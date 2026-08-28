@@ -6,7 +6,6 @@ class Crease extends SculptBase {
   constructor(main) {
     super(main);
 
-    this._radius = 25;
     // 0.4 default: crease is a pinch tool, so high intensity drags groove triangles toward
     // zero area and folds the mesh (no dyntopo to relieve the bunching). ~0.4 is the sweet
     // spot in VR; the slider still goes higher for anyone who wants a harder crease.

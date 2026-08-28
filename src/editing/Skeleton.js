@@ -1735,7 +1735,12 @@ Skeleton.updateVisuals = function (main) {
       // to the solve watcher forever. (Literal 4 rather than IKSolver.PIN_ROT on purpose —
       // the visuals do not import the solver. See the note on reading the joint's own fields.)
       if (pinObj && pinObj.getModelSpaceMatrix) {
-        if (pinMode === 4 && pinObj.setModelSpaceMatrix) {
+        // NOT WHILE IT IS IN A HAND. The follow below is a courtesy — it keeps a rotation-only
+        // pin's handle reachable as the animation carries its joint away — but it is a WRITE,
+        // and a write to a pin somebody is holding is the app arguing with the hand. Dragging a
+        // wrist pin, this put it straight back on the joint every frame. matt: "nothing should
+        // be able to move or rotate the pins but me."
+        if (pinMode === 4 && pinObj.setModelSpaceMatrix && !held(pinObj.getID())) {
           const pm = pinObj.getModelSpaceMatrix();
           if (Math.abs(pm[12] - _pB.x) > 1e-9 || Math.abs(pm[13] - _pB.y) > 1e-9 ||
               Math.abs(pm[14] - _pB.z) > 1e-9) {

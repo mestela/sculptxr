@@ -17,7 +17,6 @@ class Grab extends SculptBase {
 
   constructor(main) {
     super(main);
-    this._radius = 0.5; // Default radius (visual only for now)
     this._grabbedMesh = null;
     this._grabOffset = vec3.create();
     this._grabQuat = quat.create();
@@ -153,7 +152,27 @@ class Grab extends SculptBase {
           } else {
             window._animationRegistry?.addInteractionTarget?.(pin);
           }
-          this._vrPinGrabs.set(hand, { pin, last: mat4.clone(controller.matrix) });
+          // THE OFFSET IS CAPTURED ONCE, AT THE GRAB, AND NEVER RE-DERIVED.
+          //
+          // This used to accumulate: each frame took `controller * inv(lastController)` and
+          // applied it to the pin's CURRENT matrix, then stored the controller pose as the new
+          // baseline. That is only correct while nothing else touches the pin between frames —
+          // and things do. The solver moves a joint that a pin is parented under, the visuals
+          // re-seat a rotation-only pin onto its joint, a solve lands a frame late. Every one of
+          // those displacements got folded into the next frame's baseline and KEPT, so the pin
+          // slid out from under the hand holding it — worse the faster you moved, because a
+          // faster drag is where the solve is most behind. matt: "if i move them too quickly it
+          // will recalculate an offset of the pin vs where my controller is."
+          //
+          // Held in the controller's own frame instead, the pin is a rigid child of the hand for
+          // the length of the gesture. Nothing accumulates, and anything that does write the pin
+          // is overwritten on the next frame rather than inherited.
+          const gm = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix() : pin.getMatrix();
+          const invGrab = mat4.create();
+          const offset = mat4.create();
+          if (mat4.invert(invGrab, controller.matrix)) mat4.multiply(offset, invGrab, gm);
+          else mat4.copy(offset, gm);
+          this._vrPinGrabs.set(hand, { pin, offset });
           this._syncXRPinGrabs();
           this._main._lastRigEdit = pin;
           // AND SELECT IT. This is the one rig grab that never did: the ordinary path calls
@@ -199,14 +218,13 @@ class Grab extends SculptBase {
     for (const controller of activeControllers) {
       const state = this._vrPinGrabs.get(controller.handedness);
       if (!state) continue;
-      const invLast = mat4.create();
-      if (!mat4.invert(invLast, state.last)) continue;
-      const delta = mat4.create(); mat4.multiply(delta, controller.matrix, invLast);
-      const pm = state.pin.getModelSpaceMatrix ? state.pin.getModelSpaceMatrix() : state.pin.getMatrix();
-      const next = mat4.create(); mat4.multiply(next, delta, pm);
+      // Absolute: where the hand is now, times where the pin sat in the hand when it was
+      // taken. The pin's current matrix is deliberately not read — reading it is what let
+      // someone else's write become part of the answer.
+      const next = mat4.create(); mat4.multiply(next, controller.matrix, state.offset);
       if (state.pin.setModelSpaceMatrix) state.pin.setModelSpaceMatrix(next);
       else mat4.copy(state.pin.getMatrix(), next);
-      mat4.copy(state.last, controller.matrix);
+      Skeleton.syncThree(state.pin);
       moved = true;
     }
 

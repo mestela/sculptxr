@@ -6649,6 +6649,13 @@ class Scene {
 
 
                 tools.setRadius(newVal);
+                // AND REMEMBER IT. The panel sliders have always saved; this — the thumbstick,
+                // which is how the radius actually gets set in VR — did not, so every session
+                // started back at the constructor's default no matter what you had dialled in
+                // last time. Same key the panels write, so the two cannot disagree.
+                // Debounced at 500ms, because this fires on every tick of a held stick.
+                getOptionsURL.saveOption(
+                  `tool_${this._sculptManager.getToolIndex()}_radius`, newVal, 500);
 
                 // Update GuiXR and GuiMini Sliders if visible
                 if (this._guiXR) {
@@ -8390,7 +8397,7 @@ class Scene {
         run: () => { Skeleton.nameChain(this, nameRoot, nm); },
       }));
       cmds.push({
-        label: limb ? 'spine\u2026' : 'limbs\u2026', icon: 'fa-rotate', enabled: true,
+        label: limb ? 'spine' : 'limbs', icon: 'fa-rotate', enabled: true,
         sub: () => nameCmds(limb ? 'axis' : 'limb'),
         run: () => {},
       });
@@ -8416,7 +8423,10 @@ class Scene {
       ...layerCmds,
       // `sub` rather than `run`: the wheel needs to know a sector HAS children before running
       // anything, so it can open them when you push out past the rim.
-      { label: 'Name chain\u2026', icon: 'fa-tag', enabled: !!nameRoot,
+      // NO ELLIPSIS on anything with a submenu: the chevrons at its rim already say there is
+      // more behind it, and saying it twice in two languages is noise. `Type...` keeps its dots
+      // because it opens a KEYBOARD, which is a different promise from another ring.
+      { label: 'Name chain', icon: 'fa-tag', enabled: !!nameRoot,
         sub: () => nameCmds(), run: () => {} },
       { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
       { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead

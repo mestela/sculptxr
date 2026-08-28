@@ -34,8 +34,20 @@ function tuning() {
   if (t.upOffset  == null) t.upOffset  = 0.0;
   if (t.camOffset == null) t.camOffset = 0.04;  // m toward the user at spawn
   if (t.showNeedle == null) t.showNeedle = true;
-  // How far out, in wheel radii, you push to open a sector's submenu without letting go.
-  if (t.subRadius == null) t.subRadius = 1.15;
+  // HOW BIG THE WHEEL LOOKS AND HOW FAR YOU MOVE ARE DIFFERENT NUMBERS.
+  //
+  // `radiusM` is the wheel's world size. It was doing double duty as the displacement that
+  // reaches the rim, which put the rim 12cm of hand movement away while a sector armed at 3cm —
+  // so pushing out to a submenu meant a deliberate 14cm shove nobody would find. matt: "i
+  // shouldn't have to press B again to bring up the name options." He was pushing out, just not
+  // four times further than selecting takes.
+  //
+  // `reachM` is that second number, and everything about the MAPPING now uses it: the needle,
+  // the dead-zone ring, and the push-out. The rim is a comfortable flick past a selection.
+  if (t.reachM == null) t.reachM = 0.07;
+  // Where the submenu opens, in units of reachM. 1.0 = exactly at the rim, which is what the
+  // needle touching the edge shows you.
+  if (t.subRadius == null) t.subRadius = 1.0;
   return t;
 }
 
@@ -199,7 +211,13 @@ export class VrRadialMenu {
     // The new wheel RE-ORIGINS at the crossing point, so the second choice is measured from
     // where your hand is now rather than from where the gesture began — otherwise every child
     // sector would sit a rim's width off to one side.
-    if (!this._isSub && active >= 0 && dist >= t.radiusM * t.subRadius) {
+    //
+    // ANY LEVEL, not just the first. This used to stop after one, on the reasoning that a menu
+    // tree in mid-air is what a radial exists to avoid — but a push-out REPLACES the ring
+    // rather than stacking one, so there is no tree and no back button to want. Capping it left
+    // the "limbs.../spine..." swap drawing chevrons that did nothing, which is worse than
+    // either choice: matt, "there's often one to the left, but it doesn't do anything."
+    if (active >= 0 && dist >= t.reachM * t.subRadius) {
       const cmd = this._commands[active];
       const sub = cmd && cmd.enabled !== false && typeof cmd.sub === 'function' ? cmd.sub() : null;
       if (sub && sub.length) {
@@ -214,7 +232,7 @@ export class VrRadialMenu {
     // how a 5cm offset went unexplained. matt: "the 'drag controller into a sector' isn't
     // clear". Quantised to a hundredth of a radius so a still hand does not repaint the canvas
     // every frame; a moving one costs one 512px upload, which is what canvas-2D is here for.
-    const nx = dx / t.radiusM, ny = dy / t.radiusM;
+    const nx = dx / t.reachM, ny = dy / t.reachM;
     const moved = Math.abs(nx - this._nx) > 0.01 || Math.abs(ny - this._ny) > 0.01;
     if (active !== this._active || moved) {
       this._active = active;
@@ -246,10 +264,11 @@ export class VrRadialMenu {
     this._isSub = false;
     this.close();
     if (!cmd || cmd.enabled === false) return;
-    // Released ON a submenu sector without pushing out far enough to open it. Rather than do
-    // nothing — which reads as a dead wedge — arm it for the next press. The push-out above is
-    // the fluent path; this is the one that catches a short drag.
-    if (!wasSub && typeof cmd.sub === 'function') {
+    // Released ON a sector that has more behind it, without pushing out far enough to open it.
+    // Rather than do nothing — which reads as a dead wedge — arm it for the next press. The
+    // push-out above is the fluent path; this is the one that catches a short drag.
+    void wasSub;
+    if (typeof cmd.sub === 'function') {
       let sub = null;
       try { sub = cmd.sub(); } catch (e) { console.error('[VrRadial] submenu failed', e); }
       if (sub && sub.length) {
@@ -301,6 +320,24 @@ export class VrRadialMenu {
       const cmd = this._commands[i];
       ctx.globalAlpha = cmd.enabled === false ? 0.4 : 1;
       ctx.fillText(cmd.label ?? '', lx, ly);
+      // A WEDGE WITH MORE BEHIND IT SAYS SO. Pushing out past the rim opens it, and nothing on
+      // screen said that was a thing you could do — so the gesture was undiscoverable even once
+      // it was reachable. Chevrons at the rim, pointing the way you would push.
+      if (typeof cmd.sub === 'function' && cmd.enabled !== false) {
+        const cx = C + Math.cos(mid) * (rOuter - 14), cy = C + Math.sin(mid) * (rOuter - 14);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(mid);
+        ctx.strokeStyle = on ? '#11111b' : '#89b4fa';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        for (const off of [-5, 3]) {
+          ctx.beginPath();
+          ctx.moveTo(off - 4, -7); ctx.lineTo(off + 3, 0); ctx.lineTo(off - 4, 7);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
       ctx.globalAlpha = 1;
     }
 
@@ -308,7 +345,7 @@ export class VrRadialMenu {
     // layout radius and has nothing to do with the 3cm of hand movement that actually arms a
     // sector — so "how far do I have to move" had no answer on screen.
     const t = tuning();
-    const rDead = Math.max(8, (t.deadZone / t.radiusM) * rOuter);
+    const rDead = Math.max(8, (t.deadZone / t.reachM) * rOuter);
     ctx.beginPath();
     ctx.arc(C, C, rDead, 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(243,139,168,0.55)';

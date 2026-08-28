@@ -138,7 +138,8 @@ check('two-controller time zoom is enabled in the dopesheet',
     && /empty timeline space/.test(scene));
 check('Grab owns existing pins independently by controller',
   /this\._vrPinGrabs = new Map\(\)/.test(grab)
-    && /this\._vrPinGrabs\.set\(hand, \{ pin, last:/.test(grab)
+    && /this\._vrPinGrabs\.set\(hand, \{ pin, offset \}\)/.test(grab)  // was `last`, a running
+    // baseline; the grab-time offset replaced it — see scratchpad/pingrab_test.mjs
     && /this\._vrPinGrabs\.get\(controller\.handedness\)/.test(grab));
 check('two-hand rig gestures shield the wrist MiniHUD',
   /blocksMiniHudInput\(\)/.test(grab)

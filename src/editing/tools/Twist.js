@@ -7,7 +7,6 @@ class Twist extends SculptBase {
   constructor(main) {
     super(main);
 
-    this._radius = 75;
     this._culling = false;
     this._twistData = {
       normal: [0.0, 0.0, 0.0], // normal of rotation plane

@@ -8,7 +8,6 @@ class Brush extends SculptBase {
   constructor(main) {
     super(main);
 
-    this._radius = 25;
     this._intensity = 0.5;
     this._negative = false;
     this._clay = true; // Clay on by default for the Brush (matt's preference)

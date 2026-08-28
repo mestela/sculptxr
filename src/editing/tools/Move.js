@@ -11,7 +11,6 @@ class Move extends SculptBase {
   constructor(main) {
     super(main);
 
-    this._radius = 80;
     this._intensity = 1.0;
     this._topoCheck = true;
     this._negative = false; // along normal

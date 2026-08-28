@@ -14,6 +14,8 @@
 //
 // Defect injections (standing lesson 1):
 //   RD_INJECT=reopenonrelease  the submenu opens on the release again — the reported bug
+//   RD_INJECT=reachiswheel     the movement scale goes back to the wheel's world size, so the
+//                              submenu needs a shove four times longer than a selection
 //   RD_INJECT=nopushout        the submenu no longer opens mid-hold, so it needs a second press
 //   RD_INJECT=basecam          the wheel is faced with the app's base camera, which during a
 //                              session carries the desktop orbit view, not the head
@@ -39,9 +41,15 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/VrRadialMenu.js'), 'ut
     SRC = SRC.replace(a, '        this._isSub = true;\n        this._openAt(this._pNow.clone(), sub);');
   } else if (inj === 'nopushout') {
     // The submenu no longer opens mid-hold, so choosing it needs a second press again.
-    const a = '    if (!this._isSub && active >= 0 && dist >= t.radiusM * t.subRadius) {';
+    const a = '    if (!this._isSub && active >= 0 && dist >= t.reachM * t.subRadius) {';
     if (!SRC.includes(a)) throw new Error('inject nopushout: anchor moved');
     SRC = SRC.replace(a, '    if (false) {');
+  } else if (inj === 'reachiswheel') {
+    // The mapping goes back to using the wheel's WORLD SIZE as the movement scale, putting the
+    // rim four times further out than a selection.
+    const a = 'if (t.reachM == null) t.reachM = 0.07;';
+    if (!SRC.includes(a)) throw new Error('inject reachiswheel: anchor moved');
+    SRC = SRC.replace(a, 'if (t.reachM == null) t.reachM = t.radiusM;');
   } else if (inj === 'basecam') {
     // The wheel is faced with the app's BASE camera again, which during a session carries the
     // desktop orbit view rather than the head.
@@ -249,17 +257,46 @@ const NEAR_UP = P(0, 0.06);
     'otherwise B never gets you out');
 }
 
-// Depth is capped: a submenu whose command returns a list must not nest.
+// A PUSH-OUT REPLACES THE RING, AT ANY LEVEL.
+//
+// This used to stop after one, on the reasoning that a menu tree in mid-air is what a radial
+// exists to avoid. But a push-out swaps the ring rather than stacking one — there is no back
+// button to want — and capping it left the name menu's "limbs/spine" swap drawing chevrons that
+// did nothing. matt: "there's often one to the left, but it doesn't do anything."
 {
-  const s = session(() => [
-    { label: 'Sub', run: () => {},
-      sub: () => [{ label: 'deeper', run: () => {},
-        sub: () => [{ label: 'no', run() {} }] }] },
-  ]);
-  s.press(CENTRE); s.drag(NEAR_UP); s.release(NEAR_UP);
-  s.press(CENTRE); s.drag(UP); s.release(UP);
-  check('a submenu cannot open a submenu', s.m.hasPending === false && s.m.isOpen === false,
-    'a menu tree in mid-air is what a radial exists to avoid');
+  const ran = [];
+  const leaf = { label: 'leaf', run: () => ran.push('leaf') };
+  const two = [{ label: 'two', run: () => {}, sub: () => [leaf] }];
+  const s = session(() => [{ label: 'one', run: () => {}, sub: () => two }]);
+  const FAR = P(0, 0.4);
+
+  s.press(CENTRE); s.drag(FAR);
+  check('the first push-out opens the second ring',
+    s.m._commands.map((c) => c.label).join() === 'two');
+  // Push out AGAIN from the new origin.
+  s.drag(P(FAR.x, FAR.y + 0.4));
+  check('and a second push-out swaps it again',
+    s.m._commands.map((c) => c.label).join() === 'leaf',
+    s.m._commands.map((c) => c.label).join()
+      + ' — a chevron that draws and does nothing is worse than either choice');
+  // A release does not update the selection — only a drag does — so move once more inside the
+  // new ring before letting go, which is what a hand does anyway.
+  s.drag(P(FAR.x, FAR.y + 0.6));
+  s.release(P(FAR.x, FAR.y + 0.6));
+  check('...and the leaf still runs', ran.join() === 'leaf', ran.join());
+}
+
+// A wedge only draws chevrons when it HAS something behind it, or the promise is empty.
+{
+  check('the chevrons are drawn from the command, not from the level',
+    /typeof cmd\.sub === 'function' && cmd\.enabled !== false/.test(SRC),
+    'drawing them on a level rather than a command is what made a dead one appear');
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('and nothing with a submenu also carries an ellipsis',
+    !/label: 'Name chain\\u2026'/.test(SC) && !/'spine\\u2026'/.test(SC),
+    'the chevrons say it; saying it twice in two languages is noise');
+  check('...while Type keeps its dots, because it opens a keyboard not a ring',
+    /label: 'Type\\u2026'/.test(SC));
 }
 
 // ── the wheel is centred where the movement is measured from ─────────────────
@@ -279,8 +316,36 @@ const NEAR_UP = P(0, 0.06);
   check('...drawn with canvas-y flipped against camUp', /C - this\._ny \* rOuter/.test(SRC),
     'getting that wrong picks the wedge opposite the one you point at');
   check('the dead zone is drawn at its real size',
-    /\(t\.deadZone \/ t\.radiusM\) \* rOuter/.test(SRC),
+    /\(t\.deadZone \/ t\.reachM\) \* rOuter/.test(SRC),
     'the inner disc is a layout radius and says nothing about how far you must move');
+
+  // HOW BIG IT LOOKS AND HOW FAR YOU MOVE ARE DIFFERENT NUMBERS, and sharing one put the rim
+  // 12cm of hand movement away while a sector armed at 3cm — so the push-out that opens a
+  // submenu needed a shove four times longer than selecting, and nobody would find it.
+  check('the mapping is measured in reach, not in wheel size',
+    /const nx = dx \/ t\.reachM, ny = dy \/ t\.reachM;/.test(SRC)
+      && /dist >= t\.reachM \* t\.subRadius/.test(SRC),
+    'radiusM is how big the wheel LOOKS; it says nothing about how far a hand moves');
+  // The defaults are LIFTED AND RUN, not read off with a regex: a number expressed in terms of
+  // another setting parses as NaN and the check then fails for the wrong reason, which is
+  // indistinguishable from passing for the wrong reason.
+  const tuningFn = new Function('window',
+    SRC.slice(SRC.indexOf('function tuning()'), SRC.indexOf('\n}', SRC.indexOf('function tuning()')) + 2)
+    + '\nreturn tuning;')({});
+  const t = tuningFn();
+  check('the tuning defaults are liftable', t && typeof t.reachM === 'number');
+  check('...and the rim is a flick past a selection, not a shove',
+    t.reachM > t.deadZone && t.reachM * t.subRadius < t.deadZone * 4,
+    'dead ' + t.deadZone + ' / reach ' + t.reachM + ' / sub '
+      + (t.reachM * t.subRadius).toFixed(3)
+      + ' — a threshold many times the dead zone is one nobody reaches, on purpose or by '
+      + 'accident');
+  check('...and the wheel size stays its own number',
+    typeof t.radiusM === 'number' && t.radiusM !== t.reachM,
+    'how big it looks and how far you move are different things');
+  check('a wedge with a submenu says so', /typeof cmd\.sub === 'function' && cmd\.enabled/.test(SRC)
+    && /ctx\.rotate\(mid\)/.test(SRC),
+    'the push-out is undiscoverable if nothing points the way');
   check('the centre says what to do next', /'move out' : 'release'/.test(SRC));
 }
 
