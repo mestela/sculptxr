@@ -3,12 +3,11 @@
  *
  * A separate HTMLVRPanel (own mesh + texture) that lives at the same wrist
  * position as MiniPanel.  Scene.js swaps mesh.visible between the two, the
- * same way it swaps MiniPanel ↔ BrushPanel.
+ * same way it swaps MiniPanel and the main menu.
  *
  * Fires custom events on this._element:
  *   'tp-close'          — user dismissed without selecting a tool
  *   'tp-tool-selected'  — e.detail.id contains the chosen tool index
- *   'tp-show-brush'     — user wants the full BrushPanel (LP + settings)
  */
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
@@ -88,23 +87,6 @@ const CSS = `
 #tp-root .tp-btn:hover,
 #tp-root .tp-btn.hover  { filter: brightness(1.3); }
 #tp-root .tp-btn.active { box-shadow: 0 0 0 2px #89b4fa; }
-
-#tp-root .tp-more-btn {
-  width: 100%;
-  padding: 7px 8px;
-  border: 1px solid #45475a;
-  border-radius: 6px;
-  background: #181825;
-  color: #6c7086;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: center;
-  outline: none;
-  box-sizing: border-box;
-}
-#tp-root .tp-more-btn:hover,
-#tp-root .tp-more-btn.hover { background: #24243e; color: #a6adc8; }
 `;
 
 let _tpCssInjected = false;
@@ -126,7 +108,6 @@ function buildHTML() {
       <button class="tp-close-btn" id="tp-close">✕</button>
     </div>
     <div class="tp-grid">${btns}</div>
-    <button class="tp-more-btn" id="tp-full">Low Poly &amp; Full Menu ▸</button>
   `;
 }
 
@@ -169,11 +150,6 @@ export class ToolPickerPanel extends HTMLVRPanel {
     // Close button
     root.querySelector('#tp-close')?.addEventListener('click', () => {
       this._element.dispatchEvent(new CustomEvent('tp-close', { bubbles: false }));
-    });
-
-    // Full menu button
-    root.querySelector('#tp-full')?.addEventListener('click', () => {
-      this._element.dispatchEvent(new CustomEvent('tp-show-brush', { bubbles: false }));
     });
 
     // Tool buttons

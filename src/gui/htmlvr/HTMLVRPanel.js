@@ -92,7 +92,6 @@ export function setMenuColorGrade(b01, s01, g01) {
  * Shared pixels-per-metre ratio for all htmlvr panels.
  * Set meshWidth = domWidth / VR_PANEL_PX_PER_M to keep perceived font size
  * consistent regardless of panel DOM width.
- *   BrushPanel:  540 / 1800 = 0.30 m  ✓
  *   MiniPanel:   240 / 1800 = 0.133 m → rounded to 0.13 m  ✓
  */
 export const VR_PANEL_PX_PER_M = 1800;

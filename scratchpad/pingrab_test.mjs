@@ -188,8 +188,9 @@ const makePin = (m) => {
   check('the VR thumbstick saves the radius it just set',
     /saveOption\(\s*`tool_\$\{this\._sculptManager\.getToolIndex\(\)\}_radius`, newVal, 500\)/.test(blk),
     'this is how the radius is actually set in VR; unsaved, every session started over');
+  // Was BrushPanel, which was deleted 2026-08-28 — the wrist panel is the surviving slider.
   check('...under the same key the panels write',
-    /saveOption\(`tool_\$\{idx\}_radius`/.test(R('src/gui/htmlvr/BrushPanel.js')),
+    /saveOption\(`tool_\$\{idx\}_radius`/.test(R('src/gui/htmlvr/MiniPanel.js')),
     'two keys for one setting is two answers to "how big is the brush"');
   check('...and the same key startup restores from',
     /saved\[`tool_\$\{i\}_radius`\]/.test(R('src/editing/SculptManager.js')));

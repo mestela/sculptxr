@@ -1552,8 +1552,8 @@ export function buildSectionHTML_rendering(main) {
   `;
 }
 
-// Tool definitions mirrored from BrushPanel — single source of truth kept here
-// so the Sculpting tab and the BrushPanel grid stay in sync.
+// Tool definitions. This was mirrored from BrushPanel, which is gone (2026-08-28) — this
+// is now the single source of truth for the Sculpting tab's grid.
 // Helper: encode a 0-1 rgb vec3 component as two hex digits.
 const _toHex2 = v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
 
@@ -1896,7 +1896,7 @@ export class MainMenuPanel extends HTMLVRPanel {
 
   _onMeshCreated() {
     if (!this.mesh) return;
-    // Wrist-relative offset — matches the BrushPanel convention so it sits
+    // Wrist-relative offset — the shared panel convention, so it sits
     // flat on the non-dominant palm when parented to the controller grip.
     // Scene.js re-parents this mesh to uiGrip every frame in VR.
     this.mesh.position.set(0.10, 0.10, -0.05);
@@ -2048,7 +2048,12 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'sculpting': html = buildSectionHTML_sculpting(main); break;
         case 'animation': html = buildSectionHTML_animation(main); break;
       }
-      const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Sculpting', animation: 'Animation' };
+      // 'Tools', not 'Sculpting'. The section header sits directly above the body's own
+      // "Sculpt" heading, so the old label said the same word twice in two type sizes for no
+      // gain — matt: "there is a unnecessary extra header, 'SCULPTING'". The ROW stays because
+      // it carries the float-panel pin button; only the word changes. 'Tools' also covers what
+      // the section actually holds, which is Sculpt AND Mesh Edit AND Paint.
+      const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Tools', animation: 'Animation' };
       const label = SECTION_LABELS[this._activeSection] ?? this._activeSection;
       const pinSVG = ICON_PIN;
       html = `<div class="mm-section-header"><span class="mm-section-header-title">${label}</span><button class="mm-section-pin-btn" id="mm-section-pin-btn" title="Float panel">${pinSVG}</button></div>` + html;

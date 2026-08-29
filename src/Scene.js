@@ -37,7 +37,6 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
 import { registerGradeMaterial } from './gui/htmlvr/HTMLVRPanel.js';
-import { BrushPanel             } from './gui/htmlvr/BrushPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -321,7 +320,6 @@ class Scene {
     // VR Menu State
     this._guiXR = null;
     this._vrMenu = null;
-    this._brushPanel      = null;   // [HTMLVRPanel] new HTML-based tools panel
     this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
     this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
@@ -1343,11 +1341,6 @@ class Scene {
       // Skipped entirely when Y-button hide is active so the polyfill does
       // no rasterisation work and we can isolate its frame cost.
       if (!this._htmlPanelsHidden) {
-        if (this._brushPanel) {
-          try { this._brushPanel.update(true); } catch (e) {
-            console.warn('[HTMLVRPanel] BrushPanel update error:', e);
-          }
-        }
         if (this._miniPanel) {
           try { this._miniPanel.update(true); } catch (_) {}
         }
@@ -1430,19 +1423,8 @@ class Scene {
           this._vrTimelineTexture.needsUpdate = true;
           this._vrTimelineUploadedRevision = revision;
         }
-        // Keep resize handle anchored to bottom-right corner as mesh moves/scales.
-        if (this._vrResizeHandle) {
-          const tl = this._vrTimelineMesh;
-          const hw = tl.geometry.parameters.width  * 0.5;
-          const hh = tl.geometry.parameters.height * 0.5;
-          this._vrResizeHandle.position.copy(tl.position)
-            .add(new THREE.Vector3(hw - 0.014, -hh + 0.014, 0.002).applyQuaternion(tl.quaternion));
-          // Coplanar with timeline — inherit its orientation so the flat icon faces forward.
-          this._vrResizeHandle.quaternion.copy(tl.quaternion);
-          this._vrResizeHandle.visible = true;
-        }
-      } else if (this._vrResizeHandle?.visible) {
-        this._vrResizeHandle.visible = false;
+        // The resize grip is a CHILD of the panel now, so it needs no per-frame placement and
+        // no per-frame show: it inherits both. Re-placed only when the geometry changes.
       }
       // Close-button hover highlights (brighten + grow while pointed at).
       this._applyCloseBtnHover(this._vrTimelineCloseBtn, '_vtlClosePointed');
@@ -1597,7 +1579,7 @@ class Scene {
       // render on desktop. Some (MiniPanel, radial) aren't _startHidden, so they'd show at
       // the world origin. Hide them whenever we're not presenting (no effect in VR).
       if (!this._renderer?.xr?.isPresenting) {
-        const _vrPanels = [this._miniPanel, this._mainMenuPanel, this._brushPanel,
+        const _vrPanels = [this._miniPanel, this._mainMenuPanel,
           this._toolPickerPanel, this._vrRadial, this._vrRadialMenu, this._vrConfirm,
           this._vrNumpad, this._vrKeyboard];
         for (const p of _vrPanels) if (p && p.mesh && p.mesh.visible) p.mesh.visible = false;
@@ -4567,22 +4549,21 @@ class Scene {
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
 
     // [HTMLVRPanel] Init HTML-based Brush/Tools panel
-    if (!this._brushPanel && this._scene && this._camera && this._renderer) {
+    {
       try {
-        this._brushPanel = new BrushPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
-        this._brushPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
-        // Listen for pin/unpin so we can move the mesh between world and wrist.
-        this._brushPanel._element.addEventListener('bp-pin-change', (e) => {
-          this._onBrushPanelPinChange(e.detail.pinned);
-        });
-        // Start visible, attached to wrist (parented in handleXRInput once grips are known).
-        if (window.screenLog) window.screenLog('[HTMLVRPanel] BrushPanel created', 'cyan');
-
-        // The legacy GuiXR main menu + mini-HUD are RETIRED (#40 Tier 1) — the HTML
-        // panels (MainMenuPanel/MiniPanel/BrushPanel/ToolPicker) are the only path.
-        // _brushPanelEnabled is now permanently true; the old toggle is kept as a no-op
-        // so any stray caller can't resurface the canvas menu. (Popups — _guiPopup —
-        // are a separate system and unaffected; their HTML migration is Tier 2.)
+        // THE BRUSH PANEL IS GONE (2026-08-28, matt: "i want it all gone"). It was the second,
+        // half-finished wrist view — a Sculpting/Low Poly tabbed panel reachable only from a
+        // "Low Poly & Full Menu" button at the bottom of the tool picker, and by accident from
+        // a couple of other paths. The working route is MiniPanel for sculpting and
+        // MainMenuPanel for low-poly, and two overlapping answers to "where are the tools" is
+        // what made the low-poly menu read as buggy.
+        //
+        // `window._brushPanelEnabled` SURVIVES AND MUST: despite the name it has nothing to do
+        // with that panel. It gates the LEGACY CANVAS VR MENU (see _legacyVrCanvasEnabled) and
+        // is permanently true, which is the only thing keeping the old canvas UI dead.
+        // The no-op toggle below is kept for the same reason: a stray caller must not be able
+        // to resurface the canvas menu. (Popups — _guiPopup — are a separate system and
+        // unaffected; their HTML migration is Tier 2.)
         window._brushPanelEnabled = true;
         window.toggleBrushPanel = () => {
           window._brushPanelEnabled = true;
@@ -4591,7 +4572,7 @@ class Scene {
           if (window.screenLog) window.screenLog('Menu: HTML (legacy retired)', 'cyan');
         };
       } catch (err) {
-        console.error('[HTMLVRPanel] BrushPanel init failed:', err);
+        console.error('[HTMLVRPanel] legacy-menu retirement failed:', err);
       }
     }
 
@@ -4600,15 +4581,10 @@ class Scene {
       try {
         this._miniPanel = new MiniPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
         this._miniPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
-        this._miniPanel._element.addEventListener('mp-show-brush-panel', () => {
-          this._swapHtmlPanels('brush');
-        });
         this._miniPanel._element.addEventListener('mp-show-tool-picker', () => {
           this._swapHtmlPanels('picker');
           this._toolPickerPanel?.syncFromState();
         });
-        // BrushPanel starts hidden; MiniPanel is the default wrist view
-        if (this._brushPanel?.mesh) this._brushPanel.mesh.visible = false;
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MiniPanel created', 'cyan');
       } catch (err) {
         console.error('[HTMLVRPanel] MiniPanel init failed:', err);
@@ -4631,9 +4607,6 @@ class Scene {
             try { this.getGui?.()._ctrlSculpting?._ctrlSculpt?.setValue(id); } catch (_) {}
           }
           this._swapHtmlPanels('mini'); // syncFromState() is called inside _swapHtmlPanels
-        });
-        this._toolPickerPanel._element.addEventListener('tp-show-brush', () => {
-          this._swapHtmlPanels('brush');
         });
         if (window.screenLog) window.screenLog('[HTMLVRPanel] ToolPickerPanel created', 'cyan');
       } catch (err) {
@@ -4831,7 +4804,6 @@ class Scene {
       window.showPanel = (name) => {
         const panels = {
           mini:   this._miniPanel,
-          brush:  this._brushPanel,
           picker: this._toolPickerPanel,
           main:   this._mainMenuPanel,
         };
@@ -5537,15 +5509,6 @@ class Scene {
 
   // (Legacy onXRFrame loop removed in Three.js WebXR Migration)
 
-  /**
-   * [HTMLVRPanel] Called when the BrushPanel's pin button is toggled.
-   * When pinning: capture the panel's current world matrix and re-parent to scene.
-   * When unpinning: re-parent to wrist (handleXRInput will add it to uiGrip next frame).
-   */
-  /**
-   * [HTMLVRPanel] Toggle which HTML panel is visible on the wrist.
-   * @param {'mini'|'brush'} show  Which panel to show; the other is hidden.
-   */
   _swapHtmlPanels(show) {
     // Sync + flush the incoming panel's texture BEFORE making it visible so
     // the mesh never appears with stale content even for a single frame.
@@ -5554,54 +5517,20 @@ class Scene {
     const _prep = (p) => { if (!p) return; p._setHostMounted?.(true); p.syncFromState?.(); p.flushPaint?.(); };
     if (show === 'mini')   _prep(this._miniPanel);
     if (show === 'main')   _prep(this._mainMenuPanel);
-    if (show === 'brush')  _prep(this._brushPanel);
     if (show === 'picker') _prep(this._toolPickerPanel);
 
     const mini   = this._miniPanel?.mesh;
-    const brush  = this._brushPanel?.mesh;
     const picker = this._toolPickerPanel?.mesh;
     const main   = this._mainMenuPanel?.mesh;
     if (mini)   mini.visible   = (show === 'mini');
-    // Pinned panels are world-anchored — don't hide them when swapping to another panel.
-    if (brush)  brush.visible  = (show === 'brush') || !!this._brushPanel?.pinned;
     if (picker) picker.visible = (show === 'picker');
     if (main) {
+      // Pinned panels are world-anchored — don't hide them when swapping to another panel.
       const keepMain = show === 'main' || !!this._mainMenuPanel?.pinned;
-      if (keepMain) {
-        this._mainMenuPanel.show(true);
-      } else {
-        this._mainMenuPanel.show(false);
-      }
+      this._mainMenuPanel.show(keepMain);
     }
   }
 
-  _onBrushPanelPinChange(pinned) {
-    if (!this._brushPanel || !this._brushPanel.mesh || !this._scene) return;
-    // Cancel any in-progress grip drag when pin state changes
-    this._bpDragActive = false;
-    this._bpDragHand   = null;
-    const mesh = this._brushPanel.mesh;
-    if (pinned) {
-      // Capture world position and re-parent to scene root.
-      mesh.updateWorldMatrix(true, false);
-      const worldMatrix = mesh.matrixWorld.clone();
-      if (mesh.parent) mesh.parent.remove(mesh);
-      this._scene.add(mesh);
-      mesh.matrix.copy(worldMatrix);
-      mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
-      mesh.matrixAutoUpdate = true;
-    } else {
-      // Remove from pinned parent.  Reset to wrist-local defaults so handleXRInput
-      // can cleanly re-parent to uiGrip next frame without inheriting world-space values.
-      // Hide it so it acts like a closed panel — user re-opens with the wrist button.
-      if (mesh.parent) mesh.parent.remove(mesh);
-      mesh.position.set(0.10, 0.10, -0.05);
-      mesh.rotation.set(-Math.PI / 2, 0, 0);
-      mesh.scale.set(1, -1, 1);   // preserve the flipY compensation set in _createMesh
-      mesh.matrixAutoUpdate = true;
-      mesh.visible = false;
-    }
-  }
 
   _openFilesPanel() {
     if (this._renderer?.xr?.isPresenting) {
@@ -5620,6 +5549,35 @@ class Scene {
       // Desktop: DOM overlay with full files menu
       openBrowserSavesDOMOverlay(this);
     }
+  }
+
+  // HOW FAR A MESH REACHES ALONG A WORLD AXIS, measured from its actual corners.
+  //
+  // Placing one panel beside another by adding half-widths assumes three things: that the pivot
+  // is centred, that `geometry.parameters.width` is the real width, and that no scale has been
+  // applied since. Any one of those being wrong puts the panels on top of each other, and the
+  // arithmetic still looks correct — which is exactly what happened. matt, spelling out what it
+  // should do instead: "work out what is left of the current mainpanel location, align the RIGHT
+  // side of the animation panel to be at least 10 pixels to the left of that."
+  //
+  // So: transform the eight corners of the mesh's own bounding box into world space, project
+  // each onto the axis, and take the range. Pivot, scale and orientation all fall out of it.
+  _extentAlong(mesh, axis) {
+    if (!mesh || !mesh.geometry) return null;
+    mesh.updateWorldMatrix(true, false);
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    const bb = mesh.geometry.boundingBox;
+    if (!bb) return null;
+    let min = Infinity, max = -Infinity;
+    const c = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+      c.set(i & 1 ? bb.max.x : bb.min.x, i & 2 ? bb.max.y : bb.min.y, i & 4 ? bb.max.z : bb.min.z);
+      c.applyMatrix4(mesh.matrixWorld);
+      const d = c.dot(axis);
+      if (d < min) min = d;
+      if (d > max) max = d;
+    }
+    return { min, max };
   }
 
   _openVRTimeline() {
@@ -5692,7 +5650,10 @@ class Scene {
       });
       this._vrResizeHandle = new THREE.Mesh(hGeo, hMat);
       this._vrResizeHandle.visible = false;
-      this._scene.add(this._vrResizeHandle);
+      // A CHILD OF THE PANEL, like the close button — NOT a scene sibling repositioned by hand
+      // every frame. See _layoutTimelineResizeHandle for why.
+      this._vrResizeHandle.renderOrder = 1000;
+      this._vrResizeHandle.frustumCulled = false;
 
       if (window.screenLog) window.screenLog(`[VR Timeline] mesh created ${_worldW.toFixed(2)}×${_worldH.toFixed(2)}m`, 'cyan');
     } else {
@@ -5714,9 +5675,35 @@ class Scene {
     const mm  = this._mainMenuPanel?.mesh;
     if (cam) {
       if (mm) {
+        // BESIDE THE MENU, NOT ON TOP OF IT. This used to open at the menu's exact world
+        // position — matt: "it appears over where the mainpanel, confusing."
+        //
+        // Placed by EDGES, not by half-widths: put the panel at the menu, face it the same way,
+        // then measure where both actually reach along camera-right and slide this one until its
+        // RIGHT edge clears the menu's LEFT edge by a gap. Nothing here assumes where the pivot
+        // is or that the stored width is the drawn width, which is what the half-width version
+        // got wrong.
+        //
+        // CAMERA-right, not the menu's own right, so "left of the menu" means left from where
+        // you are standing whatever angle the menu is held at.
+        const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
         const pos = new THREE.Vector3();
         mm.getWorldPosition(pos);
         this._vrTimelineMesh.position.copy(pos);
+        this._vrTimelineMesh.quaternion.copy(cam.quaternion);
+        const menuExt = this._extentAlong(mm, camRight);
+        const tlExt   = this._extentAlong(this._vrTimelineMesh, camRight);
+        if (menuExt && tlExt) {
+          const GAP = 0.02;   // ~36px at 1800 px/m; matt asked for at least 10
+          this._vrTimelineMesh.position.addScaledVector(
+            camRight, (menuExt.min - GAP) - tlExt.max);
+        } else {
+          // No measurable box (a panel whose geometry has not been built yet). Fall back to the
+          // half-width guess rather than dropping the panel on the menu.
+          const menuHalfW = (mm.geometry?.parameters?.width ?? 0.30) * 0.5;
+          this._vrTimelineMesh.position.addScaledVector(
+            camRight, -(menuHalfW + _worldW / 2 + 0.02));
+        }
       } else {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
         this._vrTimelineMesh.position.copy(cam.position).addScaledVector(fwd, 0.50);
@@ -5727,11 +5714,45 @@ class Scene {
     if (!this._vrTimelineCloseBtn) this._vrTimelineCloseBtn = this._makeVRCloseBtn();
     if (this._vrTimelineCloseBtn.parent !== this._vrTimelineMesh) this._vrTimelineMesh.add(this._vrTimelineCloseBtn);
     this._layoutTimelineCloseBtn();
+    this._layoutTimelineResizeHandle();
     this._vrTimelineCloseBtn.visible = true;
     tl.draw();
     if (this._vrTimelineTexture) this._vrTimelineTexture.needsUpdate = true;
     this._mainMenuPanel?._element?.querySelector('#mm-tl-btn')?.classList.add('tl-on');
     if (window.screenLog) window.screenLog('[VR Timeline] open', 'lime');
+  }
+
+  // WHERE THE SIDE PANELS ACTUALLY ARE, along the axis that decides whether they overlap.
+  // Run it with the menu and a side panel open: if `gap` is negative they are on top of each
+  // other, and the numbers say by how much and which assumption was wrong.
+  panelDiag() {
+    const cam = this._camera?.getThreeCamera();
+    const mm = this._mainMenuPanel?.mesh;
+    if (!cam || !mm) { console.log('[panels] no camera or main menu'); return null; }
+    const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+    const rows = { menu: mm, timeline: this._vrTimelineMesh, layers: this._vrBlendMesh };
+    const out = {};
+    for (const [name, mesh] of Object.entries(rows)) {
+      if (!mesh) { console.log('[panels] ' + name + ': not created'); continue; }
+      const e = this._extentAlong(mesh, camRight);
+      out[name] = e;
+      console.log('[panels] ' + name.padEnd(9) + ' visible=' + mesh.visible
+        + '  left=' + e.min.toFixed(3) + '  right=' + e.max.toFixed(3)
+        + '  width=' + (e.max - e.min).toFixed(3)
+        + '  scaleX=' + mesh.scale.x.toFixed(3));
+    }
+    if (out.menu && out.timeline) {
+      console.log('[panels] timeline right edge to menu left edge: '
+        + (out.menu.min - out.timeline.max).toFixed(3) + 'm (negative = overlapping)');
+    }
+    if (out.menu && out.layers) {
+      console.log('[panels] menu right edge to layers left edge: '
+        + (out.layers.min - out.menu.max).toFixed(3) + 'm (negative = overlapping)');
+    }
+    console.log('[panels] NOTE the main menu is WRIST-PARENTED unless pinned, so it moves after '
+      + 'a side panel is placed. A gap that is positive here and an overlap in the headset means '
+      + 'the menu came to the panel, not that the placement was wrong.');
+    return out;
   }
 
   _closeVRTimeline() {
@@ -5788,10 +5809,20 @@ class Scene {
     if (cam) {
       const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
       if (mm) {
+        // By EDGES, the same rule the timeline uses — see _extentAlong. This one goes RIGHT, so
+        // opening both puts one either side of the menu rather than two panels in one place.
         const mPos = new THREE.Vector3(); mm.getWorldPosition(mPos);
-        const menuHalfW = (mm.geometry?.parameters?.width ?? 0.30) * 0.5;
-        mPos.addScaledVector(camRight, menuHalfW + _worldW / 2 + 0.02); // beside, small gap
         this._vrBlendMesh.position.copy(mPos);
+        this._vrBlendMesh.quaternion.copy(cam.quaternion);
+        const menuExt = this._extentAlong(mm, camRight);
+        const bsExt   = this._extentAlong(this._vrBlendMesh, camRight);
+        if (menuExt && bsExt) {
+          this._vrBlendMesh.position.addScaledVector(
+            camRight, (menuExt.max + 0.02) - bsExt.min);
+        } else {
+          const menuHalfW = (mm.geometry?.parameters?.width ?? 0.30) * 0.5;
+          this._vrBlendMesh.position.addScaledVector(camRight, menuHalfW + _worldW / 2 + 0.02);
+        }
       } else {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
         this._vrBlendMesh.position.copy(cam.position).addScaledVector(fwd, 0.4);
@@ -5859,6 +5890,32 @@ class Scene {
     btn.quaternion.identity(); // local to parent
   }
   _layoutTimelineCloseBtn() { this._layoutCloseBtn(this._vrTimelineCloseBtn, this._vrTimelineMesh); }
+
+  // THE CORNER GRIP, PLACED IN THE PANEL'S OWN SPACE.
+  //
+  // It used to be a scene sibling whose world position and orientation were recomputed every
+  // frame from the panel's, and re-shown every frame — the close button next to it is a CHILD
+  // and does not flicker, which is the difference this removes. matt: "the corner grip/resize
+  // indicator in the lower right of the animation panel frequently hides/unhides."
+  //
+  // I have not isolated the exact trigger, so this is a structural fix rather than a targeted
+  // one, and it closes off all three candidates at once: a transform written after the frame
+  // was culled (one frame stale, which reads as flicker), a visibility flag that could disagree
+  // with the panel's, and independent frustum culling of a 28mm quad. As a child it inherits
+  // transform and visibility, and cannot disagree with the panel about either.
+  //
+  // Safe to parent because a resize rebuilds the panel's GEOMETRY and holds scale at 1 — a
+  // scaled parent would stretch the grip.
+  _layoutTimelineResizeHandle() {
+    const h = this._vrResizeHandle, tl = this._vrTimelineMesh;
+    if (!h || !tl) return;
+    if (h.parent !== tl) tl.add(h);
+    const hw = tl.geometry.parameters.width  * 0.5;
+    const hh = tl.geometry.parameters.height * 0.5;
+    h.position.set(hw - 0.014, -hh + 0.014, 0.002);
+    h.quaternion.identity();   // local to the panel
+    h.visible = true;
+  }
 
   // Hover feedback for a corner close button: brighten + grow while pointed at.
   // `flagKey` is set true by the input dispatch and consumed (reset) here.
@@ -6292,13 +6349,6 @@ class Scene {
             if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
             if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== uiGrip) uiGrip.add(this._vrMiniHUD.mesh);
             if (this._vrPopup && this._vrPopup.mesh.parent !== uiGrip) uiGrip.add(this._vrPopup.mesh);
-
-            // [HTMLVRPanel] Attach BrushPanel to wrist unless it's been pinned.
-            if (this._brushPanel && this._brushPanel.mesh && !this._brushPanel.pinned) {
-              if (this._brushPanel.mesh.parent !== uiGrip) {
-                uiGrip.add(this._brushPanel.mesh);
-              }
-            }
 
             // [HTMLVRPanel] Attach MiniPanel to wrist (no pin button — always wrist-local).
             if (this._miniPanel && this._miniPanel.mesh && !this._miniPanel.pinned) {
@@ -6835,7 +6885,7 @@ class Scene {
               this._htmlPanelsHidden = !this._htmlPanelsHidden;
               const hide = this._htmlPanelsHidden;
               const panels = [
-                this._brushPanel, this._miniPanel, this._mainMenuPanel,
+                this._miniPanel, this._mainMenuPanel,
                 this._toolPickerPanel, this._filesPanel, this._animPanel,
               ];
               if (hide) {
@@ -7158,10 +7208,6 @@ class Scene {
           // an incidental ray across the wrist-mounted MiniHUD must not change values.
           const _miniHudBlocked = !!this._sculptManager.getCurrentTool()?.blocksMiniHudInput?.();
           if (!_numpadOpen) {
-            if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
-              const h = _rc.intersectObject(this._brushPanel.mesh);
-              if (h.length > 0) _panelHits.push({ name: 'BrushPanel', panel: this._brushPanel, hit: h[0], pressKey: '_bpWasPressed' });
-            }
             if (!_miniHudBlocked && this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
               const h = _rc.intersectObject(this._miniPanel.mesh);
               if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
@@ -7204,7 +7250,10 @@ class Scene {
           this._vtlIsPointing = false;
           this._vbsIsPointing = false;
           if (!_numpadOpen) {
-            if (this._vrResizeHandle?.visible) {
+            // The panel's visibility as well as the grip's own: as a CHILD the grip keeps its
+            // flag true while a hidden parent stops it being drawn, so `visible` alone would
+            // leave an invisible grip hittable.
+            if (this._vrResizeHandle?.visible && this._vrTimelineMesh?.visible) {
               const h = _rc.intersectObject(this._vrResizeHandle);
               if (h.length > 0) _panelHits.push({ name: 'VRTimelineResize', panel: null, hit: h[0], pressKey: '_vtlResizeWasPressed', isTimelineResize: true });
             }
@@ -7249,7 +7298,6 @@ class Scene {
             const _dragCandidates = [
               { name: 'MainMenuPanel',   panel: this._mainMenuPanel,      pressKey: '_mmWasPressed' },
               { name: 'FilesPanel',      panel: this._filesPanel,         pressKey: '_fpWasPressed' },
-              { name: 'BrushPanel',      panel: this._brushPanel,         pressKey: '_bpWasPressed' },
               ...(!_miniHudBlocked ? [{ name: 'MiniPanel', panel: this._miniPanel, pressKey: '_mpWasPressed' }] : []),
               { name: 'ToolPickerPanel', panel: this._toolPickerPanel,    pressKey: '_tpWasPressed' },
               { name: 'VrNumpad',        panel: this._vrNumpad,           pressKey: '_npWasPressed' },
@@ -7292,8 +7340,6 @@ class Scene {
           this._mark('xr-pose');
           // Phase 3: build full visible-panel list so non-hit panels also get leave calls
           const _allVisible = [];
-          if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false)
-            _allVisible.push({ name: 'BrushPanel', panel: this._brushPanel, pressKey: '_bpWasPressed' });
           if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false)
             _allVisible.push({ name: 'MiniPanel', panel: this._miniPanel, pressKey: '_mpWasPressed' });
           if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false)
@@ -7350,9 +7396,17 @@ class Scene {
             if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRTimeline'; }
             else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRTimeline'; }
             this._updateBPCursor?.(_winner.hit.point, true);
-            // While the two-handed zoom gesture owns input, don't also pan/select
-            // with the dominant hand — just keep the press latch in sync.
-            if (this._vtlZoomActive) {
+            // While a gesture that OWNS the panel is running, don't also pan/select with the
+            // dominant hand — just keep the press latch in sync so the release is not seen as
+            // a fresh press afterwards.
+            //
+            // A RESIZE is one of those, and used not to be listed. Dragging the corner grip
+            // outward grows the panel INTO the ray that is doing the dragging, so the timeline
+            // starts receiving pointer-downs from the same held trigger and opens a marquee
+            // behind the resize. matt: "while resizing larger it often draws the marquee select
+            // region." The trigger is already committed to the grip; nothing else should read
+            // it until it is released.
+            if (this._vtlZoomActive || this._vtlResizeActive) {
               this._vtlWasPressed = _pressed;
             } else if (!this._vtlDragActive) {
               const justDown  = _pressed && !this._vtlWasPressed;
@@ -7365,7 +7419,8 @@ class Scene {
               this._vtlLastDragUV = _winner.hit.uv;   // remember for off-panel release
               this._vtlWasPressed = _pressed;
             }
-          } else if (this._vtlWasPressed && _pressed && !this._vtlZoomActive && !this._vtlDragActive) {
+          } else if (this._vtlWasPressed && _pressed && !this._vtlZoomActive
+                     && !this._vtlDragActive && !this._vtlResizeActive) {
             // Edge-drag latch: the trigger is still held but the ray has left the
             // timeline mesh — easy to do when dragging a blendshape value toward 0
             // past the panel's left edge. Project the ray onto the timeline plane,
@@ -7536,6 +7591,7 @@ class Scene {
                 tl.geometry = new THREE.PlaneGeometry(newWorldW, newWorldH);
                 tl.scale.set(1, 1, 1);
                 this._layoutTimelineCloseBtn(); // half-extents changed → re-place child
+                this._layoutTimelineResizeHandle();
 
                 // Reposition so the top-left corner stays fixed
                 tl.position.copy(this._vtlResizeFixedCorner)
@@ -7563,8 +7619,6 @@ class Scene {
           else if (!_winner) this._lastHtmlPanelHit = null;
 
           // Periodic state sync (independent of hit)
-          this._bpSyncCounter = (this._bpSyncCounter || 0) + 1;
-          if (this._bpSyncCounter % 30 === 0) this._brushPanel?.syncFromState?.();
           this._mpSyncCounter = (this._mpSyncCounter || 0) + 1;
           if (this._mpSyncCounter % 30 === 0) this._miniPanel?.syncFromState?.();
           // ── end unified HTML panel raycast ────────────────────────────────
@@ -7685,7 +7739,7 @@ class Scene {
           } else {
             if (this._guiXR) this._guiXR.setCursor(-1, -1);
             if (this._guiMini) this._guiMini.setCursor(-1, -1);
-            // Only reset if BrushPanel also didn't claim this ray — it sets _isPointingAtMenu
+            // Only reset if no panel also claimed this ray — a panel sets _isPointingAtMenu
             // and pre-fills _vrUIHitDist to suppress the sculpt cursor.
             if (!this._isPointingAtMenu) {
               if (source.handedness === 'left') this._vrUIHitDistLeft = Infinity;
@@ -7744,39 +7798,7 @@ class Scene {
           const _panelDragBusy = this._hasPanelDragActive(source.handedness);
           const _worldNavBusy  = this._vrGrip[source.handedness]?.active ?? false;
           const _hitSrc = source.handedness === 'left' ? this._vrUIHitSourceLeft : this._vrUIHitSourceRight;
-          const bpOnPanel  = _hitSrc === 'BrushPanel';
           const mmOnPanel  = _hitSrc === 'MainMenuPanel';
-          const bpCanStart    = this._brushPanel?.pinned && bpOnPanel && isGrip && !this._bpDragActive && !this._vtlIsPointing && !_panelDragBusy && !_worldNavBusy;
-          const bpCanContinue = this._bpDragActive && this._bpDragHand === source.handedness && isGrip;
-          if (bpCanStart || bpCanContinue) {
-            const refPose = frame.getPose(source.gripSpace, refSpace);
-            if (refPose) {
-              const p = refPose.transform.position;
-              const q = refPose.transform.orientation;
-              const curPos  = new THREE.Vector3(p.x, p.y, p.z);
-              const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-              if (!this._bpDragActive) {
-                this._bpDragActive = true;
-                this._bpDragHand   = source.handedness;
-                const mesh = this._brushPanel.mesh;
-                mesh.updateWorldMatrix(true, false);
-                const invCtrlQuat = curQuat.clone().invert();
-                this._bpDragRelPos  = mesh.position.clone().sub(curPos).applyQuaternion(invCtrlQuat);
-                this._bpDragRelQuat = invCtrlQuat.clone().multiply(mesh.quaternion);
-              } else {
-                const mesh = this._brushPanel.mesh;
-                mesh.position.copy(curPos).add(_v3tmp.copy(this._bpDragRelPos).applyQuaternion(curQuat));
-                mesh.quaternion.copy(curQuat).multiply(this._bpDragRelQuat);
-              }
-            }
-            if (source.handedness === 'left') { leftGrip = false; }
-            else                              { rightGrip = false; }
-          }
-          if (this._bpDragActive && this._bpDragHand === source.handedness && !isGrip) {
-            this._bpDragActive = false;
-            this._bpDragHand   = null;
-          }
-          // ── end BrushPanel grip drag ──────────────────────────────────────
 
           // ── MainMenuPanel grip drag (pinned) ──────────────────────────────
           const mmCanStart    = this._mainMenuPanel?.pinned && mmOnPanel && isGrip && !this._mmDragActive && !this._vtlIsPointing && !_panelDragBusy && !_worldNavBusy;
@@ -8525,7 +8547,6 @@ class Scene {
   }
 
   _hasPanelDragActive(handedness) {
-    if (this._bpDragActive  && this._bpDragHand  === handedness) return true;
     if (this._mmDragActive  && this._mmDragHand  === handedness) return true;
     if (this._vtlDragActive && this._vtlDragHand === handedness) return true;
     if (this._tornOffPanels) {

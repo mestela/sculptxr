@@ -6,7 +6,7 @@ import MotionPathEdit from '../../editing/MotionPathEdit.js';
  * into a WebGL texture via the three-html-render polyfill.
  *
  * Displays:
- *   • Current tool button (tinted by tool family) → tapping opens BrushPanel
+ *   • Current tool button (tinted by tool family) → tapping opens the tool picker
  *   • Radius + Intensity sliders
  *   • Symmetry / Negative / Wireframe toggles
  *   • Tool-specific extras (masking, paint, voxel, extrude/inset)
@@ -14,9 +14,6 @@ import MotionPathEdit from '../../editing/MotionPathEdit.js';
  * Scene.js wires:
  *   this._miniPanel = new MiniPanel(this, scene, camera, renderer);
  *   this._miniPanel.bindDesktopPointers(renderer, camera);
- *   this._miniPanel._element.addEventListener('mp-show-brush-panel', () => {
- *     this._swapHtmlPanels('brush');
- *   });
  */
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
@@ -549,7 +546,7 @@ export class MiniPanel extends HTMLVRPanel {
     root.id = 'mp-root';
     root.innerHTML = buildHTML();
 
-    // Width derived from shared px/m ratio so fonts match BrushPanel
+    // Width derived from the shared px/m ratio so fonts match the other panels
     super(root, 240 / VR_PANEL_PX_PER_M); // 0.133 m
 
     this._main          = main;
