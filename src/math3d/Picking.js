@@ -52,8 +52,33 @@ var _segS = 0.0;   // parameter along the segment, 0 at the head and 1 at the ti
 // bone which somehow got disabled a few versions ago." Splitting a thing you cannot point at
 // is a menu item that acts on something invisible.
 //
-//   window._rigBoneSelect = false   turn it off again, no rebuild
-const BONE_SELECT = () => window._rigBoneSelect !== false;
+//   window._rigBoneSelect = false   force it off everywhere, no rebuild
+//   window._rigBoneSelect = true    force it on everywhere
+//
+// FOLLOWS THE TOOL BY DEFAULT: on in the BONE tool, off everywhere else.
+//
+// Bone selection is needed by Split, which has to know which bone you are pointing at — and it
+// is actively harmful in Grab. Grab's generic pick runs with includeRig, so a pickable bone
+// capsule is something it will happily TAKE; capsules are large and easy to hit, so with bone
+// select on globally the right hand kept grabbing a bone instead of the pin it was aimed at.
+// That held mesh then short-circuits the pin path on its first line, and the hand goes dead.
+//
+// matt found this the hard way twice — the first time it was the reason bone select was
+// reverted wholesale, the second time `window._rigBoneSelect = false` fixed a lock-up on the
+// spot. His conclusion, and it is the right one: "keep dissolve and split in the marking menu
+// only for the bones tool, not for grab."
+//
+// So the switch is per-tool rather than global, and the manual override still wins either way.
+const BONE_SELECT = (main) => {
+  if (window._rigBoneSelect === false) return false;
+  if (window._rigBoneSelect === true) return true;
+  const idx = main && main.getSculptManager && main.getSculptManager()
+    ? main.getSculptManager().getToolIndex() : -1;
+  return idx === BONE_DRAW_TOOL;
+};
+// Enums is not imported here and importing it for one number would drag the tool tables into
+// the pick loop's module. The index is stable and asserted in rigpick_test.
+const BONE_DRAW_TOOL = 34;
 
 // WHICH ONE YOU MEANT, in two lines and one number.
 //
@@ -365,7 +390,7 @@ class Picking {
         // exactly as it always was.
         var rigHit = mesh;
         // BONE SELECTION IS OFF BY DEFAULT — see the note by BONE_SELECT.
-        var segHead = BONE_SELECT() ? segmentHead(mesh) : null;
+        var segHead = BONE_SELECT(this._main) ? segmentHead(mesh) : null;
         // A CANDIDATE, committed only where the winner is decided — see the VR path for why
         // writing it here directly let iteration order pick the bone.
         var segIsBone = null;
@@ -442,7 +467,7 @@ class Picking {
         // much the bigger of the two. Pointing at an arm of the triad then landed outside the
         // pin's own zone and the bone beneath it won every time. `_pickRadius` is published by
         // the code that draws the marker, so the zone is whatever is actually on screen.
-        if (BONE_SELECT() && mesh._pickRadius > cone) cone = mesh._pickRadius;
+        if (BONE_SELECT(this._main) && mesh._pickRadius > cone) cone = mesh._pickRadius;
         if (window._pickTrace) {
           console.log('[pick]', mesh._permanentStaticLabel || mesh.getID(),
             mesh._isPinTarget ? 'PIN' : 'BONE',
@@ -568,7 +593,7 @@ class Picking {
         // Reaching for the middle of a limb takes the joint at the nearer end of it. Same rule
         // as the desktop pick, measured from the controller tip instead of along a ray, since
         // that is what the VR rig pick has always been.
-        var vrHead = BONE_SELECT() ? segmentHead(mesh) : null;
+        var vrHead = BONE_SELECT(this._main) ? segmentHead(mesh) : null;
         // WHICH BONE, as distinct from which joint. A segment is drawn from a joint to its
         // parent, so the segment IS `mesh` — the child end — whichever end the SELECTION
         // resolves to. Selection wants the nearer end; an operation on the bone (split) wants
@@ -604,7 +629,7 @@ class Picking {
         // and set beats a constant nobody can, which is the whole lesson of the last few
         // rounds. Falls back to the fixed reach when there is no sphere to read.
         const base = this._main?._vrBrushPhysicalRadius || (window._rigPickProximityVR || 0.11);
-        const reach = BONE_SELECT()
+        const reach = BONE_SELECT(this._main)
           ? Math.max(base, (mesh._pickRadius || 0) * vrScale) : base;
         if (physicalDistance > reach) continue;
         // MEASURED AGAINST ITS OWN REACH, exactly as the desktop score is measured against its

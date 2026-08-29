@@ -20,6 +20,7 @@ import Skeleton from './editing/Skeleton.js';
 import Skinning from './editing/Skinning.js';
 import IKSolver from './editing/IKSolver.js';
 import RigTopology from './editing/RigTopology.js';
+import HumanBase from './drawables/HumanBase.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
@@ -3030,6 +3031,27 @@ class Scene {
     }
   }
 
+  // A HUMAN FIGURE, from MakeHuman's CC0 base mesh. Async because the geometry is a fetched
+  // asset rather than a procedural primitive — see drawables/HumanBase.js for the provenance.
+  //
+  // Marked `isQuad` like the grids: it is 13,378 quads of authored topology, and that is the
+  // whole point of it. Sculpting it destroys nothing — the quads survive subdivision — so it
+  // doubles as a retopology target for a head or body sculpted from a sphere.
+  async addHumanBase() {
+    try {
+      await HumanBase.load();
+    } catch (e) {
+      console.error('[humanbase] could not load the base mesh', e);
+      if (window.screenLog) window.screenLog('Base mesh failed to load', 'red');
+      return null;
+    }
+    const mesh = new Multimesh(HumanBase.build(this._gl));
+    mesh.normalizeSize();
+    mesh._typeName = 'Human';
+    mesh.isQuad = true;
+    return this.addNewMesh(mesh);
+  }
+
   addGrid3x3() {
     var mesh = new Multimesh(Primitives.createPlaneGrid(this._gl, 3, 3));
     mesh.normalizeSize();
@@ -5843,6 +5865,53 @@ class Scene {
     return out;
   }
 
+  // WHY CAN'T THIS CONTROLLER MANIPULATE ANYTHING.
+  //
+  // A controller that preselects but cannot grab is always a LATCH that was set and never
+  // released — never a dead controller, because preselection and manipulation run on different
+  // paths and only the second one is gated. There are eight such latches and they are spread
+  // across three files, which is why this has been diagnosed wrongly before. This prints all of
+  // them, per hand, so the answer is read rather than guessed.
+  grabDiag() {
+    const tool = this._sculptManager?.getCurrentTool?.();
+    const isGrab = tool?.constructor?.name === 'Grab';
+    const pins = tool?._vrPinGrabs;
+    const rows = [
+      ['tool', tool?.constructor?.name || 'none'],
+      ['dominant hand', this._dominantHand],
+      ['_activeHandedness', this._activeHandedness || 'null'],
+      ['_vrSculpting', !!this._vrSculpting],
+      ['_vrLockedHand', this._vrLockedHand || 'null'],
+      // Read off the flag rather than through RigPending: Scene does not import it, and a
+      // diagnostic is not worth an import just to ask one question. The flag IS the storage —
+      // RigPending owns the transitions, not the state (see the note at the top of that file).
+      ['RigPending armed', this._rigPendingMode || 'no'],
+      ['  (armed blocks EVERY tool)', this._rigPendingMode ? 'YES — this is the cause' : '-'],
+      ['  pending subject', this._rigPendingSubject != null ? ('#' + this._rigPendingSubject) : '-'],
+      ['_sculptLocked', !!window._sculptLocked],
+      ['_isPointingAtMenu', !!this._isPointingAtMenu],
+      ['_vtlIsPointing', !!this._vtlIsPointing],
+      ['_vtlDragActive', !!this._vtlDragActive],
+      ['_vtlResizeActive', !!this._vtlResizeActive],
+      ['_mmDragActive', !!this._mmDragActive],
+      ['controllers seen', [this._vrControllerLeft ? 'left' : null,
+        this._vrControllerRight ? 'right' : null].filter(Boolean).join(',') || 'NONE'],
+    ];
+    if (isGrab) {
+      rows.push(['Grab._grabbedMesh', tool._grabbedMesh ? ('#' + tool._grabbedMesh.getID()) : 'null']);
+      rows.push(['Grab._vrPinGesture', tool._vrPinGesture ? 'live' : 'null']);
+      rows.push(['Grab._vrPinGrabs', pins && pins.size
+        ? [...pins.entries()].map(([h, g]) => h + '->#' + g.pin.getID()).join(' ') : 'empty']);
+      rows.push(['Grab._vrPinTriggerWas', JSON.stringify(tool._vrPinTriggerWas)]);
+    }
+    for (const [k, v] of rows) console.log('[grab] ' + String(k).padEnd(28) + v);
+    console.log('[grab] A pin still listed for a hand you are NOT holding, or a triggerWas stuck '
+      + 'true, means Grab.updateXR returns early every frame and that hand can never grab. '
+      + '"RigPending armed" blocks every tool in BOTH hands. A _vrLockedHand naming the other '
+      + 'hand blocks a Transform drag only.');
+    return rows;
+  }
+
   _closeVRTimeline() {
     if (this._vrTimelineMesh) this._vrTimelineMesh.visible = false;
     if (this._vrTimelineCloseBtn) this._vrTimelineCloseBtn.visible = false;
@@ -8521,6 +8590,12 @@ class Scene {
     // Split usable from a selection when no bone is under the tip.
     const splitTarget = this._rigHoverBone || nameRoot;
     const dissolveTarget = nameRoot;
+    // TOPOLOGY VERBS BELONG TO THE BONE TOOL. They need bone selection to know which bone you
+    // mean, and bone selection is only on in that tool — see BONE_SELECT in Picking for why it
+    // cannot be on in Grab. Offering them elsewhere would enable a command whose target the
+    // pick cannot resolve. matt: "keep dissolve and split in the marking menu only for the
+    // bones tool, not for grab."
+    const inBoneTool = this._sculptManager?.getToolIndex?.() === Enums.Tools.BONE_DRAW;
 
     const nameCmds = (which) => {
       const chain = Skeleton.chainFrom(this, nameRoot);
@@ -8584,10 +8659,11 @@ class Scene {
       //
       // The whole point of a context menu is that it acts on what you opened it on.
       { label: 'Split bone', icon: 'fa-scissors',
-        enabled: RigTopology.canSplit(this, splitTarget),
+        enabled: inBoneTool && RigTopology.canSplit(this, splitTarget),
         run: () => { RigTopology.split(this, splitTarget); } },
       // Dissolve acts on the JOINT, which nameRoot already froze at open for the same reason.
-      { label: 'Dissolve', icon: 'fa-compress', enabled: RigTopology.canDissolve(this, dissolveTarget),
+      { label: 'Dissolve', icon: 'fa-compress',
+        enabled: inBoneTool && RigTopology.canDissolve(this, dissolveTarget),
         run: () => { RigTopology.dissolve(this, dissolveTarget); } },
       { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
       { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
@@ -9289,6 +9365,53 @@ class Scene {
        isTriggerPressed = (isDominant && analogValue >= triggerThreshold);
     }
 
+    // THE PRESS, REPORTED BEFORE ANY TOOL GETS A SAY.
+    //
+    // Grab's own report fires on ITS press edge, which is inside a branch that a controller only
+    // reaches if it arrived with a pose. So a pull that never reaches the tool produced no report
+    // at all — matt: "its not reporting anything when i pull the right trigger... only on
+    // successful grabs." A silent failure is the one case an instrument must not have, so this
+    // one sits at the source: the frame where the trigger crosses, whatever happens afterwards.
+    if (!this._trigWas) this._trigWas = {};
+    {
+      const raw = !!(buttons && buttons[0] && buttons[0].pressed);
+      const hand = source.handedness;
+      if (raw && !this._trigWas[hand] && !window._grabQuiet) {
+        const tool = this._sculptManager?.getCurrentTool?.();
+        console.log('[press ' + hand + '] digital=' + raw
+          + '  analog=' + analogValue.toFixed(2) + '  threshold=' + triggerThreshold.toFixed(2)
+          + '  -> isTriggerPressed=' + isTriggerPressed
+          + '  dominant=' + isDominant + '  lockedHand=' + (this._vrLockedHand || '-')
+          + '  tool=' + (tool?.constructor?.name || '-')
+          + '  pointingAtMenu=' + !!this._isPointingAtMenu
+          + '  uiHit=' + ((hand === 'left' ? this._vrUIHitSourceLeft : this._vrUIHitSourceRight) || '-'));
+        // WHAT THE TOOLS WERE ACTUALLY HANDED. This is the list Grab iterates, and a hand that
+        // is missing from it is invisible to every report inside the tool — which is the state
+        // this hunt kept landing in: a clean press here, then silence there. Built later in this
+        // same function, so it is one frame old; that is fine for a list that changes on
+        // connect/disconnect rather than per frame.
+        //
+        // A source present in `inputSources` but absent here means the build dropped it, and
+        // the build drops a source when `_vrControllerLeft/Right` has no object for that hand.
+        const _ctls = this._lastXRControllers || [];
+        console.log('[press ' + hand + '] toolsWereHanded=['
+          + _ctls.map((c) => c.handedness + (c.matrix ? '' : '/noMatrix')).join(' ')
+          + ']  inputSources=['
+          + [...(frame.session?.inputSources || [])].map((sr) => sr.handedness).join(' ')
+          + ']  mapping=[' + (this._vrControllerLeft ? 'left' : '-') + ' '
+          + (this._vrControllerRight ? 'right' : '-') + ']');
+        console.log('[press ' + hand + '] a press with isTriggerPressed=false never reaches the '
+          + 'tool: the analog value did not cross the threshold, or the hand is not dominant '
+          + 'and nothing has locked to it. A uiHit naming a panel means the ray was on UI and '
+          + 'the controller is handed to tools WITHOUT a pose, which excludes it from the pin '
+          + 'path entirely.');
+      }
+      // Remembered for the dispatch report below: the two decisions are ~100 lines apart and
+      // the interesting thing is whether THIS press reached the tool.
+      if (raw && !this._trigWas[hand]) { this._pressEdgeHand = hand; this._pressEdgeCall = hand; }
+      this._trigWas[hand] = raw;
+    }
+
     // VR Ergonomics: Temporary Modifiers
     // Check if the non-dominant index trigger is held.
     // FIX v0.9.160: Evaluated BEFORE stroke initialization to prevent first-frame "dot" of primary tool
@@ -9383,6 +9506,47 @@ class Scene {
     // }
 
     // Capture state for change detection
+    // DID THIS PRESS REACH THE TOOL. Every [grab] report lives inside Grab.updateXR, so a frame
+    // that never dispatches produces total silence — which is what a failed pull looked like:
+    // a clean press line, then nothing. This is the one link that was never instrumented.
+    if (this._pressEdgeHand && !window._grabQuiet) {
+      console.log('[press ' + this._pressEdgeHand + '] dispatch: canSculpt=' + canSculpt
+        + '  (isTriggerPressed=' + isTriggerPressed + '  picked=' + !!picked
+        + '  allowAir=' + allowAir + '  toolActive=' + !!isToolActive
+        + '  alreadySculpting=' + !!this._vrSculpting
+        + '  secondaryTrigger=' + !!this._vrSecondaryTriggerPressed + ')');
+      console.log('[press ' + this._pressEdgeHand + '] canSculpt=false means NO tool dispatch '
+        + 'this frame, so Grab never sees the press and reports nothing. canSculpt=true with no '
+        + '[grab] line after it means the dispatch ran but the pin loop skipped this hand.');
+      this._pressEdgeHand = null;
+    }
+
+    // A TOOL STILL HOLDING SOMETHING GETS end() EVEN IF NO STROKE WAS EVER OPEN.
+    //
+    // Grab ACQUIRES from the digital triggers inside `controllers[]`, but the stroke lifecycle
+    // that ends it keys off `isTriggerPressed`. Those disagree, so a grab taken on a frame that
+    // was not a stroke has no stroke to end — and `_grabbedMesh` sticks for ever. Because
+    // `_updateXRPinGrabs` returns on its FIRST line when a mesh is held, the pin path then dies
+    // for that hand: preselection still lights up, nothing is grabbable.
+    //
+    // Fixing it inside the tool did not work, and the reason is the point: updateXR is only
+    // dispatched while canSculpt is true, so the tool never gets a frame with the trigger up in
+    // which to notice. The release has to live where it is reached unconditionally, which is
+    // here. matt: "i'm sure this is why i asked you to revert all the bone select code" — and he
+    // was right that the two are connected. Re-enabling BONE_SELECT made Grab's rig-aware pick
+    // return bone capsules, which are big and easy to hit, so the generic path started
+    // swallowing rig nodes far more often. That turned a latent leak into a constant one.
+    if (!canSculpt && !this._vrSculpting) {
+      const _t = this._sculptManager?.getCurrentTool?.();
+      if (_t && _t._grabbedMesh) {
+        if (!window._grabQuiet) {
+          console.log('[press] orphan release: tool was holding #' + _t._grabbedMesh.getID()
+            + ' with no stroke open — acquired outside the stroke lifecycle');
+        }
+        try { _t.end(); } catch (e) { console.error('[grab] orphan end() failed', e); }
+      }
+    }
+
     if (this._lastCanSculpt !== canSculpt || (this._vrSculpting && !canSculpt)) {
       if (window.screenLog) {
         // window.screenLog(`Scene Logic Change: Can=${canSculpt} Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive} Sculpting=${this._vrSculpting}`, canSculpt ? "lime" : "red");
@@ -9749,8 +9913,27 @@ class Scene {
           }
 
           for (let src of session.inputSources) {
-            // Support native hand tracking mock objects
-            const gamepad = src.hand ? { buttons: [{pressed:false},{pressed:false}] } : src.gamepad;
+            // A REAL GAMEPAD ALWAYS WINS OVER THE HAND-TRACKING STUB.
+            //
+            // This used to read `src.hand ? stub : src.gamepad`, so ANY source carrying hand
+            // data was handed to the tools with a stub whose buttons are permanently
+            // `pressed: false` — even when the same source had a perfectly good gamepad with
+            // the trigger physically down. The runtime populates `hand` intermittently
+            // alongside a controller, which is why this failed roughly three pulls in five and
+            // looked like a picking problem.
+            //
+            // It was invisible from inside the tools because it is a SECOND SOURCE OF TRUTH:
+            // Scene reads `source.gamepad.buttons` directly for its own input handling and saw
+            // the real press, while Grab read the stub and saw nothing at all — not a wrong
+            // answer, no answer, which is why every report inside Grab stayed silent. matt
+            // tracked it down to exactly that pair: "canSculpt=true" and no [grab] line.
+            //
+            // The stub still exists for a genuine hand source, which has no gamepad, so the
+            // downstream code that reads buttons does not have to check.
+            const _realPad = (src.gamepad && src.gamepad.buttons && src.gamepad.buttons.length)
+              ? src.gamepad : null;
+            const gamepad = _realPad
+              || (src.hand ? { buttons: [{ pressed: false }, { pressed: false }] } : null);
             if (!gamepad) continue;
 
             // Get Physical Matrix (World Space)
@@ -9859,6 +10042,19 @@ class Scene {
         // a list rebuilt from the session — the difference between the two is exactly the
         // menu-guard case it exists to catch.
         this._lastXRControllers = xrControllers;
+        // THE CALL ITSELF. Everything so far has measured either side of this line and assumed
+        // the middle. If the press reaches here, the entry log inside Grab must follow it; if
+        // there is no entry log, the call is not happening on this frame despite canSculpt.
+        if (this._pressEdgeCall && !window._grabQuiet) {
+          console.log('[press ' + this._pressEdgeCall + '] CALLING updateXR  activeSource='
+            + source.handedness + '  isPressed=' + isTriggerPressed
+            + '  srcHasHand=' + !!source.hand
+            + '  xrControllers=[' + xrControllers.map((c) => c.handedness
+              + (c.buttons?.[0]?.pressed ? '!' : '.')
+              + (c.matrix ? '' : '/noMatrix')).join(' ') + ']');
+          window._grabExpectEntry = this._pressEdgeCall;
+          this._pressEdgeCall = null;
+        }
         this._mark('xr-tools');
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
@@ -10527,5 +10723,68 @@ window._reloadControllerModels = function() {
 Scene.prototype.reloadControllerModels = window._reloadControllerModels;
 
 // console.log(`[SculptGL] Scene.prototype.reloadControllerModels attached: true`);
+
+// Diagnostics, reachable the way the others are — `rigUnit()`, `pathDiag()`, `gnomonDiag()`.
+// Both are Scene methods, so they need the live instance rather than a captured one: a Scene
+// built after this module loaded would otherwise be invisible to them.
+// A FRAME-BY-FRAME TRACE, because the resting state is not the interesting one.
+//
+// grabDiag() samples latches, and while you are not pressing they are all clear — correct, and
+// no help. This records where each frame of Grab input actually ENDED: which hand was chosen,
+// whether a controller arrived without a pose, which early return fired. Turn it on, reproduce
+// the lock-up, turn it off and read.
+window.grabTrace = function (on) {
+  // NOT `_grabTrace` — that flag drives two console.log calls per frame, and logging at 72-90Hz
+  // moves frame timing enough to change the behaviour being traced. This one only appends to an
+  // array; nothing is printed until grabTraceDump().
+  window._grabFrameTrace = on !== false;
+  if (window._grabFrameTrace) window._grabTraceBuf = [];
+  console.log('[grab] frame trace ' + (window._grabFrameTrace ? 'ON — silent, costs one array '
+    + 'push per frame. Reproduce the lock-up, then grabTrace(false)' : 'off'));
+  if (!window._grabFrameTrace) window.grabTraceDump();
+  return window._grabFrameTrace;
+};
+
+// Collapsed: one line per RUN of identical outcomes, so a stuck frame reads as a count rather
+// than nine hundred lines that scroll the answer away.
+window.grabTraceDump = function () {
+  const b = window._grabTraceBuf || [];
+  if (!b.length) { console.log('[grab] nothing traced'); return []; }
+  const out = [];
+  for (const e of b) {
+    const key = e.where + ' | ' + e.extra;
+    const last = out[out.length - 1];
+    if (last && last.key === key) { last.n++; last.to = e.t; continue; }
+    out.push({ key: key, n: 1, from: e.t, to: e.t });
+  }
+  for (const r of out) {
+    console.log('[grab] x' + String(r.n).padEnd(5) + r.key
+      + (r.n > 1 ? '   (' + r.from + 's..' + r.to + 's)' : '   (' + r.from + 's)'));
+  }
+  console.log('[grab] WHAT TO LOOK FOR, in order:');
+  console.log('[grab]  1. `pressed=false` while the same line shows `right!` — the digital '
+    + 'button is down but the ANALOG value never crossed the trigger threshold. Scene derives '
+    + '`pressed` from `value >= 0.9 - sensitivity*0.8`; the buttons list shows the raw pressed '
+    + 'flag. A divergence there is the trigger threshold, not the grab code.');
+  console.log('[grab]  2. `ACQUIRED #n` with no matching `released` — the held mesh stuck, so '
+    + 'every later press moves that object instead of picking a new one.');
+  console.log('[grab]  3. `RETURN active has no matrix` naming the dead hand — Scene sends a '
+    + 'pose-less controller when a menu is under the ray, and the right hand wins the ternary '
+    + 'that picks the active one.');
+  console.log('[grab]  4. Long runs of `enter` with no branch line after them — the frame '
+    + 'reached the tool and no branch claimed it.');
+  return out;
+};
+
+window.grabDiag = function () {
+  const app = window.app;
+  if (!app?.grabDiag) { console.log('[grab] no scene yet'); return null; }
+  return app.grabDiag();
+};
+window.panelDiag = function () {
+  const app = window.app;
+  if (!app?.panelDiag) { console.log('[panels] no scene yet'); return null; }
+  return app.panelDiag();
+};
 
 export default Scene;

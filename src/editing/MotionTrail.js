@@ -746,7 +746,7 @@ window.gnomonDiag = function () {
   const main = _lastMain;
   const d = main && main._trailVis && main._trailVis.gnomonDbg;
   if (!d) {
-    console.log('[gnomon] nothing drawn yet — turn Trails and Key Axes on, with a keyed pin '
+    console.log('[gnomon] nothing drawn yet — turn Trails and Rotation on, with a keyed pin '
       + 'selected, then run this again');
     return null;
   }
@@ -912,7 +912,7 @@ MotionTrail.recolor = function (main) {
 // toggled, the pointer hovers a different sample — none of those alter the fingerprint, so none
 // of them cause a rebuild, and anything that depends on them has to run here instead.
 //
-// The gnomons were on the rebuild path and looked simply broken: pressing Key Axes set the flag
+// The gnomons were on the rebuild path and looked simply broken: pressing the button set the flag
 // and nothing appeared, because the curve had not changed and so was never redrawn. That is the
 // second thing to land on this path for exactly the same reason, which is why there is now one
 // entry point rather than a call bolted onto each early return.

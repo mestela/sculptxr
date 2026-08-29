@@ -161,7 +161,7 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
-      ${flagButton(c, 'gnomons', 'Key Axes', Skeleton.displayFlag('gnomons'))}
+      ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlag('gnomons'))}
     </div>
   `;
 }

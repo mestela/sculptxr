@@ -123,13 +123,78 @@ class Grab extends SculptBase {
     const activeControllers = [left, right].filter(Boolean);
     if (!activeControllers.length) return this._vrPinGrabs.size > 0;
 
+    // A HAND THAT IS NOT REPORTING CANNOT BE HOLDING ANYTHING.
+    //
+    // Every release below is keyed to a controller present in `activeControllers`. Lose a hand
+    // for one frame while it holds a pin and its entry is never deleted — so `hadGesture` stays
+    // true, `updateXR` returns early on every subsequent frame, and that controller can never
+    // manipulate anything again. Preselection lives on another path and keeps working, which is
+    // why it reads as "it highlights but I can't grab" rather than as a dead controller. matt:
+    // "the primary controller locked up... this has happened before."
+    //
+    // NOT the same as the GalaxyXR blur, and the difference is what makes this safe: a frame
+    // with NO controllers at all is transient and returns above without touching anything. This
+    // only releases a hand that is absent while another hand IS reporting, which is a real loss
+    // rather than a hiccup.
+    for (const hand of ['left', 'right']) {
+      if (activeControllers.some((c) => c.handedness === hand)) continue;
+      // Say so when it matters: a hand missing from the snapshot while its button is down is
+      // a press that can never be acted on, and from the outside that is a dead controller.
+      const raw = controllers.find((c) => c.handedness === hand);
+      if (raw?.buttons?.[0]?.pressed && !window._grabQuiet) {
+        this._press(hand, { SKIPPED: 'not in the active set this frame',
+          hasMatrix: !!raw.matrix,
+          note: 'a controller without a pose is excluded from the pin path entirely' });
+      }
+      this._vrPinGrabs.delete(hand);
+      this._vrPinTriggerWas[hand] = false;   // or the next press is not seen as an edge
+    }
+
     const hadGesture = this._vrPinGrabs.size > 0;
     for (const controller of activeControllers) {
       const hand = controller.handedness;
       const pressed = !!controller.buttons?.[0]?.pressed;
       const was = !!this._vrPinTriggerWas[hand];
+      // WHY THE EDGE DID NOT FIRE. The acquire below is gated on three conditions, and the
+      // report lived INSIDE it — so a hand skipped by any of them said nothing at all, which is
+      // exactly what happened: a clean, dominant, in-threshold press on the right produced a
+      // valid [press right] line from Scene and then silence from the tool. Reported here, one
+      // line per pull, so the skipped case names its own reason.
+      if (pressed && !was && this._vrPinGrabs.has(hand) && !window._grabQuiet) {
+        this._press(hand, { SKIPPED: 'this hand is already listed as holding a pin',
+          holds: '#' + this._vrPinGrabs.get(hand).pin.getID(),
+          note: 'a stale entry here blocks every future press from this hand, silently' });
+      } else if (pressed && was && !window._grabQuiet) {
+        this._press(hand, { SKIPPED: 'no press EDGE — the trigger was already down last frame',
+          note: 'a triggerWas stuck true means the release frame was never seen for this hand' });
+      }
       if (pressed && !was && !this._vrPinGrabs.has(hand)) {
         const pin = this._pickPinForController(picking, controller);
+        // WHY THE PIN PICK SAID NO. When it says no, the frame falls through to the ordinary
+        // mesh grab — which takes whatever the ray hits and then disables the pin path for BOTH
+        // hands, because `_grabbedMesh` is the first thing _updateXRPinGrabs checks. That is the
+        // lock-up, so the interesting number is the distance from THIS hand's ray origin to the
+        // nearest pin: if the tip looks like it is on the pin and this says centimetres, the two
+        // hands are using different origins.
+        // THE PRESS REPORT. Everything the decision rested on, at the moment it was made.
+        const ray = this._pinControllerRay(controller);
+        const near = ray ? this._nearestPin(ray.origin) : { id: null, d: Infinity };
+        const hiJ = this._main._skelHighlightId ?? -1;
+        const hiP = this._main._pinHighlightId ?? -1;
+        this._press(hand, {
+          pinPick: pin ? ('#' + pin.getID()) : 'NONE',
+          // What the HIGHLIGHT says is under you. A lit joint or bone with no pin taken is the
+          // mismatch that used to fall through and grab the body.
+          litPin: hiP >= 0 ? ('#' + hiP) : '-',
+          litJointOrBone: hiJ >= 0 ? ('#' + hiJ) : '-',
+          nearestPin: near.id != null ? ('#' + near.id) : 'none',
+          dist: near.d === Infinity ? 'n/a' : near.d.toFixed(3),
+          reach: (this._main._vrBrushPhysicalRadius || 0).toFixed(3),
+          rayFrom: controller.rayOrigin ? 'tip' : 'matrix',
+          heldAlready: this._grabbedMesh ? ('#' + this._grabbedMesh.getID()) : '-',
+          otherHandHolds: [...this._vrPinGrabs.keys()].join(',') || '-',
+        });
+        this._tr('pinPick ' + hand, pin ? 'took #' + pin.getID() : 'NONE');
         if (pin) {
           if (!this._vrPinGesture) {
             this._vrPinGesture = {
@@ -173,6 +238,7 @@ class Grab extends SculptBase {
           if (mat4.invert(invGrab, controller.matrix)) mat4.multiply(offset, invGrab, gm);
           else mat4.copy(offset, gm);
           this._vrPinGrabs.set(hand, { pin, offset });
+          this._press(hand, { OUTCOME: 'took pin #' + pin.getID() });
           this._syncXRPinGrabs();
           this._main._lastRigEdit = pin;
           // AND SELECT IT. This is the one rig grab that never did: the ordinary path calls
@@ -494,6 +560,55 @@ class Grab extends SculptBase {
 
   // Custom method called by Scene.js for VR tools?
   // Or we just hook into standard update.
+  // WHERE A FRAME OF GRAB INPUT ENDED UP. Recorded per frame while `window._grabTrace` is on,
+  // so a lock-up can be read from what the code DECIDED rather than from what it looks like
+  // afterwards. A snapshot taken while idle shows every latch clear — which is correct, and
+  // useless, because the interesting state only exists during a press.
+  //
+  // ON ITS OWN FLAG, NOT `_grabTrace`. That one already drove two per-frame console.log calls,
+  // and a console write per frame at 72-90Hz is enough to move frame timing — so switching the
+  // trace on changed the behaviour being traced, and switching it off "fixed" the lock-up. An
+  // instrument that perturbs what it measures is worse than none. This one appends to an array
+  // and prints nothing until asked.
+  _tr(where, extra) {
+    if (!window._grabFrameTrace) return;
+    const b = window._grabTraceBuf || (window._grabTraceBuf = []);
+    b.push({ t: (performance.now() / 1000).toFixed(2), where: where, extra: extra || '' });
+    if (b.length > 900) b.shift();
+  }
+
+  // WHAT GRAB THOUGHT, ON THE PRESS. One report per trigger pull, printed as it happens —
+  // not a stream. A live trace answers "what is it doing continuously", and the question here is
+  // "why did THIS pull do nothing", which is a single decision with about six inputs. matt:
+  // "we don't need endless live logs, just what happens when the trigger is pulled."
+  //
+  // On by default and cheap: it fires on the press EDGE only, so it costs two lines per pull.
+  // `window._grabQuiet = true` silences it.
+  _press(hand, fields) {
+    if (window._grabQuiet) return;
+    const parts = Object.entries(fields).map(([k, v]) => k + '=' + v).join('  ');
+    console.log('[grab ' + hand + '] ' + parts);
+  }
+
+  // The nearest pin to a point, and how far — the number that says whether a miss was aim or
+  // a disagreement between the two hands about where the controller's ray starts.
+  // IN PHYSICAL METRES, so it is comparable with the reach it is judged against. The first
+  // version returned MODEL-space distance while `reach` is physical, which made a successful
+  // pick read as `dist=7.888 reach=0.114` — a report that looks like a huge miss next to the
+  // word "took". A diagnostic whose two numbers are in different units is worse than one number.
+  _nearestPin(p) {
+    const vrScale = this._main._vrScale || 1.0;
+    let best = Infinity, id = null;
+    for (const m of this._main.getMeshes()) {
+      if (!m?._isPinTarget || !m.isVisible?.()) continue;
+      const ms = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : m.getMatrix();
+      const dx = ms[12] - p[0], dy = ms[13] - p[1], dz = ms[14] - p[2];
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < best) { best = d; id = m.getID(); }
+    }
+    return { id: id, d: best === Infinity ? best : best * vrScale };
+  }
+
   updateXR(picking, isPressed, origin, dir, options) {
     // A PINS THE BONE YOU ARE POINTING AT — the same press, cycle and undo the bone tool and
     // Transform use. Read FIRST: the `controllers.length === 0` return just below would
@@ -501,6 +616,20 @@ class Grab extends SculptBase {
     // the "A works, then doesn't" bug the reader in SculptBase was written for). Skipped while
     // a grab is in flight, so the press that takes hold of a joint does not also re-pin it.
     IKSolver.pinOnA(this, options, !!this._grabbedMesh);
+
+    // THE HELD MESH, ON CHANGE ONLY. `_grabbedMesh` is the state that locks the tool if it is
+    // ever left set: with it non-null and no trigger down, none of the three branches below
+    // match, so nothing runs and nothing clears it — and the next press moves the OLD object
+    // rather than picking a new one, which from inside the headset is "the controller stopped
+    // working". Logged on transition so a stuck value is visible as an acquire with no release.
+    if (window._grabFrameTrace) {
+      const now = this._grabbedMesh ? this._grabbedMesh.getID() : null;
+      if (now !== this._trLastGrabbed) {
+        this._tr(now == null ? 'released' : 'ACQUIRED', now == null
+          ? ('was #' + this._trLastGrabbed) : ('#' + now));
+        this._trLastGrabbed = now;
+      }
+    }
 
     if (!this._logThrottle) this._logThrottle = 0;
     const shouldLog = (this._logThrottle++ % 60 === 0) && window.screenLog;
@@ -512,14 +641,62 @@ class Grab extends SculptBase {
       // window.screenLog(`Grab.updateXR: Cnts=${controllers.length} Pressed=${isPressed}`, "gray");
     }
 
+    // THE OTHER END OF THE CALL. Scene logs that it is about to dispatch; this says the tool
+    // was entered and what it was given. A CALLING line with no ENTERED line means the call did
+    // not arrive — a different fault from anything inside this function.
+    if (window._grabExpectEntry && !window._grabQuiet) {
+      const cs = (options && options.controllers) || [];
+      const want = window._grabExpectEntry;
+      const mine = cs.find((c) => c.handedness === want);
+      console.log('[grab ' + want + '] ENTERED updateXR  isPressed=' + isPressed
+        + '  controllers=[' + cs.map((c) => c.handedness
+          + (c.buttons?.[0]?.pressed ? '!' : '.') + (c.matrix ? '' : '/noMatrix')).join(' ') + ']'
+        + '  thisHand=' + (mine ? (mine.buttons?.[0]?.pressed ? 'pressed' : 'NOT pressed')
+          : 'ABSENT from the list')
+        + '  triggerWas=' + JSON.stringify(this._vrPinTriggerWas)
+        + '  pinGrabs=' + [...this._vrPinGrabs.keys()].join(',')
+        + '  grabbedMesh=' + (this._grabbedMesh ? this._grabbedMesh.getID() : '-'));
+      window._grabExpectEntry = null;
+    }
+
+    if (window._grabFrameTrace) {
+      const b = (options && options.controllers) || [];
+      this._tr('enter', 'pressed=' + isPressed + ' ctrls=' + b.length
+        + ' [' + b.map((c) => c.handedness + (c.buttons?.[0]?.pressed ? '!' : '')
+          + (c.matrix ? '' : '/noMatrix')).join(' ') + ']'
+        + ' grabbed=' + (this._grabbedMesh ? this._grabbedMesh.getID() : '-')
+        + ' pins=' + this._vrPinGrabs.size);
+    }
+
     if (controllers.length === 0) {
-      // if (window.screenLog && Math.random() < 0.01) window.screenLog("Grab: No controllers", "red");
+      this._tr('RETURN no controllers');
       return;
+    }
+
+    // A HELD MESH CANNOT SURVIVE A FRAME WITH NO TRIGGER DOWN.
+    //
+    // Releasing used to depend entirely on Scene's stroke lifecycle: `_vrSculpting` goes false,
+    // Scene calls end(), end() clears `_grabbedMesh`. But this tool ACQUIRES from the digital
+    // triggers in `controllers[]`, not from the `isPressed` that lifecycle is built on — so a
+    // grab taken on a frame that was not a stroke never had a stroke to end. `_grabbedMesh`
+    // then stuck for ever, and because `_updateXRPinGrabs` returns on its first line when a
+    // mesh is held, the pin path died for that hand: preselection still lit, nothing grabbable.
+    //
+    // matt's log named it exactly — a fresh press reporting `triggerWas={left:false,right:false}
+    // pinGrabs= grabbedMesh=318`: nothing was being held by anyone, and yet a mesh was.
+    //
+    // Owning the release here makes it independent of who dispatched us. end() is the same path
+    // the ordinary release takes, so the undo entry is pushed exactly once either way.
+    if (this._grabbedMesh && !controllers.some((c) => c.buttons?.[0]?.pressed)) {
+      this._press((this._activeController && this._activeController.handedness) || 'grab',
+        { RELEASED: 'held mesh #' + this._grabbedMesh.getID() + ' with no trigger down',
+          note: 'the grab was taken outside a stroke, so Scene never called end()' });
+      this.end();
     }
 
     // Pins-only two-controller manipulation. If no pin was acquired this returns false and
     // the existing single-object Grab behaviour continues unchanged.
-    if (this._updateXRPinGrabs(picking, controllers)) return;
+    if (this._updateXRPinGrabs(picking, controllers)) { this._tr('RETURN pin path owned it'); return; }
 
     // We expect controllers to have 'handedness' and 'buttons' and 'matrix'
     const right = controllers.find(c => c.handedness === 'right');
@@ -532,7 +709,7 @@ class Grab extends SculptBase {
     if (window._grabTrace) {
       console.log('[grabXR] ctrls=' + controllers.length + ' right=' + !!right + ' left=' + !!left);
     }
-    if (!right && !left) return;
+    if (!right && !left) { this._tr('RETURN no left or right'); return; }
 
     // Check Triggers (Button 0)
     // Note: buttons[0] is usually Trigger. buttons[1] Grip? 
@@ -619,7 +796,16 @@ class Grab extends SculptBase {
       // The trigger is read straight out of those buttons, so holding it while pointing at a
       // panel walked into this branch and dereferenced a matrix that was never sent, throwing
       // once per frame for the rest of the session. There is nothing to grab with here.
-      if (!active || !active.matrix) return;
+      if (!active || !active.matrix) {
+        // THE RIGHT HAND WINS THE TERNARY ABOVE, so a matrix-less RIGHT entry ends the frame
+        // here even when the left has a perfectly good pose — one hand works, the other cannot
+        // grab anything, and no latch is set anywhere. Traced rather than silent because that
+        // is indistinguishable from a dead controller from inside the headset.
+        this._tr('RETURN active has no matrix',
+          (active ? active.handedness : 'none') + ' (rightTrigger=' + !!rightTrigger
+            + ' leftTrigger=' + !!leftTrigger + ')');
+        return;
+      }
 
       if (shouldLog) {
         const m = active.matrix;
@@ -629,7 +815,12 @@ class Grab extends SculptBase {
 
       // Valid Controller Check
       const mat = active.matrix;
-      if (Math.hypot(mat[0], mat[1], mat[2]) < 0.001) return;
+      if (Math.hypot(mat[0], mat[1], mat[2]) < 0.001) {
+        this._tr('RETURN degenerate matrix', active.handedness);
+        return;
+      }
+      this._tr('single-hand', active.handedness
+        + (this._grabbedMesh ? ' holding #' + this._grabbedMesh.getID() : ' picking'));
 
       // 1. Picking Phase (if nothing grabbed)
       if (!this._grabbedMesh) {
@@ -689,12 +880,36 @@ class Grab extends SculptBase {
           }
         }
 
-        if (!mesh && this._main.getMesh() && this._main.getMesh().isVisible()) {
+        // THE AIR FALLBACK MUST NOT FIRE WHEN YOU WERE AIMING AT THE RIG.
+        //
+        // Grabbing the selected mesh on a miss is what makes Grab usable on an object you
+        // cannot easily ray — but it is catastrophic while posing. Reach for a pin, miss it by
+        // a centimetre, and this silently takes the whole character instead. And once
+        // `_grabbedMesh` is set, `_updateXRPinGrabs` returns on its first line, so the pin path
+        // dies for BOTH hands until the mesh is released. That is the lock-up: matt, "the
+        // primary controller locked up... i couldn't actually manipulate anything", with the
+        // trace showing `ACQUIRED #222` and then `right holding #222` for ever.
+        //
+        // The highlight is a PROMISE. If a rig node is lit under this controller, the press was
+        // aimed at the rig, and a miss means "you missed the pin" — not "take the body". This
+        // is also why the accuracy felt random: the two paths disagreed about what was under
+        // you, so which one answered depended on where the nearest rig node happened to be.
+        const rigUnder = (this._main._skelHighlightId ?? -1) >= 0
+          || (this._main._pinHighlightId ?? -1) >= 0;
+        if (!mesh && !rigUnder && this._main.getMesh() && this._main.getMesh().isVisible()) {
           mesh = this._main.getMesh();
+        }
+        if (!mesh && rigUnder) {
+          this._tr('miss on rig', 'no fallback');
+          this._press(active.handedness, { OUTCOME: 'nothing',
+            why: 'ray missed, and a rig node is lit — the air fallback is suppressed so this '
+              + 'press does not take the selected mesh instead' });
         }
 
         if (mesh) {
           if (mesh._isVoxel) return; // LOCK TRANSFORM
+          this._press(active.handedness, { OUTCOME: 'took mesh #' + mesh.getID(),
+            kind: mesh._isPinTarget ? 'pin' : (mesh._isBone ? 'bone/joint' : 'ordinary mesh') });
           this._grabbedMesh = mesh;
           // AUTOKEY KEYS WHAT THE TOOL TOOK, and only the tool knows what that was.
           // `currentMesh` at AutoKey time comes from _vrSculptMesh — the SCULPTING pick,

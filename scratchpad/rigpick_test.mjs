@@ -520,7 +520,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 // the pin entirely: "the wrist never preselect highlighted", with the bone underneath winning.
 // So the zone takes whichever is larger. The thing you can see is the thing you can click.
 {
-  const m = /if \(BONE_SELECT\(\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/.test(SRC);
+  const m = /if \(BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/.test(SRC);
   check('the desktop cone is widened to the drawn marker', m,
     'a marker bigger than its own pick zone is a target you cannot hit');
   check('...and the VR reach likewise',
@@ -531,7 +531,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   // away would lose the screen-space zone that makes it hittable at a distance.
   const widen = new Function('cone', 'r',
     'const BONE_SELECT = () => true; const mesh = { _pickRadius: r }; '
-    + (SRC.match(/if \(BONE_SELECT\(\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/) || [''])[0]
+    + (SRC.match(/if \(BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/) || [''])[0]
     + ' return cone;');
   check('a marker larger than the cone widens it', widen(0.2, 3.8) === 3.8);
   check('a marker smaller than the cone leaves it alone', widen(2.0, 0.5) === 2.0,
@@ -604,19 +604,34 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 //
 // The escape hatch survives and still matters — `window._rigBoneSelect = false` puts the pick
 // back to joints-as-points, the v3.20.65 rule, without a rebuild.
-check('bone selection is one switch, and it is now ON by default',
-  /const BONE_SELECT = \(\) => window\._rigBoneSelect !== false;/.test(SRC),
-  'off by default made Split act on a target the user could not see');
+// PER TOOL, NOT GLOBAL (2026-08-30). On in the BONE tool, off everywhere else, with the manual
+// override still winning either way.
+//
+// Split needs it — it has to know which bone you are pointing at. Grab is actively harmed by it:
+// Grab's generic pick runs with includeRig, so a pickable bone capsule is something it will
+// TAKE, capsules are large and easy to hit, and a held mesh short-circuits the pin path on its
+// first line. matt hit that twice, and `window._rigBoneSelect = false` fixed it on the spot.
+check('bone selection follows the TOOL, and is on in the bone tool',
+  /const idx = main && main\.getSculptManager/.test(SRC)
+    && /return idx === BONE_DRAW_TOOL;/.test(SRC),
+  'global bone select makes Grab swallow rig nodes and go dead');
+check('...with both manual overrides still winning',
+  /if \(window\._rigBoneSelect === false\) return false;/.test(SRC)
+    && /if \(window\._rigBoneSelect === true\) return true;/.test(SRC));
+check('...and the tool index it compares against is the real one',
+  /const BONE_DRAW_TOOL = 34;/.test(SRC)
+    && /BONE_DRAW:\s*34/.test(fs.readFileSync('/Users/mattestela/sculptxr/src/misc/Enums.js', 'utf8')),
+  'a hardcoded index that drifts from Enums silently disables bone selection everywhere');
 check('...with the escape hatch still one flag away',
   /window\._rigBoneSelect = false/.test(SRC),
   'five versions of tuning say this must stay switchable without a rebuild');
 check('...gating the segments on both paths',
-  (SRC.match(/BONE_SELECT\(\) \? segmentHead\(mesh\) : null/g) || []).length === 2,
+  (SRC.match(/BONE_SELECT\(this\._main\) \? segmentHead\(mesh\) : null/g) || []).length === 2,
   'desktop and VR, or the switch only half works');
-check('...the zone widening', /BONE_SELECT\(\) && mesh\._pickRadius > cone/.test(SRC));
+check('...the zone widening', /BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone/.test(SRC));
 check('...and the zone widening is the only thing left gated',
-  /BONE_SELECT\(\) && mesh\._pickRadius > cone/.test(SRC)
-    && !/BONE_SELECT\(\) \? offAxis/.test(SRC),
+  /BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone/.test(SRC)
+    && !/BONE_SELECT\(this\._main\) \? offAxis/.test(SRC),
   'the blended scores are gone entirely now, so there is nothing left to gate there');
 {
   const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
@@ -690,9 +705,14 @@ check('...and the zone widening is the only thing left gated',
   const PK = SRC, SK = SKEL;
   const SC = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
 
-  check('bone selection is on unless switched off',
-    /const BONE_SELECT = \(\) => window\._rigBoneSelect !== false;/.test(PK),
-    'off by default made Split act on something the user could not see');
+  check('bone selection is on in the bone tool and off elsewhere',
+    /return idx === BONE_DRAW_TOOL;/.test(PK),
+    'Split needs it; Grab is broken by it — so it follows the tool rather than a global flag');
+  check('...and the topology verbs are offered only where it is on',
+    /const inBoneTool = this\._sculptManager\?\.getToolIndex\?\.\(\) === Enums\.Tools\.BONE_DRAW;/.test(SC)
+      && /enabled: inBoneTool && RigTopology\.canSplit/.test(SC)
+      && /enabled: inBoneTool && RigTopology\.canDissolve/.test(SC),
+    'a command enabled where the pick cannot resolve its target is worse than a hidden one');
   check('...and can still be switched off without a rebuild',
     /window\._rigBoneSelect = false/.test(PK));
 

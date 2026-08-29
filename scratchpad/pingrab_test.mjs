@@ -196,5 +196,252 @@ const makePin = (m) => {
     /saved\[`tool_\$\{i\}_radius`\]/.test(R('src/editing/SculptManager.js')));
 }
 
+
+// ── A HAND THAT IS NOT REPORTING CANNOT BE HOLDING ANYTHING ─────────────────
+//
+// Every release in _updateXRPinGrabs is keyed to a controller present in `activeControllers`.
+// Lose a hand for one frame while it holds a pin and its entry is never deleted, so `hadGesture`
+// stays true, Grab.updateXR returns early on every subsequent frame, and that controller can
+// never manipulate anything again. Preselection runs on another path and keeps working — which
+// is why it reads as "it highlights but I can't grab" rather than as a dead controller.
+// matt: "the primary controller locked up... this has happened before."
+{
+  check('a hand missing from the snapshot has its pin released',
+    /if \(activeControllers\.some\(\(c\) => c\.handedness === hand\)\) continue;[\s\S]{0,600}?this\._vrPinGrabs\.delete\(hand\);/.test(GRAB),
+    'an entry that survives its own controller latches updateXR into an early return for ever');
+  check('...and its trigger latch cleared with it',
+    /this\._vrPinTriggerWas\[hand\] = false;/.test(GRAB),
+    'a stuck triggerWas means the next press is never seen as an edge, so that hand can never '
+      + 'start a grab even once the pin entry is gone');
+  check('...before hadGesture is computed, or the release comes a frame too late',
+    GRAB.indexOf("this._vrPinTriggerWas[hand] = false;   // or the next press")
+      < GRAB.indexOf('const hadGesture = this._vrPinGrabs.size > 0;'));
+  check('...and NOT on a frame with no controllers at all, which is the GalaxyXR blur',
+    /if \(this\._grabbedMesh \|\| !controllers\.length\) return false;/.test(GRAB),
+    'sources go 2->0->2 when the recorder starts; releasing there would drop a live pose');
+
+  // The eight latches, in one place, because this has been diagnosed wrongly before and they
+  // are spread across three files.
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('there is a diagnostic that names every blocking latch',
+    /grabDiag\(\) \{/.test(SC) && /RigPending armed/.test(SC) && /_vrLockedHand/.test(SC)
+      && /Grab\._vrPinTriggerWas/.test(SC));
+  // A DIAGNOSTIC THAT THROWS IS WORSE THAN NONE — it fails at exactly the moment it is wanted,
+  // and the stack trace displaces the answer. This one referenced RigPending, which Scene does
+  // not import.
+  check('...using only identifiers Scene actually has',
+    !/RigPending\./.test(SC),
+    'Scene does not import RigPending; the armed flag lives on the scene and is read directly');
+  check('...reachable the way the other diagnostics are',
+    /window\.grabDiag = function/.test(SC) && /window\.panelDiag = function/.test(SC),
+    'a diagnostic that needs the instance handed to it does not get used');
+  check('...reading the LIVE scene, not one captured at module load',
+    /const app = window\.app;/.test(SC));
+}
+
+
+// ── A PRESS AIMED AT THE RIG DOES NOT TAKE THE MESH BEHIND IT ───────────────
+//
+// Grab falls back to the SELECTED mesh when its ray hits nothing — which makes it usable on an
+// object you cannot easily ray, and is catastrophic while posing. Miss a pin by a centimetre
+// and it took the whole character; and once `_grabbedMesh` is set, _updateXRPinGrabs returns on
+// its first line, so the pin path died for BOTH hands until that mesh was released.
+//
+// The trace caught it exactly: `ACQUIRED #222`, then `right holding #222` for every subsequent
+// frame. matt had also read the shape of it from the outside — "the right controller doesn't
+// seem to care about the preselect highlight" — because the highlight and the grab were
+// answering from two different pick rules.
+{
+  check('the air fallback is gated on nothing rig-ish being under the controller',
+    /if \(!mesh && !rigUnder && this\._main\.getMesh\(\)/.test(GRAB),
+    'a miss while aiming at a pin must mean "you missed", not "take the body"');
+  check('...reading the same highlight the user can SEE',
+    /const rigUnder = \(this\._main\._skelHighlightId \?\? -1\) >= 0\s*\n?\s*\|\| \(this\._main\._pinHighlightId \?\? -1\) >= 0;/.test(GRAB),
+    'the highlight is a promise; anything else makes the two disagree about what is under you');
+  check('...and the miss is traced rather than silent',
+    /this\._tr\('miss on rig'/.test(GRAB));
+
+  // THE CONSEQUENCE THAT MADE IT A LOCK-UP RATHER THAN A MISFIRE.
+  check('a held mesh still disables the pin path, which is why the fallback mattered',
+    /if \(this\._grabbedMesh \|\| !controllers\.length\) return false;/.test(GRAB),
+    'this line is correct; the bug was letting _grabbedMesh get set by a press aimed elsewhere');
+
+  // The frame trace must not perturb what it measures — it shares nothing with the per-frame
+  // console logging that `_grabTrace` drives, because logging at 72-90Hz moved frame timing
+  // enough that switching the trace off appeared to fix the bug.
+  check('the frame trace is silent and on its own flag',
+    /if \(!window\._grabFrameTrace\) return;/.test(GRAB)
+      && !/_tr\([^)]*\)\s*\{\s*if \(!window\._grabTrace\)/.test(GRAB),
+    'an instrument that changes the behaviour it measures is worse than none');
+  check('...and records the held mesh on transition, so a stuck one is visible',
+    /this\._tr\(now == null \? 'released' : 'ACQUIRED'/.test(GRAB));
+  check('...and says WHY a pin pick declined, with the distance to the nearest pin',
+    /this\._tr\('pinPick ' \+ hand/.test(GRAB),
+    'if the tip looks like it is on the pin and this says centimetres, the two hands are '
+      + 'using different origins');
+}
+
+
+// ── ONE REPORT PER TRIGGER PULL ─────────────────────────────────────────────
+//
+// A live trace answers "what is it doing continuously". The question here is "why did THIS pull
+// do nothing", which is a single decision with about six inputs — so it is reported on the press
+// EDGE, printed as it happens, on by default. matt: "we don't need endless live logs, just what
+// happens when the trigger is pulled."
+{
+  check('the press report fires on the edge, not per frame',
+    /if \(pressed && !was && !this\._vrPinGrabs\.has\(hand\)\)[\s\S]{0,1400}?this\._press\(hand, \{/.test(GRAB),
+    'inside the edge branch, so it costs two lines per pull rather than two per frame');
+  check('...and can be silenced without a rebuild',
+    /if \(window\._grabQuiet\) return;/.test(GRAB));
+  check('it reports what the HIGHLIGHT said as well as what the pick did',
+    /litPin:/.test(GRAB) && /litJointOrBone:/.test(GRAB),
+    'the mismatch between those two is the whole bug: a lit joint with no pin taken');
+  check('...the distance to the nearest pin, IN THE SAME UNITS as the reach',
+    /nearestPin:/.test(GRAB) && /dist:/.test(GRAB) && /reach:/.test(GRAB)
+      && /best \* vrScale/.test(GRAB),
+    'model-space distance next to a physical reach made a successful pick read as a huge miss');
+  check('...and the press is reported at the SOURCE too, before any tool can decline it',
+    /\[press ' \+ hand \+ '\]/.test(fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8')),
+    'a pull that never reaches the tool produced no report at all — the one case an instrument '
+      + 'must not have');
+  check('...on the digital edge, so a sub-threshold press still reports',
+    /if \(raw && !this\._trigWas\[hand\] && !window\._grabQuiet\)/.test(fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8')),
+    'reporting off isTriggerPressed would hide exactly the failure being hunted');
+  check('the old check still holds',
+    /nearestPin:/.test(GRAB) && /reach:/.test(GRAB),
+    'a miss is either aim or a disagreement about where the ray starts, and dist-vs-reach says '
+      + 'which');
+  check('...where the ray started, per hand',
+    /rayFrom: controller\.rayOrigin \? 'tip' : 'matrix'/.test(GRAB),
+    'the two hands using different origins would explain accuracy that felt random');
+  check('...and what was already held, by either hand',
+    /heldAlready:/.test(GRAB) && /otherHandHolds:/.test(GRAB),
+    'a mesh already held disables the pin path on _updateXRPinGrabs’ first line');
+  check('every outcome is named, including doing nothing',
+    (GRAB.match(/OUTCOME:/g) || []).length === 3,
+    'took a pin, took a mesh, or took nothing — a pull with no outcome line is a path this '
+      + 'report does not cover');
+}
+
+
+// ── A SKIPPED HAND NAMES ITS OWN REASON ─────────────────────────────────────
+//
+// The acquire is gated on three conditions and the report lived INSIDE it, so a hand skipped by
+// any of them said nothing at all. That produced the worst possible evidence: a clean, dominant,
+// in-threshold press reported by Scene, then silence from the tool. matt: "right controller
+// isn't grabbing anything at all. left controller works."
+{
+  check('a hand already listed as holding says so',
+    /SKIPPED: 'this hand is already listed as holding a pin'/.test(GRAB),
+    'a stale entry blocks every future press from that hand, silently — which is the shape of '
+      + 'a dead controller from the outside');
+  check('a trigger with no EDGE says so',
+    /SKIPPED: 'no press EDGE — the trigger was already down last frame'/.test(GRAB),
+    'a stuck triggerWas means the release frame was never seen for that hand');
+  check('a hand missing from the active set says so, with whether it had a pose',
+    /SKIPPED: 'not in the active set this frame'/.test(GRAB) && /hasMatrix: !!raw\.matrix/.test(GRAB),
+    'a controller without a pose is excluded from the pin path entirely');
+  check('...and all three are silenceable by the same flag as the rest',
+    (GRAB.match(/!window\._grabQuiet/g) || []).length >= 3);
+}
+
+
+// ── ONE TRIGGER, ONE SOURCE OF TRUTH ────────────────────────────────────────
+//
+// THE BUG THAT COST A DAY. The controller list handed to the tools was built as
+//   src.hand ? { buttons: [{pressed:false},{pressed:false}] } : src.gamepad
+// so ANY source carrying hand-tracking data was passed a stub whose buttons are permanently
+// `pressed: false` — even when that same source had a real gamepad with the trigger down. The
+// Quest runtime populates `hand` intermittently alongside a controller, so this failed roughly
+// three pulls in five and read as a picking or preselection problem.
+//
+// It survived five rounds of instrumentation because it is a SECOND SOURCE OF TRUTH: Scene reads
+// `source.gamepad.buttons` for its own input handling and saw the real press, while every report
+// inside Grab read the stub and produced NO output at all — not a wrong answer, no answer. The
+// pair that finally named it was "canSculpt=true" from Scene with no [grab] line after it.
+{
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('a real gamepad is preferred over the hand-tracking stub',
+    /const _realPad = \(src\.gamepad && src\.gamepad\.buttons && src\.gamepad\.buttons\.length\)\s*\n?\s*\? src\.gamepad : null;/.test(SC),
+    'a controller with its trigger down must never be described to the tools as unpressed');
+  check('...and the stub only serves a source with no gamepad at all',
+    /const gamepad = _realPad\s*\n?\s*\|\| \(src\.hand \? \{ buttons: \[\{ pressed: false \}, \{ pressed: false \}\] \} : null\);/.test(SC),
+    'genuine hand tracking still needs something with .buttons so downstream need not check');
+  check('...and the old hand-first form is gone',
+    !/src\.hand \? \{ buttons: \[\{pressed:false\},\{pressed:false\}\] \} : src\.gamepad/.test(SC),
+    'this exact expression is the bug');
+
+  // The instrumentation that found it, kept: the value of each piece was in being OUTSIDE the
+  // code path under suspicion. Every probe placed inside Grab could only speak when Grab
+  // already worked.
+  check('the press is still reported at the source, before any tool can decline it',
+    /\[press ' \+ hand \+ '\]/.test(SC));
+  check('...with the dispatch decision, which is the link between the two',
+    /dispatch: canSculpt=/.test(SC),
+    '"canSculpt=true with no [grab] line" is the pair that localised this');
+  check('...and what the tools were actually handed',
+    /toolsWereHanded=\[/.test(SC),
+    'a hand missing from that list is invisible to every report inside the tool');
+}
+
+
+// ── A HELD MESH CANNOT SURVIVE A FRAME WITH NO TRIGGER DOWN ─────────────────
+//
+// THE ACTUAL CAUSE, after six rounds. Releasing depended entirely on Scene's stroke lifecycle:
+// `_vrSculpting` goes false -> Scene calls end() -> end() clears `_grabbedMesh`. But Grab
+// ACQUIRES from the digital triggers in `controllers[]`, not from the `isPressed` that lifecycle
+// is built on — so a grab taken on a frame that was not a stroke had no stroke to end.
+// `_grabbedMesh` stuck for ever, and since _updateXRPinGrabs returns on its FIRST line when a
+// mesh is held, the pin path died for that hand: preselection still lit, nothing grabbable.
+//
+// The log that named it: a fresh press reporting
+//   triggerWas={"left":false,"right":false}  pinGrabs=  grabbedMesh=318
+// Nobody was holding anything, and yet a mesh was held.
+{
+  check('the tool releases a held mesh when no trigger is down',
+    /if \(this\._grabbedMesh && !controllers\.some\(\(c\) => c\.buttons\?\.\[0\]\?\.pressed\)\) \{/.test(GRAB),
+    'the release must not depend on who dispatched us, or a grab taken outside a stroke is '
+      + 'never released');
+  check('...through end(), the same path the ordinary release uses',
+    /this\.end\(\);/.test(GRAB),
+    'a second release path would push the undo entry twice or not at all');
+  check('...before the pin path is consulted, since a held mesh short-circuits it',
+    GRAB.indexOf('if (this._grabbedMesh && !controllers.some((c) => c.buttons?.[0]?.pressed))')
+      < GRAB.indexOf('if (this._updateXRPinGrabs(picking, controllers))'),
+    'releasing after that check leaves the pin path dead for one more frame');
+  check('...and says so, since a silent release is how this hid',
+    /RELEASED: 'held mesh #'/.test(GRAB));
+
+  // The pair of probes that localised it, kept: both ends of the dispatch call.
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('Scene reports that it is about to dispatch',
+    /CALLING updateXR/.test(SC));
+  check('...and the tool reports being entered, with what it was given',
+    /ENTERED updateXR/.test(GRAB) && /grabbedMesh=/.test(GRAB),
+    'measuring either side of a call and assuming the middle is what cost the extra rounds');
+}
+
+
+// ── THE ORPHAN RELEASE LIVES WHERE IT IS ALWAYS REACHED ─────────────────────
+//
+// The first attempt put this inside Grab.updateXR, and it could never fire: updateXR is only
+// dispatched while canSculpt is true, so the tool never gets a frame with the trigger UP in
+// which to notice it is still holding something. The release has to sit in Scene, on the path
+// taken when no stroke is open.
+{
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('Scene ends a tool that is still holding something with no stroke open',
+    /if \(!canSculpt && !this\._vrSculpting\) \{[\s\S]{0,400}?_t\._grabbedMesh/.test(SC),
+    'the tool cannot do this itself — it is not dispatched on those frames');
+  check('...through the tool’s own end(), so the undo entry is pushed once',
+    /try \{ _t\.end\(\); \}/.test(SC));
+  check('...and says so, because a silent orphan is how this survived six rounds',
+    /orphan release: tool was holding/.test(SC));
+  check('...guarded, since end() runs undo and picking code',
+    /catch \(e\) \{ console\.error\('\[grab\] orphan end\(\) failed', e\); \}/.test(SC),
+    'a throw here would take down the frame loop on every release');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
