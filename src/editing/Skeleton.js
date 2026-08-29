@@ -802,11 +802,37 @@ Skeleton.sceneUnit = function (main) {
 // already. It answers immediately AND turns tracing on — and after that, SILENCE IS THE
 // ANSWER. If the markers change size while nothing prints, the unit is not what moved and the
 // cause is downstream of it.
-window.rigUnit = function () {
+window.rigUnit = function (main) {
   console.log('[rigUnit] ' + VERSION + ' — currently ' + _lastUnit.toFixed(4)
     + ', measured from ' + _lastUnitFrom + ' (' + _lastUnitMeshes + ' real meshes)'
     + ' | joint dot ' + (_lastUnit * JOINT_R_FRAC).toFixed(4)
     + ' | ' + _unitRemeasures + ' remeasures so far');
+  // THE OTHER CANDIDATE. A joint marker's drawn size is `sceneUnit * JOINT_R_FRAC`, but each
+  // joint ALSO carries a scale baked into its own matrix at creation — and a reparent rewrites
+  // that matrix to preserve the world transform, which is exactly where a stale three-side
+  // matrix bakes in a factor. So "the markers doubled" has two possible causes and this prints
+  // both: if the unit is unchanged and the matrix scales have moved, it is not the unit.
+  const app = main || window.app;
+  const js = app ? Skeleton.joints(app) : [];
+  if (js.length) {
+    const scaleOf = (j) => {
+      const m = j.getMatrix();
+      return Math.hypot(m[0], m[1], m[2]);
+    };
+    const ss = js.map(scaleOf);
+    const lo = Math.min(...ss), hi = Math.max(...ss);
+    console.log('[rigUnit] joint matrix scale across ' + js.length + ' joints: '
+      + lo.toFixed(4) + ' .. ' + hi.toFixed(4)
+      + '  (variation across joints is NORMAL — each bakes the unit as it was when that joint'
+      + ' was created. What matters is whether this RANGE moves across an operation.)');
+    const world = js.map((j) => {
+      const m = j.getModelSpaceMatrix ? j.getModelSpaceMatrix() : j.getMatrix();
+      return Math.hypot(m[0], m[1], m[2]);
+    });
+    console.log('[rigUnit] joint WORLD scale: ' + Math.min(...world).toFixed(4) + ' .. '
+      + Math.max(...world).toFixed(4)
+      + '  (a parent carrying a scale shows here and not above)');
+  }
   window._rigUnitTrace = true;
   console.log('[rigUnit] tracing ON. It only prints when the unit is RE-MEASURED, which is a '
     + 'structural change to the scene. Nothing printed while the rig resizes means the rig '
@@ -1107,9 +1133,15 @@ Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
     console.log('[rigHover] mouse: main=' + !!main + ' picking=' + !!picking);
   }
   if (!main || !picking || !hoverDue(main, 'mouse')) return;
-  const hit = pickPreserving(picking, () =>
-    picking.intersectionMouseMeshes(meshes || main.getMeshes(), main._mouseX, main._mouseY, false, true)
-      ? picking.getMesh() : null);
+  const hit = pickPreserving(picking, () => {
+    const got = picking.intersectionMouseMeshes(
+      meshes || main.getMeshes(), main._mouseX, main._mouseY, false, true) ? picking.getMesh() : null;
+    // THE BONE UNDER THE CURSOR, which is not the same answer as the node under it: a segment
+    // resolves to its nearer END for selection, while an operation on the bone itself wants the
+    // bone. Published here so both are available and neither has to be guessed from the other.
+    main._rigHoverBone = picking._rigHitSegment || null;
+    return got;
+  });
   applyRigHover(main, isRigNode(hit) ? hit : null);
 };
 
@@ -1120,8 +1152,11 @@ Skeleton.hoverRigFromRay = function (main, picking, origin, dir, meshes) {
   // Rig hover is an x-ray operation: skin geometry must not occlude the bone/pin that the
   // controller is visibly aiming at. Use the same target class as rig acquisition.
   const vis = (meshes || main.getMeshes()).filter((m) => m.isVisible() && isRigNode(m));
-  const hit = pickPreserving(picking, () =>
-    picking.intersectionRayMeshes(vis, origin, dir, true) ? picking.getMesh() : null);
+  const hit = pickPreserving(picking, () => {
+    const got = picking.intersectionRayMeshes(vis, origin, dir, true) ? picking.getMesh() : null;
+    main._rigHoverBone = picking._rigHitSegment || null;   // see hoverRigFromMouse
+    return got;
+  });
   applyRigHover(main, isRigNode(hit) ? hit : null);
 };
 
@@ -1131,11 +1166,16 @@ Skeleton.hoverRigFromRay = function (main, picking, origin, dir, meshes) {
 Skeleton.hoverRigFromRays = function (main, picking, rays, primaryHand) {
   if (!main || !picking || !rays?.length || !hoverDue(main, 'vr')) return;
   const vis = main.getMeshes().filter((m) => m.isVisible() && isRigNode(m));
+  let hoveredBone = null;
   const hits = rays.map(({ origin, direction }) => {
-    const hit = pickPreserving(picking, () =>
-      picking.intersectionRayMeshes(vis, origin, direction, true) ? picking.getMesh() : null);
+    const hit = pickPreserving(picking, () => {
+      const got = picking.intersectionRayMeshes(vis, origin, direction, true) ? picking.getMesh() : null;
+      if (picking._rigHitSegment) hoveredBone = picking._rigHitSegment;
+      return got;
+    });
     return isRigNode(hit) ? hit : null;
   });
+  main._rigHoverBone = hoveredBone;
   const primaryIndex = Math.max(0, rays.findIndex((r) => r.handedness === primaryHand));
   applyRigHovers(main, hits, hits[primaryIndex] || null, rays.map((r) => r.handedness));
 };
@@ -1166,7 +1206,10 @@ Skeleton.jointPos = function (joint, out) {
 
 // Create a joint at `pos` (MODEL space), optionally parented to `parent`. Because
 // addNewMesh pushes its own add-state, each joint is one undo step for free.
-Skeleton.createJoint = function (main, pos, parent, name) {
+// `opts.silent` creates the joint without pushing undo entries of its own — for callers that
+// wrap a whole topology edit in one step (see RigTopology). Two entries for one split would
+// leave the middle press showing a rig nobody built.
+Skeleton.createJoint = function (main, pos, parent, name, opts) {
   // No normalizeSize() here — it writes a scale into the matrix, and the matrix is set
   // outright below. The primitive's own 0.5 radius is folded into the scale instead.
   const mesh = new Multimesh(Primitives.createSphere(main._gl, 0.5, 8, 8));
@@ -1186,7 +1229,8 @@ Skeleton.createJoint = function (main, pos, parent, name) {
   mat4.scale(m, m, [s, s, s]);
   m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 
-  main.addNewMesh(mesh);
+  if (opts && opts.silent) main.addMeshSilent(mesh);
+  else main.addNewMesh(mesh);
 
   // The locator itself never draws — the flat bone/joint visuals represent it. colorWrite
   // off keeps CPU picking working (it uses geometry, not the material).
@@ -1216,7 +1260,7 @@ Skeleton.createJoint = function (main, pos, parent, name) {
   main._skelAll.add(mesh);
 
   if (parent && main.getMeshes().includes(parent)) {
-    main.setMeshParent(mesh.getID(), parent.getID());
+    main.setMeshParent(mesh.getID(), parent.getID(), opts && opts.silent ? { silent: true } : undefined);
     // Default capsule radius from the bone's own length. A measured-at-creation default
     // is what makes the phase-2 capsule bind possible without a second pass over the rig;
     // editing a stored number later is cheap, re-measuring a finished skeleton is not.
@@ -1955,7 +1999,17 @@ Skeleton.updateVisuals = function (main) {
     // nothing at all if something else can cover it.
     const pid = parent.getID();
     const boneHeld = jointHeld || held(pid);
-    const boneHot = isHi || hiAll.has(pid);
+    // ONE BONE READS AS HOVERED, not every bone touching a hovered joint.
+    //
+    // `isHi || hiAll.has(pid)` lights a bone when EITHER of its ends is highlighted — so
+    // hovering one joint lit its own bone and every bone hanging off it. That is fine as "the
+    // joint you are near" and useless as "the bone this is about to split", which is the
+    // question Split asks. When a segment is actually under the cursor, that segment alone is
+    // hot, so what is lit is what gets split.
+    // The latch wins while a context menu is up — see the note in Scene where it is set. What
+    // is lit has to be what the menu will act on, and the hand has to move to choose.
+    const hoverBone = main._rigHoverBoneLatch || main._rigHoverBone;
+    const boneHot = hoverBone ? (hoverBone === j) : (isHi || hiAll.has(pid));
     const boneSel = isSel || sel.has(pid);
     const boneTint = boneHeld ? SELECT_COLOR : (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR
       : ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR

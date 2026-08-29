@@ -42,7 +42,18 @@ var _segS = 0.0;   // parameter along the segment, 0 at the head and 1 at the ti
 //
 // Skeleton reads the same flag and brings the joint dots back when it is off, because the dots
 // were only removed on the grounds that the bone had replaced them as the target.
-const BONE_SELECT = () => window._rigBoneSelect === true;
+//
+// BACK ON BY DEFAULT, 2026-08-28. It was switched off after four rounds of margin-tuning, and
+// what actually fixed that was `rigWinner` below — two distances and one ratio, rather than a
+// margin per case. With that in place the segments are a preference the pin can beat, not a
+// competitor, which is the shape the note above says the problem needed.
+//
+// Turning it back on is also what makes SPLIT legible: matt, "the intuition is to select a
+// bone which somehow got disabled a few versions ago." Splitting a thing you cannot point at
+// is a menu item that acts on something invisible.
+//
+//   window._rigBoneSelect = false   turn it off again, no rebuild
+const BONE_SELECT = () => window._rigBoneSelect !== false;
 
 // WHICH ONE YOU MEANT, in two lines and one number.
 //
@@ -298,6 +309,7 @@ class Picking {
   // this one function, so making them pickable outright would put a joint under every stroke.
   // `includeRig` is the opt-in the selection paths use.
   intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY, twoSided = false, includeRig = false) {
+    this._rigHitSegment = null;   // per pick — see the note in intersectionRayMeshes
     if (this._main && this._main._lockSelection) {
       const activeMesh = this._main.getMesh();
       if (activeMesh) {
@@ -354,6 +366,9 @@ class Picking {
         var rigHit = mesh;
         // BONE SELECTION IS OFF BY DEFAULT — see the note by BONE_SELECT.
         var segHead = BONE_SELECT() ? segmentHead(mesh) : null;
+        // A CANDIDATE, committed only where the winner is decided — see the VR path for why
+        // writing it here directly let iteration order pick the bone.
+        var segIsBone = null;
         if (segHead) {
           var shm = segHead.getThreeMesh();
           if (shm) {
@@ -365,6 +380,14 @@ class Picking {
             if (segOff < offAxis) {
               offAxis = segOff;
               tAlong = _segT;
+              // WHICH BONE, as distinct from which joint. A segment is drawn from a joint to
+              // its parent, so the segment IS `mesh` — the child end — whichever end the
+              // selection resolves to. Recorded separately because the two answers differ and
+              // both are wanted: selection wants the nearer END, while an operation on the BONE
+              // (split) wants the bone you are pointing at. Without this, pointing at the top
+              // of a bone selected the parent and split the bone ABOVE the one under the
+              // cursor.
+              segIsBone = mesh;
               // NEAREST END. At s = 1 this is the joint itself and the answer matches the
               // point test exactly, which is what makes the two continuous.
               rigHit = _segS >= 0.5 ? mesh : segHead;
@@ -449,7 +472,10 @@ class Picking {
         nearRigFace = -1;
         if (rigHit._isPinTarget) {
           if (offAxis < nearPinD) { nearPinD = offAxis; nearPin = rigHit; }
-        } else if (offAxis < nearBoneD) { nearBoneD = offAxis; nearBone = rigHit; }
+        } else if (offAxis < nearBoneD) {
+          nearBoneD = offAxis; nearBone = rigHit;
+          this._rigHitSegment = segIsBone;   // null when this hit was a point, not a segment
+        }
         continue;
       }
 
@@ -510,6 +536,8 @@ class Picking {
   // way, and for the same reason: the controller ray shares this function with sculpting, so
   // making rig nodes pickable outright would put a joint under every stroke.
   intersectionRayMeshes(meshes, origin, direction, includeRig = false) {
+    // Cleared per pick: a stale segment would name a bone from wherever the ray was last time.
+    this._rigHitSegment = null;
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;
@@ -541,6 +569,16 @@ class Picking {
         // as the desktop pick, measured from the controller tip instead of along a ray, since
         // that is what the VR rig pick has always been.
         var vrHead = BONE_SELECT() ? segmentHead(mesh) : null;
+        // WHICH BONE, as distinct from which joint. A segment is drawn from a joint to its
+        // parent, so the segment IS `mesh` — the child end — whichever end the SELECTION
+        // resolves to. Selection wants the nearer end; an operation on the bone (split) wants
+        // the bone under the cursor, and they differ.
+        //
+        // Held per mesh and committed only where the winner is decided. Written straight to
+        // `this` it was overwritten by every bone whose segment beat its own joint, so the last
+        // one in ITERATION ORDER won rather than the nearest — which is why aiming at a bone
+        // still could not split it.
+        var segIsBone = null;
         if (vrHead) {
           vrHead.getModelSpaceMatrix(_TMP_SEG_MS);
           _TMP_SEG_A[0] = _TMP_SEG_MS[12];
@@ -550,6 +588,7 @@ class Picking {
           var segD = pointSegDist(origin, _TMP_SEG_A, _TMP_SEG_E);
           if (segD < rigDist) {
             rigDist = segD;
+            segIsBone = mesh;   // a CANDIDATE — see the commit below
             vrHit = _segS >= 0.5 ? mesh : vrHead;
             vrHit = pinAtEnd(vrHit, _TMP_SEG_Q[0], _TMP_SEG_Q[1], _TMP_SEG_Q[2]) || vrHit;
           }
@@ -583,6 +622,7 @@ class Picking {
           if (physicalDistance < nearPinD) { nearPinD = physicalDistance; nearPin = vrHit; }
         } else if (physicalDistance < nearBoneD) {
           nearBoneD = physicalDistance; nearBone = vrHit;
+          this._rigHitSegment = segIsBone;   // null when this hit was a point, not a segment
         }
         continue;
       }

@@ -225,6 +225,10 @@ var getOptionsURL = function () {
   options.recTranslate = queryBool(getVal('recTranslate'), true);
   options.recRotate = queryBool(getVal('recRotate'), true);
   options.recScale = queryBool(getVal('recScale'), true);
+  // Extra height for the wrist panels, for controllers with a tracking ring (Quest 2) that the
+  // panels would otherwise clip through. 0 = the shared default. See HTMLVRPanel.wristPanelY.
+  options.wristPanelLift = queryNumber(getVal('wristPanelLift'), 0.0, 0.20, 0.0);
+  window._wristPanelLiftSaved = options.wristPanelLift;
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
   options.boneShowGnomons = queryBool(getVal('boneShowGnomons'), false);
 

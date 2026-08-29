@@ -136,5 +136,41 @@ check('it is inside the section it costs',
     /this\._vtlZoomActive \|\| this\._vtlResizeActive/.test(SC));
 }
 
+
+// ── ONE WRIST SLOT, ONE POSE ────────────────────────────────────────────────
+//
+// The three wrist panels sat at two heights (0.10 vs 0.05) and two angles (0 vs PI/8), none of
+// it chosen — they were written at different times. Swapping between them visibly moved and
+// turned the panel. matt noticed both: "the mainpanel and minipanel are at different heights",
+// then "if i look along the axis of the controller ... at different angles".
+{
+  const HP = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  const panels = ['MiniPanel', 'MainMenuPanel', 'ToolPickerPanel']
+    .map((n) => [n, fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/' + n + '.js'), 'utf8')]);
+
+  check('the shared height is the midpoint of the two that disagreed',
+    /export const WRIST_PANEL_Y = 0\.075;/.test(HP), '0.10 and 0.05, neither chosen');
+  check('the shared yaw is the value the OTHER TWO already agreed on',
+    /export const WRIST_PANEL_YAW = Math\.PI \/ 8;/.test(HP),
+    'not a midpoint: two panels shared a tuned value and one had a default');
+  for (const [name, src] of panels) {
+    check(name + ' takes both from the shared source',
+      /position\.set\([^)]*wristPanelY\(\)/.test(src)
+        && /rotation\.set\(-Math\.PI \/ 2, wristPanelYaw\(\), 0\)/.test(src),
+      'a literal here is how the three drifted apart in the first place');
+  }
+  check('...and no panel still carries its own wrist literal',
+    !panels.some(([, src]) => /rotation\.set\(-Math\.PI \/ 2, (0|Math\.PI \/ 8), 0\)/.test(src)));
+  check('Scene re-seats them every frame, so the lift is tunable from inside a session',
+    /_p\.mesh\.position\.y = _wy;\s*\n\s*_p\.mesh\.rotation\.y = _wYaw;/.test(SC),
+    'a Quest 2 lift guessed from outside the headset is a guess');
+  check('...but never a PINNED panel, which is world-anchored',
+    /if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiGrip\) continue;/.test(SC));
+  check('the lift persists, so it survives a reload',
+    /options\.wristPanelLift = queryNumber\(getVal\('wristPanelLift'\), 0\.0, 0\.20, 0\.0\);/
+      .test(fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8')));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

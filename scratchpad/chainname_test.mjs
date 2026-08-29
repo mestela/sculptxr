@@ -413,11 +413,13 @@ const label = (m) => m._permanentStaticLabel;
 
   // The lift is the part that is easy to get wrong: naming is TWO wheels, and letting go
   // between them says the subject was released.
+  // The condition gained a second latch (the hovered BONE, for Split) — same clock, same rule.
   check('the latch lifts only when nothing is open AND nothing is pending',
-    /!this\._vrRadial\.isOpen && !this\._vrRadial\.hasPending && this\._rigMenuLatch != null/.test(SC),
+    /!this\._vrRadial\.isOpen && !this\._vrRadial\.hasPending/.test(SC)
+      && /this\._rigMenuLatch != null \|\| this\._rigHoverBoneLatch/.test(SC),
     'lifting on the first close makes the subject blink yellow mid-operation');
   check('...and repaints when it does, so the cyan actually goes away',
-    /this\._rigMenuLatch = null;\s*\n\s*Skeleton\.updateVisuals\(this\);/.test(SC));
+    /this\._rigMenuLatch = null;\s*\n\s*this\._rigHoverBoneLatch = null;\s*\n\s*Skeleton\.updateVisuals\(this\);/.test(SC));
   check('the subject is latched at open, from the same rule the commands use',
     /Skeleton\.hoveredJoint\(this\) \|\| this\.getMesh\?\.\(\)/.test(SC),
     'latching something other than what the menu acts on is worse than not latching');

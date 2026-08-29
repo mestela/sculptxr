@@ -19,6 +19,7 @@ import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import Skinning from './editing/Skinning.js';
 import IKSolver from './editing/IKSolver.js';
+import RigTopology from './editing/RigTopology.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
@@ -36,7 +37,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { registerGradeMaterial } from './gui/htmlvr/HTMLVRPanel.js';
+import { registerGradeMaterial, wristPanelY, wristPanelYaw } from './gui/htmlvr/HTMLVRPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -2737,7 +2738,10 @@ class Scene {
   }
 
   // Reparent childId under parentId (or null → worldGroup), preserving world transform.
-  setMeshParent(childId, parentId) {
+  // `opts.silent` performs the reparent WITHOUT pushing its own undo entry, for callers that
+  // wrap a whole topology edit — split, dissolve — in one step. A split that undid in three
+  // presses would be worse than no undo at all, because the middle state is a rig nobody built.
+  setMeshParent(childId, parentId, opts) {
     const child = this._meshes.find((m) => m.getID() === childId);
     if (!child) { console.warn('[parent] no child', childId); return; }
     const parent = (parentId == null) ? null : this._meshes.find((m) => m.getID() === parentId);
@@ -2745,15 +2749,99 @@ class Scene {
     for (let p = parent; p; p = p._parentMesh) {
       if (p === child) { console.warn('[parent] refused (would create a cycle)'); return; }
     }
-    const childTM = child.getThreeMesh();
-    const dstTM   = parent ? parent.getThreeMesh() : this._worldGroup;
-    childTM.updateWorldMatrix(true, false);
-    dstTM.updateWorldMatrix(true, false);
-    dstTM.attach(childTM);                       // reparent, preserve world transform
-    child.setMatrix(childTM.matrix.elements);    // new local-to-parent → SculptXR matrix
-    childTM.matrixAutoUpdate = false;
-    child._parentMesh = parent || null;
-    this.render();
+    // ALREADY THERE means BOTH sides agree — the logical parent AND the three-side one.
+    //
+    // Checking only `_parentMesh` was wrong in exactly one case, and it is the case that
+    // matters: `removeMeshSilent` does not clear `_parentMesh`, so a joint pulled out of the
+    // scene still claims its old parent. Restoring it then hit this early return, the three
+    // mesh was never re-attached to the parent's, and the saved LOCAL matrix was applied to a
+    // mesh sitting under the world group — so the joint landed at its local coordinates read as
+    // world ones. In a rig with no bound mesh the scene unit is the joint EXTENT, so one joint
+    // in the wrong place resized every marker in the skeleton. matt measured it: the unit went
+    // 60.52 to 164.75 across an undo while every joint's own matrix scale stayed identical.
+    const _curTM = child.getThreeMesh && child.getThreeMesh();
+    const _wantTM = parent ? parent.getThreeMesh() : this._worldGroup;
+    if (child._parentMesh === (parent || null) && _curTM && _curTM.parent === _wantTM) return;
+
+    // EVERYTHING THIS TOUCHES, CAPTURED FIRST, SO IT IS ONE UNDO.
+    //
+    // A reparent had no undo entry at all, which is most of why an accidental one "exploded":
+    // there was no way back from it. matt: "i've accidentally tried it a few times and things
+    // explode, it should be a stable operation."
+    const before = {
+      parent: child._parentMesh || null,
+      matrix: mat4.clone(child.getMatrix()),
+      rest: child._ikRest ? mat4.clone(child._ikRest) : null,
+    };
+
+    const apply = (toParent, localMatrix, restMatrix) => {
+      const childTM = child.getThreeMesh();
+      const dstTM   = toParent ? toParent.getThreeMesh() : this._worldGroup;
+      childTM.updateWorldMatrix(true, false);
+      dstTM.updateWorldMatrix(true, false);
+      dstTM.attach(childTM);                       // reparent, preserve world transform
+      childTM.matrixAutoUpdate = false;
+      child._parentMesh = toParent || null;
+      if (localMatrix) {
+        // Undo path: restore the exact local matrix, since `attach` only preserves the world
+        // transform and the world may have moved since.
+        mat4.copy(child.getMatrix(), localMatrix);
+        Skeleton.syncThree(child);
+      } else {
+        child.setMatrix(childTM.matrix.elements); // new local-to-parent → SculptXR matrix
+      }
+      child._ikRest = restMatrix ? mat4.clone(restMatrix) : null;
+      // THE BEND REFERENCE IS A FACT ABOUT THE REST SHAPE, which just changed under it.
+      child._boneBendRef = null;
+      // The solver caches joint and pin transforms; a hierarchy change invalidates both, and a
+      // stale cache is the difference between a reparent and a rig that tears itself apart on
+      // the next solve.
+      IKSolver.syncJointCache?.(this);
+      IKSolver.syncPinCache?.(this);
+      Skeleton.updateVisuals?.(this);
+      Skeleton.refreshOutliner?.(this);
+      this.render();
+    };
+
+    // THE REST POSE HAS TO MOVE WITH IT, and this is the bug that actually detonates.
+    //
+    // `_ikRest` is the joint's LOCAL matrix at rest — relative to its parent. `attach` rewrites
+    // the local matrix to preserve the world transform, and left `_ikRest` expressed in the OLD
+    // parent's space. Every solve calls seedFromRest, which copies `_ikRest` straight back into
+    // the local matrix: the joint is slammed to a transform that meant something under a parent
+    // it no longer has. That is the explosion, and it arrives on the next solve rather than on
+    // the reparent, which is why it never looked like the reparent's fault.
+    //
+    // The same change is applied to rest as to the live matrix: D = inv(newParentWorld) *
+    // oldParentWorld, the delta `attach` just applied. Exact while the rig is at rest, and
+    // consistent either way — rest and current keep their relationship, which is the property
+    // that stops the tearing.
+    const restBefore = child._ikRest;
+    let restAfter = null;
+    if (restBefore) {
+      const oldW = new THREE.Matrix4();
+      const newW = new THREE.Matrix4();
+      const oldP = child._parentMesh ? child._parentMesh.getThreeMesh() : this._worldGroup;
+      const newP = parent ? parent.getThreeMesh() : this._worldGroup;
+      oldP.updateWorldMatrix(true, false); newP.updateWorldMatrix(true, false);
+      oldW.copy(oldP.matrixWorld);
+      newW.copy(newP.matrixWorld).invert().multiply(oldW);
+      const R = new THREE.Matrix4().fromArray(restBefore).premultiply(newW);
+      restAfter = mat4.clone(R.elements);
+    }
+
+    apply(parent, null, restAfter);
+    const after = {
+      parent: parent || null,
+      matrix: mat4.clone(child.getMatrix()),
+      rest: child._ikRest ? mat4.clone(child._ikRest) : null,
+    };
+    if (!opts || !opts.silent) {
+      this.getStateManager?.()?.pushStateCustom?.(
+        () => apply(before.parent, before.matrix, before.rest),
+        () => apply(after.parent, after.matrix, after.rest),
+        false, 'Set Parent');
+    }
   }
 
   getParentMesh(childId) {
@@ -6354,6 +6442,18 @@ class Scene {
             if (this._miniPanel && this._miniPanel.mesh && !this._miniPanel.pinned) {
               if (this._miniPanel.mesh.parent !== uiGrip) uiGrip.add(this._miniPanel.mesh);
             }
+            // KEEP EVERY WRIST PANEL AT THE SHARED HEIGHT, re-read each frame so the Quest 2
+            // lift can be dialled in from inside a session rather than guessed from outside
+            // one. One number for all of them: they used to sit at different heights and
+            // visibly jumped as they swapped. Pinned panels are world-anchored and exempt.
+            {
+              const _wy = wristPanelY(), _wYaw = wristPanelYaw();
+              for (const _p of [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel]) {
+                if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiGrip) continue;
+                _p.mesh.position.y = _wy;
+                _p.mesh.rotation.y = _wYaw;   // same slot, same angle — they used to differ
+              }
+            }
             if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
               if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
             }
@@ -7080,11 +7180,18 @@ class Scene {
           const subj = Skeleton.hoveredJoint(this) || this.getMesh?.();
           this._rigMenuLatch = (subj && (subj._isBone || subj._isPinTarget))
             ? subj.getID() : null;
+          // The BONE is latched for the same reason and on the same clock: Split acts on the
+          // segment, so the segment is what has to stay lit while you choose. Without it the
+          // highlight crawls to whatever the tip drifts past behind the wheel — the exact
+          // complaint the joint latch above was written for.
+          this._rigHoverBoneLatch = this._rigHoverBone || null;
           return cmds;
         });
         // Lifted only once nothing is open AND nothing is waiting for the next press.
-        if (!this._vrRadial.isOpen && !this._vrRadial.hasPending && this._rigMenuLatch != null) {
+        if (!this._vrRadial.isOpen && !this._vrRadial.hasPending
+            && (this._rigMenuLatch != null || this._rigHoverBoneLatch)) {
           this._rigMenuLatch = null;
+          this._rigHoverBoneLatch = null;
           Skeleton.updateVisuals(this);
         }
       }
@@ -8405,6 +8512,16 @@ class Scene {
     const nameRoot = hoveredRoot
       || (selMesh && selMesh._isPinTarget && selMesh._pinnedJoint)
       || (selMesh && selMesh._isBone ? selMesh : null);
+    // FROZEN AT OPEN, both of them. The commands' run closures must not re-read live hover
+    // state: picking a sector moves the hand, the preselection follows the hand, and the menu
+    // would act on whatever the tip had drifted onto by the time you let go.
+    //
+    // Split takes the BONE — the segment you are pointing at, which is a different answer from
+    // the joint at its nearer end. Dissolve takes the JOINT. Falling back to nameRoot keeps
+    // Split usable from a selection when no bone is under the tip.
+    const splitTarget = this._rigHoverBone || nameRoot;
+    const dissolveTarget = nameRoot;
+
     const nameCmds = (which) => {
       const chain = Skeleton.chainFrom(this, nameRoot);
       const n = chain.length;
@@ -8450,6 +8567,28 @@ class Scene {
       // because it opens a KEYBOARD, which is a different promise from another ring.
       { label: 'Name chain', icon: 'fa-tag', enabled: !!nameRoot,
         sub: () => nameCmds(), run: () => {} },
+      // SPLIT AND DISSOLVE act on the joint under the controller first, the selection second —
+      // the same rule Name chain uses, because in the headset you are already pointing at the
+      // joint you mean and reaching for a list to say so again is the slow way round.
+      // SPLIT ACTS ON THE BONE YOU ARE POINTING AT, which is a different answer from the joint
+      // you are pointing at. A bone resolves to its nearer END for selection, so aiming at the
+      // top of a bone selects the parent — and splitting the parent splits the bone ABOVE the
+      // one under the cursor. `_rigHoverBone` is the segment itself. matt: "ensure whatever the
+      // highlighted bone is, that is what gets split."
+      // CAPTURED AT OPEN, like nameRoot — NOT read again when the sector is committed.
+      //
+      // Picking a sector means moving the hand, and the bone preselection follows the hand. So
+      // by the time you released, `this._rigHoverBone` was whatever the tip had drifted onto —
+      // usually nothing, which fell back to nameRoot and split the same joint every time. matt:
+      // "if i preselect any other bone and split, it keeps trying to split the first bone."
+      //
+      // The whole point of a context menu is that it acts on what you opened it on.
+      { label: 'Split bone', icon: 'fa-scissors',
+        enabled: RigTopology.canSplit(this, splitTarget),
+        run: () => { RigTopology.split(this, splitTarget); } },
+      // Dissolve acts on the JOINT, which nameRoot already froze at open for the same reason.
+      { label: 'Dissolve', icon: 'fa-compress', enabled: RigTopology.canDissolve(this, dissolveTarget),
+        run: () => { RigTopology.dissolve(this, dissolveTarget); } },
       { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
       { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance

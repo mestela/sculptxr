@@ -96,6 +96,46 @@ export function setMenuColorGrade(b01, s01, g01) {
  */
 export const VR_PANEL_PX_PER_M = 1800;
 
+// HOW HIGH A WRIST PANEL SITS ABOVE THE CONTROLLER — ONE NUMBER FOR ALL OF THEM.
+//
+// The main menu sat at 0.10 and the mini panel and tool picker at 0.05, which nobody chose:
+// they were written at different times. matt noticed them jumping height as they swapped —
+// "this is the first time i've noticed the mainpanel and minipanel are at different heights.
+// i think find the midpoint and make both panels appear at that height." 0.075 is that midpoint.
+export const WRIST_PANEL_Y = 0.075;
+
+// AND AN EXTRA LIFT, because a Quest 2 controller has a large tracking ring exactly where the
+// panel sits and the panels clip through it — the offsets above were tuned on ringless hardware
+// (Quest 3, GalaxyXR). matt, with a Quest 2 in hand: "its simply a matter of lifting the
+// minipanel away from the controller."
+//
+// Live and persisted rather than a constant, so the right number comes from a headset instead
+// of from me guessing at a controller I cannot hold: set `window._wristPanelLift` in a session,
+// and it applies on the next frame because Scene re-seats the wrist panels as it re-parents
+// them. Defaults to 0, so nothing moves for anyone who does not need it.
+// AND THE SAME FOR THE ANGLE. The mini panel and the tool picker — the two that share one
+// wrist slot — both used a 22.5 degree yaw, matched to the legacy MiniHUD placement so the
+// panel faces you rather than the ceiling. The main menu used 0, which reads as a default
+// nobody set rather than a decision: sighting along the controller, the panels visibly turn as
+// they swap. matt: "if i look along the axis of the controller the minipanel and mainpanel are
+// at different angles, can you conform that too?"
+//
+// Conformed to the value the OTHER TWO already share, not to a midpoint — this one has a right
+// answer rather than two equally-arbitrary ends.
+export const WRIST_PANEL_YAW = Math.PI / 8;
+
+export function wristPanelYaw() {
+  const live = window._wristPanelYaw;
+  return Number.isFinite(live) ? live : WRIST_PANEL_YAW;
+}
+
+export function wristPanelY() {
+  const live = window._wristPanelLift;
+  const lift = Number.isFinite(live) ? live
+    : (Number.isFinite(window._wristPanelLiftSaved) ? window._wristPanelLiftSaved : 0);
+  return WRIST_PANEL_Y + lift;
+}
+
 // A switch that answers back, for the same reason ikPerf and xrPerf have one: silence from an
 // instrument and silence from the thing it measures are indistinguishable otherwise, and this
 // session has now lost two headset sessions to exactly that.

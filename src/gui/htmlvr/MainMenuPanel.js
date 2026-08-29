@@ -24,7 +24,7 @@
  * The panel is fixed height — content scrolls inside the body.
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw } from './HTMLVRPanel.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
@@ -1899,8 +1899,8 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Wrist-relative offset — the shared panel convention, so it sits
     // flat on the non-dominant palm when parented to the controller grip.
     // Scene.js re-parents this mesh to uiGrip every frame in VR.
-    this.mesh.position.set(0.10, 0.10, -0.05);
-    this.mesh.rotation.set(-Math.PI / 2, 0, 0);
+    this.mesh.position.set(0.10, wristPanelY(), -0.05);
+    this.mesh.rotation.set(-Math.PI / 2, wristPanelYaw(), 0);
   }
 
   // ── Wait for mesh, then wire shell events ──────────────────────────────────

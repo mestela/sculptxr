@@ -483,12 +483,31 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     const hm = new RegExp('const ' + expr + ' = (.+?);\n').exec(SKEL);
     check(`the ${what} rule is liftable`, !!hm);
     if (!hm) continue;
-    const lit = (tip, head) => new Function('isHi', 'isSel', 'hiAll', 'sel', 'pid',
-      'return (' + hm[1] + ');')(tip, tip, new Set(head ? [7] : []), new Set(head ? [7] : []), 7);
+    // `hoverBone`/`j` only appear in the preselect rule; passing them to both is harmless and
+    // keeps one evaluator. With no segment hovered, hoverBone is null and BOTH rules fall back
+    // to the either-end behaviour these checks were written for.
+    const lit = (tip, head) => new Function('isHi', 'isSel', 'hiAll', 'sel', 'pid', 'hoverBone', 'j',
+      'return (' + hm[1] + ');')(tip, tip, new Set(head ? [7] : []), new Set(head ? [7] : []),
+      7, null, {});
     check(`${what}: the joint at the TIP lights this capsule`, lit(true, false) === true);
     check(`${what}: so does the joint at the HEAD`, lit(false, true) === true,
       'the root is only ever a head — light only tips and it has no feedback at all');
     check(`${what}: and an unrelated joint lights nothing`, !lit(false, false));
+  }
+
+  // AND WHEN A SEGMENT IS ACTUALLY UNDER THE CURSOR, exactly one bone is hot — otherwise
+  // "whatever the highlighted bone is, that is what gets split" names several bones at once.
+  {
+    const hm = /const boneHot = (.+?);\n/.exec(SKEL);
+    const hot = (hoverBone, j) => new Function('isHi', 'isSel', 'hiAll', 'sel', 'pid',
+      'hoverBone', 'j', 'return (' + hm[1] + ');')(
+      true, true, new Set([7]), new Set([7]), 7, hoverBone, j);
+    const bone = {}, other = {};
+    check('a hovered segment lights only itself', hot(bone, bone) === true);
+    check('...and not the bones hanging off its ends', hot(bone, other) === false,
+      'either-end lighting lit a joint’s own bone AND every bone below it');
+    check('...while no segment hovered keeps the either-end rule',
+      hot(null, other) === true, 'the root has no segment of its own to be hovered by');
   }
 }
 
@@ -572,16 +591,25 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     api(joint(pin), 0, 1.5, 0) === pin && api(joint(pin), 1.5, 1.5, 0) === null);
 }
 
-// The escape hatch. Four rounds went into the interaction between bone segments and pins; if
-// the balance is still wrong in the headset, this puts the pick back to joints-as-points
-// without a rebuild, which is what it was before any of it.
-// THE WHOLE OF BONE SELECTION IS OPT-IN, AND OFF. Five versions of it shipped without ever
-// being run against the real app, each one re-balancing the previous against the pins that sit
-// on the joints at a bone's ends. What runs by default is the rule from v3.20.65, which is
-// known to work because it did.
-check('bone selection is one switch, and it defaults to OFF',
-  /const BONE_SELECT = \(\) => window\._rigBoneSelect === true;/.test(SRC),
-  'a default of true is not an escape hatch, it is the same gamble with a flag on it');
+// BONE SELECTION IS ONE SWITCH, AND IT IS BACK ON (2026-08-28).
+//
+// It shipped off after five versions of re-balancing segments against the pins that sit on
+// their ends, none of which had been run against the real app. What eventually fixed it was
+// `rigWinner` — two distances and one ratio, replacing a margin per case — and that HAS been
+// run: matt used it through the whole rigging session that followed.
+//
+// Turning it back on is what makes Split legible. Splitting a bone you cannot point at acts on
+// something invisible, and matt reached for a bone by instinct: "the intuition is to select a
+// bone which somehow got disabled a few versions ago."
+//
+// The escape hatch survives and still matters — `window._rigBoneSelect = false` puts the pick
+// back to joints-as-points, the v3.20.65 rule, without a rebuild.
+check('bone selection is one switch, and it is now ON by default',
+  /const BONE_SELECT = \(\) => window\._rigBoneSelect !== false;/.test(SRC),
+  'off by default made Split act on a target the user could not see');
+check('...with the escape hatch still one flag away',
+  /window\._rigBoneSelect = false/.test(SRC),
+  'five versions of tuning say this must stay switchable without a rebuild');
 check('...gating the segments on both paths',
   (SRC.match(/BONE_SELECT\(\) \? segmentHead\(mesh\) : null/g) || []).length === 2,
   'desktop and VR, or the switch only half works');
@@ -646,6 +674,100 @@ check('...and the zone widening is the only thing left gated',
   check('no raw origin left in the branch', !/picking, origin, dir/.test(branch)
     && !/targets, origin, dir/.test(branch),
     'one of the two using the pivot is the same bug half the time');
+}
+
+
+// ── BONE SELECTION IS BACK ON, AND A BONE IS A DIFFERENT ANSWER FROM A JOINT ─
+//
+// It was switched off after four rounds of margin-tuning. What actually fixed that was
+// rigWinner — two distances and one ratio — so with that in place the segments are a preference
+// the pin can beat rather than a competitor. Turning it back on is also what makes Split
+// legible: matt, "the intuition is to select a bone which somehow got disabled a few versions
+// ago", and splitting a thing you cannot point at acts on something invisible.
+{
+  // This harness uses absolute paths and has no `path` import — reuse the sources it already
+  // read rather than adding one.
+  const PK = SRC, SK = SKEL;
+  const SC = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+
+  check('bone selection is on unless switched off',
+    /const BONE_SELECT = \(\) => window\._rigBoneSelect !== false;/.test(PK),
+    'off by default made Split act on something the user could not see');
+  check('...and can still be switched off without a rebuild',
+    /window\._rigBoneSelect = false/.test(PK));
+
+  // THE BONE AND THE NEARER END ARE TWO ANSWERS, and both are wanted. Selection wants the end;
+  // an operation on the bone wants the bone. Conflating them meant aiming at the top of a bone
+  // selected the parent, and splitting the parent split the bone ABOVE the cursor.
+  check('a segment pick records the bone as well as the end',
+    (PK.match(/segIsBone = mesh;/g) || []).length === 2,
+    'both the desktop and the VR path, or one of them silently keeps the old behaviour');
+  // COMMITTED WHERE THE WINNER IS DECIDED, not where the candidate is found. Written straight
+  // to `this` inside the per-mesh loop, it was overwritten by every bone whose segment beat its
+  // own joint — so the LAST bone in iteration order named itself, not the nearest. That is why
+  // enabling bone selection still did not let you aim at a bone and split it.
+  check('...and commits it only when that bone actually wins',
+    (PK.match(/this\._rigHitSegment = segIsBone;/g) || []).length === 2,
+    'a per-mesh write makes iteration order pick the bone');
+  check('...clearing it when the winner was a point rather than a segment',
+    (PK.match(/var segIsBone = null;/g) || []).length === 2,
+    'a stale candidate names a bone the cursor is nowhere near');
+  check('...as the CHILD joint, which is what identifies a bone',
+    /A segment is drawn from a joint to\n\s*\/\/ its parent, so the segment IS `mesh`/.test(PK),
+    'a bone is the segment from a joint to its parent, so the child names it');
+  check('...cleared per pick, so it cannot name a bone from last frame',
+    (PK.match(/this\._rigHitSegment = null;/g) || []).length === 2);
+  check('...and published on every hover route',
+    (SK.match(/_rigHoverBone = /g) || []).length === 3,
+    'mouse, one ray and two rays — a route that does not publish leaves Split guessing');
+
+  // THE BONE TOOL PICKS FOR ITSELF, so nothing else publishes the hovered bone there. Bones lit
+  // in Grab and stayed dark in Draw — which is the mode you are in when you notice a bone wants
+  // splitting. matt: "not in the bone tool when in draw mode, which again is when you'd be most
+  // likely to need it for the bone split."
+  {
+    const BD = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+    check('draw mode publishes the nearest bone',
+      /main\._rigHoverBone = parent \? null : this\._pickBone\(_tip\);/.test(BD));
+    check('...but only BETWEEN chains',
+      /parent \? null : this\._pickBone/.test(BD),
+      'mid-chain the tip is the end of the bone being drawn, so it would light every frame');
+    check('radius mode publishes it too, since it already resolves a bone',
+      /main\._rigHoverBone = this\._hilite;/.test(BD));
+    check('...and it is cleared every frame so it cannot go stale',
+      /main\._rigHoverBone = null;/.test(BD),
+      'this tool picks for itself, so nothing else here would ever clear it');
+  }
+
+  // FROZEN AT OPEN, not re-read on release. Picking a sector moves the hand and the
+  // preselection follows the hand, so a run closure reading the live value acted on whatever
+  // the tip had drifted onto — usually nothing, which fell back to nameRoot and split the same
+  // joint every time. matt: "if i preselect any other bone and split, it keeps trying to split
+  // the first bone."
+  check('Split takes the hovered BONE, captured at menu open',
+    /const splitTarget = this\._rigHoverBone \|\| nameRoot;/.test(SC)
+      && /RigTopology\.split\(this, splitTarget\)/.test(SC));
+  check('...and its run closure never re-reads the live hover',
+    !/RigTopology\.split\(this, this\._rigHoverBone/.test(SC),
+    'a context menu acts on what you opened it on');
+  check('...enabled by the same node it will act on',
+    /canSplit\(this, splitTarget\)/.test(SC),
+    'a menu item enabled for one target and acting on another is worse than a disabled one');
+  check('Dissolve is frozen the same way',
+    /const dissolveTarget = nameRoot;/.test(SC)
+      && /RigTopology\.dissolve\(this, dissolveTarget\)/.test(SC));
+  check('and the lit bone is latched while the menu is up',
+    /this\._rigHoverBoneLatch = this\._rigHoverBone \|\| null;/.test(SC)
+      && /const hoverBone = main\._rigHoverBoneLatch \|\| main\._rigHoverBone;/.test(SK),
+    'otherwise the highlight crawls behind the wheel to something the menu will not touch');
+  check('...and the latch lifts when nothing is open or pending',
+    /this\._rigHoverBoneLatch = null;/.test(SC),
+    'a latch that never lifts freezes the preselection for the rest of the session');
+
+  // WHAT IS LIT IS WHAT GETS SPLIT.
+  check('exactly one bone reads as hovered when a segment is under the cursor',
+    /const boneHot = hoverBone \? \(hoverBone === j\) : \(isHi \|\| hiAll\.has\(pid\)\);/.test(SK),
+    'either-end lighting lit a joint’s own bone AND every bone hanging off it');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

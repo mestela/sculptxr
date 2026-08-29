@@ -85,9 +85,6 @@ RigPending.candidate = function (main) {
   else if (main._skelHighlightId != null && main._skelHighlightId >= 0) ids.push(main._skelHighlightId);
   for (const id of ids) {
     const m = meshes.find((x) => x.getID() === id);
-    // A bone can still be HOVERED by whatever else is driving the highlight; it is not a
-    // candidate here, so the line must not point at one either.
-    if (m && m._isBone && !m._isPinTarget) continue;
     // Never point the line at the child itself: parenting a thing to itself is refused, and a
     // line saying otherwise would be promising something that will not happen.
     if (m && m.getID() !== main._rigPendingSubject) return m;
@@ -106,12 +103,27 @@ RigPending.candidate = function (main) {
 //
 // The pick clobbers the shared picking state. Safe for the same reason SecondaryAction's is:
 // this runs ONCE on a click that is then consumed, so nothing downstream reads the stale pick.
-// PINS ONLY. A bone is never a candidate here, and not as a preference — it is not offered to
-// the pick at all. Parenting is a control-rig operation: the answer is a pin, or an ordinary
-// object, and a rig full of bones between you and the handle you are pointing at is exactly
-// what made this feel like a fight. Excluding them is one filter and cannot be out-scored.
+// JOINTS ARE TARGETS AGAIN, and this reverses an earlier call of mine that was wrong.
+//
+// It used to be pins-and-objects only, on the reasoning that parenting is a control-rig
+// operation and a rig full of bones between you and the handle you are pointing at made the
+// pick a fight. That is true of pin-to-pin parenting and false of the case people actually hit
+// first: matt, "a likely scenario if someone draws a skeleton then realises they want the arms
+// parented somewhere else."
+//
+// With bones excluded, arming Set Parent and clicking a joint hit NOTHING — and a click that
+// hits nothing cancels, so the gesture disarmed itself and the next click went to the tool. The
+// reported symptom was the tool running: "clicking anywhere just starts drawing a new bone
+// chain." The gate was working; there was simply nothing it was allowed to take.
+//
+// The pick already knows how to prefer a pin over the bone it sits on — see `rigWinner` in
+// Picking — so offering both is a preference, not a fight.
 RigPending.targets = function (main) {
-  return (main.getMeshes() || []).filter((m) => !m._isBone || m._isPinTarget);
+  // Everything. A joint carries BOTH `_isBone` and `_isNull` — it is a transform-only locator
+  // that reuses the null evaluation paths — so any filter phrased in those terms excludes the
+  // very thing this needs to offer. The callers already drop what is genuinely unpickable
+  // (invisible meshes, voxel chunks) at the point of the ray.
+  return (main.getMeshes() || []).slice();
 };
 
 RigPending.pickTarget = function (main) {

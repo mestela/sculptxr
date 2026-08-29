@@ -10,7 +10,7 @@
  *   'tp-tool-selected'  — e.detail.id contains the chosen tool index
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, wristPanelY, wristPanelYaw } from './HTMLVRPanel.js';
 import Enums from '../../misc/Enums.js';
 import { SCULPT_TOOLS } from './toolLists.js';
 
@@ -140,8 +140,8 @@ export class ToolPickerPanel extends HTMLVRPanel {
   _onMeshCreated() {
     if (!this.mesh) return;
     // Same wrist position as MiniPanel
-    this.mesh.position.set(0, 0.05, -0.05);
-    this.mesh.rotation.set(-Math.PI / 2, Math.PI / 8, 0);
+    this.mesh.position.set(0, wristPanelY(), -0.05);
+    this.mesh.rotation.set(-Math.PI / 2, wristPanelYaw(), 0);
   }
 
   _wireEvents(main) {

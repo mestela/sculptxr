@@ -285,14 +285,15 @@ function scene(list, picked) {
   RigPending.take(main, child);
   check('a hovered pin is the candidate', RigPending.candidate(main) === pin);
 
-  // A BONE IS NEVER A CANDIDATE. matt: "ignore bones completely, it is only pins." Parenting is
-  // a control-rig operation, and a rig full of bones between the pointer and the handle it is
-  // on is exactly what made this a fight. Excluded rather than out-ranked: a filter cannot be
-  // beaten by a distance.
+  // A HOVERED JOINT IS A CANDIDATE. This asserted the opposite until 2026-08-28, on the
+  // reasoning that parenting is a control-rig operation and only pins should answer. That is
+  // true of pin-to-pin parenting and false of the first thing anyone actually does: reparent an
+  // arm after drawing a skeleton. With joints excluded the click hit nothing, and a click that
+  // hits nothing CANCELS — so the gesture disarmed itself and the next one reached the tool.
   main._pinHighlightId = -1;
   main._skelHighlightId = bone.getID();
-  check('a hovered BONE is not a candidate', RigPending.candidate(main) === null,
-    'the line must not offer something the pick refuses');
+  check('a hovered joint IS a candidate', RigPending.candidate(main) === bone,
+    'excluding it made Set Parent unusable for the case people hit first');
 
   main._skelHighlightId = -1;
   check('nothing hovered, no line', RigPending.candidate(main) === null,
@@ -411,15 +412,25 @@ function scene(list, picked) {
 }
 
 
-// PINS ONLY, and by EXCLUSION rather than by preference.
+// EVERYTHING IS A TARGET. Pins are PREFERRED by the pick (rigWinner), not by a filter here.
+//
+// The old rule excluded joints outright, and the note said a filter cannot be out-scored while
+// a preference can — which was the right lesson from the picking war and the wrong place to
+// apply it. It made the feature unusable for reparenting a limb.
+//
+// A JOINT CARRIES BOTH `_isBone` AND `_isNull`: it is a transform-only locator reusing the null
+// evaluation paths. The first attempt at this fix filtered on `_isNull` and still excluded every
+// joint — which is why the rule is now "everything", stated plainly.
 {
-  const joint = mesh({ _isBone: true });
-  const pin = mesh({ _isPinTarget: true, _isBone: false });
+  const joint = mesh({ _isBone: true, _isNull: true });
+  const pin = mesh({ _isPinTarget: true, _isBone: false, _isNull: true });
   const obj = mesh({});
   const main = scene([joint, pin, obj]);
   const t = RigPending.targets(main);
-  check('a joint is not offered to the pick at all', !t.includes(joint),
-    'a filter cannot be out-scored; a preference can, and was, four times');
+  check('a joint IS offered to the pick', t.includes(joint),
+    'reparenting a limb is the case people hit first, and it needs joints');
+  check('...even though it is flagged as a null', joint._isNull === true && t.includes(joint),
+    'a filter phrased in terms of _isNull excludes every joint — this caught exactly that');
   check('a pin is', t.includes(pin));
   check('and an ordinary object still is', t.includes(obj),
     'parenting to a mesh is a real thing to want and was never the problem');

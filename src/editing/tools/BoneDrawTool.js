@@ -883,7 +883,15 @@ class BoneDrawTool extends SculptBase {
 
   // ---- tweak --------------------------------------------------------------------
 
-  _beginGrab(joint) {
+  // `quat` is the controller orientation at the grab, when there is one. Tweak is a 6DOF grab
+  // in the headset: you take hold of a joint and your hand both moves AND turns, and until now
+  // only the movement was read. matt: "tweak fk should support rotation, so if i twist my
+  // controller around, the entire child hierarchy should rotate."
+  //
+  // The hierarchy following is free — children are parented, so in FK they ride the rotation
+  // through the scene graph. In Tweak FREE they do not, because that mode explicitly restores
+  // each child's model-space transform afterwards, which is exactly what "free" means.
+  _beginGrab(joint, quat) {
     const main = this._main;
     // Resolve the symmetry plane ONCE per grab, not per frame: it walks every mesh, and a
     // plane that shifted mid-drag would make the mirrored joint wander independently.
@@ -894,10 +902,15 @@ class BoneDrawTool extends SculptBase {
     // both lanes, so one undo restores the whole edit including the compensation.
     const snapshot = Skeleton.captureLocal(main, joint)
       .concat(twin ? Skeleton.captureLocal(main, twin) : []);
-    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot };
+    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot,
+      // Inverted at the grab so every frame is measured against that ONE pose. A frame-to-frame
+      // delta composes into a ratchet that never returns to zero.
+      qStart: quat ? new THREE.Quaternion(quat[0], quat[1], quat[2], quat[3]).invert() : null,
+      localAtGrab: mat4.clone(joint.getMatrix()),
+      twinLocalAtGrab: twin ? mat4.clone(twin.getMatrix()) : null };
   }
 
-  _dragTo(pos) {
+  _dragTo(pos, quat) {
     const g = this._grab;
     if (!g) return;
     // A joint WITH a twin is by definition a side joint, so snapping it to the centreline
@@ -909,12 +922,41 @@ class BoneDrawTool extends SculptBase {
     const at = g.twin
       ? (this._axisEnabled() && gp ? Skeleton.snapAxis(Skeleton.jointPos(gp, _from), pos, _eff, null) : pos)
       : this._resolve(pos, g.plane, _eff, gp);
+    // ROTATION FIRST, then position. moveJoint writes the model-space TRANSLATION and, in
+    // compensate mode, restores each child's model-space transform afterwards — so it has to be
+    // the last thing that touches the chain, or the compensation is computed against a parent
+    // frame that is about to turn.
+    if (quat && g.qStart) this._twistTo(g.joint, g.localAtGrab, quat);
     Skeleton.moveJoint(this._main, g.joint, at, this._compensate);
     if (g.twin && g.plane) {
+      // The twin is deliberately NOT twisted: a mirrored rotation is not the same rotation, and
+      // guessing which reflection was meant is how a symmetric rig comes back asymmetric. The
+      // mirror follows position only, which is what it has always done.
       Skeleton.mirrorPoint(at, g.plane, _mirror);
       Skeleton.moveJoint(this._main, g.twin, _mirror, this._compensate);
     }
     this._refresh();
+  }
+
+  // The controller's rotation since the grab, applied about the joint's own origin. Same maths
+  // as _poseTo — carried into the parent's frame first, or a rotation applied to a joint deep in
+  // a posed chain is measured against the wrong frame and skews as the chain moves.
+  _twistTo(joint, localAtGrab, quat) {
+    const g = this._grab;
+    _qNow.set(quat[0], quat[1], quat[2], quat[3]);
+    _qDelta.copy(_qNow).multiply(g.qStart);
+    const parent = joint._parentMesh;
+    if (parent && parent.getModelSpaceMatrix) {
+      _mParent.fromArray(parent.getModelSpaceMatrix());
+      _mParent.decompose(_vTmp, _qParent, _sTmp);
+      _qDelta.premultiply(_qParent.clone().invert()).multiply(_qParent);
+    }
+    _mLocal.fromArray(localAtGrab);
+    _mLocal.decompose(_vTmp, _qJoint, _sTmp);
+    _qJoint.premultiply(_qDelta);
+    _mLocal.compose(_vTmp, _qJoint, _sTmp);
+    mat4.copy(joint.getMatrix(), _mLocal.elements);
+    Skeleton.syncThree(joint);
   }
 
   _releaseGrab() {
@@ -1222,6 +1264,11 @@ class BoneDrawTool extends SculptBase {
     Skeleton.updatePlane(main, plane, !!plane && this._snapEnabled()
       && Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap());
 
+    // CLEARED EACH FRAME, then set by the modes that actually resolve a bone. This tool does
+    // its own picking, so nothing else here would ever clear it — and a stale value names a
+    // bone the tip is nowhere near, which is worse than naming none.
+    main._rigHoverBone = null;
+
     if (this._mode === 'pose') {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
@@ -1271,17 +1318,21 @@ class BoneDrawTool extends SculptBase {
       }
       this._hilite = this._radius ? this._radius.joint : this._pickBone(_tip);
       Skeleton.setHighlight(main, this._hilite);
+      // Radius mode already resolves a BONE rather than a joint, so say so — then the lit bone
+      // is the split target here too, the same as everywhere else.
+      main._rigHoverBone = this._hilite;
       return;
     }
 
     if (this._mode === 'tweak') {
       Skeleton.hidePreview(main);
+      const qTweak = (options && options.quat) || main._vrControllerQuat;
       if (down) {
         const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
-        if (hit) this._beginGrab(hit);
+        if (hit) this._beginGrab(hit, qTweak);
       }
       if (this._grab) {
-        if (isPressed) this._dragTo(_tip);
+        if (isPressed) this._dragTo(_tip, qTweak);
         else this._releaseGrab();
       }
       // Preselect whatever the tip is nearest to, unless a drag already owns a joint.
@@ -1296,6 +1347,17 @@ class BoneDrawTool extends SculptBase {
     const parent = this._validParent();
     this._hilite = parent ? null : Skeleton.pickJoint(main, _tip, this._snapDist());
     Skeleton.setHighlight(main, this._hilite);
+
+    // AND THE NEAREST BONE, because Draw is exactly where you reach for Split.
+    //
+    // Draw does its own POINT pick against joints rather than going through Picking, so the
+    // segment-aware path that publishes `_rigHoverBone` never runs here — bones lit in Grab and
+    // stayed dark in Draw. matt: "not in the bone tool when in draw mode, which again is when
+    // you'd be most likely to need it for the bone split."
+    //
+    // Only BETWEEN chains. Mid-chain the tip is the end of the bone you are drawing, so every
+    // frame would light the segment you are in the middle of placing.
+    main._rigHoverBone = parent ? null : this._pickBone(_tip);
 
     if (down) {
       this._place(_tip);
