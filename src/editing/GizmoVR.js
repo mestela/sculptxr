@@ -348,8 +348,11 @@ class GizmoVR {
     const baseMat = mat4.create();
     mat4.translate(baseMat, baseMat, center);
 
-    // Sync Rotation with Mesh
-    if (meshes.length > 0) {
+    // A single object's gizmo follows its local axes. A multi-selection has no meaningful
+    // shared local frame, so its centroid gizmo is world-aligned. TransformVR uses the same
+    // rule when interpreting rotation and scale gestures; keeping the display/picker local to
+    // meshes[0] here made the visible X ring disagree with the world-X rotation it produced.
+    if (meshes.length === 1) {
       const m = meshes[0].getMatrix();
       const sx = Math.hypot(m[0], m[1], m[2]);
       const sy = Math.hypot(m[4], m[5], m[6]);

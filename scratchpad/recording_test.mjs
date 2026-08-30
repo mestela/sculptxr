@@ -110,8 +110,10 @@ check('selected objects delete whole animation tracks',
 // list: `setMesh(mesh, true)` (keepTool, so clicking a curve cannot switch your active tool) is
 // the same claim, and the exact-spelling version of this check called that a regression.
 // What keepTool itself guarantees is asserted in graph_target_test, against Scene.js.
+// setMesh -> setOrUnsetMesh at v3.20.160, so a dopesheet name can ADD to the selection with the
+// modifier held rather than always replacing it. keepTool stays true either way.
 check('timeline row and key focus update real scene selection',
-  /this\._main\.setMesh\?\.\(mesh\b/.test(tl)
+  /this\._main\.setOrUnsetMesh\?\.\(mesh, _multi, true\)/.test(tl)
     && /Last-click wins/.test(tl));
 // PICKING RULES LIVE IN rigpick_test.mjs, and only there. This file used to carry its own copy
 // of the VR proximity assertions, which is the same-rule-in-N-places bug in the tests

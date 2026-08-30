@@ -498,6 +498,19 @@ export default class GuiTimeline {
   }
 
   selectedAnimationIds() {
+    // A DELIBERATE MULTI-SELECTION IS THE STATEMENT, and it outranks everything below.
+    //
+    // This used to answer with the PRIMARY mesh only, so with three objects selected the
+    // dopesheet still highlighted one row and Delete still acted on one track — the selection
+    // was multi and nothing here could see it. matt: "holding shift and selecting channel names
+    // does not multiselect."
+    //
+    // Only when there is genuinely more than one: a single selection keeps the last-click rule
+    // below, which exists so a stale key selection from another row cannot make Delete affect
+    // two things at once.
+    const _sel = this._main.getSelectedMeshes?.() || [];
+    if (_sel.length > 1) return _sel.map((m) => m.getID());
+
     const active = this._main.getMesh?.();
     const activeId = active?.getID?.();
     const keyIds = new Set();
@@ -2881,7 +2894,14 @@ export default class GuiTimeline {
     const mesh = this._main._meshes?.find((m) => m.getID() === meshId);
     // Unify timeline focus with the scene selection, but pass keepTool: setOrUnsetMesh runs
     // tool-context switching, and looking at a curve must not change your active tool.
-    if (mesh && this._main.getMesh?.() !== mesh) this._main.setMesh?.(mesh, true);
+    // MULTI-SELECT on a dopesheet name, same modifier as everywhere else: the secondary
+    // trigger in VR, Ctrl/Shift with a mouse. `keepTool` stays true for the reason above —
+    // looking at a curve must not change your active tool, and that is just as true when you
+    // are adding a second object to the selection.
+    const _multi = !!this._main.multiSelectHeld?.() || !!this._lastModifierDown;
+    if (mesh && (_multi || this._main.getMesh?.() !== mesh)) {
+      this._main.setOrUnsetMesh?.(mesh, _multi, true);
+    }
     // This IS the selection changing — the row, the scene object and Delete's target are all
     // one thing (see the note above), so the button has to be re-read here.
     this._notifySelectionChanged();
@@ -3355,6 +3375,10 @@ export default class GuiTimeline {
   // vals / labels: parallel arrays for v1/v2/v3 inputs
 
   onMouseDown(e) {
+    // The desktop half of the multi-select modifier, captured here because the row handlers
+    // downstream are reached through several paths and none of them carry the event. The VR
+    // half is read live from Scene.multiSelectHeld and needs no capture.
+    this._lastModifierDown = !!(e && (e.ctrlKey || e.metaKey || e.shiftKey));
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;

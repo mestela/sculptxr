@@ -253,7 +253,9 @@ class Grab extends SculptBase {
           //
           // keepTool, like the timeline's row click: taking hold of a pin must not switch the
           // active tool out from under the hand that is holding it.
-          if (!this._main._lockSelection) this._main.setMesh?.(pin, true);
+          if (!this._main._lockSelection) {
+            this._main.setOrUnsetMesh?.(pin, false, true);   // see the note above: not in Grab
+          }
         }
       }
       this._vrPinTriggerWas[hand] = pressed;
@@ -346,6 +348,8 @@ class Grab extends SculptBase {
     }
     var mesh = picking.getMesh();
     if (!mesh || mesh._isVoxel) return false;
+    // Desktop Ctrl-click still multi-selects here — that is a keyboard modifier and does not
+    // collide with the second hand. Only the VR trigger is excluded.
     if (!main.setOrUnsetMesh(mesh, ctrl)) return false;
 
     this._grabbedMesh = mesh;
@@ -929,8 +933,13 @@ class Grab extends SculptBase {
           mat4.invert(invCtl, active.matrix);
           mat4.multiply(this._grabOffsetMatrix, invCtl, mesh.getMatrix());
 
-          if (this._main.setMesh && (!this._main._lockSelection)) {
-            this._main.setMesh(mesh);
+          if (!this._main._lockSelection) {
+            // NO MULTI-SELECT MODIFIER IN GRAB. Grab is a TWO-HANDED tool: the secondary
+            // trigger already means "the other hand takes a pin", which is the whole of
+            // two-handed posing. Wiring Ctrl onto it made holding the left trigger start an IK
+            // solve that dragged the skeleton off its pins — matt: "the skeleton started doing
+            // an ik solve and drifting away from the pins."
+            this._main.setOrUnsetMesh(mesh, false, true);
           }
 
           window._animationRegistry?.beginInteraction?.(mesh);

@@ -1094,6 +1094,23 @@ class Scene {
     grid.setFlatColor([0.3, 0.3, 0.3]);
   }
 
+  // THE MULTI-SELECT MODIFIER — the secondary trigger, held, as Ctrl.
+  //
+  // matt: "holding down the secondary controller trigger, click select then supports multi
+  // select, like holding control and selecting files on windows." The gesture already existed
+  // and was already read every frame for other purposes; it just never reached the selection.
+  //
+  // SCOPE IS DELIBERATE AND MUST STAY NARROW. The same trigger is the SMOOTH/NEGATIVE override
+  // during a sculpt stroke, so this is consulted only where selecting is the point — Transform,
+  // Grab, the outliner and the dopesheet. Do not "unify" it into the brushes later; the two
+  // meanings are not reconcilable on one button.
+  //
+  // Desktop passes the real Ctrl key down through `start(ctrl)` already, so this only has to
+  // answer for VR.
+  multiSelectHeld() {
+    return !!this._vrSecondaryTriggerPressed;
+  }
+
   setOrUnsetMesh(mesh, multiSelect, keepTool) {
     if (!mesh) {
       this._selectMeshes.length = 0;
@@ -9578,7 +9595,9 @@ class Scene {
 
 
         this._vrSculptMesh = this._picking.getMesh() || this.getMesh(); // capture at stroke start
-        this._sculptManager.start(this._vrMultiSelect);
+        // A VR stroke never multi-selects: the secondary trigger means smooth/negative here,
+        // not Ctrl. See Scene.multiSelectHeld for where it DOES mean Ctrl.
+        this._sculptManager.start(false);
         this._action = Enums.Action.SCULPT_EDIT;
       }
       this._sculptManager.preUpdate(); // Sync position

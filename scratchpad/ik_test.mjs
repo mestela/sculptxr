@@ -1383,8 +1383,12 @@ function lengthsPreserved(name, joints, before) {
 {
   const VR = fs.readFileSync(path.join(REPO, 'src/editing/tools/TransformVR.js'), 'utf8');
 
+  // The test moved from the gesture-wide `_dragIsJoint` to the MESH's own kind at v3.20.165,
+  // when the VR gizmo learned to move a whole selection: a mixed set (a joint and a pin) must
+  // not have the dragged mesh's rule applied to the other. The guarantee is unchanged — a joint
+  // is solved, never written — it is just asked per mesh.
   check('VR gizmo: a dragged bone is solved, not written',
-    /if \(this\._dragIsJoint\) \{[\s\S]{0,700}?IKSolver\.solve\(/.test(VR),
+    /if \(Skeleton\.isJoint\(mesh\) && window\._vrGizmoPose !== false\) \{[\s\S]{0,700}?IKSolver\.solve\(/.test(VR),
     'the joint branch in _applyMatrix is gone; a drag would edit bone LENGTH');
   check('VR gizmo: the joint branch returns before the matrix write',
     /IKSolver\.solve\([\s\S]{0,300}?return;[\s\S]{0,200}?setModelSpaceMatrix/.test(VR),

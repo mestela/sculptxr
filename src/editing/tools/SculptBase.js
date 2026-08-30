@@ -80,8 +80,12 @@ class SculptBase {
       }
     }
 
-    // [VR] Multi-select Check
-    if (main._vrMultiSelect) ctrl = true;
+    // NO MULTI-SELECT HOOK HERE, deliberately. `_vrMultiSelect` was a sticky MODE flag that
+    // only the legacy canvas UI ever set, and that UI is gone — so it was permanently false.
+    // Multi-select is now the secondary trigger held (Scene.multiSelectHeld), and it is
+    // consulted only by the tools where SELECTING is the point. This is the brush base class:
+    // the same trigger is the smooth/negative override mid-stroke, and the two meanings cannot
+    // share one button.
 
     var mesh = null;
     if (main._lockSelection) {
@@ -90,9 +94,6 @@ class SculptBase {
       mesh = main.setOrUnsetMesh(picking.getMesh(), ctrl);
     }
     // console.log("[SculptBase] start called, picking mesh:", picking.getMesh(), "active mesh:", mesh);
-
-    // [VR] Return early if Multi-select is active to prevent sculpting
-    if (main._vrMultiSelect) return false;
 
     // If allowAir, we might proceed without a mesh selection
     if (!mesh && !this._allowAir) {
@@ -533,9 +534,6 @@ class SculptBase {
   sculptStrokeXR(picking, isPressed, origin, dir, options) {
     var main = this._main;
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
-
-    // Safety: Prevent sculpting if Multi-select is active
-    if (main._vrMultiSelect) return;
 
     // Use Controller Distance (Robust like Move.js) instead of Surface Distance (Fragile)
     var worldPos = main._vrControllerPos;

@@ -78,7 +78,22 @@ class Transform extends SculptBase {
     if (!picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY, false, true))
       return false;
 
-    if (!main.setOrUnsetMesh(picking.getMesh(), ctrl))
+    // A PRESS ON SOMETHING ALREADY SELECTED DOES NOT COLLAPSE THE SELECTION.
+    //
+    // The gizmo transforms getSelectedMeshes() throughout — centre, snapshot and live write all
+    // iterate it — so multi-object transform already worked. What broke it was this line: a
+    // press that the gizmo did not claim fell through and re-selected, reducing the set to the
+    // one mesh under the cursor. matt: "the gizmo jumps to the centroid of the selection, but as
+    // soon as i try to move it, it snaps to one of the selections, and moves only that one."
+    //
+    // Every DCC behaves this way: clicking a member of a multi-selection keeps the selection so
+    // you can drag it. Reducing to one happens on a click that was NOT a drag, which is a
+    // separate gesture this tool does not implement.
+    const _picked = picking.getMesh();
+    const _already = _picked && main.getSelectedMeshes().length > 1
+      && main.getIndexSelectMesh(_picked) >= 0;
+    if (_already) return false;   // keep the set; the gizmo drag below owns the press
+    if (!main.setOrUnsetMesh(_picked, ctrl || main.multiSelectHeld?.()))
       return false;
 
     this._lastMouseX = main._mouseX;

@@ -62,7 +62,12 @@ class TransformVR extends SculptBase {
     if (!mesh && !this._allowAir) return false;
 
     // Set Selection (This updates main.setMesh)
-    if (!main.setOrUnsetMesh(mesh, ctrl))
+    // Secondary trigger held = add to the selection rather than replace it. See
+    // Scene.multiSelectHeld — the gizmo already transforms the whole set.
+    // Same rule as the desktop tool: a press on something already in a multi-selection keeps
+    // the set, or the drag reduces it to one and only that one moves.
+    if (main.getSelectedMeshes().length > 1 && main.getIndexSelectMesh(mesh) >= 0) return true;
+    if (!main.setOrUnsetMesh(mesh, ctrl || main.multiSelectHeld?.()))
       return false;
 
     return true; // Occupy the tool
@@ -93,6 +98,8 @@ class TransformVR extends SculptBase {
       this._undoMatrix = null;
       this._undoCenter = null;
       this._dragMesh = null;
+      this._dragStart = null;
+      this._dragPivot = null;
       super.end();
       return;
     }
@@ -122,6 +129,8 @@ class TransformVR extends SculptBase {
     this._undoMatrix = null;
     this._undoCenter = null;
     this._dragMesh = null;
+    this._dragStart = null;   // the per-mesh start poses for a multi-object drag
+    this._dragPivot = null;
     this._dragIsJoint = false;
     super.end();
   }
@@ -248,9 +257,26 @@ class TransformVR extends SculptBase {
         this._pickConsumed = true;
         const picked = this._pickRigOrMesh(picking, origin, dir);
         if (picked) {
-          main.setOrUnsetMesh(picked, false);
-          main.render();
-          return; // a selection press, not a drag
+          // A PRESS ON A MEMBER OF A MULTI-SELECTION IS A DRAG, NOT A RESELECT.
+          //
+          // This is the path that actually runs in the headset — the guard in start() is on a
+          // different one. Without it, the press that begins the drag re-selected whatever the
+          // ray was on and reduced the set to that one object, so the gizmo snapped from the
+          // centroid to a single mesh and only that mesh moved. matt: "as soon as i try to move
+          // it, it snaps to one of the selections, and moves only that one."
+          //
+          // You built the selection with the modifier HELD, then released it to drag — so
+          // consulting the modifier here cannot preserve the set either. Membership is the
+          // honest test: if the thing under the ray is already selected alongside others, the
+          // press means "move all of this".
+          const inSet = main.getSelectedMeshes().length > 1
+            && main.getIndexSelectMesh(picked) >= 0;
+          if (!inSet) {
+            main.setOrUnsetMesh(picked, main.multiSelectHeld?.());
+            main.render();
+            return; // a selection press, not a drag
+          }
+          // fall through: the set stands and the drag below moves all of it
         }
       }
 
@@ -287,6 +313,36 @@ class TransformVR extends SculptBase {
       // For a top-level mesh this is exactly getMatrix() (no change).
       if (mesh.getModelSpaceMatrix) mesh.getModelSpaceMatrix(this._startMeshMatrix);
       else mat4.copy(this._startMeshMatrix, mesh.getMatrix());
+
+      // EVERY SELECTED OBJECT'S START POSE, not just the locked one.
+      //
+      // This tool drags ONE mesh by design — `_dragMesh`, "MESH LOCKING" — and every mode
+      // computes its result against that one start matrix. With three pins selected the gizmo
+      // sat on the centroid and exactly one of them moved. matt: "go to manipulate, only one pin
+      // moves." The desktop gizmo iterates the selection; this is a different class and never
+      // did.
+      //
+      // Captured here so the propagation in _applyMatrix has something to apply the delta to.
+      // Each is MODEL space, matching `_startMeshMatrix`, because that is the space the delta
+      // is computed in.
+      this._dragStart = new Map();
+      for (const m of (main.getSelectedMeshes() || [])) {
+        const sm = mat4.create();
+        if (m.getModelSpaceMatrix) m.getModelSpaceMatrix(sm);
+        else mat4.copy(sm, m.getMatrix());
+        this._dragStart.set(m, sm);
+      }
+      // THE PIVOT, captured once. A rotation or scale on a multi-selection happens about the
+      // MEDIAN of the set — that is what the gizmo is drawn on, and what "rotate these three
+      // things together" means. Taken at gesture start rather than read live, so it cannot
+      // drift as the objects move under it.
+      this._dragPivot = [0, 0, 0];
+      if (this._dragStart.size) {
+        for (const sm of this._dragStart.values()) {
+          this._dragPivot[0] += sm[12]; this._dragPivot[1] += sm[13]; this._dragPivot[2] += sm[14];
+        }
+        vec3.scale(this._dragPivot, this._dragPivot, 1 / this._dragStart.size);
+      }
 
       // Robust TRS extraction for non-uniform scale (Cached for all modes)
       this._startMeshPos = vec3.create();
@@ -331,6 +387,13 @@ class TransformVR extends SculptBase {
     mat4.getScaling(meshScale, this._startMeshMatrix);
 
     const translationMatrix = mat4.create();
+
+    // A multi-selection's gizmo is a WORLD-ALIGNED frame at the selection pivot. The mesh
+    // under the ray is only the drag target; its position and rotation must not define the
+    // gesture. Keep the old local frame for a single selection.
+    const multiGesture = !!(this._dragStart && this._dragStart.size > 1);
+    const gesturePos = multiGesture ? this._dragPivot : this._startMeshPos;
+    const gestureRot = multiGesture ? quat.create() : this._startMeshRot;
 
     // MODE: TRANSLATE
     if (this._mode === 0) {
@@ -382,7 +445,7 @@ class TransformVR extends SculptBase {
       } else {
         // CONSTRAINED AXIS MOVEMENT (Mesh Local Axes)
 
-        const qRot = this._startMeshRot;
+        const qRot = gestureRot;
 
         const vX = vec3.fromValues(1, 0, 0);
         const vY = vec3.fromValues(0, 1, 0);
@@ -410,8 +473,22 @@ class TransformVR extends SculptBase {
           localMove[2] = dist / s;
         }
 
-        mat4.fromTranslation(translationMatrix, localMove);
         const newMat = mat4.create();
+        // A multi-selection's handles are WORLD axes, so the move they produce is already a
+        // world vector: compose it on the LEFT, undivided by the dragged mesh's scale. Taking
+        // the local path would re-read that vector in the dragged object's own frame and send
+        // the whole set off along ITS axes, scaled by ITS size.
+        if (multiGesture) {
+          const worldMove = vec3.create();
+          if (mask[0]) vec3.scaleAndAdd(worldMove, worldMove, vX, vec3.dot(delta, vX));
+          if (mask[1]) vec3.scaleAndAdd(worldMove, worldMove, vY, vec3.dot(delta, vY));
+          if (mask[2]) vec3.scaleAndAdd(worldMove, worldMove, vZ, vec3.dot(delta, vZ));
+          mat4.fromTranslation(translationMatrix, worldMove);
+          mat4.multiply(newMat, translationMatrix, this._startMeshMatrix);
+          this._applyMatrix(mesh, newMat);
+          return;
+        }
+        mat4.fromTranslation(translationMatrix, localMove);
         // Post-multiply for Local Translation
         mat4.multiply(newMat, this._startMeshMatrix, translationMatrix);
 
@@ -430,11 +507,11 @@ class TransformVR extends SculptBase {
 
       const vStart = vec3.create();
       const vCurr = vec3.create();
-      vec3.sub(vStart, this._startControllerPos, pos);
-      vec3.sub(vCurr, controllerPos, pos);
+      vec3.sub(vStart, this._startControllerPos, gesturePos);
+      vec3.sub(vCurr, controllerPos, gesturePos);
 
       const qInv = quat.create();
-      quat.conjugate(qInv, rot);
+      quat.conjugate(qInv, gestureRot);
 
       const vStartLocal = vec3.create();
       const vCurrLocal = vec3.create();
@@ -450,19 +527,19 @@ class TransformVR extends SculptBase {
         const angleCurr = Math.atan2(vCurrLocal[2], vCurrLocal[1]);
         deltaAngle = angleCurr - angleStart; // Restored to standard subtraction
         vec3.set(axis, 1.0, 0.0, 0.0);
-        vec3.transformQuat(axis, axis, rot); // To World!
+        vec3.transformQuat(axis, axis, gestureRot); // To World!
       } else if (!mask[0] && mask[1] && !mask[2]) { // Local Y Only (XZ Plane)
         const angleStart = Math.atan2(vStartLocal[2], vStartLocal[0]); // Z, X
         const angleCurr = Math.atan2(vCurrLocal[2], vCurrLocal[0]);
         deltaAngle = angleStart - angleCurr; // Flipped to match gesture intuition
         vec3.set(axis, 0.0, 1.0, 0.0);
-        vec3.transformQuat(axis, axis, rot); // To World!
+        vec3.transformQuat(axis, axis, gestureRot); // To World!
       } else if (!mask[0] && !mask[1] && mask[2]) { // Local Z Only (XY Plane)
         const angleStart = Math.atan2(vStartLocal[1], vStartLocal[0]);
         const angleCurr = Math.atan2(vCurrLocal[1], vCurrLocal[0]);
         deltaAngle = angleCurr - angleStart; // Restored to standard subtraction
         vec3.set(axis, 0.0, 0.0, 1.0);
-        vec3.transformQuat(axis, axis, rot); // To World!
+        vec3.transformQuat(axis, axis, gestureRot); // To World!
       } else {
         // Free Rotation (Arcball)
         vec3.normalize(vStart, vStart);
@@ -485,7 +562,7 @@ class TransformVR extends SculptBase {
           if (!mask[2]) axisLocal[2] = 0.0;
           if (vec3.length(axisLocal) > 0.0001) {
             vec3.normalize(axisLocal, axisLocal);
-            vec3.transformQuat(axis, axisLocal, rot);
+            vec3.transformQuat(axis, axisLocal, gestureRot);
           } else {
             return; // No allowed axis
           }
@@ -520,8 +597,8 @@ class TransformVR extends SculptBase {
 
       const vStart = vec3.create();
       const vCurr = vec3.create();
-      vec3.sub(vStart, this._startControllerPos, pos);
-      vec3.sub(vCurr, controllerPos, pos);
+      vec3.sub(vStart, this._startControllerPos, gesturePos);
+      vec3.sub(vCurr, controllerPos, gesturePos);
 
       // UNIFORM SCALE (All 3 axes)
       if (mask[0] && mask[1] && mask[2]) {
@@ -533,6 +610,13 @@ class TransformVR extends SculptBase {
         const factor = dCurr / dStart;
 
         // Apply Uniform Scale
+        if (multiGesture) {
+          const scaleDelta = mat4.fromScaling(mat4.create(), [factor, factor, factor]);
+          const newMat = mat4.create();
+          mat4.multiply(newMat, scaleDelta, this._startMeshMatrix);
+          this._applyMatrix(mesh, newMat);
+          return;
+        }
         vec3.scale(scale, scale, factor);
 
         const newMat = mat4.create();
@@ -549,9 +633,9 @@ class TransformVR extends SculptBase {
         const vX = vec3.fromValues(1, 0, 0);
         const vY = vec3.fromValues(0, 1, 0);
         const vZ = vec3.fromValues(0, 0, 1);
-        vec3.transformQuat(vX, vX, rot);
-        vec3.transformQuat(vY, vY, rot);
-        vec3.transformQuat(vZ, vZ, rot);
+        vec3.transformQuat(vX, vX, gestureRot);
+        vec3.transformQuat(vY, vY, gestureRot);
+        vec3.transformQuat(vZ, vZ, gestureRot);
 
         const factors = vec3.fromValues(1, 1, 1);
 
@@ -573,7 +657,16 @@ class TransformVR extends SculptBase {
           if (Math.abs(s) > 0.0001) factors[2] = c / s;
         }
 
-        // Apply Factors
+        // Apply Factors. For a multi-selection these are WORLD-axis factors, so compose the
+        // scale on the left. Rebuilding the dragged mesh's local TRS would rotate this scale
+        // back into that object's frame before the delta is propagated.
+        if (multiGesture) {
+          const scaleDelta = mat4.fromScaling(mat4.create(), factors);
+          const newMat = mat4.create();
+          mat4.multiply(newMat, scaleDelta, this._startMeshMatrix);
+          this._applyMatrix(mesh, newMat);
+          return;
+        }
         vec3.multiply(scale, scale, factors);
 
         const newMat = mat4.create();
@@ -632,7 +725,56 @@ class TransformVR extends SculptBase {
     else if (type & GIZMO_TYPE.SCALE_W) { this._mode = 2; this._axisMask = [true, true, true]; } 
   }
 
+  // THE WHOLE SELECTION MOVES, and the delta is what makes that possible without redoing the
+  // per-mode maths. Each mode already computes where the DRAGGED mesh should end up; expressed
+  // as `mat * inv(itsStart)` that is a model-space transform which applies equally to everything
+  // else that was selected. Translation, rotation about the gizmo pivot and scale all carry.
+  //
+  // matt's observation is the reason it has to be a delta rather than a shared pose: the pins
+  // had "very different local transforms in both position and rotation", so there is no common
+  // matrix to write — only a common CHANGE.
   _applyMatrix(mesh, mat) {
+    if (!mesh) return;
+    const start = this._dragStart && this._dragStart.size > 1
+      ? this._dragStart.get(mesh) : null;
+    const inv = start ? mat4.create() : null;
+    if (!start || !mat4.invert(inv, start)) { this._applyMatrixOne(mesh, mat); return; }
+
+    const delta = mat4.create();
+    mat4.multiply(delta, mat, inv);
+
+    // ROTATE AND SCALE HAPPEN ABOUT THE PIVOT, NOT ABOUT THE DRAGGED OBJECT.
+    //
+    // `mat * inv(start)` is position-INDEPENDENT for a translation, which is why translate
+    // worked on the whole set immediately. A rotation composed about the dragged mesh's own
+    // origin comes out as `T(p) * R * T(-p)` — a rotation about THAT mesh — so the others
+    // orbited it instead of the median, in its frame rather than the world's. matt: "rotate and
+    // scale... seem to operate around one of the selections and in its local space, not the
+    // midpoint in worldspace."
+    //
+    // So for those modes the linear part is kept and re-hung on the median: T(C) * L * T(-C).
+    // Mode 0 (translate) keeps the raw delta, which also preserves free-move's optional carried
+    // rotation — holding a thing in your hand should turn about the hand, not the median.
+    if (this._mode !== 0) {
+      const L = mat4.clone(delta);
+      L[12] = 0; L[13] = 0; L[14] = 0;
+      const C = this._dragPivot || [0, 0, 0];
+      const toC = mat4.fromTranslation(mat4.create(), C);
+      const fromC = mat4.fromTranslation(mat4.create(), [-C[0], -C[1], -C[2]]);
+      mat4.multiply(delta, toC, L);
+      mat4.multiply(delta, delta, fromC);
+    }
+
+    // The dragged mesh included: on a multi-selection it orbits the median like everything else.
+    for (const [m, sm] of this._dragStart) {
+      const om = mat4.create();
+      mat4.multiply(om, delta, sm);
+      this._applyMatrixOne(m, om);
+    }
+    return;
+  }
+
+  _applyMatrixOne(mesh, mat) {
     if (!mesh) return;
 
     // A BONE IS POSED, NEVER WRITTEN. Every mode funnels through here, so this one branch
@@ -642,7 +784,10 @@ class TransformVR extends SculptBase {
     // IS its bone length, so the rig would stretch a little more with every drag. Because the
     // matrix is never written, there is nothing to restore before solving (the step
     // IKSolver.resolveToJoint has to perform for the desktop watcher path).
-    if (this._dragIsJoint) {
+    // PER MESH, not per gesture. `_dragIsJoint` was decided once for the mesh under the ray,
+    // and a mixed selection — a joint and a pin, say — must not have one kind's rule applied to
+    // the other. A joint is POSED through the solver; anything else is written.
+    if (Skeleton.isJoint(mesh) && window._vrGizmoPose !== false) {
       _poseM.fromArray(mat);
       _poseM.decompose(_poseT, _poseQ, _poseS);
       // Position AND orientation. The solver takes a driven orientation as a constraint, not a

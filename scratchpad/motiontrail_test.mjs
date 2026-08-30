@@ -967,14 +967,18 @@ function setup(times) {
   const G = fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8');
   const i = G.indexOf('this._vrPinGrabs.set(hand, { pin,');
   const block = G.slice(i, i + 1400);
+  // Went through setMesh(pin, true) until multi-select landed (v3.20.160); it is
+  // setOrUnsetMesh(pin, multi, keepTool) now so the secondary trigger can add a pin to the
+  // selection instead of replacing it. The keepTool guarantee is unchanged — it just moved from
+  // the second argument to the third.
   check('the pin-grab gesture selects the pin it takes',
-    /this\._main\.setMesh\?\.\(pin, true\)/.test(block),
+    /setOrUnsetMesh\?\.\(pin, false, true\)/.test(block),
     'without this the trail, the outliner and anything else reading the selection see the joint');
   check('...and honours the selection lock, like every other grab path',
-    /if \(!this\._main\._lockSelection\) this\._main\.setMesh/.test(block));
+    /if \(!this\._main\._lockSelection\) \{/.test(block));
   check('...with keepTool, so taking hold of a pin does not swap the active tool',
-    /setMesh\?\.\(pin, true\)/.test(block),
-    'the second argument IS keepTool — see Scene.setMesh');
+    /setOrUnsetMesh\?\.\(pin,[\s\S]{0,60}?, true\)/.test(block),   // the arg itself contains parens
+    'the THIRD argument is keepTool — see Scene.setOrUnsetMesh');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

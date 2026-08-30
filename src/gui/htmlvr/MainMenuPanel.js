@@ -2697,7 +2697,7 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   }
 
   el.querySelectorAll('[data-action="select"]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
       const mesh = findMesh(btn.dataset.meshId);
       if (!mesh) return;
       // Step 2 of a rig assignment: this click picks the target, not a selection.
@@ -2717,7 +2717,11 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         beginRename(btn, mesh);
         return;
       }
-      main.setOrUnsetMesh?.(mesh, false); main.render?.(); repaintFn();
+      // MULTI-SELECT: the secondary trigger in VR, Ctrl or Shift with a mouse. Same rule as
+      // the viewport tools — see Scene.multiSelectHeld. The outliner is where you reach when
+      // the thing you want is hard to point at, so it needs this at least as much as they do.
+      const _multi = !!(e && (e.ctrlKey || e.metaKey || e.shiftKey)) || !!main.multiSelectHeld?.();
+      main.setOrUnsetMesh?.(mesh, _multi); main.render?.(); repaintFn();
     });
   });
 

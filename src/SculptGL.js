@@ -43,7 +43,6 @@ class SculptGL extends Scene {
     this._mouseY = 0;
     this._lastMouseX = 0;
     this._lastMouseY = 0;
-    this._vrMultiSelect = false; // [VR] Multi-select Mode
 
     // NOTHING, MASK_EDIT, SCULPT_EDIT, CAMERA_ZOOM, CAMERA_ROTATE, CAMERA_PAN, CAMERA_PAN_ZOOM_ALT
     this._action = Enums.Action.NOTHING;
