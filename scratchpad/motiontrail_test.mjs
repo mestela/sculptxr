@@ -12,6 +12,10 @@
 //   TRAIL_INJECT=nopins       leave pins out of the fingerprint
 //   TRAIL_INJECT=jointignorespin  a selected JOINT ignores the pin on it, so the trail depends
 //                             on which of the two the pick happened to return
+//   TRAIL_INJECT=headonly     only the head of a multi-selection trails, the rest are dropped
+//   TRAIL_INJECT=nodedupe     a joint and the pin on it each contribute the same curve
+//   TRAIL_INJECT=flatreach    the gnomon reach counted down the concatenated key list, so only
+//                             the first curve's triads are ever in range
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -22,9 +26,24 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8')
 
 const inject = process.env.TRAIL_INJECT || '';
 if (inject === 'jointignorespin') {
-  const a = "    if (pin && pin._isPinTarget && keyed(pin)) out.unshift({ obj: pin, control: true });";
+  const a = "      if (pin && pin._isPinTarget && keyed(pin)) add(pin, true);";
   if (!SRC.includes(a)) throw new Error('inject jointignorespin: anchor moved');
   SRC = SRC.replace(a, '');
+}
+if (inject === 'flatreach') {
+  const a = "    const raw = 1 - Math.abs(ordinal[k] - centreOf.get(idx[k].s)) / GNOMON_KEY_REACH;";
+  if (!SRC.includes(a)) throw new Error('inject flatreach: anchor moved');
+  SRC = SRC.replace(a, "    const raw = 1 - Math.abs(k - centreOf.get(idx[0].s)) / GNOMON_KEY_REACH;");
+}
+if (inject === 'headonly') {
+  const a = '  for (const t of targets) {';
+  if (!SRC.includes(a)) throw new Error('inject headonly: anchor moved');
+  SRC = SRC.replace(a, '  for (const t of targets.slice(0, 1)) {');
+}
+if (inject === 'nodedupe') {
+  const a = '    if (seen.has(k)) return;';
+  if (!SRC.includes(a)) throw new Error('inject nodedupe: anchor moved');
+  SRC = SRC.replace(a, '    if (false) return;');
 }
 if (inject === 'noplayguard') {
   const a = '  window._animPlaying = false;';
@@ -442,6 +461,69 @@ function setup(times) {
 
 // --- 5d. the trail target STICKS to the last rig node -------------------------------------
 //
+// --- SELECT SEVERAL, SEE SEVERAL ------------------------------------------------------
+//
+// #49. The sampler and the line pool were always written for N curves; what was single was the
+// TARGET. So this tests the fan-out and the two things that can quietly go wrong with it: that
+// every selected node contributes, and that a node named twice contributes once.
+{
+  const { j, main, reg } = setup();
+  const j2 = joint({ times: [0, 1, 2] });
+  const mkPin = (id, owner) => ({ _isPinTarget: true, _id: id, _p: [0, 0, 0], _pinnedJoint: owner,
+    getID() { return this._id; },
+    getModelSpaceMatrix() { return [1,0,0,0, 0,1,0,0, 0,0,1,0, this._p[0], this._p[1], this._p[2], 1]; } });
+  const pin1 = mkPin(911, j);
+  const pin2 = mkPin(912, j2);
+  j._pin = pin1; j2._pin = pin2;
+  j._boneIKPinObj = pin1; j2._boneIKPinObj = pin2;
+  reg.tracks.set(pin1.getID(), { times: [0, 1, 2] });
+  reg.tracks.set(pin2.getID(), { times: [0, 1, 2] });
+  main.getMeshes = () => [j, pin1, j2, pin2];
+
+  main.getMesh = () => pin1;
+  main.getSelectedMeshes = () => [pin1];
+  const one = mod.trailed(main);
+  check('one selected pin still gives exactly its own pair', one.length === 2,
+    JSON.stringify(one.map((t) => [t.obj.getID(), t.control])));
+
+  main.getSelectedMeshes = () => [pin1, pin2];
+  const two = mod.trailed(main);
+  check('selecting two pins trails BOTH', two.length === 4,
+    JSON.stringify(two.map((t) => [t.obj.getID(), t.control])));
+  check('...and both authored curves are offered as controls',
+    two.filter((t) => t.control).length === 2
+      && two.some((t) => t.control && t.obj === pin1)
+      && two.some((t) => t.control && t.obj === pin2));
+
+  // The head owns the editable dots and gnomons, so it must be the node last touched -- not
+  // whatever order the selection array happens to be in.
+  main.getMesh = () => pin2;
+  const headed = mod.trailed(main);
+  check('the CURRENT node heads the list whatever the selection order',
+    headed[0].obj === pin2 && headed[0].control === true,
+    JSON.stringify(headed.map((t) => [t.obj.getID(), t.control])));
+
+  // A joint and the pin sitting on it are one control point. Named together they must still
+  // produce one curve each, or the same path is drawn twice and edited twice.
+  main.getMesh = () => j;
+  main.getSelectedMeshes = () => [j, pin1];
+  const dup = mod.trailed(main);
+  check('a joint and its own pin selected together are ONE control point',
+    dup.length === 2, JSON.stringify(dup.map((t) => [t.obj.getID(), t.control])));
+
+  // Stickiness is per-SET now: an ordinary sculpt must not decay a multi-selection.
+  const mesh = { _id: 913, getID() { return this._id; } };
+  main.getMeshes = () => [j, pin1, j2, pin2, mesh];
+  main.getMesh = () => pin1;
+  main.getSelectedMeshes = () => [pin1, pin2];
+  mod.trailed(main);                       // the set that should be held
+  main.getMesh = () => mesh;
+  main.getSelectedMeshes = () => [mesh];
+  check('a sculpt does not shrink a held multi-selection', mod.trailed(main).length === 4);
+
+  delete j._pin; delete j2._pin;
+}
+
 // Read straight off the live selection, the trail was far too easy to lose: with a pin selected
 // and Move active, a stroke that missed the curve by a few pixels fell through to an ordinary
 // sculpt, that sculpt selected the MESH, and the trail being edited vanished.
@@ -786,6 +868,68 @@ function setup(times) {
   window._flag_gnomons = false;
   mod.default.perFrame(m);
   check('...and turning it off takes them away again', seg.visible === false);
+
+  // TRIADS ON EVERY PATH (#49). The reach that decides which keys draw is measured in KEY
+  // POSITIONS. Measured down the concatenated list it asks "how many keys away, counting
+  // through the other curves" -- so every key of the second curve sits tens of positions from
+  // the playhead and is silently out of reach. Only one path's triads drew, and which one was
+  // whichever happened to be listed first. Two identical curves must draw twice the triads.
+  {
+    const seg2 = fatSeg();
+    // ENOUGH KEYS TO ACTUALLY FALL OUT OF RANGE. The reach is GNOMON_KEY_REACH = 10 keys, so a
+    // two-key curve can never leave it and a test built on one passes with the bug in place --
+    // which is exactly what the first version of this test did.
+    const N = 12;
+    const pts = [];
+    const tms = [];
+    for (let i = 0; i < N; i++) { pts.push({ x: i, y: 0, z: 0 }); tms.push(i); }
+    const qs = pts.map(() => new THREE.Quaternion());
+    const one = { points: pts, quats: qs, times: tms, base: 0, pin: strand.pin };
+    const two = { points: pts, quats: qs, times: tms,
+      base: N, pin: { getID: () => 2, _pinnedJoint: {} } };
+    const refs = (si) => Array.from({ length: N }, (_, k) => ({ s: si, local: k, g: 0 }));
+    const mm = { _trailStrand: one, _trailStrands: [one],
+      _trailVis: { gnomons: seg2, keyIndices: refs(0) },
+      getCamera: () => ({ _width: 1600, _height: 900 }) };
+    window._flag_gnomons = true;
+    mod.default.drawGnomons(mm);
+    const single = seg2.geometry.instanceCount;
+
+    mm._trailStrands = [one, two];
+    mm._trailVis.keyIndices = refs(0).concat(refs(1));
+    mod.default.drawGnomons(mm);
+    check('a second path gets its own triads, not none',
+      seg2.geometry.instanceCount === single * 2,
+      'drawn ' + seg2.geometry.instanceCount + ', expected ' + (single * 2)
+        + ' -- a concatenated reach puts the second curve out of range');
+
+    // The playhead key is per curve too: the concatenated times run forwards, jump back, and
+    // run forwards again, so one centre computed over them is a search through a sequence that
+    // is not monotonic and cannot be searched.
+    const drawn = [];
+    const data = seg2.geometry.attributes.instanceStart.data.array;
+    for (let i = 0; i < seg2.geometry.instanceCount; i++) drawn.push(data[i * 6]);
+    check('...and both are drawn from their own curve',
+      drawn.length === single * 2, drawn.length);
+
+    // ALL KEYS. The fade says where the playhead is; it also hides the shape of the rotation as
+    // a whole, which is what you want when judging a curve rather than editing one key of it.
+    // N=12 with a reach of 10 means the fade CANNOT be showing everything, so this is a real
+    // difference rather than two modes that happen to agree on a short take.
+    window._flag_gnomonsAll = true;
+    mod.default.drawGnomons(mm);
+    const all = seg2.geometry.instanceCount;
+    check('All Keys draws every key on every curve',
+      all === N * 2 * 3, all + ' of ' + (N * 2 * 3));
+    check('...which is strictly more than the fade showed', all > single * 2);
+    check('...and at full size, not faded to nothing at the far end',
+      mm._trailVis.gnomonDbg.minScale === 1,
+      'a fade stretched over a long take is the same as not drawing the far end');
+    window._flag_gnomonsAll = false;
+    mod.default.drawGnomons(mm);
+    check('...and turning it off returns to the playhead fade',
+      seg2.geometry.instanceCount === single * 2);
+  }
 
   window._flag_gnomons = true;
   mod.default.drawGnomons(m);

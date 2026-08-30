@@ -76,20 +76,39 @@ function range() {
 // So a rig node captures the trail when it is selected, and KEEPS it until another rig node
 // takes it — selecting a mesh, or nothing, leaves the trail where it was. The target is dropped
 // only when it leaves the scene, which is the one case where keeping it would be a lie.
-function trailTarget(main) {
-  const sel = main.getMesh && main.getMesh();
-  if (sel && (Skeleton.isJoint(sel) || (sel._isPinTarget && sel._pinnedJoint))) {
-    main._trailTarget = sel;
-    return sel;
+//
+// SELECT SEVERAL AND YOU SEE SEVERAL. The stickiness above is per-SET, not per-node: the whole
+// selected set is captured together and held together. Holding them individually would let a
+// set decay one node at a time as unrelated picks came and went, which is worse than either
+// keeping all of it or dropping all of it.
+//
+// The CURRENT node is forced to the front, because the head of this list is the strand that
+// gets the editable dots and gnomons. Whatever you touched last is what you are editing.
+function trailTargets(main) {
+  const inScene = (m) => (main.getMeshes() || []).indexOf(m) >= 0;
+  const isRig = (m) => !!(m && (Skeleton.isJoint(m) || (m._isPinTarget && m._pinnedJoint)));
+  const cur = main.getMesh && main.getMesh();
+  const sel = (main.getSelectedMeshes && main.getSelectedMeshes()) || [];
+  const picked = sel.filter(isRig);
+  if (isRig(cur)) {
+    const at = picked.indexOf(cur);
+    if (at >= 0) picked.splice(at, 1);
+    picked.unshift(cur);
   }
-  const held = main._trailTarget;
-  if (held && (main.getMeshes() || []).indexOf(held) >= 0) return held;
-  main._trailTarget = null;
-  return null;
+  if (picked.length) {
+    main._trailTargets = picked;
+    main._trailTarget = picked[0];   // what trailTrace() reports, and the editable strand
+    return picked;
+  }
+  const held = (main._trailTargets || []).filter(inScene);
+  main._trailTargets = held;
+  main._trailTarget = held[0] || null;
+  return held;
 }
 
 function trailed(main) {
-  const sel = trailTarget(main);
+  const targets = trailTargets(main);
+  const sel = targets[0] || null;
   if (window._trailTrace) {
     console.log('[trail] target=' + (sel && sel._permanentStaticLabel) +
       ' isBone=' + !!(sel && sel._isBone) + ' isPin=' + !!(sel && sel._isPinTarget) +
@@ -107,18 +126,28 @@ function trailed(main) {
   //
   // The keys are on the PIN: the joint is driven by the solver and usually has no track of its
   // own, so reading only what was selected finds nothing to draw and draws nothing.
-  if (sel && Skeleton.isJoint(sel)) {
-    const pin = sel._boneIKPinObj;
-    const out = [{ obj: sel, control: false }];
-    if (pin && pin._isPinTarget && keyed(pin)) out.unshift({ obj: pin, control: true });
-    return out;
+  // Each selected node contributes its own control/output pair, in selection order. Deduped
+  // by object AND role: selecting a joint and the pin sitting on it names the same control
+  // twice, and drawing that curve twice is invisible until it is edited twice as well.
+  const out = [];
+  const seen = new Set();
+  const add = (obj, control) => {
+    const k = obj.getID() + (control ? 'c' : 'o');
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ obj: obj, control: control });
+  };
+  for (const t of targets) {
+    if (Skeleton.isJoint(t)) {
+      const pin = t._boneIKPinObj;
+      if (pin && pin._isPinTarget && keyed(pin)) add(pin, true);
+      add(t, false);
+    } else if (t._isPinTarget && t._pinnedJoint) {
+      if (keyed(t)) add(t, true);
+      add(t._pinnedJoint, false);
+    }
   }
-  if (sel && sel._isPinTarget && sel._pinnedJoint) {
-    const out = [{ obj: sel._pinnedJoint, control: false }];
-    if (keyed(sel)) out.unshift({ obj: sel, control: true });
-    return out;
-  }
-  return [];
+  return out;
 }
 
 // A cheap fingerprint of everything the curve depends on. Recomputed per frame and compared,
@@ -645,11 +674,38 @@ function playheadKeyIndex(keyTimes, head) {
   return (i - 1) + (t1 > t0 ? (head - t0) / (t1 - t0) : 0);
 }
 
+// The authored curves on screen. `_trailStrands` is the real list; the single-strand fallback
+// keeps every caller working in the moment before update() has built one.
+function strandsOf(main) {
+  const list = main._trailStrands;
+  if (list && list.length) return list;
+  const one = main._trailStrand;
+  if (!one) return [];
+  if (one.base == null) one.base = 0;
+  return [one];
+}
+
+// A LIVE EDIT OWNS THE CURVE IT IS EDITING, and only that one. perFrame runs every frame of a
+// drag, so reading the baseline here would repaint the old shape one frame after the drag drew
+// the new one -- the gnomons would sit inert while the path moved, which is indistinguishable
+// from the rotation not being editable at all. The strands NOT under the drag keep their own.
+function drawnPoints(main, st) {
+  const e = main._pathEdit;
+  return (e && e.strand === st && e.after) || st.points;
+}
+function drawnQuats(main, st) {
+  const e = main._pathEdit;
+  return (e && e.strand === st && e.afterQ) || st.quats;
+}
+
 MotionTrail.drawGnomons = function (main) {
   const v = main._trailVis;
   const strand = main._trailStrand;
   if (!v || !v.gnomons) return;
-  if (!strand || !strand.quats || !Skeleton.displayFlag('gnomons')) {
+  // Any curve carrying orientations is reason to draw; requiring it of the HEAD one would let
+  // a head without them hide every other path's triads.
+  const anyQuats = strandsOf(main).some((st) => st && st.quats);
+  if (!strand || !anyQuats || !Skeleton.displayFlag('gnomons')) {
     v.gnomons.visible = false;
     return;
   }
@@ -657,13 +713,20 @@ MotionTrail.drawGnomons = function (main) {
   // of a drag and calls this, so reading the baseline here would repaint the old rotation one
   // frame after the twist drew the new one — the gnomons would sit inert while the path moved,
   // which is indistinguishable from the rotation not being editable at all.
-  const edit = main._pathEdit;
-  const points = (edit && edit.after) || strand.points;
-  const quats = (edit && edit.afterQ) || strand.quats;
+  const strands = strandsOf(main);
 
-  const idx = v.keyIndices || [];
+  // A ref whose strand has gone is a stale map from the frame before the selection changed;
+  // drawDots will rebuild it. Drawing from it would read a curve that is no longer on screen.
+  const idx = (v.keyIndices || [])
+    .map((r) => (typeof r === 'number' ? { s: 0, local: r } : r))
+    .filter((r) => r && strands[r.s]);
   const n = idx.length;
   if (!n) { v.gnomons.visible = false; return; }
+
+  // ALL KEYS, or only those near the playhead. Full size for every one in this mode rather
+  // than a fade stretched over the whole take: spread across a long take the far end fades to
+  // nothing, which is the same as not drawing it and defeats the point of asking for all.
+  const showAll = !!Skeleton.displayFlag('gnomonsAll');
 
   const L = gnomonLength(main);
   // Sized for EVERY key even though only some are drawn: which ones qualify changes as the
@@ -678,14 +741,39 @@ MotionTrail.drawGnomons = function (main) {
   const pos = v.gnomonPos;
   const col = v.gnomonCol;
 
-  const keyTimes = idx.map((i) => strand.times[i]);
-  const centre = playheadKeyIndex(keyTimes, now(main));
+  // THE REACH IS PER CURVE. It is measured in KEY POSITIONS, so measuring it down the
+  // concatenated list asks "how many keys away is this, counting through the other curves" --
+  // and every key of the second curve is then tens of positions from the playhead and silently
+  // out of reach. Only one path's triads ever drew, whichever happened to be listed first.
+  //
+  // Each curve gets its own ordinal and its own playhead key, which is also the only reading
+  // that means anything: the concatenated times are not monotonic, so a single centre computed
+  // over them is a search through a sequence that runs forwards, jumps back, and runs forwards
+  // again.
+  const ordinal = new Array(idx.length);
+  const centreOf = new Map();
+  const perStrand = new Map();
+  for (let k = 0; k < idx.length; k++) {
+    const r = idx[k];
+    let list = perStrand.get(r.s);
+    if (!list) { list = []; perStrand.set(r.s, list); }
+    ordinal[k] = list.length;
+    list.push(strands[r.s].times[r.local]);
+  }
+  const head = now(main);
+  for (const [si, times] of perStrand) centreOf.set(si, playheadKeyIndex(times, head));
 
   let o = 0;
   let verts = 0;
   let smallest = 1, biggest = 0;
+  // Per curve, so "only one path has triads" is a number rather than a thing to squint at.
+  const drawnBy = new Map();
+  const keysBy = new Map();
+  for (const r of idx) keysBy.set(r.s, (keysBy.get(r.s) || 0) + 1);
   for (let k = 0; k < idx.length; k++) {
-    const raw = 1 - Math.abs(k - centre) / GNOMON_KEY_REACH;
+    const raw = showAll
+      ? 1
+      : 1 - Math.abs(ordinal[k] - centreOf.get(idx[k].s)) / GNOMON_KEY_REACH;
     if (raw <= 0) continue;            // past the reach: not drawn at all, not drawn faintly
     // Remapped onto [floor, 1] rather than clamped, so the ranking survives the floor: a clamp
     // would flatten everything past the halfway point into one size.
@@ -694,9 +782,13 @@ MotionTrail.drawGnomons = function (main) {
     if (scale < smallest) smallest = scale;
     if (scale > biggest) biggest = scale;
     const len = L * scale;
-    const i = idx[k];
-    const p = points[i];
-    const q = quats[i];
+    const r = idx[k];
+    drawnBy.set(r.s, (drawnBy.get(r.s) || 0) + 1);
+    const rs = strands[r.s];
+    const p = drawnPoints(main, rs)[r.local];
+    const rq = drawnQuats(main, rs);
+    const q = rq && rq[r.local];
+    if (!p) continue;
     for (let a = 0; a < 3; a++) {
       _axV.set(a === 0 ? len : 0, a === 1 ? len : 0, a === 2 ? len : 0);
       if (q) _axV.applyQuaternion(q);
@@ -724,8 +816,17 @@ MotionTrail.drawGnomons = function (main) {
   // KEYS from the playhead. Kept every draw because it is five numbers, and because "the
   // gnomons are the wrong size" is otherwise a report that can only be answered by guessing.
   // Read it with window.gnomonDiag().
+  // The head curve's playhead key, which is what the single-curve reading always was.
+  const centre = centreOf.has(idx[0].s) ? centreOf.get(idx[0].s) : 0;
   v.gnomonDbg = { L: L, unit: Skeleton.sceneUnit(main) || 0, centre: centre,
-    keys: idx.length, drawn: verts / 2 / 3, minScale: smallest, maxScale: biggest };
+    keys: idx.length, drawn: verts / 2 / 3, minScale: smallest, maxScale: biggest,
+    perStrand: Array.from(keysBy.keys()).sort((a, b) => a - b).map((si) => ({
+      strand: si,
+      pin: (strands[si] && strands[si].pin && strands[si].pin._permanentStaticLabel)
+        || ('#' + (strands[si] && strands[si].pin && strands[si].pin.getID())),
+      keys: keysBy.get(si) || 0, drawn: drawnBy.get(si) || 0,
+      centre: centreOf.get(si), hasQuats: !!(strands[si] && strands[si].quats),
+    })) };
 
   if (window._trailTrace) {
     const r = v.gnomons.material.resolution;
@@ -755,6 +856,16 @@ window.gnomonDiag = function () {
     + '  scale=' + d.minScale.toFixed(3) + '..' + d.maxScale.toFixed(3)
     + '  -> drawn length ' + (d.L * d.minScale).toFixed(4) + '..'
     + (d.L * d.maxScale).toFixed(4));
+  // ONE LINE PER CURVE. "only one path has triads" is otherwise a report that can only be
+  // answered by guessing which of several reasons it was: no orientations on that curve, no
+  // keys on it, or every key out of the playhead's reach.
+  for (const r of (d.perStrand || [])) {
+    console.log('[gnomon]   curve ' + r.strand + ' ' + r.pin
+      + '  keys=' + r.keys + ' drawn=' + r.drawn
+      + ' playheadAtKey=' + (r.centre == null ? '?' : r.centre.toFixed(2))
+      + (r.hasQuats ? '' : '  <-- no orientations, so no triads')
+      + (r.keys && !r.drawn ? '  <-- every key out of reach of the playhead' : ''));
+  }
   console.log('[gnomon] maxScale well under 1 means the PLAYHEAD is far from the keys, not that '
     + 'the triads are small. unit far from the size of your sculpt means the scene unit is the '
     + 'problem — check window.rigUnit().');
@@ -792,12 +903,16 @@ MotionTrail.clear = function (main) {
   disposeTrail(main);
   main._trailSig = null;
   main._trailStrand = null;
+  main._trailStrands = null;
 };
 
 // Dropping the held target is a separate thing from clearing the drawing: turning trails off
 // and on again should come back to what you were looking at.
 MotionTrail.forget = function (main) {
   main._trailTarget = null;
+  // The SET is what stickiness holds now, so clearing only the head left the rest held and
+  // the next frame simply promoted one of them -- a forget that forgot nothing.
+  main._trailTargets = null;
   MotionTrail.clear(main);
 };
 
@@ -844,7 +959,10 @@ MotionTrail.recolor = function (main) {
     const plainCol = v.plainCol, keyCol = v.keyCol;
     // Sample dots ride at the solved curve's brightness: they mark the path, they are not it.
     if (plainCol) {
-      for (let i = 0; i < plainCol.length; i++) plainCol[i] = v.identity[i % 3] * OUTPUT_VALUE;
+      const id = v.plainIdent;
+      for (let i = 0; i < plainCol.length; i++) {
+        plainCol[i] = (id && i < id.length ? id[i] : v.identity[i % 3]) * OUTPUT_VALUE;
+      }
     }
     if (keyCol) {
       for (let i = 0; i < v.keyTimes.length; i++) {
@@ -1003,11 +1121,23 @@ MotionTrail.update = function (main) {
 
   // The strand the editor may take hold of: the AUTHORED curve only. Solver output is not
   // editable, so it is never offered — see MotionPathEdit for why.
+  const strandAt = (i) => ({
+    points: paths[i], quats: paths.quats && paths.quats[i],
+    times: main._trailTimes, pin: targets[i].obj, line: i,
+  });
+  // EVERY authored curve on screen, so an edit can reach the ones that are not the head of the
+  // selection. `_trailStrand` stays the head's: it owns the dots and the gnomons, and every
+  // existing caller means "the one I am editing" by it.
+  main._trailStrands = targets.map((t, i) => (t.control ? strandAt(i) : null)).filter(Boolean);
+  // EACH STRAND CARRIES ITS OWN BASE. The dots of every authored curve share two point clouds,
+  // so a sample is addressed by a GLOBAL index that runs across the strands in order. Both the
+  // drawing and the hit test have to agree on where each strand starts in that numbering, and
+  // the reliable way to make two sides agree on a rule is to not write the rule twice.
+  let base = 0;
+  for (const st of main._trailStrands) { st.base = base; base += st.points.length; }
+  main._trailSampleCount = base;
   const ci = targets.findIndex((t) => t.control);
-  main._trailStrand = ci >= 0
-    ? { points: paths[ci], quats: paths.quats && paths.quats[ci],
-        times: main._trailTimes, pin: targets[ci].obj, line: ci }
-    : null;
+  main._trailStrand = ci >= 0 ? strandAt(ci) : null;
 
   const v = main._trailVis;
   v.lineState = v.lineState || paths.map(() => ({ fresh: true }));
@@ -1036,12 +1166,31 @@ MotionTrail.drawDots = function (main, weights) {
   if (!v || !v.dots) return;
   if (!strand) { v.dots.visible = v.keyDots.visible = false; return; }
 
-  const pts = strand.points;
-  const isKey = keyMask(main, strand.pin, strand.times);
-  const plain = [], keys = [], keyTimes = [], slots = [], keyIndices = [];
-  for (let i = 0; i < pts.length; i++) {
-    if (isKey[i]) { slots.push({ key: true, i: keys.length }); keys.push(pts[i]); keyTimes.push(strand.times[i]); keyIndices.push(i); }
-    else { slots.push({ key: false, i: plain.length }); plain.push(pts[i]); }
+  // EVERY authored curve contributes its samples to the same two clouds, addressed by the
+  // global index each strand's `base` defines. One pair of clouds rather than a pair per curve:
+  // PointsMaterial carries a single size, so the split is already by size class, not by curve.
+  const strands = strandsOf(main);
+  const plain = [], keys = [], keyTimes = [], slots = [], keyIndices = [], ident = [];
+  for (let si = 0; si < strands.length; si++) {
+    const st = strands[si];
+    if (!st.points || !st.times) continue;
+    const isKey = keyMask(main, st.pin, st.times);
+    // Identity is per CURVE -- it is the colour of the joint the curve describes -- so it is
+    // stored per point. Held as one colour for the whole cloud, a second curve simply took the
+    // first one's colour and the two became indistinguishable.
+    const col = Skeleton.boneColor(main, st.pin._pinnedJoint);
+    const dpts = drawnPoints(main, st);
+    for (let i = 0; i < dpts.length; i++) {
+      if (isKey[i]) {
+        slots.push({ key: true, i: keys.length, s: si, local: i });
+        keys.push(dpts[i]); keyTimes.push(st.times[i]);
+        keyIndices.push({ s: si, local: i, g: st.base + i });
+      } else {
+        slots.push({ key: false, i: plain.length, s: si, local: i });
+        plain.push(dpts[i]);
+        ident.push(col.r, col.g, col.b);
+      }
+    }
   }
 
   v.dots.geometry.setFromPoints(plain);
@@ -1049,15 +1198,15 @@ MotionTrail.drawDots = function (main, weights) {
   v.dots.visible = plain.length > 0;
   v.keyDots.visible = keys.length > 0;
 
-  // SAMPLE dots keep IDENTITY — which control is this. KEY dots carry TIME, because a key is
+  // SAMPLE dots keep IDENTITY -- which control is this. KEY dots carry TIME, because a key is
   // where an edit can actually land, so "which of these is at the playhead, and which side of
   // it is the rest" is the question you are asking of them.
   // Published for recolor, which runs every frame and owns the colours: the identity tint, the
   // key times, and a map from SAMPLE index to which cloud a sample landed in and where. Without
   // that map a preselected sample cannot be found again once the two clouds are split.
-  const col = Skeleton.boneColor(main, strand.pin._pinnedJoint);
   const span = (strand.times[strand.times.length - 1] - strand.times[0]) || 1;
-  v.identity = [col.r, col.g, col.b];
+  v.identity = ident.length ? [ident[0], ident[1], ident[2]] : [1, 1, 1];
+  v.plainIdent = new Float32Array(ident);
   v.keyTimes = keyTimes;
   v.slots = slots;
   v.keyIndices = keyIndices;
@@ -1067,16 +1216,23 @@ MotionTrail.drawDots = function (main, weights) {
   // the same float, and a white mark that only appears on exact equality never appears.
   v.nowEps = span / Math.max(1, strand.times.length - 1) * 0.5;
 
-
   void weights;
 };
 
 // The drawn position of a sample: the edit's curve while a drag is live, the strand otherwise.
 // Same rule the gnomons follow, so the mark cannot sit on the old curve mid-drag.
-function pointOf(main, i) {
-  const e = main._pathEdit;
-  const pts = (e && e.after) || (main._trailStrand && main._trailStrand.points);
-  const p = pts && pts[i];
+function pointOf(main, g) {
+  const v = main._trailVis;
+  const sl = v && v.slots && v.slots[g];
+  const strands = strandsOf(main);
+  // Before the clouds are built there is no map, so fall back to the head strand's own
+  // numbering -- which is what the global index means when there is only one curve.
+  // A slot with no strand on it MEANS the head strand, and the global index means its own
+  // sample number -- which is what both meant when there was only ever one curve.
+  const st = strands[sl && sl.s != null ? sl.s : 0];
+  if (!st) return null;
+  const pts = drawnPoints(main, st);
+  const p = pts && pts[sl && sl.local != null ? sl.local : g];
   return p ? new THREE.Vector3(p.x, p.y, p.z) : null;
 }
 

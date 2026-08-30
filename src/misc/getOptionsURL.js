@@ -231,6 +231,7 @@ var getOptionsURL = function () {
   window._wristPanelLiftSaved = options.wristPanelLift;
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
   options.boneShowGnomons = queryBool(getVal('boneShowGnomons'), false);
+  options.boneShowGnomonsAll = queryBool(getVal('boneShowGnomonsAll'), false);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

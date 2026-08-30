@@ -134,7 +134,7 @@ MotionPathEdit.channels = function () {
 // The sample a click landed on: nearest in SCREEN space, since that is what "I clicked the
 // curve" means. Returns -1 when nothing is within reach, so the click falls through to whatever
 // it would otherwise have done.
-MotionPathEdit.hit = function (points, project, x, y, radiusPx) {
+function hitD(points, project, x, y, radiusPx) {
   let best = -1;
   let bestD = radiusPx * radiusPx;
   for (let i = 0; i < points.length; i++) {
@@ -143,6 +143,39 @@ MotionPathEdit.hit = function (points, project, x, y, radiusPx) {
     const dx = p.x - x, dy = p.y - y;
     const d = dx * dx + dy * dy;
     if (d <= bestD) { bestD = d; best = i; }
+  }
+  return { i: best, d: bestD };
+}
+
+MotionPathEdit.hit = function (points, project, x, y, radiusPx) {
+  return hitD(points, project, x, y, radiusPx).i;
+};
+
+// The authored curves on screen. Each carries the `base` that places its samples in the global
+// numbering the dots are drawn and highlighted by -- carried BY the strand precisely so this
+// side and the drawing side cannot compute it differently.
+MotionPathEdit.strandsOf = function (main) {
+  const list = main && main._trailStrands;
+  if (list && list.length) return list;
+  const one = main && main._trailStrand;
+  if (!one) return [];
+  if (one.base == null) one.base = 0;
+  return [one];
+};
+
+// WHICH CURVE, AND WHERE ON IT. With several paths on screen the nearest sample may belong to
+// any of them, so the strand is an OUTPUT of the hit test rather than an input to it. Picking a
+// strand first and searching only that one is what made every edit land on the last-selected
+// curve however carefully you aimed at another.
+MotionPathEdit.hitStrands = function (strands, project, x, y, radiusPx) {
+  let best = null;
+  for (let s = 0; s < strands.length; s++) {
+    const st = strands[s];
+    if (!st || !st.points || st.points.length < 2) continue;
+    if (!MotionPathEdit.editable(st.pin)) continue;
+    const r = hitD(st.points, project, x, y, radiusPx);
+    if (r.i < 0) continue;
+    if (!best || r.d < best.d) best = { s: s, i: r.i, d: r.d, strand: st };
   }
   return best;
 };
@@ -532,18 +565,23 @@ MotionPathEdit.begin = function (main, x, y, radiusPx) {
   // unprojection anywhere.
   if (main._vrSculpting || main._xrSession) return false;
 
-  const strand = main._trailStrand;
-  if (!strand || !strand.points || strand.points.length < 2) return false;
-  if (!MotionPathEdit.editable(strand.pin)) {
-    console.log('[path] this pin is parented, so its motion path is not editable here');
-    return false;
-  }
+  const strands = MotionPathEdit.strandsOf(main);
+  if (!strands.length) return false;
   const camera = main.getCamera && main.getCamera();
   if (!camera) return false;
 
   const project = (p) => screenOf(main, camera, p);
-  const index = MotionPathEdit.hit(strand.points, project, x, y, radiusPx);
-  if (index < 0) return false;
+  const h = MotionPathEdit.hitStrands(strands, project, x, y, radiusPx);
+  if (!h) {
+    // Every curve was out of reach -- or the only one under the cursor cannot be edited, which
+    // is worth saying out loud rather than failing silently as a missed aim.
+    if (strands.length && !strands.some((st) => MotionPathEdit.editable(st.pin))) {
+      console.log('[path] this pin is parented, so its motion path is not editable here');
+    }
+    return false;
+  }
+  const strand = h.strand;
+  const index = h.i;
 
   const anchor = strand.points[index];
   const s = camera.project([anchor.x, anchor.y, anchor.z]);
@@ -557,6 +595,10 @@ MotionPathEdit.begin = function (main, x, y, radiusPx) {
   main._pathEdit = {
     strand: strand,
     index: index,
+    // LOCAL vs GLOBAL. `index` addresses this strand's own arrays, which is what the drag
+    // maths wants; `gIndex` addresses the shared dot clouds, which is what the highlight
+    // wants. Collapsing the two put the preselect mark on the wrong curve's dot.
+    gIndex: (strand.base || 0) + index,
     radius: world,
     screenZ: z,
     // Deep copy: the baseline must not be a view of the array the drag writes to.
@@ -733,21 +775,27 @@ function dist2(a, b) {
 }
 
 MotionPathEdit.beginXR = function (main, tip, radiusWorld) {
-  const strand = main._trailStrand;
-  if (!tip || !strand || !strand.points || strand.points.length < 2) return false;
-  if (!MotionPathEdit.editable(strand.pin)) return false;
+  if (!tip) return false;
+  const strands = MotionPathEdit.strandsOf(main);
 
+  // The controller tip is already a 3D point, so the nearest sample across every curve answers
+  // "which one am I reaching for" directly -- no projection, and no need to pick a curve first.
   let best = -1;
+  let strand = null;
   let bestD = radiusWorld * radiusWorld;
-  for (let i = 0; i < strand.points.length; i++) {
-    const d = dist2(strand.points[i], tip);
-    if (d <= bestD) { bestD = d; best = i; }
+  for (const st of strands) {
+    if (!st.points || st.points.length < 2 || !MotionPathEdit.editable(st.pin)) continue;
+    for (let i = 0; i < st.points.length; i++) {
+      const d = dist2(st.points[i], tip);
+      if (d <= bestD) { bestD = d; best = i; strand = st; }
+    }
   }
-  if (best < 0) return false;
+  if (best < 0 || !strand) return false;
 
   main._pathEdit = {
     strand: strand,
     index: best,
+    gIndex: (strand.base || 0) + best,
     radius: radiusWorld,
     before: strand.points.map((p) => ({ x: p.x, y: p.y, z: p.z })),
     // The baseline ORIENTATIONS, copied for the same reason the positions are: every frame's
@@ -854,9 +902,14 @@ function screenOf(main, camera, p) {
 // Only for the tools that can act on a path: a highlight under a brush that will sculpt the
 // mesh instead is a promise the click does not keep.
 MotionPathEdit.hoverIndex = function (main) {
-  if (main._pathEdit) return main._pathEdit.index;   // during a drag, the anchor is the answer
-  const strand = main._trailStrand;
-  if (!strand || !strand.points || strand.points.length < 2) return -1;
+  // During a drag the anchor is the answer -- in GLOBAL numbering, which is what the dots are
+  // indexed by. `index` is the anchor's position within its own strand and means nothing to
+  // the clouds once a second curve is on screen.
+  if (main._pathEdit) {
+    return main._pathEdit.gIndex != null ? main._pathEdit.gIndex : main._pathEdit.index;
+  }
+  const strands = MotionPathEdit.strandsOf(main);
+  if (!strands.length) return -1;
 
   const sm = main.getSculptManager && main.getSculptManager();
   const idx = sm && sm.getToolIndex && sm.getToolIndex();
@@ -870,9 +923,12 @@ MotionPathEdit.hoverIndex = function (main) {
     if (!tip) return -1;
     const r = main._vrLastPickingRadius || 0.05;
     let best = -1, bestD = r * r;
-    for (let i = 0; i < strand.points.length; i++) {
-      const d = dist2(strand.points[i], tip);
-      if (d <= bestD) { bestD = d; best = i; }
+    for (const st of strands) {
+      if (!st.points || !MotionPathEdit.editable(st.pin)) continue;
+      for (let i = 0; i < st.points.length; i++) {
+        const d = dist2(st.points[i], tip);
+        if (d <= bestD) { bestD = d; best = st.base + i; }
+      }
     }
     return best;
   }
@@ -880,8 +936,9 @@ MotionPathEdit.hoverIndex = function (main) {
   const camera = main.getCamera && main.getCamera();
   if (!camera || !tool || !tool.getScreenRadius) return -1;
   const project = (p) => screenOf(main, camera, p);
-  return MotionPathEdit.hit(strand.points, project, main._mouseX, main._mouseY,
-                            tool.getScreenRadius());
+  const h = MotionPathEdit.hitStrands(strands, project, main._mouseX, main._mouseY,
+                                      tool.getScreenRadius());
+  return h ? h.strand.base + h.i : -1;
 };
 
 // WHERE DOES THE HIT TEST THINK THE CURVE IS. Prints the cursor, and the projected screen

@@ -177,6 +177,9 @@ const CSS = `
   display: flex;
   gap: 6px;
 }
+/* Two toggle rows in one section -- Move and Smooth both have them -- were flush against each
+   other: the gap property spaces buttons WITHIN a row and says nothing about the row below. */
+#mp-root .mp-toggles + .mp-toggles { margin-top: 6px; }
 #mp-root .mp-toggle-btn {
   flex: 1;
   padding: 6px 4px;

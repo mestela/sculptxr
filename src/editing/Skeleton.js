@@ -2923,6 +2923,11 @@ const DISPLAY_FLAGS = {
   // trail is often on for minutes at a time while you watch an arc, and a triad per key is a
   // lot of ink to carry through that when you are not editing rotation.
   gnomons: ['_boneShowGnomons', 'boneShowGnomons', false],
+  // Every key's triad at full size, rather than only those near the playhead. The fade is the
+  // better default -- it says where you are in the take -- but it hides the shape of the
+  // rotation as a whole, which is the thing you want when judging a curve rather than editing
+  // one key of it.
+  gnomonsAll: ['_boneShowGnomonsAll', 'boneShowGnomonsAll', false],
 };
 Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
 Skeleton.flushBatches = flushBatches;

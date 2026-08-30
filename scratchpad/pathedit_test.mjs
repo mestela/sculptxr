@@ -32,6 +32,9 @@ let INJ_BODY = null;
     'const delta = reach;'];
   else if (i === 'swinggate') INJ_BODY = ['ch.translate ? twist : null, e.startWorld, e.falloff);',
     'ch.rotate ? twist : null, e.startWorld, e.falloff);'];
+  else if (i === 'headstrand') INJ_BODY = [
+    'for (let s = 0; s < strands.length; s++) {',
+    'for (let s = 0; s < Math.min(1, strands.length); s++) {'];
   else if (i === 'nopushquat') INJ_BODY = [
     'const turned = MotionPathEdit.pushBackQuats(track, e.strand.times, e.beforeQ, e.afterQ);',
     'const turned = 0;'];
@@ -787,12 +790,55 @@ const qAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3])));
       && /pushStateCustom\(\(\) => put\(beforePos, beforeQuat\), \(\) => put\(afterPos, afterQuat\)/.test(MPS),
     'two entries for one gesture, and the second undoes a state the first already changed');
 
+  // --- THE AIM PICKS THE CURVE (#49) ---------------------------------------------------
+  //
+  // With several paths on screen the strand is an OUTPUT of the hit test, not an input. Picking
+  // a strand first and searching only that one is exactly what made every edit land on the
+  // last-selected curve however carefully you aimed at another one.
+  {
+    const line = (x0, base) => ({
+      points: [0, 1, 2, 3].map((i) => ({ x: x0 + i, y: 0, z: 0 })),
+      times: [0, 1, 2, 3], base: base, pin: { getID: () => base + 1, _pinnedJoint: {} },
+    });
+    const a = line(0, 0);        // samples at x = 0,1,2,3
+    const b = line(100, 4);      // samples at x = 100..103
+    const project = (p) => ({ x: p.x, y: p.y });
+
+    const nearA = MPE.hitStrands([a, b], project, 2, 0, 10);
+    check('the nearest curve wins, not the first one listed',
+      !!nearA && nearA.strand === a && nearA.i === 2, nearA && nearA.i);
+    const nearB = MPE.hitStrands([a, b], project, 101, 0, 10);
+    check('...and aiming at the OTHER curve takes that one',
+      !!nearB && nearB.strand === b && nearB.i === 1,
+      'this is the whole bug: only the last-selected path could be edited');
+    check('out of reach of both is a miss',
+      MPE.hitStrands([a, b], project, 50, 0, 10) === null);
+
+    // A parented pin cannot be edited, so it must not swallow the pick from a curve that can.
+    const c = line(0, 0);
+    c.pin = { getID: () => 9, _pinnedJoint: {}, _parent: {} };
+    const overlap = MPE.hitStrands([c, b], project, 101, 0, 10);
+    check('an uneditable curve does not swallow the pick',
+      !!overlap && overlap.strand === b);
+    check('...and a pick landing only on it is a miss',
+      MPE.hitStrands([c], project, 2, 0, 10) === null);
+
+    // GLOBAL numbering is what the shared dot clouds are indexed by: base + local.
+    check('the hit is reported in the strand\'s own numbering, to be based later',
+      nearB.i === 1 && nearB.strand.base === 4,
+      'begin() adds base to get gIndex; collapsing the two lit the wrong curve\'s dot');
+  }
+
   const TRAIL_R = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
   check('the gnomons are drawn from the live edit while it is running',
-    /const edit = main\._pathEdit;\s*\n\s*const points = \(edit && edit\.after\) \|\| strand\.points;\s*\n\s*const quats = \(edit && edit\.afterQ\) \|\| strand\.quats;/.test(TRAIL_R),
+    /return \(e && e\.strand === st && e\.after\) \|\| st\.points;/.test(TRAIL_R)
+      && /return \(e && e\.strand === st && e\.afterQ\) \|\| st\.quats;/.test(TRAIL_R),
     'perFrame calls drawGnomons every frame, so the baseline would repaint over the twist');
+  // ...and the live edit owns ONLY the curve it is editing. Without the `e.strand === st`
+  // guard, every other path on screen would redraw itself from the dragged one's geometry.
   check('...and drawGnomons reads those rather than the strand directly',
-    /const p = points\[i\];\s*\n\s*const q = quats\[i\];/.test(TRAIL_R));
+    /const p = drawnPoints\(main, rs\)\[r\.local\];/.test(TRAIL_R)
+      && /const rq = drawnQuats\(main, rs\);/.test(TRAIL_R));
 }
 
 // --- CHANNELS: which half of the keys an edit is allowed to write ------------------------
