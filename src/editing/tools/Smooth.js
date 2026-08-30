@@ -51,7 +51,7 @@ class Smooth extends SculptBase {
       // reads the current curve rather than the baseline. The baseline stays untouched, because
       // push-back has to measure the whole gesture, not the last frame of it.
       if (MotionPathEdit.smoothStep(main, this._intensity)) {
-        MotionTrail.redraw(main, main._pathEdit.strand.line, main._pathEdit.after);
+        MotionTrail.redrawEdit(main);
         main.render();
       }
       return;

@@ -84,7 +84,10 @@ function falloff(d, radius) {
 // which is why it is named the same thing.
 MotionPathEdit.weights = function (points, index, radius, opts) {
   if (opts && opts.connected === false) {
-    const c = points[index];
+    // AN EXPLICIT CENTRE, so several curves can share ONE sphere. Left to default, each curve
+    // measures from its own nearest sample -- and a curve the sphere merely grazes would move
+    // as though it had been grabbed in the middle.
+    const c = (opts && opts.center) || points[index];
     return points.map((p) => {
       const dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
       return falloff(Math.sqrt(dx * dx + dy * dy + dz * dz), radius);
@@ -391,6 +394,14 @@ MotionPathEdit.smoothStep = function (main, strength) {
   //   "Cannot read properties of null (reading 'length')" at MotionTrail.writeLine.
   // With Translate off the curve is unchanged, so the current curve is the baseline — but it
   // still has to be SAID, not left absent.
+  applyExtras(e, (x) => {
+    const xp = x.after || x.before;
+    if (ch.translate) x.after = MotionPathEdit.smoothed(xp, x.index, e.radius, strength, e.extraOpts);
+    if (ch.rotate && x.beforeQ) {
+      x.afterQ = MotionPathEdit.smoothedQuats(xp, x.afterQ || x.beforeQ, x.index, e.radius,
+        strength, e.extraOpts);
+    }
+  });
   e.after = ch.translate
     ? MotionPathEdit.smoothed(pts, e.index, e.radius, strength, e.falloff)
     : pts;
@@ -618,8 +629,79 @@ MotionPathEdit.begin = function (main, x, y, radiusPx) {
     falloff: { connected: MotionPathEdit.connected() },
     channels: MotionPathEdit.channels(),
   };
+  attachExtras(main, main._pathEdit, strand, anchor, world);
   return true;
 };
+
+// EVERY OTHER CURVE INSIDE THE SPHERE. Connectivity ON measures along the strand, so a curve
+// you did not grab has no meaningful distance and gets nothing -- implicitly one object. OFF,
+// the falloff is a sphere in space, and any keyframe inside it moves whatever curve it belongs
+// to. One code path, no new gesture, and matt's own reading of the option.
+//
+// Gathered ONCE at the grab, like the baselines: a curve drifting into the sphere mid-drag
+// would start from a pose the gesture had already moved past and jump.
+function gatherExtras(main, e, primary, anchor, radius) {
+  if (e.falloff.connected !== false) return null;
+  const r2 = radius * radius;
+  const out = [];
+  for (const st of MotionPathEdit.strandsOf(main)) {
+    if (st === primary || !st.points || !MotionPathEdit.editable(st.pin)) continue;
+    let best = -1, bestD = r2;
+    for (let i = 0; i < st.points.length; i++) {
+      const p = st.points[i];
+      const dx = p.x - anchor.x, dy = p.y - anchor.y, dz = p.z - anchor.z;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d <= bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) continue;
+    out.push({
+      strand: st,
+      index: best,
+      before: st.points.map((p) => ({ x: p.x, y: p.y, z: p.z })),
+      beforeQ: st.quats ? st.quats.map((q) => readQ(q)) : null,
+      after: null,
+      afterQ: null,
+    });
+  }
+  return out.length ? out : null;
+}
+
+// Both begins go through here, so the sphere's centre and the extras' baselines cannot be
+// gathered one way on the desktop and another in the headset.
+function attachExtras(main, e, primary, anchor, radius) {
+  e.extra = gatherExtras(main, e, primary, anchor, radius);
+  // THE CENTRE IS THE GRAB ANCHOR, for every curve including the one that was grabbed. The
+  // primary keeps its own opts because points[index] IS this point for it.
+  e.extraOpts = { connected: false, center: { x: anchor.x, y: anchor.y, z: anchor.z } };
+
+  // WHAT THIS GRAB SAW, KEPT FOR AFTERWARDS. In the headset you cannot hold the trigger and
+  // read a console at the same time, so a diagnostic that only works during the drag cannot be
+  // run by the person who has the problem. Recorded here and read back by pathMultiDiag().
+  const label = (st) => (st.pin
+    && (st.pin._permanentStaticLabel || ('#' + st.pin.getID()))) || '?';
+  const rows = [];
+  for (const st of MotionPathEdit.strandsOf(main)) {
+    if (st === primary) continue;
+    let best = Infinity;
+    for (const p of (st.points || [])) {
+      const dx = p.x - anchor.x, dy = p.y - anchor.y, dz = p.z - anchor.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < best) best = d;
+    }
+    rows.push({ pin: label(st), nearest: best, editable: MotionPathEdit.editable(st.pin) });
+  }
+  main._pathLastGrab = {
+    connected: e.falloff.connected, radius: radius, grabbed: label(primary),
+    extras: e.extra ? e.extra.length : 0, others: rows,
+    strands: MotionPathEdit.strandsOf(main).length,
+  };
+}
+
+// The same operation, on every curve the sphere reached.
+function applyExtras(e, fn) {
+  if (!e || !e.extra) return;
+  for (const x of e.extra) fn(x);
+}
 
 // A TRACKBALL, FOR THE ROTATION CHANNEL ON A FLAT SCREEN.
 //
@@ -673,6 +755,9 @@ MotionPathEdit.drag = function (main, x, y) {
   const moved = { x: now.x - e.startWorld.x, y: now.y - e.startWorld.y, z: now.z - e.startWorld.z };
   const delta = ch.translate ? moved : ZERO;
   e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius, null, null, e.falloff);
+  applyExtras(e, (x) => {
+    x.after = MotionPathEdit.displace(x.before, x.index, delta, e.radius, null, null, e.extraOpts);
+  });
 
   // ONE DRAG, ONE MEANING. The trackball takes over only when Translate is OFF: with both on,
   // a single mouse drag would have to be a move and a turn at once, and neither would be
@@ -696,16 +781,36 @@ MotionPathEdit.finish = function (main) {
   const track = reg && reg.tracks && reg.tracks.get(e.strand.pin.getID());
   if (!track) return 0;
 
-  const beforePos = track.positions.slice();
-  const beforeQuat = track.quaternions ? track.quaternions.slice() : null;
-  const moved = MotionPathEdit.pushBack(track, e.strand.times, e.before, e.after);
-  // BOTH CHANNELS, ONE GESTURE, ONE UNDO. A twist that moved no key positionally still has to
-  // land, so the two counts are summed rather than the rotation being gated behind the move.
-  const turned = MotionPathEdit.pushBackQuats(track, e.strand.times, e.beforeQ, e.afterQ);
+  // ONE UNDO ENTRY COVERS EVERY CURVE THE GESTURE TOUCHED. A drag with Connectivity off can
+  // move keys on several paths, and undoing that a curve at a time would be a different edit
+  // played backwards -- so the before/after snapshots are taken per track and restored together.
+  const shots = [];
+  const snap = (rec) => {
+    const t = reg.tracks && reg.tracks.get(rec.strand.pin.getID());
+    if (!t || !rec.after) return null;
+    const sh = { pin: rec.strand.pin, track: t,
+      beforePos: t.positions.slice(),
+      beforeQuat: t.quaternions ? t.quaternions.slice() : null };
+    sh.moved = MotionPathEdit.pushBack(t, rec.strand.times, rec.before, rec.after);
+    // BOTH CHANNELS, ONE GESTURE. A twist that moved no key positionally still has to land, so
+    // the two counts are summed rather than the rotation being gated behind the move.
+    sh.turned = MotionPathEdit.pushBackQuats(t, rec.strand.times, rec.beforeQ, rec.afterQ);
+    sh.afterPos = t.positions.slice();
+    sh.afterQuat = t.quaternions ? t.quaternions.slice() : null;
+    shots.push(sh);
+    return sh;
+  };
+  const head = snap(e);
+  applyExtras(e, (x) => snap(x));
+  if (!head) return 0;
+  const moved = shots.reduce((a, sh) => a + sh.moved, 0);
+  const turned = shots.reduce((a, sh) => a + sh.turned, 0);
   if (!moved && !turned) return 0;
 
-  const afterPos = track.positions.slice();
-  const afterQuat = track.quaternions ? track.quaternions.slice() : null;
+  const beforePos = head.beforePos;
+  const beforeQuat = head.beforeQuat;
+  const afterPos = head.afterPos;
+  const afterQuat = head.afterQuat;
   const sm = main.getStateManager && main.getStateManager();
   // Restore the keys, then make the rig and the drawing agree with them again.
   //
@@ -715,12 +820,19 @@ MotionPathEdit.finish = function (main) {
   // restored keys through its own fingerprint, which now notices a key that moved without
   // being retimed.
   const put = (arr, quat) => {
-    const t = reg.tracks.get(e.strand.pin.getID());
-    if (!t) return;
-    t.positions = arr.slice();
-    if (quat && t.quaternions) t.quaternions = quat.slice();
-    t.eulers = null;
-    reg.update(e.strand.pin, true);
+    // `arr`/`quat` are the HEAD curve's, kept as the argument so the single-curve behaviour and
+    // every existing caller read exactly as before; the rest restore from their own snapshots.
+    for (const sh of shots) {
+      const t = reg.tracks.get(sh.pin.getID());
+      if (!t) continue;
+      const isHead = sh === head;
+      const pos = isHead ? arr : (arr === beforePos ? sh.beforePos : sh.afterPos);
+      const qs = isHead ? quat : (arr === beforePos ? sh.beforeQuat : sh.afterQuat);
+      t.positions = pos.slice();
+      if (qs && t.quaternions) t.quaternions = qs.slice();
+      t.eulers = null;
+      reg.update(sh.pin, true);
+    }
     IKSolver.holdPins(main);
   };
   if (sm && sm.pushStateCustom) {
@@ -813,6 +925,7 @@ MotionPathEdit.beginXR = function (main, tip, radiusWorld) {
     falloff: { connected: MotionPathEdit.connected() },
     channels: MotionPathEdit.channels(),
   };
+  attachExtras(main, main._pathEdit, strand, strand.points[best], radiusWorld);
   return true;
 };
 
@@ -843,6 +956,16 @@ MotionPathEdit.dragXR = function (main, tip, intensity) {
   e.afterQ = ch.rotate
     ? MotionPathEdit.twisted(e.before, e.beforeQ, e.index, twist, e.radius, e.falloff)
     : null;
+  // The twist turns every curve about the HAND, not about each curve's own anchor -- the same
+  // reason the positional falloff shares one centre. Turning each about its own nearest sample
+  // would spin the far ones in place instead of swinging them around the grab.
+  applyExtras(e, (x) => {
+    x.after = MotionPathEdit.displace(x.before, x.index, delta, e.radius,
+      ch.translate ? twist : null, e.startWorld, e.extraOpts);
+    x.afterQ = (ch.rotate && x.beforeQ)
+      ? MotionPathEdit.twisted(x.before, x.beforeQ, x.index, twist, e.radius, e.extraOpts)
+      : null;
+  });
   return true;
 };
 
@@ -1062,6 +1185,72 @@ MotionPathEdit.hoverTick = function (main) {
   main._pathHoverLast = i;
   main.render?.();
   return true;
+};
+
+// WHY DID ONLY ONE CURVE MOVE. Three separate things can produce that one symptom -- the
+// option is on, there is only one editable curve on screen, or the others are outside the
+// sphere -- and from the outside they look identical. Run it during or right after a drag.
+window.pathMultiDiag = function () {
+  const main = window.app;
+  const strands = MotionPathEdit.strandsOf(main);
+  const e = main && main._pathEdit;
+  const on = MotionPathEdit.connected();
+  console.log('[path] Connectivity is ' + (on ? 'ON' : 'OFF')
+    + (on ? '  <-- ON measures ALONG the strand, so a curve you did not grab has no distance '
+          + 'from your grab at all and CANNOT be reached at any radius. Turn it OFF for the '
+          + 'sphere that spans curves.'
+          : '  (falloff is a sphere in space, so it can span curves)'));
+  console.log('[path] authored curves on screen: ' + strands.length
+    + (strands.length < 2 ? '  <-- fewer than 2, so there is nothing else to reach. Select '
+        + 'more than one keyed control.' : ''));
+  for (const st of strands) {
+    console.log('[path]   ' + (st.pin && (st.pin._permanentStaticLabel || ('#' + st.pin.getID())))
+      + '  samples=' + (st.points ? st.points.length : 0)
+      + '  editable=' + MotionPathEdit.editable(st.pin));
+  }
+  if (!e) {
+    // The LAST grab, recorded at the moment it happened. This is the reading that matters in
+    // VR, where the drag is over by the time you can type.
+    const g = main && main._pathLastGrab;
+    if (!g) {
+      console.log('[path] no live edit and no grab recorded yet -- grab a curve once, let go, '
+        + 'then run this again.');
+      return { connected: on, strands: strands.length };
+    }
+    console.log('[path] LAST GRAB: took ' + g.grabbed + '  radius=' + g.radius.toFixed(4)
+      + '  Connectivity was ' + (g.connected === false ? 'OFF' : 'ON')
+      + '  extras gathered=' + g.extras);
+    for (const r of g.others) {
+      console.log('[path]   ' + r.pin + ' nearest sample ' + r.nearest.toFixed(4)
+        + ' away, radius ' + g.radius.toFixed(4)
+        + (!r.editable ? '  <- NOT EDITABLE (parented pin)'
+          : (r.nearest <= g.radius ? '  <- inside, should have joined'
+            : '  <- OUTSIDE: the sphere is in WORLD space, and this curve is '
+              + (r.nearest / g.radius).toFixed(1) + 'x the radius away')));
+    }
+    return g;
+  }
+  const a = e.extraOpts && e.extraOpts.center;
+  console.log('[path] live edit: radius=' + e.radius.toFixed(4)
+    + '  extras gathered=' + (e.extra ? e.extra.length : 0)
+    + (e.extra ? '' : '  <-- none'));
+  // The distance that decides it, per curve, so "large radius" becomes a comparison rather
+  // than a belief.
+  if (a) {
+    for (const st of strands) {
+      if (st === e.strand) continue;
+      let best = Infinity;
+      for (const p of (st.points || [])) {
+        const dx = p.x - a.x, dy = p.y - a.y, dz = p.z - a.z;
+        best = Math.min(best, Math.sqrt(dx * dx + dy * dy + dz * dz));
+      }
+      console.log('[path]   nearest sample of '
+        + (st.pin && (st.pin._permanentStaticLabel || ('#' + st.pin.getID())))
+        + ' is ' + best.toFixed(4) + ' away, radius is ' + e.radius.toFixed(4)
+        + (best <= e.radius ? '  <- inside' : '  <- OUTSIDE, so it is not in the gesture'));
+    }
+  }
+  return { connected: on, strands: strands.length, extras: e.extra ? e.extra.length : 0 };
 };
 
 MotionPathEdit.active = function (main) { return !!(main && main._pathEdit); };

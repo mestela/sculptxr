@@ -15,7 +15,8 @@
 // Defect injections (standing lesson 1):
 //   MS_INJECT=sculpt      the modifier is consulted by the brush base class too, where the same
 //                         trigger already means smooth/negative
-//   MS_INJECT=grabsingle  Grab's VR select goes back to replacing the selection
+//   MS_INJECT=grabmulti   multi-select is put BACK into Grab, which matt found breaks the
+//                         pin path in the headset -- the exclusion is the feature
 //   MS_INJECT=outliner    the outliner row goes back to single-select
 //   MS_INJECT=dope        the dopesheet name goes back to single-select
 import fs from 'fs';
@@ -40,9 +41,9 @@ let GVR = R('src/editing/GizmoVR.js');
   };
   if (i === 'sculpt') SB = cut(SB, 'var mesh = null;',
     'if (main.multiSelectHeld?.()) ctrl = true;\n    var mesh = null;', i);
-  else if (i === 'grabsingle') GRAB = cut(GRAB,
-    'this._main.setOrUnsetMesh(mesh, this._main.multiSelectHeld?.(), true);',
-    'this._main.setMesh(mesh);', i);
+  else if (i === 'grabmulti') GRAB = cut(GRAB,
+    'if (!main.setOrUnsetMesh(mesh, ctrl)) return false;',
+    'if (!main.setOrUnsetMesh(mesh, ctrl || main.multiSelectHeld?.())) return false;', i);
   else if (i === 'outliner') PANEL = cut(PANEL,
     'main.setOrUnsetMesh?.(mesh, _multi);', 'main.setOrUnsetMesh?.(mesh, false);', i);
   else if (i === 'dope') TL = cut(TL,

@@ -18,6 +18,9 @@ const body = SRC.split('\n').filter((l) => !/^import\s/.test(l))
 //   PE_INJECT=lerpweight    the falloff scales the quaternion's components instead of slerping
 //                           from identity, which is not a rotation and gives the wrong angle
 //   PE_INJECT=diffresidual  the rotation residual is a subtraction, not after * inv(before)
+//   PE_INJECT=owncentre   each curve measures the falloff from its own nearest sample
+//   PE_INJECT=noextras    only the grabbed curve is ever gathered, so Connectivity off is
+//                         still implicitly one object
 //   PE_INJECT=nopushquat    finish() stops writing the rotation channel
 let INJ_BODY = null;
 {
@@ -32,12 +35,18 @@ let INJ_BODY = null;
     'const delta = reach;'];
   else if (i === 'swinggate') INJ_BODY = ['ch.translate ? twist : null, e.startWorld, e.falloff);',
     'ch.rotate ? twist : null, e.startWorld, e.falloff);'];
+  else if (i === 'owncentre') INJ_BODY = [
+    'const c = (opts && opts.center) || points[index];',
+    'const c = points[index];'];
+  else if (i === 'noextras') INJ_BODY = [
+    '  if (e.falloff.connected !== false) return null;',
+    '  if (true) return null;'];
   else if (i === 'headstrand') INJ_BODY = [
     'for (let s = 0; s < strands.length; s++) {',
     'for (let s = 0; s < Math.min(1, strands.length); s++) {'];
   else if (i === 'nopushquat') INJ_BODY = [
-    'const turned = MotionPathEdit.pushBackQuats(track, e.strand.times, e.beforeQ, e.afterQ);',
-    'const turned = 0;'];
+    'sh.turned = MotionPathEdit.pushBackQuats(t, rec.strand.times, rec.beforeQ, rec.afterQ);',
+    'sh.turned = 0;'];
 }
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_pathedit_gen.mjs');
@@ -781,14 +790,22 @@ const qAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3])));
       && /MotionPathEdit\.twisted\(e\.before, e\.beforeQ, e\.index, twist, e\.radius, e\.falloff\)/.test(MPS),
     'two twists computed separately is two chances for the path and the triads to disagree');
   check('finish pushes the rotation channel back',
-    /pushBackQuats\(track, e\.strand\.times, e\.beforeQ, e\.afterQ\)/.test(MPS));
+    /pushBackQuats\(t, rec\.strand\.times, rec\.beforeQ, rec\.afterQ\)/.test(MPS));
   check('...and a pure twist still counts as an edit',
     /if \(!moved && !turned\) return 0;/.test(MPS),
     'gating rotation behind a positional move loses every twist-only gesture');
   check('...and undo restores the quaternions with the positions, in ONE entry',
-    /const put = \(arr, quat\) =>[\s\S]{0,300}?t\.quaternions = quat\.slice\(\)/.test(MPS)
-      && /pushStateCustom\(\(\) => put\(beforePos, beforeQuat\), \(\) => put\(afterPos, afterQuat\)/.test(MPS),
+    /if \(qs && t\.quaternions\) t\.quaternions = qs\.slice\(\);/.test(MPS)
+      && /pushStateCustom\(\(\) => put\(beforePos, beforeQuat\), \(\) => put\(afterPos, afterQuat\)/.test(MPS)
+      && (MPS.match(/sm\.pushStateCustom\(/g) || []).length === 1,
     'two entries for one gesture, and the second undoes a state the first already changed');
+  // ...and that ONE entry covers EVERY curve the gesture touched. A drag with Connectivity off
+  // can move keys on several paths; undoing that a curve at a time is a different edit played
+  // backwards, so every snapshot has to restore inside the same entry.
+  check('...covering every curve the gesture touched, not just the grabbed one',
+    /const head = snap\(e\);\s*\n\s*applyExtras\(e, \(x\) => snap\(x\)\);/.test(MPS)
+      && /for \(const sh of shots\) \{/.test(MPS),
+    'the extras push back but do not undo = an undo that half-restores');
 
   // --- THE AIM PICKS THE CURVE (#49) ---------------------------------------------------
   //
@@ -829,11 +846,95 @@ const qAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3])));
       'begin() adds base to get gIndex; collapsing the two lit the wrong curve\'s dot');
   }
 
+  // --- ONE SPHERE, SEVERAL CURVES (#49) --------------------------------------------------
+  //
+  // Connectivity ON measures ALONG the strand, so a curve you did not grab has no meaningful
+  // distance and gets nothing -- implicitly one object. OFF, the falloff is a sphere in space
+  // and any keyframe inside it moves whatever curve it belongs to. matt's own reading of the
+  // option, and the reason this needed no new gesture.
+  {
+    const row = (y) => [0, 1, 2, 3, 4].map((i) => ({ x: i, y: y, z: 0 }));
+    const near = row(0);
+    // THE CENTRE HAS TO BE SHARED. Measured from its own nearest sample, a curve the sphere
+    // merely grazes gets weight 1 at that sample and moves as though grabbed in the middle.
+    const c = { x: 2, y: 0, z: 0 };
+    const own = MPE.weights(near, 2, 2, { connected: false });
+    const shared = MPE.weights(row(1.5), 2, 2, { connected: false, center: c });
+    check('an explicit centre is what several curves share',
+      shared[2] < own[2] && shared[2] > 0,
+      'weight ' + shared[2].toFixed(3) + ' at the near sample of a curve 1.5 away, vs '
+        + own[2].toFixed(3) + ' measured from its own');
+    check('...and a curve outside the sphere gets nothing',
+      MPE.weights(row(9), 2, 2, { connected: false, center: c }).every((w) => w === 0));
+    // The grabbed curve is unaffected by the change: its own anchor IS the shared centre.
+    check('...while the grabbed curve reads exactly as it always did',
+      MPE.weights(near, 2, 2, { connected: false, center: c })
+        .every((w, i) => Math.abs(w - own[i]) < 1e-12),
+      'the primary must not change behaviour just because others joined the gesture');
+
+    // Connectivity ON is the one-object case, and must stay so.
+    const along = MPE.weights(near, 2, 2, { connected: true });
+    check('with Connectivity ON the falloff still runs along the strand',
+      along[2] === 1 && along[0] === 0,
+      'arc length, not distance -- this is what makes it implicitly a single curve');
+  }
+
+  // ...and the gathering itself, through the REAL begin/drag rather than through weights():
+  // a shared centre is no use if the second curve is never put in the session to begin with.
+  {
+    const mk = (y, base, id) => ({
+      points: [0, 1, 2, 3, 4].map((i) => ({ x: i, y: y, z: 0 })),
+      times: [0, 1, 2, 3, 4], base: base, quats: null,
+      pin: { getID: () => id, _pinnedJoint: {} },
+    });
+    const mkMain = () => {
+      const a = mk(0, 0, 1), b = mk(1, 5, 2), far = mk(50, 10, 3);
+      return { _trailStrand: a, _trailStrands: [a, b, far],
+        _vrControllerQuat: [0, 0, 0, 1], a: a, b: b, far: far };
+    };
+
+    globalThis.window._pathConnected = false;
+    const m1 = mkMain();
+    check('a grab acquires the curve under the hand', MPE.beginXR(m1, [2, 0, 0], 3) === true);
+    const e1 = m1._pathEdit;
+    check('...and gathers the OTHER curve inside the sphere',
+      !!e1.extra && e1.extra.length === 1 && e1.extra[0].strand === m1.b,
+      'extras: ' + (e1.extra ? e1.extra.length : 'none')
+        + ' -- without this, Connectivity off is still implicitly one object');
+    check('...but not one outside it',
+      !e1.extra.some((x) => x.strand === m1.far));
+
+    // And the drag actually reaches it.
+    m1._vrControllerQuat = [0, 0, 0, 1];
+    MPE.dragXR(m1, [2, 0, 1], 1);
+    check('a drag moves the curve it did not grab',
+      !!e1.extra[0].after && Math.abs(e1.extra[0].after[2].z) > 1e-6,
+      'z moved ' + (e1.extra[0].after ? e1.extra[0].after[2].z.toFixed(4) : 'not at all'));
+    check('...by LESS than the curve it did grab, being further from the centre',
+      Math.abs(e1.extra[0].after[2].z) < Math.abs(e1.after[2].z),
+      'one sphere means one falloff, measured from the hand');
+
+    // Connectivity ON is the single-object case and must stay untouched.
+    globalThis.window._pathConnected = true;
+    const m2 = mkMain();
+    MPE.beginXR(m2, [2, 0, 0], 3);
+    check('with Connectivity ON no other curve joins the gesture',
+      !m2._pathEdit.extra,
+      'along-the-strand distance is meaningless for a curve you did not grab');
+    delete globalThis.window._pathConnected;
+  }
+
   const TRAIL_R = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
   check('the gnomons are drawn from the live edit while it is running',
-    /return \(e && e\.strand === st && e\.after\) \|\| st\.points;/.test(TRAIL_R)
-      && /return \(e && e\.strand === st && e\.afterQ\) \|\| st\.quats;/.test(TRAIL_R),
+    /return \(r && r\.after\) \|\| st\.points;/.test(TRAIL_R)
+      && /return \(r && r\.afterQ\) \|\| st\.quats;/.test(TRAIL_R),
     'perFrame calls drawGnomons every frame, so the baseline would repaint over the twist');
+  // The record is looked up PER STRAND -- the grabbed curve or any extra the sphere reached --
+  // so a curve the gesture is not touching keeps its own geometry rather than borrowing the
+  // dragged one's.
+  check('...and the live edit owns exactly the curves it is editing',
+    /if \(e\.strand === st\) return e;/.test(TRAIL_R)
+      && /return \(e\.extra && e\.extra\.find\(\(x\) => x\.strand === st\)\) \|\| null;/.test(TRAIL_R));
   // ...and the live edit owns ONLY the curve it is editing. Without the `e.strand === st`
   // guard, every other path on screen would redraw itself from the dragged one's geometry.
   check('...and drawGnomons reads those rather than the strand directly',

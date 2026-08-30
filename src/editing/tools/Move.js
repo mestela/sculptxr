@@ -323,9 +323,8 @@ class Move extends SculptBase {
 
   sculptStroke() {
     if (MotionPathEdit.active(this._main)) {
-      const e = this._main._pathEdit;
       if (MotionPathEdit.drag(this._main, this._main._mouseX, this._main._mouseY)) {
-        MotionTrail.redraw(this._main, e.strand.line, e.after);
+        MotionTrail.redrawEdit(this._main);
         this._main.render();
       }
       return;

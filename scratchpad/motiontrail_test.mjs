@@ -31,9 +31,9 @@ if (inject === 'jointignorespin') {
   SRC = SRC.replace(a, '');
 }
 if (inject === 'flatreach') {
-  const a = "    const raw = 1 - Math.abs(ordinal[k] - centreOf.get(idx[k].s)) / GNOMON_KEY_REACH;";
+  const a = "      : 1 - Math.abs(ordinal[k] - centreOf.get(idx[k].s)) / GNOMON_KEY_REACH;";
   if (!SRC.includes(a)) throw new Error('inject flatreach: anchor moved');
-  SRC = SRC.replace(a, "    const raw = 1 - Math.abs(k - centreOf.get(idx[0].s)) / GNOMON_KEY_REACH;");
+  SRC = SRC.replace(a, "      : 1 - Math.abs(k - centreOf.get(idx[0].s)) / GNOMON_KEY_REACH;");
 }
 if (inject === 'headonly') {
   const a = '  for (const t of targets) {';

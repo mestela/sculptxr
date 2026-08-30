@@ -689,13 +689,19 @@ function strandsOf(main) {
 // drag, so reading the baseline here would repaint the old shape one frame after the drag drew
 // the new one -- the gnomons would sit inert while the path moved, which is indistinguishable
 // from the rotation not being editable at all. The strands NOT under the drag keep their own.
-function drawnPoints(main, st) {
+function editRecord(main, st) {
   const e = main._pathEdit;
-  return (e && e.strand === st && e.after) || st.points;
+  if (!e) return null;
+  if (e.strand === st) return e;
+  return (e.extra && e.extra.find((x) => x.strand === st)) || null;
+}
+function drawnPoints(main, st) {
+  const r = editRecord(main, st);
+  return (r && r.after) || st.points;
 }
 function drawnQuats(main, st) {
-  const e = main._pathEdit;
-  return (e && e.strand === st && e.afterQ) || st.quats;
+  const r = editRecord(main, st);
+  return (r && r.afterQ) || st.quats;
 }
 
 MotionTrail.drawGnomons = function (main) {
@@ -1332,9 +1338,17 @@ MotionPathEdit.unprojectHook = function (main, x, y, depthOf) {
 };
 const _invG = new THREE.Matrix4();
 
-MotionPathEdit.redrawHook = function (main) {
-  const e = main._pathEdit;
-  if (e && e.after) MotionTrail.redraw(main, e.strand.line, e.after);
+MotionPathEdit.redrawHook = function (main) { MotionTrail.redrawEdit(main); };
+
+// EVERY curve the gesture is moving, not only the one under the hand. Shared rather than
+// repeated at each of the three callers: redrawing just the primary leaves the others frozen
+// until the trigger comes up, which reads as them not being edited at all.
+MotionTrail.redrawEdit = function (main) {
+  const e = main && main._pathEdit;
+  if (!e) return;
+  if (e.after) MotionTrail.redraw(main, e.strand.line, e.after);
+  if (!e.extra) return;
+  for (const x of e.extra) if (x.after) MotionTrail.redraw(main, x.strand.line, x.after);
 };
 
 // Write one curve's points into its fat-line geometry. The colour buffer is left alone here:
