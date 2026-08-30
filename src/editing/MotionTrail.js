@@ -550,15 +550,24 @@ function makeFat(main, px, opacity, order) {
     linewidth: px,               // SCREEN pixels, because worldUnits is off
     worldUnits: false,
     vertexColors: true,
-    // OPAQUE. Transparency here meant a blended pass per overlay every frame, and in the
-    // headset that was showing as judder. It also cost the colours their saturation, since a
-    // part-alpha line is literally mixed with whatever is behind it.
+    // LATE PASS, BUT NOT BLENDED. `depthTest: false` and renderOrder 9998 were not enough on
+    // their own, and the reason is a rule renderOrder cannot beat: three.js draws EVERY
+    // transparent object after EVERY opaque one, and renderOrder only sorts WITHIN a pass. Every
+    // mesh in this app is `transparent: true` (measured: opacity 1, but transparent all the
+    // same), so an opaque overlay is painted over by the whole scene however high its order.
+    // This is also exactly how the BONES have always drawn through meshes -- their visuals are
+    // transparent with a high order -- so this makes the trail match the thing it is drawn
+    // alongside rather than inventing a second mechanism.
     //
-    // The trade, stated plainly: LineMaterial antialiases its edge THROUGH alpha, and this
-    // renderer runs with antialias:false (MSAA breaks WebXR session start here), so
-    // alphaToCoverage has no coverage to work with either. Opaque means hard edges. That is a
-    // real loss and the reason to keep the widths modest.
-    transparent: false,
+    // `transparent` here buys the PASS, and NoBlending declines the blend. The previous note
+    // rejected transparency because a blended pass per overlay showed as judder in the headset,
+    // and because a part-alpha line is literally mixed with whatever is behind it and loses its
+    // saturation. Both of those are the BLEND, not the pass — so neither is paid here. Edges
+    // stay hard exactly as before (LineMaterial antialiases through alpha, and this renderer
+    // runs antialias:false because MSAA breaks WebXR session start), which is unchanged, not a
+    // new loss, and still the reason to keep the widths modest.
+    transparent: true,
+    blending: THREE.NoBlending,
     depthWrite: false,
     depthTest: false,
     // The overlay is a readout, not part of the scene's lighting. Tone mapping would roll a
@@ -849,6 +858,93 @@ MotionTrail.drawGnomons = function (main) {
 //   scale   — 1 - (keys from the playhead) / 10. A triad nine keys from the playhead is drawn
 //             at a TENTH of full size, on purpose. If minScale is small and unit is right, the
 //             triads are not the wrong size; the playhead is somewhere else.
+// WHY IS THE TRAIL BEHIND THE MESH. Everything in the source says it cannot be: depthTest is
+// off and the render order is 9998 against a mesh's 0. So the answer is a runtime fact, and
+// there is exactly one that the source cannot show -- three.js renders ALL transparent objects
+// after ALL opaque ones, and renderOrder only sorts WITHIN a pass. An opaque overlay therefore
+// loses to a transparent mesh no matter how high its order.
+window.trailDepthDiag = function () {
+  const main = window.app;
+  const v = main && main._trailVis;
+  if (!v || !v.lines || !v.lines.length) {
+    console.log('[trail] nothing drawn -- turn Trails on with a keyed control selected');
+    return null;
+  }
+  const m = v.lines[0].material;
+  console.log('[trail] line   depthTest=' + m.depthTest + ' depthWrite=' + m.depthWrite
+    + ' transparent=' + m.transparent + ' renderOrder=' + v.lines[0].renderOrder
+    + '  (pass: ' + (m.transparent ? 'TRANSPARENT' : 'opaque') + ')');
+  const dm = v.dots && v.dots.material;
+  if (dm) {
+    console.log('[trail] dots   depthTest=' + dm.depthTest + ' transparent=' + dm.transparent
+      + ' renderOrder=' + v.dots.renderOrder);
+  }
+  // And the meshes it is losing to.
+  let worst = null;
+  for (const mesh of (main.getMeshes ? main.getMeshes() : [])) {
+    const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+    const mm = tm && tm.material;
+    if (!mm) continue;
+    const row = { name: mesh._permanentStaticLabel || ('#' + mesh.getID()),
+      transparent: !!mm.transparent, opacity: mm.opacity, order: tm.renderOrder };
+    console.log('[trail] mesh   ' + row.name + '  transparent=' + row.transparent
+      + ' opacity=' + row.opacity + ' renderOrder=' + row.order
+      + (row.transparent ? '  <-- TRANSPARENT: drawn after every opaque object, so it paints '
+        + 'over the trail whatever the trail order is' : ''));
+    if (row.transparent) worst = row;
+  }
+  if (!worst) {
+    console.log('[trail] no transparent mesh found -- so the overlap is NOT the pass order, '
+      + 'and depthTest=false above should already be winning. Tell me what this printed.');
+  }
+  return { line: { depthTest: m.depthTest, transparent: m.transparent }, culprit: worst };
+};
+
+// WHY ARE THE JOINT DOTS STILL ON. The flag is one of six reasons a dot draws, and the other
+// five are deliberate -- a dot that is the ONLY marker of a pickable thing must not be
+// switchable off. So "the button does nothing" is usually one of those five, and this says
+// which, per joint, instead of leaving it to be guessed.
+window.jointDotDiag = function () {
+  const main = window.app;
+  const flags = {
+    joints: Skeleton.displayFlag('joints'),
+    solid: Skeleton.displayFlag('solid'),
+    wire: Skeleton.displayFlag('wire'),
+  };
+  const noBoneBody = !flags.solid && !flags.wire;
+  console.log('[joints] Joints=' + flags.joints + '  Solid=' + flags.solid
+    + '  Wire=' + flags.wire
+    + (noBoneBody ? '\n[joints] Solid AND Wire are both OFF, so the dots are the only thing '
+        + 'marking a joint and are forced on REGARDLESS of the Joints flag. Turn Solid or Wire '
+        + 'on and the flag takes effect.' : ''));
+  const joints = Skeleton.joints(main) || [];
+  const sel = new Set((main.getSelectedMeshes?.() || []).map((x) => x.getID()));
+  const hasChildBone = new Set();
+  for (const j of joints) {
+    const p = j._parentMesh;
+    if (Skeleton.isJoint(p)) hasChildBone.add(p.getID());
+  }
+  let forced = 0;
+  for (const j of joints) {
+    const id = j.getID();
+    const isolated = !hasChildBone.has(id) && !Skeleton.isJoint(j._parentMesh);
+    const isSel = sel.has(id);
+    const why = [];
+    if (flags.joints) why.push('flag on');
+    if (noBoneBody) why.push('no bone body');
+    if (isolated) why.push('ISOLATED (no bone at either end)');
+    if (isSel) why.push('selected');
+    if (why.length && !flags.joints) forced++;
+    if (why.length && !flags.joints) {
+      console.log('[joints]   ' + (j._permanentStaticLabel || ('#' + id))
+        + ' visible despite the flag: ' + why.join(', '));
+    }
+  }
+  console.log('[joints] ' + joints.length + ' joints, ' + forced
+    + ' drawn for a reason other than the flag');
+  return { flags: flags, joints: joints.length, forced: forced };
+};
+
 window.gnomonDiag = function () {
   const main = _lastMain;
   const d = main && main._trailVis && main._trailVis.gnomonDbg;
@@ -889,7 +985,10 @@ function makeDots(main, sizePx) {
     // to go. The edge is harder than it was; a few pixels across, that is a fair trade.
     alphaTest: 0.5,
     vertexColors: true,       // key dots carry the time ramp; sample dots carry identity
-    transparent: false,
+    // The same late-pass-without-the-blend as the lines above; see makeFat for why. alphaTest
+    // is a discard in the shader, so the round dot survives NoBlending untouched.
+    transparent: true,
+    blending: THREE.NoBlending,
     depthWrite: false,
     depthTest: false,
     toneMapped: false,

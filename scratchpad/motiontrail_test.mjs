@@ -14,6 +14,10 @@
 //                             on which of the two the pick happened to return
 //   TRAIL_INJECT=headonly     only the head of a multi-selection trails, the rest are dropped
 //   TRAIL_INJECT=nodedupe     a joint and the pin on it each contribute the same curve
+//   TRAIL_INJECT=opaqueoverlay  the overlay goes back to the opaque pass, where a scene of
+//                             transparent meshes paints straight over it
+//   TRAIL_INJECT=blendoverlay the late pass is taken WITH the blend -- the judder and the
+//                             washed-out colours the old note was right about
 //   TRAIL_INJECT=flatreach    the gnomon reach counted down the concatenated key list, so only
 //                             the first curve's triads are ever in range
 import fs from 'fs';
@@ -29,6 +33,16 @@ if (inject === 'jointignorespin') {
   const a = "      if (pin && pin._isPinTarget && keyed(pin)) add(pin, true);";
   if (!SRC.includes(a)) throw new Error('inject jointignorespin: anchor moved');
   SRC = SRC.replace(a, '');
+}
+if (inject === 'opaqueoverlay') {
+  const a = "    transparent: true,\n    blending: THREE.NoBlending,";
+  if (!SRC.includes(a)) throw new Error('inject opaqueoverlay: anchor moved');
+  SRC = SRC.split(a).join("    transparent: false,");
+}
+if (inject === 'blendoverlay') {
+  const a = "    blending: THREE.NoBlending,";
+  if (!SRC.includes(a)) throw new Error('inject blendoverlay: anchor moved');
+  SRC = SRC.split(a).join("    blending: THREE.NormalBlending,");
 }
 if (inject === 'flatreach') {
   const a = "      : 1 - Math.abs(ordinal[k] - centreOf.get(idx[k].s)) / GNOMON_KEY_REACH;";
@@ -461,6 +475,32 @@ function setup(times) {
 
 // --- 5d. the trail target STICKS to the last rig node -------------------------------------
 //
+// --- ALWAYS ON TOP, LIKE THE BONES ----------------------------------------------------
+//
+// depthTest:false and renderOrder 9998 were not enough, and the reason is a rule renderOrder
+// cannot beat: three.js draws EVERY transparent object after EVERY opaque one, and renderOrder
+// sorts only WITHIN a pass. Every mesh in this app is transparent (measured on prod: opacity 1,
+// transparent all the same), so an opaque overlay is painted over by the whole scene. The
+// overlay must therefore be in the LATE pass -- and must NOT pay for the blend, which is what
+// showed as judder in the headset the last time transparency was tried here.
+{
+  const SRC_R = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
+  // Anchored to the material PROPERTY (line-start, trailing comma), not the words -- the
+  // rationale comments above these materials contain the same text.
+  const props = (SRC_R.match(/^\s+transparent: true,$/gm) || []).length;
+  check('the overlay materials are in the transparent PASS',
+    !/^\s+transparent: false,$/m.test(SRC_R) && props >= 2,
+    'an opaque overlay cannot beat a transparent mesh at any renderOrder');
+  check('...and every one of them declines the BLEND',
+    (SRC_R.match(/^\s+blending: THREE\.NoBlending,$/gm) || []).length === props,
+    'transparent buys the pass; NoBlending is what keeps the judder and the washed-out '
+      + 'colours away. A transparent: true without it is the regression.');
+  check('...while still ignoring depth, and drawing above the meshes',
+    (SRC_R.match(/depthTest: false/g) || []).length >= 2
+      && /const TRAIL_ORDER = 9998;/.test(SRC_R)
+      && /const DOT_ORDER = 9999;/.test(SRC_R));
+}
+
 // --- SELECT SEVERAL, SEE SEVERAL ------------------------------------------------------
 //
 // #49. The sampler and the line pool were always written for N curves; what was single was the
@@ -624,10 +664,13 @@ function setup(times) {
 
   // Identity moved to the dots when the line took the gradient.
   check('the line is drawn with per-vertex colour', /vertexColors: true/.test(SRC));
-  // NO BLENDING ANYWHERE. It cost a blended pass per overlay every frame, and it was also why
-  // the colours went pastel in the headset: a part-alpha line IS mixed with what is behind it.
+  // NO BLENDING ANYWHERE -- it cost a blended pass per overlay every frame, and it was why the
+  // colours went pastel in the headset: a part-alpha line IS mixed with what is behind it.
+  // This used to be written as "no transparency", which conflated two separate things. The
+  // PASS is what puts the overlay above a scene of transparent meshes; the BLEND is what cost
+  // the judder and the saturation. Take the pass, decline the blend.
   check('no overlay is drawn with alpha blending',
-    !/transparent: true/.test(SRC) && /transparent: false/.test(SRC),
+    /blending: THREE\.NoBlending/.test(SRC) && !/blending: THREE\.NormalBlending/.test(SRC),
     'blending was the judder suspect and the pastel cause both');
   check('...the dots keep their round shape by CUTOUT instead',
     /alphaTest: 0\.5/.test(SRC) && /map: dotTexture\(\)/.test(SRC),

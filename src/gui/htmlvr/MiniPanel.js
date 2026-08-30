@@ -780,14 +780,18 @@ export class MiniPanel extends HTMLVRPanel {
       if (clearBtn) {
         clearBtn.addEventListener('click', () => {
           const t = sm?.getCurrentTool?.();
-          if (t?.clearMask) { t.clearMask(); main.render?.(); }
+          // The tool's methods are clear()/invert(), not clearMask()/invertMask(). Written as
+          // an optional-chained guard, the wrong name did not throw -- the buttons simply did
+          // nothing, forever, and read as "clear and invert mask seem broken" (Quest 2 user,
+          // 2026-08-28). A guard that hides a typo is worse than no guard.
+          if (t?.clear) { t.clear(); main.render?.(); }
           this.syncFromState();
         });
       }
       if (invertBtn) {
         invertBtn.addEventListener('click', () => {
           const t = sm?.getCurrentTool?.();
-          if (t?.invertMask) { t.invertMask(); main.render?.(); }
+          if (t?.invert) { t.invert(); main.render?.(); }
           this.syncFromState();
         });
       }
