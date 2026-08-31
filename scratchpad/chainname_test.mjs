@@ -277,7 +277,7 @@ const label = (m) => m._permanentStaticLabel;
     Skeleton.nameSuggestions(axis).includes('spine')
       && !Skeleton.nameSuggestions(axis).includes('arm'));
   for (const [what, list] of [['limb', Skeleton.LIMB_NAMES], ['axis', Skeleton.AXIS_NAMES]])
-    check(`the ${what} list stays flick-able (<= 7, leaving a wedge for Type...)`,
+    check(`the ${what} list stays flick-able (<= 7, leaving a wedge for Keyboard)`,
       list.length <= 7, list.length + ' entries');
   check('and nothing is offered for no joint at all',
     Skeleton.nameSuggestions(null).length > 0,

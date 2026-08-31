@@ -16,6 +16,13 @@
 //   RD_INJECT=reopenonrelease  the submenu opens on the release again — the reported bug
 //   RD_INJECT=reachiswheel     the movement scale goes back to the wheel's world size, so the
 //                              submenu needs a shove four times longer than a selection
+//   RD_INJECT=chasehand        submenus re-origin where the hand pushed to, so a chain of them
+//                              walks across the room and you end up chasing the menu
+//   RD_INJECT=norecentre       a new ring arms while the hand is still held out, so one flick
+//                              falls through every level of a chain
+//   RD_INJECT=noclipfit        labels go back to a fixed size with no fitting, so they clip
+//   RD_INJECT=arcwidth         the wedge's usable width is measured as the arc, not the chord,
+//                              which is always too generous and still clips
 //   RD_INJECT=nopushout        the submenu no longer opens mid-hold, so it needs a second press
 //   RD_INJECT=basecam          the wheel is faced with the app's base camera, which during a
 //                              session carries the desktop orbit view, not the head
@@ -39,9 +46,30 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/VrRadialMenu.js'), 'ut
     const a = '        this._pending = sub;';
     if (!SRC.includes(a)) throw new Error('inject reopenonrelease: anchor moved');
     SRC = SRC.replace(a, '        this._isSub = true;\n        this._openAt(this._pNow.clone(), sub);');
+  } else if (inj === 'chasehand') {
+    // The submenu re-origins at the crossing point again, so each level walks away from the last.
+    const a = '        this._openAt(this._p0, sub);';
+    if (!SRC.includes(a)) throw new Error('inject chasehand: anchor moved');
+    SRC = SRC.replace(a, '        this._openAt(cpos, sub);');
+  } else if (inj === 'norecentre') {
+    // The new ring arms immediately, so the push-out that opened it selects again at once.
+    const a = '        this._needRecentre = true;';
+    if (!SRC.includes(a)) throw new Error('inject norecentre: anchor moved');
+    SRC = SRC.replace(a, '        this._needRecentre = false;');
+  } else if (inj === 'noclipfit') {
+    // Labels go back to a fixed size with no fitting, so long ones run past the wedge.
+    const a = '      const fit = fitLabel(ctx, cmd.label ?? \'\', maxW, Math.round(tuning().labelPx));';
+    if (!SRC.includes(a)) throw new Error('inject noclipfit: anchor moved');
+    SRC = SRC.replace(a, '      const fit = { px: 30, lines: [cmd.label ?? \'\'] };');
+  } else if (inj === 'arcwidth') {
+    // The available width is measured as the ARC rather than the CHORD -- always longer than
+    // the straight line it subtends, so it reports room that is not there and the text clips.
+    const a = '  const chord = 2 * rL * Math.sin(Math.min(seg, Math.PI) / 2);';
+    if (!SRC.includes(a)) throw new Error('inject arcwidth: anchor moved');
+    SRC = SRC.replace(a, '  const chord = rL * seg;');
   } else if (inj === 'nopushout') {
     // The submenu no longer opens mid-hold, so choosing it needs a second press again.
-    const a = '    if (!this._isSub && active >= 0 && dist >= t.reachM * t.subRadius) {';
+    const a = '    if (active >= 0 && dist >= t.reachM * t.subRadius) {';
     if (!SRC.includes(a)) throw new Error('inject nopushout: anchor moved');
     SRC = SRC.replace(a, '    if (false) {');
   } else if (inj === 'reachiswheel') {
@@ -138,14 +166,121 @@ globalThis.window = { app: { _camera: { getThreeCamera: () => ({
   quaternion: new Q(CAM_WORLD_YAW - CAM_PARENT_YAW),   // LOCAL: differs from world
   getWorldQuaternion: (q) => { q._yaw = CAM_WORLD_YAW; return q; } }) } } };
 globalThis.document = { createElement: () => ({ width: 0, height: 0,
-  getContext: () => new Proxy({}, { get: () => () => {} }) }) };
+  // measureText has to return something SHAPED like a TextMetrics -- the blanket Proxy below
+  // answers every property with a no-op function, which is undefined once you read `.width`.
+  getContext: () => new Proxy({ measureText: (t) => ({ width: String(t).length * 8 }) },
+    { get: (o, k) => (k in o ? o[k] : () => {}) }) }) };
 
 const body = SRC.split('\n').filter((l) => !/^import\s/.test(l))
   .filter((l) => !/^export /.test(l) || l.includes('class VrRadialMenu')).join('\n')
   .replace('export class VrRadialMenu', 'class VrRadialMenu');
-const VrRadialMenu = new Function('THREE', body + '\nreturn VrRadialMenu;')(THREE);
+const _exports = new Function('THREE', body + '\nreturn { VrRadialMenu, fitLabel, wedgeWidth };')(THREE);
+const VrRadialMenu = _exports.VrRadialMenu;
+const fitLabel = _exports.fitLabel;
+const wedgeWidth = _exports.wedgeWidth;
+
+// --- LABELS THAT FIT THEIR WEDGE ------------------------------------------------------
+//
+// matt: "a lot of the text is getting clipped." A wedge is a RING SEGMENT, so the width a
+// horizontal label actually has is the CHORD at the label's radius -- measuring the arc gives
+// a number that is always too generous and lets text run past the edges.
+//
+// fitLabel is pure, so it is driven directly with a measuring stub rather than inspected.
+{
+  // A monospace-ish stub: every glyph is 0.5em. Enough to make width a function of length and
+  // size, which is all the layout logic depends on.
+  const ctx = {
+    font: '',
+    measureText(t) {
+      const px = Number((this.font.match(/(\d+)px/) || [])[1]) || 10;
+      return { width: t.length * px * 0.5 };
+    },
+  };
+  const widthOf = (fit) =>
+    Math.max(...fit.lines.map((l) => l.length * fit.px * 0.5));
+
+  // A wedge is a RING SEGMENT: the width a horizontal label really has is the CHORD, and the
+  // arc is always longer than the straight line it subtends. Measuring the arc reports room
+  // that is not there, which is precisely how text ends up over the edges.
+  for (const n of [4, 6, 8, 12]) {
+    const seg = (Math.PI * 2) / n, rL = 170;
+    // Against the EXACT chord, not merely "less than the arc" -- the padding factor alone is
+    // enough to bring an arc-based width under the arc, so that comparison passes with the
+    // wrong formula in place. It has to be the straight line, to within rounding.
+    const w = wedgeWidth(rL, seg, 1e6);          // ring depth large, so only the chord binds
+    const chord = 2 * rL * Math.sin(seg / 2);
+    check('with ' + n + ' wedges the width IS the chord, padded',
+      Math.abs(w / chord - 0.84) < 1e-6,
+      w.toFixed(2) + ' vs chord ' + chord.toFixed(2) + ' (arc would be '
+        + (rL * seg).toFixed(2) + ')');
+  }
+  check('a narrower wedge gets less room, monotonically',
+    wedgeWidth(170, Math.PI / 6, 138) < wedgeWidth(170, Math.PI / 3, 138));
+
+  const short = fitLabel(ctx, 'Split', 120, 22);
+  check('a label that already fits is left alone, at full size',
+    short.px === 22 && short.lines.length === 1 && short.lines[0] === 'Split',
+    JSON.stringify(short));
+
+  // The whole point: nothing may exceed the width it was given.
+  for (const [label, maxW] of [['Dissolve Joint', 90], ['Set Parent To', 70],
+                               ['Name This Chain', 60], ['Rotation Only Pin', 55]]) {
+    const fit = fitLabel(ctx, label, maxW, 22);
+    check('"' + label + '" fits inside ' + maxW + 'px',
+      widthOf(fit) <= maxW || fit.px === 13,
+      'laid out at ' + fit.px + 'px as ' + JSON.stringify(fit.lines)
+        + ' = ' + widthOf(fit).toFixed(1) + 'px');
+  }
+
+  // A WHOLE WORD BEATS A BROKEN ONE: wrapping is tried before shrinking, so a two-word label
+  // stays readable rather than being scaled down to fit on one line.
+  const wrapped = fitLabel(ctx, 'Dissolve Joint', 90, 22);
+  check('a two-word label wraps before it shrinks',
+    wrapped.lines.length === 2 && wrapped.px === 22,
+    JSON.stringify(wrapped));
+
+  // ...and the split is the most even one available, not simply the first space.
+  // ...at the split that makes the WIDEST line as narrow as possible, which is the thing that
+  // decides whether it fits. Not the most even split, and not the first space -- splitting at
+  // the first space leaves one short line and one that may still not fit.
+  const even = fitLabel(ctx, 'Set Parent To', 70, 22);
+  const parts = 'Set Parent To'.split(' ');
+  let bestPossible = Infinity;
+  for (let k = 1; k < parts.length; k++) {
+    bestPossible = Math.min(bestPossible,
+      Math.max(parts.slice(0, k).join(' ').length, parts.slice(k).join(' ').length));
+  }
+  check('...at the split that makes the widest line narrowest',
+    even.lines.length === 2
+      && Math.max(...even.lines.map((l) => l.length)) === bestPossible,
+    JSON.stringify(even.lines) + ' widest ' + Math.max(...even.lines.map((l) => l.length))
+      + ', best available ' + bestPossible);
+
+  // A single long word cannot wrap, so it must shrink instead.
+  const long = fitLabel(ctx, 'Antidisestablishment', 60, 22);
+  check('an unbreakable word shrinks rather than overflowing',
+    long.lines.length === 1 && long.px < 22, JSON.stringify(long));
+
+  // But not past readability -- past the floor the answer is a shorter LABEL, not smaller type.
+  const tiny = fitLabel(ctx, 'Antidisestablishmentarianism', 10, 22);
+  check('...and never below the readable floor',
+    tiny.px === 13, 'floor is 13px; got ' + tiny.px);
+
+  // Type matched to the bone labels, which is what let the wheel shrink. Read off the LIFTED
+  // tuning defaults rather than a regex, for the reason the note below already gives.
+  const tune0 = new Function('window',
+    SRC.slice(SRC.indexOf('function tuning()'), SRC.indexOf('\n}', SRC.indexOf('function tuning()')) + 2)
+    + '\nreturn tuning;')({})();
+  check('the base type size is the smaller one matched to the bone labels',
+    tune0.labelPx <= 24, 'labelPx ' + tune0.labelPx + ' (was 30)');
+  check('...and the wheel shrank with it',
+    tune0.radiusM < 0.12, 'radiusM ' + tune0.radiusM + ' (was 0.12)');
+  check('...and the draw path reads the tunable, so it can be dialled in the headset',
+    /tuning\(\)\.labelPx/.test(SRC));
+}
 
 // Drive it the way Scene does: one handleInput per frame.
+
 const P = (x, y) => new V3(x, y, 0);
 function session(rootCmds, parentYaw = 0) {
   PARENT_YAW = parentYaw;
@@ -214,13 +349,27 @@ const NEAR_UP = P(0, 0.06);
   check('pushing out opens the submenu WITHOUT releasing', s.m._isSub === true
     && s.m._commands.map((c) => c.label).join() === 'arm,leg',
     s.m._commands.map((c) => c.label).join());
-  check('...and it re-origins at the crossing point, not where the gesture began',
-    Math.abs(s.m._p0.y - FAR.y) < 1e-9,
-    'otherwise every child sector sits a rim off to one side');
+  // EVERY RING OPENS WHERE THE FIRST ONE DID. Re-origining at the crossing point made each
+  // level appear wherever the hand had pushed to, so a three-deep chain walked across the room
+  // -- matt: "the menu drifts to the left, choose limbs, it drifts further left." A fixed
+  // target is worth the return stroke it costs.
+  check('...and it stays at the ORIGINAL origin rather than chasing the hand',
+    Math.abs(s.m._p0.y - CENTRE.y) < 1e-9 && Math.abs(s.m._p0.x - CENTRE.x) < 1e-9,
+    'p0 ' + s.m._p0.x + ',' + s.m._p0.y + ' -- a menu you have to chase is not a gesture');
   check('...with nothing run yet', s.ran.length === 0);
 
-  // From the new origin, move to a child sector and release.
-  s.drag(P(FAR.x, FAR.y + 0.2)); s.release(P(FAR.x, FAR.y + 0.2));
+  // STEP IN BEFORE YOU CAN STEP OUT. The hand is still out past the rim -- that is what opened
+  // this ring -- so it must not select until it has come back to the middle.
+  s.drag(P(FAR.x, FAR.y + 0.2));
+  check('the new ring does not arm while the hand is still held out',
+    s.m._active === -1,
+    'without this, the push-out that opened the ring selects again in the same motion and one '
+      + 'flick falls through every level of a chain');
+  s.drag(CENTRE);
+  check('...and coming back to the middle re-arms it', s.m._needRecentre === false);
+
+  // Now, from the original origin, out to a child sector and release.
+  s.drag(P(0, 0.2)); s.release(P(0, 0.2));
   check('releasing in the child runs the child command', s.ran.join() === 'arm', s.ran.join());
   check('...and closes', s.m.isOpen === false);
 
@@ -273,16 +422,21 @@ const NEAR_UP = P(0, 0.06);
   s.press(CENTRE); s.drag(FAR);
   check('the first push-out opens the second ring',
     s.m._commands.map((c) => c.label).join() === 'two');
-  // Push out AGAIN from the new origin.
-  s.drag(P(FAR.x, FAR.y + 0.4));
+  // Back to the middle, then out again -- the second push-out is the same gesture as the
+  // first, from the same place, which is the whole point of not moving the ring.
+  s.drag(CENTRE);
+  s.drag(FAR);
   check('and a second push-out swaps it again',
     s.m._commands.map((c) => c.label).join() === 'leaf',
     s.m._commands.map((c) => c.label).join()
       + ' — a chevron that draws and does nothing is worse than either choice');
+  check('...still at the original origin, three levels in',
+    Math.abs(s.m._p0.y - CENTRE.y) < 1e-9, 'p0 ' + s.m._p0.y);
   // A release does not update the selection — only a drag does — so move once more inside the
   // new ring before letting go, which is what a hand does anyway.
-  s.drag(P(FAR.x, FAR.y + 0.6));
-  s.release(P(FAR.x, FAR.y + 0.6));
+  s.drag(CENTRE);
+  s.drag(P(0, 0.2));
+  s.release(P(0, 0.2));
   check('...and the leaf still runs', ran.join() === 'leaf', ran.join());
 }
 
@@ -293,10 +447,35 @@ const NEAR_UP = P(0, 0.06);
     'drawing them on a level rather than a command is what made a dead one appear');
   const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
   check('and nothing with a submenu also carries an ellipsis',
-    !/label: 'Name chain\\u2026'/.test(SC) && !/'spine\\u2026'/.test(SC),
+    !/label: 'Name chain\\u2026'/.test(SC) && !/'Centre names\\u2026'/.test(SC),
     'the chevrons say it; saying it twice in two languages is noise');
-  check('...while Type keeps its dots, because it opens a keyboard not a ring',
-    /label: 'Type\\u2026'/.test(SC));
+  // "Type..." read as a NOUN -- an object type, a kind of thing -- which is the wrong sense in
+  // a menu full of names, and matt said so. Every other wedge here also enters a name, so the
+  // OUTCOME does not distinguish this one; opening the keyboard does, so it is named for that.
+  check('...and the keyboard wedge is named for what it opens',
+    /label: 'Keyboard', icon: 'fa-keyboard'/.test(SC)
+      && !/label: 'Type/.test(SC),
+    '"Type..." reads as a kind of thing, not an action');
+  // With that one gone, NOTHING in the wheel carries an ellipsis: a submenu says so with
+  // chevrons, and a wedge that opens a keyboard says so with the word.
+  const ellipsed = [...SC.matchAll(/label: '([^']*\\u2026)'/g)].map((m) => m[1]);
+  check('...leaving no ellipsis anywhere in the wheel',
+    ellipsed.length === 0, ellipsed.join(', '));
+  // THE SET SWITCH IS NOT A NAME. Labelled 'spine'/'limbs' it sat among arm, leg and hand
+  // looking like one more suggestion, and then carried push-out chevrons no name has -- which
+  // is exactly what read as wrong. It must not be labelled with any word from either set.
+  // The two lists, read from Skeleton rather than restated here -- a copy would go stale the
+  // first time a name is added and the check would then pass for the wrong reason.
+  const SK = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+  const nameWords = [...SK.matchAll(/Skeleton\.(?:LIMB|AXIS)_NAMES = \[([^\]]+)\]/g)]
+    .flatMap((m) => m[1].split(',').map((w) => w.trim().replace(/^'|'$/g, '')));
+  const swap = (SC.match(/label: limb \? '([^']+)' : '([^']+)', icon: 'fa-rotate'/) || []).slice(1);
+  check('the name-set switch is not labelled like a name',
+    swap.length === 2
+      && !swap.some((l) => nameWords.includes(l)),
+    swap.join(' / ') + ' -- a wedge that looks like a name but opens a ring is the confusion');
+  check('...and says which SET it goes to',
+    swap.every((l) => /names/i.test(l)), swap.join(' / '));
 }
 
 // ── the wheel is centred where the movement is measured from ─────────────────

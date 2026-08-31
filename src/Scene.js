@@ -8737,14 +8737,26 @@ class Scene {
         label: nm, icon: 'fa-tag', enabled: true,
         run: () => { Skeleton.nameChain(this, nameRoot, nm); },
       }));
+      // THE SET SWITCH, WHICH IS NOT A NAME. Labelled 'spine' / 'limbs' it sat among arm, leg
+      // and hand looking exactly like one more suggestion -- and then carried the push-out
+      // chevrons that no other name has, which is what matt spotted: "why is there a double
+      // chevron next to 'spine'?" The chevrons were right; the label was lying about what the
+      // wedge does. Named for the SET it switches to, in title case so it reads as a command
+      // among a ring of lowercase names.
       cmds.push({
-        label: limb ? 'spine' : 'limbs', icon: 'fa-rotate', enabled: true,
+        label: limb ? 'Centre names' : 'Limb names', icon: 'fa-rotate', enabled: true,
         sub: () => nameCmds(limb ? 'axis' : 'limb'),
         run: () => {},
       });
       // The long tail. One wedge rather than a panel, and the keyboard already exists.
       cmds.push({
-        label: 'Type\u2026', icon: 'fa-keyboard', enabled: true,
+        // "Type..." read as a NOUN -- an object type, a kind of thing -- which is the wrong
+        // sense entirely in a menu full of names. matt: "it's confusing." Every other wedge
+        // here also enters a name, so naming the OUTCOME ("Enter name") would not tell them
+        // apart; what makes this one different is that it opens the keyboard. So it says so,
+        // and the label names the thing that appears. No ellipsis: the word is already the
+        // promise.
+        label: 'Keyboard', icon: 'fa-keyboard', enabled: true,
         run: () => {
           const kb = window._vrKeyboard;
           const cur = (nameRoot._permanentStaticLabel || '').replace(/_\d+(_[LR])?$/, '');
@@ -8765,8 +8777,8 @@ class Scene {
       // `sub` rather than `run`: the wheel needs to know a sector HAS children before running
       // anything, so it can open them when you push out past the rim.
       // NO ELLIPSIS on anything with a submenu: the chevrons at its rim already say there is
-      // more behind it, and saying it twice in two languages is noise. `Type...` keeps its dots
-      // because it opens a KEYBOARD, which is a different promise from another ring.
+      // more behind it, and saying it twice in two languages is noise. The keyboard wedge does
+      // not need dots either -- it is named for what it opens.
       { label: 'Name chain', icon: 'fa-tag', enabled: !!nameRoot,
         sub: () => nameCmds(), run: () => {} },
       // SPLIT AND DISSOLVE act on the joint under the controller first, the selection second —

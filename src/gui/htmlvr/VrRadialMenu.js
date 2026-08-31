@@ -21,10 +21,63 @@ import * as THREE from 'three';
 
 const CANVAS_PX = 512;
 
+// Nothing may be clipped, so a label that does not fit its wedge wraps and then shrinks -- but
+// only to here. Past this it is unreadable, and a wedge whose label cannot be read at all is
+// better served by a shorter label than by smaller type.
+const LABEL_MIN_PX = 13;
+const CENTER_PX = 17;
+
+// How wide a horizontal label may be inside a wedge. A wedge is a RING SEGMENT, so the usable
+// width is the CHORD across it at the label's radius -- the ARC is always longer than the
+// straight line it subtends, so measuring that says there is room where there is not, and the
+// text runs past the edges. Capped by the ring's depth as well, for the two- and three-wedge
+// cases where the chord is enormous and a long label would spill over the rims instead.
+function wedgeWidth(rL, seg, ringDepth) {
+  const chord = 2 * rL * Math.sin(Math.min(seg, Math.PI) / 2);
+  return Math.min(chord, ringDepth * 2.6) * 0.84;
+}
+
+// Lay a label out inside its wedge: the widest it may draw is the CHORD across the wedge at the
+// label's radius, which is what actually clips. Tries the full string, then a wrap at a space,
+// then shrinks -- in that order, because a smaller whole word beats a broken one.
+function fitLabel(ctx, text, maxW, basePx) {
+  const font = (px, bold) => `${bold ? 700 : 600} ${px}px system-ui, sans-serif`;
+  for (let px = basePx; px >= LABEL_MIN_PX; px -= 1) {
+    ctx.font = font(px, false);
+    if (ctx.measureText(text).width <= maxW) return { px: px, lines: [text] };
+    // Two lines, split where the WIDEST line comes out narrowest -- that is the measure that
+    // decides whether it fits, not evenness. Splitting at the first space turns "Set Parent To"
+    // into one short line and one that still does not fit.
+    const parts = text.split(' ');
+    if (parts.length > 1) {
+      let best = null;
+      for (let k = 1; k < parts.length; k++) {
+        const a = parts.slice(0, k).join(' '), b = parts.slice(k).join(' ');
+        const w = Math.max(ctx.measureText(a).width, ctx.measureText(b).width);
+        if (w <= maxW && (!best || w < best.w)) best = { w: w, lines: [a, b] };
+      }
+      if (best) return { px: px, lines: best.lines };
+    }
+  }
+  return { px: LABEL_MIN_PX, lines: [text] };
+}
+
 function tuning() {
   const t = (window._radial = window._radial || {});
   if (t.deadZone  == null) t.deadZone  = 0.03;  // m of controller displacement before a sector engages
-  if (t.radiusM   == null) t.radiusM   = 0.12;  // world size of the wheel (half-extent)
+  // Smaller than it was (0.12), which the smaller type paid for: at the old size the wheel
+  // filled the view and still clipped its own labels.
+  if (t.radiusM   == null) t.radiusM   = 0.085; // world size of the wheel (half-extent)
+  // TYPE SIZE IN CANVAS PIXELS, matched to the bone-name labels rather than picked by eye: a
+  // label is a 34px glyph on a 64px-tall sprite (Skeleton's LABEL_FONT / LABEL_H), so the glyph
+  // is 0.53 of the sprite's world height. Getting the wheel's text to READ the same size is
+  // what let the wheel itself shrink -- matt: "the text labels for bone names is quite
+  // readable, go for the same size, meaning we can make the marking menu much smaller."
+  //
+  // Kept as a literal HERE and not as a module constant, because tuning() is lifted and run on
+  // its own by the harness; a reference to anything outside it fails there for a reason that
+  // has nothing to do with the setting.
+  if (t.labelPx   == null) t.labelPx   = 22;
   // THE WHEEL IS CENTRED ON THE HAND, because that is the origin the movement is measured
   // FROM. It used to float 5cm up, which put the visual centre somewhere the selection origin
   // was not: to hit the top sector you pushed up from a point below the middle of a wheel that
@@ -144,6 +197,10 @@ export class VrRadialMenu {
     this._pNow.copy(cpos);
     this._active = -1;
     this._p0.copy(cpos);
+    // The ROOT ring opens under a hand that is at the origin by definition, so it arms at once;
+    // the push-out below is what sets the gate. Cleared here rather than left standing, so a
+    // fresh gesture never inherits the previous one's wait.
+    this._needRecentre = false;
 
     // ONE FRAME FOR BOTH THE DRAWING AND THE PICK, and it is the DISK'S.
     //
@@ -195,6 +252,24 @@ export class VrRadialMenu {
     const dy = d.dot(this._axY);
     const dist = Math.hypot(dx, dy);
 
+    // The re-arm gate. Held out from the previous level, the hand has to return to the middle
+    // before this ring will select anything -- otherwise the push-out that opened it is still
+    // being made and would choose again instantly.
+    if (this._needRecentre) {
+      if (dist < t.deadZone) this._needRecentre = false;
+      else {
+        // Still show where the hand is, so the ring does not look frozen while it waits.
+        const nx0 = dx / t.reachM, ny0 = dy / t.reachM;
+        if (this._active !== -1 || Math.abs(nx0 - this._nx) > 0.01
+            || Math.abs(ny0 - this._ny) > 0.01) {
+          this._active = -1;
+          this._nx = nx0; this._ny = ny0;
+          this._draw();
+        }
+        return;
+      }
+    }
+
     let active = -1;
     if (dist >= t.deadZone && this._commands.length) {
       active = this._sectorAt(dx, dy, this._commands.length);
@@ -208,9 +283,15 @@ export class VrRadialMenu {
     // outward and the child ring takes over, which is one continuous gesture and needs nothing
     // explaining.
     //
-    // The new wheel RE-ORIGINS at the crossing point, so the second choice is measured from
-    // where your hand is now rather than from where the gesture began — otherwise every child
-    // sector would sit a rim's width off to one side.
+    // EVERY RING OPENS WHERE THE FIRST ONE DID. Re-origining at the crossing point meant each
+    // level appeared wherever your hand had pushed to, so a three-deep chain walked across the
+    // room — matt: "the next menu appears higher, I choose centre names, the menu drifts to the
+    // left, choose limbs, it drifts further left." Chasing a menu is not a gesture.
+    //
+    // So the wheel STAYS PUT and you come back to the middle to choose again. That costs a
+    // return stroke and buys a fixed target: one place to look, one origin, and a chain of any
+    // depth that never moves. It also makes the gesture self-limiting in the right way — see
+    // the re-arm rule in _openAt.
     //
     // ANY LEVEL, not just the first. This used to stop after one, on the reasoning that a menu
     // tree in mid-air is what a radial exists to avoid — but a push-out REPLACES the ring
@@ -222,7 +303,15 @@ export class VrRadialMenu {
       const sub = cmd && cmd.enabled !== false && typeof cmd.sub === 'function' ? cmd.sub() : null;
       if (sub && sub.length) {
         this._isSub = true;
-        this._openAt(cpos, sub);
+        // Anchored at the ORIGINAL origin, not at cpos. `_p0` is where the first ring opened
+        // and has not moved since.
+        this._openAt(this._p0, sub);
+        // STEP IN BEFORE YOU CAN STEP OUT. The hand is still held out past the rim -- that is
+        // what just opened this ring -- so arming now would select the sector it is already
+        // sitting in and push straight out of that too: one flick would fall through every
+        // level of a chain in a single frame. matt's rule: "they have to step in to step out
+        // again." Set AFTER _openAt, which clears it for the root case.
+        this._needRecentre = true;
         return;
       }
     }
@@ -310,16 +399,22 @@ export class VrRadialMenu {
       ctx.strokeStyle = 'rgba(180,190,210,0.35)';
       ctx.stroke();
 
-      // Label at the sector mid-radius.
+      // Label at the sector mid-radius, laid out to FIT. The limit is the chord across the
+      // wedge at that radius -- the wedge is a ring segment, so its usable width is a chord and
+      // not the arc length, and measuring the arc is what let text run past the edges.
       const rL = (rOuter + rInner) / 2;
       const lx = C + Math.cos(mid) * rL, ly = C + Math.sin(mid) * rL;
-      ctx.fillStyle = on ? '#11111b' : '#cdd6f4';
-      ctx.font = `${on ? 700 : 600} 30px system-ui, sans-serif`;
+      const maxW = wedgeWidth(rL, seg, rOuter - rInner);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const cmd = this._commands[i];
       ctx.globalAlpha = cmd.enabled === false ? 0.4 : 1;
-      ctx.fillText(cmd.label ?? '', lx, ly);
+      const fit = fitLabel(ctx, cmd.label ?? '', maxW, Math.round(tuning().labelPx));
+      ctx.fillStyle = on ? '#11111b' : '#cdd6f4';
+      ctx.font = `${on ? 700 : 600} ${fit.px}px system-ui, sans-serif`;
+      const lh = fit.px * 1.15;
+      const y0 = ly - (fit.lines.length - 1) * lh / 2;
+      fit.lines.forEach((ln, k) => ctx.fillText(ln, lx, y0 + k * lh));
       // A WEDGE WITH MORE BEHIND IT SAYS SO. Pushing out past the rim opens it, and nothing on
       // screen said that was a thing you could do — so the gesture was undiscoverable even once
       // it was reachable. Chevrons at the rim, pointing the way you would push.
@@ -377,7 +472,7 @@ export class VrRadialMenu {
     ctx.fillStyle = this._active < 0 ? 'rgba(243,139,168,0.30)' : 'rgba(20,20,30,0.85)';
     ctx.fill();
     ctx.fillStyle = this._active < 0 ? '#f38ba8' : '#6c7086';
-    ctx.font = '600 24px system-ui, sans-serif';
+    ctx.font = `600 ${CENTER_PX}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(this._active < 0 ? 'move out' : 'release', C, C);
