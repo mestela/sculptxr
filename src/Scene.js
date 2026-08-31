@@ -1,6 +1,11 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import * as THREE from 'three';
 import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
+
+// How much of the grid's opacity survives where the sculpt is in front of it. Matches the rig's
+// own GHOST_OPACITY ratio closely enough to read as one visual language: present, clearly
+// behind, and never competing with the thing you are sculpting.
+const GRID_GHOST_FRACTION = 0.35;
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -1876,6 +1881,8 @@ class Scene {
 
       // Sync Ground Plane Visibility with UI
       if (this._groundGrid) this._groundGrid.visible = !!this._showGrid;
+      // The ghost follows the grid: one toggle, two passes.
+      if (this._groundGridGhost) this._groundGridGhost.visible = !!this._showGrid;
 
       // GalaxyXR / Adreno: explicitly rebind the XR base layer framebuffer before
       // every render. The Adreno tile renderer occasionally drops the FBO binding
@@ -2157,6 +2164,36 @@ class Scene {
     this._groundGrid.position.y = -0.25;
     this._groundGrid.visible = !!this._showGrid;
     this._worldGroup.add(this._groundGrid);
+
+    // THE GHOST PASS -- the grid where the sculpt is in front of it.
+    //
+    // Fixing the alpha hole took the grid's visibility with it, because the hole WAS the
+    // visibility: punching through the mesh is what made the grid show from above. Composited
+    // honestly, the sculpt simply occludes it, which is correct and is not what was asked for.
+    // matt wants it "half mixed on the mesh".
+    //
+    // So: the same idiom the BONES have always used to stay readable inside a mesh -- a second
+    // pass drawn only where something is nearer (`depthFunc: GreaterDepth`), at a fraction of
+    // the opacity. In front of the sculpt the grid reads normally; behind it, it reads as a
+    // faint wash. Nothing is punched through, because this pass carries the same
+    // alpha-only-accumulates blending as the first.
+    const ghostMat = this._groundGrid.material.clone();
+    ghostMat.opacity = this._groundGrid.material.opacity * GRID_GHOST_FRACTION;
+    ghostMat.depthFunc = THREE.GreaterDepth;
+    ghostMat.depthWrite = false;
+    // clone() copies the factors but not the custom-blending intent on every three version, so
+    // they are restated rather than assumed -- a ghost that blends normally reinstates the hole
+    // in the one place the fix exists to protect.
+    ghostMat.blending = THREE.CustomBlending;
+    ghostMat.blendSrc = THREE.SrcAlphaFactor;
+    ghostMat.blendDst = THREE.OneMinusSrcAlphaFactor;
+    ghostMat.blendSrcAlpha = THREE.OneFactor;
+    ghostMat.blendDstAlpha = THREE.OneFactor;
+    this._groundGridGhost = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
+    this._groundGridGhost.material = ghostMat;
+    this._groundGridGhost.position.y = this._groundGrid.position.y;
+    this._groundGridGhost.visible = !!this._showGrid;
+    this._worldGroup.add(this._groundGridGhost);
 
     // Fallback/Legacy Caps init
     WebGLCaps.initWebGLExtensions(this._gl);

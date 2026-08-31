@@ -15,6 +15,8 @@
 //   ARGRID_INJECT=alphablend  alpha goes back to the colour factors (the original bug)
 //   ARGRID_INJECT=zeroalpha   a wrong "fix" that wipes alpha instead of preserving it
 //   ARGRID_INJECT=depthwrite  the transparent grid writes depth again
+//   ARGRID_INJECT=noghost     the second pass stops being a ghost, so the sculpt hides the grid
+//   ARGRID_INJECT=ghostblend  the ghost blends normally and punches the hole back in
 import fs from 'fs';
 import path from 'path';
 
@@ -32,6 +34,14 @@ if (inject === 'alphablend') {
   const a = '    this._groundGrid.material.blendDstAlpha = THREE.OneFactor;';
   if (!SRC.includes(a)) throw new Error('inject zeroalpha: anchor moved');
   SRC = SRC.replace(a, '    this._groundGrid.material.blendDstAlpha = THREE.ZeroFactor;');
+} else if (inject === 'noghost') {
+  const a = '  ghostMat.depthFunc = THREE.GreaterDepth;';
+  if (!SRC.includes(a)) throw new Error('inject noghost: anchor moved');
+  SRC = SRC.replace(a, '  ghostMat.depthFunc = THREE.LessEqualDepth;');
+} else if (inject === 'ghostblend') {
+  const a = '  ghostMat.blending = THREE.CustomBlending;';
+  if (!SRC.includes(a)) throw new Error('inject ghostblend: anchor moved');
+  SRC = SRC.replace(a, '  ghostMat.blending = THREE.NormalBlending;');
 } else if (inject === 'depthwrite') {
   const a = '    this._groundGrid.material.depthWrite = false;';
   if (!SRC.includes(a)) throw new Error('inject depthwrite: anchor moved');
@@ -86,6 +96,35 @@ if (FACTOR[sA] && FACTOR[dA]) {
   check('the grid is still drawn over empty space',
     overRoom > 0, 'alpha ' + overRoom.toFixed(3) + ' against passthrough -- a grid that '
       + 'preserves alpha by contributing none of its own is simply invisible');
+}
+
+// THE GHOST PASS. Fixing the alpha hole took the grid's visibility with it -- the hole WAS the
+// visibility -- so a second pass draws the grid where the sculpt is in FRONT of it, faintly.
+// Same idiom the bones use to stay readable inside a mesh.
+{
+  const gsA = (SRC.match(/ghostMat\.blendSrcAlpha = THREE\.(\w+);/) || [])[1];
+  const gdA = (SRC.match(/ghostMat\.blendDstAlpha = THREE\.(\w+);/) || [])[1];
+  check('there is a ghost pass, drawn only where something is nearer',
+    /ghostMat\.depthFunc = THREE\.GreaterDepth;/.test(SRC),
+    'without it the sculpt simply hides the grid, which is correct compositing and still not '
+      + 'the "half mixed on the mesh" that was asked for');
+  check('...at a fraction of the opacity, not full strength',
+    /ghostMat\.opacity = this\._groundGrid\.material\.opacity \* GRID_GHOST_FRACTION;/.test(SRC)
+      && /const GRID_GHOST_FRACTION = 0\.\d+;/.test(SRC));
+  // Both halves, because either alone is useless: custom factors that NormalBlending ignores,
+  // or CustomBlending pointed at factors that still reduce alpha.
+  check('...and it carries the alpha rule too, or it reinstates the hole',
+    /ghostMat\.blending = THREE\.CustomBlending;/.test(SRC)
+      && !!FACTOR[gsA] && !!FACTOR[gdA] && blend(gsA, gdA, 0.5, 1.0) >= 1.0,
+    'blending=' + ((SRC.match(/ghostMat\.blending = THREE\.(\w+);/) || [])[1])
+      + '  alpha factors ' + gsA + ' / ' + gdA);
+  check('...and neither pass writes depth',
+    (SRC.match(/depthWrite = false;/g) || []).length >= 2);
+  check('the toggle drives both passes',
+    /_groundGridGhost\.visible = !!this\._showGrid;/.test(SRC)
+      && (SRC.match(/_groundGridGhost\.visible/g) || []).length >= 2,
+    'one grid switch, two objects -- a ghost that ignores the toggle is a grid you cannot '
+      + 'turn off');
 }
 
 // Colour is deliberately unchanged: the look over empty space was already right.
