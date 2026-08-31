@@ -2131,7 +2131,29 @@ class Scene {
     this._groundGrid = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
     this._groundGrid.material.transparent = true;
     this._groundGrid.material.opacity = getOptionsURL().gridOpacity ?? 0.5;
-    this._groundGrid.material.depthWrite = true;  // must write depth so grid composites correctly in VR
+    // ALPHA MUST ONLY EVER ACCUMULATE, NEVER DROP.
+    //
+    // In passthrough the framebuffer's ALPHA is what the compositor reads to decide how much of
+    // the real room shows through. Ordinary SrcAlpha/OneMinusSrcAlpha blending applies to the
+    // alpha channel as well as to colour, so a half-alpha grid line drawn over the mesh REDUCES
+    // the destination alpha -- and lower alpha in an AR layer means the room comes through. The
+    // grid was not darkening the sculpt, it was making it see-through: matt's "punching a hole
+    // in the alpha". Over empty space there is no alpha to reduce, which is why only the half
+    // over the mesh looked wrong, and that asymmetry is the whole diagnosis.
+    //
+    // So: keep the colour blend exactly as it was, and give the ALPHA channel its own factors
+    // that can only add. The grid now reads as mixed into the mesh rather than cut through it.
+    this._groundGrid.material.blending = THREE.CustomBlending;
+    this._groundGrid.material.blendSrc = THREE.SrcAlphaFactor;
+    this._groundGrid.material.blendDst = THREE.OneMinusSrcAlphaFactor;
+    this._groundGrid.material.blendSrcAlpha = THREE.OneFactor;
+    this._groundGrid.material.blendDstAlpha = THREE.OneFactor;
+    // Depth WRITE stays off. It was set true with the note "must write depth so grid composites
+    // correctly in VR", but a transparent surface that writes depth occludes whatever is sorted
+    // after it -- and every mesh in this app is transparent, so the grid was competing with the
+    // sculpt for the same pass. Depth TEST is untouched, so the grid is still properly hidden by
+    // anything genuinely in front of it.
+    this._groundGrid.material.depthWrite = false;
     this._groundGrid.position.y = -0.25;
     this._groundGrid.visible = !!this._showGrid;
     this._worldGroup.add(this._groundGrid);
