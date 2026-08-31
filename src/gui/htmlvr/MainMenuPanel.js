@@ -1399,6 +1399,7 @@ export function buildSectionHTML_rendering(main) {
   ).join('');
 
   const exposure    = main.getExposure?.() ?? 1.0;
+  const gridOpacity = main.getGridOpacity?.() ?? 0.5;
   const curvature   = mesh?.getCurvature?.() ?? 0;
   const opacity     = mesh?.getOpacity?.() ?? 1;
   const isFlat      = getOptionsURL().flatshading;
@@ -1490,6 +1491,11 @@ export function buildSectionHTML_rendering(main) {
 
       <div class="mm-section-title">Scene Display</div>
       <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
+      <div class="mm-row">
+        <span class="mm-lbl">Grid Opacity</span>
+        <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
+        <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
+      </div>
 
       <div class="mm-section-title">Tone Mapping</div>
       <div class="mm-choice-grid cols-5">${tmBtns}</div>
@@ -2999,6 +3005,11 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
       lightRepaintFn();
     });
   });
+
+  // One slider, both passes -- Scene.setGridOpacity keeps the occluded one the fainter fraction.
+  wireSlider(el.querySelector('#mm-grid-opacity'), el.querySelector('#mm-grid-opacity-val'), (v) => {
+    main.setGridOpacity?.(v / 100);
+  }, (v) => (v / 100).toFixed(2), sliderDirtyFn);
 
   wireSlider(el.querySelector('#mm-exposure'), el.querySelector('#mm-exposure-val'), (v) => {
     main.setExposure?.(v / 100); main.render?.();

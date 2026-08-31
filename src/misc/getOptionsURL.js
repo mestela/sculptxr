@@ -271,7 +271,10 @@ var getOptionsURL = function () {
   options.animLoopEnabled  = queryBool(getVal('animLoopEnabled'),  true);
 
   // Scene
-  options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.5);
+  // 0.2 is matt's own setting, arrived at in AR against a real room: the grid reads as a floor
+  // rather than competing with the sculpt. Persisted like every other slider, so it survives a
+  // reload -- it was tuned once and should not have to be tuned again.
+  options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.2);
 
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are

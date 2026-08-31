@@ -248,6 +248,16 @@ export class HTMLVRPanel {
     });
     _installGrade(_mat); // brightness/saturation/gamma grade from the Settings sliders
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this._meshWidth, meshH), _mat);
+    // UI DRAWS AFTER THE WORLD. Depth testing still decides what is in front -- the flags above
+    // are untouched, so a panel behind geometry is still hidden by it. This only fixes the
+    // ORDER within the transparent pass, where the panel used to sit at 0 alongside the meshes.
+    //
+    // The ground grid's occluded pass is drawn with `depthFunc: GreaterDepth`, i.e. "show me
+    // wherever something is NEARER than the grid" -- and a menu floating in front of the floor
+    // is exactly that, so the floor was painted over the menu. A ghost cannot be told to make
+    // an exception for the UI, so the UI is ordered after it. 1000 is the number VRMenu already
+    // used for this, with the same reasoning.
+    this.mesh.renderOrder = 1000;
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
     this.mesh.scale.y = -1;
 

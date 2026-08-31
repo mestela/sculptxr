@@ -2,10 +2,17 @@ import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import * as THREE from 'three';
 import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
 
-// How much of the grid's opacity survives where the sculpt is in front of it. Matches the rig's
-// own GHOST_OPACITY ratio closely enough to read as one visual language: present, clearly
-// behind, and never competing with the thing you are sculpting.
-const GRID_GHOST_FRACTION = 0.35;
+// The ghost's opacity where the sculpt is in front of the grid. ABSOLUTE, not a fraction of the
+// grid's own opacity -- as a fraction it multiplied an already-low default (0.5 * 0.35 = 0.175)
+// and against bright passthrough that is invisible, which is exactly what "it disappears as I
+// go higher" was: the ghost WAS drawing, at a strength you could not see. The rig's own
+// GHOST_OPACITY is an absolute 0.35 for the same reason.
+//
+// Live-tunable, because the right number is a judgement made in AR against a real room and not
+// one I can pick from here: set window._gridGhostOpacity and toggle the grid off and on.
+// The occluded pass is a FRACTION of the visible one, so one slider moves both and the ghost is
+// always the fainter of the two -- "more transparent where it is behind the mesh".
+const GRID_GHOST_FRACTION = 0.4;
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -1715,6 +1722,24 @@ class Scene {
     this.render();
   }
 
+  // The ground plane's opacity, and the ONE place the two passes are kept in step: the occluded
+  // pass is always the fainter fraction of the visible one, so a single slider moves both and
+  // they can never drift into disagreeing about how strong the grid is.
+  setGridOpacity(val) {
+    const v = Math.min(1, Math.max(0, val));
+    if (this._groundGrid) this._groundGrid.material.opacity = v;
+    if (this._groundGridGhost) {
+      this._groundGridGhost.material.opacity = v * GRID_GHOST_FRACTION;
+    }
+    // Debounced, because this is written on every frame of a slider drag.
+    getOptionsURL.saveOption?.('gridOpacity', v, 250);
+    this.render();
+  }
+
+  getGridOpacity() {
+    return this._groundGrid ? this._groundGrid.material.opacity : (getOptionsURL().gridOpacity ?? 0.5);
+  }
+
   setToneMapping(val) {
     if (this._renderer) {
       this._renderer.toneMapping = val;
@@ -2161,6 +2186,25 @@ class Scene {
     // sculpt for the same pass. Depth TEST is untouched, so the grid is still properly hidden by
     // anything genuinely in front of it.
     this._groundGrid.material.depthWrite = false;
+    // BOTH PASSES DRAW AFTER THE MESHES, and then DEPTH TESTING decides each one.
+    //
+    // Order has to be stated rather than left to the sort: at renderOrder 0 the grid ties with
+    // every mesh, and the transparent pass falls back to bounding-sphere distance -- but the
+    // grid and the default sculpt are BOTH centred on the origin, so that comparison is a
+    // near-tie that flips as the view tumbles. matt saw the grid snap in and out at an angle
+    // threshold while his distance never changed, and read it correctly as a draw-order problem.
+    //
+    // Ordering it BEFORE the meshes was the wrong correction, and swapped which half broke:
+    // this pass writes no depth, so drawn first it cannot occlude anything, and the sculpt
+    // painted over the grid even where the grid was NEARER than it -- "the part between the
+    // sphere and the camera is invisible".
+    //
+    // After the meshes, with depth WRITE still off, the ordinary depth TEST does exactly the
+    // right thing: this pass survives only where the grid is genuinely in front, and the ghost
+    // below picks up precisely the fragments this one loses.
+    // ...but UNDER the VR panels, which sit at 1000 (VRMenu.js) and must never be drawn
+    // through: a menu you can see the floor through is worse than no grid at all.
+    this._groundGrid.renderOrder = 200;
     this._groundGrid.position.y = -0.25;
     this._groundGrid.visible = !!this._showGrid;
     this._worldGroup.add(this._groundGrid);
@@ -2191,6 +2235,13 @@ class Scene {
     ghostMat.blendDstAlpha = THREE.OneFactor;
     this._groundGridGhost = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
     this._groundGridGhost.material = ghostMat;
+    // The other half of the pair, one step later. `GreaterDepth` passes only where something
+    // NEARER has ALREADY written depth, so a ghost that draws before the sculpt tests against a
+    // depth buffer the sculpt has not written yet and is discarded every frame -- invisible,
+    // not faint. That was the real fault; the opacity was never the problem. The rig's ghosts
+    // have always sat at 9998 for exactly this reason. Kept just under them so a bone still
+    // reads in front of the grid.
+    this._groundGridGhost.renderOrder = 201;
     this._groundGridGhost.position.y = this._groundGrid.position.y;
     this._groundGridGhost.visible = !!this._showGrid;
     this._worldGroup.add(this._groundGridGhost);
