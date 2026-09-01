@@ -86,6 +86,14 @@ class AnimationRegistry {
       visValues:        track.visValues        ? track.visValues.slice()                          : [],
       tangentOffsets:   track.tangentOffsets   ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined,
     };
+    // Scalar channels ride in the snapshot with everything else: a channel that is not
+    // snapshotted is a channel undo silently leaves at its new value.
+    if (track.scalarTracks) {
+      snap.scalarTracks = new Map();
+      track.scalarTracks.forEach((st, name) => {
+        snap.scalarTracks.set(name, { times: st.times.slice(), values: st.values.slice() });
+      });
+    }
     if (track.blendshapeTracks) {
       snap.blendshapeTracks = new Map();
       track.blendshapeTracks.forEach((bt, name) => {
@@ -110,6 +118,16 @@ class AnimationRegistry {
     track.visTimes         = snap.visTimes  ? snap.visTimes.slice()  : [];
     track.visValues        = snap.visValues ? snap.visValues.slice() : [];
     track.tangentOffsets   = snap.tangentOffsets ? JSON.parse(JSON.stringify(snap.tangentOffsets)) : undefined;
+    if (snap.scalarTracks) {
+      track.scalarTracks = new Map();
+      snap.scalarTracks.forEach((sSnap, name) => {
+        track.scalarTracks.set(name, { times: sSnap.times.slice(), values: sSnap.values.slice() });
+      });
+    } else if (track.scalarTracks) {
+      // The snapshot predates any scalar channel on this object, so restoring it means there
+      // were none -- keeping them would resurrect a channel the undo is meant to remove.
+      track.scalarTracks = null;
+    }
     if (snap.blendshapeTracks) {
       if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
       snap.blendshapeTracks.forEach((bSnap, name) => {
@@ -1904,6 +1922,65 @@ class AnimationRegistry {
     this.applyBlendshapes(mesh);
   }
 
+  // ── SCALAR CHANNELS ───────────────────────────────────────────────────────────────────
+  //
+  // A keyable NUMBER on any object, stored exactly like a blendshape weight -- same {times,
+  // values} shape, same evaluator, same dopesheet row, same graph curve. Generalised out of
+  // blendshapeTracks rather than bolted on beside it, because the same mechanism is wanted by
+  // at least three things: pin weight (activate/deactivate a constraint over time), physics
+  // blend, and any future IK/FK blend. All three are "how much does this apply, over time".
+  //
+  // A BOOLEAN IS A SPECIAL CASE OF THIS, not an alternative to it: a channel whose keys only
+  // ever hold 0 or 1, stepped, IS the on/off toggle. That is why this is a scalar and not a
+  // flag -- you can express the boolean here, and you cannot express this in a boolean.
+  scalarTrack(mesh, name, create) {
+    if (!mesh) return null;
+    // MAKE THE TRACK IF THERE ISN'T ONE. A pin that has never been keyed has no entry in
+    // `tracks` at all, so bailing here meant setScalarKey silently did nothing and the ring's
+    // Deactivate appeared dead -- matt: "if i use the marking menu to deactivate it, it has no
+    // effect... i'm guessing because nothing had been keyframed." He was right, and this is the
+    // line it died on. Only on `create`: a read must not conjure a track as a side effect.
+    let track = this.tracks.get(mesh.getID());
+    if (!track && create && this._ensureTransformTrack) {
+      track = this._ensureTransformTrack(mesh.getID());
+    }
+    if (!track) return null;
+    if (!track.scalarTracks) {
+      if (!create) return null;
+      track.scalarTracks = new Map();
+    }
+    let st = track.scalarTracks.get(name);
+    if (!st && create) {
+      st = { times: [], values: [] };
+      track.scalarTracks.set(name, st);
+    }
+    return st || null;
+  }
+
+  // The value at a time, or `dflt` when the channel has never been keyed. The default matters:
+  // an unkeyed pin weight has to read as 1 (fully on), or every existing rig would silently
+  // deactivate the moment this shipped.
+  scalarAt(mesh, name, time, dflt) {
+    const st = this.scalarTrack(mesh, name, false);
+    if (!st || !st.times.length) return dflt;
+    return this.evaluateScalarTrack(st, time);
+  }
+
+  // Key a value, replacing any key already at that time -- the same overwrite rule the other
+  // channels use, so scrubbing back and re-keying edits the key rather than stacking a second
+  // one at the same instant.
+  setScalarKey(mesh, name, time, value) {
+    const st = this.scalarTrack(mesh, name, true);
+    if (!st) return false;
+    const EPS = 1e-6;
+    for (let i = 0; i < st.times.length; i++) {
+      if (Math.abs(st.times[i] - time) < EPS) { st.values[i] = value; return true; }
+      if (st.times[i] > time) { st.times.splice(i, 0, time); st.values.splice(i, 0, value); return true; }
+    }
+    st.times.push(time); st.values.push(value);
+    return true;
+  }
+
   // Re-order the blendshape layers. `displayNames` is the desired top-to-bottom
   // (newest-first) order shown in the stack panel / timeline. We rebuild the
   // backing Maps in place so every consumer that reads `[...keys].reverse()`
@@ -2590,7 +2667,14 @@ class AnimationRegistry {
         // Through the accessor, NOT straight into `positions`: this is the graph editor's
         // vertical drag, so it must land on whichever group the editor is showing. Writing
         // positions unconditionally is what made dragging a rotation key translate the object.
-        xfWrite(track, key.index, key.channel, (key.startVal !== undefined ? key.startVal : 0) + dVal);
+        // BACK OUT OF NORMALISED UNITS. With normalise on, the graph's Y axis is -1..1 for
+        // every group, so `dVal` arrives in that space and has to be scaled by the group's own
+        // half-range before it means anything as a rotation or a translation.
+        const _nr = window._animXfNorm && window._animXfNormRanges
+          ? window._animXfNormRanges[key.group || 'pos'] : null;
+        const d = _nr ? dVal * _nr.half : dVal;
+        xfWrite(track, key.index, key.channel,
+                (key.startVal !== undefined ? key.startVal : 0) + d, key.group);
       } else if (key.type === 'shape' && track.shapeOutputTimes && key.index !== undefined) {
         track.shapeOutputTimes[key.index] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
       } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {

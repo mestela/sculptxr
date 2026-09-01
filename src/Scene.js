@@ -543,6 +543,13 @@ class Scene {
           this._vrConfirm = new VrConfirm(this._scene, this._camera.getThreeCamera(), this._renderer, this);
           window._vrConfirmPanel = this._vrConfirm;
         }
+        if (!this._vrPinRadial && this._scene) {
+          // A SECOND WHEEL, not a mode on the first. They are driven by different buttons and
+          // can in principle be open at once; sharing one instance would make the second press
+          // silently steal the first's state mid-gesture.
+          this._vrPinRadial = new VrRadialMenu(this._scene);
+          window._vrPinRadial = this._vrPinRadial;
+        }
         if (!this._vrRadial && this._scene) {
           this._vrRadial = new VrRadialMenu(this._scene);
           window._vrRadial = this._vrRadial;
@@ -7385,11 +7392,36 @@ class Scene {
         });
         // Lifted only once nothing is open AND nothing is waiting for the next press.
         if (!this._vrRadial.isOpen && !this._vrRadial.hasPending
+            && !(this._vrPinRadial && (this._vrPinRadial.isOpen || this._vrPinRadial.hasPending))
             && (this._rigMenuLatch != null || this._rigHoverBoneLatch)) {
           this._rigMenuLatch = null;
           this._rigHoverBoneLatch = null;
           Skeleton.updateVisuals(this);
         }
+      }
+
+      // THE PIN RING, on A (btns[4]) -- same gesture as B, different button and a different
+      // list. A used to CYCLE the pin mode, so reaching one of five states meant counting
+      // presses and reading the marker, and overshooting meant going all the way round again.
+      if (source.handedness === this._dominantHand && this._vrPinRadial && worldPose) {
+        const _modalUp2 = this._vrNumpad?.mesh?.visible
+          || this._vrKeyboard?.mesh?.visible
+          || window._vrConfirmPanel?.isBlockingOpen;
+        const _aBtn = activeGamepad?.buttons?.[4];
+        // Never both at once: B owns the gesture if it is already up, or the two wheels would
+        // sit on top of each other reading the same hand.
+        const _bBusy = this._vrRadial && (this._vrRadial.isOpen || this._vrRadial.hasPending);
+        const _aDown = !_modalUp2 && !_bBusy
+          && !!(_aBtn && (_aBtn.pressed || _aBtn.value > 0.5));
+        const _pp2 = worldPose.transform.position;
+        this._vrPinRadial.handleInput(_aDown, [_pp2.x, _pp2.y, _pp2.z], () => {
+          // Same latch as the B menu, for the same reason: the hand has to move to choose, and
+          // the preselection would otherwise crawl to whatever bone the tip drifted past behind
+          // the wheel -- changing the joint the menu is about, mid-menu.
+          const subj = this._resolvePinJoint();
+          this._rigMenuLatch = subj ? subj.getID() : null;
+          return this._resolvePinCommands();
+        });
       }
 
       // Keep Legacy _vrRightRayMatrix for now (for old Menu Logic, until Step 4)
@@ -8669,6 +8701,82 @@ class Scene {
   // the VR radial (VrRadialMenu) and the flatscreen desktop/iPad "…" menu (MainMenuPanel).
   // Each entry is { label, icon, enabled, run }. The radial ignores `icon` and dims
   // `enabled === false`; the "…" menu renders the icon and disables the row.
+  // THE PIN MENU, on A. It replaces a CYCLE: pressing A walked unpinned -> position -> 6DOF ->
+  // rotation -> steer -> unpinned, so reaching a mode meant counting presses and watching the
+  // marker, and getting there from the wrong end meant going all the way round. Five states is
+  // two too many for a cycle. A ring shows all of them at once and costs one gesture whichever
+  // you want.
+  //
+  // Acts on the preselected joint first and the selection second, which is the same rule the B
+  // menu uses -- in the headset you are already pointing at the joint you mean.
+  _resolvePinJoint() {
+    const hov = Skeleton.hoveredJoint(this);
+    if (hov) return hov;
+    const sel = this.getMesh && this.getMesh();
+    if (!sel) return null;
+    // A pin resolves to the joint it holds: reaching for a control and being told "not that" is
+    // a worse answer than doing the obvious thing.
+    if (sel._isPinTarget) return sel._pinnedJoint || null;
+    return sel._isBone ? sel : null;
+  }
+
+  _resolvePinCommands() {
+    const joint = this._resolvePinJoint();
+    if (!joint) return [];
+    const now = IKSolver.pinMode(joint);
+    // Named for what the pin HOLDS, not for its DOF count -- "6DOF" is the implementation's
+    // word for it and says nothing to someone deciding what they want the wrist to do.
+    const modes = [
+      [IKSolver.PIN_POS,  'Position'],
+      [IKSolver.PIN_FULL, 'Position and Rotation'],
+      [IKSolver.PIN_ROT,  'Rotation Only'],
+      // "Aim" rather than "Steer" -- matt's word, and the better one: the pin points the limb
+      // at something, it does not drive it there. Steering implies continuous control.
+      [IKSolver.PIN_SOFT, 'Aim'],
+      [IKSolver.PIN_NONE, 'Unpin'],
+    ];
+    const cmds = modes.map(([mode, label]) => ({
+      label: label,
+      icon: mode === IKSolver.PIN_NONE ? 'fa-link-slash' : 'fa-thumbtack',
+      // THE MODE IT IS ALREADY IN IS DIMMED, which is both true and useful: choosing it does
+      // nothing, and the dimming is the only thing in the ring that says which state you are
+      // in. Without it the menu shows five equal options and no answer to "what is it now".
+      enabled: mode !== now,
+      run: () => { IKSolver.setPinMode(this, joint, mode); },
+    }));
+    // WEIGHT AS A SUBMENU, not four more wedges. The ring is already at five, and a marking
+    // menu's accuracy falls off past about eight -- so the four weight commands go one level
+    // down rather than pushing the root to nine. Only offered on a pin that exists: weighting
+    // nothing is not a thing to offer.
+    if (now) cmds.push({
+      label: 'Weight', icon: 'fa-sliders', enabled: true,
+      sub: () => this._resolvePinWeightCommands(joint), run: () => {},
+    });
+    return cmds;
+  }
+
+  // ACTIVATE / DEACTIVATE, and the two blunt values. "Here" is the word doing the work in the
+  // first two: both act AT THE PLAYHEAD, and activating also puts the pin where the joint
+  // already is so the transition moves nothing -- see IKSolver.setPinActive.
+  _resolvePinWeightCommands(joint) {
+    const reg = window._animationRegistry;
+    const pin = IKSolver.pinObject(joint);
+    const w = pin && reg ? IKSolver.pinWeight(joint) : 1;
+    return [
+      { label: 'Activate Here', icon: 'fa-play', enabled: w < 1,
+        run: () => { IKSolver.setPinActive(this, joint, true); } },
+      { label: 'Deactivate Here', icon: 'fa-stop', enabled: w > 0,
+        run: () => { IKSolver.setPinActive(this, joint, false); } },
+      { label: 'Half', icon: 'fa-sliders', enabled: true,
+        run: () => { IKSolver.setPinWeightKey(this, joint, 0.5); } },
+      // Removing the channel is not the same as keying 1: an unkeyed pin is fully on with no
+      // curve at all, which is the state a rig starts in and the one to be able to get back to.
+      { label: 'Clear Keys', icon: 'fa-eraser', enabled: !!(pin && reg
+          && reg.scalarTrack && reg.scalarTrack(pin, IKSolver.PIN_WEIGHT, false)),
+        run: () => { IKSolver.clearPinWeight(this, joint); } },
+    ];
+  }
+
   _resolveRadialCommands() {
     const tl = () => this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
     const hasKeySel = !!(window._animSelectedKeys && window._animSelectedKeys.length);

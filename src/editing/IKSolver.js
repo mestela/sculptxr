@@ -70,6 +70,13 @@ const _sOne = new THREE.Vector3(1, 1, 1);
 // than this, so the bar is set well clear of the noise rather than as tight as possible.
 const MOVE_EPS = 1e-5;
 const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
+// Its own scratch: pinAnchorQuat decomposes into _vTmp/_sTmp on the line above, so reusing
+// either for the weighted slerp would overwrite the value being read.
+const _qWeight = new THREE.Quaternion();
+// ...and likewise for the position lerp. Every caller today passes a fresh vector as `out`, but
+// `out` is the caller's to choose: if one ever hands in _vTmp, `here` and `out` become the same
+// object and the lerp reads the value it is writing.
+const _vWeight = new THREE.Vector3();
 
 const IKSolver = {};
 
@@ -181,22 +188,74 @@ IKSolver.pinMode = function (joint) {
 };
 IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 
-// The anchor this joint is pinned to, in model space: the pin object's own transform.
+// HOW MUCH THIS PIN APPLIES, 0..1, at the current playback time.
+//
+// Unkeyed reads as 1. That default is load-bearing: every rig that already exists has no such
+// channel, and any other default would silently deactivate every pin in every saved scene the
+// moment this shipped.
+IKSolver.PIN_WEIGHT = 'pinWeight';
+const PIN_W_EPS = 0.01;
+
+IKSolver.pinWeight = function (joint) {
+  const p = IKSolver.pinObject(joint);
+  if (!p) return 0;
+  const reg = window._animationRegistry;
+  if (!reg || !reg.scalarAt) return 1;
+  const t = reg.globalPlaybackTime || 0;
+  const w = reg.scalarAt(p, IKSolver.PIN_WEIGHT, t, 1);
+  if (w == null) return 1;
+  // SNAP THE ENDS. The scalar evaluator is a Bezier solved iteratively, so a key valued
+  // exactly 1.0 evaluates to about 0.9990 AT ITS OWN KEY TIME. Left alone that is a pin an
+  // animator keyed as fully on which is fractionally loose forever, and it also means the
+  // w >= 1 fast path below never fires. The error is ~1e-3, so anything inside 1e-2 of an end
+  // is that end.
+  if (w >= 1 - PIN_W_EPS) return 1;
+  if (w <= PIN_W_EPS) return 0;
+  return Math.min(1, Math.max(0, w));
+};
+
+// The anchor this joint is pinned to, in model space: the pin object's own transform, LERPED
+// toward the joint's own position by the pin's weight.
+//
+// WHY THE TARGET AND NOT THE SOLVER. Weighting the constraint inside FABRIK interacts with the
+// iteration count -- the same weight converges differently at 8 iterations than at 20 -- so
+// "half pinned" would mean something slightly different depending on solver settings, which is
+// not a thing an animator can hold in their head. Moving the TARGET is exact at every value and
+// costs nothing: at w=1 it is the pin, at w=0 it is where the joint already is, so the
+// constraint asks for no change and is a no-op without needing a branch to disable it.
+//
+// NOTE this does NOT by itself solve the activation POP. Ramping 0->1 over a few frames still
+// drags the joint the whole distance, just faster than a jump. What solves that is matching on
+// transition -- keying the pin to where the joint already is at the activation frame -- which
+// is Phase B and is needed whether the channel is continuous or a boolean.
 IKSolver.pinAnchor = function (joint, out) {
   out = out || new THREE.Vector3();
   const p = IKSolver.pinObject(joint);
   if (!p) return Skeleton.jointPos(joint, out);
   _mTmp.fromArray(p.getModelSpaceMatrix());
-  return out.set(_mTmp.elements[12], _mTmp.elements[13], _mTmp.elements[14]);
+  out.set(_mTmp.elements[12], _mTmp.elements[13], _mTmp.elements[14]);
+  const w = IKSolver.pinWeight(joint);
+  if (w >= 1) return out;
+  // lerp(jointPos, pinPos, w)
+  const here = Skeleton.jointPos(joint, _vWeight);
+  return out.set(here.x + (out.x - here.x) * w,
+                 here.y + (out.y - here.y) * w,
+                 here.z + (out.z - here.z) * w);
 };
 
+// The same weight on the ORIENTATION half, or a 6DOF pin at w=0 would release its position and
+// keep holding its rotation -- half a pin, which is not one of the modes and not what "off"
+// means. Slerped from the joint's own orientation, so w=0 asks for no change.
 IKSolver.pinAnchorQuat = function (joint, out) {
   out = out || new THREE.Quaternion();
   const p = IKSolver.pinObject(joint);
   if (!p) return modelQuat(joint, out);
   _mTmp.fromArray(p.getModelSpaceMatrix());
   _mTmp.decompose(_vTmp, out, _sTmp);
-  return out;
+  const w = IKSolver.pinWeight(joint);
+  if (w >= 1) return out;
+  const here = modelQuat(joint, _qWeight);
+  return out.copy(here).slerp(out, w);
 };
 
 // none -> position -> position+rotation -> none. A cycle rather than two buttons: pinning is
@@ -227,6 +286,23 @@ IKSolver.setPinned = function (joint, on, main) {
 
 IKSolver.pinnedJoints = function (main) {
   return Skeleton.joints(main).filter(IKSolver.isPinned);
+};
+
+// THE PINS THAT ACTUALLY APPLY THIS FRAME. A pin at weight 0 is not a weak pin, it is not a pin
+// at all, and it must drop out of the solve entirely rather than merely asking for nothing.
+//
+// This is the whole of matt's second report. Deactivating a wrist pin at frame 11 made "the body
+// and arm snap away to a different position", and he read it as the other pins re-solving the
+// arm from scratch. Almost: the arm was still SOLVER-OWNED, because the pin object still
+// existed, so `seedFromRest` reset the whole chain to its rest pose before every solve. A joint
+// off every path from a pin to the root is deliberately left alone -- its transform is not
+// solver output -- and that is exactly the behaviour a deactivated pin should get.
+//
+// So this is NOT a limit of FABRIK, and the stop-motion expectation is the right one: with the
+// pin excluded, the arm stops being owned and simply keeps the pose it was in, until something
+// else claims it.
+IKSolver.activePins = function (main) {
+  return IKSolver.pinnedJoints(main).filter((j) => IKSolver.pinWeight(j) > 0);
 };
 
 // Pin states of every pinned joint, so an undo can put back WHICH KIND of pin each one was and
@@ -1314,7 +1390,7 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   //
   // So the pin wins. A pin is an explicit statement about where something stays; the wrist
   // rotation that comes free with a 6DOF grab is not a statement about anything.
-  const pinListEarly = pins || IKSolver.pinnedJoints(main);
+  const pinListEarly = pins || IKSolver.activePins(main);
   const blockingPin = orientation ? pinnedChild(effector, pinListEarly) : null;
   if (orientation && !blockingPin) {
     eff.orient = orientation.clone();
@@ -1482,7 +1558,8 @@ const _mWatch = mat4.create();
 
 IKSolver.pinsMoved = function (main) {
   let moved = false;
-  for (const j of IKSolver.pinnedJoints(main)) {
+  // Active only: moving a deactivated pin changes no pose, so it is not a reason to re-solve.
+  for (const j of IKSolver.activePins(main)) {
     const p = IKSolver.pinObject(j);
     if (!p) continue;
     // MODEL SPACE, BECAUSE THAT IS WHAT THE SOLVE READS.
@@ -1593,7 +1670,11 @@ IKSolver.holdPins = function (main) {
   // as that frame's controls, and the joints it names would then be held at values from a
   // frame nobody is on any more.
   const written = consumeWritten();
-  const pins = IKSolver.pinnedJoints(main);
+  // ACTIVE pins only. This list decides solverOwned(), and a zero-weight pin left in it keeps
+  // its whole chain owned -- so seedFromRest resets that chain to rest before every solve, and
+  // the limb snaps to its rest pose the moment the pin is deactivated. Excluded, the chain is
+  // simply not the solver's business and keeps the pose it was in.
+  const pins = IKSolver.activePins(main);
   if (window._ikTrace) {
     console.log('[ik] holdPins pins=%d seed=%s', pins.length, written ? 'rest' : 'current');
   }
@@ -1740,16 +1821,38 @@ IKSolver.resetRigAndPins = function (main) {
 // of the scene, so undo has to put THE SAME OBJECT back at the matrix it stood at, or the pin
 // comes back somewhere else.
 IKSolver.togglePin = function (main, joint) {
+  return IKSolver.applyPinMode(main, joint, null);
+};
+
+// SET A SPECIFIC MODE, sharing every scrap of the cycle's bookkeeping.
+//
+// The cycle and the ring want the same thing done -- change the mode, put the pin object in or
+// out of the scene, and record ONE undo entry that can restore the pin at the matrix it stood
+// at. Only the choice of the next mode differs, so that is the only thing parameterised:
+// `mode === null` means "the next one round the ring", which is what the A button used to do
+// and what togglePin still means.
+//
+// Written this way rather than as a second copy because the undo here is the fiddly part: the
+// pin is a real scene object, so an undo has to put THE SAME OBJECT back at THE SAME matrix,
+// and a second implementation of that is a second chance to get it subtly wrong.
+IKSolver.applyPinMode = function (main, joint, mode) {
   if (!joint || !main) return false;
   const was = IKSolver.pinMode(joint);
+  if (mode != null && mode === was) return false;   // nothing to do, and no undo entry for it
   const wasPin = IKSolver.pinObject(joint);
   const wasM = wasPin ? mat4.clone(wasPin.getMatrix()) : null;
-  const r = IKSolver.cyclePin(joint, main);
+  const r = mode == null
+    ? IKSolver.cyclePin(joint, main)
+    : (() => {
+        const before = IKSolver.pinObject(joint);
+        const pin = IKSolver.setPin(joint, mode, main);
+        return { mode: mode, pin: mode ? pin : null, removed: mode ? null : before };
+      })();
   const now = r.mode;
   if (r.removed) main.removeMeshSilent(r.removed);
   const nowPin = r.pin;
   const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)',
-                 'pinned (steer)', 'pinned (rotation)'];
+                 'pinned (aim)', 'pinned (rotation)'];
   const sm = main.getStateManager && main.getStateManager();
   if (sm && sm.pushStateCustom) {
     const apply = (mode, pin, m) => {
@@ -1773,6 +1876,154 @@ IKSolver.togglePin = function (main, joint) {
   return true;
 };
 
+// The ring's entry point: name the mode you want.
+IKSolver.setPinMode = function (main, joint, mode) {
+  return IKSolver.applyPinMode(main, joint, mode);
+};
+
+// ── ACTIVATE / DEACTIVATE, WITHOUT THE POP ────────────────────────────────────────────────
+//
+// THE POP IS NOT SOLVED BY A WEIGHT RAMP. When a pin activates, the joint is somewhere the pin
+// is not, so it lurches across that gap -- and ramping the weight over a few frames only turns
+// the jump into a fast slide down the same wrong path. Making the ramp long enough to hide it
+// defeats the point of switching at a moment.
+//
+// What solves it is MATCHING ON TRANSITION, which is what every DCC does: at the activation
+// frame, put the pin where the joint ALREADY IS and key it there. The weight then rises with
+// the target already coincident, so nothing moves, and the animator moves the pin from there.
+// This is needed whether the channel is continuous or a boolean, which is why it is its own
+// phase rather than a property of the scalar.
+
+// Put the pin on its joint, position and orientation both.
+IKSolver.matchPinToJoint = function (main, joint) {
+  const pin = IKSolver.pinObject(joint);
+  if (!pin || !pin.setModelSpaceMatrix) return false;
+  const p = Skeleton.jointPos(joint, new THREE.Vector3());
+  const q = modelQuat(joint, new THREE.Quaternion());
+  const m = new THREE.Matrix4().compose(p, q, new THREE.Vector3(1, 1, 1));
+  pin.setModelSpaceMatrix(m.toArray());
+  // The three-side matrix has to follow, or the two disagree and the next world-preserving
+  // read shrinks the thing it reads -- the trap v3.20.70 was written to close.
+  Skeleton.syncThree(pin);
+  return true;
+};
+
+// One frame of hold before the change. Per-key STEP interpolation does not exist yet (backlog
+// #7 -- the scalar evaluator interpolates with tangents), so an on/off transition is written as
+// two keys one frame apart: the old value held until the frame before, the new value now. That
+// is a one-frame ramp, which reads as a step at any sane frame rate. When #7 lands this becomes
+// a single stepped key and this constant goes away.
+const PIN_STEP_FRAMES = 1;
+
+IKSolver.setPinActive = function (main, joint, on) {
+  const pin = IKSolver.pinObject(joint);
+  const reg = window._animationRegistry;
+  if (!pin || !reg || !reg.setScalarKey) return false;
+  const t = reg.globalPlaybackTime || 0;
+  const fps = window._animFPS || 24;
+  const tPrev = Math.max(0, t - PIN_STEP_FRAMES / fps);
+
+  const sm = main && main.getStateManager && main.getStateManager();
+  const track = reg.tracks && reg.tracks.get(pin.getID());
+  const before = track ? reg._snapshotTrack(track) : null;
+  const beforeM = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix().slice() : null;
+
+  if (on) {
+    // MATCH FIRST, then key the pin's transform at this time so the match survives playback --
+    // a pin with a position track would otherwise be pulled straight back to its keyed path on
+    // the next evaluation, and the match would last exactly one frame.
+    IKSolver.matchPinToJoint(main, joint);
+    if (reg.keyTransforms) reg.keyTransforms([pin], t, 'Activate Pin', false);
+  }
+
+  // Hold whatever the channel said a frame ago, then state the new value. Reading the previous
+  // value rather than assuming it means re-activating an already-active pin writes 1 -> 1 and
+  // changes nothing, instead of inventing a dip.
+  const prev = reg.scalarAt(pin, IKSolver.PIN_WEIGHT, tPrev, on ? 0 : 1);
+  reg.setScalarKey(pin, IKSolver.PIN_WEIGHT, tPrev, prev);
+  reg.setScalarKey(pin, IKSolver.PIN_WEIGHT, t, on ? 1 : 0);
+
+  const after = reg.tracks && reg.tracks.get(pin.getID())
+    ? reg._snapshotTrack(reg.tracks.get(pin.getID())) : null;
+  const afterM = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix().slice() : null;
+  if (sm && sm.pushStateCustom) {
+    // ONE entry covering the match AND both keys: they are one act, and undoing half of it
+    // leaves a pin keyed on at a position it was never matched to -- which is the pop, put
+    // back by the undo that was supposed to remove it.
+    const apply = (snap, m) => {
+      const tr = reg.tracks && reg.tracks.get(pin.getID());
+      if (tr && snap) reg._restoreTrack(tr, snap, null);
+      if (m && pin.setModelSpaceMatrix) {
+        pin.setModelSpaceMatrix(m);
+        Skeleton.syncThree(pin);
+      }
+      Skeleton.updateVisuals(main);
+      if (main.render) main.render();
+    };
+    sm.pushStateCustom(() => apply(before, beforeM), () => apply(after, afterM),
+      false, on ? 'Activate Pin' : 'Deactivate Pin');
+  }
+  if (window.screenLog) {
+    window.screenLog('Pin ' + (on ? 'activated' : 'deactivated') + ' here', 'cyan');
+  }
+  Skeleton.updateVisuals(main);
+  if (main.render) main.render();
+  return true;
+};
+
+// Back to no channel at all, which is NOT the same as keying 1: an unkeyed pin is fully on with
+// no curve, which is the state every rig starts in and the one to be able to return to.
+IKSolver.clearPinWeight = function (main, joint) {
+  const pin = IKSolver.pinObject(joint);
+  const reg = window._animationRegistry;
+  const track = pin && reg && reg.tracks ? reg.tracks.get(pin.getID()) : null;
+  if (!track || !track.scalarTracks) return false;
+  const before = reg._snapshotTrack(track);
+  track.scalarTracks.delete(IKSolver.PIN_WEIGHT);
+  if (!track.scalarTracks.size) track.scalarTracks = null;
+  const after = reg._snapshotTrack(track);
+  const sm = main && main.getStateManager && main.getStateManager();
+  if (sm && sm.pushStateCustom) {
+    const apply = (snap) => {
+      const tr = reg.tracks.get(pin.getID());
+      if (tr && snap) reg._restoreTrack(tr, snap, null);
+      Skeleton.updateVisuals(main);
+      if (main.render) main.render();
+    };
+    sm.pushStateCustom(() => apply(before), () => apply(after), false, 'Clear Pin Weight');
+  }
+  Skeleton.updateVisuals(main);
+  if (main.render) main.render();
+  return true;
+};
+
+// A weight straight out, for the animator who wants a specific partial value rather than a
+// transition. Keyed at the playhead like anything else.
+IKSolver.setPinWeightKey = function (main, joint, w) {
+  const pin = IKSolver.pinObject(joint);
+  const reg = window._animationRegistry;
+  if (!pin || !reg || !reg.setScalarKey) return false;
+  const t = reg.globalPlaybackTime || 0;
+  const track = reg.tracks && reg.tracks.get(pin.getID());
+  const before = track ? reg._snapshotTrack(track) : null;
+  reg.setScalarKey(pin, IKSolver.PIN_WEIGHT, t, Math.min(1, Math.max(0, w)));
+  const after = reg.tracks && reg.tracks.get(pin.getID())
+    ? reg._snapshotTrack(reg.tracks.get(pin.getID())) : null;
+  const sm = main && main.getStateManager && main.getStateManager();
+  if (sm && sm.pushStateCustom) {
+    const apply = (snap) => {
+      const tr = reg.tracks && reg.tracks.get(pin.getID());
+      if (tr && snap) reg._restoreTrack(tr, snap, null);
+      Skeleton.updateVisuals(main);
+      if (main.render) main.render();
+    };
+    sm.pushStateCustom(() => apply(before), () => apply(after), false, 'Key Pin Weight');
+  }
+  Skeleton.updateVisuals(main);
+  if (main.render) main.render();
+  return true;
+};
+
 // A PINS THE JOINT UNDER THE RAY, on the press EDGE. Bone draw, Transform and Grab all bind
 // it, so it lives in ONE place: pointing at a joint and pressing one thing is the gesture, and
 // it should not change meaning with the tool in your hand.
@@ -1790,6 +2041,13 @@ IKSolver.pinOnA = function (tool, options, busy) {
   const was = tool._wasAPressed;
   tool._wasAPressed = a;
   if (!a || was || busy) return false;
+  // A NOW OPENS THE PIN RING (Scene drives it from the same button), so the old press-edge
+  // CYCLE must stand down or one press would both open the wheel and step the mode behind it --
+  // and the wheel would then be showing, and acting on, a state that changed underneath it.
+  //
+  // Left in place rather than deleted: the ring needs a scene and an XR session, and this is
+  // still the path on anything that has neither. It is the fallback, not the gesture.
+  if (tool._main && tool._main._vrPinRadial) return false;
   return IKSolver.togglePin(tool._main, Skeleton.hoveredJoint(tool._main));
 };
 

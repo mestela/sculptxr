@@ -22,26 +22,139 @@ import * as THREE from 'three';
 // and to playback, not to this file.
 
 
-export function xfGroup() {
-  const g = window._animXfGroup;
-  return g === 'rot' || g === 'scale' ? g : 'pos';
+export const XF_GROUPS = ['pos', 'rot', 'scale', 'weight'];
+
+// THE STRIP IS A FILTER, NOT A RADIO (matt 2026-09-01): "sometimes it would be good to see all
+// the channels, or just translation and rotation, or just rotation and activation." So the
+// visible set is a SET, and the single "active" group survives only as the one an edit lands on
+// when the thing being edited does not say which group it belongs to.
+export function xfVisible() {
+  const v = window._animXfVisible;
+  if (Array.isArray(v) && v.length) return v.filter((g) => XF_GROUPS.includes(g));
+  // Nothing chosen yet: whatever the old single-group setting said, so an existing session and
+  // an existing saved layout both open on the group they were last left on.
+  return [xfGroup()];
 }
 
-export function xfRead(tr, index, channel) {
+export function xfIsVisible(g) { return xfVisible().indexOf(g) >= 0; }
+
+// PER-CHANNEL VISIBILITY, PER GROUP. `_animChannelVisible` is one array of three flags, which
+// was the whole truth while only one group could be on screen. With several visible it would
+// hide X in rotation because you hid X in translation, so each group keeps its own trio --
+// seeded from the old array, so a session that had hidden a channel keeps it hidden.
+export function xfChanVisible(g, c) {
+  const m = window._animXfChanVis;
+  const row = m && m[g];
+  if (row && row[c] !== undefined) return row[c] !== false;
+  const legacy = window._animChannelVisible;
+  return !legacy || legacy[c] !== false;
+}
+
+export function xfSetChanVisible(g, c, on) {
+  const m = (window._animXfChanVis = window._animXfChanVis || {});
+  if (!m[g]) m[g] = [true, true, true];
+  m[g][c] = !!on;
+}
+
+// At least one has to stay on: a graph with every channel filtered out is a blank panel with no
+// way back except guessing which button to press.
+export function xfToggleVisible(g) {
+  if (!XF_GROUPS.includes(g)) return;
+  const cur = xfVisible();
+  const at = cur.indexOf(g);
+  let next;
+  if (at < 0) next = XF_GROUPS.filter((x) => cur.indexOf(x) >= 0 || x === g);
+  else if (cur.length === 1) return;         // refuse to empty it
+  else next = cur.filter((x) => x !== g);
+  window._animXfVisible = next;
+  // The ACTIVE group -- where an untagged edit lands, and whose tangent namespace is used --
+  // follows the most recent turn-on, and otherwise falls back to the first still visible.
+  if (at < 0) window._animXfGroup = g;
+  else if (window._animXfGroup === g) window._animXfGroup = next[0];
+}
+
+// The group an untagged edit belongs to. A key CARRIES its own group once it has been selected
+// off a specific curve; this is only the fallback, and the reason it must exist is that with
+// several groups drawn at once "the group" is otherwise an unanswerable question.
+export function xfGroup() {
+  const g = window._animXfGroup;
+  return XF_GROUPS.includes(g) ? g : 'pos';
+}
+
+// TANGENT HANDLES ARE PER GROUP TOO, and were not until v3.20.197.
+//
+// The stored key was `trans_<index>_<side>_dv_<channel>` -- key and channel, no GROUP. So a
+// handle dragged on a translation curve was read back as the tangent of the rotation and scale
+// curves as well. `dv` is a VALUE-space number (-deltaY / zoomY), so used on another group it is
+// not merely wrong, it is in the wrong UNITS: a third-of-a-unit translation tangent landing on a
+// scale curve whose keys are all 1.0 throws the interpolation clean off the graph. matt: "the
+// graph looks crazy, even though the actual keys are all the same."
+export function xfTanPrefix(group) { return 'trans_' + (group || xfGroup()) + '_'; }
+
+// Legacy files carry ungrouped `trans_` keys, authored while looking at some group -- almost
+// always translate, which is the default and the only one most scenes ever had handles dragged
+// in. They are read as the POS group's and nothing else's, so an old file keeps its translation
+// tangents and stops leaking them into the other two.
+export function xfTanGet(tr, suffix, group) {
+  const to = tr && tr.tangentOffsets;
+  if (!to) return undefined;
+  const g = group || xfGroup();
+  const v = to[xfTanPrefix(g) + suffix];
+  if (v !== undefined) return v;
+  return g === 'pos' ? to['trans_' + suffix] : undefined;
+}
+
+// `group` is explicit so a key can be read in ITS OWN group while several are on screen.
+// Defaulted rather than required, because every existing caller means "the active one".
+export function xfRead(tr, index, channel, group) {
   if (!tr) return undefined;
-  const g = xfGroup();
+  const g = group || xfGroup();
+  if (g === 'weight') return undefined;   // not a transform channel; see xfWeightTrack
   if (g === 'scale') return tr.scales?.[index * 3 + channel];
   if (g !== 'rot') return tr.positions?.[index * 3 + channel];
   const e = rotSync(tr);
   return e ? e[index * 3 + channel] : undefined;
 }
 
-export function xfWrite(tr, index, channel, v) {
+export function xfWrite(tr, index, channel, v, group) {
   if (!tr) return;
-  const g = xfGroup();
+  const g = group || xfGroup();
+  if (g === 'weight') { xfWeightWrite(tr, index, v); return; }
   if (g === 'scale') { if (tr.scales) tr.scales[index * 3 + channel] = v; return; }
   if (g !== 'rot') { if (tr.positions) tr.positions[index * 3 + channel] = v; return; }
   rotSetEuler(tr, index, channel, v);
+}
+
+// ── WEIGHT, the one group that is not a transform ─────────────────────────────────────
+//
+// It lives in `scalarTracks` rather than in positions/quaternions/scales, has ONE channel
+// instead of three, and its keys are its own -- they do not line up with the transform keys.
+// Everything that draws or edits it therefore has to ask for it by name rather than by index
+// into a shared array, which is why it gets its own two accessors instead of a branch inside
+// the transform ones.
+export const XF_WEIGHT_CHANNEL = 'pinWeight';
+
+export function xfWeightTrack(tr) {
+  return (tr && tr.scalarTracks && tr.scalarTracks.get(XF_WEIGHT_CHANNEL)) || null;
+}
+
+// WHICH TIMES ARRAY A KEY OF THIS GROUP LIVES ON. Every transform group shares `track.times`,
+// so a key index means the same thing across T, R and S -- but the weight channel keeps its own
+// times, and reading a weight key's time out of `track.times` gives whatever transform key
+// happens to sit at that index. That is not a wrong number, it is an unrelated one.
+export function xfTimes(tr, group) {
+  if (!tr) return null;
+  if (group === 'weight') {
+    const st = xfWeightTrack(tr);
+    return st ? st.times : null;
+  }
+  return tr.times || null;
+}
+
+export function xfWeightWrite(tr, index, v) {
+  const st = xfWeightTrack(tr);
+  if (!st || index < 0 || index >= st.values.length) return;
+  st.values[index] = Math.min(1, Math.max(0, v));
 }
 
 // ---- rotation with winding -------------------------------------------------------

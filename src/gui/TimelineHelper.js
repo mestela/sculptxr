@@ -1,4 +1,5 @@
-import { xfRead, xfWrite } from '../editing/xfChannel.js';
+import { xfRead, xfWrite, xfTanPrefix, xfVisible, xfChanVisible,
+         xfWeightTrack } from '../editing/xfChannel.js';
 
 export default class TimelineHelper {
 
@@ -461,7 +462,7 @@ export default class TimelineHelper {
     else deltaX = Math.max(0, deltaX);
     
     if (!track.tangentOffsets) track.tangentOffsets = {};
-    const prefix = activeTangent.type === 'transform' ? 'trans_' : '';
+    const prefix = activeTangent.type === 'transform' ? xfTanPrefix() : '';
     const dt = (deltaX / tlW) * visibleDuration;
     const dv = -deltaY / zoomY;
     
@@ -495,16 +496,47 @@ export default class TimelineHelper {
     const channelsVisible = window._animChannelVisible || [true, true, true, true];
     
     if (track && track.times) {
-      for (let i = 0; i < track.times.length; i++) {
-        const t = track.times[i];
-        if (t >= tMin && t <= tMax) {
+      // EVERY VISIBLE GROUP, and the key REMEMBERS which one it came from.
+      //
+      // Read ungrouped, the marquee measured every key against the ACTIVE group's values and
+      // tagged none of them -- so a rotation key came back untagged, defaulted to 'pos' when the
+      // highlight asked which curve it belonged to, and drew unhighlighted on the rotation
+      // curve. matt: "rotation keys ... they're selected, i can move them, but they're not
+      // yellow." The move worked for the same reason the highlight failed: an untagged key
+      // falls back to the active group, which happened to be the right one.
+      for (const grp of xfVisible()) {
+        if (grp === 'weight') continue;
+        for (let i = 0; i < track.times.length; i++) {
+          const t = track.times[i];
+          if (t < tMin || t > tMax) continue;
           for (let c = 0; c < 3; c++) {
-            if (channelsVisible[c]) {
-              const val = xfRead(track, i, c);
-              if (val >= vMin && val <= vMax) {
-                newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: c, time: t });
-              }
+            if (!xfChanVisible(grp, c)) continue;
+            const raw = xfRead(track, i, c, grp);
+            if (typeof raw !== 'number' || !isFinite(raw)) continue;
+            // The marquee's bounds come from SCREEN Y, so under Normalise they are in
+            // normalised space and the key has to be compared there too -- otherwise the box
+            // you drew and the keys it catches are measured in different units.
+            const nr = window._animXfNorm && window._animXfNormRanges
+              ? window._animXfNormRanges[grp] : null;
+            const val = nr ? (raw - nr.mid) / nr.half : raw;
+            if (val >= vMin && val <= vMax) {
+              newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: c,
+                             group: grp, time: t });
             }
+          }
+        }
+      }
+      // The weight channel has its own keys, on its own times, so it cannot ride the loop above.
+      if (xfVisible().indexOf('weight') >= 0) {
+        const wT = xfWeightTrack(track);
+        for (let i = 0; wT && i < wT.times.length; i++) {
+          const t = wT.times[i];
+          const nrw = window._animXfNorm && window._animXfNormRanges
+            ? window._animXfNormRanges.weight : null;
+          const wv = nrw ? (wT.values[i] - nrw.mid) / nrw.half : wT.values[i];
+          if (t >= tMin && t <= tMax && wv >= vMin && wv <= vMax) {
+            newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: 0,
+                           group: 'weight', time: t });
           }
         }
       }
@@ -618,7 +650,12 @@ export default class TimelineHelper {
     return cloned;
   }
 
-  static scaleKeysVertical(track, initialKeys, initialBox, targetVal, handle, tBox) {
+  // `fromDisp(displayValue, group)` converts back out of the space the graph is drawn in. The
+  // box, its extent, its handles and the captured start values are ALL in display space -- so
+  // the arithmetic below is one consistent space, and only the final write leaves it. With
+  // Normalise off the caller passes the identity and nothing about raw mode changes.
+  static scaleKeysVertical(track, initialKeys, initialBox, targetVal, handle, tBox, fromDisp) {
+    const back = fromDisp || ((v) => v);
     let factor = 1.0;
     if (initialBox.maxV !== initialBox.minV) {
       if (handle === 'top') {
@@ -628,6 +665,18 @@ export default class TimelineHelper {
       }
     }
     
+    // ONE PIVOT FOR EVERYTHING: the box's own edge, shared by every selected key.
+    //
+    // This briefly scaled each group about its own edge, on my reasoning that a shared pivot in
+    // raw units maps one group's values through another's origin. That reasoning was about
+    // units and matt's is about the GESTURE: "it would be common to scale all the keys to their
+    // midpoint, and then move all the keys to zero." Collapsing a mixed selection onto one line
+    // is the point of the move, and per-group pivots make it impossible -- each group collapses
+    // onto its own line instead.
+    //
+    // The bug that per-group pivots appeared to fix was really the CENTRE drag writing keys
+    // ungrouped (see _setKeyVal), so every key landed in the active group and the other curves
+    // never moved. That is fixed at its source; the box behaves like a box again.
     initialKeys.forEach(sk => {
       const initialVal = sk.val ?? 0;
       let newVal = 0;
@@ -636,14 +685,15 @@ export default class TimelineHelper {
       } else {
         newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
       }
-      if (sk.type === 'transform' && track.positions) {
-        xfWrite(track, sk.index, sk.channel !== undefined ? sk.channel : 0, newVal);
+      if (sk.type === 'transform') {
+        xfWrite(track, sk.index, sk.channel !== undefined ? sk.channel : 0,
+                back(newVal, sk.group), sk.group);
       } else if (sk.type === 'shape' && track.shapeOutputTimes) {
-        track.shapeOutputTimes[sk.index] = newVal;
+        track.shapeOutputTimes[sk.index] = back(newVal, sk.group);
       } else if (sk.type === 'blendshape') {
         const bt = track.blendshapeTracks?.get(sk.name);
         // No 0..1 clamp — overshoot (below 0 / above 1) is intentionally allowed.
-        if (bt?.values) bt.values[sk.index] = newVal;
+        if (bt?.values) bt.values[sk.index] = back(newVal, sk.group);
       }
     });
     

@@ -1,5 +1,8 @@
 import TimelineHelper from './TimelineHelper.js';
-import { xfGroup, xfRead, xfWrite } from '../editing/xfChannel.js';
+import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
+         XF_GROUPS, xfVisible, xfIsVisible, xfToggleVisible,
+         xfWeightTrack, xfChanVisible, xfSetChanVisible,
+         xfTimes } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
 
@@ -26,6 +29,10 @@ const PLAYBACK_SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2];
 // scroll-into-view alike — offsets by this. One constant, or they drift apart and clicking a
 // row selects its neighbour.
 const XF_SEG_H = 20;
+// Half what it was. At 4px the dots crowded a dense curve and hid the shape they sit on; the
+// HIT radius is separate (isKeyHovered uses its own tolerance), so they stay just as easy to
+// grab. matt: "keyframe circles are too big, make them half their current size."
+const KEY_R = 2;
 
 export default class GuiTimeline {
   constructor(main) {
@@ -998,7 +1005,7 @@ export default class GuiTimeline {
   // time, blendshape → weight). undefined if not resolvable.
   _keyValue(k, tr) {
     if (!tr) return undefined;
-    if (k.type === 'transform')  return xfRead(tr, k.index, k.channel ?? 0);
+    if (k.type === 'transform')  return xfRead(tr, k.index, k.channel ?? 0, k.group);
     if (k.type === 'shape')      return tr.shapeOutputTimes?.[k.index];
     if (k.type === 'blendshape') return tr.blendshapeTracks?.get(k.name)?.values?.[k.index];
     return undefined;
@@ -1011,20 +1018,34 @@ export default class GuiTimeline {
   // so carrying one group's zoom into another shows an empty graph and reads as a bug. Each
   // group keeps its own framing, and a group being visited for the first time is framed to its
   // own keys rather than to a guess.
+  // Toggle one channel group in or out of the graph.
+  //
+  // The remembered per-group framing survives, but it now belongs to the ACTIVE group only --
+  // with several on screen there is one Y axis, and which group's framing it carries is
+  // whichever one you last switched on. Normalise is the answer when that is not enough.
   _switchXfGroup(g) {
-    if (g === xfGroup()) return;
-    this._graphViewByGroup = this._graphViewByGroup || {};
-    this._graphViewByGroup[xfGroup()] = { zoomY: this._zoomY, panY: this._panY };
-    window._animXfGroup = g;
-    // Selected keys carry a channel, not a group, so a selection made against translation
-    // would silently re-point at rotation. Drop it rather than move it.
-    window._animSelectedKeys = [];
+    const wasActive = xfGroup();
+    const wasOn = xfIsVisible(g);
 
-    const seen = this._graphViewByGroup[g];
-    if (seen) { this._zoomY = seen.zoomY; this._panY = seen.panY; }
-    else this._frameXfGroup();
-    tlLog(`switch group -> ${g}`, `zoomY=${this._zoomY} panY=${this._panY}`,
-      seen ? '(remembered)' : '(framed to keys)');
+    xfToggleVisible(g);
+    if (xfIsVisible(g) === wasOn) return;   // refused (would have emptied the set)
+
+    // A selection made against one group must not silently re-point at another. Keys now CARRY
+    // their group, so only the ones whose group just went away are dropped -- switching a second
+    // channel ON no longer costs you the selection you were working with.
+    const vis = xfVisible();
+    window._animSelectedKeys = (window._animSelectedKeys || [])
+      .filter((k) => k.type !== 'transform' || vis.indexOf(k.group || wasActive) >= 0);
+
+    // THE VIEW DOES NOT MOVE. Remembering a zoom per group made sense while the strip was a
+    // RADIO -- you were changing what the graph was OF, and degrees and scene units want
+    // different framings. As a FILTER it is wrong: adding or removing a curve is not a reason
+    // to re-frame the ones already on screen, and matt saw exactly that -- "if normalise is
+    // off, the zoom shouldn't change. right now if i toggle TRS, the vertical zoom seems to
+    // jump around." Fit All is the explicit way to reframe, and Normalise is the way to make
+    // different units share an axis.
+    tlLog(`toggle group ${g} -> ${xfIsVisible(g) ? 'on' : 'off'}`,
+      `visible=${vis.join(',')} active=${xfGroup()}`);
   }
 
   // Fit the vertical view to the visible keys of the group on show. Falls back to leaving the
@@ -1038,7 +1059,8 @@ export default class GuiTimeline {
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < n; i++) {
       for (let c = 0; c < 3; c++) {
-        const v = xfRead(tr, i, c);
+        // The ACTIVE group on purpose: this frames the group you just switched to.
+        const v = xfRead(tr, i, c, xfGroup());
         if (typeof v !== 'number' || !isFinite(v)) continue;
         if (v < lo) lo = v;
         if (v > hi) hi = v;
@@ -1047,20 +1069,48 @@ export default class GuiTimeline {
     tlLog(`frame ${xfGroup()}: keys=${n} range ${lo} .. ${hi}`);
     if (!isFinite(lo) || !isFinite(hi)) return;
     const graphH = Math.max(1, this._cssHeight - HEADER_H);
-    const span = Math.max(hi - lo, 1e-3);
+    // A CONSTANT CURVE HAS NO RANGE TO FRAME. The old floor of 1e-3 meant a channel whose keys
+    // are all the same value -- scale on anything that has never been scaled, which is most
+    // things -- was framed to a thousandth of a unit, i.e. zoomed some hundred thousand times.
+    // At that magnification any wobble at all fills the graph, so a flat curve looked wild.
+    //
+    // So: a range that is genuinely flat gets a comfortable default window in the group's OWN
+    // units, and anything with a real range is still framed to it. Degrees and scene units are
+    // not the same kind of number, which is the same reason the view is remembered per group.
+    const FLAT_SPAN = { pos: 1, rot: 90, scale: 1 };
+    const measured = hi - lo;
+    const span = measured > 1e-6 ? Math.max(measured, 1e-3)
+                                 : (FLAT_SPAN[xfGroup()] || 1);
     this._zoomY = (graphH * 0.7) / span;          // leave a margin rather than filling edge to edge
     this._panY = -((lo + hi) / 2) * this._zoomY;  // centre the range in the graph band
   }
 
   // The three segments of the T|R|S strip, in canvas CSS coords. Drawing and hit-testing both
   // read this, which is the only way they stay in step.
+  // FOUR FILTERS AND A NORMALISE. The strip was a radio -- one transform group at a time -- and
+  // is now a set: matt, "sometimes it would be good to see all the channels, or just translation
+  // and rotation, or just rotation and activation."
+  //
+  // `norm` sits apart from the four because it is not a channel. Mixed units cannot share a Y
+  // axis -- rotation is degrees, translation scene units, weight is 0..1, so a weight curve
+  // drawn raw against a view framed for rotation is a flat line on the floor -- and matt chose
+  // an explicit toggle over the view silently changing mode when a second group is switched on.
   _xfSegRects() {
-    const pad = 6, gap = 3, w = (200 - pad * 2 - gap * 2) / 3;
-    return ['pos', 'rot', 'scale'].map((g, i) => ({
-      g, x: pad + i * (w + gap), y: HEADER_H + 5, w, h: XF_SEG_H - 6,
-      label: g === 'pos' ? 'T' : (g === 'rot' ? 'R' : 'S'),
+    const pad = 6, gap = 3, n = XF_GROUPS.length;
+    const w = (200 - pad * 2 - gap * n) / (n + 1);
+    const LABEL = { pos: 'T', rot: 'R', scale: 'S', weight: 'W' };
+    const rects = XF_GROUPS.map((g, i) => ({
+      g, x: pad + i * (w + gap), y: HEADER_H + 5, w, h: XF_SEG_H - 6, label: LABEL[g],
     }));
+    rects.push({ g: null, norm: true, x: pad + n * (w + gap), y: HEADER_H + 5,
+                 w, h: XF_SEG_H - 6, label: 'N' });
+    return rects;
   }
+
+  // Normalise each visible group to its own vertical range, so groups in different units can be
+  // read against each other for TIMING and SHAPE. Off by default: raw units are the truth, and
+  // this is the comparison view.
+  _xfNorm() { return !!window._animXfNorm; }
 
   // Toolbar value field rect — sits just left of the frame field.
   _valueFieldRect() {
@@ -1096,7 +1146,7 @@ export default class GuiTimeline {
       const nv = parseExpr(s, cur);
       if (nv == null) return;
       if (k.type === 'transform') {
-        xfWrite(tr, k.index, k.channel ?? 0, nv);
+        xfWrite(tr, k.index, k.channel ?? 0, nv, k.group);
       } else if (k.type === 'shape') {
         if (!tr.shapeOutputTimes) tr.shapeOutputTimes = [...(tr.shapeTimes || [])];
         tr.shapeOutputTimes[k.index] = nv;
@@ -1157,6 +1207,102 @@ export default class GuiTimeline {
 
   valueToY(val) {
     return TimelineHelper.valueToY(val, this._cssHeight, HEADER_H, this._zoomY, this._panY);
+  }
+
+  // A value in group `grp`, expressed on the NORMALISED axis: each group's own min..max across
+  // X, Y and Z maps onto -1..1, so every curve fills the same band whatever its units.
+  //
+  // The first version mapped straight to SCREEN pixels, which looked like normalising and was
+  // not: the axis, the gridlines and the drag maths all still spoke raw units, so the view read
+  // as "position half fitted, rotation and scale barely touched". Going through valueToY means
+  // the whole graph -- ruler included -- is in the same -1..1 space, which is what matt asked
+  // for: "i'd expect the graph zoom range to jump to -1 to 1 vertically."
+  _normVal(val, grp, ranges) {
+    const r = ranges && ranges[grp];
+    if (!r) return val;
+    return (val - r.mid) / r.half;
+  }
+
+  _valY(val, grp, ranges) {
+    if (!this._xfNorm() || !ranges) return this.valueToY(val);
+    return this.valueToY(this._normVal(val, grp, ranges));
+  }
+
+  // THE VALUE AS THE GRAPH SHOWS IT, and the way back.
+  //
+  // The transform box is a box IN THE VIEW: dragging its top edge scales about its bottom edge,
+  // whatever the curves inside it are made of. That only works if the box and the keys are
+  // measured in the same space -- and with Normalise on they were not, because the box's extent
+  // was built from RAW values while the curves were drawn normalised. So the box sat somewhere
+  // the keys were not, and the scale mixed a normalised target with raw values.
+  //
+  // Everything about the box now happens in DISPLAY space, converted back on the way into the
+  // key. With Normalise off both are the identity, so raw mode is untouched -- it was already
+  // scaling about the box edges correctly, which is what the UI implies and what it did.
+  _dispVal(raw, grp) {
+    if (!this._xfNorm()) return raw;
+    return this._normVal(raw, grp, this._liveNormRanges());
+  }
+
+  _rawVal(disp, grp) {
+    if (!this._xfNorm()) return disp;
+    const r = this._liveNormRanges();
+    const g = r && r[grp];
+    return g ? disp * g.half + g.mid : disp;
+  }
+
+  _liveNormRanges() {
+    if (!this._xfNorm()) return null;
+    const reg = window._animationRegistry;
+    const mesh = this._graphMesh && this._graphMesh();
+    const tr = reg && mesh ? reg.tracks.get(mesh.getID()) : null;
+    return this._xfNormRanges(tr);
+  }
+
+  // Each visible group's centre and half-range, measured once per draw across ALL THREE of its
+  // channels together -- so X, Y and Z keep their relative proportions inside the group and only
+  // the group as a whole is rescaled.
+  _xfNormRanges(track) {
+    if (!this._xfNorm() || !track) return null;
+    const out = {};
+    // A group with no variation still needs a defined mapping, or it falls through to raw units
+    // and reads as "normalise did nothing to this one" -- which is exactly how the missing
+    // `scales` array showed up.
+    const FLAT = { pos: 1, rot: 90, scale: 1, weight: 1 };
+    for (const g of xfVisible()) {
+      let lo = Infinity, hi = -Infinity;
+      if (g === 'weight') {
+        const st = xfWeightTrack(track);
+        for (const v of (st ? st.values : [])) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      } else {
+        const n = track.times ? track.times.length : 0;
+        for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) {
+          const v = xfRead(track, i, c, g);
+          if (typeof v !== 'number' || !isFinite(v)) continue;
+          if (v < lo) lo = v; if (v > hi) hi = v;
+        }
+      }
+      if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 0; }
+      const span = (hi - lo) > 1e-6 ? (hi - lo) : (FLAT[g] || 1);
+      out[g] = { mid: (lo + hi) / 2, half: span / 2 };
+    }
+    return out;
+  }
+
+  // Turning Normalise on frames the view on -1..1, because that is the range everything is now
+  // in; turning it off puts back whatever the raw view was, rather than leaving a zoom that
+  // meant something else.
+  _applyNormView(on) {
+    const band = Math.max(1, this._cssHeight - HEADER_H);
+    if (on) {
+      this._rawView = { zoomY: this._zoomY, panY: this._panY };
+      this._zoomY = (band * 0.8) / 2;   // -1..1 across 80% of the band
+      this._panY = 0;
+    } else if (this._rawView) {
+      this._zoomY = this._rawView.zoomY;
+      this._panY = this._rawView.panY;
+      this._rawView = null;
+    }
   }
 
   yToValue(y) {
@@ -1334,12 +1480,31 @@ export default class GuiTimeline {
     ctx.save();
     const gutterY = headerH + 4 + XF_SEG_H;
     const rowH = 22; // 25% smaller than original 30
-    const colors = ['#ff4444', '#44ff44', '#4444ff'];
-    // Prefixed so the rows say WHICH transform they belong to — three rows called X/Y/Z are
-    // ambiguous the moment they can mean three different things.
-    const _xfg = xfGroup();
-    const _xfPrefix = _xfg === 'rot' ? 'R' : (_xfg === 'scale' ? 'S' : 'T');
-    const labels = [_xfPrefix + 'X', _xfPrefix + 'Y', _xfPrefix + 'Z'];
+    const XYZ_COLORS = ['#ff4444', '#44ff44', '#4444ff'];
+    // ONE LABELLED TRIPLE PER VISIBLE GROUP. The gutter listed a single X/Y/Z trio for the
+    // ACTIVE group, which was right while the strip was a radio and became a lie the moment two
+    // groups could be drawn at once -- matt: "if i have combinations of TRS displayed, the
+    // gutter should show them all as channel names, right now it only shows a single triple."
+    //
+    // `rowMeta` runs alongside so drawing, the eye toggles and the click hit-test all agree on
+    // which row is which group's which channel; the row INDEX is no longer the channel number.
+    const PREFIX = { pos: 'T', rot: 'R', scale: 'S' };
+    const colors = [];
+    const labels = [];
+    const rowMeta = [];
+    for (const g of xfVisible()) {
+      if (g === 'weight') continue;
+      for (let c = 0; c < 3; c++) {
+        labels.push(PREFIX[g] + 'XYZ'[c]);
+        colors.push(XYZ_COLORS[c]);
+        rowMeta.push({ kind: 'xf', group: g, channel: c });
+      }
+    }
+    if (xfIsVisible('weight')) {
+      labels.push('Weight');
+      colors.push('#f9e2af');
+      rowMeta.push({ kind: 'weight' });
+    }
 
     const activeMeshForGutter = this._graphMesh();
     const idForGutter = activeMeshForGutter ? activeMeshForGutter.getID() : null;
@@ -1348,7 +1513,11 @@ export default class GuiTimeline {
     if (trackForGutter && trackForGutter.shapeTimes && trackForGutter.shapeTimes.length >= 2) {
       colors.push('#ff00ff');
       labels.push('Shot');
+      rowMeta.push({ kind: 'shape' });
     }
+    // Published for the click handler, which has to turn a row index back into a group and a
+    // channel. Derived in one place so the two cannot drift.
+    this._gutterRowMeta = rowMeta;
 
     if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
     if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
@@ -1362,9 +1531,8 @@ export default class GuiTimeline {
     // The T|R|S strip. Drawn BEFORE the clip below, so it stays put while the channel rows
     // scroll under it — it is a mode switch, not a row.
     {
-      const active = xfGroup();
       for (const r of this._xfSegRects()) {
-        const on = r.g === active;
+        const on = r.norm ? this._xfNorm() : xfIsVisible(r.g);
         const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
                  && this._lastMouseY >= r.y && this._lastMouseY <= r.y + r.h;
         ctx.fillStyle = on ? TL_ACCENT : (hov ? Theme.surface1 : Theme.surface0);
@@ -1491,10 +1659,18 @@ export default class GuiTimeline {
     const _gMatrix = activeMeshForGutter?.getMatrix?.();
     const _gPosVals = _gMatrix ? [_gMatrix[12], _gMatrix[13], _gMatrix[14]] : null;
     for (let ch = 0; ch < labels.length; ch++) {
-      const _gVal = ch < 3 && _gPosVals ? _gPosVals[ch].toFixed(2) : null;
-      const _hl = (ch < 3 ? selXfCh.has(ch) : selHasShape)
-               || (_hc && (ch < 3 ? (_hc.kind === 'transform' && _hc.channel === ch) : _hc.kind === 'shape'));
-      _drawRow(ch, labels[ch], colors[ch], window._animChannelVisible[ch] !== false, _gVal, false, _hl);
+      const m = rowMeta[ch] || { kind: 'shape' };
+      // The value badge is read off the matrix TRANSLATION, so it is only true for the
+      // translation rows. It used to be shown against whichever group was active, which meant
+      // the rotation rows displayed position numbers.
+      const _gVal = (m.kind === 'xf' && m.group === 'pos' && _gPosVals)
+        ? _gPosVals[m.channel].toFixed(2) : null;
+      const _vis = m.kind === 'xf' ? xfChanVisible(m.group, m.channel)
+        : (m.kind === 'weight' ? true : window._animChannelVisible[3] !== false);
+      const _hl = m.kind === 'xf'
+        ? (selXfCh.has(m.channel) || (_hc && _hc.kind === 'transform' && _hc.channel === m.channel))
+        : (m.kind === 'shape' ? (selHasShape || (_hc && _hc.kind === 'shape')) : false);
+      _drawRow(ch, labels[ch], colors[ch], _vis, _gVal, false, _hl);
     }
 
     if (trackForGutter?.blendshapeTracks) {
@@ -1639,9 +1815,25 @@ export default class GuiTimeline {
         // Draw Position X, Y, Z
         const colors = ['#ff4444', '#44ff44', '#4444ff']; // R, G, B
         
+        // EVERY VISIBLE GROUP, not just the active one -- the strip is a filter now.
+        //
+        // ALL SOLID. The three groups share the same red/green/blue for X/Y/Z, so they were
+        // dashed to tell them apart. Once the gutter started naming every row that cue was
+        // redundant, and a dashed curve is harder to read the shape of: matt, "dashed lines are
+        // distracting." Which curve is which is answered by the gutter, which can say it in
+        // words instead of in a pattern you have to learn.
+        const normR = this._xfNormRanges(track);
+        // Published for the value DRAG. Under normalise a vertical drag is measured in
+        // normalised units, so writing it straight into the key would scale every edit by
+        // whatever the group's range happens to be -- a 2-degree nudge on a 180-degree curve
+        // would land as 180. The drag scales by the group's half-range to get back to real
+        // units, and this is where that number lives.
+        window._animXfNormRanges = normR;
+        ctx.setLineDash([]);
+        for (const grp of xfVisible()) {
+          if (grp === 'weight') continue;   // one channel, its own track -- drawn below
         for (let channel = 0; channel < 3; channel++) {
-          const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
-          if (!isVisible) continue;
+          if (!xfChanVisible(grp, channel)) continue;
 
           const _hovC = this._hoverCurve?.kind === 'transform' && this._hoverCurve.channel === channel;
           ctx.strokeStyle = _hovC ? this._lightenHex(colors[channel]) : colors[channel];
@@ -1662,42 +1854,44 @@ export default class GuiTimeline {
             
             const dt = t2 - t1;
             
-            const val1 = xfRead(track, i, channel);
-            const val2 = xfRead(track, i + 1, channel);
+            const val1 = xfRead(track, i, channel, grp);
+            const val2 = xfRead(track, i + 1, channel, grp);
 
-            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
-            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${channel}`] : undefined;
-            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dt`] : undefined;
-            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] : undefined;
+            // Per GROUP as well as per channel -- see xfTanGet. Reading these ungrouped is what
+            // put a translation tangent on the scale curve.
+            const rightDt = xfTanGet(track, `${i}_right_dt`, grp);
+            const rightDv = xfTanGet(track, `${i}_right_dv_${channel}`, grp);
+            const leftDt = xfTanGet(track, `${i + 1}_left_dt`, grp);
+            const leftDv = xfTanGet(track, `${i + 1}_left_dv_${channel}`, grp);
 
             const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
             const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
 
             let slope0 = 0;
             if (i === 0) {
-              slope0 = (xfRead(track, 1, channel) - xfRead(track, 0, channel)) / (track.times[1] - track.times[0]);
+              slope0 = (xfRead(track, 1, channel, grp) - xfRead(track, 0, channel, grp)) / (track.times[1] - track.times[0]);
             } else if (i === track.times.length - 1) {
-              slope0 = (xfRead(track, i, channel) - xfRead(track, i - 1, channel)) / (track.times[i] - track.times[i - 1]);
+              slope0 = (xfRead(track, i, channel, grp) - xfRead(track, i - 1, channel, grp)) / (track.times[i] - track.times[i - 1]);
             } else {
               const pIdx = (i - 1) * 3;
               const nIdx = (i + 1) * 3;
               const dt_seg = track.times[i + 1] - track.times[i - 1];
-              slope0 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel) - xfRead(track, pIdx / 3, channel)) / dt_seg : 0;
+              slope0 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel, grp) - xfRead(track, pIdx / 3, channel, grp)) / dt_seg : 0;
             }
 
             let slope1 = 0;
             const i1 = i + 1;
             if (i1 === 0) {
-              slope1 = (xfRead(track, 1, channel) - xfRead(track, 0, channel)) / (track.times[1] - track.times[0]);
+              slope1 = (xfRead(track, 1, channel, grp) - xfRead(track, 0, channel, grp)) / (track.times[1] - track.times[0]);
             } else if (i1 === track.times.length - 1) {
               const pIdx = (i1 - 1) * 3;
               const cIdx = i1 * 3;
-              slope1 = (xfRead(track, cIdx / 3, channel) - xfRead(track, pIdx / 3, channel)) / (track.times[i1] - track.times[i1 - 1]);
+              slope1 = (xfRead(track, cIdx / 3, channel, grp) - xfRead(track, pIdx / 3, channel, grp)) / (track.times[i1] - track.times[i1 - 1]);
             } else {
               const pIdx = (i1 - 1) * 3;
               const nIdx = (i1 + 1) * 3;
               const dt_seg = track.times[i1 + 1] - track.times[i1 - 1];
-              slope1 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel) - xfRead(track, pIdx / 3, channel)) / dt_seg : 0;
+              slope1 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel, grp) - xfRead(track, pIdx / 3, channel, grp)) / dt_seg : 0;
             }
 
             const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
@@ -1706,7 +1900,8 @@ export default class GuiTimeline {
             const p1x = dt0 / dt;
             const p2x = 1 + dt1 / dt;
 
-            const hasTangents = track.tangentOffsets && (track.tangentOffsets[`trans_${i}_right_dv_${channel}`] !== undefined || track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] !== undefined);
+            const hasTangents = xfTanGet(track, `${i}_right_dv_${channel}`, grp) !== undefined
+              || xfTanGet(track, `${i + 1}_left_dv_${channel}`, grp) !== undefined;
 
             const steps = 20;
             for (let s = 0; s <= steps; s++) {
@@ -1718,7 +1913,7 @@ export default class GuiTimeline {
               const time = t1 + targetAlpha * (t2 - t1);
               
               const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
-              const y = this.valueToY(val);
+              const y = this._valY(val, grp, normR);
               
               if (i === 0 && s === 0) {
                 ctx.moveTo(x, y);
@@ -1727,21 +1922,31 @@ export default class GuiTimeline {
               }
             }
           }
+          // STROKE INSIDE THE CHANNEL LOOP. When the group wrapper was added, its closing brace
+          // landed BEFORE this line -- so the braces still balanced and the file still parsed,
+          // but stroke() ran once per GROUP instead of once per channel, and only the last
+          // channel to call beginPath() was ever drawn. matt: "it only shows Z values ... it
+          // always seems to only show a single value across all." A brace in the wrong place
+          // with the right count is invisible to a syntax check.
           ctx.stroke();
         }
+        }
+        ctx.setLineDash([]);
 
         // Draw dots at keyframes
+        for (const grp of xfVisible()) {
+          if (grp === 'weight') continue;
         for (let i = 0; i < track.times.length; i++) {
           const t = track.times[i];
           for (let channel = 0; channel < 3; channel++) {
-            const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
-            if (!isVisible) continue;
-            
-            const val = xfRead(track, i, channel);
+            if (!xfChanVisible(grp, channel)) continue;
+
+            const val = xfRead(track, i, channel, grp);
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
-            const y = this.valueToY(val);
+            const y = this._valY(val, grp, normR);
             
-            const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel);
+            const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel
+              && (k.group || 'pos') === grp);
             const isHovered = TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10);
             
             const isInsideMarquee = this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd &&
@@ -1757,11 +1962,64 @@ export default class GuiTimeline {
             const isTied = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_tied`] !== false : true;
             ctx.beginPath();
             if (isTied) {
-              ctx.arc(x, y, 4, 0, Math.PI * 2);
+              ctx.arc(x, y, KEY_R, 0, Math.PI * 2);
             } else {
-              ctx.fillRect(x - 4, y - 4, 8, 8);
+              ctx.fillRect(x - KEY_R, y - KEY_R, KEY_R * 2, KEY_R * 2);
             }
+            // Same trap as the stroke above: the group wrapper's closing brace landed BEFORE
+            // this fill, so it ran once per group and only the last dot's path was ever filled.
             ctx.fill();
+          }
+        }
+        }
+
+        // ── THE PIN WEIGHT CURVE ──────────────────────────────────────────────────────
+        //
+        // One channel, not three, and its keys are its OWN -- they do not line up with the
+        // transform keys, so it cannot ride the loops above. Drawn through the same evaluator
+        // the blendshape weight curves use, because it is the same kind of track.
+        if (xfIsVisible('weight')) {
+          const wTrack = xfWeightTrack(track);
+          if (wTrack && wTrack.times.length) {
+            const WCOL = '#f9e2af';
+            ctx.setLineDash([]);
+            if (wTrack.times.length >= 2) {
+              const _hovW = this._hoverCurve?.kind === 'weight';
+              ctx.strokeStyle = _hovW ? this._lightenHex(WCOL) : WCOL;
+              ctx.lineWidth = _hovW ? 3.5 : 2;
+              ctx.beginPath();
+              for (let i = 0; i < wTrack.times.length - 1; i++) {
+                const t1 = wTrack.times[i], t2 = wTrack.times[i + 1];
+                const v1 = wTrack.values[i], v2 = wTrack.values[i + 1];
+                const dt = t2 - t1;
+                const s0 = reg.getBsSlope(wTrack, i);
+                const s1 = reg.getBsSlope(wTrack, i + 1);
+                const dt0 = dt * 0.33, dt1 = -dt * 0.33;
+                const dv0 = s0 * dt0, dv1 = s1 * dt1;
+                const p1x = dt0 / dt, p2x = 1 + dt1 / dt;
+                for (let st = 0; st <= 20; st++) {
+                  const alpha = st / 20;
+                  const bt = TimelineHelper.getBezierT(alpha, p1x, p2x);
+                  const val = TimelineHelper.evaluateBezier(bt, v1, v2, dv0, dv1);
+                  const x = tlX + ((t1 + alpha * dt - loopStart) / visibleDuration) * tlW;
+                  const y = this._valY(val, 'weight', normR);
+                  if (i === 0 && st === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+              }
+              ctx.stroke();
+            }
+            for (let i = 0; i < wTrack.times.length; i++) {
+              const x = tlX + ((wTrack.times[i] - loopStart) / visibleDuration) * tlW;
+              const y = this._valY(wTrack.values[i], 'weight', normR);
+              const sel = (window._animSelectedKeys || []).some((k) => k.meshId === id
+                && k.type === 'transform' && k.group === 'weight' && k.index === i);
+              ctx.fillStyle = sel ? '#ffff00'
+                : (TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10)
+                    ? '#00ffff' : WCOL);
+              ctx.beginPath();
+              ctx.arc(x, y, KEY_R, 0, Math.PI * 2);
+              ctx.fill();
+            }
           }
         }
 
@@ -1777,13 +2035,16 @@ export default class GuiTimeline {
             const t = track.times[i];
             const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
             
-            const val = xfRead(track, i, selChannel);
+            // Handles belong to the SELECTED key's group -- reading them ungrouped is the bug
+            // that put a translation tangent on the scale curve.
+            const selGrp = (singleSelected && singleSelected.group) || xfGroup();
+            const val = xfRead(track, i, selChannel, selGrp);
             const ky = this.valueToY(val);
-            
-            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
-            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
-            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
-            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+
+            const rightDt = xfTanGet(track, `${i}_right_dt`, selGrp);
+            const rightDv = xfTanGet(track, `${i}_right_dv_${selChannel}`, selGrp);
+            const leftDt = xfTanGet(track, `${i}_left_dt`, selGrp);
+            const leftDv = xfTanGet(track, `${i}_left_dv_${selChannel}`, selGrp);
 
             const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
             const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
@@ -2107,8 +2368,11 @@ export default class GuiTimeline {
             if (sk.meshId !== id) return;
             let t, val;
             if (sk.type === 'transform') {
-              t   = track.times?.[sk.index];
-              val = track ? xfRead(track, sk.index, sk.channel !== undefined ? sk.channel : 0) : undefined;
+              t   = xfTimes(track, sk.group)?.[sk.index];
+              val = this._dispVal(sk.group === 'weight'
+                ? xfWeightTrack(track)?.values?.[sk.index]
+                : xfRead(track, sk.index, sk.channel !== undefined ? sk.channel : 0, sk.group),
+                sk.group);
             } else if (sk.type === 'shape') {
               t   = track.shapeTimes?.[sk.index];
               val = track.shapeOutputTimes?.[sk.index] ?? track.shapes?.[sk.index];
@@ -2161,8 +2425,12 @@ export default class GuiTimeline {
       const tr = reg.tracks.get(sk.meshId);
       let time, val;
       if (sk.type === 'transform') {
-        time = tr?.times?.[sk.index];
-        val  = tr ? xfRead(tr, sk.index, sk.channel !== undefined ? sk.channel : 0) : undefined;
+        time = xfTimes(tr, sk.group)?.[sk.index];
+        // In DISPLAY space, like the box that is about to scale it.
+        val  = this._dispVal(sk.group === 'weight'
+          ? (xfWeightTrack(tr)?.values?.[sk.index])
+          : (tr ? xfRead(tr, sk.index, sk.channel !== undefined ? sk.channel : 0, sk.group) : undefined),
+          sk.group);
       } else if (sk.type === 'shape') {
         time = tr?.shapeTimes?.[sk.index];
         val  = tr?.shapeOutputTimes?.[sk.index] ?? 0;
@@ -2183,7 +2451,7 @@ export default class GuiTimeline {
       const tr = reg.tracks.get(sk.meshId);
       let time;
       if (sk.type === 'transform') {
-        time = tr?.times?.[sk.index];
+        time = xfTimes(tr, sk.group)?.[sk.index];
       } else if (sk.type === 'shape') {
         time = tr?.shapeTimes?.[sk.index];
       } else if (sk.type === 'blendshape') {
@@ -2221,10 +2489,17 @@ export default class GuiTimeline {
         if (dSeg(rx, ry, xOf(pts[i].t), this.valueToY(pts[i].v), xOf(pts[i + 1].t), this.valueToY(pts[i + 1].v)) <= TH) return true;
       return false;
     };
-    if (track.times && track.positions) {
-      for (let c = 0; c < 3; c++) {
-        if (!vis[c]) continue;
-        if (test(track.times.map((t, i) => ({ t, v: xfRead(track, i, c) })))) return { kind: 'transform', channel: c };
+    // Every visible group, and the answer NAMES the group -- clicking a rotation curve must
+    // select rotation keys, and an untagged hit falls back to whichever group is active.
+    if (track.times) {
+      const _nr = this._xfNormRanges(track);
+      for (const grp of xfVisible()) {
+        if (grp === 'weight') continue;
+        for (let c = 0; c < 3; c++) {
+          if (!xfChanVisible(grp, c)) continue;
+          if (test(track.times.map((t, i) => ({ t, v: this._normVal(xfRead(track, i, c, grp), grp, _nr) }))))
+            return { kind: 'transform', channel: c, group: grp };
+        }
       }
     }
     if (track.shapeTimes && track.shapeOutputTimes && vis[3]) {
@@ -2241,7 +2516,7 @@ export default class GuiTimeline {
 
   // Expand a channel descriptor into the full set of selectable keys for it.
   _channelKeys(desc, id, track) {
-    if (desc.kind === 'transform') return track.times.map((_, i) => ({ meshId: id, type: 'transform', index: i, channel: desc.channel }));
+    if (desc.kind === 'transform') return track.times.map((_, i) => ({ meshId: id, type: 'transform', index: i, channel: desc.channel, group: desc.group }));
     if (desc.kind === 'shape')     return track.shapeTimes.map((_, i) => ({ meshId: id, type: 'shape', index: i }));
     if (desc.kind === 'blendshape') {
       const bt = track.blendshapeTracks.get(desc.name);
@@ -2350,8 +2625,11 @@ export default class GuiTimeline {
         if (sk.meshId !== id) return;
         let t, val;
         if (sk.type === 'transform') {
-          t   = track.times?.[sk.index];
-          val = track ? xfRead(track, sk.index, sk.channel !== undefined ? sk.channel : 0) : undefined;
+          t   = xfTimes(track, sk.group)?.[sk.index];
+          val = this._dispVal(sk.group === 'weight'
+            ? xfWeightTrack(track)?.values?.[sk.index]
+            : xfRead(track, sk.index, sk.channel !== undefined ? sk.channel : 0, sk.group),
+            sk.group);
         } else if (sk.type === 'shape') {
           t   = track.shapeTimes?.[sk.index];
           val = track.shapeOutputTimes?.[sk.index] ?? track.shapes?.[sk.index];
@@ -2444,10 +2722,16 @@ export default class GuiTimeline {
         const t = track.times[i];
         const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
 
+        // EVERY VISIBLE GROUP, and the winner remembers WHICH. Without the group on the key,
+        // a click on the rotation curve selects a key that later reads and writes translation --
+        // the exact class of bug xfChannel was created to end, back when the group was global.
+        const _normR = this._xfNormRanges(track);
+        for (const grp of xfVisible()) {
+        if (grp === 'weight') continue;
         for (let c = 0; c < 3; c++) {
-          if (_chVis[c] === false) continue; // hidden channel — not selectable
-          const val = xfRead(track, i, c);
-          const y = this.valueToY(val);
+          if (!xfChanVisible(grp, c)) continue; // hidden channel — not selectable
+          const val = xfRead(track, i, c, grp);
+          const y = this._valY(val, grp, _normR);
           tlLog(`  key ${i} ch${c} val=${val} x=${x.toFixed(1)} y=${y.toFixed(1)}`,
             `dist=${Math.hypot(x - rx, y - ry).toFixed(1)}`,
             TimelineHelper.isKeyHovered(x, y, rx, ry, 10) ? 'HIT' : '');
@@ -2472,13 +2756,22 @@ export default class GuiTimeline {
             this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
             this._keyDragStartVal = this.yToValue(ry);
 
-            const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === c);
-            
+            const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(
+              k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === c
+                && (k.group || 'pos') === grp);
+
             if (isPartSelection) {
               this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
                 const tr = reg.tracks.get(k.meshId);
                 const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
-                const startVal = k.type === 'transform' ? xfRead(tr, k.index, k.channel !== undefined ? k.channel : 0) : 0;
+                // IN THE KEY'S OWN GROUP. Read ungrouped, every selected key took its start
+                // value from the ACTIVE group -- so a rotation X key began the drag holding
+                // translation X's value, and `startVal + delta` landed every X key on the same
+                // number. matt: "all the x values snap together across translate and rotate,
+                // same for y, same for z."
+                const startVal = k.type === 'transform'
+                  ? xfRead(tr, k.index, k.channel !== undefined ? k.channel : 0, k.group)
+                  : 0;
                 return { ...k, time, startVal };
               });
             } else {
@@ -2487,7 +2780,8 @@ export default class GuiTimeline {
               const beforeSelection = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({...k})) : [];
               
               // Select only this key!
-              window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, startVal: val }];
+              window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c,
+                                            group: grp, startVal: val }];
               window._animTransformBox = null;
               
               const afterSelection = [...window._animSelectedKeys];
@@ -2506,6 +2800,7 @@ export default class GuiTimeline {
             this.draw();
             return;
           }
+        }
         }
       }
     }
@@ -2627,11 +2922,13 @@ export default class GuiTimeline {
         const t = track.times[i];
         const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
         
-        const val = xfRead(track, i, selChannel);
+        const _selGrp2 = (window._animSelectedKeys && window._animSelectedKeys.length === 1
+          && window._animSelectedKeys[0].group) || xfGroup();
+        const val = xfRead(track, i, selChannel, _selGrp2);
         const ky = this.valueToY(val);
-        
-        const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
-        const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
+
+        const rightDt = xfTanGet(track, `${i}_right_dt`, _selGrp2);
+        const rightDv = xfTanGet(track, `${i}_right_dv_${selChannel}`, _selGrp2);
         const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
         const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
 
@@ -2932,15 +3229,29 @@ export default class GuiTimeline {
 
     const channelsVisible = window._animChannelVisible || [true, true, true, true];
 
-    if (track.positions && track.times && track.times.length > 0) {
-      for (let i = 0; i < track.times.length; i++) {
-        for (let c = 0; c < 3; c++) {
-          if (channelsVisible[c]) {
-            const val = xfRead(track, i, c);
+    // EVERY VISIBLE GROUP, not just the active one. Measured ungrouped, Fit All framed the
+    // active group and left the others running off the top of the graph -- matt: "the fit all
+    // button seems to only fit on x, not on Y." It was fitting Y, to a third of the curves.
+    if (track.times && track.times.length > 0) {
+      for (const grp of xfVisible()) {
+        if (grp === 'weight') continue;
+        for (let i = 0; i < track.times.length; i++) {
+          for (let c = 0; c < 3; c++) {
+            if (!xfChanVisible(grp, c)) continue;
+            const val = xfRead(track, i, c, grp);
+            if (typeof val !== 'number' || !isFinite(val)) continue;
             if (val < minVal) minVal = val;
             if (val > maxVal) maxVal = val;
           }
         }
+      }
+    }
+    // ...and the weight channel, which has its own track and its own keys.
+    if (xfIsVisible('weight')) {
+      const wT = xfWeightTrack(track);
+      for (const v of (wT ? wT.values : [])) {
+        if (v < minVal) minVal = v;
+        if (v > maxVal) maxVal = v;
       }
     }
 
@@ -3157,7 +3468,7 @@ export default class GuiTimeline {
     if (single && reg) {
       const tr = reg.tracks.get(single.meshId);
       if (tr?.tangentOffsets) {
-        const pfx = single.type === 'transform' ? 'trans_' : '';
+        const pfx = single.type === 'transform' ? xfTanPrefix() : '';
         isTied = tr.tangentOffsets[`${pfx}${single.index}_tied`] !== false;
       }
     }
@@ -3167,9 +3478,18 @@ export default class GuiTimeline {
     // Mode toggle — two FA icons
     btns.push({ id: 'mode', x: bx, y: 5, w: 46, h: 20, icon: 'mode', tooltip: 'Toggle Dopesheet / Graph' });
     bx += 54;
-    // Drag vs Marquee toggle (icon drawn programmatically in draw())
-    btns.push({ id: 'marquee', x: bx, y: 5, w: 28, h: 20, active: marqOn, tooltip: marqOn ? 'Marquee Selection on — click for Drag mode' : 'Drag Mode on — click for Marquee Selection' });
-    bx += 36;
+    // ORDER: show tangents, tangent mode, marquee, fit all, transform box, snap.
+    //
+    // The two tangent controls were split either side of Fit All, reading as two unrelated
+    // buttons rather than a switch and its mode -- matt: "the split of the tangents seems
+    // silly." Showing them comes first because it gates the other: Tied/Free means nothing
+    // while the handles are hidden.
+    // Tangents show/hide (graph only, text)
+    if (isGraph) {
+      btns.push({ id: 'tangents', x: bx, y: 5, w: 70, h: 20,
+        label: 'Tangents', active: tanOn, tooltip: 'Show tangent handles' });
+      bx += 78;
+    }
     // Tied tangents (graph only, text)
     if (isGraph) {
       btns.push({ id: 'tangents-tied', x: bx, y: 5, w: 105, h: 20,
@@ -3177,15 +3497,12 @@ export default class GuiTimeline {
         disabled: !single, tooltip: 'Toggle tied / free tangents' });
       bx += 113;
     }
+    // Drag vs Marquee toggle (icon drawn programmatically in draw())
+    btns.push({ id: 'marquee', x: bx, y: 5, w: 28, h: 20, active: marqOn, tooltip: marqOn ? 'Marquee Selection on — click for Drag mode' : 'Drag Mode on — click for Marquee Selection' });
+    bx += 36;
     // Fit All
     btns.push({ id: 'fit', x: bx, y: 5, w: 28, h: 20, icon: '', tooltip: 'Fit All (X + Y)' });
     bx += 36;
-    // Tangents show/hide (graph only, text)
-    if (isGraph) {
-      btns.push({ id: 'tangents', x: bx, y: 5, w: 70, h: 20,
-        label: 'Tangents', active: tanOn, tooltip: 'Show tangent handles' });
-      bx += 78;
-    }
     // T.Box
     btns.push({ id: 'tbox', x: bx, y: 5, w: 28, h: 20, icon: '', active: tboxOn, tooltip: 'Transform Box' });
     bx += 36;
@@ -3648,7 +3965,7 @@ export default class GuiTimeline {
               const track = reg.tracks.get(singleSelected.meshId);
               if (track) {
                 if (!track.tangentOffsets) track.tangentOffsets = {};
-                const prefix = singleSelected.type === 'transform' ? 'trans_' : '';
+                const prefix = singleSelected.type === 'transform' ? xfTanPrefix() : '';
                 const key = `${prefix}${singleSelected.index}_tied`;
                 const cur = track.tangentOffsets[key] !== false;
                 track.tangentOffsets[key] = !cur;
@@ -3800,29 +4117,44 @@ export default class GuiTimeline {
         const seg = this._xfSegRects().find((r) => rx >= r.x && rx <= r.x + r.w
                                                 && ry >= r.y && ry <= r.y + r.h);
         if (seg) {
-          this._switchXfGroup(seg.g);
+          if (seg.norm) {
+            window._animXfNorm = !this._xfNorm();
+            this._applyNormView(this._xfNorm());
+          }
+          else this._switchXfGroup(seg.g);
           this.draw();
           return;
         }
         const gutterY = HEADER_H + 4 + XF_SEG_H;
         const rowH = 22;
+        // ROW INDEX IS NO LONGER THE CHANNEL NUMBER. With several groups listed, row 4 might be
+        // rotation's Y -- so the row is resolved through the same meta the drawing built, and
+        // the two cannot disagree about what a row means.
         const channel = Math.floor((ry - gutterY + this._gutterScrollY) / rowH);
 
         const reg = window._animationRegistry;
         const activeMesh = this._graphMesh();
         const track = activeMesh ? reg.tracks.get(activeMesh.getID()) : null;
-        const maxChannels = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
+        const meta = this._gutterRowMeta || [];
+        const maxChannels = meta.length;
 
         if (channel >= 0 && channel < maxChannels) {
+          const m = meta[channel];
           if (rx < 36) { // eye icon zone (widened for VR — easier to hit)
             if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
-            if (e.shiftKey) {
-              this._soloChannel({ kind: channel === 3 ? 'shape' : 'transform', channel });
-            } else {
-              window._animChannelVisible[channel] = !window._animChannelVisible[channel];
-              this._pruneSelectionToVisible();
-              this.draw();
+            if (m && m.kind === 'xf') {
+              if (e.shiftKey) this._soloChannel({ kind: 'transform', channel: m.channel });
+              else xfSetChanVisible(m.group, m.channel, !xfChanVisible(m.group, m.channel));
+            } else if (m && m.kind === 'shape') {
+              if (e.shiftKey) this._soloChannel({ kind: 'shape', channel: 3 });
+              else window._animChannelVisible[3] = !window._animChannelVisible[3];
+            } else if (m && m.kind === 'weight') {
+              // The weight row's eye is the W filter itself -- one channel, one switch, rather
+              // than two controls that can disagree about whether it is showing.
+              this._switchXfGroup('weight');
             }
+            this._pruneSelectionToVisible();
+            this.draw();
             return;
           }
         }
@@ -4065,7 +4397,7 @@ export default class GuiTimeline {
             window._animSelectedKeys.forEach(sk => {
               const tr = reg.tracks.get(sk.meshId);
               if (tr && sk.type === 'transform' && tr.positions) {
-                const val = xfRead(tr, sk.index, sk.channel !== undefined ? sk.channel : 0);
+                const val = xfRead(tr, sk.index, sk.channel !== undefined ? sk.channel : 0, sk.group);
                 if (val < minV) minV = val;
                 if (val > maxV) maxV = val;
               }
@@ -4455,7 +4787,9 @@ export default class GuiTimeline {
   // layer-key drag capture and reindex paths.
   _keyTimeOf(tr, k) {
     if (!tr) return 0;
-    if (k.type === 'transform') return tr.times?.[k.index] ?? 0;
+    // Through xfTimes, because the weight channel keeps its own times -- reading a weight key
+    // out of `tr.times` returns whatever transform key sits at that index.
+    if (k.type === 'transform') return xfTimes(tr, k.group)?.[k.index] ?? 0;
     if (k.type === 'shape') return tr.shapeTimes?.[k.index] ?? 0;
     if (k.type === 'shapeLayer') return tr.shapeLayers?.[k.layer]?.shapeTimes?.[k.index] ?? 0;
     if (k.type === 'blendshape' && k.name) return tr.blendshapeTracks?.get(k.name)?.times?.[k.index] ?? 0;
@@ -4801,7 +5135,9 @@ export default class GuiTimeline {
         const id = activeMesh.getID();
         const track = window._animationRegistry.tracks.get(id);
         if (track) {
-          TimelineHelper.scaleKeysVertical(track, this._animTransformBoxInitialKeys, initialBox, targetVal, this._activeTransformHandle, window._animTransformBox);
+          TimelineHelper.scaleKeysVertical(track, this._animTransformBoxInitialKeys, initialBox,
+            targetVal, this._activeTransformHandle, window._animTransformBox,
+            (v, g) => this._rawVal(v, g));
           
           if (this._main && this._main._meshes) {
             this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
@@ -4835,8 +5171,9 @@ export default class GuiTimeline {
         // Respect snap-to-integer for the WHOLE transform box (edge/center/scale) —
         // the single-key drag already snapped, the box math didn't.
         if (window._animSnapToFrame !== false) { const fps = window._animFPS || 24; t = Math.round(t * fps) / fps; }
-        if (initKey.type === 'transform' && track.times) {
-          track.times[initKey.index] = t;
+        const _times = initKey.type === 'transform' ? xfTimes(track, initKey.group) : null;
+        if (_times) {
+          _times[initKey.index] = t;
         } else if (initKey.type === 'shape' && track.shapeTimes) {
           track.shapeTimes[initKey.index] = t;
         } else if (initKey.type === 'shapeLayer') {
@@ -4848,9 +5185,18 @@ export default class GuiTimeline {
         }
         window._animationRegistry?._extendDurationForTime?.(t);
       };
+      // THE KEY'S OWN GROUP, and back out of display space.
+      //
+      // This wrote `xfWrite(track, index, channel, newVal)` with no group, so every key landed
+      // in whichever group was ACTIVE -- with T and R both showing and R active, translation
+      // keys were written into rotation and the translation curves never moved at all. matt:
+      // "still ignoring curves when i scale vertically with the toolbox." A second vertical
+      // path, separate from scaleKeysVertical, which is why fixing that one changed nothing
+      // here. `track.positions` was also required, which is false for a weight key.
       const _setKeyVal = (track, initKey, newVal) => {
-        if (initKey.type === 'transform' && track.positions && initKey.channel !== undefined) {
-          xfWrite(track, initKey.index, initKey.channel, newVal);
+        if (initKey.type === 'transform' && initKey.channel !== undefined) {
+          xfWrite(track, initKey.index, initKey.channel,
+                  this._rawVal(newVal, initKey.group), initKey.group);
         } else if (initKey.type === 'shape' && track.shapeOutputTimes) {
           track.shapeOutputTimes[initKey.index] = newVal;
         } else if (initKey.type === 'blendshape') {
@@ -4930,6 +5276,10 @@ export default class GuiTimeline {
             const scaleFactorY = 1.0 - dy / 150.0;
 
             if (this._animTransformBoxInitialKeys) {
+              // ONE midpoint, shared by every key -- the box's own centre. Scaling a mixed
+              // selection onto a single line is the gesture ("scale all the keys to their
+              // midpoint, then move them all to zero"), and per-group midpoints make it
+              // impossible: each group collapses onto its own line instead.
               this._animTransformBoxInitialKeys.forEach(initKey => {
                 const track = window._animationRegistry.tracks.get(initKey.meshId);
                 if (!track) return;
@@ -5758,6 +6108,69 @@ export default class GuiTimeline {
         [[0, 0], [14, 0], [0, 9], [14, 9]].forEach(([dx, dy]) => {
           ctx.beginPath(); ctx.arc(ix + dx, iy + dy, 1.5, 0, Math.PI * 2); ctx.fill();
         });
+      } else if (btn.id === 'fit') {
+        // FIT ALL: a magnifier with arrows into the four corners of its bounding box. Drawn
+        // rather than a glyph, because the three 28px buttons were a marquee rectangle, a
+        // magnifier and a grid -- three small outlined squares that read as the same button at
+        // a glance. matt: "the icons for marquee, fit all, toolbox are too similar."
+        const ic = Theme.subtext;
+        ctx.strokeStyle = ic; ctx.fillStyle = ic; ctx.lineWidth = 1.4;
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(cx - 1, cy - 1, 4, 0, Math.PI * 2); ctx.stroke();
+        // Handle stops well short of the corner arrow: at 5.5 it ran into the arrow's shaft,
+        // which starts 3.2 back from the tip at 8.5.
+        ctx.beginPath(); ctx.moveTo(cx + 2, cy + 2); ctx.lineTo(cx + 4, cy + 4); ctx.stroke();
+        // Four corner arrows, pointing outward into the corners of the button's box.
+        const R = 8.5;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          const ax = cx + sx * R, ay = cy + sy * R;
+          ctx.beginPath();
+          ctx.moveTo(ax - sx * 3.2, ay - sy * 3.2);
+          ctx.lineTo(ax, ay);
+          ctx.stroke();
+          // barbs
+          ctx.beginPath();
+          ctx.moveTo(ax, ay); ctx.lineTo(ax - sx * 3, ay);
+          ctx.moveTo(ax, ay); ctx.lineTo(ax, ay - sy * 3);
+          ctx.stroke();
+        }
+      } else if (btn.id === 'tbox') {
+        // TRANSFORM BOX: a transform handle -- a square with grab dots at its corners and at
+        // the N/S/E/W midpoints, which is what the thing actually looks like on the graph.
+        const ic = btn.active ? Theme.text : Theme.subtext;
+        ctx.strokeStyle = ic; ctx.fillStyle = ic; ctx.lineWidth = 1.3;
+        ctx.setLineDash([]);
+        const hw = 6, hh = 5;
+        ctx.strokeRect(cx - hw, cy - hh, hw * 2, hh * 2);
+        for (const [dx, dy] of [[-hw, -hh], [0, -hh], [hw, -hh],
+                                [-hw, 0],            [hw, 0],
+                                [-hw, hh], [0, hh], [hw, hh]]) {
+          ctx.beginPath(); ctx.arc(cx + dx, cy + dy, 1.6, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (btn.id === 'snap') {
+        // SNAP TO FRAMES: a ruler of fractional ticks with a taller one at the centre and a
+        // small 1 above it -- the whole point being that a value lands on a WHOLE frame rather
+        // than between two. matt's sketch.
+        const ic = btn.active ? Theme.text : Theme.subtext;
+        ctx.strokeStyle = ic; ctx.fillStyle = ic; ctx.lineWidth = 1.2;
+        ctx.setLineDash([]);
+        const base = cy + 6;
+        for (const dx of [-9, -6, -3, 3, 6, 9]) {
+          ctx.beginPath();
+          ctx.moveTo(cx + dx, base);
+          ctx.lineTo(cx + dx, base - 3);
+          ctx.stroke();
+        }
+        // The whole-frame tick, taller than the fractions either side of it.
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(cx, base);
+        ctx.lineTo(cx, base - 7);
+        ctx.stroke();
+        ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText('1', cx, base - 8.5);
       } else if (btn.id === 'mode') {
         // Two icons: chart-column (flipped V) = dopesheet, bezier-curve = graph.
         ctx.textBaseline = 'middle';

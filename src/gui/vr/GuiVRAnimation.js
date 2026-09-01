@@ -1,4 +1,5 @@
-// Dummy comment to test Vite error line
+import { xfTanPrefix } from '../../editing/xfChannel.js';
+
 let isConfirmingClearAnim = false;
 export default function getAnimationWidgets(main, Enums) {
   const widgets = [];
@@ -1319,7 +1320,7 @@ export default function getAnimationWidgets(main, Enums) {
           const track = reg.tracks.get(sk.meshId);
           if (track) {
             if (!track.tangentOffsets) track.tangentOffsets = {};
-            const prefix = sk.type === 'transform' ? 'trans_' : '';
+            const prefix = sk.type === 'transform' ? xfTanPrefix() : '';
             const channel = sk.channel !== undefined ? sk.channel : 0;
             
             const leftKey = `${prefix}${sk.index}_left_dv`;

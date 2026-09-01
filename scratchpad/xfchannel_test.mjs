@@ -31,6 +31,11 @@ const _e = new THREE.Euler();
 const _rq = new THREE.Quaternion();
 const _re = new THREE.Euler();
 const R2D = 180 / Math.PI, D2R = Math.PI / 180;
+// The group list the accessors now validate against. Lifted rather than restated, so adding a
+// group to the module cannot leave this harness testing a shorter list than the app has.
+const XF_GROUPS = ${JSON.stringify(
+  (XF.match(/export const XF_GROUPS = \[([^\]]+)\]/) || [, ''])[1]
+    .split(',').map((w) => w.trim().replace(/^'|'$/g, '')).filter(Boolean))};
 ${grab('xfGroup')}
 ${grab('xfRead')}
 ${grab('xfWrite')}
@@ -181,10 +186,17 @@ check('rotation: the other key is untouched', t6.quaternions.slice(4).join() ===
 // first channel row.
 {
   const r = segRects();
-  check('strip: three segments, in T R S order',
-    r.length === 3 && r.map((x) => x.g).join() === 'pos,rot,scale',
+  // FOUR FILTERS AND A NORMALISE. The strip was a radio over three transform groups and is now
+  // a set over four channels, plus a button that is not a channel at all.
+  check('strip: four channel segments, in T R S W order',
+    r.filter((x) => !x.norm).map((x) => x.g).join() === 'pos,rot,scale,weight',
     r.map((x) => x.g).join());
-  check('strip: labels are T R S', r.map((x) => x.label).join() === 'T,R,S');
+  check('strip: labels are T R S W',
+    r.filter((x) => !x.norm).map((x) => x.label).join() === 'T,R,S,W');
+  check('strip: with Normalise beside them, marked as not a channel',
+    r.length === 5 && r[4].norm === true && r[4].g === null && r[4].label === 'N',
+    'mixed units cannot share a Y axis, and matt chose an explicit toggle over the view '
+      + 'silently changing mode when a second group is switched on');
   check('strip: stays inside the 200px gutter column',
     r.every((x) => x.x >= 0 && x.x + x.w <= 200),
     r.map((x) => `${x.x.toFixed(1)}..${(x.x + x.w).toFixed(1)}`).join(' '));
