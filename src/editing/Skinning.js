@@ -745,15 +745,21 @@ function resolveCagesRaw(mesh, prepared, nbV, touched) {
   const slack = cageSlack(prepared);
   const base = mesh._skinRaw;
   const full = () => WeightCage.weights(mesh._skinRest, nbV, prepared, MAX_INFLUENCES, slack);
-  if (!touched || !base || base.idx.length !== nbV * MAX_INFLUENCES) return full();
+  const list = touched ? (Array.isArray(touched) ? touched : [touched]) : [];
+  if (!list.length || !base || base.idx.length !== nbV * MAX_INFLUENCES) return full();
 
-  const ji = mesh._skinJoints.indexOf(touched._cageJointId);
-  const p = prepared.find((q) => q.joint === ji);
-  if (ji < 0 || !p) return full();
-
+  // MORE THAN ONE CAPSULE CAN HAVE MOVED. A mirrored stroke edits the twin as well, and
+  // re-measuring only the one under the brush would leave the other side of the character
+  // weighted to the shape it had before the mirror.
   const V = mesh._skinRest;
-  const cand = WeightCage.candidates(V, nbV, p, base, MAX_INFLUENCES);
-  return WeightCage.weightsPartial(V, prepared, MAX_INFLUENCES, slack, cand, base);
+  const seen = new Set();
+  for (const c of list) {
+    const ji = mesh._skinJoints.indexOf(c._cageJointId);
+    const p = prepared.find((q) => q.joint === ji);
+    if (ji < 0 || !p) return full();   // a capsule we cannot place: measure everything
+    for (const i of WeightCage.candidates(V, nbV, p, base, MAX_INFLUENCES)) seen.add(i);
+  }
+  return WeightCage.weightsPartial(V, prepared, MAX_INFLUENCES, slack, [...seen], base);
 }
 
 // The mesh a joint drives, if any. Selecting a joint is unavoidable while rigging — grabbing
@@ -789,7 +795,16 @@ Skinning.resolveWeightsAll = function (main, touched) {
 // the cage's, so it is far too expensive to run inside a stroke.
 Skinning.onCageEdited = function (main, cage) {
   if (!WeightCage.isCage(cage)) return 0;
-  return Skinning.resolveWeightsAll(main, cage);
+  // MIRROR FIRST, THEN MEASURE. The twin capsule is part of the shape being weighted, so
+  // re-solving before it moves would weight the skin against a half-finished edit and leave the
+  // other side of the character a stroke behind.
+  const mir = WeightCage.mirrorEdit(main, cage);
+  // A mirrored twin is a second capsule that moved, and the vertices it can have changed are
+  // not the ones the touched capsule can. Passing only one of them would leave the other side's
+  // weights stale until something else happened to re-solve them.
+  const touched = (mir && mir.ok && mir.twinCage && mir.twinCage !== cage)
+    ? [cage, mir.twinCage] : [cage];
+  return Skinning.resolveWeightsAll(main, touched);
 };
 
 // ---- weight colour preview ------------------------------------------------------

@@ -90,7 +90,6 @@ export function buildBoneAuthoringHTML(main, style) {
   const axis  = f('snapAxis');
   const caps  = f('capsules');
   const wts   = f('weights');
-  const radPct = Math.round(Skeleton.radiusFraction() * 100);
   const bound = Skinning.isBound(main.getMesh?.());
   const hasCages = WeightCage.cages(main).length > 0;
   const anyBound = Skinning.anyBound(main);
@@ -109,13 +108,8 @@ export function buildBoneAuthoringHTML(main, style) {
       ${flagButton(c, 'caps', 'Capsules', caps)}
       ${flagButton(c, 'weights', 'Weights', wts)}
     </div>
-    <div class="${c.row}">
-      <span class="${c.lbl}">Capsule</span>
-      <input type="range" id="bone-rad" min="5" max="120" step="1" value="${radPct}">
-      <span class="${c.val}" id="bone-rad-val">${radPct}%</span>
-    </div>
     <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-rad-all">Apply To All</button>
+      <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
       <button class="${c.action}" id="bone-skin">Make Skin</button>
     </div>
     <div class="${c.btnRow}">
@@ -405,16 +399,14 @@ export function wireBoneSection(root, main, opts) {
     doMirror(d > 0 ? 1 : -1, 'Copy Side');
   });
 
-  // The slider sets the DEFAULT fraction (used by every joint drawn from now on); the button
-  // pushes it onto the bones that already exist. Split deliberately: applying live on every
-  // drag frame would silently wipe radii that were hand-tuned in Radius mode.
-  const radInput = q('rad'), radVal = q('rad-val');
-  radInput?.addEventListener('input', () => {
-    const pct = parseFloat(radInput.value);
-    window._boneRadiusFrac = pct / 100;
-    if (radVal) radVal.textContent = Math.round(pct) + '%';
-  });
-
+  // THE DEFAULT IS THE SIZE. There used to be a slider here setting the fraction of a bone's
+  // length a capsule takes, and it was the first range control in the panel -- which is what
+  // made it the one a mis-aimed press grabbed. matt: "i think the defualt size is pretty good,
+  // whatever the default is, leave it at that, and remove the slider."
+  //
+  // The button stays, doing what it always did, now with the only value there is: push the
+  // default onto every bone. That is a reset -- the way back from radii hand-tuned in Radius
+  // mode, or from a rig imported with odd ones -- so it is labelled as one.
   q('rad-all')?.addEventListener('click', () => {
     const before = Skeleton.captureRadii(main);
     Skeleton.setRadiusFraction(main, Skeleton.radiusFraction());
@@ -476,8 +468,25 @@ export function wireBoneSection(root, main, opts) {
       say(`Bones: deleted ${n} baked capsule(s) — binding is back to the drawn capsules`, true);
     } else {
       const res = WeightCage.bake(main);
+      // PAY FOR THE FIRST FULL SOLVE HERE, where a pause is expected.
+      //
+      // A rig bound to the drawn capsules has weights, but it has no per-vertex distances to
+      // any CAGE — so the first cage edit had to measure every vertex against every cage before
+      // the incremental path had anything to work from, and that one stroke took seconds while
+      // every stroke after it was instant. matt: "the first capsule weight adjust takes a long
+      // time to update... i don't understand why that first one takes so long."
+      //
+      // Doing it at bake time does not make the work smaller, it puts it where the user is
+      // already waiting for a button, and leaves the first sculpt as fast as the rest.
+      let solveMs = 0;
+      if (res.ok) {
+        const t0 = performance.now();
+        Skinning.resolveWeightsAll(main);
+        solveMs = Math.round(performance.now() - t0);
+      }
       say(res.ok
         ? `Bones: baked ${res.cages} capsule(s) — sculpt them, weights follow on each stroke`
+          + (solveMs ? ` (weights re-solved in ${solveMs}ms)` : '')
         : `Bones: ${res.why}`, res.ok);
       // Baking into a scene with capsules switched off would produce twenty invisible meshes
       // and look like nothing happened — the same reason a radius edit turns them on.

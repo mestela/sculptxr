@@ -305,10 +305,12 @@ const CSS = `
   color: #7f849c;
   flex-shrink: 0;
 }
+/* Tall enough to hit with a ray — see the note on #mp-root input[type=range]. A 4px box is a
+   sliver in a headset, and the thumb the eye aims at is drawn well outside it. */
 .mm-row input[type=range] {
   flex: 1;
   accent-color: #89b4fa;
-  height: 4px;
+  height: 18px;
   cursor: pointer;
   min-width: 0;
 }

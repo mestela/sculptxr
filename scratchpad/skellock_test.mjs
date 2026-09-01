@@ -17,14 +17,27 @@ const REPO = '/Users/mattestela/sculptxr';
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 
 // Defect injection (standing lesson 1):
+//   SKEL_INJECT=nocagebit  a baked capsule is saved as an ordinary mesh, so a reload cannot
+//                          recognise it -- the Capsules button stops reaching it and the drawn
+//                          capsules come back over the top
+//   SKEL_INJECT=nohidden    visibility is not written, so a hidden mesh reloads visible
+//   SKEL_INJECT=nocagejoint the cage comes back without the joint it speaks for
 //   SKEL_INJECT=pinbits  the pin mode is written with its old two bits only, so the fourth
 //                        mode saves as unpinned while everything about the live session still
 //                        looks right — the classic bitfield bug that only shows up on reload.
 {
+  const _i = process.env.SKEL_INJECT;
+  const _cut = (a, b) => {
+    if (!SRC.includes(a)) throw new Error('inject ' + _i + ': anchor moved');
+    SRC = SRC.replace(a, b);
+  };
+  if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (hidden ? 64 : 0),');
+  else if (_i === 'nohidden') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (m._isWeightCage ? 32 : 0),');
+  else if (_i === 'nocagejoint') _cut('          if (row.parent && row.parent.getID) row.mesh._cageJointId = row.parent.getID();', '');
   if (process.env.SKEL_INJECT === 'pinbits') {
-    const a = "\n        | (((m._boneIKPin | 0) & 4) << 2),";
+    const a = "\n        | (((m._boneIKPin | 0) & 4) << 2)\n";
     if (!SRC.includes(a)) throw new Error('inject pinbits: anchor moved');
-    SRC = SRC.replace(a, ',');
+    SRC = SRC.replace(a, "\n");
   }
 }
 
@@ -92,6 +105,9 @@ const mk = (over) => Object.assign({
   setModelSpaceMatrix() {},
   getThreeMesh() { return null; },
   isVisible() { return true; },
+  // Records what the loader did, so a hidden mesh is observable in the reloaded copy — the
+  // real one sets the SculptGL flag and the three-side flag together.
+  setVisible(v) { this._isVisible = v; this._hiddenApplied = (v === false); },
 }, over || {});
 
 // The shape that made this matter: a bound character (not a bone, not parented) that binding
@@ -106,7 +122,13 @@ const roundTrip = (meshes) => {
   // deserialize ends in healGraph/updateVisuals, and its own try/catch swallows anything that
   // throws in there. Give the mock what those need, or the load half-completes and the checks
   // below pass on whatever happened to be applied before the throw.
-  const main = { _skelAll: new Set(), getMeshes: () => fresh, render() {}, _scene: null };
+  const main = { _skelAll: new Set(), getMeshes: () => fresh, render() {}, _scene: null,
+    // Restoring a PARENT link is a real part of the load — a baked capsule is parented to the
+    // joint it speaks for, and that link is where the cage's joint comes from.
+    setMeshParent(childId, parentId) {
+      const c = fresh.find((m) => m._id === childId), p = fresh.find((m) => m._id === parentId);
+      if (c) c._parentMesh = p || null;
+    } };
   let threw = null;
   const err = console.error;
   console.error = (...a) => { threw = a.join(' '); };
@@ -210,6 +232,49 @@ const roundTrip = (meshes) => {
   check('a v4 file loads without reading the rest section', !threw && fresh[0]._isBone === true,
     threw || 'bone flag ' + fresh[0]._isBone);
   check('and gains no rest pose from it', !fresh[0]._ikRest);
+}
+
+// ── BAKED CAPSULES, AND WHAT HIDDEN MEANS AFTER A RELOAD ──────────────────────────────
+//
+// matt: "i had capsules hidden, saved, reloaded, they were visible, and i couldn't hide them
+// again." Two separate gaps behind one report. Nothing in the file said a mesh was a baked
+// capsule, so a reloaded one was an ordinary mesh -- WeightCage.cages() found none, the
+// Capsules button had nothing to act on, and the parametric capsules came back over the top of
+// them. And visibility is not in the SGL format at all, so ANY hidden mesh reloaded visible.
+{
+  const joint = mk({ _isBone: true, _boneRadius: 1 });
+  const cage = mk({ _isWeightCage: true, _parentMesh: joint, isVisible: () => false });
+  const plain = mk({ _parentMesh: joint });        // parented, visible, not a cage
+  const out = roundTrip([joint, cage, plain]);
+  check('a baked capsule comes back as one', !!out && out[1]._isWeightCage === true,
+    'otherwise the Capsules button cannot find it and Rebind falls back to the drawn shapes');
+  check('...knowing which bone it speaks for',
+    !!out && out[1]._cageJointId === joint._id,
+    'taken from the parent link, which is the only place it was ever stored');
+  check('...and an ordinary parented mesh is NOT mistaken for one',
+    !!out && !out[2]._isWeightCage);
+  check('a hidden mesh comes back hidden',
+    !!out && out[1]._hiddenApplied === true,
+    'visibility is not in the SGL format, so this block is the only thing carrying it');
+  check('...and a visible one comes back visible',
+    !!out && !out[2]._hiddenApplied && !out[0]._hiddenApplied);
+  check('the joint it hangs from is still a joint',
+    !!out && out[0]._isBone === true,
+    'the two new bits share a word with the bone flag and the pin mode');
+}
+
+// A JOINT IS NEVER SAVED HIDDEN, however it was found. `visible = false` on a joint skips its
+// whole subtree in three -- the capsules and cages parented under it vanish with it, which is
+// the fault that took six versions to find. So the hidden bit is refused at BOTH ends.
+{
+  const joint = mk({ _isBone: true, _boneRadius: 1, isVisible: () => false });
+  const cage = mk({ _isWeightCage: true, _parentMesh: joint, isVisible: () => false });
+  const out = roundTrip([joint, cage]);
+  check('a hidden JOINT does not come back hidden',
+    !!out && !out[0]._hiddenApplied,
+    'it would take every capsule and cage parented to it out of the scene with it');
+  check('...while the capsule under it still does',
+    !!out && out[1]._hiddenApplied === true);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

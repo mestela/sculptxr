@@ -321,9 +321,18 @@ check('one bone per vertex, weight 1', (() => {
       /function noDrawMaterial\(tm\) \{[\s\S]{0,300}?tm\.visible = true;/.test(SKEL)
         && /colorWrite: false, depthWrite: false/.test(SKEL),
       'visible=false on a parent makes every descendant invisible too');
-    check('...and nothing sets a joint locator invisible any more',
-      !/tm\.visible = false;/.test(SKEL),
-      'one of these anywhere in the joint path hides everything parented to a joint');
+    // The rule is about JOINTS, and it used to be enforced as "this line appears nowhere in the
+    // file". Restoring a hidden mesh from a save needs exactly this line -- so the guard is now
+    // that every one of them is gated on the row NOT being a joint, which is the actual
+    // invariant rather than a proxy for it.
+    {
+      const hits = [...SKEL.matchAll(/tm\.visible = false;/g)];
+      const guarded = hits.every((h) => /!\(row\.bone & 1\)/.test(SKEL.slice(Math.max(0, h.index - 400), h.index)));
+      check('...and nothing sets a joint locator invisible any more',
+        guarded,
+        hits.length + ' occurrence(s); one ungated anywhere in the joint path hides everything '
+        + 'parented to a joint');
+    }
     check('...reasserted rather than assumed, since initRender rebuilds materials',
       (SKEL.match(/noDrawMaterial\(tm\);/g) || []).length >= 2,
       'applied at creation AND every frame -- the two drifting apart is how the white pick '

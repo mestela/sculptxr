@@ -70,7 +70,7 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
     SKEL = SKEL.replace(': (tintMode === 1 ? PIN_POS_COLOR : restTint))));',
       ': (tintMode === 1 ? PIN_POS_COLOR : restTint)))));');
   } else if (inj === 'spherealways') {
-    const a = 'o.visible = showJoints || noBoneBody || isolated || isHi || isSel || jointHeld;';
+    const a = 'o.visible = showJoints || isolated || isHi || isSel || jointHeld;';
     if (!SKEL.includes(a)) throw new Error('inject spherealways: anchor moved');
     SKEL = SKEL.replace(a, 'o.visible = true;');   // always drawn, flag ignored
   }
@@ -405,9 +405,9 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   const m = /o\.visible = (.+?);\n/.exec(SKEL.slice(SKEL.indexOf('const isolated = !hasChildBone')));
   check('the joint dot visibility is liftable', !!m, 'the placement code moved');
   if (m) {
-    const show = (o = {}) => new Function('showJoints', 'noBoneBody', 'isolated',
+    const show = (o = {}) => new Function('showJoints', 'isolated',
       'isHi', 'isSel', 'jointHeld', 'return (' + m[1] + ');')(
-      !!o.showJoints, !!o.noBoneBody, !!o.isolated, !!o.isHi, !!o.isSel, !!o.jointHeld);
+      !!o.showJoints, !!o.isolated, !!o.isHi, !!o.isSel, !!o.jointHeld);
 
     check('the flag on draws them', show({ showJoints: true }) === true);
     check('the flag off hides them', show({ showJoints: false }) === false,
@@ -420,12 +420,21 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     check('...and one in a hand', show({ jointHeld: true }) === true);
     check('an ISOLATED joint draws anyway', show({ isolated: true }) === true,
       'it has no capsule at either end: without the dot it is invisible AND unpickable');
-    check('so does every joint when the bone body is switched off',
-      show({ noBoneBody: true }) === true, 'the same case by a different route');
-    check('...and those two ignore the flag on purpose',
-      show({ showJoints: false, isolated: true }) === true
-        && show({ showJoints: false, noBoneBody: true }) === true,
-      'switching a marker off must not switch off the only way to find the thing');
+    // WAS: with Solid and Wire both off the dots came back regardless of the flag, so that
+    // something still marked a pickable joint. It overrode a switch the user had just thrown,
+    // one step after they threw it -- matt turned the dots off, then turned the bone body off,
+    // and the dots reappeared. The exemption is gone; the expression must not grow one back.
+    check('turning the bone body off does NOT bring the dots back',
+      !/noBoneBody/.test(m[1]),
+      'off has to mean off: the flag is the user\'s statement, not a suggestion');
+    check('...and the transient states still show what you would take',
+      show({ showJoints: false, isHi: true }) === true
+        && show({ showJoints: false, isSel: true }) === true,
+      'which is what makes a hidden rig still findable, without overriding anything');
+    check('...while ISOLATED keeps its exemption',
+      show({ showJoints: false, isolated: true }) === true,
+      'no bone at either end: with nothing drawn it is invisible AND unfindable, and it is '
+      + 'the first joint of every chain you draw');
   }
   check('the flag exists and defaults to ON',
     /joints: \['_boneShowJoints', 'boneShowJointDots', true\]/.test(SKEL),

@@ -889,11 +889,33 @@ export class HTMLVRPanel {
     if (!this.mesh) return;
     const { el, absX, absY } = this._uvToElement(uv);
 
-    // Slider drag: walk() may return the parent row if the 8px track isn't hit.
+    // Slider drag: walk() may return the parent row if the thin track isn't hit.
+    //
+    // ...BUT ONLY A SLIDER ON THE ROW YOU PRESSED. The fallback used to search the whole
+    // SUBTREE of whatever element was hit, and walk() returns a big ancestor whenever the point
+    // lands in padding or a gap between children -- so pressing empty space anywhere in the
+    // bone panel found the FIRST range in the entire panel and started dragging it. matt: "the
+    // earlier capsule slider keeps stealing focus, even though its at least 4 button rows
+    // away." Which is exactly what "first slider in the subtree" means from the outside.
+    //
+    // Two conditions now: the search is limited to the nearest ROW, and the slider it finds has
+    // to be vertically under the ray. A row has one slider, so this can only ever grab the one
+    // you are pointing at.
     if (type === 'pointerdown') {
-      const rangeEl = (el.tagName === 'INPUT' && el.type === 'range')
-        ? el
-        : el.querySelector?.('input[type=range]') ?? null;
+      let rangeEl = null;
+      if (el.tagName === 'INPUT' && el.type === 'range') {
+        rangeEl = el;
+      } else {
+        const row = el.closest?.('.mp-row, .mm-row, .acp-row, [data-row]') || null;
+        const cand = row ? row.querySelector('input[type=range]') : null;
+        if (cand) {
+          const r = cand.getBoundingClientRect();
+          // Generous vertically -- the track is a few px tall and the point of this branch is
+          // to catch a press that MISSED it -- but bounded by the row, not by the panel.
+          const pad = Math.max(10, r.height);
+          if (absY >= r.top - pad && absY <= r.bottom + pad) rangeEl = cand;
+        }
+      }
       if (rangeEl) this._sliderDragTarget = rangeEl;
     }
     if (type === 'pointerup') this._sliderDragTarget = null;

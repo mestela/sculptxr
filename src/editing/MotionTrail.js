@@ -900,10 +900,14 @@ window.trailDepthDiag = function () {
   return { line: { depthTest: m.depthTest, transparent: m.transparent }, culprit: worst };
 };
 
-// WHY ARE THE JOINT DOTS STILL ON. The flag is one of six reasons a dot draws, and the other
-// five are deliberate -- a dot that is the ONLY marker of a pickable thing must not be
-// switchable off. So "the button does nothing" is usually one of those five, and this says
-// which, per joint, instead of leaving it to be guessed.
+// WHY ARE THE JOINT DOTS STILL ON. The flag is one of several reasons a dot draws, and the
+// rest are transient -- preselect, selection, a held joint -- plus the one standing exemption
+// for an ISOLATED joint, which has no bone at either end and would otherwise be invisible AND
+// unpickable. So "the button does nothing" has a specific cause, and this says which, per
+// joint, instead of leaving it to be guessed.
+//
+// The "solid and wire are both off" exemption was REMOVED (v3.20.245): it overrode a switch
+// the user had just thrown, one step after they threw it.
 window.jointDotDiag = function () {
   const main = window.app;
   const flags = {
@@ -911,12 +915,8 @@ window.jointDotDiag = function () {
     solid: Skeleton.displayFlag('solid'),
     wire: Skeleton.displayFlag('wire'),
   };
-  const noBoneBody = !flags.solid && !flags.wire;
   console.log('[joints] Joints=' + flags.joints + '  Solid=' + flags.solid
-    + '  Wire=' + flags.wire
-    + (noBoneBody ? '\n[joints] Solid AND Wire are both OFF, so the dots are the only thing '
-        + 'marking a joint and are forced on REGARDLESS of the Joints flag. Turn Solid or Wire '
-        + 'on and the flag takes effect.' : ''));
+    + '  Wire=' + flags.wire);
   const joints = Skeleton.joints(main) || [];
   const sel = new Set((main.getSelectedMeshes?.() || []).map((x) => x.getID()));
   const hasChildBone = new Set();
@@ -931,7 +931,6 @@ window.jointDotDiag = function () {
     const isSel = sel.has(id);
     const why = [];
     if (flags.joints) why.push('flag on');
-    if (noBoneBody) why.push('no bone body');
     if (isolated) why.push('ISOLATED (no bone at either end)');
     if (isSel) why.push('selected');
     if (why.length && !flags.joints) forced++;

@@ -431,6 +431,114 @@ WeightCage.setVisible = function (main, on) {
   return cages.length;
 };
 
+// ── MIRRORING ─────────────────────────────────────────────────────────────────────────
+//
+// Sculpt one arm's capsule, get the other arm's for free. Applied when the stroke ENDS rather
+// than while it runs, because the mirror of an arm capsule is a DIFFERENT MESH and no in-stroke
+// mirror can reach across meshes -- SculptManager.getSymmetry() switches the in-stroke one off
+// for cages precisely so this can do the job properly instead.
+//
+// The pairing is not guessed: `_boneMirror` already links each side joint to its twin, it is
+// maintained as the chain is drawn and it survives a save. A bone ON the centreline has no
+// twin, and mirrors onto ITSELF -- which is the case the ordinary local symmetry would have got
+// right, and it costs nothing to handle here with the same machinery.
+
+// Vertex i of `src` corresponds to which vertex of `dst`, once mirrored. Built by matching
+// mirrored positions to nearest neighbours in MODEL space, and cached on the source cage.
+//
+// Matched rather than assumed equal: mirroring reverses a capsule's radial winding, so index i
+// on the left is emphatically not index i on the right, and copying straight across turns the
+// twin inside out. Both cages come from the same generator, so at bake time they are exact
+// mirror images and every match is a direct hit -- the map is built once, then reused while the
+// vertex counts hold.
+function mirrorMap(src, dst, plane) {
+  const sv = src.verts, dv = dst.verts;
+  const n = sv.length / 3, m = dv.length / 3;
+  const map = new Int32Array(n).fill(-1);
+  const _p = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    _p.set(sv[i * 3], sv[i * 3 + 1], sv[i * 3 + 2]);
+    Skeleton.mirrorPoint(_p, plane, _p);
+    let best = -1, bestD = Infinity;
+    for (let j = 0; j < m; j++) {
+      const dx = dv[j * 3] - _p.x, dy = dv[j * 3 + 1] - _p.y, dz = dv[j * 3 + 2] - _p.z;
+      const d = dx * dx + dy * dy + dz * dz;
+      if (d < bestD) { bestD = d; best = j; }
+    }
+    map[i] = best;
+  }
+  return map;
+}
+
+// A cage's vertices in model space, and the transform back.
+function modelVerts(cage) {
+  const level = cage.getCurrentMesh ? cage.getCurrentMesh() : cage;
+  const v = level.getVertices ? level.getVertices() : null;
+  if (!v) return null;
+  const nb = level.getNbVertices();
+  const m = new THREE.Matrix4().fromArray(cage.getModelSpaceMatrix());
+  const out = new Float32Array(nb * 3);
+  const _p = new THREE.Vector3();
+  for (let i = 0; i < nb; i++) {
+    _p.set(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]).applyMatrix4(m);
+    out[i * 3] = _p.x; out[i * 3 + 1] = _p.y; out[i * 3 + 2] = _p.z;
+  }
+  return { level: level, verts: out, nb: nb, toLocal: m.clone().invert() };
+}
+
+WeightCage.mirrorEdit = function (main, cage) {
+  if (!WeightCage.isCage(cage)) return null;
+  const plane = Skeleton.rigMirrorPlane(main);
+  if (!plane) return null;                       // symmetry is off: the user said not to
+
+  const joints = Skeleton.joints(main);
+  const joint = joints.find((j) => j.getID() === cage._cageJointId);
+  if (!joint) return null;
+  const twinJoint = joint._boneMirror || joint;  // a centreline bone mirrors onto itself
+  const dstCage = twinJoint === joint
+    ? cage
+    : WeightCage.cages(main).find((c) => c._cageJointId === twinJoint.getID());
+  if (!dstCage) return null;
+
+  const src = modelVerts(cage);
+  const dst = dstCage === cage ? src : modelVerts(dstCage);
+  if (!src || !dst) return null;
+  // Subdivide one side and the correspondence is gone. Refusing is the honest answer: silently
+  // mirroring a fraction of the vertices would leave a torn twin that looks like a sculpt bug.
+  if (src.nb !== dst.nb) return { ok: false, why: 'the twin capsule has a different vertex count' };
+
+  const key = dstCage.getID() + ':' + src.nb;
+  if (!cage._cageMirrorMap || cage._cageMirrorKey !== key) {
+    cage._cageMirrorMap = mirrorMap(src, dst, plane);
+    cage._cageMirrorKey = key;
+  }
+  const map = cage._cageMirrorMap;
+
+  // Written into a copy first: mirroring a cage onto ITSELF reads and writes the same array,
+  // and a vertex already moved this pass is no longer the source its partner needs.
+  const outV = new Float32Array(dst.verts);
+  const _p = new THREE.Vector3();
+  for (let i = 0; i < src.nb; i++) {
+    const j = map[i];
+    if (j < 0) continue;
+    _p.set(src.verts[i * 3], src.verts[i * 3 + 1], src.verts[i * 3 + 2]);
+    Skeleton.mirrorPoint(_p, plane, _p);
+    outV[j * 3] = _p.x; outV[j * 3 + 1] = _p.y; outV[j * 3 + 2] = _p.z;
+  }
+
+  const target = dst.level.getVertices();
+  for (let j = 0; j < dst.nb; j++) {
+    _p.set(outV[j * 3], outV[j * 3 + 1], outV[j * 3 + 2]).applyMatrix4(dst.toLocal);
+    target[j * 3] = _p.x; target[j * 3 + 1] = _p.y; target[j * 3 + 2] = _p.z;
+  }
+  dstCage.updateGeometry();
+  dstCage.updateBuffers();
+  // The twin comes back because the caller has to re-measure the skin against IT as well —
+  // it is a second capsule that moved, and not the same vertices changed hands.
+  return { ok: true, twinCage: dstCage,
+           twin: dstCage === cage ? 'self' : (twinJoint._permanentStaticLabel || 'twin') };
+};
+
 WeightCage.deleteAll = function (main) {
   const cages = WeightCage.cages(main);
   for (const c of cages) main.removeMesh ? main.removeMesh(c) : main.removeMeshSilent(c);

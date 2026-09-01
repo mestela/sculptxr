@@ -10,6 +10,7 @@ import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Skinning from './Skinning.js';
 import RigPending from './RigPending.js';
 import Skeleton from './Skeleton.js';
+import WeightCage from './WeightCage.js';
 
 // Tools that change the vertex count (or the mesh object), which a per-vertex skin weight
 // map cannot survive. Voxel is included because it replaces the surface wholesale.
@@ -141,6 +142,25 @@ class SculptManager {
   }
 
   getSymmetry() {
+    // A WEIGHT CAPSULE'S MIRROR IS THE OTHER LIMB, NOT ITS OWN MIDDLE.
+    //
+    // Ordinary symmetry mirrors a stroke across the MESH's own centre, which for a capsule out
+    // on an arm means the far side of that same arm -- so sculpting the front of a bicep pushed
+    // the back of it out too. matt: "they all seem to go into local symmetrcy sculpting mode,
+    // thats bad. bone sculpting should be symmetrical about the world x axis."
+    //
+    // The correct mirror of an arm capsule is the OTHER ARM's capsule, which is a different
+    // mesh and something no in-stroke mirror can reach. So in-stroke symmetry is switched off
+    // for cages and the real thing is applied when the stroke ends, across the rig's own mirror
+    // plane and onto the twin bone -- see WeightCage.mirrorEdit.
+    if (this._symmetry && WeightCage.isCage(this._main.getMesh?.())) return false;
+    return this._symmetry;
+  }
+
+  // The toggle itself, ignoring the cage rule above. The stroke-end mirror has to know whether
+  // the user asked for symmetry, and asking getSymmetry() while a cage is selected always
+  // answers no -- which would switch the feature off exactly where it applies.
+  getSymmetryFlag() {
     return this._symmetry;
   }
 

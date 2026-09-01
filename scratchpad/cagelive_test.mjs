@@ -21,6 +21,10 @@
 //   CL_INJECT=noxray      the x-ray slider stops reaching the bound meshes
 //   CL_INJECT=sharedmat   the skin keeps the SHARED material, so its alpha leaks to every mesh
 //   CL_INJECT=xraydepth   a see-through skin goes on writing depth, hiding the capsules inside
+//   CL_INJECT=localsym    a capsule mirrors about its OWN centre again, not onto the twin bone
+//   CL_INJECT=indexmirror the mirror copies vertex i to vertex i, ignoring the reversed winding
+//   CL_INJECT=onetouched  only the sculpted capsule is re-measured, not the mirrored twin
+//   CL_INJECT=lazybake    the first full solve is left to the first stroke instead of the bake
 import fs from 'fs';
 import path from 'path';
 
@@ -194,6 +198,71 @@ for (const [label, before, after] of [
   check('...and it is a no-op for anything that is not a cage',
     /if \(!WeightCage\.isCage\(cage\)\) return 0;/.test(SKIN),
     'this runs at the end of every stroke in the app');
+}
+
+// ── SYMMETRY IS ACROSS THE RIG, ONTO THE TWIN BONE ────────────────────────────────────
+//
+// matt: "they all seem to go into local symmetrcy sculpting mode, thats bad. bone sculpting
+// should be symmetrical about the world x axis." The mirror of an arm capsule is the OTHER
+// ARM's capsule -- a different mesh, which no in-stroke mirror can reach.
+{
+  const CAGE = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
+  const SKEL = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+  const sm = inject === 'localsym'
+    ? SM.replace("if (this._symmetry && WeightCage.isCage(this._main.getMesh?.())) return false;", '')
+    : SM;
+  check('in-stroke symmetry is off while a capsule is selected',
+    /if \(this\._symmetry && WeightCage\.isCage\(this\._main\.getMesh\?\.\(\)\)\) return false;/.test(sm),
+    'mirroring about the capsule\'s own centre pushes the BACK of a bicep out with the front');
+  check('...but the toggle itself is still readable',
+    /getSymmetryFlag\(\) \{\s+return this\._symmetry;/.test(sm),
+    'the stroke-end mirror needs to know what the user asked for, and getSymmetry() now says no');
+  check('...and the rig plane can be had without that gate',
+    /Skeleton\.rigMirrorPlane = function/.test(SKEL) &&
+    /getSymmetryFlag\?\.\(\)/.test(SKEL));
+  check('the twin is the rig\'s own mirror link, not a name match',
+    /const twinJoint = joint\._boneMirror \|\| joint;/.test(CAGE),
+    '_boneMirror is maintained as the chain is drawn and survives a save');
+  check('...a centreline bone mirrors onto itself',
+    /twinJoint === joint\s+\? cage/.test(CAGE));
+  check('vertices are matched by mirrored position, not by index',
+    /function mirrorMap/.test(inject === 'indexmirror' ? CAGE.replace('function mirrorMap', 'function _dead') : CAGE)
+    && /Skeleton\.mirrorPoint\(_p, plane, _p\);/.test(CAGE),
+    'mirroring reverses the radial winding, so index i on the left is not index i on the right');
+  check('...into a copy, so a self-mirror cannot read what it just wrote',
+    /const outV = new Float32Array\(dst\.verts\);/.test(CAGE));
+  check('...and a subdivided twin is refused rather than half-written',
+    /if \(src\.nb !== dst\.nb\) return \{ ok: false/.test(CAGE),
+    'a torn twin looks like a sculpt bug, not like a refusal');
+  const skinSym = inject === 'onetouched'
+    ? SKIN.replace('? [cage, mir.twinCage] : [cage];', '? [cage] : [cage];')
+    : SKIN;
+  check('the mirror runs BEFORE the weights are re-measured',
+    /const mir = WeightCage\.mirrorEdit\(main, cage\);[\s\S]{0,600}resolveWeightsAll/.test(SKIN),
+    'otherwise the skin is weighted against a half-finished edit');
+  check('...and BOTH capsules are re-measured',
+    /\? \[cage, mir\.twinCage\] : \[cage\]/.test(skinSym),
+    'the twin moved too, and not the same vertices changed hands');
+  check('...with the candidate sets unioned rather than one replacing the other',
+    /for \(const i of WeightCage\.candidates\([\s\S]{0,80}\) seen\.add\(i\)/.test(SKIN));
+}
+
+// ── THE FIRST EDIT IS NOT THE SLOW ONE ────────────────────────────────────────────────
+//
+// A rig bound to the DRAWN capsules has weights but no per-vertex distance to any CAGE, so the
+// first cage edit had to measure everything before the incremental path had a baseline. matt:
+// "the first capsule weight adjust takes a long time to update... i don't understand why that
+// first one takes so long, when every other subsequent update is fast."
+{
+  const panel = inject === 'lazybake'
+    ? PANEL.replace('        Skinning.resolveWeightsAll(main);', '')
+    : PANEL;
+  check('baking pays for the first full solve',
+    /const t0 = performance\.now\(\);\s+Skinning\.resolveWeightsAll\(main\);/.test(panel),
+    'the cost does not shrink, but it moves to a button the user is already waiting on');
+  check('...and says how long it took',
+    /weights re-solved in \$\{solveMs\}ms/.test(PANEL),
+    'a silent multi-second pause is indistinguishable from a hang');
 }
 
 // ── X-RAY ─────────────────────────────────────────────────────────────────────────────

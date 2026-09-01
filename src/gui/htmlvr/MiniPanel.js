@@ -159,14 +159,25 @@ const CSS = `
   color: #a6adc8;
   flex-shrink: 0;
 }
+/* THE HIT BOX IS THE ELEMENT, NOT THE PAINTED TRACK.
+   The input WAS 5px tall and painted its own track, so the box a ray has to hit was a 5px
+   sliver -- while the thumb, at 16px, is drawn overflowing that box. So the control looks three
+   times taller than it can be hit, and the hover highlight came out as a thin band sitting
+   below the thumb you were aiming at. matt: "the hover hilight is very thin and misaligned too
+   low." Same width, same look: the box grows to a hittable 20px and the 5px track moves to the
+   track pseudo-element inside it. */
 #mp-root input[type=range] {
   flex: 1;
   -webkit-appearance: none;
+  height: 20px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+#mp-root input[type=range]::-webkit-slider-runnable-track {
   height: 5px;
   border-radius: 3px;
   background: #45475a;
-  outline: none;
-  cursor: pointer;
 }
 #mp-root input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -175,6 +186,7 @@ const CSS = `
   background: #89b4fa;
   cursor: pointer;
   box-shadow: 0 0 0 3px rgba(137,180,250,0.25);
+  margin-top: -5.5px;          /* centre the thumb on the track inside the taller box */
 }
 #mp-root .mp-val {
   width: 32px;

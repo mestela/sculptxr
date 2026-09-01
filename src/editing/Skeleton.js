@@ -255,6 +255,10 @@ function capsuleEndGeometry() {
 // envelopes read as bloated tubes rather than as limbs, and they swamped the bones they were
 // meant to wrap. This is the number every downstream weight inherits.
 const DEFAULT_RADIUS_FRAC = 0.25;
+// The panel's slider for this was removed -- matt judged the default right and the control was
+// costing more in mis-aimed presses than it was worth. `window._boneRadiusFrac` is kept as the
+// override because it is how the number is tried from the console, which is how it was tuned to
+// 0.25 in the first place; nothing in the UI writes it any more.
 function radiusFrac() {
   const v = window._boneRadiusFrac;
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_RADIUS_FRAC;
@@ -1766,7 +1770,6 @@ Skeleton.updateVisuals = function (main) {
     // dots: the flag was persisted, so anyone who had ever seen the old default carried it
     // forward and got them back on every launch.
     const isolated = !hasChildBone.has(id) && !Skeleton.isJoint(j._parentMesh);
-    const noBoneBody = !showSolid && !showWire;   // nothing else would mark the joint
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
       o.scale.setScalar(isSel ? jr * 1.7 : jr);
@@ -1774,10 +1777,20 @@ Skeleton.updateVisuals = function (main) {
       // yellow, and it loses to a hand actually on the thing.
       o.material.color.setHex(jointHeld ? SELECT_COLOR
         : (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
-      // The flag, plus the two cases that ignore it: an ISOLATED joint has no capsule at
-      // either end to be picked by, and a hidden bone body leaves nothing else on screen —
-      // switching a marker off must not also switch off the only way to find the thing.
-      o.visible = showJoints || noBoneBody || isolated || isHi || isSel || jointHeld;
+      // OFF MEANS OFF. There used to be a `noBoneBody` term here — with the bone body and the
+      // wireframe both switched off, the dots came back on their own so that something still
+      // marked a joint that was perfectly pickable. Reasonable in the abstract and wrong in
+      // practice: it silently overrode a switch the user had just thrown, and it did it a step
+      // LATER, so the dots reappeared while you were turning other things off. matt: "if i turn
+      // off joint spheres first, they go away, but then if i turn off bone solid and bone
+      // wireframe, the joint spheres become visible again."
+      //
+      // The concern it answered is met by the terms that remain: preselect, selection and a
+      // held joint all still light up, so pointing at a rig you have hidden still shows you
+      // what you would take. And an ISOLATED joint keeps its exemption — it has no bone at
+      // either end, so with nothing drawn it would be both invisible and unfindable, which is
+      // the first joint of every chain you draw.
+      o.visible = showJoints || isolated || isHi || isSel || jointHeld;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -2230,8 +2243,17 @@ Skeleton.symmetryPlane = function (main) {
   return main._skelPlane;
 };
 
-Skeleton._computeSymmetryPlane = function (main) {
-  if (!main.getSculptManager || !main.getSculptManager().getSymmetry()) return null;
+// The rig's mirror plane whether or not the current selection is allowed in-stroke symmetry.
+// Selecting a weight capsule turns getSymmetry() off (its mirror is another mesh, so an
+// in-stroke mirror is wrong) -- and the stroke-end mirror that DOES handle it still needs the
+// plane, so it asks here rather than through the gate that is switched off for its sake.
+Skeleton.rigMirrorPlane = function (main) {
+  if (!main.getSculptManager || !main.getSculptManager().getSymmetryFlag?.()) return null;
+  return Skeleton._computeSymmetryPlane(main, true);
+};
+
+Skeleton._computeSymmetryPlane = function (main, force) {
+  if (!force && (!main.getSculptManager || !main.getSculptManager().getSymmetry())) return null;
   const meshes = (main.getMeshes() || []).filter((m) => !Skeleton.isJoint(m) && !m._isNull);
   const m = meshes.includes(main.getMesh()) ? main.getMesh() : meshes[0];
   // The plane is READ off the sculpt, but it does not belong to the sculpt — it is where the
@@ -2586,7 +2608,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 5;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose
+const SKEL_VERSION = 6;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -2609,7 +2631,16 @@ Skeleton.serialize = function (meshes) {
     // A LOCKED MESH EARNS A ROW OF ITS OWN. The lock is set from the outliner on anything at
     // all, and a bound character is typically neither parented nor a bone — so without this
     // the one case that most wants saving is the one with nowhere to be written.
-    if (!parented && !m._isBone && !m._selectLocked) return;
+    // A HIDDEN MESH ALSO EARNS A ROW. Visibility is not in the SGL format at all, so anything
+    // hidden came back visible on load — and for a baked capsule that was half the problem:
+    // hidden when saved, visible on reload. matt: "i had capsules hidden, saved, reloaded, they
+    // were visible, and i couldn't hide them again."
+    // NEVER FOR A JOINT. A joint locator paints nothing by MATERIAL, never by `visible`, because
+    // three skips a hidden object's entire subtree and a joint has capsules and cages parented
+    // under it — the fault that cost six versions to find. Saving a joint as "hidden" would
+    // reintroduce it through the loader, so the bit is only ever written for other meshes.
+    const hidden = !m._isBone && m.isVisible ? !m.isVisible() : false;
+    if (!parented && !m._isBone && !m._selectLocked && !hidden) return;
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
@@ -2624,8 +2655,16 @@ Skeleton.serialize = function (meshes) {
       // and sees a rotation-only pin as unpinned, which is the right way for it to fail: it
       // cannot honour the mode, and a pin it cannot honour is better absent than mistaken for
       // a position pin that would drag the joint somewhere.
+      // Bit 5 (v6) = THIS IS A BAKED WEIGHT CAPSULE. Nothing else in the file says so, and
+      // without it a reloaded cage is an ordinary mesh: WeightCage.cages() finds none, so the
+      // Capsules button cannot hide them, the drawn capsules come back over the top of them,
+      // and a Rebind quietly falls back to the parametric shapes. The JOINT it speaks for needs
+      // no field of its own — a cage is parented to exactly that joint, and `p` already carries
+      // the link.
+      // Bit 6 (v6) = hidden. See the note on the entry filter above.
       bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0)
-        | (((m._boneIKPin | 0) & 4) << 2),
+        | (((m._boneIKPin | 0) & 4) << 2)
+        | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
       // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
@@ -2757,6 +2796,29 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     // it for bound meshes so a v3 file still comes back locked.
     if (ver >= 4) {
       for (const row of rows) row.mesh._selectLocked = !!(row.bone & 8);
+    }
+
+    // v6: baked weight capsules, and visibility.
+    if (ver >= 6) {
+      for (const row of rows) {
+        if (row.bone & 32) {
+          row.mesh._isWeightCage = true;
+          row.mesh._typeName = 'Cage';
+          // The joint is the parent, which is the only place the link was ever stored.
+          if (row.parent && row.parent.getID) row.mesh._cageJointId = row.parent.getID();
+        }
+        // ...AND NEVER APPLIED TO A JOINT, whatever the file says: `visible = false` on a joint
+        // hides everything parented to it. The writer already refuses to set the bit for one;
+        // this is the second half of that rule, so a hand-edited or future file cannot smuggle
+        // it back in.
+        if ((row.bone & 64) && !(row.bone & 1)) {
+          // Both flags, the pair the outliner eye and the Capsules button set — one without the
+          // other leaves a mesh that is hidden to half the app.
+          row.mesh.setVisible?.(false);
+          const tm = row.mesh.getThreeMesh?.();
+          if (tm) tm.visible = false;
+        }
+      }
     }
 
     // Restore the joint's own properties first — healGraph keys off _isBone, and the
