@@ -8767,6 +8767,11 @@ class Scene {
         run: () => { IKSolver.setPinActive(this, joint, true); } },
       { label: 'Deactivate Here', icon: 'fa-stop', enabled: w > 0,
         run: () => { IKSolver.setPinActive(this, joint, false); } },
+      // MATCH, on its own. Activate Here also matches, but re-running it rewrites the weight
+      // keys -- and the reason to re-match is that the FK underneath was retimed, which is
+      // exactly when those keys are the thing you want to keep.
+      { label: 'Match Here', icon: 'fa-crosshairs', enabled: true,
+        run: () => { IKSolver.matchPinHere(this, joint); } },
       { label: 'Half', icon: 'fa-sliders', enabled: true,
         run: () => { IKSolver.setPinWeightKey(this, joint, 0.5); } },
       // Removing the channel is not the same as keying 1: an unkeyed pin is fully on with no

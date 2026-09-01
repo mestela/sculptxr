@@ -994,11 +994,41 @@ class BoneDrawTool extends SculptBase {
   // for (editing the rest skeleton); a pose that also moved joints would quietly change the
   // rig's proportions every time you turned a wrist.
   _beginPose(joint, quat) {
+    // IS THE SOLVER GOING TO OVERWRITE THIS JOINT? Worked out once, at the press: solverOwnedIds
+    // rebuilds the rig graph, which is not something to do per frame of a drag.
+    //
+    // If it is owned, the swing belongs to the solve and only the TWIST about the bone survives
+    // -- so the gesture is split and the twist is stored as the joint's free roll. If it is not
+    // owned, the joint keeps whatever it is given and nothing special is needed (roadmap #59,
+    // Tier 1: FK on an unpinned chain already works).
+    let owned = false;
+    let axis = null;
+    try {
+      owned = IKSolver.solverOwnedIds(this._main).has(joint.getID());
+    } catch (_) { owned = false; }
+    if (owned) {
+      // The bone axis, in the joint's own frame: where its single child sits. With no child, or
+      // several, there is no free roll to give -- see applyFkRoll.
+      const kids = Skeleton.joints(this._main).filter((j) => j._parentMesh === joint);
+      if (kids.length === 1) {
+        const lm = kids[0].getMatrix();
+        const v = new THREE.Vector3(lm[12], lm[13], lm[14]);
+        if (v.lengthSq() > 1e-12) axis = v.normalize();
+      }
+    }
     this._pose = {
       joint: joint,
       qStart: new THREE.Quaternion(quat[0], quat[1], quat[2], quat[3]).invert(),
       local: mat4.clone(joint.getMatrix()),
       before: [[joint, mat4.clone(joint.getMatrix())]],
+      rollAxis: axis,
+      rollStart: IKSolver.fkRoll(joint),
+      q0: (() => {
+        const m = new THREE.Matrix4().fromArray(joint.getMatrix());
+        const q = new THREE.Quaternion();
+        m.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+        return q;
+      })(),
     };
   }
 
@@ -1026,6 +1056,16 @@ class BoneDrawTool extends SculptBase {
     _mLocal.compose(_vTmp, _qJoint, _sTmp);
     mat4.copy(p.joint.getMatrix(), _mLocal.elements);
     Skeleton.syncThree(p.joint);
+
+    // THE HALF THAT SURVIVES. On a solver-owned joint the swing is about to be rewritten by the
+    // next solve, so the twist about the bone is recorded as the joint's free roll -- measured
+    // from the pose at the press, ABSOLUTE, not accumulated per frame, or a slow drag would
+    // integrate the same gesture dozens of times.
+    if (p.rollAxis) {
+      const dq = _qJoint.clone().multiply(p.q0.clone().invert());
+      IKSolver.clearFkRoll(p.joint);
+      IKSolver.addFkRoll(p.joint, p.rollStart + IKSolver.twistAbout(dq, p.rollAxis));
+    }
     this._refresh();
   }
 

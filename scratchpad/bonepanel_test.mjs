@@ -137,8 +137,12 @@ check('...and the empty animation block is not still emitting a heading',
 // Caller-level routing. The shared blocks can be perfect and still be invisible if one panel
 // forgets to compose or wire them — the same parallel-implementation failure this split is
 // meant to prevent.
+// Grab now shows its Translate/Rotate channels above Pose, so the two are composed rather than
+// Pose being returned alone. What matters is that Pose is still there.
 check('MiniPanel shows Pose for Grab',
-  /idx === Enums\.Tools\.GRAB\) return buildBonePoseHTML\(this\._main, 'mp'\)/.test(MINI_SRC));
+  /idx === Enums\.Tools\.GRAB\) \{[\s\S]{0,300}?buildBonePoseHTML\(this\._main, 'mp'\)/.test(MINI_SRC));
+check('...alongside the grab channel buttons',
+  /grabChannelHTML\(\)/.test(MINI_SRC));
 check('MiniPanel composes Pose with TransformVR controls',
   /idx === Enums\.Tools\.TRANSFORM_VR \? buildBonePoseHTML\(this\._main, 'mp'\)/.test(MINI_SRC));
 check('MainMenu shows Pose for Grab and TransformVR',

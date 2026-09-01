@@ -1,4 +1,5 @@
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
+import GrabChannels  from '../../editing/grabChannels.js';
 /**
  * MiniPanel — compact wrist HUD for SculptXR.
  *
@@ -38,6 +39,17 @@ import { buildTransformSectionHTML, wireTransformSection, syncTransformSection }
 //
 // Labelled "Path" because these are about the motion path and NOT about the mesh brush, which
 // shares the tool and the panel above it.
+// The same two buttons for GRAB, in the same dialect. A grabbed joint with translation off
+// stops being an IK effector and simply turns -- which is the whole point.
+function grabChannelHTML() {
+  const ch = GrabChannels.channels();
+  return `
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-grab-translate">Translate</button>
+          <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-grab-rotate">Rotate</button>
+        </div>`;
+}
+
 function pathChannelHTML() {
   const ch = MotionPathEdit.channels();
   return `
@@ -731,6 +743,20 @@ export class MiniPanel extends HTMLVRPanel {
       channelBtn('#mp-path-rotate', '_pathRotate', 'pathRotate');
     }
 
+    // The same pair for GRAB. Through GrabChannels rather than writing the globals here,
+    // because turning off the last one has to turn the other back on -- a grab that does
+    // nothing is indistinguishable from a broken grab.
+    if (idx === Enums.Tools.GRAB) {
+      const grabBtn = (id, which) => {
+        extras.querySelector(id)?.addEventListener('click', () => {
+          GrabChannels.setChannel(which, !GrabChannels.channels()[which]);
+          this.syncFromState();
+        });
+      };
+      grabBtn('#mp-grab-translate', 'translate');
+      grabBtn('#mp-grab-rotate', 'rotate');
+    }
+
     // ── Move extras: how a path edit measures "near" ───────────────────────
     if (idx === Enums.Tools.MOVE) {
       const btn = extras.querySelector('#mp-connected');
@@ -959,6 +985,15 @@ export class MiniPanel extends HTMLVRPanel {
 
     } else if (idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB) {
       syncBoneSection(extrasEl, this._main);
+      // HERE, not in a branch of its own further down: GRAB already matches this arm of the
+      // chain, so a second `else if (idx === GRAB)` below it is unreachable and the buttons
+      // never repaint. They were toggling the setting the whole time with nothing to show for
+      // it -- matt: "they don't even pretend to disable visually."
+      if (idx === Enums.Tools.GRAB) {
+        const gch = GrabChannels.channels();
+        extrasEl.querySelector('#mp-grab-translate')?.classList.toggle('active', gch.translate);
+        extrasEl.querySelector('#mp-grab-rotate')?.classList.toggle('active', gch.rotate);
+      }
     } else if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
       syncTransformSection(extrasEl);
       if (idx === Enums.Tools.TRANSFORM_VR) syncBoneSection(extrasEl, this._main);
@@ -1030,7 +1065,10 @@ export class MiniPanel extends HTMLVRPanel {
     // changing meaning by mode, which is what made the previous binding opaque.
     if (idx === Enums.Tools.BONE_DRAW) return buildBoneSectionHTML(this._main, 'mp');
 
-    if (idx === Enums.Tools.GRAB) return buildBonePoseHTML(this._main, 'mp');
+    if (idx === Enums.Tools.GRAB) {
+      return `<hr class="mp-divider">${grabChannelHTML()}`
+        + buildBonePoseHTML(this._main, 'mp');
+    }
 
     // ── Transform ──────────────────────────────────────────────────────────
     // Shared with the main menu's copy — see gui/transformPanel.js.

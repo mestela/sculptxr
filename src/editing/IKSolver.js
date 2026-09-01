@@ -77,6 +77,8 @@ const _qWeight = new THREE.Quaternion();
 // `out` is the caller's to choose: if one ever hands in _vTmp, `here` and `out` become the same
 // object and the lerp reads the value it is writing.
 const _vWeight = new THREE.Vector3();
+const _vRoll = new THREE.Vector3();
+const _qRoll = new THREE.Quaternion();
 
 const IKSolver = {};
 
@@ -193,6 +195,51 @@ IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 // Unkeyed reads as 1. That default is load-bearing: every rig that already exists has no such
 // channel, and any other default would silently deactivate every pin in every saved scene the
 // moment this shipped.
+// SWING-TWIST: how much of `q` is a rotation ABOUT `axis`, in radians.
+//
+// A hand rotating a joint produces a rotation with two parts: the SWING, which points the bone
+// somewhere else, and the TWIST about the bone itself. On a solver-owned joint the swing is not
+// the animator's to keep -- the solve decides where the bone points -- but the twist is, because
+// nothing in the solve determines it. So the gesture is split and only the half that survives is
+// stored. Standard decomposition: project the quaternion's vector part onto the axis and keep
+// the axis-aligned remainder.
+IKSolver.twistAbout = function (q, axis) {
+  const ax = axis.x, ay = axis.y, az = axis.z;
+  const d = q.x * ax + q.y * ay + q.z * az;
+  const px = ax * d, py = ay * d, pz = az * d;
+  const len = Math.hypot(px, py, pz, q.w);
+  if (len < 1e-12) return 0;                     // a half-turn of pure swing: no twist to read
+  const w = q.w / len;
+  // The sign comes from whether the projection points along the axis or against it.
+  const s = Math.hypot(px, py, pz) / len * (d < 0 ? -1 : 1);
+  return 2 * Math.atan2(s, w);
+};
+
+// The joints this solve will WRITE -- everything on a path from an active pin to the root. A
+// joint outside that set keeps whatever pose it is given, which is why FK already works there
+// (roadmap #59, Tier 1) and why the roll is only needed inside it.
+IKSolver.solverOwnedIds = function (main) {
+  const pins = IKSolver.activePins(main);
+  if (!pins.length) return new Set();
+  return solverOwned(main, pins);
+};
+
+// Add to a joint's free roll, in radians. The angle accumulates, because a twist gesture is a
+// series of small additions and each one has to build on the last rather than replace it.
+IKSolver.addFkRoll = function (joint, radians) {
+  if (!joint || !radians) return false;
+  joint._fkRoll = (joint._fkRoll || 0) + radians;
+  return true;
+};
+
+IKSolver.fkRoll = function (joint) { return (joint && joint._fkRoll) || 0; };
+
+IKSolver.clearFkRoll = function (joint) {
+  if (!joint) return false;
+  joint._fkRoll = 0;
+  return true;
+};
+
 IKSolver.PIN_WEIGHT = 'pinWeight';
 const PIN_W_EPS = 0.01;
 
@@ -1247,6 +1294,38 @@ function fitLocalRotation(n, kids, out) {
   return alignVectors(_fromBuf, _toBuf, k, out, window._ikFitPasses || 3);
 }
 
+// ── FK ROLL: THE ONE ROTATION THE SOLVE DOES NOT OWN ──────────────────────────────────
+//
+// FABRIK is POSITIONAL. It decides where joints go, and rotations are derived from that -- so a
+// joint with ONE child has its twist about the bone left completely undetermined by the maths.
+// The solver already knows this: `fitLocalRotation` exists to pick a stable convention for that
+// free roll, because otherwise it wanders and collapses the skin at the top of a thigh.
+//
+// Which means the roll is available. Rotating a joint ABOUT THE AXIS THAT POINTS AT ITS CHILD
+// does not move the child at all, so the solve is undisturbed -- the position constraint is
+// satisfied exactly as before, and everything below the joint turns. That is forearm twist and
+// wrist roll, which is where FK-on-an-IK-rig is actually wanted, and it costs the solver
+// nothing. See roadmap #59: this is Tier 2, and the reason to try it before the far larger job
+// of making the whole seed pose keyable.
+//
+// Stored per joint as a plain angle in radians. NOT a matrix: it has to survive the solve
+// rewriting the joint's rotation every frame, so it cannot live in the rotation it modifies.
+function applyFkRoll(n, kids, q) {
+  const roll = n.joint._fkRoll || 0;
+  // ONLY a single-child joint. With two or more children the geometry pins the rotation down
+  // completely -- there is no free roll, and forcing one would fight the fit and lose.
+  if (!roll || kids.length !== 1) return false;
+  const lm = kids[0].joint.getMatrix();
+  _vRoll.set(lm[12], lm[13], lm[14]);
+  if (_vRoll.lengthSq() < 1e-12) return false;   // child sits on top of the joint: no axis
+  _vRoll.normalize();
+  _qRoll.setFromAxisAngle(_vRoll, roll);
+  // POST-multiply: the axis is the child's offset in THIS joint's own frame, so the roll is
+  // about the bone rather than about some world axis.
+  q.multiply(_qRoll);
+  return true;
+}
+
 // Write a joint's LOCAL rotation outright, leaving its offset and scale alone.
 function setLocalRotation(joint, q) {
   _mLocal.fromArray(joint.getMatrix());
@@ -1333,10 +1412,22 @@ function applyRotations(main, nodes, root, rootFixed) {
     const canBeAbsolute = n.parent || kids.length > 1;
     if (window._ikAbsoluteRotations !== false && canBeAbsolute) {
       fitLocalRotation(n, kids, _qLocal);
+      applyFkRoll(n, kids, _qLocal);
       setLocalRotation(n.joint, _qLocal);
     } else {
       fitRotation(n, kids, _qFit);
       rotateJoint(n.joint, _qFit);
+      // The delta branch rewrites the joint from where it already is, so the roll is applied
+      // as its own local step rather than folded into the fit.
+      if (n.joint._fkRoll) {
+        _mLocal.fromArray(n.joint.getMatrix());
+        _mLocal.decompose(_vTmp, _qJoint, _sTmp);
+        if (applyFkRoll(n, kids, _qJoint)) {
+          _mLocal.compose(_vTmp, _qJoint, _sTmp);
+          mat4.copy(n.joint.getMatrix(), _mLocal.elements);
+          Skeleton.syncThree(n.joint);
+        }
+      }
     }
     touched.push(n);
   }
@@ -1908,6 +1999,53 @@ IKSolver.matchPinToJoint = function (main, joint) {
   return true;
 };
 
+// MATCH THE PIN TO ITS JOINT, HERE, AND KEY IT THERE. A command in its own right, not just the
+// first half of activating.
+//
+// The handoff frame moves. Retime the FK walk and the frame where the hand should take the
+// handle is somewhere else, with the arm in a different pose -- so the pin has to be re-matched,
+// and re-running Activate would rewrite the weight keys you had already shaped. matt: "you could
+// move to a frame where the handoff has to start, select the pin and say 'match to target', and
+// it would snap to the wrist position."
+//
+// Position AND orientation, because a 6DOF pin that matched only position would still snap the
+// wrist's rotation at the handoff.
+IKSolver.matchPinHere = function (main, joint) {
+  const pin = IKSolver.pinObject(joint);
+  const reg = window._animationRegistry;
+  if (!pin || !main) return false;
+  const beforeM = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix().slice() : null;
+  const track = reg && reg.tracks ? reg.tracks.get(pin.getID()) : null;
+  const before = track && reg._snapshotTrack ? reg._snapshotTrack(track) : null;
+
+  IKSolver.matchPinToJoint(main, joint);
+  // Keyed at the playhead, or a pin with a track is pulled straight back to its keyed path on
+  // the next evaluation and the match lasts exactly one frame.
+  if (reg && reg.keyTransforms) {
+    reg.keyTransforms([pin], reg.globalPlaybackTime || 0, 'Match Pin', false);
+  }
+
+  const afterM = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix().slice() : null;
+  const after = reg && reg.tracks && reg.tracks.get(pin.getID()) && reg._snapshotTrack
+    ? reg._snapshotTrack(reg.tracks.get(pin.getID())) : null;
+  const sm = main.getStateManager && main.getStateManager();
+  if (sm && sm.pushStateCustom) {
+    const apply = (snap, m) => {
+      const tr = reg && reg.tracks ? reg.tracks.get(pin.getID()) : null;
+      if (tr && snap) reg._restoreTrack(tr, snap, null);
+      if (m && pin.setModelSpaceMatrix) { pin.setModelSpaceMatrix(m); Skeleton.syncThree(pin); }
+      Skeleton.updateVisuals(main);
+      if (main.render) main.render();
+    };
+    sm.pushStateCustom(() => apply(before, beforeM), () => apply(after, afterM),
+      false, 'Match Pin');
+  }
+  if (window.screenLog) window.screenLog('Pin matched to joint here', 'cyan');
+  Skeleton.updateVisuals(main);
+  if (main.render) main.render();
+  return true;
+};
+
 // One frame of hold before the change. Per-key STEP interpolation does not exist yet (backlog
 // #7 -- the scalar evaluator interpolates with tangents), so an on/off transition is written as
 // two keys one frame apart: the old value held until the frame before, the new value now. That
@@ -1929,9 +2067,9 @@ IKSolver.setPinActive = function (main, joint, on) {
   const beforeM = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix().slice() : null;
 
   if (on) {
-    // MATCH FIRST, then key the pin's transform at this time so the match survives playback --
-    // a pin with a position track would otherwise be pulled straight back to its keyed path on
-    // the next evaluation, and the match would last exactly one frame.
+    // MATCH FIRST, so the weight rises with the target already coincident and nothing moves.
+    // The same two steps Match Here does, which is why they share them -- and why Match Here
+    // exists separately: a retimed handoff needs the match again WITHOUT rewriting the weight.
     IKSolver.matchPinToJoint(main, joint);
     if (reg.keyTransforms) reg.keyTransforms([pin], t, 'Activate Pin', false);
   }

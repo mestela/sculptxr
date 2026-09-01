@@ -162,7 +162,7 @@ check('two-controller time zoom is enabled in the dopesheet',
     && /empty timeline space/.test(scene));
 check('Grab owns existing pins independently by controller',
   /this\._vrPinGrabs = new Map\(\)/.test(grab)
-    && /this\._vrPinGrabs\.set\(hand, \{ pin, offset \}\)/.test(grab)  // was `last`, a running
+    && /this\._vrPinGrabs\.set\(hand, \{ pin, offset, startMatrix: mat4\.clone\(gm\) \}\)/.test(grab)  // was `last`, a running
     // baseline; the grab-time offset replaced it — see scratchpad/pingrab_test.mjs
     && /this\._vrPinGrabs\.get\(controller\.handedness\)/.test(grab));
 check('two-hand rig gestures shield the wrist MiniHUD',
@@ -171,10 +171,17 @@ check('two-hand rig gestures shield the wrist MiniHUD',
     && /const _miniHudBlocked = .*blocksMiniHudInput/.test(scene)
     && /if \(!_miniHudBlocked && this\._miniPanel/.test(scene)
     && /\.\.\.\(!_miniHudBlocked \? \[\{ name: 'MiniPanel'/.test(scene));
+// Still ONE batched solve after every held pin has been applied -- the solve simply moved into
+// the else of the rotation-only branch, which does not solve at all (see grabchannel_test).
 check('two pin targets are applied before one batched IK solve',
-  /if \(moved\) this\._queueXRPinSolve\(\)/.test(grab)
+  /\} else if \(moved\) \{\s*\n\s*this\._queueXRPinSolve\(\);/.test(grab)
     && /queueMicrotask\(\(\) => this\._flushXRPinSolve\(\)\)/.test(grab)
     && /_flushXRPinSolve\(\)[\s\S]{0,250}?IKSolver\.holdPins/.test(grab));
+// Depth, not distance: the solve must sit at the function's own indentation, i.e. outside the
+// per-controller loop. Measuring the gap in characters breaks the moment a comment is added.
+check('...and the solve is still OUTSIDE the per-controller loop',
+  /\n    if \(moved && rotateOnly\) \{/.test(grab) && /\n    \} else if \(moved\) \{/.test(grab),
+  'a solve per hand would be two solves for a two-handed gesture');
 check('VR pin solve avoids a duplicate skeleton visual rebuild',
   /XR's render loop rebuilds skeleton visuals every frame/.test(grab)
     && !((/_flushXRPinSolve\(\) \{([\s\S]*?)\n  \}\n\n  _queueXRPinSolve/.exec(grab)?.[1] || '')

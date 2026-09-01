@@ -19,6 +19,8 @@
 //                           releases position and keeps holding rotation
 //   PW_INJECT=zeroispin     a weight-0 pin still owns its chain, so deactivating snaps it to rest
 //   PW_INJECT=notrack       the channel cannot be created on a never-keyed pin, so the ring is dead
+//   PW_INJECT=matchwritesweight  Match Here rewrites the weight key, which is the thing a
+//                         retimed handoff most needs left alone
 //   PW_INJECT=nomatch       activating stops matching the pin to the joint, so the pop returns
 //   PW_INJECT=onekey        a transition writes one key, so the channel becomes a constant
 //   PW_INJECT=nosync        the matched matrix never reaches the three-side matrix
@@ -29,6 +31,7 @@ import path from 'path';
 const REPO = '/Users/mattestela/sculptxr';
 let IKS = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
 let REG = fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8');
+const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 
 const inject = process.env.PW_INJECT || '';
 const cut = (src, a, b, name) => {
@@ -45,11 +48,17 @@ if (inject === 'defaultzero') {
   IKS = cut(IKS, "  const here = modelQuat(joint, _qWeight);\n  return out.copy(here).slerp(out, w);",
     "  return out;", inject);
 } else if (inject === 'zeroispin') {
-  IKS = cut(IKS, '  const pins = IKSolver.activePins(main);',
-    '  const pins = IKSolver.pinnedJoints(main);', inject);
+  // Anchored with its comment: `const pins = IKSolver.activePins(main);` also appears in
+  // solverOwnedIds, and cut() replaces the FIRST match -- so the bare line injected the wrong
+  // function and left holdPins, the one that decides ownership, untouched.
+  IKS = cut(IKS, '  // simply not the solver\'s business and keeps the pose it was in.\n  const pins = IKSolver.activePins(main);',
+    '  // simply not the solver\'s business and keeps the pose it was in.\n  const pins = IKSolver.pinnedJoints(main);', inject);
 } else if (inject === 'notrack') {
   REG = cut(REG, '    if (!track && create && this._ensureTransformTrack) {',
     '    if (false) {', inject);
+} else if (inject === 'matchwritesweight') {
+  IKS = cut(IKS, "  if (reg && reg.keyTransforms) {\n    reg.keyTransforms([pin], reg.globalPlaybackTime || 0, 'Match Pin', false);\n  }",
+    "  reg.setScalarKey(pin, IKSolver.PIN_WEIGHT, reg.globalPlaybackTime || 0, 1);", inject);
 } else if (inject === 'nomatch') {
   IKS = cut(IKS, '    IKSolver.matchPinToJoint(main, joint);', '', inject);
 } else if (inject === 'onekey') {
@@ -233,6 +242,28 @@ check('the whole act is ONE undo entry',
 check('...restoring the pin MATRIX as well as its keys',
   /const beforeM = pin\.getModelSpaceMatrix \? pin\.getModelSpaceMatrix\(\)\.slice\(\) : null;/.test(ACTIVE));
 
+// MATCH ON ITS OWN. The handoff frame moves when the FK underneath is retimed, so the pin has
+// to be re-matched at the new frame -- and re-running Activate would rewrite the weight keys,
+// which are exactly what you want to keep.
+{
+  const MH = (() => {
+    const at = IKS.indexOf('IKSolver.matchPinHere = function');
+    return at < 0 ? '' : IKS.slice(at, IKS.indexOf('\n};', at));
+  })();
+  check('Match Here exists as its own command', MH.length > 0);
+  check('...matching and keying, the same two steps Activate takes',
+    /IKSolver\.matchPinToJoint\(main, joint\);/.test(MH)
+      && /reg\.keyTransforms\(\[pin\], reg\.globalPlaybackTime \|\| 0, 'Match Pin', false\)/.test(MH),
+    'without the key, a pin with a track is pulled back to its keyed path next frame');
+  check('...and touching NO weight key',
+    !/setScalarKey/.test(MH) && !/PIN_WEIGHT/.test(MH),
+    'the reason to re-match is a retime, which is when the weight curve is the thing to keep');
+  check('...under one undo entry, restoring the matrix and the track together',
+    /sm\.pushStateCustom\(\(\) => apply\(before, beforeM\), \(\) => apply\(after, afterM\)/.test(MH));
+  check('the ring offers it beside the transitions',
+    /label: 'Match Here'[\s\S]{0,120}?IKSolver\.matchPinHere\(this, joint\)/.test(SCENE));
+}
+
 // Clearing is not the same as keying 1.
 check('clearing removes the channel rather than keying it to 1',
   /track\.scalarTracks\.delete\(IKSolver\.PIN_WEIGHT\);/.test(IKS)
@@ -251,9 +282,17 @@ check('clearing removes the channel rather than keying it to 1',
 // is not a FABRIK limit and the stop-motion expectation was right.
 check('a weight-0 pin is excluded from the pins that solve',
   /IKSolver\.activePins = function \(main\) \{\s*\n\s*return IKSolver\.pinnedJoints\(main\)\.filter\(\(j\) => IKSolver\.pinWeight\(j\) > 0\);/.test(IKS));
+// SCOPED TO holdPins. `const pins = IKSolver.activePins(main);` also appears in
+// solverOwnedIds, so an unscoped check passes while the function that actually decides
+// ownership is still using the full pin list -- which is the bug being guarded.
+const HOLD = (() => {
+  const at = IKS.indexOf('IKSolver.holdPins = function');
+  return at < 0 ? '' : IKS.slice(at, IKS.indexOf('\n};', at));
+})();
 check('...and holdPins uses that list, since it is what decides ownership',
-  /const pins = IKSolver\.activePins\(main\);/.test(IKS)
-    && /seedFromRest\(main, written, solverOwned\(main, pins\)\);/.test(IKS),
+  HOLD.length > 0
+    && /const pins = IKSolver\.activePins\(main\);/.test(HOLD)
+    && /seedFromRest\(main, written, solverOwned\(main, pins\)\);/.test(HOLD),
   'a zero-weight pin left in this list keeps its chain owned, and seedFromRest then resets that '
     + 'chain to rest before every solve -- which is the snap');
 check('...and the solve entry point takes it too',

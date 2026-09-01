@@ -47,7 +47,7 @@ const cut = (src, from, to, what) => {
 };
 
 let capture = cut(GRAB, 'const gm = pin.getModelSpaceMatrix',
-  'this._vrPinGrabs.set(hand, { pin, offset });', 'capture');
+  'this._vrPinGrabs.set(hand, { pin, offset, startMatrix: mat4.clone(gm) });', 'capture');
 let drag = cut(GRAB, 'const next = mat4.create(); mat4.multiply(next, controller.matrix, state.offset);',
   'moved = true;', 'drag');
 
@@ -66,8 +66,12 @@ if (inj === 'accumulate') {
 
 const captureFn = new Function('mat4', 'Skeleton', 'pin', 'controller', 'hand', 'self',
   'const _m = new Map(); this._vrPinGrabs = _m;' + capture + '; return _m.get(hand);');
-const dragFn = new Function('mat4', 'Skeleton', 'state', 'controller',
+// GrabChannels is handed in rather than stubbed away: the drag now asks it which half of the
+// gesture to apply, and these tests are all about the ordinary both-on grab. A stub that always
+// answers "both" is exactly what the default is, so it tests the path that actually runs.
+const dragFn = new Function('mat4', 'Skeleton', 'GrabChannels', 'state', 'controller',
   'let moved = false;' + drag + '; return moved;');
+const BOTH = { channels: () => ({ translate: true, rotate: true }) };
 
 const T = (x, y, z) => { const m = mat4.create(); m[12] = x; m[13] = y; m[14] = z; return m; };
 const pos = (m) => [m[12], m[13], m[14]];
@@ -88,7 +92,7 @@ const makePin = (m) => {
 {
   const pin = makePin(T(0, 0, -0.1));
   const st = captureFn(mat4, SK, pin, { matrix: T(0, 0, 0) }, 'right', {});
-  dragFn(mat4, SK, st, { matrix: T(0.3, 0, 0) });
+  dragFn(mat4, SK, BOTH, st, { matrix: T(0.3, 0, 0) });
   check('the pin follows the hand', near(pos(pin.getModelSpaceMatrix()), [0.3, 0, -0.1]),
     pos(pin.getModelSpaceMatrix()).join());
 }
@@ -99,9 +103,9 @@ const makePin = (m) => {
 {
   const pin = makePin(T(0, 0, -0.1));
   const st = captureFn(mat4, SK, pin, { matrix: T(0, 0, 0) }, 'right', {});
-  dragFn(mat4, SK, st, { matrix: T(0.3, 0, 0) });
+  dragFn(mat4, SK, BOTH, st, { matrix: T(0.3, 0, 0) });
   pin.setModelSpaceMatrix(T(0.35, 0.02, -0.1)); // the interloper
-  dragFn(mat4, SK, st, { matrix: T(0.3, 0, 0) }); // same hand pose, next frame
+  dragFn(mat4, SK, BOTH, st, { matrix: T(0.3, 0, 0) }); // same hand pose, next frame
   check('a write by anything else is undone on the next frame',
     near(pos(pin.getModelSpaceMatrix()), [0.3, 0, -0.1]),
     pos(pin.getModelSpaceMatrix()).join()
@@ -116,7 +120,7 @@ const makePin = (m) => {
   for (let i = 1; i <= 4; ++i) {
     const p = pin.getModelSpaceMatrix();
     pin.setModelSpaceMatrix(T(p[12] + 0.02, p[13] + 0.02, p[14])); // solver drags it along
-    dragFn(mat4, SK, st, { matrix: T(i * 0.1, 0, 0) });
+    dragFn(mat4, SK, BOTH, st, { matrix: T(i * 0.1, 0, 0) });
   }
   check('...and four frames of that leave no residue at all',
     near(pos(pin.getModelSpaceMatrix()), [0.4, 0, -0.1]),

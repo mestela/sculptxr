@@ -4,6 +4,7 @@ import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
 import AnimationRegistry from '../AnimationRegistry.js';
 import IKSolver from '../IKSolver.js';
+import GrabChannels from '../grabChannels.js';
 import Skeleton from '../Skeleton.js';
 
 const _gV = new THREE.Vector3();
@@ -11,6 +12,7 @@ const _grabM = new THREE.Matrix4();
 const _grabQ = new THREE.Quaternion();
 const _grabS = new THREE.Vector3();
 const _grabTarget = [0, 0, 0];
+const _grabPrevT = new THREE.Vector3();
 const _grabTargetV = new THREE.Vector3();
 
 class Grab extends SculptBase {
@@ -237,7 +239,10 @@ class Grab extends SculptBase {
           const offset = mat4.create();
           if (mat4.invert(invGrab, controller.matrix)) mat4.multiply(offset, invGrab, gm);
           else mat4.copy(offset, gm);
-          this._vrPinGrabs.set(hand, { pin, offset });
+          // The pose it was taken in, for the channel gate: with one half of the gesture
+          // switched off, that half has to come from SOMEWHERE, and reading it back off the
+          // live matrix each frame would let the half that IS applied leak into it.
+          this._vrPinGrabs.set(hand, { pin, offset, startMatrix: mat4.clone(gm) });
           this._press(hand, { OUTCOME: 'took pin #' + pin.getID() });
           this._syncXRPinGrabs();
           this._main._lastRigEdit = pin;
@@ -283,6 +288,7 @@ class Grab extends SculptBase {
     }
 
     let moved = false;
+    let rotateOnly = false;
     for (const controller of activeControllers) {
       const state = this._vrPinGrabs.get(controller.handedness);
       if (!state) continue;
@@ -290,13 +296,51 @@ class Grab extends SculptBase {
       // taken. The pin's current matrix is deliberately not read — reading it is what let
       // someone else's write become part of the answer.
       const next = mat4.create(); mat4.multiply(next, controller.matrix, state.offset);
+      // ONE HALF OF THE GESTURE, when the tool is set that way. A hand cannot move without also
+      // turning, so a grabbed JOINT always got a new position and always became an IK effector
+      // -- there was no way to simply turn a bone. With translation off the joint stays exactly
+      // where it is, nothing asks the solve for a new position, and the rotation is FK.
+      const _ch = GrabChannels.channels();
+      if (!_ch.translate || !_ch.rotate) {
+        const start = state.startMatrix;
+        if (start) {
+          if (!_ch.translate) { next[12] = start[12]; next[13] = start[13]; next[14] = start[14]; }
+          if (!_ch.rotate) {
+            // Keep the pose it was taken in: copy the 3x3 back, leaving the translation alone.
+            for (const i of [0, 1, 2, 4, 5, 6, 8, 9, 10]) next[i] = start[i];
+          }
+        }
+      }
       if (state.pin.setModelSpaceMatrix) state.pin.setModelSpaceMatrix(next);
       else mat4.copy(state.pin.getMatrix(), next);
       Skeleton.syncThree(state.pin);
       moved = true;
+      if (!_ch.translate) rotateOnly = true;
     }
 
-    if (moved) this._queueXRPinSolve();
+    // ROTATION-ONLY DOES NOT SOLVE AT ALL.
+    //
+    // Suppressing the position was not enough: the solve still ran, and a rotated constraint is
+    // just as much a constraint as a moved one -- so the whole chain re-solved against it and
+    // the elbow was still driving the body. matt: "if i grab the elbow and rotate it, the entire
+    // skeleton tries to resolve... it is not isolating to a pure fk rotation."
+    //
+    // With translation off there is nothing for the solver to satisfy that it was not already
+    // satisfying: the joint has not moved. So the rotation is written and left alone, children
+    // ride it through the scene graph, and that IS forward kinematics.
+    if (moved && rotateOnly) {
+      // ACKNOWLEDGE, DON'T SOLVE. Scene watches the pin matrices and schedules a solve of its
+      // own whenever one changes without the solver's knowledge (Scene.js, `pinsMoved`) -- so
+      // simply skipping the solve here left the watcher to run one a frame later, and the chain
+      // resolved anyway. Syncing the caches records "yes, this moved, and it was meant to",
+      // which is exactly what an FK rotation is.
+      IKSolver.syncPinCache(this._main);
+      IKSolver.syncJointCache(this._main);
+      Skeleton.updateVisuals(this._main);
+      this._main.render();
+    } else if (moved) {
+      this._queueXRPinSolve();
+    }
 
     if (this._vrPinGrabs.size === 0 && this._vrPinGesture) {
       // If release happened in the same frame as a final movement, solve before taking
@@ -926,6 +970,20 @@ class Grab extends SculptBase {
           this._grabIsJoint = Skeleton.isJoint(mesh);
           this._grabUndoRig = this._grabIsJoint ? IKSolver.captureAll(this._main) : null;
           this._activeController = active; // First assignment
+          // THE DELTA BASELINE BELONGS TO THIS GRAB, so it starts empty.
+          //
+          // It was only cleared on release and on lost tracking -- and this tool ACQUIRES from
+          // the digital triggers, not from the stroke lifecycle, so a grab taken on a frame
+          // that was not a stroke has no release to run. The stale baseline then survived into
+          // the next grab, and the first frame computed `current * inv(where your hand was when
+          // you let go last time)`. That is an arbitrary rotation applied in one frame, and
+          // then correct tracking for ever after: matt, "the arm pops to some random angle,
+          // then follows my fk rotation."
+          //
+          // Nulled here, so the next frame re-seeds it from the hand's CURRENT pose and the
+          // first delta is identity -- which is what "maintain whatever angle it is at, then
+          // follow my rotation with that offset" means.
+          this._lastControllerMatrix = null;
 
           // Calculate Offset (For Fallback/Init)
           this._grabOffsetMatrix = mat4.create();
@@ -1020,7 +1078,48 @@ class Grab extends SculptBase {
               // delta matrix) did both.
               _grabM.fromArray(nm);
               _grabM.decompose(_grabTargetV, _grabQ, _grabS);
-              IKSolver.solve(this._main, this._grabbedMesh, _grabTargetV, null, _grabQ);
+
+              // WHICH HALF OF THE GESTURE THIS TOOL IS SET TO APPLY.
+              //
+              // THIS is the branch a grabbed BONE takes -- the pin path is a different one, and
+              // gating that alone left this untouched, which is why the buttons appeared to do
+              // nothing at all. matt: "i put it into rotate mode... the bone follows the
+              // translation of my controller."
+              const _ch = GrabChannels.channels();
+
+              if (!_ch.translate) {
+                // ROTATION ONLY IS FORWARD KINEMATICS, so it does not go near the solver.
+                //
+                // The joint has not moved, so there is nothing for the solve to satisfy that it
+                // was not already satisfying -- and handing it a rotated constraint makes it
+                // rearrange the whole chain, which is exactly the thing being avoided. The
+                // rotation is written straight onto the joint and its children ride it through
+                // the scene graph. That is FK.
+                if (_ch.rotate) {
+                  _grabPrevT.set(jm[12], jm[13], jm[14]);   // where it stays
+                  _grabM.compose(_grabPrevT, _grabQ, _grabS);
+                  if (this._grabbedMesh.setModelSpaceMatrix) {
+                    this._grabbedMesh.setModelSpaceMatrix(_grabM.elements);
+                  } else {
+                    mat4.copy(this._grabbedMesh.getMatrix(), _grabM.elements);
+                  }
+                  Skeleton.syncThree(this._grabbedMesh);
+                  // Acknowledge, so Scene's pin watcher does not schedule a solve of its own on
+                  // the next frame and undo this -- see the same note in _updateXRPinGrabs.
+                  IKSolver.syncJointCache(this._main);
+                  IKSolver.syncPinCache(this._main);
+                }
+                Skeleton.updateVisuals(this._main);
+                mat4.copy(this._lastControllerMatrix, currentMat);
+                this._main.render();
+                return;
+              }
+
+              // Translation, with the orientation only if it is switched on. Passing null is
+              // how the solver is told "position only" -- it is a constraint when present, so
+              // leaving it in is what made a twist of the wrist turn the limb.
+              IKSolver.solve(this._main, this._grabbedMesh, _grabTargetV, null,
+                             _ch.rotate ? _grabQ : null);
               Skeleton.updateVisuals(this._main);
               mat4.copy(this._lastControllerMatrix, currentMat);
               this._main.render();

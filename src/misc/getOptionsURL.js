@@ -232,6 +232,10 @@ var getOptionsURL = function () {
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
   options.boneShowGnomons = queryBool(getVal('boneShowGnomons'), false);
   options.boneShowGnomonsAll = queryBool(getVal('boneShowGnomonsAll'), false);
+  // Which half of a VR grab is applied. Both on is the ordinary 6DOF grab; translation off
+  // turns a grabbed joint from an IK effector into a plain FK rotation.
+  options.grabTranslate = queryBool(getVal('grabTranslate'), true);
+  options.grabRotate = queryBool(getVal('grabRotate'), true);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 
