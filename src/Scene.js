@@ -3312,9 +3312,22 @@ class Scene {
     if (t && this._worldGroup) this._worldGroup.add(t);
   }
 
+  // TAKE IT OUT OF WHEREVER IT ACTUALLY IS.
+  //
+  // This removed from `_worldGroup` unconditionally -- but a PARENTED mesh's render object
+  // lives under its PARENT's render object, and Object3D.remove() on something that is not a
+  // child is a silent no-op. So nothing parented was ever detached: deleted joints, deleted
+  // weight capsules and a reset scene all left their render objects in the graph, still
+  // drawing. matt: "if i delete them they still draw in the viewport, if i reset the scene they
+  // still draw."
+  //
+  // It went unnoticed for as long as it did because joint locators used to be `visible = false`,
+  // which hid their whole subtree -- so the leaked objects were invisible leaks. Fixing that
+  // (v3.20.231) is what made this one visible, not what caused it.
   detachMeshThree(mesh) {
     var t = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
     if (!t) return;
+    if (t.parent) { t.parent.remove(t); return; }
     var target = this._worldGroup || this._scene;
     if (target) target.remove(t);
   }
@@ -3754,12 +3767,9 @@ class Scene {
   clearScene() {
     this.getStateManager().reset();
     
-    // Remove all Three.js meshes from the scene
-    for (var i = 0; i < this._meshes.length; ++i) {
-      if (this._worldGroup && this._meshes[i].getThreeMesh()) {
-        this._worldGroup.remove(this._meshes[i].getThreeMesh());
-      }
-    }
+    // Through detachMeshThree, so a parented mesh is taken out of its real parent rather than
+    // asked to leave a group it was never in.
+    for (var i = 0; i < this._meshes.length; ++i) this.detachMeshThree(this._meshes[i]);
     
     this.getMeshes().length = 0;
 
@@ -3884,9 +3894,7 @@ class Scene {
     if (this._mesh === mesh) this.setMesh(newMesh);
 
     if (this._worldGroup && newMesh.getThreeMesh()) {
-      if (mesh.getThreeMesh()) {
-        this._worldGroup.remove(mesh.getThreeMesh());
-      }
+      this.detachMeshThree(mesh);
       this._worldGroup.add(newMesh.getThreeMesh());
     }
     if (!newMesh._isBone && !newMesh._isNull && !newMesh._isReference) {

@@ -510,6 +510,19 @@ const CSS = `
    in VR (the thumbstick targeted the deepest scrollable, this list, so the controls
    below were unreachable). With the list flowing, the panel is the single scroll
    surface on both desktop and VR. */
+/* The list needs a scrollbar you can actually SEE and grab. Native ones never reach the panel:
+   the VR panel is rasterised through an SVG foreignObject, which paints no scrollbar at all —
+   the same reason #mm-content has a hand-built track. So the list gets the same treatment, in a
+   relative wrapper that the track can pin itself to. */
+.mm-outliner-wrap { position: relative; }
+.mm-outliner-list::-webkit-scrollbar { display: none; }
+.mm-outliner-sbar {
+  /* Inside the list's border, and only as tall as the list — the shared .mm-scrollbar-track
+     stretches to its offset parent, which here would be the whole wrapper. */
+  top: 1px; bottom: 6px; right: 1px;
+  width: 12px;
+  border-radius: 5px;
+}
 .mm-outliner-list {
   border: 1px solid #45475a;
   border-radius: 5px;
@@ -517,37 +530,39 @@ const CSS = `
      which reserved a big empty block for a 2–3 mesh scene and pushed the transform/rig
      controls off-screen — now just enough to not collapse when empty. */
   min-height: 52px;
+  /* ...AND A CEILING, because the other end became the problem. A rig has dozens of joints,
+     and at content height the list grew to the full panel and pushed everything below it out
+     of reach: every visit to a rig control meant scrolling past the whole skeleton. Capped at
+     two thirds, the list scrolls itself and the controls under it stay where they were.
+     matt: "it should expand no bigger than, say 2/3 of the panel." */
+  max-height: ${Math.round(MM_BODY_H * 0.66)}px;
+  overflow-y: auto;
+  overscroll-behavior: contain;   /* stop a flick inside the list from scrolling the panel too */
+  scrollbar-width: none;          /* the rasteriser does not paint native scrollbars — see .mm-outliner-sbar */
   padding: 2px 4px;
+  padding-right: 16px;            /* room for the track, which overlays the right edge */
   margin-bottom: 5px;
   box-sizing: border-box;
 }
 .mm-outliner-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 0;
+  gap: 3px;
+  padding: 0 0;
 }
-.mm-vis-btn {
-  width: 24px;
-  height: 24px;
-  flex-shrink: 0;
-  border: 1px solid #45475a;
-  border-radius: 4px;
-  background: #313244;
-  color: #cdd6f4;
-  font-size: 11px;
-  cursor: pointer;
-  outline: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-.mm-vis-btn.hidden { color: #45475a; }
-/* Keyframe-driven visibility: orange eye (bright = shown, dark = hidden) so it reads
-   as "timeline controls this" vs a normal manual eye. */
-.mm-vis-btn.keyed { color: #fab387; }
-.mm-vis-btn.keyed.hidden { color: #8a4b1e; }
+/* A QUARTER SMALLER, throughout the outliner. Sized for a scene of a few meshes, the rows were
+   comfortable; against a skeleton they are most of the panel. Everything here scales together —
+   type, eye, icon and gaps — because shrinking only the text leaves the buttons setting the
+   row height and nothing is gained. matt: "the font size and icons used for the outliner are
+   too big, i think they could be 25% smaller in vr." */
+/* WITH THE EYE GONE FROM THE ROW, THE ROW ITSELF CARRIES THE STATE. A hidden mesh was legible
+   only through its own eye icon; now the name dims, and a keyframe-driven one takes the same
+   orange the eye used, so "the timeline controls this" still reads at a glance. */
+.mm-outliner-row.is-hidden .mm-mesh-btn { opacity: 0.45; font-style: italic; }
+.mm-outliner-row.vis-keyed .mm-node-icon { color: #fab387; }
+.mm-outliner-row.vis-keyed.is-hidden .mm-node-icon { color: #8a4b1e; }
+/* The toolbar eye takes the same orange when the selection's visibility is keyed. */
+.mm-tool-btn.keyed { color: #fab387; }
 .mm-collapse-btn {
   width: 16px; height: 24px; flex-shrink: 0; padding: 0;
   border: none; background: none; color: #9399b2; font-size: 10px;
@@ -556,25 +571,18 @@ const CSS = `
 }
 .mm-collapse-btn:hover, .mm-collapse-btn.hover { color: #cdd6f4; }
 .mm-collapse-spacer { width: 16px; flex-shrink: 0; display: inline-block; }
-.mm-rename-btn {
-  width: 24px; height: 24px; flex-shrink: 0;
-  border: 1px solid #45475a; border-radius: 4px; background: #313244;
-  color: #6c7086; font-size: 11px; cursor: pointer; outline: none;
-  display: flex; align-items: center; justify-content: center; padding: 0;
-}
-.mm-rename-btn:hover, .mm-rename-btn.hover { background: #45475a; color: #cdd6f4; }
 .mm-mesh-btn {
   flex: 1;
   min-width: 0;                /* allow ellipsis inside the flex row */
   display: flex;              /* override WebAwesome's centered button base */
   align-items: center;
   justify-content: flex-start;
-  padding: 4px 6px;
+  padding: 2px 5px;
   border: 1px solid transparent;
   border-radius: 4px;
   background: transparent;
   color: #a6adc8;
-  font-size: 11px;
+  font-size: 8px;
   cursor: pointer;
   text-align: left;
   outline: none;
@@ -584,11 +592,11 @@ const CSS = `
   flex: 1; min-width: 0;
   background: #11111b; color: #cdd6f4;
   border: 1px solid #89b4fa; border-radius: 4px;
-  font-size: 11px; padding: 3px 5px; outline: none;
+  font-size: 8px; padding: 2px 4px; outline: none;   /* matches .mm-mesh-btn, or the row jumps height on rename */
 }
 .mm-mesh-btn:hover, .mm-mesh-btn.hover { background: #313244; color: #cdd6f4; }
 .mm-mesh-btn.active { color: #89b4fa; background: rgba(137,180,250,0.1); }
-.mm-node-icon { display: inline-block; width: 14px; text-align: center; margin-right: 6px; color: #6c7086; }
+.mm-node-icon { display: inline-block; width: 10px; font-size: 8px; text-align: center; margin-right: 4px; color: #6c7086; }
 .mm-mesh-btn.is-null .mm-node-icon { color: #66e0ff; }
 .mm-mesh-btn.active .mm-node-icon { color: #89b4fa; }
 .mm-rig-label { font-size: 10px; color: #a6adc8; text-transform: uppercase; letter-spacing: 0.04em; margin: 8px 0 3px; }
@@ -1179,20 +1187,23 @@ export function buildSectionHTML_scene(main) {
     // During a pending pick, rows read as targets (and the subject can't pick itself).
     const isSubject = pendingMode && m.getID() === main._rigPendingSubject;
     const pickCls = pendingMode ? (isSubject ? ' rig-subject' : ' rig-target') : '';
-    // Indent the NAME (not the row) so the vis-eye column stays vertically aligned.
+    // ONE BUTTON EACH, IN THE TOOLBAR — NOT ONE PER ROW.
+    //
+    // The eye and the pencil used to sit on every row: three buttons per mesh, and with a rig
+    // the list is dozens of rows deep. They also predate multi-select, which is what actually
+    // made them redundant — the toolbar acts on the selection, so hiding six meshes is a
+    // select-then-click instead of six clicks, and the row is left as what it is, a name you
+    // pick. matt: "now that we have multiselect, lets remove the per-item visibility and rename
+    // buttons, and move them to the top toolbar."
+    //
+    // A hidden mesh still has to READ as hidden with no eye on the row, so the name dims.
     return `
-      <div class="mm-outliner-row${pickCls}">
-        <button class="mm-vis-btn${vis ? '' : ' hidden'}${hasVisKeys ? ' keyed' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="vis" title="${hasVisKeys ? 'Visibility is keyframe-driven (timeline controls it)' : 'Toggle visibility'}">
-          <i class="fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}"${hasVisKeys ? ` style="color:${vis ? '#fab387' : '#8a4b1e'}"` : ''}></i>
-        </button>
+      <div class="mm-outliner-row${pickCls}${vis ? '' : ' is-hidden'}${hasVisKeys ? ' vis-keyed' : ''}">
         ${hasKids
           ? `<button class="mm-collapse-btn" data-mesh-id="${m._permanentStaticId}" data-action="collapse" style="margin-left:${depth * 14}px" title="${collapsed ? 'Expand' : 'Collapse'}"><i class="fa-solid ${collapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></button>`
           : `<span class="mm-collapse-spacer" style="margin-left:${depth * 14}px"></span>`}
-        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" title="Rename with the pencil, or double-click">
+        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" title="Select — rename from the toolbar, or double-click">
           <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>${main.isLinked?.(m) ? '<i class="fa-solid fa-link" style="margin-left:5px;font-size:10px;color:#89dceb" title="Linked instance — shares geometry; edits affect all occurrences"></i>' : ''}
-        </button>
-        <button class="mm-rename-btn" data-mesh-id="${m._permanentStaticId}" data-action="rename" title="Rename">
-          <i class="fa-solid fa-pen"></i>
         </button>
       </div>`;
   };
@@ -1270,6 +1281,9 @@ export function buildSectionHTML_scene(main) {
   }
 
   const hasSel = selected.length > 0;
+  // The eye shows what the CLICK will do to the selection: any visible → it hides them all.
+  const selAnyVisible = selected.some((m) => m.isVisible?.() ?? true);
+  const selVisKeyed   = selected.some((m) => !!window._animationRegistry?.hasVisibilityKeys?.(m));
   // Lock lives in the toolbar (padlock) and acts on the single selected mesh.
   const singleSel = selected.length === 1 ? selected[0] : null;
   const tbLocked  = singleSel ? !!main.isSelectLocked?.(singleSel.getID()) : false;
@@ -1279,10 +1293,15 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-copy"></i></button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-link"></i></button>
       <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}><i class="fa-solid fa-link-slash"></i></button>
+      <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}><i class="fa-solid ${selAnyVisible ? 'fa-eye' : 'fa-eye-slash'}"></i></button>
+      <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}><i class="fa-solid fa-pen"></i></button>
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-trash"></i></button>
       <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}><i class="fa-solid ${tbLocked ? 'fa-lock' : 'fa-lock-open'}"></i></button>
     </div>
-    <div class="mm-outliner-list">${meshRows}</div>
+    <div class="mm-outliner-wrap">
+      <div class="mm-outliner-list">${meshRows}</div>
+      <div class="mm-scrollbar-track mm-outliner-sbar"><div class="mm-scrollbar-thumb"></div></div>
+    </div>
     ${rigHTML}
     <div class="mm-add-row">
       <button class="mm-action-btn" id="mm-add-cube">Cube</button>
@@ -2086,6 +2105,21 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Sync custom scrollbar thumb after content changes
     refreshVRScrollbar(this._element.querySelector('#mm-content'), this._element.querySelector('#mm-sbar-thumb'));
 
+    // The outliner is rebuilt from scratch on every content change, so its scrollbar is a NEW
+    // pair of elements each time and has to be re-wired here — wiring it once at construction
+    // would leave it dead from the first rebuild onwards.
+    const olList = this._element.querySelector('.mm-outliner-list');
+    if (olList) {
+      const olWrap = olList.parentElement;
+      wireVRScrollbar(
+        olList,
+        olWrap.querySelector('.mm-outliner-sbar'),
+        olWrap.querySelector('.mm-outliner-sbar .mm-scrollbar-thumb'),
+        () => this.markDirty()
+      );
+      refreshVRScrollbar(olList, olWrap.querySelector('.mm-outliner-sbar .mm-scrollbar-thumb'));
+    }
+
     this.markDirty();
   }
 
@@ -2545,36 +2579,48 @@ export function wireSlider(sliderEl, valEl, cb, formatFn, dirtyFn) {
 export function updateOutlinerVisIcons(main) {
   const reg = window._animationRegistry;
   const meshes = main.getMeshes?.() ?? [];
-  document.querySelectorAll('[data-action="vis"]').forEach((btn) => {
+  const sel = main.getSelectedMeshes?.() ?? [];
+
+  // THE ROWS, which no longer have an eye of their own: dim a hidden one and orange a keyed one.
+  // Still per-frame cheap (class toggles, no rebuild) because the timeline drives visibility and
+  // the outliner has to follow it live.
+  document.querySelectorAll('[data-action="select"]').forEach((btn) => {
     const mesh = meshes.find((m) => m._permanentStaticId === btn.dataset.meshId);
-    if (!mesh) return;
-    const vis = mesh.isVisible?.() ?? true;
-    const keyed = !!reg?.hasVisibilityKeys?.(mesh);
-    btn.classList.toggle('hidden', !vis);
+    const row = btn.parentElement;
+    if (!mesh || !row) return;
+    row.classList.toggle('is-hidden', !(mesh.isVisible?.() ?? true));
+    row.classList.toggle('vis-keyed', !!reg?.hasVisibilityKeys?.(mesh));
+  });
+
+  // THE TOOLBAR EYE, which now reports the selection rather than one mesh. Queried across the
+  // document because the torn-off Scene panel carries its own copy of this toolbar.
+  const anyVis = sel.some((m) => m.isVisible?.() ?? true);
+  const keyed  = sel.some((m) => !!reg?.hasVisibilityKeys?.(m));
+  document.querySelectorAll('#mm-vis-toggle').forEach((btn) => {
     btn.classList.toggle('keyed', keyed);
     const i = btn.querySelector('i');
-    if (i) {
-      const want = `fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}`;
-      if (i.className !== want) i.className = want;
-      const col = keyed ? (vis ? '#fab387' : '#8a4b1e') : '';
-      if (i.style.color !== col) i.style.color = col;
-    }
+    if (!i) return;
+    const want = `fa-solid ${anyVis ? 'fa-eye' : 'fa-eye-slash'}`;
+    if (i.className !== want) i.className = want;
   });
 }
 
 export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
 
-  el.querySelectorAll('[data-action="vis"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mesh = findMesh(btn.dataset.meshId);
-      if (!mesh) return;
-      const cur = mesh.isVisible?.() ?? true;
-      mesh.setVisible?.(!cur);
-      if (mesh.getThreeMesh?.()) mesh.getThreeMesh().visible = !cur;
-      main.render?.();
-      repaintFn();
-    });
+  // Toolbar eye → hide/show the whole selection. ONE TARGET STATE FOR ALL OF THEM, taken from
+  // "is any of them visible": a per-mesh toggle across a mixed selection just inverts the mess
+  // and needs a second click to mean anything.
+  el.querySelector('#mm-vis-toggle')?.addEventListener('click', () => {
+    const sel = main.getSelectedMeshes?.() ?? [];
+    if (!sel.length) return;
+    const want = !sel.some((m) => m.isVisible?.() ?? true);
+    for (const mesh of sel) {
+      mesh.setVisible?.(want);
+      if (mesh.getThreeMesh?.()) mesh.getThreeMesh().visible = want;
+    }
+    main.render?.();
+    repaintFn();
   });
 
   // Chevron → expand/collapse a parent's children in the outliner (frame groups,
@@ -2640,15 +2686,16 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     }
   };
 
-  // Pencil button → rename (double-click still works, but it's awkward in VR).
-  el.querySelectorAll('[data-action="rename"]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const mesh = findMesh(btn.dataset.meshId);
-      if (!mesh) return;
-      const nameBtn = el.querySelector(`[data-action="select"][data-mesh-id="${btn.dataset.meshId}"]`);
-      if (nameBtn) beginRename(nameBtn, mesh);
-    });
+  // Toolbar pencil → rename the selected mesh (double-click a row still works, but it's awkward
+  // in VR). Single selection only — the button is disabled otherwise, since one name cannot be
+  // typed into six meshes.
+  el.querySelector('#mm-rename-sel')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const sel = main.getSelectedMeshes?.() ?? [];
+    if (sel.length !== 1) return;
+    const mesh = sel[0];
+    const nameBtn = el.querySelector(`[data-action="select"][data-mesh-id="${mesh._permanentStaticId}"]`);
+    if (nameBtn) beginRename(nameBtn, mesh);
   });
 
   // HOVERING A ROW LIGHTS THE THING IN 3D. matt: "if i hover over names in the outliner tree in

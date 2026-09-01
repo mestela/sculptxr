@@ -264,6 +264,74 @@ Skinning.setMushIterations = function (n) {
 
 Skinning.defaultMushIterations = function () { return MUSH_ITERATIONS; };
 
+// ---- x-ray ----------------------------------------------------------------------
+//
+// A capsule lives INSIDE the character, which is the one thing that makes weighting by
+// sculpting them awkward: the shape you are editing is behind the shape you are editing it
+// for. So the skin gets an opacity of its own, separate from the mesh opacity in the rendering
+// panel, applied to every BOUND mesh -- bound is the exact set that has capsules inside it.
+// matt: "we should have a way to turn on xray mode for either the capsule meshes or the actual
+// skin mesh itself."
+Skinning.skinOpacity = function () {
+  const live = window._skinOpacity;
+  if (Number.isFinite(live) && live > 0) return live;
+  const saved = getOptionsURL().skinOpacity;
+  return Number.isFinite(saved) && saved > 0 ? saved : 1;
+};
+
+Skinning.setSkinOpacity = function (main, v) {
+  window._skinOpacity = Math.min(1, Math.max(0.05, v));
+  getOptionsURL.saveOption('skinOpacity', window._skinOpacity, 300);
+  return Skinning.applySkinOpacity(main);
+};
+
+// Push the current value onto every bound mesh. Also called after a bind, so a mesh bound while
+// x-ray is on comes up see-through rather than making the setting look like it stopped working.
+//
+// THE SKIN NEEDS ITS OWN MATERIAL, and that is the whole reason this is more than setOpacity.
+//
+// Every matcap mesh in the scene SHARES one cached ShaderMaterial, and Scene's per-frame loop
+// calls ShaderManager.updateUniforms for each mesh in turn, writing that mesh's values into the
+// shared uniforms. Only uRotCorrection is re-uploaded per draw; uAlpha is not, so the alpha the
+// GPU actually uses is whichever mesh the loop wrote LAST -- and setting the skin's opacity
+// turned the capsules see-through with it. matt: "xray is affecting both the skin mesh and the
+// capsule meshes, thats stupid. it should be one or the other."
+//
+// Giving the skin a private clone takes it out of that shared write entirely: its alpha is its
+// own, and every other mesh goes on sharing the cached material at 1.
+//
+// Two more things follow from a see-through skin, and both are needed for it to be any use:
+//   - depthWrite off while it is transparent. The shared material writes depth, so a solid skin
+//     would depth-reject the capsules INSIDE it -- see-through and still hiding them.
+//   - drawn after the meshes, so it blends over the capsules rather than them over it. Both are
+//     put back at full opacity, where an ordinary opaque mesh is what is wanted.
+Skinning.applySkinOpacity = function (main) {
+  const a = Skinning.skinOpacity();
+  const meshes = main.getMeshes() || [];
+  const clear = a >= 0.99;
+  let n = 0;
+  for (let i = 0; i < meshes.length; i++) {
+    const mesh = meshes[i];
+    if (!Skinning.isBound(mesh)) continue;
+    mesh.setOpacity(a);
+    const tm = mesh.getThreeMesh?.();
+    const mat = tm && tm.material;
+    if (mat) {
+      if (!mat.userData || !mat.userData._skinPrivate) {
+        const own = mat.clone();
+        own.userData = Object.assign({}, mat.userData, { _skinPrivate: true });
+        tm.material = own;
+      }
+      tm.material.transparent = true;
+      tm.material.depthWrite = clear;
+      tm.material.needsUpdate = true;
+      tm.renderOrder = clear ? 0 : 2;
+    }
+    n++;
+  }
+  return n;
+};
+
 // Vertex adjacency, flattened. The array-of-arrays that adjacencyFromFaces returns is fine
 // to build from and wrong to iterate at 90Hz — this runs several times a frame over every
 // vertex, and chasing a pointer per vertex per iteration is most of the cost. Duplicates are
@@ -475,6 +543,62 @@ function applyMush(mesh, level, out, nbV) {
 // vertex count invalidates them. Callers gate on isBound() rather than silently dropping
 // weights — losing a weight map without being told is the failure mode we are explicitly
 // designing against.
+// Every cage in the scene, transformed into the skin's local space and ready to measure.
+//
+// `frameFor(ji)` supplies the frame of joint `ji` IN THE SKIN'S LOCAL SPACE at whichever pose
+// the caller is measuring in. That indirection is the whole reason this is shared: a bind
+// measures at the current pose, while a live re-solve has to measure at the BIND pose even
+// though the character may be standing somewhere else entirely. Expressing the cage as
+// frame(ji) * inverse(joint's current model) * cage's model takes the current pose back out
+// and puts the wanted one in -- and at bind time the two cancel, so bind gets exactly the
+// transform it had before.
+function prepareCages(main, joints, frameFor) {
+  const cageMeshes = WeightCage.cages(main).filter((c) => !c._isVoxelChunk);
+  if (!cageMeshes.length) return [];
+  const jointIndex = new Map();
+  joints.forEach((j, i) => { if (j) jointIndex.set(j.getID(), i); });
+  const prepared = [];
+  const _mJ = new THREE.Matrix4(), _pre = new THREE.Matrix4();
+  for (const c of cageMeshes) {
+    const ji = jointIndex.get(c._cageJointId);
+    // A cage whose joint is gone -- dissolved, or from another skeleton -- has nothing to
+    // speak for, and weighting vertices to a bone that no longer exists is worse than
+    // ignoring it.
+    if (ji === undefined) continue;
+    _mJ.fromArray(joints[ji].getModelSpaceMatrix()).invert();
+    _pre.multiplyMatrices(frameFor(ji), _mJ);
+    const p = WeightCage.prepare(c, _pre, ji);
+    if (p) prepared.push(p);
+  }
+  return prepared;
+}
+
+// Slack for the broadphase: a vertex further than this outside a cage's box is not measured
+// against it at all. Generous, because a vertex outside EVERY cage still has to find its
+// nearest bone.
+function cageSlack(prepared) {
+  let diag = 0;
+  for (const p of prepared) {
+    diag = Math.max(diag, Math.hypot(p.bb[3] - p.bb[0], p.bb[4] - p.bb[1], p.bb[5] - p.bb[2]));
+  }
+  return diag;
+}
+
+// The pre-smoothing assignment, copied so a later solve cannot write through it. `dist` comes
+// along because it is what makes the next partial solve tight -- without it every vertex is a
+// candidate and the shortcut measures the whole mesh.
+function rawSnapshot(raw) {
+  return {
+    idx: new Int32Array(raw.idx),
+    wts: new Float32Array(raw.wts),
+    dist: raw.dist ? new Float32Array(raw.dist) : null,
+  };
+}
+
+function cageWeights(prepared, verts, nbV) {
+  return WeightCage.weights(verts, nbV, prepared, MAX_INFLUENCES, cageSlack(prepared));
+}
+
 Skinning.bind = function (main, mesh) {
   const joints = Skeleton.joints(main);
   if (!mesh || !joints.length) return { ok: false, why: 'need a mesh and a bone chain' };
@@ -511,35 +635,17 @@ Skinning.bind = function (main, mesh) {
   // A cage is a baked capsule you have sculpted, so it answers the same question with a shape
   // the capsule could not express. Falling back keeps every existing rig binding exactly as it
   // did -- a scene with no cages cannot tell this code is here.
-  const cageMeshes = WeightCage.cages(main).filter((c) => !c._isVoxelChunk);
+  // The joint frames the cages are measured against are the CURRENT ones, which at bind time
+  // are by definition the bind frames.
+  const _mm = new THREE.Matrix4().fromArray(mesh.getModelSpaceMatrix()).invert();
+  const prepared = prepareCages(main, joints,
+    (ji) => new THREE.Matrix4().multiplyMatrices(_mm,
+      new THREE.Matrix4().fromArray(joints[ji].getModelSpaceMatrix())));
   let raw;
   let usedCages = 0;
-  if (cageMeshes.length) {
-    const jointIndex = new Map();
-    joints.forEach((j, i) => jointIndex.set(j.getID(), i));
-    const invModel = new THREE.Matrix4().fromArray(mesh.getModelSpaceMatrix()).invert();
-    const prepared = [];
-    for (const c of cageMeshes) {
-      const ji = jointIndex.get(c._cageJointId);
-      // A cage whose joint is gone -- dissolved, or from another skeleton -- has nothing to
-      // speak for, and weighting vertices to a bone that no longer exists is worse than
-      // ignoring it.
-      if (ji === undefined) continue;
-      const p = WeightCage.prepare(c, invModel, ji);
-      if (p) prepared.push(p);
-    }
-    if (prepared.length) {
-      // Slack for the broadphase: a vertex further than this outside a cage's box is not
-      // measured against it at all. Generous, because a vertex outside EVERY cage still has to
-      // find its nearest bone.
-      let diag = 0;
-      for (const p of prepared) {
-        diag = Math.max(diag, Math.hypot(p.bb[3] - p.bb[0], p.bb[4] - p.bb[1], p.bb[5] - p.bb[2]));
-      }
-      raw = WeightCage.weights(level.getVertices(), level.getNbVertices(), prepared,
-                               MAX_INFLUENCES, diag);
-      usedCages = prepared.length;
-    }
+  if (prepared.length) {
+    raw = cageWeights(prepared, level.getVertices(), level.getNbVertices());
+    usedCages = prepared.length;
   }
   if (!raw) raw = nearestCapsuleWeights(level.getVertices(), level.getNbVertices(), segs);
   const w = solveSmoothing(level, raw, joints.length);
@@ -556,6 +662,9 @@ Skinning.bind = function (main, mesh) {
   mesh._skinJoints = joints.map((j) => j.getID());
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
+  // The PRE-SMOOTHING assignment, kept because a partial re-solve amends it and re-smooths;
+  // smoothing is not invertible, so the smoothed map cannot be amended in place.
+  mesh._skinRaw = rawSnapshot(raw);
   mesh._skinInvBind = invBind;
   mesh._skinRest = new Float32Array(level.getVertices().subarray(0, nbV * 3));
   mesh._skinSrc = new Float32Array(mesh._skinRest);
@@ -576,6 +685,7 @@ Skinning.bind = function (main, mesh) {
   // business importing the skinning module, and a bound-mesh check through the Multimesh proxy
   // has failed to fire before.
   mesh._selectLocked = true;
+  Skinning.applySkinOpacity(main);
 
   return { ok: true, name: mesh._permanentStaticLabel || 'mesh', joints: joints.length,
            verts: nbV, ms: Math.round(performance.now() - t0), outside: raw.outside,
@@ -591,25 +701,60 @@ Skinning.bind = function (main, mesh) {
 //
 // Deliberately measures the BIND-pose skeleton against the BIND-pose vertices, so it stays
 // correct even if the character is posed while you edit.
-Skinning.resolveWeights = function (main, mesh) {
+Skinning.resolveWeights = function (main, mesh, touched) {
   if (!Skinning.isBound(mesh)) return false;
   const joints = resolveJoints(main, mesh);
   if (joints.some((j) => !j)) return false; // a joint was deleted: rebinding is the fix
 
-  const segs = boneSegments(mesh, joints, jointPositionsAtBind(mesh._skinInvBind));
-  if (!segs.length) return false;
-
   const nbV = (mesh._skinRest.length / 3) | 0;
-  const raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
   const lvl = boundLevel(mesh);
   if (!lvl) return false;
+
+  // CAGES IF THERE ARE ANY, exactly as Bind decides it -- otherwise sculpting a cage would
+  // change nothing while a live re-solve quietly reasserted the drawn capsules underneath it.
+  //
+  // Measured at the BIND pose: the frame of each joint in skin space is recovered from the
+  // inverse bind matrix, so this stays right with the character posed. The rest vertices are
+  // bind-pose too, and comparing a posed cage against them is what would make the weights jump
+  // the moment you moved an arm.
+  const prepared = prepareCages(main, joints,
+    (ji) => new THREE.Matrix4().copy(mesh._skinInvBind[ji]).invert());
+  let raw;
+  if (prepared.length) {
+    raw = resolveCagesRaw(mesh, prepared, nbV, touched);
+  } else {
+    const segs = boneSegments(mesh, joints, jointPositionsAtBind(mesh._skinInvBind));
+    if (!segs.length) return false;
+    raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
+  }
   const w = solveSmoothing(lvl, raw, joints.length);
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
+  mesh._skinRaw = rawSnapshot(raw);
   mesh._skinDirty = true;
   Skinning.refreshWeightColors(main, mesh);
   return true;
 };
+
+// The raw assignment after a cage edit: only the vertices the touched capsule can have changed
+// are re-measured (WeightCage.candidates picks them), the rest are copied forward.
+//
+// Falls back to measuring everything whenever the shortcut cannot be trusted: no previous
+// assignment, a changed vertex count, or no idea which cage was touched.
+function resolveCagesRaw(mesh, prepared, nbV, touched) {
+  const slack = cageSlack(prepared);
+  const base = mesh._skinRaw;
+  const full = () => WeightCage.weights(mesh._skinRest, nbV, prepared, MAX_INFLUENCES, slack);
+  if (!touched || !base || base.idx.length !== nbV * MAX_INFLUENCES) return full();
+
+  const ji = mesh._skinJoints.indexOf(touched._cageJointId);
+  const p = prepared.find((q) => q.joint === ji);
+  if (ji < 0 || !p) return full();
+
+  const V = mesh._skinRest;
+  const cand = WeightCage.candidates(V, nbV, p, base, MAX_INFLUENCES);
+  return WeightCage.weightsPartial(V, prepared, MAX_INFLUENCES, slack, cand, base);
+}
 
 // The mesh a joint drives, if any. Selecting a joint is unavoidable while rigging — grabbing
 // one selects it — so operations aimed at "the model" need a way to find the model from the
@@ -626,13 +771,25 @@ Skinning.meshForJoint = function (main, joint) {
 };
 
 // Every bound mesh in the scene, for the live editing path.
-Skinning.resolveWeightsAll = function (main) {
+Skinning.resolveWeightsAll = function (main, touched) {
   const meshes = main.getMeshes() || [];
   let n = 0;
   for (let i = 0; i < meshes.length; i++) {
-    if (Skinning.isBound(meshes[i]) && Skinning.resolveWeights(main, meshes[i])) n++;
+    if (Skinning.isBound(meshes[i]) && Skinning.resolveWeights(main, meshes[i], touched)) n++;
   }
   return n;
+};
+
+// A STROKE ON A CAPSULE IS A WEIGHT EDIT. Sculpting a cage and seeing nothing happen until you
+// press Rebind makes the shape and the weights feel like two unrelated things, when the cage
+// exists precisely to BE the weights. matt: "i don't see the skin weights changing on the skin
+// in terms of colours as i sculpt and move the capsule meshes."
+//
+// Called on stroke end rather than per sample: the measurement is over the skin's vertices, not
+// the cage's, so it is far too expensive to run inside a stroke.
+Skinning.onCageEdited = function (main, cage) {
+  if (!WeightCage.isCage(cage)) return 0;
+  return Skinning.resolveWeightsAll(main, cage);
 };
 
 // ---- weight colour preview ------------------------------------------------------
@@ -801,6 +958,11 @@ Skinning.unbind = function (mesh) {
   // the lock is owned by the bind state here, and leaving a mesh unselectable after unbinding
   // is the one failure mode with no obvious way out from inside the headset.
   mesh._selectLocked = false;
+  // X-ray goes with it. It is a working view for weighting capsules, and this mesh no longer
+  // has any -- leaving it half-transparent, with depth off, is a mystery to walk into later.
+  mesh.setOpacity?.(1);
+  const tm = mesh.getThreeMesh?.();
+  if (tm && tm.material) { tm.material.depthWrite = true; tm.material.needsUpdate = true; tm.renderOrder = 0; }
 };
 
 // Called by applyBlendshapes once it has composited base + deltas: that composite IS the

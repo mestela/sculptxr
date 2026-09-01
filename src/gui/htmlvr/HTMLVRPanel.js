@@ -422,6 +422,7 @@ export class HTMLVRPanel {
     if (window._hoverTrace) this._hoverStat(uv, hand, rayOrigin);
     if (this._sliderDragTarget) { this._vrDispatch('pointermove', uv, 0, true); return; }
     this._hoverHand = hand;
+    this._lastUV = uv;          // where the ray is, for onVRScroll to decide WHAT to scroll
     this._showHover(uv);
   }
 
@@ -513,8 +514,15 @@ export class HTMLVRPanel {
    */
   onVRScroll(deltaPx) {
     if (!this.mesh || !this._element) return;
-    // Walk descendants looking for the first element with scrollable overflow.
-    const el = this._findScrollable(this._element);
+    // WHAT IS UNDER THE RAY DECIDES WHAT MOVES. The panel used to have exactly one scroll
+    // surface, so "the panel's scrollable" was the same answer as "the one you are pointing
+    // at". The outliner now scrolls on its own, and with a single answer the thumbstick moved
+    // the panel underneath a list that stayed put. So: nearest scrollable ANCESTOR of the
+    // element under the ray, which is the outliner when you are in it and the panel body when
+    // you are anywhere else. _scrollClipEl only accepts a container that actually overflows,
+    // so a short outliner falls straight through to the panel rather than eating the input.
+    const at = this._lastUV ? this._uvToElement(this._lastUV).el : null;
+    const el = (at && this._scrollClipEl(at)) || this._findScrollable(this._element);
     if (!el) return;
     // Move the scroll position immediately (keeps the DOM/hit-test correct), but
     // THROTTLE the expensive re-rasterisation during a continuous scroll so it
@@ -535,7 +543,12 @@ export class HTMLVRPanel {
 
   // Position the custom scrollbar thumb to reflect a scroll container's position.
   _updateScrollThumb(scrollEl) {
-    const thumb = this._element.querySelector('.mm-scrollbar-thumb');
+    // The thumb belonging to THIS container — its own, when it has one (the outliner carries a
+    // track inside its wrapper), otherwise the panel's. A blind panel-wide query moved the
+    // panel's thumb while the outliner scrolled, which reads as the scroll going astray.
+    const thumb = (scrollEl.parentElement
+                   && scrollEl.parentElement.querySelector(':scope > .mm-scrollbar-track > .mm-scrollbar-thumb'))
+                  || this._element.querySelector('.mm-scrollbar-thumb');
     if (!thumb || !scrollEl) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollEl;
     if (scrollHeight > clientHeight) {

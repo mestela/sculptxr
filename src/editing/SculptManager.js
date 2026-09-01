@@ -384,6 +384,12 @@ class SculptManager {
     // One completed stroke is one edit to push over the Nomad link (no-op unless
     // live send is on and this mesh came from Nomad).
     this._main.onNomadLocalEdit?.();
+
+    // A STROKE ON A WEIGHT CAPSULE IS A WEIGHT EDIT, so the skin re-solves here and the colours
+    // move with the shape. No-op for every other mesh, which is all of them until capsules are
+    // baked. On stroke END, not per sample: the cost is over the SKIN's vertices, so running it
+    // inside a stroke would price a hundred thousand distance tests into every mouse move.
+    Skinning.onCageEdited(this._main, this._main.getMesh?.());
   }
 
   preUpdate() {

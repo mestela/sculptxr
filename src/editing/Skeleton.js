@@ -1679,7 +1679,19 @@ Skeleton.updateVisuals = function (main) {
   // The bind capsules, drawn. They are the actual support of the capsule bind — a vertex
   // outside every capsule gets no weight from any of them — so seeing them is the difference
   // between tuning weights by argument and tuning them by eye.
-  const showCaps = Skeleton.displayFlag('capsules');
+  //
+  // ...UNLESS THEY HAVE BEEN BAKED, in which case the baked meshes ARE the capsules and the
+  // parametric ones are a second, stale copy of the same shape drawn over the top of them.
+  // Sculpt a cage and the drawn capsule stays where it was, so the two disagree about the thing
+  // they both claim to show, and the one that is no longer the truth is the one drawn on top.
+  // matt: "those meshes ARE the capsules, so the original parametric capsules should be hidden.
+  // its only if i press the 'delete capsules' button should the parametric capsules be drawn
+  // again." Deleting the cages brings them straight back, since this is read every frame.
+  //
+  // Asked of the mesh list rather than through WeightCage, which imports this module -- the
+  // property is the same one WeightCage.isCage tests, and a scan is cheaper than a cycle.
+  const showCaps = Skeleton.displayFlag('capsules')
+    && !(main.getMeshes() || []).some((m) => m && m._isWeightCage);
   // The bone body and its edge overlay, each switchable. Turning both off brings the joint
   // dots back on their own, because otherwise there would be nothing on screen marking a
   // target that is still perfectly pickable — the bone IS the target now.

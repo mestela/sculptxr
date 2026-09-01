@@ -95,6 +95,7 @@ export function buildBoneAuthoringHTML(main, style) {
   const hasCages = WeightCage.cages(main).length > 0;
   const anyBound = Skinning.anyBound(main);
   const mush = Skinning.mushIterations();
+  const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
   return `
@@ -126,6 +127,11 @@ export function buildBoneAuthoringHTML(main, style) {
       ${bound ? '<button class="' + c.action + '" id="bone-unbind">Unbind</button>' : ''}
     </div>
     ${anyBound ? `
+    <div class="${c.row}">
+      <span class="${c.lbl}">X-Ray</span>
+      <input type="range" id="bone-xray" min="5" max="100" step="1" value="${xray}">
+      <span class="${c.val}" id="bone-xray-val">${xray}%</span>
+    </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
       <input type="range" id="bone-mush" min="0" max="30" step="1" value="${mush}">
@@ -221,7 +227,11 @@ export function wireBoneSection(root, main, opts) {
   // say which flag it is.
   const flag = (id, name) => {
     q(id)?.addEventListener('click', () => {
-      Skeleton.setDisplayFlag(name, !Skeleton.displayFlag(name));
+      const on = !Skeleton.displayFlag(name);
+      Skeleton.setDisplayFlag(name, on);
+      // Capsules means BOTH kinds. The drawn overlay reads the flag every frame; the baked
+      // meshes are real scene objects and have to be told.
+      if (name === 'capsules') WeightCage.setVisible(main, on);
       refresh();
       // Snap Plane draws the plane, so the toggle has to reach the tool BEFORE the render —
       // the tool's own per-frame sync runs after the frame is drawn, which on a still screen
@@ -423,6 +433,16 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
+  // See-through skin, so the capsules inside it can be seen while they are sculpted. Live on
+  // drag like the mush slider — it is a look, and a look is judged by watching it move.
+  const xrayInput = q('xray'), xrayVal = q('xray-val');
+  xrayInput?.addEventListener('input', () => {
+    const pct = parseInt(xrayInput.value, 10);
+    Skinning.setSkinOpacity(main, pct / 100);
+    if (xrayVal) xrayVal.textContent = pct + '%';
+    main.render?.();
+  });
+
   // Delta mush strength, in smoothing iterations — the radius, in edges, that the smoothing
   // reaches. Live on drag rather than on release: judging a mush is entirely a matter of
   // watching a bent limb while the number moves, and the pass is a post-process on positions,
@@ -457,8 +477,11 @@ export function wireBoneSection(root, main, opts) {
     } else {
       const res = WeightCage.bake(main);
       say(res.ok
-        ? `Bones: baked ${res.cages} capsule(s) — sculpt them, then Rebind`
+        ? `Bones: baked ${res.cages} capsule(s) — sculpt them, weights follow on each stroke`
         : `Bones: ${res.why}`, res.ok);
+      // Baking into a scene with capsules switched off would produce twenty invisible meshes
+      // and look like nothing happened — the same reason a radius edit turns them on.
+      if (res.ok) { Skeleton.setDisplayFlag('capsules', true); WeightCage.setVisible(main, true); }
     }
     rebuild();
     main.render?.();
@@ -524,6 +547,13 @@ export function syncBoneSection(root, main) {
   setFlag('trails', Skeleton.displayFlag('trails'));
   setFlag('gnomons', Skeleton.displayFlag('gnomons'));
   setFlag('gnomons-all', Skeleton.displayFlag('gnomonsAll'));
+
+  const xrayInput2 = q('xray'), xrayVal2 = q('xray-val');
+  if (xrayInput2) {
+    const pct = Math.round(Skinning.skinOpacity() * 100);
+    xrayInput2.value = String(pct);
+    if (xrayVal2) xrayVal2.textContent = pct + '%';
+  }
 
   const mushInput = q('mush'), mushVal = q('mush-val');
   if (mushInput) {

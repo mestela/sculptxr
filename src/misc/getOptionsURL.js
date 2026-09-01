@@ -280,6 +280,13 @@ var getOptionsURL = function () {
   // reload -- it was tuned once and should not have to be tuned again.
   options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.2);
 
+  // Rig
+  // How see-through a BOUND mesh is drawn, so the capsules inside it can be seen and sculpted.
+  // 1 is opaque, which is what every rig starts as -- this is a working view, turned on while
+  // weighting and turned back off after, and persisted so it survives the reload that a long
+  // weighting session tends to involve.
+  options.skinOpacity = queryNumber(getVal('skinOpacity'), 0.05, 1.0, 1.0);
+
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are
   // stale old-defaults (e.g. saturation 100%). Force 65/55/0 once, then respect user changes.

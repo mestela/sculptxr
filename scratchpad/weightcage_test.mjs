@@ -17,6 +17,9 @@
 //   WC_INJECT=nobuffers   the index buffer is never uploaded, so the mesh draws nothing
 //   WC_INJECT=translucent a baked capsule goes translucent again, which reads worse than opaque
 //   WC_INJECT=firstwins   ties are taken by the first cage rather than the deepest
+//   WC_INJECT=drawnonly   the Capsules button hides only the drawn overlay, not the baked meshes
+//   WC_INJECT=halfhide    hiding a cage sets one of the two visibility flags, not both
+//   WC_INJECT=bothcaps    the drawn capsules keep drawing over the baked ones
 import fs from 'fs';
 import path from 'path';
 
@@ -24,6 +27,7 @@ const REPO = '/Users/mattestela/sculptxr';
 const THREE = await import(path.join(REPO, 'node_modules/three/build/three.module.js'));
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
 let SKEL_INJ = false;
+let SCENE_INJ = false;
 
 const inject = process.env.WC_INJECT || '';
 const cut = (a, b, n) => {
@@ -40,6 +44,10 @@ if (inject === 'unsigned') {
   // valid faces and the bake puts nothing in the scene.
   cut('      if (lo.pole) faces.push(a, c, d, Utils.TRI_INDEX);       // fan at the first pole\n      else if (hi.pole) faces.push(a, b, c, Utils.TRI_INDEX);  // fan at the last\n      else faces.push(a, b, c, d);',
     '      if (a !== b) faces.push(a, b, c);\n      if (c !== d) faces.push(a, c, d);', inject);
+} else if (inject === 'noloop') {
+  cut('  lengthSegs = Math.max(2, lengthSegs || 2);', '  lengthSegs = 1;', inject);
+} else if (inject === 'worldremove') {
+  SCENE_INJ = true;
 } else if (inject === 'greycage') {
   cut('    const col = Skeleton.boneColor(main, p);', '    const col = { r: 0.5, g: 0.5, b: 0.5 };', inject);
 } else if (inject === 'hiddenparent') {
@@ -54,6 +62,14 @@ if (inject === 'unsigned') {
 } else if (inject === 'firstwins') {
   cut('      if (d < bestD) { bestD = d; bestJoint = cages[c].joint; }',
     '      if (bestD === Infinity) { bestD = d; bestJoint = cages[c].joint; }', inject);
+}
+
+let SKEL_DRAW_INJ = '';
+if (inject === 'bothcaps') SKEL_DRAW_INJ = inject;
+let PANEL_INJ = '';
+if (inject === 'drawnonly') PANEL_INJ = inject;
+else if (inject === 'halfhide') {
+  cut('    const t = c.getThreeMesh?.();\n    if (t) t.visible = !!on;', '', inject);
 }
 
 // Geometry.distance2PointTriangle is real code and the whole measurement rests on it, so it is
@@ -119,6 +135,27 @@ check('a capsule is built', !!g && g.verts.length > 0 && g.faces.length > 0);
     const y = g.verts[i + 1];
     if (y < lo) lo = y; if (y > hi) hi = y;
     maxR = Math.max(maxR, Math.hypot(g.verts[i], g.verts[i + 2]));
+  }
+  // EDGE LOOPS ALONG THE BONE. Without one at the middle, the centre of a capsule has no
+  // vertices to move and cannot be shaped at all -- which is the one thing this mesh is for.
+  {
+    const mid = [];
+    for (let i = 0; i < g.verts.length; i += 3) {
+      if (Math.abs(g.verts[i + 1] - 1) < 1e-6) mid.push(i);   // y = 1 is halfway along 0..2
+    }
+    check('there is an edge loop at the middle of the bone',
+      mid.length === 12, mid.length + ' verts at the midpoint (expected one ring of 12)');
+  }
+  // ...and no duplicated ring, which the previous version emitted at A: a degenerate band of
+  // zero-area quads down the middle of every capsule.
+  {
+    const seen = new Map();
+    for (let i = 0; i < g.verts.length; i += 3) {
+      const k = [g.verts[i], g.verts[i + 1], g.verts[i + 2]].map((n) => n.toFixed(5)).join(',');
+      seen.set(k, (seen.get(k) || 0) + 1);
+    }
+    const dupes = [...seen.values()].filter((c) => c > 1).length;
+    check('...and no ring is emitted twice', dupes === 0, dupes + ' duplicated vertices');
   }
   check('the caps extend a radius past each end',
     Math.abs(lo + 0.5) < 1e-6 && Math.abs(hi - 2.5) < 1e-6, lo.toFixed(3) + '..' + hi.toFixed(3));
@@ -205,8 +242,8 @@ check('one bone per vertex, weight 1', (() => {
   const SK = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
   const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
   check('the bind uses cages when there are any',
-    /const cageMeshes = WeightCage\.cages\(main\)/.test(SK)
-      && /raw = WeightCage\.weights\(level\.getVertices\(\), level\.getNbVertices\(\), prepared,/.test(SK));
+    /const prepared = prepareCages\(main, joints,/.test(SK)
+      && /raw = cageWeights\(prepared, level\.getVertices\(\), level\.getNbVertices\(\)\);/.test(SK));
   check('...and falls back to capsules when there are none',
     /if \(!raw\) raw = nearestCapsuleWeights\(level\.getVertices\(\), level\.getNbVertices\(\), segs\);/.test(SK),
     'an existing rig must bind exactly as it did');
@@ -220,6 +257,42 @@ check('one bone per vertex, weight 1', (() => {
   check('a cage is parented to the joint its bone hangs from',
     /main\.setMeshParent\(cage\.getID\(\), p\.getID\(\)/.test(SRC),
     'so it moves with its bone and needs no rig of its own');
+  // ONE BUTTON FOR BOTH KINDS OF CAPSULE. Baked, there are two representations in the scene and
+  // only the drawn overlay answered the toggle -- so "hide the capsules" left the solid ones
+  // sitting over the character with no way to clear them but the outliner, row by row.
+  {
+    const panel = PANEL_INJ === 'drawnonly'
+      ? PANEL.replace("      if (name === 'capsules') WeightCage.setVisible(main, on);", '')
+      : PANEL;
+    check('the Capsules button hides the baked meshes too',
+      /if \(name === 'capsules'\) WeightCage\.setVisible\(main, on\);/.test(panel));
+    check('...setting both visibility flags, like the outliner eye does',
+      /c\.setVisible\?\.\(!!on\);/.test(SRC) && /if \(t\) t\.visible = !!on;/.test(SRC),
+      'one without the other leaves a mesh that is hidden to one half of the app');
+    check('...and a bake turns them on rather than making twenty invisible meshes',
+      /Skeleton\.setDisplayFlag\('capsules', true\); WeightCage\.setVisible\(main, true\);/.test(PANEL),
+      'the same reason a radius edit turns them on: an invisible edit looks like a no-op');
+  }
+
+  // BAKED, THE MESHES ARE THE CAPSULES. Drawing the parametric ones as well puts a second,
+  // stale copy of the same shape over the top -- and once a cage is sculpted the two disagree,
+  // with the one that is no longer true drawn in front.
+  {
+    let skel = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+    if (SKEL_DRAW_INJ) {
+      const a = "  const showCaps = Skeleton.displayFlag('capsules')\n"
+        + "    && !(main.getMeshes() || []).some((m) => m && m._isWeightCage);";
+      if (!skel.includes(a)) throw new Error('inject bothcaps: anchor moved');
+      skel = skel.replace(a, "  const showCaps = Skeleton.displayFlag('capsules');");
+    }
+    check('a baked rig stops drawing the parametric capsules',
+      /const showCaps = Skeleton\.displayFlag\('capsules'\)\s*\n\s*&& !\(main\.getMeshes\(\) \|\| \[\]\)\.some\(\(m\) => m && m\._isWeightCage\);/.test(skel),
+      'otherwise the mesh, the baked capsules AND the parametric ones are all on screen at once');
+    check('...decided per frame, so Delete Capsules brings them straight back',
+      /const showCaps = Skeleton\.displayFlag/.test(skel) && !/_hasWeightCages/.test(skel),
+      'a latched flag would need clearing from every path that removes a cage');
+  }
+
   check('baking refuses to double up',
     /if \(existing\.length\) return \{ ok: false, why: 'cages already exist/.test(SRC));
   // A CAPSULE LIVES INSIDE THE CHARACTER -- that is what it is for -- so an opaque cage is
@@ -282,6 +355,23 @@ check('one bone per vertex, weight 1', (() => {
   check('the bind measures the level you are looking at, not level 0',
     /const level = cage\.getCurrentMesh \? cage\.getCurrentMesh\(\)/.test(SRC),
     'sculpt at level 2 and a level-0 read measures the smooth base underneath');
+  // DELETING SOMETHING PARENTED. Every removal path removed the render object from
+  // `_worldGroup` -- but a parented mesh's render object lives under its PARENT's, and
+  // Object3D.remove() on a non-child is a silent no-op. So deleted joints, deleted capsules and
+  // a reset scene all left their render objects drawing. It hid for as long as it did because
+  // joint locators used to be `visible = false`, which made the leaks invisible leaks.
+  {
+    let SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+    if (SCENE_INJ) SCENE = SCENE.replace('    if (t.parent) { t.parent.remove(t); return; }', '');
+    check('a render object is detached from its ACTUAL parent',
+      /detachMeshThree\(mesh\) \{[\s\S]{0,200}?if \(t\.parent\) \{ t\.parent\.remove\(t\); return; \}/.test(SCENE),
+      'removing from _worldGroup is a no-op for anything parented to a joint');
+    check('...and no removal path bypasses it',
+      !/_worldGroup\.remove\(/.test(SCENE),
+      'clearScene and replaceMesh each had their own copy of the same wrong assumption');
+    check('...with a fallback for an object that has no parent yet',
+      /var target = this\._worldGroup \|\| this\._scene;\s*\n\s*if \(target\) target\.remove\(t\);/.test(SCENE));
+  }
   check('the panel offers bake and delete as one state',
     /hasCages \? 'Delete Capsules' : 'Bake Capsules'/.test(PANEL),
     'named for the thing the user already has a word for, not for our word');

@@ -46,7 +46,7 @@ WeightCage.cages = function (main) {
 // A capsule as a triangle mesh: a tube of `radial` sides between the two ends, capped with
 // hemispheres. Deliberately low-poly -- it is a volume to be measured against and sculpted, not
 // rendered detail, and every triangle is one more the bind walks per vertex.
-function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings) {
+function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs) {
   const A = new THREE.Vector3(ax, ay, az);
   const B = new THREE.Vector3(bx, by, bz);
   const axis = new THREE.Vector3().subVectors(B, A);
@@ -58,51 +58,52 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings) {
   const u = new THREE.Vector3().crossVectors(up, axis).normalize();
   const v = new THREE.Vector3().crossVectors(axis, u);
 
+  lengthSegs = Math.max(2, lengthSegs || 2);
   const verts = [];
   const push = (p) => { verts.push(p.x, p.y, p.z); return verts.length / 3 - 1; };
   const _p = new THREE.Vector3();
 
-  // Rings from one pole to the other: the hemispheres bend round, the tube runs straight.
+  // ROWS FROM POLE TO POLE, built as an explicit list rather than an index puzzle.
+  //
+  // The tube gets `lengthSegs` bands, so there are edge loops ALONG the bone and not just at
+  // its two ends -- without them the middle of a capsule has no vertices to move and cannot be
+  // shaped at all, which is the one thing this mesh exists for. matt: "the capsules don't have
+  // an edge loop around their center, they should."
+  //
+  // The previous version also emitted the ring at A twice, once as the last cap row and again
+  // as the first tube row: a degenerate band of zero-area quads down the middle of every
+  // capsule.
   const rows = [];
-  const total = rings * 2 + 2;
-  for (let i = 0; i <= total; i++) {
-    let centre, rad;
-    if (i <= rings) {                        // cap A
-      const a = (Math.PI / 2) * (1 - i / rings);
-      centre = A.clone().addScaledVector(axis, -Math.sin(a) * r);
-      rad = Math.cos(a) * r;
-    } else if (i >= rings + 2) {             // cap B
-      const k = i - (rings + 2);
-      const a = (Math.PI / 2) * (k / rings);
-      centre = B.clone().addScaledVector(axis, Math.sin(a) * r);
-      rad = Math.cos(a) * r;
-    } else {                                  // the two tube rings, at A and at B
-      centre = i === rings + 1 ? A.clone() : B.clone();
-      rad = r;
-      if (i === rings + 1) centre = A.clone();
-    }
-    const row = [];
+  const addRow = (centre, rad) => {
+    const ids = [];
     if (rad < 1e-6) {
-      row.push(push(centre));                 // a pole is one vertex, shared by the whole ring
-      rows.push({ ids: row, pole: true });
-      continue;
+      ids.push(push(centre));               // a pole is one vertex, shared by the whole ring
+      rows.push({ ids: ids, pole: true });
+      return;
     }
     for (let k = 0; k < radial; k++) {
       const t = (k / radial) * Math.PI * 2;
       _p.copy(centre).addScaledVector(u, Math.cos(t) * rad).addScaledVector(v, Math.sin(t) * rad);
-      row.push(push(_p));
+      ids.push(push(_p));
     }
-    rows.push({ ids: row, pole: false });
+    rows.push({ ids: ids, pole: false });
+  };
+
+  // Cap A: pole round to the ring sitting on A.
+  for (let i = 0; i <= rings; i++) {
+    const ang = (Math.PI / 2) * (1 - i / rings);
+    addRow(A.clone().addScaledVector(axis, -Math.sin(ang) * r), Math.cos(ang) * r);
+  }
+  // The tube, divided along its length. i starts at 1 because the ring at A is already there.
+  for (let i = 1; i < lengthSegs; i++) {
+    addRow(A.clone().addScaledVector(axis, (len * i) / lengthSegs), r);
+  }
+  // Cap B: the ring on B, round to the pole.
+  for (let i = 0; i <= rings; i++) {
+    const ang = (Math.PI / 2) * (i / rings);
+    addRow(B.clone().addScaledVector(axis, Math.sin(ang) * r), Math.cos(ang) * r);
   }
 
-  // FACES ARE ivec4, NOT TRIANGLE TRIPLES. SculptGL stores four indices per face and flags a
-  // triangle by putting Utils.TRI_INDEX in the fourth slot (Mesh.js:20). Emitting raw triples
-  // produced a mesh with no valid faces at all: the bake ran, took its time, and put nothing in
-  // the scene -- matt, "i don't see any baked capsules."
-  //
-  // Quads everywhere except the two poles, where the ring collapses to a point and the quad
-  // degenerates to a triangle. Quads also make the cage subdividable and pleasant to sculpt,
-  // which is the whole point of it being a mesh.
   const faces = [];
   for (let i = 0; i < rows.length - 1; i++) {
     const lo = rows[i], hi = rows[i + 1];
@@ -204,6 +205,10 @@ WeightCage.signedDistance = function (c, px, py, pz, slack) {
 WeightCage.weights = function (verts, nbV, cages, maxInfluences, slack) {
   const idx = new Int32Array(nbV * maxInfluences).fill(-1);
   const wts = new Float32Array(nbV * maxInfluences);
+  // HOW FAR EACH VERTEX WAS FROM THE CAGE THAT WON IT. Kept because it is exactly what makes a
+  // partial re-solve tight: a cage can only take a vertex by beating that distance, so a vertex
+  // further from the edited cage than this cannot have changed. See WeightCage.candidates.
+  const dist = new Float32Array(nbV).fill(Infinity);
   let outside = 0;
   for (let i = 0; i < nbV; i++) {
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
@@ -216,8 +221,81 @@ WeightCage.weights = function (verts, nbV, cages, maxInfluences, slack) {
     if (bestD > 0) outside++;
     idx[i * maxInfluences] = bestJoint;
     wts[i * maxInfluences] = 1;
+    dist[i] = bestD;
   }
-  return { idx: idx, wts: wts, outside: outside };
+  return { idx: idx, wts: wts, dist: dist, outside: outside };
+};
+
+// THE SAME QUESTION, ASKED ABOUT A FEW VERTICES INSTEAD OF ALL OF THEM.
+//
+// Sculpting one capsule cannot change what most of the mesh is weighted to, so re-measuring
+// every vertex against every cage after every stroke is nearly all wasted work -- and it is the
+// work that decides whether the weight colours can update on stroke end at all, or only on a
+// Rebind. matt: "we could accellerate this further by only testing against the last touched
+// capsule."
+//
+// `candidates` (from WeightCage.candidates) is the set that can actually have changed;
+// everything else is copied from `base`.
+// WHICH VERTICES ONE SCULPTED CAPSULE CAN HAVE CHANGED.
+//
+// Two sets, and both are needed. Everything the touched bone OWNED, because the capsule may
+// have shrunk out from under it; and everything inside the capsule's new bounding box, because
+// it may have grown over vertices another bone owned. A vertex outside every cage falls to its
+// nearest surface, so the box is padded by the capsule's own diagonal to catch the ones just
+// beyond it -- padded by the scene-wide slack instead, the set would be the whole mesh and the
+// shortcut would be a no-op with extra steps.
+//
+// Lives here, next to the measurement it is a shortcut for, so it can be tested against a full
+// solve: a candidate rule that misses a vertex is a wrong weight that only appears in one
+// sculpt out of ten, which is exactly the kind of thing that never gets noticed by looking.
+WeightCage.candidates = function (verts, nbV, cage, base, maxInfluences) {
+  const bb = cage.bb;
+  const idx = base.idx, dist = base.dist;
+  const out = [];
+  for (let i = 0; i < nbV; i++) {
+    // Everything the touched bone already owned: its capsule may have shrunk out from under it.
+    if (idx[i * maxInfluences] === cage.joint) { out.push(i); continue; }
+    // A vertex with no owner, or no recorded distance, has nothing to beat -- always measure.
+    const d = dist ? dist[i] : Infinity;
+    if (!isFinite(d)) { out.push(i); continue; }
+    // Otherwise the edited cage has to BEAT the distance this vertex already had, and distance
+    // to the cage's box is a lower bound on distance to the cage. A vertex further outside the
+    // box than its current winner's distance cannot change hands, whatever was sculpted.
+    //
+    // A vertex INSIDE its cage (negative distance) can only be taken by a cage it is also
+    // inside, so the box alone decides -- max(0, d) says both of those in one line.
+    const pad = d > 0 ? d : 0;
+    const x = verts[i * 3], y = verts[i * 3 + 1], z = verts[i * 3 + 2];
+    if (x >= bb[0] - pad && x <= bb[3] + pad &&
+        y >= bb[1] - pad && y <= bb[4] + pad &&
+        z >= bb[2] - pad && z <= bb[5] + pad) out.push(i);
+  }
+  return out;
+};
+
+WeightCage.weightsPartial = function (verts, cages, maxInfluences, slack, candidates, base) {
+  const idx = new Int32Array(base.idx);
+  const wts = new Float32Array(base.wts);
+  const dist = base.dist ? new Float32Array(base.dist) : new Float32Array(idx.length / maxInfluences).fill(Infinity);
+  let outside = 0;
+  for (let n = 0; n < candidates.length; n++) {
+    const i = candidates[n];
+    const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
+    let bestJoint = -1, bestD = Infinity;
+    for (let c = 0; c < cages.length; c++) {
+      const d = WeightCage.signedDistance(cages[c], px, py, pz, slack);
+      if (d < bestD) { bestD = d; bestJoint = cages[c].joint; }
+    }
+    // A candidate that reaches no cage at all keeps whatever it had: dropping it would UNWEIGHT
+    // a vertex on the strength of a broadphase miss.
+    if (bestJoint < 0) continue;
+    if (bestD > 0) outside++;
+    for (let k = 0; k < maxInfluences; k++) { idx[i * maxInfluences + k] = -1; wts[i * maxInfluences + k] = 0; }
+    idx[i * maxInfluences] = bestJoint;
+    wts[i * maxInfluences] = 1;
+    dist[i] = bestD;
+  }
+  return { idx: idx, wts: wts, dist: dist, outside: outside };
 };
 
 // ── BAKING ────────────────────────────────────────────────────────────────────────────
@@ -237,7 +315,9 @@ WeightCage.bake = function (main) {
   const existing = WeightCage.cages(main);
   if (existing.length) return { ok: false, why: 'cages already exist — delete them first' };
 
-  const RADIAL = 10, RINGS = 3;
+  // LENGTH_SEGS 2 puts an edge loop at the middle of every bone, which is the least that
+  // makes a capsule shapeable; more is more to sculpt and more for the bind to walk.
+  const RADIAL = 10, RINGS = 3, LENGTH_SEGS = 2;
   const made = [];
   const _mJ = new THREE.Matrix4(), _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
   const _a = new THREE.Vector3(), _b = new THREE.Vector3();
@@ -260,7 +340,8 @@ WeightCage.bake = function (main) {
              + _mP.elements[2] * _mP.elements[2];
     const rLocal = r / (Math.sqrt(sc) || 1);
 
-    const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, rLocal, RADIAL, RINGS);
+    const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, rLocal,
+                                RADIAL, RINGS, LENGTH_SEGS);
     if (!geo) continue;
 
     const base = new MeshStatic(main._gl);
@@ -328,6 +409,26 @@ WeightCage.bake = function (main) {
   return made.length
     ? { ok: true, cages: made.length }
     : { ok: false, why: 'no bones with a radius to bake' };
+};
+
+// THE CAPSULES BUTTON HIDES THE BAKED ONES TOO.
+//
+// Once they are baked there are two capsule representations in the scene -- the drawn overlay
+// and these meshes -- and only the overlay answered to the Capsules toggle. So the one button
+// that means "get the capsules out of my way" left the solid ones sitting over the character,
+// and the only way to clear them was to hunt down twenty rows in the outliner. matt: "ideally
+// just the 'capsules' button in the bones tool would also hide all the capsule meshes."
+//
+// Sets the SculptGL visibility and the three-side flag together, the same pair the outliner's
+// eye sets -- a cage hidden here reads as hidden there, and vice versa.
+WeightCage.setVisible = function (main, on) {
+  const cages = WeightCage.cages(main);
+  for (const c of cages) {
+    c.setVisible?.(!!on);
+    const t = c.getThreeMesh?.();
+    if (t) t.visible = !!on;
+  }
+  return cages.length;
 };
 
 WeightCage.deleteAll = function (main) {

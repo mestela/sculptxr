@@ -6,6 +6,7 @@ import StDynamic from './StateDynamic.js';
 import StMultiresolution from './StateMultiresolution.js';
 import StCustom from './StateCustom.js';
 import StVoxel from './StateVoxel.js';
+import Skinning from '../editing/Skinning.js';
 
 class StateManager {
 
@@ -145,6 +146,9 @@ class StateManager {
     // An undo changes geometry without a stroke, so the Nomad link would never
     // hear about it (no-op unless live sending is on).
     this._main.onNomadLocalEdit?.(state);
+    // ...and neither would the skin weights, if the thing undone was a capsule sculpt. Undo is
+    // the one path that changes a cage with no stroke to end. No-op for anything else.
+    Skinning.onCageEdited(this._main, this._main.getMesh?.());
   }
 
   redo() {
@@ -159,6 +163,7 @@ class StateManager {
     if (this._redos.length && this._redos[this._redos.length - 1].squash === true)
       this.redo();
     this._main.onNomadLocalEdit?.(state);
+    Skinning.onCageEdited(this._main, this._main.getMesh?.());
   }
 
   reset() {

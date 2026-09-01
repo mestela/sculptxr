@@ -28,7 +28,9 @@ const Skeleton = {
 };
 const _flagState = {};
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
-  mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){} };
+  mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){},
+  // The x-ray slider: the panel reads the current skin opacity to fill it in.
+  skinOpacity: () => 1, setSkinOpacity(){}, applySkinOpacity(){} };
 const SkinMesh = {};
 // The panel asks whether any weight cages exist so it can label one button Bake or Delete.
 // Stubbed to "none", which is the state every existing rig is in.
