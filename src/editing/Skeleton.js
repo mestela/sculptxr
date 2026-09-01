@@ -843,6 +843,20 @@ window.rigUnit = function (main) {
 // Push a joint's engine matrix into its Three mesh and refresh its world matrix. Needed
 // any time a joint moves outside the render loop's own sync, and needed BEFORE reparenting
 // or before a child reads its parent's world matrix.
+// A locator that occupies space and paints nothing. Kept as one function because it is applied
+// in two places -- at creation and again every frame after anything that might have rebuilt the
+// material -- and the two drifting apart is how a white pick sphere comes back.
+//
+// NOT `visible = false`: that skips the object's whole subtree in three, so anything parented to
+// a joint would be invisible too.
+function noDrawMaterial(tm) {
+  if (!tm) return;
+  tm.visible = true;
+  const m = tm.material;
+  if (m && m.colorWrite === false && m.depthWrite === false) return;   // already ours
+  tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+}
+
 Skeleton.syncThree = function (mesh) {
   const tm = mesh.getThreeMesh && mesh.getThreeMesh();
   if (!tm) return;
@@ -1246,11 +1260,16 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
     tm.matrixAutoUpdate = false;
     tm.matrix.fromArray(mesh.getMatrix());
     tm.updateMatrixWorld(true);
-    // The locator must never draw — the flat bone/joint visuals represent it. visible=false
-    // as well as the no-draw material, because StateAddRemove.undo() calls initRender() on
-    // every surviving mesh, which rebuilds the material and would otherwise resurrect the
-    // pick sphere as a visible white blob. Reasserted each frame in updateVisuals.
-    tm.visible = false;
+    // The locator must never draw — the flat bone/joint visuals represent it. It is hidden by
+    // its MATERIAL rather than by `visible`, because in three.js `visible = false` skips the
+    // whole SUBTREE: anything parented to a joint could never render, however correct it was.
+    // That is precisely what happened to the baked weight capsules, which are parented to
+    // joints and were perfect in every measurable respect and invisible.
+    //
+    // The material has to be reasserted, because StateAddRemove.undo() calls initRender() on
+    // every surviving mesh and rebuilds it — which would otherwise resurrect the pick sphere as
+    // a white blob. updateVisuals does that each frame; see noDrawMaterial.
+    noDrawMaterial(tm);
   }
 
   // Every joint ever created this session, live or undone. The add/remove undo system is
@@ -1408,7 +1427,9 @@ Skeleton.healGraph = function (main) {
       continue;
     }
 
-    tm.visible = false; // initRender() may have rebuilt the material; keep it non-drawing
+    // Non-drawing via the MATERIAL, never via `visible` — see makeJoint. initRender() may have
+    // rebuilt the material, so it is reasserted here rather than assumed.
+    noDrawMaterial(tm);
 
     const p = j._parentMesh;
     const want = (Skeleton.isJoint(p) && live.has(p)) ? p.getThreeMesh() : main._worldGroup;
@@ -2739,8 +2760,10 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       m._typeName = m._typeName || 'Bone';
       main._skelAll = main._skelAll || new Set();
       main._skelAll.add(m);
+      // By material, not by `visible` -- see noDrawMaterial. A loaded rig would otherwise
+      // reintroduce the hidden-subtree bug for every joint in the file.
       const tm = m.getThreeMesh && m.getThreeMesh();
-      if (tm) tm.visible = false;
+      if (tm) noDrawMaterial(tm);
     }
     for (const row of rows) {
       if (row.mir !== NONE && meshes[row.mir]) row.mesh._boneMirror = meshes[row.mir];

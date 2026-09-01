@@ -30,6 +30,9 @@ const _flagState = {};
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
   mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){} };
 const SkinMesh = {};
+// The panel asks whether any weight cages exist so it can label one button Bake or Delete.
+// Stubbed to "none", which is the state every existing rig is in.
+const WeightCage = { cages: () => (globalThis.__cages || []) };
 const IKSolver = { pinnedJoints: () => [{},{}] };
 `;
 const mod = await import('data:text/javascript,' + encodeURIComponent(stub + body));
@@ -47,6 +50,23 @@ const check = (n, ok, got) => { console.log((ok ? '  ok   ' : '  FAIL ') + n + (
 const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () => ({ modeKey: () => 'draw' }) }), getMesh: () => null };
 
 const flat = buildBoneSectionHTML(main, 'mm');
+// The cage button is one control with two states, not two controls -- either the rig weights
+// from capsules or it weights from sculpted cages, and both being offered at once would invite
+// the question of what having both means.
+{
+  globalThis.__cages = [];
+  const none = buildBoneSectionHTML(main, 'mm');
+  globalThis.__cages = [{}];
+  const some = buildBoneSectionHTML(main, 'mm');
+  globalThis.__cages = [];
+  check('the cage button offers Bake when there are none',
+    /id="bone-cages">Bake Capsules</.test(none));
+  check('...and Delete when there are some',
+    /id="bone-cages">Delete Capsules</.test(some));
+  check('...as ONE button either way',
+    (none.match(/id="bone-cages"/g) || []).length === 1
+      && (some.match(/id="bone-cages"/g) || []).length === 1);
+}
 const vr = buildBoneSectionHTML({ ...main, _xrSession: {} }, 'mm');
 const wrist = buildBoneSectionHTML({ ...main, _xrSession: {} }, 'mp');
 const authoring = buildBoneAuthoringHTML(main, 'mm');

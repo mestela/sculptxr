@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import Skeleton from './Skeleton.js';
+import WeightCage from './WeightCage.js';
 import { adjacencyFromFaces } from './Geodesic.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
@@ -504,7 +505,43 @@ Skinning.bind = function (main, mesh) {
   if (!level) return { ok: false, why: 'no geometry at the selected level' };
 
   const t0 = performance.now();
-  const raw = nearestCapsuleWeights(level.getVertices(), level.getNbVertices(), segs);
+
+  // CAGES IF THERE ARE ANY, CAPSULES OTHERWISE.
+  //
+  // A cage is a baked capsule you have sculpted, so it answers the same question with a shape
+  // the capsule could not express. Falling back keeps every existing rig binding exactly as it
+  // did -- a scene with no cages cannot tell this code is here.
+  const cageMeshes = WeightCage.cages(main).filter((c) => !c._isVoxelChunk);
+  let raw;
+  let usedCages = 0;
+  if (cageMeshes.length) {
+    const jointIndex = new Map();
+    joints.forEach((j, i) => jointIndex.set(j.getID(), i));
+    const invModel = new THREE.Matrix4().fromArray(mesh.getModelSpaceMatrix()).invert();
+    const prepared = [];
+    for (const c of cageMeshes) {
+      const ji = jointIndex.get(c._cageJointId);
+      // A cage whose joint is gone -- dissolved, or from another skeleton -- has nothing to
+      // speak for, and weighting vertices to a bone that no longer exists is worse than
+      // ignoring it.
+      if (ji === undefined) continue;
+      const p = WeightCage.prepare(c, invModel, ji);
+      if (p) prepared.push(p);
+    }
+    if (prepared.length) {
+      // Slack for the broadphase: a vertex further than this outside a cage's box is not
+      // measured against it at all. Generous, because a vertex outside EVERY cage still has to
+      // find its nearest bone.
+      let diag = 0;
+      for (const p of prepared) {
+        diag = Math.max(diag, Math.hypot(p.bb[3] - p.bb[0], p.bb[4] - p.bb[1], p.bb[5] - p.bb[2]));
+      }
+      raw = WeightCage.weights(level.getVertices(), level.getNbVertices(), prepared,
+                               MAX_INFLUENCES, diag);
+      usedCages = prepared.length;
+    }
+  }
+  if (!raw) raw = nearestCapsuleWeights(level.getVertices(), level.getNbVertices(), segs);
   const w = solveSmoothing(level, raw, joints.length);
 
   // Inverse bind matrices, in mesh-local space.
@@ -541,7 +578,10 @@ Skinning.bind = function (main, mesh) {
   mesh._selectLocked = true;
 
   return { ok: true, name: mesh._permanentStaticLabel || 'mesh', joints: joints.length,
-           verts: nbV, ms: Math.round(performance.now() - t0), outside: raw.outside };
+           verts: nbV, ms: Math.round(performance.now() - t0), outside: raw.outside,
+           // Which source actually decided the weights, so "I sculpted a cage and nothing
+           // changed" is answerable without guessing.
+           cages: usedCages };
 };
 
 // Re-solve the weights of an already-bound mesh against the CURRENT capsules, leaving the

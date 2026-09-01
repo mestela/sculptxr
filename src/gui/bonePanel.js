@@ -3,6 +3,7 @@ import Enums from '../misc/Enums.js';
 import Skeleton from '../editing/Skeleton.js';
 import Skinning from '../editing/Skinning.js';
 import SkinMesh from '../editing/SkinMesh.js';
+import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
 
 // The Bones tool's controls, in ONE place, for every panel that shows them.
@@ -91,6 +92,7 @@ export function buildBoneAuthoringHTML(main, style) {
   const wts   = f('weights');
   const radPct = Math.round(Skeleton.radiusFraction() * 100);
   const bound = Skinning.isBound(main.getMesh?.());
+  const hasCages = WeightCage.cages(main).length > 0;
   const anyBound = Skinning.anyBound(main);
   const mush = Skinning.mushIterations();
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
@@ -114,6 +116,9 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-rad-all">Apply To All</button>
       <button class="${c.action}" id="bone-skin">Make Skin</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
     </div>
     ${rule}
     <div class="${c.btnRow}">
@@ -443,10 +448,27 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
+  // BAKE THE CAPSULES TO SCULPTABLE CAGES, or delete them again. One button, because they are
+  // one state: either the rig weights from capsules or it weights from cages.
+  q('cages')?.addEventListener('click', () => {
+    if (WeightCage.cages(main).length) {
+      const n = WeightCage.deleteAll(main);
+      say(`Bones: deleted ${n} baked capsule(s) — binding is back to the drawn capsules`, true);
+    } else {
+      const res = WeightCage.bake(main);
+      say(res.ok
+        ? `Bones: baked ${res.cages} capsule(s) — sculpt them, then Rebind`
+        : `Bones: ${res.why}`, res.ok);
+    }
+    rebuild();
+    main.render?.();
+  });
+
   q('bind')?.addEventListener('click', () => {
     const res = Skinning.bind(main, main.getMesh?.());
     say(res.ok
       ? `Bones: bound ${res.name} — ${res.joints} joints, ${res.verts} verts, ${res.ms}ms`
+        + (res.cages ? `, from ${res.cages} baked capsule(s)` : ', from drawn capsules')
         + (res.outside ? `, ${res.outside} verts outside every capsule` : '')
       : `Bones: ${res.why}`, res.ok);
     rebuild(); // the button set itself changes once bound
