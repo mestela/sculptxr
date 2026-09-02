@@ -423,7 +423,7 @@ function relax(verts, faces, caps) {
 // Assembly
 // -----------------------------------------------------------------------------------------
 
-function buildArrays(joints, topo) {
+function buildArrays(main, joints, topo) {
   const adj = topo.adj;
   const verts = [];
   const boxes = new Map();
@@ -448,11 +448,29 @@ function buildArrays(joints, topo) {
     const claims = claimSides(BOX, dirs);
     if (!claims) continue;
 
-    // No rotation anywhere: the lattice goes straight to world, scaled and offset. That one
-    // line is the whole reason bridges cannot shear against each other.
+    // A JOINT WITH A VOLUME IS BUILT AT THE VOLUME'S SIZE, not at one derived from its radius.
+    //
+    // This is the payoff matt pointed out when the volumes went in: with real shapes on the rig,
+    // Make Skin "would now have a much better volume read of what the skin should be" — a pelvis
+    // box that is as wide as the pelvis instead of a cube sized by the thinnest bone touching
+    // it. Three half-extents and a centre offset replace one number.
+    //
+    // The volume's ROTATION is deliberately not applied: the lattice goes straight to world,
+    // and that one fact is the whole reason bridges between boxes cannot shear against each
+    // other. A turned box here would tear its own bridges apart, so a tilted ribcage still
+    // contributes an upright block — worth revisiting when the bridging can take a frame.
+    const vol = main && Skeleton.hasVolume && Skeleton.hasVolume(j) && Skeleton.volumeFrame
+      ? Skeleton.volumeFrame(main, j) : null;
+
     const base = verts.length / 3;
     for (const l of BOX.lat) {
-      verts.push(c.x + (h * l[0]) / CELLS, c.y + (h * l[1]) / CELLS, c.z + (h * l[2]) / CELLS);
+      if (vol) {
+        verts.push(vol.pos.x + (vol.half[0] * l[0]) / CELLS,
+                   vol.pos.y + (vol.half[1] * l[1]) / CELLS,
+                   vol.pos.z + (vol.half[2] * l[2]) / CELLS);
+      } else {
+        verts.push(c.x + (h * l[0]) / CELLS, c.y + (h * l[1]) / CELLS, c.z + (h * l[2]) / CELLS);
+      }
     }
 
     const byNeighbour = new Map();
@@ -586,7 +604,7 @@ SkinMesh.build = function (main) {
   if (!topo.bones.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
   const t0 = performance.now();
-  const arr = buildArrays(joints, topo);
+  const arr = buildArrays(main, joints, topo);
   if (!arr) return { ok: false, why: 'could not build a skin from this skeleton' };
 
   const base = new MeshStatic(main._gl);

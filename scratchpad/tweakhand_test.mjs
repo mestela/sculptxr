@@ -24,6 +24,8 @@
 //   TH_INJECT=jumptohand  the VR grab drops its held offset, so the joint jumps to the hand
 //   TH_INJECT=noarm       the grab starts armed, so a press meant as a selection drags the joint
 //   TH_INJECT=undoontap   a tap that moved nothing still pushes an undo step
+//   TH_INJECT=perjointundo drawing a bone pushes a state per joint again, so undoing one
+//                          mirrored bone takes two or three presses
 //   TH_INJECT=solveduring the pin watcher runs during a rest edit again — the actual runaway
 //   TH_INJECT=nореseed    (noreseed) the caches are not re-seeded on release, so the whole edit
 //                         is read as one external move and solved away in a frame
@@ -58,6 +60,9 @@ if (inject === 'anyhand') {
 } else if (inject === 'noarm') {
   cut('      startTip: tip ? tip.clone() : null, armed: !tip,',
     '      startTip: tip ? tip.clone() : null, armed: true,', inject);
+} else if (inject === 'perjointundo') {
+  cut('    const joint = Skeleton.createJoint(main, at, parent, base + side, { silent: true });',
+    '    const joint = Skeleton.createJoint(main, at, parent, base + side);', inject);
 } else if (inject === 'solveduring') {
   const a = '    if (this._rigRestEdit) { window._ikPinsDirty = false; }\n    else if';
   if (!SCENE.includes(a)) throw new Error('inject solveduring: anchor moved');
@@ -270,6 +275,26 @@ check('a trace names the hand, the owner, and who moved the joint',
     'without it the whole edit reads as one enormous external move and is solved away');
   check('...on both paths that raise the flag',
     (SRC.match(/IKSolver\.syncPinCache\?\.\(this\._main\);/g) || []).length >= 2);
+}
+
+// ── ONE PRESS, ONE UNDO STEP ──────────────────────────────────────────────────────────
+//
+// Every add pushed its own state, and a mirrored placement makes two joints — so undoing one
+// bone took two or three presses and none of them was a whole bone. matt: "each bone takes at
+// least 2 or 3 steps to undo the bone tip, the bone root, and the bone starting click."
+{
+  check('a drawn joint is created silently',
+    /Skeleton\.createJoint\(main, at, parent, base \+ side, \{ silent: true \}\)/.test(SRC));
+  check('...and so is its mirrored twin',
+    /base \+ \(side === '_L' \? '_R' : '_L'\), \{ silent: true \}\)/.test(SRC));
+  check('one state covers the pair',
+    /false, made\.length > 1 \? 'Draw Bone \(mirrored\)' : 'Draw Bone'\);/.test(SRC));
+  check('...and the chain cursor goes back with it',
+    /setChain\(chainBefore\);/.test(SRC) && /setChain\(chainAfter\);/.test(SRC),
+    'undoing has to put you back where you were in the chain, or the next joint continues from '
+    + 'a parent that is no longer in the scene');
+  check('...with the parents restored on redo',
+    /if \(m\.parent\) main\.setMeshParent\(m\.mesh\.getID\(\), m\.parent\.getID\(\), \{ silent: true \}\);/.test(SRC));
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

@@ -35,6 +35,9 @@
 //   RV_INJECT=tintwhileedit the volume lights up in selection colour while being edited
 //   RV_INJECT=fixedplane  the mirror plane goes back to a fixed square centred on the origin
 //   RV_INJECT=nostand     the plane straddles the ground grid instead of standing on it
+//   RV_INJECT=edgescan    the round shapes go back to an edge-angle scan, which finds nothing on
+//                         an ellipsoid
+//   RV_INJECT=fullrings   the dome draws full circles, half of each in the air above it
 import fs from 'fs';
 import path from 'path';
 
@@ -69,6 +72,11 @@ if (inject === 'boneowned') {
   const a = "      var local = vec3.transformMat4([0, 0, 0], inter, this._volJointInv || mat4.create());";
   if (!GIZ.includes(a)) throw new Error('inject worldoffset: anchor moved');
   GIZ = GIZ.replace(a, "      var local = inter;");
+} else if (inject === 'edgescan') {
+  cut("  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || equatorGeometry(32, false));",
+    "  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || new THREE.EdgesGeometry(eggVolGeometry(), 28));", inject);
+} else if (inject === 'fullrings') {
+  cut('    arc(0, 1, Math.PI, TAU);      // XY, lower half only', '    arc(0, 1, 0, TAU);', inject);
 } else if (inject === 'fixedplane') {
   cut('    w = Math.max(floor, Math.abs(_vRel.dot(_vRight)) * 2.2);', '    w = floor;', inject);
 } else if (inject === 'nostand') {
@@ -91,7 +99,7 @@ if (inject === 'boneowned') {
   if (!/off\[ax\] = vd\.off\[ax\]/.test(fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8')))
     throw new Error('inject symgrow: anchor moved');
 } else if (inject === 'norot') {
-  cut('      _qJ.multiply(Skeleton.jointVolRot(j, _qVol));', '', inject);
+  cut('  out.quat.multiply(Skeleton.jointVolRot(j, _qFrame));', '', inject);
 } else if (inject === 'handlesalways') {
   cut("    if (e.vol && isSel && main.getSculptManager?.()?.getCurrentTool?.()?.modeKey?.() === 'volume') {",
     '    if (e.vol) {', inject);
@@ -108,7 +116,7 @@ if (inject === 'boneowned') {
 } else if (inject === 'nocube') {
   cut('  if (kids.length < 2) {', '  if (false) {', inject);
 } else if (inject === 'nooffset') {
-  cut('        o.position.copy(_pB).add(_vOff);', '        o.position.copy(_pB);', inject);
+  cut('  out.pos.add(_vFrame);', '', inject);
 } else if (inject === 'identcolour') {
   cut('      const volIdent = Skeleton.boneColor(main, j);', '      const volIdent = ident;', inject);
 } else if (inject === 'keepcaps') {
@@ -176,7 +184,8 @@ check('...falling back to the capsule radius when there is nothing to measure',
     'this geometry is also baked into a weight cage, and an open surface has no inside for a '
     + 'signed distance to be negative in');
   check('the volume is drawn in the joint\'s frame',
-    /_qJ\.setFromRotationMatrix\(_mVol\);/.test(SRC) && /o\.quaternion\.copy\(_qJ\);/.test(SRC),
+    /const vf = Skeleton\.volumeFrame\(main, j, _frameDraw\);/.test(SRC)
+    && /o\.quaternion\.copy\(_qJ\);/.test(SRC),
     'so a pelvis stays a pelvis when the character is posed');
 }
 
@@ -204,10 +213,10 @@ check('...falling back to the capsule radius when there is nothing to measure',
     /const volIdent = Skeleton\.boneColor\(main, j\);/.test(block),
     'the volume speaks for the junction, and its weights are painted in the colour of the joint '
     + 'that moves them');
-  check('...and uses its own matrix scratch',
-    /_mVol\.fromArray\(j\.getModelSpaceMatrix\(\)\)/.test(block),
-    '_mTmp belongs to the symmetry plane; sharing it across a frame is how two features start '
-    + 'overwriting each other');
+  check('...and reads the frame from one place rather than rebuilding it',
+    /Skeleton\.volumeFrame\(main, j, _frameDraw\)/.test(block),
+    'the draw, the handles, the cage and Make Skin all need the same answer, and three of them '
+    + 'had their own');
 }
 
 // ── WHICH WAY UP, AND HOW BIG ─────────────────────────────────────────────────────────
@@ -240,11 +249,11 @@ check('...falling back to the capsule radius when there is nothing to measure',
 {
   check('a volume can be offset from its joint',
     /Skeleton\.setJointVolOffset = function/.test(SRC) && /Skeleton\.jointVolOffset = function/.test(SRC));
-  check('...applied in the joint\'s own frame',
-    /_vOff\.set\(_off\[0\], _off\[1\], _off\[2\]\)\.applyQuaternion\(_qJ\);/.test(SRC),
-    'so it turns with the joint, like the volume does');
+  check('...applied in the joint\'s own frame, scaled into model space',
+    /_vFrame\.set\(off\[0\] \* _sFrame\.x, off\[1\] \* _sFrame\.y, off\[2\] \* _sFrame\.z\)\.applyQuaternion\(out\.quat\);/.test(SRC),
+    'so it turns with the joint and is the right LENGTH — the offset is stored joint-local');
   check('...and it actually moves the drawn volume',
-    /o\.position\.copy\(_pB\)\.add\(_vOff\);/.test(SRC));
+    /out\.pos\.add\(_vFrame\);/.test(SRC) && /o\.position\.copy\(vf\.pos\);/.test(SRC));
   check('...falling back to the joint itself when there is no bone to stand on',
     /out\[0\] = out\[1\] = out\[2\] = 0;\s*\n\s*return out;/.test(SRC),
     'a branching joint is centred on its junction');
@@ -334,7 +343,7 @@ check('...falling back to the capsule radius when there is nothing to measure',
   check('a volume carries its own rotation',
     /Skeleton\.setJointVolRot = function/.test(SRC) && /Skeleton\.jointVolRot = function/.test(SRC));
   check('...composed onto the joint\'s, so it survives a pose',
-    /_qJ\.multiply\(Skeleton\.jointVolRot\(j, _qVol\)\);/.test(SRC),
+    /out\.quat\.multiply\(Skeleton\.jointVolRot\(j, _qFrame\)\);/.test(SRC),
     'stored in world terms it would slide off the bone the moment the character moved');
   check('...and counts as a hand edit, stopping the live fit',
     /j\._jointVolDims \|\| j\._jointVolOffset \|\| j\._jointVolRot/.test(SRC));
@@ -435,6 +444,32 @@ check('...falling back to the capsule radius when there is nothing to measure',
   check('...and only when its own up really is up',
     /Math\.abs\(_vUp\.y\) > 0\.7/.test(SRC),
     'a plane lying flat has no base to stand on');
+}
+
+// ── A WIREFRAME THE ROUND SHAPES CAN ACTUALLY HAVE ────────────────────────────────────
+//
+// EdgesGeometry keeps an edge only where two faces meet past a threshold angle. That is the
+// right rule for a box and no rule at all for an ellipsoid, whose facets are all nearly flat —
+// so the egg came out with no wireframe whatsoever. matt: "nothing at all for the ellipsoid
+// shapes. can they get one. 3 circles that fit to the shape around X, Y, Z equators." And,
+// a moment later: "and around the dome too."
+{
+  check('the round shapes are wireframed with equators, not an edge scan',
+    /if \(shape === 'egg'\) return \(_eggEdgeGeo = _eggEdgeGeo \|\| equatorGeometry\(32, false\)\);/.test(SRC)
+    && /return \(_halfEdgeGeo = _halfEdgeGeo \|\| equatorGeometry\(32, true\)\);/.test(SRC));
+  check('...the box keeps its edges, which it genuinely has',
+    /if \(shape === 'box'\) return \(_boxEdgeGeo = _boxEdgeGeo \|\| new THREE\.EdgesGeometry\(boxVolGeometry\(\), 1\)\);/.test(SRC));
+  check('an egg gets three full circles',
+    /arc\(0, 1, 0, TAU\);            \/\/ XY/.test(SRC)
+    && /arc\(1, 2, 0, TAU\);            \/\/ YZ/.test(SRC)
+    && /arc\(2, 0, 0, TAU\);            \/\/ ZX/.test(SRC));
+  check('a dome gets its rim and two HALF circles',
+    /arc\(0, 2, 0, TAU\);            \/\/ the rim, in XZ/.test(SRC)
+    && /arc\(0, 1, Math\.PI, TAU\);      \/\/ XY, lower half only/.test(SRC)
+    && /arc\(2, 1, Math\.PI, TAU\);      \/\/ ZY, lower half only/.test(SRC),
+    'full circles would put half of each one in the empty air above the shape');
+  check('...unit sized, so they scale with the volume like it does',
+    /p0\[ax\] = Math\.cos\(t0\); p0\[ay\] = Math\.sin\(t0\);/.test(SRC));
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

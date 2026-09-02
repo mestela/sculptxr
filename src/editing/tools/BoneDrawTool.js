@@ -321,7 +321,22 @@ class BoneDrawTool extends SculptBase {
     const side = offPlane ? (sd > 0 ? '_L' : '_R') : '';
     const base = this._chainName + '_' + String(this._chainIndex).padStart(2, '0');
 
-    const joint = Skeleton.createJoint(main, at, parent, base + side);
+    // ONE PRESS, ONE UNDO STEP.
+    //
+    // Every add pushed its own state, and a mirrored placement makes two joints — so undoing a
+    // single bone took two or three presses, and none of them was a whole bone. matt: "if i'm
+    // drawing bones and undo, each bone takes at least 2 or 3 steps to undo the bone tip, the
+    // bone root, and the bone starting click/placeholder."
+    //
+    // Both joints are created SILENTLY and one custom state covers the pair, along with the
+    // chain cursor — undoing has to put you back where you were in the chain, or the next joint
+    // continues from a parent that is no longer in the scene.
+    const chainBefore = { parent: this._chainParent, mirror: this._chainParentMirror,
+      index: this._chainIndex };
+    const made = [];
+
+    const joint = Skeleton.createJoint(main, at, parent, base + side, { silent: true });
+    made.push({ mesh: joint, parent: parent });
 
     if (plane && offPlane) {
       Skeleton.mirrorPoint(at, plane, _mirror);
@@ -329,7 +344,8 @@ class BoneDrawTool extends SculptBase {
         ? this._chainParentMirror
         : parent; // first mirrored joint of a chain hangs off the shared (on-plane) parent
       const twin = Skeleton.createJoint(main, _mirror, mParent,
-        base + (side === '_L' ? '_R' : '_L'));
+        base + (side === '_L' ? '_R' : '_L'), { silent: true });
+      made.push({ mesh: twin, parent: mParent });
       joint._boneMirror = twin;
       twin._boneMirror = joint;
       this._chainParentMirror = twin;
@@ -339,6 +355,27 @@ class BoneDrawTool extends SculptBase {
 
     this._chainParent = joint;
     this._chainIndex++;
+    const chainAfter = { parent: this._chainParent, mirror: this._chainParentMirror,
+      index: this._chainIndex };
+
+    const setChain = (c) => {
+      this._chainParent = c.parent; this._chainParentMirror = c.mirror; this._chainIndex = c.index;
+    };
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => {
+        for (const m of made) main.removeMeshSilent(m.mesh);
+        setChain(chainBefore);
+        Skeleton.updateVisuals(main); main.render?.();
+      },
+      () => {
+        for (const m of made) {
+          main.addMeshSilent(m.mesh);
+          if (m.parent) main.setMeshParent(m.mesh.getID(), m.parent.getID(), { silent: true });
+        }
+        setChain(chainAfter);
+        Skeleton.updateVisuals(main); main.render?.();
+      },
+      false, made.length > 1 ? 'Draw Bone (mirrored)' : 'Draw Bone');
     // A JOINT IS BORN AT REST, and this is the only moment that is unambiguously true. The
     // solver evaluates keyed frames by putting every joint it owns back to rest first, so a
     // joint with no rest recorded has to adopt one later — from whatever pose the rig happened

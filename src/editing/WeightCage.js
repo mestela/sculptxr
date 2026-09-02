@@ -123,6 +123,128 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs) {
 
 WeightCage.capsuleGeometry = capsuleGeometry;
 
+// ── THE VOLUME SHAPES, AS QUAD MESHES ─────────────────────────────────────────────────
+//
+// A joint volume decides the envelope now, so baking has to produce THAT shape rather than the
+// capsule the bone no longer draws. Same output format as capsuleGeometry — ivec4 faces, quads
+// in the body, triangle fans at poles — because the bind, the sculpt tools and the renderer all
+// read it.
+//
+// One generator per shape, and quads throughout, because these meshes have a second consumer:
+// matt's note on Make Skin — "assuming we stick with known shapes... we should be able to have
+// known good box modelling equivalents for each". A shape that bakes as a clean quad cage is
+// the same shape Make Skin can stitch.
+//
+// Built as a UNIT shape about the origin and scaled by the volume's half-extents at the end, so
+// the ring maths never has to know which shape it is drawing.
+function ringsToQuads(rows, radial) {
+  const faces = [];
+  for (let i = 0; i < rows.length - 1; i++) {
+    const lo = rows[i], hi = rows[i + 1];
+    for (let k = 0; k < radial; k++) {
+      const k2 = (k + 1) % radial;
+      const a = lo.pole ? lo.ids[0] : lo.ids[k];
+      const b = lo.pole ? lo.ids[0] : lo.ids[k2];
+      const c = hi.pole ? hi.ids[0] : hi.ids[k2];
+      const d = hi.pole ? hi.ids[0] : hi.ids[k];
+      if (lo.pole) faces.push(a, c, d, Utils.TRI_INDEX);
+      else if (hi.pole) faces.push(a, b, c, Utils.TRI_INDEX);
+      else faces.push(a, b, c, d);
+    }
+  }
+  return faces;
+}
+
+// A lat-long shell between two polar angles. `capAt` closes the open end with a fan, which the
+// dome needs and the egg does not — an open surface has no inside for a signed distance to be
+// negative in, and the bind would then never call a vertex "inside" this volume at all.
+function shellGeometry(radial, rings, thetaStart, thetaEnd, capAt) {
+  const verts = [];
+  const rows = [];
+  const push = (x, y, z) => { verts.push(x, y, z); return verts.length / 3 - 1; };
+  const addRow = (y, rad) => {
+    if (rad < 1e-6) { rows.push({ ids: [push(0, y, 0)], pole: true }); return; }
+    const ids = [];
+    for (let k = 0; k < radial; k++) {
+      const t = (k / radial) * Math.PI * 2;
+      ids.push(push(Math.cos(t) * rad, y, Math.sin(t) * rad));
+    }
+    rows.push({ ids: ids, pole: false });
+  };
+  for (let i = 0; i <= rings; i++) {
+    const th = thetaStart + (thetaEnd - thetaStart) * (i / rings);
+    addRow(Math.cos(th), Math.sin(th));
+  }
+  const faces = ringsToQuads(rows, radial);
+  if (capAt !== undefined) {
+    // The cap is a fan to a centre vertex on the open ring's plane.
+    const edge = rows[capAt === 0 ? 0 : rows.length - 1];
+    if (!edge.pole) {
+      const hub = push(0, edge.ids.length ? verts[edge.ids[0] * 3 + 1] : 0, 0);
+      for (let k = 0; k < radial; k++) {
+        const k2 = (k + 1) % radial;
+        // Wound to face outward from the closed side.
+        if (capAt === 0) faces.push(hub, edge.ids[k2], edge.ids[k], Utils.TRI_INDEX);
+        else faces.push(hub, edge.ids[k], edge.ids[k2], Utils.TRI_INDEX);
+      }
+    }
+  }
+  return { verts: verts, faces: faces };
+}
+
+// A box as six quad faces, each subdivided into an n x n grid so there is something to sculpt.
+// Corners are shared, so the mesh is closed.
+function boxGeometry(n) {
+  const verts = [];
+  const index = new Map();
+  const key = (i, j, k) => i + ',' + j + ',' + k;
+  const at = (i, j, k) => {
+    const s = key(i, j, k);
+    if (index.has(s)) return index.get(s);
+    verts.push((i / n) * 2 - 1, (j / n) * 2 - 1, (k / n) * 2 - 1);
+    const id = verts.length / 3 - 1;
+    index.set(s, id);
+    return id;
+  };
+  const faces = [];
+  const quad = (a, b, c, d) => faces.push(a, d, c, b);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      // Each pair of opposite faces, wound so both point outward.
+      quad(at(i, j, 0), at(i + 1, j, 0), at(i + 1, j + 1, 0), at(i, j + 1, 0));
+      quad(at(i, j, n), at(i, j + 1, n), at(i + 1, j + 1, n), at(i + 1, j, n));
+      quad(at(i, 0, j), at(i, 0, j + 1), at(i + 1, 0, j + 1), at(i + 1, 0, j));
+      quad(at(i, n, j), at(i + 1, n, j), at(i + 1, n, j + 1), at(i, n, j + 1));
+      quad(at(0, i, j), at(0, i + 1, j), at(0, i + 1, j + 1), at(0, i, j + 1));
+      quad(at(n, i, j), at(n, i, j + 1), at(n, i + 1, j + 1), at(n, i + 1, j));
+    }
+  }
+  return { verts: verts, faces: faces };
+}
+
+// The geometry for a joint's volume, in the JOINT's own space: unit shape, scaled by the
+// half-extents, turned by the volume's rotation and moved to its offset — the same three
+// numbers the draw uses, so the cage lands exactly where the shape is drawn.
+WeightCage.volumeGeometry = function (shape, dims, offset, rot, radial, rings) {
+  radial = radial || 12; rings = rings || 6;
+  let g;
+  if (shape === 'box') g = boxGeometry(3);
+  else if (shape === 'egg') g = shellGeometry(radial, rings, 0, Math.PI);
+  // The dome is the LOWER half, capped at the top — matching how it is drawn.
+  else g = shellGeometry(radial, Math.max(2, rings >> 1), Math.PI / 2, Math.PI, 0);
+  if (!g) return null;
+
+  const out = new Float32Array(g.verts.length);
+  const _p = new THREE.Vector3();
+  const q = rot || new THREE.Quaternion();
+  for (let i = 0; i < g.verts.length; i += 3) {
+    _p.set(g.verts[i] * dims[0], g.verts[i + 1] * dims[1], g.verts[i + 2] * dims[2]);
+    _p.applyQuaternion(q);
+    out[i] = _p.x + offset[0]; out[i + 1] = _p.y + offset[1]; out[i + 2] = _p.z + offset[2];
+  }
+  return { verts: out, faces: new Uint32Array(g.faces) };
+};
+
 // A cage prepared for measuring: its triangles in the SKIN MESH's local space, plus a bounding
 // box. Transformed once per cage rather than per vertex -- a cage is a few hundred triangles
 // and the sculpt is a hundred thousand vertices, so the direction of that conversion is the
@@ -308,6 +430,55 @@ WeightCage.weightsPartial = function (verts, cages, maxInfluences, slack, candid
 // already right nearly everywhere, so a bake reproduces what you have and sculpting is only
 // needed where it was wrong. matt: "most things should be fine as is; this sculpting would only
 // be required for problematic shapes."
+// One cage mesh, built and put in the scene. Shared by the volume pass and the capsule pass so
+// the two cannot drift in colour, flags, buffer upload or parenting — every one of which has
+// already cost a round of "the cage is there and invisible".
+function makeCage(main, geo, owner, namedAfter, prefix) {
+  const base = new MeshStatic(main._gl);
+  base.setVertices(geo.verts);
+  base.setFaces(geo.faces);
+  base.init();
+  if (main._gl) base.initRender();
+  const cage = new Multimesh(base);
+  cage.setMatcap(getOptionsURL().matcap);
+
+  // THE COLOUR OF THE BONE IT SPEAKS FOR, as vertex colours — which is where a SculptGL mesh
+  // keeps colour, and it means sculpting the cage keeps it, since new vertices inherit from
+  // their neighbours.
+  const col = Skeleton.boneColor(main, owner);
+  const cAr = base.getColors();
+  if (cAr) {
+    for (let ci = 0; ci < cAr.length; ci += 3) {
+      cAr[ci] = col.r; cAr[ci + 1] = col.g; cAr[ci + 2] = col.b;
+    }
+  }
+  cage.setOpacity(WeightCage.OPACITY);
+  cage.setShowWireframe(true);
+  // UPLOAD THE BUFFERS. init() writes positions and builds the three mesh; the INDEX buffer is
+  // written by updateBuffers(), and without it the geometry has vertices and no triangles — it
+  // draws nothing at all. Primitives get this free from normalizeSize(), which these must not
+  // call: it rescales to a unit box, which is exactly the fit being preserved here.
+  cage.updateGeometry();
+  if (cage.updateDuplicateColorsAndMaterials) cage.updateDuplicateColorsAndMaterials();
+  cage.updateBuffers();
+  cage._typeName = 'Cage';
+  cage.isQuad = true;
+  cage._isWeightCage = true;
+  // WHICH BONE THIS SPEAKS FOR. By joint ID rather than index: the joint list is rebuilt on
+  // every call and an index would point at a different bone the moment one is added or split.
+  cage._cageJointId = owner.getID();
+  cage._permanentStaticLabel = prefix + (namedAfter._permanentStaticLabel || namedAfter.getID());
+  // SILENT: a bake makes twenty of these and it is ONE action. addNewMesh would push a state
+  // per cage, so undoing a bake meant undoing each capsule in turn — matt: "if i bake capsules,
+  // i noticed i can't undo in one step, but i have to undo every capsule being baked." The
+  // single state for the whole bake is pushed by bake() below.
+  main.addMeshSilent(cage);
+  if (main.setMeshParent) main.setMeshParent(cage.getID(), owner.getID(), { silent: true });
+  mat4.identity(cage.getMatrix());
+  Skeleton.syncThree(cage);
+  return cage;
+}
+
 WeightCage.bake = function (main) {
   const joints = Skeleton.joints(main);
   if (!joints.length) return { ok: false, why: 'no skeleton to bake from' };
@@ -322,9 +493,28 @@ WeightCage.bake = function (main) {
   const _mJ = new THREE.Matrix4(), _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
   const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 
+  // VOLUMES FIRST. A joint with a volume owns its whole junction — it swallows the bones out of
+  // it, and those bones have no envelope of their own any more — so it bakes ONE cage for the
+  // volume and the capsule loop below must skip everything it covers. Baking both would put two
+  // overlapping cages on the same vertices and let them argue over the weights.
+  const hasChild = new Set();
+  for (const j of joints) { const p = j._parentMesh; if (Skeleton.isJoint(p)) hasChild.add(p.getID()); }
+
+  for (const j of joints) {
+    if (!Skeleton.hasVolume(j)) continue;
+    const shape = Skeleton.jointVolume(j);
+    const geo = WeightCage.volumeGeometry(shape,
+      Skeleton.jointVolDims(main, j), Skeleton.jointVolOffset(main, j), Skeleton.jointVolRot(j));
+    if (!geo) continue;
+    const cage = makeCage(main, geo, j, j, 'vol_' + shape + '_');
+    if (cage) made.push(cage);
+  }
+
   for (const j of joints) {
     const p = j._parentMesh;
     if (!Skeleton.isJoint(p)) continue;            // a root has no bone above it
+    // Swallowed by a volume — at either end. Its envelope is that volume's cage.
+    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()))) continue;
     const r = j._boneRadius || 0;
     if (r <= 0) continue;
 
@@ -344,69 +534,29 @@ WeightCage.bake = function (main) {
                                 RADIAL, RINGS, LENGTH_SEGS);
     if (!geo) continue;
 
-    const base = new MeshStatic(main._gl);
-    base.setVertices(geo.verts);
-    base.setFaces(geo.faces);
-    base.init();
-    if (main._gl) base.initRender();
-    const cage = new Multimesh(base);
-    cage.setMatcap(getOptionsURL().matcap);
-    // THE COLOUR OF THE BONE IT SPEAKS FOR. Twenty-one grey capsules over a skeleton say
-    // nothing about which belongs to what; the rig already gives every bone an identity colour
-    // and the drawn capsules already use it, so a baked one that did not was simply losing
-    // information the rig was handing it for free.
-    //
-    // Written as VERTEX colours, which is where a SculptGL mesh keeps colour -- and it means
-    // sculpting the cage keeps the colour, since new vertices inherit from their neighbours.
-    const col = Skeleton.boneColor(main, p);
-    const cAr = base.getColors();
-    if (cAr) {
-      for (let ci = 0; ci < cAr.length; ci += 3) {
-        cAr[ci] = col.r; cAr[ci + 1] = col.g; cAr[ci + 2] = col.b;
-      }
-    }
-    // SEMI-TRANSPARENT, OR YOU CANNOT SEE IT AT ALL.
-    //
-    // A capsule lives INSIDE the character -- that is what it is for -- so a freshly baked cage
-    // is completely enclosed by the skin and an opaque one is invisible. The bake ran, took its
-    // time, and appeared to do nothing: matt, "i press it, there's a delay, but i see no change
-    // in the 3d view." This is why the capsule OVERLAY has always been drawn with a ghost pass;
-    // a cage is a real mesh and cannot use that, so it gets alpha instead.
-    cage.setOpacity(WeightCage.OPACITY);
-    cage.setShowWireframe(true);      // the shape is easier to read, and to sculpt, with edges
-    // UPLOAD THE BUFFERS. `init()` builds the three mesh and writes the POSITIONS, but the
-    // INDEX buffer is written by updateBuffers() -- and without it the geometry has vertices
-    // and no triangles, so it draws nothing at all. Every other mesh in the app gets this for
-    // free from `normalizeSize()`, which every primitive calls and a capsule must not: it
-    // rescales to a unit box, which is exactly the fit being preserved here.
-    //
-    // That is why a baked capsule was present, parented, correctly sized, visible, unculled and
-    // reaching the Scene -- and invisible. matt ran cageDiag three times and every field was
-    // right, because the missing thing was not a field.
-    cage.updateGeometry();
-    // The colours live in a duplicated buffer for rendering, so writing the array is not
-    // enough on its own -- it has to be pushed through before the buffers go up.
-    if (cage.updateDuplicateColorsAndMaterials) cage.updateDuplicateColorsAndMaterials();
-    cage.updateBuffers();
-    cage._typeName = 'Cage';
-    // Quads, so it subdivides and sculpts like any other primitive rather than degrading into
-    // triangles the first time it is smoothed.
-    cage.isQuad = true;
-    cage._isWeightCage = true;
-    // WHICH BONE THIS SPEAKS FOR. Stored by joint ID rather than by index: the joint list is
-    // rebuilt on every call and an index would point at a different bone the moment one is
-    // added, split or dissolved.
-    cage._cageJointId = p.getID();
-    cage._permanentStaticLabel = 'cage_' + (p._permanentStaticLabel || p.getID());
-    main.addNewMesh(cage);
-    // Parented AFTER it is in the scene, so the reparent has something to move.
-    if (main.setMeshParent) main.setMeshParent(cage.getID(), p.getID());
-    mat4.identity(cage.getMatrix());
-    Skeleton.syncThree(cage);
-    made.push(cage);
+    const cage = makeCage(main, geo, p, j, 'cage_');
+    if (cage) made.push(cage);
   }
 
   if (!made.length) return { ok: false, why: 'no bones with a radius to bake' };
+
+  // ONE STATE FOR THE WHOLE BAKE. Parents are restored on redo because removeMeshSilent leaves
+  // `_parentMesh` set but does not re-attach the three-side mesh — a cage put back without it
+  // sits under the world group and reads its local matrix as a world one.
+  const owners = made.map((c) => ({ cage: c, owner: c._parentMesh }));
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => {
+      for (const o of owners) main.removeMeshSilent(o.cage);
+      Skeleton.updateVisuals(main); main.render?.();
+    },
+    () => {
+      for (const o of owners) {
+        main.addMeshSilent(o.cage);
+        if (o.owner && main.setMeshParent) main.setMeshParent(o.cage.getID(), o.owner.getID(), { silent: true });
+      }
+      Skeleton.updateVisuals(main); main.render?.();
+    },
+    false, 'Bake Capsules');
 
   // PAIR THEM NOW, while every capsule is still the shape the generator made. This is the one
   // moment the two sides are exact mirror images, so it is the only moment a correspondence can
@@ -600,9 +750,25 @@ WeightCage.mirrorEdit = function (main, cage) {
   return { ok: true, twinCage: dstCage, twin: pair.self ? 'self' : 'twin' };
 };
 
+// ...and one state for undoing them all, for the same reason.
 WeightCage.deleteAll = function (main) {
   const cages = WeightCage.cages(main);
-  for (const c of cages) main.removeMesh ? main.removeMesh(c) : main.removeMeshSilent(c);
+  if (!cages.length) return 0;
+  const owners = cages.map((c) => ({ cage: c, owner: c._parentMesh }));
+  for (const o of owners) main.removeMeshSilent(o.cage);
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => {
+      for (const o of owners) {
+        main.addMeshSilent(o.cage);
+        if (o.owner && main.setMeshParent) main.setMeshParent(o.cage.getID(), o.owner.getID(), { silent: true });
+      }
+      Skeleton.updateVisuals(main); main.render?.();
+    },
+    () => {
+      for (const o of owners) main.removeMeshSilent(o.cage);
+      Skeleton.updateVisuals(main); main.render?.();
+    },
+    false, 'Delete Capsules');
   return cages.length;
 };
 

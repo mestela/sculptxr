@@ -180,13 +180,51 @@ function volGeometry(shape) {
     : halfVolGeometry();
 }
 
-let _boxEdgeGeo = null, _halfEdgeGeo = null;
+// THREE EQUATORS, NOT AN EDGE SCAN. EdgesGeometry keeps an edge only where two faces meet at
+// more than a threshold angle — which is the right rule for a box and no rule at all for an
+// ellipsoid, whose facets are all nearly flat: the egg came out with no wireframe whatsoever.
+// matt: "nothing at all for the ellipsoid shapes. can they get one. 3 circles that fit to the
+// shape around X, Y, Z equators."
+//
+// Circles also read better than a facet scan would: three rings say which way the ellipsoid is
+// squashed at a glance, and they scale with the volume because they are unit-sized like it.
+function equatorGeometry(segments, dome) {
+  const pts = [];
+  // One ring, or one arc of one: cos on `ax`, sin on `ay`, over [from, to].
+  const arc = (ax, ay, from, to) => {
+    for (let i = 0; i < segments; i++) {
+      const t0 = from + (to - from) * (i / segments);
+      const t1 = from + (to - from) * ((i + 1) / segments);
+      const p0 = [0, 0, 0], p1 = [0, 0, 0];
+      p0[ax] = Math.cos(t0); p0[ay] = Math.sin(t0);
+      p1[ax] = Math.cos(t1); p1[ay] = Math.sin(t1);
+      pts.push(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]);
+    }
+  };
+  const TAU = Math.PI * 2;
+  if (dome) {
+    // A dome is the LOWER half, so its verticals are half-circles and its equator is the rim at
+    // y = 0 — the ring matt could already see. Drawing full circles here would put half of each
+    // one in the empty air above the shape.
+    arc(0, 2, 0, TAU);            // the rim, in XZ
+    arc(0, 1, Math.PI, TAU);      // XY, lower half only
+    arc(2, 1, Math.PI, TAU);      // ZY, lower half only
+  } else {
+    arc(0, 1, 0, TAU);            // XY
+    arc(1, 2, 0, TAU);            // YZ
+    arc(2, 0, 0, TAU);            // ZX
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+  return g;
+}
+
+let _boxEdgeGeo = null, _halfEdgeGeo = null, _eggEdgeGeo = null;
 function volEdgeGeometry(shape) {
   if (shape === 'box') return (_boxEdgeGeo = _boxEdgeGeo || new THREE.EdgesGeometry(boxVolGeometry(), 1));
-  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || new THREE.EdgesGeometry(eggVolGeometry(), 28));
-  return (_halfEdgeGeo = _halfEdgeGeo || new THREE.EdgesGeometry(halfVolGeometry(), 25));
+  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || equatorGeometry(32, false));
+  return (_halfEdgeGeo = _halfEdgeGeo || equatorGeometry(32, true));
 }
-let _eggEdgeGeo = null;
 
 // Edge overlay for the bone octahedron. A shaded solid gives you position but reads almost
 // flat from many angles — the ridge lines are what make the bone's ROLL and taper legible,
@@ -885,15 +923,11 @@ Skeleton.updateVolumeHandles = function (main, j) {
   if (!j) { h.group.visible = false; return h; }
   h.group.visible = true;
 
-  Skeleton.jointVolDims(main, j, _dims);
-  Skeleton.jointVolOffset(main, j, _off);
-  _mVolH.fromArray(j.getModelSpaceMatrix());
-  _qJH.setFromRotationMatrix(_mVolH).multiply(Skeleton.jointVolRot(j, _qVolH));
-  Skeleton.jointPos(j, _pJH);
+  const vf = Skeleton.volumeFrame(main, j, _frameH);
+  _qJH.copy(vf.quat);
 
   const r = Skeleton.sceneUnit(main) * 0.018;
-  _vOffH.set(_off[0], _off[1], _off[2]).applyQuaternion(_qJH);
-  h.centrePos.copy(_pJH).add(_vOffH);
+  h.centrePos.copy(vf.pos);
   h.centre.position.copy(h.centrePos);
   h.centre.scale.setScalar(r);
   h.centre.updateMatrix(); h.centre.matrixWorldNeedsUpdate = true;
@@ -901,7 +935,7 @@ Skeleton.updateVolumeHandles = function (main, j) {
   for (let i = 0; i < HANDLE_AXES.length; i++) {
     const [ax, sign] = HANDLE_AXES[i];
     _vFace.set(0, 0, 0);
-    _vFace.setComponent(ax, sign * _dims[ax]);
+    _vFace.setComponent(ax, sign * vf.half[ax]);
     _vFace.applyQuaternion(_qJH);
     h.pos[i].copy(h.centrePos).add(_vFace);
     h.faces[i].position.copy(h.pos[i]);
@@ -951,6 +985,37 @@ Skeleton.highlightVolumeHandle = function (main, grip) {
 // both, it cannot slide off the plane, and the only rotation that keeps it symmetric is the one
 // about the plane's normal. A side volume has a twin and none of this applies to it.
 // matt: "bones/volumes on the center axis should have their moves be left/right symmetrical."
+// WHERE A VOLUME ACTUALLY IS, IN MODEL SPACE. One answer, used by the draw, the handles, the
+// weight cage and Make Skin.
+//
+// The dimensions and the offset are stored in the JOINT's own frame — fitJointVolume measures
+// the children through inverse(jointModel), so that is the space they come out in. The draw was
+// using them as model-space lengths and taking the joint's rotation off a matrix that may carry
+// scale, so every consumer had a slightly different idea of where the shape was: the cage did
+// not match the drawn volume, and Make Skin put its blocks somewhere else again. matt: "weight
+// cage doesn't appear to follow the shape of these new volume shapes at all... make skin doesn't
+// track the shape of these surfaces at all."
+//
+// decompose() is the fix: it separates the joint's scale from its rotation, which
+// setFromRotationMatrix on a scaled matrix silently does not.
+Skeleton.volumeFrame = function (main, j, out) {
+  out = out || { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] };
+  _mFrame.fromArray(j.getModelSpaceMatrix());
+  _mFrame.decompose(out.pos, out.quat, _sFrame);
+
+  const dims = Skeleton.jointVolDims(main, j, _dimsF);
+  out.half[0] = dims[0] * _sFrame.x;
+  out.half[1] = dims[1] * _sFrame.y;
+  out.half[2] = dims[2] * _sFrame.z;
+
+  const off = Skeleton.jointVolOffset(main, j, _offF);
+  _vFrame.set(off[0] * _sFrame.x, off[1] * _sFrame.y, off[2] * _sFrame.z).applyQuaternion(out.quat);
+  out.pos.add(_vFrame);
+
+  out.quat.multiply(Skeleton.jointVolRot(j, _qFrame));
+  return out;
+};
+
 Skeleton.volumeIsCentreline = function (main, j) {
   if (!j || j._boneMirror) return false;
   const plane = Skeleton.rigMirrorPlane(main) || Skeleton.symmetryPlane(main);
@@ -1091,6 +1156,11 @@ const _mVolH = new THREE.Matrix4();
 const _qJH = new THREE.Quaternion(), _qVolH = new THREE.Quaternion();
 const _pJH = new THREE.Vector3(), _vOffH = new THREE.Vector3(), _vFace = new THREE.Vector3();
 const _pCentre = new THREE.Vector3();
+const _mFrame = new THREE.Matrix4(), _sFrame = new THREE.Vector3(), _vFrame = new THREE.Vector3();
+const _qFrame = new THREE.Quaternion();
+const _dimsF = [0, 0, 0], _offF = [0, 0, 0];
+const _frameDraw = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] };
+const _frameH = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] };
 let _volHandlesShown = false;
 const _off = [0, 0, 0];
 const _vOff = new THREE.Vector3();
@@ -2291,12 +2361,9 @@ Skeleton.updateVisuals = function (main) {
     // THE JOINT'S VOLUME. Drawn in the joint's own frame at its three dimensions, so it turns
     // with the joint and a pelvis stays a pelvis when the character is posed.
     if (e.vol) {
-      Skeleton.jointVolDims(main, j, _dims);
-      _mVol.fromArray(j.getModelSpaceMatrix());   // its own scratch: _mTmp is the plane's
-      _qJ.setFromRotationMatrix(_mVol);
-      // The volume's own rotation rides on top of the joint's, so it is expressed relative to
-      // the bone and survives the character being posed.
-      _qJ.multiply(Skeleton.jointVolRot(j, _qVol));
+      // ONE SOURCE for where the volume is — see Skeleton.volumeFrame.
+      const vf = Skeleton.volumeFrame(main, j, _frameDraw);
+      _qJ.copy(vf.quat);
       // NO SELECTION TINT WHILE YOU ARE EDITING IT. In Volume mode the volume is the thing you
       // are working ON, not a thing you are choosing — and lit up in selection colour it hides
       // both the handles sitting on it and the x-ray ghost of the rig inside. matt: "in this
@@ -2307,13 +2374,10 @@ Skeleton.updateVisuals = function (main) {
         : ((isHi || jointHeld) ? HILITE_COLOR : (isSel ? SELECT_COLOR
           : (volIdent ? volIdent.getHex() : BONE_COLOR)));
       const volWire = volIdent ? _wireCol.copy(volIdent).multiplyScalar(0.35).getHex() : BONE_EDGE;
-      // The offset is in the JOINT's frame, so it turns with the joint like the volume does.
-      Skeleton.jointVolOffset(main, j, _off);
-      _vOff.set(_off[0], _off[1], _off[2]).applyQuaternion(_qJ);
       for (const o of [e.vol.solid, e.vol.ghost, e.vol.wire]) {
-        o.position.copy(_pB).add(_vOff);
+        o.position.copy(vf.pos);
         o.quaternion.copy(_qJ);
-        o.scale.set(_dims[0], _dims[1], _dims[2]);
+        o.scale.set(vf.half[0], vf.half[1], vf.half[2]);
         o.visible = (o === e.vol.wire) ? showWire : showSolid;
         o.material.color.setHex(o === e.vol.wire ? volWire : volTint);
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;

@@ -20,6 +20,15 @@
 //   WC_INJECT=drawnonly   the Capsules button hides only the drawn overlay, not the baked meshes
 //   WC_INJECT=halfhide    hiding a cage sets one of the two visibility flags, not both
 //   WC_INJECT=bothcaps    the drawn capsules keep drawing over the baked ones
+//   WC_INJECT=novolcage   a joint volume bakes no cage, so the weights fall back to capsules
+//   WC_INJECT=doublebake  a bone swallowed by a volume ALSO bakes its capsule, so two cages
+//                         argue over the same vertices
+//   WC_INJECT=opencage    the dome bakes without its cap, so it has no inside to be within
+//   WC_INJECT=insideout   the box bakes wound inward, as it first did
+//   WC_INJECT=localdims   the volume's joint-local dimensions are used as model-space lengths
+//   WC_INJECT=perbakeundo each cage pushes its own undo state again, so a bake takes twenty
+//                         presses to undo
+//   WC_INJECT=noreparent  redo re-adds the cages without re-parenting them
 import fs from 'fs';
 import path from 'path';
 
@@ -27,6 +36,7 @@ const REPO = '/Users/mattestela/sculptxr';
 const THREE = await import(path.join(REPO, 'node_modules/three/build/three.module.js'));
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
 let SKEL_INJ = false;
+let SKEL_FRAME_INJ = false;
 let SCENE_INJ = false;
 
 const inject = process.env.WC_INJECT || '';
@@ -48,15 +58,31 @@ if (inject === 'unsigned') {
   cut('  lengthSegs = Math.max(2, lengthSegs || 2);', '  lengthSegs = 1;', inject);
 } else if (inject === 'worldremove') {
   SCENE_INJ = true;
+} else if (inject === 'novolcage') {
+  cut('    if (!Skeleton.hasVolume(j)) continue;', '    if (true) continue;', inject);
+} else if (inject === 'doublebake') {
+  cut('    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()))) continue;', '', inject);
+} else if (inject === 'opencage') {
+  cut('  else g = shellGeometry(radial, Math.max(2, rings >> 1), Math.PI / 2, Math.PI, 0);',
+    '  else g = shellGeometry(radial, Math.max(2, rings >> 1), Math.PI / 2, Math.PI);', inject);
+} else if (inject === 'perbakeundo') {
+  cut('  main.addMeshSilent(cage);', '  main.addNewMesh(cage);', inject);
+} else if (inject === 'noreparent') {
+  cut('        if (o.owner && main.setMeshParent) main.setMeshParent(o.cage.getID(), o.owner.getID(), { silent: true });\n      }\n      Skeleton.updateVisuals(main); main.render?.();\n    },\n    false, \'Bake Capsules\');', '      }\n    },\n    false, \'Bake Capsules\');', inject);
+} else if (inject === 'insideout') {
+  cut('  const quad = (a, b, c, d) => faces.push(a, d, c, b);',
+    '  const quad = (a, b, c, d) => faces.push(a, b, c, d);', inject);
+} else if (inject === 'localdims') {
+  SKEL_FRAME_INJ = true;
 } else if (inject === 'greycage') {
-  cut('    const col = Skeleton.boneColor(main, p);', '    const col = { r: 0.5, g: 0.5, b: 0.5 };', inject);
+  cut('  const col = Skeleton.boneColor(main, owner);', '  const col = { r: 0.5, g: 0.5, b: 0.5 };', inject);
 } else if (inject === 'hiddenparent') {
   // Not in this file: the defect lives in Skeleton, so it is injected there.
   SKEL_INJ = true;
 } else if (inject === 'nobuffers') {
   // Just the upload: the two calls are no longer adjacent (the colour push sits between them),
   // and the previous two-line anchor went dead the moment that was added.
-  cut('    cage.updateBuffers();', '', inject);
+  cut('  cage.updateBuffers();', '', inject);
 } else if (inject === 'translucent') {
   cut('WeightCage.OPACITY = 1;', 'WeightCage.OPACITY = 0.45;', inject);
 } else if (inject === 'firstwins') {
@@ -251,11 +277,11 @@ check('one bone per vertex, weight 1', (() => {
     /if \(ji === undefined\) continue;/.test(SK),
     'weighting vertices to a bone that no longer exists is worse than ignoring the cage');
   check('a cage remembers its bone by ID, not by index',
-    /cage\._cageJointId = p\.getID\(\);/.test(SRC),
+    /cage\._cageJointId = owner\.getID\(\);/.test(SRC),
     'the joint list is rebuilt every call, and an index points at a different bone the moment '
       + 'one is added, split or dissolved');
   check('a cage is parented to the joint its bone hangs from',
-    /main\.setMeshParent\(cage\.getID\(\), p\.getID\(\)/.test(SRC),
+    /main\.setMeshParent\(cage\.getID\(\), owner\.getID\(\), \{ silent: true \}\)/.test(SRC),
     'so it moves with its bone and needs no rig of its own');
   // ONE BUTTON FOR BOTH KINDS OF CAPSULE. Baked, there are two representations in the scene and
   // only the drawn overlay answered the toggle -- so "hide the capsules" left the solid ones
@@ -347,7 +373,7 @@ check('one bone per vertex, weight 1', (() => {
   // The rig gives every bone an identity colour and the DRAWN capsules already use it. A baked
   // one that came out grey was losing information the rig was handing it for free.
   check('a baked capsule takes the colour of its bone',
-    /const col = Skeleton\.boneColor\(main, p\);/.test(SRC)
+    /const col = Skeleton\.boneColor\(main, owner\);/.test(SRC)
       && /cAr\[ci\] = col\.r; cAr\[ci \+ 1\] = col\.g; cAr\[ci \+ 2\] = col\.b;/.test(SRC),
     'twenty-one grey capsules say nothing about which belongs to what');
   check('...as vertex colours, so sculpting keeps them',
@@ -387,6 +413,159 @@ check('one bone per vertex, weight 1', (() => {
   check('...and the bind says which source decided the weights',
     /res\.cages \? `, from \$\{res\.cages\} baked capsule\(s\)` : ', from drawn capsules'/.test(PANEL),
     '"I sculpted a cage and nothing changed" should be answerable without guessing');
+}
+
+// ── THE VOLUME IS WHAT BAKES ──────────────────────────────────────────────────────────
+//
+// A joint volume decides the envelope, so a bake has to produce THAT shape — not the capsule the
+// bone no longer draws. And the bones it swallows must not bake capsules of their own, or two
+// cages sit on the same vertices and argue over the weights.
+{
+  check('a joint volume bakes a cage of its own shape',
+    /if \(!Skeleton\.hasVolume\(j\)\) continue;/.test(SRC)
+    && /WeightCage\.volumeGeometry\(shape,/.test(SRC));
+  check('...at the dimensions, offset and rotation it is drawn with',
+    /Skeleton\.jointVolDims\(main, j\), Skeleton\.jointVolOffset\(main, j\), Skeleton\.jointVolRot\(j\)\)/.test(SRC),
+    'the same three numbers the draw uses, or the cage lands somewhere the shape is not');
+  check('...and the bones it swallows bake nothing',
+    /if \(Skeleton\.boneSwallowed\(p, j, !hasChild\.has\(j\.getID\(\)\)\)\) continue;/.test(SRC));
+  check('one builder for both passes',
+    /function makeCage\(main, geo, owner, namedAfter, prefix\)/.test(SRC),
+    'colour, flags, buffer upload and parenting have each already cost a round of "the cage is '
+    + 'there and invisible" — they get one home, not two');
+
+  // The shapes themselves, run rather than described: quads in the body, closed surfaces, and
+  // the same ivec4 format the capsule uses.
+  for (const [name, shape] of [['box', 'box'], ['egg', 'egg'], ['dome', 'half']]) {
+    const g = WeightCage.volumeGeometry(shape, [1, 2, 3], [0, 0, 0], null, 12, 6);
+    check(name + ' bakes a mesh', !!g && g.verts.length > 0 && g.faces.length > 0);
+    if (!g) continue;
+    check('...in the ivec4 face format', g.faces.length % 4 === 0);
+    check('...scaled to the volume\'s half-extents', (() => {
+      let mx = 0, my = 0, mz = 0;
+      for (let i = 0; i < g.verts.length; i += 3) {
+        mx = Math.max(mx, Math.abs(g.verts[i]));
+        my = Math.max(my, Math.abs(g.verts[i + 1]));
+        mz = Math.max(mz, Math.abs(g.verts[i + 2]));
+      }
+      return Math.abs(mx - 1) < 0.02 && Math.abs(my - 2) < 0.02 && Math.abs(mz - 3) < 0.02;
+    })(), 'a cage that is not the size of its volume weights the wrong vertices');
+    // CLOSED, or a signed distance has no inside and the bind never calls a vertex "within".
+    const edges = new Map();
+    for (let t = 0; t + 3 < g.faces.length; t += 4) {
+      const quad = g.faces[t + 3] !== Utils.TRI_INDEX;
+      const tris = quad
+        ? [[g.faces[t], g.faces[t + 1], g.faces[t + 2]], [g.faces[t], g.faces[t + 2], g.faces[t + 3]]]
+        : [[g.faces[t], g.faces[t + 1], g.faces[t + 2]]];
+      for (const tri of tris) {
+        for (let k = 0; k < 3; k++) {
+          const a = tri[k], b = tri[(k + 1) % 3];
+          const key = a < b ? a + ':' + b : b + ':' + a;
+          edges.set(key, (edges.get(key) || 0) + 1);
+        }
+      }
+    }
+    const open = [...edges.values()].filter((n) => n !== 2).length;
+    check('...and closed, every edge shared by two faces', open === 0,
+      open + ' of ' + edges.size + ' edges are not — an open surface has no inside for a signed '
+      + 'distance to be negative in');
+
+    // WINDING, MEASURED. The signed volume of a closed mesh is positive when its faces face
+    // OUTWARD and negative when they face in; a mesh with some of each lands somewhere between
+    // and does not match its own bounding box. This is the check for matt's "in xray mode when i
+    // start weight painting i can see a lot of artifacts on the skin, i assume its incorrect
+    // winding orders or internal faces" — and the signed distance the bind uses takes its INSIDE
+    // from the face normal, so a flipped face weights those vertices to the wrong bone.
+    {
+      let vol6 = 0;
+      for (let t = 0; t + 3 < g.faces.length; t += 4) {
+        const quad = g.faces[t + 3] !== Utils.TRI_INDEX;
+        const tris = quad
+          ? [[g.faces[t], g.faces[t + 1], g.faces[t + 2]], [g.faces[t], g.faces[t + 2], g.faces[t + 3]]]
+          : [[g.faces[t], g.faces[t + 1], g.faces[t + 2]]];
+        for (const tri of tris) {
+          const ax = g.verts[tri[0] * 3], ay = g.verts[tri[0] * 3 + 1], az = g.verts[tri[0] * 3 + 2];
+          const bx = g.verts[tri[1] * 3], by = g.verts[tri[1] * 3 + 1], bz = g.verts[tri[1] * 3 + 2];
+          const cx = g.verts[tri[2] * 3], cy = g.verts[tri[2] * 3 + 1], cz = g.verts[tri[2] * 3 + 2];
+          vol6 += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+        }
+      }
+      // A box of half-extents 1,2,3 encloses 48; the shells enclose less, so only the SIGN and
+      // a sane magnitude are asserted — a mixed-winding mesh cancels itself toward zero.
+      check('...wound outward, every face', vol6 > 1,
+        'signed volume x6 = ' + vol6.toFixed(2) + ' — negative means inside-out, near zero means '
+        + 'some faces point each way');
+    }
+  }
+}
+
+// ── MAKE SKIN READS THE VOLUMES TOO ───────────────────────────────────────────────────
+//
+// matt, when the volumes went in: with real shapes on the rig, Make Skin "would now have a much
+// better volume read of what the skin should be".
+{
+  const SM = fs.readFileSync(path.join(REPO, 'src/editing/SkinMesh.js'), 'utf8');
+  check('a joint with a volume is built at the volume\'s size',
+    /Skeleton\.volumeFrame\(main, j\) : null;/.test(SM)
+    && /verts\.push\(vol\.pos\.x \+ \(vol\.half\[0\] \* l\[0\]\) \/ CELLS,/.test(SM),
+    'through volumeFrame, which converts the joint-local dimensions into model space — mixing '
+    + 'the two is what put the blocks off the bones');
+  check('...and a joint without one is unchanged',
+    /verts\.push\(c\.x \+ \(h \* l\[0\]\) \/ CELLS, c\.y \+ \(h \* l\[1\]\) \/ CELLS, c\.z \+ \(h \* l\[2\]\) \/ CELLS\);/.test(SM));
+  check('...with the lattice still going straight to world',
+    /The volume's ROTATION is deliberately not applied/.test(SM),
+    'a turned box would shear against its own bridges — the one thing the lattice exists to '
+    + 'prevent');
+}
+
+// ── ONE ANSWER FOR WHERE A VOLUME IS ──────────────────────────────────────────────────
+//
+// The dimensions and offset are stored in the JOINT's frame; the draw was using them as
+// model-space lengths, and taking the joint's rotation off a matrix that may carry scale. Every
+// consumer then had its own idea of where the shape was — which is all three of matt's reports
+// at once: the cage not matching the volume, Make Skin landing off the bones, and the artifacts
+// that a mis-scaled cage produces once it is weighting anything.
+{
+  let SK = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+  if (SKEL_FRAME_INJ) {
+    const a = '  _mFrame.decompose(out.pos, out.quat, _sFrame);';
+    if (!SK.includes(a)) throw new Error('inject localdims: anchor moved');
+    SK = SK.replace(a, '  out.pos.setFromMatrixPosition(_mFrame); out.quat.setFromRotationMatrix(_mFrame); _sFrame.set(1, 1, 1);');
+  }
+  check('there is one function that says where a volume is',
+    /Skeleton\.volumeFrame = function \(main, j, out\)/.test(SK));
+  check('...separating the joint\'s SCALE from its rotation',
+    /_mFrame\.decompose\(out\.pos, out\.quat, _sFrame\);/.test(SK),
+    'setFromRotationMatrix on a scaled matrix silently returns a wrong rotation');
+  check('...converting the joint-local dimensions into model space',
+    /out\.half\[0\] = dims\[0\] \* _sFrame\.x;/.test(SK)
+    && /_vFrame\.set\(off\[0\] \* _sFrame\.x, off\[1\] \* _sFrame\.y, off\[2\] \* _sFrame\.z\)/.test(SK));
+  check('...and the draw goes through it',
+    /const vf = Skeleton\.volumeFrame\(main, j, _frameDraw\);/.test(SK)
+    && /o\.scale\.set\(vf\.half\[0\], vf\.half\[1\], vf\.half\[2\]\);/.test(SK));
+  check('...as do the handles, so what you grab is where the shape is',
+    /const vf = Skeleton\.volumeFrame\(main, j, _frameH\);/.test(SK)
+    && /_vFace\.setComponent\(ax, sign \* vf\.half\[ax\]\);/.test(SK));
+}
+
+// ── A BAKE IS ONE ACTION ──────────────────────────────────────────────────────────────
+//
+// matt: "if i bake capsules, i noticed i can't undo in one step, but i have to undo every
+// capsule being baked." Twenty cages, twenty states — because addNewMesh pushes one each.
+{
+  check('cages are added silently',
+    /main\.addMeshSilent\(cage\);/.test(SRC) && !/main\.addNewMesh\(cage\)/.test(SRC),
+    'the single state for the whole bake is pushed by bake() instead');
+  check('...and parented silently too',
+    /main\.setMeshParent\(cage\.getID\(\), owner\.getID\(\), \{ silent: true \}\)/.test(SRC));
+  check('one state covers the whole bake',
+    /false, 'Bake Capsules'\);/.test(SRC));
+  check('...restoring the parents on redo',
+    /main\.addMeshSilent\(o\.cage\);\s*\n\s*if \(o\.owner && main\.setMeshParent\)/.test(SRC),
+    'removeMeshSilent leaves _parentMesh set but does not re-attach the three-side mesh, so a '
+    + 'cage put back without this sits under the world group and reads its local matrix as world');
+  check('and deleting them is one step as well',
+    /false, 'Delete Capsules'\);/.test(SRC));
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

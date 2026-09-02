@@ -50,6 +50,11 @@ const Multimesh = class {};
 const Skeleton = {
   joints: () => [],
   jointPos: (j, out) => (out || new THREE.Vector3()).set(j.p[0], j.p[1], j.p[2]),
+  // Joint volumes (roadmap #60): a joint carrying one is built at ITS size. These fixtures have
+  // none, which is the case these checks are about — the box lattice and its bridges.
+  hasVolume: (j) => !!(j && j._vol),
+  jointVolDims: (main, j) => j._vol.dims,
+  jointVolOffset: (main, j) => j._vol.off,
 };
 `;
 
@@ -152,7 +157,7 @@ function build(joints) {
   // The old implementation took (main, chainList) and had a different private surface; give it
   // what it wants so the same checks can be pointed at it.
   return SkinMesh._adjacency
-    ? SkinMesh._buildArrays(joints, topo)
+    ? SkinMesh._buildArrays(null, joints, topo)
     : SkinMesh._buildArrays(null, SkinMesh._chains(null, joints));
 }
 
