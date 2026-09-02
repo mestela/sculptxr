@@ -67,6 +67,8 @@ const _mTmp = new THREE.Matrix4();
 const _pA = new THREE.Vector3(), _pB = new THREE.Vector3();
 const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const _zAxis = new THREE.Vector3(0, 0, 1);
+// The mirror plane's own axes, and the cursor relative to it — see updatePlane.
+const _vRight = new THREE.Vector3(), _vUp = new THREE.Vector3(), _vRel = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 // Scratch for deriving a bone's roll from the joint that owns it.
 const _qOwner = new THREE.Quaternion(), _qAlign = new THREE.Quaternion();
@@ -2842,7 +2844,7 @@ Skeleton._computeSymmetryPlane = function (main, force) {
 // without seeing the plane you are guessing whether you hit it. `hot` (the tip is inside
 // the snap band, so the next joint WILL land on the plane) brightens it — that turns the
 // plane from decoration into a live answer to "will this joint be centred?".
-Skeleton.updatePlane = function (main, plane, hot) {
+Skeleton.updatePlane = function (main, plane, hot, at) {
   if (!plane) { Skeleton.hidePlane(main); return; }
   const g = skelGroup(main);
   if (!main._skelPlaneVis) {
@@ -2861,12 +2863,47 @@ Skeleton.updatePlane = function (main, plane, hot) {
     main._skelPlaneVis = { fill: fill, edge: edge };
   }
   const v = main._skelPlaneVis;
-  const size = Skeleton.sceneUnit(main) * 2.6;
   _q.setFromUnitVectors(_zAxis, plane.normal);
+
+  // THE PLANE GROWS TO CONTAIN WHAT YOU ARE DRAWING, and stands ON the ground rather than
+  // straddling it.
+  //
+  // It was a fixed square centred on the origin, which is the wrong shape for the job: drawing a
+  // spine upward from the hips left the cursor outside it within a few joints, and half of it
+  // was always buried under the floor. matt: "if i'm drawing from there up to the head, its
+  // always too small... it should default to always grow and be 10% larger than where the draw
+  // cursor is, and if the groundplane is visible, start with the base of it on the groundplane."
+  //
+  // 10% clear of the cursor, measured along the plane's OWN axes so it holds however the plane
+  // is oriented; the old size stays as a floor so it never shrinks to a sliver near the origin.
+  const unit = Skeleton.sceneUnit(main);
+  const floor = unit * 2.6;
+  _vRight.set(1, 0, 0).applyQuaternion(_q);
+  _vUp.set(0, 1, 0).applyQuaternion(_q);
+  let w = floor, h = floor, lift = 0;
+  if (at) {
+    _vRel.copy(at).sub(plane.origin);
+    w = Math.max(floor, Math.abs(_vRel.dot(_vRight)) * 2.2);
+    h = Math.max(floor, Math.abs(_vRel.dot(_vUp)) * 2.2);
+  }
+
+  // ON the ground, not through it: the base is pinned to the grid and the plane grows upward
+  // from there. Only when the plane's own up really is up — a plane lying flat has no base to
+  // stand on and is left centred.
+  const grid = main._showGrid && main._groundGrid ? main._groundGrid : null;
+  if (grid && Math.abs(_vUp.y) > 0.7) {
+    const sign = _vUp.y > 0 ? 1 : -1;
+    const base = grid.position.y;
+    const top = Math.max(base + floor, at ? at.y + Math.abs(at.y - base) * 0.1 : plane.origin.y + h * 0.5);
+    h = Math.max(floor, top - base);
+    // How far the centre has to move along the plane's own up to put its base on the grid.
+    lift = sign * ((base + h * 0.5) - plane.origin.y);
+  }
+
   for (const o of [v.fill, v.edge]) {
-    o.position.copy(plane.origin);
+    o.position.copy(plane.origin).addScaledVector(_vUp, lift);
     o.quaternion.copy(_q);
-    o.scale.set(size, size, 1);
+    o.scale.set(w, h, 1);
     o.visible = true;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
   }

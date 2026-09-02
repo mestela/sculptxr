@@ -33,6 +33,8 @@
 //   RV_INJECT=freerot     a centreline volume may rotate on any axis, breaking its symmetry
 //   RV_INJECT=slidex      a centreline volume may slide in X, off the plane it is defined by
 //   RV_INJECT=tintwhileedit the volume lights up in selection colour while being edited
+//   RV_INJECT=fixedplane  the mirror plane goes back to a fixed square centred on the origin
+//   RV_INJECT=nostand     the plane straddles the ground grid instead of standing on it
 import fs from 'fs';
 import path from 'path';
 
@@ -67,6 +69,10 @@ if (inject === 'boneowned') {
   const a = "      var local = vec3.transformMat4([0, 0, 0], inter, this._volJointInv || mat4.create());";
   if (!GIZ.includes(a)) throw new Error('inject worldoffset: anchor moved');
   GIZ = GIZ.replace(a, "      var local = inter;");
+} else if (inject === 'fixedplane') {
+  cut('    w = Math.max(floor, Math.abs(_vRel.dot(_vRight)) * 2.2);', '    w = floor;', inject);
+} else if (inject === 'nostand') {
+  cut('    lift = sign * ((base + h * 0.5) - plane.origin.y);', '', inject);
 } else if (inject === 'rotbutton') {
   TOOLSRC = TOOLSRC.replace('            if (vd.qStart && options && options.quat) {',
     '            if (options && options.isNegative && vd.qStart && options.quat) {');
@@ -398,6 +404,37 @@ check('...falling back to the capsule radius when there is nothing to measure',
     && /Skeleton\.highlightVolumeHandle\(main,\s*\n\s*vd \? vd\.grip : Skeleton\.pickVolumeHandle/.test(TOOLSRC),
     'they sit close together on a small volume; without a hover state you find out which one '
     + 'you took by taking it');
+}
+
+// ── THE MIRROR PLANE FITS WHAT YOU ARE DRAWING ────────────────────────────────────────
+//
+// matt: "the mirror plane when drawing bones is centered on the origin, and if i'm drawing from
+// there up to the head, its always too small... it should default to always grow and be 10%
+// larger than where the draw cursor is, and if the groundplane is visible, start with the base
+// of it on the groundplane, rather than the center be on the groundplane."
+{
+  check('the plane sizes itself to the cursor',
+    /w = Math\.max\(floor, Math\.abs\(_vRel\.dot\(_vRight\)\) \* 2\.2\);/.test(SRC)
+    && /h = Math\.max\(floor, Math\.abs\(_vRel\.dot\(_vUp\)\) \* 2\.2\);/.test(SRC),
+    '2.2 = twice the distance (a half-extent becomes a full one) plus the 10% clearance');
+  check('...along the plane\'s own axes',
+    /_vRight\.set\(1, 0, 0\)\.applyQuaternion\(_q\);/.test(SRC),
+    'so it holds however the plane is oriented');
+  check('...never smaller than it used to be',
+    /const floor = unit \* 2\.6;/.test(SRC) && /let w = floor, h = floor, lift = 0;/.test(SRC),
+    'or it shrinks to a sliver when the cursor is near the origin');
+  check('...and the cursor is actually passed in',
+    /Skeleton\.updatePlane\(main, plane, [^;]*, _tip\);/.test(TOOLSRC),
+    'a size that fits the cursor is only as good as the call site that supplies one');
+
+  check('the plane stands ON the ground grid',
+    /lift = sign \* \(\(base \+ h \* 0\.5\) - plane\.origin\.y\);/.test(SRC),
+    'centred on it, half the plane is always buried under the floor');
+  check('...only when the grid is actually shown',
+    /const grid = main\._showGrid && main\._groundGrid \? main\._groundGrid : null;/.test(SRC));
+  check('...and only when its own up really is up',
+    /Math\.abs\(_vUp\.y\) > 0\.7/.test(SRC),
+    'a plane lying flat has no base to stand on');
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

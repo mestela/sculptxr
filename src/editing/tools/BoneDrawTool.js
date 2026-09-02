@@ -590,7 +590,8 @@ class BoneDrawTool extends SculptBase {
     const wants = this._mode === 'draw' || this._mode === 'tweak';
     const plane = wants && this._snapEnabled() ? Skeleton.symmetryPlane(main) : null;
     if (!plane) { Skeleton.hidePlane(main); return; }
-    Skeleton.updatePlane(main, plane, !!this._hot);
+    // The cursor goes with it: the plane sizes itself to stay clear of where you are drawing.
+    Skeleton.updatePlane(main, plane, !!this._hot, this._drag ? this._drag.pos : null);
   }
 
   // Model-space centre of the sculpt — the depth a joint gets when there is no plane and no
@@ -1442,7 +1443,7 @@ class BoneDrawTool extends SculptBase {
     // that the next joint will be centred BEFORE you commit it.
     const plane = Skeleton.symmetryPlane(main);
     Skeleton.updatePlane(main, plane, !!plane && this._snapEnabled()
-      && Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap());
+      && Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap(), _tip);
 
     // CLEARED EACH FRAME, then set by the modes that actually resolve a bone. This tool does
     // its own picking, so nothing else here would ever clear it — and a stale value names a
