@@ -52,6 +52,14 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 // ── the two highest-count kinds are instanced ────────────────────────────────
 check('the bone body is instanced, not a Mesh per joint',
   /bone: \{\s*\n\s*solid: batchSlot\(main, 'bone', boneGeometry, false\)/.test(SRC));
+// Joint volumes (roadmap #60) are batched too, one batch per SHAPE — a batch is a single
+// geometry drawn many times, so a box and a dome cannot share one.
+check('a joint volume is instanced as well, one batch per shape',
+  /solid: batchSlot\(main, 'vol-' \+ shape, \(\) => volGeometry\(shape\), false\)/.test(SRC)
+  && /ghost: batchSlot\(main, 'vol-ghost-' \+ shape/.test(SRC));
+check('...and a joint that changes shape is rebuilt into the right batch',
+  /if \(e && e\._shape !== shape\) \{ disposeEntry\(main, id\); e = null; \}/.test(SRC),
+  'checked at the entry rather than only in the setter, so undo and reload are covered too');
 check('the joint dot is instanced too',
   /joint: \{\s*\n\s*solid: batchSlot\(main, 'joint', jointGeometry, false\)/.test(SRC));
 check('...and the xray ghost is its own batch, not a second pass over the first',

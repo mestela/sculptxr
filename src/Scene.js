@@ -1544,7 +1544,12 @@ class Scene {
     // A pin dragged with the gizmo has to re-solve the rig, and nothing tells the solver that
     // happened — so the pins are watched rather than the gizmo hooked. Undo, a keyed pin and a
     // console poke all count as a move without any of them knowing the solver exists.
-    if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) {
+    // ...UNLESS THE RIG ITSELF IS BEING EDITED. A tweak or an FK pose moves joints as a matter
+    // of course, and to this watcher that is indistinguishable from a pin being dragged — so it
+    // solved, which moved the children, which looked like another move. The tool raises this
+    // flag for the duration of the edit and re-seeds the caches when it lets go.
+    if (this._rigRestEdit) { window._ikPinsDirty = false; }
+    else if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) {
       // Recorded separately from the registry's flag: "a pin genuinely moved" and "playback
       // wrote a bone" are the two reasons a solve happens, and which one is firing decides
       // what the fix is. With playback PAUSED only this one can fire, so if it is still
@@ -1559,7 +1564,7 @@ class Scene {
     // editing the rig's proportions. Watched rather than hooked, so the gizmo, an undo and a
     // console poke all behave identically and none of them needs to know the solver exists.
     // The solver refreshes this cache after every solve, so its own writes cannot feed back.
-    if (window._ikGizmoPose === true && !window._animPlaying) {
+    if (window._ikGizmoPose === true && !window._animPlaying && !this._rigRestEdit) {
       const movedJoint = IKSolver.externallyMovedJoint(this);
       if (movedJoint && window._ikTrace) {
         console.log('[ikPose] external move on ' +

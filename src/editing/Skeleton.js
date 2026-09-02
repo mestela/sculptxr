@@ -100,6 +100,92 @@ function makeBoneGeometry() {
 let _boneGeo = null;
 function boneGeometry() { return (_boneGeo = _boneGeo || makeBoneGeometry()); }
 
+// ---- JOINT VOLUMES (roadmap #60) ------------------------------------------------
+//
+// A joint pair with a radius describes a limb well and a pelvis not at all. matt: "bones/joints
+// are ultimately dimensionless entities that are ok when parented together for limbs and tails,
+// but are always a tricky approximation for bones that have volume and heft, like the pelvis,
+// the ribcage." The reference is 3ds Max CAT, whose bones ARE solid non-uniformly scaled boxes,
+// so the skeleton reads as skeletal form rather than as a stick figure with envelopes bolted on.
+//
+// THE VOLUME BELONGS TO THE JOINT, NOT TO A BONE, because the case it exists for is a JUNCTION:
+// "the hips is ultimately a t-junction; hips to the top of the leg joints, and hips to the base
+// of the spine... i can only place a dome in one line segment of the T, not replace the entire
+// T." So a volume sits at a joint, in that joint's frame, and swallows every bone leading out of
+// it — those bones stop drawing and stop carrying an envelope, because the volume is the answer
+// for the whole junction now. A plain limb segment is the same thing seen from its parent (a
+// joint with one child), so there is no need for a second mechanism.
+//
+// 'none' is every joint until one is given a volume.
+const VOLUME_SHAPES = ['none', 'box', 'half', 'egg'];
+
+// A box is CENTRED on the joint, because a pelvis or a ribcage straddles the junction rather
+// than growing out of one side of it.
+//
+// The dome HANGS BELOW the joint — round part down, flat disc up at the joint. matt: "lets
+// assume it will always be leg joints to the left/right, the center axis is the spine, and
+// therefore... the flat side of the dome should point towards the spine." A joint's +Y runs up
+// the chain toward the spine, so a pelvis is the LOWER hemisphere with its cap facing +Y. The
+// first version had it the other way up and read as a bowl sitting on the hips.
+//
+// Both are unit sized in x and z so the placement code can scale them by three dimensions.
+let _boxGeo = null;
+function boxVolGeometry() {
+  if (!_boxGeo) _boxGeo = new THREE.BoxGeometry(2, 2, 2);
+  return _boxGeo;
+}
+
+// The closing disc matters because this geometry is also baked into a weight cage, and an open
+// surface has no inside for a signed distance to be negative in.
+let _halfGeo = null;
+function halfVolGeometry() {
+  if (!_halfGeo) {
+    _halfGeo = mergePositions([
+      // thetaStart = PI/2 takes the LOWER hemisphere, y = -1..0.
+      new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+      new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2),   // the cap, facing +Y
+    ]);
+  }
+  return _halfGeo;
+}
+
+// Positions only, which is all the batcher uses — three's own merge wants matching attribute
+// sets and these two do not have them.
+function mergePositions(list) {
+  const parts = list.map((g) => (g.index ? g.toNonIndexed() : g).getAttribute('position').array);
+  let n = 0;
+  for (const a of parts) n += a.length;
+  const out = new Float32Array(n);
+  let o = 0;
+  for (const a of parts) { out.set(a, o); o += a.length; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(out, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+// An ellipsoid — matt's egg. A full sphere scaled non-uniformly, which is the ribcage and skull
+// shape a box only blocks out and a dome cannot close.
+let _eggGeo = null;
+function eggVolGeometry() {
+  if (!_eggGeo) _eggGeo = new THREE.SphereGeometry(1, 20, 14);
+  return _eggGeo;
+}
+
+function volGeometry(shape) {
+  return shape === 'box' ? boxVolGeometry()
+    : shape === 'egg' ? eggVolGeometry()
+    : halfVolGeometry();
+}
+
+let _boxEdgeGeo = null, _halfEdgeGeo = null;
+function volEdgeGeometry(shape) {
+  if (shape === 'box') return (_boxEdgeGeo = _boxEdgeGeo || new THREE.EdgesGeometry(boxVolGeometry(), 1));
+  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || new THREE.EdgesGeometry(eggVolGeometry(), 28));
+  return (_halfEdgeGeo = _halfEdgeGeo || new THREE.EdgesGeometry(halfVolGeometry(), 25));
+}
+let _eggEdgeGeo = null;
+
 // Edge overlay for the bone octahedron. A shaded solid gives you position but reads almost
 // flat from many angles — the ridge lines are what make the bone's ROLL and taper legible,
 // which is the whole reason to draw an octahedron rather than a cylinder.
@@ -581,6 +667,335 @@ Skeleton.isJoint = function (m) { return !!(m && m._isBone); };
 // Must live BELOW `const Skeleton`: assigning onto it from up beside DEFAULT_RADIUS_FRAC put
 // the write in the const's temporal dead zone and the whole module failed to evaluate.
 Skeleton.defaultRadiusFrac = function () { return DEFAULT_RADIUS_FRAC; };
+
+// ---- joint volumes ----------------------------------------------------------
+//
+// Assigned HERE, below `const Skeleton`, for the same reason defaultRadiusFrac is: writing onto
+// it from up beside the geometry puts the write in the const's temporal dead zone and the whole
+// module fails to evaluate. (Done exactly that once already.)
+Skeleton.VOLUME_SHAPES = VOLUME_SHAPES;
+
+Skeleton.jointVolume = function (j) {
+  const sh = j && j._jointVolume;
+  return VOLUME_SHAPES.indexOf(sh) >= 0 ? sh : 'none';
+};
+Skeleton.hasVolume = function (j) { return Skeleton.jointVolume(j) !== 'none'; };
+
+// Is this bone swallowed by a volume. Asked by the draw and by the bind, so both agree about
+// which envelope owns the junction.
+//
+// Two ways for that to be true. The parent carries a volume, which covers every bone leading out
+// of it — the pelvis case. Or the CHILD carries one and is a leaf, in which case the volume
+// stands in for the bone leading into it: a skull has no bone below it, so the neck bone is the
+// only one its volume can be said to replace, and leaving that bone drawn puts a stick through
+// the head.
+Skeleton.boneSwallowed = function (parent, child, childIsLeaf) {
+  if (Skeleton.hasVolume(parent)) return true;
+  return !!childIsLeaf && Skeleton.hasVolume(child);
+};
+
+// FITTED TO THE JOINT AND ITS CHILDREN, which is what makes a dome land pelvis-shaped before the
+// gizmo is touched: the width spans the two leg tops, the height reaches the base of the spine.
+// Measured in the joint's OWN frame so it follows the joint's orientation, and padded, because a
+// pelvis is wider than the line between two joints.
+// THE BONE A NON-BRANCHING VOLUME STANDS IN FOR: its length, and its midpoint in the joint's own
+// frame. A joint with one child spans the bone leading OUT of it — that is the bone it swallows.
+// A leaf has none, so it spans the bone leading IN, which is the only bone it can be said to be.
+//
+// Returns null for a branching joint, which is centred on the junction instead.
+Skeleton.volSpan = function (main, j) {
+  const kids = Skeleton.joints(main).filter((k) => k._parentMesh === j);
+  if (kids.length >= 2) return null;
+  const other = kids.length === 1 ? kids[0]
+    : (Skeleton.isJoint(j._parentMesh) ? j._parentMesh : null);
+  if (!other) return null;
+  const inv = _mSpan.fromArray(j.getModelSpaceMatrix()).invert();
+  const p = new THREE.Vector3().copy(Skeleton.jointPos(other)).applyMatrix4(inv);
+  return { len: p.length(), mid: [p.x * 0.5, p.y * 0.5, p.z * 0.5] };
+};
+
+Skeleton.fitJointVolume = function (main, j, out) {
+  out = out || [0, 0, 0];
+  const kids = Skeleton.joints(main).filter((k) => k._parentMesh === j);
+
+  // NO BRANCHING MEANS A CUBE, SIDED BY THE BONE. A skull came out thin and twice too big
+  // because it was fitted the way a pelvis is — and a leaf joint has no children to span, so
+  // the fit was measuring its fallback radius rather than the head. matt: "lets go with the
+  // assumption that a joint that has no branching structures should be then a cube that has its
+  // side set by the length of the bone." HALF-extents, because the geometry is unit-sized about
+  // its own centre — treating them as full extents is what made it twice the size asked for.
+  if (kids.length < 2) {
+    const span = Skeleton.volSpan(main, j);
+    const len = (span && span.len) || Skeleton.boneLength(main, j)
+      || (j._boneRadius ? j._boneRadius * 4 : Skeleton.sceneUnit(main) * 0.2);
+    out[0] = out[1] = out[2] = len * 0.5;
+    return out;
+  }
+
+  const inv = _mTmp.fromArray(j.getModelSpaceMatrix()).invert();
+  const _p = new THREE.Vector3();
+  let mx = 0, my = 0, mz = 0;
+  for (const k of kids) {
+    _p.copy(Skeleton.jointPos(k)).applyMatrix4(inv);
+    mx = Math.max(mx, Math.abs(_p.x));
+    my = Math.max(my, Math.abs(_p.y));
+    mz = Math.max(mz, Math.abs(_p.z));
+  }
+  // A joint with no children, or children stacked on one axis, still has to produce three usable
+  // numbers — fall back to the capsule radius it already carries.
+  const r = (j._boneRadius || 0) || Skeleton.sceneUnit(main) * 0.05;
+  out[0] = (mx > 1e-6 ? mx : r) * 1.15;
+  out[1] = (my > 1e-6 ? my : r * 2);
+  out[2] = (mz > 1e-6 ? mz : out[0]) * 1.15;
+  return out;
+};
+
+// Has this volume been sized or placed BY HAND. Once it has, the live fit stops for it: an
+// adjustment you made must not be undone by the rig moving underneath it.
+Skeleton.volumeIsManual = function (j) {
+  return !!(j && (j._jointVolDims || j._jointVolOffset || j._jointVolRot));
+};
+
+// Back to the live fit — used by pressing the shape a second time.
+Skeleton.refitJointVolume = function (j) {
+  if (!j) return false;
+  if (!Skeleton.volumeIsManual(j)) return false;
+  j._jointVolDims = null;
+  j._jointVolOffset = null;
+  j._jointVolRot = null;
+  return true;
+};
+
+Skeleton.jointVolDims = function (main, j, out) {
+  out = out || [0, 0, 0];
+  const d = j && j._jointVolDims;
+  if (d && d.length === 3 && d[0] > 0 && d[1] > 0 && d[2] > 0) {
+    out[0] = d[0]; out[1] = d[1]; out[2] = d[2];
+    return out;
+  }
+  return Skeleton.fitJointVolume(main, j, out);
+};
+
+// WHERE THE VOLUME SITS RELATIVE TO ITS JOINT, in the joint's own frame. A skull is not centred
+// on the neck joint it hangs from — matt: "i'd want to tweak a skull representation to have its
+// pivot be towards the back of the cube, and raised a little." Kept on the VOLUME rather than
+// moved into the joint, so the rig is untouched: the joint stays where the animation needs it
+// and only the shape moves.
+Skeleton.jointVolOffset = function (main, j, out) {
+  out = out || [0, 0, 0];
+  const o = j && j._jointVolOffset;
+  if (o) { out[0] = o[0]; out[1] = o[1]; out[2] = o[2]; return out; }
+  // NO OFFSET SET: a non-branching volume sits on its BONE, not on its joint. matt: "cube is
+  // centered on the joint vs replacing the bone drawn from itself to the child joint." The
+  // volume stands in for that bone, so it starts centred on it — halfway to the child. A
+  // BRANCHING joint has no single bone to stand on and stays centred on the junction, which is
+  // the pelvis case and the reason the two are not one rule.
+  const span = main ? Skeleton.volSpan(main, j) : null;
+  if (span) { out[0] = span.mid[0]; out[1] = span.mid[1]; out[2] = span.mid[2]; return out; }
+  out[0] = out[1] = out[2] = 0;
+  return out;
+};
+
+// AND A ROTATION, also in the joint's frame. A ribcage is not square to the spine and a pelvis
+// tips forward; without this the only way to angle a volume is to angle the JOINT, which moves
+// the rig. Stored as a quaternion because it is composed with the joint's own each frame.
+Skeleton.jointVolRot = function (j, out) {
+  out = out || new THREE.Quaternion();
+  const r = j && j._jointVolRot;
+  if (r) out.set(r[0], r[1], r[2], r[3]); else out.set(0, 0, 0, 1);
+  return out;
+};
+
+Skeleton.setJointVolRot = function (j, q) {
+  if (!j || !q) return;
+  j._jointVolRot = [q.x, q.y, q.z, q.w];
+};
+
+Skeleton.setJointVolOffset = function (j, x, y, z) {
+  if (!j) return;
+  j._jointVolOffset = [x || 0, y || 0, z || 0];
+};
+
+Skeleton.setJointVolDims = function (j, x, y, z) {
+  if (!j) return;
+  j._jointVolDims = [Math.max(1e-5, x), Math.max(1e-5, y), Math.max(1e-5, z)];
+};
+
+// Changing the shape REBUILDS the joint's visual entry. Volumes are batched by geometry — one
+// buffer per shape — so a joint cannot change shape and stay in the batch it was drawn from.
+// THE JOINT WHOSE VOLUME THE GIZMO IS EDITING, or null.
+//
+// The gizmo normally moves the SELECTION — and for a joint that means posing the rig, which is
+// exactly what must not happen while you are sizing a pelvis. So the redirect is gated on the
+// Bones tool being in Volume mode: in that mode the handles size and place the volume, in every
+// other mode they do what they have always done.
+//
+// One question, asked from the gizmo, so the gizmo needs to know nothing about rigs beyond this.
+// ---- volume handles ---------------------------------------------------------
+//
+// SEVEN DOTS: one on each face of the volume's box, and one at its centre. matt asked for
+// "small dots on the bounding box that i could use to scale/slide the shapes", which is the
+// right instrument for this job — a face dot says which axis it changes just by where it sits,
+// and there is nothing to read.
+//
+// Drawn for the SELECTED volume only. Handles on every volume at once would be twenty times the
+// clutter and would make the rig unpickable; and the thing you are about to size is by
+// definition the thing you have selected.
+//
+// A face drag grows the box FROM THAT FACE, leaving the opposite one where it is — the standard
+// box-handle behaviour, and the reason each drag writes both the extent and the offset:
+//     h' = h + sign * d/2      offset' = offset + d/2
+const HANDLE_AXES = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+
+function volHandleGroup(main) {
+  if (main._volHandles) return main._volHandles;
+  const g = new THREE.Group();
+  g.frustumCulled = false;
+  const geo = new THREE.SphereGeometry(1, 10, 8);
+  const mk = (color) => {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: color, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false,
+    }));
+    m.renderOrder = 10002;          // above the rig, like the labels: a handle you cannot see
+    m.frustumCulled = false;        // is a handle you cannot grab
+    m.isPickable = false;
+    m.raycast = () => {};
+    g.add(m);
+    return m;
+  };
+  main._volHandles = {
+    group: g,
+    faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax])),
+    centre: mk(0xffffff),
+    pos: HANDLE_AXES.map(() => new THREE.Vector3()),
+    centrePos: new THREE.Vector3(),
+    joint: null,
+  };
+  skelGroup(main).add(g);
+  return main._volHandles;
+}
+
+// Where the handles are, in model space, for the joint whose volume is selected. Written every
+// frame by the draw and read by the tool's pick — one source, so what you grab is what you see.
+Skeleton.updateVolumeHandles = function (main, j) {
+  const h = volHandleGroup(main);
+  h.joint = j || null;
+  if (!j) { h.group.visible = false; return h; }
+  h.group.visible = true;
+
+  Skeleton.jointVolDims(main, j, _dims);
+  Skeleton.jointVolOffset(main, j, _off);
+  _mVolH.fromArray(j.getModelSpaceMatrix());
+  _qJH.setFromRotationMatrix(_mVolH).multiply(Skeleton.jointVolRot(j, _qVolH));
+  Skeleton.jointPos(j, _pJH);
+
+  const r = Skeleton.sceneUnit(main) * 0.018;
+  _vOffH.set(_off[0], _off[1], _off[2]).applyQuaternion(_qJH);
+  h.centrePos.copy(_pJH).add(_vOffH);
+  h.centre.position.copy(h.centrePos);
+  h.centre.scale.setScalar(r);
+  h.centre.updateMatrix(); h.centre.matrixWorldNeedsUpdate = true;
+
+  for (let i = 0; i < HANDLE_AXES.length; i++) {
+    const [ax, sign] = HANDLE_AXES[i];
+    _vFace.set(0, 0, 0);
+    _vFace.setComponent(ax, sign * _dims[ax]);
+    _vFace.applyQuaternion(_qJH);
+    h.pos[i].copy(h.centrePos).add(_vFace);
+    h.faces[i].position.copy(h.pos[i]);
+    h.faces[i].scale.setScalar(r);
+    h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+  }
+  return h;
+};
+
+// Which handle is under a point, if any. Generous radius: a dot is small on purpose, and a grab
+// that misses reads as the handles not working at all.
+Skeleton.pickVolumeHandle = function (main, p, radius) {
+  const h = main._volHandles;
+  if (!h || !h.group.visible || !h.joint) return null;
+  let best = null, bestD = radius * radius, bestI = -1;
+  for (let i = 0; i < h.pos.length; i++) {
+    const d = h.pos[i].distanceToSquared(p);
+    if (d < bestD) { bestD = d; bestI = i; best = { kind: 'face', axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] }; }
+  }
+  const dc = h.centrePos.distanceToSquared(p);
+  if (dc < bestD) { bestD = dc; bestI = -2; best = { kind: 'centre' }; }
+  return best ? Object.assign(best, { index: bestI }) : null;
+};
+
+// WHICH HANDLE IS UNDER THE HAND, lit. A dot with no hover state gives you no way to know which
+// one you are about to take until you have taken it — and they sit close together on a small
+// volume. matt: "the bbox handles should preselect highlight."
+Skeleton.highlightVolumeHandle = function (main, grip) {
+  const h = main._volHandles;
+  if (!h) return;
+  const hot = grip ? grip.index : -99;
+  const r = Skeleton.sceneUnit(main) * 0.018;
+  for (let i = 0; i < h.faces.length; i++) {
+    const on = hot === i;
+    h.faces[i].scale.setScalar(on ? r * 1.6 : r);
+    h.faces[i].material.opacity = on ? 1 : 0.9;
+    h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+  }
+  const onC = hot === -2;
+  h.centre.scale.setScalar(onC ? r * 1.6 : r);
+  h.centre.material.opacity = onC ? 1 : 0.9;
+  h.centre.updateMatrix(); h.centre.matrixWorldNeedsUpdate = true;
+};
+
+// IS THIS VOLUME ON THE CENTRELINE. A pelvis, a ribcage or a skull sits ON the mirror plane and
+// has no twin — so its edits have to stay symmetric by construction: scaling one side scales
+// both, it cannot slide off the plane, and the only rotation that keeps it symmetric is the one
+// about the plane's normal. A side volume has a twin and none of this applies to it.
+// matt: "bones/volumes on the center axis should have their moves be left/right symmetrical."
+Skeleton.volumeIsCentreline = function (main, j) {
+  if (!j || j._boneMirror) return false;
+  const plane = Skeleton.rigMirrorPlane(main) || Skeleton.symmetryPlane(main);
+  if (!plane) return false;
+  return Math.abs(Skeleton.planeDistance(Skeleton.jointPos(j, _pCentre), plane))
+    <= Skeleton.sceneUnit(main) * 0.02;
+};
+
+// The part of a rotation that turns about `axis`, discarding the rest — the twist of a
+// swing-twist split. A centreline volume may only tip about the mirror normal; anything else
+// takes it out of symmetry, so the rest of the controller's rotation is dropped rather than
+// approximated.
+Skeleton.twistAboutAxis = function (q, axis, out) {
+  out = out || new THREE.Quaternion();
+  const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+  out.set(axis.x * d, axis.y * d, axis.z * d, q.w);
+  const len = Math.hypot(out.x, out.y, out.z, out.w);
+  if (len < 1e-9) out.set(0, 0, 0, 1); else { out.x /= len; out.y /= len; out.z /= len; out.w /= len; }
+  return out;
+};
+
+Skeleton.volumeEditTarget = function (main) {
+  const tool = main.getSculptManager?.()?.getCurrentTool?.();
+  if (!tool || tool.modeKey?.() !== 'volume') return null;
+  const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+  const j = sel.length === 1 ? sel[0] : null;
+  return j && Skeleton.hasVolume(j) ? j : null;
+};
+
+Skeleton.setJointVolume = function (main, j, shape) {
+  if (!j || VOLUME_SHAPES.indexOf(shape) < 0) return false;
+  if (Skeleton.jointVolume(j) === shape) return false;
+  j._jointVolume = shape;
+  // NOTHING IS SEEDED. Leaving the dimensions unset is what makes the fit LIVE: jointVolDims
+  // falls through to fitJointVolume every frame, so moving a leg joint reshapes the pelvis and
+  // moving the head's tip resizes its cube, as they are dragged. matt: "if i then adjust the
+  // placement of the first leg joint, the shape should adapt to fit in realtime."
+  //
+  // Writing the fitted numbers here — which is what the first version did — froze the volume at
+  // whatever the rig looked like the moment the button was pressed, and made it indistinguishable
+  // from a volume the user had sized by hand.
+  j._jointVolDims = null;
+  j._jointVolOffset = null;
+  j._jointVolRot = null;
+  if (main._skelVis && main._skelVis.get(j.getID())) disposeEntry(main, j.getID());
+  return true;
+};
 Skeleton.radiusFraction = radiusFrac;
 
 // ---- bone identity colours -----------------------------------------------------
@@ -662,6 +1077,21 @@ function colorSlots(main) {
 
 const _fallbackColor = new THREE.Color(0.6, 0.6, 0.6);
 const _wireCol = new THREE.Color();
+// Scratch for a joint volume: its three dimensions, the joint's frame, and its orientation.
+const _dims = [0, 0, 0];
+const _mVol = new THREE.Matrix4();
+const _mSpan = new THREE.Matrix4();
+const _qJ = new THREE.Quaternion();
+const _qVol = new THREE.Quaternion();
+// Handle scratch, separate from the draw's: the handles are placed from the same numbers but on
+// a different pass, and sharing would have them fight over one buffer.
+const _mVolH = new THREE.Matrix4();
+const _qJH = new THREE.Quaternion(), _qVolH = new THREE.Quaternion();
+const _pJH = new THREE.Vector3(), _vOffH = new THREE.Vector3(), _vFace = new THREE.Vector3();
+const _pCentre = new THREE.Vector3();
+let _volHandlesShown = false;
+const _off = [0, 0, 0];
+const _vOff = new THREE.Vector3();
 Skeleton.boneColor = function (main, joint) {
   if (!joint || !joint.getID) return _fallbackColor;
   const slots = colorSlots(main);
@@ -984,20 +1414,92 @@ Skeleton.nameSuggestions = function (joint) {
   return (joint && joint._boneMirror) ? Skeleton.LIMB_NAMES : Skeleton.AXIS_NAMES;
 };
 
+// PIN THE CHILDREN ACROSS A WHOLE EDIT, not just across one call.
+//
+// moveJoint compensates what IT does. That is not enough for a tweak drag, which ROTATES the
+// joint first and then moves it: by the time moveJoint takes its snapshot the children have
+// already swung with the rotation, so the swing is never undone — and every frame writes a
+// little more of it permanently into the children's local matrices. That is the runaway matt
+// spent an afternoon on, and it is why turning the twist off cured it while the compensation
+// arithmetic tested clean in isolation.
+//
+// Bracket the whole edit instead: take the parent's model matrix before anything moves, do as
+// many writes as you like, then put the children back with one correction.
+Skeleton.beginCompensate = function (main, joint) {
+  return {
+    joint: joint,
+    before: mat4.clone(joint.getModelSpaceMatrix()),
+    kids: Skeleton.childJoints(main, joint),
+  };
+};
+
+Skeleton.endCompensate = function (token) {
+  if (!token || !token.kids.length) return;
+  const after = token.joint.getModelSpaceMatrix();
+  const fix = mat4.create();
+  if (!mat4.invert(fix, after)) return;
+  mat4.multiply(fix, fix, token.before);
+  for (const k of token.kids) {
+    const local = k.getMatrix();
+    mat4.multiply(local, fix, local);
+    Skeleton.syncThree(k);
+  }
+};
+
 Skeleton.moveJoint = function (main, joint, pos, compensate) {
   const kids = compensate ? Skeleton.childJoints(main, joint) : [];
-  const saved = kids.map((k) => k.getModelSpaceMatrix());
+
+  // THE COMPENSATION IS DONE IN THE PARENT'S OWN FRAME, not through world space.
+  //
+  // It used to read each child's MODEL matrix, move the joint, and write that model matrix back
+  // — three conversions through three.js world matrices, each depending on those matrices being
+  // refreshed at exactly the right moment. When they were not, the residual was a small scale
+  // error, and a small scale error applied to the child's offset EVERY FRAME is exponential:
+  // matt's trace showed a child 1.9 units from its joint reaching 56 in about thirty frames,
+  // roughly 1.1x per frame, while the compensation reported err=0.0000 throughout. Of course it
+  // did — it re-measured with the same conversion that had just lied to it.
+  //
+  // The relationship is exact and needs no world matrices at all. A child's model transform is
+  // `parentModel * childLocal`, so holding it still across a parent move means
+  //     childLocal' = inverse(parentModel') * parentModel * childLocal
+  // and the only thing that varies is one matrix, taken before and after, in the same frame.
+  const before = mat4.clone(joint.getModelSpaceMatrix());
 
   const ms = joint.getModelSpaceMatrix();
   ms[12] = pos.x; ms[13] = pos.y; ms[14] = pos.z;
   joint.setModelSpaceMatrix(ms);
   Skeleton.syncThree(joint);
 
-  // Order matters: the joint's world matrix must already be updated before a child
-  // converts its desired model-space transform back through the new parent.
-  for (let i = 0; i < kids.length; i++) {
-    kids[i].setModelSpaceMatrix(saved[i]);
-    Skeleton.syncThree(kids[i]);
+  if (kids.length) {
+    const after = joint.getModelSpaceMatrix();
+    const fix = mat4.create();
+    if (mat4.invert(fix, after)) {
+      mat4.multiply(fix, fix, before);      // parent-after^-1 * parent-before
+      for (let i = 0; i < kids.length; i++) {
+        const local = kids[i].getMatrix();
+        mat4.multiply(local, fix, local);
+        Skeleton.syncThree(kids[i]);
+      }
+    }
+  }
+
+  // DID THE COMPENSATION ACTUALLY HOLD. The whole promise of `compensate` is that a child comes
+  // out of this function exactly where it went in — so the only measurement that matters is the
+  // child's model position before against after, and it is one line to take.
+  //
+  // `parentOK` is there because the likeliest way for this to fail is not the arithmetic: it is
+  // a child whose THREE parent is not the joint's three mesh, in which case "model space" means
+  // something different on the way in and on the way out.
+  // Reported from the SAME arithmetic the fix uses: the old diagnostic measured the round trip
+  // it was meant to be checking, which is why it read err=0.0000 while children flew off.
+  if (window._tweakTrace && kids.length) {
+    for (let i = 0; i < kids.length; i++) {
+      const m = mat4.create();
+      mat4.multiply(m, joint.getModelSpaceMatrix(), kids[i].getMatrix());
+      console.log('[compensate] ' + (kids[i]._permanentStaticLabel || kids[i].getID())
+        + ' at=' + m[12].toFixed(3) + ',' + m[13].toFixed(3) + ',' + m[14].toFixed(3)
+        + ' dist=' + Math.hypot(m[12] - pos.x, m[13] - pos.y, m[14] - pos.z).toFixed(3));
+    }
   }
 };
 
@@ -1315,10 +1817,15 @@ function skelGroup(main) {
 // undefined at load — see the findings doc).
 Skeleton.overlayGroup = skelGroup;
 
-function ensureEntry(main, id) {
+function ensureEntry(main, id, shape) {
   const g = skelGroup(main);
+  shape = shape || 'none';
   main._skelVis = main._skelVis || new Map();
   let e = main._skelVis.get(id);
+  // A joint whose VOLUME changed cannot stay in the batch it was built from — one batch is one
+  // geometry. Rebuilding the entry is how it moves, and doing it here rather than only in
+  // setJointVolume covers every other route a shape arrives by: an undo, a reload, a preset.
+  if (e && e._shape !== shape) { disposeEntry(main, id); e = null; }
   if (!e) {
     // The wireframe gets the same solid/ghost treatment as everything else, so the bone's
     // edges stay readable when it is buried inside the mesh.
@@ -1348,9 +1855,18 @@ function ensureEntry(main, id) {
       // which is where the ~185 draw calls came from. Everything else here is still a Mesh of
       // its own — pins exist only on pinned joints, capsules and labels are off by default, so
       // none of them carry the same weight.
+      _shape: shape,
       bone: {
         solid: batchSlot(main, 'bone', boneGeometry, false),
         ghost: batchSlot(main, 'bone-ghost', boneGeometry, true),
+      },
+      // THE JOINT'S VOLUME, when it has one. Its own slot pair rather than a reuse of the bone's,
+      // because a joint can carry a volume AND still be the far end of an ordinary bone above it.
+      // One batch per shape: a box and a dome are different geometries and cannot share one.
+      vol: shape === 'none' ? null : {
+        solid: batchSlot(main, 'vol-' + shape, () => volGeometry(shape), false),
+        ghost: batchSlot(main, 'vol-ghost-' + shape, () => volGeometry(shape), true),
+        wire: lineBatchSlot(main, 'vol-wire-' + shape, () => volEdgeGeometry(shape), false),
       },
       joint: {
         solid: batchSlot(main, 'joint', jointGeometry, false),
@@ -1367,6 +1883,7 @@ function ensureEntry(main, id) {
     // The batched slots, listed so flushBatches can gather them without knowing this shape.
     e._slots = [e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
                 e.wire.solid, e.wire.ghost];
+    if (e.vol) e._slots.push(e.vol.solid, e.vol.ghost, e.vol.wire);
     g.add(e.label.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
           e.pinS.solid, e.pinS.ghost);
@@ -1723,7 +2240,7 @@ Skeleton.updateVisuals = function (main) {
   for (const j of joints) {
     const id = j.getID();
     live.add(id);
-    const e = ensureEntry(main, id);
+    const e = ensureEntry(main, id, Skeleton.jointVolume(j));
 
     // Hidden by the outliner (its own eye, or an ancestor's). Everything this joint draws
     // goes away; the entry itself stays so unhiding costs nothing.
@@ -1769,6 +2286,45 @@ Skeleton.updateVisuals = function (main) {
     // There is no flag for any of it. Defaulting one to off is not the same as removing the
     // dots: the flag was persisted, so anyone who had ever seen the old default carried it
     // forward and got them back on every launch.
+    // THE JOINT'S VOLUME. Drawn in the joint's own frame at its three dimensions, so it turns
+    // with the joint and a pelvis stays a pelvis when the character is posed.
+    if (e.vol) {
+      Skeleton.jointVolDims(main, j, _dims);
+      _mVol.fromArray(j.getModelSpaceMatrix());   // its own scratch: _mTmp is the plane's
+      _qJ.setFromRotationMatrix(_mVol);
+      // The volume's own rotation rides on top of the joint's, so it is expressed relative to
+      // the bone and survives the character being posed.
+      _qJ.multiply(Skeleton.jointVolRot(j, _qVol));
+      // NO SELECTION TINT WHILE YOU ARE EDITING IT. In Volume mode the volume is the thing you
+      // are working ON, not a thing you are choosing — and lit up in selection colour it hides
+      // both the handles sitting on it and the x-ray ghost of the rig inside. matt: "in this
+      // volume tweak mode, the volume shape shouldn't highlight, it obscures the handles."
+      const volIdent = Skeleton.boneColor(main, j);
+      const volEditing = main.getSculptManager?.()?.getCurrentTool?.()?.modeKey?.() === 'volume';
+      const volTint = volEditing ? (volIdent ? volIdent.getHex() : BONE_COLOR)
+        : ((isHi || jointHeld) ? HILITE_COLOR : (isSel ? SELECT_COLOR
+          : (volIdent ? volIdent.getHex() : BONE_COLOR)));
+      const volWire = volIdent ? _wireCol.copy(volIdent).multiplyScalar(0.35).getHex() : BONE_EDGE;
+      // The offset is in the JOINT's frame, so it turns with the joint like the volume does.
+      Skeleton.jointVolOffset(main, j, _off);
+      _vOff.set(_off[0], _off[1], _off[2]).applyQuaternion(_qJ);
+      for (const o of [e.vol.solid, e.vol.ghost, e.vol.wire]) {
+        o.position.copy(_pB).add(_vOff);
+        o.quaternion.copy(_qJ);
+        o.scale.set(_dims[0], _dims[1], _dims[2]);
+        o.visible = (o === e.vol.wire) ? showWire : showSolid;
+        o.material.color.setHex(o === e.vol.wire ? volWire : volTint);
+        o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+      }
+    }
+
+    // The handles follow the selection, and only in Volume mode — they are an editing
+    // instrument, not a display layer, and drawn all the time they would bury the rig.
+    if (e.vol && isSel && main.getSculptManager?.()?.getCurrentTool?.()?.modeKey?.() === 'volume') {
+      Skeleton.updateVolumeHandles(main, j);
+      _volHandlesShown = true;
+    }
+
     const isolated = !hasChildBone.has(id) && !Skeleton.isJoint(j._parentMesh);
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
@@ -2065,12 +2621,16 @@ Skeleton.updateVisuals = function (main) {
     // contrasting with the body it sits on — matched exactly, the ridge lines disappear into
     // the face they are drawn over and the bone reads as a flat lozenge again.
     const wireTint = ident ? _wireCol.copy(ident).multiplyScalar(0.35).getHex() : BONE_EDGE;
+    // SWALLOWED BY THE PARENT'S VOLUME. Every bone out of a joint that carries one stops
+    // drawing — the volume already covers that whole junction, and drawing both would claim
+    // there are two answers to where the bone is.
+    const swallowed = Skeleton.boneSwallowed(parent, j, !hasChildBone.has(id));
     for (const o of [e.bone.solid, e.bone.ghost, e.wire.solid, e.wire.ghost]) {
       const isBody = o === e.bone.solid || o === e.bone.ghost;
       o.position.copy(_pA);
       o.quaternion.copy(_q);
       o.scale.set(w, len, w);
-      o.visible = isBody ? showSolid : showWire;
+      o.visible = swallowed ? false : (isBody ? showSolid : showWire);
       o.material.color.setHex(isBody ? boneTint : wireTint);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
@@ -2078,8 +2638,9 @@ Skeleton.updateVisuals = function (main) {
     // Capsule. The radius belongs to the CHILD joint, matching the bind (a bone deforms with
     // its child), so the joint you highlight is the joint whose capsule lights up and whose
     // radius the Radius mode edits.
+    // ...and stops carrying an envelope, for the same reason: the volume IS the envelope there.
     const cr = j._boneRadius || 0;
-    if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
+    if (swallowed || !showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
     // which is the same colour the weight preview paints onto the vertices it claims. (The
     // radius still belongs to this joint; ownership and authorship are different things.)
@@ -2109,6 +2670,9 @@ Skeleton.updateVisuals = function (main) {
       part.ghost.material.opacity = capOp * 0.55;
     }
   }
+
+  if (!_volHandlesShown && main._volHandles) main._volHandles.group.visible = false;
+  _volHandlesShown = false;
 
   for (const id of Array.from(main._skelVis.keys())) if (!live.has(id)) disposeEntry(main, id);
 

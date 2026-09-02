@@ -25,6 +25,9 @@ const Skeleton = {
   DISPLAY_FLAGS: ${JSON.stringify(FLAG_DEFAULTS)},
   displayFlag: (n) => (_flagState[n] != null ? _flagState[n] : !!${JSON.stringify(FLAG_DEFAULTS)}[n]),
   setDisplayFlag: (n, v) => { _flagState[n] = !!v; },
+  // Bone shapes (roadmap #60): the panel asks which meshes are joints and what shape each has.
+  isJoint: (m) => !!(m && m._isBone),
+  jointVolume: (j) => (j && j._jointVolume) || 'none',
 };
 const _flagState = {};
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
@@ -49,7 +52,10 @@ const {
 let fails = 0;
 const check = (n, ok, got) => { console.log((ok ? '  ok   ' : '  FAIL ') + n + (ok ? '' : '  got: ' + got)); if (!ok) fails++; };
 
-const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () => ({ modeKey: () => 'draw' }) }), getMesh: () => null };
+const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () => ({ modeKey: () => 'draw' }) }),
+  getMesh: () => null,
+  // Bone-shape buttons act on the selected joints, so the panel now asks for them.
+  getSelectedMeshes: () => (globalThis.__sel || []) };
 
 const flat = buildBoneSectionHTML(main, 'mm');
 // The cage button is one control with two states, not two controls -- either the rig weights
@@ -79,10 +85,11 @@ const animation = buildBoneAnimationHTML(main, 'mm');
 // Every mode now has a mouse/touch path in BoneDrawTool, so nothing is gated to a controller
 // on a flat screen any more. The gate itself (XR_ONLY_MODES) is still wired, so a future
 // 6DOF-only mode re-disables by being named there — that is what the third check pins down.
-check('flat screen disables nothing', (flat.match(/disabled/g) || []).length === 0,
-  (flat.match(/disabled/g) || []).length);
+const modeGrid = (html) => html.slice(html.indexOf('id="bone-draw"'), html.indexOf('id="bone-snap"'));
+check('flat screen disables no MODE', (modeGrid(flat).match(/disabled/g) || []).length === 0,
+  (modeGrid(flat).match(/disabled/g) || []).length);
 check('flat screen leaves Draw enabled', /id="bone-draw"(?![^>]*disabled)/.test(flat));
-check('in VR nothing is disabled', !/disabled/.test(vr));
+check('in VR no MODE is disabled', !/disabled/.test(modeGrid(vr)));
 check('every mode button reaches a flat screen',
   ['bone-draw', 'bone-fk', 'bone-free', 'bone-pose', 'bone-radius', 'bone-ik']
     .every(id => /id="/.test(flat) && flat.includes('id="' + id + '"')));
@@ -91,6 +98,29 @@ check('every command button is present on a flat screen',
     && ['bone-unpin', 'bone-restpose'].every(id => pose.includes('id="' + id + '"'))
     && display.includes('id="bone-trails"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
+
+// BONE SHAPE (roadmap #60). The row must be in the markup whether or not a joint is selected:
+// the panel does not rebuild its HTML when the selection changes -- syncBoneSection updates the
+// existing DOM -- so a row that is only EMITTED with a joint selected never appears at all.
+// matt: "i'm in the bonepanel, i don't see an option for capsule/box/dome."
+{
+  globalThis.__sel = [];
+  const noSel = buildBoneAuthoringHTML(main, 'mm');
+  check('the joint-volume row exists with nothing selected',
+    ['none', 'box', 'half'].every((k) => noSel.includes('data-shape="' + k + '"')),
+    'presence must not depend on selection; only enabled state may');
+  check('...and is disabled there', /data-shape="box"[^>]*disabled/.test(noSel), noSel.length);
+
+  globalThis.__sel = [{ _isBone: true, _jointVolume: 'box', getID: () => 1 }];
+  const withJoint = buildBoneAuthoringHTML(main, 'mm');
+  check('...enabled once a joint is selected',
+    !/data-shape="box"[^>]*disabled/.test(withJoint));
+  check('...showing that joint\'s current shape as active',
+    /data-shape="box"[^>]*class="[^"]*active|class="[^"]*active[^"]*"[^>]*data-shape="box"/.test(withJoint)
+      || /class="mm-choice active" data-shape="box"/.test(withJoint),
+    withJoint.slice(withJoint.indexOf('data-shape="box"') - 60, withJoint.indexOf('data-shape="box"') + 20));
+  globalThis.__sel = [];
+}
 check('wrist panel uses its own class dialect', wrist.includes('mp-voxel-btn') && !wrist.includes('mm-choice'));
 check('menu panel uses its own class dialect', flat.includes('mm-choice') && !flat.includes('mp-voxel-btn'));
 

@@ -25,6 +25,9 @@
 //   CL_INJECT=indexmirror the mirror copies vertex i to vertex i, ignoring the reversed winding
 //   CL_INJECT=onetouched  only the sculpted capsule is re-measured, not the mirrored twin
 //   CL_INJECT=lazybake    the first full solve is left to the first stroke instead of the bake
+//   CL_INJECT=modelmirror the mirror carries the pose with it instead of working in local space
+//   CL_INJECT=nopairbar   a badly-matched pair is accepted instead of refused
+//   CL_INJECT=paintall    every stroke repaints every vertex of the character
 import fs from 'fs';
 import path from 'path';
 
@@ -59,6 +62,16 @@ if (inject === 'ownedonly') {
 } else if (inject === 'capsulesnap') {
   cutSkin('  if (prepared.length) {\n    raw = resolveCagesRaw(mesh, prepared, nbV, touched);',
     '  if (false) {\n    raw = resolveCagesRaw(mesh, prepared, nbV, touched);', inject);
+} else if (inject === 'paintall') {
+  cutSkin('  const partial = only && only.length !== undefined && mesh._skinColorsPainted;',
+    '  const partial = false;', inject);
+} else if (inject === 'nopairbar') {
+  cut('    if (r > 0 && mm.worst > r * 0.1) { unpaired++; continue; }', '', inject);
+} else if (inject === 'modelmirror') {
+  // The transform stops being local->local: the twin's inverse is dropped, so the result is
+  // written into the twin's local array in the SOURCE's frame -- exactly the old fault.
+  cut('  return new THREE.Matrix4().multiplyMatrices(Binv, new THREE.Matrix4().multiplyMatrices(P, A));',
+    '  return new THREE.Matrix4().multiplyMatrices(P, A);', inject);
 } else if (inject === 'nohook' || inject === 'noxray') {
   // Both live in other files; handled at their checks below.
 }
@@ -74,8 +87,22 @@ const Geometry = new Function('vec3', 'mat4', 'quat',
 const Utils = { TRI_INDEX: 4294967295 };
 const body = SRC.split('\n').filter((l) => !/^import /.test(l)).join('\n')
   .replace(/^export default WeightCage;$/m, '');
+// Skeleton is a real stub rather than {}: the mirror asks it for the rig's plane and its
+// joints, and those two answers are the entire input to the pairing. Held in a variable so a
+// test can change the rig under it.
+const Skel = {
+  plane: { origin: new THREE.Vector3(0, 0, 0), normal: new THREE.Vector3(1, 0, 0) },
+  jointList: [],
+  rigMirrorPlane() { return this.plane; },
+  joints() { return this.jointList; },
+  isJoint(m) { return !!(m && m._isBone); },
+  mirrorPoint(p, plane, out) {
+    const d = out.copy(p).sub(plane.origin).dot(plane.normal);
+    return out.copy(p).addScaledVector(plane.normal, -2 * d);
+  },
+};
 const WeightCage = new Function('THREE', 'Skeleton', 'Geometry', 'Utils', 'window',
-  body + '\nreturn WeightCage;')(THREE, {}, Geometry, Utils, {});
+  body + '\nreturn WeightCage;')(THREE, Skel, Geometry, Utils, {});
 
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
@@ -224,15 +251,18 @@ for (const [label, before, after] of [
     /const twinJoint = joint\._boneMirror \|\| joint;/.test(CAGE),
     '_boneMirror is maintained as the chain is drawn and survives a save');
   check('...a centreline bone mirrors onto itself',
-    /twinJoint === joint\s+\? cage/.test(CAGE));
+    /const twin = twinJoint === joint \? c :/.test(CAGE));
+  check('the pairing is built at BAKE time, not on the first mirror',
+    /WeightCage\.pairMirrors = function/.test(CAGE) &&
+    /const pairs = WeightCage\.pairMirrors\(main\);/.test(CAGE),
+    'built later it matches a capsule you have already sculpted against one you have not');
   check('vertices are matched by mirrored position, not by index',
-    /function mirrorMap/.test(inject === 'indexmirror' ? CAGE.replace('function mirrorMap', 'function _dead') : CAGE)
-    && /Skeleton\.mirrorPoint\(_p, plane, _p\);/.test(CAGE),
+    /function mirrorMap/.test(inject === 'indexmirror' ? CAGE.replace('function mirrorMap', 'function _dead') : CAGE),
     'mirroring reverses the radial winding, so index i on the left is not index i on the right');
   check('...into a copy, so a self-mirror cannot read what it just wrote',
-    /const outV = new Float32Array\(dst\.verts\);/.test(CAGE));
-  check('...and a subdivided twin is refused rather than half-written',
-    /if \(src\.nb !== dst\.nb\) return \{ ok: false/.test(CAGE),
+    /const outV = new Float32Array\(dst\.verts\.subarray\(0, dst\.nb \* 3\)\);/.test(CAGE));
+  check('...and a subdivided capsule is refused rather than half-written',
+    /if \(src\.nb !== pair\.nb \|\| dst\.nb !== pair\.nb\) \{/.test(CAGE),
     'a torn twin looks like a sculpt bug, not like a refusal');
   const skinSym = inject === 'onetouched'
     ? SKIN.replace('? [cage, mir.twinCage] : [cage];', '? [cage] : [cage];')
@@ -245,6 +275,142 @@ for (const [label, before, after] of [
     'the twin moved too, and not the same vertices changed hands');
   check('...with the candidate sets unioned rather than one replacing the other',
     /for \(const i of WeightCage\.candidates\([\s\S]{0,80}\) seen\.add\(i\)/.test(SKIN));
+}
+
+// ── THE MIRROR ACTUALLY LANDS WHERE IT SHOULD ────────────────────────────────────────
+//
+// Everything above is structure; this runs the shipped pairMirrors and mirrorEdit over real
+// capsule geometry and checks the only thing that matters: after mirroring, every vertex of the
+// twin is at the WORLD reflection of its partner on the source. Stated that way the test does
+// not care how the transform is composed, which is the point -- the first version composed it
+// in model space, looked reasonable, and tore posed capsules apart.
+{
+  const mk = (id, jointId, model, verts) => ({
+    _isWeightCage: true,
+    _cageJointId: jointId,
+    _id: id,
+    getID() { return this._id; },
+    _model: model,
+    getModelSpaceMatrix() { return this._model; },
+    getCurrentMesh() {
+      return {
+        getVertices: () => this._v,
+        getNbVertices: () => this._v.length / 3,
+      };
+    },
+    _v: verts,
+    updateGeometry() {}, updateBuffers() {},
+  });
+
+  // Two arms: same capsule geometry in each one's own local frame, placed left and right.
+  const geo = () => {
+    const g = WeightCage.capsuleGeometry(0, 0, 0, 0, 1.2, 0, 0.3, 10, 3, 2);
+    return new Float32Array(g.verts);
+  };
+  const T = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z).toArray();
+  const world = (cage, i) => new THREE.Vector3(cage._v[i * 3], cage._v[i * 3 + 1], cage._v[i * 3 + 2])
+    .applyMatrix4(new THREE.Matrix4().fromArray(cage.getModelSpaceMatrix()));
+
+  const run = (rightModel, label, expectPaired = true) => {
+    const jL = { _id: 10, getID() { return 10; }, _isBone: true, _boneRadius: 0.3 };
+    const jR = { _id: 11, getID() { return 11; }, _isBone: true, _boneRadius: 0.3 };
+    jL._boneMirror = jR; jR._boneMirror = jL;
+    Skel.jointList = [jL, jR];
+    const L = mk(1, 10, T(0.8, 0, 0), geo());
+    const R = mk(2, 11, rightModel, geo());
+    const main = { getMeshes: () => [L, R] };
+    const res = WeightCage.pairMirrors(main);
+    if (!expectPaired) return { res, L, R };
+    // Sculpt the left one: push one vertex out along its own local x.
+    L._v[0] += 0.25; L._v[1] += 0.1;
+    const mir = WeightCage.mirrorEdit(main, L);
+    return { res, mir, L, R, main };
+  };
+
+  {
+    // Mirrored placement: the right arm is the left arm reflected in x.
+    const { res, mir, L, R } = run(T(-0.8, 0, 0), 'mirrored');
+    check('two mirrored capsules pair up', res.paired === 2, JSON.stringify(res));
+    check('...and a stroke on one carries to the other', !!mir && mir.ok === true,
+      mir ? mir.why || '' : 'no result');
+    let worst = 0;
+    for (let i = 0; i < L._v.length / 3; i++) {
+      const j = L._cageMirror.map[i];
+      const a = world(L, i); const b = world(R, j);
+      // The twin's vertex must sit at the world reflection of its partner: x negated.
+      worst = Math.max(worst, Math.hypot(b.x + a.x, b.y - a.y, b.z - a.z));
+    }
+    check('...landing exactly on the world mirror of the vertex it came from',
+      worst < 1e-4, 'worst vertex is ' + worst.toFixed(6) + ' out');
+  }
+
+  {
+    // THE CASE THAT BROKE IT, AND THE ORDER MATTERS. Pairing happens at BAKE, with the character
+    // in its bind pose where the two sides really are mirror images. Sculpting happens later,
+    // and by then an arm may be anywhere. So: pair, THEN pose the twin, THEN sculpt.
+    //
+    // The invariant once posed is not "world reflection" -- the arm has moved, so of course it
+    // is not. It is that the twin's own LOCAL shape comes out identical either way: the mirror
+    // describes a shape in the twin's frame and the frame is the bone's business. A mirror that
+    // works in model space fails exactly here, writing a pose-dependent shape into a local
+    // array, which is what "shapes on one side going crazy on the other" looked like.
+    const posed = new THREE.Matrix4()
+      .makeRotationZ(0.7).premultiply(new THREE.Matrix4().makeTranslation(-0.8, 0.2, 0.1)).toArray();
+
+    const localAfter = (poseIt) => {
+      const jL = { _id: 10, getID() { return 10; }, _isBone: true, _boneRadius: 0.3 };
+      const jR = { _id: 11, getID() { return 11; }, _isBone: true, _boneRadius: 0.3 };
+      jL._boneMirror = jR; jR._boneMirror = jL;
+      Skel.jointList = [jL, jR];
+      const L = mk(1, 10, T(0.8, 0, 0), geo());
+      const R = mk(2, 11, T(-0.8, 0, 0), geo());
+      const main = { getMeshes: () => [L, R] };
+      const res = WeightCage.pairMirrors(main);          // at bind: both sides mirror images
+      if (poseIt) R._model = posed;                       // ...and now the arm moves
+      L._v[0] += 0.25; L._v[1] += 0.1;
+      const mir = WeightCage.mirrorEdit(main, L);
+      return { res, mir, v: new Float32Array(R._v) };
+    };
+
+    const rest = localAfter(false);
+    const pose = localAfter(true);
+    check('the pairing survives the character being posed afterwards',
+      rest.res.paired === 2 && !!pose.mir && pose.mir.ok === true,
+      JSON.stringify(pose.res) + ' ' + (pose.mir ? pose.mir.why || 'ok' : 'no result'));
+    let worst = 0;
+    for (let i = 0; i < rest.v.length; i++) worst = Math.max(worst, Math.abs(rest.v[i] - pose.v[i]));
+    check('...and the pose does not leak into the mirrored shape',
+      worst < 1e-5,
+      'the twin came out ' + worst.toFixed(6) + ' different for having been posed -- the mirror '
+      + 'must describe the shape in the twin\'s own frame');
+  }
+
+  {
+    // A rig whose two sides are NOT mirror images: the nearest-neighbour map would collapse
+    // several source vertices onto one target, which looks exactly like the capsule exploding.
+    // Refusing is the only honest answer, and the bake says how many were left unpaired.
+    const jL = { _id: 10, getID() { return 10; }, _isBone: true, _boneRadius: 0.3 };
+    const jR = { _id: 11, getID() { return 11; }, _isBone: true, _boneRadius: 0.3 };
+    jL._boneMirror = jR; jR._boneMirror = jL;
+    Skel.jointList = [jL, jR];
+    const big = WeightCage.capsuleGeometry(0, 0, 0, 0, 2.4, 0, 0.62, 10, 3, 2);
+    const L = mk(1, 10, T(0.8, 0, 0), geo());
+    const R = mk(2, 11, T(-0.8, 0, 0), new Float32Array(big.verts));
+    const res = WeightCage.pairMirrors({ getMeshes: () => [L, R] });
+    check('a rig whose sides are not mirror images is refused, not scrambled',
+      res.paired === 0 && res.unpaired === 2, JSON.stringify(res));
+  }
+
+  {
+    // Symmetry off: the plane is null and nothing mirrors, whatever is paired.
+    const saved = Skel.plane;
+    Skel.plane = null;
+    const L = mk(1, 10, T(0.8, 0, 0), geo());
+    L._cageMirror = { toId: 2, M: new THREE.Matrix4(), map: new Int32Array(1), nb: 1, self: false };
+    check('symmetry off means no mirroring',
+      WeightCage.mirrorEdit({ getMeshes: () => [L] }, L) === null);
+    Skel.plane = saved;
+  }
 }
 
 // ── THE FIRST EDIT IS NOT THE SLOW ONE ────────────────────────────────────────────────
@@ -263,6 +429,36 @@ for (const [label, before, after] of [
   check('...and says how long it took',
     /weights re-solved in \$\{solveMs\}ms/.test(PANEL),
     'a silent multi-second pause is indistinguishable from a hang');
+}
+
+// ── A STROKE REPAINTS WHAT IT CHANGED, NOT THE CHARACTER ──────────────────────────────
+//
+// matt: "the weight painting is super slow after every capsule mesh stroke." The measurement
+// was already incremental; the COLOUR pass was not -- it walked every vertex of the character
+// and rebuilt the colour buffer on every stroke, which is the same work as a full bind done for
+// a local edit.
+{
+  const skinP = inject === 'paintall'
+    ? SKIN.replace('  const partial = only && only.length !== undefined && mesh._skinColorsPainted;',
+                   '  const partial = false;')
+    : SKIN;
+  check('the changed vertices are carried out of the solve',
+    /out\.changed = cand;/.test(SKIN),
+    'the same set the measurement used, so it costs nothing to keep');
+  check('...and the colour pass repaints only those',
+    /const partial = only && only\.length !== undefined && mesh\._skinColorsPainted;/.test(skinP)
+    && /const i = partial \? only\[n\] : n;/.test(skinP));
+  check('...only once there is something on the mesh to keep',
+    /mesh\._skinColorsPainted = true;/.test(SKIN),
+    'the first paint has no list and must walk everything, or the unchanged vertices are '
+    + 'left showing the mesh\'s own colours');
+  check('...and a full repaint is forced when smoothing is on',
+    /Skinning\.mushSmoothIterations\(\) > 0 \? null : raw\.changed \|\| null/.test(SKIN),
+    'smoothing spreads a change to neighbours, so the candidate set stops being the truth');
+  // "Why is it slow" should be answerable without another round trip through the headset.
+  check('a stroke records where its time went',
+    /window\._skinPerfLast = \{/.test(SKIN) && /mirror:/.test(SKIN) && /resolve:/.test(SKIN),
+    'four candidates look identical from the outside');
 }
 
 // ── X-RAY ─────────────────────────────────────────────────────────────────────────────

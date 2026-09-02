@@ -92,6 +92,13 @@ const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3();
 const _axis = new THREE.Vector3(), _hit = new THREE.Vector3();
 const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
+// Volume drag scratch: the joint's rotation inverted, and the controller delta in its frame.
+const _mVolInv = new THREE.Matrix4();
+const _vDelta = new THREE.Vector3();
+const _vGrab = new THREE.Vector3();   // the tip plus the grab's held offset
+const _qVolT = new THREE.Quaternion(), _qVolT2 = new THREE.Quaternion();
+const _qNowV = new THREE.Quaternion(), _qDeltaV = new THREE.Quaternion();
+const _axisX = new THREE.Vector3(1, 0, 0);
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
@@ -147,6 +154,10 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'draw') return 'draw';
     if (this._mode === 'pose') return 'pose';
     if (this._mode === 'radius') return 'radius';
+    // VOLUME: the gizmo sizes and places the selected joint's volume instead of posing the rig.
+    // A mode rather than a modifier, because the gizmo means something else in every other one
+    // and "why did my hips move" is not a question worth creating.
+    if (this._mode === 'volume') return 'volume';
     if (this._mode === 'ik') return 'ik';
     return this._compensate ? 'free' : 'fk';
   }
@@ -161,7 +172,7 @@ class BoneDrawTool extends SculptBase {
   }
 
   setModeKey(key) {
-    const named = { draw: 'draw', pose: 'pose', radius: 'radius', ik: 'ik' };
+    const named = { draw: 'draw', pose: 'pose', radius: 'radius', ik: 'ik', volume: 'volume' };
     const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
@@ -170,9 +181,13 @@ class BoneDrawTool extends SculptBase {
     this._drag = null;
     this._hot = false;
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
+    this._releaseVolume();
     // The capsules are the whole point of radius mode, so turn them on when entering it
     // rather than making the user find a second toggle to make the mode visible.
     if (mode === 'radius') Skeleton.setDisplayFlag('capsules', true);
+    // Same reasoning for volumes: the bone bodies ARE the volumes, so make sure they are drawn
+    // rather than leaving the mode looking like it does nothing.
+    if (mode === 'volume') Skeleton.setDisplayFlag('solid', true);
     // Leaving draw mode ends the chain — coming back to draw should start clean rather
     // than silently resuming a chain from before the detour.
     if (mode !== 'draw') this.endChain();
@@ -693,6 +708,15 @@ class BoneDrawTool extends SculptBase {
 
     const joint = this._pickJointScreen();
     if (!joint) return false;
+
+    // VOLUME mode selects and stops — the gizmo is the editor here, not the drag.
+    if (this._mode === 'volume') {
+      this._hilite = joint;
+      Skeleton.setHighlight(main, joint);
+      this._selectLater(joint);
+      return true;
+    }
+
     Skeleton.jointPos(joint, _jp);
     const anchor = _jp.clone();
     this._hilite = joint;
@@ -891,7 +915,7 @@ class BoneDrawTool extends SculptBase {
   // The hierarchy following is free — children are parented, so in FK they ride the rotation
   // through the scene graph. In Tweak FREE they do not, because that mode explicitly restores
   // each child's model-space transform afterwards, which is exactly what "free" means.
-  _beginGrab(joint, quat) {
+  _beginGrab(joint, quat, tip) {
     const main = this._main;
     // Resolve the symmetry plane ONCE per grab, not per frame: it walks every mesh, and a
     // plane that shifted mid-drag would make the mirrored joint wander independently.
@@ -902,7 +926,43 @@ class BoneDrawTool extends SculptBase {
     // both lanes, so one undo restores the whole edit including the compensation.
     const snapshot = Skeleton.captureLocal(main, joint)
       .concat(twin ? Skeleton.captureLocal(main, twin) : []);
-    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot,
+    // HOLD THE OFFSET BETWEEN THE HAND AND THE JOINT.
+    //
+    // Without it the joint is written straight to the controller tip, so it JUMPS to your hand
+    // the instant you grab it and then follows 1:1 — which is what matt was seeing and reading
+    // as a runaway: "the hips will drag themselves away from the body, the head will zap off to
+    // somewhere crazy." The trace showed it plainly: joint.y and joint.z equal to tip.y and
+    // tip.z on every frame, with the gap constant. Nothing was compounding; the very first
+    // frame had already moved it.
+    //
+    // The desktop path has held this offset all along ("so the joint does not jump to the
+    // pointer on the first frame") — the VR path simply never did. A grab should move the joint
+    // WITH your hand, not TO it.
+    // A REST EDIT IS IN PROGRESS — HOLD THE SOLVER OFF.
+    //
+    // Scene watches the pins every frame and re-solves when one appears to have moved, so that
+    // dragging a pin with the gizmo rearranges the chain. Tweak edits the REST skeleton, which
+    // moves joints — so the watcher read every frame of a tweak as "a pin moved", solved, and
+    // moved the children; the compensation then preserved their new positions, and the watcher
+    // saw movement again. A loop between two features that are each correct on their own, which
+    // is why it only appeared with a pin in the rig: matt's clean trace had pins=0, the runaway
+    // one had pins=1.
+    main._rigRestEdit = true;
+    const tipOffset = tip ? Skeleton.jointPos(joint, _jp2).clone().sub(tip) : null;
+    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot, tipOffset: tipOffset,
+      // A TAP IS A SELECT; ONLY A DELIBERATE MOVE IS A DRAG.
+      //
+      // Nothing was wrong with the drag itself — the trace showed the joint tracking the hand
+      // 1:1, no drift, no pins, no loop. The fault was that there is no way to merely SELECT a
+      // joint in this mode: pressing the trigger anywhere near one starts moving it, and a hand
+      // held still for a second still wanders a few centimetres, which the joint faithfully
+      // follows. matt was trying to "select the hips to change them to the dome type" and
+      // watched them walk away from the body.
+      //
+      // So the grab starts UNARMED and only begins writing once the hand has travelled past a
+      // threshold — the same tap-versus-drag rule the desktop IK path already uses. Release
+      // without arming and the press was a selection, which _releaseGrab already performs.
+      startTip: tip ? tip.clone() : null, armed: !tip,
       // Inverted at the grab so every frame is measured against that ONE pose. A frame-to-frame
       // delta composes into a ratchet that never returns to zero.
       qStart: quat ? new THREE.Quaternion(quat[0], quat[1], quat[2], quat[3]).invert() : null,
@@ -913,6 +973,9 @@ class BoneDrawTool extends SculptBase {
   _dragTo(pos, quat) {
     const g = this._grab;
     if (!g) return;
+    // The VR grab carries the hand-to-joint offset; the desktop drag has already applied its
+    // own before calling in, so only one of the two is ever present.
+    if (g.tipOffset) pos = _vGrab.copy(pos).add(g.tipOffset);
     // A joint WITH a twin is by definition a side joint, so snapping it to the centreline
     // would contradict its own mirror. Only centreline joints snap while dragging.
     // A joint WITH a twin is by definition a side joint, so plane-snapping it would
@@ -926,8 +989,19 @@ class BoneDrawTool extends SculptBase {
     // compensate mode, restores each child's model-space transform afterwards — so it has to be
     // the last thing that touches the chain, or the compensation is computed against a parent
     // frame that is about to turn.
-    if (quat && g.qStart) this._twistTo(g.joint, g.localAtGrab, quat);
-    Skeleton.moveJoint(this._main, g.joint, at, this._compensate);
+    // TWO SWITCHES, so the runaway can be cornered from the console instead of by argument.
+    // `_boneCompensate = false` drops the child pinning; `_boneTwist = false` drops the
+    // controller's ROTATION. Whichever one stops it names the culprit, and either is a usable
+    // workaround in the meantime.
+    // THE COMPENSATION BRACKETS BOTH WRITES. The twist rotates the joint and the move
+    // translates it; children have to be held still across the pair, not across the second one
+    // alone — see Skeleton.beginCompensate. Leaving it to moveJoint compensated the translation
+    // and let the rotation's swing accumulate, one frame's worth at a time.
+    const compensating = window._boneCompensate === false ? false : this._compensate;
+    const comp = compensating ? Skeleton.beginCompensate(this._main, g.joint) : null;
+    if (quat && g.qStart && window._boneTwist !== false) this._twistTo(g.joint, g.localAtGrab, quat);
+    Skeleton.moveJoint(this._main, g.joint, at, false);
+    if (comp) Skeleton.endCompensate(comp);
     if (g.twin && g.plane) {
       // The twin is deliberately NOT twisted: a mirrored rotation is not the same rotation, and
       // guessing which reflection was meant is how a symmetric rig comes back asymmetric. The
@@ -959,9 +1033,46 @@ class BoneDrawTool extends SculptBase {
     Skeleton.syncThree(joint);
   }
 
+  // One undo step per volume edit, holding both numbers: a resize and a move are the same
+  // gesture with a different button, and either way what you want back is "how it was".
+  _releaseVolume() {
+    const vd = this._volDrag;
+    this._volDrag = null;
+    if (!vd) return;
+    const j = vd.joint;
+    const rotArr = (q) => [q.x, q.y, q.z, q.w];
+    const before = { dims: vd.dims.slice(), off: vd.off.slice(),
+      rot: rotArr(vd.rot || Skeleton.jointVolRot(j)) };
+    const after = {
+      dims: Skeleton.jointVolDims(this._main, j).slice(),
+      off: Skeleton.jointVolOffset(this._main, j).slice(),
+      rot: rotArr(Skeleton.jointVolRot(j)),
+    };
+    const same = before.dims.every((v, i) => v === after.dims[i])
+      && before.off.every((v, i) => v === after.off[i])
+      && before.rot.every((v, i) => v === after.rot[i]);
+    if (same) return;   // a tap that selected and moved nothing is not an undo step
+    const main = this._main;
+    const apply = (st) => {
+      Skeleton.setJointVolDims(j, st.dims[0], st.dims[1], st.dims[2]);
+      Skeleton.setJointVolOffset(j, st.off[0], st.off[1], st.off[2]);
+      Skeleton.setJointVolRot(j, { x: st.rot[0], y: st.rot[1], z: st.rot[2], w: st.rot[3] });
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(before), () => apply(after), false, 'Bone Volume');
+  }
+
   _releaseGrab() {
     const g = this._grab;
     this._grab = null;
+    this._grabHand = null;
+    // The rig has a new rest; re-seed the watcher's caches BEFORE letting it look again, or the
+    // whole edit reads as one enormous external move and is solved away in a single frame.
+    this._main._rigRestEdit = false;
+    IKSolver.syncPinCache?.(this._main);
+    IKSolver.syncJointCache?.(this._main);
     if (!g) return;
     // Tweak edits the REST skeleton, and where a knee sits in the rest pose is the statement
     // of which way it bends. Drop the remembered preferences so the next solve re-reads them.
@@ -975,8 +1086,16 @@ class BoneDrawTool extends SculptBase {
     const main = this._main;
     const before = g.before;
     const after = before.map(([mesh]) => [mesh, mat4.clone(mesh.getMatrix())]);
+    // A grab that never armed moved nothing, so there is nothing to undo — and an undo step
+    // per selection is worse than no undo at all: it fills the stack with entries that appear
+    // to do nothing when you use them.
+    const moved = before.some(([mesh], i) => {
+      const a = after[i][1], b = mesh && before[i][1];
+      for (let k = 0; k < 16; k++) if (a[k] !== b[k]) return true;
+      return false;
+    });
     const sm = main.getStateManager && main.getStateManager();
-    if (sm && sm.pushStateCustom) {
+    if (moved && sm && sm.pushStateCustom) {
       sm.pushStateCustom(
         () => { Skeleton.restoreLocal(before); Skeleton.updateVisuals(main); main.render(); },
         () => { Skeleton.restoreLocal(after); Skeleton.updateVisuals(main); main.render(); },
@@ -994,6 +1113,7 @@ class BoneDrawTool extends SculptBase {
   // for (editing the rest skeleton); a pose that also moved joints would quietly change the
   // rig's proportions every time you turned a wrist.
   _beginPose(joint, quat) {
+    this._main._rigRestEdit = true;   // same reason as _beginGrab: this edits the rest skeleton
     // IS THE SOLVER GOING TO OVERWRITE THIS JOINT? Worked out once, at the press: solverOwnedIds
     // rebuilds the rig graph, which is not something to do per frame of a drag.
     //
@@ -1070,6 +1190,10 @@ class BoneDrawTool extends SculptBase {
   }
 
   _releasePose() {
+    this._grabHand = null;
+    this._main._rigRestEdit = false;
+    IKSolver.syncPinCache?.(this._main);
+    IKSolver.syncJointCache?.(this._main);
     const p = this._pose;
     this._pose = null;
     if (!p) return;
@@ -1225,6 +1349,7 @@ class BoneDrawTool extends SculptBase {
   }
 
   _releaseIK() {
+    this._grabHand = null;
     const ik = this._ik;
     this._ik = null;
     if (!ik) return;
@@ -1295,8 +1420,23 @@ class BoneDrawTool extends SculptBase {
     }
     this._wasAPressed = aPressed;
 
-    const down = isPressed && !this._wasXRPressed;
-    this._wasXRPressed = isPressed;
+    // THE PRESS EDGE IS PER HAND, AND THAT IS THE RUNAWAY.
+    //
+    // updateXR is called once per controller, and there is a second call site that always passes
+    // isPressed = false (the menu guard). With one shared flag the sequence each frame was:
+    // guard call sets it false, real call sees pressed && !false — so `down` was TRUE ON EVERY
+    // FRAME of a held trigger, not just the first.
+    //
+    // That re-ran the grab every frame, and a grab is a PICK: `pickJoint` re-chose whatever was
+    // nearest the tip right then. The joint being dragged is by definition nearest the tip, so
+    // it holds — until it is not, and the grab hops to the next joint, which is then dragged to
+    // your hand as well. matt: "the hips will drag themselves away from the body, the head will
+    // zap off to somewhere crazy." Not a feedback loop in the maths; a rising edge that never
+    // stopped rising.
+    const hand0 = (options && options.handedness) || 'one';
+    this._xrPressBy = this._xrPressBy || {};
+    const down = isPressed && !this._xrPressBy[hand0];
+    this._xrPressBy[hand0] = isPressed;
 
     // Draw the symmetry plane, lit up while the tip is inside the snap band so you can see
     // that the next joint will be centred BEFORE you commit it.
@@ -1307,17 +1447,29 @@ class BoneDrawTool extends SculptBase {
     // CLEARED EACH FRAME, then set by the modes that actually resolve a bone. This tool does
     // its own picking, so nothing else here would ever clear it — and a stale value names a
     // bone the tip is nowhere near, which is worse than naming none.
-    main._rigHoverBone = null;
+    // WHICH BONE THE HAND IS ON, IN EVERY MODE OF THIS TOOL — not only in Draw and Radius.
+    //
+    // Split acts on `_rigHoverBone` and falls back to the selected JOINT when there is none. At a
+    // T-junction that fallback cannot mean anything: the chest has a neck and two shoulders
+    // hanging off it, and "the joint" does not say which of the three you meant. matt: "i can see
+    // the neck, but i can't select it to split it... i would have expected bone highlighting to
+    // work here, but it seems to only highlight the joint."
+    //
+    // The pick is the same one Draw already does, so this costs a pick per frame and makes the
+    // highlight — and therefore Split — follow the hand in Pose, Tweak, IK and Volume too.
+    main._rigHoverBone = this._pickBone(_tip);
 
     if (this._mode === 'pose') {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
       const q = (options && options.quat) || main._vrControllerQuat;
-      if (down && q) {
+      const poseHand = (options && options.handedness) || null;
+      if (down && q && !this._pose) {
         const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
-        if (hit) this._beginPose(hit, q);
+        if (hit) { this._beginPose(hit, q); this._grabHand = poseHand; }
       }
-      if (this._pose) {
+      // Same ownership rule as the tweak grab above — one drag, one hand.
+      if (this._pose && (!this._grabHand || !poseHand || poseHand === this._grabHand)) {
         if (isPressed && q) this._poseTo(q);
         else this._releasePose();
       }
@@ -1327,15 +1479,153 @@ class BoneDrawTool extends SculptBase {
       return;
     }
 
+    // VOLUME: SELECT ONLY. The gizmo does the sizing and placing (see Skeleton.volumeEditTarget),
+    // so all this mode owes the controller is a way to say WHICH joint — and, crucially, a
+    // branch of its own. Without one it fell through to the code below and started drawing new
+    // joints, which is exactly what matt saw: "i tried the 'volume' button, it doesn't seem to
+    // do anything, it behaves like draw mode."
+    if (this._mode === 'volume') {
+      Skeleton.hidePreview(main);
+      Skeleton.hidePlane(main);
+      const volHand = (options && options.handedness) || null;
+
+      // THE DRAG IS THE GIZMO. There is no gizmo to grab in here: the desktop Gizmo is not
+      // drawn by this tool, and the VR one belongs to TransformVR, which is a different TOOL
+      // and cannot be active at the same time. So Volume mode edits the way everything else in
+      // this app does in a headset — grab the thing and move your hand. matt: "i don't see any
+      // gizmos, nothing happens when i hold the trigger and drag."
+      //
+      // Trigger drags the volume; the secondary button turns the same drag into a resize. Both
+      // are 1:1 in the joint's own frame, so what your hand does is what the shape does.
+      // A HANDLE FIRST, THEN A JOINT. The dots sit on the volume you have selected, so they are
+      // what the hand is reaching for when it is near them; falling through to the joint pick
+      // would re-select instead of resizing and the handles would feel dead.
+      if (down && !this._volDrag) {
+        const hj = main._volHandles && main._volHandles.joint;
+        const grip = hj ? Skeleton.pickVolumeHandle(main, _tip, this._snapDist() * 1.2) : null;
+        if (grip) {
+          _mVolInv.fromArray(hj.getModelSpaceMatrix());
+          _mVolInv.setPosition(0, 0, 0);
+          // The volume's own rotation is part of its frame, so a handle drag is measured in it —
+          // otherwise dragging the X dot on a tilted ribcage would scale it along the bone.
+          _qVolT.copy(Skeleton.jointVolRot(hj, _qVolT2));
+          _mVolInv.multiply(new THREE.Matrix4().makeRotationFromQuaternion(_qVolT));
+          _mVolInv.invert();
+          this._volDrag = {
+            joint: hj, hand: volHand, grip: grip,
+            start: _tip.clone(), inv: _mVolInv.clone(),
+            dims: Skeleton.jointVolDims(main, hj).slice(),
+            off: Skeleton.jointVolOffset(main, hj).slice(),
+            rot: Skeleton.jointVolRot(hj).clone(),
+            // Fixed at the grab: whether this volume has to stay symmetric about the mirror
+            // plane. Read once, because a drag that crossed the plane would otherwise change
+            // the rules under your hand halfway through.
+            centreline: Skeleton.volumeIsCentreline(main, hj),
+            qStart: (options && options.quat)
+              ? new THREE.Quaternion(options.quat[0], options.quat[1], options.quat[2], options.quat[3]).invert()
+              : null,
+            side: [1, 1, 1],
+          };
+          this._selectLater(hj);
+          return;
+        }
+        const hit = Skeleton.pickJoint(main, _tip, this._snapDist() * 3);
+        if (hit && Skeleton.hasVolume(hit)) {
+          this._selectLater(hit);
+          _mVolInv.fromArray(hit.getModelSpaceMatrix());
+          _mVolInv.setPosition(0, 0, 0);
+          _mVolInv.invert();
+          this._volDrag = {
+            joint: hit, hand: volHand,
+            start: _tip.clone(),
+            dims: Skeleton.jointVolDims(main, hit).slice(),
+            off: Skeleton.jointVolOffset(main, hit).slice(),
+            // Which side of the volume the grab started on, so pulling outward always GROWS.
+            side: null,
+          };
+          const local = _tip.clone().sub(Skeleton.jointPos(hit, _jp)).applyMatrix4(_mVolInv);
+          this._volDrag.side = [Math.sign(local.x) || 1, Math.sign(local.y) || 1, Math.sign(local.z) || 1];
+          this._volDrag.inv = _mVolInv.clone();
+        } else if (hit) {
+          this._selectLater(hit);   // no volume to edit: selecting is all this can mean
+        }
+      }
+
+      const vd = this._volDrag;
+      if (vd && (!vd.hand || !volHand || volHand === vd.hand)) {
+        if (isPressed) {
+          _vDelta.copy(_tip).sub(vd.start).applyMatrix4(vd.inv);
+          if (vd.grip && vd.grip.kind === 'face') {
+            const ax = vd.grip.axis, sgn = vd.grip.sign;
+            const d = _vDelta.getComponent(ax);
+            const dims = vd.dims.slice(), off = vd.off.slice();
+            if (vd.centreline && ax === 0) {
+              // BOTH SIDES AT ONCE. A ribcage straddles the mirror plane, so pulling its left
+              // face has to take the right one with it — the extent changes and the centre does
+              // not move at all. matt: "if i grab the ribcage and scale the left bbox handle,
+              // the right should mirror it."
+              dims[ax] = Math.max(1e-4, vd.dims[ax] + sgn * d);
+            } else {
+              // Grow from the face you took hold of, leaving the opposite one where it is: the
+              // extent takes half the pull and the centre takes the other half.
+              dims[ax] = Math.max(1e-4, vd.dims[ax] + sgn * d * 0.5);
+              off[ax] = vd.off[ax] + d * 0.5;
+            }
+            Skeleton.setJointVolDims(vd.joint, dims[0], dims[1], dims[2]);
+            Skeleton.setJointVolOffset(vd.joint, off[0], off[1], off[2]);
+          } else if (vd.grip && vd.grip.kind === 'centre') {
+            // SIX DEGREES OF FREEDOM, no modifier. The centre dot is a handle you hold: the
+            // volume follows the controller's position AND its rotation, because that is what
+            // holding something means. Asking for a button to turn it made rotation a mode.
+            if (vd.qStart && options && options.quat) {
+              _qNowV.set(options.quat[0], options.quat[1], options.quat[2], options.quat[3]);
+              _qDeltaV.copy(_qNowV).multiply(vd.qStart);
+              if (vd.centreline) {
+                // Only the tip about the mirror normal keeps a centreline volume symmetric;
+                // the rest of the controller's rotation is dropped rather than approximated.
+                Skeleton.twistAboutAxis(_qDeltaV, _axisX, _qDeltaV);
+              }
+              Skeleton.setJointVolRot(vd.joint, _qDeltaV.multiply(vd.rot));
+            }
+            // ...and slides. A centreline volume slides in YZ only: any x would take it off the
+            // plane it is defined by.
+            Skeleton.setJointVolOffset(vd.joint,
+              vd.centreline ? vd.off[0] : vd.off[0] + _vDelta.x,
+              vd.off[1] + _vDelta.y, vd.off[2] + _vDelta.z);
+          } else if (options && options.isNegative) {
+            // RESIZE. The extent grows on the side you pulled from, so dragging away from the
+            // volume always makes it bigger whichever face you took hold of.
+            Skeleton.setJointVolDims(vd.joint,
+              vd.dims[0] + _vDelta.x * vd.side[0],
+              vd.dims[1] + _vDelta.y * vd.side[1],
+              vd.dims[2] + _vDelta.z * vd.side[2]);
+          } else {
+            Skeleton.setJointVolOffset(vd.joint,
+              vd.off[0] + _vDelta.x, vd.off[1] + _vDelta.y, vd.off[2] + _vDelta.z);
+          }
+        } else {
+          this._releaseVolume();
+        }
+      }
+
+      // The handle under the hand is lit, so you can see which one you are about to take.
+      Skeleton.highlightVolumeHandle(main,
+        vd ? vd.grip : Skeleton.pickVolumeHandle(main, _tip, this._snapDist() * 1.2));
+      this._hilite = vd ? vd.joint : Skeleton.pickJoint(main, _tip, this._snapDist());
+      Skeleton.setHighlight(main, this._hilite);
+      return;
+    }
+
     if (this._mode === 'ik') {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
       const qIK = (options && options.quat) || main._vrControllerQuat;
-      if (down) {
+      const ikHand = (options && options.handedness) || null;
+      if (down && !this._ik) {
         const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
-        if (hit) this._beginIK(hit, qIK);
+        if (hit) { this._beginIK(hit, qIK); this._grabHand = ikHand; }
       }
-      if (this._ik) {
+      if (this._ik && (!this._grabHand || !ikHand || ikHand === this._grabHand)) {
         if (isPressed) this._ikTo(_tip, qIK);
         else this._releaseIK();
       }
@@ -1350,7 +1640,7 @@ class BoneDrawTool extends SculptBase {
       Skeleton.hidePlane(main);
       if (down) {
         const hit = this._pickBone(_tip);
-        if (hit) this._beginRadius(hit);
+        if (!this._radius && hit) this._beginRadius(hit);
       }
       if (this._radius) {
         if (isPressed) this._radiusTo(_tip);
@@ -1367,13 +1657,69 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'tweak') {
       Skeleton.hidePreview(main);
       const qTweak = (options && options.quat) || main._vrControllerQuat;
-      if (down) {
+      const hand = (options && options.handedness) || null;
+      // `&& !this._grab`: a grab already in hand is never re-picked, whatever the edge says.
+      if (down && !this._grab) {
         const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
-        if (hit) this._beginGrab(hit, qTweak);
+        if (hit) { this._beginGrab(hit, qTweak, _tip); this._grabHand = hand; }
       }
-      if (this._grab) {
-        if (isPressed) this._dragTo(_tip, qTweak);
+      // ONLY THE HAND THAT GRABBED MAY DRIVE OR RELEASE THE GRAB.
+      //
+      // updateXR runs once per CONTROLLER, and there is a second call site that always passes
+      // isPressed = false (the menu guard). So the other hand's call was dragging the joint to
+      // ITS tip — wherever that happened to be — and then releasing the grab a frame later. From
+      // the inside that reads exactly as matt described it: "the hips will drag themselves away
+      // from the body, the head will zap off to somewhere crazy."
+      //
+      // One grab, one owner. A call from any other hand leaves it alone.
+      if (this._grab && (!this._grabHand || !hand || hand === this._grabHand)) {
+        // Half the pick radius: far enough that holding still cannot trip it, near enough that
+        // a move meant as a move arms on the first deliberate centimetre.
+        if (isPressed && !this._grab.armed && this._grab.startTip
+            && _tip.distanceTo(this._grab.startTip) > this._snapDist() * 0.5) {
+          this._grab.armed = true;
+          // RE-TAKE THE OFFSET AT THE MOMENT OF ARMING. The hand has by definition travelled a
+          // threshold's worth by now, and an offset measured back at the press would hand all of
+          // it to the joint in one frame — a visible pop exactly when the drag begins. Measured
+          // here, the joint starts from where it still is and follows from there.
+          if (this._grab.tipOffset) {
+            this._grab.tipOffset.copy(Skeleton.jointPos(this._grab.joint, _jp2)).sub(_tip);
+          }
+        }
+        if (isPressed) { if (this._grab.armed) this._dragTo(_tip, qTweak); }
         else this._releaseGrab();
+        // Read AFTER the write, so the next frame can tell this tool's own result apart from
+        // whatever happened to the joint in between.
+        if (window._tweakTrace && this._grab) {
+          Skeleton.jointPos(this._grab.joint, _jp2);
+          this._tracePost = _jp2.clone();
+          console.log('[tweak]   -> post=' + _jp2.x.toFixed(3) + ',' + _jp2.y.toFixed(3)
+            + ',' + _jp2.z.toFixed(3)
+            + '  movedThisFrame=' + (this._traceTip ? _jp2.distanceTo(_jp).toFixed(4) : '?'));
+        }
+      }
+      // WHO MOVED THE JOINT. The first trace proved the joint was tracking the hand; it could
+      // not say whether THIS tool was the only thing writing to it. So the joint is read BEFORE
+      // the drag as well as after, and `drift` is the distance it travelled between the end of
+      // last frame and the start of this one — i.e. movement this tool did not cause.
+      //
+      // drift ~0 and post == target  -> the tool owns the joint and the maths here is the story
+      // drift large                  -> something else (a solver, a pin, another tool) is also
+      //                                 writing to it, and this tool is fighting it every frame
+      // hand still, post moving      -> the target itself is being recomputed, not the input
+      if (window._tweakTrace && this._grab) {
+        Skeleton.jointPos(this._grab.joint, _jp);
+        const drift = this._tracePost ? _jp.distanceTo(this._tracePost) : 0;
+        const handMove = this._traceTip ? _tip.distanceTo(this._traceTip) : 0;
+        this._traceTip = _tip.clone();
+        console.log('[tweak] hand=' + hand + ' owner=' + this._grabHand
+          + ' pressed=' + (isPressed ? 1 : 0)
+          + ' pre=' + _jp.x.toFixed(3) + ',' + _jp.y.toFixed(3) + ',' + _jp.z.toFixed(3)
+          + ' drift=' + drift.toFixed(4)
+          + ' handMoved=' + handMove.toFixed(4)
+          + ' pins=' + (IKSolver.pinnedJoints(main).length)
+          + ' twin=' + (this._grab.twin ? 1 : 0)
+          + ' compensate=' + (this._compensate ? 1 : 0));
       }
       // Preselect whatever the tip is nearest to, unless a drag already owns a joint.
       this._hilite = this._grab ? this._grab.joint
@@ -1474,6 +1820,7 @@ class BoneDrawTool extends SculptBase {
   clearPreview() {
     this._drag = null;
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
+    this._releaseVolume();
     // Leaving the tool puts the real vertex colours back. A weight preview is a diagnostic,
     // and one that outlived the tool could be saved into the sculpt without anyone noticing.
     Skinning.restoreColorsAll(this._main);

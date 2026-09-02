@@ -119,34 +119,68 @@ RigTopology.split = function (main, joint, t) {
   const b = Skeleton.jointPos(joint);
   const pos = { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: a.z + (b.z - a.z) * u };
 
-  const before = snapshot(main, [joint]);
+  // SPLIT THE TWIN TOO. A rig is built symmetrically and stays that way only if every topology
+  // edit is symmetric: splitting the left collarbone and not the right leaves a skeleton that no
+  // longer mirrors, and every later feature that reads `_boneMirror` — pose mirroring, capsule
+  // pairing, centreline rules — quietly stops working for that limb. matt: "if i split a bone,
+  // it doesn't appear to mirror when it should."
+  //
+  // Only when the twin's own bone is splittable: a twin whose parent is not the mirror of this
+  // one is not the same bone on the other side, and guessing there would be worse than not
+  // mirroring at all.
+  const twin = joint._boneMirror;
+  const twinOk = !!(twin && RigTopology.canSplit(main, twin)
+    && twin._parentMesh === (parent._boneMirror || parent));
+  const targets = twinOk ? [joint, twin] : [joint];
 
-  // Created under the SAME parent, then the old child moves under it — so the chain reads
-  // parent -> new -> joint and every joint below `joint` comes along untouched.
-  const mid = Skeleton.createJoint(main, pos, parent, splitName(parent, joint), { silent: true });
-  // The radius is a property of the bone, and the new joint sits inside the old one — take the
-  // interpolated value rather than the default, or the chain visibly pinches at the new joint.
-  if (Number.isFinite(joint._boneRadius) && Number.isFinite(parent._boneRadius)) {
-    mid._boneRadius = parent._boneRadius + (joint._boneRadius - parent._boneRadius) * u;
-  } else if (Number.isFinite(joint._boneRadius)) {
-    mid._boneRadius = joint._boneRadius;
+  const before = snapshot(main, targets);
+  const mids = [];
+
+  for (const target of targets) {
+    const tp = target._parentMesh;
+    const ta = Skeleton.jointPos(tp);
+    const tb = Skeleton.jointPos(target);
+    const tpos = { x: ta.x + (tb.x - ta.x) * u, y: ta.y + (tb.y - ta.y) * u,
+                   z: ta.z + (tb.z - ta.z) * u };
+
+    // Created under the SAME parent, then the old child moves under it — so the chain reads
+    // parent -> new -> joint and every joint below `joint` comes along untouched.
+    const m = Skeleton.createJoint(main, tpos, tp, splitName(tp, target), { silent: true });
+    // The radius is a property of the bone, and the new joint sits inside the old one — take the
+    // interpolated value rather than the default, or the chain visibly pinches at the new joint.
+    if (Number.isFinite(target._boneRadius) && Number.isFinite(tp._boneRadius)) {
+      m._boneRadius = tp._boneRadius + (target._boneRadius - tp._boneRadius) * u;
+    } else if (Number.isFinite(target._boneRadius)) {
+      m._boneRadius = target._boneRadius;
+    }
+    main.setMeshParent(target.getID(), m.getID(), { silent: true });
+
+    // Rest is the pose the solver seeds from; a joint created now has none, so give it the pose
+    // it was created in. Without it the first solve adopts whatever pose the rig happens to be
+    // in, which makes the new joint history-dependent inside a deterministic rig.
+    m._ikRest = mat4.clone(m.getMatrix());
+    mids.push(m);
   }
-  main.setMeshParent(joint.getID(), mid.getID(), { silent: true });
 
-  // Rest is the pose the solver seeds from; a joint created now has none, so give it the pose
-  // it was created in. Without it the first solve adopts whatever pose the rig happens to be
-  // in, which makes the new joint history-dependent inside a deterministic rig.
-  mid._ikRest = mat4.clone(mid.getMatrix());
+  // PAIR THE NEW JOINTS. Splitting both sides is only half of mirroring — without this link the
+  // two new joints are strangers, and the next mirror-aware operation treats them as centreline
+  // bones sitting improbably far off the plane.
+  if (mids.length === 2) {
+    mids[0]._boneMirror = mids[1];
+    mids[1]._boneMirror = mids[0];
+  }
 
-  const after = snapshot(main, [joint, mid]);
+  const after = snapshot(main, targets.concat(mids));
   // `before` has no entry for a joint that did not exist; add one marked absent so undo removes
   // it rather than leaving it orphaned in the scene.
-  before.push({ mesh: mid, parent: parent, matrix: mat4.clone(mid.getMatrix()),
-    rest: mid._ikRest ? mat4.clone(mid._ikRest) : null, present: false });
+  for (let i = 0; i < mids.length; i++) {
+    before.push({ mesh: mids[i], parent: targets[i]._parentMesh, matrix: mat4.clone(mids[i].getMatrix()),
+      rest: mids[i]._ikRest ? mat4.clone(mids[i]._ikRest) : null, present: false });
+  }
 
   restore(main, after);   // one path for doing it and for redoing it
-  commit(main, before, after, 'Split Bone');
-  return mid;
+  commit(main, before, after, mids.length === 2 ? 'Split Bone (mirrored)' : 'Split Bone');
+  return mids[0];
 };
 
 function splitName(parent, joint) {

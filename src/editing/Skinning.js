@@ -264,6 +264,13 @@ Skinning.setMushIterations = function (n) {
 
 Skinning.defaultMushIterations = function () { return MUSH_ITERATIONS; };
 
+// The WEIGHT smoothing count (not the mush): 0 by default, so a partial re-solve changes only
+// the vertices it measured. Anything above 0 spreads a change to neighbours and the colour pass
+// has to repaint the lot.
+Skinning.mushSmoothIterations = function () {
+  return Math.round(tune('_skinSmooth', SMOOTH_ITERATIONS));
+};
+
 // ---- x-ray ----------------------------------------------------------------------
 //
 // A capsule lives INSIDE the character, which is the one thing that makes weighting by
@@ -732,7 +739,10 @@ Skinning.resolveWeights = function (main, mesh, touched) {
   mesh._skinW = w.wts;
   mesh._skinRaw = rawSnapshot(raw);
   mesh._skinDirty = true;
-  Skinning.refreshWeightColors(main, mesh);
+  // Smoothing spreads a change outwards, so the candidate set is only the truthful answer to
+  // "what changed" when there is none. With smoothing on, repaint everything.
+  Skinning.refreshWeightColors(main, mesh,
+    Skinning.mushSmoothIterations() > 0 ? null : raw.changed || null);
   return true;
 };
 
@@ -744,7 +754,11 @@ Skinning.resolveWeights = function (main, mesh, touched) {
 function resolveCagesRaw(mesh, prepared, nbV, touched) {
   const slack = cageSlack(prepared);
   const base = mesh._skinRaw;
-  const full = () => WeightCage.weights(mesh._skinRest, nbV, prepared, MAX_INFLUENCES, slack);
+  const full = () => {
+    Skinning._lastCandidates = nbV;   // "measured everything", so a slow stroke says why
+    Skinning._lastVerts = nbV;
+    return WeightCage.weights(mesh._skinRest, nbV, prepared, MAX_INFLUENCES, slack);
+  };
   const list = touched ? (Array.isArray(touched) ? touched : [touched]) : [];
   if (!list.length || !base || base.idx.length !== nbV * MAX_INFLUENCES) return full();
 
@@ -759,7 +773,14 @@ function resolveCagesRaw(mesh, prepared, nbV, touched) {
     if (ji < 0 || !p) return full();   // a capsule we cannot place: measure everything
     for (const i of WeightCage.candidates(V, nbV, p, base, MAX_INFLUENCES)) seen.add(i);
   }
-  return WeightCage.weightsPartial(V, prepared, MAX_INFLUENCES, slack, [...seen], base);
+  const cand = [...seen];
+  Skinning._lastCandidates = cand.length;
+  Skinning._lastVerts = nbV;
+  const out = WeightCage.weightsPartial(V, prepared, MAX_INFLUENCES, slack, cand, base);
+  // WHICH VERTICES COULD HAVE CHANGED, carried out so the colour pass can repaint those instead
+  // of the whole character. It is the same set the measurement used, so it costs nothing.
+  out.changed = cand;
+  return out;
 }
 
 // The mesh a joint drives, if any. Selecting a joint is unavoidable while rigging — grabbing
@@ -793,8 +814,16 @@ Skinning.resolveWeightsAll = function (main, touched) {
 //
 // Called on stroke end rather than per sample: the measurement is over the skin's vertices, not
 // the cage's, so it is far too expensive to run inside a stroke.
+// WHERE THE TIME AFTER A STROKE ACTUALLY GOES.
+//
+// "Slow after every stroke" has four candidates that look identical from the outside -- the
+// mirror, preparing the cages, measuring the skin, and repainting the weight colours -- and
+// guessing between them is how an afternoon disappears. Always recorded (four timestamps is
+// nothing); printed only with `window._skinPerf = true`, and the last breakdown is left on
+// `window._skinPerfLast` so it can be read after the fact without turning logging on first.
 Skinning.onCageEdited = function (main, cage) {
   if (!WeightCage.isCage(cage)) return 0;
+  const _t0 = performance.now();
   // MIRROR FIRST, THEN MEASURE. The twin capsule is part of the shape being weighted, so
   // re-solving before it moves would weight the skin against a half-finished edit and leave the
   // other side of the character a stroke behind.
@@ -804,7 +833,23 @@ Skinning.onCageEdited = function (main, cage) {
   // weights stale until something else happened to re-solve them.
   const touched = (mir && mir.ok && mir.twinCage && mir.twinCage !== cage)
     ? [cage, mir.twinCage] : [cage];
-  return Skinning.resolveWeightsAll(main, touched);
+  const _t1 = performance.now();
+  const n = Skinning.resolveWeightsAll(main, touched);
+  const _t2 = performance.now();
+  const p = window._skinPerfLast = {
+    mirror: Math.round(_t1 - _t0),
+    resolve: Math.round(_t2 - _t1),
+    total: Math.round(_t2 - _t0),
+    measured: Skinning._lastCandidates | 0,
+    colored: Skinning._lastColored | 0,
+    of: Skinning._lastVerts | 0,
+    meshes: n,
+  };
+  if (window._skinPerf) {
+    console.log('[skin] stroke ' + p.total + 'ms  (mirror ' + p.mirror + ', resolve ' + p.resolve
+      + ')  measured ' + p.measured + ' of ' + p.of + ' verts, repainted ' + p.colored);
+  }
+  return n;
 };
 
 // ---- weight colour preview ------------------------------------------------------
@@ -816,7 +861,7 @@ Skinning.onCageEdited = function (main, cage) {
 
 Skinning.weightColorsShown = function (mesh) { return !!(mesh && mesh._skinSavedColors); };
 
-Skinning.showWeightColors = function (main, mesh) {
+Skinning.showWeightColors = function (main, mesh, only) {
   if (!Skinning.isBound(mesh)) return false;
   // Colours are per weight, so they belong to the bound level too. At another level the map
   // does not address these vertices and painting would be meaningless.
@@ -832,7 +877,15 @@ Skinning.showWeightColors = function (main, mesh) {
   const cols = joints.map((j) => (j ? Skeleton.boneColor(main, j) : null));
   const idx = mesh._skinIdx, wts = mesh._skinW;
 
-  for (let i = 0; i < nbV; i++) {
+  // ONLY THE VERTICES THAT CHANGED, when the caller knows which. A cage stroke moves a few
+  // hundred of them and this used to repaint every vertex of the character on every stroke --
+  // the same work as a full bind, done for a local edit. The first paint has no such list and
+  // still walks everything, which is right: there is nothing on the mesh yet to keep.
+  const partial = only && only.length !== undefined && mesh._skinColorsPainted;
+  const count = partial ? only.length : nbV;
+  Skinning._lastColored = count;
+  for (let n = 0; n < count; n++) {
+    const i = partial ? only[n] : n;
     let r = 0, g = 0, b = 0, total = 0;
     for (let k = 0; k < MAX_INFLUENCES; k++) {
       const j = idx[i * MAX_INFLUENCES + k];
@@ -846,13 +899,15 @@ Skinning.showWeightColors = function (main, mesh) {
     if (total <= 1e-6) { r = g = b = 0.04; total = 1; }
     colors[i * 3] = r / total; colors[i * 3 + 1] = g / total; colors[i * 3 + 2] = b / total;
   }
-  mesh.updateDuplicateColorsAndMaterials();
+  mesh._skinColorsPainted = true;
+  mesh.updateDuplicateColorsAndMaterials(partial ? only : undefined);
   mesh.updateColorBuffer();
   return true;
 };
 
 Skinning.restoreColors = function (mesh) {
   if (!mesh || !mesh._skinSavedColors) return;
+  mesh._skinColorsPainted = false;
   const level = boundLevel(mesh);
   if (!level || level.getNbVertices() * 3 < mesh._skinSavedColors.length) return; // wrong level: leave it
   level.getColors().set(mesh._skinSavedColors);
@@ -863,10 +918,10 @@ Skinning.restoreColors = function (mesh) {
 
 // Repaint if the preview is on, otherwise make sure the real colours are back. Called after
 // anything that changes the assignment, so the two states can never drift apart.
-Skinning.refreshWeightColors = function (main, mesh) {
+Skinning.refreshWeightColors = function (main, mesh, only) {
   if (!Skinning.isBound(mesh)) { Skinning.restoreColors(mesh); return; }
   if (!Skeleton.displayFlag('weights')) Skinning.restoreColors(mesh);
-  else Skinning.showWeightColors(main, mesh);
+  else Skinning.showWeightColors(main, mesh, only);
 };
 
 // Put every mesh's real colours back. Called when the Bones tool is left, so a preview can

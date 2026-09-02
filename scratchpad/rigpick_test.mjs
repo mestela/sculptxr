@@ -763,9 +763,10 @@ check('...and the zone widening is the only thing left gated',
       'mid-chain the tip is the end of the bone being drawn, so it would light every frame');
     check('radius mode publishes it too, since it already resolves a bone',
       /main\._rigHoverBone = this\._hilite;/.test(BD));
-    check('...and it is cleared every frame so it cannot go stale',
-      /main\._rigHoverBone = null;/.test(BD),
-      'this tool picks for itself, so nothing else here would ever clear it');
+    check('...and it is re-picked every frame so it cannot go stale',
+      /main\._rigHoverBone = this\._pickBone\(_tip\);/.test(BD),
+      'this tool picks for itself, so nothing else here would ever refresh it — and Split reads '
+      + 'it in every mode, not just the two that used to publish it');
   }
 
   // FROZEN AT OPEN, not re-read on release. Picking a sector moves the hand and the

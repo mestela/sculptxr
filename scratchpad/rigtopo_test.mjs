@@ -16,6 +16,8 @@
 //                          is computed from a parent that is not back yet
 //   RT_INJECT=splitroot    split stops refusing a root, and invents a parent for it
 //   RT_INJECT=norest       a split joint is created with no rest pose
+//   RT_INJECT=nomirrorsplit a split stops taking the twin bone with it
+//   RT_INJECT=unpairedmids  both sides split, but the two new joints are never paired
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -44,7 +46,10 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/RigTopology.js'), 'utf8')
   else if (i === 'splitroot') cut(
     "  return !!(joint && Skeleton.isJoint(joint) && joint._parentMesh\n    && Skeleton.isJoint(joint._parentMesh) && main.getIndexMesh(joint) >= 0);",
     '  return !!(joint && Skeleton.isJoint(joint) && main.getIndexMesh(joint) >= 0);');
-  else if (i === 'norest') cut('  mid._ikRest = mat4.clone(mid.getMatrix());', '');
+  else if (i === 'norest') cut('    m._ikRest = mat4.clone(m.getMatrix());', '');
+  else if (i === 'nomirrorsplit') cut('  const targets = twinOk ? [joint, twin] : [joint];', '  const targets = [joint];');
+  else if (i === 'unpairedmids') cut(
+    '    mids[0]._boneMirror = mids[1];\n    mids[1]._boneMirror = mids[0];', '');
 }
 
 // ── stubs: a tiny scene that behaves the way the real one does where it matters ──
@@ -137,6 +142,52 @@ const chain = (main, meshes, n) => {
   }
   return js;
 };
+
+// ── SPLIT MIRRORS ────────────────────────────────────────────────────────────
+//
+// A rig is built symmetrically and only stays that way if every topology edit is symmetric.
+// matt: "if i split a bone, it doesn't appear to mirror when it should. eg i split the joint
+// from the chest to the shoulder, it only appeared on one side."
+{
+  const { main, meshes } = makeScene();
+  // A chest with a left and right collarbone hanging off it — the shape matt was splitting.
+  const chest = main._mk('chest'); chest.m[13] = 5; meshes.push(chest);
+  const clavL = main._mk('clav_L'); clavL.m[12] = 2; clavL.m[13] = 5; clavL._parentMesh = chest; meshes.push(clavL);
+  const clavR = main._mk('clav_R'); clavR.m[12] = -2; clavR.m[13] = 5; clavR._parentMesh = chest; meshes.push(clavR);
+  clavL._boneMirror = clavR; clavR._boneMirror = clavL;
+
+  const n0 = meshes.length;
+  const mid = RT.split(main, clavL);
+
+  check('splitting one side splits the other too', meshes.length === n0 + 2,
+    'added ' + (meshes.length - n0) + ' joint(s) — a one-sided split leaves a rig that no '
+    + 'longer mirrors, and every feature reading _boneMirror quietly stops working for that limb');
+  check('...each between its own joint and parent',
+    !!mid && clavL._parentMesh === mid && mid._parentMesh === chest
+    && clavR._parentMesh && clavR._parentMesh._parentMesh === chest);
+  check('...and the two new joints are paired',
+    !!mid && !!mid._boneMirror && mid._boneMirror === clavR._parentMesh
+    && mid._boneMirror._boneMirror === mid,
+    'unpaired, the next mirror-aware operation treats them as centreline bones sitting '
+    + 'improbably far off the plane');
+  check('...mirrored positions, not copied ones',
+    !!mid && Math.abs(mid.m[12] - 1) < 1e-9 && Math.abs(clavR._parentMesh.m[12] + 1) < 1e-9,
+    'each side is measured along its OWN bone: ' + (mid ? mid.m[12] : '?')
+    + ' and ' + (clavR._parentMesh ? clavR._parentMesh.m[12] : '?'));
+}
+
+// A bone whose twin is not the same bone on the other side must NOT drag it along.
+{
+  const { main, meshes } = makeScene();
+  const js = chain(main, meshes, 3);
+  const stray = main._mk('stray'); stray.m[12] = 9; stray._parentMesh = null; meshes.push(stray);
+  js[1]._boneMirror = stray;                 // a twin with a different parent: not our bone
+  const n0 = meshes.length;
+  RT.split(main, js[1]);
+  check('a twin that is not the mirror of this bone is left alone',
+    meshes.length === n0 + 1,
+    'guessing there would be worse than not mirroring at all');
+}
 
 // ── SPLIT ────────────────────────────────────────────────────────────────────
 {
@@ -306,16 +357,16 @@ const chain = (main, meshes, n) => {
 {
   const BD = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
   check('the grab captures the controller orientation',
-    /_beginGrab\(joint, quat\)/.test(BD) && /qStart: quat \?/.test(BD));
+    /_beginGrab\(joint, quat, tip\)/.test(BD) && /qStart: quat \?/.test(BD));
   check('...inverted once, not accumulated frame to frame',
     /\.invert\(\) : null,/.test(BD),
     'a frame-to-frame delta composes into a ratchet that never returns to zero');
   check('...and the VR dispatch actually passes it',
-    /this\._beginGrab\(hit, qTweak\)/.test(BD) && /this\._dragTo\(_tip, qTweak\)/.test(BD),
+    /this\._beginGrab\(hit, qTweak, _tip\)/.test(BD) && /this\._dragTo\(_tip, qTweak\)/.test(BD),
     'capturing a quat nothing supplies is a feature that silently does nothing');
   check('the twist is applied BEFORE the move',
     BD.indexOf('this._twistTo(g.joint, g.localAtGrab, quat)')
-      < BD.indexOf('Skeleton.moveJoint(this._main, g.joint, at, this._compensate)'),
+      < BD.indexOf('Skeleton.moveJoint(this._main, g.joint, at,'),
     'moveJoint restores each child in compensate mode, so it has to be last');
   check('...measured from the pose at the GRAB, not the live matrix',
     /_twistTo\(joint, localAtGrab, quat\)/.test(BD),

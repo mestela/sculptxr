@@ -2,6 +2,7 @@ import { vec2, vec3, mat4, quat } from 'gl-matrix';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
+import Skeleton from './Skeleton.js';
 
 // configs colors
 var COLOR_X = vec3.fromValues(0.7, 0.2, 0.2);
@@ -868,6 +869,23 @@ class Gizmo {
     this._startTranslateEdit();
   }
 
+  // THE STATE A VOLUME DRAG IS MEASURED FROM. Captured once when the handle is grabbed: reading
+  // the live dimensions each frame would compound the scale, so the shape would run away from
+  // the pointer rather than follow it.
+  _startVolumeEdit() {
+    var j = Skeleton.volumeEditTarget(this._main);
+    this._volStartDims = null;
+    this._volStartOffset = null;
+    this._volJointInv = null;
+    if (!j) return;
+    this._volStartDims = Skeleton.jointVolDims(this._main, j).slice();
+    this._volStartOffset = Skeleton.jointVolOffset(this._main, j).slice();
+    // World -> joint-local, rotation only: the offset is expressed in the joint's frame.
+    var m = mat4.clone(j.getModelSpaceMatrix());
+    m[12] = m[13] = m[14] = 0;
+    this._volJointInv = mat4.invert(mat4.create(), m) || mat4.create();
+  }
+
   _updateRotateEdit() {
     var main = this._main;
 
@@ -980,6 +998,19 @@ class Gizmo {
 
   _updateMatrixTranslate(inter) {
     var tmp = [0, 0, 0];
+
+    // ...and the same for translate, which is how a skull gets its pivot moved back and up
+    // without moving the JOINT the animation is driving. Every translate handle lands here —
+    // axis, plane and camera-plane — so one interception covers all of them. The offset is
+    // stored in the joint's own frame, so it is rotated out of world space on the way in.
+    var volJoint = Skeleton.volumeEditTarget(this._main);
+    if (volJoint) {
+      var o0 = this._volStartOffset || Skeleton.jointVolOffset(this._main, volJoint);
+      var local = vec3.transformMat4([0, 0, 0], inter, this._volJointInv || mat4.create());
+      Skeleton.setJointVolOffset(volJoint, o0[0] + local[0], o0[1] + local[1], o0[2] + local[2]);
+      Skeleton.updateVisuals(this._main);
+      return;
+    }
 
     var meshes = this._main.getSelectedMeshes();
     for (var i = 0; i < meshes.length; ++i) {
@@ -1175,6 +1206,19 @@ class Gizmo {
       inter[2] += scaleMult;
     } else {
       inter[nbAxis] += scaleMult;
+    }
+
+    // A JOINT VOLUME IS SCALED INSTEAD OF THE SELECTION, in Volume mode. Scaling the joint
+    // itself would scale the rig — the thing the gizmo does everywhere else and the one thing
+    // that must not happen while a pelvis is being sized. Multiplied off the dimensions captured
+    // at the start of the drag, so the handle tracks the pointer instead of compounding.
+    var volJoint = Skeleton.volumeEditTarget(this._main);
+    if (volJoint) {
+      var d0 = this._volStartDims || Skeleton.jointVolDims(this._main, volJoint);
+      Skeleton.setJointVolDims(volJoint,
+        d0[0] * inter[0], d0[1] * inter[1], d0[2] * inter[2]);
+      Skeleton.updateVisuals(this._main);
+      return;
     }
 
     var meshes = this._main.getSelectedMeshes();
@@ -1388,6 +1432,10 @@ class Gizmo {
     else if (type & SCALE_XYZW) this._startScaleEdit();
     else if (type & TRANS_W) this._startCameraPlaneEdit();
     else if (type & ROT_W) this._startTrackballEdit();
+
+    // After the chain, not inside it: every handle can drive a volume, so this is not one more
+    // branch — it is the state all of them are measured from.
+    this._startVolumeEdit();
 
     return true;
   }

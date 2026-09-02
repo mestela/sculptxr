@@ -406,9 +406,14 @@ WeightCage.bake = function (main) {
     made.push(cage);
   }
 
-  return made.length
-    ? { ok: true, cages: made.length }
-    : { ok: false, why: 'no bones with a radius to bake' };
+  if (!made.length) return { ok: false, why: 'no bones with a radius to bake' };
+
+  // PAIR THEM NOW, while every capsule is still the shape the generator made. This is the one
+  // moment the two sides are exact mirror images, so it is the only moment a correspondence can
+  // be established with confidence -- afterwards you are matching a sculpt against a capsule.
+  const pairs = WeightCage.pairMirrors(main);
+  main._cagePairTried = true;
+  return { ok: true, cages: made.length, paired: pairs.paired, unpaired: pairs.unpaired };
 };
 
 // THE CAPSULES BUTTON HIDES THE BAKED ONES TOO.
@@ -443,100 +448,156 @@ WeightCage.setVisible = function (main, on) {
 // twin, and mirrors onto ITSELF -- which is the case the ordinary local symmetry would have got
 // right, and it costs nothing to handle here with the same machinery.
 
-// Vertex i of `src` corresponds to which vertex of `dst`, once mirrored. Built by matching
-// mirrored positions to nearest neighbours in MODEL space, and cached on the source cage.
+// THE PAIRING IS BUILT AT BAKE TIME, IN LOCAL SPACE. Both facts are load-bearing and the first
+// version had neither, which is what made mirroring "borderline unusable, with shapes on one
+// side going crazy on the other".
+//
+//   WHEN. The map was built the first time a mirror ran -- by which point one side had already
+//   been sculpted, so it was matching a shaped capsule against a round one and the nearest
+//   neighbour was meaningless. Built at bake, both capsules are pristine and every match is an
+//   exact hit; nothing later can degrade it, because the map is indices, not positions.
+//
+//   WHERE. Mirroring in MODEL space bakes the pose into the result: with the arms in different
+//   positions -- which is most poses -- the mirrored shape lands nowhere near the twin's own
+//   frame and the capsule tears itself apart. What is captured instead is a single 4x4 taking
+//   the source cage's LOCAL space to its twin's local space, measured once at bake. It has no
+//   pose in it at all, so the same matrix is right whatever the character is doing later.
+//
+// `M` = inverse(twin's model matrix) * reflection * (this cage's model matrix), at bake.
+function mirrorTransform(srcCage, dstCage, plane) {
+  // Reflection about the plane as a 4x4: p' = p - 2((p-o).n)n, i.e. (I - 2nn^T) with a
+  // translation of 2(o.n)n. Written out rather than composed from translate/scale/translate,
+  // which is three matrices and one more place to get the sign wrong.
+  const n = plane.normal, o = plane.origin;
+  const k = 2 * (n.x * o.x + n.y * o.y + n.z * o.z);
+  const P = new THREE.Matrix4().set(
+    1 - 2 * n.x * n.x, -2 * n.x * n.y, -2 * n.x * n.z, k * n.x,
+    -2 * n.y * n.x, 1 - 2 * n.y * n.y, -2 * n.y * n.z, k * n.y,
+    -2 * n.z * n.x, -2 * n.z * n.y, 1 - 2 * n.z * n.z, k * n.z,
+    0, 0, 0, 1);
+  const A = new THREE.Matrix4().fromArray(srcCage.getModelSpaceMatrix());
+  const Binv = new THREE.Matrix4().fromArray(dstCage.getModelSpaceMatrix()).invert();
+  return new THREE.Matrix4().multiplyMatrices(Binv, new THREE.Matrix4().multiplyMatrices(P, A));
+}
+
+// Vertex i of `src` corresponds to which vertex of `dst`, once carried across by `M`.
 //
 // Matched rather than assumed equal: mirroring reverses a capsule's radial winding, so index i
 // on the left is emphatically not index i on the right, and copying straight across turns the
-// twin inside out. Both cages come from the same generator, so at bake time they are exact
-// mirror images and every match is a direct hit -- the map is built once, then reused while the
-// vertex counts hold.
-function mirrorMap(src, dst, plane) {
-  const sv = src.verts, dv = dst.verts;
-  const n = sv.length / 3, m = dv.length / 3;
+// twin inside out. `worst` is the largest match distance -- at bake, against a symmetric rig,
+// it is essentially zero, and anything else means the two bones are not mirror images and the
+// pair should be left alone rather than scrambled.
+function mirrorMap(srcVerts, dstVerts, M) {
+  const n = srcVerts.length / 3, m = dstVerts.length / 3;
   const map = new Int32Array(n).fill(-1);
   const _p = new THREE.Vector3();
+  let worst = 0;
   for (let i = 0; i < n; i++) {
-    _p.set(sv[i * 3], sv[i * 3 + 1], sv[i * 3 + 2]);
-    Skeleton.mirrorPoint(_p, plane, _p);
+    _p.set(srcVerts[i * 3], srcVerts[i * 3 + 1], srcVerts[i * 3 + 2]).applyMatrix4(M);
     let best = -1, bestD = Infinity;
     for (let j = 0; j < m; j++) {
-      const dx = dv[j * 3] - _p.x, dy = dv[j * 3 + 1] - _p.y, dz = dv[j * 3 + 2] - _p.z;
+      const dx = dstVerts[j * 3] - _p.x, dy = dstVerts[j * 3 + 1] - _p.y, dz = dstVerts[j * 3 + 2] - _p.z;
       const d = dx * dx + dy * dy + dz * dz;
       if (d < bestD) { bestD = d; best = j; }
     }
     map[i] = best;
+    if (bestD > worst) worst = bestD;
   }
-  return map;
+  return { map: map, worst: Math.sqrt(worst) };
 }
 
-// A cage's vertices in model space, and the transform back.
-function modelVerts(cage) {
+// Local vertices of a cage's CURRENT level, as a plain array.
+function localVerts(cage) {
   const level = cage.getCurrentMesh ? cage.getCurrentMesh() : cage;
   const v = level.getVertices ? level.getVertices() : null;
   if (!v) return null;
   const nb = level.getNbVertices();
-  const m = new THREE.Matrix4().fromArray(cage.getModelSpaceMatrix());
-  const out = new Float32Array(nb * 3);
-  const _p = new THREE.Vector3();
-  for (let i = 0; i < nb; i++) {
-    _p.set(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]).applyMatrix4(m);
-    out[i * 3] = _p.x; out[i * 3 + 1] = _p.y; out[i * 3 + 2] = _p.z;
-  }
-  return { level: level, verts: out, nb: nb, toLocal: m.clone().invert() };
+  return { level: level, verts: v, nb: nb };
 }
+
+// Pair every cage with its twin, once, while they are still the shapes the generator made.
+// Stored on the SOURCE cage, both directions, so either side can be the one you sculpt.
+WeightCage.pairMirrors = function (main) {
+  const plane = Skeleton.rigMirrorPlane(main);
+  const cages = WeightCage.cages(main);
+  for (const c of cages) { c._cageMirror = null; }
+  if (!plane) return { paired: 0, unpaired: cages.length };
+
+  const joints = Skeleton.joints(main);
+  const byJoint = new Map();
+  for (const c of cages) byJoint.set(c._cageJointId, c);
+  let paired = 0, unpaired = 0;
+
+  for (const c of cages) {
+    const joint = joints.find((j) => j.getID() === c._cageJointId);
+    if (!joint) { unpaired++; continue; }
+    const twinJoint = joint._boneMirror || joint;          // centreline: mirrors onto itself
+    const twin = twinJoint === joint ? c : byJoint.get(twinJoint.getID());
+    const a = localVerts(c), b = twin ? localVerts(twin) : null;
+    if (!twin || !a || !b || a.nb !== b.nb) { unpaired++; continue; }
+
+    const M = mirrorTransform(c, twin, plane);
+    const mm = mirrorMap(a.verts, b.verts, M);
+    // HOW WELL THEY ACTUALLY MATCH. A hand-drawn rig can have limbs that are nearly but not
+    // exactly mirrored, and a nearest-neighbour map across a bad pair collapses several source
+    // vertices onto one target -- which is precisely what "going crazy" looks like. A tenth of
+    // the capsule's own radius is a generous bar for two shapes that should be identical.
+    const r = joint._boneRadius || 0;
+    if (r > 0 && mm.worst > r * 0.1) { unpaired++; continue; }
+    c._cageMirror = { toId: twin.getID(), M: M, map: mm.map, nb: a.nb, self: twin === c };
+    paired++;
+  }
+  return { paired: paired, unpaired: unpaired };
+};
 
 WeightCage.mirrorEdit = function (main, cage) {
   if (!WeightCage.isCage(cage)) return null;
-  const plane = Skeleton.rigMirrorPlane(main);
-  if (!plane) return null;                       // symmetry is off: the user said not to
+  // The toggle still governs: symmetry off means no mirroring, whatever is paired.
+  if (!Skeleton.rigMirrorPlane(main)) return null;
 
-  const joints = Skeleton.joints(main);
-  const joint = joints.find((j) => j.getID() === cage._cageJointId);
-  if (!joint) return null;
-  const twinJoint = joint._boneMirror || joint;  // a centreline bone mirrors onto itself
-  const dstCage = twinJoint === joint
-    ? cage
-    : WeightCage.cages(main).find((c) => c._cageJointId === twinJoint.getID());
-  if (!dstCage) return null;
+  let pair = cage._cageMirror;
+  // A scene loaded from a file has cages but no pairs -- the map is geometry, not a saved field.
+  // Pairing once here recovers them: a rig saved with both sides mirrored still matches, and one
+  // saved asymmetric fails the quality bar and is refused, which is the right answer either way.
+  if (!pair && !main._cagePairTried) {
+    main._cagePairTried = true;
+    WeightCage.pairMirrors(main);
+    pair = cage._cageMirror;
+  }
+  // Not paired at bake -- no twin, an asymmetric rig, or a cage from a file saved before the
+  // pairing existed. Refusing is the honest answer; a nearest-neighbour map built now would be
+  // matching a shape you have already sculpted against one you have not.
+  if (!pair) return { ok: false, why: 'this capsule has no mirror twin' };
 
-  const src = modelVerts(cage);
-  const dst = dstCage === cage ? src : modelVerts(dstCage);
+  const dstCage = pair.self ? cage
+    : WeightCage.cages(main).find((c) => c.getID() === pair.toId);
+  if (!dstCage) return { ok: false, why: 'the twin capsule is gone' };
+
+  const src = localVerts(cage);
+  const dst = pair.self ? src : localVerts(dstCage);
   if (!src || !dst) return null;
   // Subdivide one side and the correspondence is gone. Refusing is the honest answer: silently
   // mirroring a fraction of the vertices would leave a torn twin that looks like a sculpt bug.
-  if (src.nb !== dst.nb) return { ok: false, why: 'the twin capsule has a different vertex count' };
-
-  const key = dstCage.getID() + ':' + src.nb;
-  if (!cage._cageMirrorMap || cage._cageMirrorKey !== key) {
-    cage._cageMirrorMap = mirrorMap(src, dst, plane);
-    cage._cageMirrorKey = key;
+  if (src.nb !== pair.nb || dst.nb !== pair.nb) {
+    return { ok: false, why: 'a capsule was subdivided — re-bake to pair them again' };
   }
-  const map = cage._cageMirrorMap;
 
   // Written into a copy first: mirroring a cage onto ITSELF reads and writes the same array,
   // and a vertex already moved this pass is no longer the source its partner needs.
-  const outV = new Float32Array(dst.verts);
+  const outV = new Float32Array(dst.verts.subarray(0, dst.nb * 3));
   const _p = new THREE.Vector3();
   for (let i = 0; i < src.nb; i++) {
-    const j = map[i];
+    const j = pair.map[i];
     if (j < 0) continue;
-    _p.set(src.verts[i * 3], src.verts[i * 3 + 1], src.verts[i * 3 + 2]);
-    Skeleton.mirrorPoint(_p, plane, _p);
+    _p.set(src.verts[i * 3], src.verts[i * 3 + 1], src.verts[i * 3 + 2]).applyMatrix4(pair.M);
     outV[j * 3] = _p.x; outV[j * 3 + 1] = _p.y; outV[j * 3 + 2] = _p.z;
   }
-
-  const target = dst.level.getVertices();
-  for (let j = 0; j < dst.nb; j++) {
-    _p.set(outV[j * 3], outV[j * 3 + 1], outV[j * 3 + 2]).applyMatrix4(dst.toLocal);
-    target[j * 3] = _p.x; target[j * 3 + 1] = _p.y; target[j * 3 + 2] = _p.z;
-  }
+  dst.verts.set(outV, 0);
   dstCage.updateGeometry();
   dstCage.updateBuffers();
   // The twin comes back because the caller has to re-measure the skin against IT as well —
   // it is a second capsule that moved, and not the same vertices changed hands.
-  return { ok: true, twinCage: dstCage,
-           twin: dstCage === cage ? 'self' : (twinJoint._permanentStaticLabel || 'twin') };
+  return { ok: true, twinCage: dstCage, twin: pair.self ? 'self' : 'twin' };
 };
 
 WeightCage.deleteAll = function (main) {
