@@ -30,6 +30,15 @@ const Skeleton = {
   jointVolume: (j) => (j && j._jointVolume) || 'none',
 };
 const _flagState = {};
+// Physics bones read through the panel now: a flagged joint grows three sliders, so the stub has
+// to answer both "is this one flagged" and "with what parameters".
+const PhysicsBones = {
+  DEFAULTS: { stiffness: 0.06, damping: 0.7, gravity: 1 },
+  isRoot: (j) => !!(j && j._physicsRoot),
+  params: (j) => (j && j._physicsParams) || { stiffness: 0.06, damping: 0.7, gravity: 1 },
+  setParams: () => true,
+  setRoot: () => true,
+};
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
   mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){},
   // The x-ray slider: the panel reads the current skin opacity to fill it in.
@@ -290,6 +299,35 @@ check('shader-specific groups mute instead of hiding',
   // The toggle has to SAVE, or the panel forgets it the moment you take the headset off.
   check('toggling a flag persists it',
     /setDisplayFlag = function[\s\S]{0,300}?saveOption\(/.test(FLAG_SRC), 'no saveOption');
+}
+
+// ── THE PHYSICS CONTROLS APPEAR WITH THE FLAG, NOT BEFORE ─────────────────────────────
+//
+// matt asked for "controls for stiffness and gravity". They are per-joint, so they only mean
+// something when exactly one flagged joint is selected — and a panel that renders three dead
+// sliders the rest of the time is three more things to read past.
+{
+  globalThis.__sel = [];
+  const none = buildBoneAuthoringHTML(main, 'mm');
+  check('the physics toggle is always there', none.includes('id="bone-phys"'));
+  check('...and the bake button with it', none.includes('id="bone-phys-bake"'));
+  check('...but the sliders are not, with nothing flagged',
+    !none.includes('id="bone-phys-stiff"'),
+    'they are per-joint: with no joint they would have nothing to edit');
+
+  globalThis.__sel = [{ _isBone: true, getID: () => 1, _physicsRoot: true,
+    _physicsParams: { stiffness: 0.2, damping: 0.5, gravity: 1.5 } }];
+  const on = buildBoneAuthoringHTML(main, 'mm');
+  check('a flagged joint grows stiffness, gravity and damping',
+    on.includes('id="bone-phys-stiff"') && on.includes('id="bone-phys-grav"')
+    && on.includes('id="bone-phys-damp"'));
+  check('...showing that joint\'s own values',
+    on.includes('value="20"') && on.includes('value="150"') && on.includes('value="50"'),
+    'a slider that always shows the default is a slider that lies about the state');
+  check('...and gravity reads as a multiple of earth',
+    /1\.50g/.test(on),
+    'an absolute number means something different on every rig — that is why nothing draped');
+  globalThis.__sel = [];
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');

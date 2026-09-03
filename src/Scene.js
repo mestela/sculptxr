@@ -1530,16 +1530,22 @@ class Scene {
 
     // PHYSICS BONES, on the pose playback just wrote and before the pins are re-seated.
     //
-    // ONLY WHILE PLAYING FORWARD. A simulation has no defined state under scrubbing — "the
-    // previous frame" means nothing when you drag the playhead backwards — so scrubbing shows
-    // the un-simulated pose honestly rather than whatever the sim happened to be holding. Bake
-    // is what makes the motion scrubbable, by turning it into keys and ceasing to be a
-    // simulation at all.
-    if (window._animPlaying && window._physicsBonesLive !== false) {
+    // LIVE ALL THE TIME, not only during playback. matt: "they should live sim in general grab
+    // mode, not just during playback." Which is right, and obvious once said — the point of a
+    // tail is that it swings when you drag the character around by hand, and a jiggle you can
+    // only see by pressing play is a jiggle you cannot tune.
+    //
+    // A SCRUB IS THE ONE THING THAT RESETS IT. Dragging the playhead backwards has no defined
+    // "previous frame", so the sim is snapped back to the animated pose there and settles again
+    // from it, rather than carrying state that depends on how you arrived. That is also why bake
+    // exists: it turns the motion into keys, which scrub exactly.
+    //
+    // ...EXCEPT WHILE THE RIG ITSELF IS BEING EDITED. Drawing or re-parenting bones moves joints
+    // as a matter of course, and a chain settling under gravity on top of that is a chain
+    // fighting the edit — the same reason the IK pin watcher stands down on this flag.
+    if (window._physicsBonesLive !== false && !this._rigRestEdit) {
       try { PhysicsBones.tick(this); } catch (e) { console.error('physics bones failed:', e); }
-    } else if (!window._animPlaying) {
-      // Stopping drops the sim state, so pressing play again starts from the pose rather than
-      // from wherever the chain was swinging when you hit stop.
+    } else if (this._rigRestEdit) {
       PhysicsBones.reset(this);
     }
 

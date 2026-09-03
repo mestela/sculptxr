@@ -102,6 +102,7 @@ export function buildBoneAuthoringHTML(main, style) {
   // the mode buttons above it.
   const physSel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
   const physOn = physSel.length === 1 && PhysicsBones.isRoot(physSel[0]);
+  const physP = physOn ? PhysicsBones.params(physSel[0]) : PhysicsBones.DEFAULTS;
   const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
@@ -128,6 +129,25 @@ export function buildBoneAuthoringHTML(main, style) {
         title="Make the selected joint a physics bone: everything below it swings and lags behind the animation. Only simulates while the timeline PLAYS — scrub shows the plain pose. Bake to turn it into keys.">${physOn ? 'Physics On' : 'Physics Bone'}</button>
       <button class="${c.action}" id="bone-phys-bake"
         title="Step the loop range, run the sim, and write the result as ordinary rotation keys on the joints it moves. Undoable.">Bake Physics</button>
+    </div>
+    ${physOn ? `
+    <div class="${c.row}">
+      <span class="${c.lbl}">Stiffness</span>
+      <input type="range" id="bone-phys-stiff" min="1" max="99" step="1" value="${Math.round(physP.stiffness * 100)}">
+      <span class="${c.val}" id="bone-phys-stiff-val">${Math.round(physP.stiffness * 100)}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Gravity</span>
+      <input type="range" id="bone-phys-grav" min="0" max="300" step="5" value="${Math.round(physP.gravity * 100)}">
+      <span class="${c.val}" id="bone-phys-grav-val">${physP.gravity.toFixed(2)}g</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Damping</span>
+      <input type="range" id="bone-phys-damp" min="0" max="99" step="1" value="${Math.round(physP.damping * 100)}">
+      <span class="${c.val}" id="bone-phys-damp-val">${Math.round(physP.damping * 100)}</span>
+    </div>
+    ` : ''}
+    <div class="${c.btnRow}">
     </div>
     ${rule}
     <div class="${c.btnRow}">
@@ -444,6 +464,24 @@ export function wireBoneSection(root, main, opts) {
       : 'Bones: physics off', true);
     refresh();
   });
+
+  // The three parameters, live on drag: this is a LOOK, and the whole reason the sim runs
+  // outside playback is so it can be judged by watching rather than by argument. No undo step
+  // per drag — a slider that pushed one would bury the history.
+  const physParam = (id, key, scale, fmt) => {
+    const input = q('phys-' + id), val = q('phys-' + id + '-val');
+    input?.addEventListener('input', () => {
+      const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+      if (js.length !== 1) return;
+      const v = parseInt(input.value, 10) / scale;
+      PhysicsBones.setParams(js[0], { [key]: v });
+      if (val) val.textContent = fmt(v);
+      main.render?.();
+    });
+  };
+  physParam('stiff', 'stiffness', 100, (v) => String(Math.round(v * 100)));
+  physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g');
+  physParam('damp', 'damping', 100, (v) => String(Math.round(v * 100)));
 
   q('phys-bake')?.addEventListener('click', () => {
     const res = PhysicsBones.bake(main);

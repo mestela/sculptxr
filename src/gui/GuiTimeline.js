@@ -5,6 +5,7 @@ import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
          xfTimes } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
+import PhysicsBones from '../editing/PhysicsBones.js';
 
 // Darker, higher-contrast blue (matches the desktop sidebar sliders) for active buttons
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
@@ -1449,6 +1450,10 @@ export default class GuiTimeline {
       reg.globalPlaybackTime = t;
       if (this._main && this._main._meshes) this._main._meshes.forEach(m => reg.update(m, true));
     }
+    // A scrub has no "previous frame", so any physics chain is snapped back onto the pose here
+    // and settles again from it. Without this the sim carries state that depends on how you got
+    // to this time, which is exactly what bake exists to remove.
+    PhysicsBones.reset(this._main);
     if (this._main.render) this._main.render();
     window._updateOutlinerVisIcons?.();
     this.draw();

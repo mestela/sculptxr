@@ -31,9 +31,47 @@ import IKSolver from './IKSolver.js';
 
 const PhysicsBones = {};
 
-// Defaults chosen to be visible but not silly on a first press: a tail that clearly lags and
-// settles within a second or so.
-const DEFAULTS = { stiffness: 0.15, damping: 0.75, gravity: 6 };
+// Defaults chosen to be visible but not silly on a first press: a tail that clearly lags, drapes
+// under its own weight, and settles within a second or so.
+//
+// GRAVITY IS A MULTIPLE OF EARTH, not a number of units per second squared. The rig has no unit
+// system — a character is forty units tall because that is how it got drawn — so an absolute
+// gravity means something different on every rig, and the first version's 6 produced an
+// equilibrium sag of ELEVEN THOUSANDTHS of a unit on a rig with twelve-unit bones. matt: "is
+// there gravity? they don't seem to drape much." There was; it was about a thousand times too
+// small to see. It is scaled by Skeleton.sceneUnit now, so 1 drapes the same way whatever size
+// the rig was drawn at.
+const DEFAULTS = { stiffness: 0.06, damping: 0.7, gravity: 1 };
+
+// A SPRING RATE AND A DECAY RATE, not per-frame factors — which is what makes "tune it live,
+// then bake it" true rather than a slogan.
+//
+// The first version lerped toward the animated pose by `stiffness` every FRAME and damped the
+// velocity by a per-frame factor. Both mean something different at a different rate, and the
+// live preview runs at 60 while a bake runs at the timeline's fps: measured, the same tail sagged
+// 6.25x further in a 24fps bake than in the preview it was tuned against. Raising the parameters
+// to the power of the step got that down to a 0.5-unit spread and no further, because the
+// equilibrium of a per-frame lerp is itself proportional to the timestep — sag ~ g*h/(60*s). The
+// only fix is to stop expressing the spring per frame.
+//
+// So: a is an acceleration, v is a velocity in units per second, and the integration is
+// semi-implicit Euler. Equilibrium sag is then g/k — no h in it at all.
+//
+// STIFFNESS 0..1 MAPS TO s/(1-s) so that 1 still means "no physics": the spring rate goes to
+// infinity and the joint sits exactly on its animated pose. That escape hatch has to be exact or
+// there is no way to tell the feature off from the feature misbehaving.
+const SPRING_SCALE = 30;    // k = SPRING_SCALE * sceneUnit * s/(1-s)
+const DAMP_SCALE = 10;      // velocity decays as exp(-DAMP_SCALE * damping * dt)
+
+// Earth gravity expressed in scene units, given how big the scene is. A character is roughly two
+// metres, sceneUnit is roughly a character, so a unit is roughly sceneUnit/2 metres — and 9.8
+// m/s^2 lands here. Approximate on purpose: the point is that the number tracks the rig's scale
+// rather than being right in any absolute sense.
+function gravityUnits(main, mult) {
+  const unit = (Skeleton.sceneUnit && Skeleton.sceneUnit(main)) || 1;
+  return (mult === undefined ? 1 : mult) * 9.8 * (unit / 2);
+}
+PhysicsBones.gravityUnits = gravityUnits;
 
 PhysicsBones.DEFAULTS = DEFAULTS;
 
@@ -119,7 +157,7 @@ PhysicsBones.reset = function (main) {
   for (const root of PhysicsBones.roots(main)) {
     for (const link of PhysicsBones.chain(main, root)) {
       const at = Skeleton.jointPos(link.joint).clone();
-      _state.set(link.joint.getID(), { p: at.clone(), prev: at.clone() });
+      _state.set(link.joint.getID(), { p: at.clone(), prev: at.clone(), v: new THREE.Vector3() });
     }
   }
 };
@@ -129,7 +167,7 @@ PhysicsBones.isSettled = function () { return _state.size > 0; };
 const _pAnim = new THREE.Vector3(), _pPar = new THREE.Vector3(), _pCur = new THREE.Vector3();
 const _vel = new THREE.Vector3(), _next = new THREE.Vector3(), _dir = new THREE.Vector3();
 const _aimA = new THREE.Vector3(), _aimB = new THREE.Vector3(), _qAim = new THREE.Quaternion();
-const _pRig = new THREE.Vector3();
+const _pRig = new THREE.Vector3(), _acc = new THREE.Vector3();
 
 // ONE STEP. `dt` is a real timestep in seconds and is clamped: a dropped frame or a paused tab
 // otherwise hands the integrator a dt large enough to throw the chain into orbit, and the user
@@ -144,6 +182,12 @@ PhysicsBones.step = function (main, dt) {
     const par = PhysicsBones.params(root);
     const links = PhysicsBones.chain(main, root);
     if (!links.length) continue;
+    const unit = (Skeleton.sceneUnit && Skeleton.sceneUnit(main)) || 1;
+    const stiff = Math.min(0.9999, Math.max(0, par.stiffness));
+    const k = SPRING_SCALE * unit * (stiff / (1 - stiff));  // spring rate, per second squared
+    const decay = Math.exp(-DAMP_SCALE * par.damping * h);  // exact, so it does not depend on h
+    const gAcc = gravityUnits(main, par.gravity);
+    const rigid = par.stiffness >= 1;
 
     // THE ANIMATED POSE IS CAPTURED FIRST, all of it, before anything is written. Each write
     // rotates a joint and therefore moves every joint below it, so a target read after the first
@@ -155,20 +199,22 @@ PhysicsBones.step = function (main, dt) {
       const j = link.joint;
       const id = j.getID();
       let st = _state.get(id);
-      if (!st) { st = { p: target.get(id).clone(), prev: target.get(id).clone() }; _state.set(id, st); }
+      if (!st) { st = { p: target.get(id).clone(), prev: target.get(id).clone(), v: new THREE.Vector3() }; _state.set(id, st); }
 
       _pAnim.copy(target.get(id));
       Skeleton.jointPos(link.parent, _pPar);        // already written this frame, so it is live
       _pCur.copy(st.p);                             // the PARTICLE's position, not the rig's
 
-      // Verlet: the step the particle took last frame, damped, carried forward.
-      _vel.subVectors(_pCur, st.prev).multiplyScalar(1 - par.damping);
-      _next.copy(_pCur).add(_vel);
-      _next.y -= par.gravity * h * h;               // gravity, in the same units the rig is in
-
-      // Spring back toward where the animation wanted this joint. Stiffness 1 is "no physics at
-      // all", 0 is "no memory of the pose", and the useful range is near the bottom.
-      _next.lerp(_pAnim, par.stiffness);
+      if (rigid) { _next.copy(_pAnim); }
+      else {
+        // Acceleration: the spring pulling back toward the pose the animation asked for, plus
+        // gravity. Then semi-implicit Euler — velocity first, position from the NEW velocity,
+        // which is what keeps a spring stable at large steps.
+        _acc.subVectors(_pAnim, _pCur).multiplyScalar(k);
+        _acc.y -= gAcc;
+        st.v.addScaledVector(_acc, h).multiplyScalar(decay);
+        _next.copy(_pCur).addScaledVector(st.v, h);
+      }
 
       // LENGTH IS A HARD CONSTRAINT, not a spring. A bone that stretches reads as broken
       // immediately, and the skin is built assuming the length it was rigged with.
@@ -193,8 +239,13 @@ PhysicsBones.step = function (main, dt) {
       // Carry the particle forward. Read back from the rig rather than trusting `_next`: the aim
       // is a rotation about the parent, so where the joint lands is the truth, and a particle
       // that drifted from it would fight the constraint every frame after.
+      //
+      // The velocity is RE-DERIVED from where it actually ended up, so the length constraint and
+      // the aim cannot inject energy the integrator never accounted for — the classic way a
+      // constrained spring chain slowly winds itself up.
       st.prev.copy(st.p);
       Skeleton.jointPos(j, st.p);
+      if (h > 1e-9) st.v.subVectors(st.p, st.prev).divideScalar(h);
     }
   }
   return moved;

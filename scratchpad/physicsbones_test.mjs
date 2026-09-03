@@ -27,6 +27,7 @@ const _all = [];
 const Skeleton = {
   joints: () => _all,
   jointPos: (j, out) => (out || new THREE.Vector3()).copy(j.wp),
+  sceneUnit: () => 2,          // 1 unit = 1 metre, so gravity 1 reads as 9.8
 };
 const IKSolver = {
   // The real one turns a model-space rotation into a joint's local matrix. Here it applies the
@@ -181,6 +182,50 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
   const main = {};
   PB.reset(main);
   check('a rig with nothing flagged does nothing', PB.step(main, 1 / 60) === 0);
+}
+
+// ── THE SAME SETTINGS MUST DRAPE THE SAME AT ANY FRAMERATE ────────────────────────────
+//
+// Stiffness and damping are per-frame factors, and a per-frame factor means something different
+// at a different rate. The live preview runs at 60 and a bake runs at the timeline's fps, so
+// before this was normalised the same tail sagged 6.25x further in a 24fps bake than in the
+// preview it was tuned against — which makes "tune it live, then bake it" a lie, and that
+// workflow is the entire feature.
+{
+  const settle = (fps, seconds) => {
+    const r = rig();
+    PB.setRoot(null, r.t0, true);
+    PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1 });
+    r.t1.wp.set(1, -1, 0); r.t2.wp.set(2, -1, 0);      // horizontal, with somewhere to fall
+    const main = {};
+    PB.reset(main);
+    const n = Math.round(seconds * fps);
+    for (let i = 0; i < n; i++) PB.step(main, 1 / fps);
+    return r.t2.wp.y;
+  };
+  const at60 = settle(60, 3), at24 = settle(24, 3), at120 = settle(120, 3);
+  const spread = Math.max(at60, at24, at120) - Math.min(at60, at24, at120);
+  check('three seconds of sag is the same at 24, 60 and 120fps',
+    spread < 0.05,
+    'tip y: 24fps ' + at24.toFixed(3) + ', 60fps ' + at60.toFixed(3)
+    + ', 120fps ' + at120.toFixed(3) + ' — spread ' + spread.toFixed(3));
+  check('...and it actually sagged, so the check is measuring something',
+    at60 < -1.3, 'tip y ' + at60.toFixed(3) + ' from a start of -1');
+}
+
+// ── GRAVITY IS A MULTIPLE OF EARTH, SCALED TO THE RIG ─────────────────────────────────
+//
+// matt: "is there gravity? they don't seem to drape much." There was — an absolute 6 units/s^2
+// on a rig with twelve-unit bones, which settles to a sag of about a hundredth of a unit. A rig
+// has no unit system, so the only gravity that means anything is one scaled by how big the rig
+// is drawn.
+{
+  check('gravity tracks the size of the scene',
+    Math.abs(PB.gravityUnits({}, 1) - 9.8) < 1e-6,
+    'sceneUnit 2 (a two-unit character) should put gravity 1 at 9.8: got '
+    + PB.gravityUnits({}, 1).toFixed(3));
+  check('...and doubles when you ask for twice earth',
+    Math.abs(PB.gravityUnits({}, 2) - 19.6) < 1e-6);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
