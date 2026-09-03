@@ -338,7 +338,7 @@ function matchLoop(near, far, posAt) {
 // makes the transition between two capsules smooth instead of a ridge.
 const _cp = new THREE.Vector3(), _ax = new THREE.Vector3(), _to = new THREE.Vector3();
 function capsuleTarget(p, caps, out) {
-  const surf = [], dist = [];
+  const surf = [], dist = [], rAt = [];
   let dmin = Infinity;
   for (const c of caps) {
     _ax.subVectors(c.b, c.a);
@@ -350,11 +350,15 @@ function capsuleTarget(p, caps, out) {
     const l = _to.length();
     // A point sitting exactly on an axis has no direction to be pushed out along; skip that
     // capsule rather than inventing one. Smoothing will have moved it off by the next pass.
-    if (l < 1e-9) { surf.push(null); dist.push(Infinity); continue; }
-    surf.push(_cp.clone().addScaledVector(_to, c.r / l));
-    const d = Math.abs(l - c.r);
+    if (l < 1e-9) { surf.push(null); dist.push(Infinity); rAt.push(0); continue; }
+    // THE RADIUS WHERE THIS POINT SITS, lerped between the two ends. `t` is already clamped, so
+    // past either end the cone keeps that end's radius and the cap stays a sphere of it.
+    const cr = c.r2 === undefined ? c.r : c.r + (c.r2 - c.r) * t;
+    surf.push(_cp.clone().addScaledVector(_to, cr / l));
+    const d = Math.abs(l - cr);
     dist.push(d);
     if (d < dmin) dmin = d;
+    rAt.push(cr);
   }
   if (!(dmin < Infinity)) return out.copy(p);
 
@@ -362,7 +366,7 @@ function capsuleTarget(p, caps, out) {
   let wsum = 0;
   for (let i = 0; i < caps.length; i++) {
     if (!surf[i]) continue;
-    const x = (dist[i] - dmin) / Math.max(caps[i].r, 1e-6);
+    const x = (dist[i] - dmin) / Math.max(rAt[i], 1e-6);
     const w = Math.exp(-x * x);
     out.addScaledVector(surf[i], w);
     wsum += w;
@@ -442,6 +446,15 @@ function buildArrays(joints, topo) {
       r = Math.max(r, boneRadius(j, nb));
       dirs.push(d.normalize());
     }
+    // THE JOINT'S OWN RADIUS SIZES ITS BLOCK. The widest bone touching it is the fallback, not
+    // the rule — that is what made a head the width of a neck, and a hand the width of a
+    // forearm, with nothing to say otherwise. matt: "i need to be able to scale joints, not
+    // bones."
+    r = Skeleton.jointRadius(j, r);
+    // ...and the clamp stays. A block wider than half the gap to its nearest neighbour reaches
+    // into that neighbour's block, and the bridge between them turns inside out. A joint sized
+    // past its neighbours grows its CAPSULE, which the relax then pushes the skin out onto —
+    // the shape arrives, and the lattice stays untangled.
     const h = Math.min(r, minLen * LENGTH_CLAMP);
     if (!(h > 1e-9)) continue;
 
@@ -532,7 +545,14 @@ function buildArrays(joints, topo) {
       }
       prev = next;
     }
-    caps.push({ a: Skeleton.jointPos(p), b: Skeleton.jointPos(j), r: Math.max(boneRadius(p, j), 1e-6) });
+    // A RADIUS AT EACH END. The number has always lived on a joint — a bone reads its CHILD's —
+    // so a bone drawing one uniform capsule was a choice, not a constraint, and it is the choice
+    // that made a head or a hand impossible to describe. Now the capsule is a cone between its
+    // two joints' radii. A joint with no radius of its own (a root, an unsized tip) falls back
+    // to the bone's, which is exactly the old shape.
+    const rj = Math.max(boneRadius(p, j), 1e-6);
+    caps.push({ a: Skeleton.jointPos(p), b: Skeleton.jointPos(j),
+      r: Math.max(Skeleton.jointRadius(p, rj), 1e-6), r2: Math.max(Skeleton.jointRadius(j, rj), 1e-6) });
     bones++;
   }
 

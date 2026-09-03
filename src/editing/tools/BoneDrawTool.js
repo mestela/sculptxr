@@ -92,6 +92,7 @@ const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3();
 const _axis = new THREE.Vector3(), _hit = new THREE.Vector3();
 const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
+const _jpRad = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
@@ -716,17 +717,15 @@ class BoneDrawTool extends SculptBase {
     const startX = main._mouseX, startY = main._mouseY;
 
     if (this._mode === 'radius') {
-      const bone = this._pickBoneScreen();
-      if (!bone) return false;
-      // Anchor the plane on the bone's MIDPOINT, not on the joint: the radius is a distance
-      // from the shaft, so the plane you drag in should contain the shaft you are measuring.
-      Skeleton.jointPos(bone, _jp);
-      Skeleton.jointPos(bone._parentMesh, _jp2);
-      const anchor = _jp.clone().add(_jp2).multiplyScalar(0.5);
-      this._beginRadius(bone);
-      this._drag = { kind: 'radius', joint: bone, anchor: anchor, startX: startX, startY: startY };
-      this._hilite = bone;
-      Skeleton.setHighlight(main, bone);
+      const joint = this._pickJointScreen();
+      if (!joint) return false;
+      // Anchor the plane on the JOINT — the radius is now a distance from it, so that is the
+      // point the drag plane has to pass through.
+      const anchor = Skeleton.jointPos(joint, _jp).clone();
+      this._beginRadius(joint);
+      this._drag = { kind: 'radius', joint: joint, anchor: anchor, startX: startX, startY: startY };
+      this._hilite = joint;
+      Skeleton.setHighlight(main, joint);
       return true;
     }
 
@@ -1221,26 +1220,32 @@ class BoneDrawTool extends SculptBase {
     return best;
   }
 
+  // RADIUS MODE SIZES A JOINT, not the bone leading into it. The bone's own number is still
+  // there and still the fallback; what a drag writes is the joint's, because that is the thing
+  // a head, a hand or a pelvis needs and the thing a bone-wide tube could never say. matt: "i
+  // need to be able to scale joints, not bones."
   _beginRadius(joint) {
     const main = this._main;
     const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
       ? joint._boneMirror : null;
-    const before = [[joint, joint._boneRadius || 0]];
-    if (twin) before.push([twin, twin._boneRadius || 0]);
+    const before = [[joint, joint._jointRadius || 0]];
+    if (twin) before.push([twin, twin._jointRadius || 0]);
     this._radius = { joint: joint, twin: twin, before: before };
   }
 
   _radiusTo(pos) {
     const r = this._radius;
     if (!r) return;
-    const d = Skeleton.boneDistance(this._main, r.joint, pos);
-    if (d === null) return;
+    // MEASURED FROM THE JOINT, not from the bone's shaft. A joint radius is the radius of a
+    // sphere centred on it, so the distance that sets it is the one you can see: how far your
+    // hand is from the dot.
+    const d = Skeleton.jointPos(r.joint, _jpRad).distanceTo(pos);
     // A capsule with no thickness has no support at all, so never let a drag collapse one to
     // zero — that would silently unweight everything the bone owned.
     const min = Math.max(Skeleton.boneLength(this._main, r.joint) * 0.02, 1e-6);
     const val = Math.max(d, min);
-    r.joint._boneRadius = val;
-    if (r.twin) r.twin._boneRadius = val; // a mirrored rig stays mirrored
+    Skeleton.setJointRadius(r.joint, val);
+    if (r.twin) Skeleton.setJointRadius(r.twin, val); // a mirrored rig stays mirrored
     this._liveWeights();
     this._refresh();
   }
@@ -1272,11 +1277,11 @@ class BoneDrawTool extends SculptBase {
     this._selectLater(r.joint);
     const main = this._main;
     const before = r.before;
-    const after = before.map(([j]) => [j, j._boneRadius || 0]);
+    const after = before.map(([j]) => [j, j._jointRadius || 0]);
     const sm = main.getStateManager && main.getStateManager();
     if (sm && sm.pushStateCustom) {
       const apply = (radii) => {
-        Skeleton.restoreRadii(radii);
+        Skeleton.restoreJointRadii(radii);
         Skinning.resolveWeightsAll(main); // radii ARE the weights now; undoing one undoes both
         Skeleton.updateVisuals(main);
         main.render();
@@ -1486,19 +1491,24 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'radius') {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
+      // THE NEAREST JOINT, not the nearest bone. The drag sizes a joint now, so the thing under
+      // your hand has to be the joint you are about to size — picking the bone would light one
+      // end and resize the other, which is the exact confusion the bone capsule's
+      // nearest-end rule was added to prevent.
       if (down) {
-        const hit = this._pickBone(_tip);
+        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
         if (!this._radius && hit) this._beginRadius(hit);
       }
       if (this._radius) {
         if (isPressed) this._radiusTo(_tip);
         else this._releaseRadius();
       }
-      this._hilite = this._radius ? this._radius.joint : this._pickBone(_tip);
+      this._hilite = this._radius ? this._radius.joint
+        : Skeleton.pickJoint(main, _tip, this._snapDist());
       Skeleton.setHighlight(main, this._hilite);
-      // Radius mode already resolves a BONE rather than a joint, so say so — then the lit bone
-      // is the split target here too, the same as everywhere else.
-      main._rigHoverBone = this._hilite;
+      // Split still wants a BONE, and this mode no longer resolves one — so it reads the bone
+      // under the hand separately rather than inheriting the highlight.
+      main._rigHoverBone = this._pickBone(_tip);
       return;
     }
 

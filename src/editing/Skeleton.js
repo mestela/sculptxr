@@ -602,6 +602,31 @@ Skeleton.isJoint = function (m) { return !!(m && m._isBone); };
 // the write in the const's temporal dead zone and the whole module failed to evaluate.
 Skeleton.defaultRadiusFrac = function () { return DEFAULT_RADIUS_FRAC; };
 
+// ---- joint radius ------------------------------------------------------------
+//
+// A JOINT CAN BE SIZED, NOT JUST A BONE. `_boneRadius` has always lived on a joint, but it
+// describes the BONE arriving there — a bone reads its child's — so every bone was a tube of one
+// width and a head, a hand or a pelvis had no way to be wider than the limb leading into it.
+// Joint volumes were the first attempt at that and were worse than the capsules they replaced;
+// matt: "i need to be able to scale joints, not bones."
+//
+// So a joint carries its own radius, and a bone is the hull of the two spheres at its ends — a
+// tapered capsule. Unset is the common case and means "whatever the bone says", which is the
+// old behaviour exactly; that distinction is why this is a separate field rather than a copy of
+// the bone's number, which would freeze the joint at whatever the bone happened to be.
+Skeleton.jointRadius = function (j, fallback) {
+  const r = j && j._jointRadius;
+  return r > 0 ? r : (fallback || 0);
+};
+
+Skeleton.setJointRadius = function (j, r) {
+  if (!j) return false;
+  j._jointRadius = r > 0 ? r : 0;
+  return true;
+};
+
+Skeleton.jointRadiusIsSet = function (j) { return !!(j && j._jointRadius > 0); };
+
 // ---- bone identity colours -----------------------------------------------------
 //
 // Each bone gets a saturated colour, and the capsule and the vertices it claims are painted
@@ -2177,12 +2202,19 @@ Skeleton.updateVisuals = function (main) {
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
-    // Capsule. The radius belongs to the CHILD joint, matching the bind (a bone deforms with
-    // its child), so the joint you highlight is the joint whose capsule lights up and whose
-    // radius the Radius mode edits.
-    // ...and stops carrying an envelope, for the same reason: the volume IS the envelope there.
+    // Capsule. The BONE's radius belongs to the CHILD joint, matching the bind (a bone deforms
+    // with its child), so the joint you highlight is the joint whose capsule lights up.
+    //
+    // A JOINT MAY OVERRIDE IT AT EITHER END, which is what makes a head wider than its neck.
+    // The two ends are drawn at their own radii; the shaft is one cylinder at the mean, because
+    // these are InstancedMeshes and one batch is one geometry — a true frustum would need a
+    // batch per taper ratio and an entry rebuild every time you dragged one. The spheres are
+    // what say how big a joint is, and the SKIN is tapered exactly (see SkinMesh capsuleTarget).
     const cr = j._boneRadius || 0;
     if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
+    const crA = Skeleton.jointRadius(parent, cr);
+    const crB = Skeleton.jointRadius(j, cr);
+    const crMid = (crA + crB) * 0.5;
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
     // which is the same colour the weight preview paints onto the vertices it claims. (The
     // radius still belongs to this joint; ownership and authorship are different things.)
@@ -2193,14 +2225,14 @@ Skeleton.updateVisuals = function (main) {
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
       o.position.copy(_pA).addScaledVector(_dir, len * 0.5); // cylinder is centre-origin
       o.quaternion.copy(_q);
-      o.scale.set(cr, len, cr);
+      o.scale.set(crMid, len, crMid);
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
-    for (const [part, at] of [[e.cap.a, _pA], [e.cap.b, _pB]]) {
+    for (const [part, at, pr] of [[e.cap.a, _pA, crA], [e.cap.b, _pB, crB]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
-        o.scale.setScalar(cr);
+        o.scale.setScalar(pr);
         o.visible = true;
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
@@ -2322,17 +2354,32 @@ Skeleton.setRadiusFraction = function (main, frac) {
   for (const j of Skeleton.joints(main)) {
     const len = Skeleton.boneLength(main, j);
     j._boneRadius = len > 1e-9 ? len * frac : unit * 0.05;
+    // A RESET CLEARS THE JOINT SIZES TOO. Leaving them would make the button a half-reset: the
+    // bones go back to a proportion of their length and the sized joints stay whatever they
+    // were, so the rig comes back neither reset nor as it was.
+    j._jointRadius = 0;
   }
 };
 
 // Radii of every joint, for undo. Small (one float per joint), so snapshotting all of them
 // is simpler and safer than tracking which ones an edit touched.
 Skeleton.captureRadii = function (main) {
-  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0]);
+  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0, j._jointRadius || 0]);
 };
 
 Skeleton.restoreRadii = function (snapshot) {
-  for (const [j, r] of snapshot) j._boneRadius = r;
+  // The joint size rides along, so one undo of Reset Radii puts back both halves of what it
+  // changed. Third element absent means an older snapshot: leave the joint alone.
+  for (const [j, r, jr] of snapshot) {
+    j._boneRadius = r;
+    if (jr !== undefined) j._jointRadius = jr > 0 ? jr : 0;
+  }
+};
+
+// The same for a JOINT's own radius. Separate because 0 means something here — "unset, follow
+// the bone" — and an undo has to be able to put a joint back to never having been sized.
+Skeleton.restoreJointRadii = function (snapshot) {
+  for (const [j, r] of snapshot) j._jointRadius = r > 0 ? r : 0;
 };
 
 // Symmetry plane of the sculpt being rigged (not of the joints, which have none).
@@ -2747,7 +2794,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 7;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden
+const SKEL_VERSION = 8;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -2846,6 +2893,15 @@ Skeleton.serialize = function (meshes) {
   // The three numbers are optional: unset means "fit to the rig", which is a different state
   // from "set to whatever the fit last returned" — the first tracks the skeleton as it changes
   // and the second does not. A flag word carries that distinction rather than a sentinel value.
+  // v8: A JOINT'S OWN RADIUS, where it has been set. Not folded into the per-entry radius above:
+  // that one belongs to the BONE (a bone reads its child's), and a joint that has been sized by
+  // hand is a different fact from the bone that happens to end there. Only joints that carry one
+  // are written, so a rig that has never been sized costs a single zero.
+  const rads = [];
+  meshes.forEach((m, i) => {
+    if (m && m._isBone && m._jointRadius > 0) rads.push({ i: i, r: m._jointRadius });
+  });
+
   // JOINT VOLUMES ARE GONE, and the section stays. Writing an empty one keeps the block at v7
   // so a reader that expects the section still finds it, and the reader below still SKIPS a
   // populated one — which is what lets a file saved when volumes existed keep loading.
@@ -2859,6 +2915,7 @@ Skeleton.serialize = function (meshes) {
   }
   slots += 1 + rests.length * 17;
   slots += 1 + vols.length * 12;
+  slots += 1 + rads.length * 2;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -2894,6 +2951,9 @@ Skeleton.serialize = function (meshes) {
   }
 
   u[o++] = vols.length;
+
+  u[o++] = rads.length;
+  for (const r of rads) { u[o++] = r.i; f[o++] = r.r; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -3111,6 +3171,18 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     if (ver >= 7) {
       const vn = u[o++];
       o += vn * 12;
+    }
+
+    // v8: joint radii. THIS is the field that makes the skip above load-bearing — before it
+    // there was nothing after the volumes, and a reader that forgot to step over them read
+    // nothing wrong.
+    if (ver >= 8) {
+      const rn = u[o++];
+      for (let i = 0; i < rn; i++) {
+        const mi = u[o++];
+        const r = f[o++];
+        if (meshes[mi]) meshes[mi]._jointRadius = r;
+      }
     }
 
     for (const p of pendingPins) {

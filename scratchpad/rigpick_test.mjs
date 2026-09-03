@@ -761,8 +761,12 @@ check('...and the zone widening is the only thing left gated',
     check('...but only BETWEEN chains',
       /parent \? null : this\._pickBone/.test(BD),
       'mid-chain the tip is the end of the bone being drawn, so it would light every frame');
-    check('radius mode publishes it too, since it already resolves a bone',
-      /main\._rigHoverBone = this\._hilite;/.test(BD));
+    // Radius mode used to resolve a bone and could hand its highlight straight to Split. It
+    // sizes a JOINT now, so its highlight is a joint — and Split still needs a bone, which it
+    // picks separately rather than inheriting something that is no longer one.
+    check('radius mode publishes a bone of its own, not its joint highlight',
+      /main\._rigHoverBone = this\._pickBone\(_tip\);/.test(BD)
+      && !/main\._rigHoverBone = this\._hilite;/.test(BD));
     check('...and it is re-picked every frame so it cannot go stale',
       /main\._rigHoverBone = this\._pickBone\(_tip\);/.test(BD),
       'this tool picks for itself, so nothing else here would ever refresh it — and Split reads '

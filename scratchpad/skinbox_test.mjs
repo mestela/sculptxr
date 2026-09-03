@@ -31,6 +31,7 @@ const SRC_REL = process.env.SKIN_SRC || 'src/editing/SkinMesh.js';
 // have looked identical from the outside more than once.
 const RELAX = process.env.SKIN_RELAX !== '0';
 const SRC = fs.readFileSync(path.isAbsolute(SRC_REL) ? SRC_REL : path.join(REPO, SRC_REL), 'utf8');
+const SM_SRC = SRC;   // named for the checks that pin a rule the measurements cannot see
 
 const body = SRC.split('\n')
   .filter((l) => !/^import\s/.test(l))
@@ -51,6 +52,10 @@ const Multimesh = class {};
 const Skeleton = {
   joints: () => [],
   jointPos: (j, out) => (out || new THREE.Vector3()).set(j.p[0], j.p[1], j.p[2]),
+  // A JOINT'S OWN RADIUS, with the real fallback rule: unset means "whatever the bone says".
+  // Lifted in spirit rather than by slice — it is three lines and the fixtures set the field
+  // directly, so a copy here cannot drift without the checks below noticing.
+  jointRadius: (j, fallback) => ((j && j._jointRadius > 0) ? j._jointRadius : (fallback || 0)),
   // Lifted from the real file, not stubbed: this is the surface Make Skin wraps onto and the
   // one the weight cage uses, and a fake of it would test my fake.
   shapePoint: null,
@@ -477,6 +482,73 @@ if (SkinMesh._boxLattice) {
     /Skeleton\.updateVisuals\(this\);/.test(body) && /Skeleton\.hidePlane\(this\);/.test(body),
     'bones and joints are batched objects, not meshes — emptying _meshes leaves them '
     + 'on screen with an empty outliner beside them');
+}
+
+// ── A JOINT CARRIES ITS OWN RADIUS ────────────────────────────────────────────────────
+//
+// The number has always lived on a joint, but it described the BONE arriving there, so every
+// bone was a tube of one width and a head could not be wider than its neck. Volumes were the
+// first attempt at that and were worse in the headset than the capsules they replaced. matt:
+// "i tried with just capsules, no volumes, and the results were pretty good. it occurs to me
+// that the issue is i need to be able to scale joints, not bones."
+//
+// Two things have to hold, and the second is the one that makes it usable: the joint's radius
+// SIZES ITS BLOCK, and the bone between two sized joints is a CONE rather than a tube.
+{
+  const chain = skeleton([
+    ['a', null, 0, 0, 0, 0.2],
+    ['b', 'a', 0, 2.0, 0, 0.2],
+    ['c', 'b', 0, 4.0, 0, 0.2],
+  ]);
+  const plain = build(chain);
+  chain[1]._jointRadius = 0.9;                       // the middle joint, four times the bone
+  const fat = build(chain);
+
+  // Measured, not read back: the widest the skin gets anywhere near that joint.
+  const spread = (arr, y) => {
+    const V = arr.vertices;
+    let r = 0;
+    for (let i = 0; i < V.length; i += 3) {
+      if (Math.abs(V[i + 1] - y) > 0.35) continue;
+      r = Math.max(r, Math.hypot(V[i], V[i + 2]));
+    }
+    return r;
+  };
+  const wasMid = spread(plain, 2.0), nowMid = spread(fat, 2.0);
+  check('a sized joint makes the skin wider THERE',
+    nowMid > wasMid * 2, 'was ' + wasMid.toFixed(2) + ', now ' + nowMid.toFixed(2));
+
+  // ...and the ends do not move with it, which is what "a cone, not a tube" means. Without the
+  // taper the whole capsule takes one radius and the far end grows just as much.
+  const wasEnd = spread(plain, 4.0), nowEnd = spread(fat, 4.0);
+  check('...and the far end of the bone does NOT grow with it',
+    nowEnd < wasEnd * 1.35,
+    'was ' + wasEnd.toFixed(2) + ', now ' + nowEnd.toFixed(2)
+    + ' — a bone between two sized joints is a cone, and an untapered capsule takes one radius '
+    + 'for its whole length');
+
+  // THE BLOCK IS SIZED BY THE JOINT TOO, and that one is about topology rather than width: the
+  // relax projects onto the capsule either way, so a tiny block stretched out to a big radius
+  // still reaches it — it just arrives as a handful of long quads with the bridges doing all
+  // the work. Deleting the block sizing does NOT fail the width checks above (measured), so it
+  // is pinned here on the source, with the raw-cage measurement that WOULD catch it available
+  // under SKIN_RELAX=0.
+  check('...and the joint sizes its BLOCK, not just its capsule',
+    /r = Skeleton\.jointRadius\(j, r\);/.test(SM_SRC),
+    'without it a sized joint is a small cube inflated by the relax — the right shape made of '
+    + 'the wrong number of polygons');
+  if (!RELAX) {
+    check('...which the raw cage shows directly',
+      spread(build(chain), 2.0) > 0.6,
+      'the block itself is built at the joint radius, before anything is projected');
+  }
+
+  const untouched = skeleton([['a', null, 0, 0, 0, 0.2], ['b', 'a', 0, 2.0, 0, 0.2]]);
+  const base = build(untouched);
+  check('...while a rig with no joint sized is unchanged',
+    Math.abs(spread(base, 1.0) - spread(build(skeleton([['a', null, 0, 0, 0, 0.2],
+      ['b', 'a', 0, 2.0, 0, 0.2]])), 1.0)) < 1e-9,
+    'unset must mean "whatever the bone says", or every existing rig re-skins differently');
 }
 
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));
