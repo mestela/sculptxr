@@ -12,6 +12,9 @@
 //   RV_INJECT=boneowned   the volume goes back to being asked of the bone, not the junction
 //   RV_INJECT=nofit       a new volume is unit-sized instead of fitted to the joint's children
 //   RV_INJECT=drawboth    a swallowed bone keeps drawing its own body over the volume
+//   RV_INJECT=swallowall a volume swallows every bone out of its joint, contained or not, so a
+//                         hip dome eats both whole thigh bones
+//   RV_INJECT=leafswallowall the leaf case swallows its incoming bone unconditionally
 //   RV_INJECT=keepcaps    a swallowed bone keeps its capsule, so two envelopes claim the junction
 //   RV_INJECT=identcolour the volume reads the bone section's `ident`, declared 270 lines later
 //   RV_INJECT=domeup      the dome goes back to sitting on the joint like a bowl
@@ -38,6 +41,15 @@
 //   RV_INJECT=edgescan    the round shapes go back to an edge-angle scan, which finds nothing on
 //                         an ellipsoid
 //   RV_INJECT=fullrings   the dome draws full circles, half of each in the air above it
+//   RV_INJECT=novolarm    a volume drag starts armed, so selecting one knocks it off axis
+//   RV_INJECT=notwinedit  a side volume no longer takes its twin with it
+//   RV_INJECT=twinnoundo  the twin is edited but left out of the undo step
+//   RV_INJECT=onesideshape choosing a shape applies to the selected joint only, not its twin
+//   RV_INJECT=copyoff     the twin's offset is copied rather than reflected, so dragging the
+//                         left face of one hand moves the left face of the other
+//   RV_INJECT=copyrot     the twin's rotation is copied rather than reflected, so both sides
+//                         tip the same way
+//   RV_INJECT=wirealpha   the wireframe blends alpha normally again, cutting a hole in AR
 import fs from 'fs';
 import path from 'path';
 
@@ -45,6 +57,8 @@ const REPO = '/Users/mattestela/sculptxr';
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 let GIZ = fs.readFileSync(path.join(REPO, 'src/editing/Gizmo.js'), 'utf8');
 let TOOLSRC = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
+let PANELSRC = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
+let WIRE_INJ = false;
 const TOOL = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
 const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
 
@@ -72,6 +86,22 @@ if (inject === 'boneowned') {
   const a = "      var local = vec3.transformMat4([0, 0, 0], inter, this._volJointInv || mat4.create());";
   if (!GIZ.includes(a)) throw new Error('inject worldoffset: anchor moved');
   GIZ = GIZ.replace(a, "      var local = inter;");
+} else if (inject === 'copyoff') {
+  TOOLSRC = TOOLSRC.replace('            const o2 = Skeleton.mirrorVolumeOffset(Skeleton.jointVolOffset(main, vd.joint), _offMirrorV);',
+    '            const o2 = Skeleton.jointVolOffset(main, vd.joint);');
+} else if (inject === 'copyrot') {
+  TOOLSRC = TOOLSRC.replace('              Skeleton.mirrorVolumeRot(Skeleton.jointVolRot(vd.joint), _qMirrorV));',
+    '              Skeleton.jointVolRot(vd.joint));');
+} else if (inject === 'wirealpha') {
+  WIRE_INJ = true;
+} else if (inject === 'onesideshape') {
+  PANELSRC = PANELSRC.replace('        if (twin && main.getMeshes?.().includes(twin) && !joints.includes(twin)) joints.push(twin);', '');
+} else if (inject === 'novolarm') {
+  TOOLSRC = TOOLSRC.replace('            armed: false,', '            armed: true,');
+} else if (inject === 'notwinedit') {
+  TOOLSRC = TOOLSRC.replace('          if (vd.twin) {', '          if (false) {');
+} else if (inject === 'twinnoundo') {
+  TOOLSRC = TOOLSRC.replace('      for (const t of twin ? [j, twin] : [j]) {', '      for (const t of [j]) {');
 } else if (inject === 'edgescan') {
   cut("  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || equatorGeometry(32, false));",
     "  if (shape === 'egg') return (_eggEdgeGeo = _eggEdgeGeo || new THREE.EdgesGeometry(eggVolGeometry(), 28));", inject);
@@ -119,6 +149,12 @@ if (inject === 'boneowned') {
   cut('  out.pos.add(_vFrame);', '', inject);
 } else if (inject === 'identcolour') {
   cut('      const volIdent = Skeleton.boneColor(main, j);', '      const volIdent = ident;', inject);
+} else if (inject === 'swallowall') {
+  cut('    if (Skeleton.volumeContains(main, parent, Skeleton.jointPos(child, _pSwallow), 1.05)) return true;',
+    '    return true;', inject);
+} else if (inject === 'leafswallowall') {
+  cut('  return Skeleton.volumeContains(main, child, Skeleton.jointPos(parent, _pSwallow), 1.05);',
+    '  return true;', inject);
 } else if (inject === 'keepcaps') {
   cut('    if (swallowed || !showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }',
     '    if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }', inject);
@@ -132,13 +168,16 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 check('a volume is a property of the JOINT, not of a bone',
   /Skeleton\.jointVolume = function \(j\)/.test(SRC) && !/_boneShape/.test(SRC),
   'hung on a bone it can only ever cover one arm of the T');
-check('...and it swallows every bone out of that joint',
-  /Skeleton\.boneSwallowed = function \(parent, child, childIsLeaf\) \{\s*\n\s*if \(Skeleton\.hasVolume\(parent\)\) return true;/.test(SRC),
-  'asked of the PARENT: the bones leaving the junction are the ones the volume covers');
+check('...and it swallows the bones out of that joint THAT IT CONTAINS',
+  /if \(Skeleton\.hasVolume\(parent\)\) \{[\s\S]{0,200}?Skeleton\.volumeContains\(main, parent, Skeleton\.jointPos\(child, _pSwallow\), 1\.05\)\) return true;/.test(SRC),
+  'asked of the PARENT — but a hip dome that swallows unconditionally eats both entire thigh '
+  + 'bones, and those limbs get no tube and no capsule at all');
 // A leaf has no bone leading out of it, so its volume stands in for the one leading IN — without
 // this a skull volume leaves the neck bone drawn straight through it.
 check('...and a LEAF joint\'s volume swallows the bone leading into it',
-  /return !!childIsLeaf && Skeleton\.hasVolume\(child\);/.test(SRC));
+  /if \(!childIsLeaf \|\| !Skeleton\.hasVolume\(child\)\) return false;/.test(SRC)
+  && /return Skeleton\.volumeContains\(main, child, Skeleton\.jointPos\(parent, _pSwallow\), 1\.05\);/.test(SRC),
+  'and it too is a containment test, run from the other end of the bone');
 // matt: "cube is centered on the joint vs replacing the bone drawn from itself to the child".
 check('a non-branching volume starts centred on its BONE, not on its joint',
   /Skeleton\.volSpan = function \(main, j\)/.test(SRC)
@@ -165,9 +204,17 @@ check('...and stops carrying an envelope',
 check('a volume with nothing set is fitted to the joint and its children',
   /const d = j && j\._jointVolDims;[\s\S]{0,300}?return Skeleton\.fitJointVolume\(main, j, out\);/.test(SRC),
   'fitted on every read rather than once at creation');
-check('...measured in the JOINT\'s own frame',
-  /const inv = _mTmp\.fromArray\(j\.getModelSpaceMatrix\(\)\)\.invert\(\);/.test(SRC),
-  'so it follows the joint\'s orientation rather than the world axes');
+check('...measured in the frame the volume is DRAWN in',
+  /const invQ = Skeleton\.volumeBasis\(main, j, _qBasisFit\)\.clone\(\)\.invert\(\);/.test(SRC),
+  'the joint\'s own matrix carries no rotation, so measuring through it put the width on '
+  + 'whichever world axis the limb happened to lie along');
+check('...and that frame aims along the bone',
+  /return out\.setFromUnitVectors\(_yAxisV, _vAim\.normalize\(\)\);/.test(SRC)
+  && /Skeleton\.volumeBasis = function \(main, j, out\)/.test(SRC),
+  'matt: "boxes don\'t aim at their child bone, they stay aligned in worldspace"');
+check('...except at a junction, which has no single bone to aim at',
+  /return out;                       \/\/ branching: keep the joint's own orientation/.test(SRC),
+  'a pelvis points three ways at once, and that case already read correctly');
 check('...over the joints that are its children',
   /const kids = Skeleton\.joints\(main\)\.filter\(\(k\) => k\._parentMesh === j\);/.test(SRC));
 check('...falling back to the capsule radius when there is nothing to measure',
@@ -470,6 +517,149 @@ check('...falling back to the capsule radius when there is nothing to measure',
     'full circles would put half of each one in the empty air above the shape');
   check('...unit sized, so they scale with the volume like it does',
     /p0\[ax\] = Math\.cos\(t0\); p0\[ay\] = Math\.sin\(t0\);/.test(SRC));
+}
+
+// ── SELECTING A VOLUME MUST NOT MOVE IT, AND EDITING ONE EDITS ITS TWIN ───────────────
+{
+  check('a volume drag starts unarmed',
+    /armed: false,/.test(TOOLSRC)
+    && /if \(isPressed && !vd\.armed\s*\n\s*&& _tip\.distanceTo\(vd\.start\) > this\._snapDist\(\) \* 0\.35\)/.test(TOOLSRC),
+    'the centre handle is a 6DOF hold, so the smallest wrist rotation tipped the shape off axis '
+    + 'before you had done anything — matt: "i frequently knock it off axis and out of symmetry"');
+  check('...and re-takes its reference when it arms',
+    /vd\.start\.copy\(_tip\);/.test(TOOLSRC) && /vd\.dims = Skeleton\.jointVolDims\(main, vd\.joint\)\.slice\(\);/.test(TOOLSRC),
+    'or the shape jumps by the threshold the instant the drag begins');
+
+  check('a side volume knows its twin',
+    /twin: hj\._boneMirror && Skeleton\.hasVolume\(hj\._boneMirror\) \? hj\._boneMirror : null,/.test(TOOLSRC));
+  check('...which receives the same edit, whichever handle did it', (() => {
+    const at = TOOLSRC.indexOf('if (vd.twin) {');
+    if (at < 0) return false;
+    const block = TOOLSRC.slice(at, TOOLSRC.indexOf('\n          }', at));
+    return /setJointVolDims\(vd\.twin/.test(block) && /setJointVolOffset\(vd\.twin/.test(block)
+      && /setJointVolRot\(vd\.twin/.test(block);
+  })());
+  check('...placed after the branches, not inside one',
+    TOOLSRC.indexOf('whichever handle did it') > TOOLSRC.indexOf("vd.grip.kind === 'centre'"),
+    'inside the centre branch a FACE drag would not mirror — and the face is the one matt named');
+  check('...and goes in the same undo step',
+    /for \(const t of twin \? \[j, twin\] : \[j\]\) \{/.test(TOOLSRC),
+    'restoring one side and not the other leaves exactly the asymmetry this prevents');
+}
+
+// ── THE MENU GETS OUT OF THE WAY (roadmap #72) ────────────────────────────────────────
+//
+// The wrist panels hang off the non-dominant grip, so reaching with that hand puts the menu
+// through whatever you are grabbing. matt, twice: "if the secondary controller is used to grab a
+// control, hide the menu for as long as the trigger is held."
+{
+  const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('the secondary hand\'s trigger is read',
+    /if \(!src\.gamepad \|\| src\.handedness === this\._dominantHand\) continue;/.test(SCENE),
+    'that hand\'s own trigger is unambiguous — the menu is operated by pointing at it with the '
+    + 'other hand');
+  check('...and the wrist panels hide while it is held',
+    /if \(secondaryHeld\) \{[\s\S]{0,220}?_p\.mesh\.visible = false;/.test(SCENE));
+  check('...restoring what was OPEN, not everything',
+    /_p\._preHideVisible = _p\.mesh\.visible;/.test(SCENE)
+    && /_p\.mesh\.visible = _p\._preHideVisible;/.test(SCENE),
+    'forcing them all visible on release would open panels the user had closed');
+  check('...and a pinned panel is exempt',
+    /if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiGrip\) continue;/.test(SCENE),
+    'it is world-anchored and no longer on the hand');
+}
+
+// ── CHOOSING A SHAPE IS MIRRORED TOO ──────────────────────────────────────────────────
+//
+// One step earlier than the drag mirroring, and the same asymmetry if it is missing. matt: "if
+// i select a left wrist and make it a box volume, the right wrist should do the same."
+{
+  check('the shape buttons act on the twin as well',
+    /const twin = j\._boneMirror;\s*\n\s*if \(twin && main\.getMeshes\?\.\(\)\.includes\(twin\) && !joints\.includes\(twin\)\) joints\.push\(twin\);/.test(PANELSRC));
+  check('...deduped, so selecting both sides does not act on either twice',
+    /if \(!joints\.includes\(j\)\) joints\.push\(j\);/.test(PANELSRC));
+  check('...only for a twin that is actually in the scene',
+    /main\.getMeshes\?\.\(\)\.includes\(twin\)/.test(PANELSRC),
+    '_boneMirror survives a save and can outlive the joint it names');
+  check('...and the undo step covers everything it touched',
+    /const before = snap\(\);/.test(PANELSRC),
+    'snap() runs over the expanded list, so both sides come back together');
+}
+
+// ── A MIRRORED ROTATION IS REFLECTED, NOT COPIED ──────────────────────────────────────
+//
+// matt: "rotating a mirrored volume shape should properly mirror, atm the mirror twins the
+// rotation rather than inverting it across the mirror plane."
+{
+  check('there is a reflection for a volume rotation',
+    /Skeleton\.mirrorVolumeRot = function \(q, out\)/.test(SRC));
+  check('...keeping the twist about the mirror normal and negating the other two',
+    /return out\.set\(q\.x, -q\.y, -q\.z, q\.w\);/.test(SRC),
+    'M.R.M is proper — two sign flips — and a twist about the normal genuinely is unchanged '
+    + 'by mirroring, while a nod or a yaw reverses');
+  check('...used when the drag writes the twin',
+    /Skeleton\.setJointVolRot\(vd\.twin,\s*\n\s*Skeleton\.mirrorVolumeRot\(Skeleton\.jointVolRot\(vd\.joint\), _qMirrorV\)\);/.test(TOOLSRC));
+  check('...and when undo puts it back',
+    /Skeleton\.setJointVolRot\(t, t === j/.test(TOOLSRC),
+    'restoring the twin from the recorded rotation verbatim would re-introduce the bug on undo');
+  // WHAT THE HANDS TAUGHT US: the two joints' frames are NOT mirror images, they carry the same
+  // orientation. So an offset copied across moves the twin the same way in the world — matt:
+  // "i tweak the left side on the left hand, but it tweaks the left side of the right hand,
+  // rather than the right side of the right hand."
+  check('the offset is reflected too',
+    /Skeleton\.mirrorVolumeOffset = function \(off, out\)/.test(SRC)
+    && /out\[0\] = -off\[0\]; out\[1\] = off\[1\]; out\[2\] = off\[2\];/.test(SRC),
+    'only the component along the mirror normal flips — the twin grows on the matching side '
+    + 'while keeping the same height and depth');
+  check('...on the drag',
+    /const o2 = Skeleton\.mirrorVolumeOffset\(Skeleton\.jointVolOffset\(main, vd\.joint\), _offMirrorV\);/.test(TOOLSRC));
+  check('...and on undo',
+    /const off = t === j \? st\.off : Skeleton\.mirrorVolumeOffset\(st\.off, _offMirrorV\);/.test(TOOLSRC));
+  check('dimensions still go across verbatim',
+    /Skeleton\.setJointVolDims\(vd\.twin, d2\[0\], d2\[1\], d2\[2\]\);/.test(TOOLSRC),
+    'extents survive a reflection unchanged; a position does not');
+}
+
+// ── THE WIREFRAME MUST NOT CUT A HOLE IN AR ───────────────────────────────────────────
+//
+// In passthrough the compositor reads framebuffer alpha as "how much room shows through", and
+// ordinary blending LOWERS destination alpha. matt hit this on the ground grid first and has now
+// hit it on the wireframe over a bound mesh.
+{
+  let MM = fs.readFileSync(path.join(REPO, 'src/mesh/multiresolution/Multimesh.js'), 'utf8');
+  if (WIRE_INJ) MM = MM.replace('            lineMaterial.blendSrcAlpha = THREE.OneFactor;', '');
+  check('the wireframe blends its alpha additively',
+    /lineMaterial\.blendSrcAlpha = THREE\.OneFactor;/.test(MM)
+    && /lineMaterial\.blendDstAlpha = THREE\.OneFactor;/.test(MM),
+    'the same rule the ground grid needed, for the same reason');
+  check('...with the COLOUR blend left exactly as it was',
+    /lineMaterial\.blendSrc = THREE\.SrcAlphaFactor;/.test(MM)
+    && /lineMaterial\.blendDst = THREE\.OneMinusSrcAlphaFactor;/.test(MM),
+    'only the alpha channel was ever the problem');
+}
+
+// ── THE WIREFRAME CARRIES THE SURFACE'S COLOUR ────────────────────────────────────────
+//
+// A black wire over a see-through skin reads as jet black — there is nothing behind it to mix
+// with, so alpha does not help. And during weight painting the one thing the wire should agree
+// with is the colour under it. matt: "wires when xray is enabled render jet black. they should
+// mix properly. when weight painting, the wire should take on the weight paint colour."
+{
+  const MM = fs.readFileSync(path.join(REPO, 'src/mesh/multiresolution/Multimesh.js'), 'utf8');
+  check('the wireframe uses per-vertex colour',
+    /vertexColors: true,/.test(MM) && /color: 0xffffff,/.test(MM),
+    'white base, or the vertex colour is multiplied down to nothing');
+  check('...fed from the mesh\'s own colours',
+    /var srcColors = activeMesh\.getColors && activeMesh\.getColors\(\);/.test(MM)
+    && /setAttribute\('color', new THREE\.BufferAttribute\(wireCols, 3\)\)/.test(MM),
+    'which is where the weight preview writes');
+  check('...darkened, so an edge still reads as an edge',
+    /wireCols\[ci\] = srcColors\[ci\] \* 0\.45;/.test(MM),
+    'matched exactly it would disappear into the face it sits on');
+  check('...and the buffer is reused between frames',
+    /if \(!wireCols \|\| wireCols\.length !== activeVerts\.length\)/.test(MM),
+    'this runs on every wireframe update, and a fresh Float32Array per frame on a dense sculpt '
+    + 'is a garbage collection every few seconds');
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

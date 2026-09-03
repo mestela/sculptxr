@@ -22,6 +22,9 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 //                          capsules come back over the top
 //   SKEL_INJECT=nohidden    visibility is not written, so a hidden mesh reloads visible
 //   SKEL_INJECT=nocagejoint the cage comes back without the joint it speaks for
+//   SKEL_INJECT=novolsave  joint volumes are not written, so a saved rig reloads as bare capsules
+//   SKEL_INJECT=volflags   the "fitted" flags are dropped, so an auto-fitted volume comes back
+//                          frozen at the size it happened to have when saved
 //   SKEL_INJECT=pinbits  the pin mode is written with its old two bits only, so the fourth
 //                        mode saves as unpinned while everything about the live session still
 //                        looks right — the classic bitfield bug that only shows up on reload.
@@ -31,7 +34,10 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
     if (!SRC.includes(a)) throw new Error('inject ' + _i + ': anchor moved');
     SRC = SRC.replace(a, b);
   };
-  if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (hidden ? 64 : 0),');
+  if (_i === 'novolsave') _cut('  u[o++] = vols.length;', '  u[o++] = 0;');
+  else if (_i === 'volflags') _cut('    u[o++] = v.shape | (d ? 16 : 0) | (off ? 32 : 0) | (rot ? 64 : 0);',
+    '    u[o++] = v.shape | 16 | 32 | 64;');
+  else if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (hidden ? 64 : 0),');
   else if (_i === 'nohidden') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (m._isWeightCage ? 32 : 0),');
   else if (_i === 'nocagejoint') _cut('          if (row.parent && row.parent.getID) row.mesh._cageJointId = row.parent.getID();', '');
   if (process.env.SKEL_INJECT === 'pinbits') {
@@ -275,6 +281,32 @@ const roundTrip = (meshes) => {
     'it would take every capsule and cage parented to it out of the scene with it');
   check('...while the capsule under it still does',
     !!out && out[1]._hiddenApplied === true);
+}
+
+// ── JOINT VOLUMES SURVIVE A SAVE (SKEL v7) ────────────────────────────────────────────
+//
+// They lived only in memory, so a rig saved with a pelvis dome and a ribcage egg came back as
+// bare capsules — and the cage bake, Make Skin and the mirroring all quietly fell back with it.
+// Found while probing matt's own skel02.sxr, which turned out not to contain the volumes he had
+// just built.
+{
+  const joint = mk({ _isBone: true, _boneRadius: 1,
+    _jointVolume: 'egg', _jointVolDims: [1, 2, 3], _jointVolRot: [0, 0, 0.3826, 0.9238] });
+  const fitted = mk({ _isBone: true, _boneRadius: 1, _jointVolume: 'half' });   // nothing set
+  const plain = mk({ _isBone: true, _boneRadius: 1 });
+  const out = roundTrip([joint, fitted, plain]);
+
+  check('a volume comes back with its shape', !!out && out[0]._jointVolume === 'egg');
+  check('...its dimensions', !!out && !!out[0]._jointVolDims
+    && Math.abs(out[0]._jointVolDims[2] - 3) < 1e-6,
+    out && out[0]._jointVolDims ? out[0]._jointVolDims.join(',') : 'none');
+  check('...and its rotation', !!out && !!out[0]._jointVolRot
+    && Math.abs(out[0]._jointVolRot[3] - 0.9238) < 1e-4);
+  check('a FITTED volume comes back still fitted', !!out && out[1]._jointVolume === 'half'
+    && !out[1]._jointVolDims && !out[1]._jointVolOffset,
+    'restoring it as hand-set would freeze it at whatever the skeleton looked like when saved, '
+    + 'and it would stop following the rig');
+  check('a joint with no volume gains none', !!out && !out[2]._jointVolume);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

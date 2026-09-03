@@ -729,10 +729,42 @@ Skeleton.hasVolume = function (j) { return Skeleton.jointVolume(j) !== 'none'; }
 // stands in for the bone leading into it: a skull has no bone below it, so the neck bone is the
 // only one its volume can be said to replace, and leaving that bone drawn puts a stick through
 // the head.
-Skeleton.boneSwallowed = function (parent, child, childIsLeaf) {
-  if (Skeleton.hasVolume(parent)) return true;
-  return !!childIsLeaf && Skeleton.hasVolume(child);
+// IS THIS POINT INSIDE THE JOINT'S VOLUME? Compare the point's distance from the volume centre,
+// in the volume's own frame with its half-extents divided out, against the shape's surface in
+// that same direction — the unit-space form of "inside".
+const _volFit = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] };
+const _cAt = new THREE.Vector3();
+const _cSurf = new THREE.Vector3();
+const _cQ = new THREE.Quaternion();
+Skeleton.volumeContains = function (main, j, at, pad) {
+  if (!main || !Skeleton.hasVolume(j)) return false;
+  const f = Skeleton.volumeFrame(main, j, _volFit);
+  _cAt.copy(at).sub(f.pos).applyQuaternion(_cQ.copy(f.quat).invert());
+  _cAt.set(_cAt.x / Math.max(f.half[0], 1e-9), _cAt.y / Math.max(f.half[1], 1e-9),
+           _cAt.z / Math.max(f.half[2], 1e-9));
+  if (!Skeleton.shapeSurfaceFromDir(Skeleton.jointVolume(j), _cAt.x, _cAt.y, _cAt.z, _cSurf)) {
+    return true;                                          // dead centre
+  }
+  return _cAt.length() <= _cSurf.length() * (pad === undefined ? 1 : pad);
 };
+
+// A VOLUME ONLY SWALLOWS A BONE IT ACTUALLY CONTAINS. This used to return true for every bone
+// whose parent carried a volume, so a hip dome swallowed both entire thigh bones and the first
+// spine bone: those limbs got no tube and no capsule at all, which read as the legs collapsing
+// into the pelvis. Test the far end of the bone against the volume instead — a stub inside the
+// pelvis is swallowed, a thigh reaching well outside it is not.
+Skeleton.boneSwallowed = function (parent, child, childIsLeaf, main) {
+  if (Skeleton.hasVolume(parent)) {
+    if (!main) return true;
+    if (Skeleton.volumeContains(main, parent, Skeleton.jointPos(child, _pSwallow), 1.05)) return true;
+  }
+  if (!childIsLeaf || !Skeleton.hasVolume(child)) return false;
+  // The leaf case runs the other way: the bone leads INTO the volume, so it is swallowed when
+  // its head is inside.
+  if (!main) return true;
+  return Skeleton.volumeContains(main, child, Skeleton.jointPos(parent, _pSwallow), 1.05);
+};
+const _pSwallow = new THREE.Vector3();
 
 // FITTED TO THE JOINT AND ITS CHILDREN, which is what makes a dome land pelvis-shaped before the
 // gizmo is touched: the width spans the two leg tops, the height reaches the base of the spine.
@@ -743,14 +775,47 @@ Skeleton.boneSwallowed = function (parent, child, childIsLeaf) {
 // A leaf has none, so it spans the bone leading IN, which is the only bone it can be said to be.
 //
 // Returns null for a branching joint, which is centred on the junction instead.
+// THE FRAME A VOLUME IS DESCRIBED IN. Not the joint's own matrix — a drawn joint carries only a
+// translation, so "the joint's frame" is world space and every volume came out world-aligned
+// whatever its bone was doing. matt: "boxes don't aim at their child bone, they stay aligned in
+// worldspace."
+//
+// So a volume is described in a frame BUILT FROM THE BONE: +Y runs along it, exactly as the bone
+// body is drawn. A branching joint has no single bone to aim at — a pelvis points three ways at
+// once — and keeps the joint's own orientation, which is the case that already read correctly.
+//
+// One definition, used by the fit AND by volumeFrame, or the dimensions would be measured in one
+// frame and drawn in another.
+Skeleton.volumeBasis = function (main, j, out) {
+  out = out || new THREE.Quaternion();
+  _mBasis.fromArray(j.getModelSpaceMatrix());
+  _mBasis.decompose(_vBasis, out, _sBasis);
+
+  const kids = Skeleton.joints(main).filter((k) => k._parentMesh === j);
+  if (kids.length !== 1) {
+    // 0 children: aim back along the bone that arrives, which is the only bone a leaf has.
+    if (kids.length === 0 && Skeleton.isJoint(j._parentMesh)) {
+      _vAim.copy(Skeleton.jointPos(j, _pAim)).sub(Skeleton.jointPos(j._parentMesh, _pAim2));
+    } else {
+      return out;                       // branching: keep the joint's own orientation
+    }
+  } else {
+    _vAim.copy(Skeleton.jointPos(kids[0], _pAim)).sub(Skeleton.jointPos(j, _pAim2));
+  }
+  if (_vAim.lengthSq() < 1e-12) return out;
+  return out.setFromUnitVectors(_yAxisV, _vAim.normalize());
+};
+
 Skeleton.volSpan = function (main, j) {
   const kids = Skeleton.joints(main).filter((k) => k._parentMesh === j);
   if (kids.length >= 2) return null;
   const other = kids.length === 1 ? kids[0]
     : (Skeleton.isJoint(j._parentMesh) ? j._parentMesh : null);
   if (!other) return null;
-  const inv = _mSpan.fromArray(j.getModelSpaceMatrix()).invert();
-  const p = new THREE.Vector3().copy(Skeleton.jointPos(other)).applyMatrix4(inv);
+  // Same frame as the fit and the draw — see volumeBasis.
+  const invQ = Skeleton.volumeBasis(main, j, _qBasisFit).clone().invert();
+  const p = new THREE.Vector3().copy(Skeleton.jointPos(other))
+    .sub(Skeleton.jointPos(j, _pAim2)).applyQuaternion(invQ);
   return { len: p.length(), mid: [p.x * 0.5, p.y * 0.5, p.z * 0.5] };
 };
 
@@ -772,11 +837,15 @@ Skeleton.fitJointVolume = function (main, j, out) {
     return out;
   }
 
-  const inv = _mTmp.fromArray(j.getModelSpaceMatrix()).invert();
+  // MEASURED IN THE VOLUME'S OWN FRAME, which is the bone's — the same frame volumeFrame draws
+  // in. Measuring through the joint's matrix instead put the width on whichever world axis the
+  // limb happened to lie along.
+  const invQ = Skeleton.volumeBasis(main, j, _qBasisFit).clone().invert();
+  const jp = Skeleton.jointPos(j, _pAim2).clone();
   const _p = new THREE.Vector3();
   let mx = 0, my = 0, mz = 0;
   for (const k of kids) {
-    _p.copy(Skeleton.jointPos(k)).applyMatrix4(inv);
+    _p.copy(Skeleton.jointPos(k)).sub(jp).applyQuaternion(invQ);
     mx = Math.max(mx, Math.abs(_p.x));
     my = Math.max(my, Math.abs(_p.y));
     mz = Math.max(mz, Math.abs(_p.z));
@@ -844,6 +913,105 @@ Skeleton.jointVolRot = function (j, out) {
   const r = j && j._jointVolRot;
   if (r) out.set(r[0], r[1], r[2], r[3]); else out.set(0, 0, 0, 1);
   return out;
+};
+
+// A ROTATION REFLECTED, NOT COPIED. Copying a quaternion to the twin makes both sides turn the
+// SAME way; mirrored, they should turn opposite ways. matt: "rotating a mirrored volume shape
+// should properly mirror, atm the mirror twins the rotation rather than inverting it across the
+// mirror plane."
+//
+// Reflecting a rotation R about a plane gives M·R·M, which is proper (two sign flips) and, in
+// quaternion terms, keeps the component of the axis ALONG the mirror normal and negates the two
+// across it: a twist about the normal is unchanged by mirroring, while a nod or a yaw reverses.
+// Written for the volume's own frame, where the mirror normal is local X — the same assumption
+// the centreline twist rule makes.
+// AN OFFSET REFLECTED. Same reasoning as the rotation, and the same discovery: the two joints'
+// frames are NOT mirror images — they carry the same orientation — so a local offset copied
+// across moves the twin the same way in the world instead of the opposite way. matt: "i tweak
+// the left side on the left hand, but it tweaks the left side of the right hand, rather than the
+// right side of the right hand."
+//
+// Only the component along the mirror normal flips; the other two are unchanged, which is what
+// makes the twin's box grow on the matching side while staying the same height and depth.
+// THE SURFACE OF EACH SHAPE, IN ONE PLACE. Takes a point on the UNIT CUBE and returns the
+// corresponding point on the unit shape — matt's shrinkwrap, done analytically because these
+// shapes have closed forms.
+//
+// Shared by the weight cage and by Make Skin, and that sharing is the point: they are two views
+// of the same volume, and a skin built from a slightly different ellipsoid than the cage it is
+// weighted against is a bug waiting for a rig big enough to show it.
+Skeleton.shapePoint = function (shape, x, y, z, out) {
+  out = out || new THREE.Vector3();
+  out.set(x, y, z);
+  if (shape === 'box') return out;                 // the cube already IS the shape
+
+  // AN EVEN CUBE-TO-SPHERE MAPPING, not a normalise.
+  //
+  // Normalising a cube point does land it on the sphere, but it bunches the vertices: a face's
+  // centre barely moves while its corners are dragged a long way, so the quads end up large at
+  // the middle of each face and small where the faces meet. matt saw the result: "its distorting
+  // the base wireframe too much, putting too few polys around the center of the egg, and too
+  // many at the poles."
+  //
+  // This is the standard spherified-cube formula, which spreads the same vertices evenly over
+  // the sphere — the difference between a lat-long grid's pinched poles and a quad sphere.
+  const x2 = x * x, y2 = y * y, z2 = z * z;
+  out.set(
+    x * Math.sqrt(Math.max(0, 1 - y2 / 2 - z2 / 2 + (y2 * z2) / 3)),
+    y * Math.sqrt(Math.max(0, 1 - z2 / 2 - x2 / 2 + (z2 * x2) / 3)),
+    z * Math.sqrt(Math.max(0, 1 - x2 / 2 - y2 / 2 + (x2 * y2) / 3)));
+  if (shape === 'half' && out.y > 0) {
+    // Above the equator, lay it onto the cap: keep the radial direction so the disc fills
+    // evenly rather than collapsing every upper point onto the rim.
+    const r = Math.hypot(out.x, out.z) || 1e-6;
+    const want = Math.min(1, r + out.y);
+    out.set((out.x / r) * want, 0, (out.z / r) * want);
+  }
+  return out;
+};
+
+// THE SURFACE POINT IN A GIVEN DIRECTION. shapePoint maps the unit CUBE onto a shape; this is
+// the question the other way round — given a direction from the centre, where is the surface?
+//
+// The distinction cost a real bug: projecting a box volume by NORMALISING the direction first
+// hands shapePoint a point on the unit sphere, and since a box returns its input unchanged,
+// every box volume projected onto a SPHERE of the box's dimensions. matt: "hands aren't
+// following the box shape at all... with the target shape BEING a box... it should be able to
+// hit that shape exactly."
+//
+// A box is reached by scaling the direction until its LARGEST component is 1 — that is the face
+// it exits through. Round shapes are reached by normalising, as before.
+Skeleton.shapeSurfaceFromDir = function (shape, x, y, z, out) {
+  out = out || new THREE.Vector3();
+  if (shape === 'box') {
+    const m = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
+    if (m < 1e-9) return null;
+    return out.set(x / m, y / m, z / m);
+  }
+  const len = Math.hypot(x, y, z);
+  if (len < 1e-9) return null;
+  // NOT through shapePoint. That maps the unit CUBE onto the shape, and its spherified-cube
+  // formula assumes a cube point — fed a point already on the sphere it returns something
+  // SHORTER than 1, so every projected vertex lands inside the volume by a varying amount. The
+  // surface in a direction is simply the normalised direction, plus the dome's cap rule.
+  out.set(x / len, y / len, z / len);
+  if (shape === 'half' && out.y > 0) {
+    const r = Math.hypot(out.x, out.z) || 1e-6;
+    const want = Math.min(1, r + out.y);
+    out.set((out.x / r) * want, 0, (out.z / r) * want);
+  }
+  return out;
+};
+
+Skeleton.mirrorVolumeOffset = function (off, out) {
+  out = out || [0, 0, 0];
+  out[0] = -off[0]; out[1] = off[1]; out[2] = off[2];
+  return out;
+};
+
+Skeleton.mirrorVolumeRot = function (q, out) {
+  out = out || new THREE.Quaternion();
+  return out.set(q.x, -q.y, -q.z, q.w);
 };
 
 Skeleton.setJointVolRot = function (j, q) {
@@ -1001,7 +1169,9 @@ Skeleton.highlightVolumeHandle = function (main, grip) {
 Skeleton.volumeFrame = function (main, j, out) {
   out = out || { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] };
   _mFrame.fromArray(j.getModelSpaceMatrix());
-  _mFrame.decompose(out.pos, out.quat, _sFrame);
+  _mFrame.decompose(out.pos, _qBasisF, _sFrame);
+  // The volume's frame comes from the BONE, not from the joint's (rotation-free) matrix.
+  out.quat.copy(Skeleton.volumeBasis(main, j, _qBasisF));
 
   const dims = Skeleton.jointVolDims(main, j, _dimsF);
   out.half[0] = dims[0] * _sFrame.x;
@@ -1157,6 +1327,10 @@ const _qJH = new THREE.Quaternion(), _qVolH = new THREE.Quaternion();
 const _pJH = new THREE.Vector3(), _vOffH = new THREE.Vector3(), _vFace = new THREE.Vector3();
 const _pCentre = new THREE.Vector3();
 const _mFrame = new THREE.Matrix4(), _sFrame = new THREE.Vector3(), _vFrame = new THREE.Vector3();
+const _mBasis = new THREE.Matrix4(), _vBasis = new THREE.Vector3(), _sBasis = new THREE.Vector3();
+const _vAim = new THREE.Vector3(), _pAim = new THREE.Vector3(), _pAim2 = new THREE.Vector3();
+const _yAxisV = new THREE.Vector3(0, 1, 0);
+const _qBasisF = new THREE.Quaternion(), _qBasisFit = new THREE.Quaternion();
 const _qFrame = new THREE.Quaternion();
 const _dimsF = [0, 0, 0], _offF = [0, 0, 0];
 const _frameDraw = { pos: new THREE.Vector3(), quat: new THREE.Quaternion(), half: [0, 0, 0] };
@@ -2690,7 +2864,7 @@ Skeleton.updateVisuals = function (main) {
     // SWALLOWED BY THE PARENT'S VOLUME. Every bone out of a joint that carries one stops
     // drawing — the volume already covers that whole junction, and drawing both would claim
     // there are two answers to where the bone is.
-    const swallowed = Skeleton.boneSwallowed(parent, j, !hasChildBone.has(id));
+    const swallowed = Skeleton.boneSwallowed(parent, j, !hasChildBone.has(id), main);
     for (const o of [e.bone.solid, e.bone.ghost, e.wire.solid, e.wire.ghost]) {
       const isBody = o === e.bone.solid || o === e.bone.ghost;
       o.position.copy(_pA);
@@ -3273,7 +3447,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 6;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden
+const SKEL_VERSION = 7;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3364,6 +3538,22 @@ Skeleton.serialize = function (meshes) {
   const rests = [];
   meshes.forEach((m, i) => { if (m && m._isBone && m._ikRest) rests.push({ i: i, m: m }); });
 
+  // v7: JOINT VOLUMES. They lived only in memory, so a rig saved with a pelvis dome and a
+  // ribcage egg came back as bare capsules — and every downstream feature (the cage bake, Make
+  // Skin, the mirroring) quietly fell back with it. Written as their own section after the
+  // rests, so an older reader stops where it always did.
+  //
+  // The three numbers are optional: unset means "fit to the rig", which is a different state
+  // from "set to whatever the fit last returned" — the first tracks the skeleton as it changes
+  // and the second does not. A flag word carries that distinction rather than a sentinel value.
+  const vols = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isBone) return;
+    const shape = Skeleton.jointVolume(m);
+    if (shape === 'none') return;
+    vols.push({ i: i, m: m, shape: VOLUME_SHAPES.indexOf(shape) });
+  });
+
   if (!entries.length && !skins.length) return null;
 
   let slots = 3 + entries.length * 6 + 1;
@@ -3371,6 +3561,7 @@ Skeleton.serialize = function (meshes) {
     slots += 3 + s.j.length + s.nbV * INFLUENCES * 2 + s.nbV * 3 + s.j.length * 16;
   }
   slots += 1 + rests.length * 17;
+  slots += 1 + vols.length * 12;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -3403,6 +3594,16 @@ Skeleton.serialize = function (meshes) {
   for (const r of rests) {
     u[o++] = r.i;
     for (let k = 0; k < 16; k++) f[o++] = r.m._ikRest[k];
+  }
+
+  u[o++] = vols.length;
+  for (const v of vols) {
+    const d = v.m._jointVolDims, off = v.m._jointVolOffset, rot = v.m._jointVolRot;
+    u[o++] = v.i;
+    u[o++] = v.shape | (d ? 16 : 0) | (off ? 32 : 0) | (rot ? 64 : 0);
+    for (let k = 0; k < 3; k++) f[o++] = d ? d[k] : 0;
+    for (let k = 0; k < 3; k++) f[o++] = off ? off[k] : 0;
+    for (let k = 0; k < 4; k++) f[o++] = rot ? rot[k] : 0;
   }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
@@ -3612,6 +3813,26 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const rest = new Float32Array(16);
         for (let k = 0; k < 16; k++) rest[k] = f[o++];
         if (m) m._ikRest = rest;
+      }
+    }
+
+    // v7: joint volumes. The flags distinguish "fitted to the rig" from "set by hand" — see the
+    // note where they are written; restoring a fitted volume as a hand-set one would freeze it
+    // at whatever the skeleton looked like when it was saved.
+    if (ver >= 7) {
+      const vn = u[o++];
+      for (let i = 0; i < vn; i++) {
+        const mi = u[o++];
+        const word = u[o++];
+        const dims = [f[o++], f[o++], f[o++]];
+        const off = [f[o++], f[o++], f[o++]];
+        const rot = [f[o++], f[o++], f[o++], f[o++]];
+        const m = meshes[mi];
+        if (!m) continue;
+        m._jointVolume = VOLUME_SHAPES[word & 15] || 'none';
+        m._jointVolDims = (word & 16) ? dims : null;
+        m._jointVolOffset = (word & 32) ? off : null;
+        m._jointVolRot = (word & 64) ? rot : null;
       }
     }
 

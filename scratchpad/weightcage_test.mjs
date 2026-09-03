@@ -29,6 +29,9 @@
 //   WC_INJECT=perbakeundo each cage pushes its own undo state again, so a bake takes twenty
 //                         presses to undo
 //   WC_INJECT=noreparent  redo re-adds the cages without re-parenting them
+//   WC_INJECT=nowrap      the cube is not projected, so an egg bakes as a box
+//   WC_INJECT=poletopo    the shapes go back to lat-long shells, with a triangle fan at each
+//                         pole and uneven spacing
 import fs from 'fs';
 import path from 'path';
 
@@ -36,6 +39,7 @@ const REPO = '/Users/mattestela/sculptxr';
 const THREE = await import(path.join(REPO, 'node_modules/three/build/three.module.js'));
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
 let SKEL_INJ = false;
+let SKEL_SHAPE_INJ = false;
 let SKEL_FRAME_INJ = false;
 let SCENE_INJ = false;
 
@@ -61,10 +65,14 @@ if (inject === 'unsigned') {
 } else if (inject === 'novolcage') {
   cut('    if (!Skeleton.hasVolume(j)) continue;', '    if (true) continue;', inject);
 } else if (inject === 'doublebake') {
-  cut('    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()))) continue;', '', inject);
+  cut('    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()), main)) continue;', '', inject);
 } else if (inject === 'opencage') {
   cut('  else g = shellGeometry(radial, Math.max(2, rings >> 1), Math.PI / 2, Math.PI, 0);',
     '  else g = shellGeometry(radial, Math.max(2, rings >> 1), Math.PI / 2, Math.PI);', inject);
+} else if (inject === 'nowrap') {
+  cut("  if (shape !== 'box') {", '  if (false) {', inject);
+} else if (inject === 'poletopo') {
+  SKEL_SHAPE_INJ = true;
 } else if (inject === 'perbakeundo') {
   cut('  main.addMeshSilent(cage);', '  main.addNewMesh(cage);', inject);
 } else if (inject === 'noreparent') {
@@ -114,8 +122,17 @@ const body = SRC.split('\n').filter((l) => !/^import /.test(l)).join('\n')
 const Utils = { TRI_INDEX: 4294967295 };
 // `window` handed in: the module installs a console diagnostic on it at load, and node has no
 // window. A bare object is enough -- the diagnostic is not what is under test here.
+const SKEL_SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+let shapePointSrc = SKEL_SRC.slice(SKEL_SRC.indexOf('Skeleton.shapePoint = function'),
+  SKEL_SRC.indexOf('Skeleton.mirrorVolumeOffset = function'));
+// poletopo: the shape is not projected at all, so an egg stays a cube — the state the cage was
+// in before the shrinkwrap.
+if (SKEL_SHAPE_INJ) shapePointSrc = shapePointSrc.replace('  out.multiplyScalar(1 / len);', '');
+const SkeletonStub = { boneColor: () => ({ r: 1, g: 1, b: 1 }) };
+new Function('THREE', 'Skeleton', shapePointSrc)(THREE, SkeletonStub);
+
 const WeightCage = new Function('THREE', 'Skeleton', 'Geometry', 'Utils', 'window',
-  body + '\nreturn WeightCage;')(THREE, {}, Geometry, Utils, {});
+  body + '\nreturn WeightCage;')(THREE, SkeletonStub, Geometry, Utils, {});
 
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
@@ -428,7 +445,7 @@ check('one bone per vertex, weight 1', (() => {
     /Skeleton\.jointVolDims\(main, j\), Skeleton\.jointVolOffset\(main, j\), Skeleton\.jointVolRot\(j\)\)/.test(SRC),
     'the same three numbers the draw uses, or the cage lands somewhere the shape is not');
   check('...and the bones it swallows bake nothing',
-    /if \(Skeleton\.boneSwallowed\(p, j, !hasChild\.has\(j\.getID\(\)\)\)\) continue;/.test(SRC));
+    /if \(Skeleton\.boneSwallowed\(p, j, !hasChild\.has\(j\.getID\(\)\), main\)\) continue;/.test(SRC));
   check('one builder for both passes',
     /function makeCage\(main, geo, owner, namedAfter, prefix\)/.test(SRC),
     'colour, flags, buffer upload and parenting have each already cost a round of "the cage is '
@@ -505,17 +522,22 @@ check('one bone per vertex, weight 1', (() => {
 // better volume read of what the skin should be".
 {
   const SM = fs.readFileSync(path.join(REPO, 'src/editing/SkinMesh.js'), 'utf8');
-  check('a joint with a volume is built at the volume\'s size',
+  check('Make Skin still reads the volumes',
     /Skeleton\.volumeFrame\(main, j\) : null;/.test(SM)
-    && /verts\.push\(vol\.pos\.x \+ \(vol\.half\[0\] \* l\[0\]\) \/ CELLS,/.test(SM),
-    'through volumeFrame, which converts the joint-local dimensions into model space — mixing '
-    + 'the two is what put the blocks off the bones');
+    && /volTargets\.push\(\{ shape: volShape/.test(SM),
+    'as a projection target for the relax — the BLOCK is capsule-sized, see skinbox_test');
   check('...and a joint without one is unchanged',
     /verts\.push\(c\.x \+ \(h \* l\[0\]\) \/ CELLS, c\.y \+ \(h \* l\[1\]\) \/ CELLS, c\.z \+ \(h \* l\[2\]\) \/ CELLS\);/.test(SM));
-  check('...with the lattice still going straight to world',
-    /The volume's ROTATION is deliberately not applied/.test(SM),
-    'a turned box would shear against its own bridges — the one thing the lattice exists to '
-    + 'prevent');
+  // The block IS turned by the volume — a box on a wrist has to sit the way the wrist does —
+  // and the price is that the lattice no longer goes straight to world. The claim has to move
+  // into the same frame or the face a bone aims at is not the face it lands on, which is what
+  // turned matt's box hands inside out. skinbox_test measures the result; this holds the pair
+  // together, because turning one without the other is the bug.
+  check('...and a turned volume turns its block',
+    /if \(vol\.quat\) _sp\.applyQuaternion\(vol\.quat\);/.test(SM));
+  check('...with the CLAIM asked in that same turned frame',
+    /if \(vol && vol\.quat\) \{\s*\n\s*const inv = vol\.quat\.clone\(\)\.invert\(\);\s*\n\s*for \(const d of dirs\) d\.applyQuaternion\(inv\);/.test(SM),
+    'the block is turned and the claim is not: the bone reaches past the box and folds back');
 }
 
 // ── ONE ANSWER FOR WHERE A VOLUME IS ──────────────────────────────────────────────────
@@ -535,8 +557,11 @@ check('one bone per vertex, weight 1', (() => {
   check('there is one function that says where a volume is',
     /Skeleton\.volumeFrame = function \(main, j, out\)/.test(SK));
   check('...separating the joint\'s SCALE from its rotation',
-    /_mFrame\.decompose\(out\.pos, out\.quat, _sFrame\);/.test(SK),
+    /_mFrame\.decompose\(out\.pos, _qBasisF, _sFrame\);/.test(SK),
     'setFromRotationMatrix on a scaled matrix silently returns a wrong rotation');
+  check('...and taking the ORIENTATION from the bone, not the joint matrix',
+    /out\.quat\.copy\(Skeleton\.volumeBasis\(main, j, _qBasisF\)\);/.test(SK),
+    'a drawn joint carries only a translation, so its "frame" is world space');
   check('...converting the joint-local dimensions into model space',
     /out\.half\[0\] = dims\[0\] \* _sFrame\.x;/.test(SK)
     && /_vFrame\.set\(off\[0\] \* _sFrame\.x, off\[1\] \* _sFrame\.y, off\[2\] \* _sFrame\.z\)/.test(SK));
@@ -566,6 +591,80 @@ check('one bone per vertex, weight 1', (() => {
     + 'cage put back without this sits under the world group and reads its local matrix as world');
   check('and deleting them is one step as well',
     /false, 'Delete Capsules'\);/.test(SRC));
+}
+
+// ── ONE TOPOLOGY FOR EVERY SHAPE ──────────────────────────────────────────────────────
+//
+// matt's approach: "there should be a boxmodelling/extrude cube equivalent for our basic shapes,
+// even if its a cube that is rotated and scaled to match the target volume, subdivided, and then
+// shrinkwrapped onto the target shape." The projection is exact, because the shapes are
+// analytic — and the payoff is that a box, an egg and a dome become the same mesh with different
+// vertex positions, which is what will make stitching them in Make Skin tractable.
+{
+  check('every shape is built from one subdivided cube',
+    /const g = cubeShell\(4\);/.test(SRC) && /function cubeShell\(n\)/.test(SRC));
+  check('...then projected onto the shape',
+    /Skeleton\.shapePoint\(shape, g\.verts\[i\], g\.verts\[i \+ 1\], g\.verts\[i \+ 2\], _n\);/.test(SRC)
+    && /1 - y2 \/ 2 - z2 \/ 2 \+ \(y2 \* z2\) \/ 3/.test(SKEL_SRC),
+    'the spherified-cube mapping, which spreads the vertices evenly — normalising leaves them '
+    + 'bunched at the corners and sparse at each face centre');
+  check('...with the dome laid onto its cap rather than pinched at a pole',
+    /const want = Math\.min\(1, r \+ out\.y\);/.test(SKEL_SRC));
+  check('...from ONE definition, shared with Make Skin',
+    /Skeleton\.shapePoint = function \(shape, x, y, z, out\)/.test(SKEL_SRC),
+    'a skin built from a slightly different ellipsoid than the cage it is weighted against is a '
+    + 'bug waiting for a rig big enough to show it');
+
+  // The whole point of the cube topology: no poles, all quads, same vertex count everywhere.
+  const shapes = ['box', 'egg', 'half'].map((sh) => WeightCage.volumeGeometry(sh, [1, 1, 1], [0, 0, 0], null));
+  {
+    const unit = (sh) => WeightCage.volumeGeometry(sh, [1, 1, 1], [0, 0, 0], null);
+    const radii = (g) => {
+      let lo = Infinity, hi = 0, maxY = -Infinity;
+      for (let i = 0; i < g.verts.length; i += 3) {
+        const r = Math.hypot(g.verts[i], g.verts[i + 1], g.verts[i + 2]);
+        lo = Math.min(lo, r); hi = Math.max(hi, r);
+        maxY = Math.max(maxY, g.verts[i + 1]);
+      }
+      return { lo: lo, hi: hi, maxY: maxY };
+    };
+    const egg = radii(unit('egg'));
+    check('an egg is actually round',
+      Math.abs(egg.lo - 1) < 1e-6 && Math.abs(egg.hi - 1) < 1e-6,
+      'radii ' + egg.lo.toFixed(3) + '..' + egg.hi.toFixed(3)
+      + ' — a cube would read 1.000..1.732, which is what an unprojected shell is');
+    {
+      const g = unit('egg');
+      let lo = Infinity, hi = 0;
+      for (let t = 0; t + 3 < g.faces.length; t += 4) {
+        const a = g.faces[t], b = g.faces[t + 1];
+        const d = Math.hypot(g.verts[a * 3] - g.verts[b * 3],
+          g.verts[a * 3 + 1] - g.verts[b * 3 + 1], g.verts[a * 3 + 2] - g.verts[b * 3 + 2]);
+        lo = Math.min(lo, d); hi = Math.max(hi, d);
+      }
+      check('...with its quads evenly spread', hi / lo < 1.6,
+        'longest edge / shortest = ' + (hi / lo).toFixed(2)
+        + ' — a plain normalise gives about 2.2, bunching them at the corners');
+    }
+    const box = radii(unit('box'));
+    check('...and a box is not', Math.abs(box.hi - Math.sqrt(3)) < 1e-6,
+      'corner radius ' + box.hi.toFixed(3));
+    const dome = radii(unit('half'));
+    check('a dome sits entirely below its cap', dome.maxY < 1e-6,
+      'highest vertex at y = ' + dome.maxY.toFixed(4));
+  }
+
+  check('...so all three have identical topology',
+    shapes.every((g) => g && g.verts.length === shapes[0].verts.length
+      && g.faces.length === shapes[0].faces.length),
+    shapes.map((g) => (g ? g.verts.length / 3 : 0)).join(' / ') + ' vertices');
+  check('...and no triangles at all — quads throughout',
+    shapes.every((g) => {
+      for (let t = 3; t < g.faces.length; t += 4) if (g.faces[t] === Utils.TRI_INDEX) return false;
+      return true;
+    }),
+    'a lat-long shell fans triangles at each pole, which is the worst place to sculpt and the '
+    + 'worst place to bridge from');
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

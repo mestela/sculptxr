@@ -99,6 +99,8 @@ const _vGrab = new THREE.Vector3();   // the tip plus the grab's held offset
 const _qVolT = new THREE.Quaternion(), _qVolT2 = new THREE.Quaternion();
 const _qNowV = new THREE.Quaternion(), _qDeltaV = new THREE.Quaternion();
 const _axisX = new THREE.Vector3(1, 0, 0);
+const _qMirrorV = new THREE.Quaternion();
+const _offMirrorV = [0, 0, 0];
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
@@ -1078,6 +1080,9 @@ class BoneDrawTool extends SculptBase {
     this._volDrag = null;
     if (!vd) return;
     const j = vd.joint;
+    // The twin was edited alongside, so it goes in the same undo step — restoring one side and
+    // not the other would leave exactly the asymmetry the mirroring exists to prevent.
+    const twin = vd.twin;
     const rotArr = (q) => [q.x, q.y, q.z, q.w];
     const before = { dims: vd.dims.slice(), off: vd.off.slice(),
       rot: rotArr(vd.rot || Skeleton.jointVolRot(j)) };
@@ -1092,9 +1097,16 @@ class BoneDrawTool extends SculptBase {
     if (same) return;   // a tap that selected and moved nothing is not an undo step
     const main = this._main;
     const apply = (st) => {
-      Skeleton.setJointVolDims(j, st.dims[0], st.dims[1], st.dims[2]);
-      Skeleton.setJointVolOffset(j, st.off[0], st.off[1], st.off[2]);
-      Skeleton.setJointVolRot(j, { x: st.rot[0], y: st.rot[1], z: st.rot[2], w: st.rot[3] });
+      for (const t of twin ? [j, twin] : [j]) {
+        const off = t === j ? st.off : Skeleton.mirrorVolumeOffset(st.off, _offMirrorV);
+        Skeleton.setJointVolDims(t, st.dims[0], st.dims[1], st.dims[2]);
+        Skeleton.setJointVolOffset(t, off[0], off[1], off[2]);
+        // The twin's rotation is the reflection of the recorded one, matching what the drag did.
+        Skeleton.setJointVolRot(t, t === j
+          ? { x: st.rot[0], y: st.rot[1], z: st.rot[2], w: st.rot[3] }
+          : Skeleton.mirrorVolumeRot({ x: st.rot[0], y: st.rot[1], z: st.rot[2], w: st.rot[3] },
+            _qMirrorV));
+      }
       Skeleton.updateVisuals(main);
       main.render?.();
     };
@@ -1559,6 +1571,14 @@ class BoneDrawTool extends SculptBase {
             // plane. Read once, because a drag that crossed the plane would otherwise change
             // the rules under your hand halfway through.
             centreline: Skeleton.volumeIsCentreline(main, hj),
+            // UNARMED, like a tweak grab. Selecting a volume put your hand on a handle and the
+            // drag began instantly — and the centre handle is a 6DOF hold, so the smallest wrist
+            // rotation tipped the shape off axis before you had done anything. matt: "when i
+            // first select a volume object in volume mode, i frequently knock it off axis and
+            // out of symmetry." Nothing moves until the hand has travelled.
+            armed: false,
+            // The twin that has to receive the same edit, if this volume has one.
+            twin: hj._boneMirror && Skeleton.hasVolume(hj._boneMirror) ? hj._boneMirror : null,
             qStart: (options && options.quat)
               ? new THREE.Quaternion(options.quat[0], options.quat[1], options.quat[2], options.quat[3]).invert()
               : null,
@@ -1591,7 +1611,21 @@ class BoneDrawTool extends SculptBase {
 
       const vd = this._volDrag;
       if (vd && (!vd.hand || !volHand || volHand === vd.hand)) {
-        if (isPressed) {
+        if (isPressed && !vd.armed
+            && _tip.distanceTo(vd.start) > this._snapDist() * 0.35) {
+          vd.armed = true;
+          // Re-take the reference at the moment of arming, so the shape does not jump by the
+          // threshold the instant the drag begins.
+          vd.start.copy(_tip);
+          if (options && options.quat) {
+            vd.qStart = new THREE.Quaternion(options.quat[0], options.quat[1],
+              options.quat[2], options.quat[3]).invert();
+          }
+          vd.dims = Skeleton.jointVolDims(main, vd.joint).slice();
+          vd.off = Skeleton.jointVolOffset(main, vd.joint).slice();
+          vd.rot = Skeleton.jointVolRot(vd.joint).clone();
+        }
+        if (isPressed && vd.armed) {
           _vDelta.copy(_tip).sub(vd.start).applyMatrix4(vd.inv);
           if (vd.grip && vd.grip.kind === 'face') {
             const ax = vd.grip.axis, sgn = vd.grip.sign;
@@ -1641,7 +1675,28 @@ class BoneDrawTool extends SculptBase {
             Skeleton.setJointVolOffset(vd.joint,
               vd.off[0] + _vDelta.x, vd.off[1] + _vDelta.y, vd.off[2] + _vDelta.z);
           }
-        } else {
+
+          // THE TWIN GETS THE SAME EDIT, whichever handle did it. A left and right volume are
+          // one shape described twice, so sizing one and not the other is how a symmetric rig
+          // stops being one. matt: "volume selection should be mirrored."
+          //
+          // The numbers live in each joint's OWN frame, and on a mirrored rig those frames are
+          // already mirror images — so copying them across produces the mirrored result without
+          // a reflection being applied a second time.
+          if (vd.twin) {
+            const d2 = Skeleton.jointVolDims(main, vd.joint);
+            const o2 = Skeleton.mirrorVolumeOffset(Skeleton.jointVolOffset(main, vd.joint), _offMirrorV);
+            // Dimensions are extents and survive a reflection unchanged; the OFFSET does not —
+            // dragging the left face of the left hand has to move the RIGHT face of the right.
+            Skeleton.setJointVolDims(vd.twin, d2[0], d2[1], d2[2]);
+            Skeleton.setJointVolOffset(vd.twin, o2[0], o2[1], o2[2]);
+            // Reflected, not copied — see Skeleton.mirrorVolumeRot. Dimensions and offset go
+            // across verbatim because the two joint frames are already mirror images; a
+            // ROTATION does not, or both sides tip the same way instead of opposite ways.
+            Skeleton.setJointVolRot(vd.twin,
+              Skeleton.mirrorVolumeRot(Skeleton.jointVolRot(vd.joint), _qMirrorV));
+          }
+        } else if (!isPressed) {
           this._releaseVolume();
         }
       }

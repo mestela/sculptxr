@@ -3792,6 +3792,19 @@ class Scene {
     this.setMesh(null);
     this._action = Enums.Action.NOTHING;
 
+    // THE RIG'S VISUALS ARE NOT MESHES, so emptying `_meshes` does not remove them. Bones,
+    // joints, capsules and volumes are batched objects living in the skeleton group, and they
+    // are torn down by updateVisuals noticing there are no joints left — which only happens if
+    // something asks it to look. Nothing here did, so a cleared scene kept a skeleton on screen
+    // with an empty outliner beside it. matt: "if i clear the scene, the outliner looks empty,
+    // but the skeleton is still in the 3d viewport."
+    try {
+      Skeleton.hidePlane(this);
+      Skeleton.hidePreview(this);
+      if (this._volHandles) this._volHandles.group.visible = false;
+      Skeleton.updateVisuals(this);
+    } catch (e) { console.error('rig teardown on clear failed:', e); }
+
     if (this._guiXR && this._guiXR.refreshSceneWidget) {
       this._guiXR.refreshSceneWidget();
     }
@@ -6649,6 +6662,24 @@ class Scene {
             uiGrip = this._vrControllerRightGrip;
         }
 
+        // THE MENU GETS OUT OF THE WAY WHILE THE HAND WEARING IT IS BUSY (roadmap #72).
+        //
+        // The wrist panels hang off the NON-DOMINANT grip, so reaching for something with that
+        // hand puts the menu straight through whatever you are grabbing. matt asked for this
+        // several turns ago: "in the grab tool, if the secondary controller is used to grab a
+        // control, hide the menu for as long as the trigger is held."
+        //
+        // Keyed on that hand's own trigger, which is unambiguous: the menu is operated by
+        // POINTING at it with the other hand, so its own trigger is never how you use it.
+        // Pinned panels are world-anchored and stay — they are no longer on the hand.
+        let secondaryHeld = false;
+        for (const src of sources) {
+            if (!src.gamepad || src.handedness === this._dominantHand) continue;
+            const t = src.gamepad.buttons[0];
+            if (t && (t.pressed || t.value > 0.5)) secondaryHeld = true;
+        }
+        this._wristUIHidden = secondaryHeld;
+
         if (uiGrip) {
             if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
             if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== uiGrip) uiGrip.add(this._vrMiniHUD.mesh);
@@ -6672,6 +6703,24 @@ class Scene {
             }
             if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
               if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
+            }
+
+            // ...and hidden while that hand is holding its trigger. Applied here rather than in
+            // each panel: they are hidden as a GROUP, and one left behind would be worse than
+            // not hiding at all.
+            //
+            // WHAT WAS OPEN IS WHAT COMES BACK. Each panel's visibility is remembered on the way
+            // down and restored on the way up — forcing them all visible on release would open
+            // panels the user had closed, which is a worse bug than the one being fixed.
+            for (const _p of [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel]) {
+              if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiGrip) continue;
+              if (secondaryHeld) {
+                if (_p._preHideVisible === undefined) _p._preHideVisible = _p.mesh.visible;
+                _p.mesh.visible = false;
+              } else if (_p._preHideVisible !== undefined) {
+                _p.mesh.visible = _p._preHideVisible;
+                _p._preHideVisible = undefined;
+              }
             }
             // [HTMLVRPanel] Attach MainMenuPanel to wrist unless pinned in world space.
             if (this._mainMenuPanel && this._mainMenuPanel.mesh && !this._mainMenuPanel.pinned) {

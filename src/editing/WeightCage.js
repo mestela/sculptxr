@@ -137,80 +137,36 @@ WeightCage.capsuleGeometry = capsuleGeometry;
 //
 // Built as a UNIT shape about the origin and scaled by the volume's half-extents at the end, so
 // the ring maths never has to know which shape it is drawing.
-function ringsToQuads(rows, radial) {
-  const faces = [];
-  for (let i = 0; i < rows.length - 1; i++) {
-    const lo = rows[i], hi = rows[i + 1];
-    for (let k = 0; k < radial; k++) {
-      const k2 = (k + 1) % radial;
-      const a = lo.pole ? lo.ids[0] : lo.ids[k];
-      const b = lo.pole ? lo.ids[0] : lo.ids[k2];
-      const c = hi.pole ? hi.ids[0] : hi.ids[k2];
-      const d = hi.pole ? hi.ids[0] : hi.ids[k];
-      if (lo.pole) faces.push(a, c, d, Utils.TRI_INDEX);
-      else if (hi.pole) faces.push(a, b, c, Utils.TRI_INDEX);
-      else faces.push(a, b, c, d);
-    }
-  }
-  return faces;
-}
-
-// A lat-long shell between two polar angles. `capAt` closes the open end with a fan, which the
-// dome needs and the egg does not — an open surface has no inside for a signed distance to be
-// negative in, and the bind would then never call a vertex "inside" this volume at all.
-function shellGeometry(radial, rings, thetaStart, thetaEnd, capAt) {
-  const verts = [];
-  const rows = [];
-  const push = (x, y, z) => { verts.push(x, y, z); return verts.length / 3 - 1; };
-  const addRow = (y, rad) => {
-    if (rad < 1e-6) { rows.push({ ids: [push(0, y, 0)], pole: true }); return; }
-    const ids = [];
-    for (let k = 0; k < radial; k++) {
-      const t = (k / radial) * Math.PI * 2;
-      ids.push(push(Math.cos(t) * rad, y, Math.sin(t) * rad));
-    }
-    rows.push({ ids: ids, pole: false });
-  };
-  for (let i = 0; i <= rings; i++) {
-    const th = thetaStart + (thetaEnd - thetaStart) * (i / rings);
-    addRow(Math.cos(th), Math.sin(th));
-  }
-  const faces = ringsToQuads(rows, radial);
-  if (capAt !== undefined) {
-    // The cap is a fan to a centre vertex on the open ring's plane.
-    const edge = rows[capAt === 0 ? 0 : rows.length - 1];
-    if (!edge.pole) {
-      const hub = push(0, edge.ids.length ? verts[edge.ids[0] * 3 + 1] : 0, 0);
-      for (let k = 0; k < radial; k++) {
-        const k2 = (k + 1) % radial;
-        // Wound to face outward from the closed side.
-        if (capAt === 0) faces.push(hub, edge.ids[k2], edge.ids[k], Utils.TRI_INDEX);
-        else faces.push(hub, edge.ids[k], edge.ids[k2], Utils.TRI_INDEX);
-      }
-    }
-  }
-  return { verts: verts, faces: faces };
-}
-
-// A box as six quad faces, each subdivided into an n x n grid so there is something to sculpt.
-// Corners are shared, so the mesh is closed.
-function boxGeometry(n) {
+// A SUBDIVIDED CUBE, PROJECTED ONTO THE SHAPE — matt's approach, and better than the lat-long
+// shells it replaces: "there should be a boxmodelling/extrude cube equivalent for our basic
+// shapes, even if its a cube that is rotated and scaled to match the target volume, subdivided,
+// and then shrinkwrapped onto the target shape."
+//
+// Three things fall out of it, and the third is the one that matters most:
+//   - all quads, no poles: a lat-long sphere has a fan of triangles at each end, which is the
+//     worst place to sculpt and the worst place to bridge from;
+//   - even spacing, so a subdivision or a smooth behaves the same everywhere on the shape;
+//   - EVERY VOLUME HAS THE SAME TOPOLOGY. A box, an egg and a dome are then the same mesh with
+//     different vertex positions, which is what makes stitching one to the next in Make Skin a
+//     question of which face to bridge rather than of what the shapes are.
+//
+// The projection is exact rather than a search, because the shapes are analytic: a cube point
+// normalised is a point on the ellipsoid.
+function cubeShell(n) {
   const verts = [];
   const index = new Map();
-  const key = (i, j, k) => i + ',' + j + ',' + k;
   const at = (i, j, k) => {
-    const s = key(i, j, k);
-    if (index.has(s)) return index.get(s);
+    const key = i + ',' + j + ',' + k;
+    if (index.has(key)) return index.get(key);
     verts.push((i / n) * 2 - 1, (j / n) * 2 - 1, (k / n) * 2 - 1);
     const id = verts.length / 3 - 1;
-    index.set(s, id);
+    index.set(key, id);
     return id;
   };
   const faces = [];
-  const quad = (a, b, c, d) => faces.push(a, d, c, b);
+  const quad = (a, b, c, d) => faces.push(a, d, c, b);   // wound outward — see the note below
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
-      // Each pair of opposite faces, wound so both point outward.
       quad(at(i, j, 0), at(i + 1, j, 0), at(i + 1, j + 1, 0), at(i, j + 1, 0));
       quad(at(i, j, n), at(i, j + 1, n), at(i + 1, j + 1, n), at(i + 1, j, n));
       quad(at(i, 0, j), at(i, 0, j + 1), at(i + 1, 0, j + 1), at(i + 1, 0, j));
@@ -222,17 +178,28 @@ function boxGeometry(n) {
   return { verts: verts, faces: faces };
 }
 
-// The geometry for a joint's volume, in the JOINT's own space: unit shape, scaled by the
-// half-extents, turned by the volume's rotation and moved to its offset — the same three
-// numbers the draw uses, so the cage lands exactly where the shape is drawn.
+WeightCage.cubeShell = cubeShell;
+
 WeightCage.volumeGeometry = function (shape, dims, offset, rot, radial, rings) {
-  radial = radial || 12; rings = rings || 6;
-  let g;
-  if (shape === 'box') g = boxGeometry(3);
-  else if (shape === 'egg') g = shellGeometry(radial, rings, 0, Math.PI);
-  // The dome is the LOWER half, capped at the top — matching how it is drawn.
-  else g = shellGeometry(radial, Math.max(2, rings >> 1), Math.PI / 2, Math.PI, 0);
+  const g = cubeShell(4);
   if (!g) return null;
+
+  // SHRINKWRAP, ANALYTICALLY. The cube is the topology; this is the shape.
+  //   box  — already the shape.
+  //   egg  — normalise: a direction from the centre lands on the unit sphere.
+  //   dome — the same sphere, with everything above the equator laid onto the cap. The rim
+  //          stays put, so the surface is closed and the cap is a real disc rather than a
+  //          pinched pole.
+  // The projection itself lives in Skeleton.shapePoint, so the cage and Make Skin wrap the cube
+  // onto the SAME surface — two views of one volume, from one definition.
+  if (shape !== 'box') {
+    const _n = new THREE.Vector3();
+    for (let i = 0; i < g.verts.length; i += 3) {
+      Skeleton.shapePoint(shape, g.verts[i], g.verts[i + 1], g.verts[i + 2], _n);
+      g.verts[i] = _n.x; g.verts[i + 1] = _n.y; g.verts[i + 2] = _n.z;
+    }
+  }
+
 
   const out = new Float32Array(g.verts.length);
   const _p = new THREE.Vector3();
@@ -514,7 +481,7 @@ WeightCage.bake = function (main) {
     const p = j._parentMesh;
     if (!Skeleton.isJoint(p)) continue;            // a root has no bone above it
     // Swallowed by a volume — at either end. Its envelope is that volume's cage.
-    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()))) continue;
+    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()), main)) continue;
     const r = j._boneRadius || 0;
     if (r <= 0) continue;
 

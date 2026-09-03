@@ -392,12 +392,37 @@ class Multimesh extends Mesh {
         }
 
         if (!this._renderData._wireframeMesh) {
+            // PER-VERTEX COLOUR, NOT FLAT BLACK.
+            //
+            // A black wire over a see-through skin reads as jet black rather than as an edge on
+            // a surface — there is nothing behind it to mix with, so the alpha does not help.
+            // And while weight painting, the one thing the wireframe should agree with is the
+            // colour under it. matt: "wires when xray is enabled render jet black. they should
+            // mix properly. when weight painting, the wire should take on the weight paint
+            // colour."
+            //
+            // vertexColors reads the colour buffer written below; `color` stays white so the
+            // vertex colour is used as-is rather than multiplied down to nothing.
             var lineMaterial = new THREE.LineBasicMaterial({
-                color: 0x000000, // Restored black color
+                color: 0xffffff,
+                vertexColors: true,
                 transparent: true,
                 opacity: rawAlpha,
                 depthTest: true
             });
+            // ALPHA MUST ONLY ACCUMULATE, or the wireframe cuts a hole in the sculpt in AR.
+            //
+            // In passthrough the compositor reads the framebuffer's alpha as "how much room
+            // shows through", and ordinary SrcAlpha/OneMinusSrcAlpha blending LOWERS destination
+            // alpha — so a 25%-opacity black line over a bound mesh made the mesh see-through
+            // along every edge. matt hit exactly this on the ground grid first: "if i have the
+            // groundplane grid visible, in AR its really harsh." Same fix, same reason: keep the
+            // colour blend as it was and give the alpha channel factors that can only add.
+            lineMaterial.blending = THREE.CustomBlending;
+            lineMaterial.blendSrc = THREE.SrcAlphaFactor;
+            lineMaterial.blendDst = THREE.OneMinusSrcAlphaFactor;
+            lineMaterial.blendSrcAlpha = THREE.OneFactor;
+            lineMaterial.blendDstAlpha = THREE.OneFactor;
             
             var lineGeom = new THREE.BufferGeometry();
             this._renderData._wireframeMesh = new THREE.LineSegments(lineGeom, lineMaterial);
@@ -429,6 +454,18 @@ class Multimesh extends Mesh {
 
         // Always update both index and positions to keep up with live sculpting!
         this._renderData._wireframeMesh.geometry.setAttribute('position', new THREE.BufferAttribute(biasedVerts, 3));
+        // ...and the colours with them, so the wire carries whatever the surface is showing —
+        // the weight preview included. DARKENED, so an edge still reads as an edge against the
+        // face it sits on rather than disappearing into it.
+        var srcColors = activeMesh.getColors && activeMesh.getColors();
+        if (srcColors && srcColors.length >= activeVerts.length) {
+          var wireCols = this._renderData._wireCols;
+          if (!wireCols || wireCols.length !== activeVerts.length) {
+            wireCols = this._renderData._wireCols = new Float32Array(activeVerts.length);
+          }
+          for (var ci = 0; ci < activeVerts.length; ci++) wireCols[ci] = srcColors[ci] * 0.45;
+          this._renderData._wireframeMesh.geometry.setAttribute('color', new THREE.BufferAttribute(wireCols, 3));
+        }
         this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
         this._renderData._wireframeMesh.geometry.computeBoundingSphere();
         this._renderData._wireframeMesh.geometry.computeBoundingBox();

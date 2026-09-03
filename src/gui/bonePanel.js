@@ -449,8 +449,19 @@ export function wireBoneSection(root, main, opts) {
   root.querySelectorAll('[data-shape]')?.forEach?.((btn) => {
     btn.addEventListener('click', () => {
       const shape = btn.dataset.shape;
-      const joints = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-      if (!joints.length) return;
+      const picked = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+      if (!picked.length) return;
+
+      // THE TWIN GETS THE SAME SHAPE. Giving a volume to one wrist and not the other is the
+      // same asymmetry the drag mirroring exists to prevent, one step earlier — matt: "if i
+      // select a left wrist and make it a box volume, the right wrist should do the same."
+      // Deduped, so selecting both sides yourself does not act on either of them twice.
+      const joints = [];
+      for (const j of picked) {
+        if (!joints.includes(j)) joints.push(j);
+        const twin = j._boneMirror;
+        if (twin && main.getMeshes?.().includes(twin) && !joints.includes(twin)) joints.push(twin);
+      }
       const snap = () => joints.map((j) => ({ j, shape: Skeleton.jointVolume(j),
         dims: j._jointVolDims ? j._jointVolDims.slice() : null,
         off: j._jointVolOffset ? j._jointVolOffset.slice() : null,
@@ -480,11 +491,14 @@ export function wireBoneSection(root, main, opts) {
       const after = snap();
       main.getStateManager?.()?.pushStateCustom?.(
         () => apply(before), () => apply(after), false, 'Bone Shape');
+      const mirrored = joints.length > picked.length;
       say(shape === 'none'
         ? `Bones: volume removed from ${joints.length} joint(s)`
         : refitted
           ? `Bones: ${refitted} volume(s) back to fitting the rig automatically`
-          : `Bones: ${joints.length} joint(s) → ${shape} volume, covering every bone out of them`, true);
+          : `Bones: ${joints.length} joint(s) → ${shape} volume`
+            + (mirrored ? ' (mirrored)' : '')
+            + ', covering every bone out of them', true);
       refresh();
       Skeleton.updateVisuals(main);
       main.render?.();
@@ -520,7 +534,8 @@ export function wireBoneSection(root, main, opts) {
   q('skin')?.addEventListener('click', () => {
     const res = SkinMesh.build(main);
     say(res.ok
-      ? `Bones: skin built — ${res.boxes} joints, ${res.bones} bones, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
+      ? `Bones: skin built — ${res.boxes} joints (${res.volumes || 0} from volumes), `
+        + `${res.bones} bones, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
       : `Bones: ${res.why}`, res.ok);
     rebuild(); // the new mesh becomes the selection, so the panel changes
     main.render?.();
