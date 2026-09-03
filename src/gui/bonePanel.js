@@ -10,7 +10,7 @@ import IKSolver from '../editing/IKSolver.js';
 // The Bones tool's controls, in ONE place, for every panel that shows them.
 //
 // They started life inside the VR wrist panel, which meant the whole rigging feature —
-// bind, capsules, Make Skin, Bind Pose, every display toggle — did not exist on
+// bind, capsules, Make Skin, Rest Pose, every display toggle — did not exist on
 // iPad or desktop at all. The two surfaces have different chrome (the wrist panel's `mp-`
 // classes, the menu/sidebar's `mm-`) but identical behaviour, so the markup is generated in
 // either dialect while the wiring and the state sync are shared outright.
@@ -187,7 +187,8 @@ export function buildBonePoseHTML(main, style) {
     ${sectionTitle(c, 'Pose')}
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
-      ${bound ? `<button class="${c.action}" id="bone-restpose">Bind Pose</button>` : ''}
+      <button class="${c.action}" id="bone-restpose"
+        title="Put every joint back to the skeleton as it was built. Recorded when you draw a bone and updated by Tweak, so it exists from the first bone \u2014 posing, grabbing and IK never change it.">Rest Pose</button>
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
@@ -621,17 +622,21 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
-  // Back to the pose the rig was bound in. Undoable in one step like any other pose edit —
-  // it is a big change, and "I only wanted to see what it looked like" has to be free.
+  // Back to the skeleton as built. Undoable in one step like any other pose edit — it is a big
+  // change, and "I only wanted to see what it looked like" has to be free.
+  //
+  // THE REST POSE, NOT THE BIND POSE. Bind only exists once a mesh is attached, so this button
+  // used to be absent for the whole authoring phase — which is exactly when you want it. Rest is
+  // recorded when a bone is drawn, so it is there from the first one.
   q('restpose')?.addEventListener('click', () => {
     const before = IKSolver.captureAll(main);
-    const n = Skinning.restoreBindPose(main);
-    say(n ? `Bones: ${n} joints returned to bind pose` : 'Bones: nothing bound', !!n);
+    const n = IKSolver.restoreRest(main);
+    say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
     if (n) {
       const after = IKSolver.captureAll(main);
       const apply = (snap) => { Skeleton.restoreLocal(snap); Skeleton.updateVisuals(main); main.render(); };
       main.getStateManager?.()?.pushStateCustom?.(
-        () => apply(before), () => apply(after), false, 'Bind Pose');
+        () => apply(before), () => apply(after), false, 'Rest Pose');
     }
     Skeleton.updateVisuals(main);
     main.render?.();

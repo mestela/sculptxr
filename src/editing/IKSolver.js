@@ -433,6 +433,30 @@ IKSolver.captureRest = function (main, only) {
   return n;
 };
 
+// BACK TO THE SKELETON AS BUILT. The rest pose is recorded when a bone is drawn and re-recorded
+// when a Tweak edit moves one — those are the two ways the rig's SHAPE changes — while posing,
+// grabbing and IK only ever write the pose. So there is always something to come back to, from
+// the first bone onward.
+//
+// This used to be reachable only through the bind pose, which does not exist until a mesh is
+// bound. matt: "i noticed that there's no rest pose/bind pose until a skeleton is bound to a
+// mesh... meaning if required i could go back to the rest pose at any time."
+//
+// Roots first: `_ikRest` is a LOCAL matrix, so a child is only meaningful once its ancestors are
+// back — the same ordering the loader needs, and the same trap that made re-parenting detonate
+// the rig on the next solve rather than on the reparent.
+IKSolver.restoreRest = function (main) {
+  const joints = Skeleton.joints(main).filter((j) => j && j._ikRest);
+  if (!joints.length) return 0;
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  joints.sort((a, b) => depth(a) - depth(b));
+  for (const j of joints) {
+    mat4.copy(j.getMatrix(), j._ikRest);
+    Skeleton.syncThree(j);
+  }
+  return joints.length;
+};
+
 // Put every joint back to rest EXCEPT the ones named in `keep` — the controls for this frame.
 // A pinned joint is NOT a control: the pin object carries the control, and the joint itself is
 // something the solver moves onto it.

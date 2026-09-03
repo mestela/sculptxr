@@ -1006,44 +1006,6 @@ Skinning.anyBound = function (main) {
   return (main.getMeshes() || []).some(Skinning.isBound);
 };
 
-// Put every bound rig back at the pose it was bound in.
-//
-// The bind pose is not stored as a pose anywhere — but it does not need to be, because the
-// inverse bind matrices ARE it: `invBind = inverse(inv(M_mesh) . J_model)` at bind, so the
-// joint's bind transform comes straight back out as `M_mesh . inverse(invBind)`. Reading the
-// mesh's CURRENT matrix there is deliberate: it puts the skeleton back at bind RELATIVE TO
-// THE MESH, so a character that has since been moved or scaled keeps its rig on it.
-//
-// This is the reset that makes posing safe to experiment with, and it is exact — it restores
-// the pose the weights were actually solved against, not an approximation of it.
-Skinning.restoreBindPose = function (main) {
-  const meshes = main.getMeshes() || [];
-  const targets = new Map();
-  for (const mesh of meshes) {
-    if (!Skinning.isBound(mesh)) continue;
-    const joints = resolveJoints(main, mesh);
-    _mMesh.fromArray(mesh.getModelSpaceMatrix());
-    joints.forEach((j, i) => {
-      // First bind wins if two meshes share a joint — they were bound at different moments
-      // and would disagree, and silently averaging two bind poses would be worse than either.
-      if (!j || targets.has(j) || !mesh._skinInvBind[i]) return;
-      targets.set(j, new THREE.Matrix4().copy(mesh._skinInvBind[i]).invert().premultiply(_mMesh));
-    });
-  }
-  if (!targets.size) return 0;
-
-  // Roots first: a child's model-space transform is only meaningful once its ancestors are
-  // back in place, since setModelSpaceMatrix converts through the parent's CURRENT world
-  // matrix. Same ordering the skeleton loader needs, for the same reason.
-  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
-  const ordered = Array.from(targets.keys()).sort((a, b) => depth(a) - depth(b));
-  for (const j of ordered) {
-    j.setModelSpaceMatrix(targets.get(j).elements);
-    Skeleton.syncThree(j);
-  }
-  return ordered.length;
-};
-
 Skinning.unbind = function (mesh) {
   if (!mesh) return;
   Skinning.restoreColors(mesh);

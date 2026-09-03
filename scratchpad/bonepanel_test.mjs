@@ -336,5 +336,34 @@ check('shader-specific groups mute instead of hiding',
   globalThis.__sel = [];
 }
 
+// ── THE REST POSE EXISTS FROM THE FIRST BONE ──────────────────────────────────────────
+//
+// matt: "i noticed that there's no rest pose/bind pose until a skeleton is bound to a mesh...
+// meaning if required i could go back to the rest pose at any time. in this case i'd suggest
+// renaming the 'bind pose' button to 'rest pose', so it makes sense in all contexts."
+//
+// The rig already recorded a rest pose when a bone was drawn (IKSolver.captureRest) and
+// re-recorded it on a Tweak edit, while posing, grabbing and IK only ever wrote the POSE. What
+// was missing was the way back: the button restored the BIND pose, which does not exist until a
+// mesh is attached, so it was hidden for the whole authoring phase — exactly when it is wanted.
+{
+  globalThis.__bound = false;
+  const unbound = buildBonePoseHTML(main, 'mm');
+  check('the rest pose button is there with nothing bound',
+    unbound.includes('id="bone-restpose"'),
+    'a rest pose exists from the first bone, so the way back to it should too');
+  check('...and it is called Rest Pose, not Bind Pose',
+    /Rest Pose<\/button>/.test(unbound) && !/Bind Pose/.test(unbound),
+    'it means the same thing in every context now, which is why it is renamed');
+  globalThis.__bound = true;
+  const boundNow = buildBonePoseHTML(main, 'mm');
+  check('...and it does not change once a mesh IS bound',
+    boundNow.includes('id="bone-restpose"') && /Rest Pose<\/button>/.test(boundNow));
+  globalThis.__bound = false;
+  check('the handler restores the REST pose, not the bind pose',
+    /IKSolver\.restoreRest\(main\)/.test(SRC) && !/restoreBindPose/.test(SRC),
+    'bind is a moment; rest is the skeleton as built');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
