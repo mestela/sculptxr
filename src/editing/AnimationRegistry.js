@@ -1449,6 +1449,77 @@ class AnimationRegistry {
     }
   }
 
+  // ── CLOSE THE LOOP (#66) ───────────────────────────────────────────────────────────────
+  //
+  // A take recorded by hand almost never ends where it started, so playing it on loop pops. This
+  // makes the LAST key of a transform track equal to the FIRST, which removes the pop.
+  //
+  // WHAT IT DOES NOT DO, and matt should see it before deciding whether that is enough: matching
+  // the endpoints removes the POSITION discontinuity and leaves a VELOCITY one. The tail is
+  // dragged to meet the head across a single key interval, so the last segment moves at whatever
+  // speed that requires — a lurch right at the loop point, in place of a jump. The cure is his
+  // own second suggestion, a falloff spread over a window of the tail, which is a few lines more
+  // and belongs here once he has looked at this. matt: "it could be as simple as ensuring the
+  // last keys for a recording match the first, or fancier like a proper crossfade with a distance
+  // falloff. i think the we try the first."
+  //
+  // Transform tracks only. A shape take's keys are whole vertex arrays and closing one means
+  // copying the first shape over the last, which is the same idea but a much bigger write — not
+  // done until it is asked for.
+  closeLoop(targets) {
+    const list = (targets && targets.length) ? targets
+      : (window.app?.getSelectedMeshes?.() || []);
+    if (!list.length) return { closed: 0, reason: 'nothing selected' };
+
+    const before = new Map();
+    const touched = [];
+    for (const m of list) {
+      const tr = this.tracks.get(m.getID());
+      if (!tr || !tr.times || tr.times.length < 2) continue;
+      before.set(m.getID(), this._snapshotTrack(tr));
+      touched.push(m);
+    }
+    if (!touched.length) return { closed: 0, reason: 'no recorded motion on the selection' };
+
+    const apply = () => {
+      for (const m of touched) {
+        const tr = this.tracks.get(m.getID());
+        if (!tr || !tr.times || tr.times.length < 2) continue;
+        const n = tr.times.length;
+        const copy = (arr, stride) => {
+          if (!arr || arr.length < n * stride) return;
+          for (let k = 0; k < stride; k++) arr[(n - 1) * stride + k] = arr[k];
+        };
+        copy(tr.positions, 3);
+        copy(tr.quaternions, 4);
+        copy(tr.scales, 3);
+        tr.eulers = null;                      // rebuilt on next read, from the new quaternions
+      }
+      this._refreshAfterEdit(touched);
+    };
+    const revert = () => {
+      for (const m of touched) {
+        const snap = before.get(m.getID());
+        if (snap) this._restoreTrack(this.tracks.get(m.getID()), snap, m);
+      }
+      this._refreshAfterEdit(touched);
+    };
+
+    apply();
+    window.app?.getStateManager?.()?.pushStateCustom?.(revert, apply, false, 'Close Loop');
+    return { closed: touched.length };
+  }
+
+  // Shared by the track edits above: put the meshes back on screen at the current playhead.
+  _refreshAfterEdit(meshes) {
+    for (const m of meshes) {
+      const tr = this.tracks.get(m.getID());
+      if (tr) this.sortTrack(tr);
+      this.update(m, true);          // same re-evaluate _restoreTrack ends with
+    }
+    window.app?.render?.();
+  }
+
   createBlendshape(mesh, name) {
     if (!mesh || !name) return;
     const id = mesh.getID();

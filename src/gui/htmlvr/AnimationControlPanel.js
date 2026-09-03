@@ -457,6 +457,8 @@ export function buildAnimationSectionHTML(main, style) {
           <button id="acp-to-end"     title="Jump to end"><i class="fa-solid fa-forward-step"></i></button>
           <button id="acp-record"     title="Record"><i class="fa-solid fa-circle" style="color:#f38ba8"></i></button>
         </div>
+        <button class="acp-btn-full" id="acp-close-loop"
+          title="Make the last key of each selected take match its first, so the take loops without a pop. Undoable.">Close loop on selected takes</button>
         <button class="acp-btn-clear" id="acp-clear-all">Delete animation from selected objects</button>
         <button class="acp-btn-full" id="acp-bake-voxel" style="display:none"
           title="Voxel frame animations can't be saved to .sxr (the voxel field is runtime-only). Bake to a plain mesh-frame animation that saves and reloads. Undoable.">Bake voxel anim &rarr; mesh frames</button>
@@ -1171,6 +1173,17 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   el.querySelector('#acp-record')?.addEventListener('click', () => {
     const r = reg(); if (!r) return;
     r.toggleRecord(_getTargetMesh()); // start when idle, stop when recording/counting/waiting
+    _sync();
+  });
+
+  el.querySelector('#acp-close-loop')?.addEventListener('click', () => {
+    const res = window._animationRegistry?.closeLoop?.();
+    if (window.screenLog) {
+      window.screenLog(res && res.closed
+        ? `Animation: closed the loop on ${res.closed} take(s)`
+        : `Animation: nothing to close — ${(res && res.reason) || 'no selection'}`,
+        res && res.closed ? 'cyan' : '#f38ba8');
+    }
     _sync();
   });
 
