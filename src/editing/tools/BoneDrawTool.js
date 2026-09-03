@@ -133,7 +133,7 @@ class BoneDrawTool extends SculptBase {
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
     this._pose = null;         // { joint, qStart, local } while rotating in pose mode
     this._radius = null;       // { joint, twin, before } while dragging a capsule radius
-    this._scale = null;        // { joint, grip, before } while dragging a joint handle
+    this._scale = null;        // { joint, twin, grip, before } while dragging a joint handle
     this._ik = null;           // { joint, before } while dragging an IK effector
     this._drag = null;         // { kind, joint, ... } while a mouse/touch drag owns the pointer
 
@@ -1321,19 +1321,23 @@ class BoneDrawTool extends SculptBase {
   // stays centred on the joint.
   _beginScale(joint, grip, fallbackR) {
     const main = this._main;
-    // NO TWIN. Every other edit in this tool mirrors — a radius, a position, a bone shape — and
-    // this one deliberately does not: the whole point of shaping a joint is that a left hand and
-    // a right hand can differ, and a rig where they cannot is a rig that can only make
-    // symmetrical creatures. matt: "only center line joints should have left-right symmetry, the
-    // rest of the handles should allow me to scale independantly."
+    // THE TWIN GETS THE EDIT, like every other edit in this tool. matt: "mirroring should happen
+    // from left hand to right hand, left foot to right foot etc, but the only symmetry WITHIN the
+    // tweak joint handles should be for joints on the center line." Two different symmetries, and
+    // they are easy to confuse: one is between a joint and its twin, the other is between the two
+    // faces of one joint. Only the first applies to a side joint.
     //
-    // A CENTRELINE JOINT IS SYMMETRIC ANYWAY, and by construction rather than by rule: it sits
-    // on the mirror plane and its ellipsoid is centred on it with no offset, so its two X faces
-    // are always the same distance out. There is nothing to enforce and nothing to propagate.
+    // REFLECTED, NOT COPIED — and only the offset. The extents are sizes and a mirror image is
+    // the same size, so the scale goes across verbatim; the offset is a POSITION, and a mirror
+    // across x flips its sign there. Copying it would push a left hand forward-and-left and its
+    // twin forward-and-left too, which is the asymmetry the mirroring exists to prevent.
+    const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
+      ? joint._boneMirror : null;
     const snap = (j) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
       (Skeleton.jointOffset(j) || [0, 0, 0]).slice()];
     const before = [snap(joint)];
-    this._scale = { joint: joint, grip: grip, before: before,
+    if (twin) before.push(snap(twin));
+    this._scale = { joint: joint, twin: twin, grip: grip, before: before,
       // The radius the extents are a multiple OF, fixed at the grab: reading it live would make
       // a drag that changes the radius compound with itself.
       base: Math.max(Skeleton.jointRadius(joint, fallbackR || 0), 1e-6),
@@ -1376,6 +1380,11 @@ class BoneDrawTool extends SculptBase {
     }
     Skeleton.setJointScale(sc.joint, cur[0], cur[1], cur[2]);
     Skeleton.setJointOffset(sc.joint, off[0], off[1], off[2]);
+    // Same size, mirrored position. SYM_AXIS is x throughout the rig.
+    if (sc.twin) {
+      Skeleton.setJointScale(sc.twin, cur[0], cur[1], cur[2]);
+      Skeleton.setJointOffset(sc.twin, -off[0], off[1], off[2]);
+    }
     this._liveWeights();
     this._refresh();
   }

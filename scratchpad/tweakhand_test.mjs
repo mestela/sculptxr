@@ -273,27 +273,39 @@ check('a trace names the hand, the owner, and who moved the joint',
     'a stale owner outlives its drag and arbitrates the next mode\'s first grab');
 }
 
-// ── TWEAK JOINT DOES NOT MIRROR ───────────────────────────────────────────────────────
+// ── TWO DIFFERENT SYMMETRIES, AND ONLY ONE OF THEM IS A HANDLE RULE ───────────────────
 //
-// Every other edit in this tool takes the mirror twin with it — a radius, a position, a bone
-// shape — and the first version of joint scaling followed suit. It is wrong here: the reason to
-// shape a joint at all is that a left hand and a right hand can differ, and a rig that cannot
-// express that can only make symmetrical creatures. matt: "only center line joints should have
-// left-right symmetry, the rest of the handles should allow me to scale independantly."
+// matt: "mirroring should happen from left hand to right hand, left foot to right foot etc, but
+// the only symmetry WITHIN the tweak joint handles should be for joints on the center line."
 //
-// A CENTRELINE JOINT stays symmetric by construction rather than by rule — it sits on the mirror
-// plane with no offset, so its two X faces are always the same distance out — which is why there
-// is nothing here enforcing that half of it.
+// Between a joint and its TWIN: always, like every other edit in this tool. Between the two
+// FACES of one joint: only on the centreline, and only in x. I conflated these once and shipped
+// the wrong one — dropping the twin mirroring entirely when the complaint was about faces — so
+// they are checked separately here.
 {
-  check('a joint drag does not carry its twin',
-    !/if \(sc\.twin\) Skeleton\.setJointScale/.test(SRC)
-    && !/_scale = \{ joint: joint, twin:/.test(SRC),
-    'shaping one hand has to leave the other alone, or the shape is not a shape but a species');
-  check('...and the undo step holds only the joint it edited',
-    /const before = \[snap\(joint\)\];\s*\n\s*this\._scale = \{ joint: joint, grip: grip/.test(SRC),
-    'a snapshot that still listed the twin would restore a value nothing had changed');
-  // The mode is named for what it does to a joint, not for the one axis a handle happens to
-  // change — it sits beside Tweak FK and Tweak Free and is the same kind of verb.
+  check('a joint edit carries its twin',
+    /if \(sc\.twin\) \{\s*\n\s*Skeleton\.setJointScale\(sc\.twin, cur\[0\], cur\[1\], cur\[2\]\);/.test(SRC),
+    'left hand to right hand, like the radius and the bone shape before it');
+  check('...with the SIZE copied',
+    /Skeleton\.setJointScale\(sc\.twin, cur\[0\], cur\[1\], cur\[2\]\);/.test(SRC),
+    'a mirror image is the same size');
+  check('...and the OFFSET reflected, not copied',
+    /Skeleton\.setJointOffset\(sc\.twin, -off\[0\], off\[1\], off\[2\]\);/.test(SRC),
+    'an offset is a position: copying it pushes both hands the same way in x, which is the very '
+    + 'asymmetry the mirroring is for');
+  check('...and the undo step holds both',
+    /const before = \[snap\(joint\)\];\s*\n\s*if \(twin\) before\.push\(snap\(twin\)\);/.test(SRC));
+
+  // The face rule, which is the one that is NOT about twins.
+  check('a face drag moves one face and pins the other',
+    /const pinned = centre - sign \* half;/.test(SRC)
+    && /off\[axis\] = \(moved \+ pinned\) \/ 2 - jointAt;/.test(SRC),
+    'matt: "i edit the top, the bottom moves"');
+  check('...except x on a centreline joint, which stays symmetric',
+    /if \(sc\.centreline && axis === 0\) \{/.test(SRC)
+    && /off\[axis\] = 0;/.test(SRC),
+    'a spine is its own twin; an x offset takes it off the plane the rig is built around');
+
   check('the mode is Tweak Joint',
     /\['joint', 'Tweak Joint'\]/.test(PANEL) && /this\._mode === 'joint'/.test(SRC),
     'the key and the label were renamed together — a half-rename leaves the mode unreachable');
