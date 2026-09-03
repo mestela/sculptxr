@@ -406,24 +406,29 @@ function camAxisModel(main) {
   const main = makeMain([a, b]);
   const tool = makeTool(main, 'radius');
 
-  const mid = new THREE.Vector3(0, 0, 0);
-  const sm = project(main, mid);
+  // RADIUS MODE SIZES A JOINT NOW, not the bone leading into it — the number always lived on a
+  // joint, and a bone is the hull of the spheres at its two ends. So the pick is the nearest
+  // JOINT, the drag plane sits on that joint rather than on the bone's midpoint, and the
+  // distance that sets the radius is measured from the joint. These checks asserted the bone
+  // version and went unrun for four versions; they measure the joint version now.
+  const jp = Skeleton.jointPos(b).clone();
+  const sm = project(main, jp);
   at(main, sm.x, sm.y);
-  check('radius: the capsule under the cursor is picked', tool._pickBoneScreen() === b);
+  check('radius: the joint under the cursor is picked', tool._pickJointScreen() === b);
   at(main, sm.x + 400, sm.y);
-  check('radius: a click far from every shaft picks nothing', tool._pickBoneScreen() === null);
+  check('radius: a click far from every joint picks nothing', tool._pickJointScreen() === null);
 
   at(main, sm.x, sm.y);
   check('radius: a hit claims the pointer', tool.start() === true);
-  check('radius: the drag began on the picked capsule', (tool.last('_beginRadius') || [])[1] === b);
+  check('radius: the drag began on the picked joint', (tool.last('_beginRadius') || [])[1] === b);
 
   at(main, sm.x + 60, sm.y);
   tool.update();
-  const near1 = Skeleton.boneDistance(main, b, (tool.last('_radiusTo') || [])[1]);
+  const near1 = jp.distanceTo((tool.last('_radiusTo') || [])[1]);
   at(main, sm.x + 120, sm.y);
   tool.update();
-  const near2 = Skeleton.boneDistance(main, b, (tool.last('_radiusTo') || [])[1]);
-  check('radius: dragging away from the shaft grows the radius', near2 > near1 && near1 > 0,
+  const near2 = jp.distanceTo((tool.last('_radiusTo') || [])[1]);
+  check('radius: dragging away from the joint grows the radius', near2 > near1 && near1 > 0,
     `${near1} then ${near2}`);
   check('radius: the growth tracks the cursor distance', near(near2 / near1, 2, 0.02), near2 / near1);
 

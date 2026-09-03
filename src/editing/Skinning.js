@@ -35,6 +35,12 @@ function tune(key, dflt) {
 const _mMesh = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
 const _mJoint = new THREE.Matrix4(), _mSkin = new THREE.Matrix4();
 const _mTmp = new THREE.Matrix4();
+// Segment scratch, separate from the matrices above: boneSegments runs while _mMesh/_mInv are
+// live for the caller that handed it the positions, and sharing them once meant the joint
+// positions were transformed by a matrix that had been overwritten underneath them.
+const _mInvSeg = new THREE.Matrix4();
+const _m3Inv = new THREE.Matrix3();
+const _vOff = new THREE.Vector3(), _vSeg = new THREE.Vector3();
 const _v = new THREE.Vector3();
 
 const Skinning = {};
@@ -42,13 +48,28 @@ const Skinning = {};
 Skinning.isBound = function (mesh) { return !!(mesh && mesh._skinW); };
 
 // Squared distance from p to segment ab, plus the parametric position along it.
-function distToSegment2(px, py, pz, ax, ay, az, bx, by, bz) {
-  const dx = bx - ax, dy = by - ay, dz = bz - az;
+
+// DISTANCE IN UNITS OF THE ENVELOPE'S OWN SIZE, for a bone whose two ends may differ in all
+// three axes. This is the same quantity the round version measured — `t2 = d2 / r2`, distance
+// as a multiple of the capsule's radius — and it generalises to an ellipsoid exactly: divide
+// the offset by the half-extents where the point sits and take the squared length. A vertex
+// inside the envelope still comes out below 1, so `outside` keeps its meaning.
+//
+// It has to be this and not raw proximity for the same reason as before: a thick torso and a
+// thin finger otherwise compete on absolute distance and the thin one wins territory it has no
+// business owning, purely by being close to the surface.
+function envelopeT2(px, py, pz, sg) {
+  const ax = sg.a.x, ay = sg.a.y, az = sg.a.z;
+  const dx = sg.b.x - ax, dy = sg.b.y - ay, dz = sg.b.z - az;
   const len2 = dx * dx + dy * dy + dz * dz;
   let t = len2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / len2 : 0;
   if (t < 0) t = 0; else if (t > 1) t = 1;
-  const cx = ax + dx * t - px, cy = ay + dy * t - py, cz = az + dz * t - pz;
-  return cx * cx + cy * cy + cz * cz;
+  const cx = px - (ax + dx * t), cy = py - (ay + dy * t), cz = pz - (az + dz * t);
+  const hx = sg.ha[0] + (sg.hb[0] - sg.ha[0]) * t;
+  const hy = sg.ha[1] + (sg.hb[1] - sg.ha[1]) * t;
+  const hz = sg.ha[2] + (sg.hb[2] - sg.ha[2]) * t;
+  const ux = cx / hx, uy = cy / hy, uz = cz / hz;
+  return ux * ux + uy * uy + uz * uz;
 }
 
 // Joint positions in MESH-LOCAL space, as they are RIGHT NOW.
@@ -88,16 +109,39 @@ function boneSegments(mesh, joints, pos) {
   const index = new Map();
   joints.forEach((j, i) => index.set(j, i));
 
+  // THE SAME ENVELOPE THE SKIN IS BUILT FROM. The bind used to measure a uniform capsule of the
+  // bone's radius between two JOINTS, which stopped being the shape the moment a joint could
+  // carry its own radius, its own three extents and an offset: the skin followed the new
+  // envelope and the weights went on following the old one. matt: "does the original capsule
+  // proximity system still control the weighting... it doesn't seem to."
+  //
+  // Mesh-local, so the extents are divided by the mesh's scale exactly as the radius was, and
+  // the offset goes through the inverse's LINEAR part — it is a direction, not a point.
+  _m3Inv.setFromMatrix4(_mInvSeg.copy(_mMesh).invert());
+  const centre = (j, at) => {
+    const off = Skeleton.jointOffset(j);
+    if (!off[0] && !off[1] && !off[2]) return at;
+    _vOff.set(off[0], off[1], off[2]).applyMatrix3(_m3Inv);
+    return _vSeg.copy(at).add(_vOff).clone();
+  };
+
   const segs = [];
   joints.forEach((j, i) => {
     const p = j._parentMesh;
     if (!index.has(p)) return;
+    // The bone's own radius is the fallback at both ends, as everywhere else — a joint that has
+    // never been sized keeps exactly the shape it had.
+    const rb = Math.max((j._boneRadius || 0) / scale, 1e-4);
+    const half = (jt) => {
+      const h = Skeleton.jointHalf(jt, rb * scale, [0, 0, 0]);
+      return [Math.max(h[0] / scale, 1e-4), Math.max(h[1] / scale, 1e-4), Math.max(h[2] / scale, 1e-4)];
+    };
     segs.push({
       // The radius still lives on the CHILD joint (that is the joint that created the bone and
       // the one whose radius you drag), but the bone moves with the PARENT.
       joint: index.get(p),
-      a: pos[index.get(p)], b: pos[i],
-      r: Math.max((j._boneRadius || 0) / scale, 1e-4),
+      a: centre(p, pos[index.get(p)]), b: centre(j, pos[i]),
+      ha: half(p), hb: half(j),
     });
   });
   return segs;
@@ -130,11 +174,8 @@ function nearestCapsuleWeights(verts, nbV, segs) {
     let bestJoint = -1, bestT2 = Infinity;
 
     for (let s = 0; s < segs.length; s++) {
-      const sg = segs[s];
-      const d2 = distToSegment2(px, py, pz,
-        sg.a.x, sg.a.y, sg.a.z, sg.b.x, sg.b.y, sg.b.z);
-      const t2 = d2 / (sg.r * sg.r);
-      if (t2 < bestT2) { bestT2 = t2; bestJoint = sg.joint; }
+      const t2 = envelopeT2(px, py, pz, segs[s]);
+      if (t2 < bestT2) { bestT2 = t2; bestJoint = segs[s].joint; }
     }
 
     if (bestJoint < 0) continue;
