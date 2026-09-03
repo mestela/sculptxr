@@ -3086,7 +3086,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 10;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset
+const SKEL_VERSION = 11;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3201,6 +3201,16 @@ Skeleton.serialize = function (meshes) {
     if (m && m._isBone && Skeleton.jointScaleIsSet(m)) scales.push({ i: i, s: m._jointScale });
   });
 
+  // v11: physics-bone roots and their three parameters. A flagged joint is a property of the
+  // RIG, not of the take — the take is what a bake turns it into — so it belongs here rather
+  // than in the animation data.
+  const phys = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isBone || !m._physicsRoot) return;
+    const p = m._physicsParams || {};
+    phys.push({ i: i, s: p.stiffness, d: p.damping, g: p.gravity });
+  });
+
   // v10: the joint's offset, where a face drag has moved its shape off it. Its own section
   // rather than three more floats on the v9 one, so a file written by a build that had scale and
   // not offset still reads.
@@ -3225,6 +3235,7 @@ Skeleton.serialize = function (meshes) {
   slots += 1 + rads.length * 2;
   slots += 1 + scales.length * 4;
   slots += 1 + offs.length * 4;
+  slots += 1 + phys.length * 4;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -3269,6 +3280,9 @@ Skeleton.serialize = function (meshes) {
 
   u[o++] = offs.length;
   for (const of_ of offs) { u[o++] = of_.i; f[o++] = of_.o[0]; f[o++] = of_.o[1]; f[o++] = of_.o[2]; }
+
+  u[o++] = phys.length;
+  for (const ph of phys) { u[o++] = ph.i; f[o++] = ph.s; f[o++] = ph.d; f[o++] = ph.g; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -3517,6 +3531,19 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const mi = u[o++];
         const ox = f[o++], oy = f[o++], oz = f[o++];
         if (meshes[mi]) Skeleton.setJointOffset(meshes[mi], ox, oy, oz);
+      }
+    }
+
+    // v11: physics-bone roots and their parameters.
+    if (ver >= 11) {
+      const pn = u[o++];
+      for (let i = 0; i < pn; i++) {
+        const mi = u[o++];
+        const st = f[o++], dp = f[o++], gr = f[o++];
+        const m = meshes[mi];
+        if (!m) continue;
+        m._physicsRoot = true;
+        m._physicsParams = { stiffness: st, damping: dp, gravity: gr };
       }
     }
 

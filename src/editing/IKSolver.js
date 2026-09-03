@@ -2189,4 +2189,9 @@ IKSolver.pinOnA = function (tool, options, busy) {
   return IKSolver.togglePin(tool._main, Skeleton.hoveredJoint(tool._main));
 };
 
+// Shared with PhysicsBones, which has the same job to do — turn a solved POSITION into a joint
+// rotation — and must do it the same way. Writing `_matrix` without syncThree leaves the three
+// side stale, which is a trap this rig has already paid for once (see the rigging notes).
+IKSolver.rotateJoint = rotateJoint;
+
 export default IKSolver;

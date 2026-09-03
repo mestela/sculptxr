@@ -2,6 +2,7 @@ import { mat4 } from 'gl-matrix';
 import Enums from '../misc/Enums.js';
 import Skeleton from '../editing/Skeleton.js';
 import Skinning from '../editing/Skinning.js';
+import PhysicsBones from '../editing/PhysicsBones.js';
 import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
@@ -97,6 +98,10 @@ export function buildBoneAuthoringHTML(main, style) {
   const mush = Skinning.mushIterations();
   // BONE SHAPE, for the selected joints (roadmap #60).
   //
+  // Physics is a property of the selected joint, so the button reads its state — same pattern as
+  // the mode buttons above it.
+  const physSel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+  const physOn = physSel.length === 1 && PhysicsBones.isRoot(physSel[0]);
   const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
@@ -117,6 +122,12 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}${physOn ? ' active' : ''}" id="bone-phys"
+        title="Make the selected joint a physics bone: everything below it swings and lags behind the animation. Only simulates while the timeline PLAYS — scrub shows the plain pose. Bake to turn it into keys.">${physOn ? 'Physics On' : 'Physics Bone'}</button>
+      <button class="${c.action}" id="bone-phys-bake"
+        title="Step the loop range, run the sim, and write the result as ordinary rotation keys on the joints it moves. Undoable.">Bake Physics</button>
     </div>
     ${rule}
     <div class="${c.btnRow}">
@@ -410,6 +421,38 @@ export function wireBoneSection(root, main, opts) {
   // The button stays, doing what it always did, now with the only value there is: push the
   // default onto every bone. That is a reset -- the way back from radii hand-tuned in Radius
   // mode, or from a rig imported with odd ones -- so it is labelled as one.
+  q('phys')?.addEventListener('click', () => {
+    const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (js.length !== 1) { say('Bones: select ONE joint to flag as a physics bone', false); return; }
+    const j = js[0];
+    const on = !PhysicsBones.isRoot(j);
+    const before = { root: !!j._physicsRoot, params: j._physicsParams ? { ...j._physicsParams } : null };
+    const apply = (st) => {
+      if (st.root) { j._physicsRoot = true; j._physicsParams = st.params ? { ...st.params } : { ...PhysicsBones.DEFAULTS }; }
+      else delete j._physicsRoot;
+      PhysicsBones.reset(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+      refresh();
+    };
+    PhysicsBones.setRoot(main, j, on);
+    const after = { root: !!j._physicsRoot, params: j._physicsParams ? { ...j._physicsParams } : null };
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(before), () => apply(after), false, 'Physics Bone');
+    say(on
+      ? 'Bones: physics on — everything below this joint will swing while the timeline plays'
+      : 'Bones: physics off', true);
+    refresh();
+  });
+
+  q('phys-bake')?.addEventListener('click', () => {
+    const res = PhysicsBones.bake(main);
+    say(res.baked
+      ? `Bones: baked physics on ${res.baked} joint(s), ${res.frames} frames`
+      : `Bones: nothing baked — ${res.reason}`, !!res.baked);
+    refresh();
+  });
+
   q('rad-all')?.addEventListener('click', () => {
     const before = Skeleton.captureRadii(main);
     Skeleton.setRadiusFraction(main, Skeleton.radiusFraction());

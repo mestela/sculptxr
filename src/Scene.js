@@ -31,6 +31,7 @@ import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import Skinning from './editing/Skinning.js';
 import IKSolver from './editing/IKSolver.js';
+import PhysicsBones from './editing/PhysicsBones.js';
 import RigTopology from './editing/RigTopology.js';
 import HumanBase from './drawables/HumanBase.js';
 import Primitives from './drawables/Primitives.js';
@@ -1525,6 +1526,21 @@ class Scene {
         }
         this._drawFullScene = true; // Ensure we redraw
       }
+    }
+
+    // PHYSICS BONES, on the pose playback just wrote and before the pins are re-seated.
+    //
+    // ONLY WHILE PLAYING FORWARD. A simulation has no defined state under scrubbing — "the
+    // previous frame" means nothing when you drag the playhead backwards — so scrubbing shows
+    // the un-simulated pose honestly rather than whatever the sim happened to be holding. Bake
+    // is what makes the motion scrubbable, by turning it into keys and ceasing to be a
+    // simulation at all.
+    if (window._animPlaying && window._physicsBonesLive !== false) {
+      try { PhysicsBones.tick(this); } catch (e) { console.error('physics bones failed:', e); }
+    } else if (!window._animPlaying) {
+      // Stopping drops the sim state, so pressing play again starts from the pose rather than
+      // from wherever the chain was swinging when you hit stop.
+      PhysicsBones.reset(this);
     }
 
     // Re-seat pinned joints against the pose playback just wrote.
