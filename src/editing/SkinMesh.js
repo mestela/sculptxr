@@ -515,11 +515,15 @@ function buildArrays(joints, topo) {
     const nbs = adj.get(j);
     if (!nbs.length) continue;
 
-    const c = Skeleton.jointPos(j);
+    // THE BLOCK SITS ON THE SHAPE, and the bones are aimed between SHAPES. Both follow from the
+    // envelope being the hull of the shapes rather than of the joints: leave the block on the
+    // joint and a tweaked joint gets a cage in one place and a capsule in another, with the
+    // bridges stretched between them.
+    const c = Skeleton.jointCentre(j);
     let r = 0, minLen = Infinity;
     const dirs = [];
     for (const nb of nbs) {
-      const d = new THREE.Vector3().subVectors(Skeleton.jointPos(nb), c);
+      const d = new THREE.Vector3().subVectors(Skeleton.jointCentre(nb), c);
       minLen = Math.min(minLen, d.length());
       r = Math.max(r, boneRadius(j, nb));
       dirs.push(d.normalize());
@@ -632,7 +636,10 @@ function buildArrays(joints, topo) {
     // ...and three of them at each end now, so a joint can be wide and shallow. jointHalf is the
     // one definition of how big a joint is; the draw and the handles read the same function.
     const guard = (h) => [Math.max(h[0], 1e-6), Math.max(h[1], 1e-6), Math.max(h[2], 1e-6)];
-    caps.push({ a: Skeleton.jointPos(p), b: Skeleton.jointPos(j),
+    // THE ENDS ARE THE SHAPES' CENTRES, not the joints. A face drag moves one face and leaves
+    // the other, which shifts the shape off its joint — and the envelope is the hull of the two
+    // SHAPES. Reading the joints here would leave the skin behind wherever a joint was tweaked.
+    caps.push({ a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
       ha: guard(Skeleton.jointHalf(p, rj)), hb: guard(Skeleton.jointHalf(j, rj)) });
     bones++;
   }

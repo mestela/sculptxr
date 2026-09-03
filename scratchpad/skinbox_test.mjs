@@ -59,6 +59,12 @@ const Skeleton = {
   // ...and the three half-extents that come out of it. Same shape as the real one: a scale of
   // [1,1,1] has to give exactly the round answer, or every fixture above changes meaning.
   jointScale: (j) => ((j && j._jointScale && j._jointScale.length === 3) ? j._jointScale : [1, 1, 1]),
+  jointOffset: (j) => ((j && j._jointOffset && j._jointOffset.length === 3) ? j._jointOffset : [0, 0, 0]),
+  jointCentre: (j, out) => {
+    out = out || new THREE.Vector3();
+    const o = (j && j._jointOffset && j._jointOffset.length === 3) ? j._jointOffset : [0, 0, 0];
+    return out.set(j.p[0] + o[0], j.p[1] + o[1], j.p[2] + o[2]);
+  },
   jointHalf: (j, fallback, out) => {
     out = out || [0, 0, 0];
     const r = (j && j._jointRadius > 0) ? j._jointRadius : (fallback || 0);
@@ -788,6 +794,46 @@ if (SkinMesh._boxLattice) {
     Math.abs(fx - 1.5 * 1.6) < 0.25 && Math.abs(fz - 1.5 * 0.4) < 0.25,
     'wanted 2.40 x 0.60, got ' + fx.toFixed(2) + ' x ' + fz.toFixed(2)
     + ' — the skin follows the ellipsoid, not a sphere of some average radius');
+}
+
+// ── A SHAPE THAT HAS MOVED OFF ITS JOINT ──────────────────────────────────────────────
+//
+// A face drag moves ONE face, which shifts the shape's centre by half of what the face did. The
+// skin has to follow that, not the joint: it is the hull of the two SHAPES. Reading joint
+// positions here would leave the skin behind wherever a joint had been tweaked, and every
+// fixture in this file would still pass, because none of them offsets anything.
+{
+  const chain = () => skeleton([
+    ['a', null, 0, -3, 0, 0.25],
+    ['b', 'a', 0, 0, 0, 0.25],
+    ['c', 'b', 0, 3, 0, 0.25],
+  ]);
+  const centreOfMass = (arr, yLo, yHi) => {
+    const V = arr.vertices;
+    let sx = 0, sz = 0, n = 0;
+    for (let i = 0; i < V.length; i += 3) {
+      if (V[i + 1] < yLo || V[i + 1] > yHi) continue;
+      sx += V[i]; sz += V[i + 2]; n++;
+    }
+    return n ? [sx / n, sz / n] : [0, 0];
+  };
+  const plain = chain();
+  plain[1]._jointRadius = 1.2;
+  const p0 = build(plain);
+
+  const shifted = chain();
+  shifted[1]._jointRadius = 1.2;
+  shifted[1]._jointOffset = [1.5, 0, 0];        // pushed sideways, as a +X face drag would
+  const s0 = build(shifted);
+
+  const [px] = centreOfMass(p0, -0.6, 0.6);
+  const [sx] = centreOfMass(s0, -0.6, 0.6);
+  check('the skin follows a shape that has been moved off its joint',
+    sx - px > 0.9,
+    'the middle of the skin moved ' + (sx - px).toFixed(2) + ' for a shape offset by 1.5 — the '
+    + 'capsule ends have to be the shape centres, not the joint positions');
+  check('...and a joint with no offset is where it always was',
+    Math.abs(px) < 0.05, 'unshifted middle sits at x = ' + px.toFixed(3));
 }
 
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));

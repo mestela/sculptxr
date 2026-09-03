@@ -97,6 +97,7 @@ const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
 // name that no longer existed, so a VR tweak grab threw on its first moved frame and Tweak FK
 // and Tweak Free did nothing at all. Its own declaration now, next to the code that uses it.
 const _vGrab = new THREE.Vector3();
+const _halfDrag = [0, 0, 0];
 const _jpRad = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
@@ -1329,26 +1330,52 @@ class BoneDrawTool extends SculptBase {
     // A CENTRELINE JOINT IS SYMMETRIC ANYWAY, and by construction rather than by rule: it sits
     // on the mirror plane and its ellipsoid is centred on it with no offset, so its two X faces
     // are always the same distance out. There is nothing to enforce and nothing to propagate.
-    const snap = (j) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice()];
+    const snap = (j) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
+      (Skeleton.jointOffset(j) || [0, 0, 0]).slice()];
     const before = [snap(joint)];
     this._scale = { joint: joint, grip: grip, before: before,
       // The radius the extents are a multiple OF, fixed at the grab: reading it live would make
       // a drag that changes the radius compound with itself.
-      base: Math.max(Skeleton.jointRadius(joint, fallbackR || 0), 1e-6) };
+      base: Math.max(Skeleton.jointRadius(joint, fallbackR || 0), 1e-6),
+      // A centreline joint may not slide in X: it is its own mirror twin, and an x offset would
+      // take it off the plane the rest of the rig is built around. Read once at the grab so the
+      // rule cannot change under your hand halfway through a drag.
+      centreline: Skeleton.jointIsCentreline(main, joint) };
   }
 
+  // ONE FACE MOVES, THE OTHER STAYS. Scaling about the centre was the first version and it made
+  // both faces move together — matt: "i edit the top, the bottom moves." So the face opposite
+  // the one you grabbed is pinned, and the extent and the centre are solved from the two of
+  // them: the centre lands halfway between the pinned face and your hand, and the half-extent is
+  // half the distance. That shift is the whole reason a joint has an offset at all.
+  //
+  // THE EXCEPTION IS X ON A CENTRELINE JOINT, which stays symmetric about the joint: a spine or
+  // a head is its own mirror twin and sliding it sideways would take it off the plane. There the
+  // old centred behaviour is the correct one.
   _scaleTo(pos) {
     const sc = this._scale;
     if (!sc) return;
     const axis = sc.grip.axis;
-    const d = Math.abs(pos.getComponent(axis) - Skeleton.jointPos(sc.joint, _jpRad).getComponent(axis));
-    // A joint with no thickness on an axis has no envelope there, and the weights it owns would
-    // vanish with it. Clamped at both ends by setJointScale as well; this keeps the DRAG from
-    // reaching the clamp and sticking.
-    const next = Math.max(0.05, Math.min(20, d / sc.base));
+    const sign = sc.grip.sign;
+    const jointAt = Skeleton.jointPos(sc.joint, _jpRad).getComponent(axis);
     const cur = (Skeleton.jointScale(sc.joint) || [1, 1, 1]).slice();
-    cur[axis] = next;
+    const off = (Skeleton.jointOffset(sc.joint) || [0, 0, 0]).slice();
+    const clamp = (v) => Math.max(0.05, Math.min(20, v));
+
+    if (sc.centreline && axis === 0) {
+      cur[axis] = clamp(Math.abs(pos.getComponent(axis) - jointAt) / sc.base);
+      off[axis] = 0;
+    } else {
+      // Where the face you did NOT grab is right now, in world terms — that is what stays put.
+      const half = Skeleton.jointHalf(sc.joint, sc.base, _halfDrag)[axis];
+      const centre = jointAt + off[axis];
+      const pinned = centre - sign * half;
+      const moved = pos.getComponent(axis);
+      cur[axis] = clamp(Math.abs(moved - pinned) / (2 * sc.base));
+      off[axis] = (moved + pinned) / 2 - jointAt;
+    }
     Skeleton.setJointScale(sc.joint, cur[0], cur[1], cur[2]);
+    Skeleton.setJointOffset(sc.joint, off[0], off[1], off[2]);
     this._liveWeights();
     this._refresh();
   }
@@ -1365,9 +1392,13 @@ class BoneDrawTool extends SculptBase {
     this._selectLater(sc.joint);
     const main = this._main;
     const before = sc.before;
-    const after = before.map(([j]) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice()]);
+    const after = before.map(([j]) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
+      (Skeleton.jointOffset(j) || [0, 0, 0]).slice()]);
     const apply = (rows) => {
-      for (const [j, v] of rows) Skeleton.setJointScale(j, v[0], v[1], v[2]);
+      for (const [j, v, o] of rows) {
+        Skeleton.setJointScale(j, v[0], v[1], v[2]);
+        Skeleton.setJointOffset(j, o[0], o[1], o[2]);
+      }
       Skinning.resolveWeightsAll(main);
       Skeleton.updateVisuals(main);
       main.render?.();

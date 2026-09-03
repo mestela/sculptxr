@@ -721,6 +721,54 @@ Skeleton.jointScaleIsSet = function (j) {
   return !!(s && (s[0] !== 1 || s[1] !== 1 || s[2] !== 1));
 };
 
+// ---- joint offset ------------------------------------------------------------
+//
+// WHERE THE JOINT'S SHAPE SITS, relative to the joint itself. There is no handle for it and
+// there never will be — matt ruled that out with the rotation — but a face drag that moves ONE
+// face has nowhere else to put the result: growing the top while the bottom stays means the
+// centre moved by half of what the top did. matt: "i edit the top, the bottom moves."
+//
+// So the offset is a CONSEQUENCE of the box handles rather than a control of its own. Model
+// space, world-axis aligned, same frame as the extents.
+const ZERO_OFF = [0, 0, 0];
+Skeleton.jointOffset = function (j) {
+  const o = j && j._jointOffset;
+  return (o && o.length === 3) ? o : ZERO_OFF;
+};
+
+Skeleton.setJointOffset = function (j, x, y, z) {
+  if (!j) return false;
+  j._jointOffset = [x || 0, y || 0, z || 0];
+  return true;
+};
+
+Skeleton.jointOffsetIsSet = function (j) {
+  const o = j && j._jointOffset;
+  return !!(o && (o[0] || o[1] || o[2]));
+};
+
+// WHERE A JOINT'S SHAPE IS CENTRED, which is the joint plus its offset. One definition, used by
+// the draw, the skin, the handles and the drag — the four places that have to agree, and the
+// four that drifted apart when the removed joint volumes each worked it out for themselves.
+const _pJC = new THREE.Vector3();
+Skeleton.jointCentre = function (j, out) {
+  out = out || new THREE.Vector3();
+  Skeleton.jointPos(j, out);
+  const o = Skeleton.jointOffset(j);
+  return out.set(out.x + o[0], out.y + o[1], out.z + o[2]);
+};
+
+// IS THIS JOINT ON THE MIRROR PLANE? A centreline joint must stay symmetric left-to-right — it
+// is its own twin, and an x offset would take it off the plane the rest of the rig is built
+// around. matt: "only center line joints should have left-right symmetry."
+Skeleton.jointIsCentreline = function (main, j) {
+  if (!j || j._boneMirror) return false;
+  const plane = Skeleton.rigMirrorPlane(main) || Skeleton.symmetryPlane(main);
+  if (!plane) return false;
+  return Math.abs(Skeleton.planeDistance(Skeleton.jointPos(j, _pJC), plane))
+    <= Skeleton.sceneUnit(main) * 0.02;
+};
+
 // The three half-extents a joint actually occupies: its radius times its scale. One definition,
 // used by the draw, the skin and the handles, so they cannot disagree about how big a joint is.
 Skeleton.jointHalf = function (j, fallback, out) {
@@ -785,7 +833,7 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
 
   // World-axis aligned, so there is no frame to build: the extents ARE the offsets to the faces.
   const half = Skeleton.jointHalf(j, fallbackR || 0, _halfH);
-  Skeleton.jointPos(j, _pJH);
+  Skeleton.jointCentre(j, _pJH);   // the SHAPE's centre — a face drag moves it off the joint
 
   const r = Skeleton.sceneUnit(main) * 0.018;
   h.centrePos.copy(_pJH);
@@ -909,6 +957,9 @@ function colorSlots(main) {
 
 const _halfA = [0, 0, 0], _halfB = [0, 0, 0];
 const _halfH = [0, 0, 0];
+const _cA = new THREE.Vector3(), _cB = new THREE.Vector3(), _dirC = new THREE.Vector3();
+const _qC = new THREE.Quaternion();
+const _upY = new THREE.Vector3(0, 1, 0);
 const _pJH = new THREE.Vector3();
 const _vFace = new THREE.Vector3();
 const _mRot = new THREE.Matrix4();
@@ -2422,6 +2473,14 @@ Skeleton.updateVisuals = function (main) {
     if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
     const hA = Skeleton.jointHalf(parent, cr, _halfA);
     const hB = Skeleton.jointHalf(j, cr, _halfB);
+    // The capsule spans the two SHAPES, which a face drag can move off their joints. The skin is
+    // built from the same two points (SkinMesh caps), so the preview and the result agree.
+    Skeleton.jointCentre(parent, _cA);
+    Skeleton.jointCentre(j, _cB);
+    _dirC.subVectors(_cB, _cA);
+    const lenC = _dirC.length();
+    if (lenC > 1e-9) _dirC.divideScalar(lenC);
+    _qC.setFromUnitVectors(_upY, lenC > 1e-9 ? _dirC : _upY);
     const crMid = ((hA[0] + hA[1] + hA[2]) + (hB[0] + hB[1] + hB[2])) / 6;
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
     // which is the same colour the weight preview paints onto the vertices it claims. (The
@@ -2431,24 +2490,24 @@ Skeleton.updateVisuals = function (main) {
     const capColor = Skeleton.boneColor(main, parent);
     const capOp = (isHi || isSel) ? 0.34 : 0.16;
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
-      o.position.copy(_pA).addScaledVector(_dir, len * 0.5); // cylinder is centre-origin
-      o.quaternion.copy(_q);
+      o.position.copy(_cA).addScaledVector(_dirC, lenC * 0.5); // cylinder is centre-origin
+      o.quaternion.copy(_qC);
       // The radii go to the shader, not into the scale — see taperMaterial. x/z stay at 1.
       const tp = o.material.userData.taper;
       if (tp) {
         tp.uHA.value.set(hA[0], hA[1], hA[2]);
         tp.uHB.value.set(hB[0], hB[1], hB[2]);
-        _mRot.makeRotationFromQuaternion(_q);
+        _mRot.makeRotationFromQuaternion(_qC);
         tp.uRot.value.setFromMatrix4(_mRot);
         tp.uRotInv.value.copy(tp.uRot.value).transpose();   // a rotation's inverse
-        o.scale.set(1, len, 1);
-      } else o.scale.set(crMid, len, crMid);
+        o.scale.set(1, lenC, 1);
+      } else o.scale.set(crMid, lenC, crMid);
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
     // The end caps are world-axis aligned — no rotation on them — so the three extents go
     // straight into the scale.
-    for (const [part, at, ph] of [[e.cap.a, _pA, hA], [e.cap.b, _pB, hB]]) {
+    for (const [part, at, ph] of [[e.cap.a, _cA, hA], [e.cap.b, _cB, hB]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
         o.scale.set(ph[0], ph[1], ph[2]);
@@ -3027,7 +3086,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 9;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale
+const SKEL_VERSION = 10;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3142,6 +3201,14 @@ Skeleton.serialize = function (meshes) {
     if (m && m._isBone && Skeleton.jointScaleIsSet(m)) scales.push({ i: i, s: m._jointScale });
   });
 
+  // v10: the joint's offset, where a face drag has moved its shape off it. Its own section
+  // rather than three more floats on the v9 one, so a file written by a build that had scale and
+  // not offset still reads.
+  const offs = [];
+  meshes.forEach((m, i) => {
+    if (m && m._isBone && Skeleton.jointOffsetIsSet(m)) offs.push({ i: i, o: m._jointOffset });
+  });
+
   // JOINT VOLUMES ARE GONE, and the section stays. Writing an empty one keeps the block at v7
   // so a reader that expects the section still finds it, and the reader below still SKIPS a
   // populated one — which is what lets a file saved when volumes existed keep loading.
@@ -3157,6 +3224,7 @@ Skeleton.serialize = function (meshes) {
   slots += 1 + vols.length * 12;
   slots += 1 + rads.length * 2;
   slots += 1 + scales.length * 4;
+  slots += 1 + offs.length * 4;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -3198,6 +3266,9 @@ Skeleton.serialize = function (meshes) {
 
   u[o++] = scales.length;
   for (const sc of scales) { u[o++] = sc.i; f[o++] = sc.s[0]; f[o++] = sc.s[1]; f[o++] = sc.s[2]; }
+
+  u[o++] = offs.length;
+  for (const of_ of offs) { u[o++] = of_.i; f[o++] = of_.o[0]; f[o++] = of_.o[1]; f[o++] = of_.o[2]; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -3436,6 +3507,16 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const mi = u[o++];
         const sx = f[o++], sy = f[o++], sz = f[o++];
         if (meshes[mi]) Skeleton.setJointScale(meshes[mi], sx, sy, sz);
+      }
+    }
+
+    // v10: the joint's offset.
+    if (ver >= 10) {
+      const on = u[o++];
+      for (let i = 0; i < on; i++) {
+        const mi = u[o++];
+        const ox = f[o++], oy = f[o++], oz = f[o++];
+        if (meshes[mi]) Skeleton.setJointOffset(meshes[mi], ox, oy, oz);
       }
     }
 
