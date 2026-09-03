@@ -55,6 +55,7 @@ const {
   buildBoneAuthoringHTML,
   buildBonePoseHTML,
   buildBoneDisplayHTML,
+  buildBoneQuickDisplayHTML,
   buildBoneAnimationHTML,
 } = mod;
 
@@ -395,6 +396,39 @@ check('shader-specific groups mute instead of hiding',
   check('...and the undo step holds both sides',
     /const snap = \(\) => pair\.map/.test(SRC),
     'a snapshot of one joint would restore half the edit');
+}
+
+// ── THE DISPLAY TOGGLES ARE WHERE YOU NEED THEM ───────────────────────────────────────
+//
+// matt: "i currently find i have to keep jumping between the display options and the bone tool
+// to swap display modes. can we put buttons for display modes on the bones minipanel? so solid,
+// wireframe, joints. i think we should also put capsules on the main display options too."
+//
+// Two separate moves. Capsules and Weights were display toggles living in the AUTHORING section
+// — they say how the rig draws, not what it is — so they move to Rig Display with the rest.
+// And the wrist panel, which has no Rig Display section at all, gets a compact row of the four
+// you actually swap while rigging.
+{
+  const disp = buildBoneDisplayHTML(main, 'mm');
+  check('Rig Display carries capsules now', disp.includes('id="bone-caps"'));
+  check('...and weights with it', disp.includes('id="bone-weights"'));
+  check('...alongside solid, wire and joints',
+    ['solid', 'wire', 'joints'].every((k) => disp.includes('id="bone-' + k + '"')));
+
+  const auth = buildBoneAuthoringHTML(main, 'mm');
+  check('...and authoring no longer duplicates them',
+    !auth.includes('id="bone-caps"') && !auth.includes('id="bone-weights"'),
+    'two buttons for one flag in one panel is a sync bug waiting to happen — querySelector '
+    + 'finds the first and the second silently goes stale');
+
+  const quick = buildBoneQuickDisplayHTML(main, 'mp');
+  check('the wrist panel gets solid, wire, joints and capsules',
+    ['solid', 'wire', 'joints', 'caps'].every((k) => quick.includes('id="bone-' + k + '"')));
+  check('...and not the read-outs, which would only make it taller',
+    !/bone-(names|len|trails|gnomons)/.test(quick),
+    'names, lengths, pins and trails are set once and left');
+  check('...in the wrist dialect, not the menu one',
+    quick.includes('mp-toggle-btn') && !quick.includes('mm-choice'));
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');

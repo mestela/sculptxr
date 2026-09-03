@@ -90,8 +90,6 @@ export function buildBoneAuthoringHTML(main, style) {
   const f     = (k) => Skeleton.displayFlag(k);
   const snap  = f('snapPlane');
   const axis  = f('snapAxis');
-  const caps  = f('capsules');
-  const wts   = f('weights');
   const bound = Skinning.isBound(main.getMesh?.());
   const hasCages = WeightCage.cages(main).length > 0;
   const anyBound = Skinning.anyBound(main);
@@ -112,10 +110,6 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
-    </div>
-    <div class="${c.toggles}">
-      ${flagButton(c, 'caps', 'Capsules', caps)}
-      ${flagButton(c, 'weights', 'Weights', wts)}
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
@@ -202,15 +196,40 @@ export function buildBoneDisplayHTML(main, style) {
   return `
     ${sectionTitle(c, 'Rig Display')}
     <div class="${c.toggles}">
-      ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
-      ${flagButton(c, 'names', 'Names', Skeleton.displayFlag('names'))}
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
+      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
+      ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlag('weights'))}
+      ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
+      ${flagButton(c, 'names', 'Names', Skeleton.displayFlag('names'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
       ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlag('gnomons'))}
       ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlag('gnomonsAll'))}
+    </div>
+  `;
+}
+
+// THE FOUR YOU REACH FOR WHILE RIGGING, for the wrist panel — which renders authoring and pose
+// and has no Rig Display section, so swapping how the rig draws meant going to the main menu and
+// back. matt: "i currently find i have to keep jumping between the display options and the bone
+// tool to swap display modes."
+//
+// Four rather than the whole display block on purpose: the wrist panel is already too tall (its
+// own problem), and these are the ones that change what you can SEE to work on. The rest —
+// names, lengths, pins, trails, rotation — are read-outs you set once and leave.
+//
+// The same ids as the main menu's, which is safe because each panel wires its own root: the two
+// never share a document, and both already emit `bone-draw` and the rest.
+export function buildBoneQuickDisplayHTML(main, style) {
+  const c = DIALECT[style] || DIALECT.mm;
+  return `
+    <div class="${c.toggles}">
+      ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
+      ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
+      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
+      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
     </div>
   `;
 }

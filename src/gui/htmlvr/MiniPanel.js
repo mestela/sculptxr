@@ -25,6 +25,7 @@ import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
   buildBoneSectionHTML,
+  buildBoneQuickDisplayHTML,
   buildBonePoseHTML,
   wireBoneSection,
   syncBoneSection,
@@ -1075,7 +1076,13 @@ export class MiniPanel extends HTMLVRPanel {
     // The same controls the menu/sidebar shows, in the wrist panel's dialect. Mode lives
     // here rather than on a face button: the modes do not fit two buttons without each one
     // changing meaning by mode, which is what made the previous binding opaque.
-    if (idx === Enums.Tools.BONE_DRAW) return buildBoneSectionHTML(this._main, 'mp');
+    if (idx === Enums.Tools.BONE_DRAW) {
+      // The four display toggles you reach for while rigging, first — this panel has no Rig
+      // Display section of its own, and going to the main menu to switch between solid and
+      // wireframe is a round trip in the middle of the thing you are looking at.
+      return buildBoneQuickDisplayHTML(this._main, 'mp')
+        + buildBoneSectionHTML(this._main, 'mp');
+    }
 
     if (idx === Enums.Tools.GRAB) {
       return `<hr class="mp-divider">${grabChannelHTML()}`
