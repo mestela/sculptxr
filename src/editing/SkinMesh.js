@@ -357,12 +357,27 @@ function matchLoop(near, far, posAt) {
 // give equal weight, so the mirror seam is still pinned by symmetry rather than by luck.
 const _cp = new THREE.Vector3(), _ax = new THREE.Vector3(), _to = new THREE.Vector3();
 const _grad = new THREE.Vector3();
-const _order = [];
+// SCRATCH FOR THE INNER LOOP, GROWN ONCE. This function runs once per vertex per relax pass —
+// about sixteen thousand times for a rig the size of matt's — and it used to allocate four
+// arrays and push into them on every one of those calls, then sort with a comparator closure.
+// That bookkeeping, not the arithmetic, was 95% of Make Skin: 311ms of a 327ms build.
+let _sd = new Float64Array(0), _nx = new Float64Array(0);
+let _ny = new Float64Array(0), _nz = new Float64Array(0);
+let _order = new Int32Array(0);
+function ensureCapsScratch(n) {
+  if (_sd.length >= n) return;
+  _sd = new Float64Array(n); _nx = new Float64Array(n);
+  _ny = new Float64Array(n); _nz = new Float64Array(n);
+  _order = new Int32Array(n);
+}
 function capsuleTarget(p, caps, out) {
   // Pass one: each capsule's signed distance and outward direction at p.
+  ensureCapsScratch(caps.length);
+  const sd = _sd, nx = _nx, ny = _ny, nz = _nz;
   let dmin = Infinity, rmin = Infinity;
-  const sd = [], nx = [], ny = [], nz = [];
-  for (const c of caps) {
+  let nc = 0;
+  for (let ci = 0; ci < caps.length; ci++) {
+    const c = caps[ci];
     _ax.subVectors(c.b, c.a);
     const len2 = _ax.lengthSq();
     let t = len2 > 1e-18 ? _to.subVectors(p, c.a).dot(_ax) / len2 : 0;
@@ -372,7 +387,7 @@ function capsuleTarget(p, caps, out) {
     const l = _to.length();
     // A point sitting exactly on an axis has no direction to be pushed out along; skip that
     // capsule rather than inventing one. Smoothing will have moved it off by the next pass.
-    if (l < 1e-9) { sd.push(Infinity); nx.push(0); ny.push(0); nz.push(0); continue; }
+    if (l < 1e-9) continue;   // on the axis: no direction to be pushed out along
     // THE HALF-EXTENTS WHERE THIS POINT SITS, lerped between the two ends. `t` is already
     // clamped, so past either end the shape keeps that end's extents and the cap stays that
     // end's ellipsoid. Three numbers rather than one, since a joint can be sized per axis.
@@ -389,11 +404,11 @@ function capsuleTarget(p, caps, out) {
     const uy = _to.y / Math.max(hy, 1e-9);
     const uz = _to.z / Math.max(hz, 1e-9);
     const lu = Math.hypot(ux, uy, uz);
-    if (lu < 1e-9) { sd.push(Infinity); nx.push(0); ny.push(0); nz.push(0); continue; }
+    if (lu < 1e-9) continue;
     const cr = l / lu;                      // the surface's distance from the axis, this way
     const d = l - cr;                       // negative inside
-    sd.push(d);
-    nx.push(_to.x / l); ny.push(_to.y / l); nz.push(_to.z / l);
+    sd[nc] = d; nx[nc] = _to.x / l; ny[nc] = _to.y / l; nz[nc] = _to.z / l;
+    nc++;
     if (d < dmin) dmin = d;
     // The FINEST feature here, which is the smallest of the three half-extents rather than the
     // radius: a joint squashed flat in Z has to keep a blend narrow enough not to fill it back
@@ -421,15 +436,21 @@ function capsuleTarget(p, caps, out) {
   // capsules — enough so that a symmetric skeleton came back with 164 vertices missing their
   // mirror twin — and sorting removes the dependence outright: the result is then a function of
   // the SET of distances, which the left and right halves of a mirrored rig share exactly.
-  _order.length = 0;
-  for (let i = 0; i < sd.length; i++) if (sd[i] < Infinity) _order.push(i);
-  if (!_order.length) return out.copy(p);
-  _order.sort((x, y) => sd[x] - sd[y]);
+  // INSERTION SORT, no comparator closure and no allocation. `nc` is the number of capsules
+  // that had anything to say about this point — a handful — and insertion sort is the right
+  // shape at that size as well as the cheap one.
+  for (let i = 0; i < nc; i++) {
+    let k = i - 1;
+    const v = i;
+    while (k >= 0 && sd[_order[k]] > sd[v]) { _order[k + 1] = _order[k]; k--; }
+    _order[k + 1] = v;
+  }
 
   let d = Infinity;
   _grad.set(0, 0, 0);
   let first = true;
-  for (const i of _order) {
+  for (let oi = 0; oi < nc; oi++) {
+    const i = _order[oi];
     if (first) { d = sd[i]; _grad.set(nx[i], ny[i], nz[i]); first = false; continue; }
     const b = sd[i];
     const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - d)) / k));
