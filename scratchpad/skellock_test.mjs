@@ -283,31 +283,55 @@ const roundTrip = (meshes) => {
     !!out && out[1]._hiddenApplied === true);
 }
 
-// ── JOINT VOLUMES SURVIVE A SAVE (SKEL v7) ────────────────────────────────────────────
+// ── A FILE SAVED WHEN VOLUMES EXISTED STILL LOADS (SKEL v7) ───────────────────────────
 //
-// They lived only in memory, so a rig saved with a pelvis dome and a ribcage egg came back as
-// bare capsules — and the cage bake, Make Skin and the mirroring all quietly fell back with it.
-// Found while probing matt's own skel02.sxr, which turned out not to contain the volumes he had
-// just built.
+// Joint volumes are gone, and their SECTION is not: matt's own skel01-03 carry one, and every
+// field is read from a running offset, so a reader that does not step over it reads everything
+// after it from the wrong place. Nothing follows the volumes today, which is exactly why this
+// has to be a test — the day something does, the bug is silent and the file is corrupt.
+//
+// Tested by forging one: serialize (which now writes an EMPTY section), then splice a populated
+// one in and fix up the footer, which is what an old file looks like byte for byte.
+//
+// HONESTY ABOUT WHAT THE FUNCTIONAL CHECKS CAN SEE. The volume section is currently LAST, so a
+// reader that forgets to step over it reads nothing wrong — the two checks below pass with the
+// skip deleted. They are still worth having (they prove a populated section does not throw and
+// does not leak volume state back onto a joint), but the skip itself can only be pinned by the
+// source until a field is written after it. When one is, delete the source check and let the
+// functional ones do the work.
 {
-  const joint = mk({ _isBone: true, _boneRadius: 1,
-    _jointVolume: 'egg', _jointVolDims: [1, 2, 3], _jointVolRot: [0, 0, 0.3826, 0.9238] });
-  const fitted = mk({ _isBone: true, _boneRadius: 1, _jointVolume: 'half' });   // nothing set
-  const plain = mk({ _isBone: true, _boneRadius: 1 });
-  const out = roundTrip([joint, fitted, plain]);
-
-  check('a volume comes back with its shape', !!out && out[0]._jointVolume === 'egg');
-  check('...its dimensions', !!out && !!out[0]._jointVolDims
-    && Math.abs(out[0]._jointVolDims[2] - 3) < 1e-6,
-    out && out[0]._jointVolDims ? out[0]._jointVolDims.join(',') : 'none');
-  check('...and its rotation', !!out && !!out[0]._jointVolRot
-    && Math.abs(out[0]._jointVolRot[3] - 0.9238) < 1e-4);
-  check('a FITTED volume comes back still fitted', !!out && out[1]._jointVolume === 'half'
-    && !out[1]._jointVolDims && !out[1]._jointVolOffset,
-    'restoring it as hand-set would freeze it at whatever the skeleton looked like when saved, '
-    + 'and it would stop following the rig');
-  check('a joint with no volume gains none', !!out && !out[2]._jointVolume);
+  const bone = mk({ _isBone: true, _boneRadius: 3, _ikRest: new Array(16).fill(0).map((_, k) => k) });
+  const buf = Skeleton.serialize([bone]);
+  const u = new Uint32Array(buf);
+  const slots = u[u.length - 1] / 4;            // the footer's own size, in words
+  // The empty volume count is the word just before the two footer words.
+  const countAt = u.length - 3;
+  const forged = new Uint32Array(u.length + 12);
+  forged.set(u.subarray(0, countAt + 1));
+  forged[countAt] = 1;                          // one volume...
+  for (let k = 0; k < 12; k++) forged[countAt + 1 + k] = 0xdeadbeef;   // ...of junk
+  forged[forged.length - 2] = u[u.length - 2];  // magic
+  forged[forged.length - 1] = (slots + 12) * 4; // size
+  const fresh = [mk({ _id: bone._id })];
+  const main = { _skelAll: new Set(), getMeshes: () => fresh, render() {}, _scene: null,
+    setMeshParent() {} };
+  let threw = null;
+  const err = console.error;
+  console.error = (...a) => { threw = a.join(' '); };
+  Skeleton.deserialize(forged.buffer, fresh, main);
+  console.error = err;
+  check('a v7 volume section is stepped over, not parsed', !threw, threw || '');
+  check('...and what came before it is intact',
+    fresh[0]._boneRadius === 3 && !!fresh[0]._ikRest && fresh[0]._ikRest[15] === 15,
+    'the rest matrix is written before the volumes and is what proves the offset held');
+  check('...and no volume state comes back with it',
+    !fresh[0]._jointVolume && !fresh[0]._jointVolDims);
+  check('...by SIZE — the only statement of the skip a test can hold today',
+    /const vn = u\[o\+\+\];\s*\n\s*o \+= vn \* 12;/.test(SRC),
+    'see the note above: nothing is written after the volumes yet, so no functional check can '
+    + 'tell a reader that steps over them from one that does not');
 }
+
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

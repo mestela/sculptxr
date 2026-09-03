@@ -1,10 +1,58 @@
-import * as THREE from 'three';
-import Utils from '../misc/Utils.js';
-import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
-import Multimesh from '../mesh/multiresolution/Multimesh.js';
-import Enums from '../misc/Enums.js';
-import getOptionsURL from '../misc/getOptionsURL.js';
-import Skeleton from './Skeleton.js';
+import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+
+const Utils = { TRI_INDEX: 4294967295 };
+const Skeleton = {
+  joints: () => [],
+  jointPos: (j, out) => (out || new THREE.Vector3()).set(j.p[0], j.p[1], j.p[2]),
+  hasVolume: (j) => !!j._volShape,
+  jointVolume: (j) => j._volShape,
+  volumeFrame: (main, j) => ({ pos: new THREE.Vector3(j.p[0], j.p[1], j.p[2]),
+    quat: null, half: j._volHalf }),
+};
+const MeshStatic = class {}; const Multimesh = class {};
+const getOptionsURL = () => ({}); getOptionsURL.saveOption = () => {};
+const Enums = {}; const mat4 = {};
+globalThis.window = globalThis.window || {};
+Skeleton.shapePoint = function (shape, x, y, z, out) {
+  out = out || new THREE.Vector3();
+  out.set(x, y, z);
+  if (shape === 'box') return out;                 // the cube already IS the shape
+  const len = out.length() || 1;
+  out.multiplyScalar(1 / len);                     // ...and a direction IS the ellipsoid
+  if (shape === 'half' && out.y > 0) {
+    // Above the equator, lay it onto the cap: keep the radial direction so the disc fills
+    // evenly rather than collapsing every upper point onto the rim.
+    const r = Math.hypot(out.x, out.z) || 1e-6;
+    const want = Math.min(1, r + out.y);
+    out.set((out.x / r) * want, 0, (out.z / r) * want);
+  }
+  return out;
+};
+
+// THE SURFACE POINT IN A GIVEN DIRECTION. shapePoint maps the unit CUBE onto a shape; this is
+// the question the other way round — given a direction from the centre, where is the surface?
+//
+// The distinction cost a real bug: projecting a box volume by NORMALISING the direction first
+// hands shapePoint a point on the unit sphere, and since a box returns its input unchanged,
+// every box volume projected onto a SPHERE of the box's dimensions. matt: "hands aren't
+// following the box shape at all... with the target shape BEING a box... it should be able to
+// hit that shape exactly."
+//
+// A box is reached by scaling the direction until its LARGEST component is 1 — that is the face
+// it exits through. Round shapes are reached by normalising, as before.
+Skeleton.shapeSurfaceFromDir = function (shape, x, y, z, out) {
+  out = out || new THREE.Vector3();
+  if (shape === 'box') {
+    const m = Math.max(Math.abs(x), Math.abs(y), Math.abs(z));
+    if (m < 1e-9) return null;
+    return out.set(x / m, y / m, z / m);
+  }
+  const len = Math.hypot(x, y, z);
+  if (len < 1e-9) return null;
+  return Skeleton.shapePoint(shape, x / len, y / len, z / len, out);
+};
+
+
 
 // [Rigging POC#2] Bones -> low-poly skin. Clay over a wire armature.
 //
@@ -337,10 +385,50 @@ function matchLoop(near, far, posAt) {
 // give equal weights, so the seam is pulled equally both ways and stays put, and the falloff
 // makes the transition between two capsules smooth instead of a ridge.
 const _cp = new THREE.Vector3(), _ax = new THREE.Vector3(), _to = new THREE.Vector3();
+const _volSurf = new THREE.Vector3();
+// THE SURFACE THE RELAX PULLS ONTO — and volumes belong in it.
+//
+// Everything above builds the blocks; this decides where they END UP, and it only knew about
+// capsules. So a joint's block was shrinkwrapped onto its volume and then, six passes later,
+// dragged back onto a capsule built from the old radius — matt: "the eggs for the chest and
+// head, no effect at all. i'd even argue they're being completely ignored." They were: the
+// shape was applied and then projected away.
+//
+// A volume target is the same shrinkwrap as everywhere else, run backwards: take the point into
+// the volume's unit space, put it on the shape with Skeleton.shapePoint, and bring it back.
+function volumeSurface(p, v, out) {
+  _to.copy(p).sub(v.pos);
+  if (v.quatInv) _to.applyQuaternion(v.quatInv);
+  _to.set(_to.x / v.half[0], _to.y / v.half[1], _to.z / v.half[2]);
+  // Which surface point lies in this direction — a BOX exits through a face, a round shape
+  // through its normalised direction. Normalising unconditionally, as the first version did,
+  // turned every box volume into a sphere of the box's dimensions.
+  if (!Skeleton.shapeSurfaceFromDir(v.shape, _to.x, _to.y, _to.z, out)) return null;
+  out.set(out.x * v.half[0], out.y * v.half[1], out.z * v.half[2]);
+  if (v.quat) out.applyQuaternion(v.quat);
+  return out.add(v.pos);
+}
+
+// Set by capsuleTarget: whether the surface it just returned is dominated by a VOLUME. Read by
+// the relax, which then honours that surface fully instead of easing toward it — see below.
+let _targetIsVolume = false;
+
 function capsuleTarget(p, caps, out) {
   const surf = [], dist = [];
   let dmin = Infinity;
+  let dminIsVolume = false;
   for (const c of caps) {
+    // A VOLUME TARGET, rather than a capsule. Its "radius" for the weighting below is its
+    // smallest half-extent, which is the scale over which being off-surface matters.
+    if (c.shape) {
+      const hit = volumeSurface(p, c, _volSurf);
+      if (!hit) { surf.push(null); dist.push(Infinity); continue; }
+      surf.push(hit.clone());
+      const d = p.distanceTo(hit);
+      dist.push(d);
+      if (d < dmin) { dmin = d; dminIsVolume = true; }
+      continue;
+    }
     _ax.subVectors(c.b, c.a);
     const len2 = _ax.lengthSq();
     let t = len2 > 1e-18 ? _to.subVectors(p, c.a).dot(_ax) / len2 : 0;
@@ -354,15 +442,19 @@ function capsuleTarget(p, caps, out) {
     surf.push(_cp.clone().addScaledVector(_to, c.r / l));
     const d = Math.abs(l - c.r);
     dist.push(d);
-    if (d < dmin) dmin = d;
+    if (d < dmin) { dmin = d; dminIsVolume = false; }
   }
+  _targetIsVolume = dminIsVolume;
   if (!(dmin < Infinity)) return out.copy(p);
 
   out.set(0, 0, 0);
   let wsum = 0;
   for (let i = 0; i < caps.length; i++) {
     if (!surf[i]) continue;
-    const x = (dist[i] - dmin) / Math.max(caps[i].r, 1e-6);
+    const scale = caps[i].shape
+      ? Math.max(Math.min(caps[i].half[0], caps[i].half[1], caps[i].half[2]), 1e-6)
+      : Math.max(caps[i].r, 1e-6);
+    const x = (dist[i] - dmin) / scale;
     const w = Math.exp(-x * x);
     out.addScaledVector(surf[i], w);
     wsum += w;
@@ -376,7 +468,28 @@ function capsuleTarget(p, caps, out) {
 // of a limb are not exactly equal once the capsules differ, so without the pin the centre line
 // drifts off x=0 a little more each pass and the symmetry that the world-aligned boxes bought
 // is gone by the last one.
-function relax(verts, faces, caps) {
+// OWNERSHIP BEATS PROXIMITY. A block is built at the CAPSULE's size, so when its joint carries
+// a big volume none of its vertices START anywhere near that volume's surface — and a target
+// chosen by "nearest surface" then picks a neighbouring capsule every time. That is why matt's
+// pelvis dome was ignored outright while the smaller volumes half-worked: "you can see its
+// ignored the red hips/pelvis completely."
+//
+// So a vertex that came from a volume's own block is projected onto THAT volume, however far
+// away it currently is. Everything else still uses the nearest surface, which is the right rule
+// for the bridges between blocks.
+// SMOOTHING IS FOR THE JOINS; PROJECTION IS FOR EVERYTHING.
+//
+// The relax does two jobs and only one of them was wanted everywhere. SMOOTHING averages a
+// vertex toward its neighbours, which is exactly right where two blocks are bridged — that seam
+// is the part with no shape of its own — and exactly wrong on a block, where it washes out the
+// volume and skews the quads that were built square. PROJECTION is what rounds an un-volumed
+// block onto its capsule, so it still applies to every vertex.
+//
+// matt: "could the relax only operate on the joins between the sections, vs being on the entire
+// skin?" — this is that, with the projection left alone so capsule-only rigs still round.
+//
+// window._boneSkinSmoothAll = true puts the old behaviour back for comparison.
+function relax(verts, faces, caps, ownerVol, volTargets, isBlock) {
   const nbV = verts.length / 3;
   const nbr = [];
   for (let i = 0; i < nbV; i++) nbr.push([]);
@@ -403,14 +516,41 @@ function relax(verts, faces, caps) {
     for (let i = 0; i < nbV; i++) {
       p.set(src[i * 3], src[i * 3 + 1], src[i * 3 + 2]);
       const ns = nbr[i];
-      if (ns.length) {
+      // ...but only a VOLUME's block is exempt. Turning smoothing off for every block made
+      // neighbouring cubes pass through each other — 6 and 32 intersecting face pairs in the
+      // harness's own fixtures — because settling them apart is exactly what it was doing there.
+      // A volume is a shape that was drawn deliberately; a capsule block is a rough cube that
+      // this pass exists to round and settle. So the rule is ownership, not blockness.
+      const maySmooth = window._boneSkinSmoothAll === true
+        || !isBlock || !isBlock[i] || !(ownerVol && ownerVol[i] > 0);
+      if (ns.length && maySmooth) {
         avg.set(0, 0, 0);
         for (const n of ns) avg.set(avg.x + src[n * 3], avg.y + src[n * 3 + 1], avg.z + src[n * 3 + 2]);
         avg.divideScalar(ns.length);
         p.lerp(avg, SMOOTH_RATE);
       }
+      const own = ownerVol ? ownerVol[i] : 0;
+      if (own > 0 && volTargets && volTargets[own - 1]) {
+        // Its own volume, whatever the distance. Full strength, for the same reason as below.
+        if (volumeSurface(p, volTargets[own - 1], t)) {
+          p.copy(t);
+          if (onSeam[i]) p.setComponent(SYM_AXIS, 0);
+          dst[i * 3] = p.x; dst[i * 3 + 1] = p.y; dst[i * 3 + 2] = p.z;
+          continue;
+        }
+      }
       capsuleTarget(p, caps, t);
-      p.lerp(t, PROJECT_RATE);
+      // A VOLUME IS HONOURED IN FULL; a capsule is eased toward.
+      //
+      // The smoothing above is an averaging pass, and averaging shrinks a convex surface — six
+      // passes of it round an egg down toward its own chords. A capsule can absorb that because
+      // it is a coarse envelope anyway; a volume is a shape the user drew, and easing back only
+      // 70% of the way each pass leaves it visibly deflated. matt, with the relax switched off
+      // entirely: "yes with boneSkinRelax its much better."
+      //
+      // So where the nearest surface is a volume, the vertex is put ON it — the smoothing still
+      // does its job of evening out the bridges, and the shape survives the pass intact.
+      p.lerp(t, _targetIsVolume ? 1 : PROJECT_RATE);
       if (onSeam[i]) p.setComponent(SYM_AXIS, 0);
       dst[i * 3] = p.x; dst[i * 3 + 1] = p.y; dst[i * 3 + 2] = p.z;
     }
@@ -423,10 +563,16 @@ function relax(verts, faces, caps) {
 // Assembly
 // -----------------------------------------------------------------------------------------
 
-function buildArrays(joints, topo) {
+function buildArrays(main, joints, topo) {
   const adj = topo.adj;
   const verts = [];
   const boxes = new Map();
+  let volumesUsed = 0;
+  const volTargets = [];
+  // Per-vertex volume owner, 1-based (0 = none), carried through the packing below.
+  const ownerVol = [];
+  // ...and whether a vertex belongs to a BLOCK rather than to a bridge between blocks.
+  const isBlock = [];
 
   // Pass one: a box at every joint, its bones each holding one block.
   for (const j of joints) {
@@ -448,11 +594,64 @@ function buildArrays(joints, topo) {
     const claims = claimSides(BOX, dirs);
     if (!claims) continue;
 
-    // No rotation anywhere: the lattice goes straight to world, scaled and offset. That one
-    // line is the whole reason bridges cannot shear against each other.
+    // A JOINT WITH A VOLUME IS BUILT AT THE VOLUME'S SIZE, not at one derived from its radius.
+    //
+    // This is the payoff matt pointed out when the volumes went in: with real shapes on the rig,
+    // Make Skin "would now have a much better volume read of what the skin should be" — a pelvis
+    // box that is as wide as the pelvis instead of a cube sized by the thinnest bone touching
+    // it. Three half-extents and a centre offset replace one number.
+    //
+    // The volume's ROTATION is deliberately not applied: the lattice goes straight to world,
+    // and that one fact is the whole reason bridges between boxes cannot shear against each
+    // other. A turned box here would tear its own bridges apart, so a tilted ribcage still
+    // contributes an upright block — worth revisiting when the bridging can take a frame.
+    const vol = main && Skeleton.hasVolume && Skeleton.hasVolume(j) && Skeleton.volumeFrame
+      ? Skeleton.volumeFrame(main, j) : null;
+    const volShape = vol ? Skeleton.jointVolume(j) : null;
+    if (vol) {
+      volumesUsed++;
+      // Carried through to the relax as a projection target — see capsuleTarget. Without this
+      // the block is shaped and then smoothed back onto a capsule.
+      volTargets.push({ shape: volShape, pos: vol.pos.clone(),
+        quat: vol.quat ? vol.quat.clone() : null,
+        quatInv: vol.quat ? vol.quat.clone().invert() : null,
+        half: vol.half.slice() });
+    }
+
+    // SHRINKWRAPPED ONTO THE VOLUME. The lattice is already a cube surface, so every point maps
+    // straight onto the shape through the SAME function the weight cage uses — matt's idea, and
+    // the reason both agree: "a cube that is rotated and scaled to match the target volume,
+    // subdivided, and then shrinkwrapped onto the target shape."
+    //
+    // NO PER-AXIS CLAMP. The first attempt limited each half-extent to the reach of the nearest
+    // bone — and once a volume was bigger than that, ALL THREE axes clamped to the same number,
+    // so every large volume came out a uniform blob and its proportions vanished. matt: "it
+    // doesn't look like its following the shapes of the volumes at all." A volume is sized
+    // deliberately; the skin's job is to follow it, and an overlap is a bridging problem to be
+    // solved where the bridges are.
+    // THE LATTICE IS TOPOLOGY; THE VOLUME IS SHAPE. Two jobs, and building the block AT the
+    // volume's size conflated them.
+    //
+    // A bridge's loop is chosen in GRID CELLS — min(perimeter(near), perimeter(far)) — with no
+    // reference to the bone's world size. Build the block at the volume's size and a limb
+    // leaving a big chest claims two cells of a large face, which shrinkwraps to a small patch
+    // on a big sphere: a thin neck out of a ball. That is matt's cloverleaf, and it is why
+    // changing the capsule radius could not fix it — the claim is topological, not metric.
+    //
+    // So the block is built at the CAPSULE's size again, which keeps every bridge proportionate
+    // to the bone it belongs to, and the volume does its work in the relax, where it is a
+    // projection target that pushes the surface out onto the shape. The skin then conforms to
+    // the capsules AND takes the volume's form, which is what image 3 and image 4 asked for
+    // together.
     const base = verts.length / 3;
     for (const l of BOX.lat) {
       verts.push(c.x + (h * l[0]) / CELLS, c.y + (h * l[1]) / CELLS, c.z + (h * l[2]) / CELLS);
+    }
+    for (let k = 0; k < BOX.lat.length; k++) isBlock[base + k] = 1;
+    // WHICH VOLUME OWNS THESE VERTICES, if any. Ownership, not proximity — see the relax.
+    if (vol) {
+      const owner = volTargets.length;          // 1-based: this joint's target is the last pushed
+      for (let k = 0; k < BOX.lat.length; k++) ownerVol[base + k] = owner;   // 0 = none
     }
 
     const byNeighbour = new Map();
@@ -474,10 +673,35 @@ function buildArrays(joints, topo) {
     if (!nEnd || !fEnd || !nEnd.claim || !fEnd.claim) continue;
 
     const want = Math.min(perimeter(nEnd.claim.rect), perimeter(fEnd.claim.rect));
+    // Reported so a pinch can be counted rather than described: a loop of 4 is one cell of one
+    // face, which is the tiniest tube this can build.
+    if (window._boneSkinTrace) {
+      console.log('[skin] bone ' + (p._permanentStaticLabel || p.getID()) + ' -> '
+        + (j._permanentStaticLabel || j.getID()) + '  loop=' + want
+        + '  (near ' + perimeter(nEnd.claim.rect) + ', far ' + perimeter(fEnd.claim.rect) + ')');
+    }
     const nc = perimeter(nEnd.claim.rect) === want
       ? nEnd.claim : shrinkTo(BOX, nEnd.claim, want, nEnd.dir);
     const fc = perimeter(fEnd.claim.rect) === want
       ? fEnd.claim : shrinkTo(BOX, fEnd.claim, want, fEnd.dir);
+    if (window._skinLoopStats) {
+      // The loop's WORLD size at each end, which is what a pinch actually is — the counts are
+      // identical everywhere, so a narrow join is a small ring, not a short one.
+      const ringR = (claim, at) => {
+        const ids = rectLoop(BOX, claim);
+        let r = 0;
+        for (const id of ids) {
+          const q = posAt(at.base + id);
+          r += q.distanceTo(Skeleton.jointPos(at.joint));
+        }
+        return ids.length ? r / ids.length : 0;
+      };
+      // `near`/`far` are the block records; the base index lives on them, not on the end.
+      window._skinLoopStats.push({ want: want,
+        near: ringR(nc, { base: near.base, joint: p }),
+        far: ringR(fc, { base: far.base, joint: j }) });
+    }
+
     for (const f of rectFaces(BOX, nc)) near.dead.add(f.join(','));
     for (const f of rectFaces(BOX, fc)) far.dead.add(f.join(','));
 
@@ -532,7 +756,11 @@ function buildArrays(joints, topo) {
       }
       prev = next;
     }
-    caps.push({ a: Skeleton.jointPos(p), b: Skeleton.jointPos(j), r: Math.max(boneRadius(p, j), 1e-6) });
+    // A bone whose ends are covered by a volume contributes no capsule — its surface is that
+    // volume, and leaving the capsule in fights the shape for every vertex between them.
+    if (!(main && Skeleton.hasVolume && (Skeleton.hasVolume(p) || Skeleton.hasVolume(j)))) {
+      caps.push({ a: Skeleton.jointPos(p), b: Skeleton.jointPos(j), r: Math.max(boneRadius(p, j), 1e-6) });
+    }
     bones++;
   }
 
@@ -559,18 +787,24 @@ function buildArrays(joints, topo) {
     if (!used.has(f)) used.set(f, used.size);
   }
   const packed = new Float32Array(used.size * 3);
+  const ownerPacked = new Int32Array(used.size);
+  const blockPacked = new Uint8Array(used.size);
   for (const [old, now] of used) {
     packed[now * 3] = verts[old * 3];
     packed[now * 3 + 1] = verts[old * 3 + 1];
     packed[now * 3 + 2] = verts[old * 3 + 2];
+    ownerPacked[now] = ownerVol[old] || 0;
+    blockPacked[now] = isBlock[old] ? 1 : 0;
   }
   const idx = new Uint32Array(faces.length);
   for (let i = 0; i < faces.length; i++) {
     idx[i] = faces[i] === Utils.TRI_INDEX ? Utils.TRI_INDEX : used.get(faces[i]);
   }
 
-  const relaxed = window._boneSkinRelax === false ? packed : relax(packed, idx, caps);
-  return { vertices: relaxed, faces: idx, boxes: boxes.size, bones: bones };
+  const relaxed = window._boneSkinRelax === false ? packed
+    : relax(packed, idx, caps.concat(volTargets), ownerPacked, volTargets, blockPacked);
+  return { vertices: relaxed, faces: idx, boxes: boxes.size, bones: bones,
+           volumes: volumesUsed };
 }
 
 // Build a skin for the whole skeleton and add it to the scene as a new mesh.
@@ -586,7 +820,7 @@ SkinMesh.build = function (main) {
   if (!topo.bones.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
   const t0 = performance.now();
-  const arr = buildArrays(joints, topo);
+  const arr = buildArrays(main, joints, topo);
   if (!arr) return { ok: false, why: 'could not build a skin from this skeleton' };
 
   const base = new MeshStatic(main._gl);
@@ -602,7 +836,8 @@ SkinMesh.build = function (main) {
   mesh._permanentStaticLabel = 'skin';
   main.addNewMesh(mesh); // pushes its own add-state, so this is one undo step
 
-  return { ok: true, boxes: arr.boxes, bones: arr.bones, verts: mesh.getNbVertices(),
+  return { ok: true, boxes: arr.boxes, bones: arr.bones, volumes: arr.volumes,
+           verts: mesh.getNbVertices(),
            faces: mesh.getNbFaces(), ms: Math.round(performance.now() - t0) };
 };
 
@@ -612,5 +847,6 @@ SkinMesh._adjacency = adjacency;
 SkinMesh._buildArrays = buildArrays;
 SkinMesh._box = BOX;
 SkinMesh._relax = relax;
+
 
 export default SkinMesh;

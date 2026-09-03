@@ -123,35 +123,11 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs) {
 
 WeightCage.capsuleGeometry = capsuleGeometry;
 
-// ── THE VOLUME SHAPES, AS QUAD MESHES ─────────────────────────────────────────────────
+// ── THE CAGE SHELL ────────────────────────────────────────────────────────────────────
 //
-// A joint volume decides the envelope now, so baking has to produce THAT shape rather than the
-// capsule the bone no longer draws. Same output format as capsuleGeometry — ivec4 faces, quads
-// in the body, triangle fans at poles — because the bind, the sculpt tools and the renderer all
-// read it.
-//
-// One generator per shape, and quads throughout, because these meshes have a second consumer:
-// matt's note on Make Skin — "assuming we stick with known shapes... we should be able to have
-// known good box modelling equivalents for each". A shape that bakes as a clean quad cage is
-// the same shape Make Skin can stitch.
-//
-// Built as a UNIT shape about the origin and scaled by the volume's half-extents at the end, so
-// the ring maths never has to know which shape it is drawing.
-// A SUBDIVIDED CUBE, PROJECTED ONTO THE SHAPE — matt's approach, and better than the lat-long
-// shells it replaces: "there should be a boxmodelling/extrude cube equivalent for our basic
-// shapes, even if its a cube that is rotated and scaled to match the target volume, subdivided,
-// and then shrinkwrapped onto the target shape."
-//
-// Three things fall out of it, and the third is the one that matters most:
-//   - all quads, no poles: a lat-long sphere has a fan of triangles at each end, which is the
-//     worst place to sculpt and the worst place to bridge from;
-//   - even spacing, so a subdivision or a smooth behaves the same everywhere on the shape;
-//   - EVERY VOLUME HAS THE SAME TOPOLOGY. A box, an egg and a dome are then the same mesh with
-//     different vertex positions, which is what makes stitching one to the next in Make Skin a
-//     question of which face to bridge rather than of what the shapes are.
-//
-// The projection is exact rather than a search, because the shapes are analytic: a cube point
-// normalised is a point on the ellipsoid.
+// A SUBDIVIDED CUBE. Better than the lat-long shell it replaces: all quads and no poles (a
+// lat-long sphere fans triangles at each end, which is the worst place to sculpt), even spacing
+// so a subdivision or a smooth behaves the same everywhere, and one topology for every cage.
 function cubeShell(n) {
   const verts = [];
   const index = new Map();
@@ -179,38 +155,6 @@ function cubeShell(n) {
 }
 
 WeightCage.cubeShell = cubeShell;
-
-WeightCage.volumeGeometry = function (shape, dims, offset, rot, radial, rings) {
-  const g = cubeShell(4);
-  if (!g) return null;
-
-  // SHRINKWRAP, ANALYTICALLY. The cube is the topology; this is the shape.
-  //   box  — already the shape.
-  //   egg  — normalise: a direction from the centre lands on the unit sphere.
-  //   dome — the same sphere, with everything above the equator laid onto the cap. The rim
-  //          stays put, so the surface is closed and the cap is a real disc rather than a
-  //          pinched pole.
-  // The projection itself lives in Skeleton.shapePoint, so the cage and Make Skin wrap the cube
-  // onto the SAME surface — two views of one volume, from one definition.
-  if (shape !== 'box') {
-    const _n = new THREE.Vector3();
-    for (let i = 0; i < g.verts.length; i += 3) {
-      Skeleton.shapePoint(shape, g.verts[i], g.verts[i + 1], g.verts[i + 2], _n);
-      g.verts[i] = _n.x; g.verts[i + 1] = _n.y; g.verts[i + 2] = _n.z;
-    }
-  }
-
-
-  const out = new Float32Array(g.verts.length);
-  const _p = new THREE.Vector3();
-  const q = rot || new THREE.Quaternion();
-  for (let i = 0; i < g.verts.length; i += 3) {
-    _p.set(g.verts[i] * dims[0], g.verts[i + 1] * dims[1], g.verts[i + 2] * dims[2]);
-    _p.applyQuaternion(q);
-    out[i] = _p.x + offset[0]; out[i + 1] = _p.y + offset[1]; out[i + 2] = _p.z + offset[2];
-  }
-  return { verts: out, faces: new Uint32Array(g.faces) };
-};
 
 // A cage prepared for measuring: its triangles in the SKIN MESH's local space, plus a bounding
 // box. Transformed once per cage rather than per vertex -- a cage is a few hundred triangles
@@ -460,28 +404,9 @@ WeightCage.bake = function (main) {
   const _mJ = new THREE.Matrix4(), _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
   const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 
-  // VOLUMES FIRST. A joint with a volume owns its whole junction — it swallows the bones out of
-  // it, and those bones have no envelope of their own any more — so it bakes ONE cage for the
-  // volume and the capsule loop below must skip everything it covers. Baking both would put two
-  // overlapping cages on the same vertices and let them argue over the weights.
-  const hasChild = new Set();
-  for (const j of joints) { const p = j._parentMesh; if (Skeleton.isJoint(p)) hasChild.add(p.getID()); }
-
-  for (const j of joints) {
-    if (!Skeleton.hasVolume(j)) continue;
-    const shape = Skeleton.jointVolume(j);
-    const geo = WeightCage.volumeGeometry(shape,
-      Skeleton.jointVolDims(main, j), Skeleton.jointVolOffset(main, j), Skeleton.jointVolRot(j));
-    if (!geo) continue;
-    const cage = makeCage(main, geo, j, j, 'vol_' + shape + '_');
-    if (cage) made.push(cage);
-  }
-
   for (const j of joints) {
     const p = j._parentMesh;
     if (!Skeleton.isJoint(p)) continue;            // a root has no bone above it
-    // Swallowed by a volume — at either end. Its envelope is that volume's cage.
-    if (Skeleton.boneSwallowed(p, j, !hasChild.has(j.getID()), main)) continue;
     const r = j._boneRadius || 0;
     if (r <= 0) continue;
 

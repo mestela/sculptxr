@@ -3801,7 +3801,6 @@ class Scene {
     try {
       Skeleton.hidePlane(this);
       Skeleton.hidePreview(this);
-      if (this._volHandles) this._volHandles.group.visible = false;
       Skeleton.updateVisuals(this);
     } catch (e) { console.error('rig teardown on clear failed:', e); }
 

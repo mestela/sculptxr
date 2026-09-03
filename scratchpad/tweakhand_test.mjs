@@ -148,57 +148,6 @@ check('a trace names the hand, the owner, and who moved the joint',
   check('...nor a live radius drag', /if \(!this\._radius && hit\) this\._beginRadius\(hit\);/.test(SRC));
 }
 
-// ── VOLUME MODE SELECTS; IT DOES NOT DRAW ─────────────────────────────────────────────
-//
-// The gizmo is the editor in Volume mode, so the controller only has to say WHICH joint. With no
-// branch of its own the mode fell through to the draw path and started dropping joints — matt:
-// "i tried the 'volume' button, it doesn't seem to do anything, it behaves like draw mode."
-{
-  const vrAt = SRC.indexOf("      const volHand = (options && options.handedness) || null;");
-  const drawAt = SRC.indexOf("// DRAW. Between chains the nearest joint is preselected");
-  check('Volume has a branch in the VR update', vrAt > 0);
-  check('...before the draw fallthrough', vrAt > 0 && drawAt > vrAt,
-    'every mode without a branch of its own ends up drawing');
-  check('...and it selects the joint it acts on',
-    /this\._selectLater\(hit\);/.test(SRC),
-    'the panel and the desktop gizmo both read the selection');
-  check('...with the same on the desktop path',
-    /if \(this\._mode === 'volume'\) \{[\s\S]{0,220}?this\._selectLater\(joint\);/.test(SRC));
-}
-
-// ── IN VR, THE DRAG IS THE GIZMO ──────────────────────────────────────────────────────
-//
-// The desktop Gizmo is not drawn by this tool, and the VR gizmo belongs to TransformVR — a
-// different TOOL, which cannot be active at the same time. So there is nothing to grab in Volume
-// mode unless the mode provides it: matt, "i don't see any gizmos, nothing happens when i hold
-// the trigger and drag."
-{
-  check('a volume drag can start in Volume mode',
-    /if \(down && !this\._volDrag\) \{/.test(SRC) && /Skeleton\.hasVolume\(hit\)/.test(SRC),
-    'and only on a joint that HAS a volume — selecting is all it can mean otherwise');
-  check('...the trigger moves the volume',
-    /Skeleton\.setJointVolOffset\(vd\.joint,\s*\n\s*vd\.off\[0\] \+ _vDelta\.x/.test(SRC));
-  check('...the secondary button resizes it instead',
-    /if \(options && options\.isNegative\) \{[\s\S]{0,400}?Skeleton\.setJointVolDims\(vd\.joint,/.test(SRC),
-    'same gesture, different button — both 1:1 so the hand and the shape agree');
-  check('...growing on the side you took hold of',
-    /vd\.dims\[0\] \+ _vDelta\.x \* vd\.side\[0\]/.test(SRC),
-    'otherwise pulling one face outward shrinks the volume');
-  check('...measured in the JOINT\'s frame',
-    /_vDelta\.copy\(_tip\)\.sub\(vd\.start\)\.applyMatrix4\(vd\.inv\);/.test(SRC),
-    'in world space the shape slides sideways as soon as the joint is turned');
-  check('...owned by one hand, like every other drag here',
-    /if \(vd && \(!vd\.hand \|\| !volHand \|\| volHand === vd\.hand\)\)/.test(SRC));
-  check('...and it is one undo step',
-    /pushStateCustom\?\.\(\s*\n\s*\(\) => apply\(before\), \(\) => apply\(after\), false, 'Bone Volume'\)/.test(SRC));
-  check('...that a tap does not create',
-    /if \(same\) return;/.test(SRC),
-    'selecting a joint is not an edit');
-  check('leaving the mode or the tool ends the drag',
-    (SRC.match(/this\._releaseVolume\(\);/g) || []).length >= 3,
-    'a stranded drag keeps writing to a joint you are no longer editing');
-}
-
 // ── A GRAB MOVES A JOINT WITH YOUR HAND, NOT TO IT ────────────────────────────────────
 //
 // The actual cause of the "runaway", found by measurement rather than reading: the VR path wrote

@@ -92,15 +92,7 @@ const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3();
 const _axis = new THREE.Vector3(), _hit = new THREE.Vector3();
 const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
-// Volume drag scratch: the joint's rotation inverted, and the controller delta in its frame.
-const _mVolInv = new THREE.Matrix4();
-const _vDelta = new THREE.Vector3();
-const _vGrab = new THREE.Vector3();   // the tip plus the grab's held offset
-const _qVolT = new THREE.Quaternion(), _qVolT2 = new THREE.Quaternion();
-const _qNowV = new THREE.Quaternion(), _qDeltaV = new THREE.Quaternion();
 const _axisX = new THREE.Vector3(1, 0, 0);
-const _qMirrorV = new THREE.Quaternion();
-const _offMirrorV = [0, 0, 0];
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
@@ -156,10 +148,6 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'draw') return 'draw';
     if (this._mode === 'pose') return 'pose';
     if (this._mode === 'radius') return 'radius';
-    // VOLUME: the gizmo sizes and places the selected joint's volume instead of posing the rig.
-    // A mode rather than a modifier, because the gizmo means something else in every other one
-    // and "why did my hips move" is not a question worth creating.
-    if (this._mode === 'volume') return 'volume';
     if (this._mode === 'ik') return 'ik';
     return this._compensate ? 'free' : 'fk';
   }
@@ -174,7 +162,7 @@ class BoneDrawTool extends SculptBase {
   }
 
   setModeKey(key) {
-    const named = { draw: 'draw', pose: 'pose', radius: 'radius', ik: 'ik', volume: 'volume' };
+    const named = { draw: 'draw', pose: 'pose', radius: 'radius', ik: 'ik' };
     const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
@@ -183,13 +171,9 @@ class BoneDrawTool extends SculptBase {
     this._drag = null;
     this._hot = false;
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
-    this._releaseVolume();
     // The capsules are the whole point of radius mode, so turn them on when entering it
     // rather than making the user find a second toggle to make the mode visible.
     if (mode === 'radius') Skeleton.setDisplayFlag('capsules', true);
-    // Same reasoning for volumes: the bone bodies ARE the volumes, so make sure they are drawn
-    // rather than leaving the mode looking like it does nothing.
-    if (mode === 'volume') Skeleton.setDisplayFlag('solid', true);
     // Leaving draw mode ends the chain — coming back to draw should start clean rather
     // than silently resuming a chain from before the detour.
     if (mode !== 'draw') this.endChain();
@@ -749,14 +733,6 @@ class BoneDrawTool extends SculptBase {
     const joint = this._pickJointScreen();
     if (!joint) return false;
 
-    // VOLUME mode selects and stops — the gizmo is the editor here, not the drag.
-    if (this._mode === 'volume') {
-      this._hilite = joint;
-      Skeleton.setHighlight(main, joint);
-      this._selectLater(joint);
-      return true;
-    }
-
     Skeleton.jointPos(joint, _jp);
     const anchor = _jp.clone();
     this._hilite = joint;
@@ -1071,47 +1047,6 @@ class BoneDrawTool extends SculptBase {
     _mLocal.compose(_vTmp, _qJoint, _sTmp);
     mat4.copy(joint.getMatrix(), _mLocal.elements);
     Skeleton.syncThree(joint);
-  }
-
-  // One undo step per volume edit, holding both numbers: a resize and a move are the same
-  // gesture with a different button, and either way what you want back is "how it was".
-  _releaseVolume() {
-    const vd = this._volDrag;
-    this._volDrag = null;
-    if (!vd) return;
-    const j = vd.joint;
-    // The twin was edited alongside, so it goes in the same undo step — restoring one side and
-    // not the other would leave exactly the asymmetry the mirroring exists to prevent.
-    const twin = vd.twin;
-    const rotArr = (q) => [q.x, q.y, q.z, q.w];
-    const before = { dims: vd.dims.slice(), off: vd.off.slice(),
-      rot: rotArr(vd.rot || Skeleton.jointVolRot(j)) };
-    const after = {
-      dims: Skeleton.jointVolDims(this._main, j).slice(),
-      off: Skeleton.jointVolOffset(this._main, j).slice(),
-      rot: rotArr(Skeleton.jointVolRot(j)),
-    };
-    const same = before.dims.every((v, i) => v === after.dims[i])
-      && before.off.every((v, i) => v === after.off[i])
-      && before.rot.every((v, i) => v === after.rot[i]);
-    if (same) return;   // a tap that selected and moved nothing is not an undo step
-    const main = this._main;
-    const apply = (st) => {
-      for (const t of twin ? [j, twin] : [j]) {
-        const off = t === j ? st.off : Skeleton.mirrorVolumeOffset(st.off, _offMirrorV);
-        Skeleton.setJointVolDims(t, st.dims[0], st.dims[1], st.dims[2]);
-        Skeleton.setJointVolOffset(t, off[0], off[1], off[2]);
-        // The twin's rotation is the reflection of the recorded one, matching what the drag did.
-        Skeleton.setJointVolRot(t, t === j
-          ? { x: st.rot[0], y: st.rot[1], z: st.rot[2], w: st.rot[3] }
-          : Skeleton.mirrorVolumeRot({ x: st.rot[0], y: st.rot[1], z: st.rot[2], w: st.rot[3] },
-            _qMirrorV));
-      }
-      Skeleton.updateVisuals(main);
-      main.render?.();
-    };
-    main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(before), () => apply(after), false, 'Bone Volume');
   }
 
   _releaseGrab() {
@@ -1506,7 +1441,7 @@ class BoneDrawTool extends SculptBase {
     // work here, but it seems to only highlight the joint."
     //
     // The pick is the same one Draw already does, so this costs a pick per frame and makes the
-    // highlight — and therefore Split — follow the hand in Pose, Tweak, IK and Volume too.
+    // highlight — and therefore Split — follow the hand in Pose, Tweak and IK too.
     main._rigHoverBone = this._pickBone(_tip);
 
     if (this._mode === 'pose') {
@@ -1525,186 +1460,6 @@ class BoneDrawTool extends SculptBase {
       }
       this._hilite = this._pose ? this._pose.joint
                                 : Skeleton.pickJoint(main, _tip, this._snapDist());
-      Skeleton.setHighlight(main, this._hilite);
-      return;
-    }
-
-    // VOLUME: SELECT ONLY. The gizmo does the sizing and placing (see Skeleton.volumeEditTarget),
-    // so all this mode owes the controller is a way to say WHICH joint — and, crucially, a
-    // branch of its own. Without one it fell through to the code below and started drawing new
-    // joints, which is exactly what matt saw: "i tried the 'volume' button, it doesn't seem to
-    // do anything, it behaves like draw mode."
-    if (this._mode === 'volume') {
-      Skeleton.hidePreview(main);
-      Skeleton.hidePlane(main);
-      const volHand = (options && options.handedness) || null;
-
-      // THE DRAG IS THE GIZMO. There is no gizmo to grab in here: the desktop Gizmo is not
-      // drawn by this tool, and the VR one belongs to TransformVR, which is a different TOOL
-      // and cannot be active at the same time. So Volume mode edits the way everything else in
-      // this app does in a headset — grab the thing and move your hand. matt: "i don't see any
-      // gizmos, nothing happens when i hold the trigger and drag."
-      //
-      // Trigger drags the volume; the secondary button turns the same drag into a resize. Both
-      // are 1:1 in the joint's own frame, so what your hand does is what the shape does.
-      // A HANDLE FIRST, THEN A JOINT. The dots sit on the volume you have selected, so they are
-      // what the hand is reaching for when it is near them; falling through to the joint pick
-      // would re-select instead of resizing and the handles would feel dead.
-      if (down && !this._volDrag) {
-        const hj = main._volHandles && main._volHandles.joint;
-        const grip = hj ? Skeleton.pickVolumeHandle(main, _tip, this._snapDist() * 1.2) : null;
-        if (grip) {
-          _mVolInv.fromArray(hj.getModelSpaceMatrix());
-          _mVolInv.setPosition(0, 0, 0);
-          // The volume's own rotation is part of its frame, so a handle drag is measured in it —
-          // otherwise dragging the X dot on a tilted ribcage would scale it along the bone.
-          _qVolT.copy(Skeleton.jointVolRot(hj, _qVolT2));
-          _mVolInv.multiply(new THREE.Matrix4().makeRotationFromQuaternion(_qVolT));
-          _mVolInv.invert();
-          this._volDrag = {
-            joint: hj, hand: volHand, grip: grip,
-            start: _tip.clone(), inv: _mVolInv.clone(),
-            dims: Skeleton.jointVolDims(main, hj).slice(),
-            off: Skeleton.jointVolOffset(main, hj).slice(),
-            rot: Skeleton.jointVolRot(hj).clone(),
-            // Fixed at the grab: whether this volume has to stay symmetric about the mirror
-            // plane. Read once, because a drag that crossed the plane would otherwise change
-            // the rules under your hand halfway through.
-            centreline: Skeleton.volumeIsCentreline(main, hj),
-            // UNARMED, like a tweak grab. Selecting a volume put your hand on a handle and the
-            // drag began instantly — and the centre handle is a 6DOF hold, so the smallest wrist
-            // rotation tipped the shape off axis before you had done anything. matt: "when i
-            // first select a volume object in volume mode, i frequently knock it off axis and
-            // out of symmetry." Nothing moves until the hand has travelled.
-            armed: false,
-            // The twin that has to receive the same edit, if this volume has one.
-            twin: hj._boneMirror && Skeleton.hasVolume(hj._boneMirror) ? hj._boneMirror : null,
-            qStart: (options && options.quat)
-              ? new THREE.Quaternion(options.quat[0], options.quat[1], options.quat[2], options.quat[3]).invert()
-              : null,
-            side: [1, 1, 1],
-          };
-          this._selectLater(hj);
-          return;
-        }
-        const hit = Skeleton.pickJoint(main, _tip, this._snapDist() * 3);
-        if (hit && Skeleton.hasVolume(hit)) {
-          this._selectLater(hit);
-          _mVolInv.fromArray(hit.getModelSpaceMatrix());
-          _mVolInv.setPosition(0, 0, 0);
-          _mVolInv.invert();
-          this._volDrag = {
-            joint: hit, hand: volHand,
-            start: _tip.clone(),
-            dims: Skeleton.jointVolDims(main, hit).slice(),
-            off: Skeleton.jointVolOffset(main, hit).slice(),
-            // Which side of the volume the grab started on, so pulling outward always GROWS.
-            side: null,
-          };
-          const local = _tip.clone().sub(Skeleton.jointPos(hit, _jp)).applyMatrix4(_mVolInv);
-          this._volDrag.side = [Math.sign(local.x) || 1, Math.sign(local.y) || 1, Math.sign(local.z) || 1];
-          this._volDrag.inv = _mVolInv.clone();
-        } else if (hit) {
-          this._selectLater(hit);   // no volume to edit: selecting is all this can mean
-        }
-      }
-
-      const vd = this._volDrag;
-      if (vd && (!vd.hand || !volHand || volHand === vd.hand)) {
-        if (isPressed && !vd.armed
-            && _tip.distanceTo(vd.start) > this._snapDist() * 0.35) {
-          vd.armed = true;
-          // Re-take the reference at the moment of arming, so the shape does not jump by the
-          // threshold the instant the drag begins.
-          vd.start.copy(_tip);
-          if (options && options.quat) {
-            vd.qStart = new THREE.Quaternion(options.quat[0], options.quat[1],
-              options.quat[2], options.quat[3]).invert();
-          }
-          vd.dims = Skeleton.jointVolDims(main, vd.joint).slice();
-          vd.off = Skeleton.jointVolOffset(main, vd.joint).slice();
-          vd.rot = Skeleton.jointVolRot(vd.joint).clone();
-        }
-        if (isPressed && vd.armed) {
-          _vDelta.copy(_tip).sub(vd.start).applyMatrix4(vd.inv);
-          if (vd.grip && vd.grip.kind === 'face') {
-            const ax = vd.grip.axis, sgn = vd.grip.sign;
-            const d = _vDelta.getComponent(ax);
-            const dims = vd.dims.slice(), off = vd.off.slice();
-            if (vd.centreline && ax === 0) {
-              // BOTH SIDES AT ONCE. A ribcage straddles the mirror plane, so pulling its left
-              // face has to take the right one with it — the extent changes and the centre does
-              // not move at all. matt: "if i grab the ribcage and scale the left bbox handle,
-              // the right should mirror it."
-              dims[ax] = Math.max(1e-4, vd.dims[ax] + sgn * d);
-            } else {
-              // Grow from the face you took hold of, leaving the opposite one where it is: the
-              // extent takes half the pull and the centre takes the other half.
-              dims[ax] = Math.max(1e-4, vd.dims[ax] + sgn * d * 0.5);
-              off[ax] = vd.off[ax] + d * 0.5;
-            }
-            Skeleton.setJointVolDims(vd.joint, dims[0], dims[1], dims[2]);
-            Skeleton.setJointVolOffset(vd.joint, off[0], off[1], off[2]);
-          } else if (vd.grip && vd.grip.kind === 'centre') {
-            // SIX DEGREES OF FREEDOM, no modifier. The centre dot is a handle you hold: the
-            // volume follows the controller's position AND its rotation, because that is what
-            // holding something means. Asking for a button to turn it made rotation a mode.
-            if (vd.qStart && options && options.quat) {
-              _qNowV.set(options.quat[0], options.quat[1], options.quat[2], options.quat[3]);
-              _qDeltaV.copy(_qNowV).multiply(vd.qStart);
-              if (vd.centreline) {
-                // Only the tip about the mirror normal keeps a centreline volume symmetric;
-                // the rest of the controller's rotation is dropped rather than approximated.
-                Skeleton.twistAboutAxis(_qDeltaV, _axisX, _qDeltaV);
-              }
-              Skeleton.setJointVolRot(vd.joint, _qDeltaV.multiply(vd.rot));
-            }
-            // ...and slides. A centreline volume slides in YZ only: any x would take it off the
-            // plane it is defined by.
-            Skeleton.setJointVolOffset(vd.joint,
-              vd.centreline ? vd.off[0] : vd.off[0] + _vDelta.x,
-              vd.off[1] + _vDelta.y, vd.off[2] + _vDelta.z);
-          } else if (options && options.isNegative) {
-            // RESIZE. The extent grows on the side you pulled from, so dragging away from the
-            // volume always makes it bigger whichever face you took hold of.
-            Skeleton.setJointVolDims(vd.joint,
-              vd.dims[0] + _vDelta.x * vd.side[0],
-              vd.dims[1] + _vDelta.y * vd.side[1],
-              vd.dims[2] + _vDelta.z * vd.side[2]);
-          } else {
-            Skeleton.setJointVolOffset(vd.joint,
-              vd.off[0] + _vDelta.x, vd.off[1] + _vDelta.y, vd.off[2] + _vDelta.z);
-          }
-
-          // THE TWIN GETS THE SAME EDIT, whichever handle did it. A left and right volume are
-          // one shape described twice, so sizing one and not the other is how a symmetric rig
-          // stops being one. matt: "volume selection should be mirrored."
-          //
-          // The numbers live in each joint's OWN frame, and on a mirrored rig those frames are
-          // already mirror images — so copying them across produces the mirrored result without
-          // a reflection being applied a second time.
-          if (vd.twin) {
-            const d2 = Skeleton.jointVolDims(main, vd.joint);
-            const o2 = Skeleton.mirrorVolumeOffset(Skeleton.jointVolOffset(main, vd.joint), _offMirrorV);
-            // Dimensions are extents and survive a reflection unchanged; the OFFSET does not —
-            // dragging the left face of the left hand has to move the RIGHT face of the right.
-            Skeleton.setJointVolDims(vd.twin, d2[0], d2[1], d2[2]);
-            Skeleton.setJointVolOffset(vd.twin, o2[0], o2[1], o2[2]);
-            // Reflected, not copied — see Skeleton.mirrorVolumeRot. Dimensions and offset go
-            // across verbatim because the two joint frames are already mirror images; a
-            // ROTATION does not, or both sides tip the same way instead of opposite ways.
-            Skeleton.setJointVolRot(vd.twin,
-              Skeleton.mirrorVolumeRot(Skeleton.jointVolRot(vd.joint), _qMirrorV));
-          }
-        } else if (!isPressed) {
-          this._releaseVolume();
-        }
-      }
-
-      // The handle under the hand is lit, so you can see which one you are about to take.
-      Skeleton.highlightVolumeHandle(main,
-        vd ? vd.grip : Skeleton.pickVolumeHandle(main, _tip, this._snapDist() * 1.2));
-      this._hilite = vd ? vd.joint : Skeleton.pickJoint(main, _tip, this._snapDist());
       Skeleton.setHighlight(main, this._hilite);
       return;
     }
@@ -1913,7 +1668,6 @@ class BoneDrawTool extends SculptBase {
   clearPreview() {
     this._drag = null;
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
-    this._releaseVolume();
     // Leaving the tool puts the real vertex colours back. A weight preview is a diagnostic,
     // and one that outlived the tool could be saved into the sculpt without anyone noticing.
     Skinning.restoreColorsAll(this._main);

@@ -30,7 +30,6 @@ const MODES = [
   ['free', 'Tweak Free'],
   ['pose', 'Pose'],
   ['radius', 'Radius'],
-  ['volume', 'Volume'],
   ['ik', 'IK'],
 ];
 
@@ -97,16 +96,6 @@ export function buildBoneAuthoringHTML(main, style) {
   const mush = Skinning.mushIterations();
   // BONE SHAPE, for the selected joints (roadmap #60).
   //
-  // ALWAYS RENDERED, disabled when no joint is selected. The first version only emitted the row
-  // when a joint was already selected — and the panel does not rebuild its MARKUP on a selection
-  // change (syncBoneSection updates the existing DOM in place), so the row simply never
-  // appeared. matt: "i'm in the bonepanel, i don't see an option for capsule/box/dome."
-  // Anything whose PRESENCE depends on selection has to be rebuilt by the selection; anything
-  // whose ENABLED state does can be synced. This is the second kind, like every button above it.
-  const selJoints = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-  const curShape = selJoints.length ? Skeleton.jointVolume(selJoints[0]) : null;
-  const shapeBtn = (id, label, title) =>
-    `<button class="${c.action}${curShape === id ? ' active' : ''}" data-shape="${id}" title="${title}"${selJoints.length ? '' : ' disabled'}>${label}</button>`;
   const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
@@ -120,12 +109,6 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.toggles}">
       ${flagButton(c, 'caps', 'Capsules', caps)}
       ${flagButton(c, 'weights', 'Weights', wts)}
-    </div>
-    <div class="${c.btnRow}">
-      ${shapeBtn('none', 'No Volume', 'Ordinary bones out of this joint, each with its own capsule')}
-      ${shapeBtn('box', 'Box', 'A solid box centred on this joint, covering every bone out of it — ribcage. Press again to re-fit it to the rig')}
-      ${shapeBtn('half', 'Dome', 'Half a sphere sitting on this joint, covering the whole junction — pelvis. Press again to re-fit it to the rig')}
-      ${shapeBtn('egg', 'Egg', 'An ellipsoid centred on this joint — ribcage, skull. Press again to re-fit it to the rig')}
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
@@ -444,67 +427,6 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
-  // Bone shape. Applies to every selected joint, undoably — a reshape changes what the bone IS,
-  // and getting back from one by hand means remembering three numbers.
-  root.querySelectorAll('[data-shape]')?.forEach?.((btn) => {
-    btn.addEventListener('click', () => {
-      const shape = btn.dataset.shape;
-      const picked = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-      if (!picked.length) return;
-
-      // THE TWIN GETS THE SAME SHAPE. Giving a volume to one wrist and not the other is the
-      // same asymmetry the drag mirroring exists to prevent, one step earlier — matt: "if i
-      // select a left wrist and make it a box volume, the right wrist should do the same."
-      // Deduped, so selecting both sides yourself does not act on either of them twice.
-      const joints = [];
-      for (const j of picked) {
-        if (!joints.includes(j)) joints.push(j);
-        const twin = j._boneMirror;
-        if (twin && main.getMeshes?.().includes(twin) && !joints.includes(twin)) joints.push(twin);
-      }
-      const snap = () => joints.map((j) => ({ j, shape: Skeleton.jointVolume(j),
-        dims: j._jointVolDims ? j._jointVolDims.slice() : null,
-        off: j._jointVolOffset ? j._jointVolOffset.slice() : null,
-        rot: j._jointVolRot ? j._jointVolRot.slice() : null }));
-      const before = snap();
-      const apply = (rows) => {
-        for (const r of rows) {
-          r.j._jointVolume = r.shape;
-          r.j._jointVolDims = r.dims ? r.dims.slice() : null;
-          r.j._jointVolOffset = r.off ? r.off.slice() : null;
-          r.j._jointVolRot = r.rot ? r.rot.slice() : null;
-          const e = main._skelVis && main._skelVis.get(r.j.getID());
-          if (e) e._shape = null;    // force the entry to rebuild into the right batch
-        }
-        Skeleton.updateVisuals(main);
-        main.render?.();
-      };
-      // PRESSING THE SHAPE IT ALREADY HAS PUTS IT BACK ON THE LIVE FIT. Once a volume has been
-      // sized or moved by hand it stops following the rig — it has to, or your adjustment would
-      // be undone by the next joint you nudge — so there needs to be a way back, and the button
-      // that is already lit is the one place to look for it.
-      let refitted = 0;
-      for (const j of joints) {
-        if (Skeleton.jointVolume(j) === shape) { if (Skeleton.refitJointVolume(j)) refitted++; }
-        else Skeleton.setJointVolume(main, j, shape);
-      }
-      const after = snap();
-      main.getStateManager?.()?.pushStateCustom?.(
-        () => apply(before), () => apply(after), false, 'Bone Shape');
-      const mirrored = joints.length > picked.length;
-      say(shape === 'none'
-        ? `Bones: volume removed from ${joints.length} joint(s)`
-        : refitted
-          ? `Bones: ${refitted} volume(s) back to fitting the rig automatically`
-          : `Bones: ${joints.length} joint(s) → ${shape} volume`
-            + (mirrored ? ' (mirrored)' : '')
-            + ', covering every bone out of them', true);
-      refresh();
-      Skeleton.updateVisuals(main);
-      main.render?.();
-    });
-  });
-
   // See-through skin, so the capsules inside it can be seen while they are sculpted. Live on
   // drag like the mush slider — it is a look, and a look is judged by watching it move.
   const xrayInput = q('xray'), xrayVal = q('xray-val');
@@ -534,7 +456,7 @@ export function wireBoneSection(root, main, opts) {
   q('skin')?.addEventListener('click', () => {
     const res = SkinMesh.build(main);
     say(res.ok
-      ? `Bones: skin built — ${res.boxes} joints (${res.volumes || 0} from volumes), `
+      ? `Bones: skin built — ${res.boxes} joints, `
         + `${res.bones} bones, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
       : `Bones: ${res.why}`, res.ok);
     rebuild(); // the new mesh becomes the selection, so the panel changes
@@ -642,16 +564,6 @@ export function syncBoneSection(root, main) {
   setFlag('trails', Skeleton.displayFlag('trails'));
   setFlag('gnomons', Skeleton.displayFlag('gnomons'));
   setFlag('gnomons-all', Skeleton.displayFlag('gnomonsAll'));
-
-  // The shape row is rendered once and synced from here — see the note where it is built.
-  {
-    const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-    const cur = js.length ? Skeleton.jointVolume(js[0]) : null;
-    root.querySelectorAll('[data-shape]').forEach((btn) => {
-      btn.disabled = !js.length;
-      btn.classList.toggle('active', !!cur && btn.dataset.shape === cur);
-    });
-  }
 
   const xrayInput2 = q('xray'), xrayVal2 = q('xray-val');
   if (xrayInput2) {
