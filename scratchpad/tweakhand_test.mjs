@@ -246,5 +246,31 @@ check('a trace names the hand, the owner, and who moved the joint',
     /if \(m\.parent\) main\.setMeshParent\(m\.mesh\.getID\(\), m\.parent\.getID\(\), \{ silent: true \}\);/.test(SRC));
 }
 
+// ── THE SCRATCH A GRAB NEEDS IS DECLARED ──────────────────────────────────────────────
+//
+// _vGrab holds the tip plus the grab's held offset, and it lived in a block of module scratch
+// SHARED between the tweak grab and the volume drag. Removing the volumes took the whole block,
+// so _dragTo went on referring to a name that no longer existed — and because that is a runtime
+// ReferenceError rather than a syntax error, `node --check` passed, every harness passed, the
+// build passed, and Tweak FK and Tweak Free were dead in production for four versions. matt:
+// "tweak fk and tweak free are disabled."
+//
+// THIS CHECK IS NARROW, deliberately and with regret. The general form is no-undef, which needs
+// a real parser and a scope analysis; a regex sweep for undeclared _names finds this one and
+// sixty false positives with it, which is a check nobody would ever act on. So it guards the
+// specific name that was lost, and the lesson lives in the comment: scratch shared by two
+// features must not leave with one of them.
+{
+  check('the grab\'s scratch vector is declared',
+    /const _vGrab = new THREE\.Vector3\(\);/.test(SRC),
+    '_dragTo uses it on every VR grab that has a tip offset');
+  check('...and it is still used, so it is not dead either',
+    /pos = _vGrab\.copy\(pos\)\.add\(g\.tipOffset\);/.test(SRC));
+  // Every drag in this tool arbitrates by hand, so every release has to hand ownership back.
+  check('every drag releases its hand ownership',
+    (SRC.match(/this\._grabHand = null;/g) || []).length >= 4,
+    'a stale owner outlives its drag and arbitrates the next mode\'s first grab');
+}
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

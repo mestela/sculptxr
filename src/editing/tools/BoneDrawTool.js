@@ -92,6 +92,11 @@ const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3();
 const _axis = new THREE.Vector3(), _hit = new THREE.Vector3();
 const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
+// The tip plus the grab's held offset. It lived in a block of scratch shared with the volume
+// drag, and went out with it when the volumes were removed — leaving _dragTo referring to a
+// name that no longer existed, so a VR tweak grab threw on its first moved frame and Tweak FK
+// and Tweak Free did nothing at all. Its own declaration now, next to the code that uses it.
+const _vGrab = new THREE.Vector3();
 const _jpRad = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
@@ -1349,6 +1354,10 @@ class BoneDrawTool extends SculptBase {
   _releaseScale() {
     const sc = this._scale;
     this._scale = null;
+    // Hand ownership is released with the drag, exactly as _releaseGrab / _releasePose /
+    // _releaseIK do. A stale owner outlives the drag and the next mode's first grab is then
+    // arbitrated against a hand that is no longer holding anything.
+    this._grabHand = null;
     if (!sc || !sc.before) return;
     this._liveWeights(true);
     this._selectLater(sc.joint);
