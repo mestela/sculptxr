@@ -119,7 +119,13 @@ globalThis.__bound = true;
 const boundHTML = buildBoneSectionHTML({ ...main, _xrSession: {} }, 'mm');
 globalThis.__bound = false;
 check('Unbind appears once a mesh is bound', boundHTML.includes('id="bone-unbind"') && boundHTML.includes('Rebind'));
-const all = vr + boundHTML + display + animation;
+// The physics controls only exist while a flagged joint is selected, so that state has to be in
+// the set this checks against — otherwise every one of them reads as "wired to nothing".
+globalThis.__sel = [{ _isBone: true, getID: () => 1, _physicsRoot: true,
+  _physicsParams: { stiffness: 0.2, damping: 0.5, gravity: 1.5, drag: 0.1, ground: true } }];
+const physHTML = buildBoneAuthoringHTML(main, 'mm');
+globalThis.__sel = [];
+const all = vr + boundHTML + display + animation + physHTML;
 const missing = [...new Set(wired)].filter(id => !all.includes('id="bone-' + id + '"') && id !== 'rad-val');
 check('every wired id exists in the markup', missing.length === 0, missing.join(','));
 

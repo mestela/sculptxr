@@ -146,6 +146,14 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-phys-damp" min="0" max="99" step="1" value="${Math.round(physP.damping * 100)}">
       <span class="${c.val}" id="bone-phys-damp-val">${Math.round(physP.damping * 100)}</span>
     </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Drag</span>
+      <input type="range" id="bone-phys-drag" min="0" max="100" step="1" value="${Math.round(physP.drag * 100)}">
+      <span class="${c.val}" id="bone-phys-drag-val">${Math.round(physP.drag * 100)}</span>
+    </div>
+    <div class="${c.toggles}">
+      ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
+    </div>
     ` : ''}
     <div class="${c.btnRow}">
     </div>
@@ -482,6 +490,16 @@ export function wireBoneSection(root, main, opts) {
   physParam('stiff', 'stiffness', 100, (v) => String(Math.round(v * 100)));
   physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g');
   physParam('damp', 'damping', 100, (v) => String(Math.round(v * 100)));
+  physParam('drag', 'drag', 100, (v) => String(Math.round(v * 100)));
+
+  q('phys-ground')?.addEventListener('click', () => {
+    const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (js.length !== 1) return;
+    PhysicsBones.setParams(js[0], { ground: !PhysicsBones.params(js[0]).ground,
+      groundY: PhysicsBones.groundHeight(main) });
+    refresh();
+    main.render?.();
+  });
 
   q('phys-bake')?.addEventListener('click', () => {
     const res = PhysicsBones.bake(main);

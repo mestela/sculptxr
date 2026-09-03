@@ -41,7 +41,7 @@ const PhysicsBones = {};
 // there gravity? they don't seem to drape much." There was; it was about a thousand times too
 // small to see. It is scaled by Skeleton.sceneUnit now, so 1 drapes the same way whatever size
 // the rig was drawn at.
-const DEFAULTS = { stiffness: 0.06, damping: 0.7, gravity: 1 };
+const DEFAULTS = { stiffness: 0.25, damping: 0.7, gravity: 1, drag: 0.1, ground: false, groundY: 0 };
 
 // A SPRING RATE AND A DECAY RATE, not per-frame factors — which is what makes "tune it live,
 // then bake it" true rather than a slogan.
@@ -73,26 +73,40 @@ function gravityUnits(main, mult) {
 }
 PhysicsBones.gravityUnits = gravityUnits;
 
+// Where the floor is. The ground grid is the one the user can actually see, so a chain that
+// stops on it stops where they expect; y = 0 is the fallback, which is where the grid sits.
+PhysicsBones.groundHeight = function (main) {
+  const g = main && (main._groundY !== undefined ? main._groundY : null);
+  return g === null ? 0 : g;
+};
+
 PhysicsBones.DEFAULTS = DEFAULTS;
 
 PhysicsBones.isRoot = function (j) { return !!(j && j._physicsRoot); };
 
 PhysicsBones.params = function (j) {
   const p = (j && j._physicsParams) || null;
+  const pick = (k) => (p && p[k] !== undefined ? p[k] : DEFAULTS[k]);
   return {
-    stiffness: p && p.stiffness !== undefined ? p.stiffness : DEFAULTS.stiffness,
-    damping:   p && p.damping   !== undefined ? p.damping   : DEFAULTS.damping,
-    gravity:   p && p.gravity   !== undefined ? p.gravity   : DEFAULTS.gravity,
+    stiffness: pick('stiffness'), damping: pick('damping'), gravity: pick('gravity'),
+    drag: pick('drag'), ground: pick('ground'), groundY: pick('groundY'),
   };
 };
 
 PhysicsBones.setParams = function (j, patch) {
   if (!j) return false;
   const cur = PhysicsBones.params(j);
+  const take = (k, lo, hi) => {
+    const v = patch[k] !== undefined ? patch[k] : cur[k];
+    return (lo === undefined) ? v : Math.max(lo, Math.min(hi, v));
+  };
   j._physicsParams = {
-    stiffness: Math.max(0, Math.min(1, patch.stiffness !== undefined ? patch.stiffness : cur.stiffness)),
-    damping:   Math.max(0, Math.min(0.99, patch.damping !== undefined ? patch.damping : cur.damping)),
-    gravity:   patch.gravity !== undefined ? patch.gravity : cur.gravity,
+    stiffness: take('stiffness', 0, 1),
+    damping:   take('damping', 0, 0.99),
+    gravity:   take('gravity'),
+    drag:      take('drag', 0, 1),
+    ground:    !!take('ground'),
+    groundY:   take('groundY'),
   };
   return true;
 };
@@ -169,6 +183,10 @@ const _vel = new THREE.Vector3(), _next = new THREE.Vector3(), _dir = new THREE.
 const _aimA = new THREE.Vector3(), _aimB = new THREE.Vector3(), _qAim = new THREE.Quaternion();
 const _pRig = new THREE.Vector3(), _acc = new THREE.Vector3();
 
+// gl-matrix's mat4 is a plain array here; a joint's matrix is written in place so the object
+// identity the rest of the app holds stays valid.
+function mat4Copy(dst, src) { for (let i = 0; i < 16; i++) dst[i] = src[i]; }
+
 // ONE STEP. `dt` is a real timestep in seconds and is clamped: a dropped frame or a paused tab
 // otherwise hands the integrator a dt large enough to throw the chain into orbit, and the user
 // reads that as the feature being broken rather than as their machine hiccupping.
@@ -189,6 +207,34 @@ PhysicsBones.step = function (main, dt) {
     const gAcc = gravityUnits(main, par.gravity);
     const rigid = par.stiffness >= 1;
 
+    // THE REST POSE IS PUT BACK BEFORE ANYTHING IS MEASURED.
+    //
+    // The spring pulls toward the pose the animation asked for — and the first version read that
+    // pose straight off the rig, which by then already contained the PREVIOUS frame's physics.
+    // So the target drifted along with the sim: no restoring force, a chain that fell and stayed
+    // fallen, and a stiffness slider that only froze it where it had landed. matt: "i assume the
+    // physics bone isn't storing a rest angle/position before being activated, it should."
+    // Measured: at stiffness 0.95 the tip sat 6.77 units from rest and did not move.
+    //
+    // WHO WROTE IT LAST decides what the rest pose is, and that cannot be assumed. During
+    // playback the animation writes every joint every frame, and restoring a saved pose there
+    // would undo the keys. Idle — matt's case, a rig being dragged around by hand — nothing
+    // writes it but us. So the rule is: if the joint is exactly where WE left it, nobody else
+    // has touched it and the saved rest still stands; if it has moved, that is the new authored
+    // pose and it is adopted. Animation, a gizmo pose and an undo all take the second branch
+    // without any of them knowing this exists.
+    for (const link of links) {
+      const st = _state.get(link.parent.getID());
+      if (!st || !st.written) continue;
+      const now = link.parent.getMatrix();
+      let same = true;
+      for (let k = 0; k < 16; k++) {
+        if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
+      }
+      if (same && st.rest) { mat4Copy(now, st.rest); Skeleton.syncThree(link.parent); }
+      else if (!same) { st.rest = Array.prototype.slice.call(now); }
+    }
+
     // THE ANIMATED POSE IS CAPTURED FIRST, all of it, before anything is written. Each write
     // rotates a joint and therefore moves every joint below it, so a target read after the first
     // write would be a target measured against a pose that is already half simulated.
@@ -200,6 +246,12 @@ PhysicsBones.step = function (main, dt) {
       const id = j.getID();
       let st = _state.get(id);
       if (!st) { st = { p: target.get(id).clone(), prev: target.get(id).clone(), v: new THREE.Vector3() }; _state.set(id, st); }
+      // The joint that will actually be rotated keeps the rest pose, since that is the matrix
+      // being written and therefore the one that accumulates.
+      const pid = link.parent.getID();
+      let pst = _state.get(pid);
+      if (!pst) { pst = { p: new THREE.Vector3(), prev: new THREE.Vector3(), v: new THREE.Vector3() }; _state.set(pid, pst); }
+      if (!pst.rest) pst.rest = Array.prototype.slice.call(link.parent.getMatrix());
 
       _pAnim.copy(target.get(id));
       Skeleton.jointPos(link.parent, _pPar);        // already written this frame, so it is live
@@ -212,8 +264,18 @@ PhysicsBones.step = function (main, dt) {
         // which is what keeps a spring stable at large steps.
         _acc.subVectors(_pAnim, _pCur).multiplyScalar(k);
         _acc.y -= gAcc;
+        // DRAG IS NOT DAMPING, which is why both are here. Damping decays the velocity at a
+        // fixed rate whatever it is doing — it decides how fast a wobble dies. Drag opposes
+        // motion in proportion to SPEED SQUARED, so it barely touches a slow drape and bites
+        // hard on a fast whip. A tail that settles gently but does not crack like a rope needs
+        // the second one, and no amount of the first gives it.
+        if (par.drag > 0) {
+          const sp = st.v.length();
+          if (sp > 1e-9) _acc.addScaledVector(st.v, -par.drag * sp / Math.max(unit, 1e-6));
+        }
         st.v.addScaledVector(_acc, h).multiplyScalar(decay);
         _next.copy(_pCur).addScaledVector(st.v, h);
+
       }
 
       // LENGTH IS A HARD CONSTRAINT, not a spring. A bone that stretches reads as broken
@@ -223,6 +285,28 @@ PhysicsBones.step = function (main, dt) {
       if (_dir.lengthSq() < 1e-12) continue;         // sitting on its own parent: nothing to aim
       _dir.normalize();
       _next.copy(_pPar).addScaledVector(_dir, rest);
+
+      // GROUND, AFTER the length constraint and not before it. Clamping y first and then
+      // projecting back onto the bone's length just pushes the point through the floor again —
+      // measured, 0.013 under a floor it was clamped to.
+      //
+      // Both constraints can hold exactly. The positions at the right distance from the parent
+      // AND on the floor are a CIRCLE: where the sphere of radius `rest` about the parent meets
+      // the plane y = groundY. So the point is put on that circle, keeping its horizontal
+      // direction. When the parent is high enough that the bone cannot reach the floor, the
+      // sphere misses the plane and there is nothing to do.
+      if (par.ground && _next.y < par.groundY) {
+        const drop = _pPar.y - par.groundY;
+        const r2 = rest * rest - drop * drop;
+        if (r2 > 1e-12) {
+          const ring = Math.sqrt(r2);
+          _dir.set(_next.x - _pPar.x, 0, _next.z - _pPar.z);
+          if (_dir.lengthSq() < 1e-12) _dir.set(1, 0, 0);
+          _dir.normalize();
+          _next.set(_pPar.x + _dir.x * ring, par.groundY, _pPar.z + _dir.z * ring);
+        }
+        if (st.v.y < 0) st.v.y = 0;
+      }
 
       // Turn the position into the parent's rotation — the only thing that can actually move a
       // joint — via the solver's own primitive, so both write a joint the same way.
@@ -234,6 +318,7 @@ PhysicsBones.step = function (main, dt) {
       if (_aimA.lengthSq() > 1e-12 && _aimB.lengthSq() > 1e-12) {
         _qAim.setFromUnitVectors(_aimA.normalize(), _aimB.normalize());
         IKSolver.rotateJoint(link.parent, _qAim);
+        pst.written = Array.prototype.slice.call(link.parent.getMatrix());
         moved++;
       }
       // Carry the particle forward. Read back from the rig rather than trusting `_next`: the aim

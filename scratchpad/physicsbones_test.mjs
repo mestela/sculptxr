@@ -18,30 +18,49 @@ import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/thre
 const REPO = '/Users/mattestela/sculptxr';
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/PhysicsBones.js'), 'utf8');
 
-// A mock rig. A joint is a position and a parent; "rotating" a joint means moving everything
-// below it rigidly, which is what a rotation does and is all this module can observe.
+// A mock rig with REAL forward kinematics, because the module now stores and restores joint
+// MATRICES — "put the rest pose back unless something else has written it" cannot be tested
+// against a mock that only has world positions. So a joint here is a local offset plus a local
+// rotation, exactly as the app's joints are, and world position is an FK walk.
 const prelude = `
 import * as THREE from '${path.join(REPO, 'node_modules/three/build/three.module.js')}';
 const window = {};
 const _all = [];
+const _mA = new THREE.Matrix4(), _mB = new THREE.Matrix4();
+const _vT = new THREE.Vector3(), _qT = new THREE.Quaternion(), _sT = new THREE.Vector3();
+
+// World matrix by walking up the chain, exactly as the app's getModelSpaceMatrix does.
+function worldMat(j, out) {
+  out.identity();
+  const up = [];
+  for (let n = j; n; n = n._parentMesh) up.push(n);
+  for (let i = up.length - 1; i >= 0; i--) {
+    _mB.fromArray(up[i]._mat);
+    out.multiply(_mB);
+  }
+  return out;
+}
+
 const Skeleton = {
   joints: () => _all,
-  jointPos: (j, out) => (out || new THREE.Vector3()).copy(j.wp),
-  sceneUnit: () => 2,          // 1 unit = 1 metre, so gravity 1 reads as 9.8
+  jointPos: (j, out) => {
+    out = out || new THREE.Vector3();
+    worldMat(j, _mA);
+    return out.setFromMatrixPosition(_mA);
+  },
+  sceneUnit: () => 2,
+  syncThree: () => {},
 };
 const IKSolver = {
-  // The real one turns a model-space rotation into a joint's local matrix. Here it applies the
-  // rotation to the subtree about the joint's own origin, which is the same thing observed
-  // from outside — and it is the observable behaviour every check below is written against.
+  // The real one carries a MODEL-space rotation into the joint's local frame. The fixtures here
+  // have no rotated ancestors, where those two coincide — which is why the checks below are
+  // about the integrator and the rest-pose bookkeeping, not about frame conversion.
   rotateJoint: (joint, q) => {
-    const walk = (n) => {
-      for (const c of _all) {
-        if (c._parentMesh !== n) continue;
-        c.wp.sub(joint.wp).applyQuaternion(q).add(joint.wp);
-        walk(c);
-      }
-    };
-    walk(joint);
+    _mA.fromArray(joint._mat);
+    _mA.decompose(_vT, _qT, _sT);
+    _qT.premultiply(q);
+    _mA.compose(_vT, _qT, _sT);
+    for (let i = 0; i < 16; i++) joint._mat[i] = _mA.elements[i];
   },
 };
 export { _all, Skeleton };
@@ -62,12 +81,25 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
 
 let nextId = 1;
+const M4 = new THREE.Matrix4();
+// A joint is a LOCAL matrix, as in the app. The offset is relative to the parent so the rig is a
+// real chain: rotating a joint moves everything below it, which is the only way this module can
+// move anything at all.
 const J = (x, y, z, parent) => {
-  const j = { _id: nextId++, wp: new THREE.Vector3(x, y, z), _parentMesh: parent || null,
-    getID() { return this._id; } };
+  const px = parent ? parent._abs[0] : 0, py = parent ? parent._abs[1] : 0, pz = parent ? parent._abs[2] : 0;
+  M4.identity().setPosition(x - px, y - py, z - pz);
+  const j = {
+    _id: nextId++, _parentMesh: parent || null, _abs: [x, y, z],
+    _mat: Array.from(M4.elements),
+    getID() { return this._id; },
+    getMatrix() { return this._mat; },
+  };
   ALL.push(j);
   return j;
 };
+const wp = (j) => M.Skeleton.jointPos(j, new THREE.Vector3());
+// Move a joint's local offset — what "the animation moved the body" looks like from here.
+const setLocal = (j, x, y, z) => { j._mat[12] = x; j._mat[13] = y; j._mat[14] = z; };
 const rig = () => {
   ALL.length = 0; nextId = 1;
   const body_ = J(0, 0, 0);            // the thing the tail hangs off
@@ -76,7 +108,7 @@ const rig = () => {
   const t2 = J(0, -3, 0, t1);
   return { body: body_, t0, t1, t2 };
 };
-const len = (a, b) => a.wp.distanceTo(b.wp);
+const len = (a, b) => wp(a).distanceTo(wp(b));
 
 // ── A CHAIN IS THE FLAGGED JOINT'S DESCENDANTS ────────────────────────────────────────
 {
@@ -99,13 +131,13 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
   PB.setRoot(null, r.t0, true);
   PB.setParams(r.t0, { stiffness: 0.02, damping: 0.1, gravity: 10 });
   // Start it horizontal, which is the shape that has somewhere to fall to.
-  r.t1.wp.set(1, -1, 0); r.t2.wp.set(2, -1, 0);
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);   // lay the tail out horizontally
   const main = {};
   PB.reset(main);
-  const y0 = r.t2.wp.y;
+  const y0 = wp(r.t2).y;
   for (let i = 0; i < 120; i++) PB.step(main, 1 / 60);
-  check('a horizontal tail falls under gravity', r.t2.wp.y < y0 - 0.2,
-    'tip y went ' + y0.toFixed(2) + ' -> ' + r.t2.wp.y.toFixed(2));
+  check('a horizontal tail falls under gravity', wp(r.t2).y < y0 - 0.2,
+    'tip y went ' + y0.toFixed(2) + ' -> ' + wp(r.t2).y.toFixed(2));
 }
 
 // ── BONE LENGTH IS A HARD CONSTRAINT ──────────────────────────────────────────────────
@@ -120,7 +152,7 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
   PB.reset(main);
   const l1 = len(r.t0, r.t1), l2 = len(r.t1, r.t2);
   for (let i = 0; i < 200; i++) {
-    r.body.wp.x = Math.sin(i * 0.3) * 2;          // shake the thing it hangs off, hard
+    setLocal(r.body, Math.sin(i * 0.3) * 2, 0, 0);   // shake the thing it hangs off, hard
     PB.step(main, 1 / 60);
   }
   check('bone lengths survive a violent shake',
@@ -128,7 +160,7 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
     l1.toFixed(4) + '/' + l2.toFixed(4) + ' -> '
     + len(r.t0, r.t1).toFixed(4) + '/' + len(r.t1, r.t2).toFixed(4));
   check('...and the chain stays finite',
-    [r.t1, r.t2].every((j) => Number.isFinite(j.wp.x + j.wp.y + j.wp.z)),
+    [r.t1, r.t2].every((j) => Number.isFinite(wp(j).x + wp(j).y + wp(j).z)),
     'a Verlet chain with no damping is exactly where a blow-up would show');
 }
 
@@ -142,11 +174,11 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
   PB.setParams(r.t0, { stiffness: 1, damping: 0.5, gravity: 10 });
   const main = {};
   PB.reset(main);
-  const p1 = r.t1.wp.clone(), p2 = r.t2.wp.clone();
+  const p1 = wp(r.t1), p2 = wp(r.t2);
   for (let i = 0; i < 60; i++) PB.step(main, 1 / 60);
   check('stiffness 1 leaves the animated pose exactly alone',
-    r.t1.wp.distanceTo(p1) < 1e-9 && r.t2.wp.distanceTo(p2) < 1e-9,
-    'moved ' + r.t2.wp.distanceTo(p2).toExponential(2));
+    wp(r.t1).distanceTo(p1) < 1e-9 && wp(r.t2).distanceTo(p2) < 1e-9,
+    'moved ' + wp(r.t2).distanceTo(p2).toExponential(2));
 }
 
 // ── IT LAGS, WHICH IS THE WHOLE POINT ─────────────────────────────────────────────────
@@ -157,10 +189,10 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
   const main = {};
   PB.reset(main);
   // Yank the anchor sideways in one frame and look at whether the tip followed immediately.
-  r.t0.wp.x += 1; r.t1.wp.x += 1; r.t2.wp.x += 1;      // the rig moves rigidly...
+  setLocal(r.body, 1, 0, 0);                          // the rig moves rigidly...
   PB.step(main, 1 / 60);                               // ...and the sim should resist
-  check('the tip lags behind a sudden move of its anchor', r.t2.wp.x < 1,
-    'tip x = ' + r.t2.wp.x.toFixed(3) + ' after the anchor jumped to 1');
+  check('the tip lags behind a sudden move of its anchor', wp(r.t2).x < 1,
+    'tip x = ' + wp(r.t2).x.toFixed(3) + ' after the anchor jumped to 1');
 }
 
 // ── A DROPPED FRAME MUST NOT DETONATE THE CHAIN ───────────────────────────────────────
@@ -172,8 +204,8 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
   PB.reset(main);
   PB.step(main, 4.0);            // a paused tab, or a breakpoint
   check('a four-second timestep is clamped, not integrated',
-    [r.t1, r.t2].every((j) => Number.isFinite(j.wp.length()) && j.wp.length() < 20),
-    'tip at ' + r.t2.wp.length().toFixed(2));
+    [r.t1, r.t2].every((j) => Number.isFinite(wp(j).length()) && wp(j).length() < 20),
+    'tip at ' + wp(r.t2).length().toFixed(2));
 }
 
 // ── NO ROOTS, NO WORK ─────────────────────────────────────────────────────────────────
@@ -196,12 +228,12 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
     const r = rig();
     PB.setRoot(null, r.t0, true);
     PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1 });
-    r.t1.wp.set(1, -1, 0); r.t2.wp.set(2, -1, 0);      // horizontal, with somewhere to fall
+    setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);   // lay the tail out horizontally      // horizontal, with somewhere to fall
     const main = {};
     PB.reset(main);
     const n = Math.round(seconds * fps);
     for (let i = 0; i < n; i++) PB.step(main, 1 / fps);
-    return r.t2.wp.y;
+    return wp(r.t2).y;
   };
   const at60 = settle(60, 3), at24 = settle(24, 3), at120 = settle(120, 3);
   const spread = Math.max(at60, at24, at120) - Math.min(at60, at24, at120);
@@ -226,6 +258,100 @@ const len = (a, b) => a.wp.distanceTo(b.wp);
     + PB.gravityUnits({}, 1).toFixed(3));
   check('...and doubles when you ask for twice earth',
     Math.abs(PB.gravityUnits({}, 2) - 19.6) < 1e-6);
+}
+
+// ── THE REST POSE IS REMEMBERED ───────────────────────────────────────────────────────
+//
+// matt: "i assumed when i turned the stiffness slider up, it would start to spring back to its
+// original position, but it didn't. i assume the physics bone isn't storing a rest angle/position
+// before being activated, it should."
+//
+// He was exactly right. The spring pulled toward the pose read off the RIG, which already
+// contained the previous frame's physics — so the target fell with the chain, there was no
+// restoring force, and turning stiffness up only froze it where it had landed. Measured on
+// skel04 before the fix: at stiffness 0.95 the tip sat 6.77 units from rest and did not move.
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);       // horizontal, with somewhere to fall
+  const main = {};
+  PB.reset(main);
+  const rest = wp(r.t2);
+  for (let i = 0; i < 180; i++) PB.step(main, 1 / 60);
+  const fell = wp(r.t2);
+  check('a soft chain falls away from its rest pose', fell.distanceTo(rest) > 0.5,
+    'moved ' + fell.distanceTo(rest).toFixed(2));
+
+  PB.setParams(r.t0, { stiffness: 0.98 });
+  for (let i = 0; i < 240; i++) PB.step(main, 1 / 60);
+  const back = wp(r.t2);
+  check('...and a stiff one springs back to it',
+    back.distanceTo(rest) < 0.25,
+    'ended ' + back.distanceTo(rest).toFixed(2) + ' from rest, having fallen '
+    + fell.distanceTo(rest).toFixed(2) + ' — if this does not shrink, the rest pose is not stored');
+}
+
+// ── ...AND THE ANIMATION STILL WINS ───────────────────────────────────────────────────
+//
+// The other half of the same rule, and the one that is easy to break while fixing the first:
+// during playback the animation writes every joint every frame, and restoring a saved rest pose
+// there would quietly undo the keys. The saved pose only stands while the joint is exactly where
+// the sim left it; anything else that writes — a key, a gizmo, an undo — is adopted as the new
+// rest without knowing this exists.
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  const main = {};
+  PB.reset(main);
+  for (let i = 0; i < 60; i++) PB.step(main, 1 / 60);
+  // "The animation" writes the flagged joint to a new pose, as a keyed take would.
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.9);
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(0, -1, 0), q, new THREE.Vector3(1, 1, 1));
+  for (let k = 0; k < 16; k++) r.t0._mat[k] = m.elements[k];
+  const posed = wp(r.t2);
+  PB.setParams(r.t0, { stiffness: 0.98 });
+  for (let i = 0; i < 240; i++) PB.step(main, 1 / 60);
+  const after = wp(r.t2);
+  check('a pose written by something else becomes the new rest',
+    after.distanceTo(posed) < 0.4,
+    'the chain settled ' + after.distanceTo(posed).toFixed(2) + ' from the NEW pose — restoring '
+    + 'a stale rest here would undo the animation every frame');
+}
+
+// ── GROUND, AND DRAG ──────────────────────────────────────────────────────────────────
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.02, damping: 0.2, gravity: 2, drag: 0, ground: true, groundY: -2.5 });
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
+  const main = {};
+  PB.reset(main);
+  let lowest = 0;
+  for (let i = 0; i < 300; i++) { PB.step(main, 1 / 60); lowest = Math.min(lowest, wp(r.t2).y); }
+  check('a chain with ground collision does not go through the floor',
+    lowest > -2.5 - 1e-6, 'lowest tip y was ' + lowest.toFixed(3) + ' against a floor at -2.5');
+
+  // Drag bites on SPEED, so it shows up in how far a whipped chain travels, not in where a
+  // slow one settles. That distinction is the reason it is a separate control from damping.
+  const whip = (drag) => {
+    const rr = rig();
+    PB.setRoot(null, rr.t0, true);
+    PB.setParams(rr.t0, { stiffness: 0.02, damping: 0.05, gravity: 0, drag: drag });
+    const mn = {};
+    PB.reset(mn);
+    let far = 0;
+    for (let i = 0; i < 120; i++) {
+      setLocal(rr.body, Math.sin(i * 0.35) * 3, 0, 0);
+      PB.step(mn, 1 / 60);
+      far = Math.max(far, Math.abs(wp(rr.t2).x));
+    }
+    return far;
+  };
+  const loose = whip(0), dragged = whip(0.9);
+  check('drag reins in a fast whip', dragged < loose - 0.05,
+    'tip reached ' + loose.toFixed(2) + ' with no drag, ' + dragged.toFixed(2) + ' with it');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
