@@ -104,6 +104,16 @@ export function buildBoneAuthoringHTML(main, style) {
   const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
+  // THE WRIST PANEL IS A WRIST PANEL AGAIN. matt: "the bones minipanel is hardly a minipanel
+  // anymore, its massive." The cure he picked is fewer things rather than better folding, and it
+  // sorts cleanly: what you touch CONSTANTLY while rigging stays on the wrist — the mode, the
+  // snaps, the physics you are tuning by watching — and what you do ONCE goes to the main menu,
+  // where you are already stopped and reading. Make Skin, Bake Capsules, Reset Radii, Bind and
+  // the two skin sliders are all once-a-session operations.
+  //
+  // Nothing is removed, only placed. The main menu still shows every control.
+  const full = style !== 'mp';
+
   return `
     ${sectionTitle(c, 'Rig Authoring')}
     <div class="${c.grid}">${modeBtns}</div>
@@ -111,6 +121,7 @@ export function buildBoneAuthoringHTML(main, style) {
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
     </div>
+    ${full ? `
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
       <button class="${c.action}" id="bone-skin">Make Skin</button>
@@ -118,6 +129,7 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
     </div>
+    ` : ''}
     <div class="${c.btnRow}">
       <button class="${c.action}${physOn ? ' active' : ''}" id="bone-phys"
         title="Make the selected joint a physics bone: everything below it swings and lags behind the animation. Only simulates while the timeline PLAYS — scrub shows the plain pose. Bake to turn it into keys.">${physOn ? 'Physics On' : 'Physics Bone'}</button>
@@ -149,8 +161,7 @@ export function buildBoneAuthoringHTML(main, style) {
       ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
     </div>
     ` : ''}
-    <div class="${c.btnRow}">
-    </div>
+    ${full ? `
     ${rule}
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
@@ -167,6 +178,7 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-mush" min="0" max="60" step="1" value="${mush}">
       <span class="${c.val}" id="bone-mush-val">${mush}</span>
     </div>
+    ` : ''}
     ` : ''}
   `;
 }

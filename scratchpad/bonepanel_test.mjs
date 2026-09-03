@@ -431,5 +431,40 @@ check('shader-specific groups mute instead of hiding',
     quick.includes('mp-toggle-btn') && !quick.includes('mm-choice'));
 }
 
+// ── THE WRIST PANEL IS A WRIST PANEL AGAIN ────────────────────────────────────────────
+//
+// matt: "the bones minipanel is hardly a minipanel anymore, its massive... it needs a tidy up."
+// Offered folding, columns or fewer things, he picked fewer things — so the split is by HOW
+// OFTEN you reach for a control, not by what subsystem it belongs to. Constantly: the mode, the
+// snaps, the physics you are tuning by watching. Once a session: Make Skin, Bake Capsules, Reset
+// Radii, Bind, and the two skin sliders. The main menu still shows everything.
+{
+  const wristAuth = buildBoneAuthoringHTML(main, 'mp');
+  const menuAuth = buildBoneAuthoringHTML(main, 'mm');
+
+  check('the wrist keeps the mode buttons',
+    ['draw', 'fk', 'free', 'pose', 'radius', 'joint', 'ik']
+      .every((k) => wristAuth.includes('id="bone-' + k + '"')));
+  check('...and the snaps, which you toggle while drawing',
+    wristAuth.includes('id="bone-snap"') && wristAuth.includes('id="bone-axis"'));
+  check('...and physics, which is tuned by watching',
+    wristAuth.includes('id="bone-phys"') && wristAuth.includes('id="bone-phys-bake"'));
+
+  const onceAJob = ['skin', 'cages', 'rad-all', 'bind'];
+  check('the once-a-session operations are off the wrist',
+    onceAJob.every((k) => !wristAuth.includes('id="bone-' + k + '"')),
+    onceAJob.filter((k) => wristAuth.includes('id="bone-' + k + '"')).join(',') + ' still there');
+  check('...and every one of them is still in the main menu',
+    onceAJob.every((k) => menuAuth.includes('id="bone-' + k + '"')),
+    'this is a placement, not a removal — losing a control would be a worse bug than a tall panel');
+
+  // The measurement behind the complaint, so a future addition that quietly re-inflates the
+  // wrist panel shows up as a number rather than as a feeling.
+  const rows = (html) => (html.match(/<div class="[^"]*"/g) || []).length;
+  check('the wrist panel is meaningfully shorter than the menu',
+    rows(wristAuth) < rows(menuAuth) - 2,
+    'wrist ' + rows(wristAuth) + ' rows vs menu ' + rows(menuAuth));
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
