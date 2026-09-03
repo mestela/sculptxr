@@ -61,7 +61,21 @@ const MAX_SPANS = 32;
 // useful without the other.
 const RELAX_PASSES = 6;
 const SMOOTH_RATE = 0.55;
-const PROJECT_RATE = 0.7;
+// THE ONE NUMBER THAT DECIDES HOW FULL THE SKIN READS. Each pass smooths, then pulls this far
+// back onto the capsule union. At 0.7 the pull won every time and the surface sat on the
+// capsules everywhere, so every joint showed through as its own ball and each junction came out
+// as a crease between two of them — matt's skel04 came out as beads on a string against a
+// drawing of one continuous body over the same capsules. Lowering it lets the smoothing's
+// surface tension bridge the hollows, which is all a fillet is.
+//
+// I first shipped this as a one-sided wrap — project in full when the vertex is INSIDE the
+// union, ease when outside — with an argument about hollows. Building both at the same rate and
+// comparing them on skel04 showed no difference: the rate was doing all of the work and the
+// branch none of it, so the branch is gone.
+//
+// Overridable from the console (window._boneSkinWrapRate), because it is a look, and a look is
+// judged by looking rather than by argument.
+const PROJECT_RATE = 0.2;
 
 // Model-space symmetry plane normal, matching TransformData._symmetryNormal.
 const SYM_AXIS = 0;
@@ -414,6 +428,8 @@ function relax(verts, faces, caps) {
   for (let i = 0; i < nbV; i++) if (Math.abs(verts[i * 3 + SYM_AXIS]) < 1e-9) onSeam[i] = 1;
 
   const p = new THREE.Vector3(), t = new THREE.Vector3(), avg = new THREE.Vector3();
+  const wrapRate = typeof window._boneSkinWrapRate === 'number'
+    ? Math.max(0, Math.min(1, window._boneSkinWrapRate)) : PROJECT_RATE;
   let src = verts;
   for (let pass = 0; pass < RELAX_PASSES; pass++) {
     const dst = new Float32Array(src.length);
@@ -427,7 +443,7 @@ function relax(verts, faces, caps) {
         p.lerp(avg, SMOOTH_RATE);
       }
       capsuleTarget(p, caps, t);
-      p.lerp(t, PROJECT_RATE);
+      p.lerp(t, wrapRate);
       if (onSeam[i]) p.setComponent(SYM_AXIS, 0);
       dst[i * 3] = p.x; dst[i * 3 + 1] = p.y; dst[i * 3 + 2] = p.z;
     }

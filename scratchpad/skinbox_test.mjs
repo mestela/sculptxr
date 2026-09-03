@@ -613,5 +613,23 @@ if (SkinMesh._boxLattice) {
     fat < thin + 0.01, 'thin ' + thin.toFixed(2) + ' vs sized ' + fat.toFixed(2));
 }
 
+// ── HOW FULL THE SKIN READS IS ONE NUMBER ─────────────────────────────────────────────
+//
+// No check here, and that is deliberate. On matt's skel04 the skin came out as beads on a
+// string — a ball at every sized joint, a crease at every junction — against a drawing of one
+// continuous body over the same capsules, and lowering the rate at which the relax pulls back
+// onto the capsules fixed it outright. Every fixture in this file passes at BOTH rates, and the
+// two measurements tried here (the width of a waist between two fat joints, and the sharpest
+// dihedral near it) moved by nothing and by 4 degrees the wrong way.
+//
+// So the change is pinned by the rig and the screenshots rather than by a check that would only
+// be a restatement of the constant. What the checks above still guarantee is that neither rate
+// tears the mesh: closed, manifold, wound outward, one shell, no surface through another.
+//
+// An earlier version of this section made the same change one-sided — full projection when the
+// vertex is inside the union, eased when outside — with an argument about bridging hollows.
+// Built at matched rates the two are indistinguishable on skel04. Worth remembering before
+// reaching for that idea again.
+
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));
 process.exit(failures ? 1 : 0);
