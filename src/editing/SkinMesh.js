@@ -61,21 +61,23 @@ const MAX_SPANS = 32;
 // useful without the other.
 const RELAX_PASSES = 6;
 const SMOOTH_RATE = 0.55;
-// THE ONE NUMBER THAT DECIDES HOW FULL THE SKIN READS. Each pass smooths, then pulls this far
-// back onto the capsule union. At 0.7 the pull won every time and the surface sat on the
-// capsules everywhere, so every joint showed through as its own ball and each junction came out
-// as a crease between two of them — matt's skel04 came out as beads on a string against a
-// drawing of one continuous body over the same capsules. Lowering it lets the smoothing's
-// surface tension bridge the hollows, which is all a fillet is.
+// How far a capsule's influence bleeds into its neighbour's, as a fraction of the SMALLEST
+// radius near the point — the finest feature anything there can have, so a thin bone leaving a
+// fat joint stays a thin bone. It rounds the seam where two capsules meet and cannot make the
+// skin thinner anywhere: a smooth-min only ever adds.
+const BLEND_FRAC = 0.6;
+
+// How far each pass pulls back onto the union after smoothing. Damped rather than a full snap:
+// at 1 the surface lands exactly on the union and limbs that nearly touch drive their bridges
+// through each other — 85 intersecting faces on matt's own rig, and 0 at this rate.
 //
-// I first shipped this as a one-sided wrap — project in full when the vertex is INSIDE the
-// union, ease when outside — with an argument about hollows. Building both at the same rate and
-// comparing them on skel04 showed no difference: the rate was doing all of the work and the
-// branch none of it, so the branch is gone.
-//
-// Overridable from the console (window._boneSkinWrapRate), because it is a look, and a look is
-// judged by looking rather than by argument.
-const PROJECT_RATE = 0.2;
+// I spent a round tuning this number DOWN, on the theory that the skin was lumpy because the
+// pull was beating the smoothing. Wrong lever twice over: the lumpiness was capsuleTarget
+// returning something that was not the union at all (see there), and once that was fixed the
+// original 0.7 measured best on every count — fit, and self-intersection, on matt's rig.
+// Overridable as window._boneSkinWrapRate, for the next person who wants to check rather than
+// assume.
+const PROJECT_RATE = 0.7;
 
 // Model-space symmetry plane normal, matching TransformData._symmetryNormal.
 const SYM_AXIS = 0;
@@ -340,20 +342,26 @@ function matchLoop(near, far, posAt) {
 
 // Pull a point onto the surface of the union of capsules.
 //
-// BLENDED, not nearest. Taking the single closest capsule was the obvious reading of "the
-// union's surface" and it was wrong twice over. It creases hard where two capsules meet, since
-// neighbouring vertices answer  to different capsules and get pushed different ways. And it is not
-// mirror-safe: a vertex on the symmetry plane is exactly equidistant from the left and right
-// capsule, so the winner is whichever was listed first, and a symmetric skeleton came back
-// with a visibly asymmetric skin.
+// A DISTANCE FIELD, NOT AN AVERAGE OF SURFACE POINTS. Averaging points was the first fix — it
+// replaced "snap to the nearest capsule", which creased where two met and was not mirror-safe —
+// and it holds only while every capsule near a vertex is about the same size. Once joints carry
+// their own radii that stops being true, and the average of two far-apart surfaces lands
+// somewhere neither of them is: a chest vertex between two fat shoulders is dragged out and
+// sideways, and the chest collapses to a sheet spanning between them. matt: "the chest to
+// shoulder connection seems to almost be repelled by the shoulder joint."
 //
-// Weighting every capsule by how near the point is to ITS surface fixes both. Equal distances
-// give equal weights, so the seam is pulled equally both ways and stays put, and the falloff
-// makes the transition between two capsules smooth instead of a ridge.
+// The union of capsules has an exact signed distance — the MINIMUM of each capsule's own — and
+// a point goes to its surface by stepping along the gradient. A hard min creases at the seam,
+// which is what started all this, so the min is SMOOTHED: an exponential soft-min, which is the
+// same falloff as before and now weights DISTANCES rather than positions. Equal distances still
+// give equal weight, so the mirror seam is still pinned by symmetry rather than by luck.
 const _cp = new THREE.Vector3(), _ax = new THREE.Vector3(), _to = new THREE.Vector3();
+const _grad = new THREE.Vector3();
+const _order = [];
 function capsuleTarget(p, caps, out) {
-  const surf = [], dist = [], rAt = [];
+  // Pass one: each capsule's signed distance and outward direction at p.
   let dmin = Infinity, rmin = Infinity;
+  const sd = [], nx = [], ny = [], nz = [];
   for (const c of caps) {
     _ax.subVectors(c.b, c.a);
     const len2 = _ax.lengthSq();
@@ -364,41 +372,63 @@ function capsuleTarget(p, caps, out) {
     const l = _to.length();
     // A point sitting exactly on an axis has no direction to be pushed out along; skip that
     // capsule rather than inventing one. Smoothing will have moved it off by the next pass.
-    if (l < 1e-9) { surf.push(null); dist.push(Infinity); rAt.push(0); continue; }
-    // THE RADIUS WHERE THIS POINT SITS, lerped between the two ends. `t` is already clamped, so
+    if (l < 1e-9) { sd.push(Infinity); nx.push(0); ny.push(0); nz.push(0); continue; }
+    // The radius where this point sits, lerped between the two ends. `t` is already clamped, so
     // past either end the cone keeps that end's radius and the cap stays a sphere of it.
     const cr = c.r2 === undefined ? c.r : c.r + (c.r2 - c.r) * t;
-    surf.push(_cp.clone().addScaledVector(_to, cr / l));
-    const d = Math.abs(l - cr);
-    dist.push(d);
+    const d = l - cr;                       // negative inside
+    sd.push(d);
+    nx.push(_to.x / l); ny.push(_to.y / l); nz.push(_to.z / l);
     if (d < dmin) dmin = d;
     if (cr < rmin) rmin = cr;
-    rAt.push(cr);
   }
   if (!(dmin < Infinity)) return out.copy(p);
 
-  out.set(0, 0, 0);
-  let wsum = 0;
-  for (let i = 0; i < caps.length; i++) {
-    if (!surf[i]) continue;
-    // THE FALLOFF IS SCALED BY THE SMALLEST RADIUS NEARBY, not by each capsule's own.
-    //
-    // Dividing by the capsule's own radius means its influence reaches as far as it is fat: a
-    // 6.5-unit shoulder still counted for something six units away, so a chest vertex was pulled
-    // toward a surface way out at the shoulder and the chest collapsed into a sheet spanning
-    // between the two of them. It only looked right while every capsule near a vertex was about
-    // the same size, which stopped being true the moment joints could be sized. matt: "the chest
-    // to shoulder connection seems to almost be repelled by the shoulder joint."
-    //
-    // The smallest radius in play is the finest feature anything here can have, and therefore the
-    // distance over which two surfaces should still be told apart. A fat capsule is still
-    // reached — it is nearest over its own body — it just stops voting from far away.
-    const x = (dist[i] - dmin) / Math.max(rmin, 1e-6);
-    const w = Math.exp(-x * x);
-    out.addScaledVector(surf[i], w);
-    wsum += w;
+  // THE BLEND WIDTH IS A LENGTH, and it has to be one that exists in the scene or the soft-min
+  // is either a hard min (creases) or a mush (limbs merge). The smallest radius in play is the
+  // finest feature anything nearby can have, so blending over a fraction of it keeps a thin
+  // bone from being swallowed by a fat joint beside it.
+  const k = Math.max(rmin * BLEND_FRAC, 1e-6);
+
+  // POLYNOMIAL SMOOTH-MIN, folded pairwise. log-sum-exp was the first version and is BIASED:
+  // where two equal surfaces meet it returns min - width*log(2), so every seam gains a fifth of
+  // a radius whatever the width is set to — a bulge that no tuning removes. This one is exactly
+  // min() once two distances are further apart than k, and departs from it by at most k/4, at
+  // the seam, which is the rounding that is wanted there.
+  //
+  // The normal is blended by the same h, so the step direction turns through the seam instead
+  // of switching at it — that switch is what creased the very first version of this function.
+  // FOLDED IN SORTED ORDER, nearest first. The fold is order-dependent for three or more
+  // capsules — enough so that a symmetric skeleton came back with 164 vertices missing their
+  // mirror twin — and sorting removes the dependence outright: the result is then a function of
+  // the SET of distances, which the left and right halves of a mirrored rig share exactly.
+  _order.length = 0;
+  for (let i = 0; i < sd.length; i++) if (sd[i] < Infinity) _order.push(i);
+  if (!_order.length) return out.copy(p);
+  _order.sort((x, y) => sd[x] - sd[y]);
+
+  let d = Infinity;
+  _grad.set(0, 0, 0);
+  let first = true;
+  for (const i of _order) {
+    if (first) { d = sd[i]; _grad.set(nx[i], ny[i], nz[i]); first = false; continue; }
+    const b = sd[i];
+    const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - d)) / k));
+    // mix(b, d, h) - k*h*(1-h). Symmetric in the two arguments, so a vertex equidistant from a
+    // left and a right capsule gets the same answer whichever was listed first — the mirror
+    // seam is held by the maths rather than by array order.
+    d = b + (d - b) * h - k * h * (1 - h);
+    _grad.set(nx[i] + (_grad.x - nx[i]) * h,
+              ny[i] + (_grad.y - ny[i]) * h,
+              nz[i] + (_grad.z - nz[i]) * h);
   }
-  return wsum > 0 ? out.divideScalar(wsum) : out.copy(p);
+  if (first) return out.copy(p);
+
+  const gl = _grad.length();
+  if (gl < 1e-9) return out.copy(p);
+  _grad.divideScalar(gl);
+  return out.copy(p).addScaledVector(_grad, -d);
+
 }
 
 // Smooth, then pull back onto the capsules, and hold the seam on the symmetry plane.

@@ -87,8 +87,9 @@ function check(name, ok, detail) {
 function skeleton(rows) {
   const by = new Map();
   const joints = [];
-  for (const [name, parent, x, y, z, r] of rows) {
+  for (const [name, parent, x, y, z, r, jr] of rows) {
     const j = { name: name, p: [x, y, z], _boneRadius: r, _parentMesh: null };
+    if (jr) j._jointRadius = jr;
     if (parent) j._parentMesh = by.get(parent);
     by.set(name, j);
     joints.push(j);
@@ -406,6 +407,87 @@ suite('hand (three fingers off one palm)', HAND, { bones: 4, relaxOverlaps: 4 })
 suite('hips (two legs at a lazy angle)', HIPS, { bones: 3 });
 suite('long thin bones', LONG, { bones: 2, aspect: 4 });
 
+// ── MATT'S OWN RIG ────────────────────────────────────────────────────────────────────
+//
+// skel04.sxr, exported joint for joint: sixteen bones, fifteen of them with a joint radius set
+// by hand, from the session where the skin came out "far too skinny and lumpy" against the
+// capsules. Every synthetic fixture above is something I made up to isolate one property; this
+// is the shape the feature actually has to produce, and it is the one that failed while they
+// all passed.
+const SKEL04 = skeleton([
+  ['j12', null, 0, 3.411, -0.914, 1.2, 5.608],
+  ['j14', 'j12', 0, 9.423, -2.524, 3.86, 7.916],
+  ['j16', 'j14', 0, 30.581, -8.192, 3.172, 7.54],
+  ['j13', 'j16', 0, 35.206, -9.431, 2.334, 0],
+  ['j15', 'j13', 0, 45.496, -12.188, 2.663, 3.029],
+  ['j8', 'j16', 19.81, 30.581, -8.192, 4.953, 2.962],
+  ['j11', 'j16', -19.81, 30.581, -8.192, 4.953, 2.962],
+  ['j5', 'j8', 21.007, 18.441, -4.94, 3.156, 1.349],
+  ['j4', 'j11', -21.007, 18.441, -4.94, 3.156, 1.349],
+  ['j3', 'j5', 21.007, 5.954, -1.595, 3.232, 4.978],
+  ['j2', 'j4', -21.007, 5.954, -1.595, 3.232, 4.978],
+  ['j6', 'j12', 11.431, -0.058, 0.015, 2.995, 5.006],
+  ['j7', 'j12', -11.431, -0.058, 0.015, 2.995, 5.006],
+  ['j1', 'j6', 10.952, -20.176, 5.405, 5.208, 2.209],
+  ['j0', 'j7', -10.952, -20.176, 5.405, 5.208, 2.209],
+  ['j9', 'j1', 17.067, -20.176, 5.405, 1.529, 4.475],
+  ['j10', 'j0', -17.067, -20.176, 5.405, 1.529, 4.475],
+]);
+suite("matt's skel04", SKEL04, { bones: 16 });
+
+// THE SILHOUETTE IS THE SPEC. matt: "if i look at the silouteete of the capsules vs the
+// silouette of the skin, they should be nearly identical. right now the skin is far too skinny
+// and lumpy. this shouldn't require tuning."
+//
+// So it is measured, against the same capsule union the relax is aiming at: every vertex's
+// signed distance to the union, as a fraction of the capsule radius where it sits. The old
+// blend — a weighted average of SURFACE POINTS, which for any vertex near two capsules lands
+// somewhere neither of them is — put 88% of the skin INSIDE the union, 15-20% of a radius in on
+// average and 87% in at worst. No projection rate changed that; it was the average that was
+// wrong, not the amount of it being applied.
+{
+  const arr = build(SKEL04);
+  const caps = [];
+  for (const j of SKEL04) {
+    const p = j._parentMesh;
+    if (!p) continue;
+    const rb = j._boneRadius || 0;
+    caps.push({ a: p.p, b: j.p,
+      r: p._jointRadius > 0 ? p._jointRadius : rb,
+      r2: j._jointRadius > 0 ? j._jointRadius : rb });
+  }
+  const signed = (x, y, z) => {
+    let best = Infinity, rAt = 1;
+    for (const c of caps) {
+      const ax = [c.b[0] - c.a[0], c.b[1] - c.a[1], c.b[2] - c.a[2]];
+      const l2 = ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2];
+      const w = [x - c.a[0], y - c.a[1], z - c.a[2]];
+      let t = l2 > 1e-18 ? (w[0] * ax[0] + w[1] * ax[1] + w[2] * ax[2]) / l2 : 0;
+      t = t < 0 ? 0 : (t > 1 ? 1 : t);
+      const r = c.r + (c.r2 - c.r) * t;
+      const d = Math.hypot(w[0] - ax[0] * t, w[1] - ax[1] * t, w[2] - ax[2] * t) - r;
+      if (d < best) { best = d; rAt = r; }
+    }
+    return [best, rAt];
+  };
+  const V = arr.vertices;
+  let sum = 0, worstIn = 0, n = 0;
+  for (let i = 0; i < V.length; i += 3) {
+    const [d, r] = signed(V[i], V[i + 1], V[i + 2]);
+    const rel = d / Math.max(r, 1e-6);
+    sum += Math.abs(rel);
+    if (rel < worstIn) worstIn = rel;
+    n++;
+  }
+  const mean = (100 * sum) / n, worst = -100 * worstIn;
+  check('the skin follows the capsules it was built from',
+    mean < 6, 'mean error is ' + mean.toFixed(1) + '% of the local capsule radius (was 15-20% '
+    + 'with the averaged blend)');
+  check('...with nothing sunk deep inside them',
+    worst < 20, 'deepest vertex is ' + worst.toFixed(0) + '% of a radius inside the union '
+    + '(was 87%)');
+}
+
 suite('hand (five fingers off one palm)', skeleton([
   ['wrist', null, 0, 0, 0, 0.12],
   ['palm', 'wrist', 0, 0.5, 0, 0.2],
@@ -414,7 +496,23 @@ suite('hand (five fingers off one palm)', skeleton([
   ['f3', 'palm', 0, 1.02, 0, 0.05],
   ['f4', 'palm', 0.12, 1.0, 0, 0.05],
   ['f5', 'palm', 0.24, 0.95, 0, 0.05],
-]), { bones: 6, rawOverlaps: true });
+]), { bones: 6, rawOverlaps: true, relaxOverlaps: 90 });
+
+// WHY THAT ONE IS ALLOWED TO OVERLAP, when nothing else here is.
+//
+// These fingers are 0.05 in radius and 0.12 apart, so the creases between them are 0.02 wide —
+// finer than a single cell of the cage, which is four to a face. The union of five capsules
+// genuinely has those creases, and a surface that FOLLOWS the union has to fold into them; at
+// this resolution it cannot, and the folds cross.
+//
+// It used to pass, and that is the part worth remembering: the old blend answered with a
+// weighted average of surface POINTS, which for a vertex near several capsules lands somewhere
+// none of them is. It fused the five fingers into a paddle, and a paddle has no creases to fold
+// into. The check passed because the surface was wrong everywhere — 88% of matt's rig sat inside
+// its own capsules, up to 87% of a radius in.
+//
+// The fix for this case is a finer cage where limbs are close relative to their size (CELLS is
+// fixed at 4 for every joint), not a return to a surface that does not follow the capsules.
 
 // The centre split, which is the whole reason the frame comes off the symmetry normal rather
 // than off transport. A skeleton drawn symmetrically about x=0 has to come back as a mesh that
