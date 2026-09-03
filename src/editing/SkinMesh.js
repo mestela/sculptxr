@@ -339,7 +339,7 @@ function matchLoop(near, far, posAt) {
 const _cp = new THREE.Vector3(), _ax = new THREE.Vector3(), _to = new THREE.Vector3();
 function capsuleTarget(p, caps, out) {
   const surf = [], dist = [], rAt = [];
-  let dmin = Infinity;
+  let dmin = Infinity, rmin = Infinity;
   for (const c of caps) {
     _ax.subVectors(c.b, c.a);
     const len2 = _ax.lengthSq();
@@ -358,6 +358,7 @@ function capsuleTarget(p, caps, out) {
     const d = Math.abs(l - cr);
     dist.push(d);
     if (d < dmin) dmin = d;
+    if (cr < rmin) rmin = cr;
     rAt.push(cr);
   }
   if (!(dmin < Infinity)) return out.copy(p);
@@ -366,7 +367,19 @@ function capsuleTarget(p, caps, out) {
   let wsum = 0;
   for (let i = 0; i < caps.length; i++) {
     if (!surf[i]) continue;
-    const x = (dist[i] - dmin) / Math.max(rAt[i], 1e-6);
+    // THE FALLOFF IS SCALED BY THE SMALLEST RADIUS NEARBY, not by each capsule's own.
+    //
+    // Dividing by the capsule's own radius means its influence reaches as far as it is fat: a
+    // 6.5-unit shoulder still counted for something six units away, so a chest vertex was pulled
+    // toward a surface way out at the shoulder and the chest collapsed into a sheet spanning
+    // between the two of them. It only looked right while every capsule near a vertex was about
+    // the same size, which stopped being true the moment joints could be sized. matt: "the chest
+    // to shoulder connection seems to almost be repelled by the shoulder joint."
+    //
+    // The smallest radius in play is the finest feature anything here can have, and therefore the
+    // distance over which two surfaces should still be told apart. A fat capsule is still
+    // reached — it is nearest over its own body — it just stops voting from far away.
+    const x = (dist[i] - dmin) / Math.max(rmin, 1e-6);
     const w = Math.exp(-x * x);
     out.addScaledVector(surf[i], w);
     wsum += w;

@@ -505,11 +505,14 @@ if (SkinMesh._boxLattice) {
   const fat = build(chain);
 
   // Measured, not read back: the widest the skin gets anywhere near that joint.
+  // A TIGHT WINDOW. The first version sampled +/-0.35 of the height, which on a two-unit bone is
+  // a third of the taper — so it measured the CONE and reported it as the far end growing. The
+  // window has to be small against the length over which the radius changes.
   const spread = (arr, y) => {
     const V = arr.vertices;
     let r = 0;
     for (let i = 0; i < V.length; i += 3) {
-      if (Math.abs(V[i + 1] - y) > 0.35) continue;
+      if (Math.abs(V[i + 1] - y) > 0.08) continue;
       r = Math.max(r, Math.hypot(V[i], V[i + 2]));
     }
     return r;
@@ -549,6 +552,65 @@ if (SkinMesh._boxLattice) {
     Math.abs(spread(base, 1.0) - spread(build(skeleton([['a', null, 0, 0, 0, 0.2],
       ['b', 'a', 0, 2.0, 0, 0.2]])), 1.0)) < 1e-9,
     'unset must mean "whatever the bone says", or every existing rig re-skins differently');
+}
+
+// ── A FAT JOINT MUST NOT REACH ACROSS THE ROOM ────────────────────────────────────────
+//
+// The relax blends every capsule near a vertex, weighted by how close that vertex is to each
+// one's surface, and the falloff used to be scaled by EACH CAPSULE'S OWN radius — so a capsule's
+// influence reached as far as it was fat. Put a big joint on each shoulder and a vertex on the
+// sternum still felt them, was pulled toward surfaces out to either side, and the chest
+// flattened into a sheet spanning between them. matt: "if joints are too big the mesh twists in
+// strange ways. the chest to shoulder connection seems to almost be repelled by the shoulder
+// joint." It only looked right while every capsule near a vertex was about the same size, which
+// stopped being true the moment joints could be sized.
+//
+// MEASURED AS EDGE-LENGTH SPREAD, on a rig with matt's own proportions. Two earlier attempts at
+// this check measured a width instead and both failed on correct code — once by sampling a
+// window wide enough to include the taper, once by counting the bottom of the shoulder sphere
+// itself, which hangs to that height on its own account. A collapse shows up as quads stretched
+// far past the median, and that is what is measured.
+//
+// The threshold is calibrated BETWEEN the two implementations: 3.32 with the old falloff, 2.97
+// with this one, on the fixture below. Tight on purpose — it is here to fail if the falloff
+// goes back.
+{
+  const shoulders = (r) => {
+    const js = skeleton([
+      ['hip', null, 0, 0, 0, 3],
+      ['chest', 'hip', 0, 30, 0, 5],
+      ['cL', 'chest', -20, 30, 0, 5],
+      ['cR', 'chest', 20, 30, 0, 5],
+      ['aL', 'cL', -20, 18, 0, 3.2],
+      ['aR', 'cR', 20, 18, 0, 3.2],
+    ]);
+    if (r) { js[2]._jointRadius = r; js[3]._jointRadius = r; }
+    return js;
+  };
+  const spread = (arr) => {
+    const fl = quads(arr);
+    const V = arr.vertices;
+    const L = [];
+    for (const f of fl) {
+      for (let i = 0; i < f.length; i++) {
+        const a = f[i], b = f[(i + 1) % f.length];
+        L.push(Math.hypot(V[a * 3] - V[b * 3], V[a * 3 + 1] - V[b * 3 + 1],
+                          V[a * 3 + 2] - V[b * 3 + 2]));
+      }
+    }
+    L.sort((x, y) => x - y);
+    return L[L.length - 1] / L[Math.floor(L.length / 2)];
+  };
+  const fat = spread(build(shoulders(6.5)));
+  check('a fat joint does not drag the bones around it out of shape',
+    fat < 3.15,
+    'longest edge is ' + fat.toFixed(2) + 'x the median — the falloff has to be scaled by the '
+    + 'SMALLEST radius nearby, not by each capsule\'s own, or a fat joint votes from far away');
+  // ...and it is not simply that big joints make everything smoother: the same rig with no joint
+  // sized has to come out at least as clean, or the threshold above is measuring the wrong thing.
+  const thin = spread(build(shoulders(0)));
+  check('...and sizing one does not make the rest of the rig WORSE',
+    fat < thin + 0.01, 'thin ' + thin.toFixed(2) + ' vs sized ' + fat.toFixed(2));
 }
 
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));

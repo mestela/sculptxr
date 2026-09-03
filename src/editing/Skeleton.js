@@ -525,8 +525,36 @@ function makePair(geo, color) {
 // Translucent rather than wireframe on purpose — the capsule's job is to read as a VOLUME
 // enclosing part of the sculpt ("does this envelope contain the forearm?"), and a wireframe
 // sphere in a headset reads as a ball of noise sitting over the model.
-function makeCapsulePart(geo) {
+// A TAPERED SHAFT, WITHOUT A GEOMETRY PER BONE. A truncated cone is not a scaled cylinder — no
+// linear transform turns one radius into two — and rebuilding a CylinderGeometry per bone per
+// frame is not an option. So the unit cylinder stays, and the two radii ride in as uniforms: the
+// vertex shader widens each ring by where it sits along the shaft.
+//
+// The shaft's x/z scale is then left at 1 and the radius is applied here in LOCAL space, so the
+// model matrix only ever rotates, translates and stretches along the bone. matt: "i should be
+// able to have a large joint, and a small child joint, and see the capsule preview have a
+// tapered cylinder."
+function taperMaterial(mat) {
+  mat.userData.taper = { uRA: { value: 1 }, uRB: { value: 1 } };
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRA = mat.userData.taper.uRA;
+    shader.uniforms.uRB = mat.userData.taper.uRB;
+    shader.vertexShader = 'uniform float uRA;\nuniform float uRB;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\n'
+      // The cylinder spans y = -0.5 .. 0.5, and -0.5 is the end the bone STARTS at.
+      + 'float _t = transformed.y + 0.5;\n'
+      + 'float _r = mix(uRA, uRB, _t);\n'
+      + 'transformed.xz *= _r;');
+  };
+  // Two materials that differ only by their uniforms must not share a compiled program.
+  mat.customProgramCacheKey = () => 'skelTaper';
+  return mat;
+}
+
+function makeCapsulePart(geo, taper) {
   const p = makePair(geo, 0xffffff); // recoloured per frame from the bone's identity colour
+  if (taper) { taperMaterial(p.solid.material); taperMaterial(p.ghost.material); }
   p.solid.material.transparent = true;
   p.solid.material.opacity = 0.16;
   p.solid.material.depthWrite = false;
@@ -1486,7 +1514,7 @@ function ensureEntry(main, id) {
       wire: { solid: wire, ghost: wireGhost },
       label: makeLabel(),
       cap: {
-        shaft: makeCapsulePart(capsuleShaftGeometry()),
+        shaft: makeCapsulePart(capsuleShaftGeometry(), true),
         a: makeCapsulePart(capsuleEndGeometry()),
         b: makeCapsulePart(capsuleEndGeometry()),
       },
@@ -2225,7 +2253,10 @@ Skeleton.updateVisuals = function (main) {
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
       o.position.copy(_pA).addScaledVector(_dir, len * 0.5); // cylinder is centre-origin
       o.quaternion.copy(_q);
-      o.scale.set(crMid, len, crMid);
+      // The radii go to the shader, not into the scale — see taperMaterial. x/z stay at 1.
+      const tp = o.material.userData.taper;
+      if (tp) { tp.uRA.value = crA; tp.uRB.value = crB; o.scale.set(1, len, 1); }
+      else o.scale.set(crMid, len, crMid);
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
