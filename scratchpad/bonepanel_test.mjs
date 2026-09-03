@@ -365,5 +365,37 @@ check('shader-specific groups mute instead of hiding',
     'bind is a moment; rest is the skeleton as built');
 }
 
+// ── PHYSICS FOLLOWS THE PANEL'S OWN CONVENTIONS ───────────────────────────────────────
+//
+// Two things matt hit, both of which every other control in this panel already gets right.
+//
+// SOURCE-ANCHORED, and stated as such: this harness builds MARKUP and has no DOM to click, so
+// what a handler does on click cannot be measured here. The markup half above is functional; this
+// half pins the two lines that were wrong.
+{
+  // The sliders are conditional markup — they exist only while a flagged joint is selected — and
+  // `refresh` only syncs DOM that is already there. Flagging a bone therefore left the panel
+  // showing no controls at all. matt: "i have to do a bit of a dance to get out of the bone tool,
+  // back into it, select a different mode, then select the bone, and then the controls appear."
+  const physHandler = SRC.slice(SRC.indexOf("q('phys')?"), SRC.indexOf("q('phys-bake')?"));
+  check('flagging a bone REBUILDS the panel, not just syncs it',
+    /rebuild\(\);/.test(physHandler) && !/[^_]refresh\(\);/.test(physHandler),
+    'markup that appears and disappears cannot be brought up to date by a sync');
+  check('...and so does the ground toggle, which also adds a row',
+    /q\('phys-ground'\)[\s\S]{0,600}?rebuild\(\);/.test(SRC));
+
+  // matt: "it doesn't seem to take into account symmetry. like most things, if i make a left
+  // antenna be physics, its right mirror should also do that. same for adjusting physics
+  // properties."
+  check('a physics flag carries to the mirror twin',
+    /const withTwin = \(j\) => \{/.test(SRC) && /for \(const j of pair\) PhysicsBones\.setRoot/.test(SRC));
+  check('...and so does every parameter drag',
+    /for \(const j of withTwin\(js\[0\]\)\) PhysicsBones\.setParams/.test(SRC),
+    'a stiffness has no handedness, so the value copies rather than reflecting');
+  check('...and the undo step holds both sides',
+    /const snap = \(\) => pair\.map/.test(SRC),
+    'a snapshot of one joint would restore half the edit');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

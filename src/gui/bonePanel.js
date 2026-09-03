@@ -450,28 +450,48 @@ export function wireBoneSection(root, main, opts) {
   // The button stays, doing what it always did, now with the only value there is: push the
   // default onto every bone. That is a reset -- the way back from radii hand-tuned in Radius
   // mode, or from a rig imported with odd ones -- so it is labelled as one.
+  // A JOINT AND ITS MIRROR TWIN, like every other edit in this tool. matt: "if i make a left
+  // antenna be physics, its right mirror should also do that. same for adjusting physics
+  // properties." The parameters are all scalars — a stiffness has no handedness — so they copy
+  // across rather than reflecting, unlike a joint offset.
+  const withTwin = (j) => {
+    const out = [j];
+    const t = j._boneMirror;
+    if (t && main.getMeshes?.().includes(t) && t !== j) out.push(t);
+    return out;
+  };
+
   q('phys')?.addEventListener('click', () => {
     const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
     if (js.length !== 1) { say('Bones: select ONE joint to flag as a physics bone', false); return; }
-    const j = js[0];
-    const on = !PhysicsBones.isRoot(j);
-    const before = { root: !!j._physicsRoot, params: j._physicsParams ? { ...j._physicsParams } : null };
-    const apply = (st) => {
-      if (st.root) { j._physicsRoot = true; j._physicsParams = st.params ? { ...st.params } : { ...PhysicsBones.DEFAULTS }; }
-      else delete j._physicsRoot;
+    const pair = withTwin(js[0]);
+    const on = !PhysicsBones.isRoot(js[0]);
+    const snap = () => pair.map((j) => [j, !!j._physicsRoot, j._physicsParams ? { ...j._physicsParams } : null]);
+    const before = snap();
+    const apply = (rows) => {
+      for (const [j, root, params] of rows) {
+        if (root) { j._physicsRoot = true; j._physicsParams = params ? { ...params } : { ...PhysicsBones.DEFAULTS }; }
+        else delete j._physicsRoot;
+      }
       PhysicsBones.reset(main);
       Skeleton.updateVisuals(main);
       main.render?.();
-      refresh();
+      rebuild();
     };
-    PhysicsBones.setRoot(main, j, on);
-    const after = { root: !!j._physicsRoot, params: j._physicsParams ? { ...j._physicsParams } : null };
+    for (const j of pair) PhysicsBones.setRoot(main, j, on);
+    const after = snap();
     main.getStateManager?.()?.pushStateCustom?.(
       () => apply(before), () => apply(after), false, 'Physics Bone');
+    const mirrored = pair.length > 1 ? ' (mirrored)' : '';
     say(on
-      ? 'Bones: physics on — everything below this joint will swing while the timeline plays'
-      : 'Bones: physics off', true);
-    refresh();
+      ? `Bones: physics on${mirrored} — everything below this joint swings and lags`
+      : `Bones: physics off${mirrored}`, true);
+    // REBUILD, not refresh. The sliders are conditional MARKUP — they only exist while a flagged
+    // joint is selected — and refresh only syncs the DOM that is already there, so flagging a
+    // bone left the panel showing no controls until something else happened to rebuild it. matt:
+    // "i have to do a bit of a dance to get out of the bone tool, back into it, select a
+    // different mode, then select the bone, and then the controls appear."
+    rebuild();
   });
 
   // The three parameters, live on drag: this is a LOOK, and the whole reason the sim runs
@@ -483,7 +503,7 @@ export function wireBoneSection(root, main, opts) {
       const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
       if (js.length !== 1) return;
       const v = parseInt(input.value, 10) / scale;
-      PhysicsBones.setParams(js[0], { [key]: v });
+      for (const j of withTwin(js[0])) PhysicsBones.setParams(j, { [key]: v });
       if (val) val.textContent = fmt(v);
       main.render?.();
     });
@@ -496,9 +516,11 @@ export function wireBoneSection(root, main, opts) {
   q('phys-ground')?.addEventListener('click', () => {
     const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
     if (js.length !== 1) return;
-    PhysicsBones.setParams(js[0], { ground: !PhysicsBones.params(js[0]).ground,
-      groundY: PhysicsBones.groundHeight(main) });
-    refresh();
+    const on = !PhysicsBones.params(js[0]).ground;
+    for (const j of withTwin(js[0])) {
+      PhysicsBones.setParams(j, { ground: on, groundY: PhysicsBones.groundHeight(main) });
+    }
+    rebuild();
     main.render?.();
   });
 
