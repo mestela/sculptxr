@@ -2465,11 +2465,11 @@ Skeleton.updateVisuals = function (main) {
   }
 
 
-  // THE SCALE HANDLES, on the selected joint and only in Scale mode. They are an editing
+  // THE JOINT HANDLES, on the selected joint and only in Tweak Joint mode. They are an editing
   // instrument rather than a display layer: drawn all the time they would bury the rig, and
   // drawn on every joint they would make it unpickable.
   {
-    const scaling = main.getSculptManager?.()?.getCurrentTool?.()?.modeKey?.() === 'scale';
+    const scaling = main.getSculptManager?.()?.getCurrentTool?.()?.modeKey?.() === 'joint';
     const sel = scaling ? (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)) : [];
     const on = sel.length === 1 ? sel[0] : null;
     if (on) Skeleton.updateScaleHandles(main, on, Skeleton.boneRadiusOf(main, on));

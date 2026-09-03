@@ -35,6 +35,7 @@ import path from 'path';
 const REPO = '/Users/mattestela/sculptxr';
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
 let SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
 
 const inject = process.env.TH_INJECT || '';
 const cut = (a, b, n) => {
@@ -270,6 +271,32 @@ check('a trace names the hand, the owner, and who moved the joint',
   check('every drag releases its hand ownership',
     (SRC.match(/this\._grabHand = null;/g) || []).length >= 4,
     'a stale owner outlives its drag and arbitrates the next mode\'s first grab');
+}
+
+// ── TWEAK JOINT DOES NOT MIRROR ───────────────────────────────────────────────────────
+//
+// Every other edit in this tool takes the mirror twin with it — a radius, a position, a bone
+// shape — and the first version of joint scaling followed suit. It is wrong here: the reason to
+// shape a joint at all is that a left hand and a right hand can differ, and a rig that cannot
+// express that can only make symmetrical creatures. matt: "only center line joints should have
+// left-right symmetry, the rest of the handles should allow me to scale independantly."
+//
+// A CENTRELINE JOINT stays symmetric by construction rather than by rule — it sits on the mirror
+// plane with no offset, so its two X faces are always the same distance out — which is why there
+// is nothing here enforcing that half of it.
+{
+  check('a joint drag does not carry its twin',
+    !/if \(sc\.twin\) Skeleton\.setJointScale/.test(SRC)
+    && !/_scale = \{ joint: joint, twin:/.test(SRC),
+    'shaping one hand has to leave the other alone, or the shape is not a shape but a species');
+  check('...and the undo step holds only the joint it edited',
+    /const before = \[snap\(joint\)\];\s*\n\s*this\._scale = \{ joint: joint, grip: grip/.test(SRC),
+    'a snapshot that still listed the twin would restore a value nothing had changed');
+  // The mode is named for what it does to a joint, not for the one axis a handle happens to
+  // change — it sits beside Tweak FK and Tweak Free and is the same kind of verb.
+  check('the mode is Tweak Joint',
+    /\['joint', 'Tweak Joint'\]/.test(PANEL) && /this\._mode === 'joint'/.test(SRC),
+    'the key and the label were renamed together — a half-rename leaves the mode unreachable');
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

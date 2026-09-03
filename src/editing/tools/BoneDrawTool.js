@@ -132,7 +132,7 @@ class BoneDrawTool extends SculptBase {
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
     this._pose = null;         // { joint, qStart, local } while rotating in pose mode
     this._radius = null;       // { joint, twin, before } while dragging a capsule radius
-    this._scale = null;        // { joint, twin, grip, before } while dragging a scale handle
+    this._scale = null;        // { joint, grip, before } while dragging a joint handle
     this._ik = null;           // { joint, before } while dragging an IK effector
     this._drag = null;         // { kind, joint, ... } while a mouse/touch drag owns the pointer
 
@@ -155,10 +155,10 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'draw') return 'draw';
     if (this._mode === 'pose') return 'pose';
     if (this._mode === 'radius') return 'radius';
-    // SCALE: the joint's three extents, on box handles. A mode of its own rather than a
+    // TWEAK JOINT: the joint's three extents, on box handles. A mode of its own rather than a
     // modifier on Radius, because the handles have to be DRAWN to be grabbed and drawing them
     // whenever a joint is selected would bury the rig.
-    if (this._mode === 'scale') return 'scale';
+    if (this._mode === 'joint') return 'joint';
     if (this._mode === 'ik') return 'ik';
     return this._compensate ? 'free' : 'fk';
   }
@@ -173,7 +173,7 @@ class BoneDrawTool extends SculptBase {
   }
 
   setModeKey(key) {
-    const named = { draw: 'draw', pose: 'pose', radius: 'radius', scale: 'scale', ik: 'ik' };
+    const named = { draw: 'draw', pose: 'pose', radius: 'radius', joint: 'joint', ik: 'ik' };
     const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
@@ -186,9 +186,9 @@ class BoneDrawTool extends SculptBase {
     // The capsules are the whole point of radius mode, so turn them on when entering it
     // rather than making the user find a second toggle to make the mode visible.
     if (mode === 'radius') Skeleton.setDisplayFlag('capsules', true);
-    // Same reasoning for Scale: the capsules ARE what the handles resize, so a mode that
+    // Same reasoning for Tweak Joint: the capsules ARE what the handles resize, so a mode that
     // resizes something invisible looks like a mode that does nothing.
-    if (mode === 'scale') Skeleton.setDisplayFlag('capsules', true);
+    if (mode === 'joint') Skeleton.setDisplayFlag('capsules', true);
     // Leaving draw mode ends the chain — coming back to draw should start clean rather
     // than silently resuming a chain from before the detour.
     if (mode !== 'draw') this.endChain();
@@ -732,7 +732,7 @@ class BoneDrawTool extends SculptBase {
 
     // Desktop: the same handles, picked in screen space through the drag plane. The plane sits
     // on the joint, so a drag reads as "move this face" the way it does in the headset.
-    if (this._mode === 'scale') {
+    if (this._mode === 'joint') {
       const main2 = this._main;
       const hj = main2._jointHandles && main2._jointHandles.joint;
       let grip = null;
@@ -741,7 +741,7 @@ class BoneDrawTool extends SculptBase {
       }
       if (grip) {
         this._beginScale(hj, grip, Skeleton.boneRadiusOf(main2, hj));
-        this._drag = { kind: 'scale', joint: hj, anchor: Skeleton.jointPos(hj, _jp).clone(),
+        this._drag = { kind: 'joint', joint: hj, anchor: Skeleton.jointPos(hj, _jp).clone(),
           startX: startX, startY: startY };
         this._hilite = hj;
         Skeleton.setHighlight(main2, hj);
@@ -839,7 +839,7 @@ class BoneDrawTool extends SculptBase {
       return;
     }
 
-    if (d.kind === 'scale') {
+    if (d.kind === 'joint') {
       if (this._planePoint(d.anchor, _hit)) this._scaleTo(_hit);
       return;
     }
@@ -881,7 +881,7 @@ class BoneDrawTool extends SculptBase {
     if (d.kind === 'tweak') this._releaseGrab();
     else if (d.kind === 'pose') this._releasePose();
     else if (d.kind === 'radius') this._releaseRadius();
-    else if (d.kind === 'scale') this._releaseScale();
+    else if (d.kind === 'joint') this._releaseScale();
     else if (d.moved) this._releaseIK();
     else this._togglePin(d.joint); // tap in IK mode = cycle the pin (the VR A button)
   }
@@ -1320,12 +1320,18 @@ class BoneDrawTool extends SculptBase {
   // stays centred on the joint.
   _beginScale(joint, grip, fallbackR) {
     const main = this._main;
-    const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
-      ? joint._boneMirror : null;
+    // NO TWIN. Every other edit in this tool mirrors — a radius, a position, a bone shape — and
+    // this one deliberately does not: the whole point of shaping a joint is that a left hand and
+    // a right hand can differ, and a rig where they cannot is a rig that can only make
+    // symmetrical creatures. matt: "only center line joints should have left-right symmetry, the
+    // rest of the handles should allow me to scale independantly."
+    //
+    // A CENTRELINE JOINT IS SYMMETRIC ANYWAY, and by construction rather than by rule: it sits
+    // on the mirror plane and its ellipsoid is centred on it with no offset, so its two X faces
+    // are always the same distance out. There is nothing to enforce and nothing to propagate.
     const snap = (j) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice()];
     const before = [snap(joint)];
-    if (twin) before.push(snap(twin));
-    this._scale = { joint: joint, twin: twin, grip: grip, before: before,
+    this._scale = { joint: joint, grip: grip, before: before,
       // The radius the extents are a multiple OF, fixed at the grab: reading it live would make
       // a drag that changes the radius compound with itself.
       base: Math.max(Skeleton.jointRadius(joint, fallbackR || 0), 1e-6) };
@@ -1343,10 +1349,6 @@ class BoneDrawTool extends SculptBase {
     const cur = (Skeleton.jointScale(sc.joint) || [1, 1, 1]).slice();
     cur[axis] = next;
     Skeleton.setJointScale(sc.joint, cur[0], cur[1], cur[2]);
-    // THE TWIN TAKES THE SAME THREE NUMBERS, not a reflection of them. The extents are
-    // world-axis aligned and a mirror across X flips the SIGN of the x offset, not the size, so
-    // a left wrist and a right wrist that are the same shape have identical scales.
-    if (sc.twin) Skeleton.setJointScale(sc.twin, cur[0], cur[1], cur[2]);
     this._liveWeights();
     this._refresh();
   }
@@ -1577,11 +1579,11 @@ class BoneDrawTool extends SculptBase {
       return;
     }
 
-    // SCALE: grab a face dot and the face follows your hand. A HANDLE FIRST, THEN A JOINT — the
+    // TWEAK JOINT: grab a face dot and the face follows your hand. A HANDLE FIRST, THEN A JOINT — the
     // dots sit on the joint you have selected, so near them that is what the hand is reaching
     // for; falling through to the joint pick would re-select instead of resizing and the
     // handles would feel dead.
-    if (this._mode === 'scale') {
+    if (this._mode === 'joint') {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
       const scHand = (options && options.handedness) || null;
