@@ -354,5 +354,61 @@ const len = (a, b) => wp(a).distanceTo(wp(b));
     'tip reached ' + loose.toFixed(2) + ' with no drag, ' + dragged.toFixed(2) + ' with it');
 }
 
+// ── A RESET MUST NOT BAKE IN THE SAG ──────────────────────────────────────────────────
+//
+// matt: "each time i do this to any of the joints in the skeleton, not just physics joints, the
+// physics joints sag a little. if i select 10 things in a row, the antenna that used to point
+// straight to the sides now hang straight down."
+//
+// Selecting with Tweak Free raises the rig-edit flag, which resets the sim — and a reset used to
+// throw the state away and let the next step re-capture the rest pose from wherever the rig
+// happened to be, which mid-sag is the SAGGED pose. Every reset therefore enshrined however far
+// the chain had fallen. Measured before the fix: 0.16 units per reset, dead linear over ten.
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
+  const main = {};
+  PB.reset(main);
+  const rest = wp(r.t2);
+  const drift = [];
+  for (let sel = 0; sel < 10; sel++) {
+    for (let i = 0; i < 20; i++) PB.step(main, 1 / 60);
+    PB.reset(main);                                   // what a selection does
+    drift.push(wp(r.t2).distanceTo(rest));
+  }
+  check('ten resets do not move the chain at all',
+    drift[9] < 1e-6,
+    'drifted ' + drift.map((d) => d.toFixed(2)).join(', ')
+    + ' — a linear ramp here means every reset is adopting the sag');
+  check('...and a reset puts the chain back where it started',
+    wp(r.t2).distanceTo(rest) < 1e-6,
+    'a reset is meant to undo the physics, not to keep it');
+}
+
+// ── ...WITHOUT UNDOING SOMEBODY ELSE'S WRITE ──────────────────────────────────────────
+//
+// The other half, and the one that would be easy to break while fixing the first: if the
+// animation or a hand pose has written the joint since the sim last did, THAT is the pose now
+// and putting the older one back would quietly undo it.
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  const main = {};
+  PB.reset(main);
+  for (let i = 0; i < 40; i++) PB.step(main, 1 / 60);
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.8);
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(0, -1, 0), q, new THREE.Vector3(1, 1, 1));
+  for (let k = 0; k < 16; k++) r.t0._mat[k] = m.elements[k];
+  const posed = wp(r.t2);
+  PB.reset(main);
+  check('a reset leaves a pose written by something else alone',
+    wp(r.t2).distanceTo(posed) < 1e-6,
+    'moved ' + wp(r.t2).distanceTo(posed).toFixed(3) + ' — restoring a stale pose here would '
+    + 'undo the animation');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

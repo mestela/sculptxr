@@ -162,7 +162,33 @@ PhysicsBones.chain = function (main, root) {
 let _state = new Map();
 let _lastTime = null;
 
+// A RESET UNDOES THE PHYSICS; IT DOES NOT ADOPT IT.
+//
+// Every reset used to throw the state away and let the next step re-capture the rest pose from
+// wherever the rig happened to be — which, mid-sag, is the sagged pose. So each reset baked in
+// however far the chain had fallen, and the sag accumulated one reset at a time. Anything that
+// resets does it: a scrub, a rig edit, and — matt's case — a selection, because Tweak Free
+// raises the rig-edit flag. "if i select 10 things in a row, the antenna that used to point
+// straight to the sides now hang straight down." Measured: 0.16 units per selection, dead
+// linear.
+//
+// So the joints are put back to the pose they had before physics touched them, and only then is
+// the state cleared. A reset is now the honest thing its name claims: the chain returns to where
+// the animation or the author last put it.
 PhysicsBones.reset = function (main) {
+  for (const st of _state.values()) {
+    if (!st.joint || !st.rest || !st.written) continue;
+    // ...unless something else has written the joint since, in which case that is the pose now
+    // and putting our older one back would undo it. Same rule the step uses.
+    const now = st.joint.getMatrix();
+    let same = true;
+    for (let k = 0; k < 16; k++) {
+      if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
+    }
+    if (!same) continue;
+    mat4Copy(now, st.rest);
+    Skeleton.syncThree(st.joint);
+  }
   _state = new Map();
   _lastTime = null;
   if (!main) return;
@@ -251,6 +277,7 @@ PhysicsBones.step = function (main, dt) {
       const pid = link.parent.getID();
       let pst = _state.get(pid);
       if (!pst) { pst = { p: new THREE.Vector3(), prev: new THREE.Vector3(), v: new THREE.Vector3() }; _state.set(pid, pst); }
+      pst.joint = link.parent;   // so a reset can put this joint back where it found it
       if (!pst.rest) pst.rest = Array.prototype.slice.call(link.parent.getMatrix());
 
       _pAnim.copy(target.get(id));
