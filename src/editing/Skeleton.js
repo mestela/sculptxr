@@ -534,18 +534,39 @@ function makePair(geo, color) {
 // model matrix only ever rotates, translates and stretches along the bone. matt: "i should be
 // able to have a large joint, and a small child joint, and see the capsule preview have a
 // tapered cylinder."
+// ...and THREE radii at each end, since a joint can be wide and shallow. The extents are
+// world-axis aligned while the shaft's own frame runs along the bone, so the shader takes the
+// bone's rotation and its inverse: the unit cross-section goes out to world, is scaled there,
+// and comes back. The component along the bone is dropped, which makes this the ellipse where
+// the world-scaled shape meets the plane square to the bone — exact whenever the bone runs
+// along an axis, which is the spine and the arms of any rig authored in a T-pose.
+//
+// The inverse is passed rather than computed: transpose() is GLSL ES 3.0 and this has to
+// compile on a WebGL1 context too.
 function taperMaterial(mat) {
-  mat.userData.taper = { uRA: { value: 1 }, uRB: { value: 1 } };
+  mat.userData.taper = {
+    uHA: { value: new THREE.Vector3(1, 1, 1) },
+    uHB: { value: new THREE.Vector3(1, 1, 1) },
+    uRot: { value: new THREE.Matrix3() },
+    uRotInv: { value: new THREE.Matrix3() },
+  };
   mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uRA = mat.userData.taper.uRA;
-    shader.uniforms.uRB = mat.userData.taper.uRB;
-    shader.vertexShader = 'uniform float uRA;\nuniform float uRB;\n' + shader.vertexShader;
+    const t = mat.userData.taper;
+    shader.uniforms.uHA = t.uHA;
+    shader.uniforms.uHB = t.uHB;
+    shader.uniforms.uRot = t.uRot;
+    shader.uniforms.uRotInv = t.uRotInv;
+    shader.vertexShader = 'uniform vec3 uHA;\nuniform vec3 uHB;\n'
+      + 'uniform mat3 uRot;\nuniform mat3 uRotInv;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n'
       // The cylinder spans y = -0.5 .. 0.5, and -0.5 is the end the bone STARTS at.
       + 'float _t = transformed.y + 0.5;\n'
-      + 'float _r = mix(uRA, uRB, _t);\n'
-      + 'transformed.xz *= _r;');
+      + 'vec3 _h = mix(uHA, uHB, _t);\n'
+      + 'vec3 _w = uRot * vec3(transformed.x, 0.0, transformed.z);\n'
+      + 'vec3 _b = uRotInv * (_w * _h);\n'
+      + 'transformed.x = _b.x;\n'
+      + 'transformed.z = _b.z;');
   };
   // Two materials that differ only by their uniforms must not share a compiled program.
   mat.customProgramCacheKey = () => 'skelTaper';
@@ -655,6 +676,160 @@ Skeleton.setJointRadius = function (j, r) {
 
 Skeleton.jointRadiusIsSet = function (j) { return !!(j && j._jointRadius > 0); };
 
+// The radius a joint falls back to when it has none of its own: the widest bone touching it,
+// which is the same rule the skin uses. Needed wherever a joint's SIZE has to be known before
+// anyone has set one — the handles have to appear somewhere on an untouched joint.
+Skeleton.boneRadiusOf = function (main, j) {
+  let r = j._boneRadius || 0;
+  for (const k of Skeleton.joints(main)) {
+    if (k._parentMesh === j) r = Math.max(r, k._boneRadius || 0);
+  }
+  return r;
+};
+
+// ---- joint scale (width / height / depth) ------------------------------------
+//
+// The joint sphere becomes an ELLIPSOID: three multipliers on the radius, so a pelvis can be
+// wide and shallow and a ribcage can be deep without either of them being round. matt: "lets
+// enable the volume tools for these joint spheres now so i can do nonlinear setups... just keep
+// the bbox controls for width, height, depth."
+//
+// WORLD-AXIS ALIGNED, and no rotation or offset — matt's scope, and for a rig authored in a
+// T-pose the world axes ARE width, height and depth, which is why the box handles read the way
+// you expect. It also sidesteps the trap the removed joint volumes fell into: a DRAWN joint
+// carries only a translation, so "the joint's own frame" was world space anyway, and every
+// volume came out world-aligned however its bone was pointing.
+//
+// Multipliers rather than three absolute half-extents, so the radius stays the one number that
+// says how big a joint is: Radius mode still means something on a squashed joint, and a rig
+// scaled up keeps its proportions.
+const UNIT_SCALE = [1, 1, 1];
+Skeleton.jointScale = function (j) {
+  const s = j && j._jointScale;
+  return (s && s.length === 3) ? s : UNIT_SCALE;
+};
+
+Skeleton.setJointScale = function (j, x, y, z) {
+  if (!j) return false;
+  const c = (v) => Math.max(0.05, Math.min(20, v || 1));   // never inside-out, never runaway
+  j._jointScale = [c(x), c(y), c(z)];
+  return true;
+};
+
+Skeleton.jointScaleIsSet = function (j) {
+  const s = j && j._jointScale;
+  return !!(s && (s[0] !== 1 || s[1] !== 1 || s[2] !== 1));
+};
+
+// The three half-extents a joint actually occupies: its radius times its scale. One definition,
+// used by the draw, the skin and the handles, so they cannot disagree about how big a joint is.
+Skeleton.jointHalf = function (j, fallback, out) {
+  out = out || [0, 0, 0];
+  const r = Skeleton.jointRadius(j, fallback);
+  const s = Skeleton.jointScale(j);
+  out[0] = r * s[0]; out[1] = r * s[1]; out[2] = r * s[2];
+  return out;
+};
+
+// ---- joint scale handles ------------------------------------------------------
+//
+// SIX DOTS, one on each face of the joint's bounding box. A face dot says which axis it changes
+// just by where it sits, so there is nothing to read. matt asked for the box controls back for
+// the joint spheres — "just keep the bbox controls for width, height, depth" — and that scope is
+// why there is no centre dot and no corner dots here: no offset to slide and no rotation to
+// turn, so the only thing a handle can mean is one of the three extents.
+//
+// A FACE DRAG SCALES THE JOINT ABOUT ITS CENTRE, so the opposite face moves out by the same
+// amount. With an offset available that would be the wrong behaviour — matt objected to exactly
+// it once — but without one it is the only behaviour: a joint IS centred on its joint, and a
+// handle that grew one side only would have nowhere to record the shift.
+//
+// Drawn for the SELECTED joint only. Handles on every joint at once would be twenty times the
+// clutter and would make the rig unpickable.
+const HANDLE_AXES = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+
+function scaleHandleGroup(main) {
+  if (main._jointHandles) return main._jointHandles;
+  const g = new THREE.Group();
+  g.frustumCulled = false;
+  const geo = new THREE.SphereGeometry(1, 10, 8);
+  const mk = (color) => {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: color, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false,
+    }));
+    m.renderOrder = 10002;          // above the rig, like the labels: a handle you cannot see
+    m.frustumCulled = false;        // is a handle you cannot grab
+    m.isPickable = false;
+    m.raycast = () => {};
+    g.add(m);
+    return m;
+  };
+  main._jointHandles = {
+    group: g,
+    faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax])),
+    pos: HANDLE_AXES.map(() => new THREE.Vector3()),
+    centrePos: new THREE.Vector3(),
+    joint: null,
+  };
+  skelGroup(main).add(g);
+  return main._jointHandles;
+}
+
+// Where the handles are, in model space, for the selected joint. Written every frame by the draw
+// and read by the tool's pick — one source, so what you grab is what you see.
+Skeleton.updateScaleHandles = function (main, j, fallbackR) {
+  const h = scaleHandleGroup(main);
+  h.joint = j || null;
+  if (!j) { h.group.visible = false; return h; }
+  h.group.visible = true;
+
+  // World-axis aligned, so there is no frame to build: the extents ARE the offsets to the faces.
+  const half = Skeleton.jointHalf(j, fallbackR || 0, _halfH);
+  Skeleton.jointPos(j, _pJH);
+
+  const r = Skeleton.sceneUnit(main) * 0.018;
+  h.centrePos.copy(_pJH);
+  for (let i = 0; i < HANDLE_AXES.length; i++) {
+    const [ax, sign] = HANDLE_AXES[i];
+    _vFace.set(0, 0, 0);
+    _vFace.setComponent(ax, sign * half[ax]);
+    h.pos[i].copy(h.centrePos).add(_vFace);
+    h.faces[i].position.copy(h.pos[i]);
+    h.faces[i].scale.setScalar(r);
+    h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+  }
+  return h;
+};
+
+// Which handle is under a point, if any. Generous radius: a dot is small on purpose, and a grab
+// that misses reads as the handles not working at all.
+Skeleton.pickScaleHandle = function (main, p, radius) {
+  const h = main._jointHandles;
+  if (!h || !h.group.visible || !h.joint) return null;
+  let best = null, bestD = radius * radius, bestI = -1;
+  for (let i = 0; i < h.pos.length; i++) {
+    const d = h.pos[i].distanceToSquared(p);
+    if (d < bestD) { bestD = d; bestI = i; best = { kind: 'face', axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] }; }
+  }
+  return best ? Object.assign(best, { index: bestI }) : null;
+};
+
+// WHICH HANDLE IS UNDER THE HAND, lit. A dot with no hover state gives you no way to know which
+// one you are about to take until you have taken it — and they sit close together on a small
+// joint. matt: "the bbox handles should preselect highlight."
+Skeleton.highlightScaleHandle = function (main, grip) {
+  const h = main._jointHandles;
+  if (!h) return;
+  const hot = grip ? grip.index : -99;
+  const r = Skeleton.sceneUnit(main) * 0.018;
+  for (let i = 0; i < h.faces.length; i++) {
+    const on = hot === i;
+    h.faces[i].scale.setScalar(on ? r * 1.6 : r);
+    h.faces[i].material.opacity = on ? 1 : 0.9;
+    h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+  }
+};
+
 // ---- bone identity colours -----------------------------------------------------
 //
 // Each bone gets a saturated colour, and the capsule and the vertices it claims are painted
@@ -732,6 +907,11 @@ function colorSlots(main) {
   return main._skelColorSlots;
 }
 
+const _halfA = [0, 0, 0], _halfB = [0, 0, 0];
+const _halfH = [0, 0, 0];
+const _pJH = new THREE.Vector3();
+const _vFace = new THREE.Vector3();
+const _mRot = new THREE.Matrix4();
 const _fallbackColor = new THREE.Color(0.6, 0.6, 0.6);
 const _wireCol = new THREE.Color();
 const _pCentre = new THREE.Vector3();
@@ -2240,9 +2420,9 @@ Skeleton.updateVisuals = function (main) {
     // what say how big a joint is, and the SKIN is tapered exactly (see SkinMesh capsuleTarget).
     const cr = j._boneRadius || 0;
     if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
-    const crA = Skeleton.jointRadius(parent, cr);
-    const crB = Skeleton.jointRadius(j, cr);
-    const crMid = (crA + crB) * 0.5;
+    const hA = Skeleton.jointHalf(parent, cr, _halfA);
+    const hB = Skeleton.jointHalf(j, cr, _halfB);
+    const crMid = ((hA[0] + hA[1] + hA[2]) + (hB[0] + hB[1] + hB[2])) / 6;
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
     // which is the same colour the weight preview paints onto the vertices it claims. (The
     // radius still belongs to this joint; ownership and authorship are different things.)
@@ -2255,15 +2435,23 @@ Skeleton.updateVisuals = function (main) {
       o.quaternion.copy(_q);
       // The radii go to the shader, not into the scale — see taperMaterial. x/z stay at 1.
       const tp = o.material.userData.taper;
-      if (tp) { tp.uRA.value = crA; tp.uRB.value = crB; o.scale.set(1, len, 1); }
-      else o.scale.set(crMid, len, crMid);
+      if (tp) {
+        tp.uHA.value.set(hA[0], hA[1], hA[2]);
+        tp.uHB.value.set(hB[0], hB[1], hB[2]);
+        _mRot.makeRotationFromQuaternion(_q);
+        tp.uRot.value.setFromMatrix4(_mRot);
+        tp.uRotInv.value.copy(tp.uRot.value).transpose();   // a rotation's inverse
+        o.scale.set(1, len, 1);
+      } else o.scale.set(crMid, len, crMid);
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
-    for (const [part, at, pr] of [[e.cap.a, _pA, crA], [e.cap.b, _pB, crB]]) {
+    // The end caps are world-axis aligned — no rotation on them — so the three extents go
+    // straight into the scale.
+    for (const [part, at, ph] of [[e.cap.a, _pA, hA], [e.cap.b, _pB, hB]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
-        o.scale.setScalar(pr);
+        o.scale.set(ph[0], ph[1], ph[2]);
         o.visible = true;
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
@@ -2276,6 +2464,20 @@ Skeleton.updateVisuals = function (main) {
     }
   }
 
+
+  // THE SCALE HANDLES, on the selected joint and only in Scale mode. They are an editing
+  // instrument rather than a display layer: drawn all the time they would bury the rig, and
+  // drawn on every joint they would make it unpickable.
+  {
+    const scaling = main.getSculptManager?.()?.getCurrentTool?.()?.modeKey?.() === 'scale';
+    const sel = scaling ? (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)) : [];
+    const on = sel.length === 1 ? sel[0] : null;
+    if (on) Skeleton.updateScaleHandles(main, on, Skeleton.boneRadiusOf(main, on));
+    else if (main._jointHandles) {
+      main._jointHandles.group.visible = false;
+      main._jointHandles.joint = null;
+    }
+  }
 
   for (const id of Array.from(main._skelVis.keys())) if (!live.has(id)) disposeEntry(main, id);
 
@@ -2825,7 +3027,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 8;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii
+const SKEL_VERSION = 9;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -2933,6 +3135,13 @@ Skeleton.serialize = function (meshes) {
     if (m && m._isBone && m._jointRadius > 0) rads.push({ i: i, r: m._jointRadius });
   });
 
+  // v9: the joint's per-axis scale, where it is not round. Only the joints that carry one, so a
+  // rig that has never been squashed costs a single zero.
+  const scales = [];
+  meshes.forEach((m, i) => {
+    if (m && m._isBone && Skeleton.jointScaleIsSet(m)) scales.push({ i: i, s: m._jointScale });
+  });
+
   // JOINT VOLUMES ARE GONE, and the section stays. Writing an empty one keeps the block at v7
   // so a reader that expects the section still finds it, and the reader below still SKIPS a
   // populated one — which is what lets a file saved when volumes existed keep loading.
@@ -2947,6 +3156,7 @@ Skeleton.serialize = function (meshes) {
   slots += 1 + rests.length * 17;
   slots += 1 + vols.length * 12;
   slots += 1 + rads.length * 2;
+  slots += 1 + scales.length * 4;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -2985,6 +3195,9 @@ Skeleton.serialize = function (meshes) {
 
   u[o++] = rads.length;
   for (const r of rads) { u[o++] = r.i; f[o++] = r.r; }
+
+  u[o++] = scales.length;
+  for (const sc of scales) { u[o++] = sc.i; f[o++] = sc.s[0]; f[o++] = sc.s[1]; f[o++] = sc.s[2]; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -3213,6 +3426,16 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const mi = u[o++];
         const r = f[o++];
         if (meshes[mi]) meshes[mi]._jointRadius = r;
+      }
+    }
+
+    // v9: the joint's per-axis scale.
+    if (ver >= 9) {
+      const sn = u[o++];
+      for (let i = 0; i < sn; i++) {
+        const mi = u[o++];
+        const sx = f[o++], sy = f[o++], sz = f[o++];
+        if (meshes[mi]) Skeleton.setJointScale(meshes[mi], sx, sy, sz);
       }
     }
 

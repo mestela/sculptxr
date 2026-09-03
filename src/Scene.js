@@ -3801,6 +3801,12 @@ class Scene {
     try {
       Skeleton.hidePlane(this);
       Skeleton.hidePreview(this);
+      // The scale handles are a Group in the skeleton group, not a mesh, so emptying _meshes
+      // leaves them floating over an empty scene — the same trap the volume handles fell into.
+      if (this._jointHandles) {
+        this._jointHandles.group.visible = false;
+        this._jointHandles.joint = null;
+      }
       Skeleton.updateVisuals(this);
     } catch (e) { console.error('rig teardown on clear failed:', e); }
 

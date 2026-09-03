@@ -333,5 +333,30 @@ const roundTrip = (meshes) => {
 }
 
 
+// ── A JOINT'S SIZE AND SHAPE SURVIVE A SAVE (SKEL v8/v9) ──────────────────────────────
+//
+// The radius and the per-axis scale are what make a head a head, and they live only in memory
+// until written. The scale carries the extra rule that 1,1,1 means "round" and is not written
+// at all — so a joint that has never been squashed must come back with no scale on it rather
+// than with an array of ones, or "is this joint shaped?" answers yes for the whole rig.
+{
+  const sized = mk({ _isBone: true, _boneRadius: 1, _jointRadius: 4.5 });
+  const shaped = mk({ _isBone: true, _boneRadius: 1, _jointRadius: 3, _jointScale: [1.6, 1, 0.4] });
+  const plain = mk({ _isBone: true, _boneRadius: 1 });
+  const out = roundTrip([sized, shaped, plain]);
+
+  check('a joint radius comes back', !!out && Math.abs(out[0]._jointRadius - 4.5) < 1e-5);
+  check('...and a per-axis scale with it',
+    !!out && !!out[1]._jointScale
+    && Math.abs(out[1]._jointScale[0] - 1.6) < 1e-5
+    && Math.abs(out[1]._jointScale[2] - 0.4) < 1e-5,
+    out && JSON.stringify(out[1]._jointScale));
+  check('...and its radius is not lost to the scale',
+    !!out && Math.abs(out[1]._jointRadius - 3) < 1e-5);
+  check('a ROUND joint comes back with no scale at all',
+    !!out && !out[2]._jointScale && !out[2]._jointRadius,
+    'writing 1,1,1 would make every joint answer yes to "has this been shaped?"');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

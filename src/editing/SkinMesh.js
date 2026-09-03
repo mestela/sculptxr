@@ -373,14 +373,33 @@ function capsuleTarget(p, caps, out) {
     // A point sitting exactly on an axis has no direction to be pushed out along; skip that
     // capsule rather than inventing one. Smoothing will have moved it off by the next pass.
     if (l < 1e-9) { sd.push(Infinity); nx.push(0); ny.push(0); nz.push(0); continue; }
-    // The radius where this point sits, lerped between the two ends. `t` is already clamped, so
-    // past either end the cone keeps that end's radius and the cap stays a sphere of it.
-    const cr = c.r2 === undefined ? c.r : c.r + (c.r2 - c.r) * t;
+    // THE HALF-EXTENTS WHERE THIS POINT SITS, lerped between the two ends. `t` is already
+    // clamped, so past either end the shape keeps that end's extents and the cap stays that
+    // end's ellipsoid. Three numbers rather than one, since a joint can be sized per axis.
+    const hx = c.ha[0] + (c.hb[0] - c.ha[0]) * t;
+    const hy = c.ha[1] + (c.hb[1] - c.ha[1]) * t;
+    const hz = c.ha[2] + (c.hb[2] - c.ha[2]) * t;
+
+    // THE SURFACE IN THIS DIRECTION, measured radially. For a sphere that is the true signed
+    // distance; for an ellipsoid it is the distance along the ray from the centre, which is
+    // always at least the true (perpendicular) distance and — the part that matters — is zero
+    // exactly on the surface and changes sign across it. The relax steps along this same ray,
+    // so the two agree and it lands ON the surface rather than near it.
+    const ux = _to.x / Math.max(hx, 1e-9);
+    const uy = _to.y / Math.max(hy, 1e-9);
+    const uz = _to.z / Math.max(hz, 1e-9);
+    const lu = Math.hypot(ux, uy, uz);
+    if (lu < 1e-9) { sd.push(Infinity); nx.push(0); ny.push(0); nz.push(0); continue; }
+    const cr = l / lu;                      // the surface's distance from the axis, this way
     const d = l - cr;                       // negative inside
     sd.push(d);
     nx.push(_to.x / l); ny.push(_to.y / l); nz.push(_to.z / l);
     if (d < dmin) dmin = d;
-    if (cr < rmin) rmin = cr;
+    // The FINEST feature here, which is the smallest of the three half-extents rather than the
+    // radius: a joint squashed flat in Z has to keep a blend narrow enough not to fill it back
+    // out again.
+    const fine = Math.min(hx, hy, hz);
+    if (fine < rmin) rmin = fine;
   }
   if (!(dmin < Infinity)) return out.copy(p);
 
@@ -610,8 +629,11 @@ function buildArrays(joints, topo) {
     // two joints' radii. A joint with no radius of its own (a root, an unsized tip) falls back
     // to the bone's, which is exactly the old shape.
     const rj = Math.max(boneRadius(p, j), 1e-6);
+    // ...and three of them at each end now, so a joint can be wide and shallow. jointHalf is the
+    // one definition of how big a joint is; the draw and the handles read the same function.
+    const guard = (h) => [Math.max(h[0], 1e-6), Math.max(h[1], 1e-6), Math.max(h[2], 1e-6)];
     caps.push({ a: Skeleton.jointPos(p), b: Skeleton.jointPos(j),
-      r: Math.max(Skeleton.jointRadius(p, rj), 1e-6), r2: Math.max(Skeleton.jointRadius(j, rj), 1e-6) });
+      ha: guard(Skeleton.jointHalf(p, rj)), hb: guard(Skeleton.jointHalf(j, rj)) });
     bones++;
   }
 

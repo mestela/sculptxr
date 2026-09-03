@@ -30,6 +30,7 @@ const MODES = [
   ['free', 'Tweak Free'],
   ['pose', 'Pose'],
   ['radius', 'Radius'],
+  ['scale', 'Scale'],
   ['ik', 'IK'],
 ];
 

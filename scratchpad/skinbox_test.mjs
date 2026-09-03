@@ -56,6 +56,16 @@ const Skeleton = {
   // Lifted in spirit rather than by slice — it is three lines and the fixtures set the field
   // directly, so a copy here cannot drift without the checks below noticing.
   jointRadius: (j, fallback) => ((j && j._jointRadius > 0) ? j._jointRadius : (fallback || 0)),
+  // ...and the three half-extents that come out of it. Same shape as the real one: a scale of
+  // [1,1,1] has to give exactly the round answer, or every fixture above changes meaning.
+  jointScale: (j) => ((j && j._jointScale && j._jointScale.length === 3) ? j._jointScale : [1, 1, 1]),
+  jointHalf: (j, fallback, out) => {
+    out = out || [0, 0, 0];
+    const r = (j && j._jointRadius > 0) ? j._jointRadius : (fallback || 0);
+    const sc = (j && j._jointScale && j._jointScale.length === 3) ? j._jointScale : [1, 1, 1];
+    out[0] = r * sc[0]; out[1] = r * sc[1]; out[2] = r * sc[2];
+    return out;
+  },
   // Lifted from the real file, not stubbed: this is the surface Make Skin wraps onto and the
   // one the weight cage uses, and a fake of it would test my fake.
   shapePoint: null,
@@ -576,6 +586,10 @@ if (SkinMesh._boxLattice) {
   const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
   const at = SC.indexOf('  clearScene() {');
   const body = SC.slice(at, SC.indexOf('\n  }', at));
+  check('...including the joint scale handles',
+    /if \(this\._jointHandles\) \{/.test(body),
+    'a Group in the skeleton group, not a mesh — emptying _meshes leaves it floating over an '
+    + 'empty scene, which is exactly what the removed volume handles used to do');
   check('clearScene tears down the rig visuals',
     /Skeleton\.updateVisuals\(this\);/.test(body) && /Skeleton\.hidePlane\(this\);/.test(body),
     'bones and joints are batched objects, not meshes — emptying _meshes leaves them '
@@ -728,6 +742,53 @@ if (SkinMesh._boxLattice) {
 // vertex is inside the union, eased when outside — with an argument about bridging hollows.
 // Built at matched rates the two are indistinguishable on skel04. Worth remembering before
 // reaching for that idea again.
+
+// ── A JOINT CAN BE WIDE AND SHALLOW ───────────────────────────────────────────────────
+//
+// matt: "lets enable the volume tools for these joint spheres now so i can do nonlinear
+// setups... just keep the bbox controls for width, height, depth." So a joint sphere is an
+// ellipsoid: three multipliers on the radius, world-axis aligned, no rotation and no offset.
+//
+// Measured on the skin, per axis, because the point of the feature is that the three come out
+// DIFFERENT — a check that only looked at one axis would pass on a uniform scale.
+{
+  const chain = () => skeleton([
+    ['a', null, 0, -3, 0, 0.2],
+    ['b', 'a', 0, 0, 0, 0.2],
+    ['c', 'b', 0, 3, 0, 0.2],
+  ]);
+  const reach = (arr, axis) => {
+    const V = arr.vertices;
+    let m = 0;
+    for (let i = 0; i < V.length; i += 3) {
+      if (Math.abs(V[i + 1]) > 0.25) continue;          // the middle joint's own slice
+      m = Math.max(m, Math.abs(V[i + axis]));
+    }
+    return m;
+  };
+  const round = chain();
+  round[1]._jointRadius = 1.5;
+  const r0 = build(round);
+  const rx = reach(r0, 0), rz = reach(r0, 2);
+  check('a joint with no scale is still round',
+    Math.abs(rx - rz) < 0.06, 'x ' + rx.toFixed(2) + ' vs z ' + rz.toFixed(2));
+
+  const flat = chain();
+  flat[1]._jointRadius = 1.5;
+  flat[1]._jointScale = [1.6, 1, 0.4];                  // wide, normal, shallow
+  const f0 = build(flat);
+  const fx = reach(f0, 0), fz = reach(f0, 2);
+  // The RATIO, not each axis against the round baseline: the round baseline is itself a little
+  // wider than the radius (the blend rounds the seam outward), so comparing to it measures the
+  // blend as much as the scale. What the feature promises is that the cross-section stops being
+  // a circle, and 1.6 : 0.4 is a ratio of 4.
+  check('...and one scaled per axis stops being round',
+    fx / fz > 2.5, 'x/z came out ' + (fx / fz).toFixed(2) + ':1 for a joint asked for 4:1');
+  check('...to the extents it was actually given',
+    Math.abs(fx - 1.5 * 1.6) < 0.25 && Math.abs(fz - 1.5 * 0.4) < 0.25,
+    'wanted 2.40 x 0.60, got ' + fx.toFixed(2) + ' x ' + fz.toFixed(2)
+    + ' — the skin follows the ellipsoid, not a sphere of some average radius');
+}
 
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));
 process.exit(failures ? 1 : 0);
