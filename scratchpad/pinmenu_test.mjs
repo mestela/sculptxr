@@ -124,10 +124,14 @@ check('the submenu covers activate, deactivate and clear',
     && wcmds.some((c) => /Deactivate/.test(c[0]) && c[1] === 'setPinActive')
     && wcmds.some((c) => /Clear/.test(c[0]) && c[1] === 'clearPinWeight'),
   wcmds.map((c) => c[0]).join(', '));
-// The same dimming rule as the modes: what would do nothing is shown as doing nothing.
-check('...dimming what would be a no-op',
-  /enabled: w < 1,/.test(SC) && /enabled: w > 0,/.test(SC),
-  'Activate on an already-active pin, Deactivate on an inactive one');
+// NOT dimmed by the current value, unlike the modes. Keying 1 onto a pin already reading 1 is
+// not a no-op: at a playhead with no key of its own it puts a key there, which is the whole
+// point of the command. Dimmed, it silently refused -- matt: "if i try and key an activate
+// frame, sometimes it doesn't set a key".
+check('...always enabled, because keying is never a no-op',
+  /\{ label: 'Activate Here', icon: 'fa-play', enabled: true,/.test(SC)
+    && /\{ label: 'Deactivate Here', icon: 'fa-stop', enabled: true,/.test(SC),
+  'a dimmed transition refuses to key the frame you are standing on');
 check('...and Clear only when there is actually a channel to clear',
   /enabled: !!\(pin && reg\s*\n?\s*&& reg\.scalarTrack && reg\.scalarTrack\(pin, IKSolver\.PIN_WEIGHT, false\)\)/.test(SC));
 // "Here" is the word doing the work: both act AT THE PLAYHEAD.

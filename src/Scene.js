@@ -8852,9 +8852,14 @@ class Scene {
     const pin = IKSolver.pinObject(joint);
     const w = pin && reg ? IKSolver.pinWeight(joint) : 1;
     return [
-      { label: 'Activate Here', icon: 'fa-play', enabled: w < 1,
+      // ALWAYS ENABLED. These were dimmed when the channel already read the value they write,
+      // on the reasoning that keying 1 onto a pin already at 1 does nothing -- but at a playhead
+      // with no key of its own it does the most important thing there is, which is to PUT A KEY
+      // THERE. Dimmed, the command silently refused: matt, "if i try and key an activate frame,
+      // sometimes it doesn't set a key".
+      { label: 'Activate Here', icon: 'fa-play', enabled: true,
         run: () => { IKSolver.setPinActive(this, joint, true); } },
-      { label: 'Deactivate Here', icon: 'fa-stop', enabled: w > 0,
+      { label: 'Deactivate Here', icon: 'fa-stop', enabled: true,
         run: () => { IKSolver.setPinActive(this, joint, false); } },
       // MATCH, on its own. Activate Here also matches, but re-running it rewrites the weight
       // keys -- and the reason to re-match is that the FK underneath was retimed, which is

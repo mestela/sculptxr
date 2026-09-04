@@ -222,19 +222,18 @@ check('...and pushes it through to the three-side matrix',
   /pin\.setModelSpaceMatrix\(m\.toArray\(\)\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*Skeleton\.syncThree\(pin\);/.test(IKS),
   'rigbatch_test catches this one; it cost a release in v3.20.70');
 
-// A NEAR-STEP, because per-key hold interpolation does not exist yet (#7): the old value held
-// until one frame before, the new value now.
-check('a transition writes TWO keys, a frame apart',
-  /reg\.setScalarKey\(pin, IKSolver\.PIN_WEIGHT, tPrev, prev\);/.test(ACTIVE)
-    && /reg\.setScalarKey\(pin, IKSolver\.PIN_WEIGHT, t, on \? 1 : 0\);/.test(ACTIVE),
-  'one key alone sets the channel to a constant -- "on from now" needs the previous value '
-    + 'held right up to the transition');
-check('...holding whatever the channel actually said, not an assumed value',
-  /const prev = reg\.scalarAt\(pin, IKSolver\.PIN_WEIGHT, tPrev, on \? 0 : 1\);/.test(ACTIVE),
-  're-activating an already-active pin must write 1 -> 1 and change nothing, not invent a dip');
-check('...and the frame gap comes from the frame rate',
-  /const tPrev = Math\.max\(0, t - PIN_STEP_FRAMES \/ fps\);/.test(ACTIVE)
-    && /const fps = window\._animFPS \|\| 24;/.test(ACTIVE));
+// ONE KEY, AT THE PLAYHEAD. This used to write a second "hold" key one frame earlier carrying
+// the PREVIOUS value, so a single command produced a ready-made one-frame ramp. The neighbouring
+// key is the one you notice first, and it carries the OPPOSITE value to the command's name, so
+// Deactivate looked like it keyed 1 and Activate like it keyed 0. matt: "stop all that behaviour
+// please... just key the value i ask."
+check('a transition writes exactly ONE key, at the playhead',
+  /reg\.setScalarKey\(pin, IKSolver\.PIN_WEIGHT, t, on \? 1 : 0\);/.test(ACTIVE)
+    && !/tPrev/.test(ACTIVE),
+  'a second key beside the playhead reads as the command doing the opposite of its name');
+check('...and no frame-step constant survives to reintroduce one',
+  !/PIN_STEP_FRAMES/.test(IKS));
+
 check('the whole act is ONE undo entry',
   /sm\.pushStateCustom\(\(\) => apply\(before, beforeM\), \(\) => apply\(after, afterM\)/.test(ACTIVE),
   'undoing half of it leaves a pin keyed on at a position it was never matched to -- the pop, '

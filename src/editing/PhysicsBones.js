@@ -266,18 +266,31 @@ let _lastTime = null;
 // the state cleared. A reset is now the honest thing its name claims: the chain returns to where
 // the animation or the author last put it.
 PhysicsBones.reset = function (main) {
-  for (const st of _state.values()) {
-    if (!st.joint || !st.rest || !st.written) continue;
+  // RESTORED FROM THE JOINT, not from `_state`, which this function is about to throw away. The
+  // state map only ever holds an entry for a joint physics has already stepped, so on the first
+  // seek after a load -- or any seek after a previous reset wiped it -- there was nothing to
+  // restore from and the chain kept whatever pose it had been bent into. matt: "the arm position
+  // is offset and crumpled; its not able to go back to its bind pose at frame 1". Measured on
+  // walkwave.sxr, scrubbing to frame 109 and back: 10 of 16 physics joints failed to return to
+  // their frame-1 local pose, worst 0.098 -- and 0 of 16 with physics off, which is what named
+  // physics rather than the solver as the cause.
+  const restore = (joint) => {
+    if (!joint || !joint._physRest || !joint._physWritten) return;
     // ...unless something else has written the joint since, in which case that is the pose now
     // and putting our older one back would undo it. Same rule the step uses.
-    const now = st.joint.getMatrix();
-    let same = true;
+    const now = joint.getMatrix();
     for (let k = 0; k < 16; k++) {
-      if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
+      if (Math.abs(now[k] - joint._physWritten[k]) > 1e-9) return;
     }
-    if (!same) continue;
-    mat4Copy(now, st.rest);
-    Skeleton.syncThree(st.joint);
+    mat4Copy(now, joint._physRest);
+    Skeleton.syncThree(joint);
+  };
+  if (main) {
+    for (const root of PhysicsBones.roots(main)) {
+      for (const link of PhysicsBones.chain(main, root)) restore(link.parent);
+    }
+  } else {
+    for (const st of _state.values()) restore(st.joint);
   }
   _state = new Map();
   _lastTime = null;
@@ -364,7 +377,9 @@ PhysicsBones.step = function (main, dt) {
         if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
       }
       if (same && st.rest) { mat4Copy(now, st.rest); Skeleton.syncThree(link.parent); }
-      else if (!same) { st.rest = Array.prototype.slice.call(now); }
+      // Re-pointed on the joint as well: assigning a NEW array here would otherwise leave the
+      // joint holding the old one, and the two copies of "rest" would drift apart.
+      else if (!same) { st.rest = Array.prototype.slice.call(now); link.parent._physRest = st.rest; }
     }
 
     // A CHAIN, NOT FOUR INDEPENDENT SPRINGS. Each joint's target is read AFTER its parent has
@@ -401,7 +416,17 @@ PhysicsBones.step = function (main, dt) {
       let pst = _state.get(pid);
       if (!pst) { pst = { p: new THREE.Vector3(), prev: new THREE.Vector3(), v: new THREE.Vector3() }; _state.set(pid, pst); }
       pst.joint = link.parent;   // so a reset can put this joint back where it found it
-      if (!pst.rest) pst.rest = Array.prototype.slice.call(link.parent.getMatrix());
+      // THE REST POSE LIVES ON THE JOINT, not only in `_state`, because reset() throws the state
+      // map away -- and a seek runs reset on every frame you land on. Held only in the map, the
+      // next step found `pst.rest` missing and captured it fresh from the pose it was looking
+      // at, which was the pose physics had just bent. The bend became the rest and the arm never
+      // came back. Shared by reference with the state entry, so the two cannot disagree.
+      if (!pst.rest) {
+        if (!link.parent._physRest) {
+          link.parent._physRest = Array.prototype.slice.call(link.parent.getMatrix());
+        }
+        pst.rest = link.parent._physRest;
+      }
 
       Skeleton.jointPos(j, _pAnim);   // the parent above has already been written
       Skeleton.jointPos(link.parent, _pPar);        // already written this frame, so it is live
@@ -525,6 +550,7 @@ PhysicsBones.step = function (main, dt) {
         _qAim.setFromUnitVectors(_aimA.normalize(), _aimB.normalize());
         IKSolver.rotateJoint(link.parent, _qAim);
         pst.written = Array.prototype.slice.call(link.parent.getMatrix());
+        link.parent._physWritten = pst.written;   // survives the state wipe, so reset can guard on it
         moved++;
         // THE PARTICLE FOLLOWS THE PHYSICS, NOT THE RIG, when a weight is in play: the rig is
         // showing a blend, and a particle that tracked it would be simulating the blend rather

@@ -2094,20 +2094,11 @@ IKSolver.matchPinHere = function (main, joint) {
   return true;
 };
 
-// One frame of hold before the change. Per-key STEP interpolation does not exist yet (backlog
-// #7 -- the scalar evaluator interpolates with tangents), so an on/off transition is written as
-// two keys one frame apart: the old value held until the frame before, the new value now. That
-// is a one-frame ramp, which reads as a step at any sane frame rate. When #7 lands this becomes
-// a single stepped key and this constant goes away.
-const PIN_STEP_FRAMES = 1;
-
 IKSolver.setPinActive = function (main, joint, on) {
   const pin = IKSolver.pinObject(joint);
   const reg = window._animationRegistry;
   if (!pin || !reg || !reg.setScalarKey) return false;
   const t = reg.globalPlaybackTime || 0;
-  const fps = window._animFPS || 24;
-  const tPrev = Math.max(0, t - PIN_STEP_FRAMES / fps);
 
   const sm = main && main.getStateManager && main.getStateManager();
   const track = reg.tracks && reg.tracks.get(pin.getID());
@@ -2122,11 +2113,12 @@ IKSolver.setPinActive = function (main, joint, on) {
     if (reg.keyTransforms) reg.keyTransforms([pin], t, 'Activate Pin', false);
   }
 
-  // Hold whatever the channel said a frame ago, then state the new value. Reading the previous
-  // value rather than assuming it means re-activating an already-active pin writes 1 -> 1 and
-  // changes nothing, instead of inventing a dip.
-  const prev = reg.scalarAt(pin, IKSolver.PIN_WEIGHT, tPrev, on ? 0 : 1);
-  reg.setScalarKey(pin, IKSolver.PIN_WEIGHT, tPrev, prev);
+  // ONE KEY, AT THE PLAYHEAD, WITH THE VALUE ASKED FOR. This used to also write a "hold" key one
+  // frame earlier carrying the PREVIOUS value, so a single command produced a ready-made one
+  // frame ramp. It read as the command doing the opposite of what it said: Deactivate dropped a
+  // key of 1 immediately left of the playhead, Activate dropped a key of 0 there, and that
+  // neighbouring key is the one you see first. matt: "stop all that behaviour please. if i key,
+  // just key at the current frame, and don't try and be clever, just key the value i ask."
   reg.setScalarKey(pin, IKSolver.PIN_WEIGHT, t, on ? 1 : 0);
 
   const after = reg.tracks && reg.tracks.get(pin.getID())

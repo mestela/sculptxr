@@ -460,5 +460,36 @@ const len = (a, b) => wp(a).distanceTo(wp(b));
     'a rig with no animation must not be silently unsimulated');
 }
 
+// ── THE REST POSE OUTLIVES A RESET ────────────────────────────────────────────────────
+//
+// reset() throws `_state` away, and a seek runs reset on every frame you land on. With the rest
+// pose held only in that map, the next step found it missing and captured it fresh from the pose
+// it was looking at -- which was the pose physics had just bent. The bend became the rest, the
+// rest became the spring's target, and the chain never came back. matt: "the arm position is
+// offset and crumpled; its not able to go back to its bind pose at frame 1". Measured on
+// walkwave.sxr, scrubbing to frame 109 and back: 10 of 16 physics joints failed to return to
+// their frame-1 local pose (0 of 16 with physics off, which is what named physics as the cause).
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
+  const main = {};
+  PB.reset(main);
+  const rest = wp(r.t2);
+  for (let i = 0; i < 120; i++) PB.step(main, 1 / 60);
+  check('a chain bends away from rest before the reset', wp(r.t2).distanceTo(rest) > 0.5);
+
+  // The seek: reset wipes the state, then the sim runs again from the pose it was left in.
+  PB.reset(main);
+  for (let i = 0; i < 120; i++) PB.step(main, 1 / 60);
+  PB.reset(main);
+  const back = wp(r.t2);
+  check('...and a reset after a second run still returns it to the ORIGINAL rest',
+    back.distanceTo(rest) < 0.05,
+    'ended ' + back.distanceTo(rest).toFixed(3) + ' from the original rest -- the bent pose was '
+    + 'adopted as the new rest when the state map was wiped');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
