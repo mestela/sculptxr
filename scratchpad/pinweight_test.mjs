@@ -339,5 +339,34 @@ check('...but only a bone is named as a control to preserve',
   /const wr = window\._ikWritten \|\| \(window\._ikWritten = new Set\(\)\);\s*\n\s*if \(mesh\._isBone\) wr\.add\(mesh\.getID\(\)\);/.test(REG),
   'naming the pin would keep its joint at the pose it already had instead of re-solving it');
 
+// ── THE WEIGHT IS A CROSSFADE, NOT JUST A WEAKER TARGET ───────────────────────────────
+//
+// A partial weight was applied to the pin's TARGET (pinAnchor) while the chain itself had
+// already been snapped to bind by seedFromRest. So w=0.1 did not mean "a tenth of the way from
+// where the limb is", it meant "bind, plus a tenth of the way to the pin" -- and the limb jumped
+// the instant the weight left zero, because that is the instant ownership begins. Keeping the
+// pre-solve pose makes w->0 approach the UN-PINNED pose (physics, FK, whatever put it there),
+// which is what leaves nothing to jump.
+//
+// Measured on weight.sxr with matt's own keys (0 at 115, 1 at 122), the onset frame:
+//   before  19.48 units in one frame     after  2.39, and the whole fade monotonic into the pin
+check('the pre-solve pose is captured before seedFromRest can wipe it',
+  /preSolve = new Map\(\);[\s\S]{0,220}?blendW\.has\(j\.getID\(\)\)/.test(IKS)
+    && IKS.indexOf('const fading =') < IKS.indexOf('seedFromRest(main, written, ownedIds)'),
+  'the blend would fade from bind, which is the jump it exists to remove');
+// A group is a SKELETON, so a fading wrist pin shares one with the hips and feet at full
+// strength. Scoping the fade to the group gives weight 1 and no fade at all -- measured as a
+// 20-unit jump that the first attempt at this did not touch.
+check('...and the fade is scoped to the joints only the FADING pin owns',
+  /const firm = solverOwned\(main, pins\.filter\(\(j\) => IKSolver\.pinWeight\(j\) >= 1\)\);/.test(IKS)
+    && /if \(firm\.has\(id\)\) continue;/.test(IKS),
+  'a limb grouped with full-strength pins never fades');
+check('...applied after every group has solved',
+  /if \(preSolve\) \{[\s\S]{0,220}?blendLocal\(n\.joint, before, blendW\.get\(id\)\);/.test(IKS));
+// A straight element-wise matrix lerp shears and shrinks a rotation, which on a limb mid-fade is
+// exactly the crumple this is meant to avoid.
+check('...decomposing the matrix rather than lerping its elements',
+  /_bA\.decompose\(_bpA, _bqA, _bsA\);[\s\S]{0,200}?_bqA\.slerp\(_bqB, w\);/.test(IKS));
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);
