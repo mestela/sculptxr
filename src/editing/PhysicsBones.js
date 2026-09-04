@@ -123,6 +123,24 @@ PhysicsBones.setRoot = function (main, j, on) {
   return true;
 };
 
+// WHICH JOINT THE PANEL'S SLIDERS EDIT, which is deliberately NOT "whatever is selected".
+//
+// Tuning a jiggle means shaking the rig and watching it, and shaking it means selecting the joint
+// you want to shake — so a panel that followed the selection took its own controls away the
+// moment you went to test them. This remembers the last physics joint that was selected and
+// keeps returning it: select the antenna once, then select the hips and shake all you like.
+//
+// Cleared when the joint stops being a physics bone or leaves the scene, so it cannot point at
+// something that is no longer there.
+PhysicsBones.panelTarget = function (main, selected) {
+  const sel = (selected || []).filter((j) => PhysicsBones.isRoot(j));
+  if (sel.length === 1) main._physicsPanelTarget = sel[0];
+  const t = main._physicsPanelTarget;
+  if (!t || !PhysicsBones.isRoot(t)) { main._physicsPanelTarget = null; return null; }
+  if (main.getMeshes && !main.getMeshes().includes(t)) { main._physicsPanelTarget = null; return null; }
+  return t;
+};
+
 PhysicsBones.roots = function (main) {
   return Skeleton.joints(main).filter((j) => j._physicsRoot);
 };

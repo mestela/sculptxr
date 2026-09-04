@@ -100,7 +100,28 @@ export function buildBoneAuthoringHTML(main, style) {
   // the mode buttons above it.
   const physSel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
   const physOn = physSel.length === 1 && PhysicsBones.isRoot(physSel[0]);
-  const physP = physOn ? PhysicsBones.params(physSel[0]) : PhysicsBones.DEFAULTS;
+  // THE SLIDERS STICK TO A JOINT; THEY DO NOT FOLLOW THE SELECTION.
+  //
+  // Tuning a jiggle means shaking the rig and watching, and shaking it means SELECTING the hips —
+  // which used to take the physics joint out of the selection and the sliders off the panel. So
+  // tuning and testing were fighting over the same channel. matt: "i can only jiggle the hips in
+  // ik mode... but i can only adjust the physics bones values by selecting the physics bone in
+  // the bone tool. it's a lot of back and forth."
+  //
+  // Selecting a physics joint aims the sliders at it, and they STAY there while you select
+  // anything else. The flag button still acts on the current selection, because that is how a
+  // new joint gets flagged at all — one control reads the selection, the other reads the target,
+  // and the panel says which joint it is editing so the two can never be confused.
+  const physTarget = PhysicsBones.panelTarget(main, physSel);
+  const physP = physTarget ? PhysicsBones.params(physTarget) : PhysicsBones.DEFAULTS;
+  // BOTH NAMES WHEN THERE ARE TWO. A drag writes to the mirror twin as well, so a header naming
+  // one joint would be telling half the truth about what the sliders are about to change.
+  const jointName = (j) => (j && (j._permanentStaticLabel || ('joint ' + j.getID()))) || '';
+  const physTwin = physTarget && physTarget._boneMirror
+    && main.getMeshes?.().includes(physTarget._boneMirror) && physTarget._boneMirror !== physTarget
+    ? physTarget._boneMirror : null;
+  const physName = physTarget
+    ? jointName(physTarget) + (physTwin ? ' + ' + jointName(physTwin) : '') : '';
   const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
@@ -136,7 +157,8 @@ export function buildBoneAuthoringHTML(main, style) {
       <button class="${c.action}" id="bone-phys-bake"
         title="Step the loop range, run the sim, and write the result as ordinary rotation keys on the joints it moves. Undoable.">Bake Physics</button>
     </div>
-    ${physOn ? `
+    ${physTarget ? `
+    ${sectionTitle(c, 'Physics: ' + physName)}
     <div class="${c.row}">
       <span class="${c.lbl}">Stiffness</span>
       <input type="range" id="bone-phys-stiff" min="1" max="99" step="1" value="${Math.round(physP.stiffness * 100)}">
@@ -531,10 +553,13 @@ export function wireBoneSection(root, main, opts) {
   const physParam = (id, key, scale, fmt) => {
     const input = q('phys-' + id), val = q('phys-' + id + '-val');
     input?.addEventListener('input', () => {
-      const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-      if (js.length !== 1) return;
+      // The joint the sliders are AIMED at — see PhysicsBones.panelTarget. Reading the selection
+      // here instead would write to whatever you had grabbed to shake the rig with.
+      const t = PhysicsBones.panelTarget(main,
+        (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
+      if (!t) return;
       const v = parseInt(input.value, 10) / scale;
-      for (const j of withTwin(js[0])) PhysicsBones.setParams(j, { [key]: v });
+      for (const j of withTwin(t)) PhysicsBones.setParams(j, { [key]: v });
       if (val) val.textContent = fmt(v);
       main.render?.();
     });
@@ -545,10 +570,11 @@ export function wireBoneSection(root, main, opts) {
   physParam('drag', 'drag', 100, (v) => String(Math.round(v * 100)));
 
   q('phys-ground')?.addEventListener('click', () => {
-    const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-    if (js.length !== 1) return;
-    const on = !PhysicsBones.params(js[0]).ground;
-    for (const j of withTwin(js[0])) {
+    const t = PhysicsBones.panelTarget(main,
+      (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
+    if (!t) return;
+    const on = !PhysicsBones.params(t).ground;
+    for (const j of withTwin(t)) {
       PhysicsBones.setParams(j, { ground: on, groundY: PhysicsBones.groundHeight(main) });
     }
     rebuild();

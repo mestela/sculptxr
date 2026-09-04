@@ -38,6 +38,14 @@ const PhysicsBones = {
   params: (j) => (j && j._physicsParams) || { stiffness: 0.06, damping: 0.7, gravity: 1 },
   setParams: () => true,
   setRoot: () => true,
+  // The sliders aim at a REMEMBERED joint rather than the selection — see panelTarget. The stub
+  // keeps the same rule so the markup checks below exercise it.
+  panelTarget: (main, sel) => {
+    const one = (sel || []).filter((j) => j && j._physicsRoot);
+    if (one.length === 1) main._physicsPanelTarget = one[0];
+    const t = main._physicsPanelTarget;
+    return (t && t._physicsRoot) ? t : null;
+  },
 };
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
   mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){},
@@ -65,7 +73,9 @@ const check = (n, ok, got) => { console.log((ok ? '  ok   ' : '  FAIL ') + n + (
 const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () => ({ modeKey: () => 'draw' }) }),
   getMesh: () => null,
   // Bone-shape buttons act on the selected joints, so the panel now asks for them.
-  getSelectedMeshes: () => (globalThis.__sel || []) };
+  getSelectedMeshes: () => (globalThis.__sel || []),
+  // The mirror header checks that a twin is actually IN the scene before naming it.
+  getMeshes: () => (globalThis.__meshes || globalThis.__sel || []) };
 
 const flat = buildBoneSectionHTML(main, 'mm');
 // The cage button is one control with two states, not two controls -- either the rig weights
@@ -318,9 +328,11 @@ check('shader-specific groups mute instead of hiding',
   const none = buildBoneAuthoringHTML(main, 'mm');
   check('the physics toggle is always there', none.includes('id="bone-phys"'));
   check('...and the bake button with it', none.includes('id="bone-phys-bake"'));
-  check('...but the sliders are not, with nothing flagged',
-    !none.includes('id="bone-phys-stiff"'),
-    'they are per-joint: with no joint they would have nothing to edit');
+  main._physicsPanelTarget = null;
+  const virgin = buildBoneAuthoringHTML(main, 'mm');
+  check('...but the sliders are not, until a physics joint has been picked',
+    !virgin.includes('id="bone-phys-stiff"'),
+    'with nothing ever targeted they would have nothing to edit');
 
   globalThis.__sel = [{ _isBone: true, getID: () => 1, _physicsRoot: true,
     _physicsParams: { stiffness: 0.2, damping: 0.5, gravity: 1.5 } }];
@@ -391,7 +403,7 @@ check('shader-specific groups mute instead of hiding',
   check('a physics flag carries to the mirror twin',
     /const withTwin = \(j\) => \{/.test(SRC) && /for \(const j of pair\) PhysicsBones\.setRoot/.test(SRC));
   check('...and so does every parameter drag',
-    /for \(const j of withTwin\(js\[0\]\)\) PhysicsBones\.setParams/.test(SRC),
+    /for \(const j of withTwin\(t\)\) PhysicsBones\.setParams/.test(SRC),
     'a stiffness has no handedness, so the value copies rather than reflecting');
   check('...and the undo step holds both sides',
     /const snap = \(\) => pair\.map/.test(SRC),
@@ -464,6 +476,58 @@ check('shader-specific groups mute instead of hiding',
   check('the wrist panel is meaningfully shorter than the menu',
     rows(wristAuth) < rows(menuAuth) - 2,
     'wrist ' + rows(wristAuth) + ' rows vs menu ' + rows(menuAuth));
+}
+
+// ── THE SLIDERS STAY PUT WHILE YOU SHAKE THE RIG ──────────────────────────────────────
+//
+// matt: "to test i want to be able to jiggle the setup from the hips, while adjusting values.
+// the issue is that i can only jiggle the hips in ik mode... but i can only adjust the physics
+// bones values by selecting the physics bone while in the bone tool. it's a lot of back and
+// forth."
+//
+// Tuning a jiggle means shaking the rig and watching, and shaking it means SELECTING the thing
+// you shake — so controls that follow the selection remove themselves exactly when you go to use
+// them. The sliders aim at the last physics joint you picked and stay there.
+{
+  const antenna = { _isBone: true, getID: () => 7, _permanentStaticLabel: 'antenna_L',
+    _physicsRoot: true, _physicsParams: { stiffness: 0.3, damping: 0.5, gravity: 1, drag: 0.1 } };
+  const hips = { _isBone: true, getID: () => 1, _permanentStaticLabel: 'hips' };
+  main._physicsPanelTarget = null;
+
+  globalThis.__sel = [antenna];
+  const picked = buildBoneAuthoringHTML(main, 'mm');
+  check('picking a physics joint aims the sliders at it',
+    picked.includes('id="bone-phys-stiff"') && /Physics: antenna_L/.test(picked),
+    'the panel names the joint it is editing, so it can never be mistaken for the selection');
+
+  // matt: "maybe as a helper, show above the physics sliders the name of the joint(s) being
+  // adjusted?" Plural, and rightly — a drag writes to the mirror twin too, so naming one joint
+  // would be telling half the truth about what is about to change.
+  const twinR = { _isBone: true, getID: () => 8, _permanentStaticLabel: 'antenna_R',
+    _physicsRoot: true };
+  antenna._boneMirror = twinR;
+  twinR._boneMirror = antenna;
+  globalThis.__meshes = [antenna, twinR];
+  const pair = buildBoneAuthoringHTML(main, 'mm');
+  check('...naming BOTH joints when the edit is mirrored',
+    /Physics: antenna_L \+ antenna_R/.test(pair),
+    'the header has to say everything the sliders will write to');
+  antenna._boneMirror = null;
+  globalThis.__meshes = null;
+
+  globalThis.__sel = [hips];
+  const shaking = buildBoneAuthoringHTML(main, 'mm');
+  check('...and they are still there once you select the hips to shake it',
+    shaking.includes('id="bone-phys-stiff"') && /Physics: antenna_L/.test(shaking),
+    'this is the whole point: tune and test without swapping selection back and forth');
+  check('...while the FLAG button still reads the selection',
+    /Physics Bone<\/button>/.test(shaking),
+    'one control reads the target and the other the selection — flagging a NEW joint has to '
+    + 'act on what is selected, or nothing could ever be flagged');
+
+  globalThis.__sel = [];
+  main._physicsPanelTarget = null;
+  globalThis.__sel = [];
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
