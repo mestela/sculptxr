@@ -1824,8 +1824,15 @@ IKSolver.holdPins = function (main) {
   // to the same pose however it was reached. A pin dragged by hand names nothing, so the solve
   // seeds from the live pose and keeps the frame-to-frame continuity that makes a drag feel
   // attached to your controller. `window._ikSeedFromRest = false` forces the old behaviour.
+  // PUBLISHED for PhysicsBones, which has to tell an authored pose from a solve. Its rest-pose
+  // rule adopts the current pose whenever something OTHER than the sim wrote the joint -- right
+  // for a key, a gizmo or an undo, and wrong for this solver: our output is one frame's answer,
+  // not a new rest. Without this, activating a pin on a physics chain made the solved pose the
+  // chain's rest for ever after, so a rewind restored the posed arm instead of the bind arm.
+  const ownedIds = solverOwned(main, pins);
+  window._ikOwnedIds = ownedIds;
   if (written && window._ikSeedFromRest !== false) {
-    seedFromRest(main, written, solverOwned(main, pins));
+    seedFromRest(main, written, ownedIds);
   }
 
   const nodes = buildGraph(main);

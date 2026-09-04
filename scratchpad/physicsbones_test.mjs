@@ -509,5 +509,37 @@ check('the sim re-initialises on the frame after a loop wrap',
 check('...and drops the accumulated clock, so no dt is integrated across the cut',
   /window\._physicsNeedsInit = false;[\s\S]{0,160}?_lastTime = null;/.test(SRC));
 
+// ── A SOLVE IS NOT AN AUTHORED POSE ───────────────────────────────────────────────────
+//
+// The rest rule adopts the current pose whenever something OTHER than the sim wrote the joint --
+// right for a key, a gizmo or an undo. But the IK solver writes every joint on a path from an
+// active pin to the root, so the moment a wrist pin came on, the whole arm counted as authored
+// and the SOLVED pose became the chain's rest for ever after. A rewind then restored the waving
+// arm as though it were bind. Measured on weight.sxr, one pass then rewind to frame 0: the
+// pinned right arm sat 2.52 units off while the three unpinned chains returned to 0.
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
+  const main = {};
+  PB.reset(main);
+  const rest = wp(r.t2);
+  for (let i = 0; i < 60; i++) PB.step(main, 1 / 60);
+
+  // The solver poses the chain and says so, exactly as holdPins now does.
+  M.win._ikOwnedIds = new Set([r.t0.getID(), r.t1.getID()]);
+  setLocal(r.t1, 0, 1, 0);                       // a solve, not an authored rest
+  for (let i = 0; i < 60; i++) PB.step(main, 1 / 60);
+  M.win._ikOwnedIds = null;
+
+  PB.reset(main);
+  const back = wp(r.t2);
+  check('a solver-posed joint is not adopted as the physics rest',
+    back.distanceTo(rest) < 0.25,
+    'ended ' + back.distanceTo(rest).toFixed(3) + ' from the original rest -- the solved pose '
+    + 'was taken as the new rest, so a rewind restores the posed limb instead of the bind one');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

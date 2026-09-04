@@ -288,10 +288,19 @@ const HOLD = (() => {
   const at = IKS.indexOf('IKSolver.holdPins = function');
   return at < 0 ? '' : IKS.slice(at, IKS.indexOf('\n};', at));
 })();
+// PUBLISHED, because PhysicsBones has to tell an authored pose from a solve: its rest rule
+// adopts the current pose whenever something other than the sim wrote the joint, and the solver
+// writing a pinned chain is not an authored rest. Without this the solved pose became the
+// chain's rest for ever -- weight.sxr, one pass then rewind: the pinned arm 2.52 units off.
+check('the owned set is published for the simulation to read',
+  /window\._ikOwnedIds = ownedIds;/.test(IKS),
+  'physics adopts the solved pose as its rest and never returns to bind');
+
 check('...and holdPins uses that list, since it is what decides ownership',
   HOLD.length > 0
     && /const pins = IKSolver\.activePins\(main\);/.test(HOLD)
-    && /seedFromRest\(main, written, solverOwned\(main, pins\)\);/.test(HOLD),
+    && /const ownedIds = solverOwned\(main, pins\);/.test(HOLD)
+    && /seedFromRest\(main, written, ownedIds\);/.test(HOLD),
   'a zero-weight pin left in this list keeps its chain owned, and seedFromRest then resets that '
     + 'chain to rest before every solve -- which is the snap');
 check('...and the solve entry point takes it too',

@@ -376,10 +376,20 @@ PhysicsBones.step = function (main, dt) {
       for (let k = 0; k < 16; k++) {
         if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
       }
+      // A SOLVE IS NOT AN AUTHORED POSE. The IK solver writes every joint on a path from an
+      // active pin to the root, so the moment matt's wrist pin came on, his arm counted as
+      // "something else wrote it" and the solved wave became the chain's rest. It never went
+      // back: a rewind restored the waving arm as though it were the bind pose, and each loop
+      // re-adopted it. Measured on weight.sxr, playing one pass then rewinding to frame 0: the
+      // pinned right arm sat 2.52 units off, while the three chains with no pin returned to 0.
+      const solverPosed = window._ikOwnedIds && window._ikOwnedIds.has(link.parent.getID());
       if (same && st.rest) { mat4Copy(now, st.rest); Skeleton.syncThree(link.parent); }
       // Re-pointed on the joint as well: assigning a NEW array here would otherwise leave the
       // joint holding the old one, and the two copies of "rest" would drift apart.
-      else if (!same) { st.rest = Array.prototype.slice.call(now); link.parent._physRest = st.rest; }
+      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); link.parent._physRest = st.rest; }
+      // else: the solver posed it this frame. Leave it where the solve put it -- physics layers
+      // on top of that -- but keep the rest we already had, so a reset still has a pose to
+      // return to that nothing simulated or solved ever wrote.
     }
 
     // A CHAIN, NOT FOUR INDEPENDENT SPRINGS. Each joint's target is read AFTER its parent has
