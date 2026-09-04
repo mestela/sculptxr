@@ -1837,7 +1837,14 @@ IKSolver.holdPins = function (main) {
   if (window._ikTrace) {
     console.log('[ik] holdPins pins=%d seed=%s', pins.length, written ? 'rest' : 'current');
   }
-  if (!pins.length) return false;
+  if (!pins.length) {
+    // CLEARED, not left behind: PhysicsBones reads these to know which joints a pin is holding,
+    // and a stale set from the last solve would have it stand down on joints nothing pins any
+    // more -- a chain that silently stops simulating because of a pin that is gone.
+    window._ikOwnedIds = null;
+    window._ikOwnedFadeW = null;
+    return false;
+  }
 
   // TWO SEEDING MODES, and the difference is the caller, not a setting. Playback and scrubbing
   // name the joints they wrote, so everything else goes back to rest and the frame evaluates
@@ -1891,6 +1898,10 @@ IKSolver.holdPins = function (main) {
       if (blendW.has(j.getID())) preSolve.set(j.getID(), mat4.clone(j.getMatrix()));
     }
   }
+  // HOW HARD EACH JOINT IS PINNED, for PhysicsBones to fade itself out against. Anything owned
+  // but not listed here is held at full strength; `blendW` is exactly the mid-fade set, so no
+  // extra graph walks are needed to say so.
+  window._ikOwnedFadeW = blendW;
   if (written && window._ikSeedFromRest !== false) {
     seedFromRest(main, written, ownedIds);
   }
