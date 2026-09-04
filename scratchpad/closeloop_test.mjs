@@ -158,8 +158,42 @@ check('the pop becomes a lurch, and here is how big',
       'evaluating the meshes by hand is how this drifted apart in the first place');
   }
   check('the timeline scrub uses the same one',
-    /if \(reg\) reg\.seek\(t\);/.test(TL),
+    /if \(reg\) window\._animationRegistry\.seek\(t\);|if \(reg\) reg\.seek\(t\);/.test(TL),
     'two implementations of one idea is the bug, not the symptom');
+}
+
+// ── ...AND NO UI SETS THE PLAYHEAD BY HAND ────────────────────────────────────────────
+//
+// Fixing the animation panel was not enough, because the same code had been written out by hand
+// in six places. matt found the next one immediately: "if i load the graph editor, and use the
+// 'rewind to first frame' button on that editor, it doesn't update the rig." The timeline
+// toolbar's rewind was worse again — it re-evaluated only the ACTIVE mesh, so every other
+// animated object stayed on the old frame too.
+//
+// So the rule is checked rather than the instances: no GUI file may write globalPlaybackTime.
+// The places that legitimately still do are not UI — the playback clock, the GLTF exporter
+// sampling every frame, the physics bake stepping the range, and MotionTrail — and all of them
+// manage their own evaluation deliberately. A seek there would thrash the rig or the sim.
+{
+  const GUI = ['src/gui/GuiTimeline.js', 'src/gui/GuiAnimation.js', 'src/gui/GuiXR.js',
+    'src/gui/vr/GuiVRAnimation.js', 'src/gui/htmlvr/AnimationControlPanel.js'];
+  const offenders = [];
+  for (const f of GUI) {
+    const src = fs.readFileSync(path.join(REPO, f), 'utf8');
+    // SEEK-EXEMPT marks a site that snaps the time to a frame boundary before writing a key.
+    // Those must NOT seek: evaluating the tracks would overwrite the pose being keyed.
+    const lines = src.split('\n');
+    let n = 0;
+    lines.forEach((l, i) => {
+      if (!/globalPlaybackTime\s*=/.test(l)) return;
+      const near = lines.slice(Math.max(0, i - 6), i).join('\n');
+      if (!/SEEK-EXEMPT/.test(near)) n++;
+    });
+    if (n) offenders.push(f + ' (' + n + ')');
+  }
+  check('no GUI file moves the playhead by hand', offenders.length === 0,
+    offenders.join(', ') + ' — go through AnimationRegistry.seek, which also refreshes the '
+    + 'drawn rig and resets physics');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

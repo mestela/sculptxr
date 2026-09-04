@@ -1664,22 +1664,8 @@ export default class GuiXR {
       }
 
       if (this._dragStartRy !== undefined && this._dragStartRy <= 30) {
-        window._animPlaying = false;
-        window._animCurrentTime = targetTime;
-
-        if (window._animationRegistry) {
-          window._animationRegistry.globalPlaybackTime = targetTime;
-          if (this._main && this._main._meshes) {
-            for (let i = 0; i < this._main._meshes.length; i++) {
-              const m = this._main._meshes[i];
-              const tr = window._animationRegistry.tracks.get(m.getID());
-              if (tr) {
-                tr.playbackTime = targetTime;
-                window._animationRegistry.update(m, true);
-              }
-            }
-          }
-        }
+        // Through reg.seek, which also refreshes the DRAWN rig — see AnimationRegistry.seek.
+        window._animationRegistry?.seek(targetTime);
       }
       this._needsRedraw = true;
       return;
@@ -1976,22 +1962,8 @@ export default class GuiXR {
         const fps = window._animFPS || 24;
         const targetTime = Math.round(t * masterLen * fps) / fps;
 
-        window._animPlaying = false;
-        window._animCurrentTime = targetTime;
-
-        if (window._animationRegistry) {
-          window._animationRegistry.globalPlaybackTime = targetTime;
-          if (this._main && this._main._meshes) {
-            for (let i = 0; i < this._main._meshes.length; i++) {
-              const m = this._main._meshes[i];
-              const tr = window._animationRegistry.tracks.get(m.getID());
-              if (tr) {
-                tr.playbackTime = targetTime;
-                window._animationRegistry.update(m, true);
-              }
-            }
-          }
-        }
+        // Through reg.seek, which also refreshes the DRAWN rig — see AnimationRegistry.seek.
+        window._animationRegistry?.seek(targetTime);
         this._needsRedraw = true;
         return;
       }
@@ -2042,22 +2014,8 @@ export default class GuiXR {
           const masterLen = window._animMasterDuration || 1.0;
           const targetTime = t * masterLen;
 
-          window._animPlaying = false;
-          window._animCurrentTime = targetTime;
-
-          if (window._animationRegistry) {
-            window._animationRegistry.globalPlaybackTime = targetTime;
-            if (this._main && this._main._meshes) {
-              for (let i = 0; i < this._main._meshes.length; i++) {
-                const m = this._main._meshes[i];
-                const tr = window._animationRegistry.tracks.get(m.getID());
-                if (tr) {
-                  tr.playbackTime = targetTime;
-                  window._animationRegistry.update(m, true);
-                }
-              }
-            }
-          }
+          // Through reg.seek, which also refreshes the DRAWN rig — see AnimationRegistry.seek.
+          window._animationRegistry?.seek(targetTime);
         } else if (window._animActiveTool === 'marquee') {
           this._activeTimeline = targetWid;
           if (!this._marqueeStart) {
@@ -2604,22 +2562,8 @@ export default class GuiXR {
               const masterLen = window._animMasterDuration || 1.0;
               const targetTime = t * masterLen;
 
-              window._animPlaying = false;
-              window._animCurrentTime = targetTime;
-
-              if (window._animationRegistry) {
-                window._animationRegistry.globalPlaybackTime = targetTime;
-                if (this._main && this._main._meshes) {
-                  for (let i = 0; i < this._main._meshes.length; i++) {
-                    const m = this._main._meshes[i];
-                    const tr = window._animationRegistry.tracks.get(m.getID());
-                    if (tr) {
-                      tr.playbackTime = targetTime;
-                      window._animationRegistry.update(m, true);
-                    }
-                  }
-                }
-              }
+              // Through reg.seek, which also refreshes the DRAWN rig — see AnimationRegistry.seek.
+              window._animationRegistry?.seek(targetTime);
             }
             this._activeTimeline = w;
             this._needsRedraw = true;
@@ -5599,12 +5543,9 @@ export default class GuiXR {
         let t = (rx - tlX) / tlW;
         t = Math.max(0, Math.min(1, t));
         const targetTime = loopStart + t * visibleDuration;
-        window._animCurrentTime = targetTime;
-        if (reg) reg.globalPlaybackTime = targetTime;
-        
-        if (this._main && this._main._meshes) {
-          this._main._meshes.forEach(m => reg.update(m, true));
-        }
+        // Through reg.seek, which also refreshes the DRAWN rig — see AnimationRegistry.seek.
+        reg?.seek(targetTime);
+
         
         this._needsRedraw = true;
       } else if (this._isDraggingKeyframe) {

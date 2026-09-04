@@ -4016,23 +4016,19 @@ export default class GuiTimeline {
             return;
           case 'rewind': {
             const _reg = window._animationRegistry;
-            const _mesh = this._main?.getMesh?.();
             const _t0 = window._animLoopStart ?? 0;
-            window._animPlaying = false;
-            window._animCurrentTime = _t0;
-            if (_reg) _reg.globalPlaybackTime = _t0;
-            if (_reg && _mesh) _reg.update(_mesh, true);
+            // seek, not a hand-rolled update: this one only re-evaluated the ACTIVE mesh, so
+            // every other animated object — and the drawn rig — stayed on the old frame.
+            _reg?.seek(_t0);
             break;
           }
           case 'stepback': {
             const _fps2 = window._animFPS || 24;
             const _t2 = Math.max(window._animLoopStart ?? 0,
               Math.round(((window._animCurrentTime || 0) * _fps2 - 1)) / _fps2);
-            window._animPlaying = false;
-            window._animCurrentTime = _t2;
-            const _r2 = window._animationRegistry; const _m2 = this._main?.getMesh?.();
-            if (_r2) _r2.globalPlaybackTime = _t2;
-            if (_r2 && _m2) _r2.update(_m2, true);
+            // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
+            // other animated object — and the drawn rig — stayed on the old frame.
+            window._animationRegistry?.seek(_t2);
             break;
           }
           case 'playpause': {
@@ -4050,20 +4046,16 @@ export default class GuiTimeline {
             const _end3 = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
             const _t3 = Math.min(_end3,
               Math.round(((window._animCurrentTime || 0) * _fps3 + 1)) / _fps3);
-            window._animPlaying = false;
-            window._animCurrentTime = _t3;
-            const _r3 = window._animationRegistry; const _m3 = this._main?.getMesh?.();
-            if (_r3) _r3.globalPlaybackTime = _t3;
-            if (_r3 && _m3) _r3.update(_m3, true);
+            // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
+            // other animated object — and the drawn rig — stayed on the old frame.
+            window._animationRegistry?.seek(_t3);
             break;
           }
           case 'end': {
             const _tEnd = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
-            window._animPlaying = false;
-            window._animCurrentTime = _tEnd;
-            const _r4 = window._animationRegistry; const _m4 = this._main?.getMesh?.();
-            if (_r4) _r4.globalPlaybackTime = _tEnd;
-            if (_r4 && _m4) _r4.update(_m4, true);
+            // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
+            // other animated object — and the drawn rig — stayed on the old frame.
+            window._animationRegistry?.seek(_tEnd);
             break;
           }
           case 'record':
@@ -5019,17 +5011,11 @@ export default class GuiTimeline {
         const fps = window._animFPS || 24;
         const targetTime = Math.round((this._viewStart + t * this._viewDuration) * fps) / fps;
 
-        window._animPlaying = false;
-        window._animCurrentTime = targetTime;
-        if (window._animationRegistry) {
-          window._animationRegistry.globalPlaybackTime = targetTime;
-          
-          if (this._main && this._main._meshes) {
-            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-          }
-          if (this._main.render) this._main.render();
-        }
-        
+        // Through reg.seek like every other jump — evaluating the meshes here and stopping
+        // leaves the DRAWN rig behind, which is the bug matt found on three separate panels.
+        if (window._animationRegistry) window._animationRegistry.seek(targetTime);
+        else { window._animPlaying = false; window._animCurrentTime = targetTime; }
+
         this.draw();
         return;
       }
@@ -5752,16 +5738,8 @@ export default class GuiTimeline {
       const fps = window._animFPS || 24;
       const targetTime = Math.round((loopStart + t * visibleDuration) * fps) / fps;
 
-      window._animPlaying = false;
-      window._animCurrentTime = targetTime;
-
-      if (window._animationRegistry) {
-        window._animationRegistry.globalPlaybackTime = targetTime;
-        if (this._main && this._main._meshes) {
-          this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-        }
-        if (this._main.render) this._main.render();
-      }
+      if (window._animationRegistry) window._animationRegistry.seek(targetTime);
+      else { window._animPlaying = false; window._animCurrentTime = targetTime; }
     }
   }
 

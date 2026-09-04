@@ -121,8 +121,9 @@ export default function getAnimationWidgets(main, Enums) {
         if (!window._animationRegistry) return;
         window._animationRegistry.stopRecording(true);
         window._animationRegistry.tracks.clear();
-        window._animCurrentTime = 0;
-        window._animationRegistry.globalPlaybackTime = 0;
+        // Through seek so the rig is redrawn where the cleared animation leaves it, rather than
+        // still showing the pose the deleted keys were holding.
+        window._animationRegistry.seek(0);
         if (main._guiXR) main._guiXR.refreshToolsWidget();
       }
     });
@@ -144,10 +145,8 @@ export default function getAnimationWidgets(main, Enums) {
   widgets.push({
     type: 'button', id: 'anim_to_start', label: '|◀', x: col1X, y: y, w: tW, h: btnH,
     onInteract: () => {
-      if (!window._animationRegistry) return;
-      window._animCurrentTime = 0;
-      window._animationRegistry.globalPlaybackTime = 0;
-      if (main._meshes) main._meshes.forEach(m => window._animationRegistry.update(m, true));
+      // Through reg.seek, which also refreshes the DRAWN rig — see AnimationRegistry.seek.
+      window._animationRegistry?.seek(0);
     }
   });
 
@@ -155,10 +154,7 @@ export default function getAnimationWidgets(main, Enums) {
   widgets.push({
     type: 'button', id: 'anim_prev_frame', label: '◀◀', x: col1X + tW, y: y, w: tW, h: btnH,
     onInteract: () => {
-      if (!window._animationRegistry) return;
-      window._animCurrentTime = Math.max(0, (window._animCurrentTime || 0) - 0.033);
-      window._animationRegistry.globalPlaybackTime = window._animCurrentTime;
-      if (main._meshes) main._meshes.forEach(m => window._animationRegistry.update(m, true));
+      window._animationRegistry?.seek(Math.max(0, (window._animCurrentTime || 0) - 0.033));
     }
   });
 
@@ -213,11 +209,8 @@ export default function getAnimationWidgets(main, Enums) {
   widgets.push({
     type: 'button', id: 'anim_next_frame', label: '▶▶', x: col1X + tW*5, y: y, w: tW, h: btnH,
     onInteract: () => {
-      if (!window._animationRegistry) return;
       const maxLen = window._animMasterDuration || 1.0;
-      window._animCurrentTime = Math.min(maxLen, (window._animCurrentTime || 0) + 0.033);
-      window._animationRegistry.globalPlaybackTime = window._animCurrentTime;
-      if (main._meshes) main._meshes.forEach(m => window._animationRegistry.update(m, true));
+      window._animationRegistry?.seek(Math.min(maxLen, (window._animCurrentTime || 0) + 0.033));
     }
   });
 
@@ -225,11 +218,7 @@ export default function getAnimationWidgets(main, Enums) {
   widgets.push({
     type: 'button', id: 'anim_to_end', label: '▶|', x: col1X + tW*6, y: y, w: tW, h: btnH,
     onInteract: () => {
-      if (!window._animationRegistry) return;
-      const maxLen = window._animMasterDuration || 1.0;
-      window._animCurrentTime = maxLen;
-      window._animationRegistry.globalPlaybackTime = maxLen;
-      if (main._meshes) main._meshes.forEach(m => window._animationRegistry.update(m, true));
+      window._animationRegistry?.seek(window._animMasterDuration || 1.0);
     }
   });
 
@@ -1107,11 +1096,8 @@ export default function getAnimationWidgets(main, Enums) {
       if (window._animLoopEnd !== undefined && window._animLoopStart >= window._animLoopEnd) {
         window._animLoopStart = Math.max(0, window._animLoopEnd - 0.1);
       }
-      window._animCurrentTime = window._animLoopStart;
-      if (window._animationRegistry) {
-        window._animationRegistry.globalPlaybackTime = window._animLoopStart;
-        if (main._meshes) main._meshes.forEach(m => window._animationRegistry.update(m, true));
-      }
+      // Dragging the loop start parks the playhead on it, which is a jump like any other.
+      window._animationRegistry?.seek(window._animLoopStart);
     }
   });
 

@@ -348,46 +348,28 @@ class GuiAnimation {
     window._animAutoKey = val;
   }
 
+  // ALL FOUR THROUGH reg.seek — see AnimationRegistry.seek. Each of these used to set the time
+  // and evaluate the meshes itself, which moves the joint MATRICES and leaves the drawn rig
+  // (batched instance buffers, rebuilt in Skeleton.updateVisuals) exactly where it was. matt hit
+  // it on the animation panel first and then here: "if i load the graph editor, and use the
+  // 'rewind to first frame' button on that editor, it doesn't update the rig."
   toStart() {
-    if (!window._animationRegistry) return;
-    window._animCurrentTime = 0;
-    window._animationRegistry.globalPlaybackTime = 0;
-    if (this._main && this._main._meshes) {
-      this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-    }
+    window._animationRegistry?.seek(0);
   }
 
   toEnd() {
-    if (!window._animationRegistry) return;
-    const maxLen = window._animMasterDuration || 1.0;
-    window._animCurrentTime = maxLen;
-    window._animationRegistry.globalPlaybackTime = maxLen;
-    if (this._main && this._main._meshes) {
-      this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-    }
+    window._animationRegistry?.seek(window._animMasterDuration || 1.0);
   }
 
   prevFrame() {
-    if (!window._animationRegistry) return;
-    const fps = window._animFPS || 24;
-    const step = 1 / fps;
-    window._animCurrentTime = Math.max(0, (window._animCurrentTime || 0) - step);
-    window._animationRegistry.globalPlaybackTime = window._animCurrentTime;
-    if (this._main && this._main._meshes) {
-      this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-    }
+    const step = 1 / (window._animFPS || 24);
+    window._animationRegistry?.seek(Math.max(0, (window._animCurrentTime || 0) - step));
   }
 
   nextFrame() {
-    if (!window._animationRegistry) return;
-    const fps = window._animFPS || 24;
-    const step = 1 / fps;
+    const step = 1 / (window._animFPS || 24);
     const maxLen = window._animMasterDuration || 1.0;
-    window._animCurrentTime = Math.min(maxLen, (window._animCurrentTime || 0) + step);
-    window._animationRegistry.globalPlaybackTime = window._animCurrentTime;
-    if (this._main && this._main._meshes) {
-      this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-    }
+    window._animationRegistry?.seek(Math.min(maxLen, (window._animCurrentTime || 0) + step));
   }
 
   playRev() {
@@ -450,6 +432,9 @@ class GuiAnimation {
     const fps = window._animFPS || 24;
     const targetTime = Math.round((window._animCurrentTime || 0) * fps) / fps;
     
+    // SEEK-EXEMPT: snapping the playhead to a frame boundary before writing a key, NOT a jump.
+    // Going through seek here would evaluate the tracks onto the mesh and overwrite the very
+    // pose being keyed — the same reason the autokey paths in Scene and SculptGL set it directly.
     window._animCurrentTime = targetTime;
     window._animationRegistry.globalPlaybackTime = targetTime;
     
