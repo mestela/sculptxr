@@ -373,7 +373,13 @@ IKSolver.pinnedJoints = function (main) {
 // pin excluded, the arm stops being owned and simply keeps the pose it was in, until something
 // else claims it.
 IKSolver.activePins = function (main) {
-  return IKSolver.pinnedJoints(main).filter((j) => IKSolver.pinWeight(j) > 0);
+  // A PIN THE SIMULATION IS HOLDING IS NOT THIS SOLVER'S. Under the XPBD chain solver a pin on a
+  // physics chain is an attachment constraint inside that solver, so FABRIK stands off it
+  // entirely; both holding it is the fight this is meant to end. Read off a published set rather
+  // than an import, because PhysicsBones imports THIS file and that has to stay one way.
+  const held = window._physXPBD ? window._physPinHeld : null;
+  return IKSolver.pinnedJoints(main).filter((j) => IKSolver.pinWeight(j) > 0
+    && !(held && held.has(j.getID())));
 };
 
 // Pin states of every pinned joint, so an undo can put back WHICH KIND of pin each one was and

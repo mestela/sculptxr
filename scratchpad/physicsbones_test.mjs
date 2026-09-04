@@ -541,5 +541,53 @@ check('...and drops the accumulated clock, so no dt is integrated across the cut
     + 'was taken as the new rest, so a rewind restores the posed limb instead of the bind one');
 }
 
+// ── XPBD ──────────────────────────────────────────────────────────────────────────────
+//
+// The same chains solved as constraints, so a pin can be an attachment with a compliance instead
+// of a limb being switched into the IK solve on one frame. matt: "vellum in houdini is based on
+// xpbd is also friendly to constraints and soft weighting... can our physics system be pushed
+// along similar lines?" Measured on weight.sxr over a twelve-frame pin fade, worst frame:
+// 20.7 units with the force solver, 2.3 with this one.
+check('the constraint solver is behind a flag, with the force solver kept',
+  /if \(window\._physXPBD\) PhysicsBones\.stepXPBD\(main, dt\);\s*\n\s*else PhysicsBones\.step\(main, dt\);/.test(SRC),
+  'both must run side by side while they are being compared');
+// Small substeps, one iteration each -- the modern formulation, and cheaper than few steps with
+// many iterations for chains this short.
+check('...substepped, with compliance divided by h squared',
+  /const h = frameH \/ N;/.test(SRC) && /const aT = alpha \/ \(h \* h\);/.test(SRC),
+  'compliance that is not scaled by the step is a stiffness that changes with frame rate');
+// One-sided was the first thing written and it made the pin useless: the constraint pulled the
+// wrist and the next line projected it back onto a parent that never learned anything had asked.
+check('...with a TWO-SIDED length constraint, so a pull at the tip travels up the chain',
+  /function solveDistance\(pPar, p, wPar, w, rest\)/.test(SRC)
+    && /pPar\.addScaledVector\(_xDir, \(wPar \/ wsum\) \* C\);/.test(SRC),
+  'a goal at the tip cannot reach the joints above it, and the arm barely moves');
+check('...and the pin solved LAST, so a full-strength pin is not overruled by the bone length',
+  SRC.indexOf('THE PIN, as an attachment constraint') > SRC.indexOf('BONE LENGTH, hard, swept down'),
+  'the hand settles a constant distance short of the pin whatever the compliance');
+// weight 0 is not a weak pin, it is no constraint at all -- an infinite compliance.
+check('...a weight of 0 is an infinite compliance, not a weak one',
+  /if \(v <= 0\) return Infinity;/.test(SRC) && /if \(!isFinite\(alpha\)\) return;/.test(SRC)
+    || /if \(C < 1e-9 \|\| !isFinite\(alpha\)\) return;/.test(SRC));
+{
+  const r = rig();
+  PB.setRoot(null, r.t0, true);
+  PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
+  setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
+  const main = {};
+  PB.reset(main);
+  const rest = wp(r.t2);
+  const before = r.t1.getMatrix().slice();
+  for (let i = 0; i < 120; i++) PB.stepXPBD(main, 1 / 60);
+  const fell = wp(r.t2).distanceTo(rest);
+  check('a soft chain falls under the constraint solver too', fell > 0.5,
+    'moved ' + fell.toFixed(2));
+  // The bone cannot stretch: that is the one constraint with no compliance at all.
+  const p1 = wp(r.t1), p2 = wp(r.t2);
+  check('...without stretching a bone', Math.abs(p1.distanceTo(p2) - 1) < 0.02,
+    'length came out ' + p1.distanceTo(p2).toFixed(3) + ', should be 1');
+  void before;
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

@@ -280,7 +280,13 @@ check('clearing removes the channel rather than keying it to 1',
 // pin to the root is deliberately left alone; that is what a deactivated pin should get. So it
 // is not a FABRIK limit and the stop-motion expectation was right.
 check('a weight-0 pin is excluded from the pins that solve',
-  /IKSolver\.activePins = function \(main\) \{\s*\n\s*return IKSolver\.pinnedJoints\(main\)\.filter\(\(j\) => IKSolver\.pinWeight\(j\) > 0\);/.test(IKS));
+  /IKSolver\.pinnedJoints\(main\)\.filter\(\(j\) => IKSolver\.pinWeight\(j\) > 0/.test(IKS));
+// ...and so is a pin the XPBD chain solver is holding as an attachment constraint: two solvers
+// on one pin is the fight the constraint formulation exists to end.
+check('...and so is one the simulation is holding',
+  /const held = window\._physXPBD \? window\._physPinHeld : null;/.test(IKS)
+    && /&& !\(held && held\.has\(j\.getID\(\)\)\)/.test(IKS),
+  'FABRIK and the sim both drag the same joint');
 // SCOPED TO holdPins. `const pins = IKSolver.activePins(main);` also appears in
 // solverOwnedIds, so an unscoped check passes while the function that actually decides
 // ownership is still using the full pin list -- which is the bug being guarded.

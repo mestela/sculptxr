@@ -591,6 +591,289 @@ PhysicsBones.step = function (main, dt) {
 
 // Advance to a wall-clock time, so the caller does not have to keep its own dt. Returns false
 // when there is nothing to do, which is also the "not playing forward" case.
+// ── XPBD ──────────────────────────────────────────────────────────────────────────────
+//
+// The same chains, solved as CONSTRAINTS instead of forces. matt: "vellum in houdini is based on
+// xpbd is also friendly to constraints and soft weighting... can our physics system be pushed
+// along similar lines? solver for gravity, drag etc, but also include forces like a pin weight
+// into the solver?"
+//
+// Why it is worth having a second solver here at all: a pin becomes an ATTACHMENT CONSTRAINT
+// whose compliance runs from infinite at weight 0 to zero at weight 1. That is continuous by
+// construction, so there is no frame on which a limb joins the solve -- which is precisely the
+// discontinuity the pin-weight pop turned out to be (v3.27.12: at w=0.08 the FABRIK solve alone
+// moved the wrist 14.8 units and left it further from the pin than it started, and weighting the
+// target, weighting the result, skipping the rest-seed, matching the pin first and keeping the
+// chain permanently owned all failed to remove it).
+//
+// XPBD's compliance is time-step independent -- alpha~ = alpha / h^2 -- which is the other prize:
+// the force solver needs SPRING_SCALE and an exp() decay to keep stiffness meaning roughly the
+// same thing at different step sizes, and those are fudge factors for exactly this.
+//
+// Small substeps with ONE iteration each, which is the modern formulation (Macklin et al.) and
+// cheaper than few steps with many iterations for chains this short. lambda therefore resets
+// every substep and the projection is just dlambda = -C / (w + alpha~).
+PhysicsBones.SUBSTEPS = 8;
+
+// Compliance from a 0..1 slider. Both sliders read "how hard does this hold", so both map the
+// same way: 1 is rigid (alpha 0) and 0 is absent (alpha infinite). Scaled by the scene unit
+// squared because compliance is metres per newton and the rig's idea of a metre is arbitrary.
+function complianceFrom(v, scale, unit) {
+  if (v >= 1) return 0;
+  if (v <= 0) return Infinity;
+  return scale * ((1 - v) / v) / (unit * unit);
+}
+
+// FITTED against the force solver, not guessed: the sliders have tuned looks behind them (the ear
+// and the tail) and a constraint solver that reads the same numbers differently would silently
+// retune every rig in every file. Overridable so the fit can be measured rather than argued.
+// FITTED, on weight.sxr at sceneUnit 31.9. POSE: swept over six orders of magnitude against the
+// force solver's mean deviation from the animated pose across an 80-frame stretch -- 1.62 for the
+// force solver, and 0.78 / 1.13 / 1.71 / 1.41 at 1e-3 / 1e-2 / 1e-1 / 1, so 0.1 is the match.
+// PIN: swept against the worst frame of a twelve-frame fade -- 21.1 / 16.3 / 11.1 / 5.7 / 2.3 at
+// 1e-3 / 1e-2 / 3e-2 / 1e-1 / 1. The first guesses were three orders too stiff in both cases,
+// which made the pin rigid at weight 0.08 and reproduced the very pop this is here to remove.
+let POSE_COMPLIANCE = 0.1;
+let PIN_COMPLIANCE  = 1;
+PhysicsBones.setCompliance = function (pose, pin) {
+  if (pose !== undefined) POSE_COMPLIANCE = pose;
+  if (pin !== undefined) PIN_COMPLIANCE = pin;
+  return { pose: POSE_COMPLIANCE, pin: PIN_COMPLIANCE };
+};
+
+const _xp = new THREE.Vector3(), _xprev = new THREE.Vector3(), _xg = new THREE.Vector3();
+const _xTo = new THREE.Vector3(), _xDir = new THREE.Vector3(), _xPar = new THREE.Vector3();
+const _xAnim = new THREE.Vector3(), _xRest = new THREE.Vector3(), _xPinP = new THREE.Vector3();
+const _xQ = new THREE.Quaternion(), _xA = new THREE.Vector3(), _xB = new THREE.Vector3();
+const _xM = new THREE.Matrix4();
+
+// One positional attachment: pull `p` toward `target`, softened by `alpha`. Returns nothing; `p`
+// is moved in place. `w` is the inverse mass. With alpha 0 this is a hard snap, which is what a
+// fully weighted pin should be.
+function solveAttach(p, target, w, alpha, h) {
+  _xDir.subVectors(p, target);
+  const C = _xDir.length();
+  if (C < 1e-9 || !isFinite(alpha)) return;
+  _xDir.multiplyScalar(1 / C);
+  const aT = alpha / (h * h);
+  const dl = -C / (w + aT);
+  p.addScaledVector(_xDir, dl * w);
+}
+
+// The bone length, TWO-SIDED. Both ends move, split by inverse mass, and the chain's own root is
+// the only kinematic point (wp = 0 there).
+//
+// One-sided was the first thing I wrote and it made the pin useless: the constraint pulled the
+// wrist, and the very next line projected it straight back onto the sphere about a parent that
+// never learned the pin had asked for anything. Measured that way, the arm barely moved through
+// the fade -- 0.1 to 0.2 units a frame -- and ended 0.82 short of the pin. Sharing the correction
+// is what lets a goal at the tip travel up the chain, which is the same thing FABRIK's backward
+// sweep does and the reason a positional solver can do IK at all.
+function solveDistance(pPar, p, wPar, w, rest) {
+  _xDir.subVectors(p, pPar);
+  const d = _xDir.length();
+  if (d < 1e-9) return;
+  const wsum = wPar + w;
+  if (wsum < 1e-12) return;
+  _xDir.multiplyScalar(1 / d);
+  const C = d - rest;
+  pPar.addScaledVector(_xDir, (wPar / wsum) * C);
+  p.addScaledVector(_xDir, -(w / wsum) * C);
+}
+
+PhysicsBones.stepXPBD = function (main, dt) {
+  const roots = PhysicsBones.roots(main);
+  if (!roots.length) return 0;
+  const frameH = Math.max(1 / 240, Math.min(1 / 20, dt || 1 / 60));
+  const N = Math.max(1, (window._physSubsteps | 0) || PhysicsBones.SUBSTEPS);
+  const h = frameH / N;
+  let moved = 0;
+  window._physPinHeld = new Set();
+
+  for (const root of roots) {
+    const par = PhysicsBones.params(root);
+    const links = PhysicsBones.chain(main, root);
+    if (!links.length) continue;
+    const unit = (Skeleton.sceneUnit && Skeleton.sceneUnit(main)) || 1;
+    const blend = PhysicsBones.weight(root);
+    if (blend <= 0) {
+      for (const link of links) {
+        const st0 = _state.get(link.joint.getID());
+        if (st0) { Skeleton.jointPos(link.joint, st0.p); st0.prev.copy(st0.p); st0.v.set(0, 0, 0); }
+      }
+      continue;
+    }
+
+    // The rest-pose rule is the force solver's, unchanged and for the same reasons: whoever wrote
+    // the joint last decides what the rest pose is, and a solve is not an authored pose.
+    for (const link of links) {
+      const st = _state.get(link.parent.getID());
+      if (!st || !st.written) continue;
+      const now = link.parent.getMatrix();
+      let same = true;
+      for (let k = 0; k < 16; k++) {
+        if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
+      }
+      const solverPosed = window._ikOwnedIds && window._ikOwnedIds.has(link.parent.getID());
+      if (same && st.rest) { mat4Copy(now, st.rest); Skeleton.syncThree(link.parent); }
+      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); link.parent._physRest = st.rest; }
+    }
+
+    // THE ANIMATED SHAPE OF THE CHAIN, read once per frame before anything is simulated: each
+    // link's rest length and its direction from its parent. The pose constraint pulls toward
+    // this shape carried on the SIMULATED parent, which is what makes a disturbance travel down
+    // the chain as a wave rather than every joint answering on the same frame.
+    const shape = [];
+    for (const link of links) {
+      Skeleton.jointPos(link.parent, _xPar);
+      Skeleton.jointPos(link.joint, _xAnim);
+      const d = _xAnim.distanceTo(_xPar);
+      shape.push({ len: d, dir: _xAnim.clone().sub(_xPar).normalize(), animPar: _xPar.clone() });
+    }
+
+    const gAcc = gravityUnits(main, par.gravity);
+    const decay = Math.exp(-DAMP_SCALE * par.damping * h);
+    const aPose = complianceFrom(par.stiffness, POSE_COMPLIANCE, unit);
+
+    // The particles of this chain, in order. Index i is links[i].joint; the chain's own root is
+    // the kinematic anchor everything hangs from.
+    const P = [], PREV = [], IM = [];
+    for (let i = 0; i < links.length; i++) {
+      const j = links[i].joint, id = j.getID();
+      let st = _state.get(id);
+      if (!st) {
+        const at = Skeleton.jointPos(j).clone();
+        st = { p: at.clone(), prev: at.clone(), v: new THREE.Vector3() };
+        _state.set(id, st);
+      }
+      P.push(st); PREV.push(new THREE.Vector3()); IM.push(1 / (links[i].mass || 1));
+    }
+    const anchor = Skeleton.jointPos(links[0].parent, new THREE.Vector3());
+    const parentOf = (i) => (i === 0 ? anchor : P[i - 1].p);
+    const wOf = (i) => (i === 0 ? 0 : IM[i - 1]);
+
+    for (let sub = 0; sub < N; sub++) {
+      // Integrate every particle first, THEN solve. Interleaving the two -- which is what the
+      // force solver does -- makes the pass a sequential filter rather than a solve, and a goal
+      // at the tip can never reach the joints above it.
+      for (let i = 0; i < links.length; i++) {
+        const st = P[i];
+        PREV[i].copy(st.p);
+        _xg.set(0, -gAcc, 0);
+        if (par.drag > 0) {
+          const sp = st.v.length();
+          if (sp > 1e-9) _xg.addScaledVector(st.v, -par.drag * sp / (Math.max(unit, 1e-6) * (links[i].mass || 1)));
+        }
+        st.v.addScaledVector(_xg, h).multiplyScalar(decay);
+        st.p.addScaledVector(st.v, h);
+      }
+
+      // THE POSE, softly. Carried on the simulated parent, so a disturbance travels down the
+      // chain as a wave instead of every joint answering on the same frame.
+      for (let i = 0; i < links.length; i++) {
+        _xAnim.copy(parentOf(i)).addScaledVector(shape[i].dir, shape[i].len);
+        solveAttach(P[i].p, _xAnim, IM[i], aPose, h);
+      }
+
+      // BONE LENGTH, hard, swept down the chain and back up. The return sweep is what carries a
+      // pull at the tip into the joints above it -- the same job FABRIK's backward pass does.
+      for (let i = 0; i < links.length; i++) solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len);
+      for (let i = links.length - 1; i >= 0; i--) solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len);
+
+      // THE PIN, as an attachment constraint, and LAST so it has the final word. Solved before
+      // the length sweeps it was always overruled by them: the pin is rigid at weight 1, but the
+      // bone length is rigid too and ran after it, leaving the hand a constant 0.47 short of the
+      // pin whatever the compliance. Last, the pin is exact when it is fully on and the length
+      // error it leaves is taken up by the next substep.
+      // THE PIN, as an attachment constraint. This is the whole point: weight 0 is an infinite
+      // compliance and therefore no constraint at all, weight 1 is rigid, and every value between
+      // is a genuine partial hold rather than a limb being switched into a solve on one frame.
+      for (let i = 0; i < links.length; i++) {
+        const j = links[i].joint;
+        const pin = IKSolver.pinObject && IKSolver.pinObject(j);
+        if (!pin || window._physPinConstraint === false) continue;
+        window._physPinHeld.add(j.getID());
+        const pw = IKSolver.pinWeight(j);
+        if (pw <= 0) continue;
+        _xM.fromArray(pin.getModelSpaceMatrix());
+        _xPinP.set(_xM.elements[12], _xM.elements[13], _xM.elements[14]);
+        solveAttach(P[i].p, _xPinP, IM[i], complianceFrom(pw, PIN_COMPLIANCE, unit), h);
+      }
+
+
+      for (let i = 0; i < links.length; i++) {
+        const st = P[i];
+        _xPar.copy(parentOf(i));
+        // The floor: the circle where the bone's sphere meets the ground plane, so both hold.
+        if (par.ground && st.p.y < par.groundY) {
+          const drop = _xPar.y - par.groundY;
+          const r2 = shape[i].len * shape[i].len - drop * drop;
+          if (r2 > 1e-12) {
+            const ring = Math.sqrt(r2);
+            _xDir.set(st.p.x - _xPar.x, 0, st.p.z - _xPar.z);
+            if (_xDir.lengthSq() < 1e-12) _xDir.set(1, 0, 0);
+            _xDir.normalize();
+            st.p.set(_xPar.x + _xDir.x * ring, par.groundY, _xPar.z + _xDir.z * ring);
+          }
+          if (st.v.y < 0) st.v.y = 0;
+        }
+        // The bend cone, so a chain cannot fold back on itself.
+        if (par.maxBend < 180) {
+          _xRest.copy(shape[i].dir);
+          _xDir.subVectors(st.p, _xPar);
+          if (_xDir.lengthSq() > 1e-12) {
+            _xDir.normalize();
+            const cosLim = Math.cos(par.maxBend * Math.PI / 180);
+            const dot = Math.max(-1, Math.min(1, _xRest.dot(_xDir)));
+            if (dot < cosLim) {
+              const ang = Math.acos(dot);
+              const t = 1 - (par.maxBend * Math.PI / 180) / ang;
+              _xDir.lerp(_xRest, t).normalize();
+              st.p.copy(_xPar).addScaledVector(_xDir, shape[i].len);
+            }
+          }
+        }
+      }
+
+      // XPBD's velocity update: the velocity IS whatever motion the constraints allowed.
+      for (let i = 0; i < links.length; i++) P[i].v.subVectors(P[i].p, PREV[i]).multiplyScalar(1 / h);
+    }
+
+    // OUTPUT, once per frame rather than once per substep: turn each particle into its parent's
+    // rotation. Identical to the force solver's, including the blend applied to what is WRITTEN
+    // while the simulation underneath runs at full strength.
+    for (const link of links) {
+      const j = link.joint;
+      const st = _state.get(j.getID());
+      if (!st) continue;
+      const pid = link.parent.getID();
+      let pst = _state.get(pid);
+      if (!pst) { pst = { p: new THREE.Vector3(), prev: new THREE.Vector3(), v: new THREE.Vector3() }; _state.set(pid, pst); }
+      pst.joint = link.parent;
+      if (!pst.rest) {
+        if (!link.parent._physRest) link.parent._physRest = Array.prototype.slice.call(link.parent.getMatrix());
+        pst.rest = link.parent._physRest;
+      }
+      Skeleton.jointPos(link.parent, _xPar);
+      Skeleton.jointPos(j, _xAnim);
+      _xTo.copy(st.p);
+      if (blend < 1) _xTo.lerp(_xAnim, 1 - blend);
+      _xA.subVectors(_xAnim, _xPar);
+      _xB.subVectors(_xTo, _xPar);
+      if (_xA.lengthSq() > 1e-12 && _xB.lengthSq() > 1e-12) {
+        _xQ.setFromUnitVectors(_xA.normalize(), _xB.normalize());
+        IKSolver.rotateJoint(link.parent, _xQ);
+        pst.written = Array.prototype.slice.call(link.parent.getMatrix());
+        link.parent._physWritten = pst.written;
+        moved++;
+      }
+      pst.lastPar = pst.lastPar || new THREE.Vector3();
+      Skeleton.jointPos(link.parent, pst.lastPar);
+    }
+  }
+  return moved;
+};
+
 PhysicsBones.tick = function (main, nowSeconds) {
   if (!PhysicsBones.roots(main).length) return false;
   // THE INIT FRAME. A loop is a cut: the playhead jumps from one end of the range to the other,
@@ -613,7 +896,10 @@ PhysicsBones.tick = function (main, nowSeconds) {
   const dt = _lastTime === null ? 1 / 60 : t - _lastTime;
   _lastTime = t;
   if (dt <= 0) return false;
-  PhysicsBones.step(main, dt);
+  // `window._physXPBD = true` runs the constraint solver instead. Both are kept while the two
+  // are being compared: same chains, same parameters, same output stage.
+  if (window._physXPBD) PhysicsBones.stepXPBD(main, dt);
+  else PhysicsBones.step(main, dt);
   return true;
 };
 
