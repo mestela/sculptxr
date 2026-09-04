@@ -338,7 +338,11 @@ const len = (a, b) => wp(a).distanceTo(wp(b));
   const whip = (drag) => {
     const rr = rig();
     PB.setRoot(null, rr.t0, true);
-    PB.setParams(rr.t0, { stiffness: 0.02, damping: 0.05, gravity: 0, drag: drag });
+    // maxBend off, inertia off: the bend limit caps the excursion before drag can change it,
+    // and with both on the two runs land on the clamp and read identical. Isolating one thing
+    // at a time is the point of a fixture.
+    PB.setParams(rr.t0, { stiffness: 0.02, damping: 0.05, gravity: 0, drag: drag,
+      maxBend: 180, inertia: 0 });
     const mn = {};
     PB.reset(mn);
     let far = 0;

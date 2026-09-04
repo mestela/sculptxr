@@ -41,7 +41,8 @@ const PhysicsBones = {};
 // there gravity? they don't seem to drape much." There was; it was about a thousand times too
 // small to see. It is scaled by Skeleton.sceneUnit now, so 1 drapes the same way whatever size
 // the rig was drawn at.
-const DEFAULTS = { stiffness: 0.25, damping: 0.7, gravity: 1, drag: 0.1, ground: false, groundY: 0 };
+const DEFAULTS = { stiffness: 0.25, damping: 0.7, gravity: 1, drag: 0.1, ground: false, groundY: 0,
+  inertia: 0.35, maxBend: 50 };
 
 // A SPRING RATE AND A DECAY RATE, not per-frame factors — which is what makes "tune it live,
 // then bake it" true rather than a slogan.
@@ -90,6 +91,7 @@ PhysicsBones.params = function (j) {
   return {
     stiffness: pick('stiffness'), damping: pick('damping'), gravity: pick('gravity'),
     drag: pick('drag'), ground: pick('ground'), groundY: pick('groundY'),
+    inertia: pick('inertia'), maxBend: pick('maxBend'),
   };
 };
 
@@ -107,6 +109,8 @@ PhysicsBones.setParams = function (j, patch) {
     drag:      take('drag', 0, 1),
     ground:    !!take('ground'),
     groundY:   take('groundY'),
+    inertia:   take('inertia', 0, 1),
+    maxBend:   take('maxBend', 0, 180),
   };
   return true;
 };
@@ -162,6 +166,22 @@ PhysicsBones.chain = function (main, root) {
   };
   walk(root, 0);
   out.sort((a, b) => a.depth - b.depth);
+
+  // HOW MUCH CHAIN HANGS BELOW EACH JOINT — its effective mass. A joint near the root has to
+  // drag everything under it, so it lags further behind a shake; the tip has only itself and
+  // whips. Without this every particle answers as if it were alone, and the root barely moves
+  // while the middle of the chain flails — measured on a real arm, 4.3 degrees at the shoulder
+  // against 34.8 at the elbow, which is backwards. matt: "mass or drag should reduce from the
+  // root to the tip?" That is exactly it, and it is not a taste knob but the thing a chain of
+  // rigid links physically does.
+  const below = new Map();
+  for (let i = out.length - 1; i >= 0; i--) {
+    const link = out[i];
+    let n = 1;
+    for (const other of out) if (other.parent === link.joint) n += below.get(other.joint) || 1;
+    below.set(link.joint, n);
+  }
+  for (const link of out) link.mass = below.get(link.joint) || 1;
   return out;
 };
 
@@ -226,6 +246,8 @@ const _pAnim = new THREE.Vector3(), _pPar = new THREE.Vector3(), _pCur = new THR
 const _vel = new THREE.Vector3(), _next = new THREE.Vector3(), _dir = new THREE.Vector3();
 const _aimA = new THREE.Vector3(), _aimB = new THREE.Vector3(), _qAim = new THREE.Quaternion();
 const _pRig = new THREE.Vector3(), _acc = new THREE.Vector3();
+const _parMove = new THREE.Vector3();
+const _restDir = new THREE.Vector3(), _newDir = new THREE.Vector3();
 
 // gl-matrix's mat4 is a plain array here; a joint's matrix is written in place so the object
 // identity the rest of the app holds stays valid.
@@ -279,17 +301,34 @@ PhysicsBones.step = function (main, dt) {
       else if (!same) { st.rest = Array.prototype.slice.call(now); }
     }
 
-    // THE ANIMATED POSE IS CAPTURED FIRST, all of it, before anything is written. Each write
-    // rotates a joint and therefore moves every joint below it, so a target read after the first
-    // write would be a target measured against a pose that is already half simulated.
-    const target = new Map();
-    for (const link of links) target.set(link.joint.getID(), Skeleton.jointPos(link.joint).clone());
+    // A CHAIN, NOT FOUR INDEPENDENT SPRINGS. Each joint's target is read AFTER its parent has
+    // been written, so it is where the animation would put this joint GIVEN THE PARENT'S
+    // SIMULATED FRAME — not where the animation alone says it should be.
+    //
+    // That one distinction is the difference between a rig that feels coupled and one that does
+    // not. Capturing every target up front, as this did, means joint four chases its un-lagged
+    // animated pose no matter how far joints one to three have lagged: shake the head and all
+    // four react on the SAME FRAME, each fighting its own way back. matt, comparing it to
+    // Unreal: "it's as if the 4 joints aren't aware of each other... each is doing its own
+    // jiggly physics which loosely transmit to each other... it doesn't feel integrated."
+    //
+    // Measured on a four-joint ear: every joint first moved on frame 1, a propagation spread of
+    // zero. Reading the target in the loop makes a disturbance travel down the chain as a wave,
+    // because a child's rest position is carried by its parent's lag.
+    //
+    // The joint's own LOCAL matrix is never written by this — the sim rotates the PARENT — so
+    // reading its world position after the parent moved is exactly "where my parent's frame puts
+    // me", with no extra bookkeeping.
 
     for (const link of links) {
       const j = link.joint;
       const id = j.getID();
       let st = _state.get(id);
-      if (!st) { st = { p: target.get(id).clone(), prev: target.get(id).clone(), v: new THREE.Vector3() }; _state.set(id, st); }
+      if (!st) {
+        const at = Skeleton.jointPos(j).clone();
+        st = { p: at.clone(), prev: at.clone(), v: new THREE.Vector3() };
+        _state.set(id, st);
+      }
       // The joint that will actually be rotated keeps the rest pose, since that is the matrix
       // being written and therefore the one that accumulates.
       const pid = link.parent.getID();
@@ -298,16 +337,36 @@ PhysicsBones.step = function (main, dt) {
       pst.joint = link.parent;   // so a reset can put this joint back where it found it
       if (!pst.rest) pst.rest = Array.prototype.slice.call(link.parent.getMatrix());
 
-      _pAnim.copy(target.get(id));
+      Skeleton.jointPos(j, _pAnim);   // the parent above has already been written
       Skeleton.jointPos(link.parent, _pPar);        // already written this frame, so it is live
       _pCur.copy(st.p);                             // the PARTICLE's position, not the rig's
+
+      // INERTIA: how much of the parent's own movement the particle inherits before it starts
+      // resisting. At 0 the particle is a free point on a string — the joint above can travel
+      // right past it, and a fast head shake throws the chain to a huge angle before the spring
+      // has any say. Measured on a four-joint ear with a two-unit shake, the root joint reached
+      // 115 degrees and the chain then flailed incoherently: matt's "the entire ear moves as a
+      // single unit then starts to decompose into random springly motion".
+      //
+      // Carrying a fraction of the parent's step is what makes a chain read as ATTACHED to the
+      // thing it hangs off. It is the same idea as Dynamic Bone's Inert, and it is the setting
+      // that separates "loose" from "detached".
+      if (pst.lastPar) {
+        _parMove.subVectors(_pPar, pst.lastPar);
+        st.p.addScaledVector(_parMove, par.inertia);
+        st.prev.addScaledVector(_parMove, par.inertia);
+        _pCur.copy(st.p);
+      }
 
       if (rigid) { _next.copy(_pAnim); }
       else {
         // Acceleration: the spring pulling back toward the pose the animation asked for, plus
         // gravity. Then semi-implicit Euler — velocity first, position from the NEW velocity,
         // which is what keeps a spring stable at large steps.
-        _acc.subVectors(_pAnim, _pCur).multiplyScalar(k);
+        // Divided by the chain hanging below this joint: a force moves a heavy thing less. Not
+        // gravity, which is an acceleration and pulls every mass the same — that is the whole
+        // point of it, and dividing it here would make a long tail fall slower than a short one.
+        _acc.subVectors(_pAnim, _pCur).multiplyScalar(k / (link.mass || 1));
         _acc.y -= gAcc;
         // DRAG IS NOT DAMPING, which is why both are here. Damping decays the velocity at a
         // fixed rate whatever it is doing — it decides how fast a wobble dies. Drag opposes
@@ -316,7 +375,9 @@ PhysicsBones.step = function (main, dt) {
         // the second one, and no amount of the first gives it.
         if (par.drag > 0) {
           const sp = st.v.length();
-          if (sp > 1e-9) _acc.addScaledVector(st.v, -par.drag * sp / Math.max(unit, 1e-6));
+          if (sp > 1e-9) {
+            _acc.addScaledVector(st.v, -par.drag * sp / (Math.max(unit, 1e-6) * (link.mass || 1)));
+          }
         }
         st.v.addScaledVector(_acc, h).multiplyScalar(decay);
         _next.copy(_pCur).addScaledVector(st.v, h);
@@ -353,6 +414,30 @@ PhysicsBones.step = function (main, dt) {
         if (st.v.y < 0) st.v.y = 0;
       }
 
+      // A BEND LIMIT, which is what stops a chain looking broken rather than loose. A free
+      // particle plus a length constraint will happily fold a joint back on itself when the rig
+      // moves faster than the spring can answer; a real ear cannot do that, and the eye reads
+      // the fold as the simulation failing rather than as the ear being floppy. Clamping the
+      // angle between where the bone points now and where its parent's frame says it should
+      // point keeps every pose one a jointed chain could actually reach.
+      if (par.maxBend < 180) {
+        _restDir.subVectors(_pAnim, _pPar);
+        _newDir.subVectors(_next, _pPar);
+        if (_restDir.lengthSq() > 1e-12 && _newDir.lengthSq() > 1e-12) {
+          _restDir.normalize(); _newDir.normalize();
+          const cosLim = Math.cos(par.maxBend * Math.PI / 180);
+          const dot = Math.max(-1, Math.min(1, _restDir.dot(_newDir)));
+          if (dot < cosLim) {
+            // Slerp back onto the edge of the cone, keeping the direction it was heading.
+            const ang = Math.acos(dot);
+            const t = 1 - (par.maxBend * Math.PI / 180) / ang;
+            _newDir.lerp(_restDir, t).normalize();
+            _next.copy(_pPar).addScaledVector(_newDir, rest);
+            st.p.copy(_next);        // the particle is clamped too, or it fights the limit
+          }
+        }
+      }
+
       // Turn the position into the parent's rotation — the only thing that can actually move a
       // joint — via the solver's own primitive, so both write a joint the same way.
       // Aim from where the joint ACTUALLY is — the rig has already dragged it this frame — to
@@ -376,6 +461,8 @@ PhysicsBones.step = function (main, dt) {
       st.prev.copy(st.p);
       Skeleton.jointPos(j, st.p);
       if (h > 1e-9) st.v.subVectors(st.p, st.prev).divideScalar(h);
+      // Where the parent was this frame, so the next one can tell how far it travelled.
+      pst.lastPar = (pst.lastPar || new THREE.Vector3()).copy(_pPar);
     }
   }
   return moved;

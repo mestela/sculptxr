@@ -175,6 +175,11 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.val}" id="bone-phys-damp-val">${Math.round(physP.damping * 100)}</span>
     </div>
     <div class="${c.row}">
+      <span class="${c.lbl}">Follow</span>
+      <input type="range" id="bone-phys-inert" min="0" max="100" step="1" value="${Math.round(physP.inertia * 100)}">
+      <span class="${c.val}" id="bone-phys-inert-val">${Math.round(physP.inertia * 100)}</span>
+    </div>
+    <div class="${c.row}">
       <span class="${c.lbl}">Drag</span>
       <input type="range" id="bone-phys-drag" min="0" max="100" step="1" value="${Math.round(physP.drag * 100)}">
       <span class="${c.val}" id="bone-phys-drag-val">${Math.round(physP.drag * 100)}</span>
@@ -569,6 +574,10 @@ export function wireBoneSection(root, main, opts) {
   physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g');
   physParam('damp', 'damping', 100, (v) => String(Math.round(v * 100)));
   physParam('drag', 'drag', 100, (v) => String(Math.round(v * 100)));
+  // "Follow" rather than "Inertia": the slider says how much the chain comes ALONG with the
+  // thing it hangs off, and at 0 it is a free point on a string that the rig can travel right
+  // past. Named for what you see rather than for the term in the integrator.
+  physParam('inert', 'inertia', 100, (v) => String(Math.round(v * 100)));
 
   q('phys-ground')?.addEventListener('click', () => {
     const t = PhysicsBones.panelTarget(main,
