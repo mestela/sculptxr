@@ -311,5 +311,25 @@ check('a trace names the hand, the owner, and who moved the joint',
     'the key and the label were renamed together — a half-rename leaves the mode unreachable');
 }
 
+// ── SNAP PLANE OFF MEANS THE PLANE IS GONE ────────────────────────────────────────────
+//
+// The flag decided the plane's HIGHLIGHT and not whether it was drawn, so in VR turning Snap
+// Plane off left the plane sitting in the view doing nothing. The desktop path had always
+// hidden it — syncPlane returns early in an XR session precisely because updateXR owns the
+// plane there — so the two disagreed and only the headset showed it. matt: "if i turn off snap
+// plane in the bone tools, we should hide it in the 3d view as well."
+{
+  check('the VR path only asks for a plane when snapping is on',
+    /const plane = this\._snapEnabled\(\) \? Skeleton\.symmetryPlane\(main\) : null;/.test(SRC),
+    'reading the flag into the HIGHLIGHT argument leaves the plane drawn');
+  check('...and hides it when there is none',
+    /if \(!plane\) Skeleton\.hidePlane\(main\);/.test(SRC),
+    'a plane already on screen stays there until something takes it away');
+  check('...while the desktop path still agrees',
+    /const plane = wants && this\._snapEnabled\(\) \? Skeleton\.symmetryPlane\(main\) : null;/.test(SRC)
+    && /if \(!plane\) \{ Skeleton\.hidePlane\(main\); return; \}/.test(SRC),
+    'the two paths having different answers is what made this headset-only');
+}
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

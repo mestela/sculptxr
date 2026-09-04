@@ -434,11 +434,11 @@ check('shader-specific groups mute instead of hiding',
     + 'finds the first and the second silently goes stale');
 
   const quick = buildBoneQuickDisplayHTML(main, 'mp');
-  check('the wrist panel gets solid, wire, joints and capsules',
-    ['solid', 'wire', 'joints', 'caps'].every((k) => quick.includes('id="bone-' + k + '"')));
+  check('the wrist panel gets solid, wire, joints, capsules and pins',
+    ['solid', 'wire', 'joints', 'caps', 'pins'].every((k) => quick.includes('id="bone-' + k + '"')));
   check('...and not the read-outs, which would only make it taller',
     !/bone-(names|len|trails|gnomons)/.test(quick),
-    'names, lengths, pins and trails are set once and left');
+    'names, lengths, trails and rotation are set once and left');
   check('...in the wrist dialect, not the menu one',
     quick.includes('mp-toggle-btn') && !quick.includes('mm-choice'));
 }

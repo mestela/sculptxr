@@ -250,9 +250,9 @@ export function buildBoneDisplayHTML(main, style) {
 // back. matt: "i currently find i have to keep jumping between the display options and the bone
 // tool to swap display modes."
 //
-// Four rather than the whole display block on purpose: the wrist panel is already too tall (its
+// Five rather than the whole display block on purpose: the wrist panel is already too tall (its
 // own problem), and these are the ones that change what you can SEE to work on. The rest —
-// names, lengths, pins, trails, rotation — are read-outs you set once and leave.
+// names, lengths, trails, rotation — are read-outs you set once and leave.
 //
 // The same ids as the main menu's, which is safe because each panel wires its own root: the two
 // never share a document, and both already emit `bone-draw` and the rest.
@@ -264,6 +264,7 @@ export function buildBoneQuickDisplayHTML(main, style) {
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
       ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
+      ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
     </div>
   `;
 }

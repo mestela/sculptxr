@@ -1580,9 +1580,17 @@ class BoneDrawTool extends SculptBase {
 
     // Draw the symmetry plane, lit up while the tip is inside the snap band so you can see
     // that the next joint will be centred BEFORE you commit it.
-    const plane = Skeleton.symmetryPlane(main);
-    Skeleton.updatePlane(main, plane, !!plane && this._snapEnabled()
-      && Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap(), _tip);
+    //
+    // ONLY WHILE SNAPPING IS ON. The flag used to decide the HIGHLIGHT and not the drawing, so
+    // turning Snap Plane off in VR left the plane sitting in the view doing nothing — the
+    // desktop path had always hidden it (see syncPlane) and the two disagreed. matt: "if i turn
+    // off snap plane in the bone tools, we should hide it in the 3d view as well."
+    const plane = this._snapEnabled() ? Skeleton.symmetryPlane(main) : null;
+    if (!plane) Skeleton.hidePlane(main);
+    else {
+      Skeleton.updatePlane(main, plane,
+        Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap(), _tip);
+    }
 
     // CLEARED EACH FRAME, then set by the modes that actually resolve a bone. This tool does
     // its own picking, so nothing else here would ever clear it — and a stale value names a
