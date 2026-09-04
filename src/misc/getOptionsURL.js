@@ -176,6 +176,9 @@ var getOptionsURL = function () {
   options.leftHandMode = queryBool(getVal('leftHandMode'), false);
   options.aimPickingMode = queryBool(getVal('aimPickingMode'), false); // Default false
   options.debugMode = queryBool(getVal('debugMode'), false);
+  // Which physics-bone solver runs. Off is the force solver, which is still the default: the
+  // constraint one removes the pin-activation pop but does not yet land the hand on the pin.
+  options.physicsXPBD = queryBool(getVal('physicsXPBD'), false);
   options.ambidextrousCursors = queryBool(getVal('ambidextrousCursors'), false);
   options.triggerCurve = queryNumber(getVal('triggerCurve'), 0.0, 1.0, 0.5);
   options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.0001);

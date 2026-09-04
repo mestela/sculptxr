@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import Skeleton from './Skeleton.js';
 import IKSolver from './IKSolver.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 // PHYSICS BONES (roadmap #51) — jiggle and follow-through for hair, tails and ears.
 //
@@ -629,13 +630,16 @@ PhysicsBones.SUBSTEPS = 8;
 // for gravity and stiffness to have real authority, the hand no longer arrives: 12.49 units from
 // the pin at full weight against 0.49 before. A pin that does not reach its pin is worse than a
 // pop, so this is opt-in until it does both. `physXPBD(true)` selects it, and that persists.
+// Through the app's own option store, not a private key: it is a setting, so it belongs in the
+// settings menu -- and reaching a console to set an env var is not a thing you can do in a
+// headset. matt: "its a pain changing things like this with an envar in the console on the gxr."
 try {
-  window._physXPBD = localStorage.getItem('sxr_physXPBD') === '1';
-} catch (_) { window._physXPBD = false; }   // private window, or site data blocked
+  window._physXPBD = !!getOptionsURL().physicsXPBD;
+} catch (_) { window._physXPBD = false; }
 
 PhysicsBones.setSolver = function (on) {
   window._physXPBD = !!on;
-  try { localStorage.setItem('sxr_physXPBD', on ? '1' : '0'); } catch (_) {}
+  try { getOptionsURL.saveOption('physicsXPBD', !!on); } catch (_) {}
   if (window.screenLog) window.screenLog('Physics solver: ' + (on ? 'XPBD' : 'force'), 'cyan');
   return !!window._physXPBD;
 };

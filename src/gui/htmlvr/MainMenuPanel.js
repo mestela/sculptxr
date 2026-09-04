@@ -33,6 +33,7 @@ import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import RigPending   from '../../editing/RigPending.js';
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
+import PhysicsBones from '../../editing/PhysicsBones.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import {
@@ -998,6 +999,9 @@ function buildMenuHTML_settings(main) {
   const menuSat       = ui.menuSaturation  ?? 0.50;
   const menuGamma     = ui.menuGamma       ?? 0.0;
   const debugMode     = ui.debugMode       ?? false;
+  // Which physics-bone solver runs. Read from the live flag rather than the option, so the panel
+  // still shows the truth when it has been switched from the console.
+  const physXPBD      = !!window._physXPBD;
 
   const isLeft      = main._dominantHand === 'left';
   const isRaycast   = !main._vrUseVolumeIntersect;
@@ -1100,6 +1104,9 @@ function buildMenuHTML_settings(main) {
     <div class="mm-section-title">Blendshapes</div>
     <button class="mm-action-btn" id="mm-bs-backup">Backup Shapes</button>
     <button class="mm-action-btn" id="mm-bs-restore">Restore Shapes</button>
+
+    <div class="mm-section-title">Physics</div>
+    <button class="mm-toggle${physXPBD ? ' active' : ''}" id="mm-phys-xpbd">Constraint Solver (XPBD)</button>
 
     <div class="mm-section-title">Debug</div>
     <button class="mm-toggle${debugMode ? ' active' : ''}" id="mm-debug-mode">Debug Mode (HUD Logs)</button>
@@ -2214,6 +2221,15 @@ export class MainMenuPanel extends HTMLVRPanel {
       main._vrUseVolumeIntersect = !main._vrUseVolumeIntersect;
       opts.saveOption('aimPickingMode', !main._vrUseVolumeIntersect);
       q('#mm-raycast')?.classList.toggle('active', !main._vrUseVolumeIntersect);
+      paint();
+    });
+    // A SETTING, NOT AN ENV VAR. This lived only on `window`, which meant a console -- and there
+    // is no console in a headset. matt: "its a pain changing things like this with an envar in
+    // the console on the gxr." PhysicsBones.setSolver persists it through the same option store
+    // as every other setting here, so it survives a reload like they do.
+    q('#mm-phys-xpbd')?.addEventListener('click', () => {
+      const on = PhysicsBones.setSolver(!window._physXPBD);
+      q('#mm-phys-xpbd')?.classList.toggle('active', on);
       paint();
     });
     q('#mm-ambi')?.addEventListener('click', () => {
@@ -3854,8 +3870,11 @@ export function buildMenuHTML_desktopSettings(main) {
   ` : '';
 
   const debugActive = !!document.getElementById('log')?.style.display && document.getElementById('log').style.display !== 'none';
+  const physSection = `
+    <div class="mm-section-title">Physics Bones</div>
+    ${chk('Constraint solver XPBD', !!window._physXPBD)}`;
 
-  return `${ipadSection}
+  return `${ipadSection}${physSection}
     <div class="mm-section-title">Numeric Input</div>
     ${chk('Always show numpad', opts.alwaysNumpad)}
     <div class="mm-section-title">Pen Pressure</div>
@@ -3894,6 +3913,14 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireCheck('#mm-stylus-controls-view',  'ipadStylusView',   '_ipadStylusView');
   wireCheck('#mm-stylus-sculpts',        'ipadStylusSculpt', '_ipadStylusSculpt');
   wireCheck('#mm-always-show-numpad',    'alwaysNumpad',     '_alwaysNumpad');
+
+  // Not wireCheck: the solver flag is owned by PhysicsBones, which persists it and logs the
+  // switch, rather than being a bare window assignment.
+  // NOTE the label has no parentheses on purpose: `chk` derives the id from it, and a "(" in an
+  // id makes querySelector throw rather than simply miss.
+  q('#mm-constraint-solver-xpbd')?.addEventListener('change', (e) => {
+    PhysicsBones.setSolver(e.target.checked);
+  });
 
   wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
     (v) => { Tablet.radiusFactor    = v; getOptionsURL.saveOption('tabletRadiusFactor',    v, 300); }, v => v.toFixed(2));

@@ -535,5 +535,26 @@ check('shader-specific groups mute instead of hiding',
   globalThis.__sel = [];
 }
 
+// ── THE PHYSICS SOLVER IS A SETTING, NOT AN ENV VAR ───────────────────────────────────
+//
+// It lived only on `window`, which meant a console -- and there is no console in a headset.
+// matt: "its a pain changing things like this with an envar in the console on the gxr."
+check('the VR settings menu offers the physics solver',
+  /<div class="mm-section-title">Physics<\/div>/.test(MAIN_SRC)
+    && /id="mm-phys-xpbd"/.test(MAIN_SRC),
+  'the only way to switch solver in a headset is a console that is not there');
+check('...wired to PhysicsBones, which persists it',
+  /q\('#mm-phys-xpbd'\)\?\.addEventListener\('click', \(\) => \{[\s\S]{0,160}?PhysicsBones\.setSolver\(!window\._physXPBD\)/.test(MAIN_SRC));
+check('...and shows the state it is actually in',
+  /const physXPBD      = !!window\._physXPBD;/.test(MAIN_SRC)
+    && /mm-toggle\$\{physXPBD \? ' active' : ''\}/.test(MAIN_SRC),
+  'a toggle that does not read the live flag lies after a console switch');
+// `chk` builds the id from the label, and a "(" in an id makes querySelector THROW rather than
+// simply miss -- so the label must not contain one.
+check('the desktop settings checkbox has a selectable id',
+  /\$\{chk\('Constraint solver XPBD', !!window\._physXPBD\)\}/.test(MAIN_SRC)
+    && /q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC),
+  'parentheses in the label make the wiring selector invalid');
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
