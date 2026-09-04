@@ -40,6 +40,11 @@ const PhysicsBones = {
   setRoot: () => true,
   // The sliders aim at a REMEMBERED joint rather than the selection — see panelTarget. The stub
   // keeps the same rule so the markup checks below exercise it.
+  // The blend weight is a keyable channel evaluated at the playhead, not a stored property —
+  // the slider shows what it reads THERE, so the stub answers the same way.
+  WEIGHT: 'physicsWeight',
+  weight: (j) => (globalThis.__physW == null ? 1 : globalThis.__physW),
+  setWeightKey: () => true,
   panelTarget: (main, sel) => {
     const one = (sel || []).filter((j) => j && j._physicsRoot);
     if (one.length === 1) main._physicsPanelTarget = one[0];

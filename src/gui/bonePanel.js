@@ -120,6 +120,9 @@ export function buildBoneAuthoringHTML(main, style) {
   const physTwin = physTarget && physTarget._boneMirror
     && main.getMeshes?.().includes(physTarget._boneMirror) && physTarget._boneMirror !== physTarget
     ? physTarget._boneMirror : null;
+  // The blend weight is a KEYABLE channel, so the slider shows what it evaluates to at the
+  // playhead rather than a stored number — scrub onto a keyed fade and the slider follows it.
+  const physW = physTarget ? PhysicsBones.weight(physTarget) : 1;
   const physName = physTarget
     ? jointName(physTarget) + (physTwin ? ' + ' + jointName(physTwin) : '') : '';
   const xray = Math.round(Skinning.skinOpacity() * 100);
@@ -159,6 +162,15 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     ${physTarget ? `
     ${sectionTitle(c, 'Physics: ' + physName)}
+    <div class="${c.row}">
+      <span class="${c.lbl}">Weight</span>
+      <input type="range" id="bone-phys-weight" min="0" max="100" step="1" value="${Math.round(physW * 100)}">
+      <span class="${c.val}" id="bone-phys-weight-val">${Math.round(physW * 100)}</span>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-phys-key"
+        title="Key the blend weight at the playhead, so a chain can be floppy through a shot and locked for the beat where it has to hit a mark. Undoable.">Key Weight</button>
+    </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Stiffness</span>
       <input type="range" id="bone-phys-stiff" min="1" max="99" step="1" value="${Math.round(physP.stiffness * 100)}">
@@ -578,6 +590,33 @@ export function wireBoneSection(root, main, opts) {
   // thing it hangs off, and at 0 it is a free point on a string that the rig can travel right
   // past. Named for what you see rather than for the term in the integrator.
   physParam('inert', 'inertia', 100, (v) => String(Math.round(v * 100)));
+
+  // WEIGHT IS NOT ONE OF THE OTHERS. The four above are properties of the chain, stored on the
+  // joint; this one is a keyable channel evaluated at the playhead, so dragging it has to write
+  // a key or it would be overwritten by the next evaluation. It writes on RELEASE rather than on
+  // every input event — one key per drag, not sixty.
+  const wInput = q('phys-weight'), wVal = q('phys-weight-val');
+  const wTarget = () => PhysicsBones.panelTarget(main,
+    (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
+  wInput?.addEventListener('input', () => {
+    if (wVal) wVal.textContent = String(parseInt(wInput.value, 10));
+  });
+  const commitWeight = () => {
+    const t = wTarget();
+    if (!t) return;
+    const v = parseInt(wInput.value, 10) / 100;
+    for (const j of withTwin(t)) PhysicsBones.setWeightKey(main, j, v);
+    say(`Bones: physics weight ${Math.round(v * 100)}% keyed here`, true);
+  };
+  wInput?.addEventListener('change', commitWeight);
+
+  q('phys-key')?.addEventListener('click', () => {
+    const t = wTarget();
+    if (!t) { say('Bones: no physics joint selected', false); return; }
+    const v = wInput ? parseInt(wInput.value, 10) / 100 : PhysicsBones.weight(t);
+    for (const j of withTwin(t)) PhysicsBones.setWeightKey(main, j, v);
+    say(`Bones: physics weight ${Math.round(v * 100)}% keyed here`, true);
+  });
 
   q('phys-ground')?.addEventListener('click', () => {
     const t = PhysicsBones.panelTarget(main,

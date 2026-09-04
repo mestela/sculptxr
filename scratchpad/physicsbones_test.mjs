@@ -24,7 +24,7 @@ const SRC = fs.readFileSync(path.join(REPO, 'src/editing/PhysicsBones.js'), 'utf
 // rotation, exactly as the app's joints are, and world position is an FK walk.
 const prelude = `
 import * as THREE from '${path.join(REPO, 'node_modules/three/build/three.module.js')}';
-const window = {};
+const window = { _animationRegistry: null };
 const _all = [];
 const _mA = new THREE.Matrix4(), _mB = new THREE.Matrix4();
 const _vT = new THREE.Vector3(), _qT = new THREE.Quaternion(), _sT = new THREE.Vector3();
@@ -63,7 +63,7 @@ const IKSolver = {
     for (let i = 0; i < 16; i++) joint._mat[i] = _mA.elements[i];
   },
 };
-export { _all, Skeleton };
+export { _all, Skeleton, window as win };
 `;
 const body = SRC.split('\n')
   .filter((l) => !/^import\s/.test(l))
@@ -412,6 +412,52 @@ const len = (a, b) => wp(a).distanceTo(wp(b));
     wp(r.t2).distanceTo(posed) < 1e-6,
     'moved ' + wp(r.t2).distanceTo(posed).toFixed(3) + ' — restoring a stale pose here would '
     + 'undo the animation');
+}
+
+// ── THE BLEND WEIGHT (roadmap #48's scalar channel) ───────────────────────────────────
+//
+// How much the physics applies, keyable over time: 1 is full jiggle, 0 is the animated pose
+// exactly, and in between the joint sits proportionally between the two. It is what lets a tail
+// be floppy through a shot and locked for the beat where it has to hit a mark, and it rides the
+// generic keyable scalar built for pin weights rather than a bespoke number of its own.
+{
+  const settle = (w) => {
+    const r = rig();
+    PB.setRoot(null, r.t0, true);
+    PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0, inertia: 0, maxBend: 180 });
+    setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
+    // A fake registry answering the scalar channel, which is all PhysicsBones asks of it.
+    M.win._animationRegistry = { globalPlaybackTime: 0,
+      scalarAt: (mesh, name, t, dflt) => (name === PB.WEIGHT ? w : dflt) };
+    const main = {};
+    const rest = wp(r.t2);
+    PB.reset(main);
+    for (let i = 0; i < 180; i++) PB.step(main, 1 / 60);
+    const moved = wp(r.t2).distanceTo(rest);
+    M.win._animationRegistry = null;
+    return moved;
+  };
+
+  const full = settle(1), half = settle(0.5), off = settle(0);
+  check('weight 0 leaves the animated pose exactly alone', off < 1e-6,
+    'moved ' + off.toFixed(6) + ' — 0 has to mean OFF, or there is no way to key a chain still');
+  check('weight 1 is the full jiggle', full > 0.5, 'moved ' + full.toFixed(2));
+  check('...and a half weight lands between the two',
+    half > off + 0.05 && half < full - 0.05,
+    'off ' + off.toFixed(2) + ', half ' + half.toFixed(2) + ', full ' + full.toFixed(2));
+
+  // The end-snap, which pin weight documents and this inherits: the scalar evaluator solves a
+  // Bezier iteratively, so a key valued exactly 1 reads about 0.9990 at its own key time.
+  M.win._animationRegistry = { globalPlaybackTime: 0, scalarAt: () => 0.999 };
+  check('a key of 1 that evaluates to 0.999 still means fully on',
+    PB.weight({ getID: () => 1 }) === 1,
+    'left alone that is a chain keyed as ON which is fractionally damped for ever');
+  M.win._animationRegistry = { globalPlaybackTime: 0, scalarAt: () => 0.004 };
+  check('...and 0.004 means fully off', PB.weight({ getID: () => 1 }) === 0);
+  M.win._animationRegistry = null;
+  check('...and with no registry at all it is fully on',
+    PB.weight({ getID: () => 1 }) === 1,
+    'a rig with no animation must not be silently unsimulated');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

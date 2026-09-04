@@ -85,6 +85,58 @@ PhysicsBones.DEFAULTS = DEFAULTS;
 
 PhysicsBones.isRoot = function (j) { return !!(j && j._physicsRoot); };
 
+// ---- blend weight (roadmap #48's scalar channel) -----------------------------
+//
+// HOW MUCH THE PHYSICS APPLIES, keyable over time. 1 is full jiggle, 0 is the animated pose
+// exactly, and in between the joint sits proportionally between the two. That is what lets a
+// tail be floppy through a shot and locked for the one beat where it must hit a mark.
+//
+// The channel is the generic keyable scalar built for pin weights (#48) — same storage, same
+// evaluator, same dopesheet row, same undo. Building a bespoke number here would have been a
+// second thing to serialise, snapshot and draw.
+PhysicsBones.WEIGHT = 'physicsWeight';
+const W_EPS = 0.01;
+
+PhysicsBones.weight = function (joint) {
+  const reg = window._animationRegistry;
+  if (!reg || !reg.scalarAt) return 1;
+  const w = reg.scalarAt(joint, PhysicsBones.WEIGHT, reg.globalPlaybackTime || 0, 1);
+  if (w == null) return 1;
+  // SNAP THE ENDS, for the reason pin weight documents: the scalar evaluator solves a Bezier
+  // iteratively, so a key valued exactly 1 reads about 0.9990 AT ITS OWN KEY TIME. Left alone
+  // that is a chain keyed as fully on which is fractionally damped for ever, and the w >= 1
+  // fast path never fires.
+  if (w >= 1 - W_EPS) return 1;
+  if (w <= W_EPS) return 0;
+  return Math.min(1, Math.max(0, w));
+};
+
+// Write a weight key at the playhead, undoable — the same shape as IKSolver.setPinWeightKey.
+PhysicsBones.setWeightKey = function (main, joint, w) {
+  const reg = window._animationRegistry;
+  if (!joint || !reg || !reg.setScalarKey) return false;
+  const t = reg.globalPlaybackTime || 0;
+  const id = joint.getID();
+  const snapOf = () => {
+    const tr = reg.tracks && reg.tracks.get(id);
+    return tr ? reg._snapshotTrack(tr) : null;
+  };
+  const before = snapOf();
+  reg.setScalarKey(joint, PhysicsBones.WEIGHT, t, Math.min(1, Math.max(0, w)));
+  const after = snapOf();
+  const apply = (snap) => {
+    const tr = reg.tracks && reg.tracks.get(id);
+    if (tr && snap) reg._restoreTrack(tr, snap, null);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  };
+  main?.getStateManager?.()?.pushStateCustom?.(
+    () => apply(before), () => apply(after), false, 'Key Physics Weight');
+  Skeleton.updateVisuals(main);
+  main.render?.();
+  return true;
+};
+
 PhysicsBones.params = function (j) {
   const p = (j && j._physicsParams) || null;
   const pick = (k) => (p && p[k] !== undefined ? p[k] : DEFAULTS[k]);
@@ -246,7 +298,7 @@ const _pAnim = new THREE.Vector3(), _pPar = new THREE.Vector3(), _pCur = new THR
 const _vel = new THREE.Vector3(), _next = new THREE.Vector3(), _dir = new THREE.Vector3();
 const _aimA = new THREE.Vector3(), _aimB = new THREE.Vector3(), _qAim = new THREE.Quaternion();
 const _pRig = new THREE.Vector3(), _acc = new THREE.Vector3();
-const _parMove = new THREE.Vector3();
+const _parMove = new THREE.Vector3(), _aimTo = new THREE.Vector3();
 const _restDir = new THREE.Vector3(), _newDir = new THREE.Vector3();
 
 // gl-matrix's mat4 is a plain array here; a joint's matrix is written in place so the object
@@ -272,6 +324,20 @@ PhysicsBones.step = function (main, dt) {
     const decay = Math.exp(-DAMP_SCALE * par.damping * h);  // exact, so it does not depend on h
     const gAcc = gravityUnits(main, par.gravity);
     const rigid = par.stiffness >= 1;
+    // The blend weight is read once per chain per step: it is keyed on the ROOT, because the
+    // chain is what it turns on and off and keying every joint of a tail separately would be a
+    // way to get them out of step with each other.
+    const blend = PhysicsBones.weight(root);
+    if (blend <= 0) {
+      // Fully off: put the chain on its animated pose and keep the particles there, so turning
+      // it back on starts from the pose rather than from wherever gravity had dragged it while
+      // nobody was looking. A weight that fades in should fade in from where the rig IS.
+      for (const link of links) {
+        const st0 = _state.get(link.joint.getID());
+        if (st0) { Skeleton.jointPos(link.joint, st0.p); st0.prev.copy(st0.p); st0.v.set(0, 0, 0); }
+      }
+      continue;
+    }
 
     // THE REST POSE IS PUT BACK BEFORE ANYTHING IS MEASURED.
     //
@@ -440,16 +506,35 @@ PhysicsBones.step = function (main, dt) {
 
       // Turn the position into the parent's rotation — the only thing that can actually move a
       // joint — via the solver's own primitive, so both write a joint the same way.
+      // BLEND, between the animated pose and where the physics wants the joint — applied to
+      // what is WRITTEN, while the simulation underneath keeps running at full strength.
+      //
+      // Blending `_next` itself and then letting the particle read its state back off the rig
+      // made the physics decay multiplicatively instead of running at half: a weight of 0.5
+      // landed at 0.01 against a full swing of 2.67, which is off, not half. The sim has to be
+      // unaware of the weight, or a chain faded back in would come back from nowhere.
+      _aimTo.copy(_next);
+      if (blend < 1) _aimTo.lerp(_pAnim, 1 - blend);
+
       // Aim from where the joint ACTUALLY is — the rig has already dragged it this frame — to
       // where the particle wants it. The rotation is the correction between those two.
       Skeleton.jointPos(j, _pRig);
       _aimA.subVectors(_pRig, _pPar);
-      _aimB.subVectors(_next, _pPar);
+      _aimB.subVectors(_aimTo, _pPar);
       if (_aimA.lengthSq() > 1e-12 && _aimB.lengthSq() > 1e-12) {
         _qAim.setFromUnitVectors(_aimA.normalize(), _aimB.normalize());
         IKSolver.rotateJoint(link.parent, _qAim);
         pst.written = Array.prototype.slice.call(link.parent.getMatrix());
         moved++;
+        // THE PARTICLE FOLLOWS THE PHYSICS, NOT THE RIG, when a weight is in play: the rig is
+        // showing a blend, and a particle that tracked it would be simulating the blend rather
+        // than the motion the blend is a fraction OF. `_next` is already length-constrained, so
+        // it is on the same surface the read-back would have given at full weight.
+        st.prev.copy(st.p);
+        st.p.copy(_next);
+        if (h > 1e-9) st.v.subVectors(st.p, st.prev).divideScalar(h);
+        pst.lastPar = (pst.lastPar || new THREE.Vector3()).copy(_pPar);
+        continue;
       }
       // Carry the particle forward. Read back from the rig rather than trusting `_next`: the aim
       // is a rotation about the parent, so where the joint lands is the truth, and a particle
