@@ -155,9 +155,32 @@ IKSolver.setPin = function (joint, mode, main) {
   let pin = IKSolver.pinObject(joint);
 
   if (!now) {
+    // REMEMBERED, NOT FORGOTTEN. A pin is an ordinary object and carries an ordinary animation
+    // track — its keyed path, and its weight keys. Unpinning takes the object out of the scene,
+    // and re-pinning used to build a brand new one with a new id, which left every key the user
+    // had put on the old one orphaned on a track belonging to nothing.
+    //
+    // Silent, and expensive: matt keyed a wrist pin to activate over two frames, cycled the pin
+    // with the A button somewhere along the way, and the fade simply stopped existing. The pin
+    // read as hard-on at weight 1 from frame 0, so the wrist snapped to it instead of blending —
+    // "instead it made the rig explode". The keys were still in his file, on object 418, which
+    // is not in the scene.
+    joint._boneIKPinPrev = pin || joint._boneIKPinPrev || null;
     joint._boneIKPinObj = null;
     joint._boneIKPin = 0;
     return pin; // handed back so the caller can remove it from the scene and undo that
+  }
+
+  if (!pin) {
+    // The one this joint had before, if it still exists — so its keys come back with it. A pin
+    // toggled off and on is the same pin, which is what the gesture says and what the undo path
+    // has always done (see attachPin).
+    const prev = joint._boneIKPinPrev;
+    if (prev && main && main.addMeshSilent && !(main.getMeshes() || []).includes(prev)) {
+      main.addMeshSilent(prev);
+      pin = prev;
+      joint._boneIKPinObj = pin;
+    }
   }
 
   if (!pin) {
@@ -165,6 +188,7 @@ IKSolver.setPin = function (joint, mode, main) {
     if (!pin) return null; // no scene to put it in
     joint._boneIKPinObj = pin;
   }
+  joint._boneIKPinPrev = pin;
   // Cycling 3DOF -> 6DOF must NOT re-place the pin: if the joint has drifted off an
   // unreachable pin, moving it to the joint would shift the pin at the very moment the user
   // asked for a stronger hold.

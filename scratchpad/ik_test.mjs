@@ -1912,5 +1912,30 @@ function poleLeg() {
     'the two halves disagreeing means a full IK solve every frame, forever');
 }
 
+// ── A PIN TOGGLED OFF AND ON IS THE SAME PIN ──────────────────────────────────────────
+//
+// A pin is an ordinary object with an ordinary animation track — its keyed path AND its weight
+// keys. Unpinning takes the object out of the scene, and re-pinning used to build a brand new
+// one with a new id, orphaning every key the user had put on the old one on a track belonging
+// to nothing.
+//
+// Silent, and expensive. matt keyed a wrist pin to activate over two frames, cycled the pin with
+// the A button somewhere along the way, and the fade stopped existing: the pin read as hard-on
+// at weight 1 from frame 0, so the wrist SNAPPED to it instead of blending in — "instead it made
+// the rig explode". Found by opening his file: the keys were still there, on object 418, and
+// object 418 is not in the scene.
+{
+  check('unpinning remembers the pin it had',
+    /joint\._boneIKPinPrev = pin \|\| joint\._boneIKPinPrev \|\| null;/.test(SRC),
+    'the object leaves the scene; its keys must not leave with it');
+  check('...and re-pinning puts that same object back',
+    /const prev = joint\._boneIKPinPrev;/.test(SRC)
+    && /main\.addMeshSilent\(prev\);/.test(SRC),
+    'a new object means a new id, and every key on the old one is orphaned');
+  check('...only when it is not already in the scene',
+    /!\(main\.getMeshes\(\) \|\| \[\]\)\.includes\(prev\)/.test(SRC),
+    'adding a live object a second time is its own bug');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
