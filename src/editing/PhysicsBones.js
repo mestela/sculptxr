@@ -650,6 +650,13 @@ window.physXPBD = PhysicsBones.setSolver;
 // Compliance from a 0..1 slider. Both sliders read "how hard does this hold", so both map the
 // same way: 1 is rigid (alpha 0) and 0 is absent (alpha infinite). Scaled by the scene unit
 // squared because compliance is metres per newton and the rig's idea of a metre is arbitrary.
+// How hard a pin is holding this joint right now, 0 when it has none.
+function pinHoldOf(joint) {
+  const pin = IKSolver.pinObject && IKSolver.pinObject(joint);
+  if (!pin || window._physPinConstraint === false) return 0;
+  return IKSolver.pinWeight(joint) || 0;
+}
+
 function complianceFrom(v, scale, unit) {
   if (v >= 1) return 0;
   if (v <= 0) return Infinity;
@@ -807,9 +814,20 @@ PhysicsBones.stepXPBD = function (main, dt) {
     // there, from the ANIMATED parent position frame to frame, so the two read the same.
     for (let i = 0; i < links.length; i++) {
       const st = P[i];
-      if (st.lastPar) {
+      // A PIN OUTRANKS THE CARRY. Follow is about inheriting the parent's ANIMATION; a pin is a
+      // statement about where this joint must BE, and a kinematic shove applied on top of it just
+      // fights it. Worse, the shove is read off the live rig -- which by then contains the pin
+      // dragging the chain -- so the carry fed on its own output: the hand tracked a moving pin
+      // to within 0.01 with Follow off, and sat a standing 11.6 units behind it at the default
+      // 0.35. matt: "the follow slider makes it go crazy... it travels with it about half way and
+      // stops", and separately that with Follow off "the solve is actually pretty good".
+      const carry = par.inertia * (1 - Math.min(1, pinHoldOf(links[i].joint)));
+      if (st.lastPar && carry > 0) {
         _xDir.subVectors(shape[i].animPar, st.lastPar);
-        st.p.addScaledVector(_xDir, par.inertia);
+        st.p.addScaledVector(_xDir, carry);
+        // BOTH ends of the step, or the shift reads as motion the chain performed and lands in
+        // the velocity on the next update -- a kick, every frame, which is the "crazy".
+        st.prev.addScaledVector(_xDir, carry);
       }
       (st.lastPar || (st.lastPar = new THREE.Vector3())).copy(shape[i].animPar);
     }

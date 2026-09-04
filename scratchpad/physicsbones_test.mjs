@@ -611,8 +611,20 @@ check('damping is applied to the velocity the constraints left, not the predicti
   'energy never leaves the chain and nothing settles');
 
 check('inertia reaches the constraint solver',
-  /st\.p\.addScaledVector\(_xDir, par\.inertia\);/.test(SRC),
+  /const carry = par\.inertia \* \(1 - Math\.min\(1, pinHoldOf\(links\[i\]\.joint\)\)\);/.test(SRC)
+    && /st\.p\.addScaledVector\(_xDir, carry\);/.test(SRC),
   'a chain reads as detached rather than loose, and the setting does nothing');
+// Follow is about inheriting the parent's ANIMATION; a pin says where the joint must BE, and a
+// kinematic shove on top of it just fights it -- measured, the hand sat 11.6 units behind a
+// moving pin at the default Follow and tracked it to 0.01 with Follow off.
+check('...but a pin outranks it',
+  /const carry = par\.inertia \* \(1 - Math\.min\(1, pinHoldOf/.test(SRC),
+  'the carry fights the pin and the hand never arrives');
+// Shifting only `p` makes the shift read as motion the chain performed, so it lands in the
+// velocity on the next update: a kick every frame.
+check('...and the shift moves both ends of the step, injecting no velocity',
+  /st\.prev\.addScaledVector\(_xDir, carry\);/.test(SRC),
+  'the carry becomes a velocity kick every frame');
 check('...as do gravity, drag, damping and stiffness',
   /_xg\.set\(0, -gAcc, 0\);/.test(SRC)
     && /-par\.drag \* sp/.test(SRC)
