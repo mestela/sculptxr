@@ -537,8 +537,13 @@ const CSS = `
      and at content height the list grew to the full panel and pushed everything below it out
      of reach: every visit to a rig control meant scrolling past the whole skeleton. Capped at
      two thirds, the list scrolls itself and the controls under it stay where they were.
-     matt: "it should expand no bigger than, say 2/3 of the panel." */
-  max-height: ${Math.round(MM_BODY_H * 0.66)}px;
+     matt: "it should expand no bigger than, say 2/3 of the panel."
+     THEN A THIRD SMALLER AGAIN (0.66 -> 0.44), because two thirds still buried what is under it:
+     the transform fields and the parenting buttons are the reason you open this panel with a rig
+     selected, and reaching them meant scrolling the whole skeleton first. matt: "the outliner
+     takes up too much vertical space still in that menu, its hard to scroll past it to get to
+     the transform matrix controls and set parent buttons. make it 1/3 less rows." */
+  max-height: ${Math.round(MM_BODY_H * 0.44)}px;
   overflow-y: auto;
   overscroll-behavior: contain;   /* stop a flick inside the list from scrolling the panel too */
   scrollbar-width: none;          /* the rasteriser does not paint native scrollbars — see .mm-outliner-sbar */
@@ -703,6 +708,21 @@ const CSS = `
   display: block;
   object-fit: cover;
 }
+/* THE NAME IS WHAT YOU ARE LOOKING FOR. A tile carried a picture and a date, and a date tells
+   you nothing about which save it is -- saves made in one sitting all say the same thing. The
+   name is typed at save time and was simply never shown. matt: "the thumbnails in the browser
+   saves dialog should include the name in the listing." */
+.mm-storage-name {
+  display: block;
+  font-size: 9px;
+  color: #cdd6f4;
+  text-align: center;
+  padding: 2px 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-storage-item.selected .mm-storage-name { color: #ffffff; }
 .mm-storage-date {
   display: block;
   font-size: 8px;
@@ -1471,6 +1491,18 @@ export function buildSectionHTML_rendering(main) {
   return `
     ${rigDisplay}
     <div id="mm-render-root" class="${shaderClass}">
+      <!-- SCENE DISPLAY FIRST. The ground plane is the toggle reached most often in this menu and
+           it sat below the shader, both environment grids, every mesh-display slider and the
+           wireframe controls -- a long scroll in a headset to flip one switch. matt: "the
+           groundplane option is too far low on the menu and hard to reach." -->
+      <div class="mm-section-title">Scene Display</div>
+      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
+      <div class="mm-row">
+        <span class="mm-lbl">Grid Opacity</span>
+        <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
+        <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
+      </div>
+
       <fieldset class="mm-disabled-group"${meshDisabled}>
       <div class="mm-section-title">Shader</div>
       <div class="mm-choice-grid cols-5">${shaderBtns}</div>
@@ -1516,14 +1548,6 @@ export function buildSectionHTML_rendering(main) {
       </div>
       <button class="mm-toggle${isSolid ? ' active' : ''}" id="mm-solid">Solid Shading</button>
       </fieldset>
-
-      <div class="mm-section-title">Scene Display</div>
-      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
-      <div class="mm-row">
-        <span class="mm-lbl">Grid Opacity</span>
-        <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
-        <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
-      </div>
 
       <div class="mm-section-title">Tone Mapping</div>
       <div class="mm-choice-grid cols-5">${tmBtns}</div>
@@ -3482,13 +3506,19 @@ export function buildMenuHTML_browserSaves(main) {
         const ts    = s.value?.timestamp ?? 0;
         const thumb = s.value?.galleryThumb ?? s.value?.thumb ?? '';
         const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
+        // The name the save was given, falling back to its key so a legacy record without one
+        // still says something. Escaped: it is user-typed and goes straight into markup.
+        const rawName = s.value?.name || key || 'untitled';
+        const name = String(rawName).replace(/[&<>"]/g, (c) =>
+          ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
         const sel   = key === selKey ? ' selected' : '';
         const img   = thumb
           ? `<img src="${thumb}" alt="save">`
           : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px;color:#6c7086"><i class="fa-solid fa-cube"></i></div>`;
         return `
-          <div class="mm-storage-item${sel}" data-save-key="${key}">
+          <div class="mm-storage-item${sel}" data-save-key="${key}" title="${name}">
             ${img}
+            <span class="mm-storage-name">${name}</span>
             <span class="mm-storage-date">${date}</span>
           </div>`;
       }).join('');

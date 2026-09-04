@@ -4,6 +4,7 @@ import fs from 'fs';
 const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
 const MINI_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MiniPanel.js', 'utf8');
 const MAIN_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
+const SKEL_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
 const body = SRC.split('\n').filter(l => !/^import\s/.test(l)).filter(l => !/^export \{ Enums/.test(l)).join('\n');
 globalThis.window = {};
 
@@ -25,11 +26,16 @@ const Skeleton = {
   DISPLAY_FLAGS: ${JSON.stringify(FLAG_DEFAULTS)},
   displayFlag: (n) => (_flagState[n] != null ? _flagState[n] : !!${JSON.stringify(FLAG_DEFAULTS)}[n]),
   setDisplayFlag: (n, v) => { _flagState[n] = !!v; },
+  // Capsule solidity is a slider in the Rig Display block, so the panel asks for it while
+  // building — a stub without it throws before a single check runs.
+  capsuleOpacity: () => (_capOp == null ? 0.16 : _capOp),
+  setCapsuleOpacity: (main, v) => { _capOp = Math.max(0.05, Math.min(1, v)); return _capOp; },
   // Bone shapes (roadmap #60): the panel asks which meshes are joints and what shape each has.
   isJoint: (m) => !!(m && m._isBone),
   jointVolume: (j) => (j && j._jointVolume) || 'none',
 };
 const _flagState = {};
+let _capOp = null;
 // Physics bones read through the panel now: a flagged joint grows three sliders, so the stub has
 // to answer both "is this one flagged" and "with what parameters".
 const PhysicsBones = {
@@ -233,12 +239,20 @@ check('mesh-only Rendering controls use a disabled fieldset', (() => {
   const decl = new RegExp('(?:const|let|var)\\s+' + tag[1] + "\\s*=[^;]*' disabled'");
   return decl.test(MAIN_SRC) || `${tag[1]} is never assigned ' disabled'`;
 })() === true);
+// OUTSIDE the fieldset, on either side of it: the ground plane is not a mesh control and must
+// not grey out with them. It moved ABOVE the fieldset when Scene Display went to the top of the
+// menu (it is the toggle reached most often and sat below everything), so the check asks what it
+// means -- not inside -- rather than pinning which side.
 check('Ground Plane sits outside the mesh-disabled fieldset', (() => {
   const start = MAIN_SRC.indexOf('<fieldset class="mm-disabled-group"');
   const end = MAIN_SRC.indexOf('</fieldset>', start);
   const grid = MAIN_SRC.indexOf('id="mm-grid-toggle"');
-  return start >= 0 && end > start && grid > end;
+  return start >= 0 && end > start && grid >= 0 && (grid < start || grid > end);
 })());
+// ...and it is near the TOP of the menu, which is the point of having moved it.
+check('...and above the shader block, where it is reachable',
+  MAIN_SRC.indexOf('id="mm-grid-toggle"') < MAIN_SRC.indexOf('${shaderBtns}'),
+  'a long scroll in a headset to flip one switch');
 check('shader-specific groups mute instead of hiding',
   !/\.mm-if-pbr[^\n]*display:\s*none/.test(MAIN_SRC)
     && /mm-if-pbr[^\n]*inert/.test(MAIN_SRC));
@@ -555,6 +569,32 @@ check('the desktop settings checkbox has a selectable id',
   /\$\{chk\('Constraint solver XPBD', !!window\._physXPBD\)\}/.test(MAIN_SRC)
     && /q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC),
   'parentheses in the label make the wiring selector invalid');
+
+// ── CAPSULE SOLIDITY, AND SET PARENT ON THE WRIST ─────────────────────────────────────
+//
+// Capsules at 0.16 are a diagnostic over the sculpt. Turned up they are a cheap stand-in for the
+// skin -- a rig you can pose and play back with the mesh hidden. matt: "capsule mode, would be
+// good to have a toggle or a slider to control opacity... it would be great to have it be fully
+// opaque and animate with the skin turned off."
+check('the rig display block has a capsule solidity slider',
+  /id="bone-cap-op"/.test(SRC) && /Capsule Solidity/.test(SRC));
+check('...live on drag, and persisted by Skeleton',
+  /Skeleton\.setCapsuleOpacity\(main, parseInt\(input\.value, 10\) \/ 100\)/.test(SRC));
+// A transparent capsule must not write depth or it punches holes in what is behind it; an opaque
+// one must, or the rig sorts like glass and a near arm draws behind a far one.
+check('...and an opaque capsule writes depth',
+  /p\.solid\.material\.depthWrite = Skeleton\.capsuleOpacity\(\) >= 0\.99;/.test(SKEL_SRC));
+
+// Parenting is a three-step gesture done while grabbing things about, and it lived only in the
+// main menu. matt: "set parent is really useful. i think that should be put on the grab
+// minipanel."
+check('Set Parent is on the grab minipanel',
+  /id="mp-set-parent"/.test(MINI_SRC)
+    && /Enums\.Tools\.GRAB[\s\S]{0,160}?setParentHTML\(this\._main\)/.test(MINI_SRC));
+check('...using the same RigPending entry point as the main menu, not a copy',
+  /RigPending\.toggle\(this\._main, 'parent'\)/.test(MINI_SRC)
+    && /const armed = main\?\._rigPendingMode === 'parent';/.test(MINI_SRC),
+  'a local armed flag goes stale when the viewport finishes the gesture');
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

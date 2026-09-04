@@ -573,13 +573,21 @@ function taperMaterial(mat) {
   return mat;
 }
 
+// HOW SOLID THE CAPSULES DRAW, 0.05..1. At the default 0.16 they are a diagnostic laid over the
+// sculpt; turned up they are a cheap stand-in for the skin, which is the point -- a rig you can
+// pose and play back with the mesh hidden entirely. matt: "capsule mode, would be good to have a
+// toggle or a slider to control opacity... it would be great to have it be fully opaque and
+// animate with the skin turned off."
 function makeCapsulePart(geo, taper) {
   const p = makePair(geo, 0xffffff); // recoloured per frame from the bone's identity colour
   if (taper) { taperMaterial(p.solid.material); taperMaterial(p.ghost.material); }
   p.solid.material.transparent = true;
-  p.solid.material.opacity = 0.16;
-  p.solid.material.depthWrite = false;
-  p.ghost.material.opacity = 0.09;
+  p.solid.material.opacity = Skeleton.capsuleOpacity();
+  // DEPTH-WRITE ONCE IT IS SOLID. A transparent capsule must not write depth or it punches
+  // holes in what is behind it; an OPAQUE one must, or the rig sorts like glass and a near arm
+  // draws behind a far one. The threshold is the point where it stops being an overlay.
+  p.solid.material.depthWrite = Skeleton.capsuleOpacity() >= 0.99;
+  p.ghost.material.opacity = Skeleton.capsuleOpacity() * 0.5625;
   p.solid.renderOrder = 9996;
   p.ghost.renderOrder = 9996;
   return p;
@@ -2488,7 +2496,11 @@ Skeleton.updateVisuals = function (main) {
     // Highlighting brightens rather than recolours, so the capsule-to-vertex colour match is
     // never broken by preselection.
     const capColor = Skeleton.boneColor(main, parent);
-    const capOp = (isHi || isSel) ? 0.34 : 0.16;
+    // The base is a setting now, not a constant -- see Skeleton.capsuleOpacity. Highlighting
+    // still brightens by about the same ratio it always did, and is capped so a fully opaque
+    // capsule cannot be asked for more than solid.
+    const capBase = Skeleton.capsuleOpacity();
+    const capOp = (isHi || isSel) ? Math.min(1, capBase * 2.125) : capBase;
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
       o.position.copy(_cA).addScaledVector(_dirC, lenC * 0.5); // cylinder is centre-origin
       o.quaternion.copy(_qC);
@@ -3636,6 +3648,22 @@ Skeleton.displayFlag = function (name) {
   if (live != null) return !!live;
   const saved = getOptionsURL()[e[1]];
   return saved != null ? !!saved : e[2];
+};
+
+// Live value first, then the saved one, then the default -- the same order Skeleton.displayFlag
+// reads in, so a drag takes effect on the current frame and a reload still restores it.
+Skeleton.capsuleOpacity = function () {
+  const live = window._boneCapsuleOpacity;
+  if (typeof live === 'number') return live;
+  const saved = getOptionsURL().boneCapsuleOpacity;
+  return typeof saved === 'number' ? saved : 0.16;
+};
+Skeleton.setCapsuleOpacity = function (main, v) {
+  const clamped = Math.max(0.05, Math.min(1, v));
+  window._boneCapsuleOpacity = clamped;
+  try { getOptionsURL.saveOption('boneCapsuleOpacity', clamped, 300); } catch (_) {}
+  if (main) Skeleton.updateVisuals(main);
+  return clamped;
 };
 
 Skeleton.setDisplayFlag = function (name, on) {

@@ -1,5 +1,6 @@
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
 import GrabChannels  from '../../editing/grabChannels.js';
+import RigPending    from '../../editing/RigPending.js';
 /**
  * MiniPanel — compact wrist HUD for SculptXR.
  *
@@ -48,6 +49,21 @@ function grabChannelHTML() {
         <div class="mp-toggles">
           <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-grab-translate">Translate</button>
           <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-grab-rotate">Rotate</button>
+        </div>`;
+}
+
+// SET PARENT, ON THE WRIST. Parenting is a three-step gesture done WHILE grabbing things about
+// -- press, click the child, click the parent -- and it lived only in the main menu, so every use
+// meant leaving the thing you were looking at and coming back. matt: "set parent is really
+// useful. i think that should be put on the grab minipanel."
+//
+// Reads its lit state from RigPending rather than a local flag, because the VIEWPORT can finish
+// or cancel the gesture too and a copy here would go stale the moment it did.
+function setParentHTML(main) {
+  const armed = main?._rigPendingMode === 'parent';
+  return `
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${armed ? ' active' : ''}" id="mp-set-parent">Set Parent</button>
         </div>`;
 }
 
@@ -768,6 +784,13 @@ export class MiniPanel extends HTMLVRPanel {
       };
       grabBtn('#mp-grab-translate', 'translate');
       grabBtn('#mp-grab-rotate', 'rotate');
+      // Same entry point the main menu uses, so the two cannot drift: press to arm, press again
+      // to cancel, and the viewport completes it.
+      extrasEl.querySelector('#mp-set-parent')?.addEventListener('click', () => {
+        RigPending.toggle(this._main, 'parent');
+        extrasEl.querySelector('#mp-set-parent')
+          ?.classList.toggle('active', this._main?._rigPendingMode === 'parent');
+      });
     }
 
     // ── Move extras: how a path edit measures "near" ───────────────────────
@@ -1085,7 +1108,7 @@ export class MiniPanel extends HTMLVRPanel {
     }
 
     if (idx === Enums.Tools.GRAB) {
-      return `<hr class="mp-divider">${grabChannelHTML()}`
+      return `<hr class="mp-divider">${grabChannelHTML()}${setParentHTML(this._main)}`
         + buildBonePoseHTML(this._main, 'mp');
     }
 

@@ -65,13 +65,16 @@ class GuiFiles {
         const img = new Image();
         img.onload = () => {
           try {
-            if (img.naturalWidth <= 128 && img.naturalHeight <= 128) {
+            // Matched to the capture size, or the downscale here undoes it: a 256 thumbnail
+            // squeezed back to 128 at quality 0.45 is exactly the mush this was raising.
+            const GALLERY_THUMB = 256;
+            if (img.naturalWidth <= GALLERY_THUMB && img.naturalHeight <= GALLERY_THUMB) {
               value.galleryThumb = value.thumb;
             } else {
               const canvas = document.createElement('canvas');
-              canvas.width = 128; canvas.height = 128;
-              canvas.getContext('2d').drawImage(img, 0, 0, 128, 128);
-              value.galleryThumb = canvas.toDataURL('image/jpeg', 0.45);
+              canvas.width = GALLERY_THUMB; canvas.height = GALLERY_THUMB;
+              canvas.getContext('2d').drawImage(img, 0, 0, GALLERY_THUMB, GALLERY_THUMB);
+              value.galleryThumb = canvas.toDataURL('image/jpeg', 0.8);
             }
             this._browserThumbCache.set(save.key, value.galleryThumb);
           } catch (_) { value.galleryThumb = value.thumb; }
@@ -270,7 +273,12 @@ class GuiFiles {
       try {
         // Gallery cards are roughly 128 CSS pixels wide. A 512px capture quadrupled each
         // dimension only to be shrunk again by the VR HTML rasteriser.
-        const THUMB = 128;
+        // 256, not 128. A browser save's thumbnail is how you find a file again, and at 128
+        // with JPEG quality 0.25 it was mush -- matt, after a long tutorial record: "can the
+        // thumbnails stored for the browser save be a little higher res? they're a bit too
+        // blocky." Four times the pixels at a quality that is actually legible costs about 20KB
+        // a save against 4KB, which is nothing beside the scene it belongs to.
+        const THUMB = 256;
 
         // 1. Pick camera position and auto-frame toward the sculpt bounding box
         const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 1000);
@@ -359,7 +367,7 @@ class GuiFiles {
         tempCtx.filter = 'contrast(1.4) brightness(0.8) saturate(1.2)';
         tempCtx.drawImage(rawCanvas, 0, 0);
 
-        thumb = tempCanvas.toDataURL('image/jpeg', 0.25);
+        thumb = tempCanvas.toDataURL('image/jpeg', 0.72);
 
         // 7. Restore hidden children
         hidden.forEach(child => { child.visible = true; });

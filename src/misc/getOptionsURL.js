@@ -206,6 +206,11 @@ var getOptionsURL = function () {
   options.boneShowLengths = queryBool(getVal('boneShowLengths'), false);
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
+  // How solid the capsules draw. They are a diagnostic at 0.16, but turned up they are a CHEAP
+  // STAND-IN FOR THE SKIN: at 1 the rig reads as a solid figure you can animate against with the
+  // mesh hidden. matt: "it would be great to have it be fully opaque and animate with the skin
+  // turned off."
+  options.boneCapsuleOpacity = queryNumber(getVal('boneCapsuleOpacity'), 0.05, 1.0, 0.16);
   options.boneShowWeights = queryBool(getVal('boneShowWeights'), false);
   options.boneShowSolid = queryBool(getVal('boneShowSolid'), true);
   options.boneShowWire = queryBool(getVal('boneShowWire'), true);

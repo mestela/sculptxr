@@ -259,6 +259,12 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlag('gnomons'))}
       ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlag('gnomonsAll'))}
     </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Capsule Solidity</span>
+      <input type="range" id="bone-cap-op" min="5" max="100" step="5"
+        value="${Math.round(Skeleton.capsuleOpacity() * 100)}">
+      <span class="${c.val}" id="bone-cap-op-val">${Math.round(Skeleton.capsuleOpacity() * 100)}</span>
+    </div>
   `;
 }
 
@@ -586,6 +592,18 @@ export function wireBoneSection(root, main, opts) {
   physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g');
   physParam('damp', 'damping', 100, (v) => String(Math.round(v * 100)));
   physParam('drag', 'drag', 100, (v) => String(Math.round(v * 100)));
+
+  // CAPSULE SOLIDITY. Live on drag like the physics sliders and for the same reason: it is a
+  // look, judged by watching. Skeleton persists it and rebuilds the batches, so the change lands
+  // on the frame you are looking at and survives a reload.
+  {
+    const input = q('cap-op'), val = q('cap-op-val');
+    input?.addEventListener('input', () => {
+      const v = Skeleton.setCapsuleOpacity(main, parseInt(input.value, 10) / 100);
+      if (val) val.textContent = String(Math.round(v * 100));
+      main.render?.();
+    });
+  }
   // "Follow" rather than "Inertia": the slider says how much the chain comes ALONG with the
   // thing it hangs off, and at 0 it is a free point on a string that the rig can travel right
   // past. Named for what you see rather than for the term in the integrator.

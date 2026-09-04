@@ -94,8 +94,12 @@ check('the panel body height is readable', bodyH > 0, String(bodyH));
   check('the outliner list is capped', /max-height:/.test(list),
     'at content height a rig fills the panel and pushes every control below it out of reach');
   const frac = Number((SRC.match(/max-height: \$\{Math\.round\(MM_BODY_H \* ([\d.]+)\)/) || [])[1]);
-  check('...at about two thirds of the panel',
-    frac > 0.5 && frac < 0.8, 'fraction ' + frac);
+  // Tightened from two thirds to a bit under a half: two thirds still buried the transform
+  // fields and the parenting buttons under a rig's worth of joints. matt: "make it 1/3 less
+  // rows." The check is a BAND, not the number -- what matters is that the list is capped well
+  // short of the panel, not the exact fraction.
+  check('...at a bit under half the panel',
+    frac > 0.3 && frac < 0.55, 'fraction ' + frac);
   check('...and scrolls itself, or the rows past the cap are simply lost',
     /overflow-y:\s*auto/.test(list));
   check('...without a flick inside it scrolling the panel as well',
