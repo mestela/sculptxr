@@ -3115,7 +3115,17 @@ class AnimationRegistry {
       // pins ONCE after every joint has been written — doing it here, per mesh, would run
       // against a half-updated skeleton. Set from playback and from scrubbing alike, which is
       // why it is a flag rather than a call at the playback site.
-      if (mesh._isBone) {
+      // A PIN COUNTS AS AN EVALUATED CONTROL, not just a bone. This test used to be `_isBone`
+      // alone, which quietly assumed the animation is keyed on the joints. Key it on the PINS
+      // instead -- which is how you animate with IK, and what walkwave.sxr does -- and nothing
+      // below ran: `_ikPinsDirty` was never raised, so an evaluated frame never solved at all
+      // (matt: "the timeline updates, but the rig doesn't"), and `_ikWritten` was never created,
+      // so on the frames something else did trigger a solve, consumeWritten() returned null and
+      // the solver read the frame as an INTERACTIVE DRAG and seeded from the live pose. That is
+      // the drift: scrub away and back and the rig does not return to the same pose, every
+      // solve compounding the last, until the limb curls up. Measured before the fix: 3.12
+      // units of error returning to frame 0, and the arm folding over repeated scrubs.
+      if (mesh._isBone || mesh._isPinTarget) {
         // A bare counter, not a call into IKSolver: this file does not import the solver and
         // adding that import to carry a diagnostic would risk the cycle module_load_test exists
         // to catch.
@@ -3126,7 +3136,12 @@ class AnimationRegistry {
         // solving, which is what makes an evaluated frame the same pose however it was reached
         // — scrubbed to, played into, or landed on from the other direction. Without the names
         // the solver cannot tell a keyed hip from its own output on the previous frame.
-        (window._ikWritten || (window._ikWritten = new Set())).add(mesh.getID());
+        // The SET's existence marks the evaluation; its contents are the joints to leave alone.
+        // A pin adds nothing to the contents -- it is not a control joint to preserve, it is the
+        // target its joint must be reset to rest and re-solved onto -- but it must still make
+        // the set exist, or an empty evaluation is indistinguishable from a drag.
+        const wr = window._ikWritten || (window._ikWritten = new Set());
+        if (mesh._isBone) wr.add(mesh.getID());
       }
 
       if (mesh.updateMatrices && window.app && window.app._camera) {

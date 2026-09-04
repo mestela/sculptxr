@@ -314,5 +314,22 @@ check('a scalar channel can be created on an object with no track yet',
 check('...but only on create, never as a side effect of reading',
   /scalarAt\(mesh, name, time, dflt\) \{\s*\n\s*const st = this\.scalarTrack\(mesh, name, false\);/.test(REG));
 
+// ── AN IK-ANIMATED RIG IS KEYED ON PINS, NOT ON BONES ────────────────────────────────
+//
+// The evaluated-frame hook tested for `_isBone` alone, which assumes the animation lives on the
+// joints. Animate with IK -- key the pins, which is the whole point of having them -- and the
+// hook never fired: `_ikPinsDirty` was never raised, so an evaluated frame never solved (matt:
+// "the timeline updates, but the rig doesn't"), and `_ikWritten` was never created, so any solve
+// that did happen read consumeWritten() === null, took the frame for an interactive drag, and
+// seeded from the live pose instead of from rest. Route-dependent, compounding: measured on
+// walkwave.sxr, returning to frame 0 landed 0.73 units off by one scrub route and 1.40 by
+// another; 0 by both after the fix.
+check('an evaluated frame counts pins as controls, not just bones',
+  /if \(mesh\._isBone \|\| mesh\._isPinTarget\) \{/.test(REG),
+  'a rig animated on its pins never solves, and drifts when it does');
+check('...but only a bone is named as a control to preserve',
+  /const wr = window\._ikWritten \|\| \(window\._ikWritten = new Set\(\)\);\s*\n\s*if \(mesh\._isBone\) wr\.add\(mesh\.getID\(\)\);/.test(REG),
+  'naming the pin would keep its joint at the pose it already had instead of re-solving it');
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);
