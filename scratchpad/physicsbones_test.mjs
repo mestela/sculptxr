@@ -557,10 +557,10 @@ check('...and the choice survives a reload',
 check('...reachable from the console without an import',
   /window\.physXPBD = PhysicsBones\.setSolver;/.test(SRC));
 
-check('the constraint solver is the default, with the force solver kept',
+check('the solver is chosen in one place, and the constraint one is opt-in for now',
   /return window\._physXPBD \? PhysicsBones\.stepXPBD\(main, dt\) : PhysicsBones\.step\(main, dt\);/.test(SRC)
-    && /window\._physXPBD = saved === null \? true : saved === '1';/.test(SRC),
-  'the force solver pops on the first frame the weight leaves zero: 20.6 units against 0.2');
+    && /window\._physXPBD = localStorage\.getItem\('sxr_physXPBD'\) === '1';/.test(SRC),
+  'it removes the pop but does not yet land the hand on the pin');
 // A bake that reached past the dispatch would write keys that do not match the motion you just
 // watched, which is the one thing a bake must never do.
 check('...and BAKE steps the same solver as the viewport',
@@ -596,7 +596,27 @@ check('...a weight of 0 is an infinite compliance, not a weak one',
   const before = r.t1.getMatrix().slice();
   for (let i = 0; i < 120; i++) PB.stepXPBD(main, 1 / 60);
   const fell = wp(r.t2).distanceTo(rest);
-  check('a soft chain falls under the constraint solver too', fell > 0.5,
+  // Every slider has to reach the constraint solver, not just the force one. matt, on the first
+// version: "changing stiffness/damp/gravity etc does nothing." Inertia was genuinely absent, and
+// gravity had no authority because the pose compliance was fitted against the wrong quantity.
+// The constraint pass REPLACES the velocity with the motion it allowed, so damping applied to
+// the prediction is discarded a few lines later and the chain never loses energy: a rig standing
+// still would not settle, stiffness came out non-monotonic and inertia moved a static chain.
+check('damping is applied to the velocity the constraints left, not the prediction',
+  /P\[i\]\.v\.subVectors\(P\[i\]\.p, PREV\[i\]\)\.multiplyScalar\(1 \/ h\)\.multiplyScalar\(decay\);/.test(SRC)
+    && /st\.v\.addScaledVector\(_xg, h\);\s*\n\s*st\.p\.addScaledVector\(st\.v, h\);/.test(SRC),
+  'energy never leaves the chain and nothing settles');
+
+check('inertia reaches the constraint solver',
+  /st\.p\.addScaledVector\(_xDir, par\.inertia\);/.test(SRC),
+  'a chain reads as detached rather than loose, and the setting does nothing');
+check('...as do gravity, drag, damping and stiffness',
+  /_xg\.set\(0, -gAcc, 0\);/.test(SRC)
+    && /-par\.drag \* sp/.test(SRC)
+    && /const decay = Math\.exp\(-DAMP_SCALE \* par\.damping \* h\);/.test(SRC)
+    && /const aPose = complianceFrom\(par\.stiffness, POSE_COMPLIANCE, unit\);/.test(SRC));
+
+check('a soft chain falls under the constraint solver too', fell > 0.5,
     'moved ' + fell.toFixed(2));
   // The bone cannot stretch: that is the one constraint with no compliance at all.
   const p1 = wp(r.t1), p2 = wp(r.t2);

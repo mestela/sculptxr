@@ -624,10 +624,14 @@ PhysicsBones.SUBSTEPS = 8;
 // the first frame of a twelve-frame pin fade moves 0.2 units under this solver against 20.6
 // under the force one -- the pin is a constraint that eases on rather than a limb being switched
 // into a solve. `physXPBD(false)` from the console goes back, and that choice persists too.
+// BACK OFF BY DEFAULT while the constraint solver is finished. It removes the pop -- worst frame
+// of a fade 6.5 against the force solver's 23.8 -- but with the pose compliance loosened enough
+// for gravity and stiffness to have real authority, the hand no longer arrives: 12.49 units from
+// the pin at full weight against 0.49 before. A pin that does not reach its pin is worse than a
+// pop, so this is opt-in until it does both. `physXPBD(true)` selects it, and that persists.
 try {
-  const saved = localStorage.getItem('sxr_physXPBD');
-  window._physXPBD = saved === null ? true : saved === '1';
-} catch (_) { window._physXPBD = true; }   // private window, or site data blocked
+  window._physXPBD = localStorage.getItem('sxr_physXPBD') === '1';
+} catch (_) { window._physXPBD = false; }   // private window, or site data blocked
 
 PhysicsBones.setSolver = function (on) {
   window._physXPBD = !!on;
@@ -651,13 +655,33 @@ function complianceFrom(v, scale, unit) {
 // FITTED against the force solver, not guessed: the sliders have tuned looks behind them (the ear
 // and the tail) and a constraint solver that reads the same numbers differently would silently
 // retune every rig in every file. Overridable so the fit can be measured rather than argued.
-// FITTED, on weight.sxr at sceneUnit 31.9. POSE: swept over six orders of magnitude against the
-// force solver's mean deviation from the animated pose across an 80-frame stretch -- 1.62 for the
-// force solver, and 0.78 / 1.13 / 1.71 / 1.41 at 1e-3 / 1e-2 / 1e-1 / 1, so 0.1 is the match.
+// FITTED AGAINST STATIC SAG, which is the quantity the sliders are actually about: hang the rig
+// still, let gravity pull, and measure how far the tip ends up from its animated pose. My first
+// fit used mean deviation over a walk cycle instead -- but that is dominated by the WALK, so it
+// matched the overall wobble while leaving gravity with almost no authority, and matt found it
+// straight away: "changing stiffness/damp/gravity etc does nothing."
+//
+// Tip sag on weight.sxr (gravity 1 / gravity 4), force solver against this one at compliance 1:
+//   stiffness 0.25   3.60 / 14.09   vs   4.18 / 14.35
+//   stiffness 0.60   0.80 /  3.20   vs   0.95 /  3.73
+// The soft end (0.05: 31.6 vs 19.7) under-sags, but that is where the force solver is nearly in
+// free fall and its own numbers stop meaning much.
+//
 // PIN: swept against the worst frame of a twelve-frame fade -- 21.1 / 16.3 / 11.1 / 5.7 / 2.3 at
-// 1e-3 / 1e-2 / 3e-2 / 1e-1 / 1. The first guesses were three orders too stiff in both cases,
-// which made the pin rigid at weight 0.08 and reproduced the very pop this is here to remove.
-let POSE_COMPLIANCE = 0.1;
+// 1e-3 / 1e-2 / 3e-2 / 1e-1 / 1. Both first guesses were three orders too stiff, which made the
+// pin rigid at weight 0.08 and reproduced the very pop this is here to remove.
+//
+// PIN re-swept AFTER the pose fit, because the two interact: a softer pose means a floppier limb
+// for the pin to drag, so the pin has to be softer too. At pose 1, the worst frame of the fade
+// came out 7.8 / 7.9 / 6.1 / 6.2 at pin 1 / 3 / 10 / 30, and 30 has the quietest tail. It also
+// lands closer -- 0.20 units off the pin at full weight against 0.49 at the stiffer pose.
+//
+// THE TRADE-OFF, stated plainly: the earlier pose value of 0.1 gave a prettier fade (worst frame
+// 1.2) but it bought that by holding the limb so tightly that gravity and stiffness had almost
+// no authority, which is the dead-controls complaint. A limb that can actually sag is a limb the
+// pin has further to move. 6.2 against the force solver's 20.6 is the trade, and the controls
+// work.
+let POSE_COMPLIANCE = 1;
 let PIN_COMPLIANCE  = 1;
 PhysicsBones.setCompliance = function (pose, pin) {
   if (pose !== undefined) POSE_COMPLIANCE = pose;
@@ -772,6 +796,20 @@ PhysicsBones.stepXPBD = function (main, dt) {
       }
       P.push(st); PREV.push(new THREE.Vector3()); IM.push(1 / (links[i].mass || 1));
     }
+    // INERTIA, once per frame: how much of the parent's own travel the particle inherits before
+    // it starts resisting. Dropped when this solver was first written -- the constraint network
+    // does couple a chain, but not this, and it is the setting that separates "loose" from
+    // "detached" (the ear at inertia 0 flails; see the force solver's note). Ported as it is
+    // there, from the ANIMATED parent position frame to frame, so the two read the same.
+    for (let i = 0; i < links.length; i++) {
+      const st = P[i];
+      if (st.lastPar) {
+        _xDir.subVectors(shape[i].animPar, st.lastPar);
+        st.p.addScaledVector(_xDir, par.inertia);
+      }
+      (st.lastPar || (st.lastPar = new THREE.Vector3())).copy(shape[i].animPar);
+    }
+
     const anchor = Skeleton.jointPos(links[0].parent, new THREE.Vector3());
     const parentOf = (i) => (i === 0 ? anchor : P[i - 1].p);
     const wOf = (i) => (i === 0 ? 0 : IM[i - 1]);
@@ -788,7 +826,13 @@ PhysicsBones.stepXPBD = function (main, dt) {
           const sp = st.v.length();
           if (sp > 1e-9) _xg.addScaledVector(st.v, -par.drag * sp / (Math.max(unit, 1e-6) * (links[i].mass || 1)));
         }
-        st.v.addScaledVector(_xg, h).multiplyScalar(decay);
+        // NO DAMPING HERE. The constraint pass ends by REPLACING the velocity with the motion it
+        // allowed, so a decay applied to the prediction is thrown away again a few lines later
+        // and the chain never loses energy -- which is why a rig standing perfectly still failed
+        // to settle at all: stiffness came out non-monotonic (9.08 / 4.16 / 13.48 for 0.05 /
+        // 0.25 / 0.6) and INERTIA moved a static chain, which nothing should. Damped after the
+        // update instead, where it is the velocity that survives.
+        st.v.addScaledVector(_xg, h);
         st.p.addScaledVector(st.v, h);
       }
 
@@ -859,8 +903,11 @@ PhysicsBones.stepXPBD = function (main, dt) {
         }
       }
 
-      // XPBD's velocity update: the velocity IS whatever motion the constraints allowed.
-      for (let i = 0; i < links.length; i++) P[i].v.subVectors(P[i].p, PREV[i]).multiplyScalar(1 / h);
+      // XPBD's velocity update: the velocity IS whatever motion the constraints allowed -- and
+      // the damping goes here, on that velocity, or it is discarded (see the note above).
+      for (let i = 0; i < links.length; i++) {
+        P[i].v.subVectors(P[i].p, PREV[i]).multiplyScalar(1 / h).multiplyScalar(decay);
+      }
     }
 
     // OUTPUT, once per frame rather than once per substep: turn each particle into its parent's
