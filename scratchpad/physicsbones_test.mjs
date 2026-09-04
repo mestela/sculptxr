@@ -551,15 +551,22 @@ check('...and drops the accumulated clock, so no dt is integrated across the cut
 // A window flag is wiped by a page load, and reloading the scene is exactly what you do to test
 // a solver on a rig -- so the choice has to persist or the test silently runs the old solver.
 check('...and the choice survives a reload',
-  /localStorage\.getItem\('sxr_physXPBD'\) === '1'/.test(SRC)
+  /localStorage\.getItem\('sxr_physXPBD'\)/.test(SRC)
     && /localStorage\.setItem\('sxr_physXPBD', on \? '1' : '0'\)/.test(SRC),
   'setting the flag and reloading puts you back on the force solver without saying so');
 check('...reachable from the console without an import',
   /window\.physXPBD = PhysicsBones\.setSolver;/.test(SRC));
 
-check('the constraint solver is behind a flag, with the force solver kept',
-  /if \(window\._physXPBD\) PhysicsBones\.stepXPBD\(main, dt\);\s*\n\s*else PhysicsBones\.step\(main, dt\);/.test(SRC),
-  'both must run side by side while they are being compared');
+check('the constraint solver is the default, with the force solver kept',
+  /return window\._physXPBD \? PhysicsBones\.stepXPBD\(main, dt\) : PhysicsBones\.step\(main, dt\);/.test(SRC)
+    && /window\._physXPBD = saved === null \? true : saved === '1';/.test(SRC),
+  'the force solver pops on the first frame the weight leaves zero: 20.6 units against 0.2');
+// A bake that reached past the dispatch would write keys that do not match the motion you just
+// watched, which is the one thing a bake must never do.
+check('...and BAKE steps the same solver as the viewport',
+  !/PhysicsBones\.step\(main, h\)/.test(SRC)
+    && /for \(let i = 0; i < preroll; i\+\+\) PhysicsBones\.solveStep\(main, h\);/.test(SRC),
+  'baked keys would not match what was on screen');
 // Small substeps, one iteration each -- the modern formulation, and cheaper than few steps with
 // many iterations for chains this short.
 check('...substepped, with compliance divided by h squared',

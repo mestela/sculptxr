@@ -620,9 +620,14 @@ PhysicsBones.SUBSTEPS = 8;
 // solver on a rig -- silently puts you back on the old one and the difference looks like it did
 // not work. matt, doing precisely that: "if i reload my scene, it is less juddery, but still pops
 // strangely", which is the force solver's own signature.
+// ON BY DEFAULT, and only off if you have said so. Measured on weight.sxr with a settled sim,
+// the first frame of a twelve-frame pin fade moves 0.2 units under this solver against 20.6
+// under the force one -- the pin is a constraint that eases on rather than a limb being switched
+// into a solve. `physXPBD(false)` from the console goes back, and that choice persists too.
 try {
-  if (localStorage.getItem('sxr_physXPBD') === '1') window._physXPBD = true;
-} catch (_) { /* private window, or site data blocked */ }
+  const saved = localStorage.getItem('sxr_physXPBD');
+  window._physXPBD = saved === null ? true : saved === '1';
+} catch (_) { window._physXPBD = true; }   // private window, or site data blocked
 
 PhysicsBones.setSolver = function (on) {
   window._physXPBD = !!on;
@@ -893,6 +898,13 @@ PhysicsBones.stepXPBD = function (main, dt) {
   return moved;
 };
 
+// THE ONE PLACE THE SOLVER IS CHOSEN. Everything that advances the sim goes through here --
+// the per-frame tick AND bake. Bake reaching past it for the force solver would write keys that
+// do not match the motion you just watched, which is the one thing a bake must never do.
+PhysicsBones.solveStep = function (main, dt) {
+  return window._physXPBD ? PhysicsBones.stepXPBD(main, dt) : PhysicsBones.step(main, dt);
+};
+
 PhysicsBones.tick = function (main, nowSeconds) {
   if (!PhysicsBones.roots(main).length) return false;
   // THE INIT FRAME. A loop is a cut: the playhead jumps from one end of the range to the other,
@@ -915,10 +927,7 @@ PhysicsBones.tick = function (main, nowSeconds) {
   const dt = _lastTime === null ? 1 / 60 : t - _lastTime;
   _lastTime = t;
   if (dt <= 0) return false;
-  // `window._physXPBD = true` runs the constraint solver instead. Both are kept while the two
-  // are being compared: same chains, same parameters, same output stage.
-  if (window._physXPBD) PhysicsBones.stepXPBD(main, dt);
-  else PhysicsBones.step(main, dt);
+  PhysicsBones.solveStep(main, dt);
   return true;
 };
 
@@ -976,12 +985,12 @@ PhysicsBones.bake = function (main, opts) {
   PhysicsBones.reset(main);
   evaluateAt(start);
   const preroll = o.preroll === undefined ? 30 : o.preroll;
-  for (let i = 0; i < preroll; i++) PhysicsBones.step(main, h);
+  for (let i = 0; i < preroll; i++) PhysicsBones.solveStep(main, h);
 
   let frames = 0;
   for (let t = start; t <= end + 1e-6; t += h) {
     evaluateAt(t);                       // the keyed pose for this frame...
-    PhysicsBones.step(main, h);          // ...then the sim on top of it
+    PhysicsBones.solveStep(main, h);     // ...then the sim on top of it
     for (const m of writes) reg._writeTransformKey(m, t);
     frames++;
   }
