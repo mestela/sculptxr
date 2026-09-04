@@ -124,5 +124,43 @@ check('the pop becomes a lurch, and here is how big',
   check('...and so is a mesh with no track at all', r2.closed === 0, JSON.stringify(r2));
 }
 
+// ── ONE DEFINITION OF "GO TO A TIME" ──────────────────────────────────────────────────
+//
+// The timeline's scrub evaluated every mesh AND refreshed the drawn rig; the animation panel's
+// transport buttons evaluated every mesh and stopped. The rig is drawn from BATCHED INSTANCE
+// BUFFERS rebuilt in Skeleton.updateVisuals, not from the joint objects — so the panel's rewind
+// moved the playhead and the joint matrices while the skeleton on screen stayed exactly where it
+// was. Measured: the whole instance buffer was byte-identical to the frame it had left. matt:
+// "the timeline updates, but the rig doesn't."
+//
+// Source-anchored, and stated as such: this harness has no scene and no batches. What it can
+// hold is that there is ONE seek and that both callers use it — which is the part that went
+// wrong, twice over, since the same shape of bug hid the VR snap plane earlier the same day.
+{
+  const REG = fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8');
+  const ACP = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/AnimationControlPanel.js'), 'utf8');
+  const TL = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
+
+  check('the registry owns a seek', /^  seek\(time\) \{/m.test(REG));
+  check('...which refreshes the DRAWN rig, not just the data',
+    /Skeleton\.updateVisuals\(main\);/.test(REG.slice(REG.indexOf('  seek(time) {'),
+      REG.indexOf('  // ── CLOSE THE LOOP'))),
+    'writing a joint matrix changes nothing on screen by itself');
+  check('...and resets physics, because a jump has no previous frame',
+    /PhysicsBones\.reset\(main\)/.test(REG.slice(REG.indexOf('  seek(time) {'),
+      REG.indexOf('  // ── CLOSE THE LOOP'))));
+
+  const transport = ['acp-to-start', 'acp-prev-frame', 'acp-next-frame', 'acp-to-end'];
+  for (const id of transport) {
+    const at = ACP.indexOf("'#" + id + "'");
+    const body = ACP.slice(at, at + 320);
+    check(id + ' goes through seek', /reg\(\)\?\.seek\(/.test(body),
+      'evaluating the meshes by hand is how this drifted apart in the first place');
+  }
+  check('the timeline scrub uses the same one',
+    /if \(reg\) reg\.seek\(t\);/.test(TL),
+    'two implementations of one idea is the bug, not the symptom');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

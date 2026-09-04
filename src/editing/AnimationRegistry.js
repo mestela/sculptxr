@@ -4,6 +4,8 @@ import { rotSync, xfWrite } from './xfChannel.js';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
+import Skeleton from './Skeleton.js';
+import PhysicsBones from './PhysicsBones.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
 const _regQuat = new THREE.Quaternion();
@@ -1447,6 +1449,38 @@ class AnimationRegistry {
         break;
       }
     }
+  }
+
+  // ── GO TO A TIME ──────────────────────────────────────────────────────────────────────
+  //
+  // ONE DEFINITION, because there were two and only one of them was complete. The timeline's
+  // scrub evaluated every mesh AND refreshed the rig; the animation panel's transport buttons
+  // evaluated every mesh and stopped there — so pressing rewind moved the playhead and the
+  // joint matrices while the drawn skeleton stayed exactly where it was. matt: "if i use the
+  // animation editor button to rewind to the first frame, the timeline updates, but the rig
+  // doesn't."
+  //
+  // The rig is drawn from BATCHED INSTANCE BUFFERS, not from the joint objects, and those are
+  // rebuilt in Skeleton.updateVisuals. Writing a joint's matrix therefore changes the data and
+  // nothing on screen. Measured: after the panel's rewind the whole instance buffer was
+  // byte-identical to the frame it had left.
+  //
+  // Physics is reset here for the same reason a scrub resets it — a jump in time has no
+  // "previous frame", so the chain starts again from the pose rather than carrying state that
+  // depends on where you jumped from.
+  seek(time) {
+    const main = window.app;
+    window._animPlaying = false;
+    window._animCurrentTime = time;
+    this.globalPlaybackTime = time;
+    if (main) {
+      for (const m of main.getMeshes?.() || []) this.update(m, true);
+      try { PhysicsBones.reset(main); } catch (e) { /* no rig, nothing to reset */ }
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    }
+    window._updateOutlinerVisIcons?.();
+    return time;
   }
 
   // ── CLOSE THE LOOP (#66) ───────────────────────────────────────────────────────────────

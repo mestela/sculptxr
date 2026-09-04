@@ -1443,19 +1443,12 @@ export default class GuiTimeline {
   // Move the playhead to an explicit time and apply it (stop playback, re-evaluate
   // every mesh so visibility/transform tracks update, refresh outliner eyes).
   _setPlayhead(t) {
-    window._animPlaying = false;
-    window._animCurrentTime = t;
+    // The same seek the animation panel's transport buttons use — evaluate every mesh, reset any
+    // physics chain (a jump in time has no "previous frame"), refresh the DRAWN rig, render.
+    // Two copies of this is what let the panel's rewind move the data and not the skeleton.
     const reg = window._animationRegistry;
-    if (reg) {
-      reg.globalPlaybackTime = t;
-      if (this._main && this._main._meshes) this._main._meshes.forEach(m => reg.update(m, true));
-    }
-    // A scrub has no "previous frame", so any physics chain is snapped back onto the pose here
-    // and settles again from it. Without this the sim carries state that depends on how you got
-    // to this time, which is exactly what bake exists to remove.
-    PhysicsBones.reset(this._main);
-    if (this._main.render) this._main.render();
-    window._updateOutlinerVisIcons?.();
+    if (reg) reg.seek(t);
+    else { window._animPlaying = false; window._animCurrentTime = t; }
     this.draw();
   }
 

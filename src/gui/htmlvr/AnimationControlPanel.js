@@ -1122,17 +1122,16 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   // ── Transport ──────────────────────────────────────────────────────────────
 
+  // ALL FOUR GO THROUGH reg.seek. They used to evaluate the meshes themselves and stop there,
+  // which moves the joint matrices and leaves the DRAWN rig — batched instance buffers, rebuilt
+  // in Skeleton.updateVisuals — exactly where it was. matt: "the timeline updates, but the rig
+  // doesn't."
   el.querySelector('#acp-to-start')?.addEventListener('click', () => {
-    if (!reg()) return;
-    window._animCurrentTime = 0; reg().globalPlaybackTime = 0;
-    meshes().forEach(m => reg().update(m, true)); repaint();
+    reg()?.seek(0); repaint();
   });
 
   el.querySelector('#acp-prev-frame')?.addEventListener('click', () => {
-    if (!reg()) return;
-    window._animCurrentTime = Math.max(0, (window._animCurrentTime || 0) - 1 / fps());
-    reg().globalPlaybackTime = window._animCurrentTime;
-    meshes().forEach(m => reg().update(m, true)); repaint();
+    reg()?.seek(Math.max(0, (window._animCurrentTime || 0) - 1 / fps())); repaint();
   });
 
   el.querySelector('#acp-play-rev')?.addEventListener('click', () => {
@@ -1156,18 +1155,12 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   });
 
   el.querySelector('#acp-next-frame')?.addEventListener('click', () => {
-    if (!reg()) return;
     const maxLen = window._animMasterDuration || 1;
-    window._animCurrentTime = Math.min(maxLen, (window._animCurrentTime || 0) + 1 / fps());
-    reg().globalPlaybackTime = window._animCurrentTime;
-    meshes().forEach(m => reg().update(m, true)); repaint();
+    reg()?.seek(Math.min(maxLen, (window._animCurrentTime || 0) + 1 / fps())); repaint();
   });
 
   el.querySelector('#acp-to-end')?.addEventListener('click', () => {
-    if (!reg()) return;
-    window._animCurrentTime = window._animMasterDuration || 1;
-    reg().globalPlaybackTime = window._animCurrentTime;
-    meshes().forEach(m => reg().update(m, true)); repaint();
+    reg()?.seek(window._animMasterDuration || 1); repaint();
   });
 
   el.querySelector('#acp-record')?.addEventListener('click', () => {
