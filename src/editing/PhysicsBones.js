@@ -583,6 +583,22 @@ PhysicsBones.step = function (main, dt) {
 // when there is nothing to do, which is also the "not playing forward" case.
 PhysicsBones.tick = function (main, nowSeconds) {
   if (!PhysicsBones.roots(main).length) return false;
+  // THE INIT FRAME. A loop is a cut: the playhead jumps from one end of the range to the other,
+  // and a simulation has no way to know that -- its particles carry the pose and velocity they
+  // had at the END of the loop into the first frame of the next one. So the first pass looked
+  // right (it began from a seek, which resets) and every pass after it started from wherever the
+  // previous pass finished. matt: "usually with solvers its a given that on frame 1 the system
+  // has to reinitialise itself."
+  //
+  // Consumed HERE rather than at the wrap because this runs after the animation has written the
+  // loop-start frame, so reset seeds the particles from the pose they are actually starting on.
+  // Doing it at the wrap seeds them from the pose still on screen -- the loop's LAST frame --
+  // which measured worse than not resetting at all.
+  if (window._physicsNeedsInit) {
+    window._physicsNeedsInit = false;
+    PhysicsBones.reset(main);
+    _lastTime = null;              // no dt across the cut, or the first step integrates the gap
+  }
   const t = nowSeconds === undefined ? performance.now() / 1000 : nowSeconds;
   const dt = _lastTime === null ? 1 / 60 : t - _lastTime;
   _lastTime = t;

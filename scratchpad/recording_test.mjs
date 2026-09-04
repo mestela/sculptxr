@@ -361,5 +361,14 @@ check('...and the arrow lights only when a channel is OFF',
 check('the two menus are mutually exclusive',
   /case 'recopts':[\s\S]{0,180}?this\._contextMenuOpen = false;/.test(tl));
 
+// A loop wrap is a discontinuity a simulation cannot see. It FLAGS rather than resetting inline:
+// at this point the rig is still in the loop's last frame, so resetting here strands every
+// particle where the previous pass ended (measured 48.7 units of error on pass two, worse than
+// the 47.0 of no reset at all). PhysicsBones.tick consumes it once the frame is written.
+check('a loop wrap flags the simulation for re-initialisation',
+  /if \(wrapped\) window\._physicsNeedsInit = true;/.test(reg)
+    && /const wrapped = this\.globalPlaybackTime > lEnd \|\| this\.globalPlaybackTime < lStart;/.test(reg),
+  'physics carries the last frame of one pass into the first frame of the next');
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

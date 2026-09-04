@@ -2946,11 +2946,30 @@ class AnimationRegistry {
         const lStart = window._animLoopStart ?? 0.0;
         const lEnd   = window._animLoopEnd ?? window._animMasterDuration ?? 0;
         if (lEnd > lStart && window._animLoopEnabled !== false) {
+          // A LOOP IS A CUT, AND A SIM HAS TO BE RE-INITIALISED ACROSS ONE. The playhead jumps
+          // from one end of the range to the other, but a simulation has no way to know that:
+          // its particles carry the pose and the velocity they had at the END of the loop
+          // straight into the first frame of the next one. So the first pass looked right --
+          // it began from a seek, which resets -- and every pass after it started from wherever
+          // the previous pass finished. matt: "it almost worked on the first playback, but every
+          // subsequent loop it was in the incorrect position again... usually with solvers its a
+          // given that on frame 1 the system has to reinitialise itself."
+          //
+          // Both directions: playing backwards wraps end-to-start and is the same discontinuity.
+          const wrapped = this.globalPlaybackTime > lEnd || this.globalPlaybackTime < lStart;
           if (this.globalPlaybackTime > lEnd) {
             this.globalPlaybackTime = lStart;
           } else if (this.globalPlaybackTime < lStart) {
             this.globalPlaybackTime = lEnd;
           }
+          // FLAGGED, NOT RESET HERE. Resetting on this line re-seeds the particles from the pose
+          // the rig is STILL IN -- the last frame of the loop just played -- and only afterwards
+          // does the frame evaluate and move the body back to the loop start, leaving every
+          // particle stranded where the previous pass ended. Measured that way: 48.7 units of
+          // error on the second pass, slightly WORSE than no reset at all (47.0). The sim has to
+          // be re-initialised against the loop-start pose, which does not exist yet here, so the
+          // flag is consumed by PhysicsBones.tick once the animation has written that frame.
+          if (wrapped) window._physicsNeedsInit = true;
         } else if (lEnd > lStart) {
           if (this.globalPlaybackTime >= lEnd) {
             this.globalPlaybackTime = lEnd;

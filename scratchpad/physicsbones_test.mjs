@@ -491,5 +491,23 @@ const len = (a, b) => wp(a).distanceTo(wp(b));
     + 'adopted as the new rest when the state map was wiped');
 }
 
+// ── THE INIT FRAME ────────────────────────────────────────────────────────────────────
+//
+// A loop is a cut. The playhead jumps from one end of the range to the other and the sim has no
+// way to know it: its particles carry the pose and velocity from the loop's LAST frame into the
+// next pass's first one. matt: "it almost worked on the first playback, but every subsequent
+// loop it was in the incorrect position again... usually with solvers its a given that on frame
+// 1 the system has to reinitialise itself."
+//
+// Consumed in tick, NOT at the wrap, because tick runs after the animation has written the
+// loop-start frame -- so reset seeds the particles from the pose they actually start on.
+// Resetting at the wrap seeds them from the pose still on screen (the loop's last frame) and
+// measured WORSE than no reset at all: 48.7 units of error on pass two against 47.0.
+check('the sim re-initialises on the frame after a loop wrap',
+  /if \(window\._physicsNeedsInit\) \{[\s\S]{0,200}?PhysicsBones\.reset\(main\);/.test(SRC),
+  'every pass after the first starts from wherever the previous pass finished');
+check('...and drops the accumulated clock, so no dt is integrated across the cut',
+  /window\._physicsNeedsInit = false;[\s\S]{0,160}?_lastTime = null;/.test(SRC));
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
