@@ -368,5 +368,20 @@ check('...applied after every group has solved',
 check('...decomposing the matrix rather than lerping its elements',
   /_bA\.decompose\(_bpA, _bqA, _bsA\);[\s\S]{0,200}?_bqA\.slerp\(_bqB, w\);/.test(IKS));
 
+// ── A NEW PIN IS WHAT YOU JUST MADE, SO IT IS WHAT IS SELECTED ────────────────────────
+//
+// The joint stayed selected after pinning, so the obvious next move -- key the pin in the
+// animation editor -- put the key on the BONE. matt: "if i make a pin then go to set keys on it
+// in the animation editor, it sets a key on the bone, not the pin."
+check('making a pin selects it',
+  /if \(nowPin && !wasPin && main\.setMesh\) \{/.test(IKS),
+  'the joint stays selected and keys land on the bone instead of the pin');
+// Only when one is newly MADE. Cycling an existing pin's mode is not a new object, and stealing
+// the selection every cycle would fight whatever the animator had selected.
+check('...only a new one, and without changing tools',
+  /main\.setMesh\(nowPin, true\);/.test(IKS)
+    && /nowPin && !wasPin/.test(IKS),
+  'cycling a mode would steal the selection, and a pin mode is not a tool choice');
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

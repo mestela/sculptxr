@@ -2084,6 +2084,17 @@ IKSolver.applyPinMode = function (main, joint, mode) {
       false, 'Pin Joint');
   }
   if (window.screenLog) window.screenLog('Bones: ' + names[now], 'cyan');
+  // A NEW PIN IS THE THING YOU JUST MADE, so it is the thing that should be selected. Without
+  // this the joint stayed selected, and the obvious next move -- key the pin in the animation
+  // editor -- keyed the BONE instead. matt: "if i make a pin then go to set keys on it in the
+  // animation editor, it sets a key on the bone, not the pin."
+  //
+  // Only when one is newly made: cycling an existing pin's mode is not a new object, and
+  // stealing the selection on every cycle would fight whatever the animator had selected.
+  // keepTool, because choosing a pin mode is not a request to change tools.
+  if (nowPin && !wasPin && main.setMesh) {
+    try { main.setMesh(nowPin, true); } catch (_) { /* selection is a convenience, not the act */ }
+  }
   Skeleton.updateVisuals(main);
   main.render();
   // The mini panel's pin count is only refreshed when something asks it to, and pinning from
