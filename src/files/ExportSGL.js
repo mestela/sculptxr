@@ -15,7 +15,7 @@ var Export = {};
 // 11 camera framing (view transform) in the header
 // 12 per-face group ids (_facesGroups; steers guided quad remesh)
 // 13 animation playback range (master duration, start, end)
-Export.VERSION = 13;
+Export.VERSION = 14;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -105,6 +105,15 @@ Export.exportSGL = function (meshes, main) {
       // v9: baseLocked + activeLayerIdx + per-layer (locked, muted)
       nbBytes += 8;
       nbBytes += track.blendshapes.size * 8;
+    }
+
+    // v10 visibility + v14 scalar channels. Both are written for EVERY mesh, count first, so
+    // the reader keeps its offset aligned without needing a per-mesh flag.
+    nbBytes += 4;
+    if (track && track.visTimes) nbBytes += track.visTimes.length * 8;
+    nbBytes += 4;
+    if (track && track.scalarTracks) {
+      track.scalarTracks.forEach(function (st) { nbBytes += 64 + 4 + st.times.length * 28; });
     }
   }
 
@@ -459,6 +468,39 @@ Export.exportSGL = function (meshes, main) {
       for (var _vi = 0; _vi < nbVisKeys; _vi++) {
         f32a[off++] = track.visTimes[_vi];
         u32a[off++] = track.visValues[_vi] ? 1 : 0;
+      }
+
+      // v14: SCALAR CHANNELS -- pin weight and physics blend weight. These were keyable and
+      // solve-critical from the day they shipped, but had no place in the file, so every fade an
+      // animator keyed was dropped on save. Worse than merely lost: IKSolver.pinWeight falls back
+      // to 1 for a pin with no channel (so old rigs keep working), which means a reloaded file
+      // came back with every pin FULLY ON for the whole animation, fighting the baked animation
+      // and the physics -- matt: "the rig collapses and does strange things even though the pin
+      // weight is 0". The 0 was never in the file. Same 7-float key layout as a blendshape track,
+      // because scalar and blendshape channels share evaluateScalarTrack.
+      var _scal = (track && track.scalarTracks) ? track.scalarTracks : null;
+      u32a[off++] = _scal ? _scal.size : 0;
+      if (_scal) {
+        _scal.forEach(function (st, sName) {
+          for (var _sn = 0; _sn < 16; _sn++) {
+            var s1 = (_sn * 2     < sName.length) ? sName.charCodeAt(_sn * 2)     : 0;
+            var s2 = (_sn * 2 + 1 < sName.length) ? sName.charCodeAt(_sn * 2 + 1) : 0;
+            u32a[off++] = (s1 << 16) | s2;
+          }
+          var nbSKeys = st.times.length;
+          u32a[off++] = nbSKeys;
+          for (var _sk = 0; _sk < nbSKeys; _sk++) {
+            var sDt = st.times[_sk + 1] !== undefined ? st.times[_sk + 1] - st.times[_sk] : 0.2;
+            var sto = st.tangentOffsets;
+            f32a[off++] = st.times[_sk];
+            f32a[off++] = st.values[_sk];
+            f32a[off++] = sto && sto[_sk + '_right_dt'] !== undefined ? sto[_sk + '_right_dt'] : sDt * 0.33;
+            f32a[off++] = sto && sto[_sk + '_right_dv'] !== undefined ? sto[_sk + '_right_dv'] : 0;
+            f32a[off++] = sto && sto[_sk + '_left_dt']  !== undefined ? sto[_sk + '_left_dt']  : -sDt * 0.33;
+            f32a[off++] = sto && sto[_sk + '_left_dv']  !== undefined ? sto[_sk + '_left_dv']  : 0;
+            f32a[off++] = (!sto || sto[_sk + '_tied'] !== false) ? 1.0 : 0.0;
+          }
+        });
       }
     }
 

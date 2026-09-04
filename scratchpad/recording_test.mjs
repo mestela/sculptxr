@@ -238,10 +238,24 @@ check('dense animation diamonds render at half size without shrinking their hit 
     && /isKeyHovered\(kx, ky,[\s\S]{0,80}?10\)/.test(timelineHelper)
     && /ctx\.moveTo\(x, y - 2\.5\)/.test(tl));
 check('native scene files preserve the authored playback range',
-  /Export\.VERSION = 13/.test(exportSgl)
+  // NOT pinned to a version number: the subject is the loop-range round trip, and a literal
+  // `= 13` here fails the day the format gains a field, which is exactly what it did.
+  /Export\.VERSION = \d+/.test(exportSgl)
     && /f32a\[off\+\+\] = window\._animLoopStart/.test(exportSgl)
     && /f32a\[off\+\+\] = window\._animLoopEnd/.test(exportSgl)
     && /version >= 13[\s\S]{0,180}?window\._animLoopStart = f32a\[off\+\+\][\s\S]{0,100}?window\._animLoopEnd = f32a\[off\+\+\]/.test(importSgl));
+// v14. Pin weight and physics blend weight were keyable and solve-critical but had no place in
+// the file, so every keyed fade was dropped on save -- and because pinWeight defaults to 1 for a
+// channel-less pin, the reload came back with every pin fully ON and the rig collapsed.
+check('scalar channels (pin + physics weight) survive a save',
+  /u32a\[off\+\+\] = _scal \? _scal\.size : 0/.test(exportSgl)
+    && /_scal\.forEach[\s\S]{0,1200}?f32a\[off\+\+\] = st\.values\[_sk\]/.test(exportSgl)
+    && /version >= 14[\s\S]{0,2000}?sTrack\.scalarTracks\.set\(sName, _st\)/.test(importSgl),
+  'a keyed pin fade is lost on save, and reloads as a permanently-on pin');
+check('...written for every mesh, count first, so the byte offset stays aligned',
+  /u32a\[off\+\+\] = _scal \? _scal\.size : 0/.test(exportSgl)
+    && /nbBytes \+= 64 \+ 4 \+ st\.times\.length \* 28/.test(exportSgl));
+
 check('loading a project frames the editor to its restored playback range',
   /framePlaybackRange\(\)[\s\S]{0,260}?this\._viewStart = start[\s\S]{0,80}?this\._viewDuration = Math\.max\(0\.1, end - start\)/.test(tl)
     && /fileType === 'sgl'[\s\S]{0,100}?framePlaybackRange/.test(scene));

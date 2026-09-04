@@ -427,6 +427,43 @@ Import.importSGL = function (buffer, gl, main) {
         }
       }
     }
+
+    // v14: scalar channels (pin weight, physics blend weight). Read unconditionally at v14+,
+    // count first, to keep the offset aligned exactly as the vis block above does.
+    if (version >= 14) {
+      var nbScalarCh = u32a[off++];
+      for (var _sc = 0; _sc < nbScalarCh; _sc++) {
+        var sName = '';
+        for (var _sn = 0; _sn < 16; _sn++) {
+          var _pk = u32a[off++];
+          var _c1 = (_pk >>> 16) & 0xFFFF, _c2 = _pk & 0xFFFF;
+          if (_c1) sName += String.fromCharCode(_c1);
+          if (_c2) sName += String.fromCharCode(_c2);
+        }
+        var nbSKeys = u32a[off++];
+        var sTrack = AnimationRegistry.tracks.get(finalMesh.getID());
+        if (!sTrack) {
+          sTrack = {
+            times: [], positions: [], quaternions: [], scales: [],
+            shapeTimes: [], shapes: [], shapeOutputTimes: [],
+            playbackTime: 0, lastUpdate: performance.now(),
+          };
+          AnimationRegistry.tracks.set(finalMesh.getID(), sTrack);
+        }
+        if (!sTrack.scalarTracks) sTrack.scalarTracks = new Map();
+        var _st = { times: [], values: [], tangentOffsets: {} };
+        for (var _sk = 0; _sk < nbSKeys; _sk++) {
+          _st.times.push(f32a[off++]);
+          _st.values.push(f32a[off++]);
+          _st.tangentOffsets[_sk + '_right_dt'] = f32a[off++];
+          _st.tangentOffsets[_sk + '_right_dv'] = f32a[off++];
+          _st.tangentOffsets[_sk + '_left_dt']  = f32a[off++];
+          _st.tangentOffsets[_sk + '_left_dv']  = f32a[off++];
+          _st.tangentOffsets[_sk + '_tied']     = f32a[off++] > 0.5;
+        }
+        if (nbSKeys > 0) sTrack.scalarTracks.set(sName, _st);
+      }
+    }
   }
 
   // NOTE: FrameGroup structure is reconstructed by Scene.loadScene AFTER these meshes are
