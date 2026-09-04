@@ -1802,26 +1802,6 @@ IKSolver.resolveToJoint = function (main, joint) {
   return ok;
 };
 
-// Lerp a joint's LOCAL matrix from `before` toward where it sits now. Decomposed rather than
-// lerped element-wise: a straight matrix lerp shears and shrinks a rotation, which on a limb
-// mid-fade is exactly the crumple this is here to avoid.
-const _bA = new THREE.Matrix4(), _bB = new THREE.Matrix4();
-const _bpA = new THREE.Vector3(), _bqA = new THREE.Quaternion(), _bsA = new THREE.Vector3();
-const _bpB = new THREE.Vector3(), _bqB = new THREE.Quaternion(), _bsB = new THREE.Vector3();
-function blendLocal(joint, before, w) {
-  _bA.fromArray(before);
-  _bB.fromArray(joint.getMatrix());
-  _bA.decompose(_bpA, _bqA, _bsA);
-  _bB.decompose(_bpB, _bqB, _bsB);
-  _bpA.lerp(_bpB, w);
-  _bqA.slerp(_bqB, w);
-  _bsA.lerp(_bsB, w);
-  _bA.compose(_bpA, _bqA, _bsA);
-  const m = joint.getMatrix();
-  for (let k = 0; k < 16; k++) m[k] = _bA.elements[k];
-  Skeleton.syncThree(joint);
-}
-
 IKSolver.holdPins = function (main) {
   const _t0 = window._ikPerf ? performance.now() : 0;
   try {
@@ -1837,14 +1817,7 @@ IKSolver.holdPins = function (main) {
   if (window._ikTrace) {
     console.log('[ik] holdPins pins=%d seed=%s', pins.length, written ? 'rest' : 'current');
   }
-  if (!pins.length) {
-    // CLEARED, not left behind: PhysicsBones reads these to know which joints a pin is holding,
-    // and a stale set from the last solve would have it stand down on joints nothing pins any
-    // more -- a chain that silently stops simulating because of a pin that is gone.
-    window._ikOwnedIds = null;
-    window._ikOwnedFadeW = null;
-    return false;
-  }
+  if (!pins.length) return false;
 
   // TWO SEEDING MODES, and the difference is the caller, not a setting. Playback and scrubbing
   // name the joints they wrote, so everything else goes back to rest and the frame evaluates
@@ -1858,50 +1831,6 @@ IKSolver.holdPins = function (main) {
   // chain's rest for ever after, so a rewind restored the posed arm instead of the bind arm.
   const ownedIds = solverOwned(main, pins);
   window._ikOwnedIds = ownedIds;
-
-  // THE POSE THE BLEND FADES FROM, captured before seedFromRest destroys it.
-  //
-  // A partial weight was being applied to the pin's TARGET (see pinAnchor) while the chain
-  // itself had already been snapped to the bind pose -- so weight 0.1 did not mean "a tenth of
-  // the way from where the arm is", it meant "bind, plus a tenth of the way to the pin". The
-  // whole limb therefore jumped the instant the weight left zero, which is the moment ownership
-  // begins. Measured on weight.sxr with a ten-frame ramp: the ramp itself is exactly linear at
-  // 3.0 units a frame, and the wrist leapt 20.4 units on the single frame the weight went from
-  // 0 to 0.101, ending FURTHER from the pin than it started (9.5 -> 27.1).
-  //
-  // With the pre-solve pose kept, weight is what it says it is: a crossfade between the pose the
-  // rig would have had with no pin at all -- physics, FK, whatever put it there -- and the fully
-  // solved one. At w->0 the result approaches the un-pinned pose instead of bind, so there is
-  // nothing left to jump. Only captured when some pin is actually mid-fade; a rig of ordinary
-  // w=1 pins pays nothing and keeps solving exactly as before.
-  // SCOPED TO THE FADING PIN'S OWN JOINTS, not to the solve group. A group is a SKELETON -- one
-  // character -- so a wrist pin mid-fade shares its group with the hips and both feet at full
-  // strength, and a per-group weight is just 1. What fades is the part of the chain that is only
-  // in the solve BECAUSE of the fading pin: the arm, not the spine those other pins also hold.
-  // `window._ikPinBlend = false` forces the old behaviour, alongside _ikSeedFromRest and
-  // _ikHoldPins -- the way to measure what this is worth without editing the file.
-  const fading = window._ikPinBlend === false
-    ? [] : pins.filter((j) => IKSolver.pinWeight(j) < 1);
-  let blendW = null, preSolve = null;
-  if (fading.length) {
-    const firm = solverOwned(main, pins.filter((j) => IKSolver.pinWeight(j) >= 1));
-    blendW = new Map();
-    for (const j of fading) {
-      const w = IKSolver.pinWeight(j);
-      for (const id of solverOwned(main, [j])) {
-        if (firm.has(id)) continue;              // held at full strength by another pin
-        blendW.set(id, Math.max(blendW.get(id) ?? 0, w));
-      }
-    }
-    preSolve = new Map();
-    for (const j of Skeleton.joints(main)) {
-      if (blendW.has(j.getID())) preSolve.set(j.getID(), mat4.clone(j.getMatrix()));
-    }
-  }
-  // HOW HARD EACH JOINT IS PINNED, for PhysicsBones to fade itself out against. Anything owned
-  // but not listed here is held at full strength; `blendW` is exactly the mid-fade set, so no
-  // extra graph walks are needed to say so.
-  window._ikOwnedFadeW = blendW;
   if (written && window._ikSeedFromRest !== false) {
     seedFromRest(main, written, ownedIds);
   }
@@ -1974,16 +1903,6 @@ IKSolver.holdPins = function (main) {
     applySwivels(nodes, soft, targets, root, rootFixed);
     applyRotations(main, nodes, root, rootFixed);
     solved = true;
-  }
-
-  // CROSSFADE, once every group has solved. Each faded joint goes back toward the pose it held
-  // before seedFromRest wiped it, by its own pin's weight -- so w->0 approaches the un-pinned
-  // pose (physics, FK, whatever put it there) rather than bind, and there is nothing to jump.
-  if (preSolve) {
-    for (const [id, before] of preSolve) {
-      const n = nodes.get(id);
-      if (n) blendLocal(n.joint, before, blendW.get(id));
-    }
   }
   return solved;
   } finally {

@@ -340,30 +340,7 @@ PhysicsBones.step = function (main, dt) {
     // The blend weight is read once per chain per step: it is keyed on the ROOT, because the
     // chain is what it turns on and off and keying every joint of a tail separately would be a
     // way to get them out of step with each other.
-    // PHYSICS RELEASES AS THE PIN TAKES HOLD.
-    //
-    // A pinned chain was still being simulated at full strength, so every frame after the pin
-    // came on, physics threw the wrist somewhere and the solver hauled it back. Measured on
-    // weight.sxr at full pin weight: physics moving the wrist 14.4 units in a frame and the
-    // solve pulling it 16.3 back, every frame, for a net of 1.9 -- a violent oscillation inside
-    // each frame that reads exactly as the pop matt kept seeing. "it does a really violent pop
-    // into that position and is still partially under physics even after the pin happens."
-    //
-    // So a joint the solver holds is one the sim gives up in proportion: fully pinned, physics
-    // is off and the chain simply follows the solve; mid-fade, the two hand over smoothly and
-    // sum to one. At pinHold 1 this falls into the "fully off" branch below, which parks the
-    // particles on the posed chain -- so releasing the pin resumes from the pose rather than
-    // from wherever gravity had dragged them meanwhile.
-    let pinHold = 0;
-    const ownedIds = window._ikOwnedIds, fadeW = window._ikOwnedFadeW;
-    if (ownedIds) {
-      for (const link of links) {
-        const id = link.parent && link.parent.getID();
-        if (id == null || !ownedIds.has(id)) continue;
-        pinHold = Math.max(pinHold, fadeW && fadeW.has(id) ? fadeW.get(id) : 1);
-      }
-    }
-    const blend = PhysicsBones.weight(root) * (1 - Math.min(1, pinHold));
+    const blend = PhysicsBones.weight(root);
     if (blend <= 0) {
       // Fully off: put the chain on its animated pose and keep the particles there, so turning
       // it back on starts from the pose rather than from wherever gravity had dragged it while

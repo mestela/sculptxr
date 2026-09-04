@@ -528,13 +528,10 @@ check('...and drops the accumulated clock, so no dt is integrated across the cut
   for (let i = 0; i < 60; i++) PB.step(main, 1 / 60);
 
   // The solver poses the chain and says so, exactly as holdPins now does.
-  // MID-FADE, deliberately: a fully pinned chain now stands down altogether (physics releases as
-  // the pin takes hold), so the adoption path is only reachable while the two share the joint.
   M.win._ikOwnedIds = new Set([r.t0.getID(), r.t1.getID()]);
-  M.win._ikOwnedFadeW = new Map([[r.t0.getID(), 0.5], [r.t1.getID(), 0.5]]);
   setLocal(r.t1, 0, 1, 0);                       // a solve, not an authored rest
   for (let i = 0; i < 60; i++) PB.step(main, 1 / 60);
-  M.win._ikOwnedIds = null; M.win._ikOwnedFadeW = null;
+  M.win._ikOwnedIds = null;
 
   PB.reset(main);
   const back = wp(r.t2);
@@ -542,43 +539,6 @@ check('...and drops the accumulated clock, so no dt is integrated across the cut
     back.distanceTo(rest) < 0.25,
     'ended ' + back.distanceTo(rest).toFixed(3) + ' from the original rest -- the solved pose '
     + 'was taken as the new rest, so a rewind restores the posed limb instead of the bind one');
-}
-
-// ── PHYSICS RELEASES AS THE PIN TAKES HOLD ────────────────────────────────────────────
-//
-// A pinned chain was still simulated at full strength, so every frame after the pin came on,
-// physics threw the limb somewhere and the solver hauled it back. Measured on weight.sxr at full
-// pin weight: physics moving the wrist 14.4 units in one frame, the solve pulling 16.3 back, for
-// a net of 1.9 -- a violent oscillation INSIDE each frame, which is the pop that survived the
-// crossfade. matt: "it still pops."
-{
-  const fall = (owned, fade) => {
-    const r = rig();
-    PB.setRoot(null, r.t0, true);
-    PB.setParams(r.t0, { stiffness: 0.05, damping: 0.6, gravity: 1, drag: 0 });
-    setLocal(r.t1, 1, 0, 0); setLocal(r.t2, 1, 0, 0);
-    const main = {};
-    PB.reset(main);
-    const rest = wp(r.t2);
-    M.win._ikOwnedIds = owned ? new Set([r.t0.getID(), r.t1.getID()]) : null;
-    M.win._ikOwnedFadeW = fade == null ? null
-      : new Map([[r.t0.getID(), fade], [r.t1.getID(), fade]]);
-    for (let i = 0; i < 120; i++) PB.step(main, 1 / 60);
-    const moved = wp(r.t2).distanceTo(rest);
-    M.win._ikOwnedIds = null; M.win._ikOwnedFadeW = null;
-    return moved;
-  };
-  const free = fall(false, null);
-  const held = fall(true, null);        // owned, no fade entry = held at full strength
-  const half = fall(true, 0.5);
-  check('an unpinned chain still falls', free > 0.5, 'moved ' + free.toFixed(2));
-  check('...a fully pinned one is left to the solver entirely',
-    held < 0.01,
-    'moved ' + held.toFixed(3) + ' -- physics is still simulating a limb the pin owns, and the '
-    + 'two fight inside every frame');
-  check('...and mid-fade the two share it',
-    half > 0.01 && half < free,
-    'free ' + free.toFixed(2) + ', half ' + half.toFixed(2) + ', held ' + held.toFixed(3));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
