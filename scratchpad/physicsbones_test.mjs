@@ -548,6 +548,15 @@ check('...and drops the accumulated clock, so no dt is integrated across the cut
 // xpbd is also friendly to constraints and soft weighting... can our physics system be pushed
 // along similar lines?" Measured on weight.sxr over a twelve-frame pin fade, worst frame:
 // 20.7 units with the force solver, 2.3 with this one.
+// A window flag is wiped by a page load, and reloading the scene is exactly what you do to test
+// a solver on a rig -- so the choice has to persist or the test silently runs the old solver.
+check('...and the choice survives a reload',
+  /localStorage\.getItem\('sxr_physXPBD'\) === '1'/.test(SRC)
+    && /localStorage\.setItem\('sxr_physXPBD', on \? '1' : '0'\)/.test(SRC),
+  'setting the flag and reloading puts you back on the force solver without saying so');
+check('...reachable from the console without an import',
+  /window\.physXPBD = PhysicsBones\.setSolver;/.test(SRC));
+
 check('the constraint solver is behind a flag, with the force solver kept',
   /if \(window\._physXPBD\) PhysicsBones\.stepXPBD\(main, dt\);\s*\n\s*else PhysicsBones\.step\(main, dt\);/.test(SRC),
   'both must run side by side while they are being compared');

@@ -615,6 +615,25 @@ PhysicsBones.step = function (main, dt) {
 // every substep and the projection is just dlambda = -C / (w + alpha~).
 PhysicsBones.SUBSTEPS = 8;
 
+// WHICH SOLVER, AND IT HAS TO SURVIVE A RELOAD. `window._physXPBD` alone is wiped by every page
+// load, so setting it and then reloading the scene -- which is exactly what you do to test a
+// solver on a rig -- silently puts you back on the old one and the difference looks like it did
+// not work. matt, doing precisely that: "if i reload my scene, it is less juddery, but still pops
+// strangely", which is the force solver's own signature.
+try {
+  if (localStorage.getItem('sxr_physXPBD') === '1') window._physXPBD = true;
+} catch (_) { /* private window, or site data blocked */ }
+
+PhysicsBones.setSolver = function (on) {
+  window._physXPBD = !!on;
+  try { localStorage.setItem('sxr_physXPBD', on ? '1' : '0'); } catch (_) {}
+  if (window.screenLog) window.screenLog('Physics solver: ' + (on ? 'XPBD' : 'force'), 'cyan');
+  return !!window._physXPBD;
+};
+// Reachable from the console without an import, like xrPerf and ikPerf.
+window.physXPBD = PhysicsBones.setSolver;
+
+
 // Compliance from a 0..1 slider. Both sliders read "how hard does this hold", so both map the
 // same way: 1 is rigid (alpha 0) and 0 is absent (alpha infinite). Scaled by the scene unit
 // squared because compliance is metres per newton and the rig's idea of a metre is arbitrary.
