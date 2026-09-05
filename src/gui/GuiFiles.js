@@ -280,6 +280,18 @@ class GuiFiles {
         const THUMB = 128;
 
         // 1. Pick camera position and auto-frame toward the sculpt bounding box
+        //
+        // ONE FRAMING RULE FOR BOTH PLATFORMS. VR measured the subject by the bounding box's
+        // DIAGONAL and desktop by its largest AXIS, then padded by different amounts (1.3 against
+        // 1.2) -- so the same sculpt photographed at two different sizes depending on where you
+        // pressed save, and both left a wide dead border. The diagonal is the overestimate the
+        // desktop branch's own comment warns about: it is the corner-to-corner span, which
+        // nothing on screen actually occupies.
+        //
+        // The margin is the ratio of the frame to the subject, so the subject fills 1/margin of
+        // it: 1.3 filled 77%, 1.2 filled 83%, and 1.08 fills 93%. matt: "can they fill the frame
+        // a little more? i think there's too much padding at the borders."
+        const FRAME_MARGIN = 1.08;
         const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 1000);
         if (renderer.xr.isPresenting) {
           // VR: start from head pose — user is naturally close to the sculpt.
@@ -290,12 +302,13 @@ class GuiFiles {
           if (this._main._worldGroup) {
             const box    = new THREE.Box3().setFromObject(this._main._worldGroup);
             const center = box.getCenter(new THREE.Vector3());
-            const maxDim = box.getSize(new THREE.Vector3()).length();
+            const vs     = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(vs.x, vs.y, vs.z);   // the axis, not the diagonal — see above
             snapCam.lookAt(center);
             const dist = snapCam.position.distanceTo(center);
             if (dist > 0.01 && maxDim > 0.01) {
               const fov = 2 * Math.atan(maxDim / (2 * dist)) * (180 / Math.PI);
-              snapCam.fov = Math.min(70, Math.max(5, fov * 1.3));
+              snapCam.fov = Math.min(70, Math.max(5, fov * FRAME_MARGIN));
             }
             snapCam.updateProjectionMatrix();
             snapCam.updateMatrixWorld(true);
@@ -314,8 +327,11 @@ class GuiFiles {
             snapCam.position.set(center.x, center.y + span * 0.1, center.z + snapDist);
             snapCam.lookAt(center);
             const dist = snapCam.position.distanceTo(center);
-            const fov = 2 * Math.atan(span / (2 * dist)) * (180 / Math.PI) * 1.2;
-            snapCam.fov = Math.min(65, Math.max(20, fov));
+            const fov = 2 * Math.atan(span / (2 * dist)) * (180 / Math.PI) * FRAME_MARGIN;
+            // The floor was 20 degrees, which is itself padding: a small sculpt computes a
+            // narrower angle than that and got widened back out to it, putting the border
+            // straight back. 12 still keeps a distant camera from a keyhole projection.
+            snapCam.fov = Math.min(65, Math.max(12, fov));
             snapCam.updateProjectionMatrix();
             snapCam.updateMatrixWorld(true);
           } else {

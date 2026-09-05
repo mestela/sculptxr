@@ -754,12 +754,6 @@ const CSS = `
   opacity: 0.4;
   cursor: default;
 }
-.mm-storage-item img {
-  width: 100%;
-  aspect-ratio: 1;
-  display: block;
-  object-fit: cover;
-}
 /* THE NAME IS WHAT YOU ARE LOOKING FOR. A tile carried a picture and a date, and a date tells
    you nothing about which save it is -- saves made in one sitting all say the same thing. The
    name is typed at save time and was simply never shown. matt: "the thumbnails in the browser

@@ -93,4 +93,26 @@ check('a saves row lays out thumbnail, name and date on one line',
 check('...with a fixed square thumbnail',
   /\.mm-storage-item img,[\s\S]{0,120}?width: 34px; height: 34px;[\s\S]{0,120}?object-fit: cover;/.test(menu));
 
+
+// ── ONE FRAMING RULE FOR BOTH PLATFORMS ───────────────────────────────────────────────
+//
+// VR measured the subject by the bounding box DIAGONAL and desktop by its largest AXIS, then
+// padded by different amounts (1.3 against 1.2), so the same sculpt photographed at two different
+// sizes depending on where you pressed save -- and both left a wide dead border. matt, on the
+// standing rule this keeps breaking: "i want desktop and vr to conform as much as possible, use
+// the same code as much as possible, otherwise we end up in this situation over and over where
+// things work on one platform and not the other."
+check('both snapshot paths share one framing margin',
+  (files.match(/FRAME_MARGIN/g) || []).length >= 3
+    && /const FRAME_MARGIN = 1\.08;/.test(files),
+  'the same sculpt is framed differently depending on where you pressed save');
+// The margin is the ratio of frame to subject, so the subject fills 1/margin: 1.3 filled 77%.
+check('...and neither measures the subject by the box diagonal',
+  !/getSize\(new THREE\.Vector3\(\)\)\.length\(\)/.test(files),
+  'the diagonal is the corner-to-corner span, which nothing on screen occupies');
+// A 20-degree floor is padding by another name: a small sculpt computes a narrower angle and got
+// widened back out to it, putting the border straight back.
+check('...and the desktop fov floor does not re-add the border',
+  /Math\.max\(12, fov\)/.test(files));
+
 console.log('browser gallery performance tests passed');
