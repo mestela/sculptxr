@@ -17,9 +17,13 @@
 //     the restore living inside `if (uiGrip)`, and "detached from the grip" looks exactly like
 //     "hidden" from the outside while `visible` reads true the whole time.
 //
-// Reported through screenLog so it is readable INSIDE the headset -- a console flag is no use on
-// a GXR, which is the same reason the physics solver became a settings item. Off by default and
-// persisted, so it survives the reload it takes to switch it on.
+// Reported to the BROWSER CONSOLE, not to screenLog. matt reads these over remote debugging, and
+// a screenLog line is text painted into the headset that cannot be copied out of it: "don't use
+// screenlog within the headset, its impossible to copy and paste into this chat. use regular
+// chrome console, i have remote debugging enabled, much easier to use." The SWITCH still has to
+// be reachable from inside the headset though -- that is a settings item, for the same reason
+// the physics solver is one. Off by default and persisted, so it survives the reload it takes to
+// switch it on.
 import getOptionsURL from './getOptionsURL.js';
 
 const PanelTrace = {};
@@ -72,8 +76,7 @@ function sizeOf(mesh) {
   return { w: p.width, h: p.height };
 }
 
-function say(msg, colour) {
-  if (window.screenLog) window.screenLog(msg, colour || '#89dceb');
+function say(msg) {
   console.log('[PanelTrace] ' + msg);
 }
 
@@ -89,8 +92,7 @@ function wrap(name, mesh) {
     set(nv) {
       nv = !!nv;
       if (nv !== v && PanelTrace.enabled()) {
-        say(name + '.visible ' + v + ' -> ' + nv + '  by ' + caller(),
-          nv ? '#a6e3a1' : '#f38ba8');
+        say(name + '.visible ' + v + ' -> ' + nv + '  by ' + caller());
       }
       v = nv;
     },
@@ -107,7 +109,7 @@ PanelTrace.enabled = function () {
 PanelTrace.setEnabled = function (on) {
   window._panelTrace = !!on;
   try { getOptionsURL.saveOption('panelTrace', !!on, 0); } catch (_) {}
-  say('panel tracing ' + (on ? 'ON' : 'off'), '#f9e2af');
+  say('panel tracing ' + (on ? 'ON' : 'off'));
 };
 
 // Called every frame from the render loop. Cheap when off: three property reads and a return.
@@ -133,8 +135,7 @@ PanelTrace.tick = function (scene) {
     const tool = sm && sm.getCurrentTool ? sm.getCurrentTool() : null;
     const mode = tool && tool._mode !== undefined ? ('/' + tool._mode) : '';
     state[name] = now;
-    say(name + ': ' + now + '   [tool ' + ((tool && tool.constructor.name) || '?') + mode + ']',
-      why ? '#f38ba8' : '#a6e3a1');
+    say(name + ': ' + now + '   [tool ' + ((tool && tool.constructor.name) || '?') + mode + ']');
   }
 
   // ...and the size, on the same once-a-change rule. A quarter is well below anything a real
@@ -151,7 +152,7 @@ PanelTrace.tick = function (scene) {
     if (dw < 0.25 && dh < 0.25) continue;
     say(name + ': resized ' + was.w.toFixed(3) + 'x' + was.h.toFixed(3)
       + ' -> ' + s.w.toFixed(3) + 'x' + s.h.toFixed(3)
-      + (s.h < 0.01 || s.w < 0.01 ? '  DEGENERATE' : ''), '#f9e2af');
+      + (s.h < 0.01 || s.w < 0.01 ? '  DEGENERATE' : ''));
   }
 };
 

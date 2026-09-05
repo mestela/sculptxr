@@ -28,16 +28,23 @@ const getOptionsURL = () => ({ panelTrace: false });
 getOptionsURL.saveOption = () => {};
 globalThis.window = globalThis;
 globalThis.__log = [];
-globalThis.screenLog = (msg, colour) => { globalThis.__log.push({ msg, colour }); };
+// A trap, not a sink: the reports must NOT go here. See the console capture below.
+globalThis.screenLog = () => { throw new Error('screenLog must not be used for diagnostics'); };
 `;
+
+// THE REPORTS GO TO THE CONSOLE, so the console is what this captures. matt reads them over
+// remote debugging: "don't use screenlog within the headset, its impossible to copy and paste
+// into this chat." console is global, so overriding it here also captures the module's writes.
+const _realLog = console.log;
+console.log = (...a) => { globalThis.__log.push({ msg: a.join(' ') }); };
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_paneltrace_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + body + '\nexport default PanelTrace;\n');
 const PanelTrace = (await import(outPath + '?v=' + Date.now())).default;
 
 let failures = 0;
-const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
-  failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
+const check = (n, ok, d) => { if (ok) return _realLog('  ok   ' + n);
+  failures++; _realLog('  FAIL ' + n + (d ? '  ' + d : '')); };
 
 // An Object3D as far as this code is concerned.
 function obj(name, type, parent) {
@@ -59,7 +66,7 @@ const app = (mini, picker, main) => ({
 const logged = () => globalThis.__log.map((e) => e.msg);
 const clear = () => { globalThis.__log.length = 0; };
 
-console.log('\n── off by default ──────────────────────────────────────────────────────');
+_realLog('\n── off by default ──────────────────────────────────────────────────────');
 {
   globalThis.window._panelTrace = undefined;
   check('tracing is off unless asked for', PanelTrace.enabled() === false,
@@ -76,7 +83,7 @@ console.log('\n── off by default ──────────────�
   check('...while still wrapping, so it works the moment it is switched on', !!mesh._ptWrapped);
 }
 
-console.log('\n── who wrote it ────────────────────────────────────────────────────────');
+_realLog('\n── who wrote it ────────────────────────────────────────────────────────');
 {
   globalThis.window._panelTrace = true;
   const mesh = obj('mini'); sceneWith(mesh);
@@ -97,7 +104,7 @@ console.log('\n── who wrote it ───────────────
   check('the value still reads back', mesh.visible === false);
 }
 
-console.log('\n── why it is not on screen ─────────────────────────────────────────────');
+_realLog('\n── why it is not on screen ─────────────────────────────────────────────');
 {
   globalThis.window._panelTrace = true;
   const mesh = obj('mini'); const { grip } = sceneWith(mesh);
@@ -129,7 +136,7 @@ console.log('\n── why it is not on screen ───────────�
     'once a frame times three panels is a fire hose if it reports the state rather than changes');
 }
 
-console.log('\n── a panel can vanish without anything touching visible ────────────────');
+_realLog('\n── a panel can vanish without anything touching visible ────────────────');
 {
   globalThis.window._panelTrace = true;
   const mesh = obj('mini'); sceneWith(mesh);
@@ -156,7 +163,7 @@ console.log('\n── a panel can vanish without anything touching visible ─�
     'a tracer that reports float noise is one you stop reading');
 }
 
-console.log('\n── the report carries the context ──────────────────────────────────────');
+_realLog('\n── the report carries the context ──────────────────────────────────────');
 {
   globalThis.window._panelTrace = true;
   const mesh = obj('mini'); sceneWith(mesh);
@@ -168,7 +175,7 @@ console.log('\n── the report carries the context ─────────
     "matt's case is Tweak Joints, and the mode is half of that answer");
 }
 
-console.log('\n── all three panels, and only when they exist ──────────────────────────');
+_realLog('\n── all three panels, and only when they exist ──────────────────────────');
 {
   globalThis.window._panelTrace = true;
   const mini = obj('mini'), main = obj('main');
@@ -181,11 +188,14 @@ console.log('\n── all three panels, and only when they exist ─────
   check('...and the ones that do exist are wrapped', !!mini._ptWrapped && !!main._ptWrapped);
 }
 
-console.log('\n── it is reachable from inside the headset ─────────────────────────────');
+_realLog('\n── it is reachable from inside the headset ─────────────────────────────');
 {
   const MM = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
   const OPT = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
   const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('the reports go to the console, never to screenLog',
+    !/screenLog/.test(SRC.replace(/^\s*\/\/.*$/gm, '')),
+    'text painted inside a headset cannot be copied out of it');
   check('Settings offers it', /chk\('Trace panel visibility', PanelTrace\.enabled\(\)\)/.test(MM),
     'a console flag is no use on a GXR — the same reason the solver is a settings item');
   check('...wired to the module, which persists it',
@@ -197,5 +207,5 @@ console.log('\n── it is reachable from inside the headset ──────
     'chk derives the id from the label and querySelector throws on a "(" in an id');
 }
 
-console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
+_realLog(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
