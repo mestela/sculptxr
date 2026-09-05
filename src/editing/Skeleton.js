@@ -261,12 +261,25 @@ function makePinPart(geo, vertexColored = true) {
 // misreport the very number the user is editing. Three unit primitives, three uniform-ish
 // scales, no per-frame geometry rebuild.
 let _capShaftGeo = null;
+// FOUR TIMES THE SEGMENTS THE CAPSULES USED TO HAVE (14 radial, 10 rings). Where two capsules
+// intersect, the seam is the intersection of two FACETED surfaces, so it is a zigzag whose
+// amplitude is the facet's own sagitta -- r(1 - cos(pi/n)), which at 14 segments is 2.5% of the
+// radius and lands at about a pixel at the zoom matt was working at. At 56 it is 0.06%. matt:
+// "the triangles of cylinders vs joints vs other cylinders meet, it makes sawtooth artifacts...
+// if these are being instanced/batched, could we try 4x the tessellation?"
+//
+// Measured on walkwave at full solidity, stipple pixels per thousand lit: 0.91 at 14 segments,
+// 0.49 at 28, 0.44 at 56 -- so most of it is bought by 28 and the last of it by 56. They ARE
+// instanced, so the cost is one geometry, not one per bone; what it does cost is triangles
+// through the pipe, 566k for the solid and ghost passes together against about 140k at 28. That
+// is nothing on a desktop GPU (0.44ms for the whole capsule pass, against 0.48ms at 28 -- fill,
+// not vertices) and is worth watching on a Quest, where these two numbers are the knob.
 function capsuleShaftGeometry() {
-  return (_capShaftGeo = _capShaftGeo || new THREE.CylinderGeometry(1, 1, 1, 14, 1, true));
+  return (_capShaftGeo = _capShaftGeo || new THREE.CylinderGeometry(1, 1, 1, 56, 1, true));
 }
 let _capEndGeo = null;
 function capsuleEndGeometry() {
-  return (_capEndGeo = _capEndGeo || new THREE.SphereGeometry(1, 14, 10));
+  return (_capEndGeo = _capEndGeo || new THREE.SphereGeometry(1, 56, 40));
 }
 
 // Default capsule radius as a fraction of the bone's own length. 0.15 was a guess with no
@@ -414,7 +427,7 @@ function makeBatch(main, geo, ghost, key) {
   // INSTANCED ATTRIBUTES LIVE ON THE GEOMETRY, and capsuleShaftGeometry returns a shared
   // module-level singleton -- so the four shaft batches (solid, ghost, and the preselected
   // variant of each) would have written their taper data over one another, every batch reading
-  // whichever wrote last. A clone per batch is one 14-segment cylinder, made once.
+  // whichever wrote last. A clone per batch is one cylinder, made once.
   if (isShaftKey(key)) geo = geo.clone();
   const mat = ghost
     ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
