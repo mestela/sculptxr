@@ -469,9 +469,15 @@ function tuneCapsuleBatches(main) {
     // leaving it flat is most of why the toggle looked like it did nothing. matt: "the shaded
     // button for capsules has no effect, the capsules still appear unlit."
     if (m.userData.shadeMix) m.userData.shadeMix.value = shaded ? 1 : 0;
-    // An opaque capsule writes depth or the rig sorts like glass; a translucent one must not, or
-    // it punches holes in what is behind it. Same rule the per-mesh capsules had.
-    m.depthWrite = !ghost && base >= 0.99;
+    // EVERY SOLID-PASS CAPSULE WRITES DEPTH, translucent or not. Instances inside one
+    // InstancedMesh are drawn in buffer order and are never sorted -- three sorts objects, not
+    // instances -- so with depth writes off a forearm painted after an upper arm shows through
+    // it whichever is nearer, and no ordering exists that could fix it. matt: capsules "don't
+    // seem to depth sort properly against each other". Writing depth resolves it per pixel: the
+    // nearest capsule wins. The cost is that you no longer see one capsule THROUGH another --
+    // only the nearest is blended against what was already in the buffer (the sculpt, the
+    // grid), which still shows through it -- and that is the trade the rig wants.
+    m.depthWrite = !ghost;
     m.depthTest = ghost ? true : m.depthTest;
     b.mesh.renderOrder = 9996;
   }
@@ -709,7 +715,16 @@ function shadeMaterial(mat, cylinder) {
     shader.fragmentShader = 'uniform float uShadeMix;\nvarying float vShade;\n' + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
       '#include <color_fragment>\n'
-      + 'diffuseColor.rgb *= mix(1.0, vShade, uShadeMix);');
+      // HUE-PRESERVING GAIN. The term straddles 1.0 so the lit side brightens, but a plain
+      // multiply pushes channels past 1.0 one at a time -- an orange bone's red saturates first,
+      // then its green catches up, and the colour walks toward white. That is exactly the
+      // "very pastel" look matt reported. Capping the gain at the point the brightest channel
+      // would clip keeps the hue exactly as authored: a mid-tone still gets most of the lift, a
+      // fully saturated colour spends its range on the shadow side instead.
+      + 'float _sg = mix(1.0, vShade, uShadeMix);\n'
+      + 'float _smx = max(max(diffuseColor.r, diffuseColor.g), diffuseColor.b);\n'
+      + 'if (_smx > 1e-4) _sg = min(_sg, 1.0 / _smx);\n'
+      + 'diffuseColor.rgb *= _sg;');
   };
   // CALLED ON THE MATERIAL, not detached. three's own customProgramCacheKey is
   // `return this.onBeforeCompile.toString()`, so invoking the saved reference as a bare function

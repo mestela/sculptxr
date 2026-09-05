@@ -393,8 +393,29 @@ check('shader-specific groups mute instead of hiding',
     boundNow.includes('id="bone-restpose"') && /Rest Pose<\/button>/.test(boundNow));
   globalThis.__bound = false;
   check('the handler restores the REST pose, not the bind pose',
-    /IKSolver\.restoreRest\(main\)/.test(SRC) && !/restoreBindPose/.test(SRC),
+    /IKSolver\.resetRigAndPins\(main, 'Rest Pose'\)/.test(SRC) && !/restoreBindPose/.test(SRC),
     'bind is a moment; rest is the skeleton as built');
+  // A rig under keys, pins AND physics has three things holding it off rest, and putting back
+  // only the joint matrices leaves the other two pulling. matt: pressing Rest Pose "put the
+  // skeleton into a tangled mess which i couldn't recover from".
+  {
+    // The handler body: from the listener to the end of its own block. Brace-balanced rather
+    // than a fixed slice, so an added comment cannot push a rule out of the window.
+    const i0 = SRC.indexOf("q('restpose')");
+    let d = 0, i = SRC.indexOf('{', i0), j = i;
+    for (; j < SRC.length; j++) { if (SRC[j] === '{') d++; else if (SRC[j] === '}' && --d === 0) break; }
+    const h = SRC.slice(i0, j + 1);
+    check('Rest Pose resets the pins too, not just the joint matrices',
+      /resetRigAndPins/.test(h),
+      'pins left behind haul the rig straight back off rest on the next solve');
+    check('...and the physics state, before the rest pose is written',
+      /PhysicsBones\.reset\(main\)/.test(h)
+      && h.indexOf('PhysicsBones.reset(main)') < h.indexOf('resetRigAndPins'),
+      "physics reset restores joints from ITS remembered pose, so running it second would undo the rest pose");
+    check('...and asks the solver to re-seed on the next step',
+      /_physicsNeedsInit\s*=\s*true/.test(h),
+      'otherwise the particles resume from wherever the swing left them');
+  }
 }
 
 // ── PHYSICS FOLLOWS THE PANEL'S OWN CONVENTIONS ───────────────────────────────────────
@@ -647,8 +668,22 @@ check('...chaining the existing cache key ON the material, not detached',
   /return \(prevKey \? prevKey\.call\(this\) : ''\) \+ suffix;/.test(SKEL_SRC),
   'the renderer throws reading onBeforeCompile of undefined');
 check('...blended by a uniform so the toggle costs no recompile',
-  /diffuseColor\.rgb \*= mix\(1\.0, vShade, uShadeMix\);/.test(SKEL_SRC)
+  /float _sg = mix\(1\.0, vShade, uShadeMix\);/.test(SKEL_SRC)
     && /m\.userData\.shadeMix\.value = shaded \? 1 : 0;/.test(SKEL_SRC));
+// The term straddles 1.0 so the lit side BRIGHTENS, and a plain multiply then pushes channels
+// past 1.0 one at a time -- red saturates, green catches up, the hue walks to white. matt:
+// capsules are "very pastel". Capping the gain where the brightest channel would clip keeps the
+// authored hue exactly; a saturated colour simply spends its range on the shadow side.
+check('...and the gain is capped so a lit capsule cannot clip toward white',
+  /_sg = min\(_sg, 1\.0 \/ _smx\);/.test(SKEL_SRC)
+    && /float _smx = max\(max\(diffuseColor\.r, diffuseColor\.g\), diffuseColor\.b\);/.test(SKEL_SRC),
+  'clipping channels unevenly desaturates -- the pastel look');
+// Instances inside one InstancedMesh draw in buffer order and are never sorted: three sorts
+// objects. Without depth writes a forearm painted after an upper arm shows through it whichever
+// is nearer. matt: capsules "don't seem to depth sort properly against each other".
+check('every solid-pass capsule writes depth, translucent or not',
+  /m\.depthWrite = !ghost;/.test(SKEL_SRC),
+  'no draw order can sort instances; only the depth buffer can');
 // The ghost is the pass drawn THROUGH the mesh, so with a sculpt visible it is most of the
 // capsule surface anyone looks at. Leaving it flat was most of why the toggle looked inert.
 check('...and the ghost pass is shaded too, being the half you actually see',

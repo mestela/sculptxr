@@ -1935,7 +1935,7 @@ IKSolver.captureAll = function (main) {
 // Return the rig and every active pin control to the solver rest pose. Pins are moved onto
 // their joints AFTER the local rest matrices are restored, so a hip pin, feet and pole goals
 // all return to the same coherent frame rather than immediately pulling the reset rig apart.
-IKSolver.resetRigAndPins = function (main) {
+IKSolver.resetRigAndPins = function (main, label) {
   if (!main) return 0;
   const joints = Skeleton.joints(main);
   const pins = IKSolver.pinnedJoints(main)
@@ -1957,6 +1957,11 @@ IKSolver.resetRigAndPins = function (main) {
     Skeleton.syncThree(pin);
   }
   IKSolver.syncJointCache(main);
+  // The pins were just MOVED, onto the joints they already hold — so the generic watcher would
+  // see them as dragged and schedule a solve on the very next frame. It could only solve the rig
+  // onto pins it is already standing on, but it would do it from a fresh seed, and that is one
+  // more thing between pressing the button and seeing the rest pose.
+  IKSolver.syncPinCache(main);
   Skeleton.updateVisuals?.(main);
   const after = objects.map((m) => [m, mat4.clone(m.getMatrix())]);
   const apply = (snap) => {
@@ -1966,7 +1971,7 @@ IKSolver.resetRigAndPins = function (main) {
     main.render?.();
   };
   main.getStateManager?.()?.pushStateCustom?.(
-    () => apply(before), () => apply(after), false, 'Reset Rig and Pins');
+    () => apply(before), () => apply(after), false, label || 'Reset Rig and Pins');
   main.render?.();
   return restored;
 };

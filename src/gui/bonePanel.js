@@ -783,16 +783,29 @@ export function wireBoneSection(root, main, opts) {
   // THE REST POSE, NOT THE BIND POSE. Bind only exists once a mesh is attached, so this button
   // used to be absent for the whole authoring phase — which is exactly when you want it. Rest is
   // recorded when a bone is drawn, so it is there from the first one.
+  //
+  // IT JUMPS TO REST NO MATTER WHAT IS DRIVING THE RIG. Restoring the joint matrices alone is
+  // only a third of the job: the pins stay where they were, so the next frame's solve hauls the
+  // arms straight back off rest, and the physics chains still hold the state and the adopted
+  // rest of the pose they were mid-swing in, so they resume from it. With keys, pins and physics
+  // all live at once the three disagreed and the rig knotted. matt: "i tried pressing rest pose
+  // when the rig had keys and pins and physics joints and whatnot. that should jump to the rest
+  // pose no matter what... instead it put the skeleton into a tangled mess which i couldn't
+  // recover from."
+  //
+  // So every driver is put back, in the order that makes each one's reset stick:
+  //   physics first, because its own reset restores joints from ITS remembered pose and would
+  //     overwrite the rest pose if it ran second;
+  //   then rig and pins together (resetRigAndPins), which is the existing shared reset — rest
+  //     matrices, bend references cleared, pins moved onto the joints they hold;
+  //   then the re-init flag, so the first step after this seeds from the rest pose rather than
+  //     from particles still standing where the swing left them.
+  // "the rest can take over control once i jump the timeline" — nothing here touches the keys.
   q('restpose')?.addEventListener('click', () => {
-    const before = IKSolver.captureAll(main);
-    const n = IKSolver.restoreRest(main);
+    PhysicsBones.reset(main);
+    const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
+    window._physicsNeedsInit = true;
     say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
-    if (n) {
-      const after = IKSolver.captureAll(main);
-      const apply = (snap) => { Skeleton.restoreLocal(snap); Skeleton.updateVisuals(main); main.render(); };
-      main.getStateManager?.()?.pushStateCustom?.(
-        () => apply(before), () => apply(after), false, 'Rest Pose');
-    }
     Skeleton.updateVisuals(main);
     main.render?.();
   });

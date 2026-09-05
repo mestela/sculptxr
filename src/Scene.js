@@ -5326,7 +5326,15 @@ class Scene {
             });
             const rayRoot = new THREE.Group();
             rayRoot.name = 'pointer_ray_root';
-            rayRoot.add(new THREE.Mesh(lineGeometry, lineMaterial));
+            const rayMesh = new THREE.Mesh(lineGeometry, lineMaterial);
+            // ABOVE THE PANELS. The ray does not write depth, so drawn before a panel it cannot
+            // occlude one: the panel paints over it wherever the depth buffer still holds the
+            // far scene. Drawn AFTER the panel it is depth-tested against the depth the panel
+            // DOES write, so the section behind a panel is correctly hidden and the section in
+            // front is visible. matt: the panels "appear above everything including the aim
+            // 'lasers' that come out of the controllers, that isn't right."
+            rayMesh.renderOrder = VR_PANEL_RENDER_ORDER + 5;
+            rayRoot.add(rayMesh);
             controller.add(rayRoot);
 
             // Controller Stylus Spike
@@ -6319,7 +6327,7 @@ class Scene {
       });
       this._vtlSecLaser = new THREE.Mesh(g, m);
       this._vtlSecLaser.visible = false;
-      this._vtlSecLaser.renderOrder = 999;
+      this._vtlSecLaser.renderOrder = VR_PANEL_RENDER_ORDER + 5;  // see pointer_ray_root
       this._scene.add(this._vtlSecLaser);
     }
     const laser = this._vtlSecLaser;
@@ -6702,12 +6710,28 @@ class Scene {
         // Keyed on that hand's own trigger, which is unambiguous: the menu is operated by
         // POINTING at it with the other hand, so its own trigger is never how you use it.
         // Pinned panels are world-anchored and stay — they are no longer on the hand.
+        // ...BUT ONLY WHEN THE HAND IS BUSY WITH THE RIG. Keyed on the trigger alone this fired
+        // on every pull of that trigger whatever the tool was doing, which is most of the time:
+        // matt: "pulling secondary triggers hides the panel(s) at almost any time, thats not the
+        // intent. it should only hide if the current tool is grab, AND if it is actually
+        // selecting and grabbing a pin or joint." So the trigger is the trigger, not the
+        // condition -- what hides the menu is a Grab tool that has actually taken hold of
+        // something in the rig with that hand.
         let secondaryHeld = false;
         for (const src of sources) {
             if (!src.gamepad || src.handedness === this._dominantHand) continue;
             const t = src.gamepad.buttons[0];
             if (t && (t.pressed || t.value > 0.5)) secondaryHeld = true;
         }
+        const _grabTool = this._sculptManager?.getCurrentTool?.();
+        const _isGrab = _grabTool?.constructor?.name === 'Grab';
+        const _nonDom = this._dominantHand === 'right' ? 'left' : 'right';
+        // A pin held BY THIS HAND, or a joint taken by the ordinary mesh grab (which is not
+        // per-hand, so the trigger above is what says which hand it is).
+        const _holdsRig = !!_isGrab && (
+          !!_grabTool._vrPinGrabs?.has?.(_nonDom) ||
+          !!(_grabTool._grabbedMesh && (_grabTool._grabbedMesh._isBone || _grabTool._grabbedMesh._isPinTarget)));
+        secondaryHeld = secondaryHeld && _holdsRig;
         this._wristUIHidden = secondaryHeld;
 
         if (uiGrip) {

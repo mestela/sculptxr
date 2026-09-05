@@ -180,5 +180,42 @@ check('it is inside the section it costs',
       .test(fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8')));
 }
 
+// ── WHAT DRAWS OVER WHAT, AND WHEN THE PANELS GET OUT OF THE WAY ─────────────────────────
+//
+// Both of these are the same shape of bug: a rule written for one situation firing in every
+// situation. The panels were put above the rig overlay and went above the aim lasers with it;
+// the wrist hide was keyed on the secondary trigger and fired on every pull of it.
+{
+  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  // A ray that does not write depth cannot occlude a panel that does: drawn first it is simply
+  // painted over. Drawn AFTER the panel, the panel's own depth hides the section behind it and
+  // the section in front survives. matt: the panels "appear above everything including the aim
+  // 'lasers' that come out of the controllers, that isn't right."
+  check('the controller aim ray draws above the panels',
+    /rayMesh\.renderOrder = VR_PANEL_RENDER_ORDER \+ 5;/.test(SC),
+    'a laser under the menu is a laser you cannot aim with');
+  check('...and so does the timeline hand\'s laser, from the same number',
+    /this\._vtlSecLaser\.renderOrder = VR_PANEL_RENDER_ORDER \+ 5;/.test(SC),
+    'two lasers, one rule -- a literal here is how they drift apart');
+  check('...neither of them left on a bare literal',
+    !/_vtlSecLaser\.renderOrder = 999;/.test(SC));
+
+  // The trigger says WHICH HAND. What says whether to hide is the tool having actually taken
+  // hold of something in the rig. matt: "it should only hide if the current tool is grab, AND if
+  // it is actually selecting and grabbing a pin or joint."
+  const i0 = SC.indexOf('let secondaryHeld = false;');
+  const seg = SC.slice(i0, SC.indexOf('this._wristUIHidden', i0) + 60);
+  check('the wrist panels hide only under the Grab tool',
+    /_grabTool\?\.constructor\?\.name === 'Grab'/.test(seg),
+    'every other tool used that trigger for its own thing and lost the menu doing it');
+  check('...and only when that hand is actually holding a pin or joint',
+    /_vrPinGrabs\?\.has\?\.\(_nonDom\)/.test(seg)
+      && /_grabbedMesh\._isBone \|\| _grabTool\._grabbedMesh\._isPinTarget/.test(seg),
+    'aiming at a pin is not holding one');
+  check('...the trigger narrowing the condition rather than being it',
+    /secondaryHeld = secondaryHeld && _holdsRig;/.test(seg),
+    'keyed on the trigger alone this fires at almost any time');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
