@@ -650,5 +650,27 @@ check('a soft chain falls under the constraint solver too', fell > 0.5,
   void before;
 }
 
+// ── A PIN OUTRANKS THE BEND LIMIT ─────────────────────────────────────────────────────
+//
+// The cone stops a chain folding back on itself under gravity: each joint may leave its ANIMATED
+// direction by at most maxBend. A pin is not gravity -- it is an authored goal, and reaching one
+// routinely needs more than 50 degrees. So the cone clamped the arm partway and the wrist sat
+// there while the pin went on without it. matt: "it tracks from frame 109 to 119, but then gets
+// left behind until frame 130 when the pin finishes its translation."
+//
+// Measured on pinxpbd.sxr, wrist-to-pin distance from frame 115 where the pin starts moving:
+//   as authored (50 deg)   1.06 -> 5.66 -> 9.09 -> 10.15, then flat near 9.9
+//   cone opened            under 1.4 throughout, ending 0.12
+//   stiffness relaxed      still 9.91 -- the pose spring was never the cause
+//   and NOT reach: the arm is 27.89 long, the pin sits 21.5 to 23.1 from the shoulder
+check('the bend limit relaxes in proportion to how hard a pin holds the chain',
+  /const bendLimit = par\.maxBend \+ \(180 - par\.maxBend\) \* Math\.min\(1, chainPinHold\);/.test(SRC)
+    && /if \(bendLimit < 180\) \{/.test(SRC),
+  'the cone clamps the limb partway and it never reaches its pin');
+// The joints ABOVE the pinned one have to bend for it to get anywhere, so a per-joint relax
+// leaves the pin just as unreachable -- it is the whole chain or nothing.
+check('...for the whole chain, not just the pinned joint',
+  /for \(const link of links\) chainPinHold = Math\.max\(chainPinHold, pinHoldOf\(link\.joint\)\);/.test(SRC));
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

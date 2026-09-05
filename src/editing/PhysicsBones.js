@@ -794,6 +794,26 @@ PhysicsBones.stepXPBD = function (main, dt) {
     const decay = Math.exp(-DAMP_SCALE * par.damping * h);
     const aPose = complianceFrom(par.stiffness, POSE_COMPLIANCE, unit);
 
+    // A PIN OUTRANKS THE BEND LIMIT, and this is what stopped an arm reaching its pin.
+    //
+    // The cone stops a chain folding back on itself under gravity: each joint may leave its
+    // ANIMATED direction by at most maxBend. But a pin is not gravity -- it is an authored goal,
+    // and reaching it routinely needs more than 50 degrees of deviation. So the cone clamped the
+    // arm partway and the wrist sat there while the pin went on without it. Measured on
+    // pinxpbd.sxr, wrist-to-pin distance from frame 115 (where the pin starts translating):
+    //   as authored, maxBend 50    1.06 -> 5.66 -> 9.09 -> 10.15, then flat at ~9.9
+    //   with the cone opened       under 1.4 throughout, ending 0.12
+    //   with stiffness relaxed     still 9.91, so the pose spring was never the cause
+    // It is the reach that is NOT the cause either: the arm is 27.89 long and the pin sits 21.5
+    // to 23.1 from the shoulder the whole time. matt: "it tracks from frame 109 to 119, but then
+    // gets left behind until frame 130 when the pin finishes its translation."
+    //
+    // Relaxed for the WHOLE chain, not just the pinned joint: the joints above it have to bend
+    // for the wrist to get anywhere, so clamping them leaves the pin just as unreachable.
+    let chainPinHold = 0;
+    for (const link of links) chainPinHold = Math.max(chainPinHold, pinHoldOf(link.joint));
+    const bendLimit = par.maxBend + (180 - par.maxBend) * Math.min(1, chainPinHold);
+
     // The particles of this chain, in order. Index i is links[i].joint; the chain's own root is
     // the kinematic anchor everything hangs from.
     const P = [], PREV = [], IM = [];
@@ -919,16 +939,16 @@ PhysicsBones.stepXPBD = function (main, dt) {
           if (st.v.y < 0) st.v.y = 0;
         }
         // The bend cone, so a chain cannot fold back on itself.
-        if (par.maxBend < 180) {
+        if (bendLimit < 180) {
           _xRest.copy(shape[i].dir);
           _xDir.subVectors(st.p, _xPar);
           if (_xDir.lengthSq() > 1e-12) {
             _xDir.normalize();
-            const cosLim = Math.cos(par.maxBend * Math.PI / 180);
+            const cosLim = Math.cos(bendLimit * Math.PI / 180);
             const dot = Math.max(-1, Math.min(1, _xRest.dot(_xDir)));
             if (dot < cosLim) {
               const ang = Math.acos(dot);
-              const t = 1 - (par.maxBend * Math.PI / 180) / ang;
+              const t = 1 - (bendLimit * Math.PI / 180) / ang;
               _xDir.lerp(_xRest, t).normalize();
               st.p.copy(_xPar).addScaledVector(_xDir, shape[i].len);
             }
