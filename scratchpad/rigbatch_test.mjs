@@ -52,13 +52,27 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 // ── the two highest-count kinds are instanced ────────────────────────────────
 check('the bone body is instanced, not a Mesh per joint',
   /bone: \{\s*\n\s*solid: batchSlot\(main, 'bone', boneGeometry, false\)/.test(SRC));
-// Joint volumes were removed (see the joint-scale work): a joint's shape is now its radius and
-// three extents on ONE geometry, so there is no per-shape batch to check any more. What
-// replaced those two checks is that the capsule shaft is NOT batched — it carries per-bone
-// taper uniforms, which one instanced draw cannot express.
-check('the capsule shaft is a Mesh per bone, not an instance',
-  /shaft: makeCapsulePart\(capsuleShaftGeometry\(\), true\)/.test(SRC),
-  'its two ends have different extents, and an InstancedMesh has one geometry for all of them');
+// The shaft used to be a Mesh per bone, on the reasoning that its per-bone taper "one instanced
+// draw cannot express". That was true of UNIFORMS and not of the thing itself: the taper is two
+// half-extent vectors, which are per-instance ATTRIBUTES, and the rotation it also wanted is
+// recoverable from instanceMatrix because the scale baked in there is (1, length, 1). So the
+// shaft is batched now too, and capsules cost four draw calls instead of a hundred and ninety-two.
+check('the capsule shaft is instanced, with its taper as per-instance attributes',
+  /shaft: makeCapsuleShaftSlots\(main\)/.test(SRC)
+    && /attribute vec3 aHA;/.test(SRC) && /attribute vec3 aHB;/.test(SRC),
+  'a mesh per bone is six draw calls per bone');
+// A hidden slot is a ZERO matrix by design, and normalize() of a zero column is NaN -- undefined
+// behaviour that happens to draw nothing on one GPU and is not guaranteed to on another.
+check('...and the taper is skipped for a collapsed instance rather than going NaN',
+  /float _len0 = length\(_im\[0\]\);/.test(SRC) && /if \(_len0 > 1e-8\) \{/.test(SRC),
+  'a hidden capsule feeds NaN vertices to the GPU');
+check('...deriving the rotation from the instance rather than sending it',
+  /mat3 _rot = mat3\(normalize\(_im\[0\]\), normalize\(_im\[1\]\), normalize\(_im\[2\]\)\);/.test(SRC),
+  'uRot and uRotInv would be eighteen more floats per instance to say what the matrix says');
+// InstancedMesh does not manage custom attributes, so they have to be resized with the batch.
+check('...and the taper attributes grow with the batch',
+  /if \(isShaftKey\(key\)\) ensureTaperAttrs\(m, cap\);/.test(SRC),
+  'a rig that gains a joint writes taper data past the end of the buffer');
 check('the joint dot is instanced too',
   /joint: \{\s*\n\s*solid: batchSlot\(main, 'joint', jointGeometry, false\)/.test(SRC));
 check('...and the xray ghost is its own batch, not a second pass over the first',
@@ -106,14 +120,13 @@ check('slots are gathered from the LIVE entries, not held by the batch',
 // The literal list IS the check: a slot left off it is simply never drawn, and nothing else
 // notices. Every batched part has to appear here, capsule ends included.
 check('an entry publishes ALL its slots for gathering',
-  /e\._slots = \[e\.bone\.solid, e\.bone\.ghost, e\.joint\.solid, e\.joint\.ghost,\s*\n\s*e\.wire\.solid, e\.wire\.ghost,\s*\n\s*e\.cap\.a\.solid, e\.cap\.a\.ghost, e\.cap\.b\.solid, e\.cap\.b\.ghost\]/.test(SRC),
+  /e\._slots = \[e\.bone\.solid, e\.bone\.ghost, e\.joint\.solid, e\.joint\.ghost,\s*\n\s*e\.wire\.solid, e\.wire\.ghost,\s*\n\s*e\.cap\.shaft\.solid, e\.cap\.shaft\.ghost,\s*\n\s*e\.cap\.a\.solid, e\.cap\.a\.ghost, e\.cap\.b\.solid, e\.cap\.b\.ghost\]/.test(SRC),
   'a slot left off this list is simply never drawn');
-// ...and a batched part must NOT also be added to the scene, or it is drawn twice: once as an
-// instance and once as a mesh that no longer has anything placing it.
-check('...and batched parts are not also scene children',
-  /g\.add\(e\.cap\.shaft\.solid, e\.cap\.shaft\.ghost\);/.test(SRC)
-    && !/for \(const p of \[e\.cap\.shaft, e\.cap\.a, e\.cap\.b\]\) g\.add/.test(SRC),
-  'the capsule ends are instanced now, so adding them to the group draws them twice');
+// A batched part must NOT also be added to the scene, or it is drawn twice: once as an instance
+// and once as a mesh that nothing places any more.
+check('...and no capsule part is also a scene child',
+  !/g\.add\(e\.cap/.test(SRC) && !/\[e\.cap\.shaft, e\.cap\.a, e\.cap\.b\]\) g\.add/.test(SRC),
+  'an instanced part added to the group is drawn twice');
 check('the flush runs AFTER the dead entries are disposed',
   SRC.indexOf('if (!live.has(id)) disposeEntry') < SRC.lastIndexOf('flushBatches(main)'),
   'flushing first publishes a joint that is about to be removed');

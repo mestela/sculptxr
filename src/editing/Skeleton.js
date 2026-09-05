@@ -354,13 +354,28 @@ function makeSlot() {
 // so a batch that kept its own slot list would renumber every joint after any joint that was
 // deleted — and would keep the deleted one's slot alive forever. Walking `_skelVis` makes
 // disposal automatic: an entry that is gone is simply not gathered.
-function makeBatch(main, geo, ghost) {
+// A shaft batch carries two extra per-instance attributes; everything else is a plain batch.
+function isShaftKey(key) { return typeof key === 'string' && key.startsWith('capShaft'); }
+
+// InstancedMesh does not manage custom attributes, so they are attached to its geometry and
+// resized alongside the matrix buffer whenever the batch grows.
+function ensureTaperAttrs(mesh, cap) {
+  const g = mesh.geometry;
+  const a = g.getAttribute('aHA');
+  if (a && a.count === cap) return;
+  g.setAttribute('aHA', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
+  g.setAttribute('aHB', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
+}
+
+function makeBatch(main, geo, ghost, key) {
   const mat = ghost
     ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
         opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
     : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  if (isShaftKey(key)) taperMaterialInstanced(mat);
   const m = new THREE.InstancedMesh(geo, mat, 1);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  if (isShaftKey(key)) ensureTaperAttrs(m, 1);
   m.count = 0;
   m.renderOrder = ghost ? 9998 : 0;
   m.isPickable = false;
@@ -374,7 +389,7 @@ function makeBatch(main, geo, ghost) {
 function batchFor(main, key, geoFn, ghost) {
   const all = main._skelBatch || (main._skelBatch = new Map());
   let b = all.get(key);
-  if (!b) { b = makeBatch(main, geoFn(), ghost); all.set(key, b); }
+  if (!b) { b = makeBatch(main, geoFn(), ghost, key); all.set(key, b); }
   return b;
 }
 
@@ -432,10 +447,11 @@ function tuneCapsuleBatches(main) {
   if (!all) return;
   const base = Skeleton.capsuleOpacity();
   for (const [key, b] of all) {
-    if (!key.startsWith('capEnd')) continue;
+    if (!key.startsWith('capEnd') && !key.startsWith('capShaft')) continue;
     const m = b.mesh.material;
     const hi = key.endsWith('Hi');
-    const ghost = key.indexOf('G') === 6;   // capEndG / capEndGHi
+    // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
+    const ghost = /G(Hi)?$/.test(key);
     m.transparent = true;
     m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
     // An opaque capsule writes depth or the rig sorts like glass; a translucent one must not, or
@@ -472,6 +488,7 @@ function flushBatches(main) {
       const old = b.mesh;
       const m = new THREE.InstancedMesh(old.geometry, old.material, cap);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      if (isShaftKey(key)) ensureTaperAttrs(m, cap);
       m.renderOrder = old.renderOrder;
       m.isPickable = false;
       m.frustumCulled = false;
@@ -481,12 +498,19 @@ function flushBatches(main) {
       b.cap = cap;
     }
     const m = b.mesh;
+    const ha = isShaftKey(key) ? m.geometry.getAttribute('aHA') : null;
+    const hb = ha ? m.geometry.getAttribute('aHB') : null;
     for (let i = 0; i < n; i++) {
       const s = slots[i];
       _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
       m.setMatrixAt(i, _mSlot);
       if (m.setColorAt) m.setColorAt(i, s.material.color);
+      if (ha && s._ha) {
+        ha.setXYZ(i, s._ha[0], s._ha[1], s._ha[2]);
+        hb.setXYZ(i, s._hb[0], s._hb[1], s._hb[2]);
+      }
     }
+    if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
     m.count = n;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
@@ -620,6 +644,52 @@ function makeCapsuleEndSlots(main) {
   return {
     solid: batchSlot(main, 'capEnd', capsuleEndGeometry, false, 'capEndHi'),
     ghost: batchSlot(main, 'capEndG', capsuleEndGeometry, true, 'capEndGHi'),
+  };
+}
+
+// THE TAPER, INSTANCED. Identical maths to taperMaterial, with the two differences that make it
+// fit in an instance:
+//
+//   - the half-extents come from per-instance attributes instead of uniforms, because that is the
+//     only thing about a capsule that genuinely varies per bone;
+//   - the rotation is DERIVED from instanceMatrix rather than passed in. uRot was always just the
+//     mesh's own rotation and uRotInv its transpose, so sending them would have meant eighteen
+//     more floats per instance to say what the matrix already says. The scale baked into that
+//     matrix is (1, length, 1), so normalising its columns leaves the rotation.
+function taperMaterialInstanced(mat) {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'attribute vec3 aHA;\nattribute vec3 aHB;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\n'
+      + 'mat3 _im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
+      // A HIDDEN SLOT IS A ZERO MATRIX, by design -- instances are positional, so one is hidden
+      // by collapsing it rather than by renumbering everything after it. normalize() of a zero
+      // column is NaN, and a NaN vertex is undefined behaviour: it draws nothing on the GPU this
+      // was written on and is not guaranteed to anywhere else. The instance is collapsed either
+      // way, so the taper is simply skipped for it.
+      + 'float _len0 = length(_im[0]);\n'
+      + 'if (_len0 > 1e-8) {\n'
+      + '  mat3 _rot = mat3(normalize(_im[0]), normalize(_im[1]), normalize(_im[2]));\n'
+      + '  mat3 _rotInv = transpose(_rot);\n'
+      // The cylinder spans y = -0.5 .. 0.5, and -0.5 is the end the bone STARTS at.
+      + '  float _t = transformed.y + 0.5;\n'
+      + '  vec3 _h = mix(aHA, aHB, _t);\n'
+      + '  vec3 _w = _rot * vec3(transformed.x, 0.0, transformed.z);\n'
+      + '  vec3 _b = _rotInv * (_w * _h);\n'
+      + '  transformed.x = _b.x;\n'
+      + '  transformed.z = _b.z;\n'
+      + '}');
+  };
+  mat.customProgramCacheKey = () => 'skelTaperInstanced';
+  return mat;
+}
+
+// Both ends of a bind capsule's SHAFT, as batched slots. The half-extents ride along as `_ha`
+// and `_hb` on the slot and are written into instanced attributes at flush time.
+function makeCapsuleShaftSlots(main) {
+  return {
+    solid: batchSlot(main, 'capShaft', capsuleShaftGeometry, false, 'capShaftHi'),
+    ghost: batchSlot(main, 'capShaftG', capsuleShaftGeometry, true, 'capShaftGHi'),
   };
 }
 
@@ -1798,7 +1868,7 @@ function ensureEntry(main, id) {
       wire: { solid: wire, ghost: wireGhost },
       label: makeLabel(),
       cap: {
-        shaft: makeCapsulePart(capsuleShaftGeometry(), true),
+        shaft: makeCapsuleShaftSlots(main),
         // THE ENDS ARE INSTANCED. They carry no taper -- world-axis aligned, with their three
         // extents straight in the scale -- so they need nothing an instance cannot hold, and
         // they were four of the six meshes every bone was drawing. Measured on a 33-joint rig:
@@ -1810,11 +1880,12 @@ function ensureEntry(main, id) {
     // The batched slots, listed so flushBatches can gather them without knowing this shape.
     e._slots = [e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
                 e.wire.solid, e.wire.ghost,
+                e.cap.shaft.solid, e.cap.shaft.ghost,
                 e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
     g.add(e.label.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
           e.pinS.solid, e.pinS.ghost);
-    g.add(e.cap.shaft.solid, e.cap.shaft.ghost);   // the ends are batched, not scene children
+    // Every capsule part is batched now; none of them are scene children.
     main._skelVis.set(id, e);
   }
   return e;
@@ -2575,17 +2646,13 @@ Skeleton.updateVisuals = function (main) {
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
       o.position.copy(_cA).addScaledVector(_dirC, lenC * 0.5); // cylinder is centre-origin
       o.quaternion.copy(_qC);
-      // The radii go to the shader, not into the scale — see taperMaterial. x/z stay at 1.
-      const tp = o.material.userData.taper;
-      if (tp) {
-        tp.uHA.value.set(hA[0], hA[1], hA[2]);
-        tp.uHB.value.set(hB[0], hB[1], hB[2]);
-        _mRot.makeRotationFromQuaternion(_qC);
-        tp.uRot.value.setFromMatrix4(_mRot);
-        tp.uRotInv.value.copy(tp.uRot.value).transpose();   // a rotation's inverse
-        o.scale.set(1, lenC, 1);
-      } else o.scale.set(crMid, lenC, crMid);
+      // The radii go to the shader, not into the scale -- see taperMaterialInstanced. x/z stay
+      // at 1, and the rotation the taper needs is read back off the instance matrix rather than
+      // sent, since this scale keeps it recoverable.
+      o._ha = hA; o._hb = hB;
+      o.scale.set(1, lenC, 1);
       o.visible = true;
+      o._hi = !!(isHi || isSel);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
     // The end caps are world-axis aligned — no rotation on them — so the three extents go
@@ -2604,6 +2671,8 @@ Skeleton.updateVisuals = function (main) {
     for (const part of [e.cap.shaft, e.cap.a, e.cap.b]) {
       part.solid.material.color.copy(capColor);
       part.ghost.material.color.copy(capColor);
+      // Opacity is batch state now (see tuneCapsuleBatches); recorded here and ignored, so this
+      // placement code does not have to know which of the two it is.
       part.solid.material.opacity = capOp;
       part.ghost.material.opacity = capOp * 0.55;
     }
