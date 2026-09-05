@@ -719,9 +719,20 @@ const CSS = `
   display: flex; align-items: center; justify-content: center;
   font-size: 13px; color: #6c7086;
 }
-/* The name takes the room; the date is a hint at the end. Both on one line, because a row that
-   wraps makes the list jump about as names change length. */
-.mm-storage-item .mm-storage-meta { flex: 1; min-width: 0; }
+/* THUMBNAIL, THEN NAME, THEN DATE -- all on one line. Stacking the name above the date made the
+   row twice as tall for no gain: the date is three characters and belongs beside the name, not
+   under it. matt: "each row entry should be a small square thumbnail, with the name and short
+   form date next to it." The name takes whatever room is left and ellipses; the date never
+   shrinks, so the column of dates stays aligned down the list. */
+.mm-storage-item .mm-storage-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.mm-storage-item .mm-storage-name { flex: 1; min-width: 0; }
+.mm-storage-item .mm-storage-date { flex-shrink: 0; }
 .mm-storage-item.selected {
   border-color: #89b4fa;
   background: #1e1e2e;

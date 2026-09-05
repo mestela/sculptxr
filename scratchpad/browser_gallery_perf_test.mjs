@@ -78,4 +78,19 @@ check('...and the flag is consumed once, before the first file',
     fs.readFileSync('/Users/mattestela/sculptxr/src/SculptGL.js', 'utf8')),
   'clearing per file would throw away the earlier ones in a multi-select');
 
+
+// A row is a square thumbnail, then the name, then a short date -- all on ONE line. Stacking the
+// name above the date made every row twice as tall for no gain: the date is a few characters and
+// belongs beside the name. matt: "each row entry should be a small square thumbnail, with the
+// name and short form date next to it."
+check('a saves row lays out thumbnail, name and date on one line',
+  /\.mm-storage-item \.mm-storage-meta \{[\s\S]{0,160}?display: flex;/.test(menu)
+    && /\.mm-storage-item \.mm-storage-name \{ flex: 1; min-width: 0; \}/.test(menu)
+    && /\.mm-storage-item \.mm-storage-date \{ flex-shrink: 0; \}/.test(menu),
+  'the row wraps to two lines and the dates stop lining up');
+// Square, and the same size whatever the image is: object-fit keeps a non-square capture from
+// stretching, and a fixed box keeps the rows an even height down the list.
+check('...with a fixed square thumbnail',
+  /\.mm-storage-item img,[\s\S]{0,120}?width: 34px; height: 34px;[\s\S]{0,120}?object-fit: cover;/.test(menu));
+
 console.log('browser gallery performance tests passed');
