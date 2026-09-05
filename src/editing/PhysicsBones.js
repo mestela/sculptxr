@@ -650,6 +650,20 @@ window.physXPBD = PhysicsBones.setSolver;
 // Compliance from a 0..1 slider. Both sliders read "how hard does this hold", so both map the
 // same way: 1 is rigid (alpha 0) and 0 is absent (alpha infinite). Scaled by the scene unit
 // squared because compliance is metres per newton and the rig's idea of a metre is arbitrary.
+const _mqM = new THREE.Matrix4(), _mqP = new THREE.Vector3(), _mqS = new THREE.Vector3();
+function modelQuatOf(obj, out) {
+  _mqM.fromArray(obj.getModelSpaceMatrix());
+  _mqM.decompose(_mqP, out, _mqS);
+  return out;
+}
+
+// Does a pin hold this joint's ORIENTATION as well as its position? PIN_POS is a position goal
+// only; PIN_FULL and PIN_ROT both state where the joint should FACE.
+function pinHoldsOrientation(joint) {
+  const m = IKSolver.pinMode ? IKSolver.pinMode(joint) : 0;
+  return m === IKSolver.PIN_FULL || m === IKSolver.PIN_ROT;
+}
+
 // How hard a pin is holding this joint right now, 0 when it has none.
 function pinHoldOf(joint) {
   const pin = IKSolver.pinObject && IKSolver.pinObject(joint);
@@ -704,6 +718,7 @@ const _xp = new THREE.Vector3(), _xprev = new THREE.Vector3(), _xg = new THREE.V
 const _xTo = new THREE.Vector3(), _xDir = new THREE.Vector3(), _xPar = new THREE.Vector3();
 const _xAnim = new THREE.Vector3(), _xRest = new THREE.Vector3(), _xPinP = new THREE.Vector3();
 const _xQ = new THREE.Quaternion(), _xA = new THREE.Vector3(), _xB = new THREE.Vector3();
+const _xQCur = new THREE.Quaternion(), _xQTgt = new THREE.Quaternion(), _xQI = new THREE.Quaternion();
 const _xM = new THREE.Matrix4();
 
 // One positional attachment: pull `p` toward `target`, softened by `alpha`. Returns nothing; `p`
@@ -984,7 +999,29 @@ PhysicsBones.stepXPBD = function (main, dt) {
       if (blend < 1) _xTo.lerp(_xAnim, 1 - blend);
       _xA.subVectors(_xAnim, _xPar);
       _xB.subVectors(_xTo, _xPar);
-      if (_xA.lengthSq() > 1e-12 && _xB.lengthSq() > 1e-12) {
+      // A 6DOF PIN OWNS THE JOINT'S ROTATION, because there is only one of them to own.
+      //
+      // `links[i].joint` IS `links[i+1].parent`, so the channel the sim uses to aim the next bone
+      // at its particle is the same channel that decides which way a pinned wrist FACES. They
+      // cannot both have it. A positional solver has nothing to say about facing -- that is the
+      // half of a 6DOF pin XPBD does not model -- so under one, the pin takes it: matt, "its not
+      // following rotation, which i know xpbd doesn't account for."
+      //
+      // Its POSITION still comes from the particle chain, through its own parent's aim one link
+      // up, so this costs the pin nothing positionally. Slerped by the pin's weight, so a fade
+      // brings the orientation in with everything else rather than snapping it on.
+      const oriW = pinHoldsOrientation(link.parent) ? pinHoldOf(link.parent) : 0;
+      const oriPin = oriW > 0 && IKSolver.pinObject ? IKSolver.pinObject(link.parent) : null;
+      if (oriPin) {
+        modelQuatOf(link.parent, _xQCur);
+        modelQuatOf(oriPin, _xQTgt);
+        _xQ.copy(_xQTgt).multiply(_xQCur.invert());
+        if (oriW < 1) _xQI.identity().slerp(_xQ, oriW), _xQ.copy(_xQI);
+        IKSolver.rotateJoint(link.parent, _xQ);
+        pst.written = Array.prototype.slice.call(link.parent.getMatrix());
+        link.parent._physWritten = pst.written;
+        moved++;
+      } else if (_xA.lengthSq() > 1e-12 && _xB.lengthSq() > 1e-12) {
         _xQ.setFromUnitVectors(_xA.normalize(), _xB.normalize());
         IKSolver.rotateJoint(link.parent, _xQ);
         pst.written = Array.prototype.slice.call(link.parent.getMatrix());

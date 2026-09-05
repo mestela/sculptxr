@@ -672,5 +672,33 @@ check('the bend limit relaxes in proportion to how hard a pin holds the chain',
 check('...for the whole chain, not just the pinned joint',
   /for \(const link of links\) chainPinHold = Math\.max\(chainPinHold, pinHoldOf\(link\.joint\)\);/.test(SRC));
 
+// ── A 6DOF PIN OWNS THE ROTATION OF THE JOINT IT HOLDS ────────────────────────────────
+//
+// `links[i].joint` IS `links[i+1].parent`, so the channel the sim uses to aim the next bone at
+// its particle is the same one that decides which way a pinned wrist FACES. They cannot both
+// have it, and a positional solver has nothing to say about facing -- that is the half of a 6DOF
+// pin XPBD does not model. matt: "its not following rotation, which i know xpbd doesn't account
+// for. can that be solved?"
+//
+// Measured on pinxpbd.sxr, angle between the wrist's orientation and its pin's, at full weight:
+//   before  worst 101 degrees -- the hand nearly inverted
+//   after   worst 4, and the position gap unchanged (1.51 against 1.36)
+// The position still comes from the particle chain through the parent's aim one link up, so the
+// pin loses nothing positionally by taking the rotation.
+check('a pin that states an orientation gets it',
+  /const oriW = pinHoldsOrientation\(link\.parent\) \? pinHoldOf\(link\.parent\) : 0;/.test(SRC)
+    && /_xQ\.copy\(_xQTgt\)\.multiply\(_xQCur\.invert\(\)\);/.test(SRC),
+  'the hand ignores the pin it is held by');
+// PIN_POS is a position goal only and must keep the aim; only FULL and ROT state a facing.
+check('...only for the modes that state one',
+  /return m === IKSolver\.PIN_FULL \|\| m === IKSolver\.PIN_ROT;/.test(SRC));
+// Slerped, so a fade brings the orientation in with everything else instead of snapping it on.
+check('...eased in by the pin weight, not snapped',
+  /if \(oriW < 1\) _xQI\.identity\(\)\.slerp\(_xQ, oriW\)/.test(SRC));
+// And an unpinned chain must still reach the aim path at all.
+check('...leaving the aim to every joint no pin is holding',
+  /\} else if \(_xA\.lengthSq\(\) > 1e-12 && _xB\.lengthSq\(\) > 1e-12\) \{/.test(SRC),
+  'a free chain stops simulating');
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
