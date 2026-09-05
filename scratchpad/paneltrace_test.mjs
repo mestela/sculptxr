@@ -210,7 +210,9 @@ _realLog('\n── the anchor has to actually be driven ────────
   check('a frozen wrist anchor is reported',
     logged().some((m) => /wrist anchor has not moved for 60 frames/.test(m)),
     'a grip that stops feeding leaves the panels where the hand last was, and nothing else changes');
-  check('...naming which grips are missing', logged().some((m) => /grips L=NULL/.test(m)));
+  check('...naming whether each grip has a POSE, not merely an object',
+    logged().some((m) => /grips L=NULL/.test(m) && /headHold=/.test(m)),
+    'both grips were present through every freeze the trace caught; the pose was not');
   clear();
   for (let i = 0; i < 30; i++) PanelTrace.tick(scene);
   check('...and it is said once, not every frame after', logged().length === 0);

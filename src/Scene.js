@@ -6815,10 +6815,37 @@ class Scene {
           return g;
         })());
         if (uiGrip) {
-          // The grip's world matrix, taken as-is. When the pose is missing three leaves it at
-          // its last value rather than zeroing it, so "hold the last position" is free.
-          uiGrip.updateWorldMatrix(true, false);
-          uiAnchor.matrix.copy(uiGrip.matrixWorld);
+          // A LOST POSE MUST NOT PARK THE MENU IN THE WORLD.
+          //
+          // `grip.visible` IS three's answer to "did this frame have a grip pose" (it assigns
+          // `grip.visible = (gripPose !== null)` every frame), and on a controller that is
+          // resting rather than being waved about, the answer is no for seconds at a time. The
+          // trace measured it: the anchor froze for 78, 110, 164, 166 and 249 frames in one
+          // short session, with BOTH grips present the whole time. That is the menu hand sitting
+          // still while the other hand works -- which is exactly what Tweak Joints looks like.
+          //
+          // Holding the last WORLD pose through that (v3.30.19) stops the panel blinking and
+          // replaces it with something that reads the same: the panel stays where the hand was
+          // while the head moves on, so it slides out of view and snaps back when tracking
+          // returns. matt: "its flashing on and off still."
+          //
+          // So a stale pose holds the panel relative to the HEAD instead, at the offset it had
+          // on the last good frame. It stays where you last saw it, in your view, and goes back
+          // on the wrist the moment the controller is seen again. World-locking is the one
+          // choice that cannot work here: the head is the thing that keeps moving.
+          const xrCam = this._renderer?.xr?.getCamera?.();
+          const live = uiGrip.visible !== false;
+          if (live || !this._wristHeadOffset || !xrCam) {
+            uiGrip.updateWorldMatrix(true, false);
+            uiAnchor.matrix.copy(uiGrip.matrixWorld);
+            // Remember where that was RELATIVE TO THE HEAD, for the frames that have no pose.
+            if (xrCam) {
+              this._wristHeadOffset = (this._wristHeadOffset || new THREE.Matrix4())
+                .copy(xrCam.matrixWorld).invert().multiply(uiAnchor.matrix);
+            }
+          } else {
+            uiAnchor.matrix.multiplyMatrices(xrCam.matrixWorld, this._wristHeadOffset);
+          }
           uiAnchor.matrixWorldNeedsUpdate = true;
         }
         if (uiGrip) {

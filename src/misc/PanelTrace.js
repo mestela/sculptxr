@@ -76,6 +76,20 @@ function sizeOf(mesh) {
   return { w: p.width, h: p.height };
 }
 
+// THE HEAD, not the app's camera. In a session the orbit camera is still sitting wherever the
+// desktop view left it -- tens of scene units away -- so every distance measured against it came
+// back as "47m from the head, FAR" for a panel that was 30cm from the user's face. The XR camera
+// is the one with the actual head pose; the orbit camera is only right outside a session.
+function headCamera(scene) {
+  const xr = scene._renderer && scene._renderer.xr;
+  if (xr && xr.isPresenting && xr.getCamera) {
+    const c = xr.getCamera();
+    if (c && c.matrixWorld) return c;
+  }
+  const c = scene._camera && scene._camera.getThreeCamera ? scene._camera.getThreeCamera() : null;
+  return c && c.matrixWorld ? c : null;
+}
+
 function say(msg) {
   console.log('[PanelTrace] ' + msg);
 }
@@ -140,7 +154,7 @@ PanelTrace.setEnabled = function (on) {
 
 PanelTrace.snapshot = function (scene) {
   if (!scene) return;
-  const cam = scene._camera && scene._camera.getThreeCamera ? scene._camera.getThreeCamera() : null;
+  const cam = headCamera(scene);
   for (const [name, p] of [['MiniPanel', scene._miniPanel], ['ToolPicker', scene._toolPickerPanel],
                            ['MainMenu', scene._mainMenuPanel]]) {
     if (!p || !p.mesh) { say(name + ': not built yet'); continue; }
@@ -184,7 +198,7 @@ PanelTrace.tick = function (scene) {
   // ...where it is, on a move big enough to be a jump rather than a hand moving. Reported with
   // the distance from the head and whether it is behind it, because those are the two ways a
   // panel that is drawing perfectly is nonetheless not on screen.
-  const cam = scene._camera && scene._camera.getThreeCamera ? scene._camera.getThreeCamera() : null;
+  const cam = headCamera(scene);
   const places = scene._ptPlace || (scene._ptPlace = {});
   for (const [name, p] of panels) {
     if (!p || !p.mesh) continue;
@@ -215,9 +229,14 @@ PanelTrace.tick = function (scene) {
     // 60 frames is under a second of a hand that has not moved AT ALL, which a real hand does
     // not do -- so this is the grip having stopped feeding us, not the user holding still.
     if (st.still === 60) {
+      // POSE, not existence. `grip.visible` is three's own record of whether this frame had a
+      // grip pose, and "the object is there" was never the interesting half: both grips were
+      // present through every freeze the trace caught.
+      const pose = (g) => (!g ? 'NULL' : (g.visible === false ? 'no-pose' : 'live'));
       say('wrist anchor has not moved for 60 frames at ' + key
-        + '  [grips L=' + (scene._vrControllerLeftGrip ? 'yes' : 'NULL')
-        + ' R=' + (scene._vrControllerRightGrip ? 'yes' : 'NULL') + ']');
+        + '  [grips L=' + pose(scene._vrControllerLeftGrip)
+        + ' R=' + pose(scene._vrControllerRightGrip)
+        + '  headHold=' + (scene._wristHeadOffset ? 'armed' : 'none') + ']');
     }
   }
 

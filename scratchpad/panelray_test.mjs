@@ -187,6 +187,17 @@ check('it is inside the section it costs',
       && !/uiGrip\.add\(this\._toolPickerPanel\.mesh\)/.test(SC)
       && !/uiGrip\.add\(this\._mainMenuPanel\.mesh\)/.test(SC),
     'one left behind still blinks, and it is the one you will be looking at');
+  // A grip whose pose is missing keeps its LAST transform, so holding it world-locked leaves the
+  // panel where the hand was while the head moves on -- it slides out of view and snaps back,
+  // which reads as flashing. Measured: the anchor froze for 78, 110, 164, 166 and 249 frames in
+  // one short session with both grips present throughout.
+  check('a lost grip pose holds the panel relative to the HEAD, not to the world',
+    /const live = uiGrip\.visible !== false;/.test(SC)
+      && /uiAnchor\.matrix\.multiplyMatrices\(xrCam\.matrixWorld, this\._wristHeadOffset\);/.test(SC),
+    'world-locking is the one choice that cannot work: the head is what keeps moving');
+  check('...and the offset is re-taken on every good frame',
+    /\.copy\(xrCam\.matrixWorld\)\.invert\(\)\.multiply\(uiAnchor\.matrix\);/.test(SC),
+    'a stale offset would hold the panel where the hand was minutes ago');
   check('...while the anchor does not derive its transform from position/quaternion',
     /g\.matrixAutoUpdate = false;/.test(SC),
     'the matrix IS the grip world matrix; letting three recompose it would fight the copy');
