@@ -174,7 +174,22 @@ check('it is inside the section it costs',
     /_p\.mesh\.position\.y = _wy;\s*\n\s*_p\.mesh\.rotation\.y = _wYaw;/.test(SC),
     'a Quest 2 lift guessed from outside the headset is a guess');
   check('...but never a PINNED panel, which is world-anchored',
-    /if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiGrip\) continue;/.test(SC));
+    /if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiAnchor\) continue;/.test(SC));
+  // three sets `grip.visible = (gripPose !== null)` EVERY frame, so anything parented to a
+  // controller grip blinks with every pose dropout. The trace caught it by name:
+  // `MiniPanel: ancestor "Group" is invisible`, next to "[XR] Input state recovered".
+  check('the wrist panels follow the grip rather than being children of it',
+    /g\.name = 'wrist_panel_anchor';/.test(SC)
+      && /uiAnchor\.matrix\.copy\(uiGrip\.matrixWorld\);/.test(SC),
+    "a child of the grip inherits three's per-frame pose visibility");
+  check('...and none of them is added to the grip any more',
+    !/uiGrip\.add\(this\._miniPanel\.mesh\)/.test(SC)
+      && !/uiGrip\.add\(this\._toolPickerPanel\.mesh\)/.test(SC)
+      && !/uiGrip\.add\(this\._mainMenuPanel\.mesh\)/.test(SC),
+    'one left behind still blinks, and it is the one you will be looking at');
+  check('...while the anchor does not derive its transform from position/quaternion',
+    /g\.matrixAutoUpdate = false;/.test(SC),
+    'the matrix IS the grip world matrix; letting three recompose it would fight the copy');
   check('the lift persists, so it survives a reload',
     /options\.wristPanelLift = queryNumber\(getVal\('wristPanelLift'\), 0\.0, 0\.20, 0\.0\);/
       .test(fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8')));

@@ -6792,6 +6792,35 @@ class Scene {
         // ever, because every line that could have put them back was inside `if (uiGrip)`.
         this._updateWristHide(secondaryHeld);
 
+        // THE PANELS RIDE THE HAND WITHOUT BEING CHILDREN OF IT.
+        //
+        // three sets `grip.visible = (gripPose !== null)` on EVERY frame -- see WebXRController
+        // -- so a controller whose pose is unavailable for a moment turns its grip invisible,
+        // and anything parented to it goes with it. The wrist panels were parented to it, so
+        // every pose dropout blinked them: hand at your side, out of the tracking cameras,
+        // occluded while the other hand works. matt: "it was flickering on and off", and the
+        // trace named it exactly -- `MiniPanel: ancestor "Group" is invisible`, followed by
+        // "[XR] Input state recovered after controller restore". The main menu looked immune
+        // because a PINNED panel is world-anchored and not on the grip at all.
+        //
+        // So they hang off an anchor of our own that FOLLOWS the grip's world transform instead
+        // of inheriting from it. A dropout now leaves the panels exactly where they were, which
+        // is also the better behaviour: the menu you were reading does not vanish because you
+        // turned your wrist away from the cameras for a frame.
+        const uiAnchor = this._wristAnchor || (this._wristAnchor = (() => {
+          const g = new THREE.Group();
+          g.name = 'wrist_panel_anchor';
+          g.matrixAutoUpdate = false;   // driven from the grip below, not from position/quaternion
+          this._scene.add(g);
+          return g;
+        })());
+        if (uiGrip) {
+          // The grip's world matrix, taken as-is. When the pose is missing three leaves it at
+          // its last value rather than zeroing it, so "hold the last position" is free.
+          uiGrip.updateWorldMatrix(true, false);
+          uiAnchor.matrix.copy(uiGrip.matrixWorld);
+          uiAnchor.matrixWorldNeedsUpdate = true;
+        }
         if (uiGrip) {
             if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
             if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== uiGrip) uiGrip.add(this._vrMiniHUD.mesh);
@@ -6799,7 +6828,7 @@ class Scene {
 
             // [HTMLVRPanel] Attach MiniPanel to wrist (no pin button — always wrist-local).
             if (this._miniPanel && this._miniPanel.mesh && !this._miniPanel.pinned) {
-              if (this._miniPanel.mesh.parent !== uiGrip) uiGrip.add(this._miniPanel.mesh);
+              if (this._miniPanel.mesh.parent !== uiAnchor) uiAnchor.add(this._miniPanel.mesh);
             }
             // KEEP EVERY WRIST PANEL AT THE SHARED HEIGHT, re-read each frame so the Quest 2
             // lift can be dialled in from inside a session rather than guessed from outside
@@ -6808,19 +6837,19 @@ class Scene {
             {
               const _wy = wristPanelY(), _wYaw = wristPanelYaw();
               for (const _p of [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel]) {
-                if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiGrip) continue;
+                if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiAnchor) continue;
                 _p.mesh.position.y = _wy;
                 _p.mesh.rotation.y = _wYaw;   // same slot, same angle — they used to differ
               }
             }
             if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
-              if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
+              if (this._toolPickerPanel.mesh.parent !== uiAnchor) uiAnchor.add(this._toolPickerPanel.mesh);
             }
 
             // [HTMLVRPanel] Attach MainMenuPanel to wrist unless pinned in world space.
             if (this._mainMenuPanel && this._mainMenuPanel.mesh && !this._mainMenuPanel.pinned) {
-              if (this._mainMenuPanel.mesh.parent !== uiGrip) {
-                uiGrip.add(this._mainMenuPanel.mesh);
+              if (this._mainMenuPanel.mesh.parent !== uiAnchor) {
+                uiAnchor.add(this._mainMenuPanel.mesh);
               }
             }
         } else {
