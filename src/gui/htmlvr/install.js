@@ -141,6 +141,26 @@ const _panels = new Set();
 export function registerPanel(panel)   { _panels.add(panel);    }
 export function unregisterPanel(panel) { _panels.delete(panel); }
 
+// EVERY PANEL SHARES ONE LAYOUT, so one panel moving invalidates all the others.
+//
+// The panel roots are ordinary block elements in the host canvas, stacked in normal flow. So
+// mounting or unmounting a panel -- and a re-mount APPENDS, which also reorders them -- or one
+// panel's content changing height moves every panel after it. `captureElementImage(el)` reads
+// the region the last rasterisation laid that element out at, so a panel that does not repaint
+// after someone else's layout change captures the WRONG REGION: blank canvas, or a slice of a
+// neighbour. Its texture stays the right size and its every property stays correct, which is
+// exactly the state the 30-second tape recorded while the menu was, to matt, not there -- and he
+// could still see the hover highlight, which is a separate mesh with no texture at all.
+//
+// So a layout change dirties everyone. A repaint of the visible panels is the cost, and it only
+// happens when something actually moved.
+export function markAllPanelsDirty(except) {
+  for (const p of _panels) {
+    if (p === except || !p._hostMounted) continue;
+    p.markDirty();
+  }
+}
+
 // ── 4. Lazy host canvas ──────────────────────────────────────────────────────
 // Created on first getHostCanvas() call (inside panel constructors, post-DOM).
 let _hostCanvas = null;

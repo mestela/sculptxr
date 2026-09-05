@@ -226,6 +226,26 @@ check('it is inside the section it costs',
   check('...neither of them left on a bare literal',
     !/_vtlSecLaser\.renderOrder = 999;/.test(SC));
 
+  // ONE SHARED FLOW, so one panel moving invalidates every other panel's capture region.
+  //
+  // The panel roots are block elements in the host canvas; mounting or unmounting one (and a
+  // re-mount APPENDS, which reorders them) or changing one's height moves everything after it.
+  // captureElementImage reads the region the last rasterisation laid the element out at, so a
+  // panel that does not repaint after someone else's layout change captures blank canvas -- with
+  // its texture the right size and every property correct, which is precisely what the
+  // 30-second tape recorded while the menu was not there, and why matt could still see the hover
+  // highlight (a separate mesh, no texture).
+  const INST = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/install.js'), 'utf8');
+  const HP0 = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
+  check('a layout change dirties every other panel',
+    /export function markAllPanelsDirty\(except\)/.test(INST)
+      && /if \(p === except \|\| !p\._hostMounted\) continue;/.test(INST),
+    'only the mounted ones need it, and the mover has already marked itself');
+  check('...on mount and unmount, which reorder the flow',
+    /try \{ host\.removeChild\(this\._element\); \} catch \(_\) \{\}\s*\n\s*\}\s*\n[\s\S]{0,400}?markAllPanelsDirty\(this\);/.test(HP0));
+  check('...and on a size change, which moves everything after it',
+    /markAllPanelsDirty\(this\);\s*\n\s*this\.resizeMesh\(\);/.test(HP0));
+
   // THE RECORDER TRAP, second victim. With a screen recorder attached the GalaxyXR adds a third
   // view, three builds its culling frustum from the LEFT EYE instead of the union of both, and
   // anything near the edge of the view is discarded while plainly on screen. The VR cursor was

@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintForced } from './install.js';
+import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintForced, markAllPanelsDirty } from './install.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 
 // ── Menu color grade (brightness / saturation) ──────────────────────────────
@@ -209,6 +209,10 @@ export class HTMLVRPanel {
     } else {
       try { host.removeChild(this._element); } catch (_) {}
     }
+    // ...AND EVERY OTHER PANEL, because this just moved them. They are block elements in one
+    // shared flow, and a re-mount appends rather than restoring position, so both directions of
+    // this reorder the host canvas. See markAllPanelsDirty.
+    markAllPanelsDirty(this);
   }
 
   dispose() {
@@ -336,6 +340,9 @@ export class HTMLVRPanel {
       // when it tries to copy the new (differently-sized) bitmap into the old slot.
       if (this._needsResize) {
         this._needsResize = false;
+        // A size change moves every panel after this one in the shared flow, so their captured
+        // regions are stale too — the same rule as mounting. See markAllPanelsDirty.
+        markAllPanelsDirty(this);
         this.resizeMesh();
         if (this._texture) {
           this._texture.dispose();
