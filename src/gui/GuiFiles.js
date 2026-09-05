@@ -240,14 +240,25 @@ class GuiFiles {
     this._main._frameGroup?.clearSaveFields?.();
   }
 
-  async saveToBrowserStorage(saveName) {
+  // `overwrite` saves back over the file you are IN rather than making another one. Without it
+  // every save was a Save As, so a session of ordinary saves left a browser full of near-identical
+  // entries and no way to tell which was current. matt: "we need a 'save file', which saves over
+  // the current file, esp for browser storage. and rename the current 'save file' to 'save as'."
+  //
+  // Falls back to a new file when there is nothing to overwrite -- a scene that was never saved,
+  // or one whose save has since been deleted -- because refusing to save is never the better
+  // answer.
+  async saveToBrowserStorage(saveName, { overwrite = false } = {}) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
 
     if (this._main._frameGroup) await this._main._frameGroup.prepareFieldsForSave(meshes);
     const blob = Export.exportSGL(meshes, this._main);
     const timestamp = Date.now();
-    const key = `sculpt_${timestamp}`;
+    const reuse = overwrite && this._currentSaveKey
+      && (this._browserSaves || []).some((sv) => (sv.key ?? sv.id) === this._currentSaveKey)
+      ? this._currentSaveKey : null;
+    const key = reuse || `sculpt_${timestamp}`;
 
     // Grab thumbnail — always renders to a square 512×512 WebGLRenderTarget so the
     // result is never squashed regardless of the canvas/VR framebuffer dimensions.
@@ -401,14 +412,33 @@ class GuiFiles {
     StorageDB.set(key, { 
       blob: blob, 
       thumb: thumb, 
-      name: (saveName || '').trim() || this._getTimestampedFileName('browser', '').replace('.', ''), // user-named, else timestamped
+      // Overwriting keeps the name it already had unless a new one is typed: a Save should not
+      // quietly rename the file it is saving over.
+      name: (saveName || '').trim()
+        || (reuse ? this._nameOfSave(reuse) : '')
+        || this._getTimestampedFileName('browser', '').replace('.', ''),
       timestamp: timestamp 
     }).then(() => {
-      if (window.screenLog) window.screenLog(`SUCCESS: Stashed sculpt ${key}`, 'lime');
+      // THE FILE YOU ARE NOW IN, so the next plain Save goes back over this one.
+      this._currentSaveKey = key;
+      if (window.screenLog) {
+        window.screenLog(reuse ? `SUCCESS: Saved over ${key}` : `SUCCESS: Stashed sculpt ${key}`, 'lime');
+      }
       this.refreshBrowserSaves(); // Refresh internal list
     }).catch(err => {
       if (window.screenLog) window.screenLog(`ERROR: Stash failed: ${err}`, 'red');
     });
+  }
+
+  // The name a save currently carries, for keeping it across an overwrite.
+  _nameOfSave(key) {
+    const rec = (this._browserSaves || []).find((sv) => (sv.key ?? sv.id) === key);
+    return (rec && rec.value && rec.value.name) || '';
+  }
+
+  // Is there a file to save back over? The menu asks so it can offer Save or fall back to Save As.
+  currentSaveName() {
+    return this._currentSaveKey ? (this._nameOfSave(this._currentSaveKey) || 'current file') : '';
   }
 
   loadFromBrowserStorage() {
@@ -419,6 +449,10 @@ class GuiFiles {
   // save's meshes to the current scene (Import). loadScene itself always appends.
   loadSpecificBrowserSave(key, replace = false) {
     if (window.screenLog) window.screenLog(`${replace ? 'Loading' : 'Importing'} ${key}...`, 'cyan');
+    // OPENING a save puts you in that file, so a later Save goes back over it. IMPORTING does
+    // not: the scene is now a mixture, and saving it over one of its ingredients would be a
+    // surprise nobody asked for.
+    if (replace) this._currentSaveKey = key;
     StorageDB.get(key).then(data => {
       if (!data) {
         if (window.screenLog) window.screenLog('No saved model found!', 'yellow');

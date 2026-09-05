@@ -115,4 +115,31 @@ check('...and neither measures the subject by the box diagonal',
 check('...and the desktop fov floor does not re-add the border',
   /Math\.max\(12, fov\)/.test(files));
 
+
+// ── SAVE OVERWRITES, SAVE AS MAKES ANOTHER ONE ────────────────────────────────────────
+//
+// Every save used to mint a new key, so an ordinary working session left a browser full of
+// near-identical entries with no way to tell which was current. matt: "we need a 'save file',
+// which saves over the current file, esp for browser storage. and rename the current 'save file'
+// to 'save as'."
+check('a browser save can go back over the file it came from',
+  /async saveToBrowserStorage\(saveName, \{ overwrite = false \} = \{\}\)/.test(files)
+    && /const key = reuse \|\| `sculpt_\$\{timestamp\}`;/.test(files),
+  'every save makes another file');
+// Refusing to save is never the better answer, so a scene with nothing to overwrite -- never
+// saved, or its save since deleted -- quietly becomes a new one.
+check('...falling back to a new file when there is nothing to save over',
+  /overwrite && this\._currentSaveKey[\s\S]{0,160}?\.some\(\(sv\) => \(sv\.key \?\? sv\.id\) === this\._currentSaveKey\)/.test(files));
+// A Save must not quietly rename the file it is saving over.
+check('...keeping the name it already had unless a new one is typed',
+  /\|\| \(reuse \? this\._nameOfSave\(reuse\) : ''\)/.test(files));
+// OPENING a save puts you in that file; IMPORTING does not -- the scene is a mixture afterwards,
+// and saving it over one of its ingredients would be a surprise nobody asked for.
+check('...adopted on Open, not on Import',
+  /if \(replace\) this\._currentSaveKey = key;/.test(files));
+check('the menu offers Save and Save As, and names the file Save will land on',
+  /id="mm-browser-save-over"/.test(menu) && /Save As…<\/button>/.test(menu)
+    && /const curSave = guiFiles\?\.currentSaveName\?\.\(\) \?\? '';/.test(menu),
+  'Save with nothing else said is the one command you want to be certain about');
+
 console.log('browser gallery performance tests passed');

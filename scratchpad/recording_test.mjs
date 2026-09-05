@@ -370,5 +370,22 @@ check('a loop wrap flags the simulation for re-initialisation',
     && /const wrapped = this\.globalPlaybackTime > lEnd \|\| this\.globalPlaybackTime < lStart;/.test(reg),
   'physics carries the last frame of one pass into the first frame of the next');
 
+// ── A SCRUB SEEDS THE SIM AFTER THE SOLVE, NOT BEFORE IT ──────────────────────────────
+//
+// seek() resets physics to put the rest pose back -- but that also seeds the particles from the
+// pose AS IT IS AT THAT INSTANT, and holdPins has not run yet. The solve then moves the rig onto
+// its pins, leaving every particle a solve behind, and the next physics step hauls all four
+// chains back toward where the rig used to be. matt: "i can also stop playback, click the 'rewind
+// to first frame' button that should reinit everything, the arms are still in the incorrect
+// half-pinned pose."
+//
+// Measured on pinxpbd.sxr, rewinding after a pass and stepping once:
+//   before   XPBD jumped 26.35 units and took ~40 frames to crawl back; the FORCE solver jumped
+//            55.96 and settled at 34.13, i.e. it never came back to rest at all
+//   after    XPBD 0.03, force solver settles at 1.63
+check('a scrub re-seeds the simulation after the frame is solved',
+  /PhysicsBones\.reset\(main\);\s*\n\s*window\._physicsNeedsInit = true;/.test(reg),
+  'the particles are a solve behind and the chains snap back toward the previous pose');
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

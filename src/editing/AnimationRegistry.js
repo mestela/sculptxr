@@ -1475,7 +1475,24 @@ class AnimationRegistry {
     this.globalPlaybackTime = time;
     if (main) {
       for (const m of main.getMeshes?.() || []) this.update(m, true);
-      try { PhysicsBones.reset(main); } catch (e) { /* no rig, nothing to reset */ }
+      // RESTORE NOW, RE-SEED AFTER THE SOLVE. This resets twice on purpose. The first call puts
+      // the rest pose back, which is what makes a scrub return to it -- but it also seeds the
+      // particles from the pose AS IT IS AT THIS INSTANT, and holdPins has not run yet. The solve
+      // then moves the rig onto its pins, leaving every particle a solve behind, and the next
+      // physics step hauls all four chains back toward where the rig used to be.
+      //
+      // Measured on pinxpbd.sxr, rewinding after a pass and stepping once: the arms and legs
+      // jumped 26.35 units, growing with depth down each chain (10.6 / 21.1 / 26.4 / 21.1 on the
+      // right arm), then took about forty frames to crawl back -- matt: "the arms are still in
+      // the incorrect half-pinned pose". Seeding after the solve instead: 0.03.
+      //
+      // The flag is the loop wrap's own mechanism (see PhysicsBones.tick), used here for the same
+      // reason it exists there: the pose a simulation should start from does not exist yet at the
+      // moment the playhead moves.
+      try {
+        PhysicsBones.reset(main);
+        window._physicsNeedsInit = true;
+      } catch (e) { /* no rig, nothing to reset */ }
       Skeleton.updateVisuals(main);
       main.render?.();
     }

@@ -971,6 +971,11 @@ function buildShellHTML() {
 // which is exactly what makes it worth a rule rather than care.
 export function buildMenuHTML_files(main) {
   const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
+  // SAVE OVERWRITES, SAVE AS MAKES ANOTHER ONE -- the pair every other application has. The name
+  // of the file you are in goes on the button, because "Save" with nothing else said is the one
+  // command where you want to be certain what it is about to land on. Disabled until there is
+  // something to save over; Save As is always there.
+  const curSave = guiFiles?.currentSaveName?.() ?? '';
   const exportAll = guiFiles?._exportAll ?? true;
   const objZbrush = guiFiles?._objColorZbrush ?? false;
   const objAppend = guiFiles?._objColorAppended ?? false;
@@ -984,8 +989,10 @@ export function buildMenuHTML_files(main) {
     </button>
 
     <div class="mm-section-title">Save</div>
-    <button class="mm-action-btn" id="mm-export-sxr">Save scene (.sxr)</button>
-    <button class="mm-action-btn" id="mm-browser-save-quick">Save to browser…</button>
+    <button class="mm-action-btn" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
+      title="${curSave ? 'Save back over ' + curSave : 'Nothing open yet — use Save As'}">Save${curSave ? ' (' + curSave + ')' : ''}</button>
+    <button class="mm-action-btn" id="mm-browser-save-quick">Save As…</button>
+    <button class="mm-action-btn" id="mm-export-sxr">Save scene to disk (.sxr)</button>
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj">Import mesh… (obj, sgl, ply, stl)</button>
@@ -3624,7 +3631,7 @@ export function buildMenuHTML_browserSaves(main) {
   // the top where it reads as "put the current scene in here".
   return `
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-browser-save">Save current scene</button>
+      <button class="mm-action-btn" id="mm-browser-save">Save current scene as…</button>
       <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
     </div>
     <div class="mm-storage-wrap">
@@ -3799,7 +3806,11 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   // The same browser save the Browser Saves panel offers, reachable without going into it --
   // saving is the thing you do most often and it was two clicks deep.
   q('#mm-browser-save-quick')?.addEventListener('click', () => {
-    promptSaveName('Save to browser as', 'sculpt', (n) => guiFiles?.saveToBrowserStorage?.(n));
+    promptSaveName('Save As', 'sculpt', (n) => guiFiles?.saveToBrowserStorage?.(n));
+  });
+  // No prompt: Save is the command you press without being asked anything.
+  q('#mm-browser-save-over')?.addEventListener('click', () => {
+    guiFiles?.saveToBrowserStorage?.(null, { overwrite: true });
   });
   q('#mm-import-scale')?.addEventListener('change', (e) => {
     main._autoMatrix = e.target.checked;
