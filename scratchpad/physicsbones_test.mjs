@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
 
 const REPO = '/Users/mattestela/sculptxr';
+const BONE = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/PhysicsBones.js'), 'utf8');
 
 // A mock rig with REAL forward kinematics, because the module now stores and restores joint
@@ -610,16 +611,25 @@ check('damping is applied to the velocity the constraints left, not the predicti
     && /st\.v\.addScaledVector\(_xg, h\);\s*\n\s*st\.p\.addScaledVector\(st\.v, h\);/.test(SRC),
   'energy never leaves the chain and nothing settles');
 
-check('inertia reaches the constraint solver',
-  /const carry = par\.inertia \* \(1 - Math\.min\(1, pinHoldOf\(links\[i\]\.joint\)\)\);/.test(SRC)
-    && /st\.p\.addScaledVector\(_xDir, carry\);/.test(SRC),
-  'a chain reads as detached rather than loose, and the setting does nothing');
-// Follow is about inheriting the parent's ANIMATION; a pin says where the joint must BE, and a
-// kinematic shove on top of it just fights it -- measured, the hand sat 11.6 units behind a
-// moving pin at the default Follow and tracked it to 0.01 with Follow off.
-check('...but a pin outranks it',
-  /const carry = par\.inertia \* \(1 - Math\.min\(1, pinHoldOf/.test(SRC),
-  'the carry fights the pin and the hand never arrives');
+// FOLLOW IS NOT USED BY THE CONSTRAINT SOLVER, and that is about the formulation rather than a
+// bug being dodged. Follow exists because the force solver's chain is four springs that only
+// loosely transmit, so it had to be TOLD to come along; XPBD's two-sided distance constraint IS
+// the coupling, and a kinematic shove on top of it double-counts and destabilises. Measured on
+// weight.sxr over 102 units of shoulder travel, tip stray from the animated pose (mean/worst),
+// with a FRESH LOAD per run -- sequential runs share adopted rest poses and inflate the worst:
+//   with the carry:  Follow 0  2.75/12.80   0.35  5.21/14.74   0.9  5.10/23.63
+//   without it:      all three 2.75/12.80, so the slider has no effect at all
+// matt: "if that is anything other than zero, the bones erratically flap around."
+check('the constraint solver does not apply the Follow carry',
+  /const carry = 0;/.test(SRC),
+  'the chain flaps: the carry double-counts a coupling the constraints already provide');
+// A slider that does nothing is worse than one that is not there -- you drag it, nothing moves,
+// and you cannot tell which of the two is broken.
+check('...and the slider says so instead of silently doing nothing',
+  /const xpbd = !!window\._physXPBD;/.test(BONE)
+    && /Follow\$\{xpbd \? ' \(n\/a\)' : ''\}/.test(BONE)
+    && /\$\{xpbd \? ' disabled' : ''\}/.test(BONE),
+  'Follow looks live under XPBD and does nothing');
 // Shifting only `p` makes the shift read as motion the chain performed, so it lands in the
 // velocity on the next update: a kick every frame.
 check('...and the shift moves both ends of the step, injecting no velocity',

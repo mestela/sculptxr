@@ -114,6 +114,10 @@ export function buildBoneAuthoringHTML(main, style) {
   // and the panel says which joint it is editing so the two can never be confused.
   const physTarget = PhysicsBones.panelTarget(main, physSel);
   const physP = physTarget ? PhysicsBones.params(physTarget) : PhysicsBones.DEFAULTS;
+  // A SLIDER THAT DOES NOTHING IS WORSE THAN ONE THAT IS NOT THERE -- you drag it, the rig does
+  // not change, and you are left wondering which of the two is broken. The constraint solver
+  // couples a chain itself, so Follow has no job under it; say so on the control.
+  const xpbd = !!window._physXPBD;
   // BOTH NAMES WHEN THERE ARE TWO. A drag writes to the mirror twin as well, so a header naming
   // one joint would be telling half the truth about what the sliders are about to change.
   const jointName = (j) => (j && (j._permanentStaticLabel || ('joint ' + j.getID()))) || '';
@@ -186,9 +190,12 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-phys-damp" min="0" max="99" step="1" value="${Math.round(physP.damping * 100)}">
       <span class="${c.val}" id="bone-phys-damp-val">${Math.round(physP.damping * 100)}</span>
     </div>
-    <div class="${c.row}">
-      <span class="${c.lbl}">Follow</span>
-      <input type="range" id="bone-phys-inert" min="0" max="100" step="1" value="${Math.round(physP.inertia * 100)}">
+    <div class="${c.row}"${xpbd ? ' inert aria-disabled="true" style="opacity:0.45"' : ''}
+      title="${xpbd
+        ? 'Not used by the constraint solver: it couples the chain itself, so Follow only fights it.'
+        : 'How much the chain comes along with the thing it hangs off.'}">
+      <span class="${c.lbl}">Follow${xpbd ? ' (n/a)' : ''}</span>
+      <input type="range" id="bone-phys-inert" min="0" max="100" step="1" value="${Math.round(physP.inertia * 100)}"${xpbd ? ' disabled' : ''}>
       <span class="${c.val}" id="bone-phys-inert-val">${Math.round(physP.inertia * 100)}</span>
     </div>
     <div class="${c.row}">

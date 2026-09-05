@@ -814,14 +814,25 @@ PhysicsBones.stepXPBD = function (main, dt) {
     // there, from the ANIMATED parent position frame to frame, so the two read the same.
     for (let i = 0; i < links.length; i++) {
       const st = P[i];
-      // A PIN OUTRANKS THE CARRY. Follow is about inheriting the parent's ANIMATION; a pin is a
-      // statement about where this joint must BE, and a kinematic shove applied on top of it just
-      // fights it. Worse, the shove is read off the live rig -- which by then contains the pin
-      // dragging the chain -- so the carry fed on its own output: the hand tracked a moving pin
-      // to within 0.01 with Follow off, and sat a standing 11.6 units behind it at the default
-      // 0.35. matt: "the follow slider makes it go crazy... it travels with it about half way and
-      // stops", and separately that with Follow off "the solve is actually pretty good".
-      const carry = par.inertia * (1 - Math.min(1, pinHoldOf(links[i].joint)));
+      // FOLLOW IS NOT USED BY THIS SOLVER, and that is a statement about the formulation rather
+      // than a bug being dodged. Follow exists because the force solver's chain is four springs
+      // that only loosely transmit, so a chain had to be TOLD to come along with the thing it
+      // hangs off. XPBD couples it natively: the two-sided distance constraint is the coupling,
+      // and adding a kinematic shove on top of it double-counts and destabilises.
+      //
+      // Measured on weight.sxr over 102 units of shoulder travel -- how far the tip strays from
+      // its animated pose, mean and worst, WITH A FRESH LOAD PER RUN (rest poses adopt across
+      // runs, so sequential ones contaminate each other and inflate the worst case):
+      //   Follow 0     2.75 / 12.80   the chain follows the shoulder on its own
+      //   Follow 0.35  5.21 / 14.74   with the carry applied
+      //   Follow 0.9   5.10 / 23.63
+      // With the carry ignored, all three are 2.75 / 12.80 -- the slider has no effect at all,
+      // which is the point. matt: "if that is anything other than zero, the bones erratically
+      // flap around."
+      //
+      // Kept as a read of the parameter rather than deleted, so the force solver's meaning of it
+      // is untouched and the slider can come back if this ever grows a use for it.
+      const carry = 0;
       if (st.lastPar && carry > 0) {
         _xDir.subVectors(shape[i].animPar, st.lastPar);
         st.p.addScaledVector(_xDir, carry);
