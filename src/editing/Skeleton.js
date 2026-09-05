@@ -368,11 +368,19 @@ function ensureTaperAttrs(mesh, cap) {
 }
 
 function makeBatch(main, geo, ghost, key) {
+  // INSTANCED ATTRIBUTES LIVE ON THE GEOMETRY, and capsuleShaftGeometry returns a shared
+  // module-level singleton -- so the four shaft batches (solid, ghost, and the preselected
+  // variant of each) would have written their taper data over one another, every batch reading
+  // whichever wrote last. A clone per batch is one 14-segment cylinder, made once.
+  if (isShaftKey(key)) geo = geo.clone();
   const mat = ghost
     ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
         opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
     : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   if (isShaftKey(key)) taperMaterialInstanced(mat);
+  if (isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'))) {
+    shadeMaterial(mat, isShaftKey(key));
+  }
   const m = new THREE.InstancedMesh(geo, mat, 1);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   if (isShaftKey(key)) ensureTaperAttrs(m, 1);
@@ -446,6 +454,7 @@ function tuneCapsuleBatches(main) {
   const all = main._skelBatch;
   if (!all) return;
   const base = Skeleton.capsuleOpacity();
+  const shaded = Skeleton.displayFlag('capsuleShaded');
   for (const [key, b] of all) {
     if (!key.startsWith('capEnd') && !key.startsWith('capShaft')) continue;
     const m = b.mesh.material;
@@ -454,6 +463,9 @@ function tuneCapsuleBatches(main) {
     const ghost = /G(Hi)?$/.test(key);
     m.transparent = true;
     m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
+    // The ghost pass stays flat: it is the "behind everything" read, and shading it makes the
+    // occluded half compete with the half you can actually see.
+    if (m.userData.shadeMix) m.userData.shadeMix.value = (!ghost && shaded) ? 1 : 0;
     // An opaque capsule writes depth or the rig sorts like glass; a translucent one must not, or
     // it punches holes in what is behind it. Same rule the per-mesh capsules had.
     m.depthWrite = !ghost && base >= 0.99;
@@ -645,6 +657,48 @@ function makeCapsuleEndSlots(main) {
     solid: batchSlot(main, 'capEnd', capsuleEndGeometry, false, 'capEndHi'),
     ghost: batchSlot(main, 'capEndG', capsuleEndGeometry, true, 'capEndGHi'),
   };
+}
+
+// SHADING, WITHOUT LIGHTS. Unlit capsules read as flat silhouettes -- a leg and the arm crossing
+// it are one shape in one colour, and you cannot see which is nearer. matt: "they should have an
+// option to be shaded, viewing them unlit is very hard to read."
+//
+// Adding a light to this pass would mean a lit material, which these are not: they are overlays
+// drawn out of order with their own depth rules. But a capsule does not need one -- its
+// object-space position IS its normal (a unit sphere's exactly, a cylinder's in xz), so the
+// shading term can be computed from the vertex alone and no normal attribute is needed.
+//
+// Blended by a uniform rather than compiled in or out: toggling a define means recompiling a
+// program mid-session, and the flat look has to stay available anyway.
+function shadeMaterial(mat, cylinder) {
+  const u = { value: 1 };
+  mat.userData.shadeMix = u;
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (shader, renderer) => {
+    if (prev) prev(shader, renderer);
+    shader.uniforms.uShadeMix = u;
+    shader.vertexShader = 'varying float vShade;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>',
+      // The normal a capsule already implies: down the shaft for a cylinder, radial for a cap.
+      (cylinder
+        ? 'vec3 _sn = normalize(vec3(transformed.x, 0.0, transformed.z));\n'
+        : 'vec3 _sn = normalize(transformed);\n')
+      + 'mat3 _sm = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
+      + 'float _sl = length(_sm[0]);\n'
+      + 'if (_sl > 1e-8) _sn = normalize(mat3(normalize(_sm[0]), normalize(_sm[1]), normalize(_sm[2])) * _sn);\n'
+      + 'vec3 _swn = normalize((modelMatrix * vec4(_sn, 0.0)).xyz);\n'
+      // A single key from above and slightly front-left, and a floor rather than a black side:
+      // this is here to say WHICH WAY A SURFACE FACES, not to light a scene.
+      + 'vShade = 0.55 + 0.45 * clamp(dot(_swn, normalize(vec3(0.35, 1.0, 0.45))), 0.0, 1.0);\n'
+      + '#include <project_vertex>');
+    shader.fragmentShader = 'uniform float uShadeMix;\nvarying float vShade;\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n'
+      + 'diffuseColor.rgb *= mix(1.0, vShade, uShadeMix);');
+  };
+  const key = mat.customProgramCacheKey;
+  mat.customProgramCacheKey = () => (key ? key() : '') + (cylinder ? '|shadeCyl' : '|shadeSph');
+  return mat;
 }
 
 // THE TAPER, INSTANCED. Identical maths to taperMaterial, with the two differences that make it
@@ -2649,7 +2703,16 @@ Skeleton.updateVisuals = function (main) {
       // The radii go to the shader, not into the scale -- see taperMaterialInstanced. x/z stay
       // at 1, and the rotation the taper needs is read back off the instance matrix rather than
       // sent, since this scale keeps it recoverable.
-      o._ha = hA; o._hb = hB;
+      // COPIED, NOT REFERENCED. `hA` and `hB` are module scratch arrays reused for every bone,
+      // and the flush reads them once at the end of the pass -- so storing the reference gave
+      // every capsule in the rig the LAST bone's extents. matt: "the tapering isn't working
+      // correctly; if i have a large joint connected to a small one, it seems to flare bigger
+      // towards the small joint instead of the reverse." That is what one shared pair of extents
+      // looks like: every shaft wearing somebody else's taper.
+      o._ha = o._ha || [0, 0, 0];
+      o._hb = o._hb || [0, 0, 0];
+      o._ha[0] = hA[0]; o._ha[1] = hA[1]; o._ha[2] = hA[2];
+      o._hb[0] = hB[0]; o._hb[1] = hB[1]; o._hb[2] = hB[2];
       o.scale.set(1, lenC, 1);
       o.visible = true;
       o._hi = !!(isHi || isSel);
@@ -3750,6 +3813,9 @@ const DISPLAY_FLAGS = {
   // it is a label per bone, and a rig full of them is unreadable while you are working.
   names: ['_boneShowNames', 'boneShowNames', false],
   capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
+  // Shaded by default: flat capsules read as one silhouette and you cannot tell a near limb from
+  // a far one. The flat look stays a switch away.
+  capsuleShaded: ['_boneCapsuleShaded', 'boneCapsuleShaded', true],
   weights: ['_boneShowWeights', 'boneShowWeights', false],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],

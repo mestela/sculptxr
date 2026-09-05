@@ -620,5 +620,24 @@ check('...using the same RigPending entry point as the main menu, not a copy',
     offenders.join(' | '));
 }
 
+// ── CAPSULES CAN BE SHADED ────────────────────────────────────────────────────────────
+//
+// Unlit capsules read as one flat silhouette: a leg and the arm crossing it are the same shape in
+// the same colour and you cannot tell which is nearer. matt: "they should have an option to be
+// shaded, viewing them unlit is very hard to read."
+check('the rig display offers a Shaded toggle for capsules',
+  /flagButton\(c, 'caps-shade', 'Shaded', Skeleton\.displayFlag\('capsuleShaded'\)\)/.test(SRC)
+    && /flag\('caps-shade', 'capsuleShaded'\);/.test(SRC),
+  'the only way to read a crossing limb is to turn the capsules off');
+// Without lights: an overlay pass has none, and a capsule does not need one -- its object-space
+// position IS its normal, radial on a cap and in xz on a shaft.
+check('...shaded from the geometry itself, with no light added to an overlay pass',
+  /vec3 _sn = normalize\(vec3\(transformed\.x, 0\.0, transformed\.z\)\);/.test(SKEL_SRC)
+    && /vec3 _sn = normalize\(transformed\);/.test(SKEL_SRC));
+// A uniform, not a define: toggling a define recompiles a program mid-session.
+check('...blended by a uniform so the toggle costs no recompile',
+  /diffuseColor\.rgb \*= mix\(1\.0, vShade, uShadeMix\);/.test(SKEL_SRC)
+    && /m\.userData\.shadeMix\.value = \(!ghost && shaded\) \? 1 : 0;/.test(SKEL_SRC));
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

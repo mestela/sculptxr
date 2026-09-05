@@ -258,6 +258,7 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
       ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
+      ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlag('capsuleShaded'))}
       ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlag('weights'))}
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
       ${flagButton(c, 'names', 'Names', Skeleton.displayFlag('names'))}
@@ -366,6 +367,7 @@ export function wireBoneSection(root, main, opts) {
   flag('len', 'lengths');
   flag('names', 'names');
   flag('caps', 'capsules');
+  flag('caps-shade', 'capsuleShaded');
   flag('solid', 'solid');
   flag('wire', 'wire');
   flag('joints', 'joints');
@@ -814,6 +816,7 @@ export function syncBoneSection(root, main) {
   setFlag('len', Skeleton.displayFlag('lengths'));
   setFlag('names', Skeleton.displayFlag('names'));
   setFlag('caps', Skeleton.displayFlag('capsules'));
+  setFlag('caps-shade', Skeleton.displayFlag('capsuleShaded'));
   setFlag('weights', Skeleton.displayFlag('weights'));
   setFlag('solid', Skeleton.displayFlag('solid'));
   setFlag('wire', Skeleton.displayFlag('wire'));

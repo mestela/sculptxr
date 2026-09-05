@@ -70,6 +70,18 @@ check('...deriving the rotation from the instance rather than sending it',
   /mat3 _rot = mat3\(normalize\(_im\[0\]\), normalize\(_im\[1\]\), normalize\(_im\[2\]\)\);/.test(SRC),
   'uRot and uRotInv would be eighteen more floats per instance to say what the matrix says');
 // InstancedMesh does not manage custom attributes, so they have to be resized with the batch.
+// The half-extents come from module scratch arrays reused for every bone, and the flush reads
+// them once at the END of the pass -- so a stored REFERENCE gives every capsule the last bone's
+// taper. It looks exactly like the taper being inverted.
+check('...copying the half-extents into the slot rather than referencing the scratch',
+  /o\._ha\[0\] = hA\[0\]; o\._ha\[1\] = hA\[1\]; o\._ha\[2\] = hA\[2\];/.test(SRC)
+    && !/o\._ha = hA; o\._hb = hB;/.test(SRC),
+  'every shaft ends up wearing the last bone in the rig taper');
+// Instanced attributes live on the GEOMETRY, and the capsule geometries are shared singletons --
+// so four shaft batches sharing one would write their taper over each other.
+check('...on a geometry of its own, since the shaft geometry is a shared singleton',
+  /if \(isShaftKey\(key\)\) geo = geo\.clone\(\);/.test(SRC),
+  'the shaft batches overwrite one another taper data');
 check('...and the taper attributes grow with the batch',
   /if \(isShaftKey\(key\)\) ensureTaperAttrs\(m, cap\);/.test(SRC),
   'a rig that gains a joint writes taper data past the end of the buffer');

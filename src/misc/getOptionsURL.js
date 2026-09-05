@@ -206,6 +206,9 @@ var getOptionsURL = function () {
   options.boneShowLengths = queryBool(getVal('boneShowLengths'), false);
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
+  // Capsules shaded rather than flat. Default true: unlit ones read as a single silhouette and a
+  // near limb cannot be told from a far one.
+  options.boneCapsuleShaded = queryBool(getVal('boneCapsuleShaded'), true);
   // How solid the capsules draw. They are a diagnostic at 0.16, but turned up they are a CHEAP
   // STAND-IN FOR THE SKIN: at 1 the rig reads as a solid figure you can animate against with the
   // mesh hidden. matt: "it would be great to have it be fully opaque and animate with the skin
