@@ -696,8 +696,16 @@ function shadeMaterial(mat, cylinder) {
       '#include <color_fragment>\n'
       + 'diffuseColor.rgb *= mix(1.0, vShade, uShadeMix);');
   };
-  const key = mat.customProgramCacheKey;
-  mat.customProgramCacheKey = () => (key ? key() : '') + (cylinder ? '|shadeCyl' : '|shadeSph');
+  // CALLED ON THE MATERIAL, not detached. three's own customProgramCacheKey is
+  // `return this.onBeforeCompile.toString()`, so invoking the saved reference as a bare function
+  // loses `this` and throws reading onBeforeCompile of undefined -- and it throws inside the
+  // renderer, on the first frame that compiles a capsule program. A plain function rather than an
+  // arrow for the same reason: the wrapper needs a `this` of its own to pass along.
+  const prevKey = mat.customProgramCacheKey;
+  const suffix = cylinder ? '|shadeCyl' : '|shadeSph';
+  mat.customProgramCacheKey = function () {
+    return (prevKey ? prevKey.call(this) : '') + suffix;
+  };
   return mat;
 }
 

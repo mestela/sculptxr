@@ -635,6 +635,12 @@ check('...shaded from the geometry itself, with no light added to an overlay pas
   /vec3 _sn = normalize\(vec3\(transformed\.x, 0\.0, transformed\.z\)\);/.test(SKEL_SRC)
     && /vec3 _sn = normalize\(transformed\);/.test(SKEL_SRC));
 // A uniform, not a define: toggling a define recompiles a program mid-session.
+// three's own customProgramCacheKey is `return this.onBeforeCompile.toString()`, so a saved
+// reference invoked as a bare function loses `this` and throws INSIDE the renderer, on the first
+// frame that compiles a capsule program.
+check('...chaining the existing cache key ON the material, not detached',
+  /return \(prevKey \? prevKey\.call\(this\) : ''\) \+ suffix;/.test(SKEL_SRC),
+  'the renderer throws reading onBeforeCompile of undefined');
 check('...blended by a uniform so the toggle costs no recompile',
   /diffuseColor\.rgb \*= mix\(1\.0, vShade, uShadeMix\);/.test(SKEL_SRC)
     && /m\.userData\.shadeMix\.value = \(!ghost && shaded\) \? 1 : 0;/.test(SKEL_SRC));
