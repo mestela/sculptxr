@@ -209,6 +209,9 @@ var getOptionsURL = function () {
   // Capsules shaded rather than flat. Default true: unlit ones read as a single silhouette and a
   // near limb cannot be told from a far one.
   options.boneCapsuleShaded = queryBool(getVal('boneCapsuleShaded'), true);
+  // Panel visibility tracing (Settings). Persisted because switching it on costs a reload to be
+  // in place for the next session, and the bug it is hunting is intermittent.
+  options.panelTrace = queryBool(getVal('panelTrace'), false);
   // How solid the capsules draw. They are a diagnostic at 0.16, but turned up they are a CHEAP
   // STAND-IN FOR THE SKIN: at 1 the rig reads as a solid figure you can animate against with the
   // mesh hidden. matt: "it would be great to have it be fully opaque and animate with the skin

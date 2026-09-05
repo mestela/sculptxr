@@ -30,6 +30,7 @@ import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import Skinning from './editing/Skinning.js';
+import PanelTrace from './misc/PanelTrace.js';
 import IKSolver from './editing/IKSolver.js';
 import PhysicsBones from './editing/PhysicsBones.js';
 import RigTopology from './editing/RigTopology.js';
@@ -1976,6 +1977,12 @@ class Scene {
       // Skinning: last in the deformation stack, and a no-op when no joint has moved
       // since the previous frame (see Skinning.apply's pose stamp).
       Skinning.update(this);
+
+      // Panel visibility tracing, when it is switched on in Settings. Wraps the panels' own
+      // `visible` the first time it sees them, so a write from anywhere is reported with the
+      // line that did it; the per-frame half catches the cases where the panel is not hidden at
+      // all but detached or under something invisible. Costs three property reads when off.
+      PanelTrace.tick(this);
 
       // The desktop transform gizmo (Gizmo.js) must never render in VR. Its visible
       // flag is sticky from desktop (set in the desktop-only postRender), and no VR

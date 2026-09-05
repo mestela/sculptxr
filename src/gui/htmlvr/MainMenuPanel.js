@@ -34,6 +34,7 @@ import Picking      from '../../math3d/Picking.js';
 import RigPending   from '../../editing/RigPending.js';
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
 import PhysicsBones from '../../editing/PhysicsBones.js';
+import PanelTrace from '../../misc/PanelTrace.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import {
@@ -4028,7 +4029,8 @@ export function buildMenuHTML_desktopSettings(main) {
   const debugActive = !!document.getElementById('log')?.style.display && document.getElementById('log').style.display !== 'none';
   const physSection = `
     <div class="mm-section-title">Physics Bones</div>
-    ${chk('Constraint solver XPBD', !!window._physXPBD)}`;
+    ${chk('Constraint solver XPBD', !!window._physXPBD)}
+    ${chk('Trace panel visibility', PanelTrace.enabled())}`;
 
   return `${ipadSection}${physSection}
     <div class="mm-section-title">Numeric Input</div>
@@ -4076,6 +4078,14 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   // id makes querySelector throw rather than simply miss.
   q('#mm-constraint-solver-xpbd')?.addEventListener('change', (e) => {
     PhysicsBones.setSolver(e.target.checked);
+  });
+
+  // A DIAGNOSTIC THAT CAN BE SWITCHED ON FROM INSIDE THE HEADSET, for the same reason the solver
+  // is here rather than on a window flag: matt, on the GXR, "its a pain changing things like
+  // this with an envar in the console". It reports every write to a wrist panel's visibility
+  // with the line that did it, through screenLog.
+  q('#mm-trace-panel-visibility')?.addEventListener('change', (e) => {
+    PanelTrace.setEnabled(e.target.checked);
   });
 
   wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
