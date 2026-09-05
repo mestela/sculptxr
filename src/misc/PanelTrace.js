@@ -150,6 +150,11 @@ function place(mesh, cam) {
 function _probe(scene, mesh, cam) {
   const mk = scene._ptRaycaster || (scene._ptRaycaster = (scene._miniPanel && scene._miniPanel._raycaster) || null);
   if (!mk || !mk.set || !mk.intersectObjects) return null;
+  // A SPRITE CANNOT BE RAYCAST WITHOUT A CAMERA, and this scene is full of them (the joint
+  // labels). three throws "Raycaster.camera needs to be set" for every one, every probe, which
+  // in a headset is an error flood down the remote console and a stall in the frame that emits
+  // it. The instrument was distorting the thing it was measuring. matt's log caught it.
+  mk.camera = cam;
   const m = mesh.matrixWorld.elements, c = cam.matrixWorld.elements;
   const ox = c[12], oy = c[13], oz = c[14];
   let dx = m[12] - ox, dy = m[13] - oy, dz = m[14] - oz;
@@ -455,6 +460,13 @@ PanelTrace.tick = function (scene) {
   // panel that is permanently behind something says it once.
   const occ = scene._ptOcc || (scene._ptOcc = { n: 0, by: {} });
   occ.n++;
+  // THE RAYCAST IS THE EXPENSIVE HALF and it is off unless asked for (window._panelTraceProbe).
+  // It walks the WHOLE scene recursively, which this codebase has paid for before -- three's
+  // intersectObject defaults to recursive and `isPickable` does not stop it, a lesson that cost
+  // four headset sessions. Everything else here is arithmetic on numbers already in hand, so the
+  // trace stays usable while hunting; the probe is for when the question is specifically "what is
+  // in front of it", and it has already answered that one.
+  const probeOn = !!window._panelTraceProbe;
   // The texture's CONTENT, on the same throttle. See inkOf: this is the last way a panel whose
   // every property is correct can still be invisible.
   if (occ.n % 10 === 0) {
@@ -466,13 +478,17 @@ PanelTrace.tick = function (scene) {
       p._ptInk = ink.a;                      // carried into the tape, so the dump shows it too
       const blank = ink.a < 8;               // essentially nothing drawn
       if (inks[name] === blank) continue;
+      const first = inks[name] === undefined;
       inks[name] = blank;
+      // THE FIRST SAMPLE IS NOT A TRANSITION. Reported as one, a healthy panel opened with
+      // "texture has content again", which reads as a recovery from a blank that never happened.
+      if (first && !blank) continue;
       say(name + (blank ? ': TEXTURE IS EMPTY (mean alpha ' + ink.a + ')'
         : ': texture has content again (mean alpha ' + ink.a + ', luma ' + ink.lum + ')'));
     }
   }
 
-  if (cam && occ.n % 10 === 0) {
+  if (probeOn && cam && occ.n % 10 === 0) {
     for (const [name, p] of panels) {
       if (!p || !p.mesh || !p.mesh.visible || !p.mesh.matrixWorld) continue;
       let hit = null;

@@ -289,6 +289,9 @@ _realLog('\n── is something standing in front of it ────────
     intersectObjects: () => inFront,
   };
   scene._scene = { children: [] };
+  // The raycast half is opt-in: it walks the whole scene recursively, which this codebase has
+  // paid for before, and in matt's headset it also threw on every sprite it met.
+  globalThis.window._panelTraceProbe = true;
   const tick10 = () => { for (let i = 0; i < 10; i++) PanelTrace.tick(scene); };
 
   clear(); tick10();
@@ -313,6 +316,23 @@ _realLog('\n── is something standing in front of it ────────
   clear(); tick10();
   check('a nearly-invisible surface is not called an occluder', logged().length === 0,
     'the rig ghost passes sit in front of everything by design');
+
+  // Off unless asked for, and it hands the raycaster a camera: a scene full of sprites (the
+  // joint labels) throws "Raycaster.camera needs to be set" on every one, every probe.
+  inFront = [{ object: { name: 'wall', visible: true, material: {} }, distance: 0.2 }];
+  globalThis.window._panelTraceProbe = false;
+  clear(); tick10();
+  check('the probe is silent unless switched on', !logged().some((m) => /OCCLUDED/.test(m)),
+    'it walks the whole scene recursively; everything else here is arithmetic');
+  let sawCamera = false;
+  scene._ptRaycaster = { set() {}, near: 0, far: 0,
+    get camera() { return this._c; }, set camera(c) { this._c = c; sawCamera = !!c; },
+    intersectObjects: () => inFront };
+  globalThis.window._panelTraceProbe = true;
+  clear(); tick10();
+  check('...and gives the raycaster a camera when it does run', sawCamera,
+    'without it three throws on every sprite in the scene, every probe');
+  globalThis.window._panelTraceProbe = false;
 }
 
 _realLog('\n── switching it on says what it is starting from ───────────────────────');
@@ -401,7 +421,14 @@ _realLog('\n── is there anything ON the texture ─────────�
     }) };
   };
   const tick10 = () => { for (let i = 0; i < 10; i++) PanelTrace.tick(scene); };
-  tick10(); clear();
+  // THE FIRST SAMPLE IS NOT A TRANSITION: a healthy panel reported as "texture has content
+  // again" reads as a recovery from a blank that never happened, and matt's log opened with
+  // exactly that line.
+  clear(); tick10();
+  check('a healthy first sample says nothing',
+    !logged().some((m) => /texture has content/.test(m)),
+    'there is nothing to have recovered from on the first look');
+  clear();
 
   // The panel is a quad whose whole appearance is its map, and the background is transparent --
   // so a paint that lands empty draws nothing while every other field stays perfect. That is the
