@@ -247,6 +247,74 @@ _realLog('\n── all three panels, and only when they exist ──────
   check('...and the ones that do exist are wrapped', !!mini._ptWrapped && !!main._ptWrapped);
 }
 
+_realLog('\n── blank, or off to the side ──────────────────────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  mesh.matrixWorld = mat4At(0, 0, -0.4);
+  mesh.material = { map: {} };
+  const scene = app(mesh);
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  PanelTrace.tick(scene); clear();
+
+  // The texture is disposed and rebuilt whenever the content's size changes; a paint that does
+  // not arrive leaves the material with no map at all, and the quad draws blank.
+  mesh.material.map = null;
+  PanelTrace.tick(scene);
+  check('a panel with no texture is reported as drawing blank',
+    logged().some((m) => /NO TEXTURE/.test(m)),
+    'nothing else here notices: it is visible, attached, sized and placed');
+
+  clear(); mesh.material.map = {}; PanelTrace.tick(scene);
+  check('...and the recovery too', logged().some((m) => /textured and in view/.test(m)));
+
+  // 90 degrees to the side: gone, without a single flag changing.
+  clear(); mesh.matrixWorld = mat4At(0.4, 0, 0); PanelTrace.tick(scene);
+  check('a panel outside the view is reported', logged().some((m) => /outside the view/.test(m)));
+  clear(); PanelTrace.tick(scene);
+  check('...once, not every frame', logged().length === 0);
+}
+
+_realLog('\n── is something standing in front of it ───────────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  mesh.matrixWorld = mat4At(0, 0, -0.4);
+  const scene = app(mesh);
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  // A raycaster shaped like three's, answering with whatever the test puts in front.
+  let inFront = [];
+  scene._miniPanel._raycaster = {
+    set() {}, near: 0, far: 0,
+    intersectObjects: () => inFront,
+  };
+  scene._scene = { children: [] };
+  const tick10 = () => { for (let i = 0; i < 10; i++) PanelTrace.tick(scene); };
+
+  clear(); tick10();
+  check('nothing in front of it is silent', !logged().some((m) => /OCCLUDED/.test(m)));
+
+  // The rig overlay began WRITING DEPTH in v3.30.8, and it draws before the panels.
+  inFront = [{ object: { name: 'bone_capsules', visible: true, material: { transparent: true, opacity: 0.9 } }, distance: 0.2 }];
+  clear(); tick10();
+  check('an occluder is named, with both distances',
+    logged().some((m) => /OCCLUDED by "bone_capsules" at 0\.20m, panel at 0\.40m/.test(m)),
+    'a panel can be visible, attached, sized and placed correctly and still be behind something');
+
+  clear(); tick10();
+  check('...and said once, not every probe', logged().length === 0);
+
+  inFront = [];
+  clear(); tick10();
+  check('...and the clearing is reported', logged().some((m) => /nothing in front of it any more/.test(m)));
+
+  // A ghost pass at 9% opacity is in front of everything and occludes nothing you can see.
+  inFront = [{ object: { name: 'ghost', visible: true, material: { transparent: true, opacity: 0.09 } }, distance: 0.2 }];
+  clear(); tick10();
+  check('a nearly-invisible surface is not called an occluder', logged().length === 0,
+    'the rig ghost passes sit in front of everything by design');
+}
+
 _realLog('\n── switching it on says what it is starting from ───────────────────────');
 {
   globalThis.window._panelTrace = false;

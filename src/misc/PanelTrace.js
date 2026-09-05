@@ -135,6 +135,38 @@ function place(mesh, cam) {
   return { p, d: Math.sqrt(dx * dx + dy * dy + dz * dz), behind: along < 0 };
 }
 
+// IS SOMETHING IN FRONT OF IT? Nothing above can answer that: the panel can be visible,
+// attached, correctly sized and exactly where it should be, and still be behind a piece of
+// geometry. The rig overlay began WRITING DEPTH in v3.30.8 (capsules had to occlude each other),
+// it is drawn before the panels, and the preselect highlight changes what it draws on every
+// hover -- and matt: "all i was doing was moving the cursor between bones... it feels strongly
+// linked to the preselect highlight." So the probe is a ray from the head to the panel's centre,
+// reporting the first thing it meets that is not the panel itself.
+//
+// Throttled, because it is a raycast: every 10th frame is four a second in a session, which is
+// far finer than a flash you can see and still nothing next to the frame it rides in.
+// Kept separate so the harness can drive it with plain objects: everything here is arithmetic on
+// matrices plus one raycast through whatever raycaster the scene already has.
+function _probe(scene, mesh, cam) {
+  const mk = scene._ptRaycaster || (scene._ptRaycaster = (scene._miniPanel && scene._miniPanel._raycaster) || null);
+  if (!mk || !mk.set || !mk.intersectObjects) return null;
+  const m = mesh.matrixWorld.elements, c = cam.matrixWorld.elements;
+  const ox = c[12], oy = c[13], oz = c[14];
+  let dx = m[12] - ox, dy = m[13] - oy, dz = m[14] - oz;
+  const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+  dx /= len; dy /= len; dz /= len;
+  mk.set({ x: ox, y: oy, z: oz }, { x: dx, y: dy, z: dz });
+  mk.near = 0; mk.far = len * 0.999;   // stop just short of the panel: only what is IN FRONT
+  const hits = mk.intersectObjects(scene._scene.children, true) || [];
+  for (const h of hits) {
+    const o = h.object;
+    if (!o || o === mesh || o.visible === false) continue;
+    if (o.material && o.material.transparent && (o.material.opacity ?? 1) < 0.2) continue;
+    return { name: o.name || o.type || '?', d: h.distance, panelD: len };
+  }
+  return null;
+}
+
 PanelTrace.enabled = function () {
   if (typeof window._panelTrace === 'boolean') return window._panelTrace;
   const saved = getOptionsURL().panelTrace;
@@ -237,6 +269,56 @@ PanelTrace.tick = function (scene) {
         + '  [grips L=' + pose(scene._vrControllerLeftGrip)
         + ' R=' + pose(scene._vrControllerRightGrip)
         + '  headHold=' + (scene._wristHeadOffset ? 'armed' : 'none') + ']');
+    }
+  }
+
+  // ...and the two cheap per-frame questions the raycast cannot be run often enough to answer.
+  //
+  // A PANEL WITH NO TEXTURE draws as an untextured quad -- which, on a material whose colour is
+  // white and whose only content was the map, is a blank. The panel is rasterised through the
+  // polyfill and the texture is disposed and rebuilt whenever the content's size changes, so a
+  // paint that does not arrive leaves exactly this state, and nothing else here would notice.
+  //
+  // OUT OF THE VIEW is the other one: a panel 30cm away and 90 degrees to the side is gone
+  // without a single flag changing. This is the half-angle to the panel against a generous
+  // 55-degree half-FOV, so it reports leaving the view rather than clipping precisely.
+  const flags = scene._ptFlags || (scene._ptFlags = {});
+  for (const [name, p] of panels) {
+    if (!p || !p.mesh) continue;
+    const mat = p.mesh.material;
+    const blank = !!(mat && 'map' in mat && !mat.map);
+    let outOfView = false;
+    if (cam && p.mesh.matrixWorld) {
+      const m = p.mesh.matrixWorld.elements, c = cam.matrixWorld.elements;
+      let dx = m[12] - c[12], dy = m[13] - c[13], dz = m[14] - c[14];
+      const L = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      const dot = (dx * -c[8] + dy * -c[9] + dz * -c[10]) / L;
+      outOfView = dot < 0.57;                    // ~55 degrees off the view axis
+    }
+    const key = (blank ? 'blank' : '') + (outOfView ? '|outofview' : '');
+    if (flags[name] === key) continue;
+    flags[name] = key;
+    if (key) say(name + ': ' + (blank ? 'NO TEXTURE (drawing blank)' : '')
+      + (blank && outOfView ? ' and ' : '') + (outOfView ? 'outside the view' : ''));
+    else say(name + ': textured and in view');
+  }
+
+  // ...and whether anything is standing in front of it. Reported on a CHANGE of occluder, so a
+  // panel that is permanently behind something says it once.
+  const occ = scene._ptOcc || (scene._ptOcc = { n: 0, by: {} });
+  occ.n++;
+  if (cam && occ.n % 10 === 0) {
+    for (const [name, p] of panels) {
+      if (!p || !p.mesh || !p.mesh.visible || !p.mesh.matrixWorld) continue;
+      let hit = null;
+      try { hit = _probe(scene, p.mesh, cam); } catch (_) { hit = null; }
+      const key = hit ? hit.name : '';
+      if (occ.by[name] === key) continue;
+      occ.by[name] = key;
+      say(hit
+        ? name + ': OCCLUDED by "' + hit.name + '" at ' + hit.d.toFixed(2)
+          + 'm, panel at ' + hit.panelD.toFixed(2) + 'm'
+        : name + ': nothing in front of it any more');
     }
   }
 
