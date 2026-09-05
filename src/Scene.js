@@ -5489,9 +5489,10 @@ class Scene {
             const geoBottomLeft = new THREE.BufferGeometry().setFromPoints(pointsBottomLeft);
             const geoBottomRight = new THREE.BufferGeometry().setFromPoints(pointsBottomRight);
 
-            const matTop = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
-            const matBottomLeft = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
-            const matBottomRight = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            // depthWrite OFF with depthTest off -- see the note on the cursor group below.
+            const matTop = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            const matBottomLeft = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            const matBottomRight = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
 
             const lineTop = new THREE.Line(geoTop, matTop);
             lineTop.name = "top";
@@ -5509,12 +5510,27 @@ class Scene {
 
             const dotGeo = new THREE.BufferGeometry();
             dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-            const dotMat = new THREE.PointsMaterial({ color: 0x4488ff, size: 2, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.8 });
+            const dotMat = new THREE.PointsMaterial({ color: 0x4488ff, size: 2, sizeAttenuation: false, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
             const centerDot = new THREE.Points(dotGeo, dotMat);
             centerDot.name = "cursor_dot";
             ringLine.add(centerDot);
 
             group.visible = false;
+            // A MATERIAL THAT REFUSES TO TEST DEPTH MUST NOT WRITE IT.
+            //
+            // `depthTest: false` says "draw me whatever is in front"; leaving depthWrite at its
+            // default (TRUE) then says "...and everything drawn after me must respect where I
+            // am". The two together stamp this overlay's depth into the buffer while ignoring
+            // the buffer, so anything later that DOES depth-test gets punched out behind it --
+            // and the VR panels, at renderOrder 11000 with depth testing on, are exactly that.
+            // The cursor rides the controller, so it passes in front of the wrist panels
+            // constantly. matt: "in volume tweak, select a joint, go near a bbox handle, menu
+            // disappears" -- the joint handles had the same pair, and so did the reticle and the
+            // cut-tool highlight. The trace found it by naming the occluder: `MiniPanel:
+            // OCCLUDED by "top"`, "top" being an arc of this ring.
+            //
+            // Everything already written to draw over the world -- the motion trail, the pending
+            // link, GizmoVR, the background quad -- pairs the two correctly. These four did not.
             // Pin the whole cursor to render AFTER the sculpt meshes. The sculpt material is
             // transparent, so it shares Three's depth-sorted transparent queue with the cursor;
             // as the camera moves their sort order swaps and the ring/volume flip between drawing
@@ -6577,7 +6593,7 @@ class Scene {
       const geo = new THREE.CircleGeometry(0.0014, 16);
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff, transparent: true, opacity: 0.8,
-        depthTest: false, side: THREE.DoubleSide,
+        depthTest: false, depthWrite: false, side: THREE.DoubleSide,
       });
       this._bpReticle = new THREE.Mesh(geo, mat);
       this._bpReticle.renderOrder = 1001;

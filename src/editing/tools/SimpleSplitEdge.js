@@ -249,7 +249,7 @@ class SimpleSplitEdge extends SculptBase {
       console.log("[SimpleSplitEdge] targetScene.add found: " + (!!targetScene.add));
       
       const geometry = new THREE.SphereGeometry(0.12, 8, 8); // Doubled size again for visibility
-      const material = new THREE.MeshBasicMaterial({ color: 0xffff00, depthTest: false, transparent: true, opacity: 0.8 });
+      const material = new THREE.MeshBasicMaterial({ color: 0xffff00, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
       const indicator = new THREE.Mesh(geometry, material);
       
       // Transform local hit point to world space

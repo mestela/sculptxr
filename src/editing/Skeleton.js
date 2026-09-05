@@ -1094,7 +1094,7 @@ function scaleHandleGroup(main) {
   const geo = new THREE.SphereGeometry(1, 10, 8);
   const mk = (color) => {
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      color: color, transparent: true, opacity: 0.9, depthTest: false, toneMapped: false,
+      color: color, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false, toneMapped: false,
     }));
     m.renderOrder = 10002;          // above the rig, like the labels: a handle you cannot see
     m.frustumCulled = false;        // is a handle you cannot grab

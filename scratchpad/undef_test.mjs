@@ -10,6 +10,7 @@
 // Deliberately ONE rule: this is a bug detector, not a style gate, and a lint run that reports
 // formatting opinions is a lint run people stop reading.
 import { execFileSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 const REPO = '/Users/mattestela/sculptxr';
@@ -42,6 +43,50 @@ try {
   out = (e.stdout || '') + (e.stderr || '');
 }
 check('no undefined identifiers in the rig and animation files', out.trim() === '', out.trim());
+
+
+// ── A MATERIAL THAT REFUSES TO TEST DEPTH MUST NOT WRITE IT ──────────────────────────────
+//
+// `depthTest: false` says "draw me whatever is in front of me"; three's depthWrite defaults to
+// TRUE, which then says "...and everything drawn after me must respect where I am". Together
+// they stamp an overlay's depth into the buffer while ignoring the buffer, so anything later
+// that DOES depth-test is punched out behind it -- and the VR panels, at renderOrder 11000 with
+// depth testing on, are exactly that. It cost days: "in volume tweak, select a joint, go near a
+// bbox handle, menu disappears", the joint handles being one of five materials with this pair.
+//
+// A sweep rather than five rules, because the next one will be written by someone adding an
+// overlay and it will look exactly as reasonable as these did.
+{
+  const offenders = [];
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(dir, e.name))
+      : (e.name.endsWith('.js') ? [path.join(dir, e.name)] : []));
+  for (const file of walk(path.join(REPO, 'src'))) {
+    const src = fs.readFileSync(file, 'utf8');
+    const re = /depthTest:\s*false/g;
+    let m;
+    while ((m = re.exec(src))) {
+      // the enclosing object literal
+      let d = 0, start = -1;
+      for (let k = m.index; k >= 0; k--) {
+        if (src[k] === '}') d++;
+        else if (src[k] === '{') { if (!d) { start = k; break; } d--; }
+      }
+      d = 0; let end = -1;
+      for (let k = m.index; k < src.length; k++) {
+        if (src[k] === '{') d++;
+        else if (src[k] === '}') { if (!d) { end = k; break; } d--; }
+      }
+      if (start < 0 || end < 0) continue;
+      if (!/depthWrite/.test(src.slice(start, end))) {
+        offenders.push(file.replace(REPO + '/', '') + ':' + (src.slice(0, m.index).split('\n').length));
+      }
+    }
+  }
+  check('no material tests depth off while still writing it',
+    offenders.length === 0,
+    offenders.join('  '));
+}
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

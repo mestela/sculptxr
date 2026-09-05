@@ -62,10 +62,10 @@ class GeodesicPoseTool extends SculptBase {
     if (this._dot) return;
     let root = this._mesh.getThreeMesh(); while (root.parent) root = root.parent;
     this._dot = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 12),
-      new THREE.MeshBasicMaterial({ color: 0x33e0ff, depthTest: false, transparent: true, opacity: 0.9 }));
+      new THREE.MeshBasicMaterial({ color: 0x33e0ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.9 }));
     // A thin cylinder, not THREE.Line — WebGL ignores line width (always 1px).
     this._line = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 8),
-      new THREE.MeshBasicMaterial({ color: 0x88ccff, depthTest: false, transparent: true, opacity: 0.85 }));
+      new THREE.MeshBasicMaterial({ color: 0x88ccff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.85 }));
     for (const o of [this._dot, this._line]) { o.renderOrder = 10000; o.isPickable = false; root.add(o); }
   }
 

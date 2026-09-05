@@ -357,7 +357,7 @@ class EdgeCreate extends SculptBase {
     const vz = vertices[vIdx * 3 + 2];
 
     const geometry = new THREE.SphereGeometry(0.12, 8, 8); // Doubled size again for visibility
-    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false, transparent: true, opacity: 0.8 });
+    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
     this._sourceIndicatorMesh = new THREE.Mesh(geometry, material);
 
     const worldPos = [vx, vy, vz];

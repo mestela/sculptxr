@@ -272,7 +272,7 @@ class CutTool extends SculptBase {
     if (!this._highlightSphere) {
       this._highlightSphere = new THREE.Mesh(
         new THREE.SphereGeometry(0.2, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0xffff00, depthTest: false, transparent: true, opacity: 0.8 })
+        new THREE.MeshBasicMaterial({ color: 0xffff00, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 })
       );
       this._highlightSphere.renderOrder = 10000;
       this._highlightSphere.isPickable = false;

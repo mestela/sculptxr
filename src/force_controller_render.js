@@ -30,7 +30,7 @@ forceUpdate(grip1);
 // Let's also add an emergency huge sphere directly to the controller constraint
 const mesh = new window.THREE.Mesh(
     new window.THREE.SphereGeometry(0.5, 16, 16),
-    new window.THREE.MeshBasicMaterial({color: 0x00ff00, wireframe: true, depthTest: false})
+    new window.THREE.MeshBasicMaterial({color: 0x00ff00, wireframe: true, depthTest: false, depthWrite: false})
 );
 grip0.add(mesh);
 
