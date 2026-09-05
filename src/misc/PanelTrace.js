@@ -220,6 +220,7 @@ function frameOf(p, cam) {
     map: !!tex,
     tw: img ? (img.width || img.videoWidth || 0) : 0,
     th: img ? (img.height || img.videoHeight || 0) : 0,
+    ink: p._ptInk === undefined ? null : p._ptInk,
     ord: m.renderOrder,
     cull: m.frustumCulled === true,
     gw: m.geometry && m.geometry.parameters ? +Number(m.geometry.parameters.width).toFixed(3) : null,
@@ -229,7 +230,12 @@ function frameOf(p, cam) {
 
 PanelTrace.record = function (scene, panels, cam) {
   const ring = scene._ptRing || (scene._ptRing = []);
-  const row = { t: Math.round(performance.now()) };
+  // UNROUNDED. Rounding here and comparing against an unrounded performance.now() in the dump
+  // makes a row up to half a millisecond in the FUTURE, which prints as "over -0.0s" and
+  // "t--0.00s". Harmless in a long tape and confusing in a short one, and it made this module's
+  // own harness fail one run in three -- an instrument nobody can trust the clock of is not one
+  // to hand somebody mid-hunt.
+  const row = { t: performance.now() };
   for (const [name, p] of panels) if (p && p.mesh) row[name] = frameOf(p, cam);
   ring.push(row);
   if (ring.length > HISTORY) ring.shift();
@@ -244,11 +250,11 @@ PanelTrace.dump = function (scene) {
   // Timed BACKWARDS from the press, because that is the only clock the user has: "it went about
   // three seconds before I hit the button" points straight at t-3s.
   const now = performance.now();
-  const span = (now - ring[0].t) / 1000;
+  const span = Math.max(0, now - ring[0].t) / 1000;
   say('--- panel history: ' + ring.length + ' frames over ' + span.toFixed(1)
     + 's (' + (ring.length / Math.max(span, 0.001)).toFixed(0) + ' fps), oldest first, times are'
     + ' SECONDS BEFORE THE DUMP ---');
-  const ago = (t) => 't-' + ((now - t) / 1000).toFixed(2) + 's';
+  const ago = (t) => 't-' + (Math.max(0, now - t) / 1000).toFixed(2) + 's';
   const prev = {};
   let printed = 0;
   for (const row of ring) {
@@ -267,6 +273,47 @@ PanelTrace.dump = function (scene) {
   }
   say('--- ' + printed + ' changed rows; the rest were identical ---');
 };
+
+// IS THERE ANYTHING ON THE TEXTURE?
+//
+// The 30-second tape settled the question it was built for: pressed within half a second of the
+// menu going, the MiniPanel's record shows visible, parented, nothing hiding it, opacity 1,
+// colorWrite on, a 419x800 map, renderOrder 11000, not culled, 0.4m from the head and in view,
+// with nothing changing but a millimetre of hand drift. Every property of the object was
+// correct while the thing was, to the user, not there.
+//
+// One possibility survives that: the texture is present and its CONTENT is empty. The panel is a
+// quad whose whole appearance is its map, the map is re-rasterised by the polyfill on every
+// content change, and the background is transparent -- so a paint that lands empty draws exactly
+// nothing while every field above stays perfect. It also fits the correlation with the preselect
+// highlight, which is what makes the panel repaint in the first place.
+//
+// So: sample the bitmap. An 8x8 draw of it into an offscreen canvas, mean alpha over the 64
+// pixels, every tenth frame -- enough to catch a blank that lasts long enough to see, cheap
+// enough to leave on while hunting.
+function inkOf(mesh, scene) {
+  const tex = mesh.material && mesh.material.map;
+  const img = tex && tex.image;
+  if (!img) return null;
+  let c = scene._ptInkCanvas;
+  if (!c) {
+    if (typeof OffscreenCanvas === 'undefined') return null;
+    c = scene._ptInkCanvas = new OffscreenCanvas(8, 8);
+    scene._ptInkCtx = c.getContext('2d', { willReadFrequently: true });
+  }
+  const ctx = scene._ptInkCtx;
+  if (!ctx) return null;
+  try {
+    ctx.clearRect(0, 0, 8, 8);
+    ctx.drawImage(img, 0, 0, 8, 8);
+    const d = ctx.getImageData(0, 0, 8, 8).data;
+    let a = 0, lum = 0;
+    for (let i = 0; i < d.length; i += 4) { a += d[i + 3]; lum += (d[i] + d[i + 1] + d[i + 2]) / 3; }
+    return { a: Math.round(a / 64), lum: Math.round(lum / 64) };
+  } catch (_) {
+    return null;   // a consumed or cross-origin bitmap; not worth taking the frame down for
+  }
+}
 
 PanelTrace.enabled = function () {
   if (typeof window._panelTrace === 'boolean') return window._panelTrace;
@@ -408,6 +455,23 @@ PanelTrace.tick = function (scene) {
   // panel that is permanently behind something says it once.
   const occ = scene._ptOcc || (scene._ptOcc = { n: 0, by: {} });
   occ.n++;
+  // The texture's CONTENT, on the same throttle. See inkOf: this is the last way a panel whose
+  // every property is correct can still be invisible.
+  if (occ.n % 10 === 0) {
+    const inks = scene._ptInk || (scene._ptInk = {});
+    for (const [name, p] of panels) {
+      if (!p || !p.mesh || !p.mesh.visible) continue;
+      const ink = inkOf(p.mesh, scene);
+      if (!ink) continue;
+      p._ptInk = ink.a;                      // carried into the tape, so the dump shows it too
+      const blank = ink.a < 8;               // essentially nothing drawn
+      if (inks[name] === blank) continue;
+      inks[name] = blank;
+      say(name + (blank ? ': TEXTURE IS EMPTY (mean alpha ' + ink.a + ')'
+        : ': texture has content again (mean alpha ' + ink.a + ', luma ' + ink.lum + ')'));
+    }
+  }
+
   if (cam && occ.n % 10 === 0) {
     for (const [name, p] of panels) {
       if (!p || !p.mesh || !p.mesh.visible || !p.mesh.matrixWorld) continue;

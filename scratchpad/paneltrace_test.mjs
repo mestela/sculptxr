@@ -383,6 +383,41 @@ _realLog('\n── the flight recorder ─────────────�
     'opacity 0, colorWrite off or an empty texture all draw nothing and change nothing else');
 }
 
+_realLog('\n── is there anything ON the texture ───────────────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  mesh.matrixWorld = mat4At(0, 0, -0.4);
+  mesh.material = { map: { image: { width: 8, height: 8 } }, opacity: 1 };
+  const scene = app(mesh);
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  // An offscreen canvas that answers with whatever alpha the test wants. The real one draws the
+  // panel's bitmap into 8x8 and averages; here the averaging is what is under test.
+  let alpha = 255;
+  globalThis.OffscreenCanvas = function () {
+    return { getContext: () => ({
+      clearRect() {}, drawImage() {},
+      getImageData: () => ({ data: new Array(8 * 8 * 4).fill(0).map((_, i) => (i % 4 === 3 ? alpha : 200)) }),
+    }) };
+  };
+  const tick10 = () => { for (let i = 0; i < 10; i++) PanelTrace.tick(scene); };
+  tick10(); clear();
+
+  // The panel is a quad whose whole appearance is its map, and the background is transparent --
+  // so a paint that lands empty draws nothing while every other field stays perfect. That is the
+  // one thing the 30-second tape could not rule out.
+  alpha = 0; tick10();
+  check('an empty texture is reported, with the alpha it measured',
+    logged().some((m) => /TEXTURE IS EMPTY \(mean alpha 0\)/.test(m)),
+    'every other property of the panel is correct while this is happening');
+  clear(); tick10();
+  check('...once, not every sample', logged().length === 0);
+  alpha = 255; clear(); tick10();
+  check('...and the recovery, with alpha and luma',
+    logged().some((m) => /texture has content again \(mean alpha 255, luma 200\)/.test(m)));
+  delete globalThis.OffscreenCanvas;
+}
+
 _realLog('\n── it is reachable from inside the headset ─────────────────────────────');
 {
   const MM = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
@@ -404,6 +439,14 @@ _realLog('\n── it is reachable from inside the headset ───────
     /PanelTrace\.setEnabled\(on\)/.test(MM)
       && /options\.panelTrace = queryBool\(getVal\('panelTrace'\), false\);/.test(OPT));
   check('...and the frame loop drives it', /PanelTrace\.tick\(this\);/.test(SC));
+  // A tape whose clock can read NEGATIVE is one nobody trusts mid-hunt: rounding the row time
+  // while comparing it against an unrounded now put rows up to half a millisecond in the future
+  // ("over -0.0s", "t--0.00s"), and made this harness fail one run in three.
+  check('the tape clock cannot run backwards',
+    /const row = \{ t: performance\.now\(\) \};/.test(SRC)
+      && /Math\.max\(0, now - ring\[0\]\.t\)/.test(SRC)
+      && /'t-' \+ \(Math\.max\(0, now - t\)/.test(SRC),
+    'an instrument nobody can trust the clock of is not one to hand somebody mid-hunt');
   check('...and the history can be dumped from either settings panel',
     /id: 'mm-panel-dump',[\s\S]{0,120}?PanelTrace\.dump\(\)/.test(MM)
       && /renderAction\(t\.id, t\.label\)/.test(MM),
