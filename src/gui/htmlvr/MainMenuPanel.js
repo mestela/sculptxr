@@ -1085,6 +1085,49 @@ export function buildMenuHTML_reference() {
   `;
 }
 
+// THE DEVELOPER TOGGLES, DECLARED ONCE.
+//
+// There are two settings panels -- buildMenuHTML_settings for VR and
+// buildMenuHTML_desktopSettings for the sidebar -- and they had independent copies of the same
+// controls, with different ids for the same setting (`mm-phys-xpbd` against
+// `mm-constraint-solver-xpbd`). So a toggle added to one simply does not exist in the other, and
+// that is exactly what happened to the panel tracer: matt, "if i look in the DESKTOP settings
+// panel, i see it. if i look in the VR settings panel, i don't see it." Standing rule, said
+// often enough to be a law here: "i want desktop and vr to conform as much as possible, use the
+// same code as much as possible, otherwise we end up in this situation over and over."
+//
+// So the LIST lives here and the two panels render it in their own idiom -- VR uses toggle
+// buttons, the sidebar uses check rows -- through a renderer they each pass in. One id per
+// setting, one place to add the next one, and neither panel can drift from the other again.
+const DEV_TOGGLES = [
+  { id: 'mm-phys-xpbd',   label: 'Constraint Solver (XPBD)',
+    get: () => !!window._physXPBD,      set: (on) => PhysicsBones.setSolver(on) },
+  { id: 'mm-panel-trace', label: 'Trace Panel Visibility',
+    get: () => PanelTrace.enabled(),    set: (on) => PanelTrace.setEnabled(on) },
+];
+
+export function buildDevToggles(render) {
+  return DEV_TOGGLES.map((t) => render(t.id, t.label, t.get())).join('\n    ');
+}
+
+// Both event shapes, because a button carries its state in a class and a checkbox carries it in
+// `checked` -- the setting itself does not care which panel it is being flipped from.
+export function wireDevToggles(q, paint) {
+  for (const t of DEV_TOGGLES) {
+    const el = q('#' + t.id);
+    if (!el) continue;
+    if (el.tagName === 'INPUT') {
+      el.addEventListener('change', (e) => { t.set(!!e.target.checked); paint?.(); });
+    } else {
+      el.addEventListener('click', () => {
+        const on = t.set(!t.get());
+        el.classList.toggle('active', on === undefined ? t.get() : !!on);
+        paint?.();
+      });
+    }
+  }
+}
+
 function buildMenuHTML_settings(main) {
   const gx  = main._guiXR ?? main.getGuiXR?.();
   const ui  = gx?._uiSettings ?? {};
@@ -1102,10 +1145,6 @@ function buildMenuHTML_settings(main) {
   const menuSat       = ui.menuSaturation  ?? 0.50;
   const menuGamma     = ui.menuGamma       ?? 0.0;
   const debugMode     = ui.debugMode       ?? false;
-  // Which physics-bone solver runs. Read from the live flag rather than the option, so the panel
-  // still shows the truth when it has been switched from the console.
-  const physXPBD      = !!window._physXPBD;
-
   const isLeft      = main._dominantHand === 'left';
   const isRaycast   = !main._vrUseVolumeIntersect;
   const isAmbi      = !!main._vrAmbidextrousCursors;
@@ -1208,8 +1247,9 @@ function buildMenuHTML_settings(main) {
     <button class="mm-action-btn" id="mm-bs-backup">Backup Shapes</button>
     <button class="mm-action-btn" id="mm-bs-restore">Restore Shapes</button>
 
-    <div class="mm-section-title">Physics</div>
-    <button class="mm-toggle${physXPBD ? ' active' : ''}" id="mm-phys-xpbd">Constraint Solver (XPBD)</button>
+    <div class="mm-section-title">Physics &amp; Diagnostics</div>
+    ${buildDevToggles((id, label, on) =>
+      `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`)}
 
     <div class="mm-section-title">Debug</div>
     <button class="mm-toggle${debugMode ? ' active' : ''}" id="mm-debug-mode">Debug Mode (HUD Logs)</button>
@@ -2351,11 +2391,7 @@ export class MainMenuPanel extends HTMLVRPanel {
     // is no console in a headset. matt: "its a pain changing things like this with an envar in
     // the console on the gxr." PhysicsBones.setSolver persists it through the same option store
     // as every other setting here, so it survives a reload like they do.
-    q('#mm-phys-xpbd')?.addEventListener('click', () => {
-      const on = PhysicsBones.setSolver(!window._physXPBD);
-      q('#mm-phys-xpbd')?.classList.toggle('active', on);
-      paint();
-    });
+    wireDevToggles(q, paint);
     q('#mm-ambi')?.addEventListener('click', () => {
       main._vrAmbidextrousCursors = !main._vrAmbidextrousCursors;
       opts.saveOption('ambidextrousCursors', main._vrAmbidextrousCursors);
@@ -4029,8 +4065,9 @@ export function buildMenuHTML_desktopSettings(main) {
   const debugActive = !!document.getElementById('log')?.style.display && document.getElementById('log').style.display !== 'none';
   const physSection = `
     <div class="mm-section-title">Physics Bones</div>
-    ${chk('Constraint solver XPBD', !!window._physXPBD)}
-    ${chk('Trace panel visibility', PanelTrace.enabled())}`;
+    ${buildDevToggles((id, label, on) =>
+      `<label class="mm-check-row"><span>${label}</span><input type="checkbox" id="${id}"${
+        on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`)}`;
 
   return `${ipadSection}${physSection}
     <div class="mm-section-title">Numeric Input</div>
@@ -4072,21 +4109,9 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireCheck('#mm-stylus-sculpts',        'ipadStylusSculpt', '_ipadStylusSculpt');
   wireCheck('#mm-always-show-numpad',    'alwaysNumpad',     '_alwaysNumpad');
 
-  // Not wireCheck: the solver flag is owned by PhysicsBones, which persists it and logs the
-  // switch, rather than being a bare window assignment.
-  // NOTE the label has no parentheses on purpose: `chk` derives the id from it, and a "(" in an
-  // id makes querySelector throw rather than simply miss.
-  q('#mm-constraint-solver-xpbd')?.addEventListener('change', (e) => {
-    PhysicsBones.setSolver(e.target.checked);
-  });
-
-  // A DIAGNOSTIC THAT CAN BE SWITCHED ON FROM INSIDE THE HEADSET, for the same reason the solver
-  // is here rather than on a window flag: matt, on the GXR, "its a pain changing things like
-  // this with an envar in the console". It reports every write to a wrist panel's visibility
-  // with the line that did it, through screenLog.
-  q('#mm-trace-panel-visibility')?.addEventListener('change', (e) => {
-    PanelTrace.setEnabled(e.target.checked);
-  });
+  // The same list the VR panel wires, from the same place. These settings are owned by their
+  // modules (PhysicsBones, PanelTrace), which persist them, rather than by a bare window write.
+  wireDevToggles(q, repaintFn);
 
   wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
     (v) => { Tablet.radiusFactor    = v; getOptionsURL.saveOption('tabletRadiusFactor',    v, 300); }, v => v.toFixed(2));

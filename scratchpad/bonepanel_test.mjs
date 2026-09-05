@@ -599,22 +599,25 @@ check('shader-specific groups mute instead of hiding',
 //
 // It lived only on `window`, which meant a console -- and there is no console in a headset.
 // matt: "its a pain changing things like this with an envar in the console on the gxr."
-check('the VR settings menu offers the physics solver',
-  /<div class="mm-section-title">Physics<\/div>/.test(MAIN_SRC)
-    && /id="mm-phys-xpbd"/.test(MAIN_SRC),
+// THE TWO SETTINGS PANELS RENDER ONE LIST. They had independent copies of these toggles, under
+// different ids for the same setting, so a control added to one did not exist in the other --
+// matt: "if i look in the DESKTOP settings panel, i see it. if i look in the VR settings panel,
+// i don't see it." The list is declared once and each panel renders it in its own idiom.
+check('the physics solver is in the shared toggle list',
+  /id: 'mm-phys-xpbd',[\s\S]{0,160}?PhysicsBones\.setSolver\(on\)/.test(MAIN_SRC),
   'the only way to switch solver in a headset is a console that is not there');
-check('...wired to PhysicsBones, which persists it',
-  /q\('#mm-phys-xpbd'\)\?\.addEventListener\('click', \(\) => \{[\s\S]{0,160}?PhysicsBones\.setSolver\(!window\._physXPBD\)/.test(MAIN_SRC));
-check('...and shows the state it is actually in',
-  /const physXPBD      = !!window\._physXPBD;/.test(MAIN_SRC)
-    && /mm-toggle\$\{physXPBD \? ' active' : ''\}/.test(MAIN_SRC),
-  'a toggle that does not read the live flag lies after a console switch');
-// `chk` builds the id from the label, and a "(" in an id makes querySelector THROW rather than
-// simply miss -- so the label must not contain one.
-check('the desktop settings checkbox has a selectable id',
-  /\$\{chk\('Constraint solver XPBD', !!window\._physXPBD\)\}/.test(MAIN_SRC)
-    && /q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC),
-  'parentheses in the label make the wiring selector invalid');
+check('...and it reads the live flag, so it cannot lie after a console switch',
+  /get: \(\) => !!window\._physXPBD/.test(MAIN_SRC));
+check('both panels build their toggles from that list',
+  (MAIN_SRC.match(/buildDevToggles\(\(id, label, on\) =>/g) || []).length === 2,
+  'a second copy is how the two drifted apart in the first place');
+check('...and both wire it from the same place',
+  /wireDevToggles\(q, paint\);/.test(MAIN_SRC) && /wireDevToggles\(q, repaintFn\);/.test(MAIN_SRC),
+  'the VR panel repaints through paint(), the sidebar through repaintFn');
+check('no panel still carries its own solver toggle',
+  !/q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC)
+    && !/q\('#mm-phys-xpbd'\)\?\.addEventListener/.test(MAIN_SRC),
+  'the duplicate ids for one setting are what this replaces');
 
 // ── CAPSULE SOLIDITY, AND SET PARENT ON THE WRIST ─────────────────────────────────────
 //

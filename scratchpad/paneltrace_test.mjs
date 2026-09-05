@@ -196,10 +196,17 @@ _realLog('\n── it is reachable from inside the headset ───────
   check('the reports go to the console, never to screenLog',
     !/screenLog/.test(SRC.replace(/^\s*\/\/.*$/gm, '')),
     'text painted inside a headset cannot be copied out of it');
-  check('Settings offers it', /chk\('Trace panel visibility', PanelTrace\.enabled\(\)\)/.test(MM),
+  // In the SHARED list, so it appears in the VR settings panel and the desktop one from a single
+  // declaration. It went into the desktop builder alone first, and was simply absent in VR --
+  // which is where the switch actually has to be, since that is where the bug happens.
+  check('Settings offers it',
+    /id: 'mm-panel-trace',[\s\S]{0,120}?PanelTrace\.enabled\(\)/.test(MM),
     'a console flag is no use on a GXR — the same reason the solver is a settings item');
+  check('...from the list BOTH panels render, not one of them',
+    (MM.match(/buildDevToggles\(/g) || []).length >= 3,
+    'the declaration plus one render call per panel');
   check('...wired to the module, which persists it',
-    /PanelTrace\.setEnabled\(e\.target\.checked\)/.test(MM)
+    /PanelTrace\.setEnabled\(on\)/.test(MM)
       && /options\.panelTrace = queryBool\(getVal\('panelTrace'\), false\);/.test(OPT));
   check('...and the frame loop drives it', /PanelTrace\.tick\(this\);/.test(SC));
   check('the label has no parentheses, which would make an unqueryable id',
