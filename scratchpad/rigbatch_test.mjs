@@ -103,9 +103,17 @@ check('slots are gathered from the LIVE entries, not held by the batch',
   /for \(const e of main\._skelVis\.values\(\)\)/.test(SRC)
     && !/b\.slots\.push/.test(SRC),
   'a batch that keeps its own list renumbers every joint after a deleted one');
+// The literal list IS the check: a slot left off it is simply never drawn, and nothing else
+// notices. Every batched part has to appear here, capsule ends included.
 check('an entry publishes ALL its slots for gathering',
-  /e\._slots = \[e\.bone\.solid, e\.bone\.ghost, e\.joint\.solid, e\.joint\.ghost,\s*\n\s*e\.wire\.solid, e\.wire\.ghost\]/.test(SRC),
+  /e\._slots = \[e\.bone\.solid, e\.bone\.ghost, e\.joint\.solid, e\.joint\.ghost,\s*\n\s*e\.wire\.solid, e\.wire\.ghost,\s*\n\s*e\.cap\.a\.solid, e\.cap\.a\.ghost, e\.cap\.b\.solid, e\.cap\.b\.ghost\]/.test(SRC),
   'a slot left off this list is simply never drawn');
+// ...and a batched part must NOT also be added to the scene, or it is drawn twice: once as an
+// instance and once as a mesh that no longer has anything placing it.
+check('...and batched parts are not also scene children',
+  /g\.add\(e\.cap\.shaft\.solid, e\.cap\.shaft\.ghost\);/.test(SRC)
+    && !/for \(const p of \[e\.cap\.shaft, e\.cap\.a, e\.cap\.b\]\) g\.add/.test(SRC),
+  'the capsule ends are instanced now, so adding them to the group draws them twice');
 check('the flush runs AFTER the dead entries are disposed',
   SRC.indexOf('if (!live.has(id)) disposeEntry') < SRC.lastIndexOf('flushBatches(main)'),
   'flushing first publishes a joint that is about to be removed');

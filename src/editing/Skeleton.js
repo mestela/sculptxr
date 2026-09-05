@@ -339,8 +339,11 @@ function makeSlot() {
     position: new THREE.Vector3(),
     quaternion: new THREE.Quaternion(),
     scale: new THREE.Vector3(1, 1, 1),
-    material: { color: new THREE.Color() },
+    // `opacity` is recorded and ignored: an instance cannot carry one (the batch material does),
+    // but the placement code writes it and must not have to know that.
+    material: { color: new THREE.Color(), opacity: 1 },
     visible: false,
+    _hi: false,
     // The placement code calls these on a Mesh; here they are already-done and never-needed.
     updateMatrix() {},
     matrixWorldNeedsUpdate: false,
@@ -404,14 +407,45 @@ function lineBatchSlot(main, key, geoFn, ghost) {
   return slot;
 }
 
-function batchSlot(main, key, geoFn, ghost) {
+// `keyHi` gives a slot a SECOND batch to live in, chosen per frame by `slot._hi`. Instancing
+// shares one material, so anything that varies per joint has to be either per-instance data or a
+// separate batch -- and a capsule's preselection is a difference in OPACITY, which an instance
+// cannot carry. Two batches and a flag keeps the highlight exactly as it was; the alternative,
+// brightening the colour instead, would have changed how it looks to save a draw call that this
+// does not cost.
+function batchSlot(main, key, geoFn, ghost, keyHi) {
   batchFor(main, key, geoFn, ghost);
+  if (keyHi) batchFor(main, keyHi, geoFn, ghost);
   const slot = makeSlot();
   slot._key = key;
+  if (keyHi) slot._keyHi = keyHi;
   return slot;
 }
 
 // One pass over every slot, at the end of the frame's visual update.
+// THE CAPSULE BATCHES CARRY WHAT AN INSTANCE CANNOT: opacity, depth-write and render order are
+// material state, so they are set on the batch once a pass rather than per joint. Everything else
+// about a capsule -- where it is, how big, what colour -- is still per instance.
+const CAP_HI_MUL = 2.125;   // the ratio preselection has always brightened by (0.16 -> 0.34)
+function tuneCapsuleBatches(main) {
+  const all = main._skelBatch;
+  if (!all) return;
+  const base = Skeleton.capsuleOpacity();
+  for (const [key, b] of all) {
+    if (!key.startsWith('capEnd')) continue;
+    const m = b.mesh.material;
+    const hi = key.endsWith('Hi');
+    const ghost = key.indexOf('G') === 6;   // capEndG / capEndGHi
+    m.transparent = true;
+    m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
+    // An opaque capsule writes depth or the rig sorts like glass; a translucent one must not, or
+    // it punches holes in what is behind it. Same rule the per-mesh capsules had.
+    m.depthWrite = !ghost && base >= 0.99;
+    m.depthTest = ghost ? true : m.depthTest;
+    b.mesh.renderOrder = 9996;
+  }
+}
+
 function flushBatches(main) {
   const all = main._skelBatch;
   if (!all || !main._skelVis) return;
@@ -419,8 +453,9 @@ function flushBatches(main) {
   const bySlot = new Map();
   for (const e of main._skelVis.values()) {
     for (const slot of e._slots || []) {
-      let list = bySlot.get(slot._key);
-      if (!list) bySlot.set(slot._key, (list = []));
+      const key = (slot._hi && slot._keyHi) ? slot._keyHi : slot._key;
+      let list = bySlot.get(key);
+      if (!list) bySlot.set(key, (list = []));
       list.push(slot);
     }
   }
@@ -579,6 +614,15 @@ function taperMaterial(mat) {
 // pose and play back with the mesh hidden entirely. matt: "capsule mode, would be good to have a
 // toggle or a slider to control opacity... it would be great to have it be fully opaque and
 // animate with the skin turned off."
+// One END of a bind capsule, as batched slots rather than meshes. Four keys: solid and ghost,
+// each with a preselected variant -- see batchSlot on why the highlight needs its own batch.
+function makeCapsuleEndSlots(main) {
+  return {
+    solid: batchSlot(main, 'capEnd', capsuleEndGeometry, false, 'capEndHi'),
+    ghost: batchSlot(main, 'capEndG', capsuleEndGeometry, true, 'capEndGHi'),
+  };
+}
+
 function makeCapsulePart(geo, taper) {
   const p = makePair(geo, 0xffffff); // recoloured per frame from the bone's identity colour
   if (taper) { taperMaterial(p.solid.material); taperMaterial(p.ghost.material); }
@@ -1755,17 +1799,22 @@ function ensureEntry(main, id) {
       label: makeLabel(),
       cap: {
         shaft: makeCapsulePart(capsuleShaftGeometry(), true),
-        a: makeCapsulePart(capsuleEndGeometry()),
-        b: makeCapsulePart(capsuleEndGeometry()),
+        // THE ENDS ARE INSTANCED. They carry no taper -- world-axis aligned, with their three
+        // extents straight in the scale -- so they need nothing an instance cannot hold, and
+        // they were four of the six meshes every bone was drawing. Measured on a 33-joint rig:
+        // capsules on added 192 visible meshes (110 -> 302), six per bone, none of them batched.
+        a: makeCapsuleEndSlots(main),
+        b: makeCapsuleEndSlots(main),
       },
     };
     // The batched slots, listed so flushBatches can gather them without knowing this shape.
     e._slots = [e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
-                e.wire.solid, e.wire.ghost];
+                e.wire.solid, e.wire.ghost,
+                e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
     g.add(e.label.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
           e.pinS.solid, e.pinS.ghost);
-    for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
+    g.add(e.cap.shaft.solid, e.cap.shaft.ghost);   // the ends are batched, not scene children
     main._skelVis.set(id, e);
   }
   return e;
@@ -2546,6 +2595,9 @@ Skeleton.updateVisuals = function (main) {
         o.position.copy(at);
         o.scale.set(ph[0], ph[1], ph[2]);
         o.visible = true;
+        // Which of the two batches this end belongs to this frame. The opacity that used to
+        // carry the preselection cannot ride on an instance, so it rides on the batch.
+        o._hi = !!(isHi || isSel);
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
     }
@@ -2577,6 +2629,7 @@ Skeleton.updateVisuals = function (main) {
   // LAST, after every slot has been written and after the dead entries are gone: the instanced
   // buffers are built from whatever is live at this moment, so flushing earlier would publish a
   // joint that is about to be removed.
+  tuneCapsuleBatches(main);
   flushBatches(main);
 };
 
