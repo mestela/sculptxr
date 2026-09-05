@@ -200,6 +200,28 @@ check('it is inside the section it costs',
   check('...neither of them left on a bare literal',
     !/_vtlSecLaser\.renderOrder = 999;/.test(SC));
 
+  // ONE OWNER FOR THE HIDE. `mesh.visible` on these panels has three writers -- the swap, each
+  // panel's own show(), and this hide -- and is also read as "is the menu open" by the hit tests
+  // and the main-menu toggle. matt: "the minipanel is getting very glitchy. it disappears
+  // randomly, reappears randomly."
+  check('the hide is an episode, not a per-frame state',
+    /if \(wantHidden && !this\._wristHideEpisode\)/.test(SC),
+    'a condition that flickers for one frame would strobe the panels');
+  check('...and it always ends, whatever happened in between',
+    /_endWristHide\(restore\) \{[\s\S]{0,400}?for \(const \[p, was\] of ep\)/.test(SC)
+      && !/if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiGrip\) continue;\s*\n\s*if \(secondaryHeld\)/.test(SC),
+    'the old restore was skipped for any panel not on the grip, and lived inside if (uiGrip)');
+  check('...driven from outside the uiGrip branch, so losing the hand still restores',
+    /this\._updateWristHide\(secondaryHeld\);/.test(SC)
+      && SC.indexOf('this._updateWristHide(secondaryHeld);') < SC.indexOf('if (uiGrip) {'),
+    'every line that could put them back used to be inside if (uiGrip)');
+  check('an explicit panel change ends the episode without replaying the old visibility',
+    /_swapHtmlPanels\(show\) \{\s*\n\s*\/\/[^\n]*\n\s*this\._endWristHide\(false\);/.test(SC),
+    'replaying a remembered visibility over a swap is where the half-swapped states came from');
+  check('a restored panel is re-synced and repainted, not shown with its old texture',
+    /if \(was\) \{ p\._setHostMounted\?\.\(true\); p\.syncFromState\?\.\(\); p\.flushPaint\?\.\(\); \}/.test(SC),
+    'a stale texture shows the tool that was current when it went down');
+
   // The trigger says WHICH HAND. What says whether to hide is the tool having actually taken
   // hold of something in the rig. matt: "it should only hide if the current tool is grab, AND if
   // it is actually selecting and grabbing a pin or joint."

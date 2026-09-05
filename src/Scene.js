@@ -5814,7 +5814,54 @@ class Scene {
 
   // (Legacy onXRFrame loop removed in Three.js WebXR Migration)
 
+  // THE WRIST HIDE, AS ONE EPISODE WITH ONE OWNER.
+  //
+  // `mesh.visible` on these three panels has three writers -- the swap, each panel's own show(),
+  // and this hide -- and it is also READ as "is the menu open" by the hit tests, the main-menu
+  // toggle and VrConfirm. With no arbitration between them the panel state comes apart, which is
+  // what matt hit: "the minipanel is getting very glitchy. it disappears randomly, reappears
+  // randomly, i can see sometimes it gets in a confused halfway state."
+  //
+  // Three rules, and between them the writers cannot fight:
+  //
+  //  * IT IS AN EPISODE, not a per-frame state. It starts on the edge and ends on the release,
+  //    so a condition that flickers for one frame -- and `_vrPinGrabs` does exactly that when a
+  //    hand drops out of the input snapshot -- cannot strobe the panels.
+  //  * IT ALWAYS ENDS. The restore runs whatever has happened in between: pinned, unparented,
+  //    hand lost, panel swapped. The old restore was skipped for any panel not currently on the
+  //    grip and lived inside `if (uiGrip)`, so losing tracking mid-grab hid the menu for good.
+  //  * AN EXPLICIT CHANGE WINS. Swapping panels or toggling the main menu during an episode ends
+  //    it WITHOUT restoring: the user has just said what they want to see, and replaying a
+  //    remembered visibility over the top of that is where the half-swapped states came from.
+  _updateWristHide(wantHidden) {
+    const panels = [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel];
+    if (wantHidden && !this._wristHideEpisode) {
+      this._wristHideEpisode = panels.map((p) => [p, p?.mesh ? p.mesh.visible : null]);
+      for (const [p] of this._wristHideEpisode) if (p?.mesh) p.mesh.visible = false;
+    } else if (!wantHidden && this._wristHideEpisode) {
+      this._endWristHide(true);
+    }
+  }
+
+  _endWristHide(restore) {
+    const ep = this._wristHideEpisode;
+    this._wristHideEpisode = null;
+    if (!ep || !restore) return;
+    for (const [p, was] of ep) {
+      if (!p?.mesh || was === null) continue;
+      p.mesh.visible = was;
+      // RE-SYNCED AND REPAINTED ON THE WAY BACK, exactly as _swapHtmlPanels does for a panel it
+      // is about to show. A panel restored with the texture it happened to hold when it went
+      // down shows whatever tool was current THEN, while everything painted since reads as the
+      // tool that is current NOW -- which is the "confused halfway state where the highlighting
+      // thinks its the bones tool, but the display is the grab tool" matt described.
+      if (was) { p._setHostMounted?.(true); p.syncFromState?.(); p.flushPaint?.(); }
+    }
+  }
+
   _swapHtmlPanels(show) {
+    // An explicit choice outranks a hide in progress — see _updateWristHide.
+    this._endWristHide(false);
     // Sync + flush the incoming panel's texture BEFORE making it visible so
     // the mesh never appears with stale content even for a single frame.
     // Mount it into the host canvas first (it may have been unmounted while
@@ -6733,6 +6780,10 @@ class Scene {
           !!(_grabTool._grabbedMesh && (_grabTool._grabbedMesh._isBone || _grabTool._grabbedMesh._isPinTarget)));
         secondaryHeld = secondaryHeld && _holdsRig;
         this._wristUIHidden = secondaryHeld;
+        // ONE OWNER FOR THE HIDE, and it lives outside the uiGrip branch below on purpose --
+        // see _updateWristHide. Losing the hand mid-grab used to leave the panels hidden for
+        // ever, because every line that could have put them back was inside `if (uiGrip)`.
+        this._updateWristHide(secondaryHeld);
 
         if (uiGrip) {
             if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
@@ -6759,23 +6810,6 @@ class Scene {
               if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
             }
 
-            // ...and hidden while that hand is holding its trigger. Applied here rather than in
-            // each panel: they are hidden as a GROUP, and one left behind would be worse than
-            // not hiding at all.
-            //
-            // WHAT WAS OPEN IS WHAT COMES BACK. Each panel's visibility is remembered on the way
-            // down and restored on the way up — forcing them all visible on release would open
-            // panels the user had closed, which is a worse bug than the one being fixed.
-            for (const _p of [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel]) {
-              if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiGrip) continue;
-              if (secondaryHeld) {
-                if (_p._preHideVisible === undefined) _p._preHideVisible = _p.mesh.visible;
-                _p.mesh.visible = false;
-              } else if (_p._preHideVisible !== undefined) {
-                _p.mesh.visible = _p._preHideVisible;
-                _p._preHideVisible = undefined;
-              }
-            }
             // [HTMLVRPanel] Attach MainMenuPanel to wrist unless pinned in world space.
             if (this._mainMenuPanel && this._mainMenuPanel.mesh && !this._mainMenuPanel.pinned) {
               if (this._mainMenuPanel.mesh.parent !== uiGrip) {
