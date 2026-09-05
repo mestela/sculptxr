@@ -131,6 +131,28 @@ PanelTrace.setEnabled = function (on) {
   window._panelTrace = !!on;
   try { getOptionsURL.saveOption('panelTrace', !!on, 0); } catch (_) {}
   say('panel tracing ' + (on ? 'ON' : 'off'));
+  // AND A SNAPSHOT, so the log says what it is starting from. Everything else here reports
+  // CHANGES, which means a log with no PanelTrace lines in it is ambiguous: nothing happened, or
+  // the tracer was never running. This line settles that, and it prints the whole state of every
+  // panel so the first report has something to be a change FROM.
+  if (on) PanelTrace.snapshot(window.app || window.sculptgl);
+};
+
+PanelTrace.snapshot = function (scene) {
+  if (!scene) return;
+  const cam = scene._camera && scene._camera.getThreeCamera ? scene._camera.getThreeCamera() : null;
+  for (const [name, p] of [['MiniPanel', scene._miniPanel], ['ToolPicker', scene._toolPickerPanel],
+                           ['MainMenu', scene._mainMenuPanel]]) {
+    if (!p || !p.mesh) { say(name + ': not built yet'); continue; }
+    const why = whyHidden(p.mesh);
+    const at = place(p.mesh, cam);
+    const g = p.mesh.geometry && p.mesh.geometry.parameters;
+    say(name + ': ' + (why || 'shown')
+      + (at && at.d !== null ? '  ' + at.d.toFixed(2) + 'm from the head' + (at.behind ? ' BEHIND it' : '') : '')
+      + (g ? '  ' + (+g.width).toFixed(3) + 'x' + (+g.height).toFixed(3) : '')
+      + '  parent=' + ((p.mesh.parent && (p.mesh.parent.name || p.mesh.parent.type)) || 'NONE')
+      + (p.pinned ? '  pinned' : ''));
+  }
 };
 
 // Called every frame from the render loop. Cheap when off: three property reads and a return.

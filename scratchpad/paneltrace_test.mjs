@@ -245,6 +245,31 @@ _realLog('\n── all three panels, and only when they exist ──────
   check('...and the ones that do exist are wrapped', !!mini._ptWrapped && !!main._ptWrapped);
 }
 
+_realLog('\n── switching it on says what it is starting from ───────────────────────');
+{
+  globalThis.window._panelTrace = false;
+  const mesh = obj('mini'); const { grip } = sceneWith(mesh);
+  mesh.geometry = { parameters: { width: 0.24, height: 0.18 } };
+  mesh.matrixWorld = mat4At(0.1, 1.2, -0.3);
+  const scene = app(mesh);
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  grip.name = 'wrist_panel_anchor';
+  globalThis.window.app = scene;
+  clear();
+  PanelTrace.setEnabled(true);
+  const l = logged();
+  // Everything else reports CHANGES, so a log with no PanelTrace lines is ambiguous -- nothing
+  // happened, or it was never running. The snapshot settles that.
+  check('switching it on announces itself', l.some((m) => /panel tracing ON/.test(m)));
+  check('...and dumps every panel, so the log has a starting point',
+    l.some((m) => /MiniPanel: shown/.test(m) && /m from the head/.test(m)
+                  && /0\.240x0\.180/.test(m) && /parent=wrist_panel_anchor/.test(m)),
+    'a report of a change is unreadable without the state it changed from');
+  check('...naming a panel that does not exist yet as such',
+    l.some((m) => /ToolPicker: not built yet/.test(m)));
+  globalThis.window.app = undefined;
+}
+
 _realLog('\n── it is reachable from inside the headset ─────────────────────────────');
 {
   const MM = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
