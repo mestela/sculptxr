@@ -741,5 +741,22 @@ check('the wrist panel rebuilds when the bone selection changes',
 check('...keyed on joints only, so a sculpt selection does not churn it',
   /\.filter\(\(m\) => m && m\._isBone\)\.map\(\(m\) => m\.getID\(\)\)\.join\(','\)/.test(MINI));
 
+// ── A PHYSICS CHAIN'S REST IS THE AUTHORED ONE ────────────────────────────────────────
+//
+// A physics chain has no keys and, with no active pin above it, no solver either -- so nothing
+// defines its pose at all and it keeps whatever it was SAVED in. Save a scene mid-swing and that
+// bent pose is the rig's idea of frame 1 for ever after. matt: "compare on the first frame the
+// values for the physics bone transforms vs their bind pose values, they're clearly very
+// different." Measured on pinxpbd.sxr: every physics joint sat 0.15 to 0.79 from its own _ikRest
+// on frame 0, and evaluating the frame moved them by nothing, because nothing was going to.
+check('a chain that has never simulated is put on its authored rest, not the saved pose',
+  /if \(!joint\._physWritten\) \{[\s\S]{0,140}?if \(joint\._ikRest\) \{ mat4Copy\(joint\.getMatrix\(\), joint\._ikRest\)/.test(SRC),
+  'a file saved mid-swing comes back bent and nothing ever straightens it');
+// And the first capture of the rest takes it from there too, or "wherever it was the first time
+// the sim ran" quietly becomes the rest and the same thing happens by another route.
+check('...and the rest is first captured from the authored one, in BOTH solvers',
+  (SRC.match(/link\.parent\._ikRest \|\| link\.parent\.getMatrix\(\)/g) || []).length === 2,
+  'one solver still learns its rest from whatever pose it happens to see');
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

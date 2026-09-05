@@ -276,7 +276,20 @@ PhysicsBones.reset = function (main) {
   // their frame-1 local pose, worst 0.098 -- and 0 of 16 with physics off, which is what named
   // physics rather than the solver as the cause.
   const restore = (joint) => {
-    if (!joint || !joint._physRest || !joint._physWritten) return;
+    if (!joint) return;
+    // NEVER SIMULATED YET: put it on the AUTHORED rest, not on whatever the file happened to
+    // store. A physics chain has no keys and, with no active pin above it, no solver either --
+    // so nothing defines its pose at all, and it simply keeps whatever it was saved in. Save a
+    // scene mid-swing and that bent pose comes back as the rig's idea of frame 1 for ever.
+    // matt: "compare on the first frame the values for the physics bone transforms vs their bind
+    // pose values, they're clearly very different." Measured on pinxpbd.sxr, every physics joint
+    // sat 0.15 to 0.79 away from its own _ikRest on frame 0, and evaluating the frame moved them
+    // by nothing, because there was nothing to move them.
+    if (!joint._physWritten) {
+      if (joint._ikRest) { mat4Copy(joint.getMatrix(), joint._ikRest); Skeleton.syncThree(joint); }
+      return;
+    }
+    if (!joint._physRest) return;
     // ...unless something else has written the joint since, in which case that is the pose now
     // and putting our older one back would undo it. Same rule the step uses.
     const now = joint.getMatrix();
@@ -433,8 +446,12 @@ PhysicsBones.step = function (main, dt) {
       // at, which was the pose physics had just bent. The bend became the rest and the arm never
       // came back. Shared by reference with the state entry, so the two cannot disagree.
       if (!pst.rest) {
+        // FROM THE AUTHORED REST where there is one -- both solvers, same rule. Capturing
+        // "wherever it was the first time the sim ran" makes a saved mid-swing pose the
+        // permanent rest, which is how a file came back with bent arms on frame 1.
         if (!link.parent._physRest) {
-          link.parent._physRest = Array.prototype.slice.call(link.parent.getMatrix());
+          link.parent._physRest = Array.prototype.slice.call(
+            link.parent._ikRest || link.parent.getMatrix());
         }
         pst.rest = link.parent._physRest;
       }
@@ -1006,7 +1023,12 @@ PhysicsBones.stepXPBD = function (main, dt) {
       if (!pst) { pst = { p: new THREE.Vector3(), prev: new THREE.Vector3(), v: new THREE.Vector3() }; _state.set(pid, pst); }
       pst.joint = link.parent;
       if (!pst.rest) {
-        if (!link.parent._physRest) link.parent._physRest = Array.prototype.slice.call(link.parent.getMatrix());
+        // FROM THE AUTHORED REST where there is one, for the same reason: capturing "wherever it
+        // was the first time the sim ran" makes a saved mid-swing pose the permanent rest.
+        if (!link.parent._physRest) {
+          link.parent._physRest = Array.prototype.slice.call(
+            link.parent._ikRest || link.parent.getMatrix());
+        }
         pst.rest = link.parent._physRest;
       }
       Skeleton.jointPos(link.parent, _xPar);
