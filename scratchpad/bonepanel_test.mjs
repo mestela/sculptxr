@@ -681,6 +681,12 @@ check('...and the gain is capped so a lit capsule cannot clip toward white',
 // Instances inside one InstancedMesh draw in buffer order and are never sorted: three sorts
 // objects. Without depth writes a forearm painted after an upper arm shows through it whichever
 // is nearer. matt: capsules "don't seem to depth sort properly against each other".
+// A GreaterDepth pass shows through whatever depth is already in the buffer when it runs, so
+// sharing an order with the solid capsules meant it showed through THEM. matt: "when an arm goes
+// behind a leg, i can still see the arm fully through the leg."
+check('the capsule ghost draws BEFORE the solid pass, so it can only reveal through the sculpt',
+  /b\.mesh\.renderOrder = ghost \? 9995 : 9996;/.test(SKEL_SRC),
+  'one order later and the rig has no depth culling against itself at all');
 check('every solid-pass capsule writes depth, translucent or not',
   /m\.depthWrite = !ghost;/.test(SKEL_SRC),
   'no draw order can sort instances; only the depth buffer can');

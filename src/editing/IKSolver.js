@@ -137,7 +137,17 @@ IKSolver.pinObject = function (joint) {
   const p = joint && joint._boneIKPinObj;
   // A pin whose object has been deleted from the scene is no pin at all. Checked here rather
   // than hunted down at every call site, so a dangling reference degrades to "unpinned".
-  return p && p._isPinTarget ? p : null;
+  if (!p || !p._isPinTarget) return null;
+  // ...AND DELETING ONE DOES NOT CLEAR THE FLAG. `_isPinTarget` is a property of the mesh, so a
+  // deleted pin still answers to it and this guard passed straight over a dangling reference.
+  // What deletion actually does is take the three mesh out of its parent -- everything else is
+  // left intact ON PURPOSE, so undo can put the same object back -- and that is the condition
+  // to read. Selecting several pins in the outliner and deleting them then crashed the next
+  // frame in setModelSpaceMatrix, which reads `tm.parent.updateWorldMatrix` on the pin this
+  // returned. matt: "Cannot read properties of null (reading 'updateWorldMatrix')".
+  const tm = p.getThreeMesh && p.getThreeMesh();
+  if (tm && !tm.parent) return null;
+  return p;
 };
 
 // Resolve a pinned joint to its driving control only where a caller explicitly needs the

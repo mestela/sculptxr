@@ -404,7 +404,11 @@ class Mesh {
   setModelSpaceMatrix(modelMat) {
     const tm = this.getThreeMesh();
     const wg = window._sxrWorldGroup;
-    if (!tm || !wg || tm.parent === wg) { mat4.copy(this._transformData._matrix, modelMat); return; }
+    // A DETACHED MESH IS TREATED AS A TOP-LEVEL ONE. Deleting a mesh takes its three mesh out of
+    // its parent and leaves everything else intact for undo, so a reference held elsewhere ends
+    // up here with `tm.parent` null and the conversion below threw on it. Local IS model space
+    // for something that is not in the graph, which is exactly what the flat case does.
+    if (!tm || !wg || !tm.parent || tm.parent === wg) { mat4.copy(this._transformData._matrix, modelMat); return; }
     tm.parent.updateWorldMatrix(true, false);
     // parent model-space = inverse(worldGroup.matrixWorld) * parent.matrixWorld
     mat4.invert(_MS_INV, wg.matrixWorld.elements);

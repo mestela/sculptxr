@@ -357,6 +357,22 @@ function makeSlot() {
 // A shaft batch carries two extra per-instance attributes; everything else is a plain batch.
 function isShaftKey(key) { return typeof key === 'string' && key.startsWith('capShaft'); }
 
+// THE JOINT'S PIN, IF IT STILL EXISTS. `_isPinTarget` is a property of the mesh and a deleted
+// pin still answers to it, so that test alone walked straight over a dangling reference: what
+// deletion does is take the three mesh out of its parent and leave every other reference intact
+// ON PURPOSE, so undo can put the same object back. Selecting several pins in the outliner and
+// deleting them therefore crashed the next frame's visual pass. matt: "if i use the secondary
+// trigger to shift select several pins in the outliner and then delete them, i get this error:
+// Cannot read properties of null (reading 'updateWorldMatrix')". Read off the joint rather than
+// through IKSolver for the same reason everything else here is: the visuals do not import the
+// solver. An undo re-adds the mesh to the graph and the pin comes back on its own.
+function livePin(joint) {
+  const p = joint && joint._boneIKPinObj;
+  if (!p || !p._isPinTarget) return null;
+  const tm = p.getThreeMesh && p.getThreeMesh();
+  return (tm && !tm.parent) ? null : p;
+}
+
 // InstancedMesh does not manage custom attributes, so they are attached to its geometry and
 // resized alongside the matrix buffer whenever the batch grows.
 function ensureTaperAttrs(mesh, cap) {
@@ -479,7 +495,15 @@ function tuneCapsuleBatches(main) {
     // grid), which still shows through it -- and that is the trade the rig wants.
     m.depthWrite = !ghost;
     m.depthTest = ghost ? true : m.depthTest;
-    b.mesh.renderOrder = 9996;
+    // THE GHOST DRAWS FIRST, so it can only reveal through the SCULPT. It is a GreaterDepth
+    // pass -- "paint me wherever something is nearer" -- so what is already in the depth buffer
+    // when it runs decides what it shows through. Sharing 9996 with the solid pass, the solid
+    // capsules had already written their depth, so the ghost of an arm behind a leg was painted
+    // over the leg and the rig read as having no depth culling at all. matt: "when an arm goes
+    // behind a leg, i can still see the arm fully through the leg." One order earlier, the only
+    // depth it can test against is the sculpt's, which is the one thing it exists to show
+    // through -- and the solid pass then paints over it.
+    b.mesh.renderOrder = ghost ? 9995 : 9996;
   }
 }
 
@@ -2406,8 +2430,8 @@ Skeleton.updateVisuals = function (main) {
     // the solver (and there is no import cycle).
     // Declared out here, not inside the `if (pinMode)` below: the preselection highlight
     // further down needs it whether or not this joint is pinned.
-    const pinObj = j._boneIKPinObj;
-    const pinMode = (pinObj && pinObj._isPinTarget) ? ((pinObj._pinMode | 0) & 7) : 0;
+    const pinObj = livePin(j);
+    const pinMode = pinObj ? ((pinObj._pinMode | 0) & 7) : 0;
     if (pinMode) {
       // THE MARKER BELONGS AT THE ANCHOR, NOT AT THE JOINT.
       //
@@ -2644,8 +2668,7 @@ Skeleton.updateVisuals = function (main) {
     // A pinned LEAF has no bone growing out of it and would show nothing at all, so it falls
     // back to the bone that ENDS there. That is the one case where the two readings cannot
     // agree, and showing the pin somewhere beats showing it nowhere.
-    const rootPin = (parent._boneIKPinObj && parent._boneIKPinObj._isPinTarget)
-      ? ((parent._boneIKPinObj._pinMode | 0) & 7) : 0;
+    const rootPin = livePin(parent) ? ((parent._boneIKPinObj._pinMode | 0) & 7) : 0;
     const leafPin = hasChildBone.has(id) ? 0 : pinMode;
     const tintMode = rootPin || leafPin;
     // IDENTITY COLOUR WHILE RIGGING, plain yellow otherwise. The capsule below already wears

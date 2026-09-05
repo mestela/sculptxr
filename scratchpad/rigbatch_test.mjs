@@ -366,5 +366,33 @@ check('...and it can still be re-measured when the scene really does change',
   }
 }
 
+// ── A DELETED PIN IS NOT A PIN ────────────────────────────────────────────────────────────
+//
+// Deleting a mesh takes its three mesh out of its parent and leaves every other reference
+// intact, ON PURPOSE, so undo can put the same object back. So `_isPinTarget` -- a property of
+// the mesh -- still answers true for a deleted pin, and every guard written as "is it a pin
+// target" walked straight over the dangling reference. matt deleted a multi-selection of pins
+// from the outliner and the next frame threw in setModelSpaceMatrix.
+{
+  const IKS = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
+  const MESH = fs.readFileSync(path.join(REPO, 'src/mesh/Mesh.js'), 'utf8');
+  check('the visuals read the joint\'s pin through a liveness test',
+    /function livePin\(joint\)/.test(SRC) && /return \(tm && !tm\.parent\) \? null : p;/.test(SRC),
+    'a mesh out of the scene graph is deleted, whatever its flags still say');
+  check('...and the per-frame pin draw uses it',
+    /const pinObj = livePin\(j\);/.test(SRC),
+    'this is the line that crashed');
+  check('...and so does the solver, from its own copy of the rule',
+    /const tm = p\.getThreeMesh && p\.getThreeMesh\(\);\s*\n\s*if \(tm && !tm\.parent\) return null;/.test(IKS));
+  check('...and no rig draw still tests _isPinTarget alone',
+    !/pinObj && pinObj\._isPinTarget/.test(SRC),
+    'that test is what let the dangling reference through');
+  // The same class of crash, closed where it actually threw: local IS model space for something
+  // that is not in the graph, which is exactly what the flat case already does.
+  check('a detached mesh converts model space as a top-level one, not by throwing',
+    /if \(!tm \|\| !wg \|\| !tm\.parent \|\| tm\.parent === wg\)/.test(MESH),
+    "tm.parent.updateWorldMatrix on a deleted mesh is the reported TypeError");
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
