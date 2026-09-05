@@ -67,14 +67,14 @@ class GuiFiles {
           try {
             // Matched to the capture size, or the downscale here undoes it: a 256 thumbnail
             // squeezed back to 128 at quality 0.45 is exactly the mush this was raising.
-            const GALLERY_THUMB = 256;
+            const GALLERY_THUMB = 128;
             if (img.naturalWidth <= GALLERY_THUMB && img.naturalHeight <= GALLERY_THUMB) {
               value.galleryThumb = value.thumb;
             } else {
               const canvas = document.createElement('canvas');
               canvas.width = GALLERY_THUMB; canvas.height = GALLERY_THUMB;
               canvas.getContext('2d').drawImage(img, 0, 0, GALLERY_THUMB, GALLERY_THUMB);
-              value.galleryThumb = canvas.toDataURL('image/jpeg', 0.8);
+              value.galleryThumb = canvas.toDataURL('image/jpeg', 0.9);
             }
             this._browserThumbCache.set(save.key, value.galleryThumb);
           } catch (_) { value.galleryThumb = value.thumb; }
@@ -273,12 +273,11 @@ class GuiFiles {
       try {
         // Gallery cards are roughly 128 CSS pixels wide. A 512px capture quadrupled each
         // dimension only to be shrunk again by the VR HTML rasteriser.
-        // 256, not 128. A browser save's thumbnail is how you find a file again, and at 128
-        // with JPEG quality 0.25 it was mush -- matt, after a long tutorial record: "can the
-        // thumbnails stored for the browser save be a little higher res? they're a bit too
-        // blocky." Four times the pixels at a quality that is actually legible costs about 20KB
-        // a save against 4KB, which is nothing beside the scene it belongs to.
-        const THUMB = 256;
+        // SMALL AND SHARP, not big and mushy. The blockiness was never the pixel count -- it was
+        // JPEG quality 0.25 -- and the saves list is a COLUMN of small rows, so the pixels were
+        // never needed. matt: "if anything the images can be smaller, but of higher quality."
+        // 128 at 0.88 is both crisper than the 256 at 0.72 it replaces and smaller on disk.
+        const THUMB = 128;
 
         // 1. Pick camera position and auto-frame toward the sculpt bounding box
         const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 1000);
@@ -367,7 +366,7 @@ class GuiFiles {
         tempCtx.filter = 'contrast(1.4) brightness(0.8) saturate(1.2)';
         tempCtx.drawImage(rawCanvas, 0, 0);
 
-        thumb = tempCanvas.toDataURL('image/jpeg', 0.72);
+        thumb = tempCanvas.toDataURL('image/jpeg', 0.88);
 
         // 7. Restore hidden children
         hidden.forEach(child => { child.visible = true; });

@@ -668,22 +668,63 @@ const CSS = `
 }
 
 /* Storage gallery */
-.mm-storage-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 5px;
-  margin-bottom: 6px;
-}
-.mm-storage-item {
-  border: 1px solid #313244;
+/* A COLUMN THAT SCROLLS ITSELF, like the outliner. A three-across grid of tiles pushed the
+   panel past its own height, so finding a save meant scrolling the whole menu and the buttons
+   moved while you did it. A list scrolls INSIDE its own box and everything around it stays
+   put. matt: "maybe a list style like the outliner, so just a column... the internal area of
+   the actual files should be scrollable, like how the outliner is scrollable within the larger
+   scrollable panel. ideally the browser saves outer panel won't need any scrolling." */
+.mm-storage-wrap { position: relative; }
+/* Inside the list's border and only as tall as the list — the shared .mm-scrollbar-track
+   stretches to its offset parent, which here would be the whole wrapper. Same as the
+   outliner's, because it is the same job. */
+.mm-storage-sbar {
+  top: 1px; bottom: 7px; right: 1px;
+  width: 12px;
   border-radius: 5px;
-  overflow: hidden;
+}
+.mm-storage-list {
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: ${Math.round(MM_BODY_H * 0.62)}px;
+  overflow-y: auto;
+  overscroll-behavior: contain;   /* a flick inside the list must not scroll the panel too */
+  scrollbar-width: none;          /* the rasteriser does not paint native scrollbars */
+  padding-right: 16px;            /* room for the track, which overlays the right edge */
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+.mm-storage-list::-webkit-scrollbar { display: none; }
+.mm-storage-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background: #181825;
   cursor: pointer;
 }
+.mm-storage-item img,
+.mm-storage-item .mm-storage-noimg {
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 3px;
+  object-fit: cover;
+  background: #313244;
+}
+.mm-storage-noimg {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: #6c7086;
+}
+/* The name takes the room; the date is a hint at the end. Both on one line, because a row that
+   wraps makes the list jump about as names change length. */
+.mm-storage-item .mm-storage-meta { flex: 1; min-width: 0; }
 .mm-storage-item.selected {
   border-color: #89b4fa;
-  box-shadow: 0 0 0 1px #89b4fa inset;
+  background: #1e1e2e;
 }
 .mm-storage-toolbar {
   display: grid;
@@ -714,10 +755,9 @@ const CSS = `
    saves dialog should include the name in the listing." */
 .mm-storage-name {
   display: block;
-  font-size: 9px;
+  font-size: 10px;
   color: #cdd6f4;
-  text-align: center;
-  padding: 2px 2px 0;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -727,7 +767,7 @@ const CSS = `
   display: block;
   font-size: 8px;
   color: #6c7086;
-  text-align: center;
+  text-align: left;
   padding: 2px 0;
   white-space: nowrap;
   overflow: hidden;
@@ -908,35 +948,34 @@ export function buildMenuHTML_files(main) {
   const objAppend = guiFiles?._objColorAppended ?? false;
 
   return `
+    <!-- OPEN REPLACES, IMPORT ADDS, SAVE ROUND-TRIPS, EXPORT IS ONE-WAY. The menu used to
+         offer one file-in button called "Add mesh" and five format buttons called "Save", which
+         says nothing about which of those keeps your rig and which throws it away. matt: "we need
+         more straightforward and easy to understand options for file load vs file import, file
+         save should be really clear as well, again its all a mess and hard to read at a glance."
+         The four words carry the difference now, and the order is the order you use them in. -->
+    <div class="mm-section-title">Open</div>
+    <button class="mm-action-btn" id="mm-open-scene">Open scene…</button>
     <button class="mm-action-btn" id="mm-browser-saves">Browser Saves…</button>
 
+    <div class="mm-section-title">Save</div>
+    <button class="mm-action-btn" id="mm-export-sxr">Save scene (.sxr)</button>
+    <button class="mm-action-btn" id="mm-browser-save-quick">Save to browser…</button>
+
     <div class="mm-section-title">Import</div>
-    <button class="mm-action-btn" id="mm-import-obj">Add mesh (obj, sgl, ply, stl)</button>
+    <!-- ADDS to the scene rather than replacing it, which is what this button has always done
+         -- it just had no counterpart to be distinguished from. -->
+    <button class="mm-action-btn" id="mm-import-obj">Import mesh… (obj, sgl, ply, stl)</button>
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     </div>
 
-    <div class="mm-section-title">Nomad Link</div>
-    <div class="mm-row">
-      <span class="mm-lbl">Address</span>
-      <input type="text" id="mm-nomad-host" class="mm-text-input" placeholder="10.0.0.138" value="${main.getNomadLink?.()._host || getOptionsURL().nomadHost || ''}">
-    </div>
-    <div class="mm-choice-grid cols-2">
-      <button class="mm-choice" id="mm-nomad-connect">Connect</button>
-      <button class="mm-choice" id="mm-nomad-disconnect">Disconnect</button>
-    </div>
-    <div class="mm-choice-grid cols-2">
-      <button class="mm-choice" id="mm-nomad-get-scene">Get scene</button>
-      <button class="mm-choice" id="mm-nomad-get-selection">Get selection</button>
-    </div>
-    <button class="mm-action-btn" id="mm-nomad-send">Send selected to Nomad</button>
-    <label class="mm-check-row"><span>Send edits live</span><input type="checkbox" id="mm-nomad-live"${main._nomadLiveSend ? ' checked' : ''}><span class="mm-checkmark"></span></label>
-    <div id="mm-nomad-status" style="color:#a6adc8;font-size:11px;margin:3px 0">${main.getNomadLink?.().getMessage() || 'Disconnected'}</div>
 
-    <div class="mm-section-title">Save</div>
-    <div class="mm-choice-grid cols-5">
-      <button class="mm-choice" id="mm-export-sxr">sxr</button>
+    <div class="mm-section-title">Export</div>
+    <!-- ONE-WAY. These lose the rig, the history and the frame groups, so calling them "save"
+         was the lie that made this menu confusing. .sxr is the one that comes back. -->
+    <div class="mm-choice-grid cols-4">
       <button class="mm-choice" id="mm-export-glb">glb</button>
       <button class="mm-choice" id="mm-export-obj">obj</button>
       <button class="mm-choice" id="mm-export-ply">ply</button>
@@ -966,6 +1005,27 @@ export function buildMenuHTML_files(main) {
     <button class="mm-action-btn danger" id="mm-clear-scene">
       ${main._clearSceneConfirm ? 'Confirm clear (no undo)' : 'Clear scene…'}
     </button>
+
+
+    <!-- LAST, and rarely: five buttons, a text field and a status line for a bridge you set up
+         once a session. matt: "i think the nomad link stuff should be moved to the bottom." -->
+    <div class="mm-section-title">Nomad Link</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Address</span>
+      <input type="text" id="mm-nomad-host" class="mm-text-input" placeholder="10.0.0.138" value="${main.getNomadLink?.()._host || getOptionsURL().nomadHost || ''}">
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice" id="mm-nomad-connect">Connect</button>
+      <button class="mm-choice" id="mm-nomad-disconnect">Disconnect</button>
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice" id="mm-nomad-get-scene">Get scene</button>
+      <button class="mm-choice" id="mm-nomad-get-selection">Get selection</button>
+    </div>
+    <button class="mm-action-btn" id="mm-nomad-send">Send selected to Nomad</button>
+    <label class="mm-check-row"><span>Send edits live</span><input type="checkbox" id="mm-nomad-live"${main._nomadLiveSend ? ' checked' : ''}><span class="mm-checkmark"></span></label>
+    <div id="mm-nomad-status" style="color:#a6adc8;font-size:11px;margin:3px 0">${main.getNomadLink?.().getMessage() || 'Disconnected'}</div>
+
 
     <button class="mm-action-btn danger" id="mm-exit-vr">Exit VR</button>
   `;
@@ -2141,6 +2201,20 @@ export class MainMenuPanel extends HTMLVRPanel {
     // The outliner is rebuilt from scratch on every content change, so its scrollbar is a NEW
     // pair of elements each time and has to be re-wired here — wiring it once at construction
     // would leave it dead from the first rebuild onwards.
+    // Same for the browser-saves list, and for the same reason: it is rebuilt on every content
+    // change, so a scrollbar wired once at construction would be dead from the first rebuild.
+    const svList = this._element.querySelector('.mm-storage-list');
+    if (svList) {
+      const svWrap = svList.parentElement;
+      wireVRScrollbar(
+        svList,
+        svWrap.querySelector('.mm-storage-sbar'),
+        svWrap.querySelector('.mm-storage-sbar .mm-scrollbar-thumb'),
+        () => this.markDirty()
+      );
+      refreshVRScrollbar(svList, svWrap.querySelector('.mm-storage-sbar .mm-scrollbar-thumb'));
+    }
+
     const olList = this._element.querySelector('.mm-outliner-list');
     if (olList) {
       const olWrap = olList.parentElement;
@@ -3514,31 +3588,41 @@ export function buildMenuHTML_browserSaves(main) {
         const sel   = key === selKey ? ' selected' : '';
         const img   = thumb
           ? `<img src="${thumb}" alt="save">`
-          : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px;color:#6c7086"><i class="fa-solid fa-cube"></i></div>`;
+          : `<div class="mm-storage-noimg"><i class="fa-solid fa-cube"></i></div>`;
         return `
           <div class="mm-storage-item${sel}" data-save-key="${key}" title="${name}">
             ${img}
-            <span class="mm-storage-name">${name}</span>
-            <span class="mm-storage-date">${date}</span>
+            <span class="mm-storage-meta">
+              <span class="mm-storage-name">${name}</span>
+              <span class="mm-storage-date">${date}</span>
+            </span>
           </div>`;
       }).join('');
 
+  // THE LIST FIRST, then the things you do to what you picked. Every control used to sit ABOVE
+  // the saves -- three actions, then Save and Refresh, then pagination -- so you scrolled past
+  // four rows of chrome to reach what you came for, and the buttons that act on a selection were
+  // furthest from it. Saving is the one action that is not about the selection, so it stays at
+  // the top where it reads as "put the current scene in here".
   return `
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-browser-save">Save current scene</button>
+      <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+    </div>
+    <div class="mm-storage-wrap">
+      <div class="mm-storage-list" id="mm-storage-grid">${thumbs}</div>
+      <div class="mm-scrollbar-track mm-storage-sbar"><div class="mm-scrollbar-thumb"></div></div>
+    </div>
     <div class="mm-storage-toolbar">
-      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Load</button>
+      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Open</button>
       <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
       <button class="mm-action-btn danger" id="mm-storage-delete" ${disabled}>Delete</button>
-    </div>
-    <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-browser-save">Save scene</button>
-      <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
     </div>
     <div class="mm-storage-toolbar">
       <button class="mm-action-btn" id="mm-storage-prev" ${page <= 0 ? 'disabled' : ''}>Previous</button>
       <span class="mm-storage-page">${page + 1} / ${pageCount}</span>
       <button class="mm-action-btn" id="mm-storage-next" ${page >= pageCount - 1 ? 'disabled' : ''}>Next</button>
     </div>
-    <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
   `;
 }
 
@@ -3683,8 +3767,21 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     }
   });
 
+  // IMPORT: adds to the scene. Same picker, flag left clear.
   q('#mm-import-obj')?.addEventListener('click', () => {
+    window._fileOpenReplace = false;
     document.getElementById('fileopen')?.click();
+  });
+  // OPEN: replaces it. The flag is read once by SculptGL.loadFiles, before the first file, and
+  // cleared there -- so a cancelled picker cannot leave it armed for the next Import.
+  q('#mm-open-scene')?.addEventListener('click', () => {
+    window._fileOpenReplace = true;
+    document.getElementById('fileopen')?.click();
+  });
+  // The same browser save the Browser Saves panel offers, reachable without going into it --
+  // saving is the thing you do most often and it was two clicks deep.
+  q('#mm-browser-save-quick')?.addEventListener('click', () => {
+    promptSaveName('Save to browser as', 'sculpt', (n) => guiFiles?.saveToBrowserStorage?.(n));
   });
   q('#mm-import-scale')?.addEventListener('change', (e) => {
     main._autoMatrix = e.target.checked;

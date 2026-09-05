@@ -1419,6 +1419,14 @@ class SculptGL extends Scene {
     event.preventDefault();
     var files = event.dataTransfer ? event.dataTransfer.files : event.target.files;
     if (window.screenLog) window.screenLog(`Files detected: ${files.length}`, "yellow");
+    // OPEN REPLACES, IMPORT ADDS. This path has always appended, which is Import's behaviour --
+    // there was simply no Open, so a menu offering one button could not say which it was. The
+    // flag is set by whichever button was pressed and consumed HERE, once, before the first
+    // file: clearing per file would throw away the earlier ones in a multi-select.
+    if (window._fileOpenReplace) {
+      window._fileOpenReplace = false;
+      this.clearScene();
+    }
     for (var i = 0, nb = files.length; i < nb; ++i) {
       var file = files[i];
       var fileType = this.getFileType(file.name);
