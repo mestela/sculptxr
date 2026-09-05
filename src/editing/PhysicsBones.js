@@ -829,6 +829,22 @@ PhysicsBones.stepXPBD = function (main, dt) {
     for (const link of links) chainPinHold = Math.max(chainPinHold, pinHoldOf(link.joint));
     const bendLimit = par.maxBend + (180 - par.maxBend) * Math.min(1, chainPinHold);
 
+    // BELOW A PIN, THE CHAIN STOPS SIMULATING AND FOLLOWS THE POSE.
+    //
+    // The joints ABOVE a pin are solving for it -- that is the IK half, and they must keep
+    // moving. The joints BELOW it are determined by nothing except gravity, so a pinned wrist
+    // held its mark while the hand hanging off it drooped. matt: "the wrist is matching the pin
+    // translation/rotation, and the elbow is respecting the extra aim constraint... but the hand
+    // bones are still under gravity and collapse", asking for a rule that a constrained chain
+    // moves "as if its in full fbik mode, especially if the pin weights are at 1".
+    //
+    // Scoped to below the pin rather than the whole chain, because zeroing the lot would take the
+    // simulation away from the joints that are reaching FOR the pin, and the pin would stop being
+    // reached. Faded by the pin's own weight, so this arrives with the handoff.
+    let pinIdx = -1;
+    for (let i = 0; i < links.length; i++) if (pinHoldOf(links[i].joint) > 0) pinIdx = i;
+    const belowPinScale = 1 - Math.min(1, chainPinHold);
+
     // The particles of this chain, in order. Index i is links[i].joint; the chain's own root is
     // the kinematic anchor everything hangs from.
     const P = [], PREV = [], IM = [];
@@ -995,8 +1011,20 @@ PhysicsBones.stepXPBD = function (main, dt) {
       }
       Skeleton.jointPos(link.parent, _xPar);
       Skeleton.jointPos(j, _xAnim);
+      // A link is "below the pin" when the joint it rotates about sits at or past the pinned one:
+      // nothing it does can help reach the pin, so at full hold it simply follows the pose.
+      const li = links.indexOf(link);
+      const effBlend = (pinIdx >= 0 && li > pinIdx) ? blend * belowPinScale : blend;
+      // AND THE PARTICLE IS PARKED, not merely blended past. Lerping only what is WRITTEN leaves
+      // the particle simulating underneath with its own momentum, so the hand still eased down
+      // through the pose on its way to nowhere -- worst droop 3.39 rather than the 9.45 it was,
+      // but not the "full fbik" matt asked for. Parked, it starts each frame on the pose it is
+      // going to be written to, and releasing the pin later resumes from there rather than from
+      // wherever gravity had dragged it meanwhile. Same thing the chain-level "fully off" branch
+      // does, applied per link.
+      if (effBlend <= 0) { st.p.copy(_xAnim); st.prev.copy(_xAnim); st.v.set(0, 0, 0); }
       _xTo.copy(st.p);
-      if (blend < 1) _xTo.lerp(_xAnim, 1 - blend);
+      if (effBlend < 1) _xTo.lerp(_xAnim, 1 - effBlend);
       _xA.subVectors(_xAnim, _xPar);
       _xB.subVectors(_xTo, _xPar);
       // A 6DOF PIN OWNS THE JOINT'S ROTATION, because there is only one of them to own.

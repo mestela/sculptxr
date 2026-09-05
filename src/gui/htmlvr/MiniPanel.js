@@ -597,6 +597,7 @@ export class MiniPanel extends HTMLVRPanel {
     this._pinned        = false;  // always false — no pin button on MiniPanel
     this._colorWheel    = null;
     this._lastExtrasIdx = -1;     // track last-built extras so we never compare innerHTML
+    this._lastExtrasKey = null;   // tool + bone selection: both change what the block contains
 
     // Initialise the Three.js mesh.
     this.init(scene, camera, renderer);
@@ -750,7 +751,7 @@ export class MiniPanel extends HTMLVRPanel {
         refresh: () => this.syncFromState(),
         // Binding and Make Skin change WHICH buttons exist, and the extras markup is only
         // rebuilt when the tool changes, so those have to force one.
-        rebuild: () => { this._lastExtrasIdx = -1; this.syncFromState(); },
+        rebuild: () => { this._lastExtrasIdx = -1; this._lastExtrasKey = null; this.syncFromState(); },
       });
     }
 
@@ -1376,8 +1377,23 @@ export class MiniPanel extends HTMLVRPanel {
     // while on the Paint tool, causing a ~1-second flicker cycle.
     const extrasEl = root.querySelector('#mp-extras');
     if (extrasEl) {
-      if (this._lastExtrasIdx !== idx) {
-        // Tool changed: rebuild the whole block and re-wire.
+      // THE TOOL IS NOT THE ONLY THING THIS BLOCK DEPENDS ON. Keyed on the tool alone, selecting
+      // a different bone never rebuilt it -- so the physics sliders, which exist only when a
+      // flagged joint is selected, simply did not appear until something else forced a rebuild.
+      // matt: "if i select the shoulder to bring up the physics properties, they're not
+      // displayed. i have to click the physics button again to turn it off, then turn it on
+      // again to display them", and, correctly: "are you reading the state of the selected bone
+      // in order to know if you show the physics properties or not?" It is -- it just was not
+      // re-reading it.
+      //
+      // JOINTS ONLY in the key. Keying on the whole selection would rebuild the block whenever a
+      // sculpt selection changed, which is the per-sync churn the note above is about.
+      const selKey = (main.getSelectedMeshes?.() || [])
+        .filter((m) => m && m._isBone).map((m) => m.getID()).join(',');
+      const extrasKey = idx + '|' + selKey;
+      if (this._lastExtrasKey !== extrasKey) {
+        // Tool or bone selection changed: rebuild the whole block and re-wire.
+        this._lastExtrasKey = extrasKey;
         this._lastExtrasIdx = idx;
         extrasEl.innerHTML  = this._buildExtrasHTML(sm, idx);
         this._wireExtras(main);

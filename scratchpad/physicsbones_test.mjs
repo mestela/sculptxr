@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
 
 const REPO = '/Users/mattestela/sculptxr';
+const MINI = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MiniPanel.js', 'utf8');
 const BONE = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/PhysicsBones.js'), 'utf8');
 
@@ -699,6 +700,46 @@ check('...eased in by the pin weight, not snapped',
 check('...leaving the aim to every joint no pin is holding',
   /\} else if \(_xA\.lengthSq\(\) > 1e-12 && _xB\.lengthSq\(\) > 1e-12\) \{/.test(SRC),
   'a free chain stops simulating');
+
+// ── BELOW A PIN, THE CHAIN FOLLOWS THE POSE ───────────────────────────────────────────
+//
+// The joints ABOVE a pin are solving for it and must keep moving; the joints BELOW it are
+// determined by nothing but gravity, so a pinned wrist held its mark while the hand hanging off
+// it drooped. matt: "the wrist is matching the pin translation/rotation... but the hand bones are
+// still under gravity and collapse", asking for a constrained chain to move "as if its in full
+// fbik mode, especially if the pin weights are at 1".
+//
+// Measured on pinxpbd.sxr at full pin weight -- how far the local matrix of the joint below the
+// pin strays from its animated pose (worst / mean):
+//   before  1.0234 / 0.1691    after  0.0817 / 0.0027
+check('below a pin the chain stops simulating and follows the pose',
+  /const effBlend = \(pinIdx >= 0 && li > pinIdx\) \? blend \* belowPinScale : blend;/.test(SRC)
+    && /const belowPinScale = 1 - Math\.min\(1, chainPinHold\);/.test(SRC),
+  'the hand hangs off a held wrist and collapses under gravity');
+// Scoped BELOW the pin, not over the whole chain: zeroing the lot would take the simulation away
+// from the joints reaching FOR the pin, and the pin would stop being reached at all.
+check('...and only below it, so the joints reaching for the pin keep simulating',
+  /for \(let i = 0; i < links\.length; i\+\+\) if \(pinHoldOf\(links\[i\]\.joint\) > 0\) pinIdx = i;/.test(SRC));
+// Blending only what is WRITTEN leaves the particle simulating underneath with its own momentum.
+check('...with the particle parked, not merely blended past',
+  /if \(effBlend <= 0\) \{ st\.p\.copy\(_xAnim\); st\.prev\.copy\(_xAnim\); st\.v\.set\(0, 0, 0\); \}/.test(SRC));
+
+// ── THE WRIST PANEL RE-READS THE SELECTION ────────────────────────────────────────────
+//
+// The extras block was keyed on the TOOL alone, so selecting a different bone never rebuilt it
+// and the physics sliders -- which exist only when a flagged joint is selected -- did not appear
+// until something else forced a rebuild. matt: "if i select the shoulder to bring up the physics
+// properties, they're not displayed. i have to click the physics button again to turn it off,
+// then turn it on again", and his own diagnosis: "are you reading the state of the selected bone
+// in order to know if you show the physics properties or not?"
+check('the wrist panel rebuilds when the bone selection changes',
+  /const extrasKey = idx \+ '\|' \+ selKey;/.test(MINI)
+    && /if \(this\._lastExtrasKey !== extrasKey\) \{/.test(MINI),
+  'the physics sliders do not appear until the tool changes');
+// Joints only: keying on the whole selection would rebuild on every sculpt selection change,
+// which is the per-sync churn the surrounding note warns about.
+check('...keyed on joints only, so a sculpt selection does not churn it',
+  /\.filter\(\(m\) => m && m\._isBone\)\.map\(\(m\) => m\.getID\(\)\)\.join\(','\)/.test(MINI));
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
