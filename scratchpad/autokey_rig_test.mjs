@@ -128,7 +128,10 @@ check('the registry keys any mesh generically', /_writeTransformKey\(mesh, time\
   // truncated the moment a diagnostic was added inside the block — reporting correct code as
   // broken, which is the standing lesson this repo already carries about slicing by length.
   // Walk the braces from the `if (mesh._isBone) {` instead.
-  const i = REG.indexOf('mesh._isBone');
+  // The BLOCK, not the first mention: an early-return guard added above it (the bind-pose hold)
+  // also names `mesh._isBone`, and anchoring on the bare identifier sliced that one-line guard
+  // instead and reported both rules as missing.
+  const i = REG.indexOf('if (mesh._isBone || mesh._isPinTarget) {');
   let near = '';
   if (i !== -1) {
     const open = REG.indexOf('{', i);

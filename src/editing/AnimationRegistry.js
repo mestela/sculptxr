@@ -2906,6 +2906,12 @@ class AnimationRegistry {
 
     if (!mesh || (!window._animPlaying && !forceScrub)) return;
 
+    // THE BIND-POSE HOLD OUTRANKS THE KEYS, for the rig only. Sculpting at the bind pose means
+    // the joints are being held somewhere the animation disagrees with, so evaluating a bone or
+    // a pin here would undo the hold on the next scrub. Everything else about the frame -- other
+    // meshes, blendshapes, visibility -- carries on evaluating normally.
+    if (window._bindPoseHold && (mesh._isBone || mesh._isPinTarget)) return;
+
     // Recording mesh: normally fully suppressed so the live performance isn't stomped by
     // playback. EXCEPT a shape (vertex) take — there the loop must keep playing so you
     // can see prior waves and puppeteer new ones on top; we only suppress the ShotSculpt

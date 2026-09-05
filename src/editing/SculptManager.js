@@ -410,6 +410,11 @@ class SculptManager {
     // baked. On stroke END, not per sample: the cost is over the SKIN's vertices, so running it
     // inside a stroke would price a hundred thousand distance tests into every mouse move.
     Skinning.onCageEdited(this._main, this._main.getMesh?.());
+
+    // ...AND A STROKE ON A BOUND MESH IS AN EDIT TO ITS REST SHAPE. The skin pass rebuilds the
+    // bound level from `_skinSrc` on every pose change, so a stroke that never reaches it is
+    // reverted the moment the rig next moves -- silently, which is the failure this closes.
+    Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   preUpdate() {

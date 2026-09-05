@@ -1825,6 +1825,10 @@ IKSolver.resolveToJoint = function (main, joint) {
 };
 
 IKSolver.holdPins = function (main) {
+  // Same rule as the physics tick: while the bind pose is held, nothing that drives the rig may
+  // write to it. A pin dragged during a bind-pose sculpt is an instruction for the pose you are
+  // coming BACK to, not for the one you are sculpting in.
+  if (window._bindPoseHold) return;
   const _t0 = window._ikPerf ? performance.now() : 0;
   try {
   // Consumed FIRST, before any early return: a set left behind would be read by a later solve

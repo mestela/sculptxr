@@ -1059,6 +1059,196 @@ Skinning.captureSource = function (mesh) {
   mesh._skinMushDirty = true;
 };
 
+// ---- rest-space write-back ------------------------------------------------------
+//
+// A SCULPT HAS TO GO BACK WHERE THE SKIN PASS READS FROM, or it does not exist.
+//
+// `apply()` treats the bound level's vertex array as an OUTPUT buffer: every frame the pose
+// changes it recomputes it from `_skinSrc`. `_skinSrc` was written in exactly three places --
+// at bind, on a blendshape recomposite, and on load -- and never after a stroke. So sculpting a
+// bound mesh worked until the rig next moved and then silently reverted. Measured on walkwave:
+// 200 vertices edited at rest pose, one joint nudged, 0 survived. It is invisible while the rig
+// is still, which is why it reads as "going back to the bind pose isn't 100% reliable" rather
+// than as a rule.
+//
+// This is the REST-POSE half of the fix (grade 1). At bind pose every skin matrix is the
+// identity, so the level's vertices ARE rest-space vertices and the commit is a copy. Sculpting
+// while POSED needs the inverse of the per-vertex composite -- src += (Σw·M)⁻¹ · delta -- and is
+// the next piece of work; until it lands, a posed stroke is REVERTED IMMEDIATELY and said out
+// loud rather than being left to die quietly at the next scrub.
+//
+// Everything here is guarded on being able to prove the copy is right, and refuses otherwise:
+// wrongly adopting a posed shape as the rest shape would corrupt the bind irreversibly.
+const BIND_EPS = 1e-4;
+const _IDENT = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+
+// Is every joint's skin matrix the identity? THE MATRICES, not the rig: a rig sitting on its
+// rest pose is the usual way to be here, but what actually matters is that current × inverse-
+// bind composes to nothing, and that is also true of a joint that was moved and put back, or
+// one whose animation happens to evaluate to its bind transform on this frame. Asking the
+// question this way needs no notion of "pose mode" and cannot disagree with what apply() does.
+Skinning.atBindPose = function (main, mesh) {
+  if (!Skinning.isBound(mesh) || !mesh._skinInvBind) return false;
+  const joints = resolveJoints(main, mesh);
+  _mMesh.fromArray(mesh.getModelSpaceMatrix());
+  _mInv.copy(_mMesh).invert();
+  // The translation tolerance is in MODEL UNITS, so it scales with the mesh; the basis is
+  // dimensionless and does not. One epsilon for both would be far too tight on a large mesh
+  // and far too loose on a small one.
+  const posTol = BIND_EPS * Math.max(1, mesh.computeLocalRadius ? mesh.computeLocalRadius() : 1);
+  for (let i = 0; i < joints.length; i++) {
+    const j = joints[i];
+    if (!j) continue;
+    _mJoint.fromArray(j.getModelSpaceMatrix());
+    _mSkin.multiplyMatrices(_mInv, _mJoint).multiply(mesh._skinInvBind[i]);
+    const e = _mSkin.elements;
+    for (let k = 0; k < 16; k++) {
+      const tol = (k === 12 || k === 13 || k === 14) ? posTol : BIND_EPS;
+      if (Math.abs(e[k] - _IDENT[k]) > tol) return false;
+    }
+  }
+  return true;
+};
+
+// Said once per stroke, because losing a stroke IS worth a line every time it happens -- the
+// failure this replaces was silent, and a silent one is what cost the trust in the first place.
+function restRefused(mesh, why) {
+  mesh._skinDirty = true;   // put the mesh back the way the skin pass says it is, now, visibly
+  if (window.screenLog) window.screenLog('Sculpt not saved: ' + why, '#f9e2af');
+  else console.warn('[Skinning] sculpt not committed to rest space: ' + why);
+  return false;
+}
+
+// Take what is on screen as the new rest shape. Called at stroke end and after undo/redo --
+// the three places that change geometry without the skin pass knowing.
+Skinning.commitToRest = function (main, mesh) {
+  if (!Skinning.isBound(mesh)) return false;
+  const level = boundLevel(mesh);
+  if (!level) return false;
+  const nbV = (mesh._skinRest.length / 3) | 0;
+  if (level.getNbVertices() !== nbV) return false;
+
+  // ONLY THE LEVEL THE WEIGHTS ARE FOR. Above it the shape lives in detail vectors that are
+  // only recomputed on the way DOWN a level, and the skin pass synthesises UP from the bound
+  // level every frame -- so a stroke up there is not in any array this could copy.
+  if (mesh._meshes && mesh._meshes.length && mesh._meshes[mesh._sel || 0] !== level) {
+    return restRefused(mesh, 'sculpt on the bound level (go down to level '
+      + mesh._meshes.indexOf(level) + ')');
+  }
+
+  // A CONTRIBUTING BLENDSHAPE MEANS THE LEVEL IS NOT THE REST SHAPE -- it is base + Σdeltas,
+  // and adopting that as rest would bake the shape into the neutral and corrupt every layer.
+  // The blendshape system has its own write-back (see Mesh.updateGeometry) and reaches
+  // `_skinSrc` through captureSource, so with a layer live this is not our stroke to keep.
+  const reg = window._animationRegistry;
+  const track = reg && reg.tracks ? reg.tracks.get(mesh.getID()) : null;
+  if (track && track.baseShape && reg.otherLayersOffset && reg.otherLayersOffset(track, null)) {
+    return false;
+  }
+
+  if (!Skinning.atBindPose(main, mesh)) return restRefused(mesh, 'sculpting while posed');
+
+  const v = level.getVertices();
+  mesh._skinSrc.set(v.subarray(0, nbV * 3));
+  // THE BIND SHAPE ITSELF MOVED, so `_skinRest` follows. It is what weights are re-solved from
+  // when a joint radius changes and what unbind puts back -- leaving it on the pre-sculpt shape
+  // would mean a radius tweak silently reverted the model.
+  mesh._skinRest.set(v.subarray(0, nbV * 3));
+  mesh._skinMushDirty = true;   // the mush deltas are defined against the rest pose
+  mesh._skinDirty = true;       // re-skin once so mush rebuilds against the new rest
+  return true;
+};
+
+// GO TO THE POSE THE SKIN WAS BOUND IN. Not the rig's rest pose -- those are two different
+// things, and the difference is why "go back to the bind pose" has never been reliable.
+//
+// `_ikRest` is the rig's own idea of rest, authored by Bone Draw and Tweak and restorable with
+// the Rest Pose button. `_skinInvBind` is the pose the MESH was bound in, frozen at bind time.
+// Nothing keeps them in sync and nothing says when they have diverged -- rest a joint after
+// binding, or bind while posed, and they are simply different poses for ever after. Measured on
+// walkwave: with every joint sitting on its `_ikRest`, the skin matrices were still up to 0.47
+// off the identity in their basis and 16 units in translation, i.e. pressing Rest Pose put the
+// rig at rest and left the MESH deformed.
+//
+// The bind pose is exactly recoverable though, because the inverse-bind matrix is what it is:
+// apply() forms meshInv × joint × invBind, so the joint transform that makes that the identity
+// is joint = mesh × invBind⁻¹. No search, no drift, no dependence on the rig's rest.
+//
+// Parents first: setModelSpaceMatrix converts through the parent's CURRENT world matrix, so a
+// child written before its parent computes its local from the pose it is about to leave.
+Skinning.goToBindPose = function (main, mesh) {
+  if (!Skinning.isBound(mesh) || !mesh._skinInvBind) return 0;
+  const joints = resolveJoints(main, mesh);
+  const order = joints.map((j, i) => [j, i]).filter(([j]) => !!j);
+  const depth = (o) => { let d = 0; for (let p = o._parentMesh; p; p = p._parentMesh) d++; return d; };
+  order.sort((a, b) => depth(a[0]) - depth(b[0]));
+  _mMesh.fromArray(mesh.getModelSpaceMatrix());
+  let n = 0;
+  for (const [j, i] of order) {
+    const inv = mesh._skinInvBind[i];
+    if (!inv) continue;
+    _mSkin.copy(inv).invert().premultiply(_mMesh);
+    if (j.setModelSpaceMatrix) j.setModelSpaceMatrix(_mSkin.elements);
+    Skeleton.syncThree(j);
+    n++;
+  }
+  mesh._skinDirty = true;
+  return n;
+};
+
+// HOLD THE BIND POSE WHILE YOU SCULPT IN IT.
+//
+// Going to the bind pose is not enough on its own: the rig has live drivers, and they write
+// joints every frame whatever the artist is doing. Measured on walkwave -- go to bind pose, run
+// ONE frame of the app's own loop, and 16 of 33 joints have moved off it again, every one of
+// them a physics bone. Animation playback and a pin solve do the same thing for the same
+// reason. So "sculpt at the bind pose" is a MODE, not a jump: the jump is undone before the
+// first stroke lands otherwise, and worse, the stroke then commits against a pose that has
+// already drifted.
+//
+// The exit restores exactly what was on the joints when it began -- that is matt's "then
+// restore the posed state" -- and asks physics to re-seed rather than resuming from particles
+// that were parked for the duration.
+Skinning.bindPoseHeld = function () { return !!window._bindPoseHold; };
+
+Skinning.enterBindPose = function (main, mesh) {
+  if (!Skinning.isBound(mesh)) return false;
+  if (window._bindPoseHold) return true;
+  // The pose to come back to, joints AND pins: a pin left behind would haul the rig off the
+  // restored pose on the first solve after the exit.
+  const pins = Skeleton.joints(main)
+    .map((j) => (j._boneIKPinObj && j._boneIKPinObj._isPinTarget ? j._boneIKPinObj : null))
+    .filter(Boolean);
+  window._bindPoseReturn = Skeleton.joints(main).concat(pins)
+    .map((o) => [o, Array.prototype.slice.call(o.getMatrix())]);
+  // Playback would fight the hold frame by frame, so it stops rather than being suppressed:
+  // a paused transport is visible in the UI, a silently ignored one is not.
+  window._animPlaying = false;
+  window._bindPoseHold = true;
+  Skinning.goToBindPose(main, mesh);
+  Skinning.apply(main, mesh);
+  return true;
+};
+
+Skinning.exitBindPose = function (main) {
+  if (!window._bindPoseHold) return false;
+  window._bindPoseHold = false;
+  const back = window._bindPoseReturn;
+  window._bindPoseReturn = null;
+  if (back) {
+    for (const [o, m4] of back) {
+      const cur = o.getMatrix();
+      for (let k = 0; k < 16; k++) cur[k] = m4[k];
+      Skeleton.syncThree(o);
+    }
+  }
+  // The particles stood still for the whole hold, so resuming from them would resume from a
+  // pose that is no longer there. Same flag the seek and the loop wrap use.
+  window._physicsNeedsInit = true;
+  for (const m of main.getMeshes() || []) if (Skinning.isBound(m)) m._skinDirty = true;
+  return true;
+};
+
 // ---- multires ------------------------------------------------------------------
 //
 // A Multimesh's getVertices()/getNbVertices() delegate to the CURRENTLY SELECTED level, so a

@@ -267,6 +267,10 @@ let _lastTime = null;
 // the state cleared. A reset is now the honest thing its name claims: the chain returns to where
 // the animation or the author last put it.
 PhysicsBones.reset = function (main) {
+  // The hold stands every rig driver down, and reset is one: it WRITES joints (that is its job,
+  // putting them back on the pose physics started from), and a seek runs it -- so with the bind
+  // pose held, loading or scrubbing would knock the rig straight off the pose being sculpted in.
+  if (window._bindPoseHold) return;
   // RESTORED FROM THE JOINT, not from `_state`, which this function is about to throw away. The
   // state map only ever holds an entry for a joint physics has already stepped, so on the first
   // seek after a load -- or any seek after a previous reset wiped it -- there was nothing to
@@ -1094,6 +1098,11 @@ PhysicsBones.solveStep = function (main, dt) {
 
 PhysicsBones.tick = function (main, nowSeconds) {
   if (!PhysicsBones.roots(main).length) return false;
+  // NOT WHILE THE BIND POSE IS HELD. Physics writes joints every frame, so with the hold on it
+  // is what drags the rig off the pose being sculpted in -- measured, 16 of 33 joints inside a
+  // single frame. Read off `window` rather than imported: Skinning is not in this module's
+  // import graph and must not be, the same reason every other cross-module flag here is global.
+  if (window._bindPoseHold) return false;
   // THE INIT FRAME. A loop is a cut: the playhead jumps from one end of the range to the other,
   // and a simulation has no way to know that -- its particles carry the pose and velocity they
   // had at the END of the loop into the first frame of the next one. So the first pass looked

@@ -58,10 +58,12 @@ const PhysicsBones = {
     return (t && t._physicsRoot) ? t : null;
   },
 };
-const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
+const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => !!globalThis.__bound, refreshWeightColorsAll(){},
   mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){},
   // The x-ray slider: the panel reads the current skin opacity to fill it in.
-  skinOpacity: () => 1, setSkinOpacity(){}, applySkinOpacity(){} };
+  skinOpacity: () => 1, setSkinOpacity(){}, applySkinOpacity(){},
+  // The bind-pose hold: the Pose block asks whether it is on, to name and light its button.
+  bindPoseHeld: () => !!globalThis.__bindHeld, enterBindPose(){}, exitBindPose(){} };
 const SkinMesh = {};
 // The panel asks whether any weight cages exist so it can label one button Bake or Delete.
 // Stubbed to "none", which is the state every existing rig is in.
@@ -384,14 +386,37 @@ check('shader-specific groups mute instead of hiding',
   check('the rest pose button is there with nothing bound',
     unbound.includes('id="bone-restpose"'),
     'a rest pose exists from the first bone, so the way back to it should too');
+  // The button's own label, not the panel's whole markup: a bound rig now ALSO offers a
+  // separate bind-pose control, and the two are different poses on purpose.
   check('...and it is called Rest Pose, not Bind Pose',
-    /Rest Pose<\/button>/.test(unbound) && !/Bind Pose/.test(unbound),
+    /id="bone-restpose"[\s\S]{0,400}?>Rest Pose<\/button>/.test(unbound)
+      && !/id="bone-restpose"[\s\S]{0,400}?>Bind Pose<\/button>/.test(unbound),
     'it means the same thing in every context now, which is why it is renamed');
   globalThis.__bound = true;
   const boundNow = buildBonePoseHTML(main, 'mm');
   check('...and it does not change once a mesh IS bound',
     boundNow.includes('id="bone-restpose"') && /Rest Pose<\/button>/.test(boundNow));
   globalThis.__bound = false;
+  // THE BIND POSE IS NOT THE REST POSE. `_ikRest` is the rig's rest, authored by Bone Draw and
+  // Tweak; `_skinInvBind` is the pose the MESH was bound in. Nothing keeps them in sync, and on
+  // walkwave they differ by up to 0.47 in the basis and 16 units in translation -- so pressing
+  // Rest Pose put the rig at rest and left the mesh deformed. A bound scene gets its own control.
+  {
+    globalThis.__bound = true;
+    const b = buildBonePoseHTML(main, 'mm');
+    check('a bound rig can sculpt at the bind pose',
+      b.includes('id="bone-bindpose"') && /Sculpt Bind Pose/.test(b),
+      'Rest Pose is the rig\'s rest and need not be the pose the skin was bound in');
+    globalThis.__bindHeld = true;
+    const held = buildBonePoseHTML(main, 'mm');
+    check('...and says so while it is holding, since everything else stands down meanwhile',
+      /Leave Bind Pose/.test(held) && /active/.test(held));
+    globalThis.__bindHeld = false;
+    globalThis.__bound = false;
+    check('...and an unbound scene is not offered it',
+      !buildBonePoseHTML(main, 'mm').includes('id="bone-bindpose"'),
+      'there is no bind pose without a bind');
+  }
   check('the handler restores the REST pose, not the bind pose',
     /IKSolver\.resetRigAndPins\(main, 'Rest Pose'\)/.test(SRC) && !/restoreBindPose/.test(SRC),
     'bind is a moment; rest is the skeleton as built');

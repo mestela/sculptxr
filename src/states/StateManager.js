@@ -149,6 +149,10 @@ class StateManager {
     // ...and neither would the skin weights, if the thing undone was a capsule sculpt. Undo is
     // the one path that changes a cage with no stroke to end. No-op for anything else.
     Skinning.onCageEdited(this._main, this._main.getMesh?.());
+    // ...and the rest shape, for the same reason: undo rewrites the level's vertices with no
+    // stroke to end, so without this the skin pass would put the undone sculpt straight back on
+    // the next pose change.
+    Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   redo() {
@@ -164,6 +168,7 @@ class StateManager {
       this.redo();
     this._main.onNomadLocalEdit?.(state);
     Skinning.onCageEdited(this._main, this._main.getMesh?.());
+    Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   reset() {

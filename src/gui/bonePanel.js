@@ -246,6 +246,11 @@ export function buildBonePoseHTML(main, style) {
       <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
       <button class="${c.action}" id="bone-flip">Copy Side</button>
     </div>
+    ${bound ? `<div class="${c.btnRow}">
+      <button class="${c.action}${Skinning.bindPoseHeld() ? ' active' : ''}" id="bone-bindpose"
+        title="Jump to the pose the SKIN was bound in and hold it there, so you can sculpt the bind shape. Not the same as Rest Pose — that is the rig's rest, which can differ from the bind. Physics, playback and pin solves stand down while it is held; pressing it again puts the pose you left back exactly.">${
+          Skinning.bindPoseHeld() ? 'Leave Bind Pose' : 'Sculpt Bind Pose'}</button>
+    </div>` : ''}
   `;
 }
 
@@ -806,6 +811,26 @@ export function wireBoneSection(root, main, opts) {
     const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
     window._physicsNeedsInit = true;
     say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  });
+
+  // SCULPT THE BIND SHAPE. Two things the rest of the app has never had: an exact way to REACH
+  // the pose the skin was bound in (the rig's rest pose is a different pose and can differ from
+  // it), and a way to STAY there while you work -- physics alone moved 16 of walkwave's 33
+  // joints off it inside a single frame. Toggling it off puts the pose you left back exactly.
+  q('bindpose')?.addEventListener('click', () => {
+    const mesh = Skinning.anyBound(main)
+      ? (main.getMeshes() || []).find((m) => Skinning.isBound(m)) : null;
+    if (!mesh) { say('Bones: nothing is bound to the skeleton', false); return; }
+    if (Skinning.bindPoseHeld()) {
+      Skinning.exitBindPose(main);
+      say('Bones: back to the pose you left', true);
+    } else {
+      Skinning.enterBindPose(main, mesh);
+      say('Bones: holding the bind pose \u2014 sculpt, then press again to return', true);
+    }
+    rebuild();
     Skeleton.updateVisuals(main);
     main.render?.();
   });

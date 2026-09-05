@@ -194,5 +194,76 @@ function boundMesh(levels, boundAt) {
   check('every picking scan honours the lock', scans >= 3, `${scans} scans`);
 }
 
+
+// ── A SCULPT HAS TO REACH REST SPACE ──────────────────────────────────────────────────────
+//
+// apply() rebuilds the bound level from `_skinSrc` on every pose change, and `_skinSrc` was
+// written at bind, on a blendshape recomposite and on load -- never after a stroke. Measured on
+// walkwave: 200 vertices edited at rest pose, one joint nudged, 0 survived, silently.
+{
+  check('a stroke is committed back to rest space',
+    /Skinning\.commitToRest = function/.test(SRC)
+      && /mesh\._skinSrc\.set\(v\.subarray\(0, nbV \* 3\)\);/.test(SRC),
+    'without this the skin pass reverts every sculpt at the next pose change');
+  check('...and the bind shape follows it',
+    /mesh\._skinRest\.set\(v\.subarray\(0, nbV \* 3\)\);/.test(SRC),
+    '_skinRest is what weights re-solve from and what unbind puts back');
+  check('...only when the skin matrices really are the identity',
+    /Skinning\.atBindPose = function/.test(SRC)
+      && /if \(!Skinning\.atBindPose\(main, mesh\)\) return restRefused\(mesh, 'sculpting while posed'\);/.test(SRC),
+    'adopting a POSED shape as the rest shape corrupts the bind irreversibly');
+  check('...and never from a level the weights are not for',
+    /mesh\._meshes\[mesh\._sel \|\| 0\] !== level/.test(SRC),
+    'above the bound level the shape lives in detail vectors this cannot see');
+  check('...nor while a blendshape layer is contributing',
+    /reg\.otherLayersOffset\(track, null\)/.test(SRC),
+    'the level is base + deltas there, and adopting it would bake the shape into the neutral');
+  check('a refused commit is said out loud and reverted, not left to die at the next scrub',
+    /function restRefused/.test(SRC) && /mesh\._skinDirty = true;/.test(SRC)
+      && /screenLog\('Sculpt not saved: '/.test(SRC),
+    'the failure this replaces was silent, which is what cost the trust');
+
+  // Three call sites: the stroke, and both directions of undo -- the places geometry changes
+  // with no skin pass to notice.
+  const SM = fs.readFileSync(path.join(REPO, 'src/editing/SculptManager.js'), 'utf8');
+  const ST = fs.readFileSync(path.join(REPO, 'src/states/StateManager.js'), 'utf8');
+  check('stroke end commits', /Skinning\.commitToRest\(this\._main, this\._main\.getMesh\?\.\(\)\);/.test(SM));
+  check('...and so do undo and redo',
+    (ST.match(/Skinning\.commitToRest\(/g) || []).length === 2,
+    'undo rewrites the level with no stroke to end, so the skin pass would put the sculpt back');
+}
+
+// ── THE BIND POSE IS A PLACE YOU CAN GO, AND STAY ────────────────────────────────────────
+//
+// `_ikRest` (the rig's rest) and `_skinInvBind` (the pose the mesh was bound in) are different
+// things that nothing keeps in sync -- on walkwave they differ by 0.47 in the basis and 16 units
+// in translation. And the rig has live drivers: physics alone moved 16 of 33 joints off the bind
+// pose inside ONE frame.
+{
+  check('the bind pose is derived from the inverse-bind matrix, not searched for',
+    /_mSkin\.copy\(inv\)\.invert\(\)\.premultiply\(_mMesh\);/.test(SRC),
+    'joint = mesh x invBind-inverse is exact; the rig rest pose is a different pose');
+  check('...parents first, since local is derived through the parent\'s current world matrix',
+    /order\.sort\(\(a, b\) => depth\(a\[0\]\) - depth\(b\[0\]\)\);/.test(SRC));
+  check('holding it stands the rig drivers down',
+    /Skinning\.enterBindPose = function/.test(SRC) && /window\._bindPoseHold = true;/.test(SRC));
+  const PB = fs.readFileSync(path.join(REPO, 'src/editing/PhysicsBones.js'), 'utf8');
+  const IK = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
+  const AR = fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8');
+  check('...physics, which is the one that actually moved the joints',
+    (PB.match(/if \(window\._bindPoseHold\) return/g) || []).length === 2,
+    'the step AND the reset: a seek runs reset, and reset writes joints');
+  check('...the pin solve',  /if \(window\._bindPoseHold\) return;/.test(IK));
+  check('...and the keys, for the rig only',
+    /if \(window\._bindPoseHold && \(mesh\._isBone \|\| mesh\._isPinTarget\)\) return;/.test(AR),
+    'blendshapes and every other mesh carry on evaluating');
+  check('leaving puts back exactly what was there, joints AND pins',
+    /window\._bindPoseReturn = Skeleton\.joints\(main\)\.concat\(pins\)/.test(SRC)
+      && /Skinning\.exitBindPose = function/.test(SRC),
+    'a pin left behind hauls the rig off the restored pose on the first solve');
+  check('...and asks physics to re-seed rather than resuming from parked particles',
+    /window\._physicsNeedsInit = true;[\s\S]{0,200}?_skinDirty = true;/.test(SRC));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
