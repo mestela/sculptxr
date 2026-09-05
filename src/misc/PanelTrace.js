@@ -100,6 +100,27 @@ function wrap(name, mesh) {
   mesh._ptWrapped = true;
 }
 
+// WHERE IT IS, not just whether it is drawn. The v3.30.19 anchor made the panels FOLLOW the
+// grip instead of being children of it, which fixed the inherited-visibility blink -- and the
+// next report of "still disappearing" came with no trace line at all: visible, attached,
+// correctly sized, and still not there. That leaves position, which nothing was watching. A
+// panel parked where your hand WAS during a dropout, or behind you, is gone as far as anyone
+// using it is concerned, and it produces no visibility event whatsoever.
+function place(mesh, cam) {
+  // An instrument must never be the thing that takes the render loop down: anything it reads
+  // might not be there yet on the frame it first sees a panel.
+  if (!mesh || !mesh.matrixWorld) return null;
+  const m = mesh.matrixWorld.elements;
+  const p = { x: m[12], y: m[13], z: m[14] };
+  if (!cam) return { p, d: null, behind: null };
+  const c = cam.matrixWorld.elements;
+  const dx = p.x - c[12], dy = p.y - c[13], dz = p.z - c[14];
+  // The camera looks down -Z in its own basis; the third column IS that axis in world space.
+  const fx = -c[8], fy = -c[9], fz = -c[10];
+  const along = dx * fx + dy * fy + dz * fz;
+  return { p, d: Math.sqrt(dx * dx + dy * dy + dz * dz), behind: along < 0 };
+}
+
 PanelTrace.enabled = function () {
   if (typeof window._panelTrace === 'boolean') return window._panelTrace;
   const saved = getOptionsURL().panelTrace;
@@ -136,6 +157,46 @@ PanelTrace.tick = function (scene) {
     const mode = tool && tool._mode !== undefined ? ('/' + tool._mode) : '';
     state[name] = now;
     say(name + ': ' + now + '   [tool ' + ((tool && tool.constructor.name) || '?') + mode + ']');
+  }
+
+  // ...where it is, on a move big enough to be a jump rather than a hand moving. Reported with
+  // the distance from the head and whether it is behind it, because those are the two ways a
+  // panel that is drawing perfectly is nonetheless not on screen.
+  const cam = scene._camera && scene._camera.getThreeCamera ? scene._camera.getThreeCamera() : null;
+  const places = scene._ptPlace || (scene._ptPlace = {});
+  for (const [name, p] of panels) {
+    if (!p || !p.mesh) continue;
+    const now = place(p.mesh, cam);
+    if (!now) continue;
+    const was = places[name];
+    places[name] = now;
+    const far = now.d !== null && now.d > 2.0;              // further than an arm, in metres
+    const jumped = was && Math.hypot(now.p.x - was.p.x, now.p.y - was.p.y, now.p.z - was.p.z) > 0.5;
+    const flipped = was && was.behind !== now.behind;
+    if (!jumped && !flipped && !(far && (!was || was.d <= 2.0))) continue;
+    say(name + ': at ' + now.p.x.toFixed(2) + ',' + now.p.y.toFixed(2) + ',' + now.p.z.toFixed(2)
+      + (now.d === null ? '' : '  ' + now.d.toFixed(2) + 'm from the head'
+        + (now.behind ? ' BEHIND it' : ''))
+      + (jumped ? '  JUMPED' : '') + (far ? '  FAR' : ''));
+  }
+
+  // ...and whether the anchor the wrist panels ride is actually being driven. A grip that stops
+  // updating leaves them frozen in the last place the hand was seen -- which looks exactly like
+  // "it disappeared" and, unlike every other cause here, changes nothing this file watches.
+  const anchor = scene._wristAnchor;
+  if (anchor) {
+    const e = anchor.matrix.elements;
+    const key = e[12].toFixed(3) + ',' + e[13].toFixed(3) + ',' + e[14].toFixed(3);
+    const st = scene._ptAnchor || (scene._ptAnchor = { key: null, still: 0 });
+    if (key === st.key) st.still++;
+    else { if (st.still > 60) say('wrist anchor moved again after ' + st.still + ' still frames'); st.still = 0; st.key = key; }
+    // 60 frames is under a second of a hand that has not moved AT ALL, which a real hand does
+    // not do -- so this is the grip having stopped feeding us, not the user holding still.
+    if (st.still === 60) {
+      say('wrist anchor has not moved for 60 frames at ' + key
+        + '  [grips L=' + (scene._vrControllerLeftGrip ? 'yes' : 'NULL')
+        + ' R=' + (scene._vrControllerRightGrip ? 'yes' : 'NULL') + ']');
+    }
   }
 
   // ...and the size, on the same once-a-change rule. A quarter is well below anything a real

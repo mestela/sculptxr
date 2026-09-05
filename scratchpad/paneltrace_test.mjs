@@ -49,8 +49,15 @@ const check = (n, ok, d) => { if (ok) return _realLog('  ok   ' + n);
 // An Object3D as far as this code is concerned.
 function obj(name, type, parent) {
   return { name, type: type || 'Object3D', visible: true, parent: parent || null,
-           scale: { x: 1, y: 1, z: 1 } };
+           scale: { x: 1, y: 1, z: 1 }, matrixWorld: mat4At(0, 0, 0) };
 }
+// A column-major 4x4 with a translation, which is all `place()` reads of a panel; the camera
+// adds a forward axis (its third column, negated) so "behind the head" can be asked.
+function mat4At(x, y, z, fwd) {
+  const f = fwd || [0, 0, -1];
+  return { elements: [1, 0, 0, 0,  0, 1, 0, 0,  -f[0], -f[1], -f[2], 0,  x, y, z, 1] };
+}
+const camAt = (x, y, z, fwd) => ({ matrixWorld: mat4At(x, y, z, fwd) });
 function sceneWith(mesh) {
   const root = obj('', 'Scene');
   const grip = obj('grip', 'Group', root);
@@ -161,6 +168,56 @@ _realLog('\n── a panel can vanish without anything touching visible ──�
   PanelTrace.tick(scene2);
   check('...while a layout-sized wobble is not reported', logged().length === 0,
     'a tracer that reports float noise is one you stop reading');
+}
+
+_realLog('\n── where it is, not just whether it is drawn ──────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  const scene = app(mesh);
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  mesh.matrixWorld = mat4At(0, 0, -0.4);        // in front of the head, arm's length
+  PanelTrace.tick(scene); clear();
+
+  // A panel parked where the hand WAS during a dropout: still visible, still attached, gone.
+  mesh.matrixWorld = mat4At(3, 0, -0.4);
+  PanelTrace.tick(scene);
+  check('a jump is reported with the distance from the head',
+    logged().some((m) => /JUMPED/.test(m) && /m from the head/.test(m)),
+    'nothing about visibility changes when a panel is simply somewhere else');
+  check('...and far away is called out', logged().some((m) => /FAR/.test(m)));
+
+  clear();
+  mesh.matrixWorld = mat4At(0, 0, 0.4);          // same distance, other side of the head
+  PanelTrace.tick(scene);
+  check('behind the head is reported as such', logged().some((m) => /BEHIND it/.test(m)));
+
+  clear();
+  mesh.matrixWorld = mat4At(0.02, 0, 0.4);       // a hand-sized move, not a jump
+  PanelTrace.tick(scene);
+  check('...while an ordinary hand movement is not reported', logged().length === 0,
+    'the hand moves every frame; only a jump is news');
+}
+
+_realLog('\n── the anchor has to actually be driven ───────────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  const scene = app(mesh);
+  scene._wristAnchor = { matrix: mat4At(0.1, 1.2, -0.3) };
+  scene._vrControllerLeftGrip = null;            // the grip went away; the anchor holds its pose
+  for (let i = 0; i < 61; i++) PanelTrace.tick(scene);
+  check('a frozen wrist anchor is reported',
+    logged().some((m) => /wrist anchor has not moved for 60 frames/.test(m)),
+    'a grip that stops feeding leaves the panels where the hand last was, and nothing else changes');
+  check('...naming which grips are missing', logged().some((m) => /grips L=NULL/.test(m)));
+  clear();
+  for (let i = 0; i < 30; i++) PanelTrace.tick(scene);
+  check('...and it is said once, not every frame after', logged().length === 0);
+  clear();
+  scene._wristAnchor.matrix = mat4At(0.11, 1.2, -0.3);
+  PanelTrace.tick(scene);
+  check('...and the recovery is reported too', logged().some((m) => /moved again after/.test(m)));
 }
 
 _realLog('\n── the report carries the context ──────────────────────────────────────');
