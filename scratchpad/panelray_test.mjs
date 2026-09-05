@@ -226,6 +226,16 @@ check('it is inside the section it costs',
   check('...neither of them left on a bare literal',
     !/_vtlSecLaser\.renderOrder = 999;/.test(SC));
 
+  // THE RECORDER TRAP, second victim. With a screen recorder attached the GalaxyXR adds a third
+  // view, three builds its culling frustum from the LEFT EYE instead of the union of both, and
+  // anything near the edge of the view is discarded while plainly on screen. The VR cursor was
+  // the first thing it ate; the wrist panels were the second. Culling is inside the renderer, so
+  // nothing the app can inspect ever shows it.
+  const HP = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
+  check('a panel is never frustum-culled',
+    /this\.mesh\.frustumCulled = false;/.test(HP),
+    'a wrist panel sits exactly where a narrowed off-centre frustum starts discarding things');
+
   // ONE OWNER FOR THE HIDE. `mesh.visible` on these panels has three writers -- the swap, each
   // panel's own show(), and this hide -- and is also read as "is the menu open" by the hit tests
   // and the main-menu toggle. matt: "the minipanel is getting very glitchy. it disappears

@@ -274,6 +274,22 @@ export class HTMLVRPanel {
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
     this.mesh.scale.y = -1;
 
+    // NEVER FRUSTUM-CULLED, for the reason the VR cursor is not (see Scene, createVRCursor).
+    //
+    // Screen recording on the GalaxyXR adds a secondary observer view, so three sees THREE views
+    // rather than two, takes its "AR" branch, and builds the culling frustum from the LEFT EYE's
+    // projection instead of the union of both eyes. Culling then runs against a narrower,
+    // off-centre frustum and discards things that are plainly on screen -- and a WRIST panel
+    // lives exactly where that matters, out at the edge of the view. Nudge the hand and it
+    // crosses the bogus boundary: on, off, on. matt: "its flashing on and off still... all i was
+    // doing was moving the cursor between bones. no buttons were being pressed."
+    //
+    // This is invisible to every check the panel tracer makes, and to any amount of reading:
+    // culling happens inside the renderer, after everything the app can see. It is also why the
+    // PINNED main menu looked immune -- pinned, it floats in front of you, nowhere near the
+    // frustum edge. The hover quad already opted out; the panel it belongs to never did.
+    this.mesh.frustumCulled = false;
+
     // Subclasses can set this._startHidden = true before calling init()
     // to start the mesh invisible (avoids the frame where both panels are visible).
     if (this._startHidden) this.mesh.visible = false;
