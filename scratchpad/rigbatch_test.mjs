@@ -74,9 +74,19 @@ check('...deriving the rotation from the instance rather than sending it',
 // them once at the END of the pass -- so a stored REFERENCE gives every capsule the last bone's
 // taper. It looks exactly like the taper being inverted.
 check('...copying the half-extents into the slot rather than referencing the scratch',
-  /o\._ha\[0\] = hA\[0\]; o\._ha\[1\] = hA\[1\]; o\._ha\[2\] = hA\[2\];/.test(SRC)
+  /o\._ha\[0\] = hA\[0\] \* SHAFT_INSET;/.test(SRC)
     && !/o\._ha = hA; o\._hb = hB;/.test(SRC),
   'every shaft ends up wearing the last bone in the rig taper');
+// Coincident surfaces at 14 segments interleave their facets, so a joint seam breaks into a
+// stipple of two colours. Strict nesting has an unambiguous depth order and does not depend on
+// the depth buffer's precision to hold. matt: "their radii are so closely aligned, their
+// tessellation is becoming apparent where they intersect."
+check('...and inset, so the shaft never shares a surface with the spheres it enters',
+  /const SHAFT_INSET = 0\.97;/.test(SRC) && /const HEAD_INSET = 0\.98;/.test(SRC));
+check('...and the head sphere sits inside the one the bone above already drew there',
+  /\[e\.cap\.a, _cA, hA, HEAD_INSET\], \[e\.cap\.b, _cB, hB, 1\]/.test(SRC)
+    && /o\.scale\.set\(ph\[0\] \* k, ph\[1\] \* k, ph\[2\] \* k\);/.test(SRC),
+  'every joint in a chain is drawn twice over, by the bone that ends there and the one that starts');
 // Instanced attributes live on the GEOMETRY, and the capsule geometries are shared singletons --
 // so four shaft batches sharing one would write their taper over each other.
 check('...on a geometry of its own, since the shaft geometry is a shared singleton',

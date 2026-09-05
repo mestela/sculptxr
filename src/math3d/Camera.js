@@ -355,8 +355,19 @@ class Camera {
       this._far = 5000.0;
     } else {
       var boxRadius = 0.5 * vec3.dist(bb, vec3.set(_TMP_VEC3, bb[3], bb[4], bb[5]));
-      this._near = Math.max(0.001, distToBoxCenter - boxRadius);
-      this._far = Math.max(this._near + 0.1, boxRadius + distToBoxCenter); // Ensure far > near
+      this._far = Math.max(0.1, boxRadius + distToBoxCenter);
+      // THE NEAR PLANE IS FLOORED AGAINST THE FAR ONE, not against a constant. Depth precision
+      // is governed by the RATIO of the two, and a 0.001 floor against a far plane the size of
+      // the scene is a ratio in the tens of thousands -- so every nearly-coincident surface in
+      // the scene chatters, and the closer you fly the worse it gets, since the floor bites
+      // exactly when the camera is inside the bounding sphere. matt: "on desktop it's actually
+      // chattering and z-fighting really badly... i'm sure could be fixed by setting camera
+      // near/far clip." Capped at 2000:1, which a 24-bit buffer holds comfortably. It does raise
+      // the near plane, so it can clip something nearer than far/2000 -- on a scene the size of
+      // the walkwave rig that is about 3.5cm in front of the eye, and the fit itself already put
+      // the near plane far past that whenever the camera is outside the model.
+      this._near = Math.max(this._far / 2000, 0.001, distToBoxCenter - boxRadius);
+      this._far = Math.max(this._near + 0.1, this._far); // Ensure far > near
     }
     this.updateProjection();
   }

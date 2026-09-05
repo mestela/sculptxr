@@ -391,6 +391,25 @@ function ensureTaperAttrs(mesh, cap) {
 // which is the one thing an xray exists to see through. The solid passes then paint over it.
 const GHOST_ORDER = 9995;
 
+// NOTHING IN A CAPSULE SHARES A SURFACE WITH ANYTHING ELSE IN A CAPSULE.
+//
+// Every joint in a chain is drawn TWICE over: the bone above it ends there and the bone below it
+// begins there, so two ellipsoids of near-identical size sit at the same point, and the shaft of
+// each bone meets them tangentially at exactly their radius. Coincident surfaces at 14 segments
+// do not merely z-fight -- their facets interleave, so the seam breaks into a stipple of two
+// colours that follows the tessellation. matt: "their radii are so closely aligned, their
+// tessellation is becoming apparent where they intersect... in vr it's just the misaligned
+// triangles, on desktop it's actually chattering and z-fighting really badly."
+//
+// The fix is containment instead of coincidence, and it is measured in percent: the shaft sits
+// just inside both of its end spheres, and the sphere at a bone's HEAD sits just inside the one
+// the bone above it already drew at that joint. Strict nesting has an unambiguous depth order,
+// so the answer stops depending on the depth buffer's precision -- which is the half of this
+// that the near plane cannot fix. Small enough to be invisible: at a 2cm joint the shaft is
+// 0.6mm thinner than the sphere it enters.
+const SHAFT_INSET = 0.97;   // cylinder radius, as a fraction of the end spheres it meets
+const HEAD_INSET = 0.98;    // the head-end sphere, against the one the parent bone drew there
+
 function makeBatch(main, geo, ghost, key) {
   // INSTANCED ATTRIBUTES LIVE ON THE GEOMETRY, and capsuleShaftGeometry returns a shared
   // module-level singleton -- so the four shaft batches (solid, ghost, and the preselected
@@ -2819,8 +2838,8 @@ Skeleton.updateVisuals = function (main) {
       // looks like: every shaft wearing somebody else's taper.
       o._ha = o._ha || [0, 0, 0];
       o._hb = o._hb || [0, 0, 0];
-      o._ha[0] = hA[0]; o._ha[1] = hA[1]; o._ha[2] = hA[2];
-      o._hb[0] = hB[0]; o._hb[1] = hB[1]; o._hb[2] = hB[2];
+      o._ha[0] = hA[0] * SHAFT_INSET; o._ha[1] = hA[1] * SHAFT_INSET; o._ha[2] = hA[2] * SHAFT_INSET;
+      o._hb[0] = hB[0] * SHAFT_INSET; o._hb[1] = hB[1] * SHAFT_INSET; o._hb[2] = hB[2] * SHAFT_INSET;
       o.scale.set(1, lenC, 1);
       o.visible = true;
       o._hi = !!(isHi || isSel);
@@ -2828,10 +2847,10 @@ Skeleton.updateVisuals = function (main) {
     }
     // The end caps are world-axis aligned — no rotation on them — so the three extents go
     // straight into the scale.
-    for (const [part, at, ph] of [[e.cap.a, _cA, hA], [e.cap.b, _cB, hB]]) {
+    for (const [part, at, ph, k] of [[e.cap.a, _cA, hA, HEAD_INSET], [e.cap.b, _cB, hB, 1]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
-        o.scale.set(ph[0], ph[1], ph[2]);
+        o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
         o.visible = true;
         // Which of the two batches this end belongs to this frame. The opacity that used to
         // carry the preselection cannot ride on an instance, so it rides on the batch.

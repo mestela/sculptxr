@@ -804,5 +804,25 @@ check('...and the zone widening is the only thing left gated',
     'either-end lighting lit a joint’s own bone AND every bone hanging off it');
 }
 
+// ── DEPTH PRECISION IS A RATIO ────────────────────────────────────────────────────────────
+//
+// The fit sets near to the front of the bounding sphere and far to its back, which is tight --
+// until the camera is INSIDE that sphere, when the near term goes negative and the floor takes
+// over. A constant floor of 0.001 against a far plane the size of the scene is a ratio in the
+// hundreds of thousands, and every nearly-coincident surface chatters. Measured on walkwave, the
+// stipple on the capsule rig went from 5.23 speckle pixels per thousand lit at the old ratio to
+// 0.91 at 2000:1. matt: "on desktop it's actually chattering and z-fighting really badly."
+{
+  const CAM2 = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Camera.js', 'utf8')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  check('the near plane is floored against the far plane, not against a constant',
+    /this\._near = Math\.max\(this\._far \/ 2000, 0\.001, distToBoxCenter - boxRadius\);/.test(CAM2),
+    'a 0.001 near with a scene-sized far is a ratio no depth buffer holds');
+  check('...and far is computed first, so the floor has something to be a fraction of',
+    CAM2.indexOf('this._far = Math.max(0.1, boxRadius + distToBoxCenter);')
+      < CAM2.indexOf('this._near = Math.max(this._far / 2000'),
+    'ordered the other way the floor reads the PREVIOUS frame\'s far plane');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
