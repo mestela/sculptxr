@@ -340,6 +340,42 @@ _realLog('\n── switching it on says what it is starting from ─────
   globalThis.window.app = undefined;
 }
 
+_realLog('\n── the flight recorder ────────────────────────────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  mesh.geometry = { parameters: { width: 0.24, height: 0.18 } };
+  mesh.material = { map: { image: { width: 512, height: 384 } }, opacity: 1, transparent: true };
+  mesh.matrixWorld = mat4At(0.1, 1.2, -0.3);
+  mesh.renderOrder = 11000;
+  const scene = app(mesh);
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  for (let i = 0; i < 5; i++) PanelTrace.tick(scene);
+  // The frame it goes wrong: opacity to zero, which every other check in this file would call
+  // a perfectly healthy panel.
+  mesh.material.opacity = 0;
+  PanelTrace.tick(scene);
+  for (let i = 0; i < 3; i++) PanelTrace.tick(scene);
+
+  clear();
+  PanelTrace.dump(scene);
+  const l = logged();
+  check('the dump prints a history', l.some((m) => /panel history, last \d+ frames/.test(m)));
+  check('...opening with the full state, since a diff needs a baseline',
+    l.some((m) => /"op":1/.test(m) && /"ord":11000/.test(m) && /"tw":512/.test(m)));
+  check('...then ONLY what changed, naming the field and both values',
+    l.some((m) => /\{"op":"1->0"\}/.test(m)),
+    'a full dump of 240 frames x 3 panels is unreadable; the changed rows are the whole point');
+  check('...and identical frames are not printed at all',
+    (l.filter((m) => /MiniPanel \{/.test(m)).length) === 2,
+    'one baseline plus one change, out of nine recorded frames');
+  // Material state is the half that nothing else here watches, and any of it can make a panel
+  // that passes every other test invisible.
+  check('the record carries the material, not just the transform',
+    l.some((m) => /"cw":true/.test(m) && /"dt":/.test(m) && /"map":true/.test(m)),
+    'opacity 0, colorWrite off or an empty texture all draw nothing and change nothing else');
+}
+
 _realLog('\n── it is reachable from inside the headset ─────────────────────────────');
 {
   const MM = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
@@ -361,6 +397,13 @@ _realLog('\n── it is reachable from inside the headset ───────
     /PanelTrace\.setEnabled\(on\)/.test(MM)
       && /options\.panelTrace = queryBool\(getVal\('panelTrace'\), false\);/.test(OPT));
   check('...and the frame loop drives it', /PanelTrace\.tick\(this\);/.test(SC));
+  check('...and the history can be dumped from either settings panel',
+    /id: 'mm-panel-dump',[\s\S]{0,120}?PanelTrace\.dump\(\)/.test(MM)
+      && /renderAction\(t\.id, t\.label\)/.test(MM),
+    'the panel that vanishes is not the one you can press a button on; the pinned menu is');
+  check('...and the button is actually wired to run it',
+    /if \(t\.action\) \{\s*\n\s*el\.addEventListener\('click', \(\) => \{ t\.run\(\); \}\);/.test(MM),
+    'a dump button that does nothing is worse than no button');
   check('the label has no parentheses, which would make an unqueryable id',
     !/chk\('[^']*\([^']*'/.test(MM),
     'chk derives the id from the label and querySelector throws on a "(" in an id');

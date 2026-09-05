@@ -1104,10 +1104,17 @@ const DEV_TOGGLES = [
     get: () => !!window._physXPBD,      set: (on) => PhysicsBones.setSolver(on) },
   { id: 'mm-panel-trace', label: 'Trace Panel Visibility',
     get: () => PanelTrace.enabled(),    set: (on) => PanelTrace.setEnabled(on) },
+  // An ACTION rather than a state: press it the moment the menu goes and the last three seconds
+  // of every panel's full state comes out of the console. The main menu is the one to press it
+  // from -- pinned, it is not the panel that vanishes.
+  { id: 'mm-panel-dump',  label: 'Dump Panel History',  action: true,
+    run: () => PanelTrace.dump() },
 ];
 
-export function buildDevToggles(render) {
-  return DEV_TOGGLES.map((t) => render(t.id, t.label, t.get())).join('\n    ');
+export function buildDevToggles(render, renderAction) {
+  return DEV_TOGGLES.map((t) => (t.action
+    ? (renderAction ? renderAction(t.id, t.label) : '')
+    : render(t.id, t.label, t.get()))).join('\n    ');
 }
 
 // Both event shapes, because a button carries its state in a class and a checkbox carries it in
@@ -1116,7 +1123,9 @@ export function wireDevToggles(q, paint) {
   for (const t of DEV_TOGGLES) {
     const el = q('#' + t.id);
     if (!el) continue;
-    if (el.tagName === 'INPUT') {
+    if (t.action) {
+      el.addEventListener('click', () => { t.run(); });
+    } else if (el.tagName === 'INPUT') {
       el.addEventListener('change', (e) => { t.set(!!e.target.checked); paint?.(); });
     } else {
       el.addEventListener('click', () => {
@@ -1249,7 +1258,8 @@ function buildMenuHTML_settings(main) {
 
     <div class="mm-section-title">Physics &amp; Diagnostics</div>
     ${buildDevToggles((id, label, on) =>
-      `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`)}
+      `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`,
+      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`)}
 
     <div class="mm-section-title">Debug</div>
     <button class="mm-toggle${debugMode ? ' active' : ''}" id="mm-debug-mode">Debug Mode (HUD Logs)</button>
@@ -4067,7 +4077,8 @@ export function buildMenuHTML_desktopSettings(main) {
     <div class="mm-section-title">Physics Bones</div>
     ${buildDevToggles((id, label, on) =>
       `<label class="mm-check-row"><span>${label}</span><input type="checkbox" id="${id}"${
-        on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`)}`;
+        on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`,
+      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`)}`;
 
   return `${ipadSection}${physSection}
     <div class="mm-section-title">Numeric Input</div>

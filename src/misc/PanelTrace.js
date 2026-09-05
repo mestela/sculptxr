@@ -167,6 +167,90 @@ function _probe(scene, mesh, cam) {
   return null;
 }
 
+// ── THE FLIGHT RECORDER ────────────────────────────────────────────────────────────────────
+//
+// Five fixes for the vanishing panel, five plausible mechanisms, and it still goes. Every one of
+// them was reasoned from a partial view and shipped before it could be checked against the thing
+// actually happening, which is a loop worth breaking rather than running a sixth time.
+//
+// So: record EVERYTHING about the panels, every frame, into a ring buffer, and let matt dump the
+// last few seconds the moment he sees it go. The bug is intermittent and lasts a moment, and no
+// change-triggered report can help when the question is "what was different on the frame it
+// vanished" -- the answer has to be a recording of that frame, next to the ones either side of
+// it. What the reports above cover is a guess about which fields matter; this covers all of them.
+//
+// Diff-compressed on the way out: 240 frames x 3 panels is unreadable printed whole, and the
+// only interesting rows are the ones where something moved.
+const HISTORY = 240;   // about three seconds at 72Hz, which is longer than a flash
+
+function frameOf(p, cam) {
+  const m = p.mesh;
+  const mat = m.material || {};
+  const tex = mat.map;
+  const img = tex && tex.image;
+  const w = m.matrixWorld && m.matrixWorld.elements;
+  const at = place(m, cam);
+  return {
+    vis: m.visible === true,
+    par: (m.parent && (m.parent.name || m.parent.type)) || 'NONE',
+    anc: whyHidden(m) || '',
+    x: w ? +w[12].toFixed(3) : null, y: w ? +w[13].toFixed(3) : null, z: w ? +w[14].toFixed(3) : null,
+    d: at && at.d !== null ? +at.d.toFixed(2) : null,
+    behind: at ? !!at.behind : null,
+    sx: +m.scale.x.toFixed(3), sy: +m.scale.y.toFixed(3), sz: +m.scale.z.toFixed(3),
+    // The material half, which nothing above watches: an opacity of 0, colorWrite off, a
+    // blending mode change or a texture whose image has gone empty each draw a panel that is
+    // present, placed, textured by every earlier test, and invisible.
+    op: mat.opacity === undefined ? null : +Number(mat.opacity).toFixed(3),
+    tr: mat.transparent === true,
+    cw: mat.colorWrite !== false,
+    dt: mat.depthTest !== false,
+    dw: mat.depthWrite !== false,
+    bl: mat.blending === undefined ? null : mat.blending,
+    map: !!tex,
+    tw: img ? (img.width || img.videoWidth || 0) : 0,
+    th: img ? (img.height || img.videoHeight || 0) : 0,
+    ord: m.renderOrder,
+    cull: m.frustumCulled === true,
+    gw: m.geometry && m.geometry.parameters ? +Number(m.geometry.parameters.width).toFixed(3) : null,
+    gh: m.geometry && m.geometry.parameters ? +Number(m.geometry.parameters.height).toFixed(3) : null,
+  };
+}
+
+PanelTrace.record = function (scene, panels, cam) {
+  const ring = scene._ptRing || (scene._ptRing = []);
+  const row = { t: Math.round(performance.now()) };
+  for (const [name, p] of panels) if (p && p.mesh) row[name] = frameOf(p, cam);
+  ring.push(row);
+  if (ring.length > HISTORY) ring.shift();
+};
+
+// Print the recording. Only the fields that CHANGED from the previous frame, so a steady panel
+// takes one line and the frame everything went wrong takes one line naming exactly what moved.
+PanelTrace.dump = function (scene) {
+  scene = scene || window.app || window.sculptgl;
+  const ring = scene && scene._ptRing;
+  if (!ring || !ring.length) { say('no history recorded (is tracing on?)'); return; }
+  say('--- panel history, last ' + ring.length + ' frames, oldest first ---');
+  const prev = {};
+  let printed = 0;
+  for (const row of ring) {
+    for (const name of ['MiniPanel', 'ToolPicker', 'MainMenu']) {
+      const now = row[name];
+      if (!now) continue;
+      const was = prev[name];
+      prev[name] = now;
+      if (!was) { say('t=' + row.t + ' ' + name + ' ' + JSON.stringify(now)); printed++; continue; }
+      const diff = {};
+      for (const k in now) if (now[k] !== was[k]) diff[k] = was[k] + '->' + now[k];
+      if (!Object.keys(diff).length) continue;
+      say('t=' + row.t + ' ' + name + ' ' + JSON.stringify(diff));
+      printed++;
+    }
+  }
+  say('--- ' + printed + ' changed rows; the rest were identical ---');
+};
+
 PanelTrace.enabled = function () {
   if (typeof window._panelTrace === 'boolean') return window._panelTrace;
   const saved = getOptionsURL().panelTrace;
@@ -321,6 +405,9 @@ PanelTrace.tick = function (scene) {
         : name + ': nothing in front of it any more');
     }
   }
+
+  // ...and the whole state into the ring buffer, for the dump.
+  PanelTrace.record(scene, panels, cam);
 
   // ...and the size, on the same once-a-change rule. A quarter is well below anything a real
   // layout change produces and well above float noise.
