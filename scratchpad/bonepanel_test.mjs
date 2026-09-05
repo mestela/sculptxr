@@ -596,5 +596,29 @@ check('...using the same RigPending entry point as the main menu, not a copy',
     && /const armed = main\?\._rigPendingMode === 'parent';/.test(MINI_SRC),
   'a local armed flag goes stale when the viewport finishes the gesture');
 
+// ── NO "--" INSIDE AN HTML COMMENT IN A VR-RASTERISED TEMPLATE ────────────────────────
+//
+// The VR panel serialises its markup into an SVG, and an SVG is XML. XML forbids a double hyphen
+// inside a comment, so one prose dash in a menu template made the whole panel fail to paint with
+// nothing but "SVG image failed to load (error). cssW=835, cssH=877, svg.length=483606". Desktop
+// showed it perfectly the whole time, because an HTML parser does not care -- which is precisely
+// why this needs a check rather than care.
+{
+  const vrTemplates = [
+    ['MainMenuPanel', MAIN_SRC],
+    ['MiniPanel', MINI_SRC],
+    ['AnimationControlPanel', fs.readFileSync(
+      '/Users/mattestela/sculptxr/src/gui/htmlvr/AnimationControlPanel.js', 'utf8')],
+  ];
+  const offenders = [];
+  for (const [name, src] of vrTemplates) {
+    for (const m of src.matchAll(/<!--([\s\S]*?)-->/g)) {
+      if (m[1].includes('--')) offenders.push(name + ': ' + m[0].slice(0, 60).replace(/\n/g, ' '));
+    }
+  }
+  check('no VR template has "--" inside an HTML comment', offenders.length === 0,
+    offenders.join(' | '));
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

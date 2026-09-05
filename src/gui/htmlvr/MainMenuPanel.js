@@ -941,6 +941,29 @@ function buildShellHTML() {
 
 // ── Content builders ─────────────────────────────────────────────────────────
 
+// OPEN REPLACES, IMPORT ADDS, SAVE ROUND-TRIPS, EXPORT IS ONE-WAY. The menu used to offer one
+// file-in button called "Add mesh" and five format buttons called "Save", which says nothing
+// about which of those keeps your rig and which throws it away. matt: "we need more
+// straightforward and easy to understand options for file load vs file import, file save should
+// be really clear as well, again its all a mess and hard to read at a glance." The four words
+// carry the difference now, and the sections run in the order you use them.
+//
+// Import ADDS to the scene rather than replacing it, which is what that button has always done;
+// it simply had no counterpart to be distinguished from. Export holds the four mesh formats
+// because they lose the rig, the history and the frame groups: calling them "save" was the lie.
+// Nomad Link goes last, being a bridge you set up once a session.
+//
+// New scene sits with Open, because starting a new one is a thing you do INSTEAD of opening --
+// same moment, same part of the menu -- and it is a plain button until it is armed. Red on the
+// resting state made a routine action look dangerous every time you passed it; red on the
+// "Confirm clear (no undo)" state is the warning that is actually worth having. matt: "make it
+// the regular button color, not red. the warning that appears one click to say 'are you sure?'
+// can stay red, thats useful." 
+//
+// NO HTML COMMENTS IN HERE. The VR panel serialises this markup into an SVG, which is XML, and
+// XML forbids "--" inside a comment -- so one prose dash blanked the whole panel with nothing
+// but "SVG image failed to load". It renders fine on desktop, whose HTML parser is lenient,
+// which is exactly what makes it worth a rule rather than care.
 export function buildMenuHTML_files(main) {
   const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
   const exportAll = guiFiles?._exportAll ?? true;
@@ -948,23 +971,18 @@ export function buildMenuHTML_files(main) {
   const objAppend = guiFiles?._objColorAppended ?? false;
 
   return `
-    <!-- OPEN REPLACES, IMPORT ADDS, SAVE ROUND-TRIPS, EXPORT IS ONE-WAY. The menu used to
-         offer one file-in button called "Add mesh" and five format buttons called "Save", which
-         says nothing about which of those keeps your rig and which throws it away. matt: "we need
-         more straightforward and easy to understand options for file load vs file import, file
-         save should be really clear as well, again its all a mess and hard to read at a glance."
-         The four words carry the difference now, and the order is the order you use them in. -->
     <div class="mm-section-title">Open</div>
     <button class="mm-action-btn" id="mm-open-scene">Open scene…</button>
     <button class="mm-action-btn" id="mm-browser-saves">Browser Saves…</button>
+    <button class="mm-action-btn${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene">
+      ${main._clearSceneConfirm ? 'Confirm clear (no undo)' : 'New scene…'}
+    </button>
 
     <div class="mm-section-title">Save</div>
     <button class="mm-action-btn" id="mm-export-sxr">Save scene (.sxr)</button>
     <button class="mm-action-btn" id="mm-browser-save-quick">Save to browser…</button>
 
     <div class="mm-section-title">Import</div>
-    <!-- ADDS to the scene rather than replacing it, which is what this button has always done
-         -- it just had no counterpart to be distinguished from. -->
     <button class="mm-action-btn" id="mm-import-obj">Import mesh… (obj, sgl, ply, stl)</button>
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
@@ -973,8 +991,6 @@ export function buildMenuHTML_files(main) {
 
 
     <div class="mm-section-title">Export</div>
-    <!-- ONE-WAY. These lose the rig, the history and the frame groups, so calling them "save"
-         was the lie that made this menu confusing. .sxr is the one that comes back. -->
     <div class="mm-choice-grid cols-4">
       <button class="mm-choice" id="mm-export-glb">glb</button>
       <button class="mm-choice" id="mm-export-obj">obj</button>
@@ -1001,14 +1017,8 @@ export function buildMenuHTML_files(main) {
       <button class="mm-choice" id="mm-save-metalness">Metalness</button>
     </div>
 
-    <div class="mm-section-title">Scene</div>
-    <button class="mm-action-btn danger" id="mm-clear-scene">
-      ${main._clearSceneConfirm ? 'Confirm clear (no undo)' : 'Clear scene…'}
-    </button>
 
 
-    <!-- LAST, and rarely: five buttons, a text field and a status line for a bridge you set up
-         once a session. matt: "i think the nomad link stuff should be moved to the bottom." -->
     <div class="mm-section-title">Nomad Link</div>
     <div class="mm-row">
       <span class="mm-lbl">Address</span>
@@ -1477,6 +1487,13 @@ export function buildSectionHTML_topology(main) {
   `;
 }
 
+// SCENE DISPLAY FIRST. The ground plane is the toggle reached most often in this menu and it sat
+// below the shader, both environment grids, every mesh-display slider and the wireframe controls:
+// a long scroll in a headset to flip one switch. matt: "the groundplane option is too far low on
+// the menu and hard to reach." It also sits OUTSIDE the mesh-disabled fieldset, or it greys out
+// with controls it has nothing to do with.
+//
+// No HTML comments in the template itself -- see buildMenuHTML_files.
 export function buildSectionHTML_rendering(main) {
   const mesh = main.getMesh?.();
   const rigDisplay = buildBoneDisplayHTML(main, 'mm');
@@ -1551,10 +1568,6 @@ export function buildSectionHTML_rendering(main) {
   return `
     ${rigDisplay}
     <div id="mm-render-root" class="${shaderClass}">
-      <!-- SCENE DISPLAY FIRST. The ground plane is the toggle reached most often in this menu and
-           it sat below the shader, both environment grids, every mesh-display slider and the
-           wireframe controls -- a long scroll in a headset to flip one switch. matt: "the
-           groundplane option is too far low on the menu and hard to reach." -->
       <div class="mm-section-title">Scene Display</div>
       <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
       <div class="mm-row">
