@@ -180,7 +180,10 @@ if (FACTOR[sA] && FACTOR[dA]) {
   // or the floor is painted over the UI. renderOrder is the only lever: the ghost cannot be
   // told to make an exception for one object.
   const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
-  const panelOrder = Number((PANEL.match(/this\.mesh\.renderOrder = (\d+);/) || [])[1]);
+  // The panel order is a named constant now, not a literal at the assignment: it also has to
+  // clear the RIG overlay (Skeleton draws at 9996..10002 with depth test off), so the number
+  // lives in one place that both this check and anything riding on a panel can read.
+  const panelOrder = Number((PANEL.match(/VR_PANEL_RENDER_ORDER = (\d+);/) || [])[1]);
   check('the VR panels are ordered AFTER both grid passes',
     panelOrder > ghost && panelOrder > main,
     'panel renderOrder ' + panelOrder + ' vs grid ' + main + '/' + ghost

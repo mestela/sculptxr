@@ -633,7 +633,12 @@ check('the rig display offers a Shaded toggle for capsules',
 // position IS its normal, radial on a cap and in xz on a shaft.
 check('...shaded from the geometry itself, with no light added to an overlay pass',
   /vec3 _sn = normalize\(vec3\(transformed\.x, 0\.0, transformed\.z\)\);/.test(SKEL_SRC)
-    && /vec3 _sn = normalize\(transformed\);/.test(SKEL_SRC));
+    && /vec3 _sn = normalize\(transformed \/ max\(_ssc, vec3\(1e-6\)\)\);/.test(SKEL_SRC));
+// A cap is a unit sphere scaled by the joint's three half-extents, and a normal does not survive
+// a non-uniform scale the way a point does -- it has to be divided by the scale before rotating,
+// or a squashed joint lights as though it were round.
+check('...with the cap normal corrected for its non-uniform scale',
+  /vec3 _ssc = vec3\(length\(_sm\[0\]\), length\(_sm\[1\]\), length\(_sm\[2\]\)\);/.test(SKEL_SRC));
 // A uniform, not a define: toggling a define recompiles a program mid-session.
 // three's own customProgramCacheKey is `return this.onBeforeCompile.toString()`, so a saved
 // reference invoked as a bare function loses `this` and throws INSIDE the renderer, on the first
@@ -643,7 +648,34 @@ check('...chaining the existing cache key ON the material, not detached',
   'the renderer throws reading onBeforeCompile of undefined');
 check('...blended by a uniform so the toggle costs no recompile',
   /diffuseColor\.rgb \*= mix\(1\.0, vShade, uShadeMix\);/.test(SKEL_SRC)
-    && /m\.userData\.shadeMix\.value = \(!ghost && shaded\) \? 1 : 0;/.test(SKEL_SRC));
+    && /m\.userData\.shadeMix\.value = shaded \? 1 : 0;/.test(SKEL_SRC));
+// The ghost is the pass drawn THROUGH the mesh, so with a sculpt visible it is most of the
+// capsule surface anyone looks at. Leaving it flat was most of why the toggle looked inert.
+check('...and the ghost pass is shaded too, being the half you actually see',
+  !/\(!ghost && shaded\)/.test(SKEL_SRC),
+  'the toggle appears to do nothing whenever a sculpt is visible');
+
+// ── A PANEL IS UI AND NOTHING IN THE SCENE PAINTS OVER IT ─────────────────────────────
+//
+// The rig overlay -- bones, joints, capsules, pins, labels -- lives at 9996..10002 and is drawn
+// with depth test off so it reads through the sculpt. VR panels sat at 1000, a number chosen only
+// to clear the ground grid, so every one of those painted straight through the menu you were
+// reading. matt: "almost all the bones display options (bone solid, bone wireframe, joints,
+// capsules, pins etc) draw over the vr panels."
+{
+  const PANEL = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8');
+  const panelOrder = Number((PANEL.match(/VR_PANEL_RENDER_ORDER = (\d+);/) || [])[1]);
+  const rigOrders = [...SKEL_SRC.matchAll(/renderOrder = (\d{3,});/g)].map((m) => Number(m[1]));
+  check('the VR panels draw above every rig overlay',
+    panelOrder > Math.max(...rigOrders),
+    'panel ' + panelOrder + ' vs highest rig ' + Math.max(...rigOrders));
+  // Named, because anything that must sit ON a panel has to say "one more than the panel"
+  // without knowing the number -- the resize handle sat at a bare 1000 and went under the rig.
+  check('...from one named constant the panel furniture can ride on',
+    /this\.mesh\.renderOrder = VR_PANEL_RENDER_ORDER;/.test(PANEL)
+      && /renderOrder = VR_PANEL_RENDER_ORDER \+ 1;/.test(
+        fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8')));
+}
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

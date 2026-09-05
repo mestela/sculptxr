@@ -94,6 +94,10 @@ export function setMenuColorGrade(b01, s01, g01) {
  * consistent regardless of panel DOM width.
  *   MiniPanel:   240 / 1800 = 0.133 m → rounded to 0.13 m  ✓
  */
+// Above the rig overlay (9996..10002 in Skeleton) and everything else in the scene: a panel is
+// UI and nothing in the world should paint over it.
+export const VR_PANEL_RENDER_ORDER = 11000;
+
 export const VR_PANEL_PX_PER_M = 1800;
 
 // HOW HIGH A WRIST PANEL SITS ABOVE THE CONTROLLER — ONE NUMBER FOR ALL OF THEM.
@@ -255,9 +259,18 @@ export class HTMLVRPanel {
     // The ground grid's occluded pass is drawn with `depthFunc: GreaterDepth`, i.e. "show me
     // wherever something is NEARER than the grid" -- and a menu floating in front of the floor
     // is exactly that, so the floor was painted over the menu. A ghost cannot be told to make
-    // an exception for the UI, so the UI is ordered after it. 1000 is the number VRMenu already
-    // used for this, with the same reasoning.
-    this.mesh.renderOrder = 1000;
+    // an exception for the UI, so the UI is ordered after it.
+    //
+    // ABOVE THE RIG OVERLAY TOO. 1000 was enough to clear the grid and nothing else: the whole
+    // skeleton family -- bones, joints, capsules, pins, labels -- lives at 9996 to 10002, drawn
+    // with depth test off so it reads through the sculpt, and every one of them therefore painted
+    // straight through the menu you were reading. matt: "almost all the bones display options
+    // (bone solid, bone wireframe, joints, capsules, pins etc) draw over the vr panels."
+    //
+    // A panel is the nearest thing there is to a HUD, so it goes above the lot. Exported because
+    // anything that must sit on a panel (its own close button, the resize handle) has to be able
+    // to say "one more than the panel" without knowing the number.
+    this.mesh.renderOrder = VR_PANEL_RENDER_ORDER;
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
     this.mesh.scale.y = -1;
 

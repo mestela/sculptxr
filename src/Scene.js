@@ -51,7 +51,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { registerGradeMaterial, wristPanelY, wristPanelYaw } from './gui/htmlvr/HTMLVRPanel.js';
+import { registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER } from './gui/htmlvr/HTMLVRPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -5949,7 +5949,10 @@ class Scene {
       this._vrResizeHandle.visible = false;
       // A CHILD OF THE PANEL, like the close button — NOT a scene sibling repositioned by hand
       // every frame. See _layoutTimelineResizeHandle for why.
-      this._vrResizeHandle.renderOrder = 1000;
+      // A child of the panel, so it rides one above whatever the panel is on -- see
+      // VR_PANEL_RENDER_ORDER. Left at a bare 1000 it sat under the rig overlay with everything
+      // else that assumed 1000 was the top of the world.
+      this._vrResizeHandle.renderOrder = VR_PANEL_RENDER_ORDER + 1;
       this._vrResizeHandle.frustumCulled = false;
 
       if (window.screenLog) window.screenLog(`[VR Timeline] mesh created ${_worldW.toFixed(2)}×${_worldH.toFixed(2)}m`, 'cyan');

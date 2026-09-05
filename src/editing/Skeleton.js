@@ -463,9 +463,12 @@ function tuneCapsuleBatches(main) {
     const ghost = /G(Hi)?$/.test(key);
     m.transparent = true;
     m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
-    // The ghost pass stays flat: it is the "behind everything" read, and shading it makes the
-    // occluded half compete with the half you can actually see.
-    if (m.userData.shadeMix) m.userData.shadeMix.value = (!ghost && shaded) ? 1 : 0;
+    // THE GHOST IS SHADED TOO. It was left flat on the reasoning that the occluded half should
+    // not compete with the half you can see -- but the ghost is the pass drawn THROUGH the mesh,
+    // so with a sculpt visible it is most of the capsule surface anyone actually looks at, and
+    // leaving it flat is most of why the toggle looked like it did nothing. matt: "the shaded
+    // button for capsules has no effect, the capsules still appear unlit."
+    if (m.userData.shadeMix) m.userData.shadeMix.value = shaded ? 1 : 0;
     // An opaque capsule writes depth or the rig sorts like glass; a translucent one must not, or
     // it punches holes in what is behind it. Same rule the per-mesh capsules had.
     m.depthWrite = !ghost && base >= 0.99;
@@ -680,16 +683,28 @@ function shadeMaterial(mat, cylinder) {
     shader.vertexShader = 'varying float vShade;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>',
       // The normal a capsule already implies: down the shaft for a cylinder, radial for a cap.
-      (cylinder
+      'mat3 _sm = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
+      + 'vec3 _ssc = vec3(length(_sm[0]), length(_sm[1]), length(_sm[2]));\n'
+      // AN ELLIPSOID'S NORMAL IS NOT ITS POSITION. A cap is a unit sphere scaled by the joint's
+      // three half-extents, and a normal does not survive a non-uniform scale the way a point
+      // does -- it transforms by the inverse, so the direction has to be divided by the scale
+      // before being rotated. Skipping that lit a squashed joint as though it were round.
+      + (cylinder
         ? 'vec3 _sn = normalize(vec3(transformed.x, 0.0, transformed.z));\n'
-        : 'vec3 _sn = normalize(transformed);\n')
-      + 'mat3 _sm = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
-      + 'float _sl = length(_sm[0]);\n'
+        : 'vec3 _sn = normalize(transformed / max(_ssc, vec3(1e-6)));\n')
+      + 'float _sl = _ssc.x;\n'
       + 'if (_sl > 1e-8) _sn = normalize(mat3(normalize(_sm[0]), normalize(_sm[1]), normalize(_sm[2])) * _sn);\n'
       + 'vec3 _swn = normalize((modelMatrix * vec4(_sn, 0.0)).xyz);\n'
       // A single key from above and slightly front-left, and a floor rather than a black side:
       // this is here to say WHICH WAY A SURFACE FACES, not to light a scene.
-      + 'vShade = 0.55 + 0.45 * clamp(dot(_swn, normalize(vec3(0.35, 1.0, 0.45))), 0.0, 1.0);\n'
+      // CENTRED ON 1.0, so the lit side BRIGHTENS and the far side dims. A term that only ever
+      // multiplies down darkens the whole rig and reads as "dimmer", not as "shaded" -- measured
+      // at the default 16% opacity, a 0.30..1.15 range took the 10th-to-90th percentile
+      // brightness from 73..194 down to 29..109: LESS contrast, which is the opposite of the
+      // point. Straddling 1 keeps the weight of the colour and spends the range on the
+      // difference between facing you and facing away. At 95% solidity this takes the spread
+      // from 10 (flat, i.e. none) to 100.
+      + 'vShade = 0.60 + 0.80 * clamp(dot(_swn, normalize(vec3(0.35, 1.0, 0.45))), 0.0, 1.0);\n'
       + '#include <project_vertex>');
     shader.fragmentShader = 'uniform float uShadeMix;\nvarying float vShade;\n' + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',

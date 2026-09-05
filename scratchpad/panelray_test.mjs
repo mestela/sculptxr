@@ -49,12 +49,20 @@ check('it is inside the section it costs',
 // confusing." They now go opposite ways, so opening both puts one either side.
 {
   const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  // THE WHOLE FUNCTION, by matching braces rather than by taking a fixed number of characters.
+  // It used to slice 6000, chosen because the timeline opener builds a resize handle first and
+  // its placement sits ~5.2k in -- and then a three-line COMMENT added to that handle pushed the
+  // placement to 6054 and two rules reported themselves missing. A slice that stops short makes
+  // a passing rule look like a broken one, which is the worst way for a check to fail.
   const cut = (from) => {
     const a = SC.indexOf(from);
-    // Wide enough to reach the placement block. The timeline opener builds a resize handle
-    // first, so its placement sits ~5.2k characters in — measure rather than guess, as a slice
-    // that stops short makes a passing rule look like a missing one.
-    return a < 0 ? '' : SC.slice(a, a + 6000);
+    if (a < 0) return '';
+    let depth = 0;
+    for (let k = SC.indexOf('{', a); k < SC.length; k++) {
+      if (SC[k] === '{') depth++;
+      else if (SC[k] === '}' && --depth === 0) return SC.slice(a, k + 1);
+    }
+    return SC.slice(a);
   };
   const blend = cut('  _openVRBlendshapes() {');
   const timeline = cut('  _openVRTimeline() {');
