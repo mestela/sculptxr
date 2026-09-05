@@ -314,6 +314,12 @@ IKSolver.pinAnchor = function (joint, out) {
                  here.z + (out.z - here.z) * w);
 };
 
+// PUBLISHED so the DRAWING can read the same weight the SOLVE does. Skeleton cannot import this
+// file -- IKSolver imports Skeleton and module_load_test keeps that one way -- and a second
+// implementation of "how strongly is this pinned" would drift from this one the first time the
+// end-snap or the default changed.
+window._ikPinWeightOf = IKSolver.pinWeight;
+
 // The same weight on the ORIENTATION half, or a 6DOF pin at w=0 would release its position and
 // keep holding its rotation -- half a pin, which is not one of the modes and not what "off"
 // means. Slerped from the joint's own orientation, so w=0 asks for no change.

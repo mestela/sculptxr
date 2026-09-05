@@ -58,6 +58,7 @@ const PIN_SOFT_COLOR = 0xa6e3a1;
 // "this pin holds orientation" and "this pin is not being met" are independent facts, and
 // sharing a colour would conflate them.
 const PIN_LINK_COLOR = 0xcba6f7;
+const _pinHSL = { h: 0, s: 0, l: 0 };   // scratch for the pin-weight saturation ramp
 const PLANE_COLOR = 0x89b4fa;
 const PLANE_HOT = 0xa6e3a1;
 const PIN_COLOR = 0xf38ba8;
@@ -2265,6 +2266,9 @@ Skeleton.updateVisuals = function (main) {
     // The pin marker grows and warms the same way a joint does under the cursor: same signal,
     // same meaning, so the two read as one preselection rather than two conventions.
     const pinHot = pinObj && pinHiAll.has(pinObj.getID());
+    // HOW STRONGLY THIS PIN IS ASKING, read through the solver's own accessor so the drawing and
+    // the solve can never disagree about it. 1 when there is no registry to ask.
+    const pinW = pinObj && window._ikPinWeightOf ? window._ikPinWeightOf(j) : 1;
     const pinHeld = pinObj ? held(pinObj.getID()) : false;
     // A steering goal is NOT a triad with a different colour — it is its own marker, and the
     // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
@@ -2288,7 +2292,11 @@ Skeleton.updateVisuals = function (main) {
     // means the solve is falling short.
     // Mode 4 excluded: a dash means the solve is falling short of a position goal, and a
     // rotation-only pin has none to fall short of. (It sits on the joint anyway.)
-    const gap = showPins && pinMode && pinMode !== 4 ? _vPin.distanceTo(_pB) : 0;
+    // A PIN AT WEIGHT 0 IS NOT PULLING, so there is nothing for a leader to be falling short of.
+    // The dash means "the solve has not met this goal"; on a pin that is asking for nothing it
+    // just reads as a broken pin. matt: "if the weight is zero, i think that line should be
+    // hidden."
+    const gap = showPins && pinMode && pinMode !== 4 && pinW > 0 ? _vPin.distanceTo(_pB) : 0;
     if (gap > jr * 0.35) {
       const pa = e.pinLink.geometry.getAttribute('position');
       pa.setXYZ(0, _pB.x, _pB.y, _pB.z);
@@ -2331,6 +2339,20 @@ Skeleton.updateVisuals = function (main) {
           o.material.color.setHex(pinHeld ? SELECT_COLOR : (pinHot ? HILITE_COLOR
             : (pinMode === 3 ? PIN_SOFT_COLOR
               : ((pinMode === 2 || pinMode === 4) ? PIN_FULL_COLOR : PIN_POS_COLOR))));
+          // SATURATION IS THE WEIGHT. A pin fading in has always looked exactly like one at full
+          // strength, so the only way to know what a pin was doing was to find its curve. Now it
+          // greys out as it lets go and comes back to full colour as it takes hold. matt: "maybe
+          // even dim the pin itself, and ramp it in saturation until its weight is 1, and its at
+          // full saturation."
+          //
+          // NOT while it is preselected or held: those colours are the answer to "what would I
+          // take", and a dim version of that is a worse answer than a bright one. Applied as a
+          // multiply, which desaturates the flat marker and dims the axis-coloured triad alike --
+          // one line for both materials.
+          if (!pinHeld && !pinHot && pinW < 1) {
+            o.material.color.getHSL(_pinHSL);
+            o.material.color.setHSL(_pinHSL.h, _pinHSL.s * pinW, _pinHSL.l * (0.55 + 0.45 * pinW));
+          }
         }
         o.position.copy(_vPin);
         o.quaternion.copy(_qPin);

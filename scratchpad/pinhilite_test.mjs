@@ -69,10 +69,19 @@ function lift(head) {
 
   // The smallest thing that answers to what the block touches. `material` is swappable, which
   // is the property under test: the block must be free to put a different one on.
+  // The ramp reads the colour back as HSL and writes it again, so the mock has to carry both --
+  // and record whether it was rewritten, which is the thing under test.
+  const mkColor = () => ({
+    hex: 0xffffff, hsl: { h: 0.5, s: 0.8, l: 0.6 }, ramped: false,
+    setHex(h) { this.hex = h; },
+    getHSL(out) { out.h = this.hsl.h; out.s = this.hsl.s; out.l = this.hsl.l; return out; },
+    setHSL(h, sat, l) { this.hsl = { h, s: sat, l }; this.ramped = true; },
+  });
+
   const mkMesh = (vertexColored) => {
-    const vcMat = { vertexColors: vertexColored, color: { hex: 0xffffff, setHex(h) { this.hex = h; } } };
+    const vcMat = { vertexColors: vertexColored, color: mkColor() };
     const plainMat = vertexColored
-      ? { vertexColors: false, color: { hex: 0xffffff, setHex(h) { this.hex = h; } } }
+      ? { vertexColors: false, color: mkColor() }
       : vcMat;
     return {
       material: vcMat, userData: { vcMat, plainMat }, visible: false,
@@ -81,16 +90,18 @@ function lift(head) {
     };
   };
 
-  const draw = ({ pinHot = false, pinHeld = false, pinMode = 1, vertexColored = true }) => {
+  const draw = ({ pinHot = false, pinHeld = false, pinMode = 1, vertexColored = true,
+                 pinW = 1 }) => {
     const part = { solid: mkMesh(vertexColored), ghost: mkMesh(vertexColored) };
     const on = true, size = 1;
     const _vPin = {}, _qPin = {};
     // eslint-disable-next-line no-new-func
+    const _pinHSL = { h: 0, s: 0, l: 0 };
     const run = new Function('part', 'on', 'size', '_vPin', '_qPin', 'pinHot', 'pinHeld',
       'pinMode', 'HILITE_COLOR', 'SELECT_COLOR', 'PIN_POS_COLOR', 'PIN_FULL_COLOR',
-      'PIN_SOFT_COLOR', block);
+      'PIN_SOFT_COLOR', 'pinW', '_pinHSL', block);
     run(part, on, size, _vPin, _qPin, pinHot, pinHeld, pinMode,
-      HILITE_COLOR, SELECT_COLOR, PIN_POS_COLOR, PIN_FULL_COLOR, PIN_SOFT_COLOR);
+      HILITE_COLOR, SELECT_COLOR, PIN_POS_COLOR, PIN_FULL_COLOR, PIN_SOFT_COLOR, pinW, _pinHSL);
     return part.solid;
   };
 
@@ -104,6 +115,26 @@ function lift(head) {
 
   // The other half: an idle pin must keep its axis colouring, or the triad stops reading as
   // three axes and the mode tint has nothing to tint.
+  // ── SATURATION IS THE WEIGHT ────────────────────────────────────────────────────────
+  //
+  // A pin fading in looked exactly like one at full strength, so the only way to know what a pin
+  // was doing was to go and find its curve. matt: "maybe even dim the pin itself, and ramp it in
+  // saturation until its weight is 1, and its at full saturation."
+  const faded = draw({ pinW: 0.3 });
+  check('a part-weight pin is desaturated toward grey',
+    faded.material.color.ramped === true && faded.material.color.hsl.s < 0.8,
+    'saturation ' + faded.material.color.hsl.s);
+  check('...and dimmed with it', faded.material.color.hsl.l < 0.6,
+    'lightness ' + faded.material.color.hsl.l);
+  check('a full-weight pin is left at full colour',
+    draw({ pinW: 1 }).material.color.ramped === false);
+  // Preselection and selection colours are the answer to "what would I take"; a dim version of
+  // that is a worse answer than a bright one, whatever the weight.
+  check('...and a hovered pin is never dimmed, whatever its weight',
+    draw({ pinHot: true, pinW: 0.1 }).material.color.ramped === false);
+  check('...nor a held one',
+    draw({ pinHeld: true, pinW: 0.1 }).material.color.ramped === false);
+
   const idle = draw({ pinHot: false, pinMode: 1 });
   check('an idle pin keeps its axis colours', idle.material.vertexColors === true);
   check('...tinted by its mode', idle.material.color.hex === PIN_POS_COLOR,
@@ -183,4 +214,21 @@ function lift(head) {
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
+
+
+
+// A pin at weight 0 is not pulling, so there is nothing for a leader to fall short of. The dash
+// means "the solve has not met this goal"; on a pin asking for nothing it reads as a broken pin.
+// matt: "if the weight is zero, i think that line should be hidden."
+check('no leader is drawn from a pin that is asking for nothing',
+  /pinMode !== 4 && pinW > 0 \? _vPin\.distanceTo\(_pB\) : 0;/.test(SRC),
+  'a dashed line points at a pin that is not pulling');
+// One reader for the weight, shared by the drawing and the solve: Skeleton cannot import
+// IKSolver (IKSolver imports Skeleton), and a second implementation would drift the first time
+// the end-snap or the default changed.
+check('...reading the weight through the solver own accessor, not a copy of it',
+  /const pinW = pinObj && window\._ikPinWeightOf \? window\._ikPinWeightOf\(j\) : 1;/.test(SRC)
+    && /window\._ikPinWeightOf = IKSolver\.pinWeight;/.test(
+      fs.readFileSync('/Users/mattestela/sculptxr/src/editing/IKSolver.js', 'utf8')));
+
 process.exit(failures ? 1 : 0);
