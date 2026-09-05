@@ -360,7 +360,14 @@ _realLog('\n── the flight recorder ─────────────�
   clear();
   PanelTrace.dump(scene);
   const l = logged();
-  check('the dump prints a history', l.some((m) => /panel history, last \d+ frames/.test(m)));
+  check('the dump prints a history, with its own length and rate',
+    l.some((m) => /panel history: \d+ frames over [\d.]+s \(\d+ fps\)/.test(m)));
+  // The user's only clock is "it went a moment before I pressed the button", so the tape is
+  // timed backwards from the press. The first tape ran out before the press: 240 frames at the
+  // 55fps it measured is 4.3s, and noticing, turning to the pinned menu and aiming takes that.
+  check('...and every row is timed from the press, not from the epoch',
+    l.some((m) => /t-[\d.]+s MiniPanel/.test(m)),
+    'a raw performance.now() cannot be lined up with "about three seconds ago"');
   check('...opening with the full state, since a diff needs a baseline',
     l.some((m) => /"op":1/.test(m) && /"ord":11000/.test(m) && /"tw":512/.test(m)));
   check('...then ONLY what changed, naming the field and both values',

@@ -181,7 +181,17 @@ function _probe(scene, mesh, cam) {
 //
 // Diff-compressed on the way out: 240 frames x 3 panels is unreadable printed whole, and the
 // only interesting rows are the ones where something moved.
-const HISTORY = 240;   // about three seconds at 72Hz, which is longer than a flash
+// LONG ENOUGH TO STILL HOLD THE EVENT WHEN THE BUTTON IS PRESSED.
+//
+// The first tape came back with 240 frames of a perfectly healthy panel: visible, parented,
+// textured, opaque, in view, every field constant except a millimetre of hand drift. 240 frames
+// at the ~55fps that recording measured is 4.3 seconds -- and noticing the menu has gone,
+// turning to the pinned main menu, aiming at it and pressing a button takes about that long. So
+// the most likely reading is not "nothing was wrong", it is "the tape had already run past it".
+//
+// Half a minute costs about 125k numbers, which is nothing, and it cannot run past a flash the
+// user then walks over to report.
+const HISTORY = 1800;  // ~30 seconds
 
 function frameOf(p, cam) {
   const m = p.mesh;
@@ -231,20 +241,27 @@ PanelTrace.dump = function (scene) {
   scene = scene || window.app || window.sculptgl;
   const ring = scene && scene._ptRing;
   if (!ring || !ring.length) { say('no history recorded (is tracing on?)'); return; }
-  say('--- panel history, last ' + ring.length + ' frames, oldest first ---');
+  // Timed BACKWARDS from the press, because that is the only clock the user has: "it went about
+  // three seconds before I hit the button" points straight at t-3s.
+  const now = performance.now();
+  const span = (now - ring[0].t) / 1000;
+  say('--- panel history: ' + ring.length + ' frames over ' + span.toFixed(1)
+    + 's (' + (ring.length / Math.max(span, 0.001)).toFixed(0) + ' fps), oldest first, times are'
+    + ' SECONDS BEFORE THE DUMP ---');
+  const ago = (t) => 't-' + ((now - t) / 1000).toFixed(2) + 's';
   const prev = {};
   let printed = 0;
   for (const row of ring) {
     for (const name of ['MiniPanel', 'ToolPicker', 'MainMenu']) {
-      const now = row[name];
-      if (!now) continue;
+      const cur = row[name];
+      if (!cur) continue;
       const was = prev[name];
-      prev[name] = now;
-      if (!was) { say('t=' + row.t + ' ' + name + ' ' + JSON.stringify(now)); printed++; continue; }
+      prev[name] = cur;
+      if (!was) { say(ago(row.t) + ' ' + name + ' ' + JSON.stringify(cur)); printed++; continue; }
       const diff = {};
-      for (const k in now) if (now[k] !== was[k]) diff[k] = was[k] + '->' + now[k];
+      for (const k in cur) if (cur[k] !== was[k]) diff[k] = was[k] + '->' + cur[k];
       if (!Object.keys(diff).length) continue;
-      say('t=' + row.t + ' ' + name + ' ' + JSON.stringify(diff));
+      say(ago(row.t) + ' ' + name + ' ' + JSON.stringify(diff));
       printed++;
     }
   }
