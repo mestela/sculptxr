@@ -685,14 +685,24 @@ check('...and the gain is capped so a lit capsule cannot clip toward white',
 // sharing an order with the solid capsules meant it showed through THEM. matt: "when an arm goes
 // behind a leg, i can still see the arm fully through the leg."
 check('the capsule ghost draws BEFORE the solid pass, so it can only reveal through the sculpt',
-  /b\.mesh\.renderOrder = ghost \? 9995 : 9996;/.test(SKEL_SRC),
+  /b\.mesh\.renderOrder = ghost \? GHOST_ORDER : 9996;/.test(SKEL_SRC)
+    && /const GHOST_ORDER = 9995;/.test(SKEL_SRC),
   'one order later and the rig has no depth culling against itself at all');
-// A material flagged transparent at opacity 1 still goes down the transparent pass -- sorted
-// per object, blended -- for a surface with nothing to blend. matt: "when the solidity is at
-// 100%, all the xray/transparency code paths in the material should be skipped."
-check('a fully solid capsule is opaque, with no blending path left on',
-  /m\.transparent = ghost \|\| m\.opacity < 0\.999;/.test(SKEL_SRC),
-  'the ghost is transparent by definition and stays so');
+// The bone, joint and wireframe ghosts had the same job and the same bug -- they ran at 9998 and
+// 9999, after the capsules, and revealed the rig through them.
+check('...and every other xray pass shares that order',
+  /m\.renderOrder = ghost \? GHOST_ORDER : 0;/.test(SKEL_SRC)
+    && /m\.renderOrder = ghost \? GHOST_ORDER : 9999;/.test(SKEL_SRC),
+  'one ghost left behind still draws the rig through itself');
+// matt asked for the skin's rule -- "when the solidity is at 100%, all the xray/transparency
+// code paths in the material should be skipped" -- and clearing `transparent` to get it moved
+// the capsules into the OPAQUE pass, which three renders before every transparent object, so the
+// ghost ran after them and revealed the rig through itself again (57,248 bleed pixels, measured).
+// The blend is what a solid capsule can skip; the pass placement is what the ordering needs.
+check('a fully solid capsule skips the blend but stays in the transparent pass',
+  /m\.transparent = true;/.test(SKEL_SRC)
+    && /m\.blending = \(!ghost && m\.opacity >= 0\.999\) \? THREE\.NoBlending : THREE\.NormalBlending;/.test(SKEL_SRC),
+  'the opaque pass runs before the ghost, and that is what re-broke the sorting');
 check('every solid-pass capsule writes depth, translucent or not',
   /m\.depthWrite = !ghost;/.test(SKEL_SRC),
   'no draw order can sort instances; only the depth buffer can');

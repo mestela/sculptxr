@@ -383,6 +383,14 @@ function ensureTaperAttrs(mesh, cap) {
   g.setAttribute('aHB', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
 }
 
+// EVERY XRAY PASS RUNS BEFORE EVERY SOLID ONE. A ghost is a GreaterDepth pass -- "paint me
+// wherever something is nearer" -- so what is in the depth buffer when it runs is what it shows
+// through. Run after the rig's own solid passes it shows the rig through the RIG, which is the
+// "arm visible through the leg" matt kept reporting; run before them, the only depth it can test
+// against is the opaque content (the sculpt, and the bone and joint bodies, which are opaque),
+// which is the one thing an xray exists to see through. The solid passes then paint over it.
+const GHOST_ORDER = 9995;
+
 function makeBatch(main, geo, ghost, key) {
   // INSTANCED ATTRIBUTES LIVE ON THE GEOMETRY, and capsuleShaftGeometry returns a shared
   // module-level singleton -- so the four shaft batches (solid, ghost, and the preselected
@@ -401,7 +409,7 @@ function makeBatch(main, geo, ghost, key) {
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   if (isShaftKey(key)) ensureTaperAttrs(m, 1);
   m.count = 0;
-  m.renderOrder = ghost ? 9998 : 0;
+  m.renderOrder = ghost ? GHOST_ORDER : 0;
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
@@ -431,7 +439,9 @@ function makeLineBatch(main, geo, ghost) {
     ...(ghost ? { depthTest: true, depthFunc: THREE.GreaterDepth } : {}),
   });
   const m = new THREE.LineSegments(new THREE.BufferGeometry(), mat);
-  m.renderOrder = 9999;
+  // The wireframe stays on top -- it is a line overlay and being drawn over is the whole point --
+  // but its GHOST is an xray like any other and goes with them. See GHOST_ORDER.
+  m.renderOrder = ghost ? GHOST_ORDER : 9999;
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
@@ -478,13 +488,17 @@ function tuneCapsuleBatches(main) {
     // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
     const ghost = /G(Hi)?$/.test(key);
     m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
-    // FULLY SOLID MEANS OPAQUE, with no blending path left switched on. A material flagged
-    // transparent at opacity 1 still goes down the transparent pass -- sorted per object, back
-    // to front, blended -- for a surface that has nothing to blend. matt, on the skin's own
-    // xray: "if its at 99% sorting goes strange, but if its at 100%, it sorts correctly... when
-    // the solidity is at 100%, all the xray/transparency code paths in the material should be
-    // skipped." Same rule here. The ghost pass is transparent by definition and stays so.
-    m.transparent = ghost || m.opacity < 0.999;
+    // FULLY SOLID SKIPS THE BLEND, BUT NOT THE PASS. matt asked for the skin's rule -- "when the
+    // solidity is at 100%, all the xray/transparency code paths in the material should be
+    // skipped" -- and taking that literally, by clearing `transparent`, moved the solid capsules
+    // into the OPAQUE pass, which three always renders BEFORE any transparent object. The ghost
+    // is transparent by definition, so it went back to running after the capsules had written
+    // their depth and revealed the rig through itself again: measured off-screen at full
+    // solidity, capsules only, sculpt hidden, the ghost painted 57,248 pixels of see-through rig
+    // over a 63,550 pixel silhouette. Pass placement is what the ordering rests on, so it stays;
+    // what a fully solid capsule can skip is the blend itself, which is what actually costs.
+    m.transparent = true;
+    m.blending = (!ghost && m.opacity >= 0.999) ? THREE.NoBlending : THREE.NormalBlending;
     // THE GHOST IS SHADED TOO. It was left flat on the reasoning that the occluded half should
     // not compete with the half you can see -- but the ghost is the pass drawn THROUGH the mesh,
     // so with a sculpt visible it is most of the capsule surface anyone actually looks at, and
@@ -509,7 +523,7 @@ function tuneCapsuleBatches(main) {
     // behind a leg, i can still see the arm fully through the leg." One order earlier, the only
     // depth it can test against is the sculpt's, which is the one thing it exists to show
     // through -- and the solid pass then paints over it.
-    b.mesh.renderOrder = ghost ? 9995 : 9996;
+    b.mesh.renderOrder = ghost ? GHOST_ORDER : 9996;
   }
 }
 
@@ -2038,14 +2052,20 @@ function disposeEntry(main, id) {
   const e = main._skelVis && main._skelVis.get(id);
   if (!e) return;
   const g = skelGroup(main);
-  const caps = e.cap ? [e.cap.shaft, e.cap.a, e.cap.b] : [];
   if (e.pinLink) {
     g.remove(e.pinLink);
     e.pinLink.geometry.dispose(); e.pinLink.material.dispose();
   }
-  // bone and joint are batch SLOTS, not scene objects — they own no geometry or material and
-  // are released with the batch itself.
-  for (const p of [e.pinT, e.pinG, e.pinS, ...caps]) {
+  // bone, joint, wire AND CAPSULE are batch SLOTS, not scene objects — they own no geometry or
+  // material and are released with the batch itself.
+  //
+  // THE CAPSULES JOINED THAT LIST when they were instanced, and this was not updated: a slot is
+  // a plain object with a position, a colour and a no-op updateMatrix, so it answers to
+  // `.material` and then has no `userData` at all. Deleting enough rig objects that a joint
+  // entry went away therefore threw here, on the frame after the delete. matt: "i could delete
+  // some and it was fine, but then deleted some more and got this error: Cannot read properties
+  // of undefined (reading 'vcMat')". Only the pin markers are still real meshes.
+  for (const p of [e.pinT, e.pinG, e.pinS]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     // Both materials, not `o.material`: a pin disposed while it was highlighted would leak the

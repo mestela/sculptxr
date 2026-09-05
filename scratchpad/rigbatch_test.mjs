@@ -159,9 +159,19 @@ check('...and the old instance mesh is disposed when it is replaced',
 check('slots are not added to the overlay group',
   !/g\.add\(e\.bone\.solid/.test(SRC) && !/g\.add\([^)]*e\.joint\.solid/.test(SRC),
   'a slot has no geometry or material; adding one to the scene does nothing good');
+// This rule USED to require the capsules in that list, from when they were real meshes. They
+// were instanced two versions later and the rule went on passing, pinning the line that then
+// threw: a slot answers to `.material` and has no `userData` at all, so disposing one blew up
+// on the frame after a joint entry went away. matt: "i could delete some and it was fine, but
+// then deleted some more and got this error: Cannot read properties of undefined (reading
+// 'vcMat')". Only the pin markers are still meshes.
 check('...and dispose does not try to free a slot',
-  /for \(const p of \[e\.pinT, e\.pinG, e\.pinS, \.\.\.caps\]\)/.test(SRC),
+  /for \(const p of \[e\.pinT, e\.pinG, e\.pinS\]\)/.test(SRC)
+    && !/\.\.\.caps/.test(SRC),
   'a slot owns nothing to dispose, and calling dispose on one would throw');
+check('...and the capsule slots are not gathered for disposal either',
+  !/const caps = e\.cap \?/.test(SRC),
+  'that list is what put slots into the dispose loop');
 
 // ── marker sizing is not driven by the POSE ──────────────────────────────────
 //
