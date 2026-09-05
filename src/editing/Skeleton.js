@@ -477,8 +477,14 @@ function tuneCapsuleBatches(main) {
     const hi = key.endsWith('Hi');
     // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
     const ghost = /G(Hi)?$/.test(key);
-    m.transparent = true;
     m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
+    // FULLY SOLID MEANS OPAQUE, with no blending path left switched on. A material flagged
+    // transparent at opacity 1 still goes down the transparent pass -- sorted per object, back
+    // to front, blended -- for a surface that has nothing to blend. matt, on the skin's own
+    // xray: "if its at 99% sorting goes strange, but if its at 100%, it sorts correctly... when
+    // the solidity is at 100%, all the xray/transparency code paths in the material should be
+    // skipped." Same rule here. The ghost pass is transparent by definition and stays so.
+    m.transparent = ghost || m.opacity < 0.999;
     // THE GHOST IS SHADED TOO. It was left flat on the reasoning that the occluded half should
     // not compete with the half you can see -- but the ghost is the pass drawn THROUGH the mesh,
     // so with a sculpt visible it is most of the capsule surface anyone actually looks at, and
@@ -1134,7 +1140,18 @@ const _paletteColors = [];
 function paletteColor(i) {
   let c = _paletteColors[i];
   if (!c) {
-    c = _paletteColors[i] = new THREE.Color().setHSL(i / BONE_PALETTE_SIZE, 0.95, 0.55);
+    // AUTHORED IN sRGB, EXPLICITLY. three's setHSL takes a colour space and defaults it to the
+    // WORKING space, which is linear -- so these numbers went into the buffer unconverted while
+    // every hex colour in this file (setStyle/setHex default to sRGB) was converted properly.
+    // The renderer then output-converts them a second time, which lifts the DARK channel of
+    // every palette colour about three-fold: HSL(0.95, 0.55) should reach the screen with a
+    // 0.1225 floor and reached it with 0.384, cutting saturation from 0.875 to 0.61 before a
+    // single pixel is blended. The same numbers drive the skin-weight vertex colours through
+    // SculptGL's own unmanaged pipeline, where they are treated as sRGB and look right -- which
+    // is exactly the comparison matt made: "if i turn on weights on the skin, they're fully
+    // saturated... the capsules feel like they're at least half the saturation of the weight
+    // and bones colours". Same palette, two pipelines, one of them converting twice.
+    c = _paletteColors[i] = new THREE.Color().setHSL(i / BONE_PALETTE_SIZE, 0.95, 0.55, THREE.SRGBColorSpace);
     c._hue = i / BONE_PALETTE_SIZE;
   }
   return c;
@@ -1220,6 +1237,16 @@ Skeleton.boneColor = function (main, joint) {
   const slots = colorSlots(main);
   const s = slots.get(joint.getID());
   return s === undefined ? _fallbackColor : paletteColor(s);
+};
+
+// THE SAME COLOUR FOR THE UNMANAGED PIPELINE. SculptGL writes vertex colours straight to the
+// framebuffer with no output conversion, so a mesh painted with a bone's identity colour needs
+// the sRGB components, not the linear ones three wants. Two accessors rather than one shared
+// convention because there are genuinely two pipelines; picking the wrong one is visible as a
+// colour that is too light (linear numbers read as sRGB) or too dark (the reverse).
+const _srgbOut = new THREE.Color();
+Skeleton.boneColorSRGB = function (main, joint) {
+  return _srgbOut.copy(Skeleton.boneColor(main, joint)).convertLinearToSRGB();
 };
 
 Skeleton.joints = function (main) {

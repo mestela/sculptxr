@@ -356,7 +356,8 @@ function makeCage(main, geo, owner, namedAfter, prefix) {
   // THE COLOUR OF THE BONE IT SPEAKS FOR, as vertex colours — which is where a SculptGL mesh
   // keeps colour, and it means sculpting the cage keeps it, since new vertices inherit from
   // their neighbours.
-  const col = Skeleton.boneColor(main, owner);
+  // sRGB components -- this paints SculptGL vertex colours. See Skeleton.boneColorSRGB.
+  const col = Skeleton.boneColorSRGB(main, owner);
   const cAr = base.getColors();
   if (cAr) {
     for (let ci = 0; ci < cAr.length; ci += 3) {

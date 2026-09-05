@@ -366,6 +366,30 @@ check('...and it can still be re-measured when the scene really does change',
   }
 }
 
+// ── ONE PALETTE, TWO PIPELINES ────────────────────────────────────────────────────────────
+//
+// three converts a material's colour on output; SculptGL writes vertex colours to the
+// framebuffer as they stand. The identity palette feeds BOTH, so it has to be authored in one
+// space and handed to each in the space that pipeline expects. It wasn't: setHSL defaults to
+// the WORKING (linear) space, so the palette went into three unconverted and was converted a
+// second time on the way out -- a 0.1225 dark channel reaching the screen at 0.384. matt: "if i
+// turn on weights on the skin, they're fully saturated... the capsules feel like they're at
+// least half the saturation of the weight and bones colours."
+{
+  const SKIN = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
+  const CAGE = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
+  check('the identity palette states its colour space',
+    /setHSL\(i \/ BONE_PALETTE_SIZE, 0\.95, 0\.55, THREE\.SRGBColorSpace\)/.test(SRC),
+    "setHSL's default is the working space, which is linear -- the colour is then converted twice");
+  check('...and the unmanaged pipeline has its own accessor',
+    /Skeleton\.boneColorSRGB = function/.test(SRC) && /convertLinearToSRGB\(\)/.test(SRC));
+  check('...which the skin-weight colours use',
+    /Skeleton\.boneColorSRGB\(main, j\)/.test(SKIN),
+    'these are SculptGL vertex colours, not a three material');
+  check('...and so do the weight cages',
+    /Skeleton\.boneColorSRGB\(main, owner\)/.test(CAGE));
+}
+
 // ── A DELETED PIN IS NOT A PIN ────────────────────────────────────────────────────────────
 //
 // Deleting a mesh takes its three mesh out of its parent and leaves every other reference

@@ -687,6 +687,12 @@ check('...and the gain is capped so a lit capsule cannot clip toward white',
 check('the capsule ghost draws BEFORE the solid pass, so it can only reveal through the sculpt',
   /b\.mesh\.renderOrder = ghost \? 9995 : 9996;/.test(SKEL_SRC),
   'one order later and the rig has no depth culling against itself at all');
+// A material flagged transparent at opacity 1 still goes down the transparent pass -- sorted
+// per object, blended -- for a surface with nothing to blend. matt: "when the solidity is at
+// 100%, all the xray/transparency code paths in the material should be skipped."
+check('a fully solid capsule is opaque, with no blending path left on',
+  /m\.transparent = ghost \|\| m\.opacity < 0\.999;/.test(SKEL_SRC),
+  'the ghost is transparent by definition and stays so');
 check('every solid-pass capsule writes depth, translucent or not',
   /m\.depthWrite = !ghost;/.test(SKEL_SRC),
   'no draw order can sort instances; only the depth buffer can');

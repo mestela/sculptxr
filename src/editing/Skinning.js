@@ -915,7 +915,8 @@ Skinning.showWeightColors = function (main, mesh, only) {
   }
 
   const joints = resolveJoints(main, mesh);
-  const cols = joints.map((j) => (j ? Skeleton.boneColor(main, j) : null));
+  // sRGB components: these go into SculptGL vertex colours, not into a three material.
+  const cols = joints.map((j) => (j ? Skeleton.boneColorSRGB(main, j).clone() : null));
   const idx = mesh._skinIdx, wts = mesh._skinW;
 
   // ONLY THE VERTICES THAT CHANGED, when the caller knows which. A cage stroke moves a few

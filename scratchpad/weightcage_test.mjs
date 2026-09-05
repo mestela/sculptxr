@@ -389,8 +389,11 @@ check('one bone per vertex, weight 1', (() => {
       + 'rescales to a unit box and destroys the fit');
   // The rig gives every bone an identity colour and the DRAWN capsules already use it. A baked
   // one that came out grey was losing information the rig was handing it for free.
+  // ...through the sRGB accessor: these are SculptGL vertex colours, and that pipeline writes
+  // them to the framebuffer unconverted. The linear ones three wants read three stops too light
+  // here -- which is the bug that made the capsules look pastel next to these very cages.
   check('a baked capsule takes the colour of its bone',
-    /const col = Skeleton\.boneColor\(main, owner\);/.test(SRC)
+    /const col = Skeleton\.boneColorSRGB\(main, owner\);/.test(SRC)
       && /cAr\[ci\] = col\.r; cAr\[ci \+ 1\] = col\.g; cAr\[ci \+ 2\] = col\.b;/.test(SRC),
     'twenty-one grey capsules say nothing about which belongs to what');
   check('...as vertex colours, so sculpting keeps them',
