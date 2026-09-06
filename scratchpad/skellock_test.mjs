@@ -22,9 +22,12 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 //                          capsules come back over the top
 //   SKEL_INJECT=nohidden    visibility is not written, so a hidden mesh reloads visible
 //   SKEL_INJECT=nocagejoint the cage comes back without the joint it speaks for
-//   SKEL_INJECT=novolsave  joint volumes are not written, so a saved rig reloads as bare capsules
-//   SKEL_INJECT=volflags   the "fitted" flags are dropped, so an auto-fitted volume comes back
-//                          frozen at the size it happened to have when saved
+// (The two joint-volume injections that used to live here are gone: volumes were removed from
+// the product, so `vols` is always empty -- one had become a silent no-op that proved nothing
+// and the other's anchor had moved. A dead injection is worse than no injection, because the
+// green tick still reads as coverage.)
+//   SKEL_INJECT=nolevel  the file is written exactly as v11 wrote it, with no bound-level
+//                        word -- the shape of every .sxr saved before today
 //   SKEL_INJECT=pinbits  the pin mode is written with its old two bits only, so the fourth
 //                        mode saves as unpinned while everything about the live session still
 //                        looks right — the classic bitfield bug that only shows up on reload.
@@ -34,10 +37,15 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
     if (!SRC.includes(a)) throw new Error('inject ' + _i + ': anchor moved');
     SRC = SRC.replace(a, b);
   };
-  if (_i === 'novolsave') _cut('  u[o++] = vols.length;', '  u[o++] = 0;');
-  else if (_i === 'volflags') _cut('    u[o++] = v.shape | (d ? 16 : 0) | (off ? 32 : 0) | (rot ? 64 : 0);',
-    '    u[o++] = v.shape | 16 | 32 | 64;');
-  else if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (hidden ? 64 : 0),');
+  if (_i === 'nolevel') {
+    // The v11 writer: no bound-level word at all. This is what every file saved before today
+    // looks like, so the reader's fallback is measured against a real old file, not a mock one.
+    _cut('const SKEL_VERSION = 12;', 'const SKEL_VERSION = 11;');
+    _cut('    slots += 4 + s.j.length', '    slots += 3 + s.j.length');
+    _cut('u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV; u[o++] = s.lvl;',
+      'u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV;');
+  }
+  if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (hidden ? 64 : 0),');
   else if (_i === 'nohidden') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (m._isWeightCage ? 32 : 0),');
   else if (_i === 'nocagejoint') _cut('          if (row.parent && row.parent.getID) row.mesh._cageJointId = row.parent.getID();', '');
   if (process.env.SKEL_INJECT === 'pinbits') {
@@ -124,7 +132,18 @@ const roundTrip = (meshes) => {
   // serialize returns the chunk; deserialize hunts for it from the END of the file.
   const withFooter = new ArrayBuffer(buf.byteLength);
   new Uint8Array(withFooter).set(new Uint8Array(buf));
-  const fresh = meshes.map((m) => mk({ _id: m._id }));
+  // The stack comes back from the SGL geometry, not from this block, so the fresh copies get
+  // theirs the way the loader would already have built it -- the skin section then has a real
+  // set of levels to resolve against.
+  const fresh = meshes.map((m) => {
+    const f = mk({ _id: m._id });
+    if (m._levelSizes) {
+      f._meshes = m._levelSizes.map((n) => ({ getNbVertices: () => n }));
+      f._sel = m._sel | 0;
+      f.getNbVertices = () => f._meshes[f._sel].getNbVertices();
+    }
+    return f;
+  });
   // deserialize ends in healGraph/updateVisuals, and its own try/catch swallows anything that
   // throws in there. Give the mock what those need, or the load half-completes and the checks
   // below pass on whatever happened to be applied before the throw.
@@ -356,6 +375,66 @@ const roundTrip = (meshes) => {
   check('a ROUND joint comes back with no scale at all',
     !!out && !out[2]._jointScale && !out[2]._jointRadius,
     'writing 1,1,1 would make every joint answer yes to "has this been shaped?"');
+}
+
+// ── THE BOUND LEVEL SURVIVES A SAVE ───────────────────────────────────────────────────────
+//
+// A weight map is indexed by vertex, so it belongs to ONE resolution -- and which one was never
+// written. The loader checked the saved count against `mesh.getNbVertices()`, which on a
+// Multimesh reports the DISPLAYED level, so a character bound at the base cage and saved while
+// subdivided (the ordinary way to work, and the only way now that sculpting above the bound
+// level is kept) failed that check and came back UNBOUND, with one console warning.
+// matt: "i loaded a character i skinned and weighted earlier, it isn't bound to the mesh."
+{
+  const NB0 = 6, NB1 = 12, NB2 = 24;
+  const boundSkin = (sizes, sel, joint) => {
+    const m = mk({ _selectLocked: true, _levelSizes: sizes, _sel: sel });
+    m._meshes = sizes.map((n) => ({ getNbVertices: () => n }));
+    m.getNbVertices = () => m._meshes[sel].getNbVertices();
+    m._skinLevelMesh = m._meshes[0];
+    m._skinLevel = 0;
+    m._skinJoints = [joint._id];
+    m._skinRest = new Float32Array(NB0 * 3);
+    m._skinIdx = new Int32Array(NB0 * 4).fill(0);
+    m._skinW = new Float32Array(NB0 * 4).fill(1);
+    m._skinInvBind = [{ elements: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]) }];
+    return m;
+  };
+
+  const j = mk({ _isBone: true, _boneRadius: 1 });
+  // BOUND AT THE BASE CAGE, SAVED SUBDIVIDED TWICE -- matt's file.
+  const out = roundTrip([boundSkin([NB0, NB1, NB2], 2, j), j]);
+  check('a mesh bound below the level it is displayed at comes back BOUND',
+    !!out && !!out[0]._skinW,
+    'this is the check that silently discarded every subdivided character');
+  check('...bound to the level the weights are actually for',
+    !!out && out[0]._skinLevel === 0 && out[0]._skinLevelMesh === out[0]._meshes[0],
+    'got level ' + (out && out[0]._skinLevel));
+  check('...with the weights themselves intact',
+    !!out && out[0]._skinW && out[0]._skinW.length === NB0 * 4
+      && out[0]._skinRest.length === NB0 * 3);
+
+  // THE FILES THAT ALREADY EXIST. Saved before the level was written, so the reader has to
+  // find it -- and there is exactly one thing that identifies it.
+  if (process.env.SKEL_INJECT === 'nolevel') {
+    check('a v11 file still binds, by matching the level size',
+      !!out && !!out[0]._skinW && out[0]._skinLevel === 0,
+      'the characters already on disk have no level word; refusing them would mean rebinding '
+        + 'every one by hand');
+  }
+
+  // AMBIGUOUS, so REFUSE. Two levels of the same size cannot be told apart by count, and
+  // binding to the wrong one deforms with indices that address real vertices -- which looks
+  // like a broken rig rather than a missing one, and is much harder to diagnose.
+  const j2 = mk({ _isBone: true, _boneRadius: 1 });
+  const amb = boundSkin([NB0, NB0, NB2], 2, j2);
+  const outAmb = roundTrip([amb, j2]);
+  const ambiguousResolvable = process.env.SKEL_INJECT !== 'nolevel';
+  check(ambiguousResolvable
+      ? 'two levels of equal size are still fine when the file SAYS which'
+      : 'two levels of equal size and no level word: refuses rather than guessing',
+    !!outAmb && (ambiguousResolvable ? !!outAmb[0]._skinW : !outAmb[0]._skinW),
+    'a coin toss here binds to real vertices in the wrong place');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

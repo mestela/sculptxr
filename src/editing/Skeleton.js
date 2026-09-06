@@ -3445,7 +3445,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 11;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones
+const SKEL_VERSION = 12;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3521,7 +3521,16 @@ Skeleton.serialize = function (meshes) {
     });
     const nbV = (m._skinRest.length / 3) | 0;
     if (!nbV) return;
-    skins.push({ i: i, j: jIdx, nbV: nbV, mesh: m });
+    // WHICH RESOLUTION THE WEIGHTS BELONG TO (v12). A weight map is indexed by vertex, so it
+    // is only meaningful for one level of the stack -- and nothing said which. The loader
+    // compared the saved count against `mesh.getNbVertices()`, which on a Multimesh reports
+    // the DISPLAYED level, so a character bound at the base cage and saved while subdivided
+    // failed that check and came back unbound. matt: "i loaded a character i skinned and
+    // weighted earlier, it isn't bound to the mesh."
+    const lvl = m._meshes && m._meshes.length
+      ? Math.max(0, m._meshes.indexOf(m._skinLevelMesh || m._meshes[m._skinLevel | 0]))
+      : 0;
+    skins.push({ i: i, j: jIdx, nbV: nbV, lvl: lvl, mesh: m });
   });
 
   // v5: the REST POSE — each joint's local matrix as the skeleton was drawn. It cannot be
@@ -3587,7 +3596,7 @@ Skeleton.serialize = function (meshes) {
 
   let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
-    slots += 3 + s.j.length + s.nbV * INFLUENCES * 2 + s.nbV * 3 + s.j.length * 16;
+    slots += 4 + s.j.length + s.nbV * INFLUENCES * 2 + s.nbV * 3 + s.j.length * 16;
   }
   slots += 1 + rests.length * 17;
   slots += 1 + vols.length * 12;
@@ -3607,7 +3616,7 @@ Skeleton.serialize = function (meshes) {
   u[o++] = skins.length;
   for (const s of skins) {
     const m = s.mesh;
-    u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV;
+    u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV; u[o++] = s.lvl;
     for (const ji of s.j) u[o++] = ji;
     // Influence indices are signed (-1 = empty slot), so they go through the Int32 view.
     for (let k = 0; k < s.nbV * INFLUENCES; k++) i32[o++] = m._skinIdx[k];
@@ -3792,6 +3801,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       for (let s = 0; s < nbSkins; s++) {
         const mesh = meshes[u[o++]];
         const nbJ = u[o++], nbV = u[o++];
+        const savedLvl = ver >= 12 ? u[o++] : NONE;
         const jointIdx = [];
         for (let a = 0; a < nbJ; a++) jointIdx.push(u[o++]);
 
@@ -3808,10 +3818,29 @@ Skeleton.deserialize = function (buffer, meshes, main) {
           invBind.push(m4);
         }
 
-        // A weight map is indexed by vertex, so it is only valid for the exact mesh it was
-        // built against. Refuse a mismatch rather than deforming with garbage indices.
-        if (!mesh || mesh.getNbVertices() !== nbV) {
-          console.warn('[Skeleton] skin weights skipped: vertex count mismatch');
+        // A weight map is indexed by vertex, so it is only valid for the exact LEVEL it was
+        // built against. Refuse a mismatch rather than deforming with garbage indices -- but
+        // measure the right level: `mesh.getNbVertices()` is the DISPLAYED one, and a mesh
+        // bound at the base cage is normally saved subdivided, so that comparison threw away
+        // every bind it was meant to protect.
+        if (!mesh) { console.warn('[Skeleton] skin weights skipped: no mesh'); continue; }
+        const stack = mesh._meshes && mesh._meshes.length ? mesh._meshes : null;
+        let level = null;
+        if (!stack) {
+          level = mesh.getNbVertices() === nbV ? mesh : null;
+        } else if (savedLvl !== NONE && savedLvl < stack.length
+                   && stack[savedLvl].getNbVertices() === nbV) {
+          level = stack[savedLvl];
+        } else {
+          // PRE-v12, OR A STACK THAT HAS CHANGED SHAPE. The level was never written, so find
+          // it by the one thing that does identify it. Only when exactly one level matches:
+          // two levels of equal size would be a coin toss, and binding to the wrong one
+          // deforms with indices that address real vertices, which is far worse than refusing.
+          const hits = stack.filter((l) => l.getNbVertices() === nbV);
+          if (hits.length === 1) level = hits[0];
+        }
+        if (!level) {
+          console.warn('[Skeleton] skin weights skipped: no level with %d vertices', nbV);
           continue;
         }
         const joints = jointIdx.map((ji) => (ji === NONE ? null : meshes[ji]));
@@ -3820,6 +3849,10 @@ Skeleton.deserialize = function (buffer, meshes, main) {
           continue;
         }
 
+        // Both, because boundLevel() prefers the object and keeps the index in step with it;
+        // the index alone goes stale the moment a level is inserted or removed.
+        mesh._skinLevelMesh = stack ? level : null;
+        mesh._skinLevel = stack ? stack.indexOf(level) : 0;
         mesh._skinJoints = joints.map((j) => j.getID());
         mesh._skinIdx = idx;
         mesh._skinW = wts;
