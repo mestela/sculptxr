@@ -108,9 +108,21 @@ class MeshResolution extends Mesh {
       return;
     }
 
-    var verts = new Float32Array(nbVerticesUp * 3);
-    var colors = new Float32Array(nbVerticesUp * 3);
-    var materials = new Float32Array(nbVerticesUp * 3);
+    // KEPT, like the scratch in lowerAnalysis, and this one matters far more: analysis runs at
+    // stroke END, but this runs inside higherSynthesis, which the skin pass calls for EVERY
+    // level above the bound one on EVERY frame a joint moves. Posing a character subdivided
+    // twice was allocating three top-level arrays per level per frame.
+    //
+    // Safe to reuse because partialSubdivision fills every element it is given and the mapping
+    // loop below covers every index; multires_test.mjs holds that down.
+    var nUp = nbVerticesUp * 3;
+    if (!this._subdMapScratch || this._subdMapScratch.length !== nUp * 3) {
+      this._subdMapScratch = new Float32Array(nUp * 3);
+    }
+    var ms = this._subdMapScratch;
+    var verts = ms.subarray(0, nUp);
+    var colors = ms.subarray(nUp, nUp * 2);
+    var materials = ms.subarray(nUp * 2, nUp * 3);
 
     Subdivision.partialSubdivision(this, verts, colors, materials);
 

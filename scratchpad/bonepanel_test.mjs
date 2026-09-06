@@ -631,6 +631,24 @@ check('both panels build their toggles from that list',
 check('...and both wire it from the same place',
   /wireDevToggles\(q, paint\);/.test(MAIN_SRC) && /wireDevToggles\(q, repaintFn\);/.test(MAIN_SRC),
   'the VR panel repaints through paint(), the sidebar through repaintFn');
+// Every instrument in the app is read over remote debugging -- the OUTPUT is the console, but
+// the SWITCH has to be reachable from inside a headset or it may as well not exist. matt: "use
+// regular chrome console, i have remote debugging enabled" / "i don't see 'trace panel
+// visibility' as an option in the settings panel when i'm in vr."
+check('the skin frame trace is in the shared toggle list',
+  /id: 'mm-skin-trace',[\s\S]{0,140}?window\._skinTrace = !!on/.test(MAIN_SRC),
+  'a trace you can only turn on from a console you cannot open is not an instrument');
+check('...and it reads the live flag',
+  /get: \(\) => !!window\._skinTrace/.test(MAIN_SRC));
+{
+  const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
+  check('...and the trace breaks the frame into the four phases',
+    /lbs %s mush %s synth %s refresh %s/.test(SKIN)
+      && /const _synth = synthesiseUp\(mesh\);/.test(SKIN),
+    'a single total cannot tell "the deformation is slow" from "rebuilding the display level '
+      + 'is slow", which are different problems with different fixes');
+}
+
 check('no panel still carries its own solver toggle',
   !/q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC)
     && !/q\('#mm-phys-xpbd'\)\?\.addEventListener/.test(MAIN_SRC),

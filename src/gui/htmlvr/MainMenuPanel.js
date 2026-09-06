@@ -1114,6 +1114,11 @@ const DEV_TOGGLES = [
   // extras go stale while it is on; that is the experiment.
   { id: 'mm-no-rebuild',  label: 'Freeze Mini Panel Rebuilds',
     get: () => !!window._mpNoRebuild,   set: (on) => { window._mpNoRebuild = !!on; } },
+  // Where a posing frame goes, printed once a second: lbs / mush / synth / refresh. Posing a
+  // SUBDIVIDED bound mesh spends most of its frame above the bound level, and until this
+  // existed the split between "the deformation" and "rebuilding the display level" was a guess.
+  { id: 'mm-skin-trace',  label: 'Trace Skin Frame Cost',
+    get: () => !!window._skinTrace,     set: (on) => { window._skinTrace = !!on; } },
 ];
 
 export function buildDevToggles(render, renderAction) {

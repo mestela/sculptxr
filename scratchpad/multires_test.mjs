@@ -136,6 +136,11 @@ for (const mapped of [false, true]) {
     /this\._detailsXYZ\.length !== nbVerticesUp \* 3/.test(SRC)
       && /this\._subdScratch\.length !== n \* 3/.test(SRC),
     'a kept buffer from a different resolution is worse than a fresh one');
+  check('src: the per-frame subdivision scratch is kept too',
+    /this\._subdMapScratch\.length !== nUp \* 3/.test(SRC)
+      && /var verts = ms\.subarray\(0, nUp\);/.test(SRC),
+    'higherSynthesis runs for every level above the bound one on every frame a joint moves, so '
+      + 'this allocation is per level PER FRAME while posing -- the hottest of the three');
   check('src: one scratch allocation, sliced three ways',
     /var subdVerts = sc\.subarray\(0, n\);/.test(SRC)
       && /var subdMaterials = sc\.subarray\(n \* 2, n \* 3\);/.test(SRC));

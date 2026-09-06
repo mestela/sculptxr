@@ -1512,6 +1512,12 @@ Skinning.apply = function (main, mesh) {
   if (!poseChanged(mesh, joints) && !mesh._skinDirty) return false;
   mesh._skinDirty = false;
 
+  // WHERE THE FRAME ACTUALLY GOES. `window._skinTrace = true` prints a breakdown once a second
+  // FROM THE DEVICE. The mush used to be the only timed part because it was the only part with
+  // an obvious budget -- but posing a SUBDIVIDED bound mesh spends most of the frame ABOVE the
+  // bound level, re-subdividing and rebuilding buffers, and none of that was visible.
+  // matt: "the glug is more in terms of posing the character with pins more than sculpting."
+  const _t0 = window._skinTrace ? performance.now() : 0;
   const mats = skinMatrices(mesh, joints);
 
   // Work on the level the weights were built for, whatever level is being displayed.
@@ -1551,6 +1557,8 @@ Skinning.apply = function (main, mesh) {
     out[i * 3] = ox; out[i * 3 + 1] = oy; out[i * 3 + 2] = oz;
   }
 
+  const _t1 = window._skinTrace ? performance.now() : 0;
+
   // Delta mush LAST, over the finished LBS result. It is a post-process on positions, so it
   // has to see the deformation the weights produced — running it before, or folding it into
   // the weights, would be a different (and much worse) algorithm.
@@ -1565,14 +1573,32 @@ Skinning.apply = function (main, mesh) {
   }
   mesh._skinPosed.set(out.subarray(0, nbV * 3));
 
+  const _t2 = window._skinTrace ? performance.now() : 0;
+
   // Carry the posed cage up to the displayed level, then refresh. updateResolution is the
   // stack's own refresh (geometry + colours + buffers + wireframe); without it the higher
   // level would hold new vertices that never reach the GPU.
-  if (synthesiseUp(mesh)) {
+  const _synth = synthesiseUp(mesh);
+  const _t3 = window._skinTrace ? performance.now() : 0;
+  if (_synth) {
     mesh.updateResolution();
   } else {
     mesh.updateGeometry();
     if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+  }
+
+  if (window._skinTrace) {
+    const now = performance.now();
+    if (now - (mesh._skinFrameTraceAt || 0) > 1000) {
+      mesh._skinFrameTraceAt = now;
+      const lvl = mesh._meshes ? (mesh._sel | 0) : 0;
+      const top = mesh._meshes ? mesh._meshes[lvl].getNbVertices() : nbV;
+      console.log('[skin] %sms total | lbs %s mush %s synth %s refresh %s '
+        + '| bound %d verts @L%d, showing %d verts @L%d',
+        (now - _t0).toFixed(2), (_t1 - _t0).toFixed(2), (_t2 - _t1).toFixed(2),
+        (_t3 - _t2).toFixed(2), (now - _t3).toFixed(2),
+        nbV, mesh._meshes ? mesh._meshes.indexOf(level) : 0, top, lvl);
+    }
   }
   return true;
 };
