@@ -57,6 +57,9 @@ function stubMesh(stale) {
       _leavesToUpdate: [],
     },
     getNbFaces: () => 4,
+    // Recorded, because the ORDER matters: the tree is built from these, so a rebuild that
+    // skips them places every face by where it used to be.
+    updateFacesAabbAndNormal() { log.push('boxes'); },
     computeOctree() { log.push('build'); this._meshData._octree = { collectIntersectRay: () => 'ray', collectIntersectSphere: () => 'sphere' }; },
     ensureOctree: ensureOctree,
     intersectRay: intersectRay,
@@ -68,13 +71,14 @@ function stubMesh(stale) {
 {
   const m = stubMesh(true);
   m.intersectRay([0, 0, 0], [0, 0, 1], false);
-  check('a ray query rebuilds a deferred octree first', m.log.join(',') === 'build',
+  check('a ray query rebuilds a deferred octree first, boxes before tree',
+    m.log.join(',') === 'boxes,build',
     'a stale tree does not throw -- it answers with the pose before last, so the brush picks '
       + 'vertices that are no longer under it');
 
   const m2 = stubMesh(true);
   m2.intersectSphere([0, 0, 0], 1, false);
-  check('...and so does a sphere query', m2.log.join(',') === 'build');
+  check('...and so does a sphere query', m2.log.join(',') === 'boxes,build');
 }
 
 // --- 2. and not rebuilt again until something defers it -----------------------------
@@ -83,9 +87,9 @@ function stubMesh(stale) {
   m.intersectRay([0, 0, 0], [0, 0, 1], false);
   m.intersectRay([0, 0, 0], [0, 0, 1], false);
   m.intersectSphere([0, 0, 0], 1, false);
-  check('a fresh octree is not rebuilt by every query after it', m.log.length === 1,
+  check('a fresh octree is not rebuilt by every query after it', m.log.length === 2,
     'rebuilding per query would be worse than the per-frame rebuild this replaces; got '
-      + m.log.length + ' builds');
+      + (m.log.length / 2) + ' builds');
 }
 
 // --- 3. a mesh that never deferred is untouched -------------------------------------
@@ -118,6 +122,18 @@ check('...and every other caller still gets the full refresh',
   !/updateResolution\(true\)/.test(MULTI)
     && (MULTI.match(/this\.updateResolution\(\)/g) || []).length >= 7,
   'a level change or a symmetrize DOES change colours and topology');
+// The face boxes and centres are skipped with the tree, and the tree is BUILT from them.
+check('a deferred rebuild refreshes the face boxes before building on them',
+  /ensureOctree\(\) \{[\s\S]{0,400}?this\.updateFacesAabbAndNormal\(\);\n\s*this\.computeOctree\(\);/.test(MESH),
+  'building over stale boxes places every face by where it used to be -- a wrong answer, not '
+    + 'a slow one');
+check('...and a posed frame still computes the normals it skipped the boxes for',
+  /this\.updateFacesAabbAndNormal\(iFaces, skipOctree\);/.test(MESH)
+    && /if \(normalsOnly\) continue;/.test(MESH)
+    && /faceNormals\[idTri \+ 2\] = crz;\n\s*if \(normalsOnly\) continue;/.test(MESH),
+  'the normals are what the surface is shaded with and a pose changes them; only the box and '
+    + 'centre are for queries');
+
 check('computeOctree clears the flag however it was reached',
   /computeOctree\(\) \{\n\s*this\._meshData\._octreeStale = false;/.test(MESH),
   'a rebuild from any other path must count, or the next query rebuilds a current tree');

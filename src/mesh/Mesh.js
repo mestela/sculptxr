@@ -610,7 +610,7 @@ class Mesh {
     // problem with different answers, and the octree turned out to be only a quarter of it.
     const _pt = window._skinTrace ? (window._skinPhase = window._skinPhase || {}) : null;
     const _pa = _pt ? performance.now() : 0;
-    this.updateFacesAabbAndNormal(iFaces);
+    this.updateFacesAabbAndNormal(iFaces, skipOctree);
     this.updateVerticesNormal(iVerts);
     if (_pt) _pt.norm = performance.now() - _pa;
     
@@ -978,7 +978,15 @@ class Mesh {
   }
 
   /** Update a group of faces normal and aabb */
-  updateFacesAabbAndNormal(iFaces) {
+  // `normalsOnly` skips the per-face box and centre. Those are read by exactly two things --
+  // OctreeCell, to place a face in a cell, and Picking, to reject a face before measuring it --
+  // and neither runs while a joint is moving. The NORMALS are not optional: they are what the
+  // surface is shaded with, and a pose changes them.
+  //
+  // They go stale with the octree and come back with it, in ensureOctree(). Picking is safe
+  // because it queries the tree before it reads a box (Picking.js: intersectSphere, then
+  // getFaceBoxes), so there is no path to a stale box that has not just rebuilt one.
+  updateFacesAabbAndNormal(iFaces, normalsOnly) {
     var faceNormals = this.getFaceNormals();
     var faceBoxes = this.getFaceBoxes();
     var faceCenters = this.getFaceCenters();
@@ -1050,6 +1058,7 @@ class Mesh {
       faceNormals[idTri] = crx;
       faceNormals[idTri + 1] = cry;
       faceNormals[idTri + 2] = crz;
+      if (normalsOnly) continue;
       // boxes
       faceBoxes[idBox] = xmin;
       faceBoxes[idBox + 1] = ymin;
@@ -1992,6 +2001,10 @@ class Mesh {
   ensureOctree() {
     if (!this._meshData._octreeStale) return;
     this._meshData._octreeStale = false;
+    // The boxes and centres were skipped along with the tree, and the tree is built FROM them.
+    // Rebuilding the octree over stale boxes would place every face by where it used to be,
+    // which is a wrong answer rather than a slow one.
+    this.updateFacesAabbAndNormal();
     this.computeOctree();
   }
 
