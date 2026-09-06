@@ -110,11 +110,32 @@ class Multimesh extends Mesh {
     return this.getCurrentMesh();
   }
 
-  updateResolution(skipOctree) {
-    this.updateGeometry(undefined, undefined, skipOctree);
+  // `poseOnly` says the CAUSE of this refresh was a joint moving. That rules a lot out: posing
+  // changes vertices and normals, and cannot touch colours, materials, texture coordinates or
+  // the index buffer -- so uploading those is several megabytes a frame of data that is
+  // identical to what is already on the card. Measured at 49,666 displayed vertices, the whole
+  // refresh was 9ms of a 13.6ms frame.
+  //
+  // It is a narrower claim than "nothing else changed": anything that DOES change a colour or a
+  // material runs its own refresh, and this one is only ever asked for by the skin pass.
+  updateResolution(poseOnly) {
+    const _tr = window._skinTrace ? performance.now() : 0;
+    this.updateGeometry(undefined, undefined, poseOnly);
+    const _tb = window._skinTrace ? performance.now() : 0;
+    // Kept even for a pose: with UVs present this is also what carries a vertex's normal out to
+    // its duplicates, and normals are exactly what a pose changes. Without UVs it returns
+    // immediately, which is the common case for a sculpted character.
     this.updateDuplicateColorsAndMaterials();
-    this.updateBuffers();
-    this.updateWireframeBuffer();
+    if (poseOnly) {
+      this.updateGeometryBuffers();   // vertices and normals, and nothing else
+    } else {
+      this.updateBuffers();           // already ends in updateWireframeBuffer()
+    }
+    if (window._skinTrace) {
+      const p = window._skinPhase = window._skinPhase || {};
+      p.geom = _tb - _tr;
+      p.buf = performance.now() - _tb;
+    }
   }
 
   selectResolution(sel) {

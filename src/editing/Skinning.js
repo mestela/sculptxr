@@ -1600,8 +1600,12 @@ Skinning.apply = function (main, mesh) {
       const lvl = mesh._meshes ? (mesh._sel | 0) : 0;
       const top = mesh._meshes ? mesh._meshes[lvl].getNbVertices() : nbV;
       const ms = (a, b) => (b - a).toFixed(2);
+      const p = window._skinPhase;
+      const n = (v) => (v === undefined ? '-' : v.toFixed(2));
       console.log('[skin] ' + ms(_t0, now) + 'ms total | lbs ' + ms(_t0, _t1)
         + ' mush ' + ms(_t1, _t2) + ' synth ' + ms(_t2, _t3) + ' refresh ' + ms(_t3, now)
+        + (p ? ' [norm ' + n(p.norm) + ' oct ' + n(p.oct) + ' draw ' + n(p.draw)
+               + ' buf ' + n(p.buf) + ']' : '')
         + ' | bound ' + nbV + ' verts @L' + (mesh._meshes ? mesh._meshes.indexOf(level) : 0)
         + ', showing ' + top + ' verts @L' + lvl);
     }

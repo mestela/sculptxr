@@ -105,8 +105,19 @@ check('...and the skin pass is what asks for it',
   /mesh\.updateResolution\(true\);/.test(SKIN)
     && /mesh\.updateGeometry\(undefined, undefined, true\);/.test(SKIN),
   'both branches of the refresh, or a mesh with no stack keeps paying');
-check('...through updateResolution',
-  /updateResolution\(skipOctree\) \{\n\s*this\.updateGeometry\(undefined, undefined, skipOctree\);/.test(MULTI));
+// One flag, two meanings, deliberately: "a joint moved" is what licenses BOTH skipping the
+// octree and uploading only the buffers a pose can change. Splitting it into two would let a
+// caller ask for one and not the other, which is a combination nothing wants.
+check('...through updateResolution, which also uploads only what a pose changes',
+  /updateResolution\(poseOnly\) \{/.test(MULTI)
+    && /this\.updateGeometry\(undefined, undefined, poseOnly\);/.test(MULTI)
+    && /if \(poseOnly\) \{\n\s*this\.updateGeometryBuffers\(\);/.test(MULTI),
+  'updateBuffers() re-uploads colours, materials, texcoords and the index buffer -- megabytes '
+    + 'a frame that posing cannot have changed');
+check('...and every other caller still gets the full refresh',
+  !/updateResolution\(true\)/.test(MULTI)
+    && (MULTI.match(/this\.updateResolution\(\)/g) || []).length >= 7,
+  'a level change or a symmetrize DOES change colours and topology');
 check('computeOctree clears the flag however it was reached',
   /computeOctree\(\) \{\n\s*this\._meshData\._octreeStale = false;/.test(MESH),
   'a rebuild from any other path must count, or the next query rebuilds a current tree');

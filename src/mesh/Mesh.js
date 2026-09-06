@@ -605,8 +605,14 @@ class Mesh {
       }
     }
 
+    // Phase times for the skin trace. Split here because "the refresh is slow" was never
+    // actionable: recomputing normals and rebuilding the draw arrays are different sizes of
+    // problem with different answers, and the octree turned out to be only a quarter of it.
+    const _pt = window._skinTrace ? (window._skinPhase = window._skinPhase || {}) : null;
+    const _pa = _pt ? performance.now() : 0;
     this.updateFacesAabbAndNormal(iFaces);
     this.updateVerticesNormal(iVerts);
+    if (_pt) _pt.norm = performance.now() - _pa;
     
 
     // THE OCTREE IS FOR PICKING, NOT FOR DRAWING, so a refresh that nobody is going to pick
@@ -626,9 +632,13 @@ class Mesh {
       this.updateOctree(iFaces);
     }
     
+    if (_pt) _pt.oct = performance.now() - _pa - _pt.norm;
+
     if (this._renderData) {
+      const _pb = _pt ? performance.now() : 0;
       this.updateDuplicateGeometry(iVerts);
       this.updateDrawArrays(iFaces);
+      if (_pt) _pt.draw = performance.now() - _pb;
       
       // Final fallback for zero normals in render buffers
       const normals = this.getNormals();
