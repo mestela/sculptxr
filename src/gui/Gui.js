@@ -182,6 +182,7 @@ class Gui {
           }
           main.render?.();
           if (gui._desktopSceneEl) gui._buildDesktopScene(gui._desktopSceneEl);
+          gui.refreshFloatingSections?.();
 
         } else if (event.which === 68 && event.ctrlKey) {         // Ctrl+D — duplicate
           event.handled = true;
@@ -477,6 +478,7 @@ class Gui {
       // Rebuild the Scene outliner on show so it reflects the current meshes /
       // references (it's otherwise built once and goes stale when you add either).
       if (name === 'scene' && this._desktopSceneEl) this._buildDesktopScene(this._desktopSceneEl);
+      this.refreshFloatingSections?.();
       if (name === 'blendshapes') this._ctrlBlendshapes?.onShow();
     });
     timelineTab.addEventListener('click', (e) => {
@@ -511,6 +513,7 @@ class Gui {
     this._ctrlSculpting._ctrlSculpt.setValue = (val, silent) => {
       _ctrlSculptOrigSetValue(val, silent);
       if (!silent && this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+      this.refreshFloatingSections?.();
       if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
     };
 
@@ -518,6 +521,7 @@ class Gui {
     this._ctrlSculpting.onKeyUp = (event) => {
       _origOnKeyUp(event);
       if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+      this.refreshFloatingSections?.();
       if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
     };
 
@@ -800,6 +804,7 @@ class Gui {
     if (this._desktopTopologyEl)  this._buildDesktopTopology(this._desktopTopologyEl);
     if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
     if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
+    this.refreshFloatingSections?.();
     if (window._animPanel) window._animPanel.refreshBlendshapes(this._main.getMesh(), this._main);
     this._ctrlBlendshapes?.onShow();
     this.updateMeshInfo();
@@ -829,6 +834,7 @@ class Gui {
   addAlphaOptions(opts) {
     this._ctrlSculpting?.addAlphaOptions(opts);
     if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+    this.refreshFloatingSections?.();
     if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
   }
 
@@ -1068,6 +1074,14 @@ class Gui {
   // Every floating panel, rebuilt from current state. Called wherever the docked sections are
   // rebuilt: a pinned panel that stops tracking the tool you just changed is worse than no
   // pinned panel.
+  // CALLED WHEREVER A DOCKED SECTION REBUILDS. A floating panel is not in the tab strip, so
+  // none of the things that refresh the sidebar reach it -- and the first version of this
+  // shipped with the method defined and never called anywhere, which is exactly what it looks
+  // like: matt, "if i tear off the scene/outliner it doesn't stay synced. i have to unpin then
+  // repin for it to update."
+  //
+  // The rule that was supposed to catch that asked whether the method EXISTED. It does. A rule
+  // has to ask about the call site.
   refreshFloatingSections() {
     if (!this._floatPanels) return;
     for (const p of this._floatPanels.values()) p.rebuild();

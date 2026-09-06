@@ -211,9 +211,13 @@ const roundTrip = (meshes) => {
 // mesh you deliberately unlocked would come back locked every single time you opened it.
 {
   const code = SRC.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  check('the bind-derived lock is confined to pre-v4 files',
-    /if \(ver < 4\) mesh\._selectLocked = true;/.test(code),
-    'an unconditional re-derive silently overrides an explicit unlock');
+  // THIS RULE USED TO REQUIRE THE RE-DERIVE, confined to pre-v4 files, because binding locked
+  // the mesh and the lock had no slot in the format. Binding no longer locks -- the pick
+  // priority prefers a pin, then a joint, and reaches the mesh only when neither is under the
+  // cursor -- so re-deriving would hand an old file a lock a new one does not get.
+  check('the loader does not invent a lock for old files',
+    !/mesh\._selectLocked = true;/.test(code),
+    'the stored per-mesh value is the only place the lock should come from');
   check('and v4 applies the stored value to every row, not just joints',
     /if \(ver >= 4\) \{[\s\S]{0,120}?row\.mesh\._selectLocked = !!\(row\.bone & 8\)/.test(code));
 }

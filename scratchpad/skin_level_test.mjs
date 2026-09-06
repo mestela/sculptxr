@@ -159,12 +159,15 @@ function boundMesh(levels, boundAt) {
   const unbindFn = SKIN.slice(SKIN.indexOf('Skinning.unbind = function'),
                              SKIN.indexOf('Skinning.captureSource'));
 
-  check('bind locks the mesh out of viewport selection',
-    /mesh\._selectLocked = true;/.test(bindFn), 'flag missing');
-  // Only on the SUCCESS path: a refused bind (a joint was selected) must not lock anything.
-  check('...only once the bind has succeeded',
-    bindFn.indexOf('_selectLocked = true') > bindFn.lastIndexOf("return { ok: false"),
-    'a refused bind would lock the mesh it refused');
+  // BINDING NO LONGER LOCKS THE MESH, and these rules used to require that it did. The lock
+  // existed because the ray took whatever it hit first and the skin stands between you and
+  // every joint inside it; the pick priority now prefers a pin, then a joint, and reaches the
+  // mesh only when neither is there. What is left is the lock's own cost -- a character you
+  // cannot select in the viewport until you find the unbind button. matt: "the pick priority
+  // seems to be doing the right thing ... and almost never the mesh."
+  check('bind does not lock the mesh',
+    !/mesh\._selectLocked = true;/.test(bindFn),
+    'the nuisance it defended against is handled by the pick priority now');
   check('bind always targets the lowest control cage',
     /mesh\._skinLevel = 0;/.test(bindFn)
       && /mesh\._skinLevelMesh = mesh\._meshes \? mesh\._meshes\[0\]/.test(bindFn),
@@ -173,9 +176,10 @@ function boundMesh(levels, boundAt) {
     /for \(let i = mesh\._sel \|\| 0; i > 0; i--\) mesh\._meshes\[i - 1\]\.lowerAnalysis\(mesh\._meshes\[i\]\)/.test(bindFn)
       && !/setSelection\(/.test(bindFn),
     'the visible sculpt was not transferred safely to level 0');
-  check('unbind hands it back',
-    /mesh\._selectLocked = false;/.test(unbindFn),
-    'a mesh left unselectable after unbind has no way out from inside the headset');
+  check('...and unbind does not unlock it',
+    !/mesh\._selectLocked = false;/.test(unbindFn),
+    'the lock is the outliner\'s and can be set on anything; clearing it here would throw away '
+      + 'a lock the USER set, which unbinding has no business doing');
 
   // AND IT HAS TO SURVIVE A RELOAD. The lock is a runtime flag with no slot in the mesh
   // format, so a reloaded character was pickable again — the ray back to catching the skin
@@ -184,9 +188,9 @@ function boundMesh(levels, boundAt) {
     const SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
     const i = SKEL.indexOf('mesh._skinDirty = true;');
     const near = i === -1 ? '' : SKEL.slice(i, i + 900);
-    check('a bound mesh comes back locked after a reload',
-      /mesh\._selectLocked = true;/.test(near),
-      'the lock is not in the file format, so it has to be re-derived where the skin is restored');
+    check('a reload does not invent one either',
+      !/mesh\._selectLocked = true;/.test(near),
+      'an old file would come back locked while a new one does not');
   }
 
   // The lock is only worth anything because the picking scans already honour it — all three.

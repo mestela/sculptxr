@@ -210,6 +210,15 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
     /_sectionIsFloating\(panelEl, sectionId\) \{/.test(GUI)
       && /Return it to the sidebar/.test(GUI),
     'a tab that goes blank when you pin its contents reads as a bug');
+  // A FLOATING PANEL IS NOT IN THE TAB STRIP, so nothing that refreshes the sidebar reaches it.
+  // The first version defined refreshFloatingSections and never called it: matt, "if i tear off
+  // the scene/outliner it doesn't stay synced. i have to unpin then repin for it to update."
+  // Counted at the CALL SITES -- the same mistake as the torn-strip rule, made twice in two
+  // commits, so this one is written the other way round from the start.
+  check('floating panels are refreshed wherever the docked ones are',
+    (GUI.match(/refreshFloatingSections\?\.\(\);/g) || []).length >= 5,
+    'a pinned outliner that only updates when you unpin and repin it is a stale panel');
+
   check('every section builder checks first',
     (GUI.match(/if \(this\._sectionIsFloating\(panelEl, '[a-z]+'\)\) return;/g) || []).length === 5,
     'one that does not will redraw itself into a sidebar tab that is meant to be empty');

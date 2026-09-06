@@ -727,17 +727,22 @@ Skinning.bind = function (main, mesh) {
   mesh._skinPosed = null;   // the posed reference the write-back measures strokes against
   mesh._skinMushDirty = true;
   Skinning.refreshWeightColors(main, mesh);
-  // A BOUND MESH IS DRIVEN BY THE RIG, so it stops being a viewport selection target: from
-  // here on you reach for a bone or a pin, and the ray hitting the character instead is a
-  // constant nuisance — the skin is exactly the thing standing between you and every joint
-  // inside it. Reuses the outliner's existing lock (Scene.toggleSelectLock), which the picking
-  // scans already honour, so the mesh stays selectable FROM the outliner. Unbind clears it,
-  // and there is a button for that in the bones panel.
+  // BINDING NO LONGER LOCKS THE MESH.
   //
-  // Set here rather than derived from isBound() at pick time: the picking scans have no
-  // business importing the skinning module, and a bound-mesh check through the Multimesh proxy
-  // has failed to fire before.
-  mesh._selectLocked = true;
+  // It used to, on the grounds that a bound mesh is driven by the rig and the skin is exactly
+  // the thing standing between you and every joint inside it. That was true when the ray took
+  // whatever it hit first. The pick priority has since learned to prefer a pin, then a joint,
+  // and to reach the mesh only when neither is under the cursor -- so the nuisance the lock
+  // was defending against no longer happens, and the lock's own cost (a character you cannot
+  // select in the viewport, only in the outliner, until you find the unbind button) is all
+  // that is left. matt: "we still have the mesh lock when it gets skinned. maybe we should
+  // turn that off? the pick priority seems to be doing the right thing when in grab mode and
+  // always prefers to grab a pin first, an joint second, and almost never the mesh."
+  //
+  // The lock itself stays -- it is the outliner's, and works on anything. Binding simply
+  // stops setting it. Any mesh locked deliberately before a bind stays locked, because this
+  // never clears it either.
+  void 0;
   Skinning.applySkinOpacity(main);
 
   return { ok: true, name: mesh._permanentStaticLabel || 'mesh', joints: joints.length,
@@ -1034,10 +1039,9 @@ Skinning.unbind = function (mesh) {
   mesh._skinLevel = 0;
   mesh._skinLevelMesh = null;
   mesh._skinLevelWarned = false;
-  // Bind locked it out of the viewport; unbind hands it back. Unconditional, matching bind —
-  // the lock is owned by the bind state here, and leaving a mesh unselectable after unbinding
-  // is the one failure mode with no obvious way out from inside the headset.
-  mesh._selectLocked = false;
+  // UNBIND NO LONGER UNLOCKS EITHER. It used to, because bind had locked it and the lock was
+  // owned by the bind state -- but bind stopped locking, so clearing it here would now throw
+  // away a lock the USER set from the outliner, which unbinding has no business doing.
   // X-ray goes with it. It is a working view for weighting capsules, and this mesh no longer
   // has any -- leaving it half-transparent, with depth off, is a mystery to walk into later.
   mesh.setOpacity?.(1);

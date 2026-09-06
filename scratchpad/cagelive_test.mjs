@@ -493,8 +493,12 @@ for (const [label, before, after] of [
     'a half-transparent mesh with depth off, left behind, is a mystery to walk into later');
   check('...reaching every BOUND mesh, which is the set with capsules inside it',
     /if \(!Skinning\.isBound\(mesh\)\) continue;\s*\n\s*mesh\.setOpacity\(a\);/.test(skin));
+  // Anchored on the CALL, not on whatever line happened to sit above it. This rule used to
+  // match `mesh._selectLocked = true;` followed by the call -- using an unrelated statement as
+  // a landmark -- so removing the bind-time lock broke a rule about x-ray opacity.
   check('...applied again after a bind',
-    /mesh\._selectLocked = true;\s*\n\s*Skinning\.applySkinOpacity\(main\);/.test(skin),
+    /Skinning\.applySkinOpacity\(main\);/.test(skin)
+      && skin.lastIndexOf('Skinning.applySkinOpacity(main);') > skin.indexOf('Skinning.bind = function'),
     'or a mesh bound while x-ray is on comes up opaque and the setting looks broken');
   check('...and persisted, like every other slider',
     /getOptionsURL\.saveOption\('skinOpacity'/.test(skin) &&

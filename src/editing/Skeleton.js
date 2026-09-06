@@ -3873,14 +3873,11 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         mesh._skinSrc = new Float32Array(rest);
         mesh._skinStampBuf = null;
         mesh._skinDirty = true; // re-skin on the first frame; the saved verts are a pose
-        // A BOUND MESH COMES BACK LOCKED, exactly as binding leaves it (Skinning.bind) —
-        // otherwise a reloaded character is pickable again and the ray goes back to catching
-        // the skin instead of the joints inside it.
-        //
-        // ONLY FOR PRE-v4 FILES. From v4 the lock is stored per mesh and has already been
-        // applied above; re-deriving it here would override an explicit unlock, so a mesh you
-        // deliberately unlocked would come back locked every time you opened the file.
-        if (ver < 4) mesh._selectLocked = true;
+        // A BOUND MESH USED TO COME BACK LOCKED for pre-v4 files, deriving what bind used to
+        // set. Bind no longer locks -- the pick priority prefers a pin, then a joint, and
+        // reaches the mesh only when neither is there -- so re-deriving it would hand an old
+        // file a lock that a new one does not get. From v4 the lock is stored per mesh and has
+        // already been applied above, which is the only place it should come from.
       }
     }
 
