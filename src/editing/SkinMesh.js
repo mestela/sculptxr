@@ -731,7 +731,7 @@ SkinMesh.build = function (main) {
   mesh._permanentStaticLabel = 'skin';
   main.addNewMesh(mesh); // pushes its own add-state, so this is one undo step
 
-  return { ok: true, boxes: arr.boxes, bones: arr.bones, verts: mesh.getNbVertices(),
+  return { ok: true, mesh: mesh, boxes: arr.boxes, bones: arr.bones, verts: mesh.getNbVertices(),
            faces: mesh.getNbFaces(), ms: Math.round(performance.now() - t0) };
 };
 

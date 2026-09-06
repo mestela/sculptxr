@@ -720,6 +720,7 @@ Skinning.bind = function (main, mesh) {
   mesh._skinDirty = true;
   // Topology and rest space both just changed, so nothing cached for the mush survives.
   mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
+  mesh._skinPosed = null;   // the posed reference the write-back measures strokes against
   mesh._skinMushDirty = true;
   Skinning.refreshWeightColors(main, mesh);
   // A BOUND MESH IS DRIVEN BY THE RIG, so it stops being a viewport selection target: from
@@ -1025,6 +1026,7 @@ Skinning.unbind = function (mesh) {
   mesh._skinJoints = mesh._skinIdx = mesh._skinW = null;
   mesh._skinInvBind = mesh._skinRest = mesh._skinSrc = null;
   mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
+  mesh._skinPosed = null;   // the posed reference the write-back measures strokes against
   mesh._skinLevel = 0;
   mesh._skinLevelMesh = null;
   mesh._skinLevelWarned = false;
@@ -1071,11 +1073,10 @@ Skinning.captureSource = function (mesh) {
 // is still, which is why it reads as "going back to the bind pose isn't 100% reliable" rather
 // than as a rule.
 //
-// This is the REST-POSE half of the fix (grade 1). At bind pose every skin matrix is the
-// identity, so the level's vertices ARE rest-space vertices and the commit is a copy. Sculpting
-// while POSED needs the inverse of the per-vertex composite -- src += (Σw·M)⁻¹ · delta -- and is
-// the next piece of work; until it lands, a posed stroke is REVERTED IMMEDIATELY and said out
-// loud rather than being left to die quietly at the next scrub.
+// There are two ways back. At BIND POSE every skin matrix is the identity, so the level's
+// vertices ARE rest-space vertices and the commit is a straight copy. POSED, the stroke has to
+// be carried back through the deformation that built the surface it was drawn on -- a per-vertex
+// 3×3 solve, src += (Σw·B)⁻¹ · delta -- which is commitPosed below.
 //
 // Everything here is guarded on being able to prove the copy is right, and refuses otherwise:
 // wrongly adopting a posed shape as the rest shape would corrupt the bind irreversibly.
@@ -1110,6 +1111,24 @@ Skinning.atBindPose = function (main, mesh) {
   return true;
 };
 
+// The per-joint skin matrix, in the mesh's local space: current × inverse-bind. Shared by the
+// skin pass and by the posed write-back, and it HAS to be shared -- the write-back inverts
+// exactly what the pass applied, so any drift between two copies of this loop would show up as
+// a sculpt that lands slightly off where it was drawn.
+function skinMatrices(mesh, joints) {
+  _mMesh.fromArray(mesh.getModelSpaceMatrix());
+  _mInv.copy(_mMesh).invert();
+  const mats = new Array(joints.length);
+  for (let i = 0; i < joints.length; i++) {
+    const j = joints[i];
+    if (!j) { mats[i] = null; continue; }
+    _mJoint.fromArray(j.getModelSpaceMatrix());
+    _mSkin.multiplyMatrices(_mInv, _mJoint).multiply(mesh._skinInvBind[i]);
+    mats[i] = _mSkin.clone();
+  }
+  return mats;
+}
+
 // Said once per stroke, because losing a stroke IS worth a line every time it happens -- the
 // failure this replaces was silent, and a silent one is what cost the trust in the first place.
 function restRefused(mesh, why) {
@@ -1117,6 +1136,100 @@ function restRefused(mesh, why) {
   if (window.screenLog) window.screenLog('Sculpt not saved: ' + why, '#f9e2af');
   else console.warn('[Skinning] sculpt not committed to rest space: ' + why);
   return false;
+}
+
+// SCULPTING WHILE POSED (grade 2). The stroke happened in POSED space; the skin pass reads
+// from REST space; so the stroke has to be carried back through the deformation that produced
+// the surface it was drawn on.
+//
+// It is a DELTA that travels, not a position. `apply()` builds each vertex as Σw·M·rest and
+// then runs delta mush over the result, and mush is not per-vertex invertible -- it reads the
+// neighbourhood. But the mush contribution is the same before and after a stroke, so it
+// cancels in the difference, and what is left is the linear part: posedDelta = (Σw·B)·restDelta
+// where B is the 3×3 of each skin matrix. Inverting THAT is a 3×3 solve per touched vertex.
+//
+// The translation drops out for the same reason, which is why this needs no inverse-bind
+// bookkeeping of its own: only the rotation/scale/shear of the composite matters to a delta.
+//
+// Untouched vertices are skipped by exact comparison, not a tolerance. The array they sit in
+// was written by the skin pass and copied byte for byte into `_skinPosed`, so a vertex the
+// brush did not reach is bit-identical -- and on a 20k mesh a fifty-vertex stroke then costs
+// fifty matrix inversions instead of twenty thousand.
+function commitPosed(main, mesh, level, nbV) {
+  const ref = mesh._skinPosed;
+  if (!ref || ref.length !== nbV * 3) {
+    return restRefused(mesh, 'no skinned reference to measure the stroke against');
+  }
+  const joints = resolveJoints(main, mesh);
+  const mats = skinMatrices(mesh, joints);
+  const out = level.getVertices();
+  const src = mesh._skinSrc, rest = mesh._skinRest;
+  const idx = mesh._skinIdx, wts = mesh._skinW;
+
+  let moved = 0, singular = 0;
+  for (let i = 0; i < nbV; i++) {
+    const i3 = i * 3;
+    const dx = out[i3] - ref[i3], dy = out[i3 + 1] - ref[i3 + 1], dz = out[i3 + 2] - ref[i3 + 2];
+    if (dx === 0 && dy === 0 && dz === 0) continue;
+
+    // The blended basis, weighted exactly as apply() weights it.
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0, total = 0;
+    for (let k = 0; k < MAX_INFLUENCES; k++) {
+      const j = idx[i * MAX_INFLUENCES + k];
+      if (j < 0) continue;
+      const w = wts[i * MAX_INFLUENCES + k];
+      const m = mats[j];
+      if (!m || w <= 0) continue;
+      // ROW-MAJOR out of a COLUMN-MAJOR array: row i, column j is e[j*4+i]. Reading it the
+      // other way builds the transpose, which for a rotation is its own inverse -- so the
+      // stroke lands rotated by twice the joint's angle instead of not at all, and only a
+      // round trip through a ROTATED pose tells you. A scale test passes either way.
+      const e = m.elements;
+      b0 += e[0] * w; b1 += e[4] * w; b2 += e[8] * w;
+      b3 += e[1] * w; b4 += e[5] * w; b5 += e[9] * w;
+      b6 += e[2] * w; b7 += e[6] * w; b8 += e[10] * w;
+      total += w;
+    }
+    // An unweighted vertex holds its rest position, so its basis is the identity and the
+    // delta travels unchanged -- the same rule apply() uses at the other end.
+    if (total <= 1e-6) {
+      src[i3] += dx; src[i3 + 1] += dy; src[i3 + 2] += dz;
+      rest[i3] += dx; rest[i3 + 1] += dy; rest[i3 + 2] += dz;
+      moved++;
+      continue;
+    }
+
+    // Cramer on the 3×3. A collapsed basis means the pose squashed this vertex to nothing and
+    // there is no rest-space direction that maps to the drawn one; dropping the vertex loses
+    // part of a stroke, writing a garbage inverse loses the model.
+    const c0 = b4 * b8 - b5 * b7, c1 = b5 * b6 - b3 * b8, c2 = b3 * b7 - b4 * b6;
+    const det = b0 * c0 + b1 * c1 + b2 * c2;
+    if (!(Math.abs(det) > 1e-12)) { singular++; continue; }
+    const id = 1 / det;
+    const i0 = c0 * id, i1 = (b2 * b7 - b1 * b8) * id, i2 = (b1 * b5 - b2 * b4) * id;
+    const i3a = c1 * id, i4 = (b0 * b8 - b2 * b6) * id, i5 = (b2 * b3 - b0 * b5) * id;
+    const i6 = c2 * id, i7 = (b1 * b6 - b0 * b7) * id, i8 = (b0 * b4 - b1 * b3) * id;
+
+    const rx = i0 * dx + i1 * dy + i2 * dz;
+    const ry = i3a * dx + i4 * dy + i5 * dz;
+    const rz = i6 * dx + i7 * dy + i8 * dz;
+    src[i3] += rx; src[i3 + 1] += ry; src[i3 + 2] += rz;
+    rest[i3] += rx; rest[i3 + 1] += ry; rest[i3 + 2] += rz;
+    moved++;
+  }
+
+  if (singular) {
+    console.warn('[Skinning] %d vertex/vertices had no invertible pose basis and were not '
+      + 'committed', singular);
+  }
+  if (!moved) return false;
+
+  // The reference has to move with the stroke: a second stroke can land before the next skin
+  // pass, and measuring it against a stale reference would commit the FIRST stroke twice.
+  ref.set(out.subarray(0, nbV * 3));
+  mesh._skinMushDirty = true;   // the mush deltas are defined against the rest pose
+  mesh._skinDirty = true;
+  return true;
 }
 
 // Take what is on screen as the new rest shape. Called at stroke end and after undo/redo --
@@ -1146,7 +1259,7 @@ Skinning.commitToRest = function (main, mesh) {
     return false;
   }
 
-  if (!Skinning.atBindPose(main, mesh)) return restRefused(mesh, 'sculpting while posed');
+  if (!Skinning.atBindPose(main, mesh)) return commitPosed(main, mesh, level, nbV);
 
   const v = level.getVertices();
   mesh._skinSrc.set(v.subarray(0, nbV * 3));
@@ -1355,18 +1468,7 @@ Skinning.apply = function (main, mesh) {
   if (!poseChanged(mesh, joints) && !mesh._skinDirty) return false;
   mesh._skinDirty = false;
 
-  _mMesh.fromArray(mesh.getModelSpaceMatrix());
-  _mInv.copy(_mMesh).invert();
-
-  // Per-joint skin matrix in mesh-local space: current × inverse-bind.
-  const mats = new Array(joints.length);
-  for (let i = 0; i < joints.length; i++) {
-    const j = joints[i];
-    if (!j) { mats[i] = null; continue; }
-    _mJoint.fromArray(j.getModelSpaceMatrix());
-    _mSkin.multiplyMatrices(_mInv, _mJoint).multiply(mesh._skinInvBind[i]);
-    mats[i] = _mSkin.clone();
-  }
+  const mats = skinMatrices(mesh, joints);
 
   // Work on the level the weights were built for, whatever level is being displayed.
   const level = boundLevel(mesh);
@@ -1409,6 +1511,15 @@ Skinning.apply = function (main, mesh) {
   // has to see the deformation the weights produced — running it before, or folding it into
   // the weights, would be a different (and much worse) algorithm.
   applyMush(mesh, level, out, nbV);
+
+  // KEEP WHAT THE SKIN PASS PRODUCED. The posed write-back measures a stroke as the difference
+  // between what is on screen now and what skinning last put there, so it needs that "there"
+  // to still exist -- and the level's array is the very thing the stroke overwrites. One memcpy
+  // per skinned frame buys the only reference that survives the sculpt.
+  if (!mesh._skinPosed || mesh._skinPosed.length !== nbV * 3) {
+    mesh._skinPosed = new Float32Array(nbV * 3);
+  }
+  mesh._skinPosed.set(out.subarray(0, nbV * 3));
 
   // Carry the posed cage up to the displayed level, then refresh. updateResolution is the
   // stack's own refresh (geometry + colours + buffers + wireframe); without it the higher

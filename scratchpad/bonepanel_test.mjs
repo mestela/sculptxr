@@ -132,6 +132,23 @@ check('every command button is present on a flat screen',
     && display.includes('id="bone-trails"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 
+// MAKE SKIN BINDS. The skin is generated FROM the capsules and the bind measures those same
+// capsules, so an unbound skin is a state with no use: the mesh sits there ignoring the rig
+// until you find a second button. matt: "make a skin, immediately weight it to the bones (we
+// should do this by default i think)".
+check('Make Skin binds the mesh it just built',
+  /const res = SkinMesh\.build\(main\);\n\s*const bnd = res\.ok \? Skinning\.bind\(main, res\.mesh\) : null;/.test(SRC),
+  'a skin that ignores the skeleton it was generated from is not a state worth passing through');
+check('...and says so on the same line, including when the bind fails',
+  /NOT bound: \$\{\(bnd && bnd\.why\)/.test(SRC),
+  'the skin still exists after a failed bind, and silence there reads as "binding is broken"');
+{
+  const SKINMESH = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/SkinMesh.js', 'utf8');
+  check('...which needs build() to hand the mesh back',
+    /return \{ ok: true, mesh: mesh,/.test(SKINMESH),
+    'the caller cannot bind what it cannot name');
+}
+
 check('wrist panel uses its own class dialect', wrist.includes('mp-voxel-btn') && !wrist.includes('mm-choice'));
 check('menu panel uses its own class dialect', flat.includes('mm-choice') && !flat.includes('mp-voxel-btn'));
 

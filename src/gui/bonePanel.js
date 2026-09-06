@@ -714,11 +714,24 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
+  // BUILD IT AND BIND IT. A skin that is not weighted to the skeleton it was generated from is
+  // not a state anyone wants to be in for even one click: it was built from the capsules, the
+  // bind reads those same capsules, and the alternative is a mesh that ignores the rig until
+  // you notice a second button. matt: "make a skin, immediately weight it to the bones (we
+  // should do this by default i think)". Unbind is still there for the rare case.
+  //
+  // One report, not two: the bind is part of building a skin, so its numbers join the same
+  // line. If the bind fails the skin still exists, and saying so is the whole point.
   q('skin')?.addEventListener('click', () => {
     const res = SkinMesh.build(main);
+    const bnd = res.ok ? Skinning.bind(main, res.mesh) : null;
     say(res.ok
       ? `Bones: skin built — ${res.boxes} joints, `
         + `${res.bones} bones, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
+        + (bnd && bnd.ok
+            ? `, bound to ${bnd.joints} joints in ${bnd.ms}ms`
+              + (bnd.outside ? ` (${bnd.outside} verts outside every capsule)` : '')
+            : `, NOT bound: ${(bnd && bnd.why) || 'bind failed'}`)
       : `Bones: ${res.why}`, res.ok);
     rebuild(); // the new mesh becomes the selection, so the panel changes
     main.render?.();

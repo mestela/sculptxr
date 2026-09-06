@@ -208,10 +208,11 @@ function boundMesh(levels, boundAt) {
   check('...and the bind shape follows it',
     /mesh\._skinRest\.set\(v\.subarray\(0, nbV \* 3\)\);/.test(SRC),
     '_skinRest is what weights re-solve from and what unbind puts back');
-  check('...only when the skin matrices really are the identity',
+  check('...by COPYING only when the skin matrices really are the identity',
     /Skinning\.atBindPose = function/.test(SRC)
-      && /if \(!Skinning\.atBindPose\(main, mesh\)\) return restRefused\(mesh, 'sculpting while posed'\);/.test(SRC),
-    'adopting a POSED shape as the rest shape corrupts the bind irreversibly');
+      && /if \(!Skinning\.atBindPose\(main, mesh\)\) return commitPosed\(main, mesh, level, nbV\);/.test(SRC),
+    'copying a POSED shape into the rest shape corrupts the bind irreversibly; posed strokes '
+      + 'go through commitPosed, which is measured in restwrite_test.mjs');
   check('...and never from a level the weights are not for',
     /mesh\._meshes\[mesh\._sel \|\| 0\] !== level/.test(SRC),
     'above the bound level the shape lives in detail vectors this cannot see');
