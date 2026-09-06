@@ -908,8 +908,14 @@ class Picking {
   // the other side would be if it had never moved. Everywhere else it is the plain reflection
   // it always was.
   mirrorFrom(from, mesh, ptPlane, nPlane) {
+    // NOTHING TO MIRROR IF NOTHING WAS HIT. The primary pick reports [0,0,0] when it has no
+    // intersection, and reflecting the origin produces a confident-looking point somewhere
+    // inside the character -- which the forced hit below then sculpts. The topological snap
+    // beside this has always checked (`pick1 && getPickedFace() !== -1`); this path never did.
+    if (!from.getMesh()) { this._mesh = null; return false; }
     var pt = vec3.create();
     vec3.copy(pt, from.getIntersectionPoint());
+    PosedSymmetry.setBrushRadius2(from.getLocalRadius2());
     var posed = PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane);
     if (!posed) {
       Geometry.mirrorPoint(pt, ptPlane, nPlane);
@@ -928,6 +934,7 @@ class Picking {
     this.setIntersectionPoint(pt);
     this._mesh = mesh; // force hit
     this.setLocalRadius2(from.getLocalRadius2());
+    return true;
   }
 
   intersectionMouseMesh(mesh = this._main.getMesh(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {

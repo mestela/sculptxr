@@ -180,6 +180,20 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
       //   out    forward through the matrix at cage vertex #b -- the mirrored brush
       // Also the cage positions of #a and #b, because the two hops each stand or fall on
       // whether the vertex they picked is anywhere near the point they picked it for.
+      // DOES THE ANSWER LAND ON THE MESH? Everything above can be arithmetically perfect and
+      // still be useless if the mirrored point is not on the surface the brush will look at --
+      // the brush gathers vertices within its radius of this point, and finds none if it is
+      // out in space. Measured against the DISPLAYED level, which is what gets sculpted, not
+      // against the cage this all reasons about.
+      const disp = mesh._meshes ? mesh._meshes[mesh._sel | 0] : level;
+      const dv = disp.getVertices(), dn = disp.getNbVertices();
+      let dBest = Infinity;
+      for (let q = 0; q < dn; q++) {
+        const q3 = q * 3;
+        const ex = dv[q3] - out[0], ey = dv[q3 + 1] - out[1], ez = dv[q3 + 2] - out[2];
+        const e = ex * ex + ey * ey + ez * ez;
+        if (e < dBest) dBest = e;
+      }
       const posedA = [posed[a * 3], posed[a * 3 + 1], posed[a * 3 + 2]];
       const restB = [rest[b * 3], rest[b * 3 + 1], rest[b * 3 + 2]];
       console.log('[sym] hit ' + f([hx, hy, hz]) + ' -> rest ' + f([rx, ry, rz])
@@ -191,6 +205,8 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
         + ' | restPlane ' + f(_psPlane) + ' posedPlane ' + f(ptPlane)
         + ' | restBounds x ' + rb[0].toFixed(2) + '..' + rb[3].toFixed(2)
         + ' y ' + rb[1].toFixed(2) + '..' + rb[4].toFixed(2)
+        + ' | OUT IS ' + Math.sqrt(dBest).toFixed(2) + ' FROM THE DISPLAYED SURFACE ('
+        + dn + ' verts), brush radius ' + Math.sqrt(_psR2 || 0).toFixed(2)
         + ' | of ' + nbV + ' normal ' + f(nPlane));
     }
   }
@@ -211,6 +227,9 @@ function mirrorAcross(v, ptPlane, nPlane) {
 // IN PLACE, for a caller that already holds the mirrored point -- the VR path, which mirrors a
 // controller position rather than a ray. Returns false when the rest-space route is not
 // available, and the caller then does the plain plane mirror it would have done anyway.
+let _psR2 = 0;
+PosedSymmetry.setBrushRadius2 = function (r2) { _psR2 = r2 || 0; };
+
 PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane) {
   if (!PosedSymmetry.applies(main, mesh)) return false;
   return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt);

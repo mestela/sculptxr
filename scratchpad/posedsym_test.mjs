@@ -305,5 +305,22 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     'topology does not move, so a trustworthy map is better than the spatial mirror');
 }
 
+// --- 7. NOTHING TO MIRROR IF NOTHING WAS HIT ---------------------------------------
+//
+// The primary pick reports [0,0,0] when it has no intersection, and reflecting the origin
+// produces a confident-looking point somewhere inside the character -- which the forced hit
+// then sculpts. Half the samples in the first real trace were this. The topological snap next
+// to it has always checked (`pick1 && getPickedFace() !== -1`); the spatial path never did.
+{
+  const PICK = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
+  check('the mirror refuses a primary pick that hit nothing',
+    /if \(!from\.getMesh\(\)\) \{ this\._mesh = null; return false; \}/.test(PICK),
+    'and clears its own mesh, or the forced hit from the previous sample stands');
+  check('...before it reads the intersection point',
+    PICK.indexOf('if (!from.getMesh()) { this._mesh = null; return false; }')
+      < PICK.indexOf('vec3.copy(pt, from.getIntersectionPoint());'),
+    'reading first and checking afterwards is the same bug with a longer stack trace');
+}
+
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');
 process.exit(failures ? 1 : 0);
