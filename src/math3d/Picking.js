@@ -934,7 +934,7 @@ class Picking {
     if (posed) vec3.copy(this._symMirrorNormal, nrm);
     // Says which of the two mirrors produced this point, so "nothing gets mirrored" can be
     // told from "it mirrored somewhere empty". Throttled; only while the trace is on.
-    if (window._symTrace) {
+    if (window._symTrace && this._main._vrSculpting !== false) {
       var _n = performance.now();
       if (_n - (window._symTraceMirAt || 0) > 1000) {
         window._symTraceMirAt = _n;

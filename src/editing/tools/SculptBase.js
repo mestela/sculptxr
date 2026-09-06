@@ -910,7 +910,12 @@ class SculptBase {
           // and the stroke still does nothing if this set comes back empty. Says which route
           // filled it, too: the vertex MAP (pose-independent, exact) or the sphere around the
           // mirrored point.
-          if (window._symTrace) {
+          // ONLY WHILE ACTUALLY STROKING. Both branches above are gated on `isSculpting`, so a
+          // hover frame reports zero picked vertices truthfully and tells you nothing -- and
+          // hover frames are almost all of them, so a throttled trace samples nothing else.
+          // Six consecutive samples of `isSculpting=false 0 verts` looked like the bug and was
+          // the instrument.
+          if (window._symTrace && isSculpting) {
             const _n = performance.now();
             if (_n - (window._symTraceVertAt || 0) > 1000) {
               window._symTraceVertAt = _n;

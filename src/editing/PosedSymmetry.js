@@ -196,7 +196,10 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
   // `window._symTrace = true` (or Settings > Trace Posed Symmetry) prints the whole round trip
   // once a second FROM THE DEVICE. Every hop is a point in a named space, so a wrong space
   // shows up as a number in the wrong range rather than as a stroke that goes missing.
-  if (window._symTrace) {
+  // Stroke frames only, for the reason given at the vertex-count trace in SculptBase: in VR
+  // the mirror also runs while merely hovering, and those frames are the overwhelming majority.
+  // `_vrSculpting` is undefined on desktop, where every call is a real stroke.
+  if (window._symTrace && main._vrSculpting !== false) {
     const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if (now - (PosedSymmetry._traceAt || 0) > 1000) {
       PosedSymmetry._traceAt = now;
