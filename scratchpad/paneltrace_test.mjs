@@ -458,6 +458,9 @@ _realLog('\n── is there anything ON the texture ─────────�
       getImageData: () => ({ data: new Array(8 * 8 * 4).fill(0).map((_, i) => (i % 4 === 3 ? alpha : 200)) }),
     }) };
   };
+  // The ink sampler is off unless asked for: it contradicted itself on the device and the number
+  // cannot be used. Kept behind a switch, and still tested, so it works if a better idea arrives.
+  globalThis.window._panelTraceInk = true;
   const tick10 = () => { for (let i = 0; i < 10; i++) PanelTrace.tick(scene); };
   // THE FIRST SAMPLE IS NOT A TRANSITION: a healthy panel reported as "texture has content
   // again" reads as a recovery from a blank that never happened, and matt's log opened with
@@ -487,7 +490,12 @@ _realLog('\n── is there anything ON the texture ─────────�
   alpha = 255; clear(); tick10();
   check('...and the recovery, with alpha and luma',
     logged().some((m) => /texture has content again \(mean alpha 255, luma 200\)/.test(m)));
+  clear(); globalThis.window._panelTraceInk = false; tick10();
+  check('...and none of it runs unless the switch is on', logged().length === 0,
+    'a measurement that contradicts itself must not be on by default');
+  globalThis.window._panelTraceInk = true;
   delete globalThis.OffscreenCanvas;
+  globalThis.window._panelTraceInk = false;
 }
 
 _realLog('\n── it is reachable from inside the headset ─────────────────────────────');

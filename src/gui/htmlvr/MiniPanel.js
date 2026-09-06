@@ -1391,7 +1391,15 @@ export class MiniPanel extends HTMLVRPanel {
       const selKey = (main.getSelectedMeshes?.() || [])
         .filter((m) => m && m._isBone).map((m) => m.getID()).join(',');
       const extrasKey = idx + '|' + selKey;
-      if (this._lastExtrasKey !== extrasKey) {
+      // BISECTION SWITCH (window._mpNoRebuild). Every measurement of this panel says it is
+      // visible, placed, sized and textured while matt watches it vanish -- and the instrument
+      // that disagreed turned out to contradict itself, so more measuring is not the next step.
+      // This takes the suspect out of the picture instead: with it on, the extras block is never
+      // rebuilt, so there is no innerHTML replacement, no _needsResize, no texture dispose and
+      // no relayout of the shared host canvas. The panel's tool-specific controls go stale,
+      // which is exactly the point -- if the disappearing stops, the rebuild is the cause; if it
+      // does not, three versions of theory about the rebuild were wrong and it is something else.
+      if (this._lastExtrasKey !== extrasKey && !window._mpNoRebuild) {
         // Tool or bone selection changed: rebuild the whole block and re-wire.
         this._lastExtrasKey = extrasKey;
         this._lastExtrasIdx = idx;

@@ -279,6 +279,19 @@ PanelTrace.dump = function (scene) {
   say('--- ' + printed + ' changed rows; the rest were identical ---');
 };
 
+// UNRELIABLE, AND OFF UNLESS ASKED FOR (window._panelTraceInk).
+//
+// With one canvas for every caller the contradiction did not go away: the per-frame sampler reads
+// mean alpha 0 on the frame the panel is shown, and the very next paint -- 118ms later, with NO
+// paint in between, so the bitmap cannot have changed -- reads 255 for the same bitmap through
+// the same canvas. One of those readings is wrong and there is no way to tell which, so the
+// number cannot be used for anything. Most likely a GPU-backed ImageBitmap that does not read
+// back synchronously through drawImage/getImageData on this device.
+//
+// Left in, switched off, because it is still the only way to ask the question at all if a better
+// idea arrives. Five versions were spent reasoning from its output; that is the cost of an
+// instrument nobody checked against a second measurement.
+//
 // IS THERE ANYTHING ON THE TEXTURE?
 //
 // The 30-second tape settled the question it was built for: pressed within half a second of the
@@ -359,9 +372,9 @@ function wrapPaint(name, panel) {
       mounted: !!panel._hostMounted,
     };
     const t0 = performance.now();
-    const aBefore = inkOf(panel.mesh);
+    const aBefore = window._panelTraceInk ? inkOf(panel.mesh) : null;
     orig();
-    const aAfter = inkOf(panel.mesh);
+    const aAfter = window._panelTraceInk ? inkOf(panel.mesh) : null;
     const tex = panel.mesh && panel.mesh.material.map;
     const img = tex && tex.image;
     const g = panel.mesh && panel.mesh.geometry && panel.mesh.geometry.parameters;
@@ -523,9 +536,7 @@ PanelTrace.tick = function (scene) {
   const probeOn = !!window._panelTraceProbe;
   // The texture's CONTENT, on the same throttle. See inkOf: this is the last way a panel whose
   // every property is correct can still be invisible.
-  {
-    // EVERY FRAME, not every tenth: the window under investigation is one paint interval, 200ms,
-    // and a ten-frame sample can sit either side of it. An 8x8 draw is cheap enough to afford.
+  if (window._panelTraceInk) {
     const inks = scene._ptInk || (scene._ptInk = {});
     for (const [name, p] of panels) {
       // HIDDEN ONES TOO. The panel is already empty at the instant it is shown, so whatever

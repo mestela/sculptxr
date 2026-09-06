@@ -732,9 +732,12 @@ check('...with the particle parked, not merely blended past',
 // properties, they're not displayed. i have to click the physics button again to turn it off,
 // then turn it on again", and his own diagnosis: "are you reading the state of the selected bone
 // in order to know if you show the physics properties or not?"
+// The `_mpNoRebuild` term is a BISECTION SWITCH for the vanishing wrist panel, off by default:
+// with it on nothing rebuilds this block, so nothing disposes the panel's texture or moves the
+// shared host layout. It must not change the ordinary path, which is what this still checks.
 check('the wrist panel rebuilds when the bone selection changes',
   /const extrasKey = idx \+ '\|' \+ selKey;/.test(MINI)
-    && /if \(this\._lastExtrasKey !== extrasKey\) \{/.test(MINI),
+    && /if \(this\._lastExtrasKey !== extrasKey && !window\._mpNoRebuild\) \{/.test(MINI),
   'the physics sliders do not appear until the tool changes');
 // Joints only: keying on the whole selection would rebuild on every sculpt selection change,
 // which is the per-sync churn the surrounding note warns about.
