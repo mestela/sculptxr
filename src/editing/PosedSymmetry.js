@@ -37,6 +37,31 @@ const _psNrm = new THREE.Matrix3();
 // Does this mesh need the rest-space route at all? Only a bound mesh that is actually posed:
 // at bind pose every skin matrix is the identity, so the plain plane mirror is already correct
 // and cheaper, and an unbound mesh has no rest space to travel through.
+// IS A STROKE ACTUALLY IN PROGRESS? One definition, used by all three symmetry traces, because
+// three nearly-identical conditions disagreed and produced a log with one line in it where the
+// interesting two should have been.
+//
+// In VR the mirror runs every frame the controller is near the mesh, and `_vrSculpting` is
+// UNDEFINED on those frames rather than false -- so `!== false` let hover through. The presence
+// of `_vrControllerPos` is what says we are in VR at all; on desktop every call already is a
+// stroke.
+PosedSymmetry.strokeActive = function (main) {
+  if (!main) return false;
+  return main._vrControllerPos ? !!main._vrSculpting : true;
+};
+
+// A short BURST per stroke rather than a global throttle. A stroke lasts about a second and a
+// throttled trace fires once in that window if it is lucky -- and it was not: every sample in
+// two runs landed on a hover frame. This prints the first few frames of each stroke and then
+// stays quiet until the next one, so the log is short AND about the thing being measured.
+const TRACE_BURST = 5;
+PosedSymmetry.traceStroke = function (main) {
+  if (!window._symTrace) return false;
+  if (!PosedSymmetry.strokeActive(main)) { PosedSymmetry._burst = 0; return false; }
+  PosedSymmetry._burst = (PosedSymmetry._burst || 0) + 1;
+  return PosedSymmetry._burst <= TRACE_BURST;
+};
+
 PosedSymmetry.applies = function (main, mesh) {
   if (!main || !mesh || !Skinning.isBound(mesh)) return false;
   return !Skinning.atBindPose(main, mesh);
@@ -196,13 +221,8 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
   // `window._symTrace = true` (or Settings > Trace Posed Symmetry) prints the whole round trip
   // once a second FROM THE DEVICE. Every hop is a point in a named space, so a wrong space
   // shows up as a number in the wrong range rather than as a stroke that goes missing.
-  // Stroke frames only, for the reason given at the vertex-count trace in SculptBase: in VR
-  // the mirror also runs while merely hovering, and those frames are the overwhelming majority.
-  // `_vrSculpting` is undefined on desktop, where every call is a real stroke.
-  if (window._symTrace && main._vrSculpting !== false) {
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    if (now - (PosedSymmetry._traceAt || 0) > 1000) {
-      PosedSymmetry._traceAt = now;
+  // Stroke frames only, and decided once per frame by traceStroke -- see the note there.
+  if (PosedSymmetry._traceOn) {
       const f = (v) => '[' + v[0].toFixed(2) + ',' + v[1].toFixed(2) + ',' + v[2].toFixed(2) + ']';
       const rb = restBounds(mesh);
       // Every hop, in order, so a bad one is the first number that stops making sense:
@@ -240,7 +260,6 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
         + ' | OUT IS ' + Math.sqrt(dBest).toFixed(2) + ' FROM THE DISPLAYED SURFACE ('
         + dn + ' verts), brush radius ' + Math.sqrt(_psR2 || 0).toFixed(2)
         + ' | of ' + nbV + ' normal ' + f(nPlane));
-    }
   }
   return out;
 };
@@ -264,6 +283,12 @@ PosedSymmetry.setBrushRadius2 = function (r2) { _psR2 = r2 || 0; };
 
 PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane, nrm) {
   if (!PosedSymmetry.applies(main, mesh)) return false;
+  // Decided ONCE, here, so the point trace, the path trace and the vertex-count trace all
+  // describe the same frame instead of three frames chosen by three separate throttles.
+  PosedSymmetry._traceOn = PosedSymmetry.traceStroke(main);
+  // On window as well, because SculptBase cannot import this module -- see the load cycle note
+  // on trustedSymMap.
+  window._symTraceOn = PosedSymmetry._traceOn;
   return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt, nrm);
 };
 

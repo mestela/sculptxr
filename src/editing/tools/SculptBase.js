@@ -915,17 +915,13 @@ class SculptBase {
           // hover frames are almost all of them, so a throttled trace samples nothing else.
           // Six consecutive samples of `isSculpting=false 0 verts` looked like the bug and was
           // the instrument.
-          if (window._symTrace && isSculpting) {
-            const _n = performance.now();
-            if (_n - (window._symTraceVertAt || 0) > 1000) {
-              window._symTraceVertAt = _n;
+          if (window._symTrace && window._symTraceOn) {
               const _pv = pickingSym.getPickedVertices();
               console.log('[sym] mirrored pick: ' + (_pv ? _pv.length : 'null') + ' verts via '
                 + (symMapUsed ? 'VERTEX MAP' : 'sphere')
                 + ' | primary ' + (picking.getPickedVertices() || []).length + ' verts'
                 + ' | isSculpting=' + isSculpting + ' pick1=' + !!pick1
                 + ' r2=' + pickingSym.getLocalRadius2().toFixed(3));
-            }
           }
 
           pickingSym.computePickedNormal();

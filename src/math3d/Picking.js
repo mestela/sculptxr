@@ -934,14 +934,10 @@ class Picking {
     if (posed) vec3.copy(this._symMirrorNormal, nrm);
     // Says which of the two mirrors produced this point, so "nothing gets mirrored" can be
     // told from "it mirrored somewhere empty". Throttled; only while the trace is on.
-    if (window._symTrace && this._main._vrSculpting !== false) {
-      var _n = performance.now();
-      if (_n - (window._symTraceMirAt || 0) > 1000) {
-        window._symTraceMirAt = _n;
+    if (PosedSymmetry._traceOn) {
         console.log('[sym] ' + (posed ? 'REST-SPACE mirror' : 'PLAIN plane mirror')
           + ' -> [' + pt[0].toFixed(2) + ',' + pt[1].toFixed(2) + ',' + pt[2].toFixed(2) + ']'
           + ' r2=' + from.getLocalRadius2().toFixed(3));
-      }
     }
     this.setIntersectionPoint(pt);
     this._mesh = mesh; // force hit
