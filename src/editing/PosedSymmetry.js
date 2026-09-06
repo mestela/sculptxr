@@ -133,11 +133,18 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
 
   // WHERE THE BRUSH IS, IN REST SPACE. The nearest bound vertex stands in for the brush: its
   // skin matrix is the deformation in that neighbourhood, and a brush IS a neighbourhood.
-  const a = nearest(posed, nbV, pt[0], pt[1], pt[2]);
+  // SNAPSHOT THE INPUT. Callers pass the same array as `out` (mirrorLocal mirrors in place), so
+  // anything read after the write sees the result, not the input -- which made the first
+  // version of the trace below print `hit` and `out` as the same point on every line and unable
+  // to tell a working mirror from a no-op.
+  const hx = pt[0], hy = pt[1], hz = pt[2];
+
+  const a = nearest(posed, nbV, hx, hy, hz);
   if (a < 0) return null;
   Skinning.blendAt(mesh, mats, a, _psMat);
   _psInv.copy(_psMat).invert();
-  _psVec.set(pt[0], pt[1], pt[2]).applyMatrix4(_psInv);
+  _psVec.set(hx, hy, hz).applyMatrix4(_psInv);
+  const rx = _psVec.x, ry = _psVec.y, rz = _psVec.z;
 
   // REST SPACE IS THE SYMMETRIC SPACE. That is the whole idea: the plane means what it says
   // here, and nowhere else once the character has moved.
@@ -166,13 +173,25 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
       PosedSymmetry._traceAt = now;
       const f = (v) => '[' + v[0].toFixed(2) + ',' + v[1].toFixed(2) + ',' + v[2].toFixed(2) + ']';
       const rb = restBounds(mesh);
-      console.log('[sym] hit ' + f(pt)
+      // Every hop, in order, so a bad one is the first number that stops making sense:
+      //   hit    posed surface, where the brush is
+      //   rest   the SAME point carried back through the skin matrix at cage vertex #a
+      //   mir    that, reflected across the rest plane
+      //   out    forward through the matrix at cage vertex #b -- the mirrored brush
+      // Also the cage positions of #a and #b, because the two hops each stand or fall on
+      // whether the vertex they picked is anywhere near the point they picked it for.
+      const posedA = [posed[a * 3], posed[a * 3 + 1], posed[a * 3 + 2]];
+      const restB = [rest[b * 3], rest[b * 3 + 1], rest[b * 3 + 2]];
+      console.log('[sym] hit ' + f([hx, hy, hz]) + ' -> rest ' + f([rx, ry, rz])
+        + ' -> mir ' + f(mir) + ' -> out ' + f(out)
+        + ' | cage#' + a + ' at ' + f(posedA) + ' (posed, d='
+        + Math.hypot(posedA[0] - hx, posedA[1] - hy, posedA[2] - hz).toFixed(2) + ')'
+        + ' cage#' + b + ' at ' + f(restB) + ' (rest, d='
+        + Math.hypot(restB[0] - mir[0], restB[1] - mir[1], restB[2] - mir[2]).toFixed(2) + ')'
         + ' | restPlane ' + f(_psPlane) + ' posedPlane ' + f(ptPlane)
-        + ' | mirRest ' + f(mir) + ' -> out ' + f(out)
         + ' | restBounds x ' + rb[0].toFixed(2) + '..' + rb[3].toFixed(2)
         + ' y ' + rb[1].toFixed(2) + '..' + rb[4].toFixed(2)
-        + ' | nearest posed#' + a + ' rest#' + b + ' of ' + nbV
-        + ' | normal ' + f(nPlane));
+        + ' | of ' + nbV + ' normal ' + f(nPlane));
     }
   }
   return out;
