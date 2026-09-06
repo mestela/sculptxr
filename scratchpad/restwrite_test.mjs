@@ -29,7 +29,12 @@ const body = SRC.split('\n')
 const prelude = `
 import * as THREE from '${THREE_PATH}';
 const Skeleton = { joints: () => [], jointPos: () => new THREE.Vector3() };
-const adjacencyFromFaces = () => [];
+const adjacencyFromFaces = (level) => {
+  const n = level.getNbVertices();
+  const a = [];
+  for (let i = 0; i < n; i++) a.push([(i + n - 1) % n, (i + 1) % n]);
+  return a;
+};
 const getOptionsURL = () => ({ boneMush: 0 });
 `;
 
@@ -256,6 +261,216 @@ check('src: a posed commit no longer refuses',
 
 check('src: a singular basis drops the vertex rather than writing a garbage inverse',
   /if \(!\(Math\.abs\(det\) > 1e-12\)\) \{ singular\+\+; continue; \}/.test(SRC));
+
+// ---- ABOVE THE BOUND LEVEL (grade 3) ----------------------------------------------
+//
+// WHAT THIS PROVES AND WHAT IT DOES NOT. The real MeshResolution needs the whole mesh and
+// render stack to instantiate, so the stack below is a stand-in that honours the same contract:
+// the shared vertices come FIRST and are copied down verbatim, and what the subdivision cannot
+// reproduce is kept as a residual. That is `copyDataFromHigherRes` + `computeDetails` in
+// structure, and it makes the ORCHESTRATION measurable -- does the commit fold the stroke down
+// before reading the weighted array, in the right order, once.
+//
+// It does NOT stand in for one thing: the real details live in each vertex's normal/tangent
+// FRAME, not in object space, so they rotate with the surface. That is the property that makes
+// detail follow a pose, and no mock of mine can vouch for it -- it is measured in the browser,
+// against the live dev server, with the real subdivision.
+//
+// Two levels, where level 1 is level 0 plus one midpoint per consecutive pair.
+function subdivide(coarse, out) {
+  const n = coarse.length / 3;
+  out.set(coarse);
+  for (let i = 0; i < n; i++) {
+    const a = i * 3, b = ((i + 1) % n) * 3, o = (n + i) * 3;
+    out[o] = (coarse[a] + coarse[b]) * 0.5;
+    out[o + 1] = (coarse[a + 1] + coarse[b + 1]) * 0.5;
+    out[o + 2] = (coarse[a + 2] + coarse[b + 2]) * 0.5;
+  }
+}
+
+let analysisLog = [];
+
+// A stack of `n` levels, each one a subdivision of the level below plus its own details. THREE
+// levels is the case that matters -- matt's workflow is "subdivide twice" -- and it is the only
+// size that can see the fold ORDER: with two levels, folding down and folding up are the same
+// single step, so a reversed loop passes.
+function stackN(rest, n) {
+  const levels = [];
+  let coarse = new Float32Array(rest);
+  for (let i = 0; i < n; i++) {
+    const nb = (coarse.length / 3) | 0;
+    const verts = coarse;
+    const lvl = { name: 'L' + i, getNbVertices: () => nb, getVertices: () => verts };
+    levels.push(lvl);
+    if (i + 1 < n) { coarse = new Float32Array(nb * 2 * 3); subdivide(verts, coarse); }
+  }
+  for (let i = 1; i < n; i++) {
+    const up = levels[i], down = levels[i - 1];
+    const n1 = up.getNbVertices(), n0 = down.getNbVertices();
+    const scratch = new Float32Array(n1 * 3);
+    const details = new Float32Array(n1 * 3);
+    // MeshResolution.higherSynthesis: rebuild from below, then add the details back.
+    up.higherSynthesis = function (below) {
+      analysisLog.push('up' + i);
+      subdivide(below.getVertices(), scratch);
+      const v = up.getVertices();
+      for (let k = 0; k < n1 * 3; k++) v[k] = scratch[k] + details[k];
+    };
+    // MeshResolution.lowerAnalysis, called ON the level below with the level above: the shared
+    // vertices come down verbatim and the residual becomes detail.
+    down.lowerAnalysis = function (above) {
+      analysisLog.push('down' + i);
+      const v = down.getVertices(), u = above.getVertices();
+      v.set(u.subarray(0, n0 * 3));
+      subdivide(v, scratch);
+      for (let k = 0; k < n1 * 3; k++) details[k] = u[k] - scratch[k];
+    };
+  }
+  return levels;
+}
+
+function boundBelow(rest, j, nLevels) {
+  const levels = stackN(rest, nLevels || 3);
+  const top = levels[levels.length - 1];
+  const nbV = rest.length / 3;
+  const idx = new Int32Array(nbV * 4).fill(-1);
+  const wts = new Float32Array(nbV * 4);
+  for (let i = 0; i < nbV; i++) { idx[i * 4] = 0; wts[i * 4] = 1; }
+  const mesh = {
+    _meshes: levels, _sel: levels.length - 1,   // BOUND AT 0, DISPLAYING THE TOP
+    _skinJoints: [j.getID()],
+    _skinLevelMesh: levels[0], _skinLevel: 0,
+    _skinIdx: idx, _skinW: wts,
+    _skinRest: new Float32Array(rest),
+    _skinSrc: new Float32Array(rest),
+    _skinInvBind: [new THREE.Matrix4()],
+    getID: () => 99,
+    getModelSpaceMatrix: () => new THREE.Matrix4().elements,
+    computeLocalRadius: () => 1,
+    updateGeometry() {}, updateGeometryBuffers() {}, updateBuffers() {}, updateResolution() {},
+    isDynamic: false,
+  };
+  return { mesh: mesh, main: { getMeshes: () => [j], render() {} },
+           levels: levels, hi: top.getVertices() };
+}
+
+// --- 8. bind the base cage, subdivide, POSE, sculpt: the stroke is kept -------------
+//
+// Both halves of a stroke are checked, because they take different routes home: a SHARED vertex
+// is copied down and becomes part of the rest shape, a MIDPOINT vertex has nowhere to go but the
+// details. A version that folds the stroke down but loses the details passes the first and fails
+// the second, and vice versa.
+{
+  analysisLog = [];
+  const j = joint();
+  const t = boundBelow(REST, j);
+  Skinning.apply(t.main, t.mesh);
+  j.setModelMatrix(new THREE.Matrix4().makeRotationZ(0.8).setPosition(1, 2, -1).elements);
+  Skinning.apply(t.main, t.mesh);
+
+  const shared = 1, midpoint = 13;            // 4 coarse verts -> L1 has 8 -> L2 has 16
+  t.hi[shared * 3] += 0.30; t.hi[shared * 3 + 1] -= 0.15;
+  t.hi[midpoint * 3 + 2] += 0.45;
+  const want = Array.from(t.hi);
+
+  check('above the bound level: commits', Skinning.commitToRest(t.main, t.mesh) === true);
+  check('...by folding the stroke down one level at a time, top first',
+    analysisLog.filter((x) => x[0] === 'd').join(',') === 'down2,down1',
+    'each analysis reads the level above it, so 2 has to reach 1 before 1 can reach 0; got '
+      + analysisLog.join(','));
+
+  t.mesh._skinDirty = true;
+  Skinning.apply(t.main, t.mesh);             // the next frame, as it really runs
+
+  let worst = 0, worstAt = -1;
+  for (let i = 0; i < want.length; i++) {
+    const d = Math.abs(t.hi[i] - want[i]);
+    if (d > worst) { worst = d; worstAt = i; }
+  }
+  check('...and the sculpted level survives the skin pass', worst < 1e-4,
+    'worst drift ' + worst.toFixed(5) + ' at component ' + worstAt);
+}
+
+// --- 9. ...and it is in the REST shape, not cancelled out by the pose ---------------
+{
+  const j = joint();
+  const t = boundBelow(REST, j);
+  Skinning.apply(t.main, t.mesh);
+  const restHi = Array.from(t.hi);
+
+  j.setModelMatrix(new THREE.Matrix4().makeRotationY(1.1).setPosition(0, -2, 3).elements);
+  Skinning.apply(t.main, t.mesh);
+  t.hi[1 * 3] += 0.30;                        // shared vertex -> must reach _skinSrc
+  t.hi[13 * 3 + 2] += 0.45;                   // midpoint      -> must reach the details
+  Skinning.commitToRest(t.main, t.mesh);
+
+  j.setModelMatrix(new THREE.Matrix4().elements);
+  Skinning.apply(t.main, t.mesh);
+
+  const dShared = Math.hypot(t.hi[3] - restHi[3], t.hi[4] - restHi[4], t.hi[5] - restHi[5]);
+  const dMid = Math.hypot(t.hi[39] - restHi[39], t.hi[40] - restHi[40], t.hi[41] - restHi[41]);
+  check('back at bind pose: the shared-vertex half is in the rest shape',
+    Math.abs(dShared - 0.30) < 1e-3, 'moved ' + dShared.toFixed(4));
+  check('back at bind pose: the detail half came with it',
+    dMid > 1e-3, 'moved ' + dMid.toFixed(4));
+}
+
+// --- 10. BELOW the bound level is still refused, pointing the right way -------------
+{
+  const j = joint();
+  const t = boundBelow(REST, j);
+  t.mesh._skinLevelMesh = t.levels[1]; t.mesh._skinLevel = 1;   // bound high, displaying low
+  t.mesh._sel = 0;
+  t.mesh._skinRest = new Float32Array(t.levels[1].getNbVertices() * 3);
+  t.mesh._skinSrc = new Float32Array(t.levels[1].getNbVertices() * 3);
+  check('below the bound level: refuses', Skinning.commitToRest(t.main, t.mesh) === false);
+}
+
+// --- 11. HOW FAR THE MUSH MOVES A COMMITTED STROKE ---------------------------------
+//
+// Delta mush is a post-process that reads the neighbourhood, so it is not per-vertex
+// invertible. commitPosed relies on it CANCELLING in the difference between two surfaces, which
+// is exact only while the mush deltas hold still -- and the commit marks them stale, because
+// they are defined against the rest pose that just changed. So the surface that comes back is
+// not quite the one the stroke was drawn on, and the question is by how much.
+//
+// Not a pass/fail on a guessed tolerance: this prints the number and fails only if a stroke
+// comes back visibly wrong (a tenth of what was drawn). If it ever creeps, the number moves
+// first and says so.
+//
+// AND THE NUMBER IS A FLOOR, NOT A MEASUREMENT. The topology here is a ring of four, where the
+// smoothing has almost nothing to do; a real mesh has a real neighbourhood. What this rules out
+// is the structural failure -- the drift compounding, or the stroke coming back somewhere else
+// entirely. How big it actually is on a sculpted character is a question for the device.
+{
+  const j = joint();
+  const t = boundMesh(REST, j);
+  window._skinMush = 6;                    // mush ON, and a real ring adjacency above
+  try {
+    Skinning.apply(t.main, t.mesh);
+    j.setModelMatrix(new THREE.Matrix4().makeRotationZ(0.6).setPosition(1, 0, 0).elements);
+    Skinning.apply(t.main, t.mesh);
+
+    const drawn = 0.25;
+    sculpt(t, 0, drawn, 0, 0);
+    const want = [t.verts[0], t.verts[1], t.verts[2]];
+    Skinning.commitToRest(t.main, t.mesh);
+    t.mesh._skinDirty = true;
+    Skinning.apply(t.main, t.mesh);
+
+    const drift = Math.hypot(t.verts[0] - want[0], t.verts[1] - want[1], t.verts[2] - want[2]);
+    console.log('       mush drift: ' + drift.toFixed(5) + ' on a ' + drawn + ' stroke ('
+      + (100 * drift / drawn).toFixed(1) + '%)');
+    check('with mush on, a committed stroke comes back where it was drawn',
+      drift < drawn * 0.1, 'drift ' + drift.toFixed(5) + ' of a ' + drawn + ' stroke');
+  } finally {
+    delete window._skinMush;
+  }
+}
+
+check('src: the fold runs before the commit, not after',
+  /analyseDown\(mesh, level\);\n\n  if \(!Skinning\.atBindPose/.test(SRC),
+  'the commit reads the weighted array, so it has to be folded by then');
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

@@ -213,9 +213,15 @@ function boundMesh(levels, boundAt) {
       && /if \(!Skinning\.atBindPose\(main, mesh\)\) return commitPosed\(main, mesh, level, nbV\);/.test(SRC),
     'copying a POSED shape into the rest shape corrupts the bind irreversibly; posed strokes '
       + 'go through commitPosed, which is measured in restwrite_test.mjs');
-  check('...and never from a level the weights are not for',
-    /mesh\._meshes\[mesh\._sel \|\| 0\] !== level/.test(SRC),
-    'above the bound level the shape lives in detail vectors this cannot see');
+  check('...after folding a stroke made ABOVE the bound level back down to it',
+    /analyseDown\(mesh, level\);/.test(SRC)
+      && /for \(let i = sel; i > at; i--\) stack\[i - 1\]\.lowerAnalysis\(stack\[i\]\);/.test(SRC),
+    'the weights belong to one resolution; without the analysis a stroke two levels up is '
+      + 'reconstructed away by the next pose change. Measured in restwrite_test.mjs');
+  check('...and refuses from BELOW it, saying which way to go',
+    /\(mesh\._sel \| 0\) < stack\.indexOf\(level\)/.test(SRC)
+      && /'sculpt at level ' \+ stack\.indexOf\(level\) \+ ' or above'/.test(SRC),
+    'synthesising up would need the details that describe the level being written over');
   check('...nor while a blendshape layer is contributing',
     /reg\.otherLayersOffset\(track, null\)/.test(SRC),
     'the level is base + deltas there, and adopting it would bake the shape into the neutral');

@@ -50,9 +50,21 @@ class MeshResolution extends Mesh {
   lowerAnalysis(meshUp) {
     this.copyDataFromHigherRes(meshUp);
     var nbVertices = meshUp.getNbVertices();
-    var subdVerts = new Float32Array(nbVertices * 3);
-    var subdColors = new Float32Array(nbVertices * 3);
-    var subdMaterials = new Float32Array(nbVertices * 3);
+
+    // THE SCRATCH IS KEPT. This used to run only when the user stepped down a level by hand,
+    // where three throwaway arrays cost nothing anyone would notice. Skinning now folds a
+    // stroke down the stack at every stroke END so that sculpting above the bound level is
+    // kept (Skinning.analyseDown), and at that rate the garbage IS the cost: two levels down a
+    // 400k mesh is ~30MB of churn per stroke, invisible on desktop and a hitch in a headset.
+    // Same arrays, same contents, one allocation per resolution.
+    var n = nbVertices * 3;
+    if (!this._subdScratch || this._subdScratch.length !== n * 3) {
+      this._subdScratch = new Float32Array(n * 3);
+    }
+    var sc = this._subdScratch;
+    var subdVerts = sc.subarray(0, n);
+    var subdColors = sc.subarray(n, n * 2);
+    var subdMaterials = sc.subarray(n * 2, n * 3);
 
     this.computePartialSubdivision(subdVerts, subdColors, subdMaterials, nbVertices);
     meshUp.computeDetails(subdVerts, subdColors, subdMaterials, nbVertices);
@@ -235,9 +247,19 @@ class MeshResolution extends Mesh {
     var mArUp = this.getMaterials();
     var nbVertices = this.getNbVertices();
 
-    var dAr = this._detailsXYZ = new Float32Array(nbVerticesUp * 3);
-    var dColorAr = this._detailsRGB = new Float32Array(nbVerticesUp * 3);
-    var dMaterialAr = this._detailsPBR = new Float32Array(nbVerticesUp * 3);
+    // Reused for the same reason as the scratch in lowerAnalysis. The colour and material
+    // deltas are written for EVERY vertex so they need nothing; the XYZ ones are SKIPPED for a
+    // degenerate normal or tangent, which on a fresh array left a zero and on a reused one
+    // would leave the PREVIOUS stroke's detail sitting there. Those two paths now zero
+    // explicitly, which is cheaper than clearing the whole array.
+    if (!this._detailsXYZ || this._detailsXYZ.length !== nbVerticesUp * 3) {
+      this._detailsXYZ = new Float32Array(nbVerticesUp * 3);
+      this._detailsRGB = new Float32Array(nbVerticesUp * 3);
+      this._detailsPBR = new Float32Array(nbVerticesUp * 3);
+    }
+    var dAr = this._detailsXYZ;
+    var dColorAr = this._detailsRGB;
+    var dMaterialAr = this._detailsPBR;
 
     for (var i = 0; i < nbVertices; ++i) {
       var j = i * 3;
@@ -258,8 +280,10 @@ class MeshResolution extends Mesh {
       var nz = nArUp[j + 2];
       // normalize vector
       var len = nx * nx + ny * ny + nz * nz;
-      if (len === 0.0)
+      if (len === 0.0) {
+        dAr[j] = dAr[j + 1] = dAr[j + 2] = 0.0;
         continue;
+      }
       len = 1.0 / Math.sqrt(len);
       nx *= len;
       ny *= len;
@@ -278,8 +302,10 @@ class MeshResolution extends Mesh {
       tz -= nz * len;
       // normalize vector
       len = tx * tx + ty * ty + tz * tz;
-      if (len === 0.0)
+      if (len === 0.0) {
+        dAr[j] = dAr[j + 1] = dAr[j + 2] = 0.0;
         continue;
+      }
       len = 1.0 / Math.sqrt(len);
       tx *= len;
       ty *= len;

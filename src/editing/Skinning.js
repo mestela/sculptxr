@@ -1138,6 +1138,44 @@ function restRefused(mesh, why) {
   return false;
 }
 
+// SCULPTING ABOVE THE BOUND LEVEL (grade 3). Bind the base cage, subdivide twice, pose, sculpt
+// -- and expect it to be kept. matt: "from a user pov, it makes total sense that i would bind
+// the base cage, subdivide twice, pose the character, then want to sculpt on it, and expect
+// those changes to be kept."
+//
+// Weights are per-vertex, so they belong to ONE resolution, and a stroke made two levels up
+// lands in an array the skin pass never reads. The pass rebuilds the bound level from `_skinSrc`
+// and synthesises back up through the stored detail vectors -- which still describe the shape as
+// it was before the stroke, so the next pose change reconstructs the OLD surface over the new
+// one and the stroke is gone.
+//
+// No new arithmetic is needed, because the split already exists: `lowerAnalysis` copies the
+// shared vertices down verbatim, re-subdivides, and stores the residual in each vertex's
+// normal/tangent frame -- exactly "coarse shape plus detail" -- and `higherSynthesis` reverses
+// it exactly. It was simply only ever reached by stepping down a level by hand. Running it at
+// stroke end puts the low-frequency half of the stroke in the weighted array, where the ordinary
+// commit picks it up, and the high-frequency half in the details, where the skin pass already
+// re-adds it every frame.
+//
+// The detail frames are captured on the POSED surface, which is the right way round: the coarse
+// shape goes back to rest and the frames rotate with it, so the detail follows the surface
+// instead of being stamped into rest space at the angle the character happened to be standing.
+//
+// A commit that then refuses (no posed reference) leaves the details updated and the coarse
+// shape about to be overwritten -- half the stroke kept. Not corrupting, and not worth a
+// snapshot to avoid: the only way to reach it is a posed mesh the skin pass has never run on.
+function analyseDown(mesh, level) {
+  const stack = mesh._meshes;
+  if (!stack || !stack.length) return 0;
+  const at = stack.indexOf(level);
+  const sel = mesh._sel | 0;
+  if (at < 0 || sel <= at) return 0;
+  // Down one level at a time: each analysis reads the level above it, so level 2 has to be
+  // folded into level 1 before level 1 can be folded into level 0.
+  for (let i = sel; i > at; i--) stack[i - 1].lowerAnalysis(stack[i]);
+  return sel - at;
+}
+
 // SCULPTING WHILE POSED (grade 2). The stroke happened in POSED space; the skin pass reads
 // from REST space; so the stroke has to be carried back through the deformation that produced
 // the surface it was drawn on.
@@ -1241,12 +1279,13 @@ Skinning.commitToRest = function (main, mesh) {
   const nbV = (mesh._skinRest.length / 3) | 0;
   if (level.getNbVertices() !== nbV) return false;
 
-  // ONLY THE LEVEL THE WEIGHTS ARE FOR. Above it the shape lives in detail vectors that are
-  // only recomputed on the way DOWN a level, and the skin pass synthesises UP from the bound
-  // level every frame -- so a stroke up there is not in any array this could copy.
-  if (mesh._meshes && mesh._meshes.length && mesh._meshes[mesh._sel || 0] !== level) {
-    return restRefused(mesh, 'sculpt on the bound level (go down to level '
-      + mesh._meshes.indexOf(level) + ')');
+  // BELOW the bound level there is nothing to do here: the shape would have to be synthesised
+  // UP into the weighted array, and the details needed to do that describe the level we would
+  // be writing over. Binding happens at whatever level is displayed and Make Skin binds a fresh
+  // level-0 mesh, so this is the unusual way round; say which way to go and stop.
+  const stack = mesh._meshes;
+  if (stack && stack.length && (mesh._sel | 0) < stack.indexOf(level)) {
+    return restRefused(mesh, 'sculpt at level ' + stack.indexOf(level) + ' or above');
   }
 
   // A CONTRIBUTING BLENDSHAPE MEANS THE LEVEL IS NOT THE REST SHAPE -- it is base + Σdeltas,
@@ -1258,6 +1297,11 @@ Skinning.commitToRest = function (main, mesh) {
   if (track && track.baseShape && reg.otherLayersOffset && reg.otherLayersOffset(track, null)) {
     return false;
   }
+
+  // ABOVE THE BOUND LEVEL, SPLIT THE STROKE FIRST. Run it before the commit and both paths
+  // below work unchanged: the weighted array now holds the low-frequency half of the stroke,
+  // and the high-frequency half is in detail vectors the skin pass re-adds every frame.
+  analyseDown(mesh, level);
 
   if (!Skinning.atBindPose(main, mesh)) return commitPosed(main, mesh, level, nbV);
 
