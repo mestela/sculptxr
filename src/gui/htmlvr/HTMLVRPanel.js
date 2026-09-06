@@ -26,6 +26,29 @@ import getOptionsURL from '../../misc/getOptionsURL.js';
 // nothing to change — no re-rasterise. Restores the Settings menu brightness/saturation
 // sliders that did this in the old canvas GUI (GuiXR.parseColor). Slider values are 0..1
 // with 0.5 = neutral; the mapping below matches the legacy behaviour exactly.
+// Is this rasterisation empty? An 8x8 draw and the mean alpha of the 64 pixels, which is enough
+// to tell "nothing on it" from "a panel". Used only on the paint that would discard a good
+// texture; a panel whose content really is blank simply keeps the last frame for one more paint.
+let _blankCanvas = null, _blankCtx = null;
+function _bitmapIsBlank(bitmap) {
+  try {
+    if (typeof OffscreenCanvas === 'undefined') return false;
+    if (!_blankCanvas) {
+      _blankCanvas = new OffscreenCanvas(8, 8);
+      _blankCtx = _blankCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    if (!_blankCtx) return false;
+    _blankCtx.clearRect(0, 0, 8, 8);
+    _blankCtx.drawImage(bitmap, 0, 0, 8, 8);
+    const d = _blankCtx.getImageData(0, 0, 8, 8).data;
+    let a = 0;
+    for (let i = 3; i < d.length; i += 4) a += d[i];
+    return (a / 64) < 8;
+  } catch (_) {
+    return false;   // never let the check itself cost a frame or a texture
+  }
+}
+
 const _gradeMats = new Set();
 function _gradeFactors(b01, s01, g01) {
   const bright = (b01 ?? 0.5) * 2.0;                                  // 0.5 → 1.0 (neutral)
@@ -338,6 +361,15 @@ export class HTMLVRPanel {
       // bitmap.  We MUST dispose the texture here — if we leave it allocated at the
       // old dimensions Chrome throws GL_INVALID_VALUE / glCopySubTextureCHROMIUM
       // when it tries to copy the new (differently-sized) bitmap into the old slot.
+      // AN EMPTY CAPTURE IS NOT AN ANSWER. The rasterisation of a just-rebuilt element can come
+      // back the right SIZE and completely transparent -- which is what the trace measured, a
+      // 419x800 map at mean alpha 0 -- and adopting it paints the panel out of existence until
+      // the next paint replaces it. Checked only on a resize, which is the only paint that
+      // discards a good texture to take this one, and only when there is a good one to keep.
+      if (this._needsResize && this._texture && _bitmapIsBlank(bitmap)) {
+        this._dirty = true;               // come back for a real one
+        return;
+      }
       if (this._needsResize) {
         this._needsResize = false;
         // A size change moves every panel after this one in the shared flow, so their captured
@@ -412,7 +444,23 @@ export class HTMLVRPanel {
       // canvas; the second needs whatever is marking them dirty to stop. xrPerf reports both
       // the count and the total, so one run tells you which.
       if (window._xrPerf) window._panelPaints = (window._panelPaints | 0) + 1;
-      if (requestPaintOnce(getHostCanvas())) this._dirty = false;
+      // A REBUILD DOES NOT WAIT OUT THE RATE LIMIT.
+      //
+      // The ambient limit is 200ms, and that is exactly the gap matt measured: "select a joint
+      // with the trigger, move controller a tiny amount, minipanel disappears for roughly 0.25
+      // seconds, reappears". The trace caught the state it spends that gap in --
+      //
+      //   MiniPanel: shown
+      //   MiniPanel: TEXTURE IS EMPTY (mean alpha 0)
+      //   MiniPanel paint: el 240x458  RESIZE -> map 419x800   (97ms later)
+      //   MiniPanel: texture has content again
+      //
+      // -- a panel on screen with a texture that has nothing on it, waiting for a paint the
+      // limiter is holding back. The limit exists to stop AMBIENT repaints costing 5fps of SVG
+      // rasterisation; a rebuild is not ambient, it is the one paint the user is waiting for.
+      // So a resize forces it: the gap becomes a frame instead of a fifth of a second.
+      if (this._needsResize) { requestPaintForced(getHostCanvas()); this._dirty = false; }
+      else if (requestPaintOnce(getHostCanvas())) this._dirty = false;
     }
   }
 

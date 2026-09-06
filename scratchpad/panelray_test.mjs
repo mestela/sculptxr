@@ -235,6 +235,24 @@ check('it is inside the section it costs',
   check('...neither of them left on a bare literal',
     !/_vtlSecLaser\.renderOrder = 999;/.test(SC));
 
+  // THE 200ms GAP. The ambient repaint limit is PAINT_MIN_MS = 200, and that is exactly the gap
+  // matt measured: "select a joint with the trigger, move controller a tiny amount, minipanel
+  // disappears for roughly 0.25 seconds, reappears". The trace caught what it spends that gap
+  // in: shown, then TEXTURE IS EMPTY (mean alpha 0), then 97ms later a RESIZE paint, then
+  // content again. A panel on screen with nothing on its texture, waiting for a paint the
+  // limiter is holding back.
+  const HP1 = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
+  check('a rebuild does not wait out the ambient paint limit',
+    /if \(this\._needsResize\) \{ requestPaintForced\(getHostCanvas\(\)\); this\._dirty = false; \}/.test(HP1),
+    'the limit is there for AMBIENT repaints; a rebuild is the paint the user is waiting for');
+  check('...and an empty rasterisation is not adopted over a good texture',
+    /if \(this\._needsResize && this\._texture && _bitmapIsBlank\(bitmap\)\) \{/.test(HP1)
+      && /function _bitmapIsBlank\(bitmap\)/.test(HP1),
+    'a 419x800 capture at mean alpha 0 paints the panel out of existence');
+  check('...tested only where it would discard something good',
+    /this\._needsResize && this\._texture &&/.test(HP1),
+    'an 8x8 read on every paint of every panel is a cost with no case behind it');
+
   // ONE SHARED FLOW, so one panel moving invalidates every other panel's capture region.
   //
   // The panel roots are block elements in the host canvas; mounting or unmounting one (and a
