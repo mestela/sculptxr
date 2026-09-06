@@ -104,16 +104,36 @@ refused. Symmetry on odd strokes, none on even ones.
 > An alternating symptom means cached state flipping. No throttled sample can show it —
 > measure once per stroke, in order.
 
-### 6. "Nearest vertex" is a spatial question with an anatomical answer
+### 6. Use ownership, not proximity — the bind is **rigid**
+
+`nearestCapsuleWeights` and `WeightCage.weights` both write **one influence with weight 1**.
+`MAX_INFLUENCES = 4` is the array's width, not what is in it, and `SMOOTH_ITERATIONS = 0`:
+*"The bind is rigid — one bone per vertex — and that is the point."* Delta mush handles the
+borders. (I misread the width as the data once; matt corrected it.)
+
+So a vertex names exactly one joint, and `_boneMirror` names that joint's twin — set when a
+rig is drawn with symmetry on, serialised in the SKEL block, restored on load, with
+`joint._boneMirror || joint` as the centreline idiom. The far side's deformation is then
+
+```
+out = ( Σ wₖ · M[ twin(jointₖ) ] ) · mirror(restPoint)
+```
+
+Nothing measured. Written as a weighted sum so it stays correct if smoothing is ever turned
+on; with a rigid bind the sum has one term and it is a matrix copy.
+
+This replaced a rest-space **cage pair map** (build a pairing by reflecting every cage vertex
+and taking the nearest match). That worked, but it answered a spatial question —
+
+### 6b. …and "nearest vertex" is a spatial question with an anatomical answer
 
 Both hops of the mirror once used nearest-cage-vertex lookups. Where two unrelated parts
 touch — hands resting on hips — the nearest vertex to a mirrored hand point is a **hip**
 vertex, and the stroke pulls the hip.
 
-Fixed by pairing the **cage to itself in rest space**, once, into `mesh._skinPair`: a
-property of the model rather than of the pose, so it holds however the character is
-standing. Unpaired stays unpaired (an asymmetric cage has no twin) and falls back to the
-search, which is wrong in a smaller and more local way than a wrong pairing.
+First fixed by pairing the cage to itself in rest space; then replaced outright by the
+ownership route above, which cannot make the mistake at all rather than avoiding it by
+tolerance. The geometric search survives as the fallback for a rig with no twins to read.
 
 ### 7. The mirrored *selection* is also spatial
 

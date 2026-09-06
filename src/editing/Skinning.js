@@ -1155,6 +1155,74 @@ Skinning.skinMatricesFor = function (main, mesh) {
   return skinMatrices(mesh, resolveJoints(main, mesh));
 };
 
+// EACH INFLUENCE JOINT'S MIRROR TWIN, as an index into the same joint list.
+//
+// The bind is RIGID -- nearestCapsuleWeights and WeightCage.weights both write one influence
+// with weight 1, and MAX_INFLUENCES is the array's width rather than what is in it. So for a
+// vertex, "which bone owns this?" has a single exact answer, and `_boneMirror` turns that into
+// "which bone owns its mirror?" without measuring anything.
+//
+// That is worth more than the arithmetic it saves. Geometry can only answer "what is nearby",
+// which is ambiguous wherever two parts of the body touch -- a mirrored hand point beside a hip
+// is genuinely nearest the hip. Ownership is not ambiguous: the hand vertex belongs to the hand
+// bone with the character in any pose at all.
+//
+// `|| joint` is the centreline case: a joint on the symmetry plane is its own twin. Same idiom
+// WeightCage uses. A joint with no twin on an asymmetric rig also lands there, and the caller
+// falls back to measuring, which is the best available answer when there is no pairing to read.
+Skinning.jointMirrors = function (main, mesh) {
+  const ids = mesh._skinJoints;
+  if (!ids) return null;
+  if (mesh._skinJMirror && mesh._skinJMirrorN === ids.length) return mesh._skinJMirror;
+  const joints = resolveJoints(main, mesh);
+  const at = new Map();
+  for (let i = 0; i < joints.length; i++) if (joints[i]) at.set(joints[i], i);
+  const table = new Int32Array(joints.length).fill(-1);
+  let paired = 0;
+  for (let i = 0; i < joints.length; i++) {
+    const j = joints[i];
+    if (!j) continue;
+    const twin = j._boneMirror || j;
+    const k = at.has(twin) ? at.get(twin) : i;
+    table[i] = k;
+    if (k !== i) paired++;
+  }
+  mesh._skinJMirror = table;
+  mesh._skinJMirrorN = ids.length;
+  mesh._skinJMirrorPaired = paired;
+  return table;
+};
+
+// The blended transform at one vertex, with every influence replaced by its MIRROR TWIN.
+//
+// Exact, not an approximation: the mirrored vertex carries the same weights on the twinned
+// joints, so Σw·M[twin(k)] is its deformation by construction. With a rigid bind the sum has
+// one term, and this is a matrix copy.
+Skinning.blendAtMirrored = function (mesh, mats, i, table, out) {
+  const idx = mesh._skinIdx, wts = mesh._skinW;
+  const e = out.elements;
+  for (let k = 0; k < 16; k++) e[k] = 0;
+  let total = 0, mirrored = 0;
+  for (let k = 0; k < MAX_INFLUENCES; k++) {
+    const j = idx[i * MAX_INFLUENCES + k];
+    if (j < 0) continue;
+    const w = wts[i * MAX_INFLUENCES + k];
+    const t = table[j];
+    const m = mats[t];
+    if (!m || w <= 0) continue;
+    const me = m.elements;
+    for (let q = 0; q < 16; q++) e[q] += me[q] * w;
+    total += w;
+    if (t !== j) mirrored++;
+  }
+  if (total <= 1e-6) { out.identity(); return false; }
+  // NOTHING ACTUALLY MIRRORED means every influence was its own twin -- a centreline vertex,
+  // or a rig drawn without symmetry. The caller must not treat that as an answer: for a
+  // centreline vertex it happens to be right, and for an unpaired rig it silently places the
+  // far side with the NEAR side's deformation, which is the old bug wearing a new hat.
+  return mirrored > 0;
+};
+
 // The blended transform at one vertex: Σw·M, weighted exactly as apply() weights it. The FULL
 // affine, not just the basis -- commitPosed blends only the 3×3 because it carries a delta, and
 // a point needs the translation too.

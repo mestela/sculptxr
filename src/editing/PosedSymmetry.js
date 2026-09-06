@@ -33,6 +33,7 @@ const _psMat = new THREE.Matrix4(), _psInv = new THREE.Matrix4();
 const _psVec = new THREE.Vector3();
 const _psPlane = [0, 0, 0];
 const _psNrm = new THREE.Matrix3();
+const _psFar = new THREE.Matrix4();
 
 // Does this mesh need the rest-space route at all? Only a bound mesh that is actually posed:
 // at bind pose every skin matrix is the identity, so the plain plane mirror is already correct
@@ -78,79 +79,6 @@ function nearest(arr, nbV, px, py, pz) {
     if (d < bestD) { bestD = d; best = i; }
   }
   return best;
-}
-
-// THE CAGE'S OWN MIRROR PAIRING, built once in REST space.
-//
-// The return hop needs the deformation on the far side, and asking "which cage vertex is
-// nearest?" is a SPATIAL question with an anatomical answer -- so it is wrong wherever two
-// parts of the body are close together but unrelated. With the hands resting beside the hips,
-// the vertex nearest a mirrored hand point is a HIP vertex, and the stroke pulls the hip.
-// matt: "if i pull on part of the hand that is in free space on the side i sculpt on, but close
-// to the hips on the opposite side ... it pulls out part of the hips rather than the hand."
-//
-// Pairing the cage to itself instead removes the question. It is measured in rest space, where
-// the shape is symmetric and the plane means what it says, and it is a property of the model
-// rather than of the pose -- so it holds however the character is standing, including when the
-// two sides are touching.
-//
-// Cheap because it is the CAGE: a few thousand vertices, once per bind, into a hash grid so it
-// is a handful of buckets per vertex rather than n^2. Rebuilt only when the vertex count
-// changes -- a sculpt moves `_skinRest` slightly and does not repartition anybody's anatomy.
-const PAIR_TOL = 0.25;   // fraction of the cage's own cell size; a pair should be nearly exact
-
-function cagePairs(mesh, nPlane) {
-  const rest = mesh._skinRest;
-  const nbV = (rest.length / 3) | 0;
-  if (mesh._skinPairN === nbV && mesh._skinPair) return mesh._skinPair;
-
-  const bb = restBounds(mesh);
-  const ex = bb[3] - bb[0], ey = bb[4] - bb[1], ez = bb[5] - bb[2];
-  // Cell size aimed at a handful of vertices per bucket.
-  const cell = Math.max(1e-6, Math.cbrt((ex * ey * ez) / Math.max(1, nbV)) * 1.5);
-  const key = (x, y, z) => (Math.floor(x / cell) + ',' + Math.floor(y / cell)
-    + ',' + Math.floor(z / cell));
-  const grid = new Map();
-  for (let i = 0; i < nbV; i++) {
-    const k = key(rest[i * 3], rest[i * 3 + 1], rest[i * 3 + 2]);
-    let b = grid.get(k);
-    if (!b) grid.set(k, b = []);
-    b.push(i);
-  }
-
-  const plane = restPlaneOrigin(mesh, nPlane, [0, 0, 0]);
-  const pair = new Int32Array(nbV).fill(-1);
-  const tol2 = (cell * PAIR_TOL) * (cell * PAIR_TOL);
-  const m = [0, 0, 0];
-  for (let i = 0; i < nbV; i++) {
-    m[0] = rest[i * 3]; m[1] = rest[i * 3 + 1]; m[2] = rest[i * 3 + 2];
-    mirrorAcross(m, plane, nPlane);
-    let best = -1, bestD = Infinity;
-    // The mirrored point can fall anywhere in its own cell, so the neighbours are searched too.
-    const cx = Math.floor(m[0] / cell), cy = Math.floor(m[1] / cell), cz = Math.floor(m[2] / cell);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dz = -1; dz <= 1; dz++) {
-          const b = grid.get((cx + dx) + ',' + (cy + dy) + ',' + (cz + dz));
-          if (!b) continue;
-          for (let q = 0; q < b.length; q++) {
-            const j = b[q] * 3;
-            const ax = rest[j] - m[0], ay = rest[j + 1] - m[1], az = rest[j + 2] - m[2];
-            const d = ax * ax + ay * ay + az * az;
-            if (d < bestD) { bestD = d; best = b[q]; }
-          }
-        }
-      }
-    }
-    // UNPAIRED IS A REAL ANSWER. An asymmetric cage, or a vertex whose twin was sculpted away,
-    // has no counterpart -- and inventing one puts the stroke somewhere arbitrary. Left at -1,
-    // and the caller falls back to the spatial search it used before, which is wrong in a
-    // smaller and more local way than a wrong pairing.
-    if (best >= 0 && bestD <= tol2) pair[i] = best;
-  }
-  mesh._skinPair = pair;
-  mesh._skinPairN = nbV;
-  return pair;
 }
 
 // DROP THE VERTICES THAT ARE ONLY SPATIALLY NEARBY.
@@ -368,24 +296,42 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
   // AND BACK, through the deformation on the OTHER side -- a different matrix, which is exactly
   // why mirroring in posed space cannot be patched up. The nearest vertex is measured against
   // the REST positions, because that is the space the mirrored point is currently in.
-  // THE FAR SIDE'S VERTEX, by pairing rather than proximity -- see cagePairs. The spatial
-  // search stays as the fallback for a vertex with no twin.
   // Kept for pruneMirrored, which needs the centre of the brush IN REST SPACE to judge whether
   // a candidate vertex belongs to the part being sculpted.
   PosedSymmetry._lastMirRest = [mir[0], mir[1], mir[2]];
   PosedSymmetry._lastMats = mats;
 
-  const pairs = cagePairs(mesh, nPlane);
-  let b = pairs[a];
-  if (b < 0) b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
-  if (b < 0) return null;
-  Skinning.blendAt(mesh, mats, b, _psMat);
+  // THE FAR SIDE'S DEFORMATION, BY OWNERSHIP RATHER THAN PROXIMITY.
+  //
+  // The bind is rigid -- one bone per vertex -- so the brush's cage vertex names a joint, and
+  // `_boneMirror` names that joint's twin. Substituting twins into the same weight set IS the
+  // mirrored vertex's deformation, exactly, with nothing measured.
+  //
+  // What this replaces was a rest-space search for the cage vertex nearest the mirrored point:
+  // a spatial question with an anatomical answer, wrong wherever two parts touch. With hands
+  // resting on hips, the vertex nearest a mirrored hand point is a HIP vertex. Ownership cannot
+  // make that mistake -- a hand vertex belongs to the hand bone in any pose at all.
+  const table = Skinning.jointMirrors(main, mesh);
+  const owned = table ? Skinning.blendAtMirrored(mesh, mats, a, table, _psMat) : false;
+  if (!owned) {
+    // Nothing to read: an unpaired joint on a rig not drawn with symmetry on. Measuring is the
+    // best answer available with no pairing to consult, and it is what this did before.
+    const b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
+    if (b < 0) return null;
+    Skinning.blendAt(mesh, mats, b, _psMat);
+  }
   // Kept for pruneMirrored: the far side's deformation, inverted, is what carries a candidate
   // vertex back to rest space to be judged.
   _psVec.set(mir[0], mir[1], mir[2]).applyMatrix4(_psMat);
   out[0] = _psVec.x; out[1] = _psVec.y; out[2] = _psVec.z;
 
   if (nrm) {
+    // THE FAR MATRIX FIRST, into its own scratch. Deriving the near matrix into `_psMat` here
+    // -- which the inbound hop needs -- would overwrite the mirrored one the position hop left
+    // there, and the normal would then be carried out by the NEAR side's deformation. It reads
+    // as a normal that is nearly right, which is the worst kind.
+    _psFar.copy(_psMat);
+
     // posed -> rest: M_a^T, which is the normal matrix of M_a's inverse.
     Skinning.blendAt(mesh, mats, a, _psMat);
     _psInv.copy(_psMat).invert();
@@ -394,9 +340,8 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
     // reflect the DIRECTION: no plane origin, only the plane's normal
     const d = 2 * (_psVec.x * nPlane[0] + _psVec.y * nPlane[1] + _psVec.z * nPlane[2]);
     _psVec.set(_psVec.x - d * nPlane[0], _psVec.y - d * nPlane[1], _psVec.z - d * nPlane[2]);
-    // rest -> posed on the far side: the normal matrix of M_b.
-    Skinning.blendAt(mesh, mats, b, _psMat);
-    _psNrm.getNormalMatrix(_psMat);
+    // rest -> posed on the far side, through the same transform the POINT rode.
+    _psNrm.getNormalMatrix(_psFar);
     _psVec.applyMatrix3(_psNrm).normalize();
     nrm[0] = _psVec.x; nrm[1] = _psVec.y; nrm[2] = _psVec.z;
   }
