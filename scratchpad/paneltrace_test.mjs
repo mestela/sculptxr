@@ -463,6 +463,13 @@ _realLog('\n── is there anything ON the texture ─────────�
   // again" reads as a recovery from a blank that never happened, and matt's log opened with
   // exactly that line.
   clear(); tick10();
+  // Two callers sampled through two different canvases and disagreed -- the per-frame sampler
+  // reporting an empty texture while the paint either side of it, through the other canvas,
+  // reported full. An instrument that contradicts itself has to be fixed before it is used.
+  check('every ink sample goes through the same canvas',
+    /const _inkScope = \{\};\s*\nfunction inkOf\(mesh\) \{\s*\n\s*const scene = _inkScope;/.test(SRC)
+      && !/inkOf\(p\.mesh, scene\)/.test(SRC),
+    'two contexts measuring one texture is two answers');
   check('a healthy first sample says nothing',
     !logged().some((m) => /texture has content/.test(m)),
     'there is nothing to have recovered from on the first look');

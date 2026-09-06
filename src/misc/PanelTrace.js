@@ -296,9 +296,19 @@ PanelTrace.dump = function (scene) {
 // So: sample the bitmap. An 8x8 draw of it into an offscreen canvas, mean alpha over the 64
 // pixels, every tenth frame -- enough to catch a blank that lasts long enough to see, cheap
 // enough to leave on while hunting.
-const _inkScope = {};   // one 8x8 canvas for the whole module; a fresh one per call is waste
-function inkOf(mesh, scene) {
-  scene = scene || _inkScope;
+// ONE CANVAS, ONE ANSWER.
+//
+// This was reading through whichever scope the caller passed, so the per-frame sampler used a
+// canvas hung off the app and the paint hook used a module-level one -- two contexts measuring
+// the same texture. They disagreed, and the disagreement was reported as a fact: the sampler
+// said "TEXTURE IS EMPTY (mean alpha 0)" on the frame the panel was shown while every paint
+// either side of it, sampled through the other canvas, said alpha 255 -- including the paints
+// while the panel was hidden and nothing was writing the texture at all. At most one of those
+// is true, and an instrument that contradicts itself has to be fixed before anything it says
+// can be used. One canvas now, for every caller.
+const _inkScope = {};
+function inkOf(mesh) {
+  const scene = _inkScope;
   const tex = mesh.material && mesh.material.map;
   const img = tex && tex.image;
   if (!img) return null;
@@ -522,7 +532,7 @@ PanelTrace.tick = function (scene) {
       // empties it happens while nobody is looking -- and sampling only the visible ones means
       // the transition is never timestamped, just its result.
       if (!p || !p.mesh) continue;
-      const ink = inkOf(p.mesh, scene);
+      const ink = inkOf(p.mesh);
       if (!ink) continue;
       p._ptInk = ink.a;                      // carried into the tape, so the dump shows it too
       const blank = ink.a < 8;               // essentially nothing drawn
