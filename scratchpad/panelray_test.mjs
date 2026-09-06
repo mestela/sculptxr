@@ -245,13 +245,17 @@ check('it is inside the section it costs',
   check('a rebuild does not wait out the ambient paint limit',
     /if \(this\._needsResize\) \{ requestPaintForced\(getHostCanvas\(\)\); this\._dirty = false; \}/.test(HP1),
     'the limit is there for AMBIENT repaints; a rebuild is the paint the user is waiting for');
-  check('...and an empty rasterisation is not adopted over a good texture',
-    /if \(this\._needsResize && this\._texture && _bitmapIsBlank\(bitmap\)\) \{/.test(HP1)
+  // On ANY paint, not just a resize: the trace showed the texture going empty while the panel
+  // was HIDDEN -- every registered panel is repainted on the shared canvas's paint event, so a
+  // swap that mounts another panel re-lays out the host and this one is captured blank. It then
+  // sits empty for the whole time it is hidden and is SHOWN with nothing on it.
+  check('...and an empty rasterisation is never adopted over a good texture',
+    /if \(this\._texture && _bitmapIsBlank\(bitmap\)\) \{/.test(HP1)
       && /function _bitmapIsBlank\(bitmap\)/.test(HP1),
     'a 419x800 capture at mean alpha 0 paints the panel out of existence');
-  check('...tested only where it would discard something good',
-    /this\._needsResize && this\._texture &&/.test(HP1),
-    'an 8x8 read on every paint of every panel is a cost with no case behind it');
+  check('...but only where there is a good texture to keep',
+    /this\._texture && _bitmapIsBlank/.test(HP1),
+    'the first paint of a panel has nothing to fall back to and must take what it gets');
 
   // ONE SHARED FLOW, so one panel moving invalidates every other panel's capture region.
   //

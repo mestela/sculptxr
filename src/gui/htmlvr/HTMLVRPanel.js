@@ -361,12 +361,21 @@ export class HTMLVRPanel {
       // bitmap.  We MUST dispose the texture here — if we leave it allocated at the
       // old dimensions Chrome throws GL_INVALID_VALUE / glCopySubTextureCHROMIUM
       // when it tries to copy the new (differently-sized) bitmap into the old slot.
-      // AN EMPTY CAPTURE IS NOT AN ANSWER. The rasterisation of a just-rebuilt element can come
-      // back the right SIZE and completely transparent -- which is what the trace measured, a
-      // 419x800 map at mean alpha 0 -- and adopting it paints the panel out of existence until
-      // the next paint replaces it. Checked only on a resize, which is the only paint that
-      // discards a good texture to take this one, and only when there is a good one to keep.
-      if (this._needsResize && this._texture && _bitmapIsBlank(bitmap)) {
+      // AN EMPTY CAPTURE IS NEVER AN ANSWER -- on ANY paint, not just a resize.
+      //
+      // Scoping this to resize paints was too narrow, and the trace showed where the damage
+      // actually happens: the panel goes blank while it is HIDDEN. Every registered panel is
+      // repainted on the shared canvas's paint event, so when another panel is mounted for a
+      // swap, this one is still mounted and gets captured against a host canvas that has just
+      // been re-laid out -- and the capture comes back the right size and completely empty. The
+      // texture then sits empty for the whole time the panel is hidden, and the panel is shown
+      // with nothing on it:
+      //
+      //   [X] MiniPanel / MiniPanel: shown / MiniPanel: TEXTURE IS EMPTY (mean alpha 0)
+      //
+      // A panel's background is opaque, so a legitimate capture is never blank; a blank one is
+      // always a failed rasterisation, and the last good frame is strictly better than it.
+      if (this._texture && _bitmapIsBlank(bitmap)) {
         this._dirty = true;               // come back for a real one
         return;
       }
