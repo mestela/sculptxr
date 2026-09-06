@@ -282,9 +282,16 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   const SB = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
   const MS = fs.readFileSync(path.join(REPO, 'src/mesh/MeshSymmetry.js'), 'utf8');
 
+  // A MAP THAT HAS NOT BEEN BUILT YET IS NOT A SAFE MAP. `_mapPosed` is undefined until the
+  // first computeSymmetryMap(), and `!undefined` is true -- so the guard vouched for a map it
+  // had never seen. The caller trusted it, getMap() built one from the posed vertices on the
+  // spot, and the stroke after that was refused: symmetry on odd strokes, none on even ones.
+  check('an unbuilt map is judged by what building it now would produce',
+    /if \(!this\._map\) return !this\._mesh\._skinIsPosed;/.test(MS),
+    'answering from `!undefined` vouches for a map that does not exist');
   check('the map records whether it was built on a posed mesh',
     /this\._mapPosed = !!this\._mesh\._skinIsPosed;/.test(MS)
-      && /mapIsPoseSafe\(\) \{\n\s*return !this\._mapPosed;/.test(MS));
+      && /mapIsPoseSafe\(\)[\s\S]{0,700}?return !this\._mapPosed;\n\s*\}/.test(MS));
   check('...and a posed map is thrown away once the mesh can be measured again',
     /if \(this\._map && this\._mapPosed && !this\._mesh\._skinIsPosed\) this\._map = null;/.test(MS),
     'otherwise one posed use poisons the map for the rest of the session');

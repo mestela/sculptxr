@@ -26,6 +26,15 @@ class MeshSymmetry {
   // A map built at bind pose stays valid while posed -- topology does not move -- so this is a
   // question about WHEN it was built, not about the pose right now.
   mapIsPoseSafe() {
+    // A MAP THAT DOES NOT EXIST YET IS NOT SAFE -- it is whatever building it now would
+    // produce. `_mapPosed` is undefined before the first computeSymmetryMap(), and `!undefined`
+    // is TRUE, so this used to vouch for a map it had never seen: the caller trusted it,
+    // getMap() built one right there from the posed vertices, and _mapPosed became true -- so
+    // the NEXT stroke was refused and took the spatial mirror instead. One stroke through the
+    // vertex map, the next through the mirror, forever.
+    //
+    // matt: "every odd time there's symmetry, every even time there's no symmetry."
+    if (!this._map) return !this._mesh._skinIsPosed;
     return !this._mapPosed;
   }
 
