@@ -249,6 +249,22 @@ check('it is inside the section it costs',
   // was HIDDEN -- every registered panel is repainted on the shared canvas's paint event, so a
   // swap that mounts another panel re-lays out the host and this one is captured blank. It then
   // sits empty for the whole time it is hidden and is SHOWN with nothing on it.
+  // THE VANISHING PANEL, settled by matt's bisection: with rebuilds frozen it stops. What the
+  // rebuild did was null `material.map` and set `material.needsUpdate` -- a request to RECOMPILE
+  // the material's program, because a map appearing or disappearing changes the shader. With
+  // parallel shader compilation the object is not drawn until the new program is ready, so the
+  // panel goes for a beat and comes back, once per rebuild, with every property correct.
+  check('a resize keeps the material and its program',
+    /this\._texture\.dispose\(\);\s*\n\s*this\._texture\.image = bitmap;\s*\n\s*this\._texture\.needsUpdate = true;/.test(HP1),
+    'nulling the map recompiles the shader, and the panel is not drawn while that happens');
+  check('...and no resize path nulls the map or dirties the material',
+    !/this\.mesh\.material\.map = null;/.test(HP1)
+      || !/this\._texture = null;\s*\n\s*this\.mesh\.material\.map = null;/.test(HP1),
+    'that pair is the recompile');
+  check('...while the FIRST texture still may, since it genuinely changes the shader',
+    /if \(!this\._texture\) \{[\s\S]{0,700}?this\.mesh\.material\.needsUpdate = true;/.test(HP1),
+    'no map to a map is a different program; every later frame is the same one');
+
   check('...and an empty rasterisation is never adopted over a good texture',
     /if \(this\._texture && _bitmapIsBlank\(bitmap\)\) \{/.test(HP1)
       && /function _bitmapIsBlank\(bitmap\)/.test(HP1),

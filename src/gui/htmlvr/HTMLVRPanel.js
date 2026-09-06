@@ -386,13 +386,30 @@ export class HTMLVRPanel {
         markAllPanelsDirty(this);
         this.resizeMesh();
         if (this._texture) {
+          // THE GPU TEXTURE GOES; THE THREE.Texture AND THE MATERIAL STAY.
+          //
+          // This used to null `material.map` and set `material.needsUpdate`, which is a request
+          // to RECOMPILE THE MATERIAL'S PROGRAM: a map appearing or disappearing changes the
+          // shader, so three throws the program away and builds a new one. On this GPU that
+          // takes long enough to see, and with parallel shader compilation the object is simply
+          // not drawn until the new program is ready -- so the panel vanishes for a beat and
+          // comes back, once per rebuild, with every property of it correct throughout. That is
+          // the bug, and it is why nothing about visibility, position, size or texture content
+          // ever showed it. matt's bisection settled it: with rebuilds frozen it stops.
+          //
+          // dispose() still frees the GPU texture, which is what the size change needs (copying
+          // a differently-sized bitmap into the old allocation is the GL_INVALID_VALUE this
+          // dispose was added for). Keeping the same Texture OBJECT on the same material means
+          // the program is untouched: the next assignment re-uploads at the new size.
           this._texture.dispose();
-          this._texture = null;
-          this.mesh.material.map = null;
-          this.mesh.material.needsUpdate = true;
+          this._texture.image = bitmap;
+          this._texture.needsUpdate = true;
         }
       }
 
+      // Only the FIRST texture changes the material -- going from no map to a map really does
+      // change the shader. Every later frame reuses the same Texture object, so the program is
+      // compiled once for the life of the panel.
       if (!this._texture) {
         this._texture = new THREE.Texture(bitmap);
         this._texture.minFilter     = THREE.LinearFilter;
