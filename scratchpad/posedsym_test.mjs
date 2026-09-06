@@ -397,6 +397,74 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     'the plain mirror is still right at bind pose, so it stays as the else');
 }
 
+// --- 10. TOUCHING BODY PARTS -------------------------------------------------------
+//
+// The return hop used to ask which cage vertex was NEAREST the mirrored point, which is a
+// spatial question with an anatomical answer. Put two unrelated parts close together -- hands
+// resting beside hips -- and it picks the wrong one's matrix and the stroke lands on the wrong
+// part. matt: "if i pull on part of the hand that is in free space on the side i sculpt on, but
+// close to the hips on the opposite side ... it pulls out part of the hips rather than the
+// hand."
+//
+// The fixture is that arrangement: a "hand" vertex sitting right next to a "hip" vertex on
+// each side, on different joints, so proximity and anatomy disagree.
+{
+  const jHand = joint(), jHip = joint();
+  // hand and hip almost touching, mirrored about x = CX
+  const REST2 = [
+    CX - 6, 10, 0,   CX - 5.7, 10, 0,     // left hand, left hip
+    CX + 6, 10, 0,   CX + 5.7, 10, 0,     // right hand, right hip
+  ];
+  const verts = new Float32Array(REST2);
+  const level = { getNbVertices: () => 4, getVertices: () => verts };
+  const idx = new Int32Array(16).fill(-1);
+  const wts = new Float32Array(16);
+  // 0,2 = hands (joint 0); 1,3 = hips (joint 1)
+  for (let i = 0; i < 4; i++) { idx[i * 4] = (i % 2 === 0) ? 0 : 1; wts[i * 4] = 1; }
+  const mesh = {
+    _meshes: [level], _sel: 0,
+    _skinJoints: [jHand.getID(), jHip.getID()],
+    _skinLevelMesh: level, _skinLevel: 0,
+    _skinIdx: idx, _skinW: wts,
+    _skinRest: new Float32Array(REST2),
+    _skinSrc: new Float32Array(REST2),
+    _skinInvBind: [new THREE.Matrix4(), new THREE.Matrix4()],
+    getID: () => 7,
+    getModelSpaceMatrix: () => new THREE.Matrix4().elements,
+    computeLocalRadius: () => 1,
+    updateGeometry() {}, updateGeometryBuffers() {}, updateBuffers() {}, updateResolution() {},
+    isDynamic: false,
+  };
+  const main = { getMeshes: () => [jHand, jHip], render() {} };
+  Skinning.apply(main, mesh);
+  // Hands swing far away; hips stay put. Now nothing about proximity survives the pose.
+  jHand.pose(new THREE.Matrix4().makeTranslation(0, 14, 6));
+  Skinning.apply(main, mesh);
+
+  // A POINT ON THE HAND, OFFSET TOWARDS THE BODY -- which is the case that matters and the one
+  // a naive fixture misses. Mirroring the hand's own vertex lands exactly on the far hand, so
+  // the spatial search gets it right and the test proves nothing (an injection said so). Offset
+  // by 0.2 and the mirrored rest point sits 0.2 from the far hand and 0.1 from the far HIP, so
+  // proximity now gives the wrong answer and only the pairing gives the right one.
+  const hand = at(verts, 0);
+  const probe = [hand[0] + 0.2, hand[1], hand[2]];
+  const out = [0, 0, 0];
+  const got = PosedSymmetry.mirrorPoint(main, mesh, probe, PLANE_PT, PLANE_N, out);
+  // The hand joint is a pure translation, so the answer is the mirrored rest point carried by
+  // it: mirror(CX-5.8) = CX+5.8, then +(0,14,6).
+  const want = [CX + 5.8, 10 + 14, 0 + 6];
+  const wrong = [CX + 5.8, 10, 0];              // what the HIP's (identity) matrix would give
+  check('a hand next to a hip mirrors to the other HAND, not the hip',
+    !!got && dist(got, want) < 1e-4,
+    'landed ' + (got ? dist(got, want).toFixed(3) : '?') + ' from the far hand and '
+      + (got ? dist(got, wrong).toFixed(3) : '?') + ' from where the hip would have put it');
+  check('...and the pairing is what did it, not luck',
+    mesh._skinPair && mesh._skinPair[0] === 2 && mesh._skinPair[1] === 3,
+    'pairs ' + (mesh._skinPair ? Array.from(mesh._skinPair).join(',') : 'none'));
+  check('...and it is cached against the vertex count',
+    mesh._skinPairN === 4);
+}
+
 // --- 9. EVERY OTHER COPY OF THE MIRROR, COUNTED -------------------------------------
 //
 // Symmetry is not one implementation. Move, Drag, Slide, Twist and SculptBase each carry their

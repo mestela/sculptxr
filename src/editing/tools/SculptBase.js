@@ -714,34 +714,6 @@ class SculptBase {
         window._symTraceOn = false;
       }
 
-      // WHICH BRANCH THIS FRAME TAKES. Printed for hover frames too, throttled, because the
-      // question "does this code even run while stroking?" has now been answered wrongly three
-      // times, and every answer came from a trace that was itself conditional.
-      // ONE LINE PER STROKE, on the rising edge of isSculpting and never throttled.
-      //
-      // matt: "every odd time there's symmetry, every even time there's no symmetry." An
-      // alternation is cached state flipping, and a throttled sample cannot show it -- you need
-      // the same measurement at the same moment of every stroke, in order. So this prints
-      // exactly once per stroke, with every piece of state that could be doing the flipping.
-      if (window._symTrace) {
-        const _sculpt = !!isSculpting;
-        if (_sculpt && !window._symWasSculpting) {
-          window._symStrokeNo = (window._symStrokeNo || 0) + 1;
-          let _sd = null;
-          if (typeof mesh.getSymmetryData === 'function') _sd = mesh.getSymmetryData();
-          else _sd = mesh._symmetryData || null;
-          console.log('[sym] --- STROKE ' + window._symStrokeNo + ' --- pick1=' + !!pick1
-            + ' meshPosed=' + !!mesh._skinIsPosed
-            + ' | symData=' + (_sd ? 'yes' : 'none')
-            + ' isTopo=' + (_sd && _sd.isTopo ? _sd.isTopo() : 'n/a')
-            + ' mapBuilt=' + (_sd && _sd._map ? 'yes' : 'no')
-            + ' mapPosed=' + (_sd ? String(_sd._mapPosed) : 'n/a')
-            + ' poseSafe=' + (_sd && _sd.mapIsPoseSafe ? _sd.mapIsPoseSafe() : 'n/a')
-            + ' -> trusted=' + !!this.trustedSymMap(mesh, _sd));
-        }
-        window._symWasSculpting = _sculpt;
-      }
-
       if (main._vrControllerPos) {
         // Parent-aware model-space matrix (== getMatrix unparented) so the
         // world<->local symmetry conversion is correct for a parented child.

@@ -80,6 +80,79 @@ function nearest(arr, nbV, px, py, pz) {
   return best;
 }
 
+// THE CAGE'S OWN MIRROR PAIRING, built once in REST space.
+//
+// The return hop needs the deformation on the far side, and asking "which cage vertex is
+// nearest?" is a SPATIAL question with an anatomical answer -- so it is wrong wherever two
+// parts of the body are close together but unrelated. With the hands resting beside the hips,
+// the vertex nearest a mirrored hand point is a HIP vertex, and the stroke pulls the hip.
+// matt: "if i pull on part of the hand that is in free space on the side i sculpt on, but close
+// to the hips on the opposite side ... it pulls out part of the hips rather than the hand."
+//
+// Pairing the cage to itself instead removes the question. It is measured in rest space, where
+// the shape is symmetric and the plane means what it says, and it is a property of the model
+// rather than of the pose -- so it holds however the character is standing, including when the
+// two sides are touching.
+//
+// Cheap because it is the CAGE: a few thousand vertices, once per bind, into a hash grid so it
+// is a handful of buckets per vertex rather than n^2. Rebuilt only when the vertex count
+// changes -- a sculpt moves `_skinRest` slightly and does not repartition anybody's anatomy.
+const PAIR_TOL = 0.25;   // fraction of the cage's own cell size; a pair should be nearly exact
+
+function cagePairs(mesh, nPlane) {
+  const rest = mesh._skinRest;
+  const nbV = (rest.length / 3) | 0;
+  if (mesh._skinPairN === nbV && mesh._skinPair) return mesh._skinPair;
+
+  const bb = restBounds(mesh);
+  const ex = bb[3] - bb[0], ey = bb[4] - bb[1], ez = bb[5] - bb[2];
+  // Cell size aimed at a handful of vertices per bucket.
+  const cell = Math.max(1e-6, Math.cbrt((ex * ey * ez) / Math.max(1, nbV)) * 1.5);
+  const key = (x, y, z) => (Math.floor(x / cell) + ',' + Math.floor(y / cell)
+    + ',' + Math.floor(z / cell));
+  const grid = new Map();
+  for (let i = 0; i < nbV; i++) {
+    const k = key(rest[i * 3], rest[i * 3 + 1], rest[i * 3 + 2]);
+    let b = grid.get(k);
+    if (!b) grid.set(k, b = []);
+    b.push(i);
+  }
+
+  const plane = restPlaneOrigin(mesh, nPlane, [0, 0, 0]);
+  const pair = new Int32Array(nbV).fill(-1);
+  const tol2 = (cell * PAIR_TOL) * (cell * PAIR_TOL);
+  const m = [0, 0, 0];
+  for (let i = 0; i < nbV; i++) {
+    m[0] = rest[i * 3]; m[1] = rest[i * 3 + 1]; m[2] = rest[i * 3 + 2];
+    mirrorAcross(m, plane, nPlane);
+    let best = -1, bestD = Infinity;
+    // The mirrored point can fall anywhere in its own cell, so the neighbours are searched too.
+    const cx = Math.floor(m[0] / cell), cy = Math.floor(m[1] / cell), cz = Math.floor(m[2] / cell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const b = grid.get((cx + dx) + ',' + (cy + dy) + ',' + (cz + dz));
+          if (!b) continue;
+          for (let q = 0; q < b.length; q++) {
+            const j = b[q] * 3;
+            const ax = rest[j] - m[0], ay = rest[j + 1] - m[1], az = rest[j + 2] - m[2];
+            const d = ax * ax + ay * ay + az * az;
+            if (d < bestD) { bestD = d; best = b[q]; }
+          }
+        }
+      }
+    }
+    // UNPAIRED IS A REAL ANSWER. An asymmetric cage, or a vertex whose twin was sculpted away,
+    // has no counterpart -- and inventing one puts the stroke somewhere arbitrary. Left at -1,
+    // and the caller falls back to the spatial search it used before, which is wrong in a
+    // smaller and more local way than a wrong pairing.
+    if (best >= 0 && bestD <= tol2) pair[i] = best;
+  }
+  mesh._skinPair = pair;
+  mesh._skinPairN = nbV;
+  return pair;
+}
+
 // Mirror `pt` (mesh-local, posed) into its anatomical opposite, also mesh-local and posed.
 // Writes into `out` and returns it, or returns null when the round trip cannot be made -- in
 // which case the caller must fall back to the plain plane mirror rather than guess.
@@ -194,7 +267,11 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
   // AND BACK, through the deformation on the OTHER side -- a different matrix, which is exactly
   // why mirroring in posed space cannot be patched up. The nearest vertex is measured against
   // the REST positions, because that is the space the mirrored point is currently in.
-  const b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
+  // THE FAR SIDE'S VERTEX, by pairing rather than proximity -- see cagePairs. The spatial
+  // search stays as the fallback for a vertex with no twin.
+  const pairs = cagePairs(mesh, nPlane);
+  let b = pairs[a];
+  if (b < 0) b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
   if (b < 0) return null;
   Skinning.blendAt(mesh, mats, b, _psMat);
   _psVec.set(mir[0], mir[1], mir[2]).applyMatrix4(_psMat);
@@ -230,20 +307,6 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
       //   out    forward through the matrix at cage vertex #b -- the mirrored brush
       // Also the cage positions of #a and #b, because the two hops each stand or fall on
       // whether the vertex they picked is anywhere near the point they picked it for.
-      // DOES THE ANSWER LAND ON THE MESH? Everything above can be arithmetically perfect and
-      // still be useless if the mirrored point is not on the surface the brush will look at --
-      // the brush gathers vertices within its radius of this point, and finds none if it is
-      // out in space. Measured against the DISPLAYED level, which is what gets sculpted, not
-      // against the cage this all reasons about.
-      const disp = mesh._meshes ? mesh._meshes[mesh._sel | 0] : level;
-      const dv = disp.getVertices(), dn = disp.getNbVertices();
-      let dBest = Infinity;
-      for (let q = 0; q < dn; q++) {
-        const q3 = q * 3;
-        const ex = dv[q3] - out[0], ey = dv[q3 + 1] - out[1], ez = dv[q3 + 2] - out[2];
-        const e = ex * ex + ey * ey + ez * ez;
-        if (e < dBest) dBest = e;
-      }
       const posedA = [posed[a * 3], posed[a * 3 + 1], posed[a * 3 + 2]];
       const restB = [rest[b * 3], rest[b * 3 + 1], rest[b * 3 + 2]];
       console.log('[sym] hit ' + f([hx, hy, hz]) + ' -> rest ' + f([rx, ry, rz])
@@ -255,8 +318,6 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
         + ' | restPlane ' + f(_psPlane) + ' posedPlane ' + f(ptPlane)
         + ' | restBounds x ' + rb[0].toFixed(2) + '..' + rb[3].toFixed(2)
         + ' y ' + rb[1].toFixed(2) + '..' + rb[4].toFixed(2)
-        + ' | OUT IS ' + Math.sqrt(dBest).toFixed(2) + ' FROM THE DISPLAYED SURFACE ('
-        + dn + ' verts), brush radius ' + Math.sqrt(_psR2 || 0).toFixed(2)
         + ' | of ' + nbV + ' normal ' + f(nPlane));
   }
   return out;
@@ -276,14 +337,17 @@ function mirrorAcross(v, ptPlane, nPlane) {
 // IN PLACE, for a caller that already holds the mirrored point -- the VR path, which mirrors a
 // controller position rather than a ray. Returns false when the rest-space route is not
 // available, and the caller then does the plain plane mirror it would have done anyway.
-let _psR2 = 0;
-PosedSymmetry.setBrushRadius2 = function (r2) { _psR2 = r2 || 0; };
-
 PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane, nrm) {
   if (!PosedSymmetry.applies(main, mesh)) return false;
   // Decided ONCE, here, so the point trace, the path trace and the vertex-count trace all
   // describe the same frame instead of three frames chosen by three separate throttles.
-  PosedSymmetry._traceOn = PosedSymmetry.traceStroke(main);
+  // Throttled here rather than gated on a stroke flag published by SculptBase: Move (and every
+  // other tool with its own symmetry branch) never sets that flag, so a log filtered for "sym"
+  // came back empty on exactly the tool being tested. matt: "the logs are very noisy now, i
+  // couldn't see anything about symmetry in them."
+  const _tnow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  PosedSymmetry._traceOn = !!window._symTrace && (_tnow - (PosedSymmetry._traceAt || 0) > 500);
+  if (PosedSymmetry._traceOn) PosedSymmetry._traceAt = _tnow;
   return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt, nrm);
 };
 

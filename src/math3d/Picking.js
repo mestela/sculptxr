@@ -922,7 +922,6 @@ class Picking {
   // closing that cycle leaves every tool with `undefined` as its base class. Every tool already
   // holds a Picking.
   mirrorLocalPoint(mesh, pt, ptPlane, nPlane, nrm) {
-    PosedSymmetry.setBrushRadius2(this.getLocalRadius2());
     if (PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane, nrm)) return true;
     Geometry.mirrorPoint(pt, ptPlane, nPlane);
     return false;
