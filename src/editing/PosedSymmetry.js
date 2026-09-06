@@ -153,6 +153,107 @@ function cagePairs(mesh, nPlane) {
   return pair;
 }
 
+// DROP THE VERTICES THAT ARE ONLY SPATIALLY NEARBY.
+//
+// The mirrored selection is gathered with a SPHERE around the mirrored point, and a sphere does
+// not know anatomy. Where the far side rests against another part of the body -- hands on hips
+// -- a large enough brush swallows both, and the stroke moves a hip along with the hand. The
+// near side shows nothing of the sort, because there the hand is in free space: same radius,
+// different neighbourhood. matt: "esp if i use a larger radius. i move the left hand, it also
+// moves the right hip."
+//
+// Each candidate is carried back to rest space by ITS OWN deformation and kept only if it lands
+// near the mirrored point there. A hand vertex goes where the hand rests; a hip vertex goes
+// where the hip rests, which is nowhere near it, and is dropped.
+//
+// ITS OWN, emphatically. Carrying every candidate back through the same matrix was the first
+// attempt and it cannot work: a rigid transform preserves distance, so the test reduces to the
+// posed-space sphere it was meant to replace. The fixture caught that immediately -- the far
+// hip and the far hand stayed exactly 0.3 apart through the transform, as they must.
+//
+// Whose matrix a candidate gets is settled by the nearest CAGE vertex in posed space, through a
+// grid built once per call rather than a search per candidate: a few thousand inserts against
+// a few hundred lookups is the right way round.
+function posedCageGrid(mesh, bound) {
+  const v = bound.getVertices();
+  const n = bound.getNbVertices();
+  let xmin = Infinity, ymin = Infinity, zmin = Infinity;
+  let xmax = -Infinity, ymax = -Infinity, zmax = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = v[i * 3], y = v[i * 3 + 1], z = v[i * 3 + 2];
+    if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+    if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+    if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+  }
+  const ex = Math.max(1e-6, xmax - xmin), ey = Math.max(1e-6, ymax - ymin);
+  const ez = Math.max(1e-6, zmax - zmin);
+  const cell = Math.max(1e-6, Math.cbrt((ex * ey * ez) / Math.max(1, n)) * 1.5);
+  const grid = new Map();
+  for (let i = 0; i < n; i++) {
+    const k = Math.floor(v[i * 3] / cell) + ',' + Math.floor(v[i * 3 + 1] / cell)
+      + ',' + Math.floor(v[i * 3 + 2] / cell);
+    let b = grid.get(k);
+    if (!b) grid.set(k, b = []);
+    b.push(i);
+  }
+  return { grid: grid, cell: cell, v: v, n: n };
+}
+
+function nearestInGrid(g, x, y, z) {
+  const cell = g.cell, v = g.v;
+  const cx = Math.floor(x / cell), cy = Math.floor(y / cell), cz = Math.floor(z / cell);
+  let best = -1, bestD = Infinity;
+  for (let r = 1; r <= 4 && best < 0; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dz = -r; dz <= r; dz++) {
+          const b = g.grid.get((cx + dx) + ',' + (cy + dy) + ',' + (cz + dz));
+          if (!b) continue;
+          for (let q = 0; q < b.length; q++) {
+            const j = b[q] * 3;
+            const ax = v[j] - x, ay = v[j + 1] - y, az = v[j + 2] - z;
+            const d = ax * ax + ay * ay + az * az;
+            if (d < bestD) { bestD = d; best = b[q]; }
+          }
+        }
+      }
+    }
+  }
+  return best;
+}
+
+PosedSymmetry.pruneMirrored = function (mesh, verts, nbVerts, level, radius) {
+  const centre = PosedSymmetry._lastMirRest;
+  const mats = PosedSymmetry._lastMats;
+  if (!centre || !mats) return nbVerts;
+  const bound = Skinning.boundLevelOf(mesh);
+  if (!bound) return nbVerts;
+
+  const g = posedCageGrid(mesh, bound);
+  const posed = level.getVertices();
+  const lim2 = radius * radius;
+  const invCache = new Map();
+  let keep = 0;
+  for (let i = 0; i < nbVerts; i++) {
+    const v = verts[i], v3 = v * 3;
+    const px = posed[v3], py = posed[v3 + 1], pz = posed[v3 + 2];
+    const c = nearestInGrid(g, px, py, pz);
+    // Undecidable, so kept: refusing to answer is not a reason to throw away someone's stroke.
+    if (c < 0) { verts[keep++] = v; continue; }
+    let inv = invCache.get(c);
+    if (!inv) {
+      inv = new THREE.Matrix4();
+      Skinning.blendAt(mesh, mats, c, inv);
+      inv.invert();
+      invCache.set(c, inv);
+    }
+    _psVec.set(px, py, pz).applyMatrix4(inv);
+    const ax = _psVec.x - centre[0], ay = _psVec.y - centre[1], az = _psVec.z - centre[2];
+    if (ax * ax + ay * ay + az * az <= lim2) verts[keep++] = v;
+  }
+  return keep;
+};
+
 // Mirror `pt` (mesh-local, posed) into its anatomical opposite, also mesh-local and posed.
 // Writes into `out` and returns it, or returns null when the round trip cannot be made -- in
 // which case the caller must fall back to the plain plane mirror rather than guess.
@@ -269,11 +370,18 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
   // the REST positions, because that is the space the mirrored point is currently in.
   // THE FAR SIDE'S VERTEX, by pairing rather than proximity -- see cagePairs. The spatial
   // search stays as the fallback for a vertex with no twin.
+  // Kept for pruneMirrored, which needs the centre of the brush IN REST SPACE to judge whether
+  // a candidate vertex belongs to the part being sculpted.
+  PosedSymmetry._lastMirRest = [mir[0], mir[1], mir[2]];
+  PosedSymmetry._lastMats = mats;
+
   const pairs = cagePairs(mesh, nPlane);
   let b = pairs[a];
   if (b < 0) b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
   if (b < 0) return null;
   Skinning.blendAt(mesh, mats, b, _psMat);
+  // Kept for pruneMirrored: the far side's deformation, inverted, is what carries a candidate
+  // vertex back to rest space to be judged.
   _psVec.set(mir[0], mir[1], mir[2]).applyMatrix4(_psMat);
   out[0] = _psVec.x; out[1] = _psVec.y; out[2] = _psVec.z;
 

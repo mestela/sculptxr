@@ -103,6 +103,12 @@ class Move extends SculptBase {
           pickingSym.intersectionSphereMeshes([mesh], worldPos, picking.getWorldRadius());
           if (pickingSym.getMesh()) {
             pickingSym.setLocalRadius2(picking.getLocalRadius2());
+            // A SPHERE DOES NOT KNOW ANATOMY. Where the far side rests against another part of
+            // the body, a large brush reaching for the far hand also takes the hip it is
+            // touching -- while the near side, in free space, shows nothing of the sort. Same
+            // radius, different neighbourhood. matt: "esp if i use a larger radius. i move the
+            // left hand, it also moves the right hip."
+            pickingSym.pruneToMirror(mesh);
             // CRITICAL FIX: Re-init alpha for valid masking (SculptBase.start initialized it with garbage mouse data)
             pickingSym.computePickedNormal(); // Update normal at new sym pos
             pickingSym.updateAlpha();         // Update masking plane

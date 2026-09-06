@@ -923,8 +923,23 @@ class Picking {
   // holds a Picking.
   mirrorLocalPoint(mesh, pt, ptPlane, nPlane, nrm) {
     if (PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane, nrm)) return true;
+    // The plain mirror leaves no rest-space centre behind, and a stale one from the previous
+    // call would prune the next selection against the wrong place entirely.
+    PosedSymmetry._lastMirRest = null;
+    PosedSymmetry._lastMats = null;
     Geometry.mirrorPoint(pt, ptPlane, nPlane);
     return false;
+  }
+
+  // Drop the vertices this picking gathered that are only SPATIALLY near the mirrored point --
+  // the far hip a large brush catches while reaching for the far hand. No-op unless the last
+  // mirror went through rest space, where the question can be asked properly.
+  pruneToMirror(mesh) {
+    const verts = this.getPickedVertices();
+    if (!verts || !verts.length) return;
+    const n = PosedSymmetry.pruneMirrored(mesh, verts, verts.length, mesh,
+      Math.sqrt(this.getLocalRadius2()));
+    if (n !== verts.length) this._pickedVertices = verts.subarray(0, n);
   }
 
   mirrorFrom(from, mesh, ptPlane, nPlane) {

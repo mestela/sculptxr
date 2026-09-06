@@ -199,7 +199,7 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   const SB = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
   const PICK = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
   check('one implementation of "where is the other side of this?"',
-    /mirrorLocalPoint\(mesh, pt, ptPlane, nPlane, nrm\) \{[\s\S]{0,300}?if \(PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane, nrm\)\) return true;\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
+    /mirrorLocalPoint\(mesh, pt, ptPlane, nPlane, nrm\) \{[\s\S]{0,600}?if \(PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane, nrm\)\) return true;[\s\S]{0,400}?Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
       && /var posed = this\.mirrorLocalPoint\(mesh, pt, ptPlane, nPlane, nrm\);/.test(PICK)
       && /pickingSym\.mirrorFrom\(picking, mesh, ptPlane, nPlane\);/.test(SB),
     'the point path, the ray path and every tool must reflect through the same function');
@@ -463,6 +463,79 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     'pairs ' + (mesh._skinPair ? Array.from(mesh._skinPair).join(',') : 'none'));
   check('...and it is cached against the vertex count',
     mesh._skinPairN === 4);
+}
+
+// --- 11. THE MIRRORED SELECTION, NOT JUST THE MIRRORED POINT ------------------------
+//
+// Getting the point right is only half of it: the far-side vertices are gathered with a SPHERE
+// around it, and a sphere does not know anatomy. With hands on hips, a large brush reaching for
+// the far hand also takes the hip it rests against -- while the near side, in free space, shows
+// nothing of the sort. matt: "esp if i use a larger radius. i move the left hand, it also moves
+// the right hip."
+//
+// The fixture is that exact arrangement, and it only works POSED: in rest space the hands are
+// out at the sides and nowhere near the hips, and the pose brings each hand in beside its own
+// hip. So the sphere sees them together and rest space sees them apart, which is the whole
+// disagreement being resolved. Four joints, because the two hands have to move independently.
+{
+  const jLH = joint(), jLHip = joint(), jRH = joint(), jRHip = joint();
+  const REST3 = [
+    CX - 6, 10, 0,    CX - 2, 8, 1,      // left hand, left hip
+    CX + 6, 10, 0,    CX + 2, 8, 1,      // right hand, right hip
+  ];
+  const verts = new Float32Array(REST3);
+  const level = { getNbVertices: () => 4, getVertices: () => verts };
+  const idx = new Int32Array(16).fill(-1);
+  const wts = new Float32Array(16);
+  for (let i = 0; i < 4; i++) { idx[i * 4] = i; wts[i * 4] = 1; }
+  const mesh = {
+    _meshes: [level], _sel: 0,
+    _skinJoints: [jLH.getID(), jLHip.getID(), jRH.getID(), jRHip.getID()],
+    _skinLevelMesh: level, _skinLevel: 0,
+    _skinIdx: idx, _skinW: wts,
+    _skinRest: new Float32Array(REST3),
+    _skinSrc: new Float32Array(REST3),
+    _skinInvBind: [new THREE.Matrix4(), new THREE.Matrix4(),
+                   new THREE.Matrix4(), new THREE.Matrix4()],
+    getID: () => 8,
+    getVertices: () => verts,
+    getModelSpaceMatrix: () => new THREE.Matrix4().elements,
+    computeLocalRadius: () => 1,
+    updateGeometry() {}, updateGeometryBuffers() {}, updateBuffers() {}, updateResolution() {},
+    isDynamic: false,
+  };
+  const main = { getMeshes: () => [jLH, jLHip, jRH, jRHip], render() {} };
+  Skinning.apply(main, mesh);
+  // HANDS ON HIPS: each hand comes in beside its own hip. Not a mirrored pose, and it does not
+  // need to be -- that is rather the point.
+  jLH.pose(new THREE.Matrix4().makeTranslation(3.7, -2, 1));
+  jRH.pose(new THREE.Matrix4().makeTranslation(-3.7, -2, 1));
+  Skinning.apply(main, mesh);
+  check('the fixture really does put hand and hip together',
+    dist(at(verts, 2), at(verts, 3)) < 0.5,
+    'far hand and far hip are ' + dist(at(verts, 2), at(verts, 3)).toFixed(2) + ' apart posed');
+  check('...and apart in rest space', Math.abs(REST3[6] - REST3[9]) > 3);
+
+  const out = [0, 0, 0];
+  const got = PosedSymmetry.mirrorPoint(main, mesh, at(verts, 0), PLANE_PT, PLANE_N, out);
+  check('the left hand mirrors onto the posed right HAND',
+    !!got && dist(got, at(verts, 2)) < 1e-4,
+    'landed ' + (got ? dist(got, at(verts, 2)).toFixed(3) : '?') + ' from the far hand, '
+      + (got ? dist(got, at(verts, 3)).toFixed(3) : '?') + ' from the far hip');
+
+  // The sphere caught both. Rest space keeps only the hand.
+  const picked = new Uint32Array([2, 3]);
+  const kept = PosedSymmetry.pruneMirrored(mesh, picked, 2, mesh, 1.0);
+  check('the far hip is dropped from the mirrored selection', kept === 1,
+    'kept ' + kept + ': [' + Array.from(picked.subarray(0, kept)).join(',') + ']');
+  check('...and the far HAND is not', kept >= 1 && picked[0] === 2,
+    'a prune that throws away the thing being sculpted is worse than no prune');
+
+  // It rejects what is anatomically elsewhere, not what is legitimately in range: a brush wide
+  // enough to cover both parts IN REST SPACE still covers both.
+  const picked2 = new Uint32Array([2, 3]);
+  check('a brush wide enough in rest space still takes both',
+    PosedSymmetry.pruneMirrored(mesh, picked2, 2, mesh, 12) === 2);
 }
 
 // --- 9. EVERY OTHER COPY OF THE MIRROR, COUNTED -------------------------------------
