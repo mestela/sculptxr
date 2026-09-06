@@ -1559,6 +1559,11 @@ Skinning.apply = function (main, mesh) {
   // bound level, re-subdividing and rebuilding buffers, and none of that was visible.
   // matt: "the glug is more in terms of posing the character with pins more than sculpting."
   const _t0 = window._skinTrace ? performance.now() : 0;
+  // IS THIS MESH ACTUALLY POSED? Read as a plain property by things that must not import the
+  // skinning module -- SculptBase reaches it through Skeleton -> Primitives -> Remesh -> Smooth
+  // and back to itself, so a flag on the mesh is the only way it can ask. Recomputed only when
+  // the pose changed, which is the only time the answer can have changed.
+  mesh._skinIsPosed = !Skinning.atBindPose(main, mesh);
   const mats = skinMatrices(mesh, joints);
 
   // Work on the level the weights were built for, whatever level is being displayed.

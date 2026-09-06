@@ -15,7 +15,24 @@ class MeshSymmetry {
     return this._isTopo;
   }
 
+  // WAS THIS MAP BUILT FROM POSITIONS THAT MEANT ANYTHING? The pairing is seeded geometrically
+  // -- centre vertices are found by distance to the symmetry plane, and the first left/right
+  // pair by a nearest-mirror hint -- and both read the LIVE vertices. On a posed character the
+  // spine is no longer on the plane and the hint pairs the wrong two, after which the
+  // topological walk propagates that one bad seed consistently across the whole mesh. That is
+  // not noise, it is a systematic offset: matt, "moving where the right index finger would be
+  // outwards on the right side, moves the pinky finger inwards on the left side."
+  //
+  // A map built at bind pose stays valid while posed -- topology does not move -- so this is a
+  // question about WHEN it was built, not about the pose right now.
+  mapIsPoseSafe() {
+    return !this._mapPosed;
+  }
+
   getMap() {
+    // A map built while posed is wrong for ever, so it is rebuilt as soon as the mesh is
+    // somewhere it can be measured -- otherwise the first posed use poisons the whole session.
+    if (this._map && this._mapPosed && !this._mesh._skinIsPosed) this._map = null;
     // If mesh version changed (picking/dyntopo), invalidate? 
     // For now, we assume this is called when we want to enforce symmetry.
     // If we want to support Dyntopo, we can't really use this map.
@@ -31,6 +48,10 @@ class MeshSymmetry {
     if (this._map && this._mapVersion === this._mesh.getNbVertices()) {
       return;
     }
+    // Recorded, not acted on: the map is still built (an unbound mesh has no other option, and
+    // a posed map is better than none for a symmetrize the user explicitly asked for), but
+    // anything that cares can now ask whether to trust it.
+    this._mapPosed = !!this._mesh._skinIsPosed;
 
     // Initialize Sides buffer
     // 0: Center/Unknown, 1: Left, 2: Right

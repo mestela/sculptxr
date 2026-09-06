@@ -17,6 +17,34 @@ import Mesh from '../../mesh/Mesh.js';
 
 class SculptBase {
 
+  // THE TOPOLOGICAL SYMMETRY MAP, OR NOTHING.
+  //
+  // The pairing is seeded geometrically from the LIVE vertices: centre vertices are found by
+  // distance to the symmetry plane, and the first left/right pair by a nearest-mirror hint. On
+  // a posed character the spine is no longer on the plane and that hint pairs the wrong two --
+  // after which the topological walk propagates the bad seed CONSISTENTLY across the whole
+  // mesh. It does not look like noise, it looks like symmetry working somewhere else entirely.
+  // matt: "moving where the right index finger would be outwards on the right side, moves the
+  // pinky finger inwards on the left side."
+  //
+  // A map built at bind pose stays valid while posed, because topology does not move -- so the
+  // question is WHEN it was built, not what the pose is now. With no trustworthy map the
+  // callers fall through to the spatial mirror, which goes through rest space (PosedSymmetry)
+  // and needs no pairing at all.
+  //
+  // `_skinIsPosed` is a plain property on the mesh rather than a call into Skinning, because
+  // this file cannot import that module: it reaches Skeleton -> Primitives -> Remesh -> Smooth
+  // and back here, and closing that cycle leaves every tool extending SculptBase with
+  // `undefined` as its base class.
+  //
+  // ONE copy, called from all five sites that used to carry their own.
+  trustedSymMap(mesh, symData) {
+    if (!symData || typeof symData.isTopo !== 'function' || !symData.isTopo()) return null;
+    if (mesh && mesh._skinIsPosed
+        && !(typeof symData.mapIsPoseSafe === 'function' && symData.mapIsPoseSafe())) return null;
+    return symData.getMap();
+  }
+
   constructor(main) {
     this._main = main;
     this._cbContinuous = this.updateContinuous.bind(this); // callback continuous
@@ -381,7 +409,7 @@ class SculptBase {
             if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
             symData = mesh._symmetryData;
           }
-          const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
+          const symMap = this.trustedSymMap(mesh, symData);
 
           if (symMap) {
             const fAr = mesh.getFaces();
@@ -464,7 +492,7 @@ class SculptBase {
             if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
             symData = mesh._symmetryData;
           }
-          const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
+          const symMap = this.trustedSymMap(mesh, symData);
           if (symMap) {
             const mainVerts = picking.getPickedVertices();
             const newVerts = new Uint32Array(mainVerts.length);
@@ -744,7 +772,7 @@ class SculptBase {
               if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
               symData = mesh._symmetryData;
             }
-            const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
+            const symMap = this.trustedSymMap(mesh, symData);
 
             if (symMap) {
               const fAr = mesh.getFaces();
@@ -838,7 +866,7 @@ class SculptBase {
               if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
               symData = mesh._symmetryData;
             }
-            const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
+            const symMap = this.trustedSymMap(mesh, symData);
 
             if (symMap) {
               const mainVerts = picking.getPickedVertices();
@@ -931,7 +959,7 @@ class SculptBase {
         if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
         symData = mesh._symmetryData;
       }
-      const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
+      const symMap = this.trustedSymMap(mesh, symData);
 
       if (picking._pickedVerticesFront && symMap) {
         const mainFront = picking._pickedVerticesFront;

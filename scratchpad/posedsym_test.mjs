@@ -214,5 +214,40 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     'a second copy of the rest-space hop is how two platforms drift apart');
 }
 
+// --- 5. THE TOPOLOGICAL MAP MUST NOT BE TRUSTED WHEN IT WAS BUILT POSED -------------
+//
+// The VR path prefers an exact vertex pairing over the spatial mirror, and rightly so -- when
+// the pairing is real. But it is seeded from the LIVE vertices, so a map built while posed
+// pairs the wrong two vertices and the topological walk then spreads that seed consistently
+// over the whole mesh. The result is not noise: it is symmetry landing somewhere else, which
+// is far harder to recognise as a bug. matt: "moving where the right index finger would be
+// outwards on the right side, moves the pinky finger inwards on the left side."
+{
+  const SB = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
+  const MS = fs.readFileSync(path.join(REPO, 'src/mesh/MeshSymmetry.js'), 'utf8');
+
+  check('the map records whether it was built on a posed mesh',
+    /this\._mapPosed = !!this\._mesh\._skinIsPosed;/.test(MS)
+      && /mapIsPoseSafe\(\) \{\n\s*return !this\._mapPosed;/.test(MS));
+  check('...and a posed map is thrown away once the mesh can be measured again',
+    /if \(this\._map && this\._mapPosed && !this\._mesh\._skinIsPosed\) this\._map = null;/.test(MS),
+    'otherwise one posed use poisons the map for the rest of the session');
+  check('the skin pass is what publishes the flag',
+    /mesh\._skinIsPosed = !Skinning\.atBindPose\(main, mesh\);/.test(SKIN),
+    'and only when the pose changed, which is the only time the answer can change');
+
+  check('every symmetry-map read goes through the trust gate',
+    (SB.match(/this\.trustedSymMap\(mesh, symData\)/g) || []).length === 5
+      && !/symData\.isTopo\(\)\) \? symData\.getMap\(\)/.test(SB),
+    'there were five identical copies of this test, which is precisely how four of them would '
+      + 'have kept the old behaviour');
+  check('...and the gate refuses a posed-built map',
+    /if \(mesh && mesh\._skinIsPosed\n\s*&& !\(typeof symData\.mapIsPoseSafe === 'function' && symData\.mapIsPoseSafe\(\)\)\) return null;/.test(SB));
+  check('...while still allowing one built at bind pose, which stays valid',
+    /A map built at bind pose stays valid while posed/.test(SB)
+      && !/if \(mesh && mesh\._skinIsPosed\) return null;/.test(SB),
+    'topology does not move, so a trustworthy map is better than the spatial mirror');
+}
+
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');
 process.exit(failures ? 1 : 0);
