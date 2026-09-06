@@ -12,6 +12,8 @@ import { build } from 'esbuild';
 import fs from 'fs';
 import path from 'path';
 
+import { spawnSync } from 'child_process';
+
 const REPO = '/Users/mattestela/sculptxr';
 const MODULES = [
   'src/editing/Skeleton.js',
@@ -67,6 +69,33 @@ for (const rel of MODULES) {
     console.log('  FAIL ' + rel + ' — ' + String(e.message || e).split('\n')[0]);
   }
 }
+
+// ── EVERY FILE THE APP ACTUALLY IMPORTS, PARSED ───────────────────────────────────────────
+//
+// The list below is hand-picked, which means a syntax error anywhere else ships. It just did: a
+// bare `function` declaration placed inside a class body in Scene.js -- legal-looking, and an
+// "Uncaught SyntaxError" that takes the WHOLE app down on load, found by matt rather than here.
+// Scene.js was not on any list, and no list will ever be complete.
+//
+// esbuild parses the entire import graph from the entry point in about 0.4s, which is cheaper
+// than most single harnesses here. Bare packages and vite's own import forms (?raw, ?url,
+// ?worker, .wasm, .md) are external: this is a PARSE check of our own source, not a build.
+{
+  const _r = spawnSync('npx', ['esbuild', '--bundle', '--packages=external',
+    '--log-level=error', '--format=esm', '--outfile=/dev/null',
+    '--external:*?raw', '--external:*.md', '--external:*.wasm',
+    '--external:*?url', '--external:*?worker', 'src/SculptGL.js'],
+    { cwd: REPO, encoding: 'utf8' });
+  const out = ((_r.stdout || '') + (_r.stderr || '')).trim();
+  if (_r.status === 0) {
+    console.log('  ok   every file the app imports parses');
+  } else {
+    failures++;
+    console.log('  FAIL every file the app imports parses\n'
+      + out.split('\n').slice(0, 12).join('\n'));
+  }
+}
+
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

@@ -115,6 +115,16 @@ window.dumpMeshTopology = function() {
     }
 };
 
+// How far the thing that matrix describes is from the head, in metres. Decides whether a
+// controller pose is one a human arm could have produced -- see the wrist anchor. MODULE SCOPE:
+// a class body cannot hold a bare function declaration, and putting it there was a syntax error
+// that took the whole app down.
+function _wristReach(gripWorld, headWorld) {
+  const g = gripWorld.elements, h = headWorld.elements;
+  const dx = g[12] - h[12], dy = g[13] - h[13], dz = g[14] - h[14];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
 class Scene {
 
   constructor() {
@@ -5836,14 +5846,6 @@ class Scene {
   }
 
   // (Legacy onXRFrame loop removed in Three.js WebXR Migration)
-
-// How far the thing that matrix describes is from the head, in metres. Used to decide whether a
-// controller pose is one a human arm could have produced -- see the wrist anchor.
-function _wristReach(gripWorld, headWorld) {
-  const g = gripWorld.elements, h = headWorld.elements;
-  const dx = g[12] - h[12], dy = g[13] - h[13], dz = g[14] - h[14];
-  return Math.sqrt(dx * dx + dy * dy + dz * dz);
-}
 
   // THE WRIST HIDE, AS ONE EPISODE WITH ONE OWNER.
   //
