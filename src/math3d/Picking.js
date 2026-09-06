@@ -1,10 +1,12 @@
 import { vec3, mat4 } from 'gl-matrix';
 import Geometry from './Geometry.js';
+import PosedSymmetry from '../editing/PosedSymmetry.js';
 import Tablet from '../misc/Tablet.js';
 import Utils from '../misc/Utils.js';
 import TR from '../gui/GuiTR.js';
 
 var _TMP_NEAR = [0.0, 0.0, 0.0];
+var _TMP_SYMOFF = [0.0, 0.0, 0.0];
 var _TMP_NEAR_1 = [0.0, 0.0, 0.0];
 var _TMP_FAR = [0.0, 0.0, 0.0];
 var _TMP_FAR_1 = [0.0, 0.0, 0.0];
@@ -897,6 +899,25 @@ class Picking {
     return false;
   }
 
+  // Put THIS picking on the mirror image of `from`'s contact, and force the hit. The one place
+  // a mirrored brush position is computed for the point-based (VR) path, so that it and the
+  // ray-based (desktop) path above cannot drift apart.
+  //
+  // On a POSED bound character the reflection goes through rest space, because the symmetry
+  // plane only means what it says at bind pose -- mirroring a posed point puts the brush where
+  // the other side would be if it had never moved. Everywhere else it is the plain reflection
+  // it always was.
+  mirrorFrom(from, mesh, ptPlane, nPlane) {
+    var pt = vec3.create();
+    vec3.copy(pt, from.getIntersectionPoint());
+    if (!PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane)) {
+      Geometry.mirrorPoint(pt, ptPlane, nPlane);
+    }
+    this.setIntersectionPoint(pt);
+    this._mesh = mesh; // force hit
+    this.setLocalRadius2(from.getLocalRadius2());
+  }
+
   intersectionMouseMesh(mesh = this._main.getMesh(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {
     var vNear = this.unproject(mouseX, mouseY, 0.0);
     var vFar = this.unproject(mouseX, mouseY, 0.1);
@@ -930,6 +951,16 @@ class Picking {
       var nPlane = mesh.getSymmetryNormal();
       Geometry.mirrorPoint(_TMP_NEAR, ptPlane, nPlane);
       Geometry.mirrorPoint(_TMP_FAR, ptPlane, nPlane);
+      // ON A POSED CHARACTER THE PLANE IS IN THE WRONG SPACE. Mirroring a posed point gives
+      // where the other side WOULD be if it had never moved; it has moved. Shift the mirrored
+      // ray onto the actual anatomy -- direction untouched, so this still lands on whatever
+      // surface is really over there, which is what makes it right on an asymmetric mesh.
+      // Null whenever the mesh is unbound or at bind pose, where the plain mirror is correct.
+      var _po = PosedSymmetry.rayOffset(this._main, mesh, ptPlane, nPlane, _TMP_SYMOFF);
+      if (_po) {
+        vec3.add(_TMP_NEAR, _TMP_NEAR, _po);
+        vec3.add(_TMP_FAR, _TMP_FAR, _po);
+      }
     }
     var vAr = mesh.getVertices();
     var fAr = mesh.getFaces();
@@ -1241,6 +1272,16 @@ class Picking {
       var nPlane = mesh.getSymmetryNormal();
       Geometry.mirrorPoint(_TMP_NEAR, ptPlane, nPlane);
       Geometry.mirrorPoint(_TMP_FAR, ptPlane, nPlane);
+      // ON A POSED CHARACTER THE PLANE IS IN THE WRONG SPACE. Mirroring a posed point gives
+      // where the other side WOULD be if it had never moved; it has moved. Shift the mirrored
+      // ray onto the actual anatomy -- direction untouched, so this still lands on whatever
+      // surface is really over there, which is what makes it right on an asymmetric mesh.
+      // Null whenever the mesh is unbound or at bind pose, where the plain mirror is correct.
+      var _po = PosedSymmetry.rayOffset(this._main, mesh, ptPlane, nPlane, _TMP_SYMOFF);
+      if (_po) {
+        vec3.add(_TMP_NEAR, _TMP_NEAR, _po);
+        vec3.add(_TMP_FAR, _TMP_FAR, _po);
+      }
     }
 
     var vAr = mesh.getVertices();

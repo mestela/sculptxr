@@ -1142,6 +1142,43 @@ function restRefused(mesh, why) {
   return false;
 }
 
+// ---- the deformation field, for anything that needs to travel through it -------------
+//
+// Sculpting symmetry needs to go from posed space to rest space and back (see PosedSymmetry),
+// and it must use the SAME composite the skin pass applies -- a second implementation of "the
+// matrix at this vertex" is how two halves of a deformer drift apart. So the pieces are exposed
+// rather than copied.
+Skinning.boundLevelOf = function (mesh) { return boundLevel(mesh); };
+
+Skinning.skinMatricesFor = function (main, mesh) {
+  if (!Skinning.isBound(mesh) || !mesh._skinInvBind) return null;
+  return skinMatrices(mesh, resolveJoints(main, mesh));
+};
+
+// The blended transform at one vertex: Σw·M, weighted exactly as apply() weights it. The FULL
+// affine, not just the basis -- commitPosed blends only the 3×3 because it carries a delta, and
+// a point needs the translation too.
+Skinning.blendAt = function (mesh, mats, i, out) {
+  const idx = mesh._skinIdx, wts = mesh._skinW;
+  const e = out.elements;
+  for (let k = 0; k < 16; k++) e[k] = 0;
+  let total = 0;
+  for (let k = 0; k < MAX_INFLUENCES; k++) {
+    const j = idx[i * MAX_INFLUENCES + k];
+    if (j < 0) continue;
+    const w = wts[i * MAX_INFLUENCES + k];
+    const m = mats[j];
+    if (!m || w <= 0) continue;
+    const me = m.elements;
+    for (let q = 0; q < 16; q++) e[q] += me[q] * w;
+    total += w;
+  }
+  // An unweighted vertex is not deformed at all, which is the identity -- the same answer
+  // apply() gives it when it holds such a vertex at its rest position.
+  if (total <= 1e-6) { out.identity(); return true; }
+  return true;
+};
+
 // SCULPTING ABOVE THE BOUND LEVEL (grade 3). Bind the base cage, subdivide twice, pose, sculpt
 // -- and expect it to be kept. matt: "from a user pov, it makes total sense that i would bind
 // the base cage, subdivide twice, pose the character, then want to sculpt on it, and expect

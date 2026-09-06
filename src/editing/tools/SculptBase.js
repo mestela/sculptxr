@@ -810,14 +810,19 @@ class SculptBase {
         }
 
         if (!snapped) {
-          // PURE SPATIAL MIRRORING!
-          const perfectB = vec3.create();
-          vec3.copy(perfectB, picking.getIntersectionPoint());
-          Geometry.mirrorPoint(perfectB, ptPlane, nPlane);
-          
-          pickingSym.setIntersectionPoint(perfectB);
-          pickingSym._mesh = mesh; // Force hit
-          pickingSym.setLocalRadius2(picking.getLocalRadius2());
+          // PURE SPATIAL MIRRORING -- through REST SPACE when the character is posed.
+          //
+          // The mirror lives in Picking, not here, for two reasons. The desktop ray path needs
+          // exactly the same correction, and one copy is the only way those two stay in step:
+          // matt, "i want desktop and vr to conform as much as possible, use the same code as
+          // much as possible, otherwise we end up in this situation over and over where things
+          // work on one platform and not the other."
+          //
+          // And SculptBase cannot reach the skinning module from here. PosedSymmetry imports
+          // Skinning, Skinning reaches Skeleton -> Primitives -> Remesh -> Smooth -> SculptBase,
+          // so importing it here closes a cycle and every tool class that extends SculptBase
+          // gets `undefined` as its base at load time. Picking sits outside that loop.
+          pickingSym.mirrorFrom(picking, mesh, ptPlane, nPlane);
         }
 
         if (pickingSym.getMesh()) {
