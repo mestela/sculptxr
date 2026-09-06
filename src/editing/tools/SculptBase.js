@@ -696,6 +696,38 @@ class SculptBase {
     // Symmetry Logic for Generic Tools
     if (pickingSym && this._main.getSculptManager().getSymmetry()) {
       const main = this._main;
+
+      // WHETHER TO TRACE THIS FRAME, decided here and published for the two modules downstream
+      // that cannot see it. `isSculpting` is a PARAMETER of this method -- it is
+      // `main._action === Enums.Action.SCULPT_EDIT`, decided by the caller -- and NOT
+      // `main._vrSculpting`, which is what three earlier versions of this gate asked about and
+      // which is apparently never true here. That mistake produced a run with one trace line in
+      // it and then a run with none, both read as evidence about the feature.
+      //
+      // A burst of frames per stroke, not a throttle: a stroke lasts about a second, and a
+      // once-a-second trace fires inside that window only if it is lucky. It never was.
+      if (window._symTrace) {
+        if (!isSculpting) window._symBurst = 0;
+        else window._symBurst = (window._symBurst || 0) + 1;
+        window._symTraceOn = !!isSculpting && window._symBurst <= 5;
+      } else {
+        window._symTraceOn = false;
+      }
+
+      // WHICH BRANCH THIS FRAME TAKES. Printed for hover frames too, throttled, because the
+      // question "does this code even run while stroking?" has now been answered wrongly three
+      // times, and every answer came from a trace that was itself conditional.
+      if (window._symTrace) {
+        const _sn = performance.now();
+        if (_sn - (window._symStateAt || 0) > 250) {
+          window._symStateAt = _sn;
+          console.log('[sym] state: isSculpting=' + !!isSculpting
+            + ' pick1=' + !!pick1 + ' vr=' + !!main._vrControllerPos
+            + ' mesh=' + (mesh ? mesh.getID() : 'null')
+            + ' posed=' + !!(mesh && mesh._skinIsPosed));
+        }
+      }
+
       if (main._vrControllerPos) {
         // Parent-aware model-space matrix (== getMatrix unparented) so the
         // world<->local symmetry conversion is correct for a parented child.
@@ -915,7 +947,7 @@ class SculptBase {
           // hover frames are almost all of them, so a throttled trace samples nothing else.
           // Six consecutive samples of `isSculpting=false 0 verts` looked like the bug and was
           // the instrument.
-          if (window._symTrace && window._symTraceOn) {
+          if (window._symTraceOn) {
               const _pv = pickingSym.getPickedVertices();
               console.log('[sym] mirrored pick: ' + (_pv ? _pv.length : 'null') + ' verts via '
                 + (symMapUsed ? 'VERTEX MAP' : 'sphere')

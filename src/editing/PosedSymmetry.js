@@ -47,7 +47,12 @@ const _psNrm = new THREE.Matrix3();
 // stroke.
 PosedSymmetry.strokeActive = function (main) {
   if (!main) return false;
-  return main._vrControllerPos ? !!main._vrSculpting : true;
+  // The decision is made by SculptBase, which is the only place that can see it: whether this
+  // is a stroke frame is the `isSculpting` PARAMETER of _makeStrokeXRInner, not any property
+  // reachable from here. Three versions of this function asked `main._vrSculpting` instead and
+  // silently answered no on every frame.
+  if (main._vrControllerPos) return !!window._symTraceOn;
+  return true;   // desktop: every call is a stroke
 };
 
 // A short BURST per stroke rather than a global throttle. A stroke lasts about a second and a
@@ -56,10 +61,7 @@ PosedSymmetry.strokeActive = function (main) {
 // stays quiet until the next one, so the log is short AND about the thing being measured.
 const TRACE_BURST = 5;
 PosedSymmetry.traceStroke = function (main) {
-  if (!window._symTrace) return false;
-  if (!PosedSymmetry.strokeActive(main)) { PosedSymmetry._burst = 0; return false; }
-  PosedSymmetry._burst = (PosedSymmetry._burst || 0) + 1;
-  return PosedSymmetry._burst <= TRACE_BURST;
+  return !!window._symTrace && PosedSymmetry.strokeActive(main);
 };
 
 PosedSymmetry.applies = function (main, mesh) {
@@ -286,9 +288,6 @@ PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane, nrm) {
   // Decided ONCE, here, so the point trace, the path trace and the vertex-count trace all
   // describe the same frame instead of three frames chosen by three separate throttles.
   PosedSymmetry._traceOn = PosedSymmetry.traceStroke(main);
-  // On window as well, because SculptBase cannot import this module -- see the load cycle note
-  // on trustedSymMap.
-  window._symTraceOn = PosedSymmetry._traceOn;
   return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt, nrm);
 };
 
