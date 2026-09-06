@@ -215,9 +215,15 @@ function boundMesh(levels, boundAt) {
       + 'go through commitPosed, which is measured in restwrite_test.mjs');
   check('...after folding a stroke made ABOVE the bound level back down to it',
     /analyseDown\(mesh, level\);/.test(SRC)
-      && /for \(let i = sel; i > at; i--\) stack\[i - 1\]\.lowerAnalysis\(stack\[i\]\);/.test(SRC),
+      && /for \(let i = sel; i > at; i--\) stack\[i - 1\]\.lowerAnalysis\(stack\[i\], mask\);/.test(SRC),
     'the weights belong to one resolution; without the analysis a stroke two levels up is '
       + 'reconstructed away by the next pose change. Measured in restwrite_test.mjs');
+  check('...and ONLY where the stroke was',
+    /const mask = strokeMask\(mesh, stack\[sel\]\);/.test(SRC)
+      && /if \(mask === null\) return 0;/.test(SRC),
+    'folding the whole surface drags every detail vector in the model into the cage, which the '
+      + 'next skin pass regenerates through blend skinning and delta mush -- both of which '
+      + 'smooth. A stroke on the hips smoothed the ears.');
   check('...and refuses from BELOW it, saying which way to go',
     /\(mesh\._sel \| 0\) < stack\.indexOf\(level\)/.test(SRC)
       && /'sculpt at level ' \+ stack\.indexOf\(level\) \+ ' or above'/.test(SRC),

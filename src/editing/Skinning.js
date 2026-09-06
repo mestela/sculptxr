@@ -1205,15 +1205,59 @@ Skinning.blendAt = function (mesh, mats, i, out) {
 // A commit that then refuses (no posed reference) leaves the details updated and the coarse
 // shape about to be overwritten -- half the stroke kept. Not corrupting, and not worth a
 // snapshot to avoid: the only way to reach it is a posed mesh the skin pass has never run on.
+// WHICH VERTICES THE STROKE ACTUALLY MOVED, at the displayed level, by comparison against what
+// the skin pass last drew there. Exact comparison, not a tolerance: the array was written by
+// the pass and copied byte for byte, so anything the brush did not reach is bit-identical.
+//
+// Returns null when nothing moved -- there is no stroke to commit -- and null also when there
+// is no snapshot to compare against, which the caller must read as "assume everything", because
+// refusing to commit a stroke is worse than folding too much of one.
+function strokeMask(mesh, disp) {
+  const snap = mesh._skinDisp;
+  const v = disp.getVertices();
+  const n = disp.getNbVertices();
+  if (!snap || snap.length !== n * 3) return undefined;
+  let mask = mesh._skinMask;
+  if (!mask || mask.length !== n) mask = mesh._skinMask = new Uint8Array(n);
+  else mask.fill(0);
+  let any = 0;
+  for (let i = 0; i < n; i++) {
+    const i3 = i * 3;
+    if (v[i3] !== snap[i3] || v[i3 + 1] !== snap[i3 + 1] || v[i3 + 2] !== snap[i3 + 2]) {
+      mask[i] = 1;
+      any++;
+    }
+  }
+  return any ? mask : null;
+}
+
 function analyseDown(mesh, level) {
+  // THE WAY OUT, if this is what is eating the model. With the fold off, a stroke above the
+  // bound level is refused as it was before v3.30.41 rather than folded down -- so sculpting
+  // has to happen at the bound level, and nothing this code does can touch the rest of the
+  // mesh. It exists because the smoothing matt is seeing has a plausible mechanism here and no
+  // evidence for one: turning it off and finding the loss continues is worth more than another
+  // theory.
+  if (window._skinNoFold) return 0;
   const stack = mesh._meshes;
   if (!stack || !stack.length) return 0;
   const at = stack.indexOf(level);
   const sel = mesh._sel | 0;
   if (at < 0 || sel <= at) return 0;
+
+  // ONLY WHERE THE STROKE WAS. The fold copies the level above into the level below, and doing
+  // that for the WHOLE surface drags every detail vector in the model down into the cage --
+  // which the next skin pass then regenerates through blend skinning and delta mush, both of
+  // which smooth. A stroke on the hips smoothed the ears. Restricting the copy to the vertices
+  // the brush actually touched leaves the rest of the model bit-identical, and computeDetails
+  // re-derives the untouched details from an unchanged cage, so they come back exactly.
+  const mask = strokeMask(mesh, stack[sel]);
+  if (mask === null) return 0;   // nothing moved: there is no stroke here to fold
+
   // Down one level at a time: each analysis reads the level above it, so level 2 has to be
-  // folded into level 1 before level 1 can be folded into level 0.
-  for (let i = sel; i > at; i--) stack[i - 1].lowerAnalysis(stack[i]);
+  // folded into level 1 before level 1 can be folded into level 0. The mask carries down
+  // unchanged because the shared vertices keep their indices at every level.
+  for (let i = sel; i > at; i--) stack[i - 1].lowerAnalysis(stack[i], mask);
   return sel - at;
 }
 
@@ -1625,6 +1669,18 @@ Skinning.apply = function (main, mesh) {
   // stack's own refresh (geometry + colours + buffers + wireframe); without it the higher
   // level would hold new vertices that never reach the GPU.
   const _synth = synthesiseUp(mesh);
+  // AND KEEP THE DISPLAYED LEVEL TOO, for the same reason as `_skinPosed` one level down: the
+  // commit needs to know which vertices the STROKE moved, and the only way to know is to have
+  // kept what the pass last drew there. Without it the fold has to assume the whole surface
+  // changed, and folding the whole surface is what smoothed the model away.
+  if (_synth) {
+    const disp = mesh._meshes[mesh._sel | 0];
+    const dn = disp.getNbVertices() * 3;
+    if (!mesh._skinDisp || mesh._skinDisp.length !== dn) mesh._skinDisp = new Float32Array(dn);
+    mesh._skinDisp.set(disp.getVertices().subarray(0, dn));
+  } else if (mesh._skinDisp) {
+    mesh._skinDisp = null;
+  }
   const _t3 = window._skinTrace ? performance.now() : 0;
   // SKIP THE OCTREE. A posed frame is not a picked frame: the tree is rebuilt by the first
   // query that needs it, which is the next brush stroke or ray, not the next frame of a drag.

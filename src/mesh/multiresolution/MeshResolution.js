@@ -47,8 +47,8 @@ class MeshResolution extends Mesh {
   }
 
   /** Go to one level below (up to down) */
-  lowerAnalysis(meshUp) {
-    this.copyDataFromHigherRes(meshUp);
+  lowerAnalysis(meshUp, mask) {
+    this.copyDataFromHigherRes(meshUp, mask);
     var nbVertices = meshUp.getNbVertices();
 
     // THE SCRATCH IS KEPT. This used to run only when the user stepped down a level by hand,
@@ -70,7 +70,21 @@ class MeshResolution extends Mesh {
     meshUp.computeDetails(subdVerts, subdColors, subdMaterials, nbVertices);
   }
 
-  copyDataFromHigherRes(meshUp) {
+  // `mask`, when given, restricts the copy to the vertices it marks.
+  //
+  // Normally this is everything, because stepping down a level means adopting the whole surface
+  // above. But the skin pass folds a stroke down at every stroke END, and there the copy is not
+  // a level change -- it is "take what was just sculpted". Copying the whole surface then drags
+  // ALL of the model's detail into the cage, and the cage is regenerated next frame by linear
+  // blend skinning and delta mush, which smooth it. Every stroke anywhere therefore smoothed
+  // everything everywhere. matt: "i add ears, a jaw structure to the head. if i use the move
+  // brush on the hips, the feet, the legs, after 10 move operates, the head has smoothed back
+  // to its original state."
+  //
+  // Detail vectors need no such treatment: computeDetails re-derives every one of them from the
+  // cage it is given, so a vertex whose cage neighbourhood did not move gets its old detail back
+  // by arithmetic rather than by being restored.
+  copyDataFromHigherRes(meshUp, mask) {
     var vArDown = this.getVertices();
     var cArDown = this.getColors();
     var mArDown = this.getMaterials();
@@ -79,15 +93,16 @@ class MeshResolution extends Mesh {
     var cArUp = meshUp.getColors();
     var mArUp = meshUp.getMaterials();
 
-    if (this.getEvenMapping() === false) {
+    if (this.getEvenMapping() === false && !mask) {
       vArDown.set(vArUp.subarray(0, nbVertices * 3));
       cArDown.set(cArUp.subarray(0, nbVertices * 3));
       mArDown.set(mArUp.subarray(0, nbVertices * 3));
     } else {
-      var vertMap = this.getVerticesMapping();
+      var vertMap = this.getEvenMapping() === false ? null : this.getVerticesMapping();
       for (var i = 0; i < nbVertices; ++i) {
+        if (mask && !mask[i]) continue;
         var id = i * 3;
-        var idUp = vertMap[i] * 3;
+        var idUp = (vertMap ? vertMap[i] : i) * 3;
         vArDown[id] = vArUp[idUp];
         vArDown[id + 1] = vArUp[idUp + 1];
         vArDown[id + 2] = vArUp[idUp + 2];

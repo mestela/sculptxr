@@ -318,10 +318,19 @@ function stackN(rest, n) {
     };
     // MeshResolution.lowerAnalysis, called ON the level below with the level above: the shared
     // vertices come down verbatim and the residual becomes detail.
-    down.lowerAnalysis = function (above) {
+    down.lowerAnalysis = function (above, mask) {
       analysisLog.push('down' + i);
       const v = down.getVertices(), u = above.getVertices();
-      v.set(u.subarray(0, n0 * 3));
+      // MeshResolution.copyDataFromHigherRes honours the same mask: only the vertices the
+      // stroke moved come down, and everything else keeps the cage it already had.
+      if (mask) {
+        for (let k = 0; k < n0; k++) {
+          if (!mask[k]) continue;
+          v[k * 3] = u[k * 3]; v[k * 3 + 1] = u[k * 3 + 1]; v[k * 3 + 2] = u[k * 3 + 2];
+        }
+      } else {
+        v.set(u.subarray(0, n0 * 3));
+      }
       subdivide(v, scratch);
       for (let k = 0; k < n1 * 3; k++) details[k] = u[k] - scratch[k];
     };
@@ -467,6 +476,29 @@ function boundBelow(rest, j, nLevels) {
     delete window._skinMush;
   }
 }
+
+// --- 12. WHAT COULD NOT BE REPRODUCED HERE ------------------------------------------
+//
+// matt: "i add ears, a jaw structure to the head. if i use the move brush on the hips, the
+// feet, the legs, after 10 move operates, the head has smoothed back to its original state."
+//
+// A fixture for that was written and DELETED, because it did not discriminate: ten strokes on
+// one vertex, a detail on a shared vertex far away, mush on -- and the drift was 0.00002 both
+// with the fold masked and with it unmasked. It was measuring mush noise on a four-vertex ring,
+// not the reported loss. Two things it is worth recording, so the next attempt starts further
+// along:
+//
+//   - the detail has to sit on a SHARED vertex. The fold only copies the vertices a level
+//     shares with the one above, so a detail on a midpoint is never touched by it and the
+//     fixture cannot see the bug at all. The first version made that mistake.
+//   - delta mush is SHAPE-PRESERVING by construction (its deltas are rebuilt against the rest
+//     pose each time), so "the mush smooths the cage" does not on its own explain a loss. That
+//     was the theory this test was written to confirm, and it did not.
+//
+// So the masked fold below is committed on its own merits -- a stroke has no business
+// rewriting the whole cage -- and NOT as a confirmed fix for the smoothing. The mechanism is
+// still unknown, and `window._skinNoFold` turns the fold off entirely to find out whether it is
+// implicated at all.
 
 check('src: the fold runs before the commit, not after',
   /analyseDown\(mesh, level\);\n\n  if \(!Skinning\.atBindPose/.test(SRC),

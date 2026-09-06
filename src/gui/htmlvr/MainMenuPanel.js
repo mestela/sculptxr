@@ -1124,6 +1124,11 @@ const DEV_TOGGLES = [
   // mirrored stroke that quietly goes missing.
   { id: 'mm-sym-trace',   label: 'Trace Posed Symmetry',
     get: () => !!window._symTrace,      set: (on) => { window._symTrace = !!on; } },
+  // A bisection switch, not a feature: with it on, a stroke above the bound level is refused
+  // instead of folded down, which is the behaviour from before that fold existed. If detail
+  // elsewhere still smooths away with this on, the fold is not what is eating it.
+  { id: 'mm-no-fold',     label: 'Freeze Sculpt Fold (bisect)',
+    get: () => !!window._skinNoFold,    set: (on) => { window._skinNoFold = !!on; } },
 ];
 
 export function buildDevToggles(render, renderAction) {
