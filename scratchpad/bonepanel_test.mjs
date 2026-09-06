@@ -199,7 +199,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // ── PINNING, ON BOTH PLATFORMS ────────────────────────────────────────────────────────
   const DFP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
   check('a desktop section can be floated out of the sidebar',
-    /floatSection\(sectionId\) \{/.test(GUI) && /redockSection\(sectionId\) \{/.test(GUI)
+    /floatSection\(sectionId, at\) \{/.test(GUI) && /redockSection\(sectionId\) \{/.test(GUI)
       && /class DesktopFloatPanel/.test(DFP));
   check('...through the SAME builder and wiring as the docked one',
     /_sectionSpec\(sectionId\) \{/.test(GUI)
@@ -224,6 +224,35 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
     'one that does not will redraw itself into a sidebar tab that is meant to be empty');
   check('...and every section builder offers the pin',
     (GUI.match(/this\._decorateDesktopSection\(panelEl, '[a-z]+'\);/g) || []).length === 5);
+
+  // A WORKSPACE ARRANGEMENT, NOT A MOMENTARY ACTION. You pin panels once for how you work and
+  // expect them back next session. matt: "pin states for panels on desktop should be
+  // persistent, remember state and position."
+  {
+    const OPTS = fs.readFileSync('/Users/mattestela/sculptxr/src/misc/getOptionsURL.js', 'utf8');
+    const DFP2 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
+    check('pin state is saved through the shared option store',
+      /getOptionsURL\.saveOption\('desktopPins', map, 250\);/.test(GUI)
+        && /options\.desktopPins = \(dp && typeof dp === 'object'\) \? dp : null;/.test(OPTS),
+      'a private localStorage key would not be cleared, exported or reasoned about with the '
+        + 'rest of the preferences');
+    check('...on pin, on unpin, and at the end of a drag',
+      (GUI.match(/this\._savePinnedSections\(\);/g) || []).length >= 2
+        && /onMoved: \(\) => this\._savePinnedSections\(\)/.test(GUI)
+        && /this\._onMoved\?\.\(this\._id\);/.test(DFP2),
+      'saving on pointermove would write to localStorage a hundred times a second for the '
+        + 'whole drag');
+    check('...and restored after the docked tabs exist',
+      /this\._restorePinnedSections\(\);/.test(GUI)
+        && GUI.indexOf('this._buildDesktopProperties(propertiesPanel);')
+             < GUI.indexOf('this._restorePinnedSections();'),
+      'floating a section rewrites its sidebar tab into a placeholder, and a tab that has not '
+        + 'been built yet has nothing to rewrite');
+    check('...clamped into the current window',
+      /Math\.min\(Math\.max\(0, at\?\.x \?\? 90\), Math\.max\(0, window\.innerWidth - 60\)\)/.test(GUI),
+      'a panel saved on a wider screen would restore off the edge with its dock button beyond '
+        + 'reach');
+  }
 
   check('the pinned strip exists on BOTH platforms',
     /_refreshPinnedStrip\(\) \{/.test(GUI) && /dfp-strip/.test(DFP)

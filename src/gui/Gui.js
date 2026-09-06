@@ -539,6 +539,8 @@ class Gui {
     this._buildDesktopTopology(topologyPanel);
     this._buildDesktopSculpting(sculptingPanel);
     this._buildDesktopProperties(propertiesPanel);
+    // Last, so every tab exists for a restored pin to empty out.
+    this._restorePinnedSections();
 
     // Wire file-input listeners for rendering (matcap + UV texture loading).
     const ShaderUV     = Shader[Enums.Shader.UV];
@@ -995,7 +997,7 @@ class Gui {
     }
   }
 
-  floatSection(sectionId) {
+  floatSection(sectionId, at) {
     if (!this._floatPanels) this._floatPanels = new Map();
     if (this._floatPanels.has(sectionId)) { this._floatPanels.get(sectionId).raise(); return; }
     const spec = this._sectionSpec(sectionId);
@@ -1008,10 +1010,12 @@ class Gui {
       build: spec.build,
       wire: (el, rb) => { spec.wire(el, rb); fixSliderDrag(el); },
       onRedock: (id) => this.redockSection(id),
-    }).mount(90 + n * 24, 90 + n * 24);
+      onMoved: () => this._savePinnedSections(),
+    }).mount(at?.x ?? (90 + n * 24), at?.y ?? (90 + n * 24));
     this._floatPanels.set(sectionId, panel);
     this._refreshDesktopSection(sectionId);
     this._refreshPinnedStrip();
+    this._savePinnedSections();
   }
 
   redockSection(sectionId) {
@@ -1021,6 +1025,43 @@ class Gui {
     this._floatPanels.delete(sectionId);
     this._refreshDesktopSection(sectionId);
     this._refreshPinnedStrip();
+    this._savePinnedSections();
+  }
+
+  // WHAT IS PINNED, AND WHERE, ACROSS SESSIONS.
+  //
+  // Pinning is a workspace arrangement, not a momentary action -- you set it up once for how
+  // you work and expect it to be there next time, the same way the sidebar's own settings are.
+  // matt: "pin states for panels on desktop should be persistent, remember state and position."
+  //
+  // Saved through the same option store as every other preference rather than a private
+  // localStorage key, so it is cleared, exported and reasoned about with the rest of them.
+  _savePinnedSections() {
+    const map = {};
+    if (this._floatPanels) {
+      for (const [id, panel] of this._floatPanels) map[id] = panel.position;
+    }
+    // Debounced: a drag ends with one save, but redocking three panels in a row should not
+    // write three times in as many milliseconds.
+    getOptionsURL.saveOption('desktopPins', map, 250);
+  }
+
+  // Restored AFTER the docked sections are built, because floating one rewrites its sidebar
+  // tab into the "this section is floating" placeholder -- and a tab that has not been built
+  // yet has nothing to rewrite.
+  _restorePinnedSections() {
+    const saved = getOptionsURL().desktopPins;
+    if (!saved) return;
+    for (const id of Object.keys(saved)) {
+      const at = saved[id];
+      if (!this._sectionSpec(id)) continue;   // a section that no longer exists
+      // Clamped into the CURRENT window: a panel saved on a wider screen, or on a second
+      // monitor that is not there today, would otherwise restore off the edge with its dock
+      // button beyond reach.
+      const x = Math.min(Math.max(0, at?.x ?? 90), Math.max(0, window.innerWidth - 60));
+      const y = Math.min(Math.max(0, at?.y ?? 90), Math.max(0, window.innerHeight - 40));
+      this.floatSection(id, { x, y });
+    }
   }
 
   _refreshDesktopSection(sectionId) {

@@ -17,10 +17,19 @@ export class DesktopFloatPanel {
     this._build = opts.build;         // () => html
     this._wire = opts.wire;           // (el, rebuild) => void
     this._onRedock = opts.onRedock;
+    this._onMoved = opts.onMoved;     // called when a drag ends, so the position can be saved
     this._el = null;
   }
 
   get sectionId() { return this._id; }
+
+  // Where it currently is, for persistence. Read from the style rather than the bounding rect:
+  // the rect is affected by any transform an ancestor happens to carry, and what has to be
+  // saved is the number that will be written back into `left`/`top` on the next load.
+  get position() {
+    if (!this._el) return { x: 0, y: 0 };
+    return { x: parseInt(this._el.style.left, 10) || 0, y: parseInt(this._el.style.top, 10) || 0 };
+  }
 
   mount(x, y) {
     const el = document.createElement('div');
@@ -93,6 +102,9 @@ export class DesktopFloatPanel {
       if (!dragging) return;
       dragging = false;
       try { head.releasePointerCapture(e.pointerId); } catch (_) { /* already gone */ }
+      // On drag END, not on every move: a pointermove save would write to localStorage a
+      // hundred times a second for the whole drag.
+      this._onMoved?.(this._id);
     };
     head.addEventListener('pointerup', end);
     head.addEventListener('pointercancel', end);

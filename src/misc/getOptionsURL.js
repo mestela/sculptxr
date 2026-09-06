@@ -212,6 +212,13 @@ var getOptionsURL = function () {
   // Panel visibility tracing (Settings). Persisted because switching it on costs a reload to be
   // in place for the next session, and the bug it is hunting is intermittent.
   options.panelTrace = queryBool(getVal('panelTrace'), false);
+  // Which desktop sidebar sections are floating, and where. An object rather than a scalar --
+  // stored and read as-is, with a type check because a URL parameter of the same name would
+  // arrive as a string and must not be mistaken for the map.
+  {
+    const dp = getVal('desktopPins', null);
+    options.desktopPins = (dp && typeof dp === 'object') ? dp : null;
+  }
   // How solid the capsules draw. They are a diagnostic at 0.16, but turned up they are a CHEAP
   // STAND-IN FOR THE SKIN: at 1 the rig reads as a solid figure you can animate against with the
   // mesh hidden. matt: "it would be great to have it be fully opaque and animate with the skin
