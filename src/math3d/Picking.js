@@ -909,6 +909,25 @@ class Picking {
   // plane only means what it says at bind pose -- mirroring a posed point puts the brush where
   // the other side would be if it had never moved. Everywhere else it is the plain reflection
   // it always was.
+  // MIRROR ONE LOCAL POINT, in place. The single implementation of "where is the other side of
+  // this?", for every tool that needs it.
+  //
+  // On a POSED bound character it goes through rest space, because the symmetry plane only
+  // means what it says at bind pose. Everywhere else it is the plain reflection it always was.
+  // Returns true when the rest-space route was taken, which the caller needs only if it also
+  // has a normal to fix up.
+  //
+  // It lives on Picking because Picking can import PosedSymmetry and the tools mostly cannot:
+  // SculptBase reaches Skinning -> Skeleton -> Primitives -> Remesh -> Smooth -> SculptBase, and
+  // closing that cycle leaves every tool with `undefined` as its base class. Every tool already
+  // holds a Picking.
+  mirrorLocalPoint(mesh, pt, ptPlane, nPlane, nrm) {
+    PosedSymmetry.setBrushRadius2(this.getLocalRadius2());
+    if (PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane, nrm)) return true;
+    Geometry.mirrorPoint(pt, ptPlane, nPlane);
+    return false;
+  }
+
   mirrorFrom(from, mesh, ptPlane, nPlane) {
     // NOTHING TO MIRROR IF NOTHING WAS HIT. The primary pick reports [0,0,0] when it has no
     // intersection, and reflecting the origin produces a confident-looking point somewhere
@@ -917,16 +936,12 @@ class Picking {
     if (!from.getMesh()) { this._mesh = null; return false; }
     var pt = vec3.create();
     vec3.copy(pt, from.getIntersectionPoint());
-    PosedSymmetry.setBrushRadius2(from.getLocalRadius2());
     // The NORMAL travels with the point. Downstream the stroke direction comes from it and
     // getFrontVertices() culls everything behind its tangent plane, so a normal left in the
     // wrong space discards the whole mirrored selection rather than merely aiming it badly.
     var nrm = vec3.create();
     vec3.copy(nrm, from.getPickedNormal());
-    var posed = PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane, nrm);
-    if (!posed) {
-      Geometry.mirrorPoint(pt, ptPlane, nPlane);
-    }
+    var posed = this.mirrorLocalPoint(mesh, pt, ptPlane, nPlane, nrm);
     // Kept for the caller, which otherwise overwrites the symmetric normal with the plain
     // posed-space mirror of the main one -- correct at bind pose, and the reason a posed
     // mirrored stroke vanished.

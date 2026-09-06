@@ -198,10 +198,25 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
 {
   const SB = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
   const PICK = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
-  check('the VR path asks PosedSymmetry first and falls back to the plane',
-    /var posed = PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane, nrm\);\n\s*if \(!posed\) \{\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
+  check('one implementation of "where is the other side of this?"',
+    /mirrorLocalPoint\(mesh, pt, ptPlane, nPlane, nrm\) \{[\s\S]{0,300}?if \(PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane, nrm\)\) return true;\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
+      && /var posed = this\.mirrorLocalPoint\(mesh, pt, ptPlane, nPlane, nrm\);/.test(PICK)
       && /pickingSym\.mirrorFrom\(picking, mesh, ptPlane, nPlane\);/.test(SB),
-    'the point path lives in Picking so it and the ray path cannot drift apart');
+    'the point path, the ray path and every tool must reflect through the same function');
+
+  // MOVE HAS ITS OWN COPY OF THE SYMMETRY BRANCH, and grab-and-pull is the tool this feature is
+  // most obviously for -- so everything done in SculptBase and Picking reached every tool
+  // except the one being tested. matt: "if i just move the foot, sculpt on it, there's no
+  // symmetry. if i move up the leg to a section where its still in symmetry, it works fine."
+  {
+    const MV = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
+    check('Move mirrors its VR pick through the shared function',
+      /pickingSym\.mirrorLocalPoint\(mesh, localPos, ptPlane, nPlane\);/.test(MV));
+    check('...and BOTH ends of the drag, not just the start',
+      /pickingSym\.mirrorLocalPoint\(mesh, symStartLocal, ptPlane, nPlane\);\n\s*pickingSym\.mirrorLocalPoint\(mesh, symCurrLocal, ptPlane, nPlane\);/.test(MV),
+      'the far side moves by the difference between them, so one end mirrored in the wrong '
+        + 'space aims the whole mirrored drag with the near side\'s deformation');
+  }
   // SculptBase must NOT reach the skinning module: PosedSymmetry -> Skinning -> Skeleton ->
   // Primitives -> Remesh -> Smooth -> SculptBase is a cycle, and every tool that extends
   // SculptBase then gets `undefined` as its base class at load time. module_load_test catches
@@ -380,6 +395,35 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   check('...and the caller stops overwriting it with the posed-space mirror',
     /if \(pickingSym\._symPosedMirror\) \{\n\s*vec3\.copy\(nSym, pickingSym\._symMirrorNormal\);\n\s*\} else \{/.test(SB2),
     'the plain mirror is still right at bind pose, so it stays as the else');
+}
+
+// --- 9. EVERY OTHER COPY OF THE MIRROR, COUNTED -------------------------------------
+//
+// Symmetry is not one implementation. Move, Drag, Slide, Twist and SculptBase each carry their
+// own reflection across the symmetry plane, and fixing one reaches only the tools that use it:
+// two versions of this feature landed in paths matt's tool never took. So the copies are
+// counted here. The number is expected to FALL as they are converted, and a rise means a new
+// one was written -- either way the test fails and the change has to be deliberate.
+//
+// Direction mirrors (origin [0,0,0]) are listed separately: those reflect a vector rather than
+// a position and need the normal treatment, not the point treatment.
+{
+  const files = ['Move', 'Drag', 'Slide', 'Twist', 'SculptBase'];
+  let points = 0, dirs = 0;
+  const detail = [];
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(REPO, 'src/editing/tools/' + f + '.js'), 'utf8');
+    const all = src.match(/Geometry\.mirrorPoint\([^)]*\)/g) || [];
+    const d = all.filter((m) => /\[0, 0, 0\]/.test(m)).length;
+    points += all.length - d;
+    dirs += d;
+    if (all.length) detail.push(f + ':' + (all.length - d) + 'p/' + d + 'd');
+  }
+  check('the remaining posed-space mirrors are the ones we know about',
+    points === 14 && dirs === 6,
+    'got ' + points + ' point + ' + dirs + ' direction mirrors (' + detail.join(' ')
+      + '). Expected 14p/6d (Move:3p Drag:4p/1d Slide:5p/1d Twist:1p/1d SculptBase:1p/3d). Falling is progress and the number should be updated; rising '
+      + 'means a new copy was written instead of calling Picking.mirrorLocalPoint');
 }
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');

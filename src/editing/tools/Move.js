@@ -86,7 +86,14 @@ class Move extends SculptBase {
         var localPos = vec3.clone(picking.getIntersectionPoint());
         var ptPlane = mesh.getSymmetryOrigin();
         var nPlane = mesh.getSymmetryNormal();
-        Geometry.mirrorPoint(localPos, ptPlane, nPlane);
+        // THROUGH REST SPACE WHEN THE CHARACTER IS POSED. Move carries its own copy of the
+        // symmetry branch -- the file above already records that costing a fix once -- so the
+        // work done in SculptBase and Picking never reached grab-and-pull, which is the tool
+        // this feature is most obviously for. matt, testing it properly: "if i remove all pins,
+        // return to rest pose, symmetry sculpting works. if i just move the foot, sculpt on it,
+        // there's no symmetry. if i move up the leg to a section where its still in symmetry,
+        // it works fine." That is a posed-space mirror, exactly.
+        pickingSym.mirrorLocalPoint(mesh, localPos, ptPlane, nPlane);
 
         // Convert mirrored point back to (model) World space for the sphere test —
         // parent-aware so a parented child mirrors correctly.
@@ -658,8 +665,13 @@ class Move extends SculptBase {
 
             var ptPlane = mesh.getSymmetryOrigin();
             var nPlane = mesh.getSymmetryNormal();
-            Geometry.mirrorPoint(symStartLocal, ptPlane, nPlane);
-            Geometry.mirrorPoint(symCurrLocal, ptPlane, nPlane);
+            // BOTH ENDS OF THE DRAG, through rest space. The displacement applied to the far
+            // side is the difference between these two, so mirroring only the start (or
+            // mirroring them in posed space) gives the mirrored vertices a direction taken from
+            // the near side's deformation -- which is why a grab on a posed foot pulled its
+            // twin the wrong way, or nowhere.
+            pickingSym.mirrorLocalPoint(mesh, symStartLocal, ptPlane, nPlane);
+            pickingSym.mirrorLocalPoint(mesh, symCurrLocal, ptPlane, nPlane);
 
             vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
           vec3.scale(moveDataSym.dir, moveDataSym.dir, this._intensity);
