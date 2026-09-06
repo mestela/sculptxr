@@ -192,9 +192,18 @@ check('it is inside the section it costs',
   // which reads as flashing. Measured: the anchor froze for 78, 110, 164, 166 and 249 frames in
   // one short session with both grips present throughout.
   check('a lost grip pose holds the panel relative to the HEAD, not to the world',
-    /const live = uiGrip\.visible !== false;/.test(SC)
-      && /uiAnchor\.matrix\.multiplyMatrices\(xrCam\.matrixWorld, this\._wristHeadOffset\);/.test(SC),
+    /uiAnchor\.matrix\.multiplyMatrices\(xrCam\.matrixWorld, this\._wristHeadOffset\);/.test(SC),
     'world-locking is the one choice that cannot work: the head is what keeps moving');
+  // `grip.visible` catches the frames three KNOWS have no pose, and that is not enough: a grip
+  // can report live and carry a STALE world matrix. Measured: head and panels together at
+  // y=9.46, then the head back at 1.2 with the panels still at 9.46 -- eight metres up and
+  // behind, then back. A wrist is always within arm's reach; anything else is a bad pose.
+  check('...and a pose no arm could reach is not taken at all',
+    /_wristReach\(uiGrip\.matrixWorld, xrCam\.matrixWorld\) < 1\.0/.test(SC),
+    'a live flag on a stale matrix is what stranded the panels');
+  check('...nor remembered as the offset the fallback uses',
+    /if \(xrCam && gripOK\) \{/.test(SC),
+    'caching a bad pose makes the fallback strand them too');
   check('...and the offset is re-taken on every good frame',
     /\.copy\(xrCam\.matrixWorld\)\.invert\(\)\.multiply\(uiAnchor\.matrix\);/.test(SC),
     'a stale offset would hold the panel where the hand was minutes ago');

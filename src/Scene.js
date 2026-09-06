@@ -5837,6 +5837,14 @@ class Scene {
 
   // (Legacy onXRFrame loop removed in Three.js WebXR Migration)
 
+// How far the thing that matrix describes is from the head, in metres. Used to decide whether a
+// controller pose is one a human arm could have produced -- see the wrist anchor.
+function _wristReach(gripWorld, headWorld) {
+  const g = gripWorld.elements, h = headWorld.elements;
+  const dx = g[12] - h[12], dy = g[13] - h[13], dz = g[14] - h[14];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
   // THE WRIST HIDE, AS ONE EPISODE WITH ONE OWNER.
   //
   // `mesh.visible` on these three panels has three writers -- the swap, each panel's own show(),
@@ -6850,12 +6858,25 @@ class Scene {
           // on the wrist the moment the controller is seen again. World-locking is the one
           // choice that cannot work here: the head is the thing that keeps moving.
           const xrCam = this._renderer?.xr?.getCamera?.();
-          const live = uiGrip.visible !== false;
-          if (live || !this._wristHeadOffset || !xrCam) {
-            uiGrip.updateWorldMatrix(true, false);
+          uiGrip.updateWorldMatrix(true, false);
+          // A WRIST IS ALWAYS WITHIN ARM'S REACH. Anything else is a bad pose, not a hand.
+          //
+          // `grip.visible` catches the frames three KNOWS have no pose, and it is not enough: a
+          // grip can report live and carry a STALE world matrix, left behind when the view jumps.
+          // The trace caught exactly that -- the head and the panels together at y=9.46 for a
+          // moment, then the head back at 1.2 with the panels still at 9.46, i.e. eight metres
+          // up and behind, and back a moment later. From inside the headset that is the menu
+          // vanishing and returning, with every property of it correct throughout.
+          //
+          // So the test is geometric rather than a flag: measure the pose the grip is offering
+          // against the head, and if it is further than an arm could be, do not take it.
+          const gripOK = !!xrCam && uiGrip.visible !== false
+            && _wristReach(uiGrip.matrixWorld, xrCam.matrixWorld) < 1.0;
+          if (gripOK || !this._wristHeadOffset || !xrCam) {
             uiAnchor.matrix.copy(uiGrip.matrixWorld);
             // Remember where that was RELATIVE TO THE HEAD, for the frames that have no pose.
-            if (xrCam) {
+            // Only from a pose we believed, or the fallback inherits the bad one.
+            if (xrCam && gripOK) {
               this._wristHeadOffset = (this._wristHeadOffset || new THREE.Matrix4())
                 .copy(xrCam.matrixWorld).invert().multiply(uiAnchor.matrix);
             }
