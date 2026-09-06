@@ -180,10 +180,60 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
       && !/i === 3 \? ' active'/.test(MAIN_SRC),
     'adding a tab to a positional list silently opens a different section');
 
-  check('the desktop sidebar still shows both halves',
-    /buildSectionHTML_sculpting\(main\) \+ buildSectionHTML_properties\(main\)/.test(GUI),
-    'the split solves a VR and mobile scrolling problem; on a desktop it is a mouse wheel, and '
-      + 'rendering only the first half would silently lose every property control');
+  // THIS RULE USED TO SAY THE OPPOSITE. It pinned the desktop sidebar as one combined column,
+  // reasoning that the split solved a VR/mobile scrolling problem and desktop had a mouse
+  // wheel. matt disagreed, and was right: the split is not only about scrolling. Picking a
+  // tool and adjusting it are different tasks at different rates on every platform. "i think
+  // the split of tools vs properties is good. it should work well on desktop, please put it
+  // there too."
+  check('the desktop sidebar has its own Properties tab',
+    /const propertiesTab = createTab\('properties', 'Properties'\);/.test(GUI)
+      && /_buildDesktopProperties\(panelEl\) \{/.test(GUI)
+      && !/buildSectionHTML_sculpting\(main\) \+ buildSectionHTML_properties\(main\)/.test(GUI),
+    'the two halves are two tasks, and that is true with a mouse as well as a controller');
+  check('...and every rebuild of one rebuilds the other',
+    (GUI.match(/if \(this\._desktopPropertiesEl\) this\._buildDesktopProperties\(this\._desktopPropertiesEl\);/g) || []).length >= 4,
+    'the properties page reads the CURRENT tool, so a tool change that refreshes only the '
+      + 'tools tab leaves it describing the previous one');
+
+  // ── PINNING, ON BOTH PLATFORMS ────────────────────────────────────────────────────────
+  const DFP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
+  check('a desktop section can be floated out of the sidebar',
+    /floatSection\(sectionId\) \{/.test(GUI) && /redockSection\(sectionId\) \{/.test(GUI)
+      && /class DesktopFloatPanel/.test(DFP));
+  check('...through the SAME builder and wiring as the docked one',
+    /_sectionSpec\(sectionId\) \{/.test(GUI)
+      && /case 'properties': return \{ build: \(\) => buildSectionHTML_properties\(main\),/.test(GUI),
+    'a float panel built from a different function than its docked twin is two panels that '
+      + 'drift apart, which is the whole failure mode this project keeps hitting');
+  check('...and the emptied tab says where it went',
+    /_sectionIsFloating\(panelEl, sectionId\) \{/.test(GUI)
+      && /Return it to the sidebar/.test(GUI),
+    'a tab that goes blank when you pin its contents reads as a bug');
+  check('every section builder checks first',
+    (GUI.match(/if \(this\._sectionIsFloating\(panelEl, '[a-z]+'\)\) return;/g) || []).length === 5,
+    'one that does not will redraw itself into a sidebar tab that is meant to be empty');
+  check('...and every section builder offers the pin',
+    (GUI.match(/this\._decorateDesktopSection\(panelEl, '[a-z]+'\);/g) || []).length === 5);
+
+  check('the pinned strip exists on BOTH platforms',
+    /_refreshPinnedStrip\(\) \{/.test(GUI) && /dfp-strip/.test(DFP)
+      && /this\._updateTornStrip\(\);/.test(MAIN_SRC) && /mm-torn-strip/.test(MAIN_SRC),
+    'matt: "would also be good on both desktop and vr for when items get pinned, to put their '
+      + 'icon in the top left". Checked by its CALL SITE, not its definition -- a rule that '
+      + 'only asks whether the function exists passes happily over dead code, which an '
+      + 'injection proved.');
+  check('...built from the same icon and label tables the tabs use',
+    /TAB_ICONS\[id\]/.test(GUI) && /TAB_ICONS\[id\]/.test(MAIN_SRC)
+      && /SECTION_LABELS\[id\]/.test(GUI) && /SECTION_LABELS\[id\]/.test(MAIN_SRC),
+    'a chip showing a different icon from the tab it came from is worse than no chip');
+
+  check('the section header is one piece of markup for both platforms',
+    /export function sectionHeaderHTML\(sectionId\)/.test(MAIN_SRC)
+      && /sectionHeaderHTML\(this\._activeSection\)/.test(MAIN_SRC)
+      && /sectionHeaderHTML\(sectionId\)/.test(GUI),
+    'two copies of the pin row is how VR and desktop pinning would come to look and behave '
+      + 'differently');
 }
 
 // MAKE SKIN BINDS. The skin is generated FROM the capsules and the bind measures those same

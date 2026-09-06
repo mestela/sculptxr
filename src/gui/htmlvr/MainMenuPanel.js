@@ -60,6 +60,20 @@ import {
   refreshBlendshapesDOM,
 } from './AnimationControlPanel.js';
 
+// ONE HEADER, both platforms. The row carries the section's name and its float/pin button, and
+// it is the same markup and the same CSS in the VR panel and in the desktop sidebar -- so a
+// change to how pinning looks or is labelled cannot land on one and not the other.
+export const SECTION_LABELS = {
+  scene: 'Scene', rendering: 'Rendering', topology: 'Topology',
+  sculpting: 'Tools', properties: 'Properties', animation: 'Animation',
+};
+
+export function sectionHeaderHTML(sectionId) {
+  const label = SECTION_LABELS[sectionId] ?? sectionId;
+  return `<div class="mm-section-header"><span class="mm-section-header-title">${label}</span>`
+    + `<button class="mm-section-pin-btn" id="mm-section-pin-btn" title="Float panel">${ICON_PIN}</button></div>`;
+}
+
 // The section the panel opens on, and the one the tab strip marks active. Named rather than
 // positional so the two cannot disagree.
 const DEFAULT_SECTION = 'sculpting';
@@ -223,6 +237,11 @@ const CSS = `
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+#mm-torn-strip { display: flex; gap: 3px; margin-right: 6px; }
+.mm-torn-chip { width: 24px; height: 24px; padding: 0; line-height: 1;
+  background: #313244; border: 1px solid #585b70; border-radius: 4px; color: #f9e2af;
+  cursor: pointer; }
+.mm-torn-chip:hover, .mm-torn-chip.hover { background: #45475a; border-color: #7f849c; }
 .mm-section-pin-btn {
   display: flex;
   align-items: center;
@@ -925,6 +944,11 @@ export function wireSelect(el, id, callback, repaintFn) {
 function buildShellHTML() {
   return `
     <div id="mm-menubar">
+      <!-- WHAT IS TORN OFF, TOP LEFT. A section that has been floated leaves a placeholder in
+           its tab and a panel somewhere in the room, and nothing on screen says which. One chip
+           per torn-off section, always in the same corner, and pressing one brings it back.
+           Same idea and same position as the desktop strip. -->
+      <div id="mm-torn-strip"></div>
       <button class="mm-menu-btn" data-menu="files">Files</button>
       <button class="mm-menu-btn" data-menu="history">History</button>
       <button class="mm-menu-btn" data-menu="background">Background</button>
@@ -2129,7 +2153,29 @@ export class MainMenuPanel extends HTMLVRPanel {
     this._element.querySelectorAll('.mm-tab-btn').forEach(btn => {
       btn.classList.toggle('torn', this._tornOffSections.has(btn.dataset.section));
     });
+    this._updateTornStrip();
     this.markDirty();
+  }
+
+  // One chip per torn-off section. Pressing one asks for it back, which is the useful action
+  // in VR: a floating panel in a room you have since turned away from is harder to walk to
+  // than to recall.
+  _updateTornStrip() {
+    const strip = this._element.querySelector('#mm-torn-strip');
+    if (!strip) return;
+    strip.innerHTML = '';
+    for (const id of this._tornOffSections) {
+      const b = document.createElement('button');
+      b.className = 'mm-torn-chip';
+      b.title = (SECTION_LABELS[id] ?? id) + ' — floating (press to bring back)';
+      b.innerHTML = TAB_ICONS[id] ?? id;
+      b.addEventListener('click', () => {
+        this._element.dispatchEvent(
+          new CustomEvent('mm-section-redock', { detail: { section: id }, bubbles: false })
+        );
+      });
+      strip.appendChild(b);
+    }
   }
 
   // ── Mesh placement ─────────────────────────────────────────────────────────
@@ -2294,10 +2340,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       // gain — matt: "there is a unnecessary extra header, 'SCULPTING'". The ROW stays because
       // it carries the float-panel pin button; only the word changes. 'Tools' also covers what
       // the section actually holds, which is Sculpt AND Mesh Edit AND Paint.
-      const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Tools', properties: 'Properties', animation: 'Animation' };
-      const label = SECTION_LABELS[this._activeSection] ?? this._activeSection;
-      const pinSVG = ICON_PIN;
-      html = `<div class="mm-section-header"><span class="mm-section-header-title">${label}</span><button class="mm-section-pin-btn" id="mm-section-pin-btn" title="Float panel">${pinSVG}</button></div>` + html;
+      html = sectionHeaderHTML(this._activeSection) + html;
     }
 
     contentEl.innerHTML = html;

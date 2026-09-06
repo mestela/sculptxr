@@ -1,5 +1,6 @@
 import TR from './GuiTR.js';
 import { TAB_ICONS } from './tabIcons.js';
+import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
 import GuiCamera from './GuiCamera.js';
 import GuiFiles from './GuiFiles.js';
 import GuiTopology from './GuiTopology.js';
@@ -11,7 +12,7 @@ import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import {
   buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting,
-  buildSectionHTML_properties,
+  buildSectionHTML_properties, sectionHeaderHTML, SECTION_LABELS,
   injectMMCSS,
   wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
   updateOutlinerVisIcons,
@@ -415,6 +416,7 @@ class Gui {
     const renderingTab = createTab('rendering', TR('renderingTitle'));
     const topologyTab  = createTab('topology',  TR('topologyTitle'));
     const sculptingTab = createTab('sculpting', TR('sculptTitle'));
+    const propertiesTab = createTab('properties', 'Properties');
     const animationTab = createTab('animation', 'Animation');
     const blendshapesTab = createTab('blendshapes', 'Blendshapes');
     const timelineTab  = createTab('timeline',  'Timeline');
@@ -425,6 +427,7 @@ class Gui {
     tabGroup.appendChild(renderingTab);
     tabGroup.appendChild(topologyTab);
     tabGroup.appendChild(sculptingTab);
+    tabGroup.appendChild(propertiesTab);
     // Layers (blendshapes) then Animation then Timeline — anim + timeline sit adjacent
     // since they're tightly linked.
     tabGroup.appendChild(blendshapesTab);
@@ -435,6 +438,7 @@ class Gui {
     const renderingPanel = document.createElement('wa-tab-panel'); renderingPanel.setAttribute('name', 'rendering');
     const topologyPanel  = document.createElement('wa-tab-panel'); topologyPanel.setAttribute('name', 'topology');
     const sculptingPanel = document.createElement('wa-tab-panel'); sculptingPanel.setAttribute('name', 'sculpting');
+    const propertiesPanel = document.createElement('wa-tab-panel'); propertiesPanel.setAttribute('name', 'properties');
     const animationPanel = document.createElement('wa-tab-panel');
     animationPanel.setAttribute('name', 'animation');
     animationPanel.id = '_acp_sidebar_panel';
@@ -448,6 +452,7 @@ class Gui {
     tabGroup.appendChild(renderingPanel);
     tabGroup.appendChild(topologyPanel);
     tabGroup.appendChild(sculptingPanel);
+    tabGroup.appendChild(propertiesPanel);
     tabGroup.appendChild(blendshapesPanel);
     tabGroup.appendChild(animationPanel);
     tabGroup.appendChild(timelinePanel);
@@ -506,12 +511,14 @@ class Gui {
     this._ctrlSculpting._ctrlSculpt.setValue = (val, silent) => {
       _ctrlSculptOrigSetValue(val, silent);
       if (!silent && this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+      if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
     };
 
     const _origOnKeyUp = this._ctrlSculpting.onKeyUp.bind(this._ctrlSculpting);
     this._ctrlSculpting.onKeyUp = (event) => {
       _origOnKeyUp(event);
       if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+      if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
     };
 
     injectMMCSS();
@@ -520,12 +527,14 @@ class Gui {
     this._desktopRenderingEl = renderingPanel;
     this._desktopTopologyEl  = topologyPanel;
     this._desktopSculptingEl = sculptingPanel;
+    this._desktopPropertiesEl = propertiesPanel;
     this._buildDesktopScene(scenePanel);
     // Global hook so the animation loop can live-refresh the outliner eye icons.
     window._updateOutlinerVisIcons = () => updateOutlinerVisIcons(this._main);
     this._buildDesktopRendering(renderingPanel);
     this._buildDesktopTopology(topologyPanel);
     this._buildDesktopSculpting(sculptingPanel);
+    this._buildDesktopProperties(propertiesPanel);
 
     // Wire file-input listeners for rendering (matcap + UV texture loading).
     const ShaderUV     = Shader[Enums.Shader.UV];
@@ -790,6 +799,7 @@ class Gui {
     if (this._desktopRenderingEl) this._buildDesktopRendering(this._desktopRenderingEl);
     if (this._desktopTopologyEl)  this._buildDesktopTopology(this._desktopTopologyEl);
     if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+    if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
     if (window._animPanel) window._animPanel.refreshBlendshapes(this._main.getMesh(), this._main);
     this._ctrlBlendshapes?.onShow();
     this.updateMeshInfo();
@@ -819,6 +829,7 @@ class Gui {
   addAlphaOptions(opts) {
     this._ctrlSculpting?.addAlphaOptions(opts);
     if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+    if (this._desktopPropertiesEl) this._buildDesktopProperties(this._desktopPropertiesEl);
   }
 
   deleteGui() {
@@ -868,6 +879,7 @@ class Gui {
   // ── Desktop section panel helpers ──────────────────────────────────────────
 
   _buildDesktopScene(panelEl) {
+    if (this._sectionIsFloating(panelEl, 'scene')) return;
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_scene(main);
     const rebuild = () => this._buildDesktopScene(panelEl);
@@ -875,37 +887,191 @@ class Gui {
     // toggling a dropdown open — that would replace innerHTML and immediately
     // close the dropdown. wireSelect already updates label/active-class directly.
     wireSectionScene(panelEl, main, rebuild, null); // desktop sidebar: no VR panel → numpad uses the DOM overlay
+
+    this._decorateDesktopSection(panelEl, 'scene');
   }
 
   _buildDesktopRendering(panelEl) {
+    if (this._sectionIsFloating(panelEl, 'rendering')) return;
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_rendering(main);
     const rebuild = () => this._buildDesktopRendering(panelEl);
     wireSectionRendering(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);
+
+    this._decorateDesktopSection(panelEl, 'rendering');
   }
 
   _buildDesktopTopology(panelEl) {
+    if (this._sectionIsFloating(panelEl, 'topology')) return;
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_topology(main);
     const rebuild = () => this._buildDesktopTopology(panelEl);
     wireSectionTopology(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);
+
+    this._decorateDesktopSection(panelEl, 'topology');
   }
 
+  // TOOLS AND PROPERTIES ARE TWO TABS HERE TOO. The first version of this split kept the
+  // desktop sidebar as one column, on the grounds that its scrolling is a mouse wheel -- but
+  // the split is not only about scrolling. Picking a tool and adjusting it are different tasks
+  // at different rates, and separating them is worth having on every platform. matt: "i think
+  // the split of tools vs properties is good. it should work well on desktop, please put it
+  // there too."
   _buildDesktopSculpting(panelEl) {
+    if (this._sectionIsFloating(panelEl, 'sculpting')) return;
     const main = this._main;
-    // BOTH HALVES, because the desktop sidebar is one scrolling column and always has been.
-    // The VR panel splits them into two pinnable pages, but the reason for that split is a VR
-    // and mobile problem -- scrolling there is a sustained precision task with a 6-DOF input,
-    // and on a desktop it is a mouse wheel. Splitting the sidebar too would be change for its
-    // own sake; dropping the second half would silently lose every property control.
-    panelEl.innerHTML = buildSectionHTML_sculpting(main) + buildSectionHTML_properties(main);
+    panelEl.innerHTML = buildSectionHTML_sculpting(main);
     const rebuild = () => this._buildDesktopSculpting(panelEl);
     wireSectionSculpting(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);
+
+    this._decorateDesktopSection(panelEl, 'sculpting');
   }
 
+  // Wired with the SAME function as the tools tab: the ids are disjoint between the two pages
+  // and querySelector returns null for the absent ones, so one pass is right for either -- and
+  // a second wiring function would be the copy that falls behind.
+  _buildDesktopProperties(panelEl) {
+    if (this._sectionIsFloating(panelEl, 'properties')) return;
+    const main = this._main;
+    panelEl.innerHTML = buildSectionHTML_properties(main);
+    const rebuild = () => this._buildDesktopProperties(panelEl);
+    wireSectionSculpting(panelEl, main, rebuild, () => {});
+    fixSliderDrag(panelEl);
+
+    this._decorateDesktopSection(panelEl, 'properties');
+  }
+
+  // ── Pinning a sidebar section ───────────────────────────────────────────────────────────
+  //
+  // The sidebar shows ONE section at a time, so anything needed while working in another costs
+  // a tab round-trip. Pinning lifts a section out of the strip and leaves it on screen. matt:
+  // "i also think pins would work well on desktop too, lets add that feature there as well."
+  //
+  // A floating panel renders the SAME section HTML through the SAME wiring function as the
+  // docked one. It is the section in a different frame, not a second copy of it.
+
+  // True when this section is floating -- in which case its sidebar tab says where it went and
+  // how to get it back, rather than going blank.
+  _sectionIsFloating(panelEl, sectionId) {
+    if (!this._floatPanels?.has(sectionId)) return false;
+    panelEl.innerHTML = '<div class="dfp-away">This section is floating.'
+      + '<button class="mm-action-btn" id="dfp-redock-here">Return it to the sidebar</button></div>';
+    panelEl.querySelector('#dfp-redock-here')
+      ?.addEventListener('click', () => this.redockSection(sectionId));
+    return true;
+  }
+
+  _decorateDesktopSection(panelEl, sectionId) {
+    panelEl.insertAdjacentHTML('afterbegin', sectionHeaderHTML(sectionId));
+    panelEl.querySelector('#mm-section-pin-btn')
+      ?.addEventListener('click', () => this.floatSection(sectionId));
+  }
+
+  // Which builder and wiring each section uses, in ONE place: a float panel that built itself
+  // from a different function than its docked twin is exactly the drift this prevents.
+  _sectionSpec(sectionId) {
+    const main = this._main;
+    switch (sectionId) {
+      case 'scene': return { build: () => buildSectionHTML_scene(main),
+        wire: (el, rb) => wireSectionScene(el, main, rb, null) };
+      case 'rendering': return { build: () => buildSectionHTML_rendering(main),
+        wire: (el, rb) => wireSectionRendering(el, main, rb, () => {}) };
+      case 'topology': return { build: () => buildSectionHTML_topology(main),
+        wire: (el, rb) => wireSectionTopology(el, main, rb, () => {}) };
+      case 'sculpting': return { build: () => buildSectionHTML_sculpting(main),
+        wire: (el, rb) => wireSectionSculpting(el, main, rb, () => {}) };
+      case 'properties': return { build: () => buildSectionHTML_properties(main),
+        wire: (el, rb) => wireSectionSculpting(el, main, rb, () => {}) };
+      default: return null;
+    }
+  }
+
+  floatSection(sectionId) {
+    if (!this._floatPanels) this._floatPanels = new Map();
+    if (this._floatPanels.has(sectionId)) { this._floatPanels.get(sectionId).raise(); return; }
+    const spec = this._sectionSpec(sectionId);
+    if (!spec) return;
+    injectFloatCSS();
+    // Staggered, so pinning three in a row does not stack them exactly on top of each other.
+    const n = this._floatPanels.size;
+    const panel = new DesktopFloatPanel({
+      sectionId,
+      build: spec.build,
+      wire: (el, rb) => { spec.wire(el, rb); fixSliderDrag(el); },
+      onRedock: (id) => this.redockSection(id),
+    }).mount(90 + n * 24, 90 + n * 24);
+    this._floatPanels.set(sectionId, panel);
+    this._refreshDesktopSection(sectionId);
+    this._refreshPinnedStrip();
+  }
+
+  redockSection(sectionId) {
+    const panel = this._floatPanels?.get(sectionId);
+    if (!panel) return;
+    panel.dispose();
+    this._floatPanels.delete(sectionId);
+    this._refreshDesktopSection(sectionId);
+    this._refreshPinnedStrip();
+  }
+
+  _refreshDesktopSection(sectionId) {
+    const el = {
+      scene: this._desktopSceneEl, rendering: this._desktopRenderingEl,
+      topology: this._desktopTopologyEl, sculpting: this._desktopSculptingEl,
+      properties: this._desktopPropertiesEl,
+    }[sectionId];
+    if (!el) return;
+    ({
+      scene: () => this._buildDesktopScene(el),
+      rendering: () => this._buildDesktopRendering(el),
+      topology: () => this._buildDesktopTopology(el),
+      sculpting: () => this._buildDesktopSculpting(el),
+      properties: () => this._buildDesktopProperties(el),
+    })[sectionId]?.();
+  }
+
+  // WHAT IS PINNED, TOP LEFT.
+  //
+  // A floating panel can end up behind another one, off in a corner, or simply forgotten -- and
+  // its section's sidebar tab now shows a placeholder rather than the controls, so there is
+  // nothing on screen saying where it went. The strip is that answer: one icon per pinned
+  // section, always in the same place. matt: "would also be good on both desktop and vr for
+  // when items get pinned, to put their icon in the top left."
+  //
+  // Clicking raises rather than redocks: the panels have their own dock button, and a strip
+  // that dismissed things on a single click would make finding one indistinguishable from
+  // putting it away.
+  _refreshPinnedStrip() {
+    let strip = document.getElementById('dfp-strip');
+    const n = this._floatPanels?.size ?? 0;
+    if (!n) { strip?.remove(); return; }
+    if (!strip) {
+      injectFloatCSS();
+      strip = document.createElement('div');
+      strip.id = 'dfp-strip';
+      document.body.appendChild(strip);
+    }
+    strip.innerHTML = '';
+    for (const [id, panel] of this._floatPanels) {
+      const b = document.createElement('button');
+      b.className = 'dfp-chip';
+      b.title = (SECTION_LABELS[id] ?? id) + ' — pinned (click to bring to front)';
+      b.innerHTML = TAB_ICONS[id] ?? id;
+      b.addEventListener('click', () => panel.raise());
+      strip.appendChild(b);
+    }
+  }
+
+  // Every floating panel, rebuilt from current state. Called wherever the docked sections are
+  // rebuilt: a pinned panel that stops tracking the tool you just changed is worse than no
+  // pinned panel.
+  refreshFloatingSections() {
+    if (!this._floatPanels) return;
+    for (const p of this._floatPanels.values()) p.rebuild();
+  }
 }
 
 class WebAwesomeFolderMock {
