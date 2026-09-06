@@ -335,6 +335,44 @@ _realLog('\n── is something standing in front of it ────────
   globalThis.window._panelTraceProbe = false;
 }
 
+_realLog('\n── the paint itself ───────────────────────────────────────────────────');
+{
+  globalThis.window._panelTrace = true;
+  const mesh = obj('mini'); sceneWith(mesh);
+  mesh.material = { map: null };
+  mesh.geometry = { parameters: { width: 0.133, height: 0.113 } };
+  const panel = { mesh, _element: { offsetWidth: 240, offsetHeight: 204 },
+    _needsResize: true, _hostMounted: true,
+    _onPaint() { this.mesh.material.map = { image: { width: 419, height: 800 } };
+                 this.mesh.geometry.parameters.height = 0.254; } };
+  const scene = app(null); scene._miniPanel = panel;
+  scene._camera = { getThreeCamera: () => camAt(0, 0, 0) };
+  mesh.matrixWorld = mat4At(0, 0, -0.4);
+  PanelTrace.tick(scene);          // wraps _onPaint
+  clear();
+  panel._onPaint();
+  const l = logged();
+  // The rate limit is 200ms, which is the quarter-second matt measured, so whatever goes wrong
+  // is set during a rebuild and not corrected until the next allowed paint. The paint is the one
+  // part of the pipeline nothing here watched.
+  check('a paint reports what the element measured and what the texture became',
+    l.some((m) => /MiniPanel paint: el 240x204/.test(m) && /-> map 419x800/.test(m)),
+    'a capture from a stale or unlaid-out element is invisible to every other check');
+  check('...and flags the resize, which is what disposes the texture',
+    l.some((m) => /RESIZE/.test(m)));
+  check('...and the plane it ended up with',
+    l.some((m) => /plane 0\.133x0\.254/.test(m)));
+
+  clear();
+  panel._hostMounted = false;
+  panel._onPaint();
+  check('...and an unmounted panel says so', logged().some((m) => /UNMOUNTED/.test(m)),
+    'an unmounted panel captures nothing at all');
+  globalThis.window._panelTrace = false;
+  clear(); panel._onPaint();
+  check('...and none of it runs when tracing is off', logged().length === 0);
+}
+
 _realLog('\n── switching it on says what it is starting from ───────────────────────');
 {
   globalThis.window._panelTrace = false;

@@ -320,6 +320,45 @@ function inkOf(mesh, scene) {
   }
 }
 
+// THE PAINT ITSELF, which is the one part of the pipeline nothing here has watched.
+//
+// matt narrowed it to a deterministic sequence: Joint Tweak, select a joint with the trigger,
+// move the controller a little, and the mini panel goes for about a quarter of a second and
+// comes back -- once. "it feels like its forcing a full repaint/rebuild of the menu." And the
+// panel repaint rate limit is PAINT_MIN_MS = 200ms, which is that quarter second: whatever goes
+// wrong is set during a rebuild and not corrected until the NEXT allowed paint.
+//
+// Selecting a joint changes the extras block's key, so the block is rebuilt, the content changes
+// height (measured: 0.113 -> 0.254) and `_needsResize` is set -- and a resize DISPOSES the
+// texture and rebuilds the geometry from the element's measured box. So the questions are what
+// the capture returned, what the element measured at that instant, and what the texture ended up
+// as. Wrapped rather than edited into the panel: this is an instrument, and it comes off with
+// the flag.
+function wrapPaint(name, panel) {
+  if (!panel || panel._ptPaintWrapped || typeof panel._onPaint !== 'function') return;
+  panel._ptPaintWrapped = true;
+  const orig = panel._onPaint.bind(panel);
+  panel._onPaint = function () {
+    if (!PanelTrace.enabled()) return orig();
+    const el = panel._element;
+    const before = {
+      w: el ? el.offsetWidth : null, h: el ? el.offsetHeight : null,
+      resize: !!panel._needsResize, map: !!(panel.mesh && panel.mesh.material.map),
+      mounted: !!panel._hostMounted,
+    };
+    const t0 = performance.now();
+    orig();
+    const tex = panel.mesh && panel.mesh.material.map;
+    const img = tex && tex.image;
+    const g = panel.mesh && panel.mesh.geometry && panel.mesh.geometry.parameters;
+    say(name + ' paint: el ' + before.w + 'x' + before.h
+      + (before.resize ? '  RESIZE' : '') + (before.mounted ? '' : '  UNMOUNTED')
+      + ' -> map ' + (tex ? ((img && img.width) || '?') + 'x' + ((img && img.height) || '?') : 'NONE')
+      + (g ? '  plane ' + (+g.width).toFixed(3) + 'x' + (+g.height).toFixed(3) : '')
+      + '  ' + (performance.now() - t0).toFixed(1) + 'ms');
+  };
+}
+
 PanelTrace.enabled = function () {
   if (typeof window._panelTrace === 'boolean') return window._panelTrace;
   const saved = getOptionsURL().panelTrace;
@@ -362,7 +401,7 @@ PanelTrace.tick = function (scene) {
     ['ToolPicker', scene._toolPickerPanel],
     ['MainMenu', scene._mainMenuPanel],
   ];
-  for (const [name, p] of panels) if (p && p.mesh) wrap(name, p.mesh);
+  for (const [name, p] of panels) if (p && p.mesh) { wrap(name, p.mesh); wrapPaint(name, p); }
   if (!PanelTrace.enabled()) return;
 
   const state = scene._ptState || (scene._ptState = {});
@@ -469,7 +508,9 @@ PanelTrace.tick = function (scene) {
   const probeOn = !!window._panelTraceProbe;
   // The texture's CONTENT, on the same throttle. See inkOf: this is the last way a panel whose
   // every property is correct can still be invisible.
-  if (occ.n % 10 === 0) {
+  {
+    // EVERY FRAME, not every tenth: the window under investigation is one paint interval, 200ms,
+    // and a ten-frame sample can sit either side of it. An 8x8 draw is cheap enough to afford.
     const inks = scene._ptInk || (scene._ptInk = {});
     for (const [name, p] of panels) {
       if (!p || !p.mesh || !p.mesh.visible) continue;
