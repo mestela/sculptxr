@@ -199,7 +199,7 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   const SB = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
   const PICK = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
   check('the VR path asks PosedSymmetry first and falls back to the plane',
-    /var posed = PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane\);\n\s*if \(!posed\) \{\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
+    /var posed = PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane, nrm\);\n\s*if \(!posed\) \{\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
       && /pickingSym\.mirrorFrom\(picking, mesh, ptPlane, nPlane\);/.test(SB),
     'the point path lives in Picking so it and the ray path cannot drift apart');
   // SculptBase must NOT reach the skinning module: PosedSymmetry -> Skinning -> Skeleton ->
@@ -320,6 +320,59 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     PICK.indexOf('if (!from.getMesh()) { this._mesh = null; return false; }')
       < PICK.indexOf('vec3.copy(pt, from.getIntersectionPoint());'),
     'reading first and checking afterwards is the same bug with a longer stack trace');
+}
+
+// --- 8. THE NORMAL TRAVELS WITH THE POINT -------------------------------------------
+//
+// The stroke direction comes from the mirrored normal, and getFrontVertices() culls every
+// vertex behind its tangent plane. So a normal left in posed space does not aim the stroke
+// badly -- it discards the entire mirrored selection and the stroke does nothing, which is a
+// completely different symptom from a mirror that lands in the wrong place, and was one.
+{
+  const jL = joint(), jR = joint();
+  const t = body(jL, jR);
+  Skinning.apply(t.main, t.mesh);
+  // NON-UNIFORM SCALE ON BOTH JOINTS, and that is the whole point of this fixture. A normal
+  // takes the inverse-TRANSPOSE, but under a pure rotation the inverse-transpose and the plain
+  // inverse are the same matrix -- so a rotation-only fixture passes just as happily with the
+  // wrong one, which an injection proved. Scale is where they diverge, and where a wrong
+  // normal would be hardest to see by eye.
+  const mL = new THREE.Matrix4().makeRotationZ(0.9).setPosition(0, 1.5, 0)
+    .multiply(new THREE.Matrix4().makeScale(1, 2.2, 0.6));
+  const mR = new THREE.Matrix4().makeRotationX(-0.6).setPosition(0, -0.5, 7)
+    .multiply(new THREE.Matrix4().makeScale(1.7, 1, 0.5));
+  jL.pose(mL);
+  jR.pose(mR);
+  Skinning.apply(t.main, t.mesh);
+
+  // A normal on the left side, carried to the right. The right joint is rotated about X, so
+  // the correct answer is the mirrored direction turned by that rotation -- which the plain
+  // posed-space mirror cannot produce.
+  const n = [0, 1, 0];
+  const out = [0, 0, 0];
+  PosedSymmetry.mirrorPoint(t.main, t.mesh, at(t.verts, 1), PLANE_PT, PLANE_N, out, n);
+  check('the mirrored normal is a unit vector',
+    Math.abs(Math.hypot(n[0], n[1], n[2]) - 1) < 1e-4, 'len ' + Math.hypot(n[0], n[1], n[2]));
+
+  // What it must equal: mirror the rest-space normal, then apply the FAR joint's rotation.
+  const want = new THREE.Vector3(0, 1, 0)
+    .applyMatrix3(new THREE.Matrix3().getNormalMatrix(mL.clone().invert()))
+    .normalize();
+  want.setX(-want.x);                                   // reflect across x
+  want.applyMatrix3(new THREE.Matrix3().getNormalMatrix(mR)).normalize();
+  check('...and points where the FAR side\'s deformation puts it',
+    Math.hypot(n[0] - want.x, n[1] - want.y, n[2] - want.z) < 1e-4,
+    'got [' + n.map((v) => v.toFixed(3)).join(',') + '] want ['
+      + [want.x, want.y, want.z].map((v) => v.toFixed(3)).join(',') + ']');
+
+  const PICK2 = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
+  const SB2 = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
+  check('the mirror keeps that normal for the caller',
+    /this\._symPosedMirror = posed;/.test(PICK2)
+      && /if \(posed\) vec3\.copy\(this\._symMirrorNormal, nrm\);/.test(PICK2));
+  check('...and the caller stops overwriting it with the posed-space mirror',
+    /if \(pickingSym\._symPosedMirror\) \{\n\s*vec3\.copy\(nSym, pickingSym\._symMirrorNormal\);\n\s*\} else \{/.test(SB2),
+    'the plain mirror is still right at bind pose, so it stays as the else');
 }
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');

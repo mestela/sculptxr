@@ -32,6 +32,7 @@ const PosedSymmetry = {};
 const _psMat = new THREE.Matrix4(), _psInv = new THREE.Matrix4();
 const _psVec = new THREE.Vector3();
 const _psPlane = [0, 0, 0];
+const _psNrm = new THREE.Matrix3();
 
 // Does this mesh need the rest-space route at all? Only a bound mesh that is actually posed:
 // at bind pose every skin matrix is the identity, so the plain plane mirror is already correct
@@ -117,7 +118,19 @@ function restPlaneOrigin(mesh, nPlane, out) {
   return out;
 }
 
-PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
+// `nrm`, when given, is a mesh-local NORMAL at `pt`, mirrored in place alongside the point.
+//
+// It has to make the same journey, and for the same reason. The brush's stroke direction comes
+// from this normal, and downstream getFrontVertices() culls every vertex behind its tangent
+// plane -- so a normal from the wrong space does not merely aim the stroke badly, it throws
+// away the entire mirrored selection and the stroke does nothing at all. That is the difference
+// between "mirrors to the wrong place" and matt's "now nothing gets mirrored".
+//
+// Normals do not transform like points: forward they take (M^-1)^T, so BACKWARD they take
+// M^T -- which is getNormalMatrix of the INVERSE, and getNormalMatrix of the forward matrix on
+// the way out. For a rigid blend both reduce to the rotation; they diverge exactly when a joint
+// carries scale, which is when getting it wrong would be hardest to spot.
+PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm) {
   const level = Skinning.boundLevelOf(mesh);
   if (!level) return null;
   const rest = mesh._skinRest;
@@ -163,6 +176,22 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
   Skinning.blendAt(mesh, mats, b, _psMat);
   _psVec.set(mir[0], mir[1], mir[2]).applyMatrix4(_psMat);
   out[0] = _psVec.x; out[1] = _psVec.y; out[2] = _psVec.z;
+
+  if (nrm) {
+    // posed -> rest: M_a^T, which is the normal matrix of M_a's inverse.
+    Skinning.blendAt(mesh, mats, a, _psMat);
+    _psInv.copy(_psMat).invert();
+    _psNrm.getNormalMatrix(_psInv);
+    _psVec.set(nrm[0], nrm[1], nrm[2]).applyMatrix3(_psNrm).normalize();
+    // reflect the DIRECTION: no plane origin, only the plane's normal
+    const d = 2 * (_psVec.x * nPlane[0] + _psVec.y * nPlane[1] + _psVec.z * nPlane[2]);
+    _psVec.set(_psVec.x - d * nPlane[0], _psVec.y - d * nPlane[1], _psVec.z - d * nPlane[2]);
+    // rest -> posed on the far side: the normal matrix of M_b.
+    Skinning.blendAt(mesh, mats, b, _psMat);
+    _psNrm.getNormalMatrix(_psMat);
+    _psVec.applyMatrix3(_psNrm).normalize();
+    nrm[0] = _psVec.x; nrm[1] = _psVec.y; nrm[2] = _psVec.z;
+  }
 
   // `window._symTrace = true` (or Settings > Trace Posed Symmetry) prints the whole round trip
   // once a second FROM THE DEVICE. Every hop is a point in a named space, so a wrong space
@@ -230,9 +259,9 @@ function mirrorAcross(v, ptPlane, nPlane) {
 let _psR2 = 0;
 PosedSymmetry.setBrushRadius2 = function (r2) { _psR2 = r2 || 0; };
 
-PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane) {
+PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane, nrm) {
   if (!PosedSymmetry.applies(main, mesh)) return false;
-  return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt);
+  return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt, nrm);
 };
 
 // FOR A MIRRORED RAY, which is how the desktop path works: it reflects the whole pick ray and

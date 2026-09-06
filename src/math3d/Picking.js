@@ -219,6 +219,8 @@ class Picking {
     this._rLocal2 = 0.0; // radius of the selection area (local/object space)
     this._rLocal2 = 0.0; // radius of the selection area (local/object space)
     this._rWorld2 = 0.0; // radius of the selection area (world space)
+    this._symPosedMirror = false;          // did the last mirror go through rest space?
+    this._symMirrorNormal = [0.0, 0.0, 0.0]; // and the normal it produced there
     this._eyeDir = [0.0, 0.0, 0.0]; // eye direction
 
     this._xSym = !!xSym;
@@ -916,10 +918,20 @@ class Picking {
     var pt = vec3.create();
     vec3.copy(pt, from.getIntersectionPoint());
     PosedSymmetry.setBrushRadius2(from.getLocalRadius2());
-    var posed = PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane);
+    // The NORMAL travels with the point. Downstream the stroke direction comes from it and
+    // getFrontVertices() culls everything behind its tangent plane, so a normal left in the
+    // wrong space discards the whole mirrored selection rather than merely aiming it badly.
+    var nrm = vec3.create();
+    vec3.copy(nrm, from.getPickedNormal());
+    var posed = PosedSymmetry.mirrorLocal(this._main, mesh, pt, ptPlane, nPlane, nrm);
     if (!posed) {
       Geometry.mirrorPoint(pt, ptPlane, nPlane);
     }
+    // Kept for the caller, which otherwise overwrites the symmetric normal with the plain
+    // posed-space mirror of the main one -- correct at bind pose, and the reason a posed
+    // mirrored stroke vanished.
+    this._symPosedMirror = posed;
+    if (posed) vec3.copy(this._symMirrorNormal, nrm);
     // Says which of the two mirrors produced this point, so "nothing gets mirrored" can be
     // told from "it mirrored somewhere empty". Throttled; only while the trace is on.
     if (window._symTrace) {

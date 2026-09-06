@@ -904,6 +904,25 @@ class SculptBase {
           if (isSculpting && !symMapUsed) {
             pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
           }
+
+          // THE LAST UNMEASURED STEP. Everything upstream can be right -- and the trace now says
+          // it is, with the mirrored point 0.88 from a surface the brush reaches 2.50 into --
+          // and the stroke still does nothing if this set comes back empty. Says which route
+          // filled it, too: the vertex MAP (pose-independent, exact) or the sphere around the
+          // mirrored point.
+          if (window._symTrace) {
+            const _n = performance.now();
+            if (_n - (window._symTraceVertAt || 0) > 1000) {
+              window._symTraceVertAt = _n;
+              const _pv = pickingSym.getPickedVertices();
+              console.log('[sym] mirrored pick: ' + (_pv ? _pv.length : 'null') + ' verts via '
+                + (symMapUsed ? 'VERTEX MAP' : 'sphere')
+                + ' | primary ' + (picking.getPickedVertices() || []).length + ' verts'
+                + ' | isSculpting=' + isSculpting + ' pick1=' + !!pick1
+                + ' r2=' + pickingSym.getLocalRadius2().toFixed(3));
+            }
+          }
+
           pickingSym.computePickedNormal();
 
           // FIX v0.6.44: Normal Consistency Check
@@ -915,8 +934,23 @@ class SculptBase {
 
             // FORCE SYMMETRY: Override Normal with Perfect Mirror
             // This fixes "Drift" by ensuring strokes always converge/diverge exactly as expected
-            vec3.copy(nSym, nMain);
-            Geometry.mirrorPoint(nSym, [0, 0, 0], nPlane);
+            //
+            // ...but the "perfect mirror" is a mirror in POSED space, and on a posed character
+            // the far limb has rotated: the reflection of this normal is not the normal of the
+            // surface the mirrored brush actually landed on. The stroke then aims across that
+            // surface, and getFrontVertices() -- which culls everything behind the tangent
+            // plane of this very normal -- throws the whole mirrored selection away. Nothing
+            // moves. matt: "now nothing gets mirrored", against a mirrored point the trace
+            // showed sitting 0.88 from a surface the brush reaches 2.50 into.
+            //
+            // When the mirror went through rest space the normal came back with it, already in
+            // the right space; use that instead of re-deriving a wrong one.
+            if (pickingSym._symPosedMirror) {
+              vec3.copy(nSym, pickingSym._symMirrorNormal);
+            } else {
+              vec3.copy(nSym, nMain);
+              Geometry.mirrorPoint(nSym, [0, 0, 0], nPlane);
+            }
 
             // We accept pick2 with the forced normal.
             pick2 = pickingSym.getMesh();
