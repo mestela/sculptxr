@@ -227,12 +227,20 @@ Counted 2026-09-07. It is not ~10 designs, which was the first (wrong) reading �
 
 | primitive | sites | where |
 |---|---|---|
-| mirror a **position** | 8 | `intersectionPoint`, `symPos`, `localPos`, Twist's `center` |
-| …the same, applied to a **ray**'s two ends | 6 | Move, Drag, Slide — each a copy of `Picking.intersectionRayMesh`'s own `_xSym` block |
+| mirror a **position** | 8 → 5 | `intersectionPoint`, `symPos`, `localPos`, Twist's `center` |
+| …the same, applied to a **ray**'s two ends | 6 → 4 | Drag, Slide — each a copy of `Picking.intersectionRayMesh`'s own `_xSym` block |
 | mirror a **direction** | 6 | `_dragDirSym` ×2, `nSym` ×2, `symANormal`, Twist's `axisSym` (all pass `[0,0,0]` as the plane origin) |
 | mirror a **rotation** | 2 | `qDeltaSym[1] = -qDeltaSym[1]` in Move and Slide — hand-written, and hardcoded to an X-axis plane |
 
-Only the position primitive is shared so far (`Picking.mirrorLocalPoint`).
+Only the position primitive is shared so far (`Picking.mirrorLocalPoint`). **`Move` is fully
+converted** (2026-09-07) and has no posed-space mirror left — VR pick, both ends of the VR
+drag, the VR sphere fallback, and the desktop drag.
+
+**A ray is not the thing to mirror.** The desktop drag reflected the whole pick ray and used
+where it passed; posed, that aims at where the far limb *would have been*, and the error grows
+with the asymmetry of the pose — "fine at rest pose, wacky in an asymmetrical pose". What
+should travel is the **point the drag is aiming at**, measured from the *near* centre against
+the *unmirrored* ray. The same correction applies to the four remaining ray copies.
 
 **Unifying is not a separate cleanup — it is the remaining fix.** Drag, Slide and Twist are
 *incorrect while posed* until they route through rest space, so "convert by hand now, share

@@ -209,14 +209,20 @@ class Move extends SculptBase {
             } else {
               if (main._xrSession) {
                 // VR: Use Geometric Sphere Pick using symPos
+                // Through the shared mirror, like every other path: rest space when the
+                // character is posed and bound, the plain reflection otherwise. This is the
+                // VR fallback for when the topological snap has nothing to say.
                 const symPos = [0.0, 0.0, 0.0];
                 const ptPlane = mesh.getSymmetryOrigin();
                 const nPlane = mesh.getSymmetryNormal();
                 vec3.copy(symPos, picking.getIntersectionPoint());
-                Geometry.mirrorPoint(symPos, ptPlane, nPlane);
+                pickingSym.mirrorLocalPoint(mesh, symPos, ptPlane, nPlane);
 
                 pickingSym.setIntersectionPoint(symPos);
                 pickingSym.intersectionSphereMeshes([mesh], symPos, picking.getWorldRadius());
+                // A sphere does not know anatomy: where the far side rests against another
+                // part, a large brush takes both. Same prune the other VR path uses.
+                pickingSym.pruneToMirror(mesh);
                 
                 // FORCE fallback if geometric check misses (tip in thin air)
                 if (!pickingSym.getMesh()) {
@@ -481,19 +487,39 @@ class Move extends SculptBase {
     vec3.transformMat4(vFar, vFar, matInverse);
 
     var moveData = useSymmetry ? this._moveDataSym : this._moveData;
+
+    // WHERE THIS DRAG IS AIMING, as a point.
+    //
+    // The symmetric side used to be found by reflecting the pick RAY across the plane and
+    // seeing where that passed. In posed space that is the wrong reflection -- the far limb has
+    // moved, so the mirrored ray aims at where it would have been -- and the error grows with
+    // the asymmetry of the pose. matt, testing on desktop: "if i sculpt at the rest pose its
+    // fine, but if i sculpt in an assymetrical pose, the result is wacky."
+    //
+    // So the POINT travels instead, through the same mirror the VR path uses: rest space when
+    // the character is posed and bound, the plain reflection otherwise. Measured from the NEAR
+    // centre against the UNMIRRORED ray, because what is being mirrored is where your hand is
+    // pointing, not the ray it happens to be pointing along.
+    //
+    // This was one of the six copies of "mirror a ray" counted in docs/posed_sculpting.md.
+    var target = vec3.create();
     if (useSymmetry) {
       var ptPlane = mesh.getSymmetryOrigin();
       var nPlane = mesh.getSymmetryNormal();
-      Geometry.mirrorPoint(vNear, ptPlane, nPlane);
-      Geometry.mirrorPoint(vFar, ptPlane, nPlane);
+      vec3.copy(target, Geometry.vertexOnLine(this._moveData.center, vNear, vFar));
+      picking.mirrorLocalPoint(mesh, target, ptPlane, nPlane);
+    } else {
+      vec3.copy(target, Geometry.vertexOnLine(moveData.center, vNear, vFar));
     }
 
     if (this._negative) {
-      var len = vec3.dist(Geometry.vertexOnLine(moveData.center, vNear, vFar), moveData.center);
+      // The normal stays the symmetric pick's OWN, which was computed from the surface it
+      // actually landed on -- so it is already the far side's normal and needs no mirroring.
+      var len = vec3.dist(target, moveData.center);
       vec3.normalize(moveData.dir, picking.computePickedNormal());
       vec3.scale(moveData.dir, moveData.dir, mouseX < this._lastMouseX ? -len : len);
     } else {
-      vec3.sub(moveData.dir, Geometry.vertexOnLine(moveData.center, vNear, vFar), moveData.center);
+      vec3.sub(moveData.dir, target, moveData.center);
     }
     vec3.scale(moveData.dir, moveData.dir, this._intensity);
 

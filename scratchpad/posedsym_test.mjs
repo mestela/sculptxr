@@ -217,7 +217,22 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   // symmetry. if i move up the leg to a section where its still in symmetry, it works fine."
   {
     const MV = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
-    check('Move mirrors its VR pick through the shared function',
+    // THE DESKTOP DRAG. It reflected the pick RAY across the plane and used where that passed;
+  // posed, that aims at where the far limb would have been. matt: "if i sculpt at the rest pose
+  // its fine, but if i sculpt in an assymetrical pose, the result is wacky."
+  check('the desktop drag mirrors the target POINT, not the ray',
+    /vec3\.copy\(target, Geometry\.vertexOnLine\(this\._moveData\.center, vNear, vFar\)\);\n\s*picking\.mirrorLocalPoint\(mesh, target, ptPlane, nPlane\);/.test(MV)
+      && !/Geometry\.mirrorPoint\(vNear, ptPlane, nPlane\);/.test(MV),
+    'what is being mirrored is where your hand is pointing, not the ray it points along');
+  check('...measured from the NEAR centre against the UNMIRRORED ray',
+    /Geometry\.vertexOnLine\(this\._moveData\.center, vNear, vFar\)/.test(MV),
+    'measuring from the symmetric centre against a mirrored ray is the old behaviour wearing '
+      + 'a new shape');
+  check('Move has no posed-space mirrors left at all',
+    !/Geometry\.mirrorPoint\(/.test(MV),
+    'the file is the first one fully converted; the inventory below counts the rest');
+
+  check('Move mirrors its VR pick through the shared function',
       /pickingSym\.mirrorLocalPoint\(mesh, localPos, ptPlane, nPlane\);/.test(MV));
     check('...and BOTH ends of the drag, not just the start',
       /pickingSym\.mirrorLocalPoint\(mesh, symStartLocal, ptPlane, nPlane\);\n\s*pickingSym\.mirrorLocalPoint\(mesh, symCurrLocal, ptPlane, nPlane\);/.test(MV),
@@ -576,9 +591,9 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     if (all.length) detail.push(f + ':' + (all.length - d) + 'p/' + d + 'd');
   }
   check('the remaining posed-space mirrors are the ones we know about',
-    points === 14 && dirs === 6,
+    points === 11 && dirs === 6,
     'got ' + points + ' point + ' + dirs + ' direction mirrors (' + detail.join(' ')
-      + '). Expected 14p/6d (Move:3p Drag:4p/1d Slide:5p/1d Twist:1p/1d SculptBase:1p/3d). Falling is progress and the number should be updated; rising '
+      + '). Expected 11p/6d (Move:0p Drag:4p/1d Slide:5p/1d Twist:1p/1d SculptBase:1p/3d) -- Move fully converted 2026-09-07. Falling is progress and the number should be updated; rising '
       + 'means a new copy was written instead of calling Picking.mirrorLocalPoint');
 }
 
