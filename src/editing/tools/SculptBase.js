@@ -822,6 +822,18 @@ class SculptBase {
                 pickingSym._rLocal2 = picking._rLocal2;
 
                 snapped = true;
+                // Which path took the mirror. Without this, "nothing gets mirrored" cannot be
+                // told from "the mirror ran and landed somewhere empty" -- two different bugs
+                // with nothing in common. Throttled, and only while the trace is on.
+                if (window._symTrace) {
+                  const _n = performance.now();
+                  if (_n - (window._symTraceSnapAt || 0) > 1000) {
+                    window._symTraceSnapAt = _n;
+                    console.log('[sym] TOPO SNAP won (exact vertex pairing); posed='
+                      + !!mesh._skinIsPosed + ' mapPoseSafe='
+                      + (symData && symData.mapIsPoseSafe ? symData.mapIsPoseSafe() : 'n/a'));
+                  }
+                }
               }
             }
           }

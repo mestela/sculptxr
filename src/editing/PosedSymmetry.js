@@ -81,10 +81,10 @@ function nearest(arr, nbV, px, py, pz) {
 // stroke -- a cache here would be a stale plane, which is the bug again with extra steps.
 //
 // The NORMAL needs no such treatment: it is a fixed local axis, and posing does not turn it.
-function restPlaneOrigin(mesh, nPlane, out) {
+const _psBounds = [0, 0, 0, 0, 0, 0];
+function restBounds(mesh) {
   const rest = mesh._skinRest;
   const nbV = (rest.length / 3) | 0;
-  if (!nbV) return null;
   let xmin = Infinity, ymin = Infinity, zmin = Infinity;
   let xmax = -Infinity, ymax = -Infinity, zmax = -Infinity;
   for (let i = 0; i < nbV; i++) {
@@ -94,6 +94,17 @@ function restPlaneOrigin(mesh, nPlane, out) {
     if (y < ymin) ymin = y; if (y > ymax) ymax = y;
     if (z < zmin) zmin = z; if (z > zmax) zmax = z;
   }
+  _psBounds[0] = xmin; _psBounds[1] = ymin; _psBounds[2] = zmin;
+  _psBounds[3] = xmax; _psBounds[4] = ymax; _psBounds[5] = zmax;
+  return _psBounds;
+}
+
+function restPlaneOrigin(mesh, nPlane, out) {
+  const rest = mesh._skinRest;
+  const nbV = (rest.length / 3) | 0;
+  if (!nbV) return null;
+  const bb = restBounds(mesh);
+  const xmin = bb[0], ymin = bb[1], zmin = bb[2], xmax = bb[3], ymax = bb[4], zmax = bb[5];
   const cx = (xmin + xmax) * 0.5, cy = (ymin + ymax) * 0.5, cz = (zmin + zmax) * 0.5;
   // The same shape as getSymmetryOrigin: centre, shifted along the normal by the user's offset
   // scaled by the radius -- both measured in REST space so the whole plane is one space.
@@ -145,6 +156,25 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
   Skinning.blendAt(mesh, mats, b, _psMat);
   _psVec.set(mir[0], mir[1], mir[2]).applyMatrix4(_psMat);
   out[0] = _psVec.x; out[1] = _psVec.y; out[2] = _psVec.z;
+
+  // `window._symTrace = true` (or Settings > Trace Posed Symmetry) prints the whole round trip
+  // once a second FROM THE DEVICE. Every hop is a point in a named space, so a wrong space
+  // shows up as a number in the wrong range rather than as a stroke that goes missing.
+  if (window._symTrace) {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - (PosedSymmetry._traceAt || 0) > 1000) {
+      PosedSymmetry._traceAt = now;
+      const f = (v) => '[' + v[0].toFixed(2) + ',' + v[1].toFixed(2) + ',' + v[2].toFixed(2) + ']';
+      const rb = restBounds(mesh);
+      console.log('[sym] hit ' + f(pt)
+        + ' | restPlane ' + f(_psPlane) + ' posedPlane ' + f(ptPlane)
+        + ' | mirRest ' + f(mir) + ' -> out ' + f(out)
+        + ' | restBounds x ' + rb[0].toFixed(2) + '..' + rb[3].toFixed(2)
+        + ' y ' + rb[1].toFixed(2) + '..' + rb[4].toFixed(2)
+        + ' | nearest posed#' + a + ' rest#' + b + ' of ' + nbV
+        + ' | normal ' + f(nPlane));
+    }
+  }
   return out;
 };
 

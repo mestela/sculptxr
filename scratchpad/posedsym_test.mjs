@@ -199,7 +199,7 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   const SB = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
   const PICK = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
   check('the VR path asks PosedSymmetry first and falls back to the plane',
-    /if \(!PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane\)\) \{\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
+    /var posed = PosedSymmetry\.mirrorLocal\(this\._main, mesh, pt, ptPlane, nPlane\);\n\s*if \(!posed\) \{\n\s*Geometry\.mirrorPoint\(pt, ptPlane, nPlane\);/.test(PICK)
       && /pickingSym\.mirrorFrom\(picking, mesh, ptPlane, nPlane\);/.test(SB),
     'the point path lives in Picking so it and the ray path cannot drift apart');
   // SculptBase must NOT reach the skinning module: PosedSymmetry -> Skinning -> Skeleton ->

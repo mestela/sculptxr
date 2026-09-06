@@ -1119,6 +1119,11 @@ const DEV_TOGGLES = [
   // existed the split between "the deformation" and "rebuilding the display level" was a guess.
   { id: 'mm-skin-trace',  label: 'Trace Skin Frame Cost',
     get: () => !!window._skinTrace,     set: (on) => { window._skinTrace = !!on; } },
+  // The whole posed-symmetry round trip, once a second: every hop as a point in a named space,
+  // so a disagreement between spaces reads as a number in the wrong range rather than as a
+  // mirrored stroke that quietly goes missing.
+  { id: 'mm-sym-trace',   label: 'Trace Posed Symmetry',
+    get: () => !!window._symTrace,      set: (on) => { window._symTrace = !!on; } },
 ];
 
 export function buildDevToggles(render, renderAction) {
