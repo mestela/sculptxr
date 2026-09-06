@@ -538,7 +538,7 @@ class Mesh {
     this.initRenderTriangles();
   }
 
-  updateGeometry(iFaces, iVerts) {
+  updateGeometry(iFaces, iVerts, skipOctree) {
     // Layer sculpting intercept — two cases:
     //  A) A blendshape layer is active: keep its delta live.
     // Both are skipped during applyBlendshapes() recomposition (_applyingBS flag).
@@ -609,7 +609,18 @@ class Mesh {
     this.updateVerticesNormal(iVerts);
     
 
-    if (iFaces === undefined) {
+    // THE OCTREE IS FOR PICKING, NOT FOR DRAWING, so a refresh that nobody is going to pick
+    // against can skip it. That distinction did not matter while this only ran on a sculpt
+    // stroke; it matters enormously now that the skin pass calls it on EVERY FRAME a joint
+    // moves. Measured on a character bound at the base cage and displayed two levels up:
+    // 49,666 vertices, 29ms a frame, of which the deformation was 2.5ms and the refresh 23ms
+    // -- a full octree rebuild, per frame, for a query nothing was making.
+    // matt: "the glug is more in terms of posing the character with pins more than sculpting."
+    //
+    // Marked stale instead, and rebuilt by the first query that needs it (see ensureOctree).
+    if (skipOctree) {
+      this._meshData._octreeStale = true;
+    } else if (iFaces === undefined) {
       this.computeOctree(); 
     } else {
       this.updateOctree(iFaces);
@@ -1964,9 +1975,20 @@ class Mesh {
   // OCTREE
   /////////
 
+  // Rebuild an octree that a pose refresh deliberately skipped. Called from the QUERIES rather
+  // than from getOctree(), because getOctree() is also read per frame for nothing more than a
+  // loose bound (Gizmo's scale heuristic) -- forcing a rebuild there would hand back every
+  // millisecond this saves. A stale loose bound is harmless; a stale ANSWER is not.
+  ensureOctree() {
+    if (!this._meshData._octreeStale) return;
+    this._meshData._octreeStale = false;
+    this.computeOctree();
+  }
+
   /** Return faces intersected by a ray */
   intersectRay(vNear, eyeDir, collectLeaves) {
     var nbFaces = this.getNbFaces();
+    this.ensureOctree();
     // Safe guard: Octree might not be initialized
     if (!this._meshData._octree) return [];
     var collectFaces = new Uint32Array(Utils.getMemory(nbFaces * 4), 0, nbFaces);
@@ -1976,6 +1998,7 @@ class Mesh {
   /** Return faces inside a sphere */
   intersectSphere(vert, radiusSquared, collectLeaves) {
     var nbFaces = this.getNbFaces();
+    this.ensureOctree();
     // Safe guard: Octree might not be initialized
     if (!this._meshData._octree) return [];
     var collectFaces = new Uint32Array(Utils.getMemory(nbFaces * 4), 0, nbFaces);
@@ -1985,6 +2008,10 @@ class Mesh {
 
   /** Update Octree */
   updateOctree(iFaces) {
+    // An incremental update moves faces between cells of the tree it already has. If a pose
+    // refresh skipped the rebuild, that tree describes an older pose, and shuffling today's
+    // faces around inside it leaves a structure that matches neither.
+    this.ensureOctree();
     // Incremental update for standard sculpt strokes: move the modified faces between
     // octree cells and refresh loose AABBs so the sphere query stays accurate mid-stroke.
     // (Previously this called octree.build(this, iFaces), which is a no-op on an already
@@ -2027,6 +2054,7 @@ class Mesh {
 
   /** Compute the octree */
   computeOctree() {
+    this._meshData._octreeStale = false;   // however we got here, the tree is current again
     var abRoot = this.computeAabb();
     var xmin = abRoot[0];
     var ymin = abRoot[1];

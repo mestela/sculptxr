@@ -643,7 +643,8 @@ check('...and it reads the live flag',
 {
   const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
   check('...and the trace breaks the frame into the four phases',
-    /lbs %s mush %s synth %s refresh %s/.test(SKIN)
+    /'ms total \| lbs ' \+ ms\(_t0, _t1\)/.test(SKIN)
+      && /' mush ' \+ ms\(_t1, _t2\) \+ ' synth ' \+ ms\(_t2, _t3\) \+ ' refresh ' \+ ms\(_t3, now\)/.test(SKIN)
       && /const _synth = synthesiseUp\(mesh\);/.test(SKIN),
     'a single total cannot tell "the deformation is slow" from "rebuilding the display level '
       + 'is slow", which are different problems with different fixes');

@@ -110,8 +110,8 @@ class Multimesh extends Mesh {
     return this.getCurrentMesh();
   }
 
-  updateResolution() {
-    this.updateGeometry();
+  updateResolution(skipOctree) {
+    this.updateGeometry(undefined, undefined, skipOctree);
     this.updateDuplicateColorsAndMaterials();
     this.updateBuffers();
     this.updateWireframeBuffer();

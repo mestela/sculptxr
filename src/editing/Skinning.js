@@ -579,7 +579,11 @@ function applyMush(mesh, level, out, nbV) {
     const now = performance.now();
     if (now - (mesh._skinTraceAt || 0) > 1000) {
       mesh._skinTraceAt = now;
-      console.log('[skin] mush %d verts x %d iters: %sms', nbV, iters, (now - t0).toFixed(2));
+      // ONE STRING, no format specifiers: the console here is read through the app's own log
+      // wrapper, which passes the arguments straight through without substituting -- so a
+      // printf-style call arrives as its literal format string followed by the numbers.
+      console.log('[skin] mush ' + nbV + ' verts x ' + iters + ' iters: '
+        + (now - t0).toFixed(2) + 'ms');
     }
   }
   return true;
@@ -1580,10 +1584,12 @@ Skinning.apply = function (main, mesh) {
   // level would hold new vertices that never reach the GPU.
   const _synth = synthesiseUp(mesh);
   const _t3 = window._skinTrace ? performance.now() : 0;
+  // SKIP THE OCTREE. A posed frame is not a picked frame: the tree is rebuilt by the first
+  // query that needs it, which is the next brush stroke or ray, not the next frame of a drag.
   if (_synth) {
-    mesh.updateResolution();
+    mesh.updateResolution(true);
   } else {
-    mesh.updateGeometry();
+    mesh.updateGeometry(undefined, undefined, true);
     if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
   }
 
@@ -1593,11 +1599,11 @@ Skinning.apply = function (main, mesh) {
       mesh._skinFrameTraceAt = now;
       const lvl = mesh._meshes ? (mesh._sel | 0) : 0;
       const top = mesh._meshes ? mesh._meshes[lvl].getNbVertices() : nbV;
-      console.log('[skin] %sms total | lbs %s mush %s synth %s refresh %s '
-        + '| bound %d verts @L%d, showing %d verts @L%d',
-        (now - _t0).toFixed(2), (_t1 - _t0).toFixed(2), (_t2 - _t1).toFixed(2),
-        (_t3 - _t2).toFixed(2), (now - _t3).toFixed(2),
-        nbV, mesh._meshes ? mesh._meshes.indexOf(level) : 0, top, lvl);
+      const ms = (a, b) => (b - a).toFixed(2);
+      console.log('[skin] ' + ms(_t0, now) + 'ms total | lbs ' + ms(_t0, _t1)
+        + ' mush ' + ms(_t1, _t2) + ' synth ' + ms(_t2, _t3) + ' refresh ' + ms(_t3, now)
+        + ' | bound ' + nbV + ' verts @L' + (mesh._meshes ? mesh._meshes.indexOf(level) : 0)
+        + ', showing ' + top + ' verts @L' + lvl);
     }
   }
   return true;
