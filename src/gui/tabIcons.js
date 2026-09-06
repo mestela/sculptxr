@@ -8,6 +8,7 @@ export const TAB_ICONS = {
   rendering: _fa(''),
   topology:  _fa(''),
   sculpting: _fa(''),
+  properties: _fa(''),   // fa-sliders
   animation: _fa(''),
   blendshapes: _fa(''), // fa-layer-group
   timeline:  _fa(''), // fa-bezier-curve — same as graph editor

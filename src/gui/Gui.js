@@ -11,6 +11,7 @@ import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import {
   buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting,
+  buildSectionHTML_properties,
   injectMMCSS,
   wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
   updateOutlinerVisIcons,
@@ -894,7 +895,12 @@ class Gui {
 
   _buildDesktopSculpting(panelEl) {
     const main = this._main;
-    panelEl.innerHTML = buildSectionHTML_sculpting(main);
+    // BOTH HALVES, because the desktop sidebar is one scrolling column and always has been.
+    // The VR panel splits them into two pinnable pages, but the reason for that split is a VR
+    // and mobile problem -- scrolling there is a sustained precision task with a 6-DOF input,
+    // and on a desktop it is a mouse wheel. Splitting the sidebar too would be change for its
+    // own sake; dropping the second half would silently lose every property control.
+    panelEl.innerHTML = buildSectionHTML_sculpting(main) + buildSectionHTML_properties(main);
     const rebuild = () => this._buildDesktopSculpting(panelEl);
     wireSectionSculpting(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);

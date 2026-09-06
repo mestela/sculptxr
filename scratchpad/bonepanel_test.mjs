@@ -132,6 +132,60 @@ check('every command button is present on a flat screen',
     && display.includes('id="bone-trails"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 
+// ── TOOLS AND PROPERTIES ARE TWO PAGES ────────────────────────────────────────────────────
+//
+// The tool grids are a wall of buttons sitting ABOVE everything that describes the tool you
+// just picked, so every radius change and every toggle was a scroll past the whole wall -- and
+// the two are used at completely different rates. matt: "the huge amount of buttons at the top
+// for all the tools for both sculpting and lowpoly gets in the way of all the tool related
+// buttons and state at the bottom."
+{
+  const TORN = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/TornOffPanel.js', 'utf8');
+  const GUI  = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/Gui.js', 'utf8');
+  const ICONS = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/tabIcons.js', 'utf8');
+
+  check('one builder produces both pages',
+    /function buildSculptingHTML\(main, part\)/.test(MAIN_SRC)
+      && /if \(part === 'tools'\) \{/.test(MAIN_SRC)
+      && /export function buildSectionHTML_sculpting\(main\) \{ return buildSculptingHTML\(main, 'tools'\); \}/.test(MAIN_SRC)
+      && /export function buildSectionHTML_properties\(main\) \{ return buildSculptingHTML\(main, 'props'\); \}/.test(MAIN_SRC),
+    'both pages read the same tool state, so two builders would be two things to keep in step');
+  check('...and the tool grids are on exactly one of them',
+    (MAIN_SRC.match(/mm-choice-grid cols-3">\$\{sculptBtns\}/g) || []).length === 1,
+    'the wall of buttons is the thing being moved out of the way');
+
+  check('Properties is a real section, not a special case',
+    /'scene','rendering','topology','sculpting','properties'/.test(MAIN_SRC)
+      && /case 'properties': html = buildSectionHTML_properties\(main\); break;/.test(MAIN_SRC)
+      && /properties: 'Properties'/.test(MAIN_SRC)
+      && /properties: _fa\(/.test(ICONS),
+    'a section that is not in every registry is one that cannot be torn off, reopened after a '
+      + 'tear-off, or reached from the tab strip');
+  check('...so it gets the section header pin like the others',
+    /mm-section-pin-btn/.test(MAIN_SRC),
+    'the pin is what makes the split pay: two pages you can float independently');
+  check('...and it can be torn off and rebuilt',
+    /case 'properties': return buildSectionHTML_properties\(main\);/.test(TORN)
+      && /case 'sculpting':\n\s*case 'properties':/.test(TORN),
+    'a torn-off page that cannot rebuild itself is a dead panel');
+
+  check('both pages wire through ONE function',
+    /section === 'sculpting' \|\| section === 'properties'/.test(MAIN_SRC)
+      && (MAIN_SRC.match(/wireSectionSculpting\(el, main, fullRepaint, lightRepaint, lightRepaint\);/g) || []).length === 1,
+    'the ids are disjoint per page and querySelector returns null for the absent ones, so one '
+      + 'pass is correct for either -- and there is no second copy to fall behind');
+
+  check('the active tab is chosen by NAME, not by index',
+    /s === DEFAULT_SECTION \? ' active' : ''/.test(MAIN_SRC)
+      && !/i === 3 \? ' active'/.test(MAIN_SRC),
+    'adding a tab to a positional list silently opens a different section');
+
+  check('the desktop sidebar still shows both halves',
+    /buildSectionHTML_sculpting\(main\) \+ buildSectionHTML_properties\(main\)/.test(GUI),
+    'the split solves a VR and mobile scrolling problem; on a desktop it is a mouse wheel, and '
+      + 'rendering only the first half would silently lose every property control');
+}
+
 // MAKE SKIN BINDS. The skin is generated FROM the capsules and the bind measures those same
 // capsules, so an unbound skin is a state with no use: the mesh sits there ignoring the rig
 // until you find a second button. matt: "make a skin, immediately weight it to the bones (we

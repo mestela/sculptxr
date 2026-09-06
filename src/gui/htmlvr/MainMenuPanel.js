@@ -60,6 +60,10 @@ import {
   refreshBlendshapesDOM,
 } from './AnimationControlPanel.js';
 
+// The section the panel opens on, and the one the tab strip marks active. Named rather than
+// positional so the two cannot disagree.
+const DEFAULT_SECTION = 'sculpting';
+
 // ── Dimensions ───────────────────────────────────────────────────────────────
 export const MM_W  = 480;   // total DOM width  (px)
 const MM_TABS_W    = 50;    // left tab-strip width
@@ -932,8 +936,10 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        ${['scene','rendering','topology','sculpting'].map((s, i) =>
-          `<button class="mm-tab-btn${i === 3 ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
+        ${['scene','rendering','topology','sculpting','properties'].map((s) =>
+          // Active by NAME, not by index: the tab that opens is the default section, and
+          // hardcoding its position means adding a tab silently opens a different one.
+          `<button class="mm-tab-btn${s === DEFAULT_SECTION ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
         ).join('\n        ')}
         <button class="mm-tab-btn mm-tl-btn" id="mm-bs-btn" title="Blendshapes">${TAB_ICONS.blendshapes}</button>
         <button class="mm-tab-btn" data-section="animation" title="Animation">${TAB_ICONS.animation}</button>
@@ -1772,7 +1778,18 @@ export function buildSectionHTML_rendering(main) {
 // Helper: encode a 0-1 rgb vec3 component as two hex digits.
 const _toHex2 = v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
 
-export function buildSectionHTML_sculpting(main) {
+// TOOLS AND PROPERTIES ARE TWO PAGES, not one long scroll.
+//
+// The tool grids are a wall of buttons and they sit ABOVE everything that describes the tool
+// you just picked -- so every radius change, every toggle, every symmetry button was a scroll
+// past the whole wall. They are also used at completely different rates: you pick a tool
+// occasionally and adjust it constantly. matt: "the huge amount of buttons at the top for all
+// the tools for both sculpting and lowpoly gets in the way of all the tool related buttons and
+// state at the bottom."
+//
+// One builder, because both pages are computed from the same tool state and splitting the
+// computation would be two things to keep in step. `part` picks which half comes back.
+function buildSculptingHTML(main, part) {
   const sm  = main.getSculptManager?.() ?? main._sculptManager;
   const cur = sm?.getToolIndex?.() ?? -1;
   const tool = sm?.getCurrentTool?.();
@@ -1788,6 +1805,15 @@ export function buildSectionHTML_sculpting(main) {
   const meshBtns = MESH_TOOLS.map(t =>
     `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
+
+  if (part === 'tools') {
+    return `
+    <div class="mm-section-title">Sculpt</div>
+    <div class="mm-choice-grid cols-3">${sculptBtns}</div>
+    <div class="mm-section-title">Mesh Edit</div>
+    <div class="mm-choice-grid cols-3">${meshBtns}</div>
+  `;
+  }
 
   // ── Brush settings (radius + intensity) ─────────────────────────
   let brushHTML = '';
@@ -2007,10 +2033,6 @@ export function buildSectionHTML_sculpting(main) {
   }
 
   return `
-    <div class="mm-section-title">Sculpt</div>
-    <div class="mm-choice-grid cols-3">${sculptBtns}</div>
-    <div class="mm-section-title">Mesh Edit</div>
-    <div class="mm-choice-grid cols-3">${meshBtns}</div>
     ${brushHTML}
     ${cur === Enums.Tools.BONE_DRAW ? buildBoneSectionHTML(main, 'mm') : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
@@ -2036,6 +2058,9 @@ export function buildSectionHTML_sculpting(main) {
     </button>
   `;
 }
+
+export function buildSectionHTML_sculpting(main) { return buildSculptingHTML(main, 'tools'); }
+export function buildSectionHTML_properties(main) { return buildSculptingHTML(main, 'props'); }
 
 export function buildSectionHTML_animation(main) {
   // The rig-animation block comes with the section now; appending it here as well was what
@@ -2069,7 +2094,7 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     this._main           = main;
     this._activeMenu    = null;     // null | 'files'|'history'|'reference'|'settings'|'about'
-    this._activeSection = 'sculpting'; // 'scene'|'topology'|'rendering'|'sculpting'
+    this._activeSection = DEFAULT_SECTION; // scene|topology|rendering|sculpting|properties|animation
     this._lastContentKey = '';      // avoids redundant rebuilds
     this._startHidden   = true;
     this._pinned        = false;
@@ -2086,7 +2111,7 @@ export class MainMenuPanel extends HTMLVRPanel {
     this._tornOffSections.add(sectionId);
     // If the torn-off section is currently active, switch to the first available one.
     if (this._activeSection === sectionId) {
-      const sections = ['scene', 'rendering', 'topology', 'sculpting', 'animation'];
+      const sections = ['scene', 'rendering', 'topology', 'sculpting', 'properties', 'animation'];
       const next = sections.find(s => !this._tornOffSections.has(s));
       if (next) this._setSection(next);
     }
@@ -2261,6 +2286,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'topology':  html = buildSectionHTML_topology(main);  break;
         case 'rendering': html = buildSectionHTML_rendering(main); break;
         case 'sculpting': html = buildSectionHTML_sculpting(main); break;
+        case 'properties': html = buildSectionHTML_properties(main); break;
         case 'animation': html = buildSectionHTML_animation(main); break;
       }
       // 'Tools', not 'Sculpting'. The section header sits directly above the body's own
@@ -2268,7 +2294,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       // gain — matt: "there is a unnecessary extra header, 'SCULPTING'". The ROW stays because
       // it carries the float-panel pin button; only the word changes. 'Tools' also covers what
       // the section actually holds, which is Sculpt AND Mesh Edit AND Paint.
-      const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Tools', animation: 'Animation' };
+      const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Tools', properties: 'Properties', animation: 'Animation' };
       const label = SECTION_LABELS[this._activeSection] ?? this._activeSection;
       const pinSVG = ICON_PIN;
       html = `<div class="mm-section-header"><span class="mm-section-header-title">${label}</span><button class="mm-section-pin-btn" id="mm-section-pin-btn" title="Float panel">${pinSVG}</button></div>` + html;
@@ -2569,7 +2595,10 @@ export class MainMenuPanel extends HTMLVRPanel {
       wireSectionTopology(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'rendering') {
       wireSectionRendering(el, main, fullRepaint, lightRepaint, lightRepaint);
-    } else if (section === 'sculpting') {
+    } else if (section === 'sculpting' || section === 'properties') {
+      // BOTH PAGES, one wiring function. The two halves have disjoint ids and querySelector
+      // returns null for the ones that are not on this page, so the single wiring pass is
+      // correct for either -- and there is no second copy to fall behind the first.
       wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'animation') {
       this._wireSectionAnimation(el, lightRepaint);

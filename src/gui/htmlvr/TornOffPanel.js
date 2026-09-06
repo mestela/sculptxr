@@ -6,6 +6,7 @@ import {
   buildSectionHTML_rendering,
   buildSectionHTML_topology,
   buildSectionHTML_sculpting,
+  buildSectionHTML_properties,
   buildSectionHTML_animation,
   wireSectionScene,
   wireSectionRendering,
@@ -119,6 +120,7 @@ export class TornOffPanel extends HTMLVRPanel {
         wireSectionTopology(el, main, fullRepaint, lightRepaint, lightRepaint);
         break;
       case 'sculpting':
+      case 'properties':
         wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
         break;
       case 'animation': {
@@ -162,6 +164,7 @@ function _buildSectionHTML(sectionId, main) {
     case 'rendering': return buildSectionHTML_rendering(main);
     case 'topology':  return buildSectionHTML_topology(main);
     case 'sculpting': return buildSectionHTML_sculpting(main);
+    case 'properties': return buildSectionHTML_properties(main);
     case 'animation': return buildSectionHTML_animation();
     default:          return '';
   }
