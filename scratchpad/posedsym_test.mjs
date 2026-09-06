@@ -65,9 +65,13 @@ function joint() {
 const HALF = [
   [-2, 0, 0], [-3, 1, 0], [-3, -1, 0], [-4, 0, 0.5],
 ];
+// DELIBERATELY NOT CENTRED ON THE ORIGIN. The rest shape is symmetric about x = 5, so the
+// mirror plane has to be MEASURED from the rest geometry -- a fixture centred at zero passes
+// just as happily with the centre hardcoded, which an injection proved.
+const CX = 5;
 const REST = [];
-for (const v of HALF) REST.push(v[0], v[1], v[2]);
-for (const v of HALF) REST.push(-v[0], v[1], v[2]);
+for (const v of HALF) REST.push(CX + v[0], v[1], v[2]);
+for (const v of HALF) REST.push(CX - v[0], v[1], v[2]);
 const NB = 8, PAIR = 4;
 
 function body(jL, jR) {
@@ -93,7 +97,7 @@ function body(jL, jR) {
   return { mesh: mesh, main: { getMeshes: () => [jL, jR], render() {} }, verts: verts };
 }
 
-const PLANE_PT = [0, 0, 0], PLANE_N = [1, 0, 0];   // mirror across x = 0
+const PLANE_PT = [CX, 0, 0], PLANE_N = [1, 0, 0];   // the rest shape mirrors about x = CX
 const at = (a, i) => [a[i * 3], a[i * 3 + 1], a[i * 3 + 2]];
 const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
 
@@ -212,6 +216,58 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
   check('the mirror itself is written once',
     (SB.match(/mirrorAcross|posed -> rest/g) || []).length === 0,
     'a second copy of the rest-space hop is how two platforms drift apart');
+}
+
+// --- 6. THE PLANE THE CALLER HANDS IN IS A POSED-SPACE PLANE ------------------------
+//
+// mesh.getSymmetryOrigin() is the mesh's `_center`: the midpoint of the LOCAL BOUND, recomputed
+// from the geometry as it is NOW. Posed, that is not where the rest shape's mirror plane is,
+// and reflecting rest-space points across it shifts every result sideways.
+//
+// This is the bug that shipped in v3.30.47, and every test above would have passed with it in
+// place -- they all hand in [0,0,0], which happens to BE the correct rest plane for this
+// fixture. So this one hands in the plane the real caller would: the midpoint of the posed
+// bounding box. matt: "i grab the outside of the left hand and pull it away from the body
+// centerline ... it mirrors to the INSIDE of the right hand"; and, decisively, "if i do it at
+// the restpose, it works correctly" -- the two planes coincide only at rest.
+{
+  const jL = joint(), jR = joint();
+  const t = body(jL, jR);
+  Skinning.apply(t.main, t.mesh);
+  // Asymmetric, and both sides carried well off the origin, so the posed bounding box has no
+  // relationship to the rest shape's plane of symmetry.
+  jL.pose(new THREE.Matrix4().makeRotationZ(0.5).setPosition(3, 1.5, 0));
+  jR.pose(new THREE.Matrix4().makeRotationX(-0.4).setPosition(9, -0.5, 2));
+  Skinning.apply(t.main, t.mesh);
+
+  // Exactly what Mesh.getSymmetryOrigin() would report: the centre of the CURRENT bound.
+  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < NB; i++) {
+    for (let k = 0; k < 3; k++) {
+      const v = t.verts[i * 3 + k];
+      if (v < lo[k]) lo[k] = v;
+      if (v > hi[k]) hi[k] = v;
+    }
+  }
+  const posedPlane = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+  check('the fixture actually displaces the plane', Math.abs(posedPlane[0]) > 1,
+    'posed centre x = ' + posedPlane[0].toFixed(3) + ', so a posed-space plane is the same as '
+      + 'the rest one and this test proves nothing');
+
+  let worst = 0;
+  for (let i = 0; i < PAIR; i++) {
+    const out = [0, 0, 0];
+    const got = PosedSymmetry.mirrorPoint(t.main, t.mesh, at(t.verts, i),
+      posedPlane, PLANE_N, out);
+    worst = Math.max(worst, got ? dist(got, at(t.verts, i + PAIR)) : Infinity);
+  }
+  check('the mirror ignores it and uses the REST plane',
+    worst < 1e-4, 'worst ' + worst.toFixed(5));
+
+  // And the rest plane is derived, not assumed: this fixture rests symmetric about x = 0.
+  const rp = PosedSymmetry._restPlaneOrigin(t.mesh, PLANE_N, [0, 0, 0]);
+  check('...which it MEASURES from the rest shape rather than assuming the origin',
+    Math.abs(rp[0] - CX) < 1e-6, 'got ' + rp[0].toFixed(5) + ', want ' + CX);
 }
 
 // --- 5. THE TOPOLOGICAL MAP MUST NOT BE TRUSTED WHEN IT WAS BUILT POSED -------------

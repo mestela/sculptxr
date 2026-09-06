@@ -31,6 +31,7 @@ const PosedSymmetry = {};
 // and a silently shared vector at worst.
 const _psMat = new THREE.Matrix4(), _psInv = new THREE.Matrix4();
 const _psVec = new THREE.Vector3();
+const _psPlane = [0, 0, 0];
 
 // Does this mesh need the rest-space route at all? Only a bound mesh that is actually posed:
 // at bind pose every skin matrix is the identity, so the plain plane mirror is already correct
@@ -58,6 +59,53 @@ function nearest(arr, nbV, px, py, pz) {
 // Mirror `pt` (mesh-local, posed) into its anatomical opposite, also mesh-local and posed.
 // Writes into `out` and returns it, or returns null when the round trip cannot be made -- in
 // which case the caller must fall back to the plain plane mirror rather than guess.
+// THE PLANE HAS TO BE IN REST SPACE TOO.
+//
+// This is the trap the whole feature nearly died in. `mesh.getSymmetryOrigin()` is the mesh's
+// `_center`, which is the midpoint of the LOCAL BOUND -- recomputed from the geometry as it is
+// now, which is to say posed. Mirroring rest-space points across a posed-space plane shifts
+// every result sideways by the offset between the two centres, and on a character that is
+// easily the thickness of a hand:
+//
+//   matt: "i grab the outside of the left hand and pull it away from the body centerline,
+//   creating a bump. it mirrors to the INSIDE of the right hand ... causing a divot."
+//
+// Note what that symptom is NOT. The direction was mirrored correctly -- both strokes went away
+// from the centreline -- so the reflection was right and only its ORIGIN was wrong. And at bind
+// pose it was invisible, because there the two centres coincide: "if i do it at the restpose, it
+// works correctly". A bug that only appears posed, in the feature that only runs posed.
+//
+// The rest centre is measured from `_skinRest`, which is what the rest shape IS. Recomputed per
+// call rather than cached: it is one pass over the bound level, the same order as the two
+// nearest-vertex searches either side of it, and `_skinRest` moves under every committed
+// stroke -- a cache here would be a stale plane, which is the bug again with extra steps.
+//
+// The NORMAL needs no such treatment: it is a fixed local axis, and posing does not turn it.
+function restPlaneOrigin(mesh, nPlane, out) {
+  const rest = mesh._skinRest;
+  const nbV = (rest.length / 3) | 0;
+  if (!nbV) return null;
+  let xmin = Infinity, ymin = Infinity, zmin = Infinity;
+  let xmax = -Infinity, ymax = -Infinity, zmax = -Infinity;
+  for (let i = 0; i < nbV; i++) {
+    const i3 = i * 3;
+    const x = rest[i3], y = rest[i3 + 1], z = rest[i3 + 2];
+    if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+    if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+    if (z < zmin) zmin = z; if (z > zmax) zmax = z;
+  }
+  const cx = (xmin + xmax) * 0.5, cy = (ymin + ymax) * 0.5, cz = (zmin + zmax) * 0.5;
+  // The same shape as getSymmetryOrigin: centre, shifted along the normal by the user's offset
+  // scaled by the radius -- both measured in REST space so the whole plane is one space.
+  const dx = xmax - xmin, dy = ymax - ymin, dz = zmax - zmin;
+  const radius = 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const off = (mesh.getSymmetryOffset ? mesh.getSymmetryOffset() : 0) * radius;
+  out[0] = cx + nPlane[0] * off;
+  out[1] = cy + nPlane[1] * off;
+  out[2] = cz + nPlane[2] * off;
+  return out;
+}
+
 PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
   const level = Skinning.boundLevelOf(mesh);
   if (!level) return null;
@@ -83,7 +131,11 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out) {
   // REST SPACE IS THE SYMMETRIC SPACE. That is the whole idea: the plane means what it says
   // here, and nowhere else once the character has moved.
   const mir = [_psVec.x, _psVec.y, _psVec.z];
-  mirrorAcross(mir, ptPlane, nPlane);
+  // `ptPlane` is the caller's POSED-space plane and is deliberately not used here -- see
+  // restPlaneOrigin. It stays in the signature because the caller still needs it for the plain
+  // mirror it falls back to when this returns null.
+  if (!restPlaneOrigin(mesh, nPlane, _psPlane)) return null;
+  mirrorAcross(mir, _psPlane, nPlane);
 
   // AND BACK, through the deformation on the OTHER side -- a different matrix, which is exactly
   // why mirroring in posed space cannot be patched up. The nearest vertex is measured against
@@ -142,6 +194,7 @@ PosedSymmetry.rayOffset = function (main, mesh, ptPlane, nPlane, out) {
   return out;
 };
 
+PosedSymmetry._restPlaneOrigin = restPlaneOrigin;
 PosedSymmetry._nearest = nearest;
 PosedSymmetry._mirrorAcross = mirrorAcross;
 
