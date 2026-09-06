@@ -55,11 +55,7 @@ PosedSymmetry.strokeActive = function (main) {
   return true;   // desktop: every call is a stroke
 };
 
-// A short BURST per stroke rather than a global throttle. A stroke lasts about a second and a
-// throttled trace fires once in that window if it is lucky -- and it was not: every sample in
-// two runs landed on a hover frame. This prints the first few frames of each stroke and then
-// stays quiet until the next one, so the log is short AND about the thing being measured.
-const TRACE_BURST = 5;
+// The burst counting now lives in SculptBase, next to the flag it depends on.
 PosedSymmetry.traceStroke = function (main) {
   return !!window._symTrace && PosedSymmetry.strokeActive(main);
 };
