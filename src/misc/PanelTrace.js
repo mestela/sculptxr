@@ -296,7 +296,9 @@ PanelTrace.dump = function (scene) {
 // So: sample the bitmap. An 8x8 draw of it into an offscreen canvas, mean alpha over the 64
 // pixels, every tenth frame -- enough to catch a blank that lasts long enough to see, cheap
 // enough to leave on while hunting.
+const _inkScope = {};   // one 8x8 canvas for the whole module; a fresh one per call is waste
 function inkOf(mesh, scene) {
+  scene = scene || _inkScope;
   const tex = mesh.material && mesh.material.map;
   const img = tex && tex.image;
   if (!img) return null;
@@ -347,7 +349,9 @@ function wrapPaint(name, panel) {
       mounted: !!panel._hostMounted,
     };
     const t0 = performance.now();
+    const aBefore = inkOf(panel.mesh);
     orig();
+    const aAfter = inkOf(panel.mesh);
     const tex = panel.mesh && panel.mesh.material.map;
     const img = tex && tex.image;
     const g = panel.mesh && panel.mesh.geometry && panel.mesh.geometry.parameters;
@@ -355,6 +359,7 @@ function wrapPaint(name, panel) {
       + (before.resize ? '  RESIZE' : '') + (before.mounted ? '' : '  UNMOUNTED')
       + ' -> map ' + (tex ? ((img && img.width) || '?') + 'x' + ((img && img.height) || '?') : 'NONE')
       + (g ? '  plane ' + (+g.width).toFixed(3) + 'x' + (+g.height).toFixed(3) : '')
+      + '  alpha ' + (aBefore ? aBefore.a : '-') + '->' + (aAfter ? aAfter.a : '-')
       + '  ' + (performance.now() - t0).toFixed(1) + 'ms');
   };
 }
@@ -513,7 +518,10 @@ PanelTrace.tick = function (scene) {
     // and a ten-frame sample can sit either side of it. An 8x8 draw is cheap enough to afford.
     const inks = scene._ptInk || (scene._ptInk = {});
     for (const [name, p] of panels) {
-      if (!p || !p.mesh || !p.mesh.visible) continue;
+      // HIDDEN ONES TOO. The panel is already empty at the instant it is shown, so whatever
+      // empties it happens while nobody is looking -- and sampling only the visible ones means
+      // the transition is never timestamped, just its result.
+      if (!p || !p.mesh) continue;
       const ink = inkOf(p.mesh, scene);
       if (!ink) continue;
       p._ptInk = ink.a;                      // carried into the tape, so the dump shows it too
