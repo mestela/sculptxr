@@ -200,6 +200,34 @@ at 49,666 displayed vertices: **29.3 ms → 11.3 ms**, all of it outside the def
 
 ---
 
+## Mirroring is three primitives, copy-pasted ~22 times
+
+Counted 2026-09-07. It is not ~10 designs, which was the first (wrong) reading — it is
+**three operations**, repeated:
+
+| primitive | sites | where |
+|---|---|---|
+| mirror a **position** | 8 | `intersectionPoint`, `symPos`, `localPos`, Twist's `center` |
+| …the same, applied to a **ray**'s two ends | 6 | Move, Drag, Slide — each a copy of `Picking.intersectionRayMesh`'s own `_xSym` block |
+| mirror a **direction** | 6 | `_dragDirSym` ×2, `nSym` ×2, `symANormal`, Twist's `axisSym` (all pass `[0,0,0]` as the plane origin) |
+| mirror a **rotation** | 2 | `qDeltaSym[1] = -qDeltaSym[1]` in Move and Slide — hand-written, and hardcoded to an X-axis plane |
+
+Only the position primitive is shared so far (`Picking.mirrorLocalPoint`).
+
+**Unifying is not a separate cleanup — it is the remaining fix.** Drag, Slide and Twist are
+*incorrect while posed* until they route through rest space, so "convert by hand now, share
+later" is two passes over the same lines, and the by-hand pass is exactly where a fix once
+landed in a copy nobody used.
+
+### Two layers, same primitive shapes
+
+Do not conflate them:
+
+- **Rig space** — mirroring joints about the rig's symmetry plane. No skinning. The right
+  answer is conjugation: `P M P` (`Skeleton.mirrorModelMatrix`).
+- **Mesh space, posed** — mirroring a brush on a deformed surface. Needs the rest-space
+  round trip (`PosedSymmetry`).
+
 ## Open
 
 - **Large brush inverts the stroke on the mirror side.** Reported 2026-09-07, not
@@ -216,3 +244,15 @@ at 49,666 displayed vertices: **29.3 ms → 11.3 ms**, all of it outside the def
 - **`Drag`, `Slide` and `Twist` still mirror in posed space.** Convert them the way `Move`
   was converted: `pickingSym.mirrorLocalPoint(...)`.
 - Sculpting **below** the bound level is refused rather than synthesised up.
+- **The three ray-mirror copies** duplicate `Picking.intersectionRayMesh`'s `_xSym` block
+  and should just call it.
+
+## Fixed since
+
+- **FK/Tweak twin mirrored position but not rotation** (v3.30.64). Not an oversight — a
+  documented deferral: *"a mirrored rotation is not the same rotation, and guessing which
+  reflection was meant is how a symmetric rig comes back asymmetric."* True when written,
+  and stale by the time `Skeleton.mirrorPose` learned to conjugate the full transform by
+  the reflection plane. The answer was a few hundred lines away being used by a menu
+  command while the live drag still did half the job — **and a harness rule was pinning the
+  old behaviour**, so the bug had a test defending it. matt found it by using the tool.

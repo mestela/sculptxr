@@ -76,6 +76,7 @@ const LIVE_WEIGHT_MS = 80;
 
 const _tip = new THREE.Vector3();
 const _mirror = new THREE.Vector3();
+const _mTwin = new THREE.Matrix4();
 const _pos = new THREE.Vector3();
 // Separate scratch for the plane maths: `pos` handed to _place() may itself be one of the
 // module scratch vectors, so the snapped result must never write through it.
@@ -1064,11 +1065,23 @@ class BoneDrawTool extends SculptBase {
     Skeleton.moveJoint(this._main, g.joint, at, false);
     if (comp) Skeleton.endCompensate(comp);
     if (g.twin && g.plane) {
-      // The twin is deliberately NOT twisted: a mirrored rotation is not the same rotation, and
-      // guessing which reflection was meant is how a symmetric rig comes back asymmetric. The
-      // mirror follows position only, which is what it has always done.
-      Skeleton.mirrorPoint(at, g.plane, _mirror);
-      Skeleton.moveJoint(this._main, g.twin, _mirror, this._compensate);
+      // THE TWIN MIRRORS THE WHOLE TRANSFORM, rotation included.
+      //
+      // It used to follow POSITION only, on the grounds that "a mirrored rotation is not the
+      // same rotation, and guessing which reflection was meant is how a symmetric rig comes
+      // back asymmetric". The first half is true and the second stopped being true: the Mirror
+      // Pose command has always conjugated the full transform by the reflection plane, which is
+      // the one right answer and not a guess. Only the live drag was still doing half the job.
+      // matt: "tweak fk for bones mirror position but not rotation."
+      //
+      // Compensated like the driven side, and for the same reason: writing a joint moves its
+      // children with it, and a twist that drags the twin's children a frame at a time
+      // accumulates into exactly the runaway this compensation exists to prevent.
+      const tcomp = compensating ? Skeleton.beginCompensate(this._main, g.twin) : null;
+      Skeleton.mirrorModelMatrix(g.joint, g.plane, _mTwin);
+      g.twin.setModelSpaceMatrix(_mTwin.elements);
+      Skeleton.syncThree(g.twin);
+      if (tcomp) Skeleton.endCompensate(tcomp);
     }
     this._refresh();
   }

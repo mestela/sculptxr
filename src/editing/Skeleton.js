@@ -3252,6 +3252,21 @@ Skeleton.jointSide = function (joint, plane) {
 // sparse: keyed hips and active effectors are controls, while unkeyed knees and elbows are
 // solver output and should be rebuilt rather than baked. With no set this remains the static
 // pose command and mirrors the complete evaluated rig.
+// THE MIRRORED TRANSFORM OF A JOINT, in model space: P M P, where P is the reflection through
+// the symmetry plane. Position, rotation and scale all at once -- a reflection conjugated onto
+// a transform is still a rigid transform, and it is the ONE right answer rather than a guess.
+//
+// Extracted from mirrorPose so the live drag can use it too. The FK/Tweak drag mirrored only
+// POSITION to the twin, with a comment explaining that "a mirrored rotation is not the same
+// rotation, and guessing which reflection was meant is how a symmetric rig comes back
+// asymmetric" -- true, but by then mirrorPose already knew which reflection was meant, a few
+// hundred lines away. matt: "tweak fk for bones mirror position but not rotation."
+Skeleton.mirrorModelMatrix = function (joint, plane, out) {
+  reflectionMatrix(plane, _mMirror);
+  _mSrc.fromArray(joint.getModelSpaceMatrix());
+  return out.multiplyMatrices(_mMirror, _mSrc).multiply(_mMirror);
+};
+
 Skeleton.mirrorPose = function (main, side, controls) {
   const plane = Skeleton.symmetryPlane(main);
   if (!plane) return { ok: false, why: 'symmetry is off — turn it on to mirror a pose' };
@@ -3276,10 +3291,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
   // parent that has already moved would change what its children reflect to, and a swap reads
   // both sides of every pair.
   const target = new Map();
-  const mirrorOf = (j) => {
-    _mSrc.fromArray(j.getModelSpaceMatrix());
-    return new THREE.Matrix4().multiplyMatrices(_mMirror, _mSrc).multiply(_mMirror);
-  };
+  const mirrorOf = (j) => Skeleton.mirrorModelMatrix(j, plane, new THREE.Matrix4());
 
   // Which joint drove which, kept because the PINS have to be mirrored from the same source —
   // and a pin's anchor is not derivable from the posed joint. A pin can be unreachable (the

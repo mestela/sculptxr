@@ -374,10 +374,31 @@ const chain = (main, meshes, n) => {
   check('...carried into the parent frame, like pose mode',
     (BD.match(/_qDelta\.premultiply\(_qParent\.clone\(\)\.invert\(\)\)\.multiply\(_qParent\)/g) || []).length === 2,
     'a rotation on a joint deep in a posed chain is otherwise measured in the wrong frame');
-  check('the MIRROR twin follows position only',
-    /The twin is deliberately NOT twisted/.test(BD),
-    'a mirrored rotation is not the same rotation; guessing the reflection is how a symmetric '
-      + 'rig comes back asymmetric');
+  // THIS RULE USED TO PIN THE OPPOSITE. It asserted the twin followed POSITION ONLY, quoting
+  // the reasoning in the code: "a mirrored rotation is not the same rotation, and guessing
+  // which reflection was meant is how a symmetric rig comes back asymmetric." The first half
+  // is still true. The second stopped being true the moment Mirror Pose learned to conjugate
+  // the full transform by the reflection plane -- after which the reflection was not a guess,
+  // it was sitting a few hundred lines away being used by a menu command. The rule outlived
+  // its reason and became a rule against fixing the bug. matt found it: "tweak fk for bones
+  // mirror position but not rotation."
+  const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  check('the MIRROR twin mirrors the whole transform, rotation included',
+    /Skeleton\.mirrorModelMatrix\(g\.joint, g\.plane, _mTwin\);/.test(BD)
+      && /g\.twin\.setModelSpaceMatrix\(_mTwin\.elements\);/.test(BD)
+      && !/The twin is deliberately NOT twisted/.test(BD),
+    'position-only leaves a twisted joint and its mirror disagreeing, which is the asymmetry '
+      + 'the mirror exists to prevent');
+  check('...through the same reflection Mirror Pose uses, not a second one',
+    /Skeleton\.mirrorModelMatrix = function/.test(SK)
+      && /const mirrorOf = \(j\) => Skeleton\.mirrorModelMatrix\(j, plane, new THREE\.Matrix4\(\)\);/.test(SK),
+    'two implementations of "the mirrored transform of a joint" is how the live drag and the '
+      + 'menu command would drift apart');
+  check('...and compensates the twin\'s children like the driven side',
+    /const tcomp = compensating \? Skeleton\.beginCompensate\(this\._main, g\.twin\) : null;/.test(BD)
+      && /if \(tcomp\) Skeleton\.endCompensate\(tcomp\);/.test(BD),
+    'writing a joint moves its children, and a twist that drags them a frame at a time is the '
+      + 'runaway this compensation exists to prevent');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
