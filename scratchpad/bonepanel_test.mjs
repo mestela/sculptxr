@@ -254,6 +254,32 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
         + 'reach');
   }
 
+  // A PINNED SECTION'S TAB IS DIMMED. Its tab is still there and still switchable, but its
+  // contents are elsewhere -- so without a mark the strip says "pinned" while the tab looks
+  // exactly as it did when it held the controls. matt: "in the sidebar their icon should be
+  // dimmed if they've been pinned."
+  {
+    const DFP3 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
+    check('a pinned section dims its sidebar tab',
+      /_updatePinnedTabStates\(\) \{/.test(GUI)
+        && (GUI.match(/this\._updatePinnedTabStates\(\);/g) || []).length >= 2,
+      'checked at the CALL SITES, twice bitten');
+    check('...by styling the ICON, not the tab host',
+      /wa-tab\.tab-pinned > span \{ opacity/.test(DFP3)
+        && !/^wa-tab\.tab-pinned \{ opacity/m.test(DFP3),
+      'Web Awesome\'s <wa-tab> refuses opacity on itself -- an inline important rule on the '
+        + 'host still computes to 1, measured in the browser');
+    check('...and stays clickable',
+      !/wa-tab\.tab-pinned[^}]*pointer-events: none/.test(DFP3),
+      'the tab still opens the placeholder that brings the section back; taking the click away '
+        + 'would leave it unreachable');
+    check('a tab is born dimmed when its section was pinned last session',
+      /if \(\(getOptionsURL\(\)\.desktopPins \|\| \{\}\)\[panelName\]\) tab\.classList\.add\('tab-pinned'\);/.test(GUI),
+      'the restore runs while the sidebar is still being built and the tab strip is not in the '
+        + 'document yet -- marking after it finds nothing, and a frame later still did not. '
+        + 'Measured: chips appeared and both tabs stayed bright.');
+  }
+
   check('the pinned strip exists on BOTH platforms',
     /_refreshPinnedStrip\(\) \{/.test(GUI) && /dfp-strip/.test(DFP)
       && /this\._updateTornStrip\(\);/.test(MAIN_SRC) && /mm-torn-strip/.test(MAIN_SRC),

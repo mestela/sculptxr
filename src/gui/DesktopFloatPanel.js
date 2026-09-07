@@ -141,6 +141,16 @@ export function injectFloatCSS() {
   background: rgba(30,30,46,0.92); border: 1px solid #45475a; border-radius: 5px;
   color: #cdd6f4; cursor: pointer; }
 .dfp-chip:hover { background: #45475a; border-color: #7f849c; }
+/* A pinned section's tab: dimmed, because its contents are somewhere else -- but still
+   clickable, since what it shows is the placeholder that brings the section back. Matches
+   .mm-tab-btn.torn in the VR panel, minus the pointer-events lock. */
+/* The ICON, not the host. Web Awesome's <wa-tab> refuses opacity on itself -- an inline
+   an inline important opacity on the host still computes to 1 -- so the dimming goes on the span
+   we put inside it, which is ordinary light DOM. That is also the more faithful thing to dim:
+   what should read as "elsewhere" is the icon, not the tab's hit area. */
+wa-tab.tab-pinned > span { opacity: 0.3; }
+wa-tab.tab-pinned:hover > span { opacity: 0.65; }
+
 .dfp-away { padding: 12px; color: #a6adc8; display: flex; flex-direction: column;
   gap: 10px; align-items: flex-start; }
 `;

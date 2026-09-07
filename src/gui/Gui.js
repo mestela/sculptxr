@@ -407,6 +407,12 @@ class Gui {
       tab.setAttribute('slot', 'nav');
       tab.setAttribute('panel', panelName);
       tab.setAttribute('title', tooltipText);
+      // ALREADY PINNED FROM LAST SESSION? Marked here rather than after the restore, because
+      // the restore runs while the sidebar is still being built and the strip is not in the
+      // document yet -- marking then finds nothing, and a frame later it still did not. The
+      // saved state IS available at this point, so the tab can be born dimmed and
+      // _updatePinnedTabStates only has to handle changes made during the session.
+      if ((getOptionsURL().desktopPins || {})[panelName]) tab.classList.add('tab-pinned');
       const span = document.createElement('span');
       span.innerHTML = TAB_SVGS[panelName] ?? '';
       tab.appendChild(span);
@@ -1015,6 +1021,7 @@ class Gui {
     this._floatPanels.set(sectionId, panel);
     this._refreshDesktopSection(sectionId);
     this._refreshPinnedStrip();
+    this._updatePinnedTabStates();
     this._savePinnedSections();
   }
 
@@ -1025,6 +1032,7 @@ class Gui {
     this._floatPanels.delete(sectionId);
     this._refreshDesktopSection(sectionId);
     this._refreshPinnedStrip();
+    this._updatePinnedTabStates();
     this._savePinnedSections();
   }
 
@@ -1062,6 +1070,9 @@ class Gui {
       const y = Math.min(Math.max(0, at?.y ?? 90), Math.max(0, window.innerHeight - 40));
       this.floatSection(id, { x, y });
     }
+    // No tab marking here: createTab reads the same saved state and the tabs are born dimmed.
+    // Marking after the restore was tried and does not work -- the strip is not in the document
+    // yet, and still is not a frame later.
   }
 
   _refreshDesktopSection(sectionId) {
@@ -1078,6 +1089,24 @@ class Gui {
       sculpting: () => this._buildDesktopSculpting(el),
       properties: () => this._buildDesktopProperties(el),
     })[sectionId]?.();
+  }
+
+  // A PINNED SECTION'S TAB IS DIMMED.
+  //
+  // Its tab is still there and still switchable, but its contents are somewhere else -- so
+  // without a mark the strip says "Properties is pinned" while the tab looks exactly as it did
+  // when it held the controls. Dimmed, it reads as "this lives elsewhere now", which is what
+  // the VR panel already does to a torn-off tab (.mm-tab-btn.torn). matt: "in the sidebar their
+  // icon should be dimmed if they've been pinned."
+  //
+  // Dimmed, NOT disabled: the tab still opens, and what it shows is the placeholder with the
+  // button that brings the section back. Taking the click away would leave the placeholder
+  // unreachable.
+  _updatePinnedTabStates() {
+    document.querySelectorAll('wa-tab[panel]').forEach((tab) => {
+      const on = !!this._floatPanels?.has(tab.getAttribute('panel'));
+      tab.classList.toggle('tab-pinned', on);
+    });
   }
 
   // WHAT IS PINNED, TOP LEFT.
