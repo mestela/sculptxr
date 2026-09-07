@@ -196,11 +196,86 @@ function _wrapRequestPaint(canvas) {
     if (!force && now - _lastPaintTs < PAINT_MIN_MS) return; // dropped — _paintScheduled untouched
     _lastPaintTs = now;
     _paintScheduled = true; // set ONLY when a paint is genuinely queued (not pre-emptively)
+    _ppRequested();
     orig();
   };
 }
 
-function _onPaintEvent() {
+// ── PANEL COST INSTRUMENT ────────────────────────────────────────────────────────────────
+//
+// THE EXISTING FRAME BUCKET CANNOT SEE THIS WORK, and that is not a small caveat -- it is why
+// "the menus are not the cost" has been concluded twice from honest measurements.
+//
+// Scene.js times `panel-paint` around drainRAF(). But the polyfill's paint callback is an ASYNC
+// function that awaits Promise.all(dirty.map(rasterise)), so drainRAF() returns at the FIRST
+// AWAIT. What it measures is the synchronous prefix -- the clone and the serialise. The rest,
+// which the prod-CSS trace already showed to be the expensive half (set src, recalculate style,
+// image decode of a ~480KB data URL PER PANEL), resolves later in the microtask queue, outside
+// every mark. It is real main-thread time and it shows up as frame gap, never as our work.
+//
+// So this measures the SPAN: from the moment a paint is requested to the paint event, alongside
+// the count of elements actually rasterised, which panel asked, and who made it dirty. Off by
+// default; one line a second when on.
+const _pp = {
+  paints: 0, els: 0, span: 0, worst: 0, worstEls: 0,
+  dirty: Object.create(null), causes: Object.create(null),
+  rebuilt: Object.create(null), skipped: Object.create(null),
+  startedAt: 0, at: 0, seq: 0,
+};
+export function panelName(p) {
+  if (!p) return 'panel';
+  return p._sectionId ? 'torn:' + p._sectionId : (p.constructor && p.constructor.name) || 'panel';
+}
+const _bump = (bag, k) => { bag[k] = (bag[k] || 0) + 1; };
+
+// WHO dirtied it, not just how often. A tally of panels says which panel is being repainted; it
+// does not say what is doing the repainting, which is the only part anyone can act on. Sampled
+// one frame in eight because building a stack is not free, and a cause that matters at 5 paints
+// a second will still be top of the list at one in eight.
+export function notePanelDirty(panel) {
+  if (!window._panelPerf) return;
+  _bump(_pp.dirty, panelName(panel));
+  if ((_pp.seq++ & 7) !== 0) return;
+  const lines = (new Error().stack || '').split('\n').slice(2);
+  const at = lines.find((l) => !/install\.js|HTMLVRPanel\.js/.test(l));
+  if (at) _bump(_pp.causes, at.trim().replace(/^at\s+/, '').replace(/\s*\(.*\)$/, '')
+    .replace(/https?:\/\/[^\s)]*\//, '').slice(0, 48));
+}
+export function notePanelRebuild(panel, changed) {
+  if (!window._panelPerf) return;
+  _bump(changed ? _pp.rebuilt : _pp.skipped, panelName(panel));
+}
+function _ppRequested() { if (window._panelPerf && !_pp.startedAt) _pp.startedAt = performance.now(); }
+function _ppPainted(count) {
+  if (!window._panelPerf) return;
+  const now = performance.now();
+  const span = _pp.startedAt ? now - _pp.startedAt : 0;
+  _pp.startedAt = 0;
+  _pp.paints++; _pp.els += count; _pp.span += span;
+  if (span > _pp.worst) { _pp.worst = span; _pp.worstEls = count; }
+  if (!_pp.at) { _pp.at = now; return; }
+  if (now - _pp.at < 1000) return;
+  const mounted = [];
+  for (const p of _panels) if (p._hostMounted) mounted.push(panelName(p));
+  const top = (bag, n) => Object.entries(bag).sort((a, b) => b[1] - a[1]).slice(0, n)
+    .map(([k, v]) => k + ' ' + v).join(', ') || 'none';
+  console.log('[panelPerf] mounted ' + mounted.length + ' (' + (mounted.join(', ') || 'none') + ')'
+    + ' | ' + _pp.paints + ' paints/s, ' + _pp.els + ' elements ('
+    + (_pp.els / Math.max(1, _pp.paints)).toFixed(1) + '/paint)'
+    + ' | rasterise ' + _pp.span.toFixed(0) + 'ms/s total, '
+    + (_pp.span / Math.max(1, _pp.paints)).toFixed(1) + 'ms/paint, worst '
+    + _pp.worst.toFixed(1) + 'ms (' + _pp.worstEls + ' els)');
+  console.log('[panelPerf]   dirtied: ' + top(_pp.dirty, 6));
+  console.log('[panelPerf]   caused by: ' + top(_pp.causes, 4) + '   (sampled 1 in 8)');
+  console.log('[panelPerf]   torn rebuilds: ' + top(_pp.rebuilt, 4)
+    + ' | skipped as unchanged: ' + top(_pp.skipped, 4));
+  _pp.paints = 0; _pp.els = 0; _pp.span = 0; _pp.worst = 0; _pp.worstEls = 0; _pp.at = now;
+  _pp.dirty = Object.create(null); _pp.causes = Object.create(null);
+  _pp.rebuilt = Object.create(null); _pp.skipped = Object.create(null);
+}
+
+function _onPaintEvent(e) {
+  _ppPainted(e && e.changedElements ? e.changedElements.length : 0);
   _paintScheduled = false;
   if (!_firstPaintFired) {
     _firstPaintFired = true;
@@ -269,6 +344,7 @@ export function requestPaintScoped(panel) {
   // Deliberately NOT setting _paintScheduled: that flag means "a queued paint covers every
   // panel", which a scoped paint does not. Leaving it clear costs at most one extra full paint
   // in the same drain; setting it would silently swallow one that was needed.
+  _ppRequested();
   panel._element.setAttribute('data-rx-paint', String(_scopeSeq = (_scopeSeq + 1) & 0xffff));
   return true;
 }

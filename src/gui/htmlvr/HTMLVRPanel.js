@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintScoped, requestPaintForced, markAllPanelsDirty } from './install.js';
+import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintScoped, requestPaintForced, markAllPanelsDirty, notePanelDirty } from './install.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 
 // ── Menu color grade (brightness / saturation) ──────────────────────────────
@@ -494,6 +494,7 @@ export class HTMLVRPanel {
   }
 
   markDirty() {
+    notePanelDirty(this);
     this._dirty = true;
     // A repaint usually means the markup was rebuilt, and the element the highlight is sized
     // to may no longer exist. Drop it rather than leave a quad over a gap.

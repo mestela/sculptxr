@@ -1166,6 +1166,11 @@ const DEV_TOGGLES = [
   // matt: "performance is still noticably slower with torn off panels and trying to animate a
   // rig" -- and tearing panels off is exactly what makes the two prices diverge, so the switch
   // is the A/B: pin two panels, pose a rig, flip it.
+  // The frame profiler cannot see panel rasterisation: the polyfill's paint callback awaits the
+  // image decode, so Scene's `panel-paint` bucket stops at the first await and the decode lands
+  // in the frame gap instead of in our work. This measures the span and names the cause.
+  { id: 'mm-panel-perf', label: 'Trace Panel Cost',
+    get: () => !!window._panelPerf,     set: (on) => { window._panelPerf = !!on; } },
   { id: 'mm-scoped-paint', label: 'Scoped Panel Repaint',
     get: () => window._panelScopedPaint !== false,
     set: (on) => { window._panelScopedPaint = !!on; } },

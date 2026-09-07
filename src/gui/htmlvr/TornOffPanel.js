@@ -1,4 +1,5 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { notePanelRebuild } from './install.js';
 import { ICON_DOCK } from '../tabIcons.js';
 import {
   MM_W, injectMMCSS,
@@ -139,6 +140,7 @@ export class TornOffPanel extends HTMLVRPanel {
     // string work, while what it avoids is an innerHTML swap, a re-wire, and a full clone +
     // serialise + CSS inline + image decode of the panel.
     const html = _buildSectionHTML(this._sectionId, main);
+    notePanelRebuild(this, immediate || html !== this._lastHTML);
     if (!immediate && html === this._lastHTML) return;
     this._lastHTML = html;
 

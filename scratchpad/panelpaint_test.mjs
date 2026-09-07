@@ -87,5 +87,56 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'the toggle does not reach the code it is supposed to bisect');
 }
 
+// ── THE FRAME PROFILER CANNOT SEE PANEL RASTERISATION ─────────────────────────────────────
+//
+// Scene.js times `panel-paint` around drainRAF(). The polyfill's paint callback is an ASYNC
+// function that awaits Promise.all(dirty.map(rasterise)), so drainRAF() returns at the FIRST
+// AWAIT: the bucket holds the clone and the serialise, and the image decode -- which the
+// prod-CSS trace already identified as the expensive half -- resolves later, outside every
+// mark, landing in the frame gap instead of in "our work". Measured on the dev server, the
+// span was 37.9ms/paint against 15.4ms of synchronous drain: the bucket sees under half.
+//
+// This is not a detail. It is how "the menus are not the cost" was concluded twice from
+// measurements that were honest about the wrong interval. So the instrument must time the SPAN,
+// request to paint event, and it must be able to say WHO dirtied the panel.
+{
+  check('the panel instrument times the span, not the drain',
+    /function _ppRequested\(\)/.test(INSTALL) && /function _ppPainted\(/.test(INSTALL),
+    'no span timing, so the async decode stays invisible');
+
+  // Both entries into a queued paint have to open the span or the average is quietly wrong.
+  const wrapper = (INSTALL.match(/canvas\.requestPaint = function[\s\S]*?\n  \};/) || [''])[0];
+  const scoped  = (INSTALL.match(/export function requestPaintScoped[\s\S]*?\n}/) || [''])[0];
+  check('...opened by the whole-canvas path', /_ppRequested\(\)/.test(wrapper),
+    'a rate-limited full paint is timed from zero');
+  check('...and by the scoped path', /_ppRequested\(\)/.test(scoped),
+    'scoped paints report a span of 0 and flatter the average');
+
+  check('...and closed by the paint event, which carries the element count',
+    /function _onPaintEvent\(e\) \{\s*\n\s*_ppPainted\(e && e\.changedElements/.test(INSTALL),
+    'the span never closes, or closes without knowing how many panels were rasterised');
+
+  check('markDirty is what gets tallied',
+    /markDirty\(\) \{\s*\n\s*notePanelDirty\(this\);/.test(PANEL),
+    'the tally is somewhere else, so it counts something other than dirtying');
+
+  check('...and the cause is sampled, not built every call',
+    /\(_pp\.seq\+\+ & 7\) !== 0\) return;/.test(INSTALL),
+    'a stack per markDirty makes the instrument the cost it is measuring');
+
+  check('a torn rebuild is counted separately from a skip',
+    /notePanelRebuild\(this, immediate \|\| html !== this\._lastHTML\)/.test(TORN),
+    'cannot tell a working content guard from a broken one');
+
+  check('Trace Panel Cost is in the settings menu',
+    /id: 'mm-panel-perf'[\s\S]{0,160}?_panelPerf/.test(MM),
+    'console-only, which by the standing rule means it does not exist');
+
+  // An instrument that is on by default is a cost everyone pays for a question nobody asked.
+  check('...and off until asked for',
+    !/window\._panelPerf\s*=\s*true/.test(INSTALL) && !/window\._panelPerf\s*=\s*true/.test(MM),
+    'the tracer ships on');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
