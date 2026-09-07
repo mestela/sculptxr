@@ -732,13 +732,27 @@ check('...with the particle parked, not merely blended past',
 // properties, they're not displayed. i have to click the physics button again to turn it off,
 // then turn it on again", and his own diagnosis: "are you reading the state of the selected bone
 // in order to know if you show the physics properties or not?"
-// The `_mpNoRebuild` term is a BISECTION SWITCH for the vanishing wrist panel, off by default:
-// with it on nothing rebuilds this block, so nothing disposes the panel's texture or moves the
-// shared host layout. It must not change the ordinary path, which is what this still checks.
+// This rule used to REQUIRE the `_mpNoRebuild` term -- a bisection switch for the vanishing
+// wrist panel, off by default. It answered its question in v3.30.39 and then stayed, both in
+// the code and in the VR settings menu, where its entire effect is "the wrist panel's tool
+// controls never update again". matt hit exactly that: "i pin the tools, select the bone tool,
+// the parameter pane that is still on my wrist isn't updating." A debugging switch that
+// outlives its investigation is indistinguishable from a bug -- and a rule that PINS one keeps
+// it alive.
 check('the wrist panel rebuilds when the bone selection changes',
   /const extrasKey = idx \+ '\|' \+ selKey;/.test(MINI)
-    && /if \(this\._lastExtrasKey !== extrasKey && !window\._mpNoRebuild\) \{/.test(MINI),
+    && /if \(this\._lastExtrasKey !== extrasKey\) \{/.test(MINI),
   'the physics sliders do not appear until the tool changes');
+{
+  // Comments stripped on BOTH files: the note explaining why the switch is gone names it, and a
+  // rule that cannot tell an explanation from an implementation fails on its own documentation.
+  const noComments = (t) => t.replace(/\/\/[^\n]*/g, '');
+  check('...with nothing left that can freeze it',
+    !/_mpNoRebuild/.test(noComments(MINI))
+      && !/_mpNoRebuild/.test(noComments(
+        fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8'))),
+    'a user-reachable switch whose effect is this bug is worse than the bug');
+}
 // Joints only: keying on the whole selection would rebuild on every sculpt selection change,
 // which is the per-sync churn the surrounding note warns about.
 check('...keyed on joints only, so a sculpt selection does not churn it',

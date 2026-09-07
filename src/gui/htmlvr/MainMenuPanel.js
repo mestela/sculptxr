@@ -1139,11 +1139,6 @@ const DEV_TOGGLES = [
   // from -- pinned, it is not the panel that vanishes.
   { id: 'mm-panel-dump',  label: 'Dump Panel History',  action: true,
     run: () => PanelTrace.dump() },
-  // The bisection switch for the vanishing panel: with it on the mini panel never rebuilds its
-  // tool-specific block, so nothing disposes its texture or moves the shared host layout. Its
-  // extras go stale while it is on; that is the experiment.
-  { id: 'mm-no-rebuild',  label: 'Freeze Mini Panel Rebuilds',
-    get: () => !!window._mpNoRebuild,   set: (on) => { window._mpNoRebuild = !!on; } },
   // Where a posing frame goes, printed once a second: lbs / mush / synth / refresh. Posing a
   // SUBDIVIDED bound mesh spends most of its frame above the bound level, and until this
   // existed the split between "the deformation" and "rebuilding the display level" was a guess.

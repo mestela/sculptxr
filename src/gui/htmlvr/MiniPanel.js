@@ -1391,15 +1391,14 @@ export class MiniPanel extends HTMLVRPanel {
       const selKey = (main.getSelectedMeshes?.() || [])
         .filter((m) => m && m._isBone).map((m) => m.getID()).join(',');
       const extrasKey = idx + '|' + selKey;
-      // BISECTION SWITCH (window._mpNoRebuild). Every measurement of this panel says it is
-      // visible, placed, sized and textured while matt watches it vanish -- and the instrument
-      // that disagreed turned out to contradict itself, so more measuring is not the next step.
-      // This takes the suspect out of the picture instead: with it on, the extras block is never
-      // rebuilt, so there is no innerHTML replacement, no _needsResize, no texture dispose and
-      // no relayout of the shared host canvas. The panel's tool-specific controls go stale,
-      // which is exactly the point -- if the disappearing stops, the rebuild is the cause; if it
-      // does not, three versions of theory about the rebuild were wrong and it is something else.
-      if (this._lastExtrasKey !== extrasKey && !window._mpNoRebuild) {
+      // The bisection switch that used to gate this (window._mpNoRebuild) is GONE, and its
+      // settings entry with it. It answered its question in v3.30.39 -- the rebuild WAS the
+      // cause, by nulling material.map and forcing a shader recompile -- and then stayed in the
+      // menu, where its whole effect is "the wrist panel's tool controls never update again".
+      // matt, months later: "i pin the tools, select the bone tool, the parameter pane that is
+      // still on my wrist isn't updating." A debugging switch that outlives its investigation
+      // is indistinguishable from a bug, and this one was reachable from the settings panel.
+      if (this._lastExtrasKey !== extrasKey) {
         // Tool or bone selection changed: rebuild the whole block and re-wire.
         this._lastExtrasKey = extrasKey;
         this._lastExtrasIdx = idx;
