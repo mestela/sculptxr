@@ -899,6 +899,20 @@ check('...and both wire it from the same place',
 // the SWITCH has to be reachable from inside a headset or it may as well not exist. matt: "use
 // regular chrome console, i have remote debugging enabled" / "i don't see 'trace panel
 // visibility' as an option in the settings panel when i'm in vr."
+// THE PANEL HIT TEST IS A HAND-ROLLED BOUNDING-BOX WALK (HTMLVRPanel._uvToElement), so "I
+// pressed Properties and got Topology" is a question about that walk and can only be asked from
+// inside a headset.
+{
+  const HP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8');
+  check('the ray-hit trace is reachable from the VR settings panel',
+    /id: 'mm-hover-trace'/.test(MAIN_SRC) && /window\._hoverTrace = !!on/.test(MAIN_SRC),
+    'console-only means it may as well not exist -- the standing rule');
+  check('...and names the element it resolved to well enough to tell tabs apart',
+    /t\.dataset\?\.section \|\| t\.dataset\?\.menu \|\| t\.id \|\| t\.className/.test(HP),
+    'every tab shares the class mm-tab-btn and has no id, so an id-or-class label printed the '
+      + 'same string for all eight -- useless for the one question it is most asked');
+}
+
 check('the skin frame trace is in the shared toggle list',
   /id: 'mm-skin-trace',[\s\S]{0,140}?window\._skinTrace = !!on/.test(MAIN_SRC),
   'a trace you can only turn on from a console you cannot open is not an instrument');

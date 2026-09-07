@@ -580,7 +580,12 @@ export class HTMLVRPanel {
     }
     h.lastP = { x: mw[12], y: mw[13], z: mw[14] };
     const t = this._hoverable(this._uvToElement(uv).el);
-    h.els.add(t ? (t.id || t.className || t.tagName) : '(none)');
+    // NAMED SO TABS CAN BE TOLD APART. Every tab button shares the class `mm-tab-btn` and has no
+    // id, so an id-or-class label printed the same string for all eight of them -- which makes
+    // the trace useless for the one question it is most often asked: "which button did my ray
+    // actually resolve to?" The section (or menu) a button carries is what distinguishes them.
+    h.els.add(t ? (t.dataset?.section || t.dataset?.menu || t.id || t.className || t.tagName)
+      : '(none)');
 
   }
 
