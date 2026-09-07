@@ -415,6 +415,16 @@ const chain = (main, meshes, n) => {
       && /const d = r\.startRadius/.test(BD2)
       && !/const d = Skeleton\.jointPos\(r\.joint, _jpRad\)\.distanceTo\(pos\);/.test(BD2),
     'an absolute radius makes selecting the joint destroy the value you came to adjust');
+  // AND FROM THE EFFECTIVE RADIUS, not the explicit one. jointRadius() returns its FALLBACK for
+  // a joint that has never been given a radius of its own -- which is most of them, since a
+  // fresh rig draws capsules from the bone width. Passing `_jointRadius || 0` as that fallback
+  // made the delta count up from ZERO and collapsed an untouched joint exactly the way the
+  // absolute version did. matt: "on desktop its still snapping the radius to 0 when i click on
+  // a joint."
+  check('...counting from the radius that is actually on screen',
+    /startRadius: Skeleton\.jointRadius\(joint, Skeleton\.boneRadiusOf\(this\._main, joint\)\)/.test(BD2),
+    'boneRadiusOf is what the draw and the scale drag already fall back to; anything else '
+      + 'means the drag counts from a number the user cannot see');
   check('...along a SIGNED axis, so it can shrink as well as grow',
     /\.dot\(this\._camRight\(_wRight\)\)/.test(BD2),
     'radial distance is never negative, so a grab ON the joint could only ever grow it -- '

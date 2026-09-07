@@ -1293,10 +1293,18 @@ class BoneDrawTool extends SculptBase {
     if (twin) before.push([twin, twin._jointRadius || 0]);
     // The radius the drag counts FROM. Read once at the grab, like the scale drag's `base`:
     // reading it live would make a drag that changes the radius compound with itself.
+    // THE EFFECTIVE RADIUS, not the explicit one.
+    //
+    // jointRadius() returns its FALLBACK for a joint that has never been given a radius of its
+    // own -- which is most of them, since a fresh rig draws capsules from the bone width. So
+    // `joint._jointRadius || 0` as the fallback meant a delta counting up from ZERO, and the
+    // first drag on an untouched joint collapsed it exactly the way the absolute version did.
+    // matt: "on desktop its still snapping the radius to 0 when i click on a joint."
+    //
+    // boneRadiusOf is what the draw and the scale drag already fall back to, so the number the
+    // drag counts from is the number on screen.
     this._radius = { joint: joint, twin: twin, before: before, startPos: null,
-      startRadius: Skeleton.jointRadius
-        ? Skeleton.jointRadius(joint, joint._jointRadius || 0)
-        : (joint._jointRadius || 0) };
+      startRadius: Skeleton.jointRadius(joint, Skeleton.boneRadiusOf(this._main, joint)) };
   }
 
   // THE CAMERA'S RIGHT, in model space. Same construction as _camAxis and for the same reason:
