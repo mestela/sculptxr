@@ -1161,6 +1161,14 @@ const DEV_TOGGLES = [
     get: () => !!window._hoverTrace,    set: (on) => { window._hoverTrace = !!on; } },
   { id: 'mm-no-fold',     label: 'Freeze Sculpt Fold (bisect)',
     get: () => !!window._skinNoFold,    set: (on) => { window._skinNoFold = !!on; } },
+  // ON is the new behaviour: an ambient repaint costs the one panel that changed. OFF restores
+  // the old whole-canvas paint, where every mounted panel is re-serialised for every repaint.
+  // matt: "performance is still noticably slower with torn off panels and trying to animate a
+  // rig" -- and tearing panels off is exactly what makes the two prices diverge, so the switch
+  // is the A/B: pin two panels, pose a rig, flip it.
+  { id: 'mm-scoped-paint', label: 'Scoped Panel Repaint',
+    get: () => window._panelScopedPaint !== false,
+    set: (on) => { window._panelScopedPaint = !!on; } },
 ];
 
 export function buildDevToggles(render, renderAction) {

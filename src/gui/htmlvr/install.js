@@ -230,6 +230,49 @@ export function requestPaintOnce(canvas) {
  * Like requestPaintOnce but bypasses the PAINT_MIN_MS rate limit.
  * Use for immediate visual feedback on user actions (pointerdown/pointerup).
  */
+/**
+ * Repaint ONE panel, not every mounted one.
+ *
+ * `canvas.requestPaint()` is all-or-nothing: the polyfill's implementation is
+ * `for (const child of state.children) state.dirty.add(child)`, so a single ambient repaint
+ * re-clones, re-serialises and re-decodes EVERY panel on the canvas — and each of those
+ * carries a full inline copy of the page CSS, which is the expensive part. Measured on the
+ * dev server, one requestPaint() with three panels mounted reports `changedElements: 3`.
+ *
+ * That is the whole of "it gets slower once I tear panels off": the panels are not slow, the
+ * repaint is priced per panel and every panel pays for every panel. Posing a rig dirties the
+ * main panel continuously (the transform fields really do change), so a pinned Rendering panel
+ * that has not altered a pixel is re-rasterised five times a second alongside it.
+ *
+ * The polyfill already has the mechanism for doing this properly — its MutationObserver adds
+ * only the mutated panel to the dirty set — so the scoped path just gives it a mutation to see:
+ * one data attribute on that panel's root. No public per-element API exists, and reaching into
+ * the polyfill's internal state would break on any update; an attribute touch is ordinary DOM.
+ *
+ * The whole-canvas paint is still the right answer when the LAYOUT moved (mount, unmount,
+ * resize): those really do invalidate every panel's captured region. See markAllPanelsDirty.
+ */
+let _scopeSeq = 0;
+export function requestPaintScoped(panel) {
+  const canvas = getHostCanvas();
+  _wrapRequestPaint(canvas);
+  if (!canvas.requestPaint || !panel?._element) return false;
+  // A/B switch, because the honest comparison is a headset with panels torn off and this is
+  // the one thing that changes between the two runs. Settings ▸ Scoped Panel Repaint.
+  if (window._panelScopedPaint === false) return requestPaintOnce(canvas);
+
+  const now   = performance.now();
+  const force = _forcePaint;
+  _forcePaint = false;
+  if (!force && now - _lastPaintTs < PAINT_MIN_MS) return false; // caller stays dirty, retries
+  _lastPaintTs = now;
+  // Deliberately NOT setting _paintScheduled: that flag means "a queued paint covers every
+  // panel", which a scoped paint does not. Leaving it clear costs at most one extra full paint
+  // in the same drain; setting it would silently swallow one that was needed.
+  panel._element.setAttribute('data-rx-paint', String(_scopeSeq = (_scopeSeq + 1) & 0xffff));
+  return true;
+}
+
 export function requestPaintForced(canvas) {
   _forcePaint = true;
   requestPaintOnce(canvas);

@@ -128,7 +128,21 @@ export class TornOffPanel extends HTMLVRPanel {
     const contentEl = this._element.querySelector('.mm-torn-content');
     if (!contentEl) return;
 
-    contentEl.innerHTML = _buildSectionHTML(this._sectionId, main);
+    // A SYNC THAT CHANGES NOTHING SHOULD COST NOTHING.
+    //
+    // The main panel forwards every markDirty to its torn-off sections, and posing a rig dirties
+    // it continuously -- the transform readouts really are changing. So a pinned Rendering or
+    // Topology panel, whose markup has not moved a character, was regenerating its DOM, re-wiring
+    // every control and re-rasterising itself five times a second for the whole drag.
+    //
+    // Comparing the built string is the whole test: building it is a few hundred microseconds of
+    // string work, while what it avoids is an innerHTML swap, a re-wire, and a full clone +
+    // serialise + CSS inline + image decode of the panel.
+    const html = _buildSectionHTML(this._sectionId, main);
+    if (!immediate && html === this._lastHTML) return;
+    this._lastHTML = html;
+
+    contentEl.innerHTML = html;
     this._wireSection(main);
     fixSliderDrag(contentEl);
     refreshVRScrollbar(contentEl, this._element.querySelector('.mm-scrollbar-thumb'));

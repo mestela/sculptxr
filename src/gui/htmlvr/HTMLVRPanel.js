@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintForced, markAllPanelsDirty } from './install.js';
+import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintScoped, requestPaintForced, markAllPanelsDirty } from './install.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 
 // ── Menu color grade (brightness / saturation) ──────────────────────────────
@@ -485,8 +485,11 @@ export class HTMLVRPanel {
       // limiter is holding back. The limit exists to stop AMBIENT repaints costing 5fps of SVG
       // rasterisation; a rebuild is not ambient, it is the one paint the user is waiting for.
       // So a resize forces it: the gap becomes a frame instead of a fifth of a second.
+      // A resize moves every panel's captured region, so that one stays whole-canvas and
+      // forced. An ordinary content change is this panel's business alone -- see
+      // requestPaintScoped, and the measurement that a full paint is priced per mounted panel.
       if (this._needsResize) { requestPaintForced(getHostCanvas()); this._dirty = false; }
-      else if (requestPaintOnce(getHostCanvas())) this._dirty = false;
+      else if (requestPaintScoped(this)) this._dirty = false;
     }
   }
 
