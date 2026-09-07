@@ -225,11 +225,15 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.val}" id="bone-mush-val">${mush}</span>
     </div>
     ` : `
-    <!-- A CONTROL THAT VANISHES CANNOT BE TOLD FROM ONE THAT IS BROKEN.
+    ${/* A CONTROL THAT VANISHES CANNOT BE TOLD FROM ONE THAT IS BROKEN.
          X-Ray and Mush need a bound mesh, and when there is not one these rows used to simply
-         not exist -- so a binding lost to a topology edit showed up as a slider that had been
+         not exist, so a binding lost to a topology edit showed up as a slider that had been
          there a minute ago and now was not, with nothing saying why. The row stays and states
-         its condition instead. matt: "the bone parameters are getting unreliable." -->
+         its condition instead. matt: "the bone parameters are getting unreliable."
+
+         Written as a JS comment inside the substitution, NOT as an HTML comment: panel markup is
+         rasterised by serialising the DOM into an SVG, and XML forbids `--` inside a comment. An
+         em dash in one of these froze the whole Bones properties page — see panelxml_test. */''}
     <div class="${c.row}" style="opacity:0.6">
       <span class="${c.lbl}">X-Ray / Mush</span>
       <span class="${c.val}" style="flex:1;text-align:left">need a bound mesh — press Bind</span>
