@@ -266,5 +266,26 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'it stays armed forever, which is where it started');
 }
 
+// ── HOW MANY TIMES A FRAME DOES THE RIG REDRAW ITSELF ─────────────────────────────────────
+//
+// matt's performance recording put `held` -- `const held = (id) => !!grabHands[id]`, a one-line
+// property lookup inside Skeleton.updateVisuals's per-joint loop -- at 401.9ms of SELF time,
+// second only to WebGLRenderer.render. There are four call sites, all in that one loop, so a
+// property read cannot reach 400ms in 15 seconds unless updateVisuals itself runs many times a
+// frame. It has 57 call sites and nothing said how many fire together.
+{
+  const SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const SCENE2 = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  check('every skeleton refresh is counted',
+    /Skeleton\.updateVisuals = function \(main\) \{[\s\S]{0,600}?window\._skelVisCalls = \(window\._skelVisCalls \| 0\) \+ 1;/.test(SKEL),
+    'no count, so "many times a frame" stays a theory');
+  check('...and reported per frame, not per second',
+    /skeleton refreshes ' \+ \(\(window\._skelVisCalls \| 0\) \/ Math\.max\(1, p\.n\)\)/.test(SCENE2),
+    'a per-second figure hides whether it is 1 a frame or 20');
+  check('...and reset each window',
+    /window\._skelVisCalls = 0;/.test(SCENE2),
+    'it accumulates forever and every window reads higher than the last');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

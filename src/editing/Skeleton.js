@@ -2358,6 +2358,12 @@ Skeleton.refreshOutliner = function (main) {
 };
 
 Skeleton.updateVisuals = function (main) {
+  // COUNTED, because this is a refresh function with 57 call sites and nothing says how many of
+  // them fire in one frame. matt's performance recording put `held` -- a one-line property
+  // lookup inside this function's per-joint loop -- at 401.9ms of SELF time, second only to
+  // WebGLRenderer.render. Four call sites in a joint loop cannot reach that in 15 seconds unless
+  // this whole function is running many times a frame. xrPerf prints the per-frame count.
+  window._skelVisCalls = (window._skelVisCalls | 0) + 1;
   Skeleton.healGraph(main);
   // Ahead of the no-joints early return below: an assignment can be under way in a scene with
   // no rig in it at all, and the line is the only thing on screen saying so.

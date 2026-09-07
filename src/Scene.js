@@ -1311,8 +1311,10 @@ class Scene {
       ', geom ' + geo + (geoGrew ? ' (' + (geoGrew > 0 ? '+' : '') + geoGrew + ')' : '') +
       ', tex ' + (info ? info.memory.textures : 0) +
       ', calls ' + (info ? info.render.calls : 0) +
-      ' | panel paints ' + (window._panelPaints | 0));
+      ' | panel paints ' + (window._panelPaints | 0) +
+      ' | skeleton refreshes ' + ((window._skelVisCalls | 0) / Math.max(1, p.n)).toFixed(1) + '/frame');
     window._panelPaints = 0;
+    window._skelVisCalls = 0;
     if (p.sec) {
       const parts = Object.keys(p.sec)
         .map((k) => [k, p.sec[k] / p.n])
