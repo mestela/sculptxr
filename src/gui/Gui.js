@@ -970,7 +970,17 @@ class Gui {
   // True when this section is floating -- in which case its sidebar tab says where it went and
   // how to get it back, rather than going blank.
   _sectionIsFloating(panelEl, sectionId) {
-    if (!this._floatPanels?.has(sectionId)) return false;
+    const panel = this._floatPanels?.get(sectionId);
+    if (!panel) return false;
+    // AND REBUILD THE FLOATING COPY, because this call was somebody asking for this section to
+    // be redrawn -- and the section is over there now.
+    //
+    // The choke point matters. Refreshing floats from the places that rebuild the sidebar
+    // reached the paths I knew about and missed Skeleton.refreshOutliner, which every rig edit
+    // goes through and which calls _buildDesktopScene directly: with the outliner pinned, that
+    // redrew the placeholder and stopped. matt: "scene/outliner still isn't updating on desktop
+    // if pinned." Handled here, every caller works, including ones not written yet.
+    panel.rebuild();
     panelEl.innerHTML = '<div class="dfp-away">This section is floating.'
       + '<button class="mm-action-btn" id="dfp-redock-here">Return it to the sidebar</button></div>';
     panelEl.querySelector('#dfp-redock-here')

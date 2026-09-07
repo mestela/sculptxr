@@ -215,6 +215,18 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // the scene/outliner it doesn't stay synced. i have to unpin then repin for it to update."
   // Counted at the CALL SITES -- the same mistake as the torn-strip rule, made twice in two
   // commits, so this one is written the other way round from the start.
+  // THE CHOKE POINT. Refreshing floats from the places that rebuild the sidebar covered the
+  // paths I knew about and missed Skeleton.refreshOutliner -- which every rig edit goes through
+  // and which calls _buildDesktopScene directly. With the outliner pinned that redrew the
+  // placeholder and stopped. matt: "scene/outliner still isn't updating on desktop if pinned."
+  //
+  // Asking a section to redraw while it is floating IS a request to redraw it, so the rebuild
+  // belongs where that request arrives. Every caller then works, including ones not yet
+  // written -- which is the difference between this and enumerating call sites.
+  check('asking a floating section to redraw rebuilds the floating copy',
+    /_sectionIsFloating\(panelEl, sectionId\) \{\n\s*const panel = this\._floatPanels\?\.get\(sectionId\);\n\s*if \(!panel\) return false;[\s\S]{0,900}?panel\.rebuild\(\);/.test(GUI),
+    'the outliner is redrawn by callers that know nothing about pinning');
+
   check('floating panels are refreshed wherever the docked ones are',
     (GUI.match(/refreshFloatingSections\?\.\(\);/g) || []).length >= 5,
     'a pinned outliner that only updates when you unpin and repin it is a stale panel');
