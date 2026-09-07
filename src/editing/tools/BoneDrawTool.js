@@ -77,6 +77,8 @@ const LIVE_WEIGHT_MS = 80;
 const _tip = new THREE.Vector3();
 const _mirror = new THREE.Vector3();
 const _mTwin = new THREE.Matrix4();
+const _wRad = new THREE.Vector3();
+const _wRight = new THREE.Vector3();
 const _pos = new THREE.Vector3();
 // Separate scratch for the plane maths: `pos` handed to _place() may itself be one of the
 // module scratch vectors, so the snapped result must never write through it.
@@ -1289,16 +1291,72 @@ class BoneDrawTool extends SculptBase {
       ? joint._boneMirror : null;
     const before = [[joint, joint._jointRadius || 0]];
     if (twin) before.push([twin, twin._jointRadius || 0]);
-    this._radius = { joint: joint, twin: twin, before: before };
+    // The radius the drag counts FROM. Read once at the grab, like the scale drag's `base`:
+    // reading it live would make a drag that changes the radius compound with itself.
+    this._radius = { joint: joint, twin: twin, before: before, startPos: null,
+      startRadius: Skeleton.jointRadius
+        ? Skeleton.jointRadius(joint, joint._jointRadius || 0)
+        : (joint._jointRadius || 0) };
+  }
+
+  // THE CAMERA'S RIGHT, in model space. Same construction as _camAxis and for the same reason:
+  // taken as the difference of two points so the worldGroup's scale cancels instead of having
+  // to be reasoned about.
+  //
+  // The HEADSET when presenting, the desktop camera otherwise -- "right" has to mean the right
+  // of the view you are actually looking through, or the gesture means something different in
+  // each mode.
+  _camRight(out) {
+    const main = this._main;
+    const xr = main._renderer && main._renderer.xr;
+    const tcam = (xr && xr.isPresenting && xr.getCamera && xr.getCamera())
+      || (main.getCamera && main.getCamera().getThreeCamera && main.getCamera().getThreeCamera());
+    if (!tcam) return out.set(1, 0, 0);
+    // FROM THE FORWARD DIRECTION, which is what _camAxis beside this already relies on -- so
+    // the two agree about which way the view is pointing by construction rather than by
+    // coincidence.
+    tcam.getWorldDirection(_wB);
+    // right = forward x up. Degenerate looking straight up or down, where any horizontal answer
+    // is as good as any other, so fall back to a fixed axis rather than dividing by nothing.
+    _wA.set(0, 1, 0);
+    _wB.cross(_wA);
+    if (_wB.lengthSq() < 1e-12) _wB.set(1, 0, 0);
+    _wB.normalize();
+    const wg = main._worldGroup;
+    if (!wg) return out.copy(_wB).normalize();
+    _wA.set(0, 0, 0);
+    wg.worldToLocal(_wA); wg.worldToLocal(_wB);
+    return out.copy(_wB).sub(_wA).normalize();
   }
 
   _radiusTo(pos) {
     const r = this._radius;
     if (!r) return;
-    // MEASURED FROM THE JOINT, not from the bone's shaft. A joint radius is the radius of a
-    // sphere centred on it, so the distance that sets it is the one you can see: how far your
-    // hand is from the dot.
-    const d = Skeleton.jointPos(r.joint, _jpRad).distanceTo(pos);
+
+    // A DELTA FROM THE RADIUS IT ALREADY HAD, driven by horizontal drag. Right is bigger.
+    //
+    // It used to be ABSOLUTE -- radius = distance from the joint to your cursor. That reads
+    // beautifully (the edge follows your hand) and is unusable for a small adjustment, because
+    // selecting a joint means clicking ON it, which is distance zero, so every edit began by
+    // collapsing the radius and rebuilding it from nothing. matt: "its also annoying if i'm
+    // just trying to do a small radius adjustment and i have to redo it from 0 every time."
+    //
+    // WHY HORIZONTAL AND NOT RADIAL. "Distance from the joint, relative to where you grabbed"
+    // is the obvious fix and it does not work: distance is never negative, so a grab on the
+    // joint starts at zero and every later position is larger. You could grow and never shrink,
+    // from the grab that is most natural to make. A signed axis is the only thing that fixes
+    // that, and horizontal is the one with no other meaning here.
+    //
+    // ONE GESTURE ON BOTH PLATFORMS: the projection onto the view's right vector is mouse-X on
+    // a desktop and hand-sideways in a headset, in the same units, through the same line.
+    if (!r.startPos) {
+      // The first frame only ANCHORS the drag. Acting on it would apply whatever offset the
+      // cursor happened to have when the button went down, which is the jump this replaces.
+      r.startPos = pos.clone ? pos.clone() : new THREE.Vector3().copy(pos);
+      return;
+    }
+    const d = r.startRadius
+      + _wRad.copy(pos).sub(r.startPos).dot(this._camRight(_wRight));
     // A capsule with no thickness has no support at all, so never let a drag collapse one to
     // zero — that would silently unweight everything the bone owned.
     const min = Math.max(Skeleton.boneLength(this._main, r.joint) * 0.02, 1e-6);

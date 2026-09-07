@@ -401,5 +401,38 @@ const chain = (main, meshes, n) => {
       + 'runaway this compensation exists to prevent');
 }
 
+// ── THE JOINT RADIUS DRAG IS A DELTA ──────────────────────────────────────────────────────
+//
+// It used to be ABSOLUTE: radius = distance from the joint to the cursor. That reads beautifully
+// and is unusable for a small adjustment, because selecting a joint means clicking ON it --
+// distance zero -- so every edit began by collapsing the radius to nothing. matt: "its also
+// annoying if i'm just trying to do a small radius adjustment and i have to redo it from 0
+// every time."
+{
+  const BD2 = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
+  check('the radius drag counts from the radius the joint already had',
+    /startRadius: Skeleton\.jointRadius/.test(BD2)
+      && /const d = r\.startRadius/.test(BD2)
+      && !/const d = Skeleton\.jointPos\(r\.joint, _jpRad\)\.distanceTo\(pos\);/.test(BD2),
+    'an absolute radius makes selecting the joint destroy the value you came to adjust');
+  check('...along a SIGNED axis, so it can shrink as well as grow',
+    /\.dot\(this\._camRight\(_wRight\)\)/.test(BD2),
+    'radial distance is never negative, so a grab ON the joint could only ever grow it -- '
+      + 'which is the grab most people make');
+  check('...anchored on the first frame, not acted on',
+    /if \(!r\.startPos\) \{[\s\S]{0,300}?return;\n\s*\}/.test(BD2),
+    'acting on the first frame applies whatever offset the cursor happened to have when the '
+      + 'button went down, which is the jump this replaces');
+  check('...and the view right follows the HEADSET when presenting',
+    /xr && xr\.isPresenting && xr\.getCamera && xr\.getCamera\(\)/.test(BD2),
+    'one gesture on both platforms: mouse-X on a desktop, hand-sideways in a headset, through '
+      + 'the same line -- but "right" has to mean the view you are actually looking through');
+  check('...derived the same way _camAxis derives forward',
+    /tcam\.getWorldDirection\(_wB\);/.test(BD2)
+      && /wg\.worldToLocal\(_wA\); wg\.worldToLocal\(_wB\);/.test(BD2),
+    'taken as the difference of two points so the worldGroup scale cancels, which is the trap '
+      + '_camAxis documents');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
