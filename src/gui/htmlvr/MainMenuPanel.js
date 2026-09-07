@@ -1230,6 +1230,9 @@ const DEV_TOGGLES = [
   // opposite conclusions. The ack makes silence mean the first one.
   // WAS ON FOR EVERYONE, ALWAYS. Five lines per trigger press, gated opt-OUT on a console
   // variable nobody in a headset can set. matt: "logs are still crazy noisy."
+  // Three lines per touch, then silent, so a repro can be done without the console filling.
+  { id: 'mm-tweak-trace', label: 'Trace Bone Tweak',
+    get: () => !!window._tweakTrace,    set: (on) => { window._tweakTrace = !!on; } },
   { id: 'mm-grab-trace', label: 'Trace Trigger Press',
     get: () => !!window._grabTrace,     set: (on) => { window._grabTrace = !!on; } },
   { id: 'mm-panel-perf', label: 'Trace Panel Cost',

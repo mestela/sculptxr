@@ -1120,6 +1120,32 @@ class BoneDrawTool extends SculptBase {
     // translates it; children have to be held still across the pair, not across the second one
     // alone — see Skeleton.beginCompensate. Leaving it to moveJoint compensated the translation
     // and let the rotation's swing accumulate, one frame's worth at a time.
+    // WHAT THE FIRST FRAME OF A TWEAK ACTUALLY DID.
+    //
+    // matt: "make hips, top of leg, knee, ankle, foot / tweak fk tool / move the top of leg / it
+    // scales 100x too big as soon as i touch it." Two completely different faults look identical
+    // on screen and neither is visible from the code:
+    //   - the joint's own matrix gains scale (a parent-inverse folded in somewhere), or
+    //   - the joint is flung somewhere far, and with no bound mesh the SCENE UNIT is measured
+    //     from the joint extent, so every marker in the rig grows while each matrix is untouched.
+    // The second is recorded twice in this codebase already. So the trace reports both, plus the
+    // parent, because the repro is specifically the first joint whose parent is another joint.
+    if (window._tweakTrace && (this._tweakTraceN = (this._tweakTraceN | 0) + 1) <= 3) {
+      const j = g.joint;
+      const loc = j.getMatrix();
+      const ms = j.getModelSpaceMatrix();
+      const par = j._parentMesh;
+      const pms = par && par.getModelSpaceMatrix ? par.getModelSpaceMatrix() : null;
+      const sc = (m) => m ? Math.hypot(m[0], m[1], m[2]).toFixed(4) : '-';
+      console.log('[tweak] ' + (j._permanentStaticLabel || j.getID())
+        + '  parent=' + (par ? (par._permanentStaticLabel || par.getID()) : 'world')
+        + '  localScale=' + sc(loc) + '  modelScale=' + sc(ms) + '  parentModelScale=' + sc(pms)
+        + '  localPos=' + [loc[12], loc[13], loc[14]].map((v) => v.toFixed(2)).join(',')
+        + '  target=' + [at.x, at.y, at.z].map((v) => v.toFixed(2)).join(',')
+        + '  sceneUnit=' + Skeleton.sceneUnit(this._main).toFixed(3)
+        + '  mode=' + this.mode);
+    }
+
     const compensating = window._boneCompensate === false ? false : this._compensate;
     const comp = compensating ? Skeleton.beginCompensate(this._main, g.joint) : null;
     if (quat && g.qStart && window._boneTwist !== false) this._twistTo(g.joint, g.localAtGrab, quat);
@@ -1169,6 +1195,7 @@ class BoneDrawTool extends SculptBase {
   }
 
   _releaseGrab() {
+    this._tweakTraceN = 0;
     const g = this._grab;
     this._grab = null;
     this._grabHand = null;
