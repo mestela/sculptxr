@@ -916,9 +916,16 @@ check('...and both wire it from the same place',
 // inside a headset.
 {
   const HP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8');
-  check('the ray-hit trace is reachable from the VR settings panel',
-    /id: 'mm-hover-trace'/.test(MAIN_SRC) && /window\._hoverTrace = !!on/.test(MAIN_SRC),
-    'console-only means it may as well not exist -- the standing rule');
+  // THE RAY-HIT TRACE HAS LEFT THE MENU, ON PURPOSE. It was added to answer one question -- "I
+  // press Properties and get Topology" -- and that turned out to be a double hyphen in an HTML
+  // comment breaking the SVG, not the bounding-box walk it was built to inspect. The instrument
+  // is still in HTMLVRPanel and still reachable as hoverTrace(); what is gone is a permanent menu
+  // entry for a question that is answered. matt: "should we keep them, or are they now no longer
+  // required?" If the walk is ever suspect again, the toggle comes back with the question.
+  check('the ray-hit trace still exists to be switched on',
+    /window\._hoverTrace = on !== false;/.test(
+      fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8')),
+    'removing the menu entry must not delete the instrument behind it');
   check('...and names the element it resolved to well enough to tell tabs apart',
     /t\.dataset\?\.section \|\| t\.dataset\?\.menu \|\| t\.id \|\| t\.className/.test(HP),
     'every tab shares the class mm-tab-btn and has no id, so an id-or-class label printed the '

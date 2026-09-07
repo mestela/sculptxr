@@ -74,17 +74,18 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
 // Standing rule: the switch has to be reachable from inside a headset, because that is the only
 // place the comparison means anything.
 {
-  check('Scoped Panel Repaint is in the settings menu',
-    /id: 'mm-scoped-paint'[\s\S]{0,200}?_panelScopedPaint/.test(MM),
-    'no toggle, so the comparison needs a laptop and a console');
-
-  check('...defaulting to on',
-    /window\._panelScopedPaint !== false/.test(MM),
-    'the fix ships off');
-
-  check('...and honoured by the paint path',
-    /window\._panelScopedPaint === false/.test(INSTALL) && /return requestPaintOnce\(canvas\)/.test(INSTALL),
-    'the toggle does not reach the code it is supposed to bisect');
+  // THE SWITCH IS GONE AND THE BEHAVIOUR IS NOT. It existed to let matt A/B the scoped repaint
+  // in one headset session; he ran it, the scoped path won, and a bisection switch that outlives
+  // its investigation is just a way for the fix to end up silently off -- the same reason the
+  // wrist-panel freeze switch was pulled. matt: "should we keep them, or are they now no longer
+  // required?"
+  check('the scoped repaint is unconditional now',
+    !/_panelScopedPaint/.test(INSTALL) && !/_panelScopedPaint/.test(MM),
+    'the switch is back, and with it the chance of shipping with the fix disabled');
+  check('...and the whole-canvas fallback is not still wired to it',
+    !/return requestPaintOnce\(canvas\);/.test(
+      (INSTALL.match(/export function requestPaintScoped[\s\S]*?\n}/) || [''])[0]),
+    'the scoped path still has a branch back to painting everything');
 }
 
 // ── THE FRAME PROFILER CANNOT SEE PANEL RASTERISATION ─────────────────────────────────────
@@ -348,6 +349,29 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
   check('...and calls out a wireframe material by name',
     /wireframe \? ' WIREFRAME'/.test(dump),
     'the report has to be able to say the word matt used');
+}
+
+// ── A DIAGNOSTIC IS OFF UNTIL ASKED FOR ───────────────────────────────────────────────────
+//
+// The trigger-press trace was gated `!window._grabQuiet` -- opt-OUT, on a console variable, in a
+// headset with no console. So it printed five lines per press in every session anyone has ever
+// run. matt: "logs are still crazy noisy. can you silence most of these please?"
+//
+// The rule is the polarity, not the volume: an instrument defaults off and is switched on from
+// the settings menu, like every other one here.
+{
+  const SCENE3 = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  const GRAB = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/Grab.js', 'utf8');
+  check('no trace is gated opt-out any more',
+    !/!window\._grabQuiet/.test(SCENE3) && !/!window\._grabQuiet/.test(GRAB)
+      && !/if \(window\._grabQuiet\) return;/.test(GRAB),
+    'a diagnostic that ships ON is a diagnostic everyone pays for');
+  check('...they are opt-in on _grabTrace instead',
+    /window\._grabTrace/.test(SCENE3) && /window\._grabTrace/.test(GRAB),
+    'the trace is gone rather than switched off, which loses the instrument');
+  check('...reachable from the settings menu',
+    /id: 'mm-grab-trace'[\s\S]{0,200}?_grabTrace/.test(MM),
+    'console-only, which in a headset means unreachable');
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');

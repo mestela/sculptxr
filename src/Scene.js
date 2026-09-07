@@ -9938,7 +9938,7 @@ class Scene {
     {
       const raw = !!(buttons && buttons[0] && buttons[0].pressed);
       const hand = source.handedness;
-      if (raw && !this._trigWas[hand] && !window._grabQuiet) {
+      if (raw && !this._trigWas[hand] && window._grabTrace) {
         const tool = this._sculptManager?.getCurrentTool?.();
         console.log('[press ' + hand + '] digital=' + raw
           + '  analog=' + analogValue.toFixed(2) + '  threshold=' + triggerThreshold.toFixed(2)
@@ -10071,7 +10071,7 @@ class Scene {
     // DID THIS PRESS REACH THE TOOL. Every [grab] report lives inside Grab.updateXR, so a frame
     // that never dispatches produces total silence — which is what a failed pull looked like:
     // a clean press line, then nothing. This is the one link that was never instrumented.
-    if (this._pressEdgeHand && !window._grabQuiet) {
+    if (this._pressEdgeHand && window._grabTrace) {
       console.log('[press ' + this._pressEdgeHand + '] dispatch: canSculpt=' + canSculpt
         + '  (isTriggerPressed=' + isTriggerPressed + '  picked=' + !!picked
         + '  allowAir=' + allowAir + '  toolActive=' + !!isToolActive
@@ -10101,7 +10101,7 @@ class Scene {
     if (!canSculpt && !this._vrSculpting) {
       const _t = this._sculptManager?.getCurrentTool?.();
       if (_t && _t._grabbedMesh) {
-        if (!window._grabQuiet) {
+        if (window._grabTrace) {
           console.log('[press] orphan release: tool was holding #' + _t._grabbedMesh.getID()
             + ' with no stroke open — acquired outside the stroke lifecycle');
         }
@@ -10609,7 +10609,7 @@ class Scene {
         // THE CALL ITSELF. Everything so far has measured either side of this line and assumed
         // the middle. If the press reaches here, the entry log inside Grab must follow it; if
         // there is no entry log, the call is not happening on this frame despite canSculpt.
-        if (this._pressEdgeCall && !window._grabQuiet) {
+        if (this._pressEdgeCall && window._grabTrace) {
           console.log('[press ' + this._pressEdgeCall + '] CALLING updateXR  activeSource='
             + source.handedness + '  isPressed=' + isTriggerPressed
             + '  srcHasHand=' + !!source.hand

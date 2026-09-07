@@ -1205,16 +1205,6 @@ const DEV_TOGGLES = [
   // mirrored stroke that quietly goes missing.
   { id: 'mm-sym-trace',   label: 'Trace Posed Symmetry',
     get: () => !!window._symTrace,      set: (on) => { window._symTrace = !!on; } },
-  // A bisection switch, not a feature: with it on, a stroke above the bound level is refused
-  // instead of folded down, which is the behaviour from before that fold existed. If detail
-  // elsewhere still smooths away with this on, the fold is not what is eating it.
-  // WHICH ELEMENT THE RAY RESOLVES TO, once a second per visible panel. The panel hit test is
-  // a hand-rolled bounding-box walk over the DOM (HTMLVRPanel._uvToElement), so "I pressed the
-  // Properties tab and got Topology" is a question about that walk and nothing else -- and it
-  // can only be asked from inside a headset. Console-only until now, which by the standing rule
-  // means it may as well not have existed.
-  { id: 'mm-hover-trace', label: 'Trace Panel Ray Hits',
-    get: () => !!window._hoverTrace,    set: (on) => { window._hoverTrace = !!on; } },
   { id: 'mm-no-fold',     label: 'Freeze Sculpt Fold (bisect)',
     get: () => !!window._skinNoFold,    set: (on) => { window._skinNoFold = !!on; } },
   // ON is the new behaviour: an ambient repaint costs the one panel that changed. OFF restores
@@ -1240,6 +1230,10 @@ const DEV_TOGGLES = [
   // ANSWERS BACK, like xrPerf and ikPerf do. This line only prints when a paint happens, so
   // "no output" means either "panels cost nothing" or "the switch did not take" -- and those are
   // opposite conclusions. The ack makes silence mean the first one.
+  // WAS ON FOR EVERYONE, ALWAYS. Five lines per trigger press, gated opt-OUT on a console
+  // variable nobody in a headset can set. matt: "logs are still crazy noisy."
+  { id: 'mm-grab-trace', label: 'Trace Trigger Press',
+    get: () => !!window._grabTrace,     set: (on) => { window._grabTrace = !!on; } },
   { id: 'mm-panel-perf', label: 'Trace Panel Cost',
     get: () => !!window._panelPerf,
     set: (on) => {
@@ -1248,9 +1242,6 @@ const DEV_TOGGLES = [
         + (on ? '. One line a second, but ONLY when a panel repaints: silence here means no panel'
               + ' work at all, which is itself the answer.' : ''));
     } },
-  { id: 'mm-scoped-paint', label: 'Scoped Panel Repaint',
-    get: () => window._panelScopedPaint !== false,
-    set: (on) => { window._panelScopedPaint = !!on; } },
 ];
 
 export function buildDevToggles(render, renderAction) {

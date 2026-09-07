@@ -290,14 +290,20 @@ const makePin = (m) => {
 //
 // A live trace answers "what is it doing continuously". The question here is "why did THIS pull
 // do nothing", which is a single decision with about six inputs — so it is reported on the press
-// EDGE, printed as it happens, on by default. matt: "we don't need endless live logs, just what
-// happens when the trigger is pulled."
+// EDGE. matt: "we don't need endless live logs, just what happens when the trigger is pulled."
+//
+// It shipped ON, gated opt-OUT on a console variable, which in a headset means it cannot be
+// turned off at all: five lines per press in every session anyone ever ran. matt again, later:
+// "logs are still crazy noisy. can you silence most of these please?" Now opt-in on _grabTrace,
+// with a switch in the settings menu. The edge-not-per-frame rule below is unchanged; it is the
+// POLARITY that was wrong.
 {
   check('the press report fires on the edge, not per frame',
     /if \(pressed && !was && !this\._vrPinGrabs\.has\(hand\)\)[\s\S]{0,1400}?this\._press\(hand, \{/.test(GRAB),
     'inside the edge branch, so it costs two lines per pull rather than two per frame');
-  check('...and can be silenced without a rebuild',
-    /if \(window\._grabQuiet\) return;/.test(GRAB));
+  check('...and is off until it is switched on',
+    /if \(!window\._grabTrace\) return;/.test(GRAB),
+    'an instrument that ships on is one every session pays for and no headset can quiet');
   check('it reports what the HIGHLIGHT said as well as what the pick did',
     /litPin:/.test(GRAB) && /litJointOrBone:/.test(GRAB),
     'the mismatch between those two is the whole bug: a lit joint with no pin taken');
@@ -310,7 +316,7 @@ const makePin = (m) => {
     'a pull that never reaches the tool produced no report at all — the one case an instrument '
       + 'must not have');
   check('...on the digital edge, so a sub-threshold press still reports',
-    /if \(raw && !this\._trigWas\[hand\] && !window\._grabQuiet\)/.test(fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8')),
+    /if \(raw && !this\._trigWas\[hand\] && window\._grabTrace\)/.test(fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8')),
     'reporting off isTriggerPressed would hide exactly the failure being hunted');
   check('the old check still holds',
     /nearestPin:/.test(GRAB) && /reach:/.test(GRAB),
@@ -346,8 +352,9 @@ const makePin = (m) => {
   check('a hand missing from the active set says so, with whether it had a pose',
     /SKIPPED: 'not in the active set this frame'/.test(GRAB) && /hasMatrix: !!raw\.matrix/.test(GRAB),
     'a controller without a pose is excluded from the pin path entirely');
-  check('...and all three are silenceable by the same flag as the rest',
-    (GRAB.match(/!window\._grabQuiet/g) || []).length >= 3);
+  check('...and all three answer to the same opt-in flag as the rest',
+    (GRAB.match(/window\._grabTrace/g) || []).length >= 3,
+    'a trace family with mixed polarity is one you cannot switch off in one action');
 }
 
 

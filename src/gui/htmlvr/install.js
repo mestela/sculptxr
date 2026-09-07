@@ -352,9 +352,8 @@ export function requestPaintScoped(panel) {
   const canvas = getHostCanvas();
   _wrapRequestPaint(canvas);
   if (!canvas.requestPaint || !panel?._element) return false;
-  // A/B switch, because the honest comparison is a headset with panels torn off and this is
-  // the one thing that changes between the two runs. Settings ▸ Scoped Panel Repaint.
-  if (window._panelScopedPaint === false) return requestPaintOnce(canvas);
+  // The A/B switch that proved this is gone: matt ran it, the scoped path won, and a bisection
+  // switch that outlives its investigation is a way for the fix to end up silently off.
 
   const now   = performance.now();
   const force = _forcePaint;

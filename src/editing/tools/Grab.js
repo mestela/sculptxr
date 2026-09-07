@@ -143,7 +143,7 @@ class Grab extends SculptBase {
       // Say so when it matters: a hand missing from the snapshot while its button is down is
       // a press that can never be acted on, and from the outside that is a dead controller.
       const raw = controllers.find((c) => c.handedness === hand);
-      if (raw?.buttons?.[0]?.pressed && !window._grabQuiet) {
+      if (raw?.buttons?.[0]?.pressed && window._grabTrace) {
         this._press(hand, { SKIPPED: 'not in the active set this frame',
           hasMatrix: !!raw.matrix,
           note: 'a controller without a pose is excluded from the pin path entirely' });
@@ -162,11 +162,11 @@ class Grab extends SculptBase {
       // exactly what happened: a clean, dominant, in-threshold press on the right produced a
       // valid [press right] line from Scene and then silence from the tool. Reported here, one
       // line per pull, so the skipped case names its own reason.
-      if (pressed && !was && this._vrPinGrabs.has(hand) && !window._grabQuiet) {
+      if (pressed && !was && this._vrPinGrabs.has(hand) && window._grabTrace) {
         this._press(hand, { SKIPPED: 'this hand is already listed as holding a pin',
           holds: '#' + this._vrPinGrabs.get(hand).pin.getID(),
           note: 'a stale entry here blocks every future press from this hand, silently' });
-      } else if (pressed && was && !window._grabQuiet) {
+      } else if (pressed && was && window._grabTrace) {
         this._press(hand, { SKIPPED: 'no press EDGE — the trigger was already down last frame',
           note: 'a triggerWas stuck true means the release frame was never seen for this hand' });
       }
@@ -631,9 +631,12 @@ class Grab extends SculptBase {
   // "we don't need endless live logs, just what happens when the trigger is pulled."
   //
   // On by default and cheap: it fires on the press EDGE only, so it costs two lines per pull.
-  // `window._grabQuiet = true` silences it.
+  // OFF BY DEFAULT. This used to be opt-OUT (`window._grabQuiet = true` to silence), which
+  // meant five lines per trigger press in every session anyone ever ran, forever, and a
+  // console you cannot read past. matt: "logs are still crazy noisy. can you silence most of
+  // these please?" Settings -> Trace Trigger Press turns it on when the question is asked.
   _press(hand, fields) {
-    if (window._grabQuiet) return;
+    if (!window._grabTrace) return;
     const parts = Object.entries(fields).map(([k, v]) => k + '=' + v).join('  ');
     console.log('[grab ' + hand + '] ' + parts);
   }
@@ -692,7 +695,7 @@ class Grab extends SculptBase {
     // THE OTHER END OF THE CALL. Scene logs that it is about to dispatch; this says the tool
     // was entered and what it was given. A CALLING line with no ENTERED line means the call did
     // not arrive — a different fault from anything inside this function.
-    if (window._grabExpectEntry && !window._grabQuiet) {
+    if (window._grabExpectEntry && window._grabTrace) {
       const cs = (options && options.controllers) || [];
       const want = window._grabExpectEntry;
       const mine = cs.find((c) => c.handedness === want);
