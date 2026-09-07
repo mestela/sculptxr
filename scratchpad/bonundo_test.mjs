@@ -158,5 +158,52 @@ const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDr
     'this.mode is not a property on the tool and printed undefined in matt\'s trace');
 }
 
+// ── THE MIRROR WAS COPYING SIZE, NOT JUST POSE ────────────────────────────────────────────
+//
+// matt's before/after, one grab, Tweak FK:
+//
+//   GRAB   bone_01_L  localScale 1.0000 -> 1.0000 (same)      modelScale 0.8640 -> 0.8640 (same)
+//     twin bone_01_R  localScale 0.2614 -> 1.0000 (3.8252x)   modelScale 0.2259 -> 0.8640 (3.8252x)
+//     child bone_02_L localScale 0.3627 -> 0.3627 (same)      modelScale 0.3134 -> 0.3134 (same)
+//
+// The dragged joint does not change. Its child does not change. The TWIN lands on exactly the
+// SOURCE's model scale -- 0.8640 -- because mirrorModelMatrix conjugates the whole model matrix
+// (M · src · M) and scale rides along with orientation. And since a joint's world size is the
+// product of its ancestors' scales, that 3.83x propagates through the twin's entire sub-chain in
+// one frame. That is the explosion.
+{
+  const src = { model: 0.8640 };
+  const twinBefore = { local: 0.2614, model: 0.2259 };
+  const parentModel = twinBefore.model / twinBefore.local;      // the twin's parent, from his numbers
+
+  // What the old code did: hand the twin the source's model scale outright.
+  const twinAfterBroken = { model: src.model, local: src.model / parentModel };
+  check('the reported jump is exactly "take the source\'s size"',
+    Math.abs(twinAfterBroken.model - 0.8640) < 1e-4 && Math.abs(twinAfterBroken.local - 1.0) < 1e-3,
+    'model ' + twinAfterBroken.model.toFixed(4) + ', local ' + twinAfterBroken.local.toFixed(4)
+      + ' — if this does not land on 0.8640/1.0000 the model of the bug is wrong');
+  check('...and it is the 3.8252x matt measured',
+    Math.abs(twinAfterBroken.model / twinBefore.model - 3.8252) < 5e-3,
+    (twinAfterBroken.model / twinBefore.model).toFixed(4) + 'x');
+
+  // The fix keeps the twin's magnitudes, so a grab is a no-op for size however different the
+  // two sides are.
+  const twinAfterFixed = { model: twinBefore.model, local: twinBefore.local };
+  check('...while keeping the twin\'s own size leaves it untouched',
+    twinAfterFixed.model === twinBefore.model && twinAfterFixed.local === twinBefore.local);
+
+  const BD3 = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+  check('the twin write keeps the twin\'s magnitudes',
+    /_mTwinCur\.fromArray\(g\.twin\.getModelSpaceMatrix\(\)\);/.test(BD3)
+      && /Math\.abs\(_vTwinKeep\.x\)/.test(BD3),
+    'the twin is handed the source\'s scale again');
+  check('...and the SIGNS from the mirrored matrix, since reflection flips handedness',
+    /Math\.sign\(_vTwinS\.x \|\| 1\)/.test(BD3),
+    'dropping the flip mirrors the pose onto the wrong handedness');
+  check('...composed back before it is written',
+    /_mTwin\.compose\(_vTwinP, _qTwinR, _vTwinS\);[\s\S]{0,120}?setModelSpaceMatrix\(_mTwin\.elements\)/.test(BD3),
+    'decomposed and never recomposed writes whatever was in the matrix before');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

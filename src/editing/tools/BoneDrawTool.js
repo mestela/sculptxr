@@ -89,6 +89,9 @@ const _qNow = new THREE.Quaternion(), _qDelta = new THREE.Quaternion();
 const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
 const _mParent = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
 const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
+// Twin write: the mirrored pose is taken from the source, the SIZE is kept from the twin.
+const _vTwinP = new THREE.Vector3(), _qTwinR = new THREE.Quaternion(), _vTwinS = new THREE.Vector3();
+const _mTwinCur = new THREE.Matrix4(), _vTwinKeep = new THREE.Vector3();
 
 // Screen-input scratch. Kept separate from the pose scratch above: the screen path CALLS
 // _poseTo, which clobbers every one of those on its way through.
@@ -1183,6 +1186,32 @@ class BoneDrawTool extends SculptBase {
       // accumulates into exactly the runaway this compensation exists to prevent.
       const tcomp = compensating ? Skeleton.beginCompensate(this._main, g.twin) : null;
       Skeleton.mirrorModelMatrix(g.joint, g.plane, _mTwin);
+      // MIRROR THE POSE, NOT THE SIZE.
+      //
+      // mirrorModelMatrix conjugates the source's WHOLE model matrix -- M · src · M -- so the
+      // twin was being handed the source's scale along with its orientation. When the two sides
+      // were not already the same size that is a step change, and because a joint's world size
+      // is the PRODUCT of its ancestors' scales, it multiplies through the twin's entire
+      // sub-chain in one frame. matt's trace caught it exactly:
+      //
+      //   GRAB   bone_01_L  localScale 1.0000 -> 1.0000 (same)
+      //     twin bone_01_R  localScale 0.2614 -> 1.0000 (3.8252x)
+      //     child bone_02_L localScale 0.3627 -> 0.3627 (same)
+      //
+      // The joint being dragged does not change and neither does its child; only the twin, and
+      // it lands on precisely the source's model scale. matt: "leg still explodes."
+      //
+      // A tweak drag moves a joint; it is not a resize, so the twin keeps its own size. The
+      // magnitudes come from the twin's current model matrix and the SIGNS from the mirrored
+      // one, because the reflection flips handedness and that flip is part of the pose.
+      _mTwinCur.fromArray(g.twin.getModelSpaceMatrix());
+      _mTwin.decompose(_vTwinP, _qTwinR, _vTwinS);
+      _mTwinCur.decompose(_vTmp, _qParent, _vTwinKeep);
+      _vTwinS.set(
+        Math.sign(_vTwinS.x || 1) * Math.abs(_vTwinKeep.x),
+        Math.sign(_vTwinS.y || 1) * Math.abs(_vTwinKeep.y),
+        Math.sign(_vTwinS.z || 1) * Math.abs(_vTwinKeep.z));
+      _mTwin.compose(_vTwinP, _qTwinR, _vTwinS);
       g.twin.setModelSpaceMatrix(_mTwin.elements);
       Skeleton.syncThree(g.twin);
       if (tcomp) Skeleton.endCompensate(tcomp);
