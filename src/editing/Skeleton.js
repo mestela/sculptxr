@@ -1096,6 +1096,9 @@ function scaleHandleGroup(main) {
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
       color: color, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false, toneMapped: false,
     }));
+    // Its axis colour, kept so the preselect tint can be taken off again. Read from here rather
+    // than recomputed, so the handle goes back to exactly the colour it was drawn with.
+    m.userData.baseColor = color;
     m.renderOrder = 10002;          // above the rig, like the labels: a handle you cannot see
     m.frustumCulled = false;        // is a handle you cannot grab
     m.isPickable = false;
@@ -1163,9 +1166,19 @@ Skeleton.highlightScaleHandle = function (main, grip) {
   const r = Skeleton.sceneUnit(main) * 0.018;
   for (let i = 0; i < h.faces.length; i++) {
     const on = hot === i;
-    h.faces[i].scale.setScalar(on ? r * 1.6 : r);
-    h.faces[i].material.opacity = on ? 1 : 0.9;
-    h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+    const f = h.faces[i];
+    // THE SAME YELLOW A JOINT OR A BONE TAKES. matt: "i want them to have preselect hlighting
+    // like joints/bones do." Preselection already means one thing everywhere in this rig --
+    // HILITE_COLOR, "this is what the next press takes" -- and a handle that answered the same
+    // question with a different signal would be a second visual language to learn. Growing it
+    // was the first attempt and is not what the rest of the rig does.
+    //
+    // The size bump stays ON TOP of the colour: these are the smallest targets in the tool and
+    // easily misclicked, so the hot one is both yellow AND bigger.
+    f.material.color.setHex(on ? HILITE_COLOR : f.userData.baseColor);
+    f.scale.setScalar(on ? r * 1.6 : r);
+    f.material.opacity = on ? 1 : 0.9;
+    f.updateMatrix(); f.matrixWorldNeedsUpdate = true;
   }
 };
 

@@ -420,6 +420,24 @@ const chain = (main, meshes, n) => {
   check('...with a drag keeping its own handle lit',
     /const lit = this\._scale \? this\._scale\.grip : grip;/.test(BD3),
     'or the handle goes dark as soon as the cursor travels away from it mid-drag');
+  // AND IT LOOKS LIKE EVERY OTHER PRESELECT IN THE RIG. Preselection already means one thing
+  // here -- HILITE_COLOR, "this is what the next press takes" -- and a handle answering the
+  // same question with a different signal is a second visual language to learn. Growing the
+  // dot was the first attempt and is not what the rest of the rig does. matt: "i want them to
+  // have preselect hlighting like joints/bones do."
+  {
+    const SK2 = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+    check('a hovered handle takes the rig preselect colour',
+      /f\.material\.color\.setHex\(on \? HILITE_COLOR : f\.userData\.baseColor\);/.test(SK2),
+      'the same yellow a joint or a bone takes, not a signal of its own');
+    check('...and its axis colour is remembered so it can be taken off again',
+      /m\.userData\.baseColor = color;/.test(SK2),
+      'recomputing it would risk returning the handle to a slightly different colour than the '
+        + 'one it was drawn with');
+    check('...with the size bump kept on top, since these are the smallest targets',
+      /f\.scale\.setScalar\(on \? r \* 1\.6 : r\);/.test(SK2));
+  }
+
   check('...and cleared when the mode changes',
     /this\._litHandle = -1;\n\s*Skeleton\.highlightScaleHandle\(this\._main, null\);/.test(BD3),
     'a handle left bright under a tool that has none reads as a stuck highlight');
