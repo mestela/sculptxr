@@ -401,6 +401,30 @@ const chain = (main, meshes, n) => {
       + 'runaway this compensation exists to prevent');
 }
 
+// ── THE SCALE HANDLES PRESELECT ON DESKTOP TOO ────────────────────────────────────────────
+//
+// highlightScaleHandle already existed and was already called -- from the VR branch only, which
+// returns long before the desktop hover code. So the hover state worked in a headset and
+// nowhere else, and with a mouse a dot gave you no way to know which handle you were about to
+// take until you had taken it. They sit close together on a small joint. matt: "please add
+// preselect highlight for the small handles in tweak joint mode."
+{
+  const BD3 = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
+  check('the desktop hover lights the handle under the cursor',
+    /THE HANDLES LIGHT UP ON DESKTOP TOO[\s\S]{0,1400}?Skeleton\.highlightScaleHandle\(this\._main, lit\);/.test(BD3),
+    'a highlight that only exists in the VR branch is a highlight most sessions never see');
+  check('...picked through the same plane and radius the PRESS uses',
+    (BD3.match(/Skeleton\.pickScaleHandle\(this\._main, _hit, this\._snapDist\(\) \* 1\.4\)/g) || []).length
+      + (BD3.match(/Skeleton\.pickScaleHandle\(main2, _hit, this\._snapDist\(\) \* 1\.4\)/g) || []).length === 2,
+    'what lights up must be what a press would grab, not an approximation of it');
+  check('...with a drag keeping its own handle lit',
+    /const lit = this\._scale \? this\._scale\.grip : grip;/.test(BD3),
+    'or the handle goes dark as soon as the cursor travels away from it mid-drag');
+  check('...and cleared when the mode changes',
+    /this\._litHandle = -1;\n\s*Skeleton\.highlightScaleHandle\(this\._main, null\);/.test(BD3),
+    'a handle left bright under a tool that has none reads as a stuck highlight');
+}
+
 // ── THE JOINT RADIUS DRAG IS A DELTA ──────────────────────────────────────────────────────
 //
 // It used to be ABSOLUTE: radius = distance from the joint to the cursor. That reads beautifully

@@ -6584,12 +6584,17 @@ class Scene {
     }
 
     this._tornOffPanels.set(sectionId, panel);
+    // So everything that marks the main panel dirty reaches this one too -- see registerTorn.
+    this._mainMenuPanel?.registerTorn?.(panel);
     this._mainMenuPanel?.notifyTearOff(sectionId);
   }
 
   _reDockSection(sectionId) {
     const panel = this._tornOffPanels.get(sectionId);
     if (!panel) return;
+    // Unregistered BEFORE it is disposed: a disposed panel left in the set would be asked to
+    // rebuild itself on the next markDirty, which is a rebuild into nothing at best.
+    this._mainMenuPanel?.unregisterTorn?.(panel);
     if (panel.mesh?.parent) panel.mesh.parent.remove(panel.mesh);
     panel.dispose();
     this._tornOffPanels.delete(sectionId);

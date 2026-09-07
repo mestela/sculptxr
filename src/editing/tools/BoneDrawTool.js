@@ -930,6 +930,37 @@ class BoneDrawTool extends SculptBase {
       return;
     }
 
+    // THE HANDLES LIGHT UP ON DESKTOP TOO.
+    //
+    // highlightScaleHandle already existed and was already called -- from the VR branch only,
+    // which returns long before this line. So the hover state worked in a headset and nowhere
+    // else, and on a desktop a dot gave you no way to know which one you were about to take
+    // until you had taken it. They sit close together on a small joint. matt: "please add
+    // preselect highlight for the small handles in tweak joint mode."
+    //
+    // Picked through the SAME plane and the SAME radius the press uses (_screenDrag above), so
+    // what lights up is exactly what a press would grab rather than an approximation of it.
+    if (this._mode === 'joint') {
+      const hj = this._main._jointHandles && this._main._jointHandles.joint;
+      let grip = null;
+      if (hj && !this._drag && this._planePoint(Skeleton.jointPos(hj, _jp).clone(), _hit)) {
+        grip = Skeleton.pickScaleHandle(this._main, _hit, this._snapDist() * 1.4);
+      }
+      // The grip being dragged wins over anything hovered, so a drag keeps its handle lit even
+      // as the cursor travels away from it.
+      const lit = this._scale ? this._scale.grip : grip;
+      if ((lit ? lit.index : -1) !== (this._litHandle ?? -1)) {
+        this._litHandle = lit ? lit.index : -1;
+        Skeleton.highlightScaleHandle(this._main, lit);
+        this._refresh();
+      }
+    } else if (this._litHandle !== undefined && this._litHandle !== -1) {
+      // Left the mode with a handle lit: clear it, or it stays bright under a tool that has
+      // no handles at all.
+      this._litHandle = -1;
+      Skeleton.highlightScaleHandle(this._main, null);
+    }
+
     const hit = this._drag ? this._drag.joint
       : (this._mode === 'radius' ? this._pickBoneScreen() : this._pickJointScreen());
     if (hit === this._hilite) return;

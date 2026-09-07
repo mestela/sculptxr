@@ -2160,6 +2160,26 @@ export class MainMenuPanel extends HTMLVRPanel {
   // One chip per torn-off section. Pressing one asks for it back, which is the useful action
   // in VR: a floating panel in a room you have since turned away from is harder to walk to
   // than to recall.
+  // TORN-OFF SECTIONS ARE STILL THIS PANEL'S CONTENT, just somewhere else in the room.
+  //
+  // Seven places across four files mark this panel dirty when something changes -- a joint is
+  // added, a tool switches, a frame group edits -- and none of them knew about the torn-off
+  // copies, so a pinned outliner stopped updating the moment it was pinned. matt noticed it on
+  // desktop first and then: "i notice in vr that the outliner isn't updating when pinned
+  // either."
+  //
+  // Fixed where "this panel's content changed" ARRIVES rather than at the seven call sites, so
+  // callers that do not exist yet are covered too. The same shape as the desktop fix, which put
+  // it in _sectionIsFloating for the same reason.
+  registerTorn(panel) { (this._tornPanels ||= new Set()).add(panel); }
+  unregisterTorn(panel) { this._tornPanels?.delete(panel); }
+
+  markDirty() {
+    super.markDirty();
+    if (!this._tornPanels) return;
+    for (const p of this._tornPanels) p.syncFromState?.();
+  }
+
   _updateTornStrip() {
     const strip = this._element.querySelector('#mm-torn-strip');
     if (!strip) return;

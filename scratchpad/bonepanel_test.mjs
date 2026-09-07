@@ -317,6 +317,26 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
       'the same positional trap the VR tab strip had');
   }
 
+  // A TORN-OFF SECTION IS STILL THE PANEL'S CONTENT, just elsewhere in the room. Seven places
+  // across four files mark the main VR panel dirty and none knew about the torn copies, so a
+  // pinned outliner stopped updating the moment it was pinned -- the VR twin of the desktop bug
+  // fixed in v3.30.72. matt: "i notice in vr that the outliner isn't updating when pinned
+  // either."
+  {
+    const SCN = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+    check('marking the VR panel dirty reaches its torn-off sections',
+      /markDirty\(\) \{\n\s*super\.markDirty\(\);[\s\S]{0,200}?for \(const p of this\._tornPanels\) p\.syncFromState\?\.\(\);/.test(MAIN_SRC),
+      'fixed where "this panel changed" ARRIVES, not at the seven call sites -- so callers that '
+        + 'do not exist yet are covered');
+    check('...with tearing off registering and redocking unregistering',
+      /this\._mainMenuPanel\?\.registerTorn\?\.\(panel\);/.test(SCN)
+        && /this\._mainMenuPanel\?\.unregisterTorn\?\.\(panel\);/.test(SCN));
+    check('...and unregistered BEFORE dispose',
+      SCN.indexOf('this._mainMenuPanel?.unregisterTorn?.(panel);')
+        < SCN.indexOf('panel.dispose();', SCN.indexOf('_reDockSection')),
+      'a disposed panel left in the set is asked to rebuild itself on the next markDirty');
+  }
+
   check('the pinned strip exists on BOTH platforms',
     /_refreshPinnedStrip\(\) \{/.test(GUI) && /dfp-strip/.test(DFP)
       && /this\._updateTornStrip\(\);/.test(MAIN_SRC) && /mm-torn-strip/.test(MAIN_SRC),
