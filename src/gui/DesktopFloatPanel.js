@@ -1,4 +1,5 @@
 import { SECTION_LABELS } from './htmlvr/MainMenuPanel.js';
+import { TAB_ICONS } from './tabIcons.js';
 import { ICON_DOCK } from './tabIcons.js';
 
 // A SIDEBAR SECTION, FLOATING OVER THE CANVAS.
@@ -41,6 +42,7 @@ export class DesktopFloatPanel {
     el.style.top  = (y ?? 80) + 'px';
     el.innerHTML = `
       <div class="dfp-head">
+        <span class="dfp-icon">${TAB_ICONS[this._id] ?? ''}</span>
         <span class="dfp-title">${SECTION_LABELS[this._id] ?? this._id}</span>
         <button class="dfp-dock" title="Return to the sidebar">${ICON_DOCK}</button>
       </div>
@@ -125,6 +127,11 @@ export function injectFloatCSS() {
   background: #313244; border-radius: 7px 7px 0 0; cursor: move; user-select: none;
   touch-action: none; }
 .dfp-title { flex: 1; font-weight: 600; letter-spacing: 0.02em; }
+/* THE ICON GOES ON THE PANEL THAT WAS PINNED, so you can tell at a glance which one it is.
+   It used to be a row of chips on the main panel instead, which is a list of what is pinned --
+   a different thing, and not what was asked for. matt: "i meant in the corner of the panel that
+   has been pinned, so its easy to tell at a glance from the icon what panel it is". */
+.dfp-icon { display: flex; align-items: center; font-size: 15px; opacity: 0.85; flex-shrink: 0; }
 .dfp-dock { background: #45475a; border: 1px solid #585b70; color: #cdd6f4;
   border-radius: 4px; width: 22px; height: 22px; cursor: pointer; line-height: 1; padding: 0; }
 .dfp-dock:hover { background: #585b70; }
@@ -135,12 +142,8 @@ export function injectFloatCSS() {
 .dfp-body .mm-section-header { display: none; }
 
 /* The pinned strip: one chip per floating section, top left, above everything. */
-#dfp-strip { position: fixed; top: 8px; left: 8px; z-index: 4000;
-  display: flex; gap: 4px; }
-.dfp-chip { width: 26px; height: 26px; padding: 0; line-height: 1;
   background: rgba(30,30,46,0.92); border: 1px solid #45475a; border-radius: 5px;
   color: #cdd6f4; cursor: pointer; }
-.dfp-chip:hover { background: #45475a; border-color: #7f849c; }
 /* A pinned section's tab: dimmed, because its contents are somewhere else -- but still
    clickable, since what it shows is the placeholder that brings the section back. Matches
    .mm-tab-btn.torn in the VR panel, minus the pointer-events lock. */

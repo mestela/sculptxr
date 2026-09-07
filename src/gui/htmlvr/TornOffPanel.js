@@ -1,6 +1,6 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import { notePanelRebuild } from './install.js';
-import { ICON_DOCK } from '../tabIcons.js';
+import { ICON_DOCK, TAB_ICONS } from '../tabIcons.js';
 import {
   MM_W, injectMMCSS,
   buildSectionHTML_scene,
@@ -55,6 +55,7 @@ export class TornOffPanel extends HTMLVRPanel {
 
     root.innerHTML = `
       <div class="mm-torn-header" style="display:flex;align-items:center;height:${HEADER_H}px;padding:0 8px;background:#11111b;border-bottom:2px solid #45475a;box-sizing:border-box;gap:6px;">
+        <span class="mm-torn-icon" style="display:flex;align-items:center;color:#cba6f7;font-size:15px;flex-shrink:0;">${TAB_ICONS[sectionId] ?? ''}</span>
         <span class="mm-torn-title" style="flex:1;font-size:12px;font-weight:700;color:#cba6f7;text-transform:uppercase;letter-spacing:0.06em;">${SECTION_LABELS[sectionId] ?? sectionId}</span>
         <button class="mm-torn-redock" title="Return to main panel" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid #45475a;border-radius:5px;background:#1e1e2e;color:#6c7086;cursor:pointer;outline:none;flex-shrink:0;">
           ${ICON_DOCK}

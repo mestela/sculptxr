@@ -249,11 +249,8 @@ const CSS = `
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-#mm-torn-strip { display: flex; gap: 3px; margin-right: 6px; }
-.mm-torn-chip { width: 24px; height: 24px; padding: 0; line-height: 1;
   background: #313244; border: 1px solid #585b70; border-radius: 4px; color: #f9e2af;
   cursor: pointer; }
-.mm-torn-chip:hover, .mm-torn-chip.hover { background: #45475a; border-color: #7f849c; }
 .mm-section-pin-btn {
   display: flex;
   align-items: center;
@@ -960,7 +957,6 @@ function buildShellHTML() {
            its tab and a panel somewhere in the room, and nothing on screen says which. One chip
            per torn-off section, always in the same corner, and pressing one brings it back.
            Same idea and same position as the desktop strip. -->
-      <div id="mm-torn-strip"></div>
       <button class="mm-menu-btn" data-menu="files">Files</button>
       <button class="mm-menu-btn" data-menu="history">History</button>
       <button class="mm-menu-btn" data-menu="background">Background</button>
@@ -2220,7 +2216,6 @@ export class MainMenuPanel extends HTMLVRPanel {
     this._element.querySelectorAll('.mm-tab-btn').forEach(btn => {
       btn.classList.toggle('torn', this._tornOffSections.has(btn.dataset.section));
     });
-    this._updateTornStrip();
     this.markDirty();
   }
 
@@ -2250,23 +2245,6 @@ export class MainMenuPanel extends HTMLVRPanel {
     for (const p of this._tornPanels) p.requestSync?.();
   }
 
-  _updateTornStrip() {
-    const strip = this._element.querySelector('#mm-torn-strip');
-    if (!strip) return;
-    strip.innerHTML = '';
-    for (const id of this._tornOffSections) {
-      const b = document.createElement('button');
-      b.className = 'mm-torn-chip';
-      b.title = (SECTION_LABELS[id] ?? id) + ' — floating (press to bring back)';
-      b.innerHTML = TAB_ICONS[id] ?? id;
-      b.addEventListener('click', () => {
-        this._element.dispatchEvent(
-          new CustomEvent('mm-section-redock', { detail: { section: id }, bubbles: false })
-        );
-      });
-      strip.appendChild(b);
-    }
-  }
 
   // ── Mesh placement ─────────────────────────────────────────────────────────
 

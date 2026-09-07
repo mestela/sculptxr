@@ -486,5 +486,25 @@ const chain = (main, meshes, n) => {
       + '_camAxis documents');
 }
 
+// ── A CLEARED SCENE LEAVES NO SKELETON BEHIND ─────────────────────────────────────────────
+//
+// Bones, joints and capsules are drawn as INSTANCED batches, and what puts them on screen is the
+// instance COUNT on the batch mesh -- not the per-joint entries. updateVisuals's no-joints path
+// disposed the entries and returned, so every batch kept the count from the last frame that had
+// a rig: an empty outliner beside a viewport full of bones. matt: "if i make a new scene in vr,
+// the outliner is empty, but bones are still visible in the viewport, left behind from the
+// previous scene."
+{
+  const SKEL2 = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const empty = (SKEL2.match(/if \(!joints\.length\) \{[\s\S]*?\n  \}/) || [''])[0];
+  check('the empty-rig path disposes the per-joint entries', /disposeEntry\(main, id\)/.test(empty));
+  check('...AND flushes the batches, which is what is actually drawn',
+    /flushBatches\(main\);/.test(empty),
+    'the instanced meshes keep last frame\'s count and the rig stays on screen');
+  check('...in that order, so the flush sees an empty set',
+    empty.indexOf('disposeEntry') < empty.indexOf('flushBatches'),
+    'flushing first writes the counts that are about to be disposed');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

@@ -2373,6 +2373,17 @@ Skeleton.updateVisuals = function (main) {
   main._skelVis = main._skelVis || new Map();
   if (!joints.length) {
     if (main._skelVis.size) for (const id of Array.from(main._skelVis.keys())) disposeEntry(main, id);
+    // AND THEN FLUSH, or the rig is still on screen with nothing behind it.
+    //
+    // Bones, joints and capsules are drawn as INSTANCED batches, and what decides whether they
+    // appear is the instance COUNT on the batch mesh -- not the entries that were just disposed.
+    // Returning here left every batch holding the count from the last frame that had a rig, so a
+    // cleared scene kept its skeleton: an empty outliner beside a viewport full of bones. matt:
+    // "if i make a new scene in vr, the outliner is empty, but bones are still visible in the
+    // viewport, left behind from the previous scene."
+    //
+    // flushBatches walks _skelVis, which is now empty, so every batch is written to zero.
+    flushBatches(main);
     return;
   }
 

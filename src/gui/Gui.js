@@ -1056,7 +1056,6 @@ class Gui {
     }).mount(at?.x ?? (90 + n * 24), at?.y ?? (90 + n * 24));
     this._floatPanels.set(sectionId, panel);
     this._refreshDesktopSection(sectionId);
-    this._refreshPinnedStrip();
     this._updatePinnedTabStates();
     this._savePinnedSections();
   }
@@ -1067,7 +1066,6 @@ class Gui {
     panel.dispose();
     this._floatPanels.delete(sectionId);
     this._refreshDesktopSection(sectionId);
-    this._refreshPinnedStrip();
     this._updatePinnedTabStates();
     this._savePinnedSections();
   }
@@ -1156,26 +1154,6 @@ class Gui {
   // Clicking raises rather than redocks: the panels have their own dock button, and a strip
   // that dismissed things on a single click would make finding one indistinguishable from
   // putting it away.
-  _refreshPinnedStrip() {
-    let strip = document.getElementById('dfp-strip');
-    const n = this._floatPanels?.size ?? 0;
-    if (!n) { strip?.remove(); return; }
-    if (!strip) {
-      injectFloatCSS();
-      strip = document.createElement('div');
-      strip.id = 'dfp-strip';
-      document.body.appendChild(strip);
-    }
-    strip.innerHTML = '';
-    for (const [id, panel] of this._floatPanels) {
-      const b = document.createElement('button');
-      b.className = 'dfp-chip';
-      b.title = (SECTION_LABELS[id] ?? id) + ' — pinned (click to bring to front)';
-      b.innerHTML = TAB_ICONS[id] ?? id;
-      b.addEventListener('click', () => panel.raise());
-      strip.appendChild(b);
-    }
-  }
 
   // Every floating panel, rebuilt from current state. Called wherever the docked sections are
   // rebuilt: a pinned panel that stops tracking the tool you just changed is worse than no

@@ -376,17 +376,29 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
       'a disposed panel left in the set is asked to rebuild itself on the next markDirty');
   }
 
-  check('the pinned strip exists on BOTH platforms',
-    /_refreshPinnedStrip\(\) \{/.test(GUI) && /dfp-strip/.test(DFP)
-      && /this\._updateTornStrip\(\);/.test(MAIN_SRC) && /mm-torn-strip/.test(MAIN_SRC),
-    'matt: "would also be good on both desktop and vr for when items get pinned, to put their '
-      + 'icon in the top left". Checked by its CALL SITE, not its definition -- a rule that '
-      + 'only asks whether the function exists passes happily over dead code, which an '
-      + 'injection proved.');
-  check('...built from the same icon and label tables the tabs use',
-    /TAB_ICONS\[id\]/.test(GUI) && /TAB_ICONS\[id\]/.test(MAIN_SRC)
-      && /SECTION_LABELS\[id\]/.test(GUI) && /SECTION_LABELS\[id\]/.test(MAIN_SRC),
-    'a chip showing a different icon from the tab it came from is worse than no chip');
+  // THE ICON GOES ON THE PANEL THAT WAS PINNED — not in a list of pinned panels somewhere else.
+  //
+  // I built the second thing. matt asked for "an icon in the top left corner for pinned panels"
+  // and I read it as an index of what is currently pinned, so both platforms grew a strip of
+  // chips on the MAIN panel. He meant the panel itself should wear its own icon: "i meant in the
+  // corner of the panel that has been pinned, so its easy to tell at a glance from the icon what
+  // panel it is". A row of chips answers "what is pinned"; it does not answer "what is THIS".
+  //
+  // The strips are gone. The recall they also offered lives on each panel's own redock button.
+  const TORN_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/TornOffPanel.js', 'utf8');
+  check('a torn-off VR panel wears its own section icon',
+    /class="mm-torn-icon"[^]{0,200}?TAB_ICONS\[sectionId\]/.test(TORN_SRC),
+    'nothing on the panel says which section it is except the word');
+  check('...and so does a pinned desktop panel',
+    /class="dfp-icon"[^]{0,120}?TAB_ICONS\[this\._id\]/.test(DFP),
+    'desktop and VR have to conform');
+  check('...from the same table the tabs draw from',
+    /TAB_ICONS/.test(TORN_SRC) && /TAB_ICONS/.test(DFP),
+    'an icon that disagrees with the tab it came from is worse than none');
+  check('...and the chip strips it replaced are gone from both',
+    !/dfp-strip/.test(DFP) && !/_refreshPinnedStrip/.test(GUI)
+      && !/mm-torn-strip/.test(MAIN_SRC) && !/_updateTornStrip/.test(MAIN_SRC),
+    'the thing that was asked to be removed is still being built')
 
   check('the section header is one piece of markup for both platforms',
     /export function sectionHeaderHTML\(sectionId\)/.test(MAIN_SRC)
