@@ -249,8 +249,6 @@ const CSS = `
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-  background: #313244; border: 1px solid #585b70; border-radius: 4px; color: #f9e2af;
-  cursor: pointer; }
 .mm-section-pin-btn {
   display: flex;
   align-items: center;

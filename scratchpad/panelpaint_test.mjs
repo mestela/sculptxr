@@ -374,5 +374,48 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'console-only, which in a headset means unreachable');
 }
 
+// ── THE PANEL CSS PARSES AS CSS ───────────────────────────────────────────────────────────
+//
+// I removed the pinned-chip rules with a line-regex and it deleted a multi-line rule's SELECTOR
+// while leaving its declarations behind:
+//
+//   }
+//     background: #313244; border: 1px solid #585b70; ...
+//     cursor: pointer; }
+//   .mm-section-pin-btn {
+//
+// CSS error recovery then reads that orphan as the start of a selector and keeps going until it
+// finds a `{` -- which is the NEXT rule's. So the orphan silently ate `.mm-section-pin-btn`, and
+// the per-panel pin button lost its `width: 26px; height: 26px` and collapsed onto its icon.
+// matt: "the pin icon per panel has gone narrow in vr... now its sized to exactly contain the pin
+// icon within it, so its very narrow."
+//
+// Nothing failed: the file parsed as JS, the build was clean, 65 harnesses were green, and the
+// only symptom was one button in a headset. So the CSS gets checked as CSS.
+{
+  const css = (MM.match(/const CSS = `([\s\S]*?)\n`;/) || [, ''])[1];
+  check('the panel CSS block is findable', css.length > 1000, css.length + ' chars');
+
+  // Strip comments first, then walk. A declaration seen at brace depth 0 is an orphan.
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  let depth = 0;
+  const orphans = [];
+  for (const raw of bare.split('\n')) {
+    const line = raw.trim();
+    if (depth === 0 && line && !line.startsWith('@') && !line.includes('{') && /^[a-z-]+\s*:/.test(line)) {
+      orphans.push(line.slice(0, 60));
+    }
+    depth += (raw.match(/\{/g) || []).length - (raw.match(/\}/g) || []).length;
+  }
+  check('no declaration is stranded outside a rule', orphans.length === 0,
+    orphans.join(' | ') + ' — CSS recovery will swallow the rule that follows');
+  check('...and the braces balance', depth === 0, 'ends at depth ' + depth);
+
+  // The specific casualty, and the property that made it a square with a hit area.
+  check('the per-panel pin button is still a square',
+    /\.mm-section-pin-btn \{[^}]*width: 26px; height: 26px;/.test(css),
+    'it collapses to the width of the icon inside it');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
