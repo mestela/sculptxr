@@ -1143,7 +1143,24 @@ class BoneDrawTool extends SculptBase {
         + '  localPos=' + [loc[12], loc[13], loc[14]].map((v) => v.toFixed(2)).join(',')
         + '  target=' + [at.x, at.y, at.z].map((v) => v.toFixed(2)).join(',')
         + '  sceneUnit=' + Skeleton.sceneUnit(this._main).toFixed(3)
-        + '  mode=' + this.mode);
+        + '  mode=' + this._mode + (this._compensate ? '+comp' : ''));
+    }
+    // BEFORE AND AFTER ONE GRAB, which is the measurement the per-frame lines cannot make.
+    //
+    // matt: "each time it runs, symmetry gets out of wack, bones get bigger and smaller, its
+    // really unstable now." Within a single drag every number above is constant, so whatever
+    // accumulates does so ACROSS grabs -- and the twin is included because a mirror that drifts
+    // apart from its source is the same accumulation seen from the side.
+    if (window._tweakTrace && g.joint && !g._tweakBefore) {
+      const snap = (m) => {
+        if (!m) return null;
+        const l = m.getMatrix(), ms = m.getModelSpaceMatrix();
+        return { name: m._permanentStaticLabel || m.getID(),
+                 ls: Math.hypot(l[0], l[1], l[2]), msc: Math.hypot(ms[0], ms[1], ms[2]),
+                 mp: [ms[12], ms[13], ms[14]] };
+      };
+      g._tweakBefore = { joint: snap(g.joint), twin: snap(g.twin),
+                         kids: Skeleton.childJoints(this._main, g.joint).map(snap) };
     }
 
     const compensating = window._boneCompensate === false ? false : this._compensate;
@@ -1197,6 +1214,26 @@ class BoneDrawTool extends SculptBase {
   _releaseGrab() {
     this._tweakTraceN = 0;
     const g = this._grab;
+    if (window._tweakTrace && g && g._tweakBefore) {
+      const snap = (m) => {
+        if (!m) return null;
+        const l = m.getMatrix(), ms = m.getModelSpaceMatrix();
+        return { ls: Math.hypot(l[0], l[1], l[2]), msc: Math.hypot(ms[0], ms[1], ms[2]) };
+      };
+      const line = (label, b, a) => {
+        if (!b || !a) return;
+        const d = (x, y) => (y - x === 0 ? 'same' : (y / (x || 1e-9)).toFixed(4) + 'x');
+        console.log('[tweak] ' + label + ' ' + b.name + '  localScale ' + b.ls.toFixed(4)
+          + ' -> ' + a.ls.toFixed(4) + ' (' + d(b.ls, a.ls) + ')'
+          + '  modelScale ' + b.msc.toFixed(4) + ' -> ' + a.msc.toFixed(4)
+          + ' (' + d(b.msc, a.msc) + ')');
+      };
+      const B = g._tweakBefore;
+      line('GRAB  ', B.joint, snap(g.joint));
+      line('  twin', B.twin, snap(g.twin));
+      const kidsNow = Skeleton.childJoints(this._main, g.joint);
+      B.kids.forEach((kb, i) => line('  child', kb, snap(kidsNow[i])));
+    }
     this._grab = null;
     this._grabHand = null;
     // The rig has a new rest; re-seed the watcher's caches BEFORE letting it look again, or the

@@ -113,10 +113,23 @@ for (const [what, begin, drive] of [
 
 // An owner left behind after a release would make the NEXT grab answer to a hand that is no
 // longer holding anything — the same bug with the sign flipped.
+// THE WHOLE FUNCTION, by matching braces rather than by slicing a fixed 220 characters. The
+// fixed slice reported _releaseGrab as broken the moment a trace was added ahead of the
+// assignment -- the code was correct and the rule was measuring the first 220 bytes of it. The
+// same trap is written up in panelray_test, which is where this brace walk comes from.
+const fnBody = (name) => {
+  const a = SRC.indexOf('  ' + name + '() {');
+  if (a < 0) return '';
+  let depth = 0;
+  for (let k = SRC.indexOf('{', a); k < SRC.length; k++) {
+    if (SRC[k] === '{') depth++;
+    else if (SRC[k] === '}' && --depth === 0) return SRC.slice(a, k + 1);
+  }
+  return SRC.slice(a);
+};
 for (const fn of ['_releaseGrab', '_releasePose', '_releaseIK']) {
-  const at = SRC.indexOf('  ' + fn + '() {');
-  const body = SRC.slice(at, at + 220);
-  check(fn + ' clears the owner', at > 0 && /this\._grabHand = null;/.test(body),
+  const body = fnBody(fn);
+  check(fn + ' clears the owner', body.length > 0 && /this\._grabHand = null;/.test(body),
     'a stale owner means the next grab is driven by nobody');
 }
 

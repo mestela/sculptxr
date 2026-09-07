@@ -118,5 +118,45 @@ const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDr
   check('...off until asked for', !/window\._tweakTrace = true/.test(BD));
 }
 
+// ── SCALE COMPOUNDS DOWN THE CHAIN ────────────────────────────────────────────────────────
+//
+// From matt's trace, checked arithmetically:
+//
+//   bone_01_L  parentModel 0.1902 x local 1.7346 = 0.3300  (reported 0.3300)
+//   bone_02_L  parentModel 0.3300 x local 1.0891 = 0.3594  (reported 0.3594)
+//   bone_03_L  parentModel 0.3594 x local 1.9993 = 0.7185  (reported 0.7185)
+//
+// Exact to four decimals on all three. A joint's world size is the PRODUCT of every ancestor's
+// scale, so bone_03 is 3.78x bone_00 -- and any per-joint scale error multiplies into every
+// descendant and into the mirrored chain, which is what "symmetry gets out of wack, bones get
+// bigger and smaller" looks like from the inside.
+//
+// It also kills the other hypothesis outright: sceneUnit read 29.232 on every single line, so
+// the ruler is not moving. This is the joints.
+{
+  // The identity itself, so a future change that decouples joint size from the hierarchy has to
+  // come past this rule and say so.
+  const chain = [
+    { local: 1.7346, parentModel: 0.1902, model: 0.3300 },
+    { local: 1.0891, parentModel: 0.3300, model: 0.3594 },
+    { local: 1.9993, parentModel: 0.3594, model: 0.7185 },
+  ];
+  const holds = chain.every((c) => Math.abs(c.parentModel * c.local - c.model) < 5e-4);
+  check('a joint\'s model scale is its parent\'s times its own', holds,
+    'the recorded measurement no longer reproduces, so the model of the bug is wrong');
+
+  const BD2 = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+  check('a grab is measured before and after, not only during',
+    /g\._tweakBefore/.test(BD2) && /line\('GRAB  ', B\.joint, snap\(g\.joint\)\);/.test(BD2),
+    'within one drag every number is constant, so per-frame lines cannot see accumulation');
+  check('...including the twin, since symmetry drifting is the same accumulation',
+    /line\('  twin', B\.twin, snap\(g\.twin\)\);/.test(BD2));
+  check('...and the children, which is where a parent scale change lands',
+    /B\.kids\.forEach/.test(BD2));
+  check('the per-frame line reports the real mode',
+    /'  mode=' \+ this\._mode/.test(BD2),
+    'this.mode is not a property on the tool and printed undefined in matt\'s trace');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
