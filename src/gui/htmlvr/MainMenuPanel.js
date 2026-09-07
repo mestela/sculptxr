@@ -1181,8 +1181,17 @@ const DEV_TOGGLES = [
   // The frame profiler cannot see panel rasterisation: the polyfill's paint callback awaits the
   // image decode, so Scene's `panel-paint` bucket stops at the first await and the decode lands
   // in the frame gap instead of in our work. This measures the span and names the cause.
+  // ANSWERS BACK, like xrPerf and ikPerf do. This line only prints when a paint happens, so
+  // "no output" means either "panels cost nothing" or "the switch did not take" -- and those are
+  // opposite conclusions. The ack makes silence mean the first one.
   { id: 'mm-panel-perf', label: 'Trace Panel Cost',
-    get: () => !!window._panelPerf,     set: (on) => { window._panelPerf = !!on; } },
+    get: () => !!window._panelPerf,
+    set: (on) => {
+      window._panelPerf = !!on;
+      console.log('[panelPerf] ' + (on ? 'ON' : 'off') + ' — ' + VERSION
+        + (on ? '. One line a second, but ONLY when a panel repaints: silence here means no panel'
+              + ' work at all, which is itself the answer.' : ''));
+    } },
   { id: 'mm-scoped-paint', label: 'Scoped Panel Repaint',
     get: () => window._panelScopedPaint !== false,
     set: (on) => { window._panelScopedPaint = !!on; } },

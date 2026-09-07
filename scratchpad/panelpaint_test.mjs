@@ -161,5 +161,21 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
   }
 }
 
+// ── SILENCE MUST MEAN ONE THING ───────────────────────────────────────────────────────────
+//
+// [panelPerf] only prints when a panel repaints, so no output means either "panels cost nothing"
+// or "the switch did not take" — opposite conclusions from the same empty console, and the
+// second one wastes a headset session. Same reason xrPerf/ikPerf have always acknowledged
+// themselves ("A SWITCH THAT ANSWERS BACK": a silent flag cannot be told from stale code).
+{
+  const block = (MM.match(/\{ id: 'mm-panel-perf'[\s\S]*?\n    \} \},/) || [''])[0];
+  check('Trace Panel Cost acknowledges itself',
+    /console\.log\('\[panelPerf\] ' \+ \(on \? 'ON' : 'off'\)/.test(block),
+    'the toggle is silent, so an empty console proves nothing');
+  check('...and says which build it is',
+    /VERSION/.test(block),
+    'no version in the ack, so stale code looks identical to a working switch');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
