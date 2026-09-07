@@ -959,28 +959,21 @@ check('...using the same RigPending entry point as the main menu, not a copy',
     && /const armed = main\?\._rigPendingMode === 'parent';/.test(MINI_SRC),
   'a local armed flag goes stale when the viewport finishes the gesture');
 
-// ── NO "--" INSIDE AN HTML COMMENT IN A VR-RASTERISED TEMPLATE ────────────────────────
+// ── NO "--" INSIDE AN HTML COMMENT: THE RULE MOVED, BECAUSE THIS ONE ENUMERATED ──────
 //
-// The VR panel serialises its markup into an SVG, and an SVG is XML. XML forbids a double hyphen
-// inside a comment, so one prose dash in a menu template made the whole panel fail to paint with
-// nothing but "SVG image failed to load (error). cssW=835, cssH=877, svg.length=483606". Desktop
-// showed it perfectly the whole time, because an HTML parser does not care -- which is precisely
-// why this needs a check rather than care.
+// This check used to live here with a hardcoded list of three files -- MainMenuPanel, MiniPanel,
+// AnimationControlPanel -- and it was green on the day the bug shipped again, because the
+// offending comment was in bonePanel.js, which builds the markup for all of those and was not on
+// the list. A whole headset session went into re-finding a fault this suite was written to catch.
+//
+// The same shape as every other bug of this kind here: enumerating the sites instead of covering
+// the class. panelxml_test now sweeps ALL of src, so this file just makes sure that sweep is
+// still there rather than keeping a narrower copy alive to disagree with it.
 {
-  const vrTemplates = [
-    ['MainMenuPanel', MAIN_SRC],
-    ['MiniPanel', MINI_SRC],
-    ['AnimationControlPanel', fs.readFileSync(
-      '/Users/mattestela/sculptxr/src/gui/htmlvr/AnimationControlPanel.js', 'utf8')],
-  ];
-  const offenders = [];
-  for (const [name, src] of vrTemplates) {
-    for (const m of src.matchAll(/<!--([\s\S]*?)-->/g)) {
-      if (m[1].includes('--')) offenders.push(name + ': ' + m[0].slice(0, 60).replace(/\n/g, ' '));
-    }
-  }
-  check('no VR template has "--" inside an HTML comment', offenders.length === 0,
-    offenders.join(' | '));
+  const XMLT = fs.readFileSync('/Users/mattestela/sculptxr/scratchpad/panelxml_test.mjs', 'utf8');
+  check('the "--" sweep exists and walks the whole tree',
+    /<!--\(\[\\s\\S\]\*\?\)-->/.test(XMLT) && /function walk\(d\)/.test(XMLT),
+    'panelxml_test no longer sweeps src, and nothing else does');
 }
 
 // ── CAPSULES CAN BE SHADED ────────────────────────────────────────────────────────────
