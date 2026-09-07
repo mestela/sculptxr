@@ -223,6 +223,7 @@ export class HTMLVRPanel {
     if (want === this._hostMounted) return;
     this._hostMounted = want;
     const host = getHostCanvas();
+    this._suspectBlank = true;   // a re-layout: the next capture may be of a stale region
     if (want) {
       host.appendChild(this._element);
       // No forced _needsResize here — the panel's size is unchanged while hidden,
@@ -375,12 +376,26 @@ export class HTMLVRPanel {
       //
       // A panel's background is opaque, so a legitimate capture is never blank; a blank one is
       // always a failed rasterisation, and the last good frame is strictly better than it.
-      if (this._texture && _bitmapIsBlank(bitmap)) {
+      // ONLY WHEN THERE IS REASON TO SUSPECT ONE.
+      //
+      // This ran on EVERY paint of EVERY panel, and it is a GPU->CPU readback: drawImage of the
+      // full bitmap into an 8x8 canvas, then getImageData. matt's performance recording put
+      // getImageData at 251ms of self time, and a readback does not only cost its own time -- it
+      // forces the pipeline to flush, which lands on WebGLRenderer.render, the largest single
+      // entry in that profile at 31%. That is the mechanism by which MORE PANELS made the
+      // RENDERER slower, which is otherwise a strange thing for a panel to do.
+      //
+      // The blank captures it was written to catch all come from one situation: a re-layout the
+      // panel has not repainted since (a mount, an unmount, a resize). So the check arms itself
+      // on exactly those, and stays armed while it keeps seeing blanks.
+      if (this._texture && this._suspectBlank && _bitmapIsBlank(bitmap)) {
         this._dirty = true;               // come back for a real one
         return;
       }
+      this._suspectBlank = false;
       if (this._needsResize) {
         this._needsResize = false;
+        this._suspectBlank = true;
         // A size change moves every panel after this one in the shared flow, so their captured
         // regions are stale too — the same rule as mounting. See markAllPanelsDirty.
         markAllPanelsDirty(this);

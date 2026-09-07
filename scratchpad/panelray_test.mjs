@@ -265,12 +265,23 @@ check('it is inside the section it costs',
     /if \(!this\._texture\) \{[\s\S]{0,700}?this\.mesh\.material\.needsUpdate = true;/.test(HP1),
     'no map to a map is a different program; every later frame is the same one');
 
+  // Still never adopted -- but the CHECK is no longer run on every paint. It is a GPU->CPU
+  // readback (drawImage the full bitmap into 8x8, then getImageData), and matt's performance
+  // recording put getImageData at 251ms of self time with WebGLRenderer.render the largest entry
+  // in the profile: a readback forces a pipeline flush, so the per-paint version was making the
+  // RENDERER pay for the number of panels. It now arms on the only thing that produces the blank
+  // it guards against -- a re-layout the panel has not repainted since -- and, critically, arms
+  // on OTHER panels' re-layouts too, which is the case the original trace actually caught.
   check('...and an empty rasterisation is never adopted over a good texture',
-    /if \(this\._texture && _bitmapIsBlank\(bitmap\)\) \{/.test(HP1)
+    /if \(this\._texture && this\._suspectBlank && _bitmapIsBlank\(bitmap\)\) \{/.test(HP1)
       && /function _bitmapIsBlank\(bitmap\)/.test(HP1),
     'a 419x800 capture at mean alpha 0 paints the panel out of existence');
+  check('...and every panel is armed when someone else re-lays out the canvas',
+    /p\._suspectBlank = true;\s*\n\s*p\.markDirty\(\);/.test(
+      fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/install.js', 'utf8')),
+    'only the panel that moved is armed, and it is the others that go blank');
   check('...but only where there is a good texture to keep',
-    /this\._texture && _bitmapIsBlank/.test(HP1),
+    /this\._texture && this\._suspectBlank && _bitmapIsBlank/.test(HP1),
     'the first paint of a panel has nothing to fall back to and must take what it gets');
 
   // ONE SHARED FLOW, so one panel moving invalidates every other panel's capture region.

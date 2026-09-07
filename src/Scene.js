@@ -1,5 +1,6 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import * as THREE from 'three';
+const XF_SETTLE_MS = 250;
 import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
 
 // The ghost's opacity where the sculpt is in front of the grid. ABSOLUTE, not a fraction of the
@@ -3049,6 +3050,8 @@ class Scene {
   // Live-refresh the outliner transform fields (.mm-xf) from the selected mesh, so they
   // track gizmo/grab manipulation. Skips a field being typed into; marks the VR panel
   // dirty only when a value actually changed. Throttled by the caller.
+  // How long the transform readouts must hold still before the panel is worth rasterising.
+  // Long enough to cover a continuous drag, short enough that letting go feels immediate.
   _syncOutlinerTransformFields() {
     const inputs = document.querySelectorAll('.mm-xf');
     if (!inputs.length) return;
@@ -3064,7 +3067,27 @@ class Scene {
       const val = Math.round(trs[t][a] * 1000) / 1000;
       if (parseFloat(inp.value) !== val) { inp.value = val; changed = true; }
     });
-    if (changed && this._mainMenuPanel && this._mainMenuPanel.markDirty) this._mainMenuPanel.markDirty();
+    // REPAINT ON SETTLE, NOT DURING THE DRAG.
+    //
+    // These readouts change on EVERY frame of a grab or a pose, so `changed` was true for the
+    // whole gesture and the main panel was asked to repaint every fourth frame throughout it --
+    // ~18 requests a second, rate-limited down to ~5 actual rasterises a second, each of them a
+    // clone, a serialise, an encode and a decode of the whole panel. It was the most-named cause
+    // in matt's trace, by a distance:
+    //
+    //   caused by: SculptGL._syncOutlinerTransformFields 1   (sampled 1 in 8)
+    //
+    // The DOM is still written every tick, so the numbers are correct the moment anything paints.
+    // What is deferred is the RASTERISE, until the values have been still for a beat -- the same
+    // bargain as the existing slider-drag suppression, which does not repaint mid-drag either.
+    if (changed) {
+      this._xfSettleAt = performance.now();
+      this._xfRepaintPending = true;
+    } else if (this._xfRepaintPending
+               && performance.now() - (this._xfSettleAt || 0) > XF_SETTLE_MS) {
+      this._xfRepaintPending = false;
+      this._mainMenuPanel?.markDirty?.();
+    }
   }
 
   // Set one local-transform component. type: 't'|'r'|'s', axis: 0|1|2.

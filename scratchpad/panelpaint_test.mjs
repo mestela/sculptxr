@@ -241,5 +241,30 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'a subclass markDirty override masks the real caller');
 }
 
+// ── THE BLANK CHECK IS A GPU READBACK ─────────────────────────────────────────────────────
+//
+// _bitmapIsBlank draws the full bitmap into an 8x8 canvas and calls getImageData -- a GPU->CPU
+// readback. It ran on every paint of every panel. matt's performance recording put getImageData
+// at 251ms self time, and a readback also forces a pipeline flush, which lands on
+// WebGLRenderer.render -- the largest entry in that profile at 31% self. That is how MORE
+// PANELS made the RENDERER slower, which is otherwise a strange thing for a panel to do.
+//
+// The blanks it catches all come from a re-layout the panel has not repainted since, so it arms
+// on exactly those and stays armed while it keeps seeing blanks.
+{
+  check('the blank check only runs when a re-layout armed it',
+    /this\._texture && this\._suspectBlank && _bitmapIsBlank\(bitmap\)/.test(PANEL),
+    'a GPU readback on every paint of every panel');
+  check('...armed by mount and unmount',
+    /this\._suspectBlank = true;[\s\S]{0,120}?if \(want\) \{/.test(PANEL),
+    'a mount can leave a stale captured region with nothing to catch it');
+  check('...and by a resize',
+    /this\._needsResize = false;\s*\n\s*this\._suspectBlank = true;/.test(PANEL),
+    'a resize is the case the check was originally written for');
+  check('...and disarmed once a good capture arrives',
+    /this\._suspectBlank = false;/.test(PANEL),
+    'it stays armed forever, which is where it started');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

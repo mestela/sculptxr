@@ -167,6 +167,11 @@ export function unregisterPanel(panel) { _panels.delete(panel); }
 export function markAllPanelsDirty(except) {
   for (const p of _panels) {
     if (p === except || !p._hostMounted) continue;
+    // ARM THE BLANK CHECK ON EVERY ONE OF THEM, not just the panel that moved. The blank capture
+    // this guards against is precisely a panel being captured against a host canvas that SOMEONE
+    // ELSE has just re-laid-out -- the trace was of MiniPanel going blank while another panel was
+    // mounted for a swap. So the panels that did not move are exactly the ones at risk.
+    p._suspectBlank = true;
     p.markDirty();
   }
 }
