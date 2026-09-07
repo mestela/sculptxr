@@ -132,6 +132,27 @@ check('every command button is present on a flat screen',
     && display.includes('id="bone-trails"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 
+// ── A CONTROL THAT VANISHES CANNOT BE TOLD FROM ONE THAT IS BROKEN ────────────────────────
+//
+// X-Ray and Mush need a bound mesh, and when there was not one the rows simply did not exist.
+// So a binding lost to a topology edit -- replaceMesh swaps the mesh object and cannot carry
+// weights across, because the remesh invalidated every index -- showed up as a slider that had
+// been there a minute ago and now was not, with nothing saying why. matt: "the bone parameters
+// are getting unreliable. after editing a character i went back to the bone parameters to
+// adjust delta mush, but that slider was missing."
+{
+  const SCN2 = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  check('losing a binding to a topology edit is announced',
+    /if \(Skinning\.isBound\(mesh\) && !Skinning\.isBound\(newMesh\)\) \{/.test(SCN2)
+      && /Bind lost: /.test(SCN2),
+    'the weights CANNOT be carried across -- they are indexed by vertex and the rebuild '
+      + 'invalidated every index -- so the fix is to say so, not to copy them');
+  check('...and the panel states its condition rather than dropping the rows',
+    /need a bound mesh — press Bind/.test(SRC),
+    'a row that disappears reads as a bug in the panel; a row that explains itself reads as a '
+      + 'state you can fix');
+}
+
 // ── TOOLS AND PROPERTIES ARE TWO PAGES ────────────────────────────────────────────────────
 //
 // The tool grids are a wall of buttons sitting ABOVE everything that describes the tool you
@@ -324,10 +345,28 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // either."
   {
     const SCN = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+    const TORN2 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/TornOffPanel.js', 'utf8');
     check('marking the VR panel dirty reaches its torn-off sections',
-      /markDirty\(\) \{\n\s*super\.markDirty\(\);[\s\S]{0,200}?for \(const p of this\._tornPanels\) p\.syncFromState\?\.\(\);/.test(MAIN_SRC),
+      /markDirty\(\) \{\n\s*super\.markDirty\(\);[\s\S]{0,500}?for \(const p of this\._tornPanels\) p\.requestSync\?\.\(\);/.test(MAIN_SRC),
       'fixed where "this panel changed" ARRIVES, not at the seven call sites -- so callers that '
         + 'do not exist yet are covered');
+    // AND ASKS RATHER THAN DOES. rebuild() regenerates the DOM, re-wires it and flushPaint()s --
+    // a blocking rasterise. markDirty fires many times a second while a rig is handled, so
+    // doing that inline made pinning a panel next to a skinned character unusably slow on
+    // mobile. matt: "if i hide all the panels its fast again."
+    check('...as a REQUEST, coalesced into the panel\'s own frame',
+      /requestSync\(\) \{ this\._needsSync = true; \}/.test(TORN2)
+        && /update\(xrIsPresenting\) \{\n\s*if \(this\._needsSync && this\._main\)/.test(TORN2)
+        && !/for \(const p of this\._tornPanels\) p\.syncFromState\?\.\(\);/.test(MAIN_SRC),
+      'a synchronous rebuild per markDirty is a DOM regeneration and an SVG rasterise per panel '
+        + 'per call');
+    check('...and throttled, since an outliner needs to be right soon, not at 90Hz',
+      /now - \(this\._lastSyncAt \|\| 0\) >= SYNC_MIN_MS/.test(TORN2)
+        && /const SYNC_MIN_MS = 200;/.test(TORN2));
+    check('...with the blocking rasterise kept only for creation and show',
+      /if \(immediate\) this\.flushPaint\(\);\n\s*else this\.markDirty\(\);/.test(TORN2),
+      'an unpainted panel reads as a black quad when it first appears, which is why flushPaint '
+        + 'exists at all -- but a periodic sync can go through the ordinary dirty path');
     check('...with tearing off registering and redocking unregistering',
       /this\._mainMenuPanel\?\.registerTorn\?\.\(panel\);/.test(SCN)
         && /this\._mainMenuPanel\?\.unregisterTorn\?\.\(panel\);/.test(SCN));

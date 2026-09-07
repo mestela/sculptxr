@@ -224,7 +224,17 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-mush" min="0" max="60" step="1" value="${mush}">
       <span class="${c.val}" id="bone-mush-val">${mush}</span>
     </div>
-    ` : ''}
+    ` : `
+    <!-- A CONTROL THAT VANISHES CANNOT BE TOLD FROM ONE THAT IS BROKEN.
+         X-Ray and Mush need a bound mesh, and when there is not one these rows used to simply
+         not exist -- so a binding lost to a topology edit showed up as a slider that had been
+         there a minute ago and now was not, with nothing saying why. The row stays and states
+         its condition instead. matt: "the bone parameters are getting unreliable." -->
+    <div class="${c.row}" style="opacity:0.6">
+      <span class="${c.lbl}">X-Ray / Mush</span>
+      <span class="${c.val}" style="flex:1;text-align:left">need a bound mesh — press Bind</span>
+    </div>
+    `}
     ` : ''}
   `;
 }

@@ -32,6 +32,11 @@ const SECTION_LABELS = {
   animation: 'Animation',
 };
 
+// How often a torn-off panel may rebuild itself from a content change. Matched to the host
+// canvas's own ambient repaint limit: rebuilding faster than the panel can be painted is work
+// nobody sees.
+const SYNC_MIN_MS = 200;
+
 export class TornOffPanel extends HTMLVRPanel {
   constructor(sectionId, main, scene, camera, renderer) {
     // CSS for .mm-torn-* classes lives in MainMenuPanel.js CSS string so it is
@@ -89,7 +94,36 @@ export class TornOffPanel extends HTMLVRPanel {
   }
 
   /** Rebuilds section HTML and re-wires. Call on full-repaint triggers. */
-  rebuild(main) {
+  // ASK FOR A REBUILD, do not perform one.
+  //
+  // The main panel forwards every markDirty to its torn-off sections so a pinned outliner keeps
+  // up (v3.30.76). The first version of that forwarding called rebuild() SYNCHRONOUSLY, and
+  // rebuild regenerates the DOM, re-wires it and then flushPaint()s -- a blocking rasterise.
+  // markDirty fires many times a second while a rig is being handled, so pinning a panel next
+  // to a skinned character bought a full DOM rebuild and a synchronous SVG rasterise per panel
+  // per call. matt: "vr in mobile gets very slow when interacting with a skinned character and
+  // pinned panels. if i hide all the panels its fast again."
+  //
+  // Coalesced into the per-frame update instead, and throttled on top of that: an outliner does
+  // not need to be right at 90Hz, it needs to be right soon.
+  requestSync() { this._needsSync = true; }
+
+  update(xrIsPresenting) {
+    if (this._needsSync && this._main) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (now - (this._lastSyncAt || 0) >= SYNC_MIN_MS) {
+        this._needsSync = false;
+        this._lastSyncAt = now;
+        this.rebuild(this._main, false);
+      }
+    }
+    super.update(xrIsPresenting);
+  }
+
+  // `immediate` forces the blocking rasterise. True when the panel is being created or shown --
+  // where an unpainted frame reads as a black quad -- and false for the periodic sync, which
+  // can go through the ordinary dirty path and be batched with everything else.
+  rebuild(main, immediate = true) {
     this._main = main;
     const contentEl = this._element.querySelector('.mm-torn-content');
     if (!contentEl) return;
@@ -101,7 +135,8 @@ export class TornOffPanel extends HTMLVRPanel {
     // flushPaint forces an immediate polyfill capture so the texture is
     // populated before the mesh becomes visible — prevents VD from seeing
     // a black (unpainted) frame and keying it out as transparent.
-    this.flushPaint();
+    if (immediate) this.flushPaint();
+    else this.markDirty();
   }
 
   _wireSection(main) {

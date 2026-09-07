@@ -2177,7 +2177,10 @@ export class MainMenuPanel extends HTMLVRPanel {
   markDirty() {
     super.markDirty();
     if (!this._tornPanels) return;
-    for (const p of this._tornPanels) p.syncFromState?.();
+    // REQUEST, not perform: rebuilding here would put a DOM regeneration and a blocking
+    // rasterise on every markDirty, of which there are many a second while a rig is handled.
+    // The panel picks it up on its next frame, throttled -- see requestSync.
+    for (const p of this._tornPanels) p.requestSync?.();
   }
 
   _updateTornStrip() {

@@ -3942,7 +3942,25 @@ class Scene {
     return this.getIndexMesh(mesh, true);
   }
 
+  // REPLACING A BOUND MESH DROPS ITS BINDING, and says so.
+  //
+  // This swaps one mesh object for another and carries the matrix, shader and wireframe across.
+  // It does NOT carry the skin weights, and it must not: a weight map is indexed by vertex, so
+  // the remesh or voxel pass that produced `newMesh` has invalidated every index in it. Copying
+  // them would deform with garbage.
+  //
+  // What was wrong is that it happened in silence. The bone panel hides its X-Ray and Mush rows
+  // when nothing in the scene is bound, so the first sign was a control that had been there a
+  // minute ago and now was not. matt: "the bone parameters are getting unreliable. after
+  // editing a character i went back to the bone parameters to adjust delta mush, but that
+  // slider was missing."
   replaceMesh(mesh, newMesh) {
+    if (Skinning.isBound(mesh) && !Skinning.isBound(newMesh)) {
+      const why = 'Bind lost: ' + (mesh._permanentStaticLabel || 'the mesh')
+        + ' was rebuilt by an edit that changes topology. Bind it again to pose it.';
+      if (window.screenLog) window.screenLog(why, '#f9e2af');
+      console.warn('[Skinning] ' + why);
+    }
     if (newMesh?.setShaderType && !newMesh._isBone && !newMesh._isNull && !newMesh._isReference) {
       newMesh.setShaderType(getOptionsURL().shader);
       newMesh.setFlatShading?.(getOptionsURL().flatshading);
