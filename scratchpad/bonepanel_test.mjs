@@ -292,6 +292,31 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
         + 'Measured: chips appeared and both tabs stayed bright.');
   }
 
+  // THE SIDEBAR REMEMBERS WHICH TAB WAS OPEN, and refuses to open on a pinned one -- a pinned
+  // section's tab shows only "this section is floating", so opening onto it spends the sidebar
+  // on a placeholder while the panel it describes is already on screen. matt: "if i have the
+  // tools and outliner pinned, its pointless to show the tools panel in the sidebar by
+  // default, that currently just shows 'this panel has been pinned'."
+  {
+    check('the open tab is remembered',
+      /getOptionsURL\.saveOption\('desktopTab', name, 400\);/.test(GUI),
+      'the sidebar arrangement is one preference; the tab belongs with the pins');
+    check('...except the timeline, which is a toggle not a panel',
+      /if \(name !== 'timeline'\) \{[\s\S]{0,400}?saveOption\('desktopTab'/.test(GUI),
+      'restoring onto it would open an empty sidebar');
+    check('...and a pinned tab is skipped on restore',
+      /const pick = order\.find\(\(n\) => n && tabsByName\[n\] && !pins\[n\]\)/.test(GUI),
+      'opening onto a floating section shows a placeholder instead of controls');
+    check('...falling through the rest in order, so something always opens',
+      /const order = \[saved, DESKTOP_DEFAULT_TAB, 'sculpting', 'properties', 'scene',/.test(GUI)
+        && /\|\| DESKTOP_DEFAULT_TAB;/.test(GUI),
+      'a session with everything pinned must still open on a tab rather than none');
+    check('...and the default is named, not positional',
+      /const DESKTOP_DEFAULT_TAB = 'sculpting';/.test(GUI)
+        && !/sculptingTab\.setAttribute\('active', ''\);/.test(GUI),
+      'the same positional trap the VR tab strip had');
+  }
+
   check('the pinned strip exists on BOTH platforms',
     /_refreshPinnedStrip\(\) \{/.test(GUI) && /dfp-strip/.test(DFP)
       && /this\._updateTornStrip\(\);/.test(MAIN_SRC) && /mm-torn-strip/.test(MAIN_SRC),

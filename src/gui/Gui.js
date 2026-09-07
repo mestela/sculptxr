@@ -1,6 +1,9 @@
 import TR from './GuiTR.js';
 import { TAB_ICONS } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
+
+// The tab the sidebar opens on when nothing has been remembered and nothing is pinned.
+const DESKTOP_DEFAULT_TAB = 'sculpting';
 import GuiCamera from './GuiCamera.js';
 import GuiFiles from './GuiFiles.js';
 import GuiTopology from './GuiTopology.js';
@@ -428,7 +431,26 @@ class Gui {
     const blendshapesTab = createTab('blendshapes', 'Blendshapes');
     const timelineTab  = createTab('timeline',  'Timeline');
 
-    sculptingTab.setAttribute('active', '');
+    // WHICH TAB OPENS.
+    //
+    // The one you left open last time, unless it is PINNED -- a pinned section's tab shows only
+    // "this section is floating", so opening onto it wastes the sidebar on a placeholder while
+    // the panel it is describing is already on screen. matt: "if i have the tools and outliner
+    // pinned, its pointless to show the tools panel in the sidebar by default, that currently
+    // just shows 'this panel has been pinned'."
+    //
+    // Falls through the ordinary tabs in order, so a session with everything pinned still opens
+    // on something rather than nothing.
+    {
+      const pins = getOptionsURL().desktopPins || {};
+      const tabsByName = { scene: sceneTab, rendering: renderingTab, topology: topologyTab,
+        sculpting: sculptingTab, properties: propertiesTab, animation: animationTab };
+      const saved = getOptionsURL()._rawSaved?.desktopTab;
+      const order = [saved, DESKTOP_DEFAULT_TAB, 'sculpting', 'properties', 'scene',
+        'topology', 'rendering', 'animation'];
+      const pick = order.find((n) => n && tabsByName[n] && !pins[n]) || DESKTOP_DEFAULT_TAB;
+      (tabsByName[pick] || sculptingTab).setAttribute('active', '');
+    }
 
     tabGroup.appendChild(sceneTab);
     tabGroup.appendChild(renderingTab);
@@ -480,6 +502,10 @@ class Gui {
       const name = e.detail?.name;
       if (name !== 'timeline') {
         _prevActivePanel = name ?? _prevActivePanel;
+        // REMEMBERED FOR NEXT SESSION, alongside the pin state -- the sidebar's arrangement is
+        // one preference, not two. Timeline is excluded because it is a toggle for an overlay
+        // rather than a panel; restoring onto it would show an empty sidebar.
+        if (name) getOptionsURL.saveOption('desktopTab', name, 400);
       }
       // Rebuild the Scene outliner on show so it reflects the current meshes /
       // references (it's otherwise built once and goes stale when you add either).
