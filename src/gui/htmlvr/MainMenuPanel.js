@@ -1157,6 +1157,35 @@ const DEV_TOGGLES = [
   //
   // This is the escape hatch, not the fix: whatever leaves it open is still to be found. It
   // also reports what it closed, so it doubles as the answer to "was one actually stuck?".
+  // WHAT IS ACTUALLY ON SCREEN IN THE RIG, named. Every rig visual has a display flag, so
+  // "I turned them all off and something is still drawn" means either a flag with no button or
+  // an object drawn outside the flag system -- and those need different fixes. Reading the code
+  // could not separate them; this asks the scene graph. matt: "theres a little wireframe sphere
+  // being drawn at the root/tip of each bone. if i turn off all the display modes/options for
+  // joints, they're still there."
+  { id: 'mm-rig-dump', label: 'Dump Rig Visuals', action: true,
+    run: () => {
+      const main = window.sculptgl;
+      const g = main?._skelGroup;
+      if (!g) { console.log('[rig] no skeleton group — nothing is drawn'); return; }
+      const rows = [];
+      g.traverse((o) => {
+        if (o === g || !o.visible) return;
+        // An instanced batch draws nothing at count 0, however visible the mesh says it is.
+        const n = o.isInstancedMesh ? o.count : null;
+        if (n === 0) return;
+        let par = o.parent, hidden = false;
+        while (par && par !== g) { if (!par.visible) hidden = true; par = par.parent; }
+        if (hidden) return;
+        rows.push([(o.name || o.type) + '  ', o.geometry?.type || '-', n === null ? '' : ' x' + n,
+                   o.material?.wireframe ? ' WIREFRAME' : '', ' order ' + o.renderOrder].join(''));
+      });
+      const flags = Object.keys(Skeleton.DISPLAY_FLAGS)
+        .filter((k) => Skeleton.displayFlag(k)).join(', ') || 'none';
+      console.log('[rig] ' + rows.length + ' visible objects in the skeleton group, flags on: '
+        + flags);
+      for (const r of rows) console.log('[rig]   ' + r);
+    } },
   { id: 'mm-close-modals', label: 'Close Stuck Modals', action: true,
     run: () => {
       const shut = [];

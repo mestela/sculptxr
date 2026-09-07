@@ -323,5 +323,32 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'deferred into nothing at all: the thumb would never move');
 }
 
+// ── WHAT IS ACTUALLY DRAWN IN THE RIG ─────────────────────────────────────────────────────
+//
+// Every rig visual is behind a display flag, so "I turned them all off and something is still
+// there" means either a flag with no button or an object drawn outside the flag system, and
+// those need different fixes. Reading the code could not separate them -- each of the twelve
+// per-joint slots checked out -- so this asks the scene graph instead. matt: "theres a little
+// wireframe sphere being drawn at the root/tip of each bone."
+{
+  const dump = (MM.match(/\{ id: 'mm-rig-dump'[\s\S]*?\n    \} \},/) || [''])[0];
+  check('Dump Rig Visuals is in the settings menu', dump.length > 100,
+    'a headset has no console to type into');
+  // An InstancedMesh at count 0 draws nothing however visible it claims to be -- listing it
+  // sends the reader after an object that is not on screen.
+  check('...and ignores batches that are drawing nothing',
+    /o\.isInstancedMesh \? o\.count : null/.test(dump) && /if \(n === 0\) return;/.test(dump),
+    'a zero-count batch reads as a visible object and is a false lead');
+  check('...and objects under a hidden parent',
+    /while \(par && par !== g\)/.test(dump),
+    'three does not clear .visible on children, so a hidden group still lists them all');
+  check('...and says which flags were on when it was asked',
+    /Skeleton\.displayFlag\(k\)/.test(dump),
+    'a list of what is drawn is unreadable without knowing what was switched on');
+  check('...and calls out a wireframe material by name',
+    /wireframe \? ' WIREFRAME'/.test(dump),
+    'the report has to be able to say the word matt used');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
