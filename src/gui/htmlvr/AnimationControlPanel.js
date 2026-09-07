@@ -14,6 +14,7 @@
  */
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { faIcon } from './faIcons.js';
 import TimelineHelper from '../TimelineHelper.js';
 import IKSolver from '../../editing/IKSolver.js';
 import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
@@ -448,14 +449,14 @@ export function buildAnimationSectionHTML(main, style) {
       <div class="acp-section-title">Transport</div>
       <div class="acp-stack">
         <div class="acp-transport">
-          <button id="acp-to-start"   title="Jump to start"><i class="fa-solid fa-backward-step"></i></button>
-          <button id="acp-prev-frame" title="Previous frame"><i class="fa-solid fa-backward"></i></button>
-          <button id="acp-play-rev"   title="Play backwards"><i class="fa-solid fa-play" style="transform:scaleX(-1);display:inline-block"></i></button>
-          <button id="acp-stop"       title="Stop"><i class="fa-solid fa-stop"></i></button>
-          <button id="acp-play-fwd"   title="Play forwards"><i class="fa-solid fa-play"></i></button>
-          <button id="acp-next-frame" title="Next frame"><i class="fa-solid fa-forward"></i></button>
-          <button id="acp-to-end"     title="Jump to end"><i class="fa-solid fa-forward-step"></i></button>
-          <button id="acp-record"     title="Record"><i class="fa-solid fa-circle" style="color:#f38ba8"></i></button>
+          <button id="acp-to-start"   title="Jump to start">${faIcon('backward-step')}</button>
+          <button id="acp-prev-frame" title="Previous frame">${faIcon('backward')}</button>
+          <button id="acp-play-rev"   title="Play backwards">${faIcon('play', { style: 'transform:scaleX(-1)' })}</button>
+          <button id="acp-stop"       title="Stop">${faIcon('stop')}</button>
+          <button id="acp-play-fwd"   title="Play forwards">${faIcon('play')}</button>
+          <button id="acp-next-frame" title="Next frame">${faIcon('forward')}</button>
+          <button id="acp-to-end"     title="Jump to end">${faIcon('forward-step')}</button>
+          <button id="acp-record"     title="Record">${faIcon('circle', { style: 'color:#f38ba8' })}</button>
         </div>
         <button class="acp-btn-full" id="acp-close-loop"
           title="Make the last key of each selected take match its first, so the take loops without a pop. Undoable.">Close loop on selected takes</button>

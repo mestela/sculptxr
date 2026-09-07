@@ -50,6 +50,7 @@ import TR from '../GuiTR.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
+import { faIcon, setFaIcon } from './faIcons.js';
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
@@ -87,6 +88,17 @@ const MM_BODY_H    = 456;   // height below menubar (scrollable content lives he
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const CSS = `
+/* An icon is a path now, not a glyph. Sized and coloured exactly as the <i> it replaced was:
+   1em square so it tracks font-size, currentColor so it inherits, and FontAwesome's own
+   -0.125em baseline nudge so it sits on the text line the way the glyph did. */
+.fa-i {
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  vertical-align: -0.125em;
+  display: inline-block;
+  flex-shrink: 0;
+}
 #mm-root {
   /* width + height are set as inline styles in the constructor so they survive
      the polyfill's SVG foreignObject serialisation.  The CSS selector here is
@@ -1094,8 +1106,8 @@ export function buildMenuHTML_history(main) {
   return `
     <div class="mm-section-title">History</div>
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-undo"${uC ? '' : ' disabled'}><i class="fa-solid fa-rotate-left"></i> Undo${uC ? ` (${uC})` : ''}</button>
-      <button class="mm-action-btn" id="mm-redo"${rC ? '' : ' disabled'}><i class="fa-solid fa-rotate-right"></i> Redo${rC ? ` (${rC})` : ''}</button>
+      <button class="mm-action-btn" id="mm-undo"${uC ? '' : ' disabled'}>${faIcon('rotate-left')} Undo${uC ? ` (${uC})` : ''}</button>
+      <button class="mm-action-btn" id="mm-redo"${rC ? '' : ' disabled'}>${faIcon('rotate-right')} Redo${rC ? ` (${rC})` : ''}</button>
     </div>
     <div class="mm-section-title">Settings</div>
     <div class="mm-row">
@@ -1467,10 +1479,10 @@ export function buildSectionHTML_scene(main) {
     return `
       <div class="mm-outliner-row${pickCls}${vis ? '' : ' is-hidden'}${hasVisKeys ? ' vis-keyed' : ''}">
         ${hasKids
-          ? `<button class="mm-collapse-btn" data-mesh-id="${m._permanentStaticId}" data-action="collapse" style="margin-left:${depth * 14}px" title="${collapsed ? 'Expand' : 'Collapse'}"><i class="fa-solid ${collapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></button>`
+          ? `<button class="mm-collapse-btn" data-mesh-id="${m._permanentStaticId}" data-action="collapse" style="margin-left:${depth * 14}px" title="${collapsed ? 'Expand' : 'Collapse'}">${faIcon(collapsed ? 'chevron-right' : 'chevron-down')}</button>`
           : `<span class="mm-collapse-spacer" style="margin-left:${depth * 14}px"></span>`}
         <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" title="Select — rename from the toolbar, or double-click">
-          <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>${main.isLinked?.(m) ? '<i class="fa-solid fa-link" style="margin-left:5px;font-size:10px;color:#89dceb" title="Linked instance — shares geometry; edits affect all occurrences"></i>' : ''}
+          ${faIcon(typeIcon, { cls: 'mm-node-icon' })}<span class="mm-node-name">${m._permanentStaticLabel}</span>${main.isLinked?.(m) ? faIcon('link', { size: 10, style: 'margin-left:5px;color:#89dceb', title: 'Linked instance — shares geometry; edits affect all occurrences' }) : ''}
         </button>
       </div>`;
   };
@@ -1510,7 +1522,7 @@ export function buildSectionHTML_scene(main) {
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="0" step="${step}" value="${_f(vals[0])}">
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="1" step="${step}" value="${_f(vals[1])}">
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="2" step="${step}" value="${_f(vals[2])}">
-        <button class="mm-xf-bake" id="${_bake[type][0]}" title="${_bake[type][1]}"><i class="fa-solid fa-cake-candles"></i></button>
+        <button class="mm-xf-bake" id="${_bake[type][0]}" title="${_bake[type][1]}">${faIcon('cake-candles')}</button>
       </div>`;
     rigHTML = `
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
@@ -1557,13 +1569,13 @@ export function buildSectionHTML_scene(main) {
   return `
     <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
-      <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-copy"></i></button>
-      <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-link"></i></button>
-      <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}><i class="fa-solid fa-link-slash"></i></button>
-      <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}><i class="fa-solid ${selAnyVisible ? 'fa-eye' : 'fa-eye-slash'}"></i></button>
-      <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}><i class="fa-solid fa-pen"></i></button>
-      <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-trash"></i></button>
-      <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}><i class="fa-solid ${tbLocked ? 'fa-lock' : 'fa-lock-open'}"></i></button>
+      <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
+      <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
+      <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}>${faIcon('link-slash')}</button>
+      <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}>${faIcon(selAnyVisible ? 'eye' : 'eye-slash')}</button>
+      <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}>${faIcon('pen')}</button>
+      <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}>${faIcon('trash')}</button>
+      <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}>${faIcon(tbLocked ? 'lock' : 'lock-open')}</button>
     </div>
     <div class="mm-outliner-wrap">
       <div class="mm-outliner-list">${meshRows}</div>
@@ -2956,10 +2968,8 @@ export function updateOutlinerVisIcons(main) {
   const keyed  = sel.some((m) => !!reg?.hasVisibilityKeys?.(m));
   document.querySelectorAll('#mm-vis-toggle').forEach((btn) => {
     btn.classList.toggle('keyed', keyed);
-    const i = btn.querySelector('i');
-    if (!i) return;
-    const want = `fa-solid ${anyVis ? 'fa-eye' : 'fa-eye-slash'}`;
-    if (i.className !== want) i.className = want;
+    // Was a className swap on an <i> glyph; the icon is a path now, so swap the path.
+    setFaIcon(btn, anyVis ? 'eye' : 'eye-slash');
   });
 }
 
@@ -3830,7 +3840,7 @@ export function buildMenuHTML_browserSaves(main) {
         const sel   = key === selKey ? ' selected' : '';
         const img   = thumb
           ? `<img src="${thumb}" alt="save">`
-          : `<div class="mm-storage-noimg"><i class="fa-solid fa-cube"></i></div>`;
+          : `<div class="mm-storage-noimg">${faIcon('cube')}</div>`;
         return `
           <div class="mm-storage-item${sel}" data-save-key="${key}" title="${name}">
             ${img}
@@ -3849,7 +3859,7 @@ export function buildMenuHTML_browserSaves(main) {
   return `
     <div class="mm-btn-pair">
       <button class="mm-action-btn" id="mm-browser-save">Save current scene as…</button>
-      <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+      <button class="mm-action-btn" id="mm-storage-refresh">${faIcon('arrows-rotate')} Refresh</button>
     </div>
     <div class="mm-storage-wrap">
       <div class="mm-storage-list" id="mm-storage-grid">${thumbs}</div>

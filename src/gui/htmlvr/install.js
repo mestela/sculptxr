@@ -46,18 +46,28 @@ import { installHtmlInCanvasPolyfill } from 'three-html-render/polyfill';
 // into the CSS (which kept the bundle lean and avoided duplicate copies).
 import faSolidInline from './faSolidBase64.js';
 
-// Inject FA Solid as a base64 @font-face SYNCHRONOUSLY at module load — i.e. before the polyfill
-// caches document.styleSheets and before any panel first paints. The panel rasteriser leaves
-// url() fonts unfetched inside its SVG (Quest/GalaxyXR immersive can't fetch them at paint time),
-// so the glyph data must already be a data: URL in a stylesheet. The old version did this via an
-// async fetch().then(), which in production resolved AFTER the polyfill had cached → icons showed
-// as placeholders in immersive. ?inline gives the base64 at build time, so this is synchronous.
+// REGISTER FA THROUGH THE FontFace API, NOT A <style> ELEMENT.
+//
+// This used to insert a <style> holding the woff2 as a base64 @font-face, so panel icons would
+// survive the rasteriser's trip through an SVG. They did -- and so did the font: the polyfill
+// inlines the whole of document.styleSheets into EVERY panel's SVG on EVERY paint, so 206KB of
+// base64 rode along each time, per panel. Measured on the dev server, same panel, cold decode:
+// 462KB / 36.5ms with it, 256KB / 25.5ms without. matt: "slower and slower the more mainpanels
+// i pin" -- each pinned panel was paying for the font separately.
+//
+// Panel icons are inline SVG paths now (faIcons.js), so nothing in a panel needs the glyphs. The
+// font is still wanted for the CANVAS-drawn radial menu, which paints FA codepoints with
+// ctx.fillText and therefore needs the family registered with the document. document.fonts.add()
+// registers it for canvas and for ordinary DOM without ever appearing in document.styleSheets,
+// which is exactly the property we need: available to draw with, invisible to the serialiser.
 try {
-  const _faStyle = document.createElement('style');
-  _faStyle.textContent = `@font-face{font-family:'Font Awesome 6 Free';font-style:normal;font-weight:900;src:url('${faSolidInline}') format('woff2');}`;
-  const _head = document.head || document.documentElement;
-  _head.insertBefore(_faStyle, _head.firstChild);
-} catch (err) { console.warn('[SculptXR] FA font inject failed:', err); }
+  const _faFace = new FontFace('Font Awesome 6 Free', `url(${faSolidInline}) format('woff2')`,
+    { style: 'normal', weight: '900' });
+  document.fonts.add(_faFace);
+  // Kick the load now rather than at first paint; the radial menu draws to a canvas the frame it
+  // opens, and an unloaded family there silently falls back to the default font.
+  _faFace.load().catch((err) => console.warn('[SculptXR] FA font load failed:', err));
+} catch (err) { console.warn('[SculptXR] FA font register failed:', err); }
 
 // ── 1. rAF intercept (must run before polyfill install) ─────────────────────
 export const _nativeRAF  = window.requestAnimationFrame.bind(window);
