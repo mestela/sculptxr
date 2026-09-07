@@ -1166,6 +1166,18 @@ const DEV_TOGGLES = [
   // matt: "performance is still noticably slower with torn off panels and trying to animate a
   // rig" -- and tearing panels off is exactly what makes the two prices diverge, so the switch
   // is the A/B: pin two panels, pose a rig, flip it.
+  // THE TWO OLDEST INSTRUMENTS WERE NEVER PUT HERE. xrPerf and ikPerf have existed for months as
+  // console-only globals, which by matt's standing rule means they may as well not exist -- you
+  // cannot open a console mid-session in a headset. matt: "i see 'trace panel cost' and 'scoped
+  // panel repaint', i don't see xperf." Routed through the existing window.xrPerf()/ikPerf()
+  // functions rather than poking the flags, because those also reset the accumulators; setting
+  // the raw flag mid-run reports a window that started before the switch did.
+  { id: 'mm-xr-perf', label: 'Trace Frame Time',
+    get: () => !!window._xrPerf,
+    set: (on) => { if (window.xrPerf) window.xrPerf(!!on); else window._xrPerf = !!on; } },
+  { id: 'mm-ik-perf', label: 'Trace Rig Solve',
+    get: () => !!window._ikPerf,
+    set: (on) => { if (window.ikPerf) window.ikPerf(!!on); else window._ikPerf = !!on; } },
   // The frame profiler cannot see panel rasterisation: the polyfill's paint callback awaits the
   // image decode, so Scene's `panel-paint` bucket stops at the first await and the decode lands
   // in the frame gap instead of in our work. This measures the span and names the cause.

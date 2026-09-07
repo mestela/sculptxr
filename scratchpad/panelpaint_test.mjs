@@ -138,5 +138,28 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'the tracer ships on');
 }
 
+// ── EVERY INSTRUMENT IS REACHABLE FROM INSIDE A HEADSET ───────────────────────────────────
+//
+// Standing rule, and it had quietly lapsed for the two oldest instruments in the codebase:
+// xrPerf and ikPerf existed only as console globals for months. matt, mid-investigation: "i see
+// 'trace panel cost' and 'scoped panel repaint', i don't see xperf." A switch you cannot reach
+// without a laptop is not a switch during a headset session, which is the only session where
+// these numbers mean anything.
+//
+// The toggles route through window.xrPerf()/ikPerf() rather than assigning the flags, because
+// those functions also reset the accumulators -- flipping the raw flag mid-run reports a window
+// that began before the switch did.
+{
+  for (const [id, label, fn] of [['mm-xr-perf', 'Trace Frame Time', 'xrPerf'],
+                                 ['mm-ik-perf', 'Trace Rig Solve', 'ikPerf']]) {
+    const block = (MM.match(new RegExp("\\{ id: '" + id + "'[\\s\\S]*?\\n(?=  [/{])")) || [''])[0];
+    check(label + ' is in the settings menu', block.includes(label),
+      'console-only, so it does not exist inside a headset');
+    check('...and ' + id + ' resets the accumulator via window.' + fn,
+      new RegExp('window\\.' + fn + '\\(!!on\\)').test(block),
+      'assigns the raw flag, so the first window reported began before the switch');
+  }
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
