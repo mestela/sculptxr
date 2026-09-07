@@ -1139,6 +1139,25 @@ const DEV_TOGGLES = [
   // from -- pinned, it is not the panel that vanishes.
   { id: 'mm-panel-dump',  label: 'Dump Panel History',  action: true,
     run: () => PanelTrace.dump() },
+  // A MODAL YOU CANNOT SEE STILL BLOCKS THE BUTTONS.
+  //
+  // The A-button pin ring is suppressed while a modal is up, and that test reads
+  // `_vrKeyboard?.mesh?.visible`. matt's panelPerf trace listed VrKeyboard as MOUNTED for a
+  // whole session -- and a panel is only mounted while its mesh is visible -- so the keyboard
+  // was up the entire time and A did nothing. matt: "the marking menu isn't appearing when i
+  // hover on a joint and press the A button."
+  //
+  // This is the escape hatch, not the fix: whatever leaves it open is still to be found. It
+  // also reports what it closed, so it doubles as the answer to "was one actually stuck?".
+  { id: 'mm-close-modals', label: 'Close Stuck Modals', action: true,
+    run: () => {
+      const shut = [];
+      for (const [name, m] of [['keyboard', window._vrKeyboard], ['numpad', window._vrNumpad],
+                               ['confirm', window._vrConfirmPanel]]) {
+        if (m?.mesh?.visible || m?.isBlockingOpen) { try { m.close?.(); shut.push(name); } catch (_) {} }
+      }
+      console.log('[modals] ' + (shut.length ? 'closed: ' + shut.join(', ') : 'none were open'));
+    } },
   // Where a posing frame goes, printed once a second: lbs / mush / synth / refresh. Posing a
   // SUBDIVIDED bound mesh spends most of its frame above the bound level, and until this
   // existed the split between "the deformation" and "rebuilding the display level" was a guess.

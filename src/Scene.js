@@ -1415,7 +1415,12 @@ class Scene {
         if (this._animPanel) {
           try {
             this._animPanel.update(true);
-            this._animPanel.syncFromState();
+            // update() must run every frame -- it is what mounts and unmounts the panel. The
+            // SYNC is only worth doing for a panel someone can see: it walks the blendshape
+            // rows and rewrites their sliders, and it was running every frame for a hidden
+            // panel. The show paths (_swapHtmlPanels and the two callers below) sync
+            // explicitly, so nothing is stale when it appears.
+            if (this._animPanel.mesh?.visible) this._animPanel.syncFromState();
           } catch (_) {}
         }
         if (this._vrNumpad?.mesh) {

@@ -177,5 +177,57 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'no version in the ack, so stale code looks identical to a working switch');
 }
 
+// ── A SYNC IS NOT A CHANGE ────────────────────────────────────────────────────────────────
+//
+// Scene calls _animPanel.syncFromState() EVERY FRAME, and syncFromState ended with an
+// unconditional markDirty -- so the animation panel asked for a repaint 60-90 times a second
+// for the whole session, visible or not, changed or not. From matt's trace, with the panel not
+// even mounted:
+//
+//   dirtied: AnimationControlPanel 60, MiniPanel 2
+//   caused by: AnimationControlPanel._requestPaint 8   (sampled 1 in 8)
+//
+// The 200ms limiter capped what got through, which is why this was survivable instead of
+// obvious -- but each one that did get through was a full rasterise, priced across every
+// mounted panel.
+{
+  const ACP = fs.readFileSync(R + 'AnimationControlPanel.js', 'utf8');
+  const SCENE = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+
+  check('the animation panel repaints only when its render changed',
+    /const sig = this\._renderSig\(\);\s*\n\s*if \(sig !== this\._lastRenderSig\) \{/.test(ACP),
+    'syncFromState marks dirty unconditionally, 60+ times a second');
+
+  // Enumerating the state sources is how the last two bugs shipped. Signing the RENDERED output
+  // cannot miss one: if the panel looks different, the signature differs.
+  check('...signed from what it renders, not from a list of state sources',
+    /_renderSig\(\)[\s\S]{0,400}?el\.textContent[\s\S]{0,200}?querySelectorAll\('input/.test(ACP),
+    'the signature enumerates sources, so a missed one shows as a stale panel');
+
+  check('...and a hidden panel is not synced every frame',
+    /if \(this\._animPanel\.mesh\?\.visible\) this\._animPanel\.syncFromState\(\);/.test(SCENE),
+    'the per-frame sync runs for a panel nobody can see');
+
+  // update() is what mounts and unmounts — gating THAT on visibility would strand the panel.
+  check('...while update() still runs unconditionally',
+    /this\._animPanel\.update\(true\);/.test(SCENE),
+    'gating update() too would leave the panel mounted after it is hidden');
+}
+
+// ── AN INVISIBLE MODAL STILL BLOCKS THE BUTTONS ───────────────────────────────────────────
+//
+// The A-button pin ring is suppressed while a modal is up, and that test reads
+// `_vrKeyboard?.mesh?.visible`. matt's trace listed VrKeyboard as MOUNTED for a whole session,
+// and a panel is only mounted while its mesh is visible -- so a keyboard nobody could see had
+// been eating the A button. An escape hatch that also reports what it found.
+{
+  check('Close Stuck Modals is in the settings menu',
+    /id: 'mm-close-modals'[\s\S]{0,600}?_vrKeyboard/.test(MM),
+    'no way to clear a stuck modal from inside a headset');
+  check('...and says what it closed, or that nothing was open',
+    /none were open/.test(MM),
+    'silence again cannot be told from "the button did nothing"');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

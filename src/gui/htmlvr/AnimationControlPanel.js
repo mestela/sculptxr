@@ -1728,7 +1728,40 @@ export class AnimationControlPanel extends HTMLVRPanel {
       });
     }
 
-    this._requestPaint();
+    // A SYNC IS NOT A CHANGE.
+    //
+    // This ran `this._requestPaint()` unconditionally, and Scene calls syncFromState() every
+    // single frame -- so the animation panel asked for a repaint 60-90 times a second, forever,
+    // whether it was visible or not and whether anything had moved or not. matt's trace, with
+    // the panel not even mounted:
+    //
+    //   dirtied: AnimationControlPanel 60, MiniPanel 2
+    //   caused by: AnimationControlPanel._requestPaint 8   (sampled 1 in 8)
+    //
+    // The rate limiter capped what got through at ~5 paints a second, which is why this was
+    // survivable rather than obvious -- but every one of those was a full rasterise, and with
+    // panels torn off each paint was priced across all of them.
+    //
+    // The signature is of what the panel RENDERS, not of the state it reads: text plus every
+    // input value plus which things are `active`. Sources get missed when they are enumerated
+    // (the whole reason the last two bugs shipped); what is on the panel cannot be.
+    const sig = this._renderSig();
+    if (sig !== this._lastRenderSig) {
+      this._lastRenderSig = sig;
+      this._requestPaint();
+    }
+  }
+
+  // Cheap next to a rasterise: a few KB of string against a clone, a serialise, a full inline of
+  // the page CSS and an image decode.
+  _renderSig() {
+    const el = this._element;
+    if (!el) return '';
+    let s = el.textContent || '';
+    el.querySelectorAll('input, .active, [class*="active"]').forEach((n) => {
+      s += '|' + (n.value ?? '') + '~' + (n.className || '');
+    });
+    return s;
   }
 
   _requestPaint() { this.markDirty(); }
