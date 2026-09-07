@@ -236,8 +236,13 @@ export function notePanelDirty(panel) {
   if (!window._panelPerf) return;
   _bump(_pp.dirty, panelName(panel));
   if ((_pp.seq++ & 7) !== 0) return;
+  // SKIP THE WRAPPERS, or the cause is always the last wrapper instead of the caller. The first
+  // version filtered by FILE, so for the main panel it reported `MainMenuPanel.markDirty` -- the
+  // subclass override -- which names the panel we already knew and not what asked it. Filter by
+  // what the frame IS: a markDirty/_requestPaint/requestSync/syncFromState frame is plumbing.
   const lines = (new Error().stack || '').split('\n').slice(2);
-  const at = lines.find((l) => !/install\.js|HTMLVRPanel\.js/.test(l));
+  const at = lines.find((l) => !/install\.js|HTMLVRPanel\.js/.test(l)
+    && !/\.(markDirty|_requestPaint|requestSync|_ppRequested)\b/.test(l));
   if (at) _bump(_pp.causes, at.trim().replace(/^at\s+/, '').replace(/\s*\(.*\)$/, '')
     .replace(/https?:\/\/[^\s)]*\//, '').slice(0, 48));
 }

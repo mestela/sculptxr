@@ -229,5 +229,17 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'silence again cannot be told from "the button did nothing"');
 }
 
+// ── THE CAUSE MUST NAME THE CALLER, NOT THE WRAPPER ───────────────────────────────────────
+//
+// The first version filtered the stack by FILE (install.js, HTMLVRPanel.js), so for the main
+// panel it reported `MainMenuPanel.markDirty` — the subclass override. That names the panel we
+// already knew from the `dirtied` line and says nothing about what asked it, which is the only
+// actionable half. Filter by what a frame IS: markDirty/_requestPaint/requestSync are plumbing.
+{
+  check('the cause skips the dirty wrappers',
+    /!\/\\\.\(markDirty\|_requestPaint\|requestSync\|_ppRequested\)\\b\//.test(INSTALL),
+    'a subclass markDirty override masks the real caller');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
