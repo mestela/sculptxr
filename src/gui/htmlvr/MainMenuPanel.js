@@ -2853,8 +2853,35 @@ export function fixSliderDrag(rootEl) {
  * Update the custom scrollbar thumb to reflect the current scroll position.
  * Call after any scrollTop change or content size change.
  */
+// DEFERRED, BECAUSE READING scrollHeight FORCES A SYNCHRONOUS LAYOUT.
+//
+// Every rebuild does: set innerHTML, wire it up, then call this -- and this reads scrollHeight
+// and clientHeight, which the browser cannot answer without laying out the subtree that was just
+// replaced. So each rebuild paid a forced reflow of a whole panel, and then the rasteriser laid
+// the same DOM out again. matt's profile of three pinned panels named this line twice:
+//
+//   Recalculate style  MainMenuPanel.js:2858   60.6ms  7.6%
+//   Layout             MainMenuPanel.js:2858   24.0ms  3.0%
+//
+// against WebGLRenderer.render at 16.1% in the same slice -- so one line of scrollbar
+// arithmetic was in the same league as all the 3D drawing.
+//
+// Deferring to the next frame does not skip the layout, it stops us FORCING it mid-write: by
+// then the browser has laid out once, on its own schedule, and the read is free. Coalesced per
+// element, because a rebuild can ask several times and one answer serves them all. The thumb
+// lands one frame late, which at 72Hz is not a thing anyone can see.
+const _sbPending = new WeakSet();
 export function refreshVRScrollbar(scrollEl, thumbEl) {
-  if (!scrollEl || !thumbEl) return;
+  if (!scrollEl || !thumbEl || _sbPending.has(scrollEl)) return;
+  _sbPending.add(scrollEl);
+  requestAnimationFrame(() => {
+    _sbPending.delete(scrollEl);
+    _applyVRScrollbar(scrollEl, thumbEl);
+  });
+}
+
+function _applyVRScrollbar(scrollEl, thumbEl) {
+  if (!scrollEl || !thumbEl || !scrollEl.isConnected) return;
   const { scrollTop, scrollHeight, clientHeight } = scrollEl;
   if (scrollHeight <= clientHeight) { thumbEl.style.display = 'none'; return; }
   thumbEl.style.display = '';

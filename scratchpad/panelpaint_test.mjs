@@ -287,5 +287,41 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
     'it accumulates forever and every window reads higher than the last');
 }
 
+// ── READING scrollHeight AFTER A WRITE FORCES A LAYOUT ────────────────────────────────────
+//
+// matt sliced his recording into a calm stretch (minipanel only) and a gluggy one (three panels
+// pinned). The calm slice is WebGLRenderer.render at 44.5% self and nothing else close. The
+// gluggy slice is a different program entirely:
+//
+//   WebGLRenderer.render                      16.1%
+//   getImageData                              13.0%   <- the blank-check readback, v3.30.90
+//   Run microtasks                            12.9% self / 41.6% total
+//   Recalculate style  MainMenuPanel.js:2858   7.6%
+//   Layout             MainMenuPanel.js:2858   3.0%
+//
+// That line is `const { scrollTop, scrollHeight, clientHeight } = scrollEl`, read straight after
+// a rebuild replaced the panel's innerHTML. The browser cannot answer it without laying out the
+// subtree that was just written, so every rebuild forced a reflow -- and the rasteriser then laid
+// the same DOM out again. Deferring the read to the next frame does not skip the layout, it stops
+// us forcing it mid-write. Measured on the dev server, 40 rebuilds: 215-293ms -> 32-42ms.
+{
+  check('the scrollbar read is deferred out of the write',
+    /export function refreshVRScrollbar[\s\S]{0,400}?requestAnimationFrame\(\(\) => \{[\s\S]{0,200}?_applyVRScrollbar/.test(MM),
+    'reading scrollHeight right after innerHTML forces a reflow of the whole panel');
+
+  check('...and coalesced, so a rebuild that asks repeatedly still lays out once',
+    /_sbPending\.has\(scrollEl\)\) return;/.test(MM),
+    'ten asks in one rebuild become ten forced layouts');
+
+  check('...and skipped entirely for a detached element',
+    /!scrollEl\.isConnected\) return;/.test(MM),
+    'a panel torn down between the ask and the frame lays out a dead subtree');
+
+  // The measurement itself has to stay honest: the deferred read still has to HAPPEN.
+  check('...with the real work still done, just later',
+    /function _applyVRScrollbar\(scrollEl, thumbEl\) \{[\s\S]*?thumbEl\.style\.top/.test(MM),
+    'deferred into nothing at all: the thumb would never move');
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);
