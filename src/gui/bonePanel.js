@@ -264,6 +264,8 @@ export function buildBonePoseHTML(main, style) {
       <button class="${c.action}${Skinning.bindPoseHeld() ? ' active' : ''}" id="bone-bindpose"
         title="Jump to the pose the SKIN was bound in and hold it there, so you can sculpt the bind shape. Not the same as Rest Pose — that is the rig's rest, which can differ from the bind. Physics, playback and pin solves stand down while it is held; pressing it again puts the pose you left back exactly.">${
           Skinning.bindPoseHeld() ? 'Leave Bind Pose' : 'Sculpt Bind Pose'}</button>
+      <button class="${c.action}" id="bone-revert"
+        title="Throw away every sculpt made since the mesh was bound and put the bind shape back. Not an undo — it does not care how the shape got here, which is what makes it useful when a stroke went wrong in a way you cannot walk back. The rig, the weights and the pose are untouched.">Revert to Bind Shape</button>
     </div>` : ''}
   `;
 }
@@ -846,6 +848,49 @@ export function wireBoneSection(root, main, opts) {
   // the pose the skin was bound in (the rig's rest pose is a different pose and can differ from
   // it), and a way to STAY there while you work -- physics alone moved 16 of walkwave's 33
   // joints off it inside a single frame. Toggling it off puts the pose you left back exactly.
+  // A STROKE WRITTEN INTO REST SPACE CANNOT BE WALKED BACK BY EYE.
+  //
+  // matt: "at one point when working on the thigh, the mirrored sculpting operation went strange,
+  // and it inverted... if i went back to the rest pose, the damage was permanent." It is
+  // permanent because it is not pose, it is the rest shape -- the posed write-back put it there
+  // on purpose. So this is the way out, and it is also the A/B for the bug that caused it:
+  // revert, repeat the stroke, compare.
+  q('revert')?.addEventListener('click', () => {
+    const mesh = (main.getMeshes() || []).find((m) => Skinning.isBound(m));
+    if (!mesh) { say('Bones: nothing is bound to the skeleton', false); return; }
+    // Bounded to the BIND SHAPE's length, not the level's: the level can carry more vertices
+    // than the weights cover, and a snapshot longer than `_skinRest` cannot be written back.
+    const nbF = mesh._skinBindShape ? mesh._skinBindShape.length : 0;
+    const liveV = Skinning.boundVertices(main, mesh);
+    const before = (nbF && liveV && liveV.length >= nbF)
+      ? new Float32Array(liveV.subarray(0, nbF)) : null;
+    const r = Skinning.revertToBindShape(main, mesh);
+    if (!r.ok) { say('Bones: ' + r.why, false); return; }
+    // Undoable, because "put it all back" is exactly the button someone presses by accident.
+    const after = new Float32Array(Skinning.boundVertices(main, mesh).subarray(0, nbF));
+    const put = (buf) => {
+      const v = Skinning.boundVertices(main, mesh);
+      if (!v || !buf || buf.length > v.length) return;
+      v.set(buf);
+      mesh._skinRest.set(buf); mesh._skinSrc.set(buf);
+      mesh._skinMushDirty = mesh._skinDirty = true;
+      mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
+      Skinning.apply?.(main, mesh);
+      main.render?.();
+    };
+    if (before) {
+      main.getStateManager?.()?.pushStateCustom?.(
+        () => put(before), () => put(after), false, 'Revert to Bind Shape');
+    }
+    Skinning.apply?.(main, mesh);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+    say(r.moved > 1e-6
+      ? `Bones: bind shape restored (largest edit undone: ${r.moved.toFixed(3)})`
+      : 'Bones: already at the bind shape — nothing to undo', true);
+    rebuild();
+  });
+
   q('bindpose')?.addEventListener('click', () => {
     const mesh = Skinning.anyBound(main)
       ? (main.getMeshes() || []).find((m) => Skinning.isBound(m)) : null;

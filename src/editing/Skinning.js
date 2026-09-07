@@ -720,6 +720,19 @@ Skinning.bind = function (main, mesh) {
   mesh._skinInvBind = invBind;
   mesh._skinRest = new Float32Array(level.getVertices().subarray(0, nbV * 3));
   mesh._skinSrc = new Float32Array(mesh._skinRest);
+  // THE ONE SHAPE NOTHING ELSE IS ALLOWED TO WRITE.
+  //
+  // `_skinRest` looks like a record of the bind shape and is not: every sculpt at bind pose
+  // overwrites it, and so does the posed write-back, deliberately -- see the note at the end of
+  // commit(), where leaving it behind would make a radius tweak silently revert the model. So
+  // when a stroke goes wrong there is nothing to go back to; the damage is in rest space and
+  // returning to the rest pose shows it faithfully. matt: "at one point when working on the
+  // thigh, the mirrored sculpting operation went strange, and it inverted... if i went back to
+  // the rest pose, the damage was permanent."
+  //
+  // This is the missing copy: taken at bind, never touched again until the next bind. One
+  // Float32Array at the BOUND level, which is the cage rather than the display mesh.
+  mesh._skinBindShape = new Float32Array(mesh._skinRest);
   mesh._skinStampBuf = null;
   mesh._skinDirty = true;
   // Topology and rest space both just changed, so nothing cached for the mush survives.
@@ -1033,7 +1046,7 @@ Skinning.unbind = function (mesh) {
     }
   }
   mesh._skinJoints = mesh._skinIdx = mesh._skinW = null;
-  mesh._skinInvBind = mesh._skinRest = mesh._skinSrc = null;
+  mesh._skinInvBind = mesh._skinRest = mesh._skinSrc = mesh._skinBindShape = null;
   mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
   mesh._skinPosed = null;   // the posed reference the write-back measures strokes against
   mesh._skinLevel = 0;
@@ -1524,6 +1537,48 @@ Skinning.goToBindPose = function (main, mesh) {
 // restore the posed state" -- and asks physics to re-seed rather than resuming from particles
 // that were parked for the duration.
 Skinning.bindPoseHeld = function () { return !!window._bindPoseHold; };
+
+// PUT THE MESH BACK TO THE SHAPE IT WAS BOUND IN, discarding every sculpt made since.
+//
+// Not an undo: it does not care how the shape got here, which is the point -- matt hit a
+// mirrored stroke that inverted while posed and could not reproduce it, and a stroke written
+// back into rest space cannot be walked back by eye. It is also the A/B for that class of bug:
+// revert, repeat the stroke, and compare.
+//
+// Returns a description of what it did, or a reason it could not, so a panel can say so rather
+// than looking broken.
+// The bound level's vertex array, for callers outside this module that need to snapshot or
+// restore it. `boundLevel` is private and returns null when the level the weights belong to has
+// gone, which is a state a caller has to be able to see rather than crash on.
+Skinning.boundVertices = function (main, mesh) {
+  const level = mesh && boundLevel(mesh);
+  return level ? level.getVertices() : null;
+};
+
+Skinning.revertToBindShape = function (main, mesh) {
+  if (!mesh || !mesh._skinBindShape) return { ok: false, why: 'nothing bound — press Bind first' };
+  const level = boundLevel(mesh);
+  const nbV = (mesh._skinBindShape.length / 3) | 0;
+  if (!level || level.getNbVertices() < nbV) {
+    return { ok: false, why: 'the bound level has changed shape since the bind' };
+  }
+  // How far it actually moved, so "nothing happened" and "it worked and the damage was small"
+  // are distinguishable in the one place a user reads.
+  let moved = 0;
+  const cur = level.getVertices();
+  for (let i = 0; i < nbV * 3; i++) {
+    const d = cur[i] - mesh._skinBindShape[i];
+    if (d > moved || -d > moved) moved = d > 0 ? d : -d;
+  }
+  level.getVertices().set(mesh._skinBindShape);
+  mesh._skinRest.set(mesh._skinBindShape);
+  mesh._skinSrc.set(mesh._skinBindShape);
+  // Every cache defined against the rest shape is now describing a shape that is gone.
+  mesh._skinMushDirty = true;
+  mesh._skinDirty = true;
+  mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
+  return { ok: true, moved, nbV };
+};
 
 Skinning.enterBindPose = function (main, mesh) {
   if (!Skinning.isBound(mesh)) return false;
