@@ -363,6 +363,14 @@ class BoneDrawTool extends SculptBase {
     const chainAfter = { parent: this._chainParent, mirror: this._chainParentMirror,
       index: this._chainIndex };
 
+    // Snapshotted here rather than at creation, because the mirrored twin's parent is decided
+    // above and `createJoint` is what sets the local matrix. This is the only moment at which
+    // every made joint is finished and still untouched.
+    for (const m of made) {
+      m.matrix = mat4.clone(m.mesh.getMatrix());
+      m.rest = m.mesh._ikRest ? mat4.clone(m.mesh._ikRest) : null;
+    }
+
     const setChain = (c) => {
       this._chainParent = c.parent; this._chainParentMirror = c.mirror; this._chainIndex = c.index;
     };
@@ -376,7 +384,27 @@ class BoneDrawTool extends SculptBase {
         for (const m of made) {
           main.addMeshSilent(m.mesh);
           if (m.parent) main.setMeshParent(m.mesh.getID(), m.parent.getID(), { silent: true });
+          // RESTORE THE LOCAL MATRIX, do not let the reparent re-derive it.
+          //
+          // Undo detaches the three mesh but leaves `_parentMesh` set; redo re-adds it under
+          // _worldGroup, so its LOCAL-to-parent matrix is now being read as a world one. The
+          // reparent then calls Object3D.attach, which PRESERVES WORLD -- so it computes a new
+          // local of parentWorld⁻¹ · (the old local), folding the parent's inverse in one more
+          // time on every cycle. A joint's scale is well under 1 in world units, so each
+          // undo/redo multiplied it up: matt: "the joint will redo, but scaled up. keep doing an
+          // undo and redo, the joint gets larger and larger."
+          //
+          // The matrix at creation is the truth and it never changes, so redo restores it
+          // outright rather than recomputing anything.
+          mat4.copy(m.mesh.getMatrix(), m.matrix);
+          if (m.rest) m.mesh._ikRest = mat4.clone(m.rest); else m.mesh._ikRest = null;
+          Skeleton.syncThree(m.mesh);
         }
+        // One top-down pass once every local matrix is back, so anything reading a WORLD matrix
+        // afterwards sees the whole restored hierarchy rather than half of it. The scene unit is
+        // measured from the joint extent when no mesh is bound, so a half-updated graph resizes
+        // every marker in the skeleton -- the same failure RigTopology.restore records.
+        (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
         setChain(chainAfter);
         Skeleton.updateVisuals(main); main.render?.();
       },
