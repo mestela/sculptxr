@@ -65,7 +65,7 @@ import {
 // it is the same markup and the same CSS in the VR panel and in the desktop sidebar -- so a
 // change to how pinning looks or is labelled cannot land on one and not the other.
 export const SECTION_LABELS = {
-  scene: 'Scene', rendering: 'Rendering', topology: 'Topology',
+  scene: 'Scene', rendering: 'Rendering', camera: 'Camera', topology: 'Topology',
   sculpting: 'Tools', properties: 'Properties', animation: 'Animation',
 };
 
@@ -322,8 +322,18 @@ const CSS = `
   gap: 6px;
   padding: 3px 0;
 }
+/* A FIXED LABEL COLUMN, so every row in a panel starts its control at the same x.
+   With flex:1 the label took whatever half was left, and "whatever was left" differs by row:
+   (no backticks in here — this stylesheet is inside a template literal and one closes it)
+   a slider row also carries a 34px value readout and a select row does not, so the two split the
+   line differently and the controls came out ragged against each other — measured at 193px
+   against 173px in the same panel. matt: "its ragged, make both the width of the env combobox
+   match the width of the mesh opacity and capsule opacity below it."
+   A PERCENTAGE rather than pixels because these panels are torn off at other widths, and the
+   longest label here is 95px against 30% of 392 — room to spare, and the ellipsis below is the
+   backstop for anything longer. */
 .mm-lbl {
-  flex: 1;
+  flex: 0 0 30%;
   font-size: 11px;
   color: #a6adc8;
   white-space: nowrap;
@@ -517,6 +527,11 @@ const CSS = `
 
 /* ── Custom select (VR-safe dropdown) ──────────────────────────── */
 .mm-select { width: 100%; margin-bottom: 3px; }
+/* A SELECT INSIDE A LABELLED ROW SITS BESIDE THE LABEL, like a slider does. On its own it is a
+   full-width control with a heading over it; in a row it is the control half of "label: value",
+   so it takes the space the label leaves rather than the whole line. Without this the 100% above
+   wins and the label is pushed onto its own line above it. */
+.mm-row .mm-select { flex: 1; width: auto; margin-bottom: 0; min-width: 0; }
 .mm-select-trigger {
   width: 100%; padding: 5px 8px; box-sizing: border-box;
   background: #2a2a3e; color: #cdd6f4; border: 1px solid #45475a;
@@ -563,6 +578,15 @@ const CSS = `
   /* Flow at content height (single panel scroll surface). The floor used to be 248px,
      which reserved a big empty block for a 2–3 mesh scene and pushed the transform/rig
      controls off-screen — now just enough to not collapse when empty. */
+  /* ...AND THEN NEITHER, BECAUSE A LIST THAT RESIZES IS THE PROBLEM. Flowing at content height
+     means the list — and the whole panel under it — moves every time the scene gains or loses a
+     row, so the buttons below never stay where you left them and selecting things walks the
+     layout around under your hand. matt: "the outliner shouldn't collapse size. keep it whatever
+     is its maximum size at all times. we'll adjust the other buttons to fit."
+     One fixed height, always: it scrolls when there is more and shows empty space when there is
+     less, and nothing below it ever moves. It also takes the panel's own height out of the
+     equation, which is what the resize machinery in HTMLVRPanel spends its time chasing. */
+  height: ${Math.round(MM_BODY_H * 0.44)}px;
   min-height: 52px;
   /* ...AND A CEILING, because the other end became the problem. A rig has dozens of joints,
      and at content height the list grew to the full panel and pushed everything below it out
@@ -966,7 +990,7 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        ${['scene','rendering','topology','sculpting','properties'].map((s) =>
+        ${['scene','rendering','camera','topology','sculpting','properties'].map((s) =>
           // Active by NAME, not by index: the tab that opens is the default section, and
           // hardcoding its position means adding a tab silently opens a different one.
           `<button class="mm-tab-btn${s === DEFAULT_SECTION ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
@@ -1284,6 +1308,22 @@ function buildMenuHTML_settings(main) {
   const offsetY       = ui.offsetY         ?? opts.offsetY         ?? -1.2;
   const wfBias        = ui.wireframeBias   ?? opts.wireframeBias   ?? 0.001;
   const wfAlpha       = ui.wireframeAlpha  ?? opts.wireframeAlpha  ?? 0.2;
+  // MOVED OUT OF RENDERING: set once and left alone, which is what this menu is for. matt: "move
+  // grid opacity, wf opacity, wf offset, tone mapping to the settings menu."
+  //
+  // The wireframe pair needed no move at all — Settings has had Bias and Opacity all along, and
+  // Rendering carried a SECOND copy under different ids (mm-render-wf-*) writing the same two
+  // settings. Two sliders for one value, either of which could be left disagreeing with the
+  // other on screen. That copy is gone; this is the one that stays.
+  const curvature     = main.getMesh?.()?.getCurvature?.() ?? 0;
+  const gridOpacity   = main.getGridOpacity?.() ?? 0.5;
+  const gridOccOpacity = main.getGridOccludedOpacity?.() ?? 0.2;
+  const exposure      = main.getExposure?.() ?? 1.0;
+  const curTM         = main.getToneMapping?.() ?? 0;
+  const tmBtns        = [
+    { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
+    { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
+  ].map(t => `<button class="mm-choice${curTM === t.id ? ' active' : ''}" data-tonemap="${t.id}">${t.label}</button>`).join('');
   const menuBright    = ui.menuBrightness  ?? 0.65;
   const menuSat       = ui.menuSaturation  ?? 0.50;
   const menuGamma     = ui.menuGamma       ?? 0.0;
@@ -1368,6 +1408,33 @@ function buildMenuHTML_settings(main) {
       <span class="mm-val" id="mm-wf-alpha-val">${Math.round(wfAlpha*100)}%</span>
     </div>
     <div class="mm-choice-grid cols-3">${wfTypeBtns}</div>
+
+    <div class="mm-section-title">Tone Mapping</div>
+    <div class="mm-choice-grid cols-5">${tmBtns}</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Exposure</span>
+      <input type="range" id="mm-exposure" min="0" max="300" step="5" value="${Math.round(exposure*100)}">
+      <span class="mm-val" id="mm-exposure-val">${exposure.toFixed(2)}</span>
+    </div>
+
+    <div class="mm-section-title">Mesh</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Curvature</span>
+      <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature*20)}">
+      <span class="mm-val" id="mm-curvature-val">${Math.round(curvature*20)}</span>
+    </div>
+
+    <div class="mm-section-title">Ground Plane</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Grid Opacity</span>
+      <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
+      <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Grid Occluded Opacity</span>
+      <input type="range" id="mm-grid-occ-opacity" min="0" max="100" step="5" value="${Math.round(gridOccOpacity*100)}">
+      <span class="mm-val" id="mm-grid-occ-opacity-val">${gridOccOpacity.toFixed(2)}</span>
+    </div>
 
     <div class="mm-section-title">Menu</div>
     <div class="mm-row">
@@ -1533,6 +1600,13 @@ export function buildSectionHTML_scene(main) {
     const _bake = { t: ['mm-bake-t', 'Bake translation into geometry (position → 0)'],
                     r: ['mm-bake-r', 'Bake rotation into geometry (rotation → 0; may misalign symmetry)'],
                     s: ['mm-bake-s', 'Bake scale into geometry (scale → 1)'] };
+    // CLEAR, BESIDE BAKE, AND THEY ARE NOT THE SAME THING. Bake folds the transform INTO the
+    // geometry and leaves the object where it looks; Clear throws the transform away and the
+    // object moves. Both end with the same numbers in the fields, which is exactly why they
+    // belong next to each other and why the tooltips say which one keeps the shape put.
+    const _clear = { t: ['mm-clear-t', 'Clear translation (position → 0; the object moves)'],
+                     r: ['mm-clear-r', 'Clear rotation (rotation → 0; the object turns)'],
+                     s: ['mm-clear-s', 'Clear scale (scale → 1; the object resizes)'] };
     const _xfRow = (type, label, vals, step) => `
       <div class="mm-xform-row">
         <span class="mm-xf-lbl">${label}</span>
@@ -1540,6 +1614,7 @@ export function buildSectionHTML_scene(main) {
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="1" step="${step}" value="${_f(vals[1])}">
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="2" step="${step}" value="${_f(vals[2])}">
         <button class="mm-xf-bake" id="${_bake[type][0]}" title="${_bake[type][1]}">${faIcon('cake-candles')}</button>
+        <button class="mm-xf-bake" id="${_clear[type][0]}" title="${_clear[type][1]}">C</button>
       </div>`;
     rigHTML = `
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
@@ -1558,11 +1633,15 @@ export function buildSectionHTML_scene(main) {
             : 'Aim at…'}
         </button>
         <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Mirror across X (eye rig)">Mirror X</button>
+        <!-- SACCADES JOINS THE ROW. It is a constraint like the other three — something the node
+             does on its own once switched on — and it sat alone on a full-width line below them
+             for no reason but the order it was written in. Its two sliders stay underneath and
+             still appear only when it is on. matt: "so there'll be 4 constraint buttons in a row;
+             set parent, aim at, mirror x, saccades." -->
+        <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades">Saccades</button>
       </div>
       ${parent ? `<button class="mm-action-btn" data-rig="clear-parent">Clear parent</button>` : ''}
       ${lookTgt ? `<button class="mm-action-btn" data-rig="clear-aim">Clear aim</button>` : ''}
-
-      <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades">Saccades</button>
       <div class="mm-row" id="mm-rig-sac-amp-row" style="${saccading ? '' : 'display:none'}">
         <span class="mm-lbl">Amplitude</span>
         <input type="range" id="mm-rig-sac-amp" min="0" max="20" step="0.5" value="${sacAmp}">
@@ -1584,7 +1663,7 @@ export function buildSectionHTML_scene(main) {
   const singleSel = selected.length === 1 ? selected[0] : null;
   const tbLocked  = singleSel ? !!main.isSelectLocked?.(singleSel.getID()) : false;
   return `
-    <div class="mm-section-title">Outliner</div>
+    <!-- No 'Outliner' heading: the list is the first thing in the section and plainly is one. -->
     <div class="mm-toolbar">
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
@@ -1693,7 +1772,6 @@ export function buildSectionHTML_topology(main) {
 // No HTML comments in the template itself -- see buildMenuHTML_files.
 export function buildSectionHTML_rendering(main) {
   const mesh = main.getMesh?.();
-  const rigDisplay = buildBoneDisplayHTML(main, 'mm');
   const meshDisabled = main.getMeshes?.().some(m => !m._isBone && !m._isNull && !m._isReference) ? '' : ' disabled';
 
   const ShaderPBR    = Shader[Enums.Shader.PBR];
@@ -1734,15 +1812,27 @@ export function buildSectionHTML_rendering(main) {
   const wfBias   = uiS.wireframeBias  ?? opts.wireframeBias  ?? 0.001;
   const wfAlpha  = uiS.wireframeAlpha ?? opts.wireframeAlpha ?? 0.2;
 
-  // PBR — environment list
-  const envBtns = (ShaderPBR?.environments ?? []).map((env, i) =>
-    `<button class="mm-choice${ShaderPBR.idEnv === i ? ' active' : ''}" data-env="${i}">${env.name}</button>`
-  ).join('');
-
-  // Matcap list
-  const matcapBtns = (ShaderMATCAP?.matcaps ?? []).map((m, i) =>
-    `<button class="mm-choice${mesh?.getMatcap?.() === i ? ' active' : ''}" data-matcap="${i}">${m.name}</button>`
-  ).join('');
+  // ENVIRONMENTS AND MATCAPS ARE DROPDOWNS, NOT A BUTTON EACH.
+  //
+  // Fourteen named buttons across two titled grids, and the names do most of nothing: nobody
+  // recognises a matcap by its name, so the grid was fourteen things to read past rather than to
+  // choose from. As selects they are two lines, and the list is still one press away.
+  //
+  // `buildSelectHTML` is the same control the camera section uses for Projection and the
+  // spectator modes — a trigger button and a hidden list of buttons, no <select> element — which
+  // is what makes it work in the headset, where a native dropdown has no way to open. matt: "you
+  // seemed to work out how to do dropown menus that work on both vr and desktop earlier."
+  const envOpts = (ShaderPBR?.environments ?? []).map((env, i) => ({ val: i, label: env.name }));
+  // IMPORT IS AN OPTION, NOT A BUTTON BESIDE THE LIST. Choosing a matcap and adding one are the
+  // same decision — "which matcap" — so they belong in the same control; a button next to the
+  // dropdown was a second thing to look at for a case that comes up once in a while. matt: "make
+  // 'import matcap' an option within the matcap combobox rather than a button."
+  //
+  // A STRING VALUE, so it cannot collide with an index however many matcaps are loaded, and so
+  // the callback can tell them apart without a magic number.
+  const matcapOpts = (ShaderMATCAP?.matcaps ?? []).map((m, i) => ({ val: i, label: m.name }))
+    .concat([{ val: 'import', label: 'Import matcap…' }]);
+  const curMatcap = mesh?.getMatcap?.() ?? 0;
 
   // Shader-class remains useful for styling, but every group is always laid out. Inapplicable
   // groups are inert and muted instead of removed, so controls never jump under the hand.
@@ -1762,72 +1852,96 @@ export function buildSectionHTML_rendering(main) {
   const fps     = skipMap[main._spectatorFrameSkip ?? 3] ?? 2;
   const speed   = main._cameraSpeed ?? 0.3;
 
+  // RIG DISPLAY GOES LAST, NOT FIRST. It used to open the section, so a panel about how the model
+  // is drawn began with fourteen toggles about bones.
+  //
+  // It does not LEAVE, though, and that is worth recording because I nearly removed it on the
+  // grounds that the bone panel has the same block. It does not: buildBoneDisplayHTML is exported
+  // there and used only here, so deleting it from this section strands the rig display flags, the
+  // capsule slider, Attach and Hide All with no home in the app at all. bonepanel_test says so
+  // outright ("Rendering owns the rig display block"), which is what the check is for.
+  const rigDisplay = buildBoneDisplayHTML(main, 'mm');
   return `
-    ${rigDisplay}
     <div id="mm-render-root" class="${shaderClass}">
-      <div class="mm-section-title">Scene Display</div>
+      <!-- NO 'Scene Display' HEADING. It sat above one button, so it was a heading that announced
+           a group of one — which is the thing that made this panel read as bitsy. -->
       <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
-      <div class="mm-row">
-        <span class="mm-lbl">Grid Opacity</span>
-        <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
-        <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
-      </div>
 
       <fieldset class="mm-disabled-group"${meshDisabled}>
       <div class="mm-section-title">Shader</div>
       <div class="mm-choice-grid cols-5">${shaderBtns}</div>
 
-      <div class="mm-if-pbr"${shaderType === Enums.Shader.PBR ? '' : ' inert aria-disabled="true"'}>
-        <div class="mm-section-title">Environment</div>
-        <div class="mm-choice-grid cols-2" id="mm-env-grid">${envBtns}</div>
-      </div>
-
-      <div class="mm-if-matcap"${shaderType === Enums.Shader.MATCAP ? '' : ' inert aria-disabled="true"'}>
-        <div class="mm-section-title">Matcap</div>
-        <div class="mm-choice-grid cols-2" id="mm-matcap-grid">${matcapBtns}</div>
-        <button class="mm-action-btn" id="mm-import-matcap">Import matcap…</button>
-      </div>
+      <!-- ONE ROW, AND ONLY THE ONE THAT APPLIES. Environment belongs to PBR and Matcap to
+           Matcap, so they are never both meaningful — and each was carrying its own heading over
+           a single dropdown. A label beside the control says the same word in a fraction of the
+           space, and the row is the same height whichever appears, so nothing below it moves.
+           This replaces the earlier rule that inapplicable groups stay laid out but inert: that
+           was about controls not jumping under the hand, and a row that is always one row high
+           keeps the promise while showing only what is live. -->
+      ${shaderType === Enums.Shader.PBR ? `<div class="mm-row">
+        <span class="mm-lbl">Environment</span>
+        ${buildSelectHTML('mm-env-select', envOpts, ShaderPBR?.idEnv ?? 0)}
+        <!-- Reserves the value column a slider row has, so the control ends where a slider does. -->
+        <span class="mm-val"></span>
+      </div>` : ''}
+      ${shaderType === Enums.Shader.MATCAP ? `<div class="mm-row">
+        <span class="mm-lbl">Matcap</span>
+        ${buildSelectHTML('mm-matcap-select', matcapOpts, curMatcap)}
+        <span class="mm-val"></span>
+      </div>` : ''}
 
       <div class="mm-if-uv"${shaderType === Enums.Shader.UV ? '' : ' inert aria-disabled="true"'}>
-        <div class="mm-section-title">Texture</div>
         <button class="mm-action-btn" id="mm-import-uv">Import UV texture…</button>
       </div>
 
-      <div class="mm-section-title">Mesh Display</div>
+      <!-- No 'Mesh Display' heading either: what follows is plainly about the mesh, and the
+           heading only separated it from the shader controls above, which the Shader heading
+           already does. -->
       <div class="mm-row">
-        <span class="mm-lbl">Curvature</span>
-        <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature * 20)}">
-        <span class="mm-val" id="mm-curvature-val">${Math.round(curvature * 20)}</span>
+        <span class="mm-lbl">Mesh Opacity</span>
+        <input type="range" id="mm-opacity" min="0" max="100" step="1" value="${Math.round(opacity*100)}">
+        <span class="mm-val" id="mm-opacity-val">${Math.round(opacity*100)}%</span>
       </div>
-      <div class="mm-row">
-        <span class="mm-lbl">Transparency</span>
-        <input type="range" id="mm-transparency" min="0" max="100" step="1" value="${Math.round((1-opacity)*100)}">
-        <span class="mm-val" id="mm-transparency-val">${Math.round((1-opacity)*100)}%</span>
+      <!-- ONE ROW, THREE WORDS. Three full-width toggles stacked down the panel for three
+           settings that are read together and switched against each other; the second word of
+           each label ("Shading", "Shading") carried no information and cost three lines. Ids are
+           unchanged, so the wiring is untouched. -->
+      <div class="mm-choice-grid cols-3">
+        <button class="mm-choice${isFlat  ? ' active' : ''}" id="mm-flat-shading">Flat</button>
+        <button class="mm-choice${isWire  ? ' active' : ''}" id="mm-wireframe">Wire</button>
+        <button class="mm-choice${isSolid ? ' active' : ''}" id="mm-solid">Solid</button>
       </div>
-      <button class="mm-toggle${isFlat  ? ' active' : ''}" id="mm-flat-shading">Flat Shading</button>
-      <button class="mm-toggle${isWire  ? ' active' : ''}" id="mm-wireframe">Wireframe</button>
-      <div class="mm-row">
-        <span class="mm-lbl">WF Opacity</span>
-        <input type="range" id="mm-render-wf-alpha" min="0" max="100" step="5" value="${Math.round(wfAlpha*100)}">
-        <span class="mm-val" id="mm-render-wf-alpha-val">${Math.round(wfAlpha*100)}%</span>
-      </div>
-      <div class="mm-row">
-        <span class="mm-lbl">WF Offset</span>
-        <input type="range" id="mm-render-wf-bias" min="0" max="50" step="1" value="${Math.round(wfBias*10000)}">
-        <span class="mm-val" id="mm-render-wf-bias-val">${wfBias.toFixed(4)}</span>
-      </div>
-      <button class="mm-toggle${isSolid ? ' active' : ''}" id="mm-solid">Solid Shading</button>
       </fieldset>
 
-      <div class="mm-section-title">Tone Mapping</div>
-      <div class="mm-choice-grid cols-5">${tmBtns}</div>
+      ${rigDisplay}
+    </div>
+  `;
+}
 
-      <div class="mm-row">
-        <span class="mm-lbl">Exposure</span>
-        <input type="range" id="mm-exposure" min="0" max="300" step="5" value="${Math.round(exposure*100)}">
-        <span class="mm-val" id="mm-exposure-val">${exposure.toFixed(2)}</span>
-      </div>
-
+// ── CAMERA, MOVED OUT OF RENDERING ────────────────────────────────────────────────────────────
+//
+// Five of the rendering section's twelve headings were camera and capture — reset, projection,
+// mode, the desktop canvas and the spectator frame rate — and none of them is about how the model
+// is drawn. They were there because there was nowhere else to put them, and they were most of
+// what made that panel unreadable. matt: "its still rediculously messy and bitsy and impossible
+// to read at a glance."
+//
+// The controls move INTACT, ids and all, which is what keeps this a move rather than a rewrite:
+// wireSectionRendering already wires them by id and querySelector answers null for the ones that
+// are not on the page, so one wiring function still serves both sections — the same arrangement
+// Sculpting and Properties use.
+export function buildSectionHTML_camera(main) {
+  const camera  = main.getCamera?.() ?? main._camera;
+  const proj    = camera?.getProjectionType?.() ?? 0;
+  const fov     = camera?.getFov?.() ?? 45;
+  const mode    = camera?.getMode?.() ?? 0;
+  const pivot   = camera?.getUsePivot?.() ?? false;
+  const vmode   = main._spectatorViewMode ?? 0;
+  const skipMap = { 0: 0, 1: 1, 3: 2, 7: 3 };
+  const fps     = skipMap[main._spectatorFrameSkip ?? 3] ?? 2;
+  const speed   = main._cameraSpeed ?? 0.3;
+  return `
+    <div id="mm-camera-root">
       <div class="mm-section-title">Camera Reset</div>
       <div class="mm-btn-pair">
         <button class="mm-action-btn" id="mm-cam-center">Center</button>
@@ -1880,6 +1994,7 @@ export function buildSectionHTML_rendering(main) {
     </div>
   `;
 }
+
 
 // Tool definitions. This was mirrored from BrushPanel, which is gone (2026-08-28) — this
 // is now the single source of truth for the Sculpting tab's grid.
@@ -2420,6 +2535,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'scene':     html = buildSectionHTML_scene(main);     break;
         case 'topology':  html = buildSectionHTML_topology(main);  break;
         case 'rendering': html = buildSectionHTML_rendering(main); break;
+        case 'camera':    html = buildSectionHTML_camera(main);    break;
         case 'sculpting': html = buildSectionHTML_sculpting(main); break;
         case 'properties': html = buildSectionHTML_properties(main); break;
         case 'animation': html = buildSectionHTML_animation(main); break;
@@ -2432,7 +2548,21 @@ export class MainMenuPanel extends HTMLVRPanel {
       html = sectionHeaderHTML(this._activeSection) + html;
     }
 
+    // KEEP THE SCROLL. Selecting a row bumps `_outlinerRev`, which changes the key above, which
+    // replaces the whole of #mm-content — and a new list starts at the top. On a rig with a
+    // hand's worth of joints that means every selection throws you back to the collarbone, so
+    // picking a run of fingers is a fight. matt: "each time i selected something the outliner
+    // would shift or reset its scroll. i hate that."
+    //
+    // Read BEFORE the assignment and written after, by class rather than by identity: the
+    // elements are new objects, so the old ones cannot be asked anything once the HTML lands.
+    const scrolls = [];
+    contentEl.querySelectorAll('.mm-outliner-list').forEach((el, i) => scrolls.push([i, el.scrollTop]));
     contentEl.innerHTML = html;
+    if (scrolls.length) {
+      const lists = contentEl.querySelectorAll('.mm-outliner-list');
+      for (const [i, top] of scrolls) if (lists[i]) lists[i].scrollTop = top;
+    }
 
     // Wire section header pin button
     const sectionPinBtn = contentEl.querySelector('#mm-section-pin-btn');
@@ -2547,6 +2677,39 @@ export class MainMenuPanel extends HTMLVRPanel {
     const ui   = gx?._uiSettings ?? {};
     const opts = getOptionsURL;
     const paint = () => this.markDirty();
+
+    // THE CONTROLS THAT MOVED HERE FROM RENDERING. Same handlers, same ids — the bodies are
+    // copied from wireSectionRendering rather than shared, because that function wires a SECTION
+    // and this wires a MENU, and the two are reached by different routes. The ids are unique, so
+    // the pair cannot both be live at once.
+    // Curvature moved here from Rendering: matt reports it does nothing in VR, so it is a
+    // desktop-only tuning control rather than something to keep beside the daily switches.
+    wireSlider(q('#mm-curvature'), q('#mm-curvature-val'), (v) => {
+      const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [main.getMesh?.()];
+      ms?.forEach(m => m?.setCurvature?.(v / 20)); main.render?.();
+    }, null);
+
+    wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
+      main.setGridOpacity?.(v / 100);
+    }, (v) => (v / 100).toFixed(2));
+
+    // The part of the grid drawn BEHIND objects, on its own number rather than a fraction of the
+    // one above — see Scene.setGridOccludedOpacity.
+    wireSlider(q('#mm-grid-occ-opacity'), q('#mm-grid-occ-opacity-val'), (v) => {
+      main.setGridOccludedOpacity?.(v / 100);
+    }, (v) => (v / 100).toFixed(2));
+
+    wireSlider(q('#mm-exposure'), q('#mm-exposure-val'), (v) => {
+      main.setExposure?.(v / 100); main.render?.();
+    }, (v) => (v / 100).toFixed(2));
+
+    el.querySelectorAll('[data-tonemap]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        main.setToneMapping?.(parseInt(btn.dataset.tonemap, 10));
+        el.querySelectorAll('[data-tonemap]').forEach(b => b.classList.toggle('active', b === btn));
+        paint();
+      });
+    });
 
     // Relaunch the floating controller-button guide. Clearing _btnLabels forces a
     // rebuild with the CURRENT dominant hand (so toggling Left Hand Mode then re-showing
@@ -2725,7 +2888,10 @@ export class MainMenuPanel extends HTMLVRPanel {
       wireSectionScene(el, main, fullRepaint, this); // this = the VR panel, so the numpad anchors to it
     } else if (section === 'topology') {
       wireSectionTopology(el, main, fullRepaint, lightRepaint, lightRepaint);
-    } else if (section === 'rendering') {
+    } else if (section === 'rendering' || section === 'camera') {
+      // ONE WIRING FUNCTION FOR BOTH, the same arrangement Sculpting and Properties use: the two
+      // pages have disjoint ids, querySelector answers null for the ones that are not here, and
+      // there is no second copy to fall behind the first.
       wireSectionRendering(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'sculpting' || section === 'properties') {
       // BOTH PAGES, one wiring function. The two halves have disjoint ids and querySelector
@@ -3301,6 +3467,19 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // Transform fields (local Pos/Rot/Scale). Edit writes the one component; clicking a
   // field opens the VR numpad (same pattern as the animation panel).
   const _xfNames = { t: 'Position', r: 'Rotation', s: 'Scale' };
+  // Zero for position and rotation, one for scale — the identity for each component, written
+  // through the same setter the number fields use so there is one path that changes a transform.
+  const _clearTo = { t: 0, r: 0, s: 1 };
+  for (const type of ['t', 'r', 's']) {
+    el.querySelector(`#mm-clear-${type}`)?.addEventListener('click', () => {
+      const sel = selOne(); if (!sel) return;
+      for (let axis = 0; axis < 3; axis++) {
+        main.setTransformComponent?.(sel.getID(), type, axis, _clearTo[type]);
+      }
+      main.render?.(); repaintFn();
+    });
+  }
+
   el.querySelectorAll('.mm-xf').forEach((input) => {
     const type = input.dataset.xf;
     const axis = parseInt(input.dataset.axis, 10);
@@ -3338,28 +3517,36 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     });
   });
 
-  el.querySelectorAll('[data-env]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      ShaderPBR.idEnv = parseInt(btn.dataset.env, 10);
-      main.getBackground?.()?._applyBackground?.(); // refresh if background shows the env
-      main.render?.();
-      el.querySelectorAll('[data-env]').forEach(b => b.classList.toggle('active', b === btn));
-      lightRepaintFn();
-    });
+  // No repaint passed to either: wireSelect updates its own trigger label and active row, and a
+  // rebuild here would replace the dropdown mid-press and swallow the click — the same reason the
+  // desktop sidebar passes a no-op light repaint for the scene section.
+  wireSelect(el, 'mm-env-select', (val) => {
+    ShaderPBR.idEnv = parseInt(val, 10);
+    main.getBackground?.()?._applyBackground?.(); // refresh if background shows the env
+    main.render?.();
   });
 
-  el.querySelectorAll('[data-matcap]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = parseInt(btn.dataset.matcap, 10);
-      (main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh])
-        ?.forEach(m => m.setMatcap?.(id));
-      main.render?.();
-      el.querySelectorAll('[data-matcap]').forEach(b => b.classList.toggle('active', b === btn));
-      lightRepaintFn();
-    });
+  wireSelect(el, 'mm-matcap-select', (val) => {
+    if (val === 'import') {
+      // PUT THE LABEL BACK FIRST. wireSelect has already written "Import matcap…" onto the
+      // trigger and marked that row active, which is right for a choice and wrong for an action:
+      // no matcap changed, and the control would sit claiming one that does not exist. The file
+      // dialog is asynchronous and may be cancelled, so there is nothing to wait for either.
+      const wrap = el.querySelector('#mm-matcap-select-wrap');
+      const cur  = String(mesh?.getMatcap?.() ?? 0);
+      const back = wrap?.querySelector(`.mm-select-opt[data-val="${cur}"]`);
+      const trig = wrap?.querySelector('.mm-select-trigger');
+      if (trig && back) trig.childNodes[0].textContent = back.textContent;
+      wrap?.querySelectorAll('.mm-select-opt').forEach(b => b.classList.toggle('active', b === back));
+      document.getElementById('matcapopen')?.click();
+      return;
+    }
+    const id = parseInt(val, 10);
+    (main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh])
+      ?.forEach(m => m.setMatcap?.(id));
+    main.render?.();
   });
 
-  el.querySelector('#mm-import-matcap')?.addEventListener('click', () => document.getElementById('matcapopen')?.click());
   el.querySelector('#mm-import-uv')?.addEventListener('click',     () => document.getElementById('textureopen')?.click());
 
   const gridBtn = el.querySelector('#mm-grid-toggle');
@@ -3375,11 +3562,12 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     main.render?.();
   });
 
-  wireSlider(el.querySelector('#mm-curvature'), el.querySelector('#mm-curvature-val'), (v) => {
-    meshes?.forEach(m => m.setCurvature?.(v / 20)); main.render?.();
-  }, null, sliderDirtyFn);
-  wireSlider(el.querySelector('#mm-transparency'), el.querySelector('#mm-transparency-val'), (v) => {
-    meshes?.forEach(m => m.setOpacity?.(1 - v / 100)); main.render?.();
+  // OPACITY, NOT TRANSPARENCY. The slider ran backwards — 0 meant fully opaque and you pushed it
+  // UP to make the mesh disappear — which is the opposite of every other opacity in the app,
+  // including the capsule slider right below it. Now 0 is see-through, 100 is solid, and 100 is
+  // where a mesh starts. Curvature moved to Settings.
+  wireSlider(el.querySelector('#mm-opacity'), el.querySelector('#mm-opacity-val'), (v) => {
+    meshes?.forEach(m => m.setOpacity?.(v / 100)); main.render?.();
   }, (v) => `${v}%`, sliderDirtyFn);
 
   el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {
@@ -3399,36 +3587,8 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   const gx  = main._guiXR ?? main.getGuiXR?.();
   const ui  = gx?._uiSettings ?? {};
   const opts = getOptionsURL;
-  wireSlider(el.querySelector('#mm-render-wf-alpha'), el.querySelector('#mm-render-wf-alpha-val'), (v) => {
-    const f = v / 100;
-    ui.wireframeAlpha = f;
-    const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
-    if (wm?.material) { wm.material.opacity = f; main.render?.(); }
-    opts.saveOption('wireframeAlpha', f, 500);
-  }, (v) => `${v}%`, sliderDirtyFn);
-  wireSlider(el.querySelector('#mm-render-wf-bias'), el.querySelector('#mm-render-wf-bias-val'), (v) => {
-    const f = v / 10000;
-    ui.wireframeBias = f;
-    const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
-    if (wm?.material?.uniforms?.uBias) { wm.material.uniforms.uBias.value = f; main.render?.(); }
-    else if (wm?.material && 'polygonOffsetFactor' in wm.material) {
-      // LineBasicMaterial path (quad-remesh results): the shader uBias uniform doesn't
-      // exist, so drive the depth polygon offset instead. v (0..50) → factor/units
-      // -2 (default) .. -52, pulling the wireframe toward the camera so it stops
-      // z-fighting the dense surface and reads crisply.
-      const off = -(2 + v);
-      wm.material.polygonOffset = true;
-      wm.material.polygonOffsetFactor = off;
-      wm.material.polygonOffsetUnits = off;
-      wm.material.needsUpdate = true;
-      main.render?.();
-    } else {
-      // Fallback: rebuild wireframe buffer so bias takes effect
-      main.getMesh?.()?.updateWireframeBuffer?.();
-      main.render?.();
-    }
-    opts.saveOption('wireframeBias', f, 500);
-  }, (v) => (v / 10000).toFixed(4), sliderDirtyFn);
+  // The WF Opacity/Offset sliders and their wiring moved to Settings, which already had the
+  // same two under 'Wireframe'. See buildMenuHTML_settings.
 
   el.querySelector('#mm-solid')?.addEventListener('click', () => {
     meshes?.forEach(m => {
@@ -3439,22 +3599,7 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     lightRepaintFn();
   });
 
-  el.querySelectorAll('[data-tonemap]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      main.setToneMapping?.(parseInt(btn.dataset.tonemap, 10));
-      el.querySelectorAll('[data-tonemap]').forEach(b => b.classList.toggle('active', b === btn));
-      lightRepaintFn();
-    });
-  });
-
-  // One slider, both passes -- Scene.setGridOpacity keeps the occluded one the fainter fraction.
-  wireSlider(el.querySelector('#mm-grid-opacity'), el.querySelector('#mm-grid-opacity-val'), (v) => {
-    main.setGridOpacity?.(v / 100);
-  }, (v) => (v / 100).toFixed(2), sliderDirtyFn);
-
-  wireSlider(el.querySelector('#mm-exposure'), el.querySelector('#mm-exposure-val'), (v) => {
-    main.setExposure?.(v / 100); main.render?.();
-  }, (v) => (v / 100).toFixed(2), sliderDirtyFn);
+  // Tone mapping, Exposure and Grid Opacity moved to Settings; their wiring went with them.
 
   // Camera controls
   const camera = main.getCamera?.() ?? main._camera;

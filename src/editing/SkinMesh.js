@@ -526,7 +526,18 @@ function capsuleTarget(p, caps, out) {
   // is either a hard min (creases) or a mush (limbs merge). The smallest radius in play is the
   // finest feature anything nearby can have, so blending over a fraction of it keeps a thin
   // bone from being swallowed by a fat joint beside it.
-  const k = Math.max(rmin * BLEND_FRAC, 1e-6);
+  // Overridable as window._boneSkinBlend, for the same reason PROJECT_RATE is: this is the
+  // number to bisect when limbs that should be separate arrive welded together.
+  //
+  // THE SUSPECT WHEN SOME FINGERS COLLAPSE AND OTHERS DO NOT. The fold below is over every
+  // capsule near the point, siblings included, and a smooth-min only ever ADDS — so the gap
+  // between two fingers is filled from both sides at once. An INNER finger has a sibling either
+  // side of it and an outer one has a sibling on a single side, which is an asymmetry in the rig
+  // rather than in the code, and it predicts exactly the shape of the complaint: the two middle
+  // fingers weld to the palm and the two outside ones do not.
+  const blendFrac = typeof window._boneSkinBlend === 'number'
+    ? Math.max(0, Math.min(2, window._boneSkinBlend)) : BLEND_FRAC;
+  const k = Math.max(rmin * blendFrac, 1e-6);
 
   // POLYNOMIAL SMOOTH-MIN, folded pairwise. log-sum-exp was the first version and is BIASED:
   // where two equal surfaces meet it returns min - width*log(2), so every seam gains a fifth of

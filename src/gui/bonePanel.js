@@ -40,10 +40,14 @@ const DIALECT = {
   mp: { grid: 'mp-voxel-grid', gridBtn: 'mp-voxel-btn', toggles: 'mp-toggles',
         toggle: 'mp-toggle-btn', row: 'mp-row', lbl: 'mp-lbl', val: 'mp-val',
         btnRow: 'mp-btn-row', action: 'mp-action-btn', divider: 'mp-divider',
+        // A toggle that stands ALONE rather than sitting in the chip grid — for a switch that
+        // governs the grid rather than belonging to it.
+        wide: 'mp-toggle-btn',
         title: '' },
   mm: { grid: 'mm-choice-grid cols-3', gridBtn: 'mm-choice', toggles: 'mm-choice-grid cols-3',
         toggle: 'mm-choice', row: 'mm-row', lbl: 'mm-lbl', val: 'mm-val',
         btnRow: 'mm-choice-grid cols-2', action: 'mm-choice', divider: '',
+        wide: 'mm-toggle',
         title: 'mm-section-title' },
   // The desktop sidebar's Animation tab. Its own vocabulary, and its buttons are bare <button>
   // inside a grid rather than a classed element, so `toggle` is deliberately empty — the
@@ -51,6 +55,7 @@ const DIALECT = {
   acp: { grid: 'acp-btn-grid', gridBtn: '', toggles: 'acp-btn-grid',
          toggle: '', row: 'acp-row', lbl: 'acp-lbl', val: 'acp-val',
          btnRow: 'acp-btn-grid', action: '', divider: '',
+         wide: '',
          title: 'acp-section-title', section: 'acp-section' },
 };
 
@@ -121,7 +126,10 @@ export function buildBoneAuthoringHTML(main, style) {
   // BOTH NAMES WHEN THERE ARE TWO. A drag writes to the mirror twin as well, so a header naming
   // one joint would be telling half the truth about what the sliders are about to change.
   const jointName = (j) => (j && (j._permanentStaticLabel || ('joint ' + j.getID()))) || '';
-  const physTwin = physTarget && physTarget._boneMirror
+  // ...AND ONLY WHEN SYMMETRY IS ON. A twin exists for the life of any joint drawn with symmetry,
+  // so testing for one meant physics could never be flagged on a single side. See
+  // Skeleton.mirrorEdits.
+  const physTwin = Skeleton.mirrorEdits(main) && physTarget && physTarget._boneMirror
     && main.getMeshes?.().includes(physTarget._boneMirror) && physTarget._boneMirror !== physTarget
     ? physTarget._boneMirror : null;
   // The blend weight is a KEYABLE channel, so the slider shows what it evaluates to at the
@@ -148,6 +156,7 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
+      ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
     </div>
     ${full ? `
     <div class="${c.btnRow}">
@@ -274,23 +283,29 @@ export function buildBoneDisplayHTML(main, style) {
   const c = DIALECT[style] || DIALECT.mm;
   return `
     ${sectionTitle(c, 'Rig Display')}
+    <!-- ON ITS OWN, ABOVE THE GRID. It governs every chip below it rather than being one of them,
+         and sitting in the row made it read as a fourteenth display flag — one that would turn
+         something called "All" on. matt: "'hide all' should be a toggle, not part of all the
+         buttons." -->
+    <button class="${c.wide}${Skeleton.decorationsHidden() ? ' active' : ''}" id="bone-hide-decor">${
+      Skeleton.decorationsHidden() ? 'Decorations Hidden' : 'Hide All Decorations'}</button>
     <div class="${c.toggles}">
-      ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
-      ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
-      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
-      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
-      ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlag('capsuleShaded'))}
-      ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlag('skinClaims'))}
-      ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlag('weights'))}
-      ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
-      ${flagButton(c, 'names', 'Names', Skeleton.displayFlag('names'))}
-      ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
-      ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
-      ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlag('gnomons'))}
-      ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlag('gnomonsAll'))}
+      ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlagRaw('solid'))}
+      ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlagRaw('wire'))}
+      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
+      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
+      ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlagRaw('capsuleShaded'))}
+      ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlagRaw('skinClaims'))}
+      ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlagRaw('weights'))}
+      ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlagRaw('lengths'))}
+      ${flagButton(c, 'names', 'Names', Skeleton.displayFlagRaw('names'))}
+      ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlagRaw('pins'))}
+      ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlagRaw('trails'))}
+      ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlagRaw('gnomons'))}
+      ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlagRaw('gnomonsAll'))}
     </div>
     <div class="${c.row}">
-      <span class="${c.lbl}">Capsule Solidity</span>
+      <span class="${c.lbl}">Capsule Opacity</span>
       <input type="range" id="bone-cap-op" min="5" max="100" step="5"
         value="${Math.round(Skeleton.capsuleOpacity() * 100)}">
       <span class="${c.val}" id="bone-cap-op-val">${Math.round(Skeleton.capsuleOpacity() * 100)}</span>
@@ -313,11 +328,11 @@ export function buildBoneQuickDisplayHTML(main, style) {
   const c = DIALECT[style] || DIALECT.mm;
   return `
     <div class="${c.toggles}">
-      ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
-      ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
-      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
-      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
-      ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
+      ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlagRaw('solid'))}
+      ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlagRaw('wire'))}
+      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
+      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
+      ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlagRaw('pins'))}
     </div>
   `;
 }
@@ -393,6 +408,30 @@ export function wireBoneSection(root, main, opts) {
   // Where Make Skin will bridge each bone. Named 'Attach' rather than 'Claims': the lattice's
   // word for it says nothing to someone deciding whether their fingers will come out right.
   flag('skin-claims', 'skinClaims');
+
+  // SYMMETRY, WHERE THE RIG WORK HAPPENS. The toggle already exists in the main menu and on the
+  // wrist panel, and neither is where you are while drawing bones — so in practice symmetry was
+  // whatever it had been left as, which reads as "always on". matt: "sym mirroring is a big one,
+  // there's an option to enable it in the grab minipanel, but not elsewhere, its just on by
+  // default."
+  //
+  // NOT a display flag, so it does not go through `flag()`: this one is the sculpt manager's own
+  // `_symmetry`, the same field those other two write. One field, three places to reach it —
+  // rather than a rig-only copy that would then have to be kept in step with it.
+  // THE MASTER SWITCH. Not a display flag of its own — it gates how the others are READ, so it
+  // has its own accessor and its own storage. See Skeleton.decorationsHidden.
+  q('hide-decor')?.addEventListener('click', () => {
+    Skeleton.setDecorationsHidden(main, !Skeleton.decorationsHidden());
+    refresh();
+  });
+
+  q('sym')?.addEventListener('click', () => {
+    const sm = main.getSculptManager?.();
+    if (!sm) return;
+    sm._symmetry = !sm._symmetry;
+    refresh();
+    main.render?.();
+  });
   flag('solid', 'solid');
   flag('wire', 'wire');
   flag('joints', 'joints');
@@ -925,20 +964,32 @@ export function syncBoneSection(root, main) {
   for (const [key] of MODES) q(key)?.classList.toggle('active', mode === key);
 
   const setFlag = (id, val) => q(id)?.classList.toggle('active', val);
-  setFlag('snap', Skeleton.displayFlag('snapPlane'));
-  setFlag('axis', Skeleton.displayFlag('snapAxis'));
-  setFlag('len', Skeleton.displayFlag('lengths'));
-  setFlag('names', Skeleton.displayFlag('names'));
-  setFlag('caps', Skeleton.displayFlag('capsules'));
-  setFlag('caps-shade', Skeleton.displayFlag('capsuleShaded'));
-  setFlag('weights', Skeleton.displayFlag('weights'));
-  setFlag('solid', Skeleton.displayFlag('solid'));
-  setFlag('wire', Skeleton.displayFlag('wire'));
-  setFlag('joints', Skeleton.displayFlag('joints'));
-  setFlag('pins', Skeleton.displayFlag('pins'));
-  setFlag('trails', Skeleton.displayFlag('trails'));
-  setFlag('gnomons', Skeleton.displayFlag('gnomons'));
-  setFlag('gnomons-all', Skeleton.displayFlag('gnomonsAll'));
+  setFlag('snap', Skeleton.displayFlagRaw('snapPlane'));
+  setFlag('axis', Skeleton.displayFlagRaw('snapAxis'));
+  // Not a display flag — the sculpt manager's own `_symmetry`, which the main menu and the wrist
+  // panel also write. Synced here so a toggle in either of those is reflected the next time this
+  // panel repaints, rather than the three going out of step with each other.
+  setFlag('sym', !!main.getSculptManager?.()?._symmetry);
+  {
+    // Label AND state: the button says which way it will go, so it has to be rewritten rather
+    // than only re-classed.
+    const hd = Skeleton.decorationsHidden();
+    setFlag('hide-decor', hd);
+    const b = q('hide-decor');
+    if (b) b.textContent = hd ? 'Decorations Hidden' : 'Hide All Decorations';
+  }
+  setFlag('len', Skeleton.displayFlagRaw('lengths'));
+  setFlag('names', Skeleton.displayFlagRaw('names'));
+  setFlag('caps', Skeleton.displayFlagRaw('capsules'));
+  setFlag('caps-shade', Skeleton.displayFlagRaw('capsuleShaded'));
+  setFlag('weights', Skeleton.displayFlagRaw('weights'));
+  setFlag('solid', Skeleton.displayFlagRaw('solid'));
+  setFlag('wire', Skeleton.displayFlagRaw('wire'));
+  setFlag('joints', Skeleton.displayFlagRaw('joints'));
+  setFlag('pins', Skeleton.displayFlagRaw('pins'));
+  setFlag('trails', Skeleton.displayFlagRaw('trails'));
+  setFlag('gnomons', Skeleton.displayFlagRaw('gnomons'));
+  setFlag('gnomons-all', Skeleton.displayFlagRaw('gnomonsAll'));
 
   const xrayInput2 = q('xray'), xrayVal2 = q('xray-val');
   if (xrayInput2) {

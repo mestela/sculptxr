@@ -207,6 +207,13 @@ var getOptionsURL = function () {
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
   options.boneShowSkinClaims = queryBool(getVal('boneShowSkinClaims'), false);
+  options.boneHideDecor = queryBool(getVal('boneHideDecor'), false);
+  // The ground grid's occluded pass has its own opacity; null means "never set", which falls back
+  // to the fraction of the main one it used to be derived from. See Scene.getGridOccludedOpacity.
+  {
+    const raw = getVal('gridOccludedOpacity');
+    options.gridOccludedOpacity = (raw == null || raw === '') ? null : parseFloat(raw);
+  }
   // Capsules shaded rather than flat. Default true: unlit ones read as a single silhouette and a
   // near limb cannot be told from a far one.
   options.boneCapsuleShaded = queryBool(getVal('boneCapsuleShaded'), true);

@@ -1777,15 +1777,20 @@ class Scene {
     this.render();
   }
 
-  // The ground plane's opacity, and the ONE place the two passes are kept in step: the occluded
-  // pass is always the fainter fraction of the visible one, so a single slider moves both and
-  // they can never drift into disagreeing about how strong the grid is.
+  // The ground plane's opacity. The occluded pass — the part of the grid behind objects — has its
+  // OWN number now rather than tracking this one by a fixed fraction.
+  //
+  // The fraction was there so the two could never drift into disagreeing about how strong the
+  // grid is, which is a real hazard and the wrong answer to it: how visible a grid should be in
+  // front of nothing and how much of it should read THROUGH the model are two different
+  // judgements, and tying them means you cannot make the second one at all. matt: "the current
+  // system of following the primary grid opacity by a set offset doesn't feel right."
+  //
+  // The old fraction survives as the DEFAULT for the new setting, so nothing looks different
+  // until the second slider is touched.
   setGridOpacity(val) {
     const v = Math.min(1, Math.max(0, val));
     if (this._groundGrid) this._groundGrid.material.opacity = v;
-    if (this._groundGridGhost) {
-      this._groundGridGhost.material.opacity = v * GRID_GHOST_FRACTION;
-    }
     // Debounced, because this is written on every frame of a slider drag.
     getOptionsURL.saveOption?.('gridOpacity', v, 250);
     this.render();
@@ -1793,6 +1798,21 @@ class Scene {
 
   getGridOpacity() {
     return this._groundGrid ? this._groundGrid.material.opacity : (getOptionsURL().gridOpacity ?? 0.5);
+  }
+
+  setGridOccludedOpacity(val) {
+    const v = Math.min(1, Math.max(0, val));
+    if (this._groundGridGhost) this._groundGridGhost.material.opacity = v;
+    getOptionsURL.saveOption?.('gridOccludedOpacity', v, 250);
+    this.render();
+  }
+
+  getGridOccludedOpacity() {
+    if (this._groundGridGhost) return this._groundGridGhost.material.opacity;
+    const saved = getOptionsURL().gridOccludedOpacity;
+    // Falls back to what the fraction would have given, so a session that has never set it looks
+    // exactly as it did before the slider existed.
+    return saved != null ? saved : (this.getGridOpacity() * GRID_GHOST_FRACTION);
   }
 
   setToneMapping(val) {
@@ -1960,9 +1980,13 @@ class Scene {
       }
 
       // Sync Ground Plane Visibility with UI
-      if (this._groundGrid) this._groundGrid.visible = !!this._showGrid;
+      // ...AND THE MASTER DECORATION SWITCH, which hides the plane without clearing the user's own
+      // Ground Plane setting — turning decorations back on restores it. See
+      // Skeleton.decorationsHidden.
+      const _decor = !Skeleton.decorationsHidden();
+      if (this._groundGrid) this._groundGrid.visible = !!this._showGrid && _decor;
       // The ghost follows the grid: one toggle, two passes.
-      if (this._groundGridGhost) this._groundGridGhost.visible = !!this._showGrid;
+      if (this._groundGridGhost) this._groundGridGhost.visible = !!this._showGrid && _decor;
 
       // GalaxyXR / Adreno: explicitly rebind the XR base layer framebuffer before
       // every render. The Adreno tile renderer occasionally drops the FBO binding
@@ -2286,7 +2310,9 @@ class Scene {
     // faint wash. Nothing is punched through, because this pass carries the same
     // alpha-only-accumulates blending as the first.
     const ghostMat = this._groundGrid.material.clone();
-    ghostMat.opacity = this._groundGrid.material.opacity * GRID_GHOST_FRACTION;
+    // Saved value first, then the old fraction as the default — see setGridOccludedOpacity.
+    ghostMat.opacity = getOptionsURL().gridOccludedOpacity
+      ?? (this._groundGrid.material.opacity * GRID_GHOST_FRACTION);
     ghostMat.depthFunc = THREE.GreaterDepth;
     ghostMat.depthWrite = false;
     // clone() copies the factors but not the custom-blending intent on every three version, so
@@ -2607,7 +2633,7 @@ class Scene {
 
     mesh._typeName = "Sphere";
     mesh.isQuad = true; // Sphere is quads (subdivided cube)
-    this.addNewMesh(mesh);
+    this._addPrimitive(mesh);
     return mesh;
   }
 
@@ -3262,7 +3288,28 @@ class Scene {
     mesh.normalizeSize();
     mesh._typeName = 'Human';
     mesh.isQuad = true;
-    return this.addNewMesh(mesh);
+    return this._addPrimitive(mesh);
+  }
+
+  // PRIMITIVES ARRIVE WITH A SCALE ALREADY ON THEM, AND SHOULD NOT.
+  //
+  // `normalizeSize` fits a new mesh to the scene by writing a scale into its MATRIX rather than
+  // into its vertices, and several creators then multiply that by another 0.7 for good measure —
+  // so every primitive starts life with an arbitrary non-unit scale showing in the transform
+  // fields, and any later "scale to 1" moves it. matt: "i notice all the default primitives have
+  // odd scales. make them all be baked to have a scale of 1 after being instantiated."
+  //
+  // Baked AFTER the add, because bakeScale finds its mesh by id in the scene list, and it folds
+  // the scale into the geometry so nothing moves on screen — the object is identical and its
+  // scale reads 1.
+  //
+  // NOT DONE IN addNewMesh, which is the tempting single point: that path also takes duplicates,
+  // imports and the rig's joint locators, and a joint's scale is deliberate — createJoint writes
+  // one to size the pick sphere. Baking there would flatten it.
+  _addPrimitive(mesh) {
+    const added = this.addNewMesh(mesh);
+    this.bakeScale(mesh.getID());
+    return added;
   }
 
   addGrid3x3() {
@@ -3271,7 +3318,7 @@ class Scene {
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     mesh._typeName = "Grid3x3";
     mesh.isQuad = true; 
-    return this.addNewMesh(mesh);
+    return this._addPrimitive(mesh);
   }
 
   addGrid() {
@@ -3280,7 +3327,7 @@ class Scene {
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     mesh._typeName = "Grid4x4";
     mesh.isQuad = true; 
-    return this.addNewMesh(mesh);
+    return this._addPrimitive(mesh);
   }
 
   addCube() {
@@ -3290,7 +3337,7 @@ class Scene {
     this.subdivideClamp(mesh, true);
     mesh._typeName = "Cube";
     mesh.isQuad = true; // Cube is quads
-    return this.addNewMesh(mesh);
+    return this._addPrimitive(mesh);
   }
 
   addVoxelObject() {
@@ -3355,7 +3402,7 @@ class Scene {
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     this.subdivideClamp(mesh);
     mesh._typeName = "Cylinder";
-    return this.addNewMesh(mesh);
+    return this._addPrimitive(mesh);
   }
 
   addTorus(preview) {
@@ -3370,7 +3417,7 @@ class Scene {
     }
     mesh.normalizeSize();
     this.subdivideClamp(mesh);
-    this.addNewMesh(mesh);
+    this._addPrimitive(mesh);
   }
 
   subdivideClamp(mesh, linear) {

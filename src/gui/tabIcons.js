@@ -11,6 +11,7 @@ export const ICON_DOCK  = _fa('arrow-left', 13);
 export const TAB_ICONS = {
   scene:     _fa('sitemap'),
   rendering: _fa('photo-film'),
+  camera:    _fa('video'),
   topology:  _fa('draw-polygon'),
   sculpting: _fa('toolbox'),
   properties: _fa('sliders'),   // fa-sliders

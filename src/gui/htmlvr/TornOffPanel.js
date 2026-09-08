@@ -5,6 +5,7 @@ import {
   MM_W, injectMMCSS,
   buildSectionHTML_scene,
   buildSectionHTML_rendering,
+  buildSectionHTML_camera,
   buildSectionHTML_topology,
   buildSectionHTML_sculpting,
   buildSectionHTML_properties,
@@ -166,6 +167,9 @@ export class TornOffPanel extends HTMLVRPanel {
         wireSectionScene(el, main, fullRepaint, this); // numpad anchors to this torn-off panel
         break;
       case 'rendering':
+      case 'camera':
+        // One wiring function for both — disjoint ids, and querySelector answers null for the
+        // controls that are not on this page. See buildSectionHTML_camera.
         wireSectionRendering(el, main, fullRepaint, lightRepaint, lightRepaint);
         break;
       case 'topology':
@@ -214,6 +218,7 @@ function _buildSectionHTML(sectionId, main) {
   switch (sectionId) {
     case 'scene':     return buildSectionHTML_scene(main);
     case 'rendering': return buildSectionHTML_rendering(main);
+    case 'camera':    return buildSectionHTML_camera(main);
     case 'topology':  return buildSectionHTML_topology(main);
     case 'sculpting': return buildSectionHTML_sculpting(main);
     case 'properties': return buildSectionHTML_properties(main);

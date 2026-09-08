@@ -129,7 +129,10 @@ RigTopology.split = function (main, joint, t) {
   // Only when the twin's own bone is splittable: a twin whose parent is not the mirror of this
   // one is not the same bone on the other side, and guessing there would be worse than not
   // mirroring at all.
-  const twin = joint._boneMirror;
+  // ...AND ONLY WHEN SYMMETRY IS ON, which is the toggle rather than the twin's existence: a
+  // joint drawn symmetrically keeps its twin forever, so testing for one split both sides for
+  // good. See Skeleton.mirrorEdits.
+  const twin = Skeleton.mirrorEdits(main) ? joint._boneMirror : null;
   const twinOk = !!(twin && RigTopology.canSplit(main, twin)
     && twin._parentMesh === (parent._boneMirror || parent));
   const targets = twinOk ? [joint, twin] : [joint];

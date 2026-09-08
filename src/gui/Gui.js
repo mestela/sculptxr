@@ -14,7 +14,7 @@ import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import {
-  buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting,
+  buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_camera, buildSectionHTML_topology, buildSectionHTML_sculpting,
   buildSectionHTML_properties, sectionHeaderHTML, SECTION_LABELS,
   injectMMCSS,
   wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
@@ -424,6 +424,9 @@ class Gui {
 
     const sceneTab     = createTab('scene',     'Scene');
     const renderingTab = createTab('rendering', TR('renderingTitle'));
+    // Camera and capture, moved out of Rendering — five of that section's twelve headings, none
+    // of them about how the model is drawn. See buildSectionHTML_camera.
+    const cameraTab    = createTab('camera',    'Camera');
     const topologyTab  = createTab('topology',  TR('topologyTitle'));
     const sculptingTab = createTab('sculpting', TR('sculptTitle'));
     const propertiesTab = createTab('properties', 'Properties');
@@ -443,7 +446,8 @@ class Gui {
     // on something rather than nothing.
     {
       const pins = getOptionsURL().desktopPins || {};
-      const tabsByName = { scene: sceneTab, rendering: renderingTab, topology: topologyTab,
+      const tabsByName = { scene: sceneTab, rendering: renderingTab, camera: cameraTab,
+        topology: topologyTab,
         sculpting: sculptingTab, properties: propertiesTab, animation: animationTab };
       const saved = getOptionsURL()._rawSaved?.desktopTab;
       const order = [saved, DESKTOP_DEFAULT_TAB, 'sculpting', 'properties', 'scene',
@@ -454,6 +458,7 @@ class Gui {
 
     tabGroup.appendChild(sceneTab);
     tabGroup.appendChild(renderingTab);
+    tabGroup.appendChild(cameraTab);
     tabGroup.appendChild(topologyTab);
     tabGroup.appendChild(sculptingTab);
     tabGroup.appendChild(propertiesTab);
@@ -465,6 +470,7 @@ class Gui {
 
     const scenePanel     = document.createElement('wa-tab-panel'); scenePanel.setAttribute('name', 'scene');
     const renderingPanel = document.createElement('wa-tab-panel'); renderingPanel.setAttribute('name', 'rendering');
+    const cameraPanel    = document.createElement('wa-tab-panel'); cameraPanel.setAttribute('name', 'camera');
     const topologyPanel  = document.createElement('wa-tab-panel'); topologyPanel.setAttribute('name', 'topology');
     const sculptingPanel = document.createElement('wa-tab-panel'); sculptingPanel.setAttribute('name', 'sculpting');
     const propertiesPanel = document.createElement('wa-tab-panel'); propertiesPanel.setAttribute('name', 'properties');
@@ -479,6 +485,7 @@ class Gui {
 
     tabGroup.appendChild(scenePanel);
     tabGroup.appendChild(renderingPanel);
+    tabGroup.appendChild(cameraPanel);
     tabGroup.appendChild(topologyPanel);
     tabGroup.appendChild(sculptingPanel);
     tabGroup.appendChild(propertiesPanel);
@@ -561,6 +568,7 @@ class Gui {
 
     this._desktopSceneEl     = scenePanel;
     this._desktopRenderingEl = renderingPanel;
+    this._desktopCameraEl    = cameraPanel;
     this._desktopTopologyEl  = topologyPanel;
     this._desktopSculptingEl = sculptingPanel;
     this._desktopPropertiesEl = propertiesPanel;
@@ -568,6 +576,7 @@ class Gui {
     // Global hook so the animation loop can live-refresh the outliner eye icons.
     window._updateOutlinerVisIcons = () => updateOutlinerVisIcons(this._main);
     this._buildDesktopRendering(renderingPanel);
+    this._buildDesktopCamera(cameraPanel);
     this._buildDesktopTopology(topologyPanel);
     this._buildDesktopSculpting(sculptingPanel);
     this._buildDesktopProperties(propertiesPanel);
@@ -921,7 +930,15 @@ class Gui {
   _buildDesktopScene(panelEl) {
     if (this._sectionIsFloating(panelEl, 'scene')) return;
     const main = this._main;
+    // KEEP THE SCROLL across the rebuild — the desktop sidebar shares the outliner markup with
+    // the VR panel and loses its position the same way. See the note there.
+    const scrolls = [];
+    panelEl.querySelectorAll('.mm-outliner-list').forEach((el, i) => scrolls.push([i, el.scrollTop]));
     panelEl.innerHTML = buildSectionHTML_scene(main);
+    if (scrolls.length) {
+      const lists = panelEl.querySelectorAll('.mm-outliner-list');
+      for (const [i, top] of scrolls) if (lists[i]) lists[i].scrollTop = top;
+    }
     const rebuild = () => this._buildDesktopScene(panelEl);
     // Pass a no-op lightRepaintFn so wireSelect doesn't call rebuild() when
     // toggling a dropdown open — that would replace innerHTML and immediately
@@ -940,6 +957,20 @@ class Gui {
     fixSliderDrag(panelEl);
 
     this._decorateDesktopSection(panelEl, 'rendering');
+  }
+
+  // Camera and capture. Shares wireSectionRendering with the section it came out of: the ids are
+  // disjoint and querySelector answers null for the ones that are not on this page, so there is
+  // one wiring pass rather than a second copy to fall behind the first.
+  _buildDesktopCamera(panelEl) {
+    if (this._sectionIsFloating(panelEl, 'camera')) return;
+    const main = this._main;
+    panelEl.innerHTML = buildSectionHTML_camera(main);
+    const rebuild = () => this._buildDesktopCamera(panelEl);
+    wireSectionRendering(panelEl, main, rebuild, () => {});
+    fixSliderDrag(panelEl);
+
+    this._decorateDesktopSection(panelEl, 'camera');
   }
 
   _buildDesktopTopology(panelEl) {
@@ -1112,6 +1143,7 @@ class Gui {
   _refreshDesktopSection(sectionId) {
     const el = {
       scene: this._desktopSceneEl, rendering: this._desktopRenderingEl,
+      camera: this._desktopCameraEl,
       topology: this._desktopTopologyEl, sculpting: this._desktopSculptingEl,
       properties: this._desktopPropertiesEl,
     }[sectionId];
@@ -1119,6 +1151,7 @@ class Gui {
     ({
       scene: () => this._buildDesktopScene(el),
       rendering: () => this._buildDesktopRendering(el),
+      camera: () => this._buildDesktopCamera(el),
       topology: () => this._buildDesktopTopology(el),
       sculpting: () => this._buildDesktopSculpting(el),
       properties: () => this._buildDesktopProperties(el),

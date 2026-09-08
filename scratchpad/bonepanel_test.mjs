@@ -21,17 +21,32 @@ const FLAG_DEFAULTS = {};
 }
 const stub = `
 const Enums = { Tools: { BONE_DRAW: 34 } };
+let _hideDecor = false;
+const DEFAULT_FLAGS = ${JSON.stringify(FLAG_DEFAULTS)};
 const Skeleton = {
   joints: () => [], radiusFraction: () => 0.25, defaultRadiusFrac: () => 0.25,
   DISPLAY_FLAGS: ${JSON.stringify(FLAG_DEFAULTS)},
   displayFlag: (n) => (_flagState[n] != null ? _flagState[n] : !!${JSON.stringify(FLAG_DEFAULTS)}[n]),
   setDisplayFlag: (n, v) => { _flagState[n] = !!v; },
+  // The master decoration switch gates how display flags are READ; the panel asks for both, so a
+  // stub without them throws before a check runs. displayFlagRaw is what the toggles read, so
+  // they keep showing their own value while everything is hidden. (No backticks in here: this
+  // whole block is a template literal, and one closes it.)
+  decorationsHidden: () => !!_hideDecor,
+  setDecorationsHidden: (main, on) => { _hideDecor = !!on; return _hideDecor; },
+  displayFlagRaw: (n) => (_flagState[n] != null ? _flagState[n] : !!DEFAULT_FLAGS[n]),
   // Capsule solidity is a slider in the Rig Display block, so the panel asks for it while
   // building — a stub without it throws before a single check runs.
   capsuleOpacity: () => (_capOp == null ? 0.16 : _capOp),
   setCapsuleOpacity: (main, v) => { _capOp = Math.max(0.05, Math.min(1, v)); return _capOp; },
   // Bone shapes (roadmap #60): the panel asks which meshes are joints and what shape each has.
   isJoint: (m) => !!(m && m._isBone),
+  // Whether a rig edit mirrors: the panel asks before offering a physics twin, so a stub without
+  // it throws before a single check runs. Reads the mock's own symmetry flag, which is what makes
+  // the "physics names both joints" check mean something either way.
+  mirrorEdits: (main) => !!(main && main.getSculptManager
+    && main.getSculptManager() && main.getSculptManager().getSymmetryFlag
+    && main.getSculptManager().getSymmetryFlag()),
   jointVolume: (j) => (j && j._jointVolume) || 'none',
 };
 const _flagState = {};
@@ -83,7 +98,11 @@ const {
 let fails = 0;
 const check = (n, ok, got) => { console.log((ok ? '  ok   ' : '  FAIL ') + n + (ok ? '' : '  got: ' + got)); if (!ok) fails++; };
 
-const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () => ({ modeKey: () => 'draw' }) }),
+// SYMMETRY IS ON IN THE FIXTURE, because that is now the condition for a rig edit to mirror at
+// all — a twin merely existing is no longer enough. `__sym` lets a check turn it off and assert
+// the other half.
+globalThis.__sym = true;
+const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () => ({ modeKey: () => 'draw' }), getSymmetryFlag: () => globalThis.__sym }),
   getMesh: () => null,
   // Bone-shape buttons act on the selected joints, so the panel now asks for them.
   getSelectedMeshes: () => (globalThis.__sel || []),
@@ -176,7 +195,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
     'the wall of buttons is the thing being moved out of the way');
 
   check('Properties is a real section, not a special case',
-    /'scene','rendering','topology','sculpting','properties'/.test(MAIN_SRC)
+    /'scene','rendering','camera','topology','sculpting','properties'/.test(MAIN_SRC)
       && /case 'properties': html = buildSectionHTML_properties\(main\); break;/.test(MAIN_SRC)
       && /properties: 'Properties'/.test(MAIN_SRC)
       && /properties: _fa\(/.test(ICONS),
@@ -253,10 +272,10 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
     'a pinned outliner that only updates when you unpin and repin it is a stale panel');
 
   check('every section builder checks first',
-    (GUI.match(/if \(this\._sectionIsFloating\(panelEl, '[a-z]+'\)\) return;/g) || []).length === 5,
+    (GUI.match(/if \(this\._sectionIsFloating\(panelEl, '[a-z]+'\)\) return;/g) || []).length === 6,
     'one that does not will redraw itself into a sidebar tab that is meant to be empty');
   check('...and every section builder offers the pin',
-    (GUI.match(/this\._decorateDesktopSection\(panelEl, '[a-z]+'\);/g) || []).length === 5);
+    (GUI.match(/this\._decorateDesktopSection\(panelEl, '[a-z]+'\);/g) || []).length === 6);
 
   // A WORKSPACE ARRANGEMENT, NOT A MOMENTARY ACTION. You pin panels once for how you work and
   // expect them back next session. matt: "pin states for panels on desktop should be
@@ -470,7 +489,7 @@ for (const id of ['solid', 'wire', 'joints']) {
 check('the Joints toggle is on the panel',
   /flagButton\(c, 'joints', 'Joints'/.test(SRC)
     && /flag\('joints', 'joints'\);/.test(SRC)
-    && /setFlag\('joints', Skeleton\.displayFlag\('joints'\)\);/.test(SRC),
+    && /setFlag\('joints', Skeleton\.displayFlagRaw\('joints'\)\);/.test(SRC),
   'the dots came back without a way to turn them off, which is worse than either state');
 
 // The split itself: each concern appears in exactly its intended block. This is the property
@@ -509,8 +528,13 @@ check('MiniPanel composes Pose with TransformVR controls',
   /idx === Enums\.Tools\.TRANSFORM_VR \? buildBonePoseHTML\(this\._main, 'mp'\)/.test(MINI_SRC));
 check('MainMenu shows Pose for Grab and TransformVR',
   /cur === Enums\.Tools\.GRAB \|\| cur === Enums\.Tools\.TRANSFORM_VR[\s\S]{0,100}?buildBonePoseHTML/.test(MAIN_SRC));
+// WHERE it sits is a layout choice — it moved to the END of the section, so a panel about how the
+// model is drawn no longer opens on fourteen toggles about bones. THAT it sits here at all is
+// not: this is the only place in the app that calls buildBoneDisplayHTML, so a tidy-up that drops
+// it strands the rig display flags, the capsule slider, Attach and Hide All entirely. Hence a
+// reference anywhere in the function rather than one near the top.
 check('Rendering owns the rig display block',
-  /function buildSectionHTML_rendering[\s\S]{0,250}?buildBoneDisplayHTML/.test(MAIN_SRC));
+  /function buildSectionHTML_rendering[\s\S]*?buildBoneDisplayHTML/.test(MAIN_SRC));
 // (The rig-animation block used to be asserted here, as MainMenuPanel referencing
 // buildBoneAnimationHTML directly. That IS the divergence that hid Trails from the desktop
 // sidebar — only this host appended it. The block is now composed once by the shared animation
@@ -870,6 +894,17 @@ check('shader-specific groups mute instead of hiding',
   check('...naming BOTH joints when the edit is mirrored',
     /Physics: antenna_L \+ antenna_R/.test(pair),
     'the header has to say everything the sliders will write to');
+
+  // ...AND ONE JOINT WHEN IT IS NOT. This is the half that was missing entirely: a joint drawn
+  // with symmetry on keeps its twin for the rest of its life, so testing for a twin meant physics
+  // could never be flagged on a single side however the toggle was set. matt: "right now i don't
+  // think i can do that asymmetrically."
+  globalThis.__sym = false;
+  const solo = buildBoneAuthoringHTML(main, 'mm');
+  globalThis.__sym = true;
+  check('...and ONE joint when symmetry is off',
+    solo.includes('antenna_L') && !solo.includes('antenna_R'),
+    'a twin exists forever once drawn; the toggle is what decides whether an edit follows it');
   antenna._boneMirror = null;
   globalThis.__meshes = null;
 
@@ -959,7 +994,7 @@ check('no panel still carries its own solver toggle',
 // good to have a toggle or a slider to control opacity... it would be great to have it be fully
 // opaque and animate with the skin turned off."
 check('the rig display block has a capsule solidity slider',
-  /id="bone-cap-op"/.test(SRC) && /Capsule Solidity/.test(SRC));
+  /id="bone-cap-op"/.test(SRC) && /Capsule Opacity/.test(SRC));
 check('...live on drag, and persisted by Skeleton',
   /Skeleton\.setCapsuleOpacity\(main, parseInt\(input\.value, 10\) \/ 100\)/.test(SRC));
 // A transparent capsule must not write depth or it punches holes in what is behind it; an opaque
@@ -1001,7 +1036,7 @@ check('...using the same RigPending entry point as the main menu, not a copy',
 // the same colour and you cannot tell which is nearer. matt: "they should have an option to be
 // shaded, viewing them unlit is very hard to read."
 check('the rig display offers a Shaded toggle for capsules',
-  /flagButton\(c, 'caps-shade', 'Shaded', Skeleton\.displayFlag\('capsuleShaded'\)\)/.test(SRC)
+  /flagButton\(c, 'caps-shade', 'Shaded', Skeleton\.displayFlagRaw\('capsuleShaded'\)\)/.test(SRC)
     && /flag\('caps-shade', 'capsuleShaded'\);/.test(SRC),
   'the only way to read a crossing limb is to turn the capsules off');
 // Without lights: an overlay pass has none, and a capsule does not need one -- its object-space

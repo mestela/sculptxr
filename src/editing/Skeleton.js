@@ -2523,11 +2523,23 @@ Skeleton.updateVisuals = function (main) {
     // did and only the small ones change. Read straight off the joint rather than through
     // boneRadiusOf, which walks every mesh in the scene — once per joint, that is quadratic in
     // the middle of the per-frame visual pass.
-    const ownR = (j._jointRadius > 0 ? j._jointRadius : (j._boneRadius || 0));
-    const jd = ownR > 1e-9 ? Math.min(jr, ownR * 0.75) : jr;
+    // THE SMALLER OF WHAT THE JOINT IS AND WHAT ITS BONE IS. `_boneRadius` is measured from the
+    // bone's LENGTH when it is drawn, so taking the minimum of the two is what makes a marker on
+    // a short bone small without anything having to measure a length here. matt: "it should never
+    // be bigger than the joint sphere, and the system should be smart enough to reduce the size
+    // of the joint indicators if the joint length gets shorter."
+    const bR = j._boneRadius || 0;
+    const jR = j._jointRadius > 0 ? j._jointRadius : bR;
+    const ownR = (bR && jR) ? Math.min(bR, jR) : (bR || jR);
+    const jd = ownR > 1e-9 ? Math.min(jr, ownR * 0.6) : jr;
+    // NO SIZE CHANGE ON SELECTION. It used to swell to 1.7x, which is a lot of movement to report
+    // a fact the colour already reports — and at finger scale the swollen marker covers the joint
+    // and its neighbours both. matt: "the scaling up of the selected joint is SUPER annoying.
+    // remove it." Kept OUT of the loop below: rigbatch_test reads that loop as one span to check
+    // the placement code was not rewritten, and a comment inside it is enough to trip that.
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
-      o.scale.setScalar(isSel ? jd * 1.7 : jd);
+      o.scale.setScalar(jd);
       // Held and selected are the same statement, so the same colour: cyan. Preselect is
       // yellow, and it loses to a hand actually on the thing.
       o.material.color.setHex(jointHeld ? SELECT_COLOR
@@ -3099,6 +3111,29 @@ Skeleton.symmetryPlane = function (main) {
 // Selecting a weight capsule turns getSymmetry() off (its mirror is another mesh, so an
 // in-stroke mirror is wrong) -- and the stroke-end mirror that DOES handle it still needs the
 // plane, so it asks here rather than through the gate that is switched off for its sake.
+// SHOULD A RIG EDIT MIRROR? One answer, asked by everything that mirrors as a SIDE EFFECT.
+//
+// Two different rules were in use. Anything reaching for `symmetryPlane` respected the symmetry
+// toggle for free, because that returns null when it is off. Anything that mirrored off
+// `_boneMirror` merely EXISTING did not — and a joint drawn with symmetry on carries a twin for
+// the rest of its life, so those operations hit both sides forever after, whatever the toggle
+// said. matt: "really important to have that as an option whenever we have implied symmetrical
+// behavior, eg turning on physics bones, right now i don't think i can do that asymmetrically."
+//
+// `getSymmetryFlag` rather than `getSymmetry`: the latter answers no while a weight cage is
+// selected, which is a rule about in-stroke sculpting and has nothing to say about whether the
+// user wants their rig edits mirrored.
+//
+// NOT for operations the user asked for BY NAME. Mirror Pose and Copy Side are requests to
+// mirror; gating those on a toggle would make a button refuse to do the one thing it is called.
+// This is for the side effects — flagging physics, splitting a bone — where the second half
+// happens without being asked.
+Skeleton.mirrorEdits = function (main) {
+  return !!(main && main.getSculptManager && main.getSculptManager()
+    && main.getSculptManager().getSymmetryFlag
+    && main.getSculptManager().getSymmetryFlag());
+};
+
 Skeleton.rigMirrorPlane = function (main) {
   if (!main.getSculptManager || !main.getSculptManager().getSymmetryFlag?.()) return null;
   return Skeleton._computeSymmetryPlane(main, true);
@@ -4087,7 +4122,54 @@ Skeleton.clearBatches = clearBatches;
 
 // Live value first, then the saved one, then the default — the same order every other
 // persisted VR setting is read in, so a toggle takes effect on the current frame.
+// ONE SWITCH OVER EVERYTHING DRAWN ON TOP OF THE MODEL, and it does not touch a single one of
+// their own settings.
+//
+// The rig has a dozen display flags and the scene has a ground plane, and clearing the view to
+// look at the actual shape meant turning them off one at a time and then trying to remember what
+// had been on. matt: "an extra toggle to quickly enable/disable all decorations, so all joint
+// displays, the ground plane, pins. so their local state can stay as is, but have a toggle to
+// quickly disable/enable them all at once."
+//
+// IT GATES THE READ, NOT THE STORE, which is the whole trick: every flag keeps whatever it was
+// set to, `displayFlag` simply answers no while this is on, and turning it off brings the exact
+// arrangement back with nothing to remember or restore.
+Skeleton.decorationsHidden = function () {
+  const live = window._boneHideDecor;
+  if (live != null) return !!live;
+  const saved = getOptionsURL().boneHideDecor;
+  return saved != null ? !!saved : false;
+};
+
+Skeleton.setDecorationsHidden = function (main, on) {
+  window._boneHideDecor = !!on;
+  try { getOptionsURL.saveOption('boneHideDecor', !!on, 300); } catch (_) {}
+  Skeleton.updateVisuals(main);
+  main?.render?.();
+  return !!on;
+};
+
+// WHICH FLAGS ARE DECORATION. Everything that DRAWS something; nothing that CHANGES what an edit
+// does. `snapPlane` and `snapAxis` live in the same list and are behaviour — hiding the plane is
+// one thing, silently switching snapping off while you draw is another, and a switch that did
+// both would be lying about what it is for.
+const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'capsuleShaded', 'weights', 'solid',
+  'wire', 'joints', 'pins', 'trails', 'gnomons', 'gnomonsAll', 'skinClaims']);
+
 Skeleton.displayFlag = function (name) {
+  const e = DISPLAY_FLAGS[name];
+  if (!e) return false;
+  if (DECOR_FLAGS.has(name) && Skeleton.decorationsHidden()) return false;
+  const live = window[e[0]];
+  if (live != null) return !!live;
+  const saved = getOptionsURL()[e[1]];
+  return saved != null ? !!saved : e[2];
+};
+
+// The flag's OWN value, ignoring the master switch — for the panels, so a toggle still shows what
+// it is set to while decorations are hidden. A button that reads as off because something else is
+// off is a button that lies about what pressing it will do.
+Skeleton.displayFlagRaw = function (name) {
   const e = DISPLAY_FLAGS[name];
   if (!e) return false;
   const live = window[e[0]];
