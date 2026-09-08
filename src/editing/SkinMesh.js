@@ -44,6 +44,11 @@ const SkinMesh = {};
 // disjoint blocks a side, so a joint can carry four bones off one face without any two of them
 // ever overlapping — the blocks tile, rather than being chosen and checked.
 const CELLS = 4;
+
+// The finest a joint may be divided. Only a joint with several bones leaving ONE face ever gets
+// here — see levelFor — and the cap is what stops a pathological rig (every limb leaving the same
+// side of one joint) from turning that joint into most of the mesh.
+const MAX_CELLS = 8;
 const BLOCK = 2;
 
 // Half-extent as a fraction of the shortest bone touching a joint. Two boxes on one bone must
@@ -125,12 +130,17 @@ const BOX_SIDES = [
   { axis: 2, sign: -1, u: 1, v: 0 }, // -Z
 ];
 
-// One box, built once and reused by every joint: the boxes differ only in centre and scale, so
-// the lattice, the sides and the block layout are all the same object every time.
+// One box PER SUBDIVISION LEVEL, built once and shared by every joint at that level: boxes of the
+// same level differ only in centre and scale, so the lattice, the sides and the block layout are
+// all the same object every time.
 //
 // Vertices are keyed by their exact lattice coordinate, so adjacent sides SHARE their edge and
 // corner vertices rather than stacking duplicates along every seam.
-function makeBox() {
+//
+// `n` is cells a side. The lattice runs -n..n in steps of two so a cell is two units wide and the
+// centre of a side lands on an integer, which is what lets a claim be described in cells and
+// still name real vertices.
+function makeBox(n) {
   const index = new Map();
   const lat = [];
   const idOf = (c) => {
@@ -142,13 +152,13 @@ function makeBox() {
 
   const sides = BOX_SIDES.map((s) => {
     const grid = [];
-    for (let a = 0; a <= CELLS; a++) {
+    for (let a = 0; a <= n; a++) {
       const col = [];
-      for (let b = 0; b <= CELLS; b++) {
+      for (let b = 0; b <= n; b++) {
         const c = [0, 0, 0];
-        c[s.axis] = s.sign * CELLS;
-        c[s.u] = -CELLS + 2 * a;
-        c[s.v] = -CELLS + 2 * b;
+        c[s.axis] = s.sign * n;
+        c[s.u] = -n + 2 * a;
+        c[s.v] = -n + 2 * b;
         col.push(idOf(c));
       }
       grid.push(col);
@@ -156,7 +166,7 @@ function makeBox() {
     return { def: s, grid: grid };
   });
 
-  return { lat: lat, sides: sides };
+  return { lat: lat, sides: sides, n: n };
 }
 
 // The boundary vertices of a rectangle of cells, counter-clockwise seen from outside, so a
@@ -191,10 +201,76 @@ function rectDir(box, claim) {
   const c = new THREE.Vector3();
   const loop = rectLoop(box, claim);
   for (const v of loop) c.add(new THREE.Vector3(box.lat[v][0], box.lat[v][1], box.lat[v][2]));
-  return c.divideScalar(loop.length * CELLS).normalize();
+  return c.divideScalar(loop.length * box.n).normalize();
 }
 
-const BOX = makeBox();
+// ONE BOX PER LEVEL, MADE ONCE. Three levels are enough and the cap is deliberate: a level has to
+// be a POWER OF TWO or the ends of a bone cannot agree. A k-by-k block of cells has 4k boundary
+// vertices whatever size those cells are, so a coarse box's whole face (k = n) meets a fine box's
+// k-cell block exactly when both sides count the same k — and powers of two are what make a
+// coarse cell line up with a block of a finer one rather than straddling it.
+const BOXES = new Map();
+function boxOf(n) {
+  let b = BOXES.get(n);
+  if (!b) { b = makeBox(n); BOXES.set(n, b); }
+  return b;
+}
+
+// HOW FINELY A JOINT HAS TO BE DIVIDED: enough to hand a rectangle to every bone that leaves it,
+// and no more.
+//
+// It used to be four, everywhere, because CELLS was one constant for the whole rig — so a
+// fingertip carried the same ninety-six cells as a pelvis, and a finger then had to give almost
+// all of its face back to meet the small patch a crowded palm could spare. matt: "it seems to me
+// that the full face of the child joint should connect to 1 of those exposed 4 sub-faces on the
+// wrist. if they were a lower subdivision, that would work right?"
+//
+// It does, and this is the half that makes it work: a chain joint — every finger bone, every
+// spine bone — has its bones on opposite faces and needs no subdivision at all, so its whole face
+// IS the one cell its parent hands it. Only a joint with several bones leaving one face has to
+// divide, and only as far as that face's own crowd demands.
+//
+// Measured on the busiest side, since that is the one that runs out of room, and rounded up to a
+// power of two.
+function levelFor(dirs) {
+  let most = 1;
+  const perSide = new Array(BOX_SIDES.length).fill(0);
+  for (const d of dirs) {
+    let bi = 0, bv = -Infinity;
+    for (let i = 0; i < BOX_SIDES.length; i++) {
+      const def = BOX_SIDES[i];
+      const v = d.getComponent(def.axis) * def.sign;
+      if (v > bv) { bv = v; bi = i; }
+    }
+    perSide[bi]++;
+    if (perSide[bi] > most) most = perSide[bi];
+  }
+  // TWO IS THE FLOOR, NOT ONE. A joint divided once a side is a plain cube, and a chain of them is
+  // a four-sided tube with nothing between its corners: the relax has no vertices left to pull
+  // into an ellipsoid, so a joint scaled 4:1 comes back round and Tweak Joint stops meaning
+  // anything. The harness said so in the bluntest way available — "one scaled per axis stops being
+  // round" came back NaN, because the width it measures was zero.
+  //
+  // TWO IS ALSO WHAT A CHILD OFFERS, and that is what sets the rule above it. A joint at two has a
+  // 2x2 face: eight boundary vertices, handed over whole. So a parent has to be able to give every
+  // bone on its busiest side a 2x2 BLOCK, which takes two cells of width each — hence twice the
+  // crowd, rounded up to a power of two. A palm with four fingers goes to eight and gives each of
+  // them a 2x2 with six rows of face left over between and around them; every finger bone in the
+  // chain below stays at two. Neither end shrinks, which is the whole point.
+  //
+  // I tried giving three or four bones a QUADRANT each instead, which needs no extra level. It
+  // fails on exactly the case it was for: fingers sit in a ROW, so splitting them two-by-two
+  // stacks two of them across the face from where they actually are, and a bone seated out of
+  // sequence puts its bridge through its neighbour's — 60 and 93 intersecting pairs on the two
+  // hand fixtures.
+  //
+  // THIS IS STILL FEWER POLYGONS THAN BEFORE, which is worth saying because eight looks like an
+  // increase. It applies to one joint. Every other joint in a hand drops from four to two — from
+  // ninety-six cells to twenty-four — and the palm's 384 does not come close to paying that back.
+  let n = 2;
+  while (n < most * 2 && n < MAX_CELLS) n *= 2;
+  return n;
+}
 
 // Hand every bone leaving a joint a rectangle of the side it points at.
 //
@@ -212,6 +288,7 @@ const BOX = makeBox();
 // Three or four fall back to quarters, arranged by trying every way and keeping the best total.
 // Four quarters is at most twenty-four arrangements, so best is exact rather than greedy.
 function splitSide(box, si, bones, dirs) {
+  const CELLS = box.n;
   if (bones.length === 1) {
     return [{ bone: bones[0], side: si, rect: { a0: 0, a1: CELLS, b0: 0, b1: CELLS } }];
   }
@@ -237,14 +314,40 @@ function splitSide(box, si, bones, dirs) {
   const sizes = [];
   for (let i = 0; i < k; i++) sizes.push(Math.floor(CELLS / k) + (i < CELLS % k ? 1 : 0));
 
+  // THREE OR MORE GET A COMPACT BLOCK, NOT A FULL-DEPTH STRIP.
+  //
+  // A strip spans the whole face across, so a bone that gets one attaches through a patch that
+  // touches both edges: nothing surrounds it, and there is no material for the relax to round the
+  // join with. On a hand that is the difference between a finger arriving as a flat ribbon and
+  // arriving as a tube. matt, on his own rig: "the thumb connects well, a whole single side... but
+  // the fingers get a strange connection, a single 1x4 row of faces... it would almost be better
+  // to do a single face and connect, so there's enough connective tissue around the joint to
+  // smooth it over."
+  //
+  // So the strip is squared off and centred across: four fingers on one palm face take one cell
+  // each instead of one row each, and the remaining twelve cells stay ordinary surface between
+  // and around them.
+  //
+  // ONLY AT THREE OR MORE. One bone takes the whole face and two split it in equal halves, and
+  // that halving is load-bearing: the seam lands on the box centre, which — because the boxes are
+  // world-aligned — is the symmetry plane itself, and that is what puts the seam between two legs
+  // exactly on the centreline rather than near it. Squaring those off would move it.
+  //
+  // The blocks stay inside their own strips, so they cannot overlap however the sizes fall out.
+  const compact = k >= 3;
   const out = [];
   let at = 0;
   for (let i = 0; i < k; i++) {
     const lo2 = at, hi2 = at + sizes[i];
     at = hi2;
+    // As deep as it is wide, centred. With CELLS even and a width of one the centring cannot be
+    // exact; landing a cell off-centre is invisible next to the strip it replaces.
+    const w = compact ? Math.min(CELLS, Math.max(sizes[i], 2)) : CELLS;
+    const c0 = compact ? Math.floor((CELLS - w) / 2) : 0;
+    const c1 = c0 + w;
     out.push({
       bone: ordered[i], side: si,
-      rect: alongU ? { a0: lo2, a1: hi2, b0: 0, b1: CELLS } : { a0: 0, a1: CELLS, b0: lo2, b1: hi2 },
+      rect: alongU ? { a0: lo2, a1: hi2, b0: c0, b1: c1 } : { a0: c0, a1: c1, b0: lo2, b1: hi2 },
     });
   }
   return out;
@@ -258,6 +361,7 @@ function splitSide(box, si, bones, dirs) {
 // came back as six loose shells. Moving the worst-fitting bone to its next-best side instead
 // gives a shape that is wrong in a way you can see and fix, rather than absent.
 function assignSides(box, dirs) {
+  const CELLS = box.n;
   const rank = dirs.map((d) => box.sides
     .map((s, i) => ({ i: i, v: d.getComponent(s.def.axis) * s.def.sign }))
     .sort((p, q) => q.v - p.v));
@@ -526,6 +630,108 @@ function relax(verts, faces, caps) {
 // Assembly
 // -----------------------------------------------------------------------------------------
 
+// THE BOX AT ONE JOINT: where it sits, how big it is, which way each bone leaves it, and which
+// rectangle of which face each of those bones claims.
+//
+// Lifted out of buildArrays so the ATTACHMENT PREVIEW can ask the generator where the bones will
+// land instead of working it out again. A second implementation of this is precisely how the
+// joint volumes drifted from the thing they claimed to describe: four consumers, each re-deriving
+// the shape, agreeing at first and diverging on the cases that mattered. There is one answer
+// here, and the preview shows it rather than a picture of it.
+function boxAt(j, nbs) {
+  // THE BLOCK SITS ON THE SHAPE, and the bones are aimed between SHAPES. Both follow from the
+  // envelope being the hull of the shapes rather than of the joints: leave the block on the
+  // joint and a tweaked joint gets a cage in one place and a capsule in another, with the
+  // bridges stretched between them.
+  const c = Skeleton.jointCentre(j);
+  let r = 0;
+  const dirs = [];
+  const lens = [];
+  for (const nb of nbs) {
+    const d = new THREE.Vector3().subVectors(Skeleton.jointCentre(nb), c);
+    lens.push(d.length());
+    r = Math.max(r, boneRadius(j, nb));
+    dirs.push(d.normalize());
+  }
+  // THE JOINT'S OWN RADIUS SIZES ITS BLOCK. The widest bone touching it is the fallback, not
+  // the rule — that is what made a head the width of a neck, and a hand the width of a
+  // forearm, with nothing to say otherwise. matt: "i need to be able to scale joints, not
+  // bones."
+  r = Skeleton.jointRadius(j, r);
+  // THE LATTICE IS SIZED PER AXIS, from the same jointHalf the capsule uses.
+  //
+  // It used to take the scalar radius, so a joint tweaked flat and wide got a UNIFORM CUBE for a
+  // cage and an anisotropic ellipsoid for a target, and relax squashed the one onto the other
+  // afterwards. Two things were wrong with that. The cage started further from its own target
+  // than it needed to, which is work the relax should not have to do — and, worse, the claims
+  // were computed on a shape the user had already said was not the shape: tweak a palm flat and
+  // the fingers still divided up a square face, so the tweak could not steer the attachment at
+  // all. matt: "if i use the tweak joints, i feel the attach cube should reflect those
+  // scale/offset changes."
+  //
+  // The offset needed nothing — `jointCentre` above has always carried it.
+  //
+  // NO TOPOLOGY MOVES WITH THIS. The faces stay axis-aligned, so which side a bone points at and
+  // how a side divides are decided exactly as before; only where the vertices sit changes. That
+  // is what keeps this a shape change rather than a rewrite of the part that is hard to get
+  // right.
+  const half = Skeleton.jointHalf(j, r);
+  // ...and the clamp stays, now per axis. A block wider than half the gap to its nearest
+  // neighbour reaches into that neighbour's block, and the bridge between them turns inside out.
+  // Clamping each axis against the same gap keeps that guarantee in every direction: a joint
+  // stretched along one axis is held there and stays free on the others, where it was never in
+  // anyone's way.
+  // THE CLAMP SHRINKS THE BOX, IT DOES NOT RESHAPE IT.
+  //
+  // It used to cap each axis at the limit independently, which quietly threw the tweak away: on a
+  // hand the nearest neighbour is a finger bone away, so the limit is small, all three axes hit
+  // it, and what came back was a CUBE of that size whatever shape had been asked for. It only
+  // started obeying the tweak once an axis fell below the limit on its own. matt: "using the
+  // joint tweak changes the box pivots, but not their scale unless i make them incredibly narrow.
+  // they should match to the apparent bounding box of the joint capsules."
+  //
+  // So the limit is met by scaling the whole box down UNIFORMLY, until its LARGEST half-extent
+  // fits — the proportions the user tweaked survive and only the size gives way, which is what
+  // makes the box read as the capsule's bounding box rather than as a cube near it.
+  //
+  // NO AXIS EVER EXCEEDS THE OLD LIMIT, and that is deliberate rather than incidental. A joint
+  // with no tweak comes out exactly where it always did, so nothing that was tuned against this
+  // shape moves: I tried the principled version first — bound each box by its SUPPORT towards
+  // each neighbour, h·|d|, which is the honest measure of whether two boxes overlap and would
+  // have let an untweaked box grow sideways where nothing was in the way. It cost 6 and 110
+  // intersecting face pairs on the harness fixtures. The clamp is not only holding boxes apart
+  // along their bones; the relax and PROJECT_RATE were tuned with these sizes in play, and a box
+  // that is a different size makes a bridge of a different length for the relax to work on.
+  // Correct in isolation, wrong in the system — the sizes stay bounded as they were.
+  const lim = Math.min.apply(null, lens) * LENGTH_CLAMP;
+  const big = Math.max(half[0], half[1], half[2]);
+  const sc = big > lim ? lim / big : 1;
+  const h = [half[0] * sc, half[1] * sc, half[2] * sc];
+  if (!(h[0] > 1e-9 && h[1] > 1e-9 && h[2] > 1e-9)) return null;
+
+  const box = boxOf(levelFor(dirs));
+  const claims = claimSides(box, dirs);
+  if (!claims) return null;
+  return { c: c, h: h, dirs: dirs, claims: claims, box: box };
+}
+
+// SETTLE ONE BONE'S TWO ENDS on a single loop length. A bone has to meet the same perimeter at
+// both ends or there is no all-quad bridge, so the shape belongs to the bone — the smaller of
+// what its two ends offer — and the generous end gives up the rest. Shared with the preview for
+// the same reason boxAt is: this, not the raw claim, is the rectangle you actually attach
+// through, and it is the one that comes out thin.
+// EACH END SHRINKS ON ITS OWN BOX, which is the whole point of per-joint levels: the two ends are
+// no longer the same lattice. A coarse child usually needs no shrinking at all — its whole face is
+// already the size its parent could spare — and that is the case this exists to make rare.
+function settleEnds(nEnd, fEnd, nBox, fBox) {
+  const want = Math.min(perimeter(nEnd.claim.rect), perimeter(fEnd.claim.rect));
+  const nc = perimeter(nEnd.claim.rect) === want
+    ? nEnd.claim : shrinkTo(nBox, nEnd.claim, want, nEnd.dir);
+  const fc = perimeter(fEnd.claim.rect) === want
+    ? fEnd.claim : shrinkTo(fBox, fEnd.claim, want, fEnd.dir);
+  return { want: want, nc: nc, fc: fc };
+}
+
 function buildArrays(joints, topo) {
   const adj = topo.adj;
   const verts = [];
@@ -535,45 +741,22 @@ function buildArrays(joints, topo) {
   for (const j of joints) {
     const nbs = adj.get(j);
     if (!nbs.length) continue;
-
-    // THE BLOCK SITS ON THE SHAPE, and the bones are aimed between SHAPES. Both follow from the
-    // envelope being the hull of the shapes rather than of the joints: leave the block on the
-    // joint and a tweaked joint gets a cage in one place and a capsule in another, with the
-    // bridges stretched between them.
-    const c = Skeleton.jointCentre(j);
-    let r = 0, minLen = Infinity;
-    const dirs = [];
-    for (const nb of nbs) {
-      const d = new THREE.Vector3().subVectors(Skeleton.jointCentre(nb), c);
-      minLen = Math.min(minLen, d.length());
-      r = Math.max(r, boneRadius(j, nb));
-      dirs.push(d.normalize());
-    }
-    // THE JOINT'S OWN RADIUS SIZES ITS BLOCK. The widest bone touching it is the fallback, not
-    // the rule — that is what made a head the width of a neck, and a hand the width of a
-    // forearm, with nothing to say otherwise. matt: "i need to be able to scale joints, not
-    // bones."
-    r = Skeleton.jointRadius(j, r);
-    // ...and the clamp stays. A block wider than half the gap to its nearest neighbour reaches
-    // into that neighbour's block, and the bridge between them turns inside out. A joint sized
-    // past its neighbours grows its CAPSULE, which the relax then pushes the skin out onto —
-    // the shape arrives, and the lattice stays untangled.
-    const h = Math.min(r, minLen * LENGTH_CLAMP);
-    if (!(h > 1e-9)) continue;
-
-    const claims = claimSides(BOX, dirs);
-    if (!claims) continue;
+    const bx = boxAt(j, nbs);
+    if (!bx) continue;
+    const c = bx.c, h = bx.h, dirs = bx.dirs, claims = bx.claims, BX = bx.box, N = BX.n;
 
     // No rotation anywhere: the lattice goes straight to world, scaled and offset. That one
     // line is the whole reason bridges cannot shear against each other.
     const base = verts.length / 3;
-    for (const l of BOX.lat) {
-      verts.push(c.x + (h * l[0]) / CELLS, c.y + (h * l[1]) / CELLS, c.z + (h * l[2]) / CELLS);
+    for (const l of BX.lat) {
+      verts.push(c.x + (h[0] * l[0]) / N,
+                 c.y + (h[1] * l[1]) / N,
+                 c.z + (h[2] * l[2]) / N);
     }
 
     const byNeighbour = new Map();
     nbs.forEach((nb, i) => byNeighbour.set(nb, { claim: claims[i], dir: dirs[i] }));
-    boxes.set(j, { base: base, by: byNeighbour, dead: new Set() });
+    boxes.set(j, { base: base, by: byNeighbour, dead: new Set(), box: BX });
   }
 
   // Pass two: settle each bone on one loop length, then bridge.
@@ -589,16 +772,13 @@ function buildArrays(joints, topo) {
     const nEnd = near.by.get(j), fEnd = far.by.get(p);
     if (!nEnd || !fEnd || !nEnd.claim || !fEnd.claim) continue;
 
-    const want = Math.min(perimeter(nEnd.claim.rect), perimeter(fEnd.claim.rect));
-    const nc = perimeter(nEnd.claim.rect) === want
-      ? nEnd.claim : shrinkTo(BOX, nEnd.claim, want, nEnd.dir);
-    const fc = perimeter(fEnd.claim.rect) === want
-      ? fEnd.claim : shrinkTo(BOX, fEnd.claim, want, fEnd.dir);
-    for (const f of rectFaces(BOX, nc)) near.dead.add(f.join(','));
-    for (const f of rectFaces(BOX, fc)) far.dead.add(f.join(','));
+    const st = settleEnds(nEnd, fEnd, near.box, far.box);
+    const nc = st.nc, fc = st.fc;
+    for (const f of rectFaces(near.box, nc)) near.dead.add(f.join(','));
+    for (const f of rectFaces(far.box, fc)) far.dead.add(f.join(','));
 
-    const A = rectLoop(BOX, nc).map((v) => near.base + v);
-    const B = rectLoop(BOX, fc).map((v) => far.base + v);
+    const A = rectLoop(near.box, nc).map((v) => near.base + v);
+    const B = rectLoop(far.box, fc).map((v) => far.base + v);
     if (A.length !== B.length) continue; // nothing sensible to stitch; leave both closed
     const M = matchLoop(A, B, posAt);
 
@@ -667,10 +847,10 @@ function buildArrays(joints, topo) {
 
   // Whatever no bone claimed closes the box. A leaf joint keeps five of its six sides, which
   // is the cap — no dome, no pole, nothing to stitch to anything else.
-  const wholeSide = { a0: 0, a1: CELLS, b0: 0, b1: CELLS };
   for (const box of boxes.values()) {
-    for (let si = 0; si < BOX.sides.length; si++) {
-      for (const f of rectFaces(BOX, { side: si, rect: wholeSide })) {
+    const wholeSide = { a0: 0, a1: box.box.n, b0: 0, b1: box.box.n };
+    for (let si = 0; si < box.box.sides.length; si++) {
+      for (const f of rectFaces(box.box, { side: si, rect: wholeSide })) {
         if (box.dead.has(f.join(','))) continue;
         pushQuad(box.base + f[0], box.base + f[1], box.base + f[2], box.base + f[3]);
       }
@@ -735,11 +915,139 @@ SkinMesh.build = function (main) {
            faces: mesh.getNbFaces(), ms: Math.round(performance.now() - t0) };
 };
 
+// ── WHERE THE BONES WILL ATTACH ──────────────────────────────────────────────────────────
+//
+// Everything Make Skin has already decided, before it is pressed: for each bone end, the exact
+// rectangle of the joint's box it will bridge through.
+//
+// This exists because the failure it shows CANNOT BE SEEN ANY OTHER WAY. A hand is five bones
+// leaving one face of a four-cell box, which is the case assignSides was written for and the
+// case it runs out of room on — and when it does, the worst-fitting bone is moved to its
+// next-best SIDE, so a finger bridges out of the palm sideways. Nothing in the skeleton says so;
+// you find out by generating a skin and looking at the wreck. matt, on his second attempt: "the
+// fingers have attached in very ugly ways, not recoverable."
+//
+// TWO THINGS ARE WORTH SEEING, and they are different problems with different fixes:
+//   • EVICTED — the bone is not on the face it points at, because that face was full. Fix by
+//     moving the joint so the bones fan out, or by giving the palm fewer children.
+//   • PINCHED — the bone is on the right face but sharing it, so its rectangle is a thin strip
+//     rather than a square. Four fingers on one face get one cell each: a perimeter of 10 where
+//     a whole face is 16. That is the flat, ribboned root, and it is not a bug — it is the face
+//     being divided as far as it goes.
+SkinMesh.attachments = function (main) {
+  const joints = Skeleton.joints(main);
+  if (!joints.length) return null;
+  const topo = adjacency(joints);
+  if (!topo.bones.length) return null;
+
+  const boxes = new Map();
+  for (const j of joints) {
+    const nbs = topo.adj.get(j);
+    if (!nbs.length) continue;
+    const bx = boxAt(j, nbs);
+    if (!bx) continue;
+    const by = new Map();
+    nbs.forEach((nb, i) => by.set(nb, { claim: bx.claims[i], dir: bx.dirs[i] }));
+    // BOTH SIZES. `h` is the lattice the generator actually builds — clamped so a box cannot
+    // reach into its neighbour's — and `half` is the joint's own shape, unclamped, which is what
+    // the user tweaked and what the capsule draws at. The preview wants the second: a picture at
+    // 45% of the size of the thing you are shaping does not read as that thing.
+    boxes.set(j, { joint: j, c: bx.c, h: bx.h, box: bx.box,
+                   half: Skeleton.jointHalf(j, Skeleton.boneRadiusOf(main, j)),
+                   by: by, sides: new Set() });
+  }
+
+  // The side this direction WANTED, which is rank[0] in assignSides. A claim on any other side
+  // is one that was evicted for want of room.
+  const bestSide = (d) => {
+    let bi = 0, bv = -Infinity;
+    for (let i = 0; i < BOX_SIDES.length; i++) {
+      const def = BOX_SIDES[i];
+      const v = d.getComponent(def.axis) * def.sign;
+      if (v > bv) { bv = v; bi = i; }
+    }
+    return bi;
+  };
+
+  const ends = [];
+  let pair = 0;
+  for (const [p, j] of topo.bones) {
+    const near = boxes.get(p), far = boxes.get(j);
+    if (!near || !far) continue;
+    const nEnd = near.by.get(j), fEnd = far.by.get(p);
+    if (!nEnd || !fEnd || !nEnd.claim || !fEnd.claim) continue;
+    const st = settleEnds(nEnd, fEnd, near.box, far.box);
+    // ONE `pair` NUMBER FOR BOTH ENDS. It is what lets the two patches be drawn in the same
+    // colour, which is the whole of the answer to "what is going to join to what" — the pairing
+    // is decided here, and a viewer matching them up again by position would be guessing.
+    // WHAT COUNTS AS A CLEAN ATTACHMENT, now that the two ends need not be the same level.
+    //
+    // It used to be "the whole of a face at the one global level", which no longer means anything:
+    // a palm at eight has a 32-vertex face and hands out 8-vertex blocks by design, and calling
+    // every one of those pinched would report the fix as the fault. What matters is whether the
+    // bone got as much as the COARSER end could offer — its whole face — because that is the most
+    // the pair can agree on. Less than that, and somebody shrank.
+    const clean = st.want >= 4 * Math.min(near.box.n, far.box.n);
+    const add = (box, joint, other, claim, dir) => {
+      box.sides.add(claim.side);
+      ends.push({ joint: joint, other: other, box: box, side: claim.side, rect: claim.rect,
+                  pair: pair, perimeter: st.want,
+                  evicted: claim.side !== bestSide(dir), full: clean });
+    };
+    add(near, p, j, st.nc, nEnd.dir);
+    add(far, j, p, st.fc, fEnd.dir);
+    pair++;
+  }
+  if (!ends.length) return null;
+
+  // Model-space position of one lattice vertex on one box — the SAME arithmetic buildArrays uses
+  // to place its vertices, so a patch drawn here sits exactly where the skin will be built.
+  const at = (box, id, out) => {
+    const l = box.box.lat[id], n = box.box.n;
+    return out.set(box.c.x + (box.h[0] * l[0]) / n,
+                   box.c.y + (box.h[1] * l[1]) / n,
+                   box.c.z + (box.h[2] * l[2]) / n);
+  };
+
+  // THE SAME LATTICE POINT, ROUNDED OFF AND AT THE JOINT'S OWN SIZE.
+  //
+  // A cube run through enough subdivision becomes very nearly a sphere, and that is not an
+  // analogy here — the cage IS a subdivided cube, and the relax pass IS what rounds it onto the
+  // joint's shape. So a spherified cube is not a picture of what the generator does, it is the
+  // result. matt: "i meant a subdivided AND smoothed cube, ie what you get if you run a cube
+  // through multires... if the joint spheres were replaced with these spheres, you could then do
+  // the same colour coding... directly on the joint spheres."
+  //
+  // Spherified rather than genuinely subdivided: pushing each lattice point out to the ellipsoid
+  // gives the same shape Catmull-Clark converges on, in one step and with the grid still exactly
+  // the generator's, which is what the colours have to sit on. Short of the whole way, because a
+  // true sphere loses the flat faces — and the faces are the thing being read.
+  const ROUND = 0.82;
+  const _sp = new THREE.Vector3();
+  const round = (box, id, out) => {
+    const l = box.box.lat[id], n = box.box.n;
+    const ux = l[0] / n, uy = l[1] / n, uz = l[2] / n;
+    _sp.set(ux, uy, uz);
+    const len = _sp.length() || 1;
+    const hf = box.half;
+    return out.set(
+      box.c.x + hf[0] * (ux + (ux / len - ux) * ROUND),
+      box.c.y + hf[1] * (uy + (uy / len - uy) * ROUND),
+      box.c.z + hf[2] * (uz + (uz / len - uz) * ROUND));
+  };
+
+  return { boxes: Array.from(boxes.values()), ends: ends, pairs: pair, at: at, round: round };
+};
+
 // Exposed for the harness in scratchpad and for console poking: the geometry half of this
 // module has no dependency on the mesh classes, so it can be exercised on its own.
 SkinMesh._adjacency = adjacency;
 SkinMesh._buildArrays = buildArrays;
-SkinMesh._box = BOX;
+// The box FOR A LEVEL, since there is no longer a single one. The harness builds fixtures against
+// it and console pokes read it; both want to name the level they mean.
+SkinMesh._boxOf = boxOf;
+SkinMesh._box = boxOf(CELLS);
+SkinMesh._levelFor = levelFor;
 SkinMesh._relax = relax;
 
 export default SkinMesh;

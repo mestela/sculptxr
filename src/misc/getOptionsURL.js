@@ -206,6 +206,7 @@ var getOptionsURL = function () {
   options.boneShowLengths = queryBool(getVal('boneShowLengths'), false);
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
+  options.boneShowSkinClaims = queryBool(getVal('boneShowSkinClaims'), false);
   // Capsules shaded rather than flat. Default true: unlit ones read as a single silhouette and a
   // near limb cannot be told from a far one.
   options.boneCapsuleShaded = queryBool(getVal('boneCapsuleShaded'), true);

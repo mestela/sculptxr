@@ -2510,9 +2510,24 @@ Skeleton.updateVisuals = function (main) {
     // dots: the flag was persisted, so anyone who had ever seen the old default carried it
     // forward and got them back on every launch.
     const isolated = !hasChildBone.has(id) && !Skeleton.isJoint(j._parentMesh);
+    // THE DOT IS SIZED BY ITS OWN JOINT, not by the scene.
+    //
+    // `jr` is one number for the whole rig — a fraction of the scene unit — which is right when
+    // every joint is about the same size and wrong the moment they are not. At finger scale the
+    // marker is bigger than the thing it marks: it swallows the joint, and the colour it is
+    // trying to report is the colour you can no longer see. matt: "the default highlight spheres
+    // is too big and totally obscures the finger joints, and i cant see the colours changing as i
+    // move the joints."
+    //
+    // CAPPED BY THE OLD VALUE, never above it, so a rig of ordinary joints looks exactly as it
+    // did and only the small ones change. Read straight off the joint rather than through
+    // boneRadiusOf, which walks every mesh in the scene — once per joint, that is quadratic in
+    // the middle of the per-frame visual pass.
+    const ownR = (j._jointRadius > 0 ? j._jointRadius : (j._boneRadius || 0));
+    const jd = ownR > 1e-9 ? Math.min(jr, ownR * 0.75) : jr;
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
-      o.scale.setScalar(isSel ? jr * 1.7 : jr);
+      o.scale.setScalar(isSel ? jd * 1.7 : jd);
       // Held and selected are the same statement, so the same colour: cyan. Preselect is
       // yellow, and it loses to a hand actually on the thing.
       o.material.color.setHex(jointHeld ? SELECT_COLOR
@@ -2530,7 +2545,12 @@ Skeleton.updateVisuals = function (main) {
       // what you would take. And an ISOLATED joint keeps its exemption — it has no bone at
       // either end, so with nothing drawn it would be both invisible and unfindable, which is
       // the first joint of every chain you draw.
-      o.visible = showJoints || isolated || isHi || isSel || jointHeld;
+      // AND IT GETS OUT OF THE WAY WHILE YOU ARE MOVING IT. A marker exists to say which joint
+      // the next press takes; once your hand is on it that question is answered, and all it does
+      // then is hide the joint at the moment you most want to watch it. The explicit flag still
+      // wins — asking for joint spheres means joint spheres — but the automatic preselect,
+      // selection and held states all stand down for the duration of the drag.
+      o.visible = showJoints || (!jointHeld && (isolated || isHi || isSel));
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -4025,6 +4045,10 @@ const DISPLAY_FLAGS = {
   // it is a label per bone, and a rig full of them is unreadable while you are working.
   names: ['_boneShowNames', 'boneShowNames', false],
   capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
+  // WHERE MAKE SKIN WILL ATTACH each bone, drawn on the joint boxes it will build from. Off by
+  // default: it is a rig-time diagnostic for the case where a joint has more bones than its box
+  // has room for, not something to have on while posing. See SkinPreview.
+  skinClaims: ['_boneShowSkinClaims', 'boneShowSkinClaims', false],
   // Shaded by default: flat capsules read as one silhouette and you cannot tell a near limb from
   // a far one. The flat look stays a switch away.
   capsuleShaded: ['_boneCapsuleShaded', 'boneCapsuleShaded', true],

@@ -262,7 +262,28 @@ class BoneDrawTool extends SculptBase {
   // threshold drives two consequences, which is what keeps the behaviour predictable:
   // inside the band a joint is centreline (snapped, and NOT mirrored, because a joint on
   // the plane is its own twin); outside it, the joint is a side joint and gets a mirror.
-  _planeSnap() { return Skeleton.sceneUnit(this._main) * 0.05; }
+  //
+  // SIZED BY THE JOINT AS WELL AS THE SCENE. The scene unit alone tracks how big the world is,
+  // which is half the answer: a band that is 5% of a whole figure is wider than a finger, so a
+  // finger joint inside it cannot be nudged at all — it is held on the plane until you drag it
+  // clear by more than its own length, and turning the controller never escapes it because the
+  // band is a distance and rotation is not. matt: "the dead zone during tweak is a bit too
+  // broad, and doesn't work for rotation... that threshold should be smaller, and ideally based
+  // on both joint size and the scale i've made the world."
+  //
+  // So the joint being dragged caps it, and the cap is a MINIMUM against the old value: a rig of
+  // ordinary joints behaves exactly as it did and only the small ones get a tighter band. Read
+  // off the joint directly rather than through boneRadiusOf, which walks every mesh in the scene.
+  //
+  // The drag supplies the joint; with no drag in progress — placing a new joint, or drawing the
+  // feedback before one exists — there is nothing to measure and the scene's own figure stands.
+  _planeSnap() {
+    const base = Skeleton.sceneUnit(this._main) * 0.05;
+    const j = this._grab && this._grab.joint;
+    if (!j) return base;
+    const r = (j._jointRadius > 0 ? j._jointRadius : (j._boneRadius || 0));
+    return r > 1e-9 ? Math.min(base, r * 1.5) : base;
+  }
 
   _snapEnabled() { return Skeleton.displayFlag('snapPlane'); }
   _axisEnabled() { return Skeleton.displayFlag('snapAxis'); }

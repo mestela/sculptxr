@@ -280,6 +280,7 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
       ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlag('capsules'))}
       ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlag('capsuleShaded'))}
+      ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlag('skinClaims'))}
       ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlag('weights'))}
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
       ${flagButton(c, 'names', 'Names', Skeleton.displayFlag('names'))}
@@ -389,6 +390,9 @@ export function wireBoneSection(root, main, opts) {
   flag('names', 'names');
   flag('caps', 'capsules');
   flag('caps-shade', 'capsuleShaded');
+  // Where Make Skin will bridge each bone. Named 'Attach' rather than 'Claims': the lattice's
+  // word for it says nothing to someone deciding whether their fingers will come out right.
+  flag('skin-claims', 'skinClaims');
   flag('solid', 'solid');
   flag('wire', 'wire');
   flag('joints', 'joints');
