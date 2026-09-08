@@ -78,6 +78,11 @@ class SculptManager {
       oldTool.clearPreview();
     }
 
+    // Captured BEFORE the write, and used after the tool is fully switched: every panel that
+    // shows the active tool is refreshed from one place rather than by whichever caller
+    // remembered to. See Scene.syncToolPanels.
+    const toolChanged = id !== this._toolIndex;
+
     this._toolIndex = id;
 
     // The on-screen modifier labels itself from the ACTIVE tool's secondary action, and hides
@@ -132,6 +137,11 @@ class SculptManager {
     if (tVR && tVR._gizmo && tVR._gizmo._group) {
       tVR._gizmo._group.visible = (id === Enums.Tools.TRANSFORM_VR);
     }
+
+    // LAST, and only on a real change. Last because the panels read the state this method has
+    // been setting — wireframe, group view, which gizmo is up — and a sync run partway through
+    // would paint a panel describing a tool switch that had not finished happening.
+    if (toolChanged) this._main?.syncToolPanels?.();
   }
 
   getToolIndex() {

@@ -229,6 +229,14 @@ export class HTMLVRPanel {
       // No forced _needsResize here — the panel's size is unchanged while hidden,
       // and forcing a resize disposes the texture (a blank frame = visible flash on
       // swap). syncFromState() sets _needsResize itself when content size changes.
+      //
+      // ...EXCEPT THAT IT DOES NOT ALWAYS, so the claim above is CHECKED ONCE on the way in.
+      // Grab's MiniPanel is rebuilt while hidden — it is the tool whose content depends on state
+      // that moves outside the show cycle (bound skin, pin count, RigPending) and the one the
+      // animation timeline selects on its own — so its flag is raised and spent before there is
+      // an element to measure, and it arrives showing the previous tool's plane under the new
+      // tool's texture. See _checkPlaneAspect.
+      this._checkAspectOnce = true;
       this.markDirty();
     } else {
       try { host.removeChild(this._element); } catch (_) {}
@@ -237,6 +245,25 @@ export class HTMLVRPanel {
     // shared flow, and a re-mount appends rather than restoring position, so both directions of
     // this reorder the host canvas. See markAllPanelsDirty.
     markAllPanelsDirty(this);
+  }
+
+  // Compare the plane against the element and raise `_needsResize` if they disagree — armed by
+  // _setHostMounted, spent on the first frame the element is real. Only on a genuine mismatch,
+  // because a forced resize disposes the texture and a blank frame is a visible flash on swap.
+  // Setting the FLAG rather than resizing directly is deliberate: the resize path also disposes
+  // the wrongly-sized texture and re-requests the paint, and doing only the plane leaves the
+  // other two half-done.
+  _checkPlaneAspect() {
+    if (!this._checkAspectOnce) return;
+    if (!this.mesh?.visible || !this._hostMounted) return;
+    const el = this._element;
+    if (!el.offsetWidth || !el.offsetHeight) return;   // not laid out yet: try again next frame
+    this._checkAspectOnce = false;
+    const gp = this.mesh.geometry?.parameters;
+    if (!gp) return;
+    const domA = el.offsetWidth / el.offsetHeight;
+    const geoA = gp.width / gp.height;
+    if (Math.abs(domA - geoA) > geoA * 0.01) { this._needsResize = true; this.markDirty(); }
   }
 
   dispose() {
@@ -476,6 +503,20 @@ export class HTMLVRPanel {
     // (the polyfill re-serialises the *entire* host-canvas DOM tree) at 5 fps.
     // pointerup already calls requestPaintForced + clears _dirty, so the final
     // slider position appears exactly one frame after release.
+    // ONCE PER SHOW, NOT PER FRAME.
+    //
+    // The first version of this asked every frame, and that broke the main menu: its content
+    // changes while you are using it — switching to the outliner, or properties — so the check
+    // kept re-flagging a resize mid-interaction, and each one disposes the texture. The panel
+    // froze on whatever it had last painted while its DOM, and so its hit regions, moved on
+    // underneath. matt: "the tool panel is the ONLY thing that works... i can see they get
+    // misaligned with the frozen tool panel."
+    //
+    // A panel that changes its own content already raises the flag correctly; the only gap is
+    // the content that changed while nobody could measure it. So this asks at the one moment that
+    // gap can appear — the frame after being shown — and never again until the next show.
+    this._checkPlaneAspect();
+
     if (this._dirty && !this._sliderDragTarget) {
       // Clear dirty only if a paint was actually scheduled. If it was rate-limited away,
       // stay dirty and retry next frame — otherwise the change is lost until the next edit

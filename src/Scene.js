@@ -69,6 +69,7 @@ import { VrRadialMenu           } from './gui/htmlvr/VrRadialMenu.js';
 import NomadLink                  from './link/NomadLink.js';
 import NomadImport                from './link/NomadImport.js';
 import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder (window._vrLog)
+import SkinPreview from './editing/SkinPreview.js';
 import MotionTrail from './editing/MotionTrail.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
@@ -1989,6 +1990,9 @@ class Scene {
       // render loop down with it.
       try {
         MotionTrail.update(this);
+        // Alongside the trail and for the same reason: it reads the live rig every frame, and
+        // the rig moves. Cheap while the flag is off — it does nothing but read one boolean.
+        SkinPreview.update(this);
       } catch (e) {
         console.error('Motion trail failed:', e);
       }
@@ -9364,6 +9368,37 @@ class Scene {
       cancel: (main) => { for (const c of copies) main.removeMeshSilent(c); main.render?.(); },
     });
     return copies[copies.length - 1];
+  }
+
+  // EVERY PANEL THAT SHOWS THE ACTIVE TOOL, TOLD IN ONE PLACE.
+  //
+  // The tool can be changed from about ten places — both menus, the tool picker, the quick-swap,
+  // the radial, keyboard shortcuts, and the tool-context switching that fires on selection — and
+  // each of them was responsible for refreshing whichever panels it happened to remember. Every
+  // one of them remembered a different subset, so whichever panel the user was NOT acting in
+  // kept showing the previous tool. matt: "i choose inflate in the mainpanel tools, swap to
+  // minipanel, its correct, but then i swap to grab in the mainpanel, the minipanel looks like
+  // its on inflate still... its all a little unstable."
+  //
+  // It reads as unstable rather than as plainly broken because the panels are not uniformly
+  // stale: a panel re-syncs when it is shown, so the wrongness depends on which panel was
+  // visible when, and anything drawn from live state each frame — the hover highlight — is right
+  // while the selected state beside it is wrong.
+  //
+  // CALLED FROM setToolIndex, and only on a REAL change: that method is also called with the
+  // current tool from routine places, and syncing there would rebuild panel HTML and its texture
+  // on every selection change.
+  //
+  // VISIBLE PANELS ONLY. A hidden one re-syncs when it is shown (see _swapHtmlPanels), so
+  // syncing it here would be work whose result is thrown away — and torn-off panels are exactly
+  // the case that needs this, since they stay visible while you work in another panel.
+  syncToolPanels() {
+    const shown = (p) => !!p && (!p.mesh || p.mesh.visible);
+    const sync = (p) => { if (shown(p)) { try { p.syncFromState?.(); } catch (_) {} } };
+    sync(this._miniPanel);
+    sync(this._mainMenuPanel);
+    sync(this._toolPickerPanel);
+    this._tornOffPanels?.forEach(sync);
   }
 
   _quickSwapTool() {
