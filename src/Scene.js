@@ -35,6 +35,7 @@ import PanelTrace from './misc/PanelTrace.js';
 import IKSolver from './editing/IKSolver.js';
 import PhysicsBones from './editing/PhysicsBones.js';
 import RigTopology from './editing/RigTopology.js';
+import RigPlacing from './editing/RigPlacing.js';
 import HumanBase from './drawables/HumanBase.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
@@ -7660,10 +7661,32 @@ class Scene {
         }
       }
 
+      // PLACE-IN-HAND — a freshly duplicated chain follows this controller until the trigger
+      // confirms where it goes, or B backs out. Ahead of the radial and holding the same hand:
+      // while a placement is running the B menu is suppressed below, so the one button cannot
+      // both cancel this and open a wheel on top of it.
+      if (source.handedness === this._dominantHand && RigPlacing.armed(this) && worldPose) {
+        const _cancelBtn = activeGamepad?.buttons?.[5];
+        // B CANCELS, and it is safe to read on this frame: the wheel commits its sector on the
+        // button's RELEASE, so B is already up by the time the command that started the
+        // placement has run. A press seen here is a new one, which is a request to back out.
+        if (_cancelBtn && (_cancelBtn.pressed || _cancelBtn.value > 0.5)) {
+          RigPlacing.cancel(this);
+        } else {
+          const _trigBtn = activeGamepad?.buttons?.[0];
+          // THE WHOLE MATRIX, not the position: the copy is carried by the controller, so
+          // turning your wrist has to turn it. `worldPose` is the grip pose, which is the one
+          // that follows the hand rather than the aim.
+          RigPlacing.update(this, worldPose.transform.matrix,
+            !!(_trigBtn && (_trigBtn.pressed || _trigBtn.value > 0.5)));
+        }
+      }
+
       // Radial context menu — hold the dominant B button (btns[5]), move the
       // controller to pick a sector, release to commit; center dead-zone cancels.
       // Suppressed while a modal VR widget is up. See VrRadialMenu.
-      if (source.handedness === this._dominantHand && this._vrRadial && worldPose) {
+      if (source.handedness === this._dominantHand && this._vrRadial && worldPose
+          && !RigPlacing.armed(this)) {
         const _modalUp = this._vrNumpad?.mesh?.visible
           || this._vrKeyboard?.mesh?.visible
           || window._vrConfirmPanel?.isBlockingOpen;
@@ -9098,7 +9121,6 @@ class Scene {
     const canPaste  = !!(window._animKeyClipboard && window._animKeyClipboard.keys && window._animKeyClipboard.keys.length);
     const selMesh   = this.getMesh && this.getMesh();
     const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
-    const hasSel    = !!selMesh;
     // #34: shape-layer multiselect commands (Combine when 2+ selected) — same source as the
     // desktop "…" menu, mapped to the radial's {label, icon, enabled, run} shape.
     const layerCmds = (tl()?._shapeLayerMenuCommands?.() || []).map(c => ({
@@ -9146,6 +9168,20 @@ class Scene {
     // pick cannot resolve. matt: "keep dissolve and split in the marking menu only for the
     // bones tool, not for grab."
     const inBoneTool = this._sculptManager?.getToolIndex?.() === Enums.Tools.BONE_DRAW;
+
+    // WHAT DUPLICATE WOULD ACT ON, resolved once and frozen with everything else here — the
+    // command must not re-read live hover state when the sector is committed, for the reason
+    // written above Split: choosing a sector moves the hand and the preselection follows it.
+    //
+    // A JOINT WINS OVER THE SELECTION, the same rule the rest of this ring uses: in the headset
+    // you are already pointing at the thing you mean. Meshes are the fallback, and there is no
+    // key case yet — see _duplicateInPlace.
+    const dupSubject = dissolveTarget
+      ? { kind: 'chain', what: 'Chain', joint: dissolveTarget }
+      : (this._selectMeshes && this._selectMeshes.length
+          ? { kind: 'mesh', what: this._selectMeshes.length > 1 ? 'Meshes' : 'Mesh',
+              meshes: this._selectMeshes.slice() }
+          : null);
 
     const nameCmds = (which) => {
       const chain = Skeleton.chainFrom(this, nameRoot);
@@ -9227,10 +9263,29 @@ class Scene {
       { label: 'Dissolve', icon: 'fa-compress',
         enabled: inBoneTool && RigTopology.canDissolve(this, dissolveTarget),
         run: () => { RigTopology.dissolve(this, dissolveTarget); } },
+      // DUPLICATE A CHAIN — draw one finger, duplicate it three times. Acts on the joint under
+      // the controller first and the selection second, the same rule as Name chain, and frozen
+      // at open for the same reason the others are: picking a sector moves the hand, and the
+      // preselection follows it.
+      //
+      // NOT gated on the Bone tool, unlike Split and Dissolve. Those need BONE selection to know
+      // which segment you mean, which is only on in that tool. This one acts on a JOINT, and
+      // `nameRoot` resolves one in any tool — so gating it would disable a command whose target
+      // the pick can perfectly well find. Same reasoning that leaves Name chain ungated.
+      // ONE DUPLICATE, WHICH ASKS WHAT YOU ARE POINTING AT. It used to be two wedges — 'Dup'
+      // for the selected mesh object and 'Duplicate' for a bone chain — which said the same word
+      // about two unrelated things and made you pick the right one yourself. matt: "shouldn't
+      // duplicate be context aware? if a mesh is selected... if a joint is selected..."
+      //
+      // THE LABEL NAMES THE RESOLVED SUBJECT rather than saying 'Duplicate' and leaving you to
+      // find out. A context-aware command that will not say what it is about to act on is a
+      // guess with a button on it, and this ring is opened while pointing at a crowded rig.
+      { label: dupSubject ? ('Duplicate ' + dupSubject.what) : 'Duplicate',
+        icon: 'fa-clone', enabled: !!dupSubject,
+        run: () => { this._duplicateInPlace(dupSubject); } },
       { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
       { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
-      { label: 'Dup',        icon: 'fa-clone',       enabled: hasSel,    run: () => this.duplicateSelection?.() }, // duplicate the object
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
       { label: 'Delete',     icon: 'fa-trash',       enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },   // selected key(s), all types incl. #34 layers
       // Reachable without leaving VR, which is the point: hand tracking grabbing a
@@ -9239,6 +9294,76 @@ class Scene {
         icon: window._sculptLocked ? 'fa-lock' : 'fa-lock-open', enabled: true,
         run: () => { window._sculptLocked = !window._sculptLocked; } },
     ];
+  }
+
+  // DUPLICATE, THEN PLACE IT — one gesture, whatever the subject is. In the headset the copy
+  // arrives following your controller and the trigger says where it goes, which is one motion
+  // instead of duplicate, hunt for the copy, grab it, move it. On a flat screen there is no hand
+  // to follow, so the command completes on its own and leaves the copy selected.
+  //
+  // NO KEY CASE YET, deliberately. matt asked for one — "if its a key or keys selected,
+  // duplicate and drag the keys" — and it is the same word for a different gesture: keys live in
+  // time and a track, not in space, so "drag with the controller" has to decide WHICH hand axis
+  // means time and how far a metre of reach is in frames. That is a design decision rather than
+  // a missing branch, and guessing it would ship a gesture nobody chose. Copy / Paste still
+  // cover keys in the meantime.
+  _duplicateInPlace(subject) {
+    if (!subject) return null;
+    const placing = !!this._xrSession;
+
+    if (subject.kind === 'chain') {
+      // Deferred so the whole gesture is ONE undo entry: undo after "duplicate, place it" must
+      // remove the copy, not strand you on the intermediate state — a chain sitting at the
+      // arbitrary offset nobody chose is a rig nobody built.
+      if (!placing) return RigTopology.duplicate(this, subject.joint);
+      const pend = RigTopology.duplicate(this, subject.joint, { defer: true });
+      if (!pend) return null;
+      // The mirrored subtree rides along as the copy's TWIN, so one gesture places both sides.
+      RigPlacing.begin(this, [{ mesh: pend.root, twin: pend.twin }], {
+        commit: (main) => RigTopology.commitDeferred(main, pend, 'Duplicate Chain'),
+        cancel: (main) => RigTopology.cancelDeferred(main, pend),
+      });
+      return pend.root;
+    }
+
+    if (subject.kind !== 'mesh') return null;
+    if (!placing) { this.duplicateSelection(); return this.getMesh(); }
+
+    // The silent twin of duplicateSelection: the copies are made without an undo entry each, so
+    // the single entry pushed on confirm covers both the copies and where they ended up.
+    const copies = [];
+    for (const mesh of subject.meshes) {
+      const copy = new MeshStatic(mesh.getGL());
+      copy.copyData(mesh);
+      // addMeshSilent skips what addNewMesh does for a NEW mesh — shader and wireframe defaults
+      // — which is right for a restore and wrong for a copy the user is about to look at.
+      copy.setShaderType?.(getOptionsURL().shader);
+      copy.setFlatShading?.(getOptionsURL().flatshading);
+      this.addMeshSilent(copy);
+      copy.setShowWireframe?.(getOptionsURL().wireframe);
+      copies.push(copy);
+    }
+    if (!copies.length) return null;
+    this.setMesh(copies[copies.length - 1]);
+
+    RigPlacing.begin(this, copies.map((c) => ({ mesh: c, twin: null })), {
+      commit: (main) => {
+        // Captured at COMMIT, not at creation: the whole point of deferring is that the copies
+        // have moved since, and redo has to put them back where they were left.
+        const at = copies.map((c) => mat4.clone(c.getMatrix()));
+        main.getStateManager?.()?.pushStateCustom?.(
+          () => { for (const c of copies) main.removeMeshSilent(c); main.render?.(); },
+          () => {
+            for (let i = 0; i < copies.length; i++) {
+              main.addMeshSilent(copies[i]);
+              mat4.copy(copies[i].getMatrix(), at[i]);
+            }
+            main.render?.();
+          }, false, copies.length > 1 ? 'Duplicate Meshes' : 'Duplicate Mesh');
+      },
+      cancel: (main) => { for (const c of copies) main.removeMeshSilent(c); main.render?.(); },
+    });
+    return copies[copies.length - 1];
   }
 
   _quickSwapTool() {

@@ -9,6 +9,7 @@ import Mesh from '../mesh/Mesh.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Skinning from './Skinning.js';
 import RigPending from './RigPending.js';
+import RigPlacing from './RigPlacing.js';
 import Skeleton from './Skeleton.js';
 import WeightCage from './WeightCage.js';
 
@@ -266,6 +267,15 @@ class SculptManager {
     // every route that does not come through there.
     if (RigPending.armed(this._main)) return false;
 
+    // Same gate, same reason, for a chain being placed in the hand: the trigger that confirms
+    // the placement is the trigger that starts a stroke, so without this the confirming press
+    // also sculpts — and on a rig, into whatever the tip happened to be over.
+    // `armed`, NOT `blocksTool`: the swallow half of that test is cleared by an XR frame seeing
+    // the trigger come up, and this route is the desktop one. Reading it here would let a session
+    // that ended mid-press leave the flag set with nothing left running to clear it — every
+    // desktop tool silently dead until reload.
+    if (RigPlacing.armed(this._main)) return false;
+
     // Blendshape layer gate (desktop + VR both route through here): when a layer is
     // active for editing, all mesh deformation is captured into that layer's delta
     // — which is only correct while the layer is visible and held at weight 1. If
@@ -429,6 +439,15 @@ class SculptManager {
 
   updateXR(picking, isPressed, origin, dir, options) {
     var tool = this.getCurrentTool();
+
+    // A CHAIN BEING PLACED OWNS THE TRIGGER, in every tool rather than in one — the same rule as
+    // the armed assignment below, and here for the same reason: Bone Draw takes its input from
+    // updateXR and never goes through start(), so a gate there alone left the one tool you are
+    // most likely to be in unguarded. `blocksTool` also covers the frame AFTER the placement
+    // ends, while the confirming press is still held; without that, confirming a duplicate
+    // immediately drew a new chain from the same spot.
+    if (RigPlacing.blocksTool(this._main, isPressed)) return;
+
     // if (window.screenLog && Math.random() < 0.01) window.screenLog(`ManagerXR: ToolIdx=${this._toolIndex} Tool=${!!tool}`, "orange");
 
     // THE ARMED ASSIGNMENT OWNS THE TRIGGER, in every tool rather than in one.
