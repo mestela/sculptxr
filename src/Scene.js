@@ -3521,6 +3521,21 @@ class Scene {
     // picker is cancelled. Every route in — Open, Import, a browser save, a drop — arrives at this
     // one function, so one line covers them all.
     try { this._mainMenuPanel?.closeMenu?.(); } catch (_) {}
+    // A TYPE WE RECOGNISE BUT CANNOT READ MUST SAY SO. getFileType answers 'glb' because the app
+    // EXPORTS glb — but there is no importer for it (see src/files: ExportGLTF exists, no
+    // ImportGLTF), so the switch below fell through, newMeshes stayed undefined, and the load
+    // ended in silence. matt: "i tried loading a glb and obj back into sculptxr, both just
+    // silently return nothing, no error on the console." Not supported and broken look identical
+    // from the outside, and only one of them is worth reporting as a bug.
+    if (fileType === 'glb' || fileType === 'gltf') {
+      const msg = 'Cannot open ' + fileType.toUpperCase()
+        + ' — SculptXR exports glTF but does not import it yet. Use OBJ, PLY, STL or .sxr.';
+      console.warn('[load] ' + msg);
+      if (window.screenLog) window.screenLog(msg, 'yellow');
+      if (this._showToolToast) this._showToolToast('Cannot open ' + fileType.toUpperCase());
+      return;
+    }
+
     var newMeshes;
     if (fileType === 'obj') newMeshes = Import.importOBJ(fileData, this._gl);
     else if (fileType === 'sgl') newMeshes = Import.importSGL(fileData, this._gl, this);

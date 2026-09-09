@@ -45,8 +45,20 @@ class Multimesh extends Mesh {
     this.setMeshData(this.getCurrentMesh().getMeshData());
 
     // CRITICAL FIX: Must force active WebGL updates when the user browses layers, or the solid triangles cache stales onto the old counts!
-    if (this.updateBuffers) this.updateBuffers();
-    if (this.updateWireframeBuffer) this.updateWireframeBuffer();
+    //
+    // ...BUT ONLY ONCE THERE IS SOMETHING TO UPLOAD. The CONSTRUCTOR calls this too, and a mesh
+    // being wrapped there may not be initialised yet: an import arrives with vertices and faces
+    // and NO colours, which are allocated by init() — called after the wrap, because the wrap is
+    // what init() is called on. So the refresh ran first and threw inside updateColorBuffer on a
+    // null array, and every OBJ and GLB import died in the Multimesh constructor before anything
+    // could report why. matt: "i tried loading a glb and obj back into sculptxr, both just
+    // silently return nothing, no error on the console."
+    //
+    // Colours are the test because they are what init() allocates and what the buffer upload
+    // reads; a mesh that has them has been through init and is safe to refresh. Layer browsing —
+    // the case this exists for — is always on an initialised mesh, so it is unaffected.
+    if (this.getColors() && this.updateBuffers) this.updateBuffers();
+    if (this.getColors() && this.updateWireframeBuffer) this.updateWireframeBuffer();
   }
 
   addLevel() {
