@@ -1183,6 +1183,52 @@ class SculptBase {
   }
 
   /** Laplacian smooth. Special rule for vertex on the edge of the mesh. */
+  // THE ONE-RING AVERAGE OF A DISPLACEMENT THAT ONLY THE BRUSH KNOWS.
+  //
+  // laplacianSmooth averages a field indexed by VERTEX id, which works because the field it reads
+  // (positions, normals) exists for the whole mesh. A brush's displacement does not: it is defined
+  // for the vertices under the brush and is zero everywhere else, and it lives in an array indexed
+  // by the brush's own order. So this walks the same one-ring and looks each neighbour up through
+  // a scratch id -> local map, treating a neighbour outside the brush as zero — which is what it
+  // is, since the brush did not move it.
+  //
+  // The map is kept between strokes and cleared by the entries it SET rather than by refilling it,
+  // so the cost is the brush's size and not the mesh's.
+  ringAverageLocal(iVerts, local, out) {
+    var mesh = this.getMesh();
+    var vrvStartCount = mesh.getVerticesRingVertStartCount();
+    var vertRingVert = mesh.getVerticesRingVert();
+    var ringVerts = vertRingVert instanceof Array ? vertRingVert : null;
+    var nbVerts = iVerts.length;
+
+    var map = this._ringIdxMap;
+    if (!map || map.length < mesh.getNbVertices()) {
+      map = this._ringIdxMap = new Int32Array(mesh.getNbVertices()).fill(-1);
+    }
+    for (var i = 0; i < nbVerts; ++i) map[iVerts[i]] = i;
+
+    for (i = 0; i < nbVerts; ++i) {
+      var i3 = i * 3;
+      var id = iVerts[i];
+      var start, end;
+      if (ringVerts) { vertRingVert = ringVerts[id]; start = 0; end = vertRingVert.length; }
+      else { start = vrvStartCount[id * 2]; end = start + vrvStartCount[id * 2 + 1]; }
+
+      var ax = 0.0, ay = 0.0, az = 0.0, n = 0;
+      for (var j = start; j < end; ++j) {
+        var k = map[vertRingVert[j]];
+        if (k < 0) { ++n; continue; }   // outside the brush: its displacement is zero, and counts
+        var k3 = k * 3;
+        ax += local[k3]; ay += local[k3 + 1]; az += local[k3 + 2];
+        ++n;
+      }
+      if (n > 0) { out[i3] = ax / n; out[i3 + 1] = ay / n; out[i3 + 2] = az / n; }
+      else { out[i3] = out[i3 + 1] = out[i3 + 2] = 0.0; }
+    }
+
+    for (i = 0; i < nbVerts; ++i) map[iVerts[i]] = -1;
+  }
+
   laplacianSmooth(iVerts, smoothVerts, vField) {
     var mesh = this.getMesh();
     var vrvStartCount = mesh.getVerticesRingVertStartCount();

@@ -210,6 +210,9 @@ function rectDir(box, claim) {
 // k-cell block exactly when both sides count the same k — and powers of two are what make a
 // coarse cell line up with a block of a finer one rather than straddling it.
 const BOXES = new Map();
+// Scratch for the reduction band's own ring — see transitionBand and the bridge.
+const _pStep = new THREE.Vector3();
+const _pStep2 = new THREE.Vector3();
 function boxOf(n) {
   let b = BOXES.get(n);
   if (!b) { b = makeBox(n); BOXES.set(n, b); }
@@ -267,7 +270,59 @@ function levelFor(dirs) {
   // THIS IS STILL FEWER POLYGONS THAN BEFORE, which is worth saying because eight looks like an
   // increase. It applies to one joint. Every other joint in a hand drops from four to two — from
   // ninety-six cells to twenty-four — and the palm's 384 does not come close to paying that back.
-  let n = 2;
+  // FOUR IS THE FLOOR, NOT TWO — and two was a real regression, caught on matt's own forearm.
+  //
+  // A chain joint's whole face IS the bridge loop, so the level sets the number of sides the tube
+  // has: level 2 gives a 2x2 face, perimeter 8, an OCTAGONAL limb. An octagon inscribed in a
+  // circle touches at its corners and cuts to cos(pi/8) = 0.924 between them, so the silhouette
+  // reads 8% inside the capsule everywhere — which is exactly what matt saw: "it still collapses
+  // between the wrist and the elbow." Measured on hand2.sxr: vertices at 0.96-0.99 of the
+  // capsule (so the relax was doing its job) with only 7-9 of them per ring.
+  //
+  // Level 4 is a 16-sided tube, which is what every bone had before per-joint levels existed. The
+  // floor was set at 2 for a different reason — a joint at 1 is a plain cube with nothing for the
+  // relax to shape — and that reasoning is sound and simply does not reach far enough: shape
+  // fidelity needs 2, SILHOUETTE needs 4.
+  //
+  // It costs the polycount saving I claimed when levels landed. That saving was mostly this
+  // trade, made without noticing: 744 cells against 1536 was bought by halving the resolution of
+  // every chain bone. What survives is the part that was always the point — a crowded joint gets
+  // subdivided FURTHER (a palm goes to 8) so its children can attach without shrinking.
+  // FOUR, because the level sets how many SIDES a limb has and two gives an octagon.
+  //
+  // A chain joint's whole face IS the bridge loop, so level 2 = perimeter 8, and an octagon
+  // inscribed in a circle cuts to cos(pi/8) = 0.924 between its corners — the limb reads 8%
+  // inside its capsule for its whole length. Measured on matt's hand2.sxr: forearm vertices at
+  // 0.96-0.99 of the capsule, so the relax was doing its job, with only 7-9 of them per ring.
+  // matt: "it still collapses between the wrist and the elbow" and, at 4, "yes that wrist looks
+  // better now".
+  //
+  // The floor was 2 when per-joint levels landed, for a reason that is true and does not reach
+  // far enough: a joint at 1 is a plain cube with nothing for the relax to shape. SHAPE fidelity
+  // needs 2; SILHOUETTE needs 4. It also means the polycount saving claimed at the time was
+  // mostly this trade rather than a free win.
+  //
+  // WHAT IT COSTS, measured rather than assumed. The five-fingers fixture goes from 62
+  // self-intersecting pairs to 108, and matt's own hand from 221 to 555 — WORSE, but not a clean
+  // sheet spoiled: a crowded palm has never generated a clean skin, which is why that fixture
+  // carries a stated overlap allowance at all. The cause is that the floor is only half of a
+  // PAIRWISE contract: a bone's loop is the smaller of what its two ends offer, so at floor 2 a
+  // finger's face (8) happened to match a crowded palm's block (8) and nothing shrank, while at 4
+  // the finger offers 16, the palm can spare 6-8, and the finger attaches through a sliver of a
+  // fat box whose bridge grazes its neighbour's.
+  //
+  // THE REAL FIX IS TOP-DOWN: a child's level should be the size of the block its PARENT can
+  // spare, resolved parent-first down the tree instead of per joint in isolation. Then a forearm
+  // off an uncrowded elbow is 16-sided while fingers off a crowded palm stay at 8, and neither
+  // end ever shrinks. Until that exists this is the better of two flawed states, chosen because
+  // the faceting is on EVERY chain bone of every rig while the overlaps are on crowded hands
+  // that already had them.
+  //
+  // window._boneSkinLevelFloor = 2 goes back. Tie-breaking shrinkTo toward the face centre was
+  // tried and is not it (108 -> 100, noise).
+  const floor = (window._boneSkinLevelFloor === 2 || window._boneSkinLevelFloor === 8)
+    ? window._boneSkinLevelFloor : 4;
+  let n = floor;
   while (n < most * 2 && n < MAX_CELLS) n *= 2;
   return n;
 }
@@ -415,6 +470,10 @@ function shrinkTo(box, claim, want, dir) {
         for (let b1 = b0 + 1; b1 <= r.b1; b1++) {
           const sub = { a0: a0, a1: a1, b0: b0, b1: b1 };
           if (perimeter(sub) !== want) continue;
+          // Tie-breaking toward the face CENTRE was tried here and is not the answer: it moved
+          // the five-finger fixture from 108 intersecting pairs to 100, which is noise. The
+          // crossing bridges are a symptom of the shrink itself, not of which sub-rect wins it.
+          // See levelFor.
           const s = rectDir(box, { side: claim.side, rect: sub }).dot(dir);
           if (s > top) { top = s; best = sub; }
         }
@@ -424,6 +483,51 @@ function shrinkTo(box, claim, want, dir) {
 // The far loop turned to run the same way round the bone as the near one, and rolled to the
 // offset that pairs the vertices up. Both loops are wound outward from their OWN box, so they
 // run in opposite directions about the bone; one has to be reversed or the bridge is a bow tie.
+// A 2:1 LOOP REDUCTION, IN QUADS.
+//
+// A limb's resolution should not be dictated by what its parent can spare. A finger is a 16-sided
+// tube; a crowded palm can only hand out an 8-vertex block; and settling both ends on the smaller
+// number means the finger gives up most of its face and attaches through a sliver — high-res
+// palm, pinched bridge, high-res finger. matt: "it goes from the relatively high res geo on the
+// wrist, does a small very low res bridge to the base of the finger, then goes high res again."
+//
+// THE CONSTRAINT THAT SHAPES THE PATTERN: in a band of quads where every quad has two vertices on
+// each side, the number of quads equals the number of edges on BOTH sides — so such a band cannot
+// change a loop's length, however it is arranged. Reduction needs a quad with THREE consecutive
+// vertices on the fine side and ONE on the coarse: a wedge, which consumes two fine edges and no
+// coarse edge at all.
+//
+// Balancing those two kinds gives the ratio. With w wedges and q ordinary quads the band consumes
+// 2w + q fine edges and q coarse ones, so 2:1 means q = 2w — one wedge for every two quads, four
+// fine edges and two coarse per unit. A 16-vertex loop meets an 8-vertex loop in four such units,
+// twelve quads, and no vertex is invented.
+//
+// The alternative — a triangle per pair — was not considered: the whole mesh is quads by contract
+// and the harness fails on the first non-quad.
+function transitionBand(fine, coarse, pushQuad) {
+  const F = fine.length, C = coarse.length;
+  // Two to one, and an even number of coarse edges so the units divide the ring exactly. Anything
+  // else falls back to settling both ends on the smaller loop, which is what always happened.
+  if (F !== C * 2 || (C & 1)) return false;
+  const units = C / 2;
+  // Counted so a harness can assert the band was REACHED — a suite that passes without ever
+  // entering this function says nothing about it.
+  SkinMesh._bandCount = (SkinMesh._bandCount | 0) + 1;
+  for (let u = 0; u < units; u++) {
+    const fi = u * 4, ci = u * 2;
+    const f0 = fine[fi % F], f1 = fine[(fi + 1) % F], f2 = fine[(fi + 2) % F];
+    const f3 = fine[(fi + 3) % F], f4 = fine[(fi + 4) % F];
+    const c0 = coarse[ci % C], c1 = coarse[(ci + 1) % C], c2 = coarse[(ci + 2) % C];
+    // The wedge: two fine edges collapse onto one coarse vertex.
+    pushQuad(f0, f1, f2, c0);
+    // ...then two ordinary quads carry the remaining two fine edges across the two coarse ones,
+    // sharing the wedge's rails so the band stays manifold.
+    pushQuad(f2, f3, c1, c0);
+    pushQuad(f3, f4, c2, c1);
+  }
+  return true;
+}
+
 function matchLoop(near, far, posAt) {
   const rev = far.slice().reverse();
   const L = rev.length;
@@ -507,7 +611,20 @@ function capsuleTarget(p, caps, out) {
     const ux = _to.x / Math.max(hx, 1e-9);
     const uy = _to.y / Math.max(hy, 1e-9);
     const uz = _to.z / Math.max(hz, 1e-9);
-    const lu = Math.hypot(ux, uy, uz);
+    // THE NORM'S EXPONENT IS THE SHAPE. |x|^p + |y|^p + |z|^p = 1 is an ellipsoid at p = 2 and
+    // approaches a box as p grows — every squircle in between, from one number. Lerped along the
+    // bone like the half-extents are, so a boxy palm blends into a round finger rather than
+    // stepping at the joint. matt: "if i could choose how much to blend it towards a cube shape,
+    // that would help the initial layout a lot."
+    //
+    // p === 2 SHORT-CIRCUITS to hypot, which is not just tidiness: this is the innermost loop of
+    // the relax, run per vertex per capsule per pass, and Math.pow three times over is many times
+    // the cost of a hypot. Almost every joint is round, so almost every joint pays nothing.
+    const pw = c.pa + (c.pb - c.pa) * t;
+    const lu = (pw <= 2.0001)
+      ? Math.hypot(ux, uy, uz)
+      : Math.pow(Math.pow(Math.abs(ux), pw) + Math.pow(Math.abs(uy), pw)
+               + Math.pow(Math.abs(uz), pw), 1 / pw);
     if (lu < 1e-9) continue;
     const cr = l / lu;                      // the surface's distance from the axis, this way
     const d = l - cr;                       // negative inside
@@ -714,9 +831,44 @@ function boxAt(j, nbs) {
   // along their bones; the relax and PROJECT_RATE were tuned with these sizes in play, and a box
   // that is a different size makes a bridge of a different length for the relax to work on.
   // Correct in isolation, wrong in the system — the sizes stay bounded as they were.
-  const lim = Math.min.apply(null, lens) * LENGTH_CLAMP;
-  const big = Math.max(half[0], half[1], half[2]);
-  const sc = big > lim ? lim / big : 1;
+  // HOW BIG THE BOX MAY BE, and two ways of asking.
+  //
+  // SHIPPED (nearest): the limit is the NEAREST neighbour's distance, applied whatever direction
+  // that neighbour lies in. Two boxes on one bone then each take at most 45% of the gap, so the
+  // pair stays under 1.0 and they cannot meet — the guarantee this clamp exists for.
+  //
+  // It is also direction-blind, and on a hand that is ruinous. Measured on matt's hand2.sxr: the
+  // palm's shape is 6.24 x 4.37 x 2.72 and its cage came out 2.48 x 1.74 x 1.08 — FORTY PERCENT —
+  // because its nearest neighbour is a finger base 5.52 away, BELOW it, while the width being
+  // shrunk is across the hand. The relax then has to drag the cage out by two and a half times,
+  // which is what matt saw: "the top of the wrist hasn't conformed well to the implied capsule;
+  // its hugged too closely to the tweaked wrist joint."
+  //
+  // SUPPORT (window._boneSkinClampMode = 'support'): measure how far the box actually reaches
+  // TOWARDS each neighbour — h.|d|, the support function — and scale uniformly until every one of
+  // those fits. Correct in the direction that matters and leaves the other axes alone.
+  //
+  // WHY IT IS NOT THE DEFAULT YET. It needs LENGTH_CLAMP at 0.55 to pass skinbox_test — below
+  // that the fixtures come back with intersecting faces, and TIGHTENING makes it worse (2 pairs
+  // at 0.45, 8 at 0.35), because box size sets bridge length and a smaller box makes a longer,
+  // thinner bridge for limbs to pass through. But 0.55 twice over is 1.10 of the gap, so the
+  // "two boxes cannot meet" guarantee above is gone — traded for a shape that fits. That is a
+  // judgement about a rig nobody has looked at in a headset yet, so it is a switch until it has
+  // been: window._boneSkinClampMode = 'support'; window._boneSkinClamp = 0.55.
+  const clampFrac = typeof window._boneSkinClamp === 'number'
+    ? Math.max(0.05, Math.min(0.95, window._boneSkinClamp)) : LENGTH_CLAMP;
+  let sc = 1;
+  if (window._boneSkinClampMode === 'support') {
+    for (let i = 0; i < dirs.length; i++) {
+      const d = dirs[i];
+      const reach = half[0] * Math.abs(d.x) + half[1] * Math.abs(d.y) + half[2] * Math.abs(d.z);
+      if (reach > 1e-12) sc = Math.min(sc, (lens[i] * clampFrac) / reach);
+    }
+  } else {
+    const lim = Math.min.apply(null, lens) * clampFrac;
+    const big = Math.max(half[0], half[1], half[2]);
+    if (big > lim) sc = lim / big;
+  }
   const h = [half[0] * sc, half[1] * sc, half[2] * sc];
   if (!(h[0] > 1e-9 && h[1] > 1e-9 && h[2] > 1e-9)) return null;
 
@@ -783,15 +935,54 @@ function buildArrays(joints, topo) {
     const nEnd = near.by.get(j), fEnd = far.by.get(p);
     if (!nEnd || !fEnd || !nEnd.claim || !fEnd.claim) continue;
 
-    const st = settleEnds(nEnd, fEnd, near.box, far.box);
+    // KEEP BOTH FACES WHEN ONE IS TWICE THE OTHER, and step between them with a reduction band.
+    //
+    // settleEnds is still the fallback and still right for every other ratio: a bone has to meet
+    // the same loop at both ends or there is nothing to bridge. But 2:1 is the case a rig actually
+    // produces — a limb at one level meeting a crowded parent's block at the next level down — and
+    // it is the one ratio the wedge pattern handles exactly. So that case keeps both claims and
+    // pays for the difference in one band of quads instead of by shrinking a face away.
+    const pN = perimeter(nEnd.claim.rect), pF = perimeter(fEnd.claim.rect);
+    const canStep = (pN === pF * 2 && !(pF & 1)) || (pF === pN * 2 && !(pN & 1));
+    const st = canStep ? { nc: nEnd.claim, fc: fEnd.claim, want: Math.min(pN, pF) }
+                       : settleEnds(nEnd, fEnd, near.box, far.box);
     const nc = st.nc, fc = st.fc;
     for (const f of rectFaces(near.box, nc)) near.dead.add(f.join(','));
     for (const f of rectFaces(far.box, fc)) far.dead.add(f.join(','));
 
     const A = rectLoop(near.box, nc).map((v) => near.base + v);
     const B = rectLoop(far.box, fc).map((v) => far.base + v);
-    if (A.length !== B.length) continue; // nothing sensible to stitch; leave both closed
-    const M = matchLoop(A, B, posAt);
+    if (!canStep && A.length !== B.length) continue; // nothing sensible to stitch; leave both closed
+
+    // THE BAND SITS AT THE FINE END, and the rest of the bone is bridged at the coarse count.
+    //
+    // Its coarse side is a new ring seeded from every OTHER vertex of the fine loop — so the two
+    // sides already correspond, with no matching to do — nudged one step along the bone so the
+    // band has somewhere to be. Everything after it is the ordinary ring bridge it always was.
+    let A2 = A, B2 = B, stepFine = null, stepCoarse = null;
+    if (canStep) {
+      const fineIsNear = A.length > B.length;
+      const fineLoop = fineIsNear ? A : B;
+      const coarseLoop = fineIsNear ? B : A;
+      const seed = [];
+      for (let i = 0; i < fineLoop.length; i += 2) seed.push(fineLoop[i]);
+      const target = matchLoop(seed, coarseLoop, posAt);
+      const made = [];
+      for (let i = 0; i < seed.length; i++) {
+        _pStep.set(verts[seed[i] * 3], verts[seed[i] * 3 + 1], verts[seed[i] * 3 + 2]);
+        _pStep2.set(verts[target[i] * 3], verts[target[i] * 3 + 1], verts[target[i] * 3 + 2]);
+        // A SHORT STEP, not a share of the span: the band is a transition, not a segment of the
+        // limb, and a long one would read as a taper rather than a change of resolution.
+        _pStep.lerp(_pStep2, 0.15);
+        made.push(verts.length / 3);
+        verts.push(_pStep.x, _pStep.y, _pStep.z);
+      }
+      stepFine = fineLoop; stepCoarse = made;
+      // The remaining span runs from the band's coarse side to the far loop, both coarse.
+      A2 = fineIsNear ? made : coarseLoop;
+      B2 = fineIsNear ? coarseLoop : made;
+    }
+    const M = matchLoop(A2, B2, posAt);
 
     // RINGS ALONG THE BONE, not one span. A box is divided four ways a side, so its quads are
     // about a quarter of its width; bridging straight from one box to the other in a single
@@ -804,11 +995,19 @@ function buildArrays(joints, topo) {
     // the quads it is about to make. That keeps them roughly square without anyone having to
     // pick a density: a short bone still gets one ring, and a long one gets as many as it
     // takes for its quads to match the boxes at either end.
-    const L = A.length;
+    // The band first, if there is one: it is emitted from the fine loop onto the ring seeded from
+    // it, and the ring bridge below then starts at the coarse count.
+    if (stepFine && !transitionBand(stepFine, stepCoarse, pushQuad)) {
+      // The pattern refused (an odd coarse count reaching here would be a bug, not a rig): fall
+      // back rather than leave a hole.
+      continue;
+    }
+
+    const L = A2.length;
     let span = 0, edge = 0;
     for (let i = 0; i < L; i++) {
-      span += posAt(A[i]).distanceTo(posAt(M[i]));
-      edge += posAt(A[i]).distanceTo(posAt(A[(i + 1) % L]))
+      span += posAt(A2[i]).distanceTo(posAt(M[i]));
+      edge += posAt(A2[i]).distanceTo(posAt(A2[(i + 1) % L]))
             + posAt(M[i]).distanceTo(posAt(M[(i + 1) % L]));
     }
     span /= L;
@@ -816,7 +1015,7 @@ function buildArrays(joints, topo) {
     let rings = edge > 1e-9 ? Math.round(span / edge) : 1;
     rings = rings < 1 ? 1 : (rings > MAX_SPANS ? MAX_SPANS : rings);
 
-    let prev = A;
+    let prev = A2;
     const _pa = new THREE.Vector3(), _pb = new THREE.Vector3();
     for (let r = 1; r <= rings; r++) {
       let next = M;
@@ -826,7 +1025,7 @@ function buildArrays(joints, topo) {
         const t = r / rings;
         next = [];
         for (let i = 0; i < L; i++) {
-          _pa.set(verts[A[i] * 3], verts[A[i] * 3 + 1], verts[A[i] * 3 + 2]);
+          _pa.set(verts[A2[i] * 3], verts[A2[i] * 3 + 1], verts[A2[i] * 3 + 2]);
           _pb.set(verts[M[i] * 3], verts[M[i] * 3 + 1], verts[M[i] * 3 + 2]);
           _pa.lerp(_pb, t);
           next.push(verts.length / 3);
@@ -852,7 +1051,8 @@ function buildArrays(joints, topo) {
     // the other, which shifts the shape off its joint — and the envelope is the hull of the two
     // SHAPES. Reading the joints here would leave the skin behind wherever a joint was tweaked.
     caps.push({ a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
-      ha: guard(Skeleton.jointHalf(p, rj)), hb: guard(Skeleton.jointHalf(j, rj)) });
+      ha: guard(Skeleton.jointHalf(p, rj)), hb: guard(Skeleton.jointHalf(j, rj)),
+      pa: Skeleton.jointRound(p), pb: Skeleton.jointRound(j) });
     bones++;
   }
 
@@ -987,7 +1187,14 @@ SkinMesh.attachments = function (main) {
     if (!near || !far) continue;
     const nEnd = near.by.get(j), fEnd = far.by.get(p);
     if (!nEnd || !fEnd || !nEnd.claim || !fEnd.claim) continue;
-    const st = settleEnds(nEnd, fEnd, near.box, far.box);
+    // THE SAME RULE THE GENERATOR USES, or the preview is a second opinion — and a second opinion
+    // about the claims is precisely how the joint volumes drifted from what they described. A 2:1
+    // pair keeps both faces and pays the difference in a reduction band, so the view shows the
+    // finger's WHOLE face meeting a 2x2 block of the palm, which is what will be built.
+    const pN2 = perimeter(nEnd.claim.rect), pF2 = perimeter(fEnd.claim.rect);
+    const stepped = (pN2 === pF2 * 2 && !(pF2 & 1)) || (pF2 === pN2 * 2 && !(pN2 & 1));
+    const st = stepped ? { nc: nEnd.claim, fc: fEnd.claim, want: Math.min(pN2, pF2) }
+                       : settleEnds(nEnd, fEnd, near.box, far.box);
     // ONE `pair` NUMBER FOR BOTH ENDS. It is what lets the two patches be drawn in the same
     // colour, which is the whole of the answer to "what is going to join to what" — the pairing
     // is decided here, and a viewer matching them up again by position would be guessing.
@@ -998,7 +1205,9 @@ SkinMesh.attachments = function (main) {
     // every one of those pinched would report the fix as the fault. What matters is whether the
     // bone got as much as the COARSER end could offer — its whole face — because that is the most
     // the pair can agree on. Less than that, and somebody shrank.
-    const clean = st.want >= 4 * Math.min(near.box.n, far.box.n);
+    // A stepped pair is clean at BOTH ends by construction: each keeps its whole face, which is
+    // the most either could offer. Otherwise it is still the coarser end's face that decides.
+    const clean = stepped || st.want >= 4 * Math.min(near.box.n, far.box.n);
     const add = (box, joint, other, claim, dir) => {
       box.sides.add(claim.side);
       ends.push({ joint: joint, other: other, box: box, side: claim.side, rect: claim.rect,
@@ -1020,31 +1229,33 @@ SkinMesh.attachments = function (main) {
                    box.c.z + (box.h[2] * l[2]) / n);
   };
 
-  // THE SAME LATTICE POINT, ROUNDED OFF AND AT THE JOINT'S OWN SIZE.
+  // THE SAME LATTICE POINT, PUSHED OUT ONTO THE JOINT'S OWN SURFACE, AT THE JOINT'S OWN SIZE.
   //
   // A cube run through enough subdivision becomes very nearly a sphere, and that is not an
-  // analogy here — the cage IS a subdivided cube, and the relax pass IS what rounds it onto the
-  // joint's shape. So a spherified cube is not a picture of what the generator does, it is the
-  // result. matt: "i meant a subdivided AND smoothed cube, ie what you get if you run a cube
-  // through multires... if the joint spheres were replaced with these spheres, you could then do
-  // the same colour coding... directly on the joint spheres."
+  // analogy here — the cage IS a subdivided cube and the relax IS what rounds it onto the joint's
+  // shape. matt: "i meant a subdivided AND smoothed cube... if the joint spheres were replaced
+  // with these spheres, you could then do the same colour coding directly on the joint spheres."
   //
-  // Spherified rather than genuinely subdivided: pushing each lattice point out to the ellipsoid
-  // gives the same shape Catmull-Clark converges on, in one step and with the grid still exactly
-  // the generator's, which is what the colours have to sit on. Short of the whole way, because a
-  // true sphere loses the flat faces — and the faces are the thing being read.
-  const ROUND = 0.82;
-  const _sp = new THREE.Vector3();
+  // AND IT USES THE JOINT'S SHARPNESS, so the preview shows the shape the skin will actually be
+  // built onto rather than a fixed guess at it. The surface along a ray is where the p-norm
+  // reaches 1, so dividing the lattice direction by its own p-norm lands exactly on it: p = 2 is
+  // the sphere, higher p pushes towards the box, and the previous fixed 82%-of-the-way-to-a-
+  // sphere constant is gone — it was approximating this.
   const round = (box, id, out) => {
     const l = box.box.lat[id], n = box.box.n;
     const ux = l[0] / n, uy = l[1] / n, uz = l[2] / n;
-    _sp.set(ux, uy, uz);
-    const len = _sp.length() || 1;
+    const pw = Skeleton.jointRound(box.joint);
+    // A lattice point always lies on the box surface, so at least one component is +-1 and the
+    // norm can never be zero.
+    const nrm = (pw <= 2.0001)
+      ? Math.hypot(ux, uy, uz)
+      : Math.pow(Math.pow(Math.abs(ux), pw) + Math.pow(Math.abs(uy), pw)
+               + Math.pow(Math.abs(uz), pw), 1 / pw);
+    const k = nrm > 1e-9 ? 1 / nrm : 1;
     const hf = box.half;
-    return out.set(
-      box.c.x + hf[0] * (ux + (ux / len - ux) * ROUND),
-      box.c.y + hf[1] * (uy + (uy / len - uy) * ROUND),
-      box.c.z + hf[2] * (uz + (uz / len - uz) * ROUND));
+    return out.set(box.c.x + hf[0] * ux * k,
+                   box.c.y + hf[1] * uy * k,
+                   box.c.z + hf[2] * uz * k);
   };
 
   return { boxes: Array.from(boxes.values()), ends: ends, pairs: pair, at: at, round: round };

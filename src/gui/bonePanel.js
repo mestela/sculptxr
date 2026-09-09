@@ -118,6 +118,21 @@ export function buildBoneAuthoringHTML(main, style) {
   // new joint gets flagged at all — one control reads the selection, the other reads the target,
   // and the panel says which joint it is editing so the two can never be confused.
   const physTarget = PhysicsBones.panelTarget(main, physSel);
+  // SHARPNESS, WHERE THE JOINT SHAPE IS EDITED. Tweak Joint sizes a joint's three extents; this
+  // says how boxy the shape spanning them is — 2 is the ellipsoid everything has always been,
+  // higher squares it off. It acts on the SELECTED joint and names it, because a slider that
+  // silently aims at "whichever joint" is the complaint the physics sliders above were rewritten
+  // to fix.
+  //
+  // A JS COMMENT, NOT AN HTML ONE. Panel markup is serialised as XML to be rasterised, and
+  // comments in it are the failure panelxml_test was written for — it will not have this.
+  //
+  // The joint the roundness slider edits: the single selected joint, or nothing.
+  const roundSel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+  const roundTarget = roundSel.length === 1 ? roundSel[0] : null;
+  const roundVal = roundTarget ? Skeleton.jointRound(roundTarget) : 2;
+  const roundName = roundTarget
+    ? (roundTarget._permanentStaticLabel || ('joint ' + roundTarget.getID())) : '';
   const physP = physTarget ? PhysicsBones.params(physTarget) : PhysicsBones.DEFAULTS;
   // A SLIDER THAT DOES NOTHING IS WORSE THAN ONE THAT IS NOT THERE -- you drag it, the rig does
   // not change, and you are left wondering which of the two is broken. The constraint solver
@@ -153,6 +168,11 @@ export function buildBoneAuthoringHTML(main, style) {
   return `
     ${sectionTitle(c, 'Rig Authoring')}
     <div class="${c.grid}">${modeBtns}</div>
+    ${roundTarget ? `<div class="${c.row}">
+      <span class="${c.lbl}">Sharpness (${roundName})</span>
+      <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
+      <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
+    </div>` : ''}
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
@@ -310,6 +330,11 @@ export function buildBoneDisplayHTML(main, style) {
         value="${Math.round(Skeleton.capsuleOpacity() * 100)}">
       <span class="${c.val}" id="bone-cap-op-val">${Math.round(Skeleton.capsuleOpacity() * 100)}</span>
     </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Capsule Detail</span>
+      <input type="range" id="bone-cap-seg" min="8" max="56" step="4" value="${Skeleton.capsuleSegments()}">
+      <span class="${c.val}" id="bone-cap-seg-val">${Skeleton.capsuleSegments()}</span>
+    </div>
   `;
 }
 
@@ -420,10 +445,50 @@ export function wireBoneSection(root, main, opts) {
   // rather than a rig-only copy that would then have to be kept in step with it.
   // THE MASTER SWITCH. Not a display flag of its own — it gates how the others are READ, so it
   // has its own accessor and its own storage. See Skeleton.decorationsHidden.
+  // CAPSULE TESSELLATION, next to the other capsule cost. It is the mobile-VR knob — 56 segments
+  // are 566k triangles across the solid and ghost passes, 28 are 140k, and the sawtooth the high
+  // count buys is mostly gone by 28. Changing it rebuilds the batches, so it is a press-and-see
+  // control rather than a drag: the slider writes on CHANGE, not on input.
+  {
+    const segIn = q('cap-seg'), segVal = q('cap-seg-val');
+    if (segIn) segIn.addEventListener('change', () => {
+      const v = Skeleton.setCapsuleSegments(main, parseInt(segIn.value, 10));
+      if (segVal) segVal.textContent = String(v);
+    });
+  }
+
   q('hide-decor')?.addEventListener('click', () => {
     Skeleton.setDecorationsHidden(main, !Skeleton.decorationsHidden());
     refresh();
   });
+
+  // Tenths, because the useful range is narrow: 2 is round, 4 already reads as a soft box, and
+  // past about 8 the difference stops being visible. An integer slider would have four usable
+  // stops.
+  {
+    const rIn = q('round'), rVal = q('round-val');
+    if (rIn) rIn.addEventListener('input', () => {
+      const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+      if (sel.length !== 1) return;
+      const v = parseInt(rIn.value, 10) / 10;
+      Skeleton.setJointRound(sel[0], v);
+      // THE TWIN TAKES IT TOO, like every other joint-shape edit. Tweak Joint already writes the
+      // twin's scale and offset when it drags a face — sharpness is the same kind of property and
+      // was simply missed. matt: "the sharpness isn't copied to the other side of the hierarchy
+      // if symmetry is enabled."
+      //
+      // SIZES COPY, POSITIONS REFLECT is the rule from the joint-shape work, and an exponent is a
+      // size-like quantity: it is the same number on both sides, with nothing to negate.
+      //
+      // Gated on the symmetry toggle rather than on a twin existing, because a joint drawn
+      // symmetrically keeps its twin for life — see Skeleton.mirrorEdits.
+      const twin = Skeleton.mirrorEdits(main) ? sel[0]._boneMirror : null;
+      if (twin && main.getMeshes?.().includes(twin)) Skeleton.setJointRound(twin, v);
+      if (rVal) rVal.textContent = v.toFixed(1);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    });
+  }
 
   q('sym')?.addEventListener('click', () => {
     const sm = main.getSculptManager?.();

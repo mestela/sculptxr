@@ -607,6 +607,20 @@ const CSS = `
   margin-bottom: 5px;
   box-sizing: border-box;
 }
+/* DRAGGABLE, ON DESKTOP ONLY. The fixed height above is what stops the list moving everything
+   below it as the scene changes, and it has to stay — but a desktop window has vertical space to
+   spare and a mouse that can grab an edge, so the number should be the user's rather than a
+   fraction of the panel. matt: "on desktop because there's more vertical space and its easier to
+   grab things, can the outliner region be draggable so i can expand its height?"
+   SCOPED TO wa-tab-panel, which is the desktop sidebar's own container — the VR panel lives in
+   the host canvas and never matches, so the headset keeps the fixed height it needs and the
+   rasteriser is never asked to draw a resize grabber it cannot paint.
+   max-height goes with it: a cap the user is dragging against is a cap fighting them. */
+wa-tab-panel .mm-outliner-list {
+  resize: vertical;
+  max-height: none;
+}
+
 .mm-outliner-row {
   display: flex;
   align-items: center;
@@ -2464,6 +2478,39 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     // Populate initial content
     this._rebuildContent();
+  }
+
+  // A PRESS IN THE VIEWPORT DISMISSES THE MENU.
+  //
+  // Every other menu in every other app closes when you go back to the work. This one stayed up
+  // until you pressed its button a second time, so after opening a file — or changing your mind
+  // about it — the menu sat over the model. matt: "it should definitely close if i click on the
+  // viewport."
+  //
+  // ON THE CANVAS, not the document: a press anywhere in the panel, the sidebar or a torn-off
+  // window is still working the UI and must not dismiss anything. The canvas IS "back to the
+  // model", which is exactly the condition.
+  //
+  // Nothing is consumed — no preventDefault, no stopPropagation — so the press that closes the
+  // menu also does whatever it was going to do. Dismissing is a side effect of going back to
+  // work, not a click you have to spend.
+  _wireViewportDismiss(main) {
+    const canvas = main && main._canvas;
+    if (!canvas || this._dismissWired) return;
+    this._dismissWired = true;
+    canvas.addEventListener('pointerdown', () => { this.closeMenu(); });
+  }
+
+  // Dismiss whatever menu is up. Public because things OUTSIDE the panel finish a menu's job —
+  // loading a scene, above all, which arrives through Scene.loadScene rather than through any
+  // button here. A no-op when nothing is open.
+  closeMenu() {
+    if (!this._activeMenu) return false;
+    this._activeMenu = null;
+    this._lastContentKey = '';
+    this._rebuildContent();
+    this.markDirty();
+    return true;
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────

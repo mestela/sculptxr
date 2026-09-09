@@ -274,12 +274,55 @@ let _capShaftGeo = null;
 // through the pipe, 566k for the solid and ghost passes together against about 140k at 28. That
 // is nothing on a desktop GPU (0.44ms for the whole capsule pass, against 0.48ms at 28 -- fill,
 // not vertices) and is worth watching on a Quest, where these two numbers are the knob.
+// ...AND THE SEGMENT COUNT IS THE KNOB ON A HEADSET, so it is a setting rather than a literal.
+//
+// The measurement above is the whole argument: 56 buys the last of the sawtooth and costs 566k
+// triangles across the solid and ghost passes, 28 buys most of it for 140k. That is free on a
+// desktop GPU and is not free on a mobile one. matt: "its starting to feel gluggy on mobilevr."
+//
+// Persisted, so a value found in a headset survives the session it was found in.
+const CAP_SEGMENTS_DEFAULT = 56;
+function capsuleSegments() {
+  const live = window._boneCapSegments;
+  if (typeof live === 'number') return Math.max(8, Math.min(64, Math.round(live)));
+  const saved = getOptionsURL().boneCapSegments;
+  return typeof saved === 'number' ? Math.max(8, Math.min(64, saved)) : CAP_SEGMENTS_DEFAULT;
+}
+
+// Changing it has to throw away the geometries AND the batches built from them: an InstancedMesh
+// holds its geometry, so a new segment count with the old batch still standing would keep drawing
+// the old one. Dropping the batches makes the next visual pass rebuild them.
+function setCapsuleSegments(main, n) {
+  const v = Math.max(8, Math.min(64, Math.round(n || CAP_SEGMENTS_DEFAULT)));
+  window._boneCapSegments = v;
+  try { getOptionsURL.saveOption('boneCapSegments', v, 300); } catch (_) {}
+  if (_capShaftGeo) { _capShaftGeo.dispose(); _capShaftGeo = null; }
+  if (_capEndGeo) { _capEndGeo.dispose(); _capEndGeo = null; }
+  const all = main && main._skelBatch;
+  if (all) {
+    for (const [key, b] of Array.from(all)) {
+      if (!key.startsWith('capEnd') && !key.startsWith('capShaft')) continue;
+      if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+      b.mesh.dispose();
+      all.delete(key);
+    }
+    // The slots point at batches by key and are re-made with the entries, so the entries go too.
+    for (const id of Array.from(main._skelVis ? main._skelVis.keys() : [])) disposeEntry(main, id);
+  }
+  Skeleton.updateVisuals(main);
+  main?.render?.();
+  return v;
+}
+
 function capsuleShaftGeometry() {
-  return (_capShaftGeo = _capShaftGeo || new THREE.CylinderGeometry(1, 1, 1, 56, 1, true));
+  const n = capsuleSegments();
+  return (_capShaftGeo = _capShaftGeo || new THREE.CylinderGeometry(1, 1, 1, n, 1, true));
 }
 let _capEndGeo = null;
 function capsuleEndGeometry() {
-  return (_capEndGeo = _capEndGeo || new THREE.SphereGeometry(1, 56, 40));
+  const n = capsuleSegments();
+  // Rings track segments so the sphere stays roughly isotropic rather than banded.
+  return (_capEndGeo = _capEndGeo || new THREE.SphereGeometry(1, n, Math.max(6, Math.round(n * 0.71))));
 }
 
 // Default capsule radius as a fraction of the bone's own length. 0.15 was a guess with no
@@ -394,6 +437,19 @@ function ensureTaperAttrs(mesh, cap) {
   if (a && a.count === cap) return;
   g.setAttribute('aHA', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
   g.setAttribute('aHB', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
+  // The SHARPNESS at each end, alongside the extents it belongs to. Filled with 2 rather than 0:
+  // a zero exponent is not a shape, and a slot that has never been written must draw as the
+  // ellipsoid everything was before this existed.
+  g.setAttribute('aPA', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
+  g.setAttribute('aPB', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
+}
+
+// The end spheres carry ONE exponent — a cap belongs to a single joint.
+function ensureSharpAttr(mesh, cap) {
+  const g = mesh.geometry;
+  const a = g.getAttribute('aP');
+  if (a && a.count === cap) return;
+  g.setAttribute('aP', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
 }
 
 // EVERY XRAY PASS RUNS BEFORE EVERY SOLID ONE. A ghost is a GreaterDepth pass -- "paint me
@@ -428,18 +484,30 @@ function makeBatch(main, geo, ghost, key) {
   // module-level singleton -- so the four shaft batches (solid, ghost, and the preselected
   // variant of each) would have written their taper data over one another, every batch reading
   // whichever wrote last. A clone per batch is one cylinder, made once.
-  if (isShaftKey(key)) geo = geo.clone();
+  //
+  // ...AND THE END SPHERES NOW NEED THE SAME, because sharpness gave them an instanced attribute
+  // too. Sharing one sphere meant the four capEnd batches wrote `aP` over each other AND resized
+  // it to whichever grew last — so a batch holding more instances than the shared buffer read
+  // past its end and stopped drawing. Worst on rigs with many small joints, because those are the
+  // ones that push the counts up. matt: "the capsules often stop drawing... it seems to be finger
+  // joints and the wrist that are worst affected, the major arm joints appear fine."
+  const needsOwnGeo = isShaftKey(key)
+    || (typeof key === 'string' && key.startsWith('capEnd'));
+  if (needsOwnGeo) geo = geo.clone();
   const mat = ghost
     ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
         opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
     : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const isEnd = (typeof key === 'string' && key.startsWith('capEnd'));
   if (isShaftKey(key)) taperMaterialInstanced(mat);
+  else if (isEnd) sharpMaterialInstanced(mat);
   if (isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'))) {
     shadeMaterial(mat, isShaftKey(key));
   }
   const m = new THREE.InstancedMesh(geo, mat, 1);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   if (isShaftKey(key)) ensureTaperAttrs(m, 1);
+  else if (isEnd) ensureSharpAttr(m, 1);
   m.count = 0;
   m.renderOrder = ghost ? GHOST_ORDER : 0;
   m.isPickable = false;
@@ -586,6 +654,7 @@ function flushBatches(main) {
       const m = new THREE.InstancedMesh(old.geometry, old.material, cap);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       if (isShaftKey(key)) ensureTaperAttrs(m, cap);
+      else if (typeof key === 'string' && key.startsWith('capEnd')) ensureSharpAttr(m, cap);
       m.renderOrder = old.renderOrder;
       m.isPickable = false;
       m.frustumCulled = false;
@@ -597,6 +666,10 @@ function flushBatches(main) {
     const m = b.mesh;
     const ha = isShaftKey(key) ? m.geometry.getAttribute('aHA') : null;
     const hb = ha ? m.geometry.getAttribute('aHB') : null;
+    const pa = ha ? m.geometry.getAttribute('aPA') : null;
+    const pb = ha ? m.geometry.getAttribute('aPB') : null;
+    const pe = (typeof key === 'string' && key.startsWith('capEnd'))
+      ? m.geometry.getAttribute('aP') : null;
     for (let i = 0; i < n; i++) {
       const s = slots[i];
       _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
@@ -605,9 +678,14 @@ function flushBatches(main) {
       if (ha && s._ha) {
         ha.setXYZ(i, s._ha[0], s._ha[1], s._ha[2]);
         hb.setXYZ(i, s._hb[0], s._hb[1], s._hb[2]);
+        // 2 when the slot has not said otherwise, so an unwritten instance is the ellipsoid.
+        if (pa) { pa.setX(i, s._pa || 2); pb.setX(i, s._pb || 2); }
       }
+      if (pe) pe.setX(i, s._p || 2);
     }
     if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
+    if (pa) { pa.needsUpdate = true; pb.needsUpdate = true; }
+    if (pe) pe.needsUpdate = true;
     m.count = n;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
@@ -826,7 +904,8 @@ function shadeMaterial(mat, cylinder) {
 //     matrix is (1, length, 1), so normalising its columns leaves the rotation.
 function taperMaterialInstanced(mat) {
   mat.onBeforeCompile = (shader) => {
-    shader.vertexShader = 'attribute vec3 aHA;\nattribute vec3 aHB;\n' + shader.vertexShader;
+    shader.vertexShader = 'attribute vec3 aHA;\nattribute vec3 aHB;\n'
+      + 'attribute float aPA;\nattribute float aPB;\n' + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n'
       + 'mat3 _im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
@@ -843,12 +922,42 @@ function taperMaterialInstanced(mat) {
       + '  float _t = transformed.y + 0.5;\n'
       + '  vec3 _h = mix(aHA, aHB, _t);\n'
       + '  vec3 _w = _rot * vec3(transformed.x, 0.0, transformed.z);\n'
+      // THE EXPONENT IS THE SHAPE. The surface along a direction is where the p-norm reaches 1,
+      // so dividing by that norm lands on it: p = 2 leaves the ellipse exactly as it was (the
+      // direction is already unit length), and higher p pushes the corners out towards a box.
+      // Branched, because pow() three times is not free and almost every joint is round.
+      + '  float _p = mix(aPA, aPB, _t);\n'
+      + '  if (_p > 2.001) {\n'
+      + '    float _n = pow(pow(abs(_w.x), _p) + pow(abs(_w.y), _p) + pow(abs(_w.z), _p), 1.0 / _p);\n'
+      + '    if (_n > 1e-6) _w /= _n;\n'
+      + '  }\n'
       + '  vec3 _b = _rotInv * (_w * _h);\n'
       + '  transformed.x = _b.x;\n'
       + '  transformed.z = _b.z;\n'
       + '}');
   };
-  mat.customProgramCacheKey = () => 'skelTaperInstanced';
+  mat.customProgramCacheKey = () => 'skelTaperInstancedP';
+  return mat;
+}
+
+// THE END SPHERES TAKE THE SAME EXPONENT, in object space, which is where it is simplest.
+//
+// A cap is a UNIT sphere scaled by the joint's half-extents through the instance matrix — so in
+// object space every vertex is already the unit direction the p-norm wants, and the surface is
+// that direction divided by its own norm. The instance's scale then maps it to the joint's
+// extents, exactly as it did for the ellipsoid.
+function sharpMaterialInstanced(mat) {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = 'attribute float aP;\n' + shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\n'
+      + 'if (aP > 2.001) {\n'
+      + '  float _n = pow(pow(abs(transformed.x), aP) + pow(abs(transformed.y), aP)\n'
+      + '                 + pow(abs(transformed.z), aP), 1.0 / aP);\n'
+      + '  if (_n > 1e-6) transformed /= _n;\n'
+      + '}');
+  };
+  mat.customProgramCacheKey = () => 'skelSharpInstanced';
   return mat;
 }
 
@@ -1022,6 +1131,35 @@ Skeleton.jointScaleIsSet = function (j) {
 // So the offset is a CONSEQUENCE of the box handles rather than a control of its own. Model
 // space, world-axis aligned, same frame as the extents.
 const ZERO_OFF = [0, 0, 0];
+// HOW BOXY A JOINT IS — 2 is the ellipsoid everything has always been, higher is squarer.
+//
+// It is the EXPONENT of the norm the surface is measured with, not a second shape competing with
+// the first: |x/hx|^p + |y/hy|^p + |z/hz|^p = 1 is an ellipsoid at p=2 and approaches a box as p
+// grows, with every squircle in between. So it changes one line of capsuleTarget and adds nothing
+// for anything else to re-derive — which is what makes it unlike the joint VOLUMES that were
+// built and removed: those were a parallel primitive with four consumers drifting apart, this is
+// one more number on the single SDF that both Make Skin and the bind already measure.
+//
+// matt: "the roundness of the capsules is fighting me for the hands, but if i could choose how
+// much to blend it towards a cube shape, that would help the initial layout a lot."
+const ROUND_MIN = 2, ROUND_MAX = 12;
+Skeleton.jointRound = function (j) {
+  const r = j && j._jointRound;
+  return (typeof r === 'number' && r >= ROUND_MIN) ? Math.min(r, ROUND_MAX) : ROUND_MIN;
+};
+
+Skeleton.setJointRound = function (j, p) {
+  if (!j) return;
+  const v = Math.max(ROUND_MIN, Math.min(ROUND_MAX, p || ROUND_MIN));
+  // Stored only when it differs from round, so a rig that never touched it serialises nothing and
+  // reads identically on a build that has never heard of the field.
+  if (v <= ROUND_MIN + 1e-6) delete j._jointRound; else j._jointRound = v;
+};
+
+Skeleton.jointRoundIsSet = function (j) {
+  return !!(j && typeof j._jointRound === 'number' && j._jointRound > ROUND_MIN + 1e-6);
+};
+
 Skeleton.jointOffset = function (j) {
   const o = j && j._jointOffset;
   return (o && o.length === 3) ? o : ZERO_OFF;
@@ -2915,6 +3053,9 @@ Skeleton.updateVisuals = function (main) {
       o._hb = o._hb || [0, 0, 0];
       o._ha[0] = hA[0] * SHAFT_INSET; o._ha[1] = hA[1] * SHAFT_INSET; o._ha[2] = hA[2] * SHAFT_INSET;
       o._hb[0] = hB[0] * SHAFT_INSET; o._hb[1] = hB[1] * SHAFT_INSET; o._hb[2] = hB[2] * SHAFT_INSET;
+      // The shaft spans two joints, so it carries both exponents and the shader blends them —
+      // a boxy palm running into a round finger tapers in sharpness as well as in size.
+      o._pa = Skeleton.jointRound(parent); o._pb = Skeleton.jointRound(j);
       o.scale.set(1, lenC, 1);
       o.visible = true;
       o._hi = !!(isHi || isSel);
@@ -2922,10 +3063,13 @@ Skeleton.updateVisuals = function (main) {
     }
     // The end caps are world-axis aligned — no rotation on them — so the three extents go
     // straight into the scale.
-    for (const [part, at, ph, k] of [[e.cap.a, _cA, hA, HEAD_INSET], [e.cap.b, _cB, hB, 1]]) {
+    for (const [part, at, ph, k, pj] of [[e.cap.a, _cA, hA, HEAD_INSET, parent],
+                                        [e.cap.b, _cB, hB, 1, j]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
         o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
+        // A cap belongs to ONE joint, so it takes that joint's sharpness rather than a blend.
+        o._p = Skeleton.jointRound(pj);
         o.visible = true;
         // Which of the two batches this end belongs to this frame. The opacity that used to
         // carry the preselection cannot ride on an instance, so it rides on the batch.
@@ -3542,7 +3686,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 12;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin
+const SKEL_VERSION = 13;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent)
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3687,6 +3831,14 @@ Skeleton.serialize = function (meshes) {
   // JOINT VOLUMES ARE GONE, and the section stays. Writing an empty one keeps the block at v7
   // so a reader that expects the section still finds it, and the reader below still SKIPS a
   // populated one — which is what lets a file saved when volumes existed keep loading.
+  // v13: how boxy each joint is. Its own section for the same reason offset got one — a file
+  // written before this existed still reads, and one written after still loads on a build that
+  // stops at v12.
+  const rounds = [];
+  meshes.forEach((m, i) => {
+    if (m && m._isBone && Skeleton.jointRoundIsSet(m)) rounds.push({ i: i, p: m._jointRound });
+  });
+
   const vols = [];
 
   if (!entries.length && !skins.length) return null;
@@ -3700,6 +3852,7 @@ Skeleton.serialize = function (meshes) {
   slots += 1 + rads.length * 2;
   slots += 1 + scales.length * 4;
   slots += 1 + offs.length * 4;
+  slots += 1 + rounds.length * 2;
   slots += 1 + phys.length * 4;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
@@ -3745,6 +3898,8 @@ Skeleton.serialize = function (meshes) {
 
   u[o++] = offs.length;
   for (const of_ of offs) { u[o++] = of_.i; f[o++] = of_.o[0]; f[o++] = of_.o[1]; f[o++] = of_.o[2]; }
+  u[o++] = rounds.length;
+  for (const rd of rounds) { u[o++] = rd.i; f[o++] = rd.p; }
 
   u[o++] = phys.length;
   for (const ph of phys) { u[o++] = ph.i; f[o++] = ph.s; f[o++] = ph.d; f[o++] = ph.g; }
@@ -4020,6 +4175,17 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       }
     }
 
+    // v13: the squircle exponent per joint. Read straight after v10's offsets, which is where it
+    // is written — sections are positional, so its place in the stream is what identifies it.
+    if (ver >= 13) {
+      const rn = u[o++];
+      for (let i = 0; i < rn; i++) {
+        const mi = u[o++];
+        const pw = f[o++];
+        if (meshes[mi]) Skeleton.setJointRound(meshes[mi], pw);
+      }
+    }
+
     // v11: physics-bone roots and their parameters.
     if (ver >= 11) {
       const pn = u[o++];
@@ -4186,6 +4352,10 @@ Skeleton.capsuleOpacity = function () {
   const saved = getOptionsURL().boneCapsuleOpacity;
   return typeof saved === 'number' ? saved : 0.16;
 };
+// Published here rather than at the definitions above, which run before `Skeleton` exists.
+Skeleton.capsuleSegments = capsuleSegments;
+Skeleton.setCapsuleSegments = setCapsuleSegments;
+
 Skeleton.setCapsuleOpacity = function (main, v) {
   const clamped = Math.max(0.05, Math.min(1, v));
   window._boneCapsuleOpacity = clamped;

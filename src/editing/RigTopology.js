@@ -273,6 +273,46 @@ export default RigTopology;
 // A CENTRELINE CHAIN IS NOT DUPLICATED TWICE. A joint on the plane is its own twin, so mirroring
 // a spine would stack a second spine on top of the first. Same test Bone Draw uses: off-plane
 // joints get a mirror, on-plane ones do not.
+
+// A CHAIN NAME NOTHING ELSE IS USING.
+//
+// Duplicate copied `_permanentStaticLabel` verbatim, so four fingers off one palm all came back
+// called finger_01_L, finger_02_L — the same names four times over. matt: "i noticed the
+// duplicate fingers in this test hand all share the same name."
+//
+// WHAT MAYA DOES, since that was the question: it does not number sibling digits at all. The
+// convention (and HumanIK's own skeleton) NAMES each one — LeftHandIndex1/2/3, or in the studio
+// dialect L_index_01_JNT, L_middle_01_JNT — because a hand has five digits with names, and
+// "finger 3" tells you nothing that "ring" does not tell you better. Numbering BOTH axes
+// (chain and joint) is the fallback for genuinely identical appendages, where there is no name
+// to use: tentacle_01_01, spider_leg_04_02.
+//
+// So a duplicate cannot pick the right name — only the user knows whether this one is the ring
+// finger — and it should not pretend to. What it owes is a name that is UNIQUE and obviously
+// provisional, so Name chain (already on the B menu) can set the real one. The base gains the
+// lowest free integer: finger -> finger2 -> finger3, keeping each joint's own number and side.
+//
+// The JOINT number and the _L/_R suffix are preserved exactly, because both are load-bearing:
+// the suffix drives mirror pairing, and the number is the joint's position along its chain.
+function uniqueBase(main, base) {
+  const used = new Set();
+  for (const m of main.getMeshes() || []) {
+    if (!Skeleton.isJoint(m)) continue;
+    const lbl = m._permanentStaticLabel || '';
+    // base_NN or base_NN_L — strip the number and side to get back to the base.
+    const hit = /^(.*)_\d+(?:_[LR])?$/.exec(lbl);
+    if (hit) used.add(hit[1]);
+  }
+  if (!used.has(base)) return base;
+  for (let n = 2; n < 999; n++) if (!used.has(base + n)) return base + n;
+  return base + '_copy';
+}
+
+function baseOf(label) {
+  const hit = /^(.*)_\d+(?:_[LR])?$/.exec(label || '');
+  return hit ? hit[1] : (label || 'bone');
+}
+
 RigTopology.canDuplicate = function (main, joint) {
   return !!(joint && Skeleton.isJoint(joint) && main.getIndexMesh(joint) >= 0);
 };
@@ -352,6 +392,12 @@ RigTopology.duplicate = function (main, joint, opts) {
   }
   const src = subtree(main, joint);
   const off = dupOffset(main, joint);
+  // Renaming the whole subtree onto one free base keeps a duplicated HAND together — palm and
+  // fingers all move to the same new base — rather than each branch drifting to its own.
+  const srcBase = baseOf(joint._permanentStaticLabel);
+  const newBase = uniqueBase(main, srcBase);
+  const rename = (label) => (label && newBase !== srcBase && baseOf(label) === srcBase)
+    ? newBase + label.slice(srcBase.length) : label;
   const copies = new Map();   // original -> copy
   const twins = new Map();    // original -> mirrored copy
   const made = [];
@@ -368,7 +414,7 @@ RigTopology.duplicate = function (main, joint, opts) {
     // The root's copy goes under the ROOT'S parent; everything else goes under its own copied
     // parent, which `copies` already holds because subtree() is parents-first.
     const parent = (s === joint) ? (s._parentMesh || null) : copies.get(s._parentMesh);
-    const name = s._permanentStaticLabel || null;
+    const name = rename(s._permanentStaticLabel) || null;
     const c = copyJoint(main, s, at, parent, name, null);
     copies.set(s, c);
     made.push(c);

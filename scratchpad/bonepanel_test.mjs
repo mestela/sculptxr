@@ -22,6 +22,7 @@ const FLAG_DEFAULTS = {};
 const stub = `
 const Enums = { Tools: { BONE_DRAW: 34 } };
 let _hideDecor = false;
+let _capSeg = null;
 const DEFAULT_FLAGS = ${JSON.stringify(FLAG_DEFAULTS)};
 const Skeleton = {
   joints: () => [], radiusFraction: () => 0.25, defaultRadiusFrac: () => 0.25,
@@ -39,8 +40,16 @@ const Skeleton = {
   // building — a stub without it throws before a single check runs.
   capsuleOpacity: () => (_capOp == null ? 0.16 : _capOp),
   setCapsuleOpacity: (main, v) => { _capOp = Math.max(0.05, Math.min(1, v)); return _capOp; },
+  // Capsule tessellation is a setting now — the panel reads it to draw the Capsule Detail slider.
+  capsuleSegments: () => (_capSeg == null ? 56 : _capSeg),
+  setCapsuleSegments: (main, n) => { _capSeg = Math.max(8, Math.min(64, Math.round(n))); return _capSeg; },
   // Bone shapes (roadmap #60): the panel asks which meshes are joints and what shape each has.
   isJoint: (m) => !!(m && m._isBone),
+  // The squircle exponent the Roundness slider edits — 2 is round. See Skeleton.jointRound.
+  jointRound: (j) => ((j && typeof j._jointRound === 'number' && j._jointRound > 2) ? Math.min(j._jointRound, 12) : 2),
+  setJointRound: (j, p) => { if (j) j._jointRound = p; },
+  mirrorEdits: (main) => !!(main && main.getSculptManager && main.getSculptManager()
+    && main.getSculptManager().getSymmetryFlag && main.getSculptManager().getSymmetryFlag()),
   // Whether a rig edit mirrors: the panel asks before offering a physics twin, so a stub without
   // it throws before a single check runs. Reads the mock's own symmetry flag, which is what makes
   // the "physics names both joints" check mean something either way.

@@ -715,13 +715,26 @@ class Gui {
     });
     topbarEl.appendChild(statsSpan);
 
-    // Close all dropdowns on outside click
+    // CLOSE ON AN OUTSIDE PRESS — including a press in the 3D viewport, which is the one place it
+    // did not work.
+    //
+    // This listened for `mousedown` on document, and the viewport never delivers one: the canvas
+    // handler calls preventDefault() on the pointerdown, which suppresses the compatibility mouse
+    // event outright, and stopPropagation() on top of that, which stops anything surviving from
+    // reaching document. So every panel closed the menu and the model — the one surface where you
+    // are plainly done with the menu — could not. matt: "a click on a ui panel closes it, but not
+    // a click in the 3d viewport."
+    //
+    // POINTERDOWN, IN THE CAPTURE PHASE. Capture runs on the way DOWN, before the target's own
+    // handler, so the canvas stopping propagation afterwards cannot hide the press from this.
+    // The two `closest` guards still exempt the menu itself, and nothing is consumed here — the
+    // press goes on to do whatever it was for.
     this._dropdownCloseHandler = (e) => {
       if (!e.target.closest?.('.desktop-dropdown') && !e.target.closest?.('.desktop-menu-btn')) {
         this._closeAllDropdowns();
       }
     };
-    document.addEventListener('mousedown', this._dropdownCloseHandler);
+    document.addEventListener('pointerdown', this._dropdownCloseHandler, true);
 
     this.updateMesh();
     this.setVisibility(true);
@@ -892,7 +905,8 @@ class Gui {
     }
 
     if (this._dropdownCloseHandler) {
-      document.removeEventListener('mousedown', this._dropdownCloseHandler);
+      // Same event and same phase it was added with, or the listener outlives the teardown.
+      document.removeEventListener('pointerdown', this._dropdownCloseHandler, true);
       this._dropdownCloseHandler = null;
     }
 
@@ -938,6 +952,26 @@ class Gui {
     if (scrolls.length) {
       const lists = panelEl.querySelectorAll('.mm-outliner-list');
       for (const [i, top] of scrolls) if (lists[i]) lists[i].scrollTop = top;
+    }
+    // THE DRAGGED HEIGHT, RESTORED AND REMEMBERED. The list is `resize: vertical` on desktop (see
+    // the stylesheet), which the browser handles entirely on its own — all this does is put the
+    // saved number back on a freshly built list and write down where the drag ended.
+    //
+    // ON pointerup, NOT a ResizeObserver. The observer is the more obvious hook and it is the one
+    // I wrote first: its callbacks are delivered during the rendering steps, which a hidden tab
+    // does not run, so it is unverifiable from a headless session and silently dead in a
+    // background window. A drag ends with a pointer release, which is an ordinary event.
+    {
+      const list = panelEl.querySelector('.mm-outliner-list');
+      if (list) {
+        const saved = getOptionsURL().outlinerHeight;
+        if (saved > 0) list.style.height = saved + 'px';
+        // Debounced through saveOption, the same as a slider drag.
+        list.addEventListener('pointerup', () => {
+          const h = Math.round(list.getBoundingClientRect().height);
+          if (h > 0) getOptionsURL.saveOption?.('outlinerHeight', h, 300);
+        });
+      }
     }
     const rebuild = () => this._buildDesktopScene(panelEl);
     // Pass a no-op lightRepaintFn so wireSelect doesn't call rebuild() when

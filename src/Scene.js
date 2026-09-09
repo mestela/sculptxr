@@ -69,6 +69,7 @@ import { VrRadialMenu           } from './gui/htmlvr/VrRadialMenu.js';
 import NomadLink                  from './link/NomadLink.js';
 import NomadImport                from './link/NomadImport.js';
 import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder (window._vrLog)
+import ViewportMenu from './gui/ViewportMenu.js';
 import SkinPreview from './editing/SkinPreview.js';
 import MotionTrail from './editing/MotionTrail.js';
 
@@ -214,6 +215,8 @@ class Scene {
     // The flat-screen secondary-action modifier. Built after the Gui so #viewport exists, and
     // it hides itself whenever the active tool has no secondary action.
     this._modifierButton = new ModifierButton(this);
+    // The flat-screen skin of the VR marking menus — see ViewportMenu.
+    this._viewportMenu = new ViewportMenu(this);
 
     this._preventRender = false; // prevent multiple render per frame
     this._drawFullScene = false; // render everything on the rtt
@@ -3509,6 +3512,15 @@ class Scene {
   }
 
   loadScene(fileData, fileType) {
+    // A LOAD DISMISSES THE FILES MENU. Opening a scene is the last thing you want from that menu,
+    // and it stayed up over the thing it had just loaded. matt: "if i use the file menu to open a
+    // file, it leaves the file menu open after load."
+    //
+    // HERE rather than on the button, because the button only opens an OS picker: closing there
+    // would dismiss the menu before the picker resolves, and dismiss it for nothing when the
+    // picker is cancelled. Every route in — Open, Import, a browser save, a drop — arrives at this
+    // one function, so one line covers them all.
+    try { this._mainMenuPanel?.closeMenu?.(); } catch (_) {}
     var newMeshes;
     if (fileType === 'obj') newMeshes = Import.importOBJ(fileData, this._gl);
     else if (fileType === 'sgl') newMeshes = Import.importSGL(fileData, this._gl, this);
@@ -3934,6 +3946,29 @@ class Scene {
     if (this._guiXR && this._guiXR.refreshSceneWidget) {
       this._guiXR.refreshSceneWidget();
     }
+  }
+
+  // DELETE ONE JOINT AND EVERYTHING BELOW IT, as its own verb rather than through the selection.
+  //
+  // Not the same as Dissolve, which rejoins the neighbours and keeps the limb — this is the one
+  // that takes the limb with it, which is what "delete this bone" means when you are pointing at
+  // a finger you no longer want. `_withDescendants` is what makes it the subtree; removeMeshes
+  // would cascade anyway, but the removal has to be RECORDED as the same set or undo brings back
+  // a joint whose children are gone.
+  deleteJointSubtree(joint) {
+    if (!joint || this.getIndexMesh(joint) < 0) return false;
+    const toRemove = this._withDescendants([joint]);
+    this.notifyNomadDeleted?.(toRemove);
+    this.removeMeshes(toRemove);
+    this._stateManager.pushStateRemove(toRemove.slice());
+    this._selectMeshes = (this._selectMeshes || []).filter((m) => !toRemove.includes(m));
+    if (toRemove.includes(this._mesh)) {
+      this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
+    }
+    Skeleton.updateVisuals(this);
+    Skeleton.refreshOutliner(this);
+    this.render?.();
+    return true;
   }
 
   deleteCurrentSelection() {
@@ -5032,6 +5067,8 @@ class Scene {
     if (!this._mainMenuPanel && this._scene && this._camera && this._renderer) {
       try {
         this._mainMenuPanel = new MainMenuPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+        // Going back to the model closes whatever menu is up — see _wireViewportDismiss.
+        this._mainMenuPanel._wireViewportDismiss?.(this);
         this._mainMenuPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
         this._mainMenuPanel._element.addEventListener('mm-pin-change', (e) => {
           this._onMainMenuPanelPinChange(e.detail.pinned);
@@ -9334,11 +9371,28 @@ class Scene {
       { label: dupSubject ? ('Duplicate ' + dupSubject.what) : 'Duplicate',
         icon: 'fa-clone', enabled: !!dupSubject,
         run: () => { this._duplicateInPlace(dupSubject); } },
-      { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
-      { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
-      { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
+      // ...AND THE SAME FOR THE CLIPBOARD THREE. They are the TIMELINE's clipboard — keys, not
+      // objects — which the bare words did not say, so on a rig they read as a general Copy that
+      // never did anything. Named for their subject, and only offered where that subject exists.
+      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },
+      { label: 'Paste Keys', icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
+      { label: 'Paste Linked', icon: 'fa-link',      enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
-      { label: 'Delete',     icon: 'fa-trash',       enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },   // selected key(s), all types incl. #34 layers
+      // DELETE SAYS WHAT IT WILL DELETE. One wedge, but it stood for one thing — selected
+      // animation keys — so right-clicking a bone offered a Delete that was about the timeline
+      // and, with no keys selected, was simply dead. matt: "if the r.click was on a bone and
+      // we're in the bone tool, make it say 'delete bone', if its in the animation editor or in
+      // grab mode, it says 'delete keyframe'."
+      //
+      // THE BONE READING WINS WHEN THERE IS A BONE UNDER THE POINTER AND THE BONE TOOL IS ACTIVE
+      // — both, not either. Pointing at a joint while holding Grab means you are about to pose
+      // it, not remove it, and a Delete that quietly meant "the limb" there would be the worst
+      // kind of surprise. Outside the bone tool it stays the timeline's Delete.
+      (inBoneTool && dissolveTarget)
+        ? { label: 'Delete Bone', icon: 'fa-trash', enabled: true,
+            run: () => { this.deleteJointSubtree(dissolveTarget); } }
+        : { label: hasKeySel ? 'Delete Keyframes' : 'Delete', icon: 'fa-trash',
+            enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },
       // Reachable without leaving VR, which is the point: hand tracking grabbing a
       // stroke mid-reach is exactly when you need to switch sculpting off fast.
       { label: window._sculptLocked ? 'Unlock' : 'Sculpt Lock',
@@ -9446,6 +9500,31 @@ class Scene {
     sync(this._mainMenuPanel);
     sync(this._toolPickerPanel);
     this._tornOffPanels?.forEach(sync);
+  }
+
+  // WHAT THE FLAT-SCREEN MENU SHOWS: the B ring, plus the A ring's pin modes as a submenu when
+  // the thing under the pointer has a pin to talk about.
+  //
+  // ONE MENU, NOT TWO. VR has two rings because it has two buttons; a pointer has one gesture, so
+  // the second ring becomes a submenu — which is the shape the B ring already uses for Name chain
+  // and for pin Weight, so it is a familiar depth rather than a new idea.
+  _resolveViewportMenuCommands() {
+    const cmds = this._resolveRadialCommands() || [];
+    const pin = this._resolvePinCommands() || [];
+    if (!pin.length) return cmds;
+    return [{ label: 'Pin', icon: 'fa-thumbtack', enabled: true, sub: () => pin, run: () => {} }]
+      .concat(cmds);
+  }
+
+  // Open it at the pointer. Returns false when there is nothing to show, so the caller can let
+  // the gesture mean whatever it meant before.
+  openViewportMenu(clientX, clientY) {
+    if (!this._viewportMenu) return false;
+    // FROZEN THE SAME WAY THE RING FREEZES. _resolveRadialCommands latches the preselected joint
+    // into the closures it returns, so what the menu acts on is what was under the pointer when
+    // it opened — not whatever the pointer has drifted onto by the time a row is clicked.
+    const cmds = this._resolveViewportMenuCommands();
+    return this._viewportMenu.open(cmds, clientX, clientY);
   }
 
   _quickSwapTool() {

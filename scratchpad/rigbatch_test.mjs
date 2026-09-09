@@ -85,19 +85,53 @@ check('...copying the half-extents into the slot rather than referencing the scr
 // the facet sagitta, r(1 - cos(pi/n)): 2.5% of the radius at the 14 segments these had, 0.06% at
 // 56. Instanced, so this is one geometry rather than one per bone.
 check('the capsules are tessellated finely enough that the seam is not a sawtooth',
-  /new THREE\.CylinderGeometry\(1, 1, 1, 56, 1, true\)/.test(SRC)
-    && /new THREE\.SphereGeometry\(1, 56, 40\)/.test(SRC),
+  // The counts are a SETTING now (the mobile-VR knob), so what is pinned is the DEFAULT and the
+  // fact that both geometries take it — a hardcoded low number would be the regression here.
+  /const CAP_SEGMENTS_DEFAULT = 56;/.test(SRC)
+    && /new THREE\.CylinderGeometry\(1, 1, 1, n, 1, true\)/.test(SRC)
+    && /new THREE\.SphereGeometry\(1, n,/.test(SRC),
   'at 14 segments the zigzag is about a pixel wide at a working zoom');
 check('...and inset, so the shaft never shares a surface with the spheres it enters',
   /const SHAFT_INSET = 0\.97;/.test(SRC) && /const HEAD_INSET = 0\.98;/.test(SRC));
+// ── SHARPNESS REACHES THE DRAWN CAPSULE, NOT ONLY THE SKIN ───────────────────────────────────
+//
+// The exponent is per joint and the capsules are INSTANCED from one shared sphere and one shared
+// cylinder — so it has to arrive as an instanced attribute and be applied in the vertex shader,
+// or a boxy joint would look round right up until Make Skin disagreed with it. Both shaders skip
+// the pow() entirely at p = 2, which is what keeps the common rig free.
+check('the shaft blends BOTH ends\' sharpness',
+  /attribute float aPA;/.test(SRC) && /attribute float aPB;/.test(SRC)
+    && /float _p = mix\(aPA, aPB, _t\);/.test(SRC),
+  'a boxy palm running into a round finger has to taper in sharpness as well as in size');
+check('...and the end spheres take their own joint\'s',
+  /attribute float aP;/.test(SRC) && /function sharpMaterialInstanced/.test(SRC));
+check('...and both skip the cost when the joint is round',
+  (SRC.match(/> 2\.001/g) || []).length >= 2,
+  'pow() three times per vertex on every rig would be the price of a feature almost nobody uses');
+check('...and the attributes default to 2, not 0',
+  /new Float32Array\(cap\)\.fill\(2\)/.test(SRC),
+  'a zero exponent is not a shape; an unwritten slot must draw as the ellipsoid it always was');
+
 check('...and the head sphere sits inside the one the bone above already drew there',
-  /\[e\.cap\.a, _cA, hA, HEAD_INSET\], \[e\.cap\.b, _cB, hB, 1\]/.test(SRC)
+  // The tuple carries the joint too now (each cap takes its own sharpness), so the trailing
+  // entries are open — what is pinned is the INSET, which is what this check is about.
+  /\[e\.cap\.a, _cA, hA, HEAD_INSET[^\]]*\],\s*\[e\.cap\.b, _cB, hB, 1[^\]]*\]/.test(SRC)
     && /o\.scale\.set\(ph\[0\] \* k, ph\[1\] \* k, ph\[2\] \* k\);/.test(SRC),
   'every joint in a chain is drawn twice over, by the bone that ends there and the one that starts');
+check('the END spheres get their own geometry too, now that they carry an attribute',
+  /const needsOwnGeo = isShaftKey\(key\)/.test(SRC)
+    && /startsWith\('capEnd'\)/.test(SRC)
+    && /if \(needsOwnGeo\) geo = geo\.clone\(\);/.test(SRC),
+  'four batches sharing one sphere overwrite each other\'s aP and resize it to whichever grew '
+    + 'last, so the batch holding the most instances reads past the end and stops drawing');
+
 // Instanced attributes live on the GEOMETRY, and the capsule geometries are shared singletons --
 // so four shaft batches sharing one would write their taper over each other.
 check('...on a geometry of its own, since the shaft geometry is a shared singleton',
-  /if \(isShaftKey\(key\)\) geo = geo\.clone\(\);/.test(SRC),
+  // The clone now covers ends as well as shafts (see above), so the shaft's half of it is
+  // asserted through the same predicate rather than by its old standalone line.
+  /const needsOwnGeo = isShaftKey\(key\)/.test(SRC)
+    && /if \(needsOwnGeo\) geo = geo\.clone\(\);/.test(SRC),
   'the shaft batches overwrite one another taper data');
 check('...and the taper attributes grow with the batch',
   /if \(isShaftKey\(key\)\) ensureTaperAttrs\(m, cap\);/.test(SRC),

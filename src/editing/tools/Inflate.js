@@ -1,4 +1,5 @@
 import Tablet from '../../misc/Tablet.js';
+import Utils from '../../misc/Utils.js';
 import SculptBase from './SculptBase.js';
 
 class Inflate extends SculptBase {
@@ -12,6 +13,18 @@ class Inflate extends SculptBase {
     this._culling = false;
     this._idAlpha = 0;
     this._lockPosition = false;
+    // INFLATE ALONG A SMOOTHED NORMAL FIELD, not each vertex's own normal.
+    //
+    // Pushing every vertex down its own normal is correct for a dense mesh and wrong for a coarse
+    // one: on a low-resolution tube adjacent normals diverge by tens of degrees, so neighbours
+    // travel apart, the quads between them fold, and what should be a swelling becomes a crease
+    // with geometry trapped behind it. matt: "if i inflate these, minor differences in normals
+    // rapidly expand to become creases and trapped geometry."
+    //
+    // Averaging the direction over the one-ring removes exactly the component that makes
+    // neighbours diverge, and leaves the overall outward push intact. On a dense mesh the
+    // averaged normal and the raw one agree, so it costs nothing there.
+    this._smoothNormals = true;
   }
 
   stroke(picking) {
@@ -41,6 +54,13 @@ class Inflate extends SculptBase {
     var mAr = mesh.getMaterials();
     var vProxy = mesh.getVerticesProxy();
     var nAr = mesh.getNormals();
+    // The averaged field, computed once for the whole brush rather than per vertex. laplacianSmooth
+    // takes any per-vertex field, so the normals go through the same ring walk the positions do.
+    var sNor = null;
+    if (this._smoothNormals) {
+      sNor = new Float32Array(Utils.getMemory(iVerts.length * 4 * 3), 0, iVerts.length * 3);
+      this.laplacianSmooth(iVerts, sNor, nAr);
+    }
     var radius = Math.sqrt(radiusSquared);
     var deformIntensity = intensity * radius * 0.1;
     if (this._negative)
@@ -65,6 +85,19 @@ class Inflate extends SculptBase {
       var nx = nAr[ind];
       var ny = nAr[ind + 1];
       var nz = nAr[ind + 2];
+      if (sNor) {
+        // BLENDED, NOT REPLACED. A fully averaged normal on a sharp edge points into the wedge
+        // between the two faces and would flatten the feature it is inflating; half of each keeps
+        // the surface's own direction while removing the divergence that folds the quads.
+        var i3n = i * 3;
+        nx = nx * 0.5 + sNor[i3n] * 0.5;
+        ny = ny * 0.5 + sNor[i3n + 1] * 0.5;
+        nz = nz * 0.5 + sNor[i3n + 2] * 0.5;
+        // A cancelled pair leaves nothing to push along — fall back rather than divide by zero.
+        if (nx * nx + ny * ny + nz * nz < 1e-12) {
+          nx = nAr[ind]; ny = nAr[ind + 1]; nz = nAr[ind + 2];
+        }
+      }
       fallOff /= Math.sqrt(nx * nx + ny * ny + nz * nz);
       fallOff *= mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
       vAr[ind] = vx + nx * fallOff;

@@ -1527,8 +1527,20 @@ class SculptGL extends Scene {
       this._rightClickX = this._rightClickY = null;
       this._rightMoved = false;
       if (wasClick) {
-        SecondaryAction.fire(this);
-        if (this._modifierButton) this._modifierButton.refresh();
+        // THE MARKING MENU, NOT THE PIN CYCLE. The secondary action's only entry is PIN, and PIN
+        // is a CYCLE — unpinned -> position -> position+rotation — which is precisely what the VR
+        // A ring was built to replace: "five states is two too many for a cycle, a ring shows all
+        // of them at once". So the desktop shorthand for a cycle now opens the ring instead, and
+        // reaches all five. matt: "atm it adds pins and cycles, the marking menu is better for
+        // that anyway."
+        //
+        // The cycle is NOT lost: the on-screen modifier button still fires it, which is how pen
+        // and touch have always reached it.
+        const opened = this.openViewportMenu?.(this._rightClientX ?? 0, this._rightClientY ?? 0);
+        if (!opened) {
+          SecondaryAction.fire(this);
+          if (this._modifierButton) this._modifierButton.refresh();
+        }
       }
     }
 
@@ -1857,6 +1869,10 @@ class SculptGL extends Scene {
       this._rightClickX = mouseX;
       this._rightClickY = mouseY;
       this._rightMoved = false;
+      // ...and where it was on SCREEN, because the menu is a DOM overlay while mouseX/Y are
+      // canvas pixels scaled by the device ratio.
+      this._rightClientX = event.clientX;
+      this._rightClientY = event.clientY;
     }
 
     var canEdit = false;

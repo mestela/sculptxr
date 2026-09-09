@@ -208,6 +208,17 @@ var getOptionsURL = function () {
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
   options.boneShowSkinClaims = queryBool(getVal('boneShowSkinClaims'), false);
   options.boneHideDecor = queryBool(getVal('boneHideDecor'), false);
+  {
+    // Capsule tessellation — the mobile-VR knob. null = never set, so the shipped 56 stands.
+    const raw = getVal('boneCapSegments');
+    options.boneCapSegments = (raw == null || raw === '') ? null : parseInt(raw, 10);
+  }
+  // The desktop outliner's dragged height, in px. null = never dragged, so the stylesheet's own
+  // fraction-of-the-panel height stands. See Gui._buildDesktopScene.
+  {
+    const raw = getVal('outlinerHeight');
+    options.outlinerHeight = (raw == null || raw === '') ? null : parseInt(raw, 10);
+  }
   // The ground grid's occluded pass has its own opacity; null means "never set", which falls back
   // to the fraction of the main one it used to be derived from. See Scene.getGridOccludedOpacity.
   {

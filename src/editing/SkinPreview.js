@@ -119,6 +119,10 @@ function poseHash(main) {
     h = (h * 31 + Math.round(c.x * 8192)) | 0;
     h = (h * 31 + Math.round(c.y * 8192)) | 0;
     h = (h * 31 + Math.round(c.z * 8192)) | 0;
+    // SHARPNESS IS PART OF THE SHAPE, so it belongs in the hash. Without it the preview only
+    // caught up when something else moved — or when the flag was toggled off and on, which clears
+    // the hash. matt: "the attach cubes only change shape if i hide and show them."
+    h = (h * 31 + Math.round(Skeleton.jointRound(j) * 256)) | 0;
     h = (h * 31 + Math.round(half[0] * 8192)) | 0;
     h = (h * 31 + Math.round(half[1] * 8192)) | 0;
     h = (h * 31 + Math.round(half[2] * 8192)) | 0;
@@ -273,7 +277,11 @@ SkinPreview.report = function (main) {
   if (!att) { console.log('[skin preview] nothing to report — no bones'); return []; }
   const name = (m) => (m && (m._permanentStaticLabel || ('#' + m.getID()))) || '?';
   const rows = att.ends.map((e) => ({
-    at: name(e.joint), to: name(e.other), perimeter: e.perimeter,
+    at: name(e.joint), to: name(e.other),
+    // The block and the face it came out of, which is the thing you actually want to see: a whole
+    // 4x4 face meeting a 2x2 block of an 8x8 one is the reduction band working, not a pinch.
+    block: (e.rect.a1 - e.rect.a0) + 'x' + (e.rect.b1 - e.rect.b0) + ' of ' + e.box.box.n,
+    perimeter: e.perimeter,
     state: e.evicted ? 'EVICTED' : (e.full ? 'ok' : 'pinched'),
   }));
   const bad = rows.filter((r) => r.state !== 'ok');
@@ -281,5 +289,12 @@ SkinPreview.report = function (main) {
   if (rows.length) console.table(rows);
   return rows;
 };
+
+// ON THE CONSOLE, because that is where rig diagnostics are read — over remote debugging from a
+// headset, where a panel cannot be copied out of. `skinReport()` prints every bone end with the
+// block it claims and whether anything had to shrink.
+if (typeof window !== 'undefined') {
+  window.skinReport = () => SkinPreview.report(window.sculptgl_instance);
+}
 
 export default SkinPreview;
