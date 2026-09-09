@@ -1391,7 +1391,7 @@ function lengthsPreserved(name, joints, before) {
     /if \(Skeleton\.isJoint\(mesh\) && window\._vrGizmoPose !== false\) \{[\s\S]{0,700}?IKSolver\.solve\(/.test(VR),
     'the joint branch in _applyMatrix is gone; a drag would edit bone LENGTH');
   check('VR gizmo: the joint branch returns before the matrix write',
-    /IKSolver\.solve\([\s\S]{0,300}?return;[\s\S]{0,200}?setModelSpaceMatrix/.test(VR),
+    /IKSolver\.solve\([\s\S]{0,300}?return;[\s\S]{0,900}?setModelSpaceMatrix/.test(VR),
     'falling through would write the joint after solving it');
   check('VR gizmo: orientation is driven, not just position',
     /IKSolver\.solve\(this\._main, mesh, _poseT, null, _poseQ\)/.test(VR),

@@ -45,8 +45,8 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
     _cut('u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV; u[o++] = s.lvl;',
       'u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV;');
   }
-  if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (hidden ? 64 : 0),');
-  else if (_i === 'nohidden') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),', '| (m._isWeightCage ? 32 : 0),');
+  if (_i === 'nocagebit') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)', '| (hidden ? 64 : 0)');
+  else if (_i === 'nohidden') _cut('| (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)', '| (m._isWeightCage ? 32 : 0)');
   else if (_i === 'nocagejoint') _cut('          if (row.parent && row.parent.getID) row.mesh._cageJointId = row.parent.getID();', '');
   if (process.env.SKEL_INJECT === 'pinbits') {
     const a = "\n        | (((m._boneIKPin | 0) & 4) << 2)\n";

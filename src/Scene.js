@@ -1119,6 +1119,32 @@ class Scene {
     this._canvas.style.cursor = style;
   }
 
+  // THE FLOOR, IN MODEL SPACE — the one number every feature that says "ground" must agree on.
+  //
+  // There was no such number. `PhysicsBones.groundHeight` read `main._groundY`, and NOTHING IN
+  // THE APP EVER SET IT, so the physics ground option has been clamping to y = 0 since it
+  // shipped rather than to the floor the user can see.
+  //
+  // THERE ARE TWO GRIDS AND ONLY ONE OF THEM IS REAL. `this._grid` is the legacy SculptGL
+  // drawable; its render call has been commented out (see the `_showGrid` line in the render
+  // path), so it is an invisible object that still carries a matrix — and that matrix puts it
+  // around y = -35, nowhere near anything anyone poses. Reading it produced a clamp that could
+  // never fire, which looks exactly like the feature doing nothing. The grid the user actually
+  // sees is `_groundGrid`, a THREE.GridHelper added to `_worldGroup`.
+  //
+  // `_worldGroup` IS MODEL SPACE — it is the group every mesh's three object is added to, so a
+  // child's local transform is its model matrix. `_groundGrid.position.y` is therefore already
+  // in the same space as Skeleton.jointPos, with no conversion, and the 0.701 scale on
+  // `_worldGroup` must NOT be applied here: that scale is model -> three-world, and both the
+  // joints and the grid sit on the model side of it. (This is the same two-spaces trap the
+  // motion-path work hit — see docs/. Anything that measures the grid against a joint has to
+  // pick one side and stay on it.)
+  groundHeight() {
+    const g = this._groundGrid;
+    if (g && g.position) return g.position.y;
+    return 0;
+  }
+
   initGrid() {
     var grid = this._grid;
     grid.normalizeSize();
@@ -9182,6 +9208,22 @@ class Scene {
     if (now) cmds.push({
       label: 'Weight', icon: 'fa-sliders', enabled: true,
       sub: () => this._resolvePinWeightCommands(joint), run: () => {},
+    });
+    // KEEP ABOVE GROUND — a TOGGLE at the root, not a mode wedge and not a submenu.
+    //
+    // Not a mode, because it composes with all four of them (see IKSolver.PIN_ABOVE_GROUND): as
+    // a mode it would need spelling out four times over. Not a submenu either, despite the note
+    // above about the ring's size — a submenu is right for Weight's four related commands and
+    // wrong for a single boolean, where it would cost a second gesture to flip one bit. Gated on
+    // `now` like Weight is, so an UNPINNED joint's ring stays at the five it has always been and
+    // only the already-pinned case reaches seven, inside the eight the note allows for.
+    //
+    // The label carries the state rather than the dimming the modes use: dimming says "choosing
+    // this does nothing", which is true of a mode you are already in and false of a toggle.
+    if (now) cmds.push({
+      label: IKSolver.keepsAboveGround(joint) ? 'Ground: On' : 'Ground: Off',
+      icon: 'fa-arrows-down-to-line', enabled: true,
+      run: () => { IKSolver.togglePinGround(this, joint); },
     });
     return cmds;
   }

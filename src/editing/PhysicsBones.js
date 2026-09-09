@@ -77,9 +77,16 @@ PhysicsBones.gravityUnits = gravityUnits;
 
 // Where the floor is. The ground grid is the one the user can actually see, so a chain that
 // stops on it stops where they expect; y = 0 is the fallback, which is where the grid sits.
+// THIS USED TO BE A LIE. It read `main._groundY`, which nothing anywhere ever assigned, so it
+// always returned the 0 fallback — while the grid the user reads as the floor sits well below
+// that. A chain with Ground ticked stopped in mid-air, at a plane with nothing drawn on it.
+// Scene.groundHeight is now the single authority (the grid's own matrix); `_groundY` stays as an
+// override for a caller that genuinely wants a different plane, and for the harness mocks that
+// have no Scene to ask.
 PhysicsBones.groundHeight = function (main) {
-  const g = main && (main._groundY !== undefined ? main._groundY : null);
-  return g === null ? 0 : g;
+  if (main && main._groundY !== undefined && main._groundY !== null) return main._groundY;
+  if (main && typeof main.groundHeight === 'function') return main.groundHeight();
+  return 0;
 };
 
 PhysicsBones.DEFAULTS = DEFAULTS;

@@ -3598,6 +3598,10 @@ Skeleton.mirrorPose = function (main, side, controls) {
     const pin = j._boneIKPinObj;
     pinWas.set(j, pin ? {
       mode: (j._boneIKPin | 0) & 7,
+      // MIRRORED WITH THE MODE. A planted left foot mirrored to the right is still planted —
+      // the flag is part of what "this pin" means, and dropping it would give the twin a pin
+      // that sinks through the floor while its source does not.
+      above: !!pin._pinAboveGround,
       m: new THREE.Matrix4().fromArray(pin.getModelSpaceMatrix()),
     } : null);
   }
@@ -3651,7 +3655,8 @@ Skeleton.mirrorPose = function (main, side, controls) {
       added.push(pin);
     }
     pin._pinMode = was.mode;
-    dst._boneIKPin = was.mode;
+    pin._pinAboveGround = was.above;
+    dst._boneIKPin = was.mode | (was.above ? 8 : 0);
     const m = new THREE.Matrix4().multiplyMatrices(_mMirror, was.m).multiply(_mMirror);
     pin.setModelSpaceMatrix(m.elements);
     Skeleton.syncThree(pin);
@@ -3691,6 +3696,9 @@ const SKEL_VERSION = 13;  // v3 adds the IK pin link per entry; v4 the selection
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
 function pinModeOf(bone) { return ((bone >> 1) & 3) | ((bone >> 2) & 4); }
+// The flag half of the same field, read separately because it is not part of the mode and must
+// not be folded into it — see the serialize note on bit 7.
+function pinAboveGroundOf(bone) { return (bone & 128) ? 8 : 0; }
 
 const NONE = 0xffffffff;
 const INFLUENCES = 4;
@@ -3740,9 +3748,15 @@ Skeleton.serialize = function (meshes) {
       // no field of its own — a cage is parented to exactly that joint, and `p` already carries
       // the link.
       // Bit 6 (v6) = hidden. See the note on the entry filter above.
+      // Bit 7 (v7) = KEEP ABOVE GROUND. A pin FLAG, not a mode — it composes with all four
+      // modes, so it could not take a value in the mode field (see IKSolver.PIN_ABOVE_GROUND).
+      // Appended at the top of the word like every flag before it, so a file written by this
+      // build still reads correctly in an older one: the bit is simply ignored there and the pin
+      // comes back with its mode intact and the clamp off, which is the pre-feature behaviour.
       bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0)
         | (((m._boneIKPin | 0) & 4) << 2)
-        | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0),
+        | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)
+        | (((m._boneIKPin | 0) & 8) ? 128 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
       // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
@@ -3991,7 +4005,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       if (!(row.bone & 1)) continue;
       const m = row.mesh;
       m._isBone = true;
-      m._boneIKPin = pinModeOf(row.bone);
+      m._boneIKPin = pinModeOf(row.bone) | pinAboveGroundOf(row.bone);
       m._isNull = true;
       m.isPickable = false;
       m._boneRadius = row.r;
@@ -4022,7 +4036,8 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       const mode = pinModeOf(row.bone);
       if (!mode) continue;
       const pinMesh = row.pin !== NONE ? meshes[row.pin] : null;
-      pendingPins.push({ joint: row.mesh, mode: mode, pin: pinMesh || null });
+      pendingPins.push({ joint: row.mesh, mode: mode, pin: pinMesh || null,
+        above: !!pinAboveGroundOf(row.bone) });
     }
 
     // Reparenting is world-PRESERVING (setMeshParent uses attach), but the matrix loaded
@@ -4209,14 +4224,20 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         p.pin._isNull = true;
         p.pin.isPickable = false;
         p.joint._boneIKPinObj = p.pin;
-        p.joint._boneIKPin = p.mode;
+        // THE LIVE STORE IS THE PIN OBJECT, so setting only `_boneIKPin` here would load a rig
+        // whose file says "keep above ground" and whose session does not — the clamp would be
+        // off until the user toggled it twice. `_pinMode` is set on the object for exactly the
+        // same reason a few lines down; this is its flag half.
+        p.pin._pinAboveGround = p.above;
+        p.joint._boneIKPin = p.mode | (p.above ? 8 : 0);
       } else {
         // Pre-v3: only the mode survived, so a pin is made where the joint is standing.
         const made = Skeleton.makePin(main, p.joint);
         if (made) {
           made._pinMode = p.mode;
+          made._pinAboveGround = p.above;
           p.joint._boneIKPinObj = made;
-          p.joint._boneIKPin = p.mode;
+          p.joint._boneIKPin = p.mode | (p.above ? 8 : 0);
         }
       }
     }

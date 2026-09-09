@@ -106,8 +106,96 @@ IKSolver.PIN_SOFT = 3;
 // one. It costs a third bit in the field, which is why it could not simply take a low slot.
 IKSolver.PIN_ROT = 4;
 
+// KEEP ABOVE GROUND — a FLAG, not a sixth mode, and the distinction is the whole design.
+//
+// matt: a per-pin toggle "for easier foot contact stuff" — plant a foot and it stops sinking
+// through the floor while you pose the rest. Every one of the modes above answers "which degrees
+// of freedom does this pin hold"; this answers "and where is it allowed to be", which is an
+// orthogonal question. Made a mode, it would have to be spelled out four times over
+// (above-ground 3DOF, above-ground 6DOF, ...) and the A ring would double in length. As a flag
+// it composes with all four for free.
+//
+// IT IS A SEPARATE FIELD ON THE PIN OBJECT, NOT A BIT INSIDE `_pinMode`, and that is not
+// fastidiousness. `_pinMode` is the live store (see the pinMode below that supersedes the
+// joint-side one), it is read through `& 7` in three places, and `setPin` REWRITES IT WHOLESALE
+// from a `& 7` argument on every cycle of the A button. A flag packed in there would be silently
+// erased the next time the user cycled 3DOF -> 6DOF — present in the file, gone in the session,
+// and the toggle would read as "sometimes doesn't stick". A separate property cannot be masked
+// away by construction.
+//
+// Bit 3 of `joint._boneIKPin` is still its home IN THE FILE, mirrored exactly the way the mode
+// is mirrored there — see the serialize note in Skeleton.js.
+IKSolver.PIN_ABOVE_GROUND = 8;
+
 // Older builds stored a boolean here; `true | 0` is 1, which is exactly the 3DOF pin.
 IKSolver.pinMode = function (joint) { return joint ? ((joint._boneIKPin | 0) & 7) : 0; };
+
+IKSolver.keepsAboveGround = function (joint) {
+  const p = IKSolver.pinObject(joint);
+  if (p) return !!p._pinAboveGround;
+  // No pin object yet (mid-load, before attachPin runs): fall back to the file-side mirror, so
+  // a rig that is still assembling still answers correctly.
+  return !!(joint && ((joint._boneIKPin | 0) & IKSolver.PIN_ABOVE_GROUND));
+};
+
+IKSolver.setKeepAboveGround = function (joint, on) {
+  if (!joint) return false;
+  on = !!on;
+  const p = IKSolver.pinObject(joint);
+  if (p) p._pinAboveGround = on;
+  const cur = joint._boneIKPin | 0;
+  joint._boneIKPin = on ? (cur | IKSolver.PIN_ABOVE_GROUND)
+                        : (cur & ~IKSolver.PIN_ABOVE_GROUND);
+  return true;
+};
+
+// THE FLOOR THIS PIN STOPS AT. Scene.groundHeight is the single authority (the grid's own
+// matrix) — see the note there about the two-floors bug that made it necessary. A caller with
+// no Scene (the harnesses) gets 0, which is where an untranslated grid would sit anyway.
+IKSolver.groundHeight = function (main) {
+  if (main && main._groundY !== undefined && main._groundY !== null) return main._groundY;
+  if (main && typeof main.groundHeight === 'function') return main.groundHeight();
+  return 0;
+};
+
+// CLAMP THE PIN OBJECT ITSELF, once per solve — as well as the target, which pinAnchor does.
+//
+// The target clamp is what makes the FOOT stop; this is what makes the MARKER stop. With only
+// the first, the pin is drawn buried under the floor while the foot it speaks for rests on top
+// of it — a marker sitting somewhere it is provably not acting, which is the same class of bug
+// as the two floors this feature had to fix first. A pin is a thing you point at and drag; if it
+// does not stop where the foot stops, the toggle reads as broken rather than as on.
+//
+// Writing the matrix while a drag is live is deliberate and is what produces the feel: push the
+// pin down and it sticks to the floor and slides along it, instead of burying itself and leaving
+// the foot behind.
+//
+// UNPARENTED PINS ONLY, and pinAnchor is why that is safe rather than a hole. A pin null is
+// unparented in practice, so its own matrix IS its model-space placement and clamping `m[13]`
+// clamps against the right plane. Parent one (space switching) and the local y and the
+// model-space y are different numbers — clamping the local one would clamp against the parent's
+// origin, which is a wrong answer rather than a missing one. So this declines, and the pin still
+// HOLDS correctly because pinAnchor clamps the target in model space regardless; all that is
+// lost is the marker moving with it, which is the cosmetic half.
+// NOTHING MOVES THE PIN OBJECT. The clamp lives in pinAnchor and nowhere else.
+//
+// Two builds tried to keep the MARKER on the floor as well as the foot, and both failed in the
+// headset the same way: "the pins totally freeze when the pin moves below the ground", then
+// "still freezing and popping, not sliding". The cause is that every drag tool recomputes a
+// pin's matrix ABSOLUTELY each frame — the matrix captured at grab start times the controller
+// delta — and never reads back where the pin currently is. So anything else that writes that
+// matrix is a SECOND WRITER: the tool puts the pin under the floor, the clamp lifts it out, and
+// they alternate every frame. That oscillation is the popping, and the same disagreement
+// reaching Scene's `pinsMoved` watcher — which cannot separate the user's intent from the
+// solver's correction — is the freezing. Clamping BEFORE the tool's own write was tried too and
+// is not enough, because `enforceGround` and the drag still disagree on the frames between.
+//
+// So the marker is left exactly where the user points it, including below the floor, and only
+// the TARGET the solve reads is clamped. The foot then slides along the ground following the
+// horizontal half of the drag, which is what matt asked for and what he confirmed works. It is
+// also the conventional behaviour — an IK handle you can drag anywhere, with a foot that simply
+// cannot reach it — so the marker under the floor reads as "you are pointing down there", not
+// as a lie about where the foot is.
 IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 
 // A pin is a WORLD-SPACE anchor, captured once when the pin goes on and held there until it
@@ -203,7 +291,12 @@ IKSolver.setPin = function (joint, mode, main) {
   // unreachable pin, moving it to the joint would shift the pin at the very moment the user
   // asked for a stronger hold.
   pin._pinMode = now;
-  joint._boneIKPin = now; // kept in step for the save format and for older readers
+  // CYCLING THE MODE MUST NOT CLEAR "keep above ground". `now` is masked `& 7` and carries no
+  // flag bits, so writing it straight into `_boneIKPin` would drop bit 3 every time the A button
+  // moved 3DOF -> 6DOF — the toggle would appear to un-tick itself at random. The flag lives on
+  // the pin object precisely so the mode cannot mask it away; the file mirror is rebuilt from
+  // there rather than from `now`.
+  joint._boneIKPin = now | (pin._pinAboveGround ? IKSolver.PIN_ABOVE_GROUND : 0);
   return pin;
 };
 
@@ -309,12 +402,25 @@ IKSolver.pinWeight = function (joint) {
 // drags the joint the whole distance, just faster than a jump. What solves that is matching on
 // transition -- keying the pin to where the joint already is at the activation frame -- which
 // is Phase B and is needed whether the channel is continuous or a boolean.
-IKSolver.pinAnchor = function (joint, out) {
+IKSolver.pinAnchor = function (joint, out, main) {
   out = out || new THREE.Vector3();
   const p = IKSolver.pinObject(joint);
   if (!p) return Skeleton.jointPos(joint, out);
   _mTmp.fromArray(p.getModelSpaceMatrix());
   out.set(_mTmp.elements[12], _mTmp.elements[13], _mTmp.elements[14]);
+  // KEEP ABOVE GROUND, here and BEFORE the weight lerp. This is the authoritative clamp — every
+  // read of a pin's target comes through this function, so one line here covers the solve, the
+  // soft pins and the hold, in model space, parented or not.
+  //
+  // Before the lerp because the clamp is a statement about the PIN, not about the blend: at
+  // weight 0.5 the target should sit halfway to a pin that is on the floor, not halfway to one
+  // buried under it and then clamped, which would make a half-active pin hold a different height
+  // from a full one. Clamping after would also mean a weight ramp changed the contact height as
+  // it faded, which is exactly the pop the weight channel exists to avoid.
+  if (IKSolver.keepsAboveGround(joint)) {
+    const gy = IKSolver.groundHeight(main);
+    if (out.y < gy) out.y = gy;
+  }
   const w = IKSolver.pinWeight(joint);
   if (w >= 1) return out;
   // lerp(jointPos, pinPos, w)
@@ -1585,7 +1691,7 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
       rotHeld.push(n);   // woken after markActive, not here — see the note by markActive
       continue;
     }
-    const anchor = IKSolver.pinAnchor(j, new THREE.Vector3());
+    const anchor = IKSolver.pinAnchor(j, new THREE.Vector3(), main);
     targets.set(n, anchor);
     pinTargets.push({ node: n, anchor: anchor });
 
@@ -1886,7 +1992,7 @@ IKSolver.holdPins = function (main) {
     for (const { node, joint } of group) {
       const pm = IKSolver.pinMode(joint);
       if (pm === IKSolver.PIN_SOFT) {
-        soft.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
+        soft.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3(), main));
         continue;
       }
       // ROTATION ONLY: the orientation half of a 6DOF pin without the position half. It sets
@@ -1902,7 +2008,7 @@ IKSolver.holdPins = function (main) {
         rotHeld.push(node);   // woken after markActive, not here — see the markActive note
         continue;
       }
-      targets.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
+      targets.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3(), main));
       // A 6DOF pin holds its orientation as well, through the same machinery the interactive
       // solve uses: the target is the orientation it already has, so the joint is its own fixed
       // point and its children stay rigid with it while the chain above swings.
@@ -2067,6 +2173,33 @@ IKSolver.applyPinMode = function (main, joint, mode) {
 // The ring's entry point: name the mode you want.
 IKSolver.setPinMode = function (main, joint, mode) {
   return IKSolver.applyPinMode(main, joint, mode);
+};
+
+// The A-ring's Keep Above Ground toggle, undoable.
+//
+// ONLY THE FLAG IS IN THE UNDO, because only the flag changes. An earlier version also captured
+// and restored the pin's POSITION, on the reasoning that switching the clamp on lifts a buried
+// pin and undo owes that back. Nothing lifts it any more — the marker is never moved, only the
+// solve target is clamped (see the note by pinAnchor) — so there is no position to restore, and
+// carrying one would mean an undo of this toggle silently relocated a pin the user had since
+// dragged somewhere else.
+//
+// The rig is re-solved rather than merely redrawn: flipping the flag changes what the next
+// solve aims at, and without a solve the foot sits wherever it was until something else moves.
+IKSolver.togglePinGround = function (main, joint) {
+  const pin = IKSolver.pinObject(joint);
+  if (!pin) return false;
+  const before = !!pin._pinAboveGround;
+  const apply = (on) => {
+    IKSolver.setKeepAboveGround(joint, on);
+    window._ikPinsDirty = true;    // the target moved, so the chain has to re-solve
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  };
+  apply(!before);
+  main?.getStateManager?.()?.pushStateCustom?.(
+    () => apply(before), () => apply(!before), false, 'Pin Keep Above Ground');
+  return true;
 };
 
 // ── ACTIVATE / DEACTIVATE, WITHOUT THE POP ────────────────────────────────────────────────
