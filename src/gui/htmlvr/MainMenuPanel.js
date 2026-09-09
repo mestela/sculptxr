@@ -36,6 +36,8 @@ import MotionPathEdit from '../../editing/MotionPathEdit.js';
 import PhysicsBones from '../../editing/PhysicsBones.js';
 import PanelTrace from '../../misc/PanelTrace.js';
 import { toolTextTint } from './toolTints.js';
+import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
+import Multimesh from '../../mesh/multiresolution/Multimesh.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import {
   buildBoneSectionHTML,
@@ -1309,6 +1311,185 @@ export function wireDevToggles(q, paint) {
   }
 }
 
+// THE WIREFRAME CONTROLS, DECLARED ONCE — same reason as buildDevToggles above.
+//
+// These lived only in the VR settings panel, so on desktop there was nowhere at all to set the
+// wire's bias, opacity or type; asking for a colour is what surfaced it. Rather than write the
+// colour twice and leave the other three behind, the whole block is one function that both panels
+// render. matt's standing rule, quoted above: "i want desktop and vr to conform as much as
+// possible, use the same code as much as possible, otherwise we end up in this situation over and
+// over."
+//
+// One set of ids, which is safe because only one of the two panels is live at a time — the same
+// contract buildDevToggles relies on.
+// IS THE PICKER OPEN. Module-level rather than on the element because the panels rebuild their
+// DOM on every repaint, so anything stored on the markup is gone by the time you look at it — and
+// only one of the two panels is live at a time, which is the same contract the shared ids rely on.
+let _wfPickerOpen = false;
+
+// ...AND A REVISION THAT SAYS THIS SECTION'S MARKUP CHANGED.
+//
+// The VR panel does not rebuild its DOM on request: _rebuildContent caches on a key made of the
+// menu name and a few scene counts, and returns early when the key is unchanged. Opening the
+// picker changes neither, so in the headset the swatch was wired, clicked, and rebuilt nothing —
+// matt: "clicking the swatch in vr doesn't show the colour wheel." The desktop menu rebuilds
+// unconditionally, which is exactly why it worked there and hid the bug.
+//
+// A counter rather than the flags themselves, so anything added to this section later is covered
+// by bumping it instead of by remembering to extend the key.
+let _wfRev = 0;
+export function wireframeSectionRev() { return _wfRev; }
+
+function buildWireframeSectionHTML(main) {
+  const gx     = main._guiXR ?? main.getGuiXR?.();
+  const ui     = gx?._uiSettings ?? {};
+  const opts   = getOptionsURL();
+  const bias   = ui.wireframeBias    ?? opts.wireframeBias    ?? 0.001;
+  const alpha  = ui.wireframeAlpha   ?? opts.wireframeAlpha   ?? 0.2;
+  const surf   = ui.wireframeSurface ?? opts.wireframeSurface ?? true;
+  const colour = ui.wireframeColor   ?? opts.wireframeColor   ?? '#000000';
+  const curType = main.getMesh?.()?.getWireframeType?.() ?? 1;
+  const typeBtns = [{ id: 1, label: 'Smooth' }, { id: 0, label: 'Fast' }, { id: 2, label: 'Full' }]
+    .map(t => `<button class="mm-choice${curType === t.id ? ' active' : ''}" data-wf-type="${t.id}">${t.label}</button>`)
+    .join('');
+  return `
+    <div class="mm-section-title">Wireframe</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Bias</span>
+      <input type="range" id="mm-wf-bias" min="0" max="50" step="1" value="${Math.round(bias * 10000)}">
+      <span class="mm-val" id="mm-wf-bias-val">${bias.toFixed(4)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Opacity</span>
+      <input type="range" id="mm-wf-alpha" min="0" max="100" step="5" value="${Math.round(alpha * 100)}">
+      <span class="mm-val" id="mm-wf-alpha-val">${Math.round(alpha * 100)}%</span>
+    </div>
+    <!-- A SWATCH THAT OPENS THE PICKER, not a picker sitting open in a settings list. The wheel
+         is 150px of hue ring in a column of one-line rows; it belongs behind the swatch, which is
+         both the button and the readout of what is currently set. matt: "cute but dumb. it should
+         be a colour swatch, when clicked it should show the colour wheel."
+         The wheel itself is the paint tool's — see ColorWheel.js — because it is the only colour
+         control in this app that survives being rasterised into a VR panel. -->
+    <div class="mm-row">
+      <span class="mm-lbl">Color</span>
+      <button id="mm-wf-swatch" title="${colour}"
+        style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${colour};border:1px solid #45475a"></button>
+      <button class="mm-choice${surf ? ' active' : ''}" id="mm-wf-surface"
+        style="flex:1;margin-left:6px">From surface: ${surf ? 'On' : 'Off'}</button>
+    </div>
+    ${_wfPickerOpen ? `
+    <div class="mm-row" style="justify-content:center">
+      ${buildColorWheelHTML({ prefix: 'mm-wf-cw', size: 150 })}
+    </div>
+    <button class="mm-action-btn" id="mm-wf-ok" style="margin-bottom:3px">OK</button>` : ''}
+    <div class="mm-choice-grid cols-3">${typeBtns}</div>`;
+}
+
+// ...and its wiring, for the same reason. `paint` re-renders the panel that called it, so the
+// swatch dimming and the toggle's active state follow whichever one is live.
+function wireWireframeSection(el, main, paint, dirty) {
+  const q    = (sel) => el.querySelector(sel);
+  const gx   = main._guiXR ?? main.getGuiXR?.();
+  const ui   = gx?._uiSettings ?? {};
+  const opts = getOptionsURL;
+
+  wireSlider(q('#mm-wf-bias'), q('#mm-wf-bias-val'), (v) => {
+    const f = v / 10000;
+    if (ui) ui.wireframeBias = f;
+    const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
+    if (wm?.material?.uniforms) wm.material.uniforms.uBias.value = f;
+    opts.saveOption('wireframeBias', f, 500);
+  }, (v) => (v / 10000).toFixed(4), dirty);
+
+  wireSlider(q('#mm-wf-alpha'), q('#mm-wf-alpha-val'), (v) => {
+    const f = v / 100;
+    if (ui) ui.wireframeAlpha = f;
+    const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
+    if (wm?.material?.uniforms) wm.material.uniforms.uOpacity.value = f;
+    opts.saveOption('wireframeAlpha', f, 500);
+  }, (v) => `${v}%`, dirty);
+
+  // EVERY MESH, not just the selected one — the colour is a global setting, and a wire that only
+  // changed where you happened to be looking would read as a bug. updateWireframeBuffer is where
+  // the colour is actually written; nothing else re-reads it.
+  const repaintWires = () => {
+    for (const m of (main.getMeshes?.() ?? [])) {
+      try { m.updateWireframeBuffer?.(); } catch (_) {}
+    }
+    main.render?.();
+  };
+
+  q('#mm-wf-swatch')?.addEventListener('click', () => { _wfPickerOpen = true; _wfRev++; paint?.(); });
+  q('#mm-wf-ok')?.addEventListener('click', () => {
+    // CONFIRM AND CLOSE. There is no separate cancel: the wheel writes live so you are choosing
+    // against the mesh itself rather than against a preview, and OK is the acknowledgement that
+    // you are done with it.
+    _wfPickerOpen = false;
+    _wfRev++;
+    el._wfWheel?.dispose?.();
+    el._wfWheel = null;
+    paint?.();
+  });
+
+  const cwRoot = q('#mm-wf-cw');
+  if (cwRoot) {
+    const hex2rgb = (h) => [parseInt(h.substr(1, 2), 16) / 255,
+                            parseInt(h.substr(3, 2), 16) / 255,
+                            parseInt(h.substr(5, 2), 16) / 255];
+    const rgb2hex = (c) => '#' + [0, 1, 2].map((i) =>
+      Math.max(0, Math.min(255, Math.round(c[i] * 255))).toString(16).padStart(2, '0')).join('');
+    // The panel rebuilds its DOM on every repaint, so an old wheel's document-level pointermove
+    // and pointerup listeners would otherwise accumulate one set per repaint.
+    el._wfWheel?.dispose?.();
+    const wheel = new ColorWheel(cwRoot, {
+      prefix: 'mm-wf-cw', size: 150,
+      get: () => hex2rgb(ui.wireframeColor || opts().wireframeColor || '#000000'),
+      set: (rgb) => {
+        const hex = rgb2hex(rgb);
+        ui.wireframeColor = hex;
+        opts.saveOption('wireframeColor', hex, 300);
+        // TOUCHING THE WHEEL TURNS THE SURFACE TINT OFF. Otherwise you drag a colour and nothing
+        // happens on screen, which is indistinguishable from the control being broken.
+        if ((ui.wireframeSurface ?? true) !== false) {
+          ui.wireframeSurface = false;
+          opts.saveOption('wireframeSurface', false);
+          const btn = q('#mm-wf-surface');
+          if (btn) { btn.classList.remove('active'); btn.textContent = 'From surface: Off'; }
+        }
+        // THE CHEAP PATH, not repaintWires: a wheel drag fires on every pointermove, and
+        // rebuilding an edge list per move is what makes a colour picker feel broken on a heavy
+        // mesh. Only the material changes here — and the swatch is poked directly rather than
+        // through a repaint, which would rebuild the DOM out from under the drag.
+        Multimesh.setWireColor(main.getMeshes?.() ?? [], rgb);
+        const sw = q('#mm-wf-swatch');
+        if (sw) { sw.style.background = hex; sw.title = hex; }
+      },
+      render: () => main.render?.(),
+    });
+    el._wfWheel = wheel;
+  }
+
+  q('#mm-wf-surface')?.addEventListener('click', () => {
+    const on = !(ui.wireframeSurface ?? true);
+    ui.wireframeSurface = on;
+    opts.saveOption('wireframeSurface', on);
+    _wfRev++;                       // the button's own label says On/Off — see wireframeSectionRev
+    repaintWires();
+    paint?.();
+  });
+
+  el.querySelectorAll('[data-wf-type]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const t = parseInt(btn.dataset.wfType, 10);
+      main.getMesh()?.setWireframeType?.(t);
+      opts.saveOption('wireframeType', t);
+      main.render?.();
+      el.querySelectorAll('[data-wf-type]').forEach(b => b.classList.toggle('active', b === btn));
+      paint?.();
+    });
+  });
+}
+
 function buildMenuHTML_settings(main) {
   const gx  = main._guiXR ?? main.getGuiXR?.();
   const ui  = gx?._uiSettings ?? {};
@@ -1320,8 +1501,7 @@ function buildMenuHTML_settings(main) {
   const stylusTilt    = ui.stylusTilt      ?? opts.stylusTilt      ?? 0;
   const gizmoSizeMul  = opts.gizmoSizeMul  ?? 1.0;
   const offsetY       = ui.offsetY         ?? opts.offsetY         ?? -1.2;
-  const wfBias        = ui.wireframeBias   ?? opts.wireframeBias   ?? 0.001;
-  const wfAlpha       = ui.wireframeAlpha  ?? opts.wireframeAlpha  ?? 0.2;
+  // Bias/Opacity/Colour/Type all live in buildWireframeSectionHTML now, shared with desktop.
   // MOVED OUT OF RENDERING: set once and left alone, which is what this menu is for. matt: "move
   // grid opacity, wf opacity, wf offset, tone mapping to the settings menu."
   //
@@ -1353,17 +1533,6 @@ function buildMenuHTML_settings(main) {
   const ctrlLabels = ['Auto','Quest+','Quest+ v2','Quest Pro','Touch v3','Touch v2',
     'Index','Vive','GalaxyXR','Odyssey'];
   const curCtrl = Math.max(0, ctrlModels.indexOf(window._xrControllerOverride ?? 'Auto'));
-
-  const wfTypes = [
-    { id: 1, label: 'Smooth' },
-    { id: 0, label: 'Fast'   },
-    { id: 2, label: 'Full'   },
-  ];
-  const curWfType = main.getMesh?.()?.getWireframeType?.() ?? 1;
-
-  const wfTypeBtns = wfTypes.map(t =>
-    `<button class="mm-choice${curWfType === t.id ? ' active' : ''}" data-wf-type="${t.id}">${t.label}</button>`
-  ).join('');
 
   return `
     <button class="mm-action-btn" id="mm-show-ctrl-guide">Show Controller Guide</button>
@@ -1410,18 +1579,7 @@ function buildMenuHTML_settings(main) {
     <div class="mm-section-title">Controller Model</div>
     ${buildSelectHTML('mm-ctrl-model', ctrlModels.map((m, i) => ({ val: i, label: ctrlLabels[i] })), curCtrl)}
 
-    <div class="mm-section-title">Wireframe</div>
-    <div class="mm-row">
-      <span class="mm-lbl">Bias</span>
-      <input type="range" id="mm-wf-bias" min="0" max="50" step="1" value="${Math.round(wfBias*10000)}">
-      <span class="mm-val" id="mm-wf-bias-val">${wfBias.toFixed(4)}</span>
-    </div>
-    <div class="mm-row">
-      <span class="mm-lbl">Opacity</span>
-      <input type="range" id="mm-wf-alpha" min="0" max="100" step="5" value="${Math.round(wfAlpha*100)}">
-      <span class="mm-val" id="mm-wf-alpha-val">${Math.round(wfAlpha*100)}%</span>
-    </div>
-    <div class="mm-choice-grid cols-3">${wfTypeBtns}</div>
+    ${buildWireframeSectionHTML(main)}
 
     <div class="mm-section-title">Tone Mapping</div>
     <div class="mm-choice-grid cols-5">${tmBtns}</div>
@@ -2543,7 +2701,7 @@ export class MainMenuPanel extends HTMLVRPanel {
     const guiFiles    = this._main.getGui?.()._ctrlFiles ?? null;
     const savesCount  = guiFiles?._browserSaves?.length ?? 0;
     const key = this._activeMenu
-      ? `menu:${this._activeMenu}:${savesCount}`
+      ? `menu:${this._activeMenu}:${savesCount}:${wireframeSectionRev()}`
       // `_outlinerRev` is bumped by anything that changes what the outliner SAYS rather than
       // what it contains — a rename above all. Without it the key is identical after a rename
       // (same section, same mesh count) and the rebuild below is skipped, so the panel keeps
@@ -2855,32 +3013,14 @@ export class MainMenuPanel extends HTMLVRPanel {
                  // _wireSettings before the controller-model/wireframe/menu sliders got wired.
     }
 
-    // Wireframe
-    this._wireSlider(q('#mm-wf-bias'), q('#mm-wf-bias-val'), (v) => {
-      const f = v / 10000;
-      if (ui) ui.wireframeBias = f;
-      const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
-      if (wm?.material?.uniforms) wm.material.uniforms.uBias.value = f;
-      opts.saveOption('wireframeBias', f, 500);
-    }, (v) => (v / 10000).toFixed(4));
-    this._wireSlider(q('#mm-wf-alpha'), q('#mm-wf-alpha-val'), (v) => {
-      const f = v / 100;
-      if (ui) ui.wireframeAlpha = f;
-      const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
-      if (wm?.material?.uniforms) wm.material.uniforms.uOpacity.value = f;
-      opts.saveOption('wireframeAlpha', f, 500);
-    }, (v) => `${v}%`);
-
-    el.querySelectorAll('[data-wf-type]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const t = parseInt(btn.dataset.wfType, 10);
-        main.getMesh()?.setWireframeType?.(t);
-        opts.saveOption('wireframeType', t);
-        main.render?.();
-        el.querySelectorAll('[data-wf-type]').forEach(b => b.classList.toggle('active', b === btn));
-        paint();
-      });
-    });
+    // Wireframe — bias, opacity, colour and type, shared with the desktop Settings menu.
+    //
+    // REBUILD, not markDirty. `paint` here is the panel's re-rasterise, which redraws the DOM as
+    // it stands; this section's controls change the MARKUP (the picker appears, the toggle's
+    // label flips), so they need the content built again. The desktop menu's repaintFn already
+    // does that, which is why only VR was broken.
+    wireWireframeSection(el, main, () => { this._rebuildContent(); this.markDirty(); },
+                         () => this.markDirty());
 
     // Menu brightness/saturation
     this._wireSlider(q('#mm-menu-bright'), q('#mm-menu-bright-val'), (v) => {
@@ -4479,6 +4619,7 @@ export function buildMenuHTML_desktopSettings(main) {
       (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`)}`;
 
   return `${ipadSection}${physSection}
+    ${buildWireframeSectionHTML(main)}
     <div class="mm-section-title">Numeric Input</div>
     ${chk('Always show numpad', opts.alwaysNumpad)}
     <div class="mm-section-title">Pen Pressure</div>
@@ -4505,6 +4646,10 @@ export function buildMenuHTML_desktopSettings(main) {
 
 export function wireMenuDesktopSettings(el, main, repaintFn) {
   const q = (sel) => el.querySelector(sel);
+
+  // The wireframe block, same code as the VR panel. No dirty hook: this menu is live DOM rather
+  // than a rasterised texture, so there is nothing to mark.
+  wireWireframeSection(el, main, repaintFn);
 
   const wireCheck = (id, optKey, windowKey) => {
     q(id)?.addEventListener('change', (e) => {

@@ -23,6 +23,7 @@ import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
+import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
   buildBoneSectionHTML,
@@ -362,218 +363,8 @@ function buildHTML() {
   `;
 }
 
-// ── Colour Wheel widget (pure HTML/CSS) ──────────────────────────────────────
-//
-// Renders the HSV picker as plain HTML divs + CSS gradients so it works
-// through the SVG-foreignObject polyfill.  Canvas pixel content is NOT
-// captured by foreignObject, so we use:
-//   • conic-gradient div  → hue ring
-//   • layered linear-gradient divs → SV square
-//   • absolutely-positioned divs   → indicators / swatches
-// Interaction is handled by a pointerdown listener on the root div plus
-// document-level pointermove/pointerup so drags never "lose" the target.
-//
-// Layout constants (must match the HTML template in _buildExtrasHTML):
-//   Widget: 216 × 216 px
-//   Swatch row: 40 px tall at the top
-//   Ring div: left 20, top 40, 176 × 176  → outer R = 88, inner R ≈ 68
-//   Ring centre in widget: (108, 128)      → ring mid-radius = 78
-//   SV square: left 62, top 82, 92 × 92   → half = 46
-
-const _CW_CX = 108, _CW_CY = 128;   // ring centre in widget coords
-const _CW_OR = 88,  _CW_IR = 68;    // outer / inner radius
-const _CW_MR = 78;                   // mid-radius for indicator placement
-const _CW_SX = 62,  _CW_SY = 82;    // SV square top-left
-const _CW_SS = 92;                   // SV square side length
-
-class ColorWheel {
-  constructor(rootEl, main, onchange) {
-    this._root      = rootEl;
-    this._main      = main;
-    this._onchange  = onchange;
-    this._region    = null;    // 'hue' | 'sv' | null
-    this._cachedHue = null;
-    this._lastSwap  = 0;
-    this._lastEye   = 0;
-
-    this._onDown = (e) => this._handleDown(e);
-    this._onMove = (e) => { if (this._region) this._handleMove(e); };
-    this._onUp   = ()  => { this._region = null; };
-
-    rootEl.addEventListener('pointerdown', this._onDown);
-    document.addEventListener('pointermove', this._onMove);
-    document.addEventListener('pointerup',   this._onUp);
-
-    this.draw();
-  }
-
-  dispose() {
-    this._root.removeEventListener('pointerdown', this._onDown);
-    document.removeEventListener('pointermove',   this._onMove);
-    document.removeEventListener('pointerup',     this._onUp);
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────
-
-  _tool() {
-    const sm = this._main.getSculptManager?.();
-    let t = sm?.getCurrentTool?.();
-    if (!t?._color) t = sm?.getTool?.(Enums.Tools.PAINT);
-    return (t?._color) ? t : null;
-  }
-
-  _el(id) { return this._root.querySelector('#' + id); }
-
-  _localXY(e) {
-    const r = this._root.getBoundingClientRect();
-    return [e.clientX - r.left, e.clientY - r.top];
-  }
-
-  // ── Draw: update inline styles only — no canvas, no encoding ─────────────────
-
-  draw() {
-    const tool = this._tool();
-    if (!tool) return;
-
-    const [h, s, v] = Utils.rgb2hsv(tool._color[0], tool._color[1], tool._color[2]);
-    const aHue = (this._region === 'sv' && this._cachedHue !== null) ? this._cachedHue : h;
-
-    // FG / BG swatches
-    const fg = tool._color;
-    const elFg = this._el('mp-cw-fg');
-    if (elFg) elFg.style.background = `rgb(${fg[0]*255|0},${fg[1]*255|0},${fg[2]*255|0})`;
-    const sec = tool._colorSecondary ?? [0, 0, 0];
-    const elBg = this._el('mp-cw-bg');
-    if (elBg) elBg.style.background = `rgb(${sec[0]*255|0},${sec[1]*255|0},${sec[2]*255|0})`;
-
-    // Eyedropper active state
-    const elEye = this._el('mp-cw-eye');
-    if (elEye) elEye.style.color = tool._pickColor ? '#89b4fa' : '#6c7086';
-
-    // SV square: hue background layer
-    const elSvBg = this._el('mp-cw-sv-bg');
-    if (elSvBg) elSvBg.style.background = `hsl(${aHue * 360}deg,100%,50%)`;
-
-    // SV indicator position + contrast border
-    const elSvI = this._el('mp-cw-sv-i');
-    if (elSvI) {
-      elSvI.style.left        = `${s * 100}%`;
-      elSvI.style.top         = `${(1 - v) * 100}%`;
-      elSvI.style.borderColor = (v > 0.5 && s < 0.5) ? 'black' : 'white';
-    }
-
-    // Hue ring indicator: position on ring + matching hue colour
-    const elHI = this._el('mp-cw-h-i');
-    if (elHI) {
-      const ang = aHue * Math.PI * 2;
-      elHI.style.left       = `${_CW_CX + Math.cos(ang) * _CW_MR}px`;
-      elHI.style.top        = `${_CW_CY + Math.sin(ang) * _CW_MR}px`;
-      elHI.style.background = `hsl(${aHue * 360}deg,100%,50%)`;
-    }
-  }
-
-  // ── Interaction ───────────────────────────────────────────────────────────────
-
-  _handleDown(e) {
-    const [lx, ly] = this._localXY(e);
-
-    // Swap button region (left:46, top:10, ~38px wide, ~22px tall)
-    if (lx >= 44 && lx <= 86 && ly >= 8 && ly <= 32) {
-      const now = performance.now();
-      if (now - this._lastSwap > 300) {
-        this._lastSwap = now;
-        const tool = this._tool();
-        if (tool) {
-          if (typeof tool.swapColors === 'function') {
-            tool.swapColors();
-          } else if (tool._colorSecondary) {
-            const tmp = [tool._color[0], tool._color[1], tool._color[2]];
-            tool._color[0] = tool._colorSecondary[0];
-            tool._color[1] = tool._colorSecondary[1];
-            tool._color[2] = tool._colorSecondary[2];
-            tool._colorSecondary[0] = tmp[0];
-            tool._colorSecondary[1] = tmp[1];
-            tool._colorSecondary[2] = tmp[2];
-          }
-          this._main.render?.();
-          this.draw(); this._onchange?.();
-        }
-      }
-      return;
-    }
-
-    // Eyedropper region (right:8, top:10 → left:~168, ~40px wide)
-    if (lx >= 166 && lx <= 210 && ly >= 8 && ly <= 32) {
-      const now = performance.now();
-      if (now - this._lastEye > 300) {
-        this._lastEye = now;
-        const tool = this._tool();
-        if (tool) {
-          tool._pickColor = !tool._pickColor;
-          this._main.render?.();
-          this.draw(); this._onchange?.();
-        }
-      }
-      return;
-    }
-
-    this._handleInteraction(lx, ly);
-  }
-
-  _handleMove(e) {
-    const [lx, ly] = this._localXY(e);
-    this._handleInteraction(lx, ly);
-  }
-
-  _handleInteraction(lx, ly) {
-    const tool = this._tool();
-    if (!tool) return;
-
-    const [h, s, v] = Utils.rgb2hsv(tool._color[0], tool._color[1], tool._color[2]);
-    const dx   = lx - _CW_CX, dy = ly - _CW_CY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    let inSV  = lx >= _CW_SX - 10 && lx <= _CW_SX + _CW_SS + 10
-             && ly >= _CW_SY - 10 && ly <= _CW_SY + _CW_SS + 10;
-    let inHue = dist >= _CW_IR - 10 && dist <= _CW_OR + 10;
-
-    if (this._region === 'sv') {
-      inSV = true; inHue = false;
-      if (this._cachedHue === null) this._cachedHue = h;
-    } else if (this._region === 'hue') {
-      inSV = false; inHue = true;
-      this._cachedHue = null;
-    } else {
-      this._cachedHue = null;
-      // Overlap zone: prefer exact SV interior
-      if (inHue && inSV) {
-        if (lx >= _CW_SX && lx <= _CW_SX + _CW_SS
-         && ly >= _CW_SY && ly <= _CW_SY + _CW_SS) inHue = false;
-        else inSV = false;
-      }
-    }
-
-    if (inSV) {
-      this._region = 'sv';
-      const newS = Math.max(0, Math.min(1, (lx - _CW_SX) / _CW_SS));
-      const newV = Math.max(0, Math.min(1, 1 - (ly - _CW_SY) / _CW_SS));
-      const aHue = this._cachedHue !== null ? this._cachedHue : h;
-      const rgb  = Utils.hsv2rgb(aHue, newS, newV);
-      tool._color[0] = rgb[0]; tool._color[1] = rgb[1]; tool._color[2] = rgb[2];
-      this._main.render?.();
-      this.draw(); this._onchange?.();
-    } else if (inHue) {
-      this._region = 'hue';
-      let ang = Math.atan2(dy, dx);
-      if (ang < 0) ang += Math.PI * 2;
-      const rgb = Utils.hsv2rgb(ang / (Math.PI * 2), s, v);
-      tool._color[0] = rgb[0]; tool._color[1] = rgb[1]; tool._color[2] = rgb[2];
-      this._main.render?.();
-      this.draw(); this._onchange?.();
-    }
-  }
-}
-
+// The colour wheel moved to ColorWheel.js so the settings panel can use it too — same widget,
+// same geometry at 216, with the colour it edits passed in rather than read off the paint tool.
 // ── MiniPanel ─────────────────────────────────────────────────────────────────
 
 export class MiniPanel extends HTMLVRPanel {
@@ -892,7 +683,34 @@ export class MiniPanel extends HTMLVRPanel {
       this._colorWheel?.dispose();
       const cwRoot = extras.querySelector('#mp-cw');
       if (cwRoot) {
-        this._colorWheel = new ColorWheel(cwRoot, main, () => this._requestPaint());
+        // The paint tool is looked up on every call rather than captured: the wheel outlives a
+      // tool switch, and a captured tool would go on editing the one that is no longer selected.
+      const paintTool = () => {
+        const sm = main.getSculptManager?.();
+        let t = sm?.getCurrentTool?.();
+        if (!t?._color) t = sm?.getTool?.(Enums.Tools.PAINT);
+        return (t?._color) ? t : null;
+      };
+      this._colorWheel = new ColorWheel(cwRoot, {
+        prefix: 'mp-cw', size: 216, onchange: () => this._requestPaint(),
+        render: () => main.render?.(),
+        get: () => paintTool()?._color ?? null,
+        set: (rgb) => { const t = paintTool(); if (t) { t._color[0] = rgb[0]; t._color[1] = rgb[1]; t._color[2] = rgb[2]; } },
+        extras: {
+          secondary: () => paintTool()?._colorSecondary ?? [0, 0, 0],
+          picking:   () => !!paintTool()?._pickColor,
+          togglePick: () => { const t = paintTool(); if (t) t._pickColor = !t._pickColor; },
+          swap: () => {
+            const t = paintTool();
+            if (!t) return;
+            if (typeof t.swapColors === 'function') { t.swapColors(); return; }
+            if (!t._colorSecondary) return;
+            const tmp = [t._color[0], t._color[1], t._color[2]];
+            t._color[0] = t._colorSecondary[0]; t._color[1] = t._colorSecondary[1]; t._color[2] = t._colorSecondary[2];
+            t._colorSecondary[0] = tmp[0]; t._colorSecondary[1] = tmp[1]; t._colorSecondary[2] = tmp[2];
+          },
+        },
+      });
       }
 
       // Roughness / metalness
@@ -1185,28 +1003,7 @@ export class MiniPanel extends HTMLVRPanel {
       // SVG foreignObject.  Layout constants must match _CW_* at top of file.
       return `
         <hr class="mp-divider">
-        <div id="mp-cw" style="position:relative;width:216px;height:216px;background:#1e1e2e;border-radius:8px;overflow:hidden;touch-action:none">
-          <!-- BG swatch (behind) -->
-          <div id="mp-cw-bg" style="position:absolute;left:22px;top:22px;width:26px;height:26px;border:1.5px solid #585b70;background:#000"></div>
-          <!-- FG swatch (front) -->
-          <div id="mp-cw-fg" style="position:absolute;left:8px;top:8px;width:26px;height:26px;border:2px solid #89b4fa;background:#fff"></div>
-          <!-- Swap FG/BG -->
-          <button id="mp-cw-swap" style="position:absolute;left:46px;top:10px;padding:2px 5px;background:#181825;border:1px solid #45475a;border-radius:4px;color:#a6adc8;font-size:13px;cursor:pointer;outline:none;line-height:1">⇄</button>
-          <!-- Eyedropper -->
-          <button id="mp-cw-eye" style="position:absolute;right:8px;top:10px;padding:2px 5px;background:#181825;border:1px solid #45475a;border-radius:4px;color:#6c7086;font-size:11px;cursor:pointer;outline:none;line-height:1">✦ pick</button>
-          <!-- Hue ring: conic-gradient donut via CSS mask -->
-          <div id="mp-cw-ring" style="position:absolute;left:20px;top:40px;width:176px;height:176px;border-radius:50%;background:conic-gradient(from 90deg,#f00 0%,#ff0 16.67%,#0f0 33.33%,#0ff 50%,#00f 66.67%,#f0f 83.33%,#f00 100%);-webkit-mask:radial-gradient(circle closest-side,transparent 77%,black 78%);mask:radial-gradient(circle closest-side,transparent 77%,black 78%)"></div>
-          <!-- SV square: layered gradients -->
-          <div id="mp-cw-sv" style="position:absolute;left:62px;top:82px;width:92px;height:92px;overflow:hidden">
-            <div id="mp-cw-sv-bg" style="position:absolute;top:0;right:0;bottom:0;left:0;background:hsl(0deg,100%,50%)"></div>
-            <div style="position:absolute;top:0;right:0;bottom:0;left:0;background:linear-gradient(to right,white,transparent)"></div>
-            <div style="position:absolute;top:0;right:0;bottom:0;left:0;background:linear-gradient(to bottom,transparent,black)"></div>
-            <!-- SV indicator (hollow circle, contrast-aware border) -->
-            <div id="mp-cw-sv-i" style="position:absolute;width:12px;height:12px;border-radius:50%;border:2px solid white;box-sizing:border-box;transform:translate(-50%,-50%)"></div>
-          </div>
-          <!-- Hue ring indicator -->
-          <div id="mp-cw-h-i" style="position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid rgba(0,0,0,0.8);box-sizing:border-box;background:red;transform:translate(-50%,-50%)"></div>
-        </div>
+        ${buildColorWheelHTML({ prefix: 'mp-cw', size: 216, extras: true })}
         <hr class="mp-divider">
         <div class="mp-row">
           <span class="mp-lbl">Roughness</span>

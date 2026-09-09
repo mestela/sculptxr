@@ -20,6 +20,13 @@ var queryInteger = function (value, min, max, def) {
   return Math.max(min, Math.min(max, f));
 };
 
+// A `#rrggbb` string, kept as a string because that is what an <input type="color"> reads and
+// writes. Anything else is a stored value from another version or a hand-edited URL, and the
+// default is a better answer than a colour parsed out of nonsense.
+var queryHex = function (value, def) {
+  return (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) ? value : def;
+};
+
 var queryColor = function (color, def) {
   if (!color) return def;
   var arr = color.split(',');
@@ -183,6 +190,15 @@ var getOptionsURL = function () {
   options.triggerCurve = queryNumber(getVal('triggerCurve'), 0.0, 1.0, 0.5);
   options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.0001);
   options.wireframeAlpha = queryNumber(getVal('wireframeAlpha'), 0.0, 1.0, 0.25);
+  // THE WIRE'S COLOUR, and the switch that says whether to use it.
+  //
+  // The shipped wireframe takes its colour FROM THE SURFACE, darkened — that is what makes it
+  // read as an edge on a shaded mesh instead of a jet-black line over a see-through one, and it
+  // is what lets the wire show the weight paint underneath it (see Multimesh.updateWireframeBuffer).
+  // A flat colour throws that away, so it is a mode rather than a replacement: `wireframeSurface`
+  // stays on by default and `wireframeColor` only takes over when it is turned off.
+  options.wireframeSurface = queryBool(getVal('wireframeSurface'), true);
+  options.wireframeColor = queryHex(getVal('wireframeColor'), '#000000');
   options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.65); // matt-tuned menu look
   options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.50);
   options.menuGamma      = queryNumber(getVal('menuGamma'),      0.0, 1.0, 0.0);  // (0.5 = neutral γ 1.0)

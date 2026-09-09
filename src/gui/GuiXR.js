@@ -94,6 +94,8 @@ export default class GuiXR {
       menuGamma: opts.menuGamma,
       wireframeAlpha: opts.wireframeAlpha,
       wireframeBias: opts.wireframeBias,
+      wireframeSurface: opts.wireframeSurface,
+      wireframeColor: opts.wireframeColor,
       offsetY: opts.offsetY,
       stylusLength: opts.stylusLength,
       stylusOffset: opts.stylusOffset,

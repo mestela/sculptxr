@@ -404,10 +404,27 @@ class Multimesh extends Mesh {
 
       var rawAlpha = 0.25;
       var rawBias = 0.001;
+      // A FLAT COLOUR IS A MODE, NOT A REPLACEMENT — see wireframeSurface in getOptionsURL. Null
+      // here means the shipped behaviour: take the colour from the surface and darken it.
+      var flatCol = null;
       if (window.app && window.app.getGuiXR()) {
           var ui = window.app.getGuiXR()._uiSettings;
           if (ui.wireframeAlpha !== undefined) rawAlpha = ui.wireframeAlpha;
           if (ui.wireframeBias !== undefined) rawBias = ui.wireframeBias;
+      }
+      // THE SAVED OPTION IS THE FALLBACK, not the live one. Bias and opacity above read only the
+      // GuiXR settings because they have always had a slider that writes there; the colour is set
+      // from a menu that saves it either way, and a mesh drawn before GuiXR exists would otherwise
+      // come back with the wrong wire on a reload.
+      var wOpts = optionsObj;
+      var useSurface = (window.app?.getGuiXR?.()?._uiSettings?.wireframeSurface)
+                    ?? wOpts.wireframeSurface ?? true;
+      if (useSurface === false) {
+        var hx = (window.app?.getGuiXR?.()?._uiSettings?.wireframeColor)
+              || wOpts.wireframeColor || '#000000';
+        flatCol = [parseInt(hx.substr(1, 2), 16) / 255,
+                   parseInt(hx.substr(3, 2), 16) / 255,
+                   parseInt(hx.substr(5, 2), 16) / 255];
       }
 
       if (indices) {
@@ -490,8 +507,16 @@ class Multimesh extends Mesh {
         // ...and the colours with them, so the wire carries whatever the surface is showing —
         // the weight preview included. DARKENED, so an edge still reads as an edge against the
         // face it sits on rather than disappearing into it.
+        // A CHOSEN COLOUR IS A MATERIAL PROPERTY, NOT A VERTEX BUFFER.
+        //
+        // The surface tint has to be per-vertex — that is the whole point of it — but a flat
+        // colour is the same three numbers everywhere, and writing them into a Float32Array the
+        // length of the mesh once per pointermove is what a colour WHEEL would cost. Turning
+        // vertexColors off and setting material.color instead makes a colour change one
+        // assignment, whatever the mesh weighs. See Multimesh.setWireColor.
+        Multimesh._applyWireColor(this._renderData._wireframeMesh, flatCol);
         var srcColors = activeMesh.getColors && activeMesh.getColors();
-        if (srcColors && srcColors.length >= activeVerts.length) {
+        if (!flatCol && srcColors && srcColors.length >= activeVerts.length) {
           var wireCols = this._renderData._wireCols;
           if (!wireCols || wireCols.length !== activeVerts.length) {
             wireCols = this._renderData._wireCols = new Float32Array(activeVerts.length);
@@ -520,6 +545,30 @@ class Multimesh extends Mesh {
     this.updateResolution();
   }
 }
+
+// PUT THE WIREFRAME COLOUR ON ONE MESH'S MATERIAL. `flat` is [r,g,b] in 0..1 for a chosen colour
+// or null for the shipped per-vertex surface tint.
+//
+// `needsUpdate` is set only when the vertexColors FLAG actually changes: it recompiles the
+// shader, so setting it on every colour change would stall a wheel drag on exactly the meshes
+// that are already expensive.
+Multimesh._applyWireColor = function (wireMesh, flat) {
+  var mat = wireMesh && wireMesh.material;
+  if (!mat) return;
+  var wantVC = !flat;
+  if (mat.vertexColors !== wantVC) { mat.vertexColors = wantVC; mat.needsUpdate = true; }
+  if (flat) mat.color.setRGB(flat[0], flat[1], flat[2]);
+  else mat.color.setRGB(1, 1, 1);   // white, so the vertex colour is used as-is
+};
+
+// THE CHEAP PATH, for a live control. Nothing about the geometry changes when only the colour
+// does, so a wheel drag never has to touch a vertex buffer or rebuild an edge list.
+Multimesh.setWireColor = function (meshes, flat) {
+  for (var i = 0; i < meshes.length; i++) {
+    var rd = meshes[i] && meshes[i].getRenderData && meshes[i].getRenderData();
+    if (rd && rd._wireframeMesh) Multimesh._applyWireColor(rd._wireframeMesh, flat);
+  }
+};
 
 Multimesh.RENDER_HINT = 0;
 
