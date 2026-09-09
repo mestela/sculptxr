@@ -49,6 +49,11 @@ const CELLS = 4;
 // here — see levelFor — and the cap is what stops a pathological rig (every limb leaving the same
 // side of one joint) from turning that joint into most of the mesh.
 const MAX_CELLS = 8;
+// THE FLOOR FOR A SHORT AXIS, which is not the same number as the floor for a joint. levelFor's
+// floor of four is a SILHOUETTE rule — it sets how many sides a limb's tube has — and it applies
+// to the axis that is actually long. An axis a third the length of its neighbours contributes a
+// third of the silhouette and two cells there is proportionate, not a regression. See levelsFor.
+const MIN_CELLS = 2;
 const BLOCK = 2;
 
 // Half-extent as a fraction of the shortest bone touching a joint. Two boxes on one bone must
@@ -137,9 +142,18 @@ const BOX_SIDES = [
 // Vertices are keyed by their exact lattice coordinate, so adjacent sides SHARE their edge and
 // corner vertices rather than stacking duplicates along every seam.
 //
-// `n` is cells a side. The lattice runs -n..n in steps of two so a cell is two units wide and the
-// centre of a side lands on an integer, which is what lets a claim be described in cells and
-// still name real vertices.
+// `n` is cells a side, PER AXIS: [nx, ny, nz]. The lattice runs -n[k]..n[k] in steps of two on
+// each axis, so a cell is two units wide there and the centre of a side still lands on an
+// integer, which is what lets a claim be described in cells and still name real vertices.
+//
+// PER AXIS, BECAUSE A JOINT IS NOT A CUBE. A uniform lattice on a flat palm gives square cells on
+// the broad face and slivers through the thin one — and, worse, the only way to give five fingers
+// room ACROSS the palm was to divide the palm's THICKNESS eight ways too. Sizing each axis in
+// proportion to its own half-extent makes the cells roughly cubic, which is what lets a bone's
+// claim be square in cells and square in world at the same time. See levelsFor.
+//
+// NO TOPOLOGY CHANGES HERE. The sides are the same six, wound the same way, and a claim is still
+// a rectangle of cells; only how many cells a side has along each of its two axes.
 function makeBox(n) {
   const index = new Map();
   const lat = [];
@@ -151,19 +165,22 @@ function makeBox(n) {
   };
 
   const sides = BOX_SIDES.map((s) => {
+    // A SIDE CARRIES ITS OWN TWO COUNTS, so everything downstream that used to read the box's one
+    // number asks the side it is actually working on instead.
+    const nu = n[s.u], nv = n[s.v];
     const grid = [];
-    for (let a = 0; a <= n; a++) {
+    for (let a = 0; a <= nu; a++) {
       const col = [];
-      for (let b = 0; b <= n; b++) {
+      for (let b = 0; b <= nv; b++) {
         const c = [0, 0, 0];
-        c[s.axis] = s.sign * n;
-        c[s.u] = -n + 2 * a;
-        c[s.v] = -n + 2 * b;
+        c[s.axis] = s.sign * n[s.axis];
+        c[s.u] = -nu + 2 * a;
+        c[s.v] = -nv + 2 * b;
         col.push(idOf(c));
       }
       grid.push(col);
     }
-    return { def: s, grid: grid };
+    return { def: s, grid: grid, nu: nu, nv: nv };
   });
 
   return { lat: lat, sides: sides, n: n };
@@ -195,13 +212,22 @@ function rectFaces(box, claim) {
 
 function perimeter(r) { return 2 * ((r.a1 - r.a0) + (r.b1 - r.b0)); }
 
+// The perimeter of a WHOLE side, in cells: the most that end of a bone could ever offer. It was
+// 4n while every side was square; a side sized per axis has to be asked.
+function facePerimeter(box, si) { const s = box.sides[si]; return 2 * (s.nu + s.nv); }
+
 // Where a rectangle sits, as a direction from the box centre, so a claim can be compared
 // against the bone that wants it.
 function rectDir(box, claim) {
   const c = new THREE.Vector3();
   const loop = rectLoop(box, claim);
   for (const v of loop) c.add(new THREE.Vector3(box.lat[v][0], box.lat[v][1], box.lat[v][2]));
-  return c.divideScalar(loop.length * box.n).normalize();
+  // NORMALISED PER AXIS BEFORE THE DIRECTION IS TAKEN. The lattice is no longer isotropic, so a
+  // raw coordinate sum leans towards whichever axis has the most cells; dividing each component by
+  // its own count puts the rectangle back on the unit box first, where the comparison against the
+  // bone direction means what it did.
+  const n = box.n;
+  return c.set(c.x / n[0], c.y / n[1], c.z / n[2]).normalize();
 }
 
 // ONE BOX PER LEVEL, MADE ONCE. Three levels are enough and the cap is deliberate: a level has to
@@ -214,8 +240,9 @@ const BOXES = new Map();
 const _pStep = new THREE.Vector3();
 const _pStep2 = new THREE.Vector3();
 function boxOf(n) {
-  let b = BOXES.get(n);
-  if (!b) { b = makeBox(n); BOXES.set(n, b); }
+  const key = n[0] + ',' + n[1] + ',' + n[2];
+  let b = BOXES.get(key);
+  if (!b) { b = makeBox(n); BOXES.set(key, b); }
   return b;
 }
 
@@ -327,6 +354,52 @@ function levelFor(dirs) {
   return n;
 }
 
+// ONE COUNT PER AXIS, in proportion to the joint's own half-extents.
+//
+// levelFor answers how finely a joint has to be divided to SEAT ITS BONES. This decides how that
+// division is spread over the three axes: the level it returns is the count on the LONGEST axis,
+// and a shorter axis gets proportionally fewer cells, so the cells come out roughly cubic instead
+// of square on a palm's broad face and slivers through its thickness.
+//
+// WHY THIS IS A POLE FIX AND NOT A COSMETIC ONE. Two ends of a bone have to agree on PERIMETER,
+// and under a uniform lattice the only lever on perimeter was the level, which moves in powers of
+// two: sixteen, then thirty-two, nothing between. So a palm crowded enough to need eight cells
+// across got eight through its thickness as well, its claim rectangles came out the wrong shape
+// for the finger faces meeting them, and the mismatch had to be absorbed by the reduction band —
+// and a band is a wedge, and a wedge is a valence-3/valence-5 pair by construction. Measured on
+// matt's handbefore.sxr, the band was worth a full point of pole count: 2.7% without it, 3.7%
+// with, against 1.7% for the same hand through QuadRemesher. Sized per axis a palm can spare a
+// SQUARE block for each finger without inflating its thickness, so the two ends can agree without
+// a band at all.
+//
+// matt, on the deprecated ZSphere plugin that did exactly this: "i used a plugin for zspheres that
+// let you more carefully control the x/y/z division count, that let you get better joins."
+//
+// STILL POWERS OF TWO. That is what makes a coarse cell line up with a block of a finer one rather
+// than straddling it — see boxOf — and it is the contract the reduction band checks before it
+// fires. Rounding is done in the log domain, so an axis wanting three cells gets four rather than
+// two: the geometric midpoint of two and four is 2.83, not 3.
+//
+// A ROUND JOINT COMES BACK EXACTLY WHERE IT WAS. Equal half-extents give equal counts, which is
+// the single level levelFor already returned, so nothing tuned against the uniform lattice moves
+// and only joints that are genuinely not cubes change shape.
+//
+// window._boneSkinPerAxis = false goes back to the uniform lattice, since there is no natural A/B
+// here and the thing worth measuring is a pole count on a real hand.
+function levelsFor(dirs, half) {
+  const base = levelFor(dirs);
+  const big = Math.max(half[0], half[1], half[2]);
+  if (window._boneSkinPerAxis === false || !(big > 1e-12)) return [base, base, base];
+  const out = [0, 0, 0];
+  for (let k = 0; k < 3; k++) {
+    const want = base * (half[k] / big);
+    let n = MIN_CELLS;
+    while (n < base && n * Math.SQRT2 < want) n *= 2;
+    out[k] = Math.min(base, n);
+  }
+  return out;
+}
+
 // Hand every bone leaving a joint a rectangle of the side it points at.
 //
 // ONE BONE TAKES THE WHOLE SIDE. That is not generosity, it is the only symmetric answer: a
@@ -343,9 +416,11 @@ function levelFor(dirs) {
 // Three or four fall back to quarters, arranged by trying every way and keeping the best total.
 // Four quarters is at most twenty-four arrangements, so best is exact rather than greedy.
 function splitSide(box, si, bones, dirs) {
-  const CELLS = box.n;
+  // THE SIDE'S OWN TWO COUNTS, not the box's one. `a` runs along the side's u axis and `b` along
+  // its v, and since per-axis sizing those need not be the same number.
+  const NU = box.sides[si].nu, NV = box.sides[si].nv;
   if (bones.length === 1) {
-    return [{ bone: bones[0], side: si, rect: { a0: 0, a1: CELLS, b0: 0, b1: CELLS } }];
+    return [{ bone: bones[0], side: si, rect: { a0: 0, a1: NU, b0: 0, b1: NV } }];
   }
 
   const def = box.sides[si].def;
@@ -365,9 +440,12 @@ function splitSide(box, si, bones, dirs) {
   // remainder spread one cell at a time when it does not. Uneven is fine — each bone settles
   // its loop length with its own far end, so three bones sharing a face as 2-1-1 costs nothing
   // beyond one limb being fatter than its neighbours.
+  // Split along one axis and stay whole across the other, so the two counts have distinct jobs:
+  // SPLIT is the one being cut into strips, CROSS is the one a compact block is centred in.
+  const SPLIT = alongU ? NU : NV, CROSS = alongU ? NV : NU;
   const k = ordered.length;
   const sizes = [];
-  for (let i = 0; i < k; i++) sizes.push(Math.floor(CELLS / k) + (i < CELLS % k ? 1 : 0));
+  for (let i = 0; i < k; i++) sizes.push(Math.floor(SPLIT / k) + (i < SPLIT % k ? 1 : 0));
 
   // THREE OR MORE GET A COMPACT BLOCK, NOT A FULL-DEPTH STRIP.
   //
@@ -397,8 +475,8 @@ function splitSide(box, si, bones, dirs) {
     at = hi2;
     // As deep as it is wide, centred. With CELLS even and a width of one the centring cannot be
     // exact; landing a cell off-centre is invisible next to the strip it replaces.
-    const w = compact ? Math.min(CELLS, Math.max(sizes[i], 2)) : CELLS;
-    const c0 = compact ? Math.floor((CELLS - w) / 2) : 0;
+    const w = compact ? Math.min(CROSS, Math.max(sizes[i], 2)) : CROSS;
+    const c0 = compact ? Math.floor((CROSS - w) / 2) : 0;
     const c1 = c0 + w;
     out.push({
       bone: ordered[i], side: si,
@@ -416,7 +494,9 @@ function splitSide(box, si, bones, dirs) {
 // came back as six loose shells. Moving the worst-fitting bone to its next-best side instead
 // gives a shape that is wrong in a way you can see and fix, rather than absent.
 function assignSides(box, dirs) {
-  const CELLS = box.n;
+  // HOW MANY WAYS A SIDE CAN BE CUT is now a property of the side: splitSide cuts along whichever
+  // of its two axes the bones actually spread over, so the capacity is the larger of the two.
+  const cap = box.sides.map((s) => Math.max(s.nu, s.nv));
   const rank = dirs.map((d) => box.sides
     .map((s, i) => ({ i: i, v: d.getComponent(s.def.axis) * s.def.sign }))
     .sort((p, q) => q.v - p.v));
@@ -427,7 +507,7 @@ function assignSides(box, dirs) {
     const perSide = box.sides.map(() => []);
     at.forEach((si, bone) => perSide[si].push(bone));
     let over = -1;
-    for (let i = 0; i < perSide.length; i++) if (perSide[i].length > CELLS) { over = i; break; }
+    for (let i = 0; i < perSide.length; i++) if (perSide[i].length > cap[i]) { over = i; break; }
     if (over < 0) return perSide;
     // Evict the bone that fits this side least well and has somewhere else to go.
     const crowd = perSide[over]
@@ -872,7 +952,10 @@ function boxAt(j, nbs) {
   const h = [half[0] * sc, half[1] * sc, half[2] * sc];
   if (!(h[0] > 1e-9 && h[1] > 1e-9 && h[2] > 1e-9)) return null;
 
-  const box = boxOf(levelFor(dirs));
+  // THE COUNTS COME OFF THE CLAMPED HALF-EXTENTS, which is the box's real shape — clamping scales
+  // uniformly, so it cannot change the proportions this reads, but taking the same array keeps one
+  // answer rather than two that agree today.
+  const box = boxOf(levelsFor(dirs, h));
   const claims = claimSides(box, dirs);
   if (!claims) return null;
   return { c: c, h: h, dirs: dirs, claims: claims, box: box };
@@ -912,9 +995,9 @@ function buildArrays(joints, topo) {
     // line is the whole reason bridges cannot shear against each other.
     const base = verts.length / 3;
     for (const l of BX.lat) {
-      verts.push(c.x + (h[0] * l[0]) / N,
-                 c.y + (h[1] * l[1]) / N,
-                 c.z + (h[2] * l[2]) / N);
+      verts.push(c.x + (h[0] * l[0]) / N[0],
+                 c.y + (h[1] * l[1]) / N[1],
+                 c.z + (h[2] * l[2]) / N[2]);
     }
 
     const byNeighbour = new Map();
@@ -943,7 +1026,11 @@ function buildArrays(joints, topo) {
     // it is the one ratio the wedge pattern handles exactly. So that case keeps both claims and
     // pays for the difference in one band of quads instead of by shrinking a face away.
     const pN = perimeter(nEnd.claim.rect), pF = perimeter(fEnd.claim.rect);
-    const canStep = (pN === pF * 2 && !(pF & 1)) || (pF === pN * 2 && !(pN & 1));
+    // window._boneSkinBand = false falls back to settling both ends on the smaller loop, which is
+    // what happened before the band existed — kept so its contribution can be measured rather
+    // than argued about. window._boneSkinBandAt moves where along the bone it sits.
+    const canStep = window._boneSkinBand !== false
+      && ((pN === pF * 2 && !(pF & 1)) || (pF === pN * 2 && !(pN & 1)));
     const st = canStep ? { nc: nEnd.claim, fc: fEnd.claim, want: Math.min(pN, pF) }
                        : settleEnds(nEnd, fEnd, near.box, far.box);
     const nc = st.nc, fc = st.fc;
@@ -973,7 +1060,8 @@ function buildArrays(joints, topo) {
         _pStep2.set(verts[target[i] * 3], verts[target[i] * 3 + 1], verts[target[i] * 3 + 2]);
         // A SHORT STEP, not a share of the span: the band is a transition, not a segment of the
         // limb, and a long one would read as a taper rather than a change of resolution.
-        _pStep.lerp(_pStep2, 0.15);
+        _pStep.lerp(_pStep2, typeof window._boneSkinBandAt === 'number'
+          ? Math.max(0.02, Math.min(0.5, window._boneSkinBandAt)) : 0.15);
         made.push(verts.length / 3);
         verts.push(_pStep.x, _pStep.y, _pStep.z);
       }
@@ -1059,8 +1147,9 @@ function buildArrays(joints, topo) {
   // Whatever no bone claimed closes the box. A leaf joint keeps five of its six sides, which
   // is the cap — no dome, no pole, nothing to stitch to anything else.
   for (const box of boxes.values()) {
-    const wholeSide = { a0: 0, a1: box.box.n, b0: 0, b1: box.box.n };
     for (let si = 0; si < box.box.sides.length; si++) {
+      const sd = box.box.sides[si];
+      const wholeSide = { a0: 0, a1: sd.nu, b0: 0, b1: sd.nv };
       for (const f of rectFaces(box.box, { side: si, rect: wholeSide })) {
         if (box.dead.has(f.join(','))) continue;
         pushQuad(box.base + f[0], box.base + f[1], box.base + f[2], box.base + f[3]);
@@ -1207,7 +1296,8 @@ SkinMesh.attachments = function (main) {
     // the pair can agree on. Less than that, and somebody shrank.
     // A stepped pair is clean at BOTH ends by construction: each keeps its whole face, which is
     // the most either could offer. Otherwise it is still the coarser end's face that decides.
-    const clean = stepped || st.want >= 4 * Math.min(near.box.n, far.box.n);
+    const clean = stepped || st.want >= Math.min(facePerimeter(near.box, nEnd.claim.side),
+                                                 facePerimeter(far.box, fEnd.claim.side));
     const add = (box, joint, other, claim, dir) => {
       box.sides.add(claim.side);
       ends.push({ joint: joint, other: other, box: box, side: claim.side, rect: claim.rect,
@@ -1224,9 +1314,9 @@ SkinMesh.attachments = function (main) {
   // to place its vertices, so a patch drawn here sits exactly where the skin will be built.
   const at = (box, id, out) => {
     const l = box.box.lat[id], n = box.box.n;
-    return out.set(box.c.x + (box.h[0] * l[0]) / n,
-                   box.c.y + (box.h[1] * l[1]) / n,
-                   box.c.z + (box.h[2] * l[2]) / n);
+    return out.set(box.c.x + (box.h[0] * l[0]) / n[0],
+                   box.c.y + (box.h[1] * l[1]) / n[1],
+                   box.c.z + (box.h[2] * l[2]) / n[2]);
   };
 
   // THE SAME LATTICE POINT, PUSHED OUT ONTO THE JOINT'S OWN SURFACE, AT THE JOINT'S OWN SIZE.
@@ -1243,7 +1333,7 @@ SkinMesh.attachments = function (main) {
   // sphere constant is gone — it was approximating this.
   const round = (box, id, out) => {
     const l = box.box.lat[id], n = box.box.n;
-    const ux = l[0] / n, uy = l[1] / n, uz = l[2] / n;
+    const ux = l[0] / n[0], uy = l[1] / n[1], uz = l[2] / n[2];
     const pw = Skeleton.jointRound(box.joint);
     // A lattice point always lies on the box surface, so at least one component is +-1 and the
     // norm can never be zero.
@@ -1268,8 +1358,9 @@ SkinMesh._buildArrays = buildArrays;
 // The box FOR A LEVEL, since there is no longer a single one. The harness builds fixtures against
 // it and console pokes read it; both want to name the level they mean.
 SkinMesh._boxOf = boxOf;
-SkinMesh._box = boxOf(CELLS);
+SkinMesh._box = boxOf([CELLS, CELLS, CELLS]);
 SkinMesh._levelFor = levelFor;
+SkinMesh._levelsFor = levelsFor;
 SkinMesh._relax = relax;
 
 export default SkinMesh;

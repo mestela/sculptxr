@@ -51,6 +51,11 @@ const window = { _boneSkinRelax: RELAX,
   // SKIN_LEVEL_FLOOR=4 exercises 16-sided limbs — see levelFor, and note that it is EXPECTED to
   // fail the five-finger fixture until the claim chooser is fixed.
   _boneSkinLevelFloor: process.env.SKIN_LEVEL_FLOOR ? parseInt(process.env.SKIN_LEVEL_FLOOR, 10) : undefined,
+  // SKIN_PER_AXIS=0 runs the whole suite on the UNIFORM lattice, which is what shipped before
+  // levelsFor. Every fixture here uses round joints bar one, so the two modes should agree
+  // almost everywhere — a difference anywhere else is per-axis sizing reaching a case it should
+  // not. See levelsFor.
+  _boneSkinPerAxis: process.env.SKIN_PER_AXIS === '0' ? false : undefined,
  };
 const Utils = { TRI_INDEX: 4294967295 };
 const Enums = { Shader: { MATCAP: 0 } };
@@ -880,6 +885,38 @@ if (SkinMesh._boxLattice) {
     Math.abs(fx - 1.5 * 1.6) < 0.25 && Math.abs(fz - 1.5 * 0.4) < 0.25,
     'wanted 2.40 x 0.60, got ' + fx.toFixed(2) + ' x ' + fz.toFixed(2)
     + ' — the skin follows the ellipsoid, not a sphere of some average radius');
+
+  // ── AND ITS LATTICE IS SIZED PER AXIS TO MATCH ──────────────────────────────────────
+  //
+  // The shape checks above pass either way — relax will squash a uniform cage onto an
+  // anisotropic target — so they say nothing about the CELLS. What per-axis sizing is for is the
+  // cells being roughly cubic, which is what lets a bone's claim be square in cells and square in
+  // world at the same time, and that only shows up by asking the lattice directly. See levelsFor.
+  const dirs = [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0)];
+  const lv = (half) => SkinMesh._levelsFor(dirs, half);
+  const roundL = lv([1, 1, 1]);
+  check('a round joint keeps the one level it always had',
+    roundL[0] === roundL[1] && roundL[1] === roundL[2] && roundL[0] === SkinMesh._levelFor(dirs),
+    'got ' + roundL.join('x') + ' for a cube');
+  const flatL = lv([1.6, 1, 0.4]);
+  check('...still in powers of two, since that is what makes the levels line up',
+    flatL.every((n) => n >= 2 && (n & (n - 1)) === 0), 'got ' + flatL.join('x'));
+  if (process.env.SKIN_PER_AXIS === '0') {
+    // The switch has to actually switch, or an A/B on a real rig measures the same thing twice.
+    check('..._boneSkinPerAxis = false goes back to the uniform lattice',
+      flatL[0] === flatL[1] && flatL[1] === flatL[2], 'got ' + flatL.join('x') + ' with it off');
+  } else {
+    check('...and a flat one is divided fewer times through its thin axis',
+      flatL[2] < flatL[0], 'got ' + flatL.join('x') + ' for a joint scaled 1.6 : 1 : 0.4');
+    // The floor is a SILHOUETTE rule about the axis that is LONG — a hair-thin axis contributing
+    // two cells is proportionate, not the octagonal-limb regression the floor of four exists to
+    // stop. See MIN_CELLS.
+    check('...and never divided away to nothing',
+      lv([1, 0.001, 1])[1] === 2, 'got ' + lv([1, 0.001, 1]).join('x') + ' for a nearly flat joint');
+  }
+  // The switch is exercised by running this whole file with SKIN_PER_AXIS=0 rather than by
+  // poking it here — `window` lives inside the generated module, and a suite that runs both ways
+  // proves the uniform path still works rather than only that the flag is read.
 }
 
 // ── A SHAPE THAT HAS MOVED OFF ITS JOINT ──────────────────────────────────────────────

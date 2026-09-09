@@ -203,11 +203,13 @@ SkinPreview.update = function (main) {
   // grid you count to see how much of a face a bone gets is the grid that joint actually has.
   for (const box of att.boxes) {
     const own = owners.get(box);
-    const B = box.box, N = B.n;
+    const B = box.box;
     for (let si = 0; si < B.sides.length; si++) {
-      const grid = B.sides[si].grid;
-      for (let a = 0; a < N; a++) {
-        for (let b = 0; b < N; b++) {
+      // A SIDE'S OWN TWO COUNTS. Since the lattice is sized per axis a side is no longer square,
+      // and drawing it as one silently dropped half of a palm's cells. See makeBox.
+      const grid = B.sides[si].grid, NU = B.sides[si].nu, NV = B.sides[si].nv;
+      for (let a = 0; a < NU; a++) {
+        for (let b = 0; b < NV; b++) {
           const e = own && own.get(si + ',' + a + ',' + b);
           if (e) pairColor(e.pair, hue); else hue.copy(COL_BARE);
           att.round(box, grid[a][b], _q0);
@@ -222,14 +224,18 @@ SkinPreview.update = function (main) {
       // The grid, so it reads as subdivided rather than as a smooth blob — and so a claimed
       // patch can be counted in cells, which is the only way to see that four fingers are
       // sharing one face four ways.
-      for (let a = 0; a <= N; a++) {
-        for (let b = 0; b < N; b++) {
+      // The two families of grid lines have to be walked separately now that the side need not be
+      // square: one runs the length of v at each u, the other the length of u at each v.
+      for (let a = 0; a <= NU; a++)
+        for (let b = 0; b < NV; b++) {
           att.round(box, grid[a][b], _a); att.round(box, grid[a][b + 1], _b);
           seg(_a, _b, COL_GRID);
-          att.round(box, grid[b][a], _a); att.round(box, grid[b + 1][a], _b);
+        }
+      for (let b = 0; b <= NV; b++)
+        for (let a = 0; a < NU; a++) {
+          att.round(box, grid[a][b], _a); att.round(box, grid[a + 1][b], _b);
           seg(_a, _b, COL_GRID);
         }
-      }
     }
   }
 
@@ -280,7 +286,8 @@ SkinPreview.report = function (main) {
     at: name(e.joint), to: name(e.other),
     // The block and the face it came out of, which is the thing you actually want to see: a whole
     // 4x4 face meeting a 2x2 block of an 8x8 one is the reduction band working, not a pinch.
-    block: (e.rect.a1 - e.rect.a0) + 'x' + (e.rect.b1 - e.rect.b0) + ' of ' + e.box.box.n,
+    block: (e.rect.a1 - e.rect.a0) + 'x' + (e.rect.b1 - e.rect.b0) + ' of '
+      + e.box.box.sides[e.side].nu + 'x' + e.box.box.sides[e.side].nv,
     perimeter: e.perimeter,
     state: e.evicted ? 'EVICTED' : (e.full ? 'ok' : 'pinched'),
   }));
