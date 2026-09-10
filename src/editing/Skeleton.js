@@ -3691,7 +3691,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 13;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent)
+const SKEL_VERSION = 14;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3834,6 +3834,26 @@ Skeleton.serialize = function (meshes) {
     phys.push({ i: i, s: p.stiffness, d: p.damping, g: p.gravity });
   });
 
+  // v14: THE OTHER FIVE PHYSICS PARAMETERS, PLUS COLLIDE.
+  //
+  // v11 saved stiffness, damping and gravity — and PhysicsBones.DEFAULTS has eight. So `drag`,
+  // `ground`, `groundY`, `inertia` and `maxBend` have been silently dropped on every save since
+  // physics bones shipped, and come back as defaults: tune a tail's bend limit or tick Ground,
+  // reload, and both are quietly gone. That is a pre-existing bug, not something self-collision
+  // introduced; this section is where it gets fixed, because the new flag needed a home anyway.
+  //
+  // ITS OWN SECTION rather than five more floats on the v11 one, which is the rule the joint
+  // offset and roundness sections already follow: a file written here still loads on a build
+  // that stops at v13 (it reads the v11 triple and ignores the rest), and a v11 file still loads
+  // here (this section is absent and the defaults stand, exactly as today).
+  const phys2 = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isBone || !m._physicsRoot) return;
+    const p = m._physicsParams || {};
+    phys2.push({ i: i, dr: p.drag, gr: p.ground ? 1 : 0, gy: p.groundY,
+      it: p.inertia, mb: p.maxBend, co: p.collide ? 1 : 0 });
+  });
+
   // v10: the joint's offset, where a face drag has moved its shape off it. Its own section
   // rather than three more floats on the v9 one, so a file written by a build that had scale and
   // not offset still reads.
@@ -3868,6 +3888,7 @@ Skeleton.serialize = function (meshes) {
   slots += 1 + offs.length * 4;
   slots += 1 + rounds.length * 2;
   slots += 1 + phys.length * 4;
+  slots += 1 + phys2.length * 7;   // v14: i + drag, ground, groundY, inertia, maxBend, collide
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -3917,6 +3938,12 @@ Skeleton.serialize = function (meshes) {
 
   u[o++] = phys.length;
   for (const ph of phys) { u[o++] = ph.i; f[o++] = ph.s; f[o++] = ph.d; f[o++] = ph.g; }
+
+  u[o++] = phys2.length;
+  for (const ph of phys2) {
+    u[o++] = ph.i; f[o++] = ph.dr; u[o++] = ph.gr; f[o++] = ph.gy;
+    f[o++] = ph.it; f[o++] = ph.mb; u[o++] = ph.co;
+  }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -4211,6 +4238,23 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         if (!m) continue;
         m._physicsRoot = true;
         m._physicsParams = { stiffness: st, damping: dp, gravity: gr };
+      }
+    }
+
+    // v14: the five parameters v11 forgot, plus self-collision. MERGED into whatever v11 just
+    // built rather than replacing it — the two sections describe the same joints and a v11 file
+    // read here must keep the three values it does carry.
+    if (ver >= 14) {
+      const pn2 = u[o++];
+      for (let i = 0; i < pn2; i++) {
+        const mi = u[o++];
+        const dr = f[o++], gr2 = u[o++], gy = f[o++], it = f[o++], mb = f[o++], co = u[o++];
+        const m = meshes[mi];
+        if (!m) continue;
+        const cur = m._physicsParams || {};
+        cur.drag = dr; cur.ground = !!gr2; cur.groundY = gy;
+        cur.inertia = it; cur.maxBend = mb; cur.collide = !!co;
+        m._physicsParams = cur;
       }
     }
 

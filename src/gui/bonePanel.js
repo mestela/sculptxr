@@ -234,6 +234,7 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.toggles}">
       ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
+      ${flagButton(c, 'phys-collide', 'Self Collision', physP.collide)}
     </div>
     ` : ''}
     ${full ? `
@@ -782,6 +783,18 @@ export function wireBoneSection(root, main, opts) {
     for (const j of withTwin(t)) {
       PhysicsBones.setParams(j, { ground: on, groundY: PhysicsBones.groundHeight(main) });
     }
+    rebuild();
+    main.render?.();
+  });
+
+  // SELF COLLISION (#36). Same shape as Ground above, and mirrored to the twin for the same
+  // reason: a left ear that collides and a right one that does not is never what was wanted.
+  q('phys-collide')?.addEventListener('click', () => {
+    const t = PhysicsBones.panelTarget(main,
+      (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
+    if (!t) return;
+    const on = !PhysicsBones.params(t).collide;
+    for (const j of withTwin(t)) PhysicsBones.setParams(j, { collide: on });
     rebuild();
     main.render?.();
   });

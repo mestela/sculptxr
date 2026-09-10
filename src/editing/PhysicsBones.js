@@ -43,7 +43,7 @@ const PhysicsBones = {};
 // small to see. It is scaled by Skeleton.sceneUnit now, so 1 drapes the same way whatever size
 // the rig was drawn at.
 const DEFAULTS = { stiffness: 0.25, damping: 0.7, gravity: 1, drag: 0.1, ground: false, groundY: 0,
-  inertia: 0.35, maxBend: 50 };
+  inertia: 0.35, maxBend: 50, collide: false };
 
 // A SPRING RATE AND A DECAY RATE, not per-frame factors — which is what makes "tune it live,
 // then bake it" true rather than a slogan.
@@ -151,6 +151,7 @@ PhysicsBones.params = function (j) {
   return {
     stiffness: pick('stiffness'), damping: pick('damping'), gravity: pick('gravity'),
     drag: pick('drag'), ground: pick('ground'), groundY: pick('groundY'),
+    collide: pick('collide'),
     inertia: pick('inertia'), maxBend: pick('maxBend'),
   };
 };
@@ -171,6 +172,7 @@ PhysicsBones.setParams = function (j, patch) {
     groundY:   take('groundY'),
     inertia:   take('inertia', 0, 1),
     maxBend:   take('maxBend', 0, 180),
+    collide:   !!take('collide'),
   };
   return true;
 };
@@ -244,6 +246,55 @@ PhysicsBones.chain = function (main, root) {
   for (const link of out) link.mass = below.get(link.joint) || 1;
   return out;
 };
+
+// THE WHOLE COLLISION RESPONSE FOR ONE BONE, shared by both solvers.
+//
+// ONE IMPLEMENTATION ON PURPOSE. matt runs XPBD (the force solver cannot animate pin constraints
+// on and off, which is the thing XPBD was brought in for), while the code's built-in default is
+// still the force one — so BOTH are live paths depending on the saved option, and a collision
+// that behaved differently between them would be a bug that only appears after someone flips a
+// setting. The projection needs nothing solver-specific: a position, the parent it hangs off,
+// the length to keep, and the two radii.
+//
+// `pt` is moved in place. `dir` is the caller's own scratch vector, since the two solvers each
+// have their own and neither wants the other's clobbered mid-substep.
+function collideBone(pt, parPos, len, joint, par, jointR, parR, dir) {
+  const nProxy = proxyCount(len, Math.min(parR, jointR) || jointR);
+  let any = false;
+  // ALTERNATED with the length constraint. They are two surfaces and one pass of each lands on
+  // neither: pushing out moves the joint off its sphere about the parent, and putting it back on
+  // that sphere moves it back into the collider. Two rounds is what a swinging chain needs.
+  for (let ci = 0; ci < 2; ci++) {
+    let hit = pushOutOfBones(pt, jointR, joint, par);
+
+    // THE PROXIES ALONG THE BONE, so it collides over its whole length and not only at its ends.
+    // Without them two long thin bones cross in an X with both endpoints clear of each other. A
+    // dense chain needs none — its joint spheres already overlap — which is why the count is
+    // derived from length and radius rather than fixed.
+    //
+    // DIVIDED BY t, WHICH IS THE LEVER ARM. The bone pivots about its parent (already written
+    // this frame), so the only thing that can move is the child; a push of d at a fraction t
+    // along the bone is the same angular correction as a push of d/t at the far end. Applied
+    // raw, everything near the parent under-rotates and the bone sinks in at its base — worst
+    // nearest the root, where the chain is stiffest and the error is least forgivable.
+    for (let pi = 1; pi <= nProxy; pi++) {
+      const t = pi / (nProxy + 1);
+      _proxy.copy(parPos).addScaledVector(_colTo.subVectors(pt, parPos), t);
+      _proxyWas.copy(_proxy);
+      if (!pushOutOfBones(_proxy, parR + (jointR - parR) * t, joint, par)) continue;
+      pt.addScaledVector(_proxyDelta.subVectors(_proxy, _proxyWas), 1 / t);
+      hit = true;
+    }
+
+    if (!hit) break;
+    any = true;
+    dir.subVectors(pt, parPos);
+    if (dir.lengthSq() < 1e-12) break;
+    dir.normalize();
+    pt.copy(parPos).addScaledVector(dir, len);
+  }
+  return any;
+}
 
 // ── SIM STATE ─────────────────────────────────────────────────────────────────────────
 //
@@ -332,6 +383,229 @@ PhysicsBones.reset = function (main) {
 
 PhysicsBones.isSettled = function () { return _state.size > 0; };
 
+// ── SELF COLLISION (roadmap #36) ──────────────────────────────────────────────────────
+//
+// matt: flagged physics joints "swing through each other and through the rest of the rig", and
+// he scoped the fix explicitly — BONES ONLY, not the skin, because the capsules are already the
+// collision proxies the rig carries.
+//
+// A PARTICLE IS A SPHERE; A COLLIDER IS A TAPERED CAPSULE. That asymmetry is not a shortcut, it
+// falls out of the formulation: this solver's only handle on the world is where each joint IS,
+// so the thing being pushed can only ever be a point with a radius. A chain of such spheres is
+// its own capsule for collision purposes, so a tail still reads as colliding along its length
+// rather than at its joints. Segment-vs-segment would be more correct and has nothing to push:
+// resolving it would mean distributing a correction over two particles that each have their own
+// length constraint, which is a different solver.
+//
+// The capsule is TAPERED because the drawn bone is — a joint carries its own radius and a bone
+// is the hull of the two spheres at its ends (see Skeleton.jointRadius). Colliding against a
+// single average width would part company with what the user can see, and "it collides where it
+// looks like it should" is the entire acceptance test for this feature.
+const _colA = new THREE.Vector3(), _colB = new THREE.Vector3(), _colP = new THREE.Vector3();
+const _proxy = new THREE.Vector3(), _proxyWas = new THREE.Vector3();
+const _proxyDelta = new THREE.Vector3();
+const _colAx = new THREE.Vector3(), _colTo = new THREE.Vector3();
+let _colliders = null;
+
+// Every bone in the rig, with the radius at each end. Rebuilt once per step() rather than per
+// particle: the joint list and the radii cannot change during a step, only the POSITIONS can,
+// and those are read live at test time — which is what keeps the pass Gauss-Seidel.
+function buildColliders(main) {
+  const out = [];
+  const byJoint = new Map();     // joint -> the colliders that move when it moves
+  for (const j of Skeleton.joints(main)) {
+    const p = j._parentMesh;
+    if (!p || !p._isBone) continue;
+    const c = {
+      a: p, b: j,
+      ra: Skeleton.jointRadius(p, Skeleton.boneRadiusOf(main, p)),
+      rb: Skeleton.jointRadius(j, Skeleton.boneRadiusOf(main, j)),
+      // Cached endpoints, plus the broad-phase sphere derived from them. `stale` is what keeps
+      // the cache honest — see refreshCollider.
+      ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0,
+      mx: 0, my: 0, mz: 0, reach: 0,
+      stale: true,
+    };
+    out.push(c);
+    for (const end of [p, j]) {
+      let l = byJoint.get(end);
+      if (!l) byJoint.set(end, (l = []));
+      l.push(c);
+    }
+  }
+  out.byJoint = byJoint;
+  return out;
+}
+
+// CACHE THE ENDPOINTS; THIS IS THE WHOLE PERFORMANCE STORY.
+//
+// `Skeleton.jointPos` looks like a matrix read and is not. It goes through
+// `Mesh.getModelSpaceMatrix`, and for a PARENTED mesh — which every joint in a skeleton is —
+// that calls `updateWorldMatrix(true, false)` to walk the entire ancestor chain, then inverts a
+// 4x4 and multiplies. Every call.
+//
+// The first cut read both endpoints of every collider inside the innermost loop: per collider,
+// per proxy, per particle, per substep. On a ten-joint tail against a fifty-bone rig under
+// XPBD's eight substeps that is 8 x 10 x 5 x 50 x 2 = FORTY THOUSAND ancestor-walks and matrix
+// inversions per frame — which is why matt saw mobile VR fall over while the collision itself
+// looked right. The arithmetic was never the cost.
+//
+// Cached, the same frame costs one read per bone per invalidation, so a few dozen.
+//
+// STALENESS IS PER JOINT, NOT PER FRAME, so the pass stays exactly Gauss-Seidel. Only SIMULATED
+// joints move during a pass; everything else is static for the whole step. So a collider is
+// re-read only when one of its own endpoints has actually been written this pass — which is what
+// `markColliderStale` is for, called right where the solver writes a joint. Caching once per
+// step instead would be faster still and WRONG in the way that matters: a joint would collide
+// against where its neighbour was last substep, which is the same ordering hazard that made the
+// first physics build four independent springs instead of a chain.
+// WHERE A COLLIDER'S ENDPOINT ACTUALLY IS, preferring the SIM's own particle over the rig.
+//
+// Two reasons, and both matter. Correctness first: the XPBD solver runs eight substeps and only
+// writes the rig AFTER all of them, so `Skeleton.jointPos` on a simulated joint returns LAST
+// FRAME's position for the whole substep loop — a tail would collide with where it used to be.
+// The particle is the live value in both solvers.
+//
+// And it is far cheaper: a map lookup and three reads, against an ancestor-chain walk plus a 4x4
+// inversion and multiply. The rig is still the fallback, because the rest of the skeleton — the
+// body a tail swings into — has no particle and is exactly where the matrices say it is.
+function endPos(joint, out) {
+  const st = _state.get(joint.getID());
+  if (st && st.p) return out.copy(st.p);
+  return Skeleton.jointPos(joint, out);
+}
+
+// `physCollidePerf()` from the console prints one line a second: how many capsule tests ran, how
+// many the broad phase rejected, and how many endpoint re-reads (the expensive ancestor-walk)
+// actually happened. Same shape as xrPerf/ikPerf, and reachable without an import — reaching for
+// an env var in a headset is not a thing you can do. matt: "its a pain changing things like this
+// with an envar in the console on the gxr."
+const _cPerf = { tests: 0, rejected: 0, reads: 0, t0: 0 };
+window.physCollidePerf = function (on) {
+  window._physCollideTrace = on !== false;
+  _cPerf.tests = _cPerf.rejected = _cPerf.reads = 0;
+  _cPerf.t0 = performance.now();
+  return !!window._physCollideTrace;
+};
+function collidePerfTick() {
+  if (!window._physCollideTrace) return;
+  const now = performance.now();
+  if (now - _cPerf.t0 < 1000) return;
+  console.log('[physCollide] %d tests/s, %d rejected by broad phase (%d%%), %d endpoint reads/s',
+    _cPerf.tests, _cPerf.rejected,
+    _cPerf.tests ? Math.round(_cPerf.rejected * 100 / _cPerf.tests) : 0, _cPerf.reads);
+  _cPerf.tests = _cPerf.rejected = _cPerf.reads = 0;
+  _cPerf.t0 = now;
+}
+
+function refreshCollider(c) {
+  if (!c.stale) return;
+  if (window._physCollideTrace) _cPerf.reads++;
+  endPos(c.a, _colA);
+  endPos(c.b, _colB);
+  c.ax = _colA.x; c.ay = _colA.y; c.az = _colA.z;
+  c.bx = _colB.x; c.by = _colB.y; c.bz = _colB.z;
+  // The broad-phase sphere: midpoint, and the distance from it that anything of this bone can
+  // reach. Recomputed with the endpoints because it is derived from them.
+  c.mx = (c.ax + c.bx) * 0.5; c.my = (c.ay + c.by) * 0.5; c.mz = (c.az + c.bz) * 0.5;
+  const hx = c.bx - c.mx, hy = c.by - c.my, hz = c.bz - c.mz;
+  c.reach = Math.sqrt(hx * hx + hy * hy + hz * hz) + Math.max(c.ra, c.rb);
+  c.stale = false;
+}
+
+// Everything this joint is an endpoint of has to be re-read before it is tested again.
+function markColliderStale(joint) {
+  if (!_colliders || !_colliders.byJoint) return;
+  const l = _colliders.byJoint.get(joint);
+  if (!l) return;
+  for (let i = 0; i < l.length; i++) l[i].stale = true;
+}
+
+function markAllCollidersStale() {
+  if (!_colliders) return;
+  for (let i = 0; i < _colliders.length; i++) _colliders[i].stale = true;
+}
+
+// Push `pt` (radius `pr`) out of every bone that is not adjacent to the bone `par -> joint`.
+// Returns true if anything moved.
+//
+// ADJACENCY IS EXCLUDED BY SHARED ENDPOINT, which is the standard rule and the only one that
+// works here: a bone and its neighbour MEET at a joint, so they are permanently interpenetrating
+// by construction and a collision pass that included them would jam the chain straight — every
+// joint shoved away from a bone it is attached to. That covers the particle's own bone, its
+// children, its siblings (two fingers off one palm meet at the palm) and the bone above its
+// parent, and leaves everything a joint could actually swing into.
+// HOW MANY PROXY POINTS A BONE NEEDS ALONG ITS LENGTH.
+//
+// matt: "would we be able to distribute points along the bones to act as collision proxies?" —
+// and he is right that joint spheres alone are not enough. A chain of short joints IS its own
+// capsule, so hair and tails collide correctly with nothing extra; but two LONG thin bones can
+// cross in an X with both endpoints clear of each other, and nothing stops them.
+//
+// THE PROXIES NEED NO RIGIDITY CONSTRAINT, which is the part that sounds hard and is not. The
+// two sides of the test are not symmetric: the COLLIDERS are already exact capsules tested
+// analytically, so nothing passive needs proxies at all. Only the moving bone needs them, and
+// there a proxy is a KINEMATIC FUNCTION of its two joints — a lerp — not a particle with degrees
+// of freedom of its own. There is nothing to keep rigid and no active/passive bookkeeping,
+// because a proxy cannot disagree with the bone it lies on.
+//
+// Spaced about a radius apart, which is the standard rule: gaps wider than the thinnest thing
+// that could pass through them are how a proxy chain leaks. Capped, because this is the inner
+// loop and a long bone with a tiny radius would otherwise ask for hundreds.
+const PROXY_MAX = 4;
+function proxyCount(len, r) {
+  if (!(r > 1e-9) || !(len > 1e-9)) return 0;
+  return Math.max(0, Math.min(PROXY_MAX, Math.floor(len / (2 * r)) - 1));
+}
+
+function pushOutOfBones(pt, pr, joint, par) {
+  if (!_colliders || !_colliders.length) return false;
+  let moved = false;
+  for (let ci = 0; ci < _colliders.length; ci++) {
+    const c = _colliders[ci];
+    if (c.a === joint || c.b === joint || c.a === par || c.b === par) continue;
+    refreshCollider(c);
+
+    // BROAD PHASE, and it earns its place: most bones are nowhere near most joints, and this
+    // rejects them in six subtractions and a compare instead of a clamped projection onto the
+    // segment plus a taper lerp. On a whole-body rig it typically removes all but a handful.
+    const dx = pt.x - c.mx, dy = pt.y - c.my, dz = pt.z - c.mz;
+    const far = c.reach + pr;
+    if (window._physCollideTrace) _cPerf.tests++;
+    if (dx * dx + dy * dy + dz * dz > far * far) {
+      if (window._physCollideTrace) _cPerf.rejected++;
+      continue;
+    }
+
+    // Closest point on the segment, then the tapered width there.
+    const axx = c.bx - c.ax, axy = c.by - c.ay, axz = c.bz - c.az;
+    const len2 = axx * axx + axy * axy + axz * axz;
+    let t = len2 > 1e-18
+      ? ((pt.x - c.ax) * axx + (pt.y - c.ay) * axy + (pt.z - c.az) * axz) / len2 : 0;
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    const cx = c.ax + axx * t, cy = c.ay + axy * t, cz = c.az + axz * t;
+    let tox = pt.x - cx, toy = pt.y - cy, toz = pt.z - cz;
+    const d = Math.sqrt(tox * tox + toy * toy + toz * toz);
+    const want = pr + c.ra + (c.rb - c.ra) * t;
+    if (d >= want) continue;
+    // EXACTLY ON THE AXIS there is no direction to be pushed along, and inventing one puts the
+    // joint somewhere arbitrary. Nudged along the bone's own perpendicular instead, which is
+    // stable because the next iteration then has a real direction to work with.
+    if (d < 1e-9) {
+      tox = axy; toy = -axx; toz = 0;
+      let l = Math.sqrt(tox * tox + toy * toy + toz * toz);
+      if (l < 1e-9) { tox = 1; toy = 0; toz = 0; l = 1; }
+      tox /= l; toy /= l; toz /= l;
+    } else {
+      tox /= d; toy /= d; toz /= d;
+    }
+    pt.set(cx + tox * want, cy + toy * want, cz + toz * want);
+    moved = true;
+  }
+  return moved;
+}
+
+
 const _pAnim = new THREE.Vector3(), _pPar = new THREE.Vector3(), _pCur = new THREE.Vector3();
 const _vel = new THREE.Vector3(), _next = new THREE.Vector3(), _dir = new THREE.Vector3();
 const _aimA = new THREE.Vector3(), _aimB = new THREE.Vector3(), _qAim = new THREE.Quaternion();
@@ -347,6 +621,13 @@ function mat4Copy(dst, src) { for (let i = 0; i < 16; i++) dst[i] = src[i]; }
 // otherwise hands the integrator a dt large enough to throw the chain into orbit, and the user
 // reads that as the feature being broken rather than as their machine hiccupping.
 PhysicsBones.step = function (main, dt) {
+  // Rebuilt on first use; the endpoint cache is invalidated wholesale at the top of every step
+  // because the ANIMATION may have moved any joint since the last one. Within a step the cache
+  // is invalidated per joint at the point of each write, which is what keeps the pass
+  // Gauss-Seidel — see refreshCollider.
+  _colliders = null;
+  markAllCollidersStale();
+  collidePerfTick();
   const roots = PhysicsBones.roots(main);
   if (!roots.length) return 0;
   const h = Math.max(1 / 240, Math.min(1 / 20, dt || 1 / 60));
@@ -467,6 +748,12 @@ PhysicsBones.step = function (main, dt) {
         pst.rest = link.parent._physRest;
       }
 
+      // The particle's own radius — what makes it a sphere rather than a point. Read per joint
+      // rather than cached on the link, because a joint resized in the panel has to take effect
+      // without resetting the sim.
+      const jointR = par.collide
+        ? Skeleton.jointRadius(j, Skeleton.boneRadiusOf(main, j)) : 0;
+
       Skeleton.jointPos(j, _pAnim);   // the parent above has already been written
       Skeleton.jointPos(link.parent, _pPar);        // already written this frame, so it is live
       _pCur.copy(st.p);                             // the PARTICLE's position, not the rig's
@@ -544,6 +831,28 @@ PhysicsBones.step = function (main, dt) {
         if (st.v.y < 0) st.v.y = 0;
       }
 
+      // SELF COLLISION, after the length constraint for exactly the reason the ground is: push
+      // first and re-project onto the bone's length afterwards, and the point goes straight back
+      // inside whatever it was pushed out of.
+      //
+      // ALTERNATED rather than done once. The push and the length constraint are two surfaces
+      // and a single pass of each lands on neither: pushing out moves the joint off its sphere
+      // about the parent, and putting it back on that sphere moves it back into the collider.
+      // Alternating converges on their intersection, which is a real position the bone can hold.
+      // Two rounds is what a swinging chain needs; more buys accuracy nobody can see and this is
+      // the innermost loop of the sim.
+      //
+      // NO CIRCLE TRICK HERE, unlike the ground. The ground is a plane, so the set of points at
+      // the right distance from the parent AND on the floor has a closed form. A capsule has no
+      // such form, so this is the iterative version of the same idea.
+      if (par.collide) {
+        // Built on FIRST USE, so a scene where nothing collides never walks the joint list at
+        // all — and one that does walks it once per step rather than once per particle.
+        if (!_colliders) _colliders = buildColliders(main);
+        collideBone(_next, _pPar, rest, j, link.parent, jointR,
+          Skeleton.jointRadius(link.parent, Skeleton.boneRadiusOf(main, link.parent)), _dir);
+      }
+
       // A BEND LIMIT, which is what stops a chain looking broken rather than loose. A free
       // particle plus a length constraint will happily fold a joint back on itself when the rig
       // moves faster than the spring can answer; a real ear cannot do that, and the eye reads
@@ -588,6 +897,11 @@ PhysicsBones.step = function (main, dt) {
       if (_aimA.lengthSq() > 1e-12 && _aimB.lengthSq() > 1e-12) {
         _qAim.setFromUnitVectors(_aimA.normalize(), _aimB.normalize());
         IKSolver.rotateJoint(link.parent, _qAim);
+        // This rotation moved `j` and everything under it, so any collider with an endpoint
+        // there must be re-read before it is tested again. Marked HERE, at the write, so the
+        // cache cannot silently go stale if the write path changes.
+        markColliderStale(j);
+        markColliderStale(link.parent);
         pst.written = Array.prototype.slice.call(link.parent.getMatrix());
         link.parent._physWritten = pst.written;   // survives the state wipe, so reset can guard on it
         moved++;
@@ -786,6 +1100,8 @@ function solveDistance(pPar, p, wPar, w, rest) {
 PhysicsBones.stepXPBD = function (main, dt) {
   const roots = PhysicsBones.roots(main);
   if (!roots.length) return 0;
+  _colliders = null;              // per step, same contract as the force solver's
+  markAllCollidersStale();
   const frameH = Math.max(1 / 240, Math.min(1 / 20, dt || 1 / 60));
   const N = Math.max(1, (window._physSubsteps | 0) || PhysicsBones.SUBSTEPS);
   const h = frameH / N;
@@ -996,6 +1312,18 @@ PhysicsBones.stepXPBD = function (main, dt) {
             st.p.set(_xPar.x + _xDir.x * ring, par.groundY, _xPar.z + _xDir.z * ring);
           }
           if (st.v.y < 0) st.v.y = 0;
+        }
+        // SELF COLLISION — the same `collideBone` the force solver runs, so the two cannot
+        // drift. THIS IS THE PATH THAT ACTUALLY RUNS FOR matt: he keeps XPBD on, because the
+        // force solver cannot animate pin constraints on and off. The built-in default is still
+        // the force solver, so both are live depending on the saved option — which is exactly
+        // why the response is one shared function rather than two that look alike.
+        if (par.collide) {
+          if (!_colliders) _colliders = buildColliders(main);
+          const jt = links[i].joint, pj = links[i].parent;
+          collideBone(st.p, _xPar, shape[i].len, jt, pj,
+            Skeleton.jointRadius(jt, Skeleton.boneRadiusOf(main, jt)),
+            Skeleton.jointRadius(pj, Skeleton.boneRadiusOf(main, pj)), _xDir);
         }
         // The bend cone, so a chain cannot fold back on itself.
         if (bendLimit < 180) {
