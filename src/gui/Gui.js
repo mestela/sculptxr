@@ -10,6 +10,7 @@ import GuiTopology from './GuiTopology.js';
 import GuiSculpting from './GuiSculpting.js';
 import GuiTimeline from './GuiTimeline.js';
 import BlendshapeStackPanel from './BlendshapeStackPanel.js';
+import BlendshapePad from './BlendshapePad.js';
 import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -495,6 +496,10 @@ class Gui {
 
     // Canvas-2D blendshape layer-stack panel (replaces the HTML blendshape UI).
     this._ctrlBlendshapes = new BlendshapeStackPanel(this._main).mount(blendshapesPanel);
+    // The kaospad, under the stack it drives (#11). Its own canvas rather than more rows in the
+    // stack: the stack is a LIST and this is a continuous 2D surface, and the panel's hit-testing
+    // is built around rows.
+    this._ctrlBlendPad = new BlendshapePad(this._main).mount(blendshapesPanel);
     // Tab ref so a blocked sculpt can pulse the icon when the panel isn't visible.
     this._ctrlBlendshapes._tabEl = blendshapesTab;
 

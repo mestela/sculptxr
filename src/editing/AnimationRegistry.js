@@ -38,6 +38,29 @@ function trsLerp(a, b, u) {
 
 const getOpt = () => getOptionsURL();
 
+// SHIFT TANGENT OVERRIDES ACROSS A STRUCTURAL EDIT.
+//
+// `tangentOffsets` is a flat object keyed by KEY INDEX — `3_right_dt`, `4_left_dv` and so on —
+// so inserting or removing a key silently re-points every override above it at a different key.
+// The symptom is a curve that misbehaves only where someone had hand-tuned a tangent, which is
+// exactly the kind of thing that gets blamed on the evaluator.
+//
+// `at` is the index inserted at (dir +1) or removed (dir -1); overrides for the removed key are
+// dropped, and everything above is renumbered.
+function shiftTangentOffsets(bt, at, dir) {
+  const to = bt.tangentOffsets;
+  if (!to) return;
+  const out = {};
+  for (const k of Object.keys(to)) {
+    const m = /^(\d+)_(.*)$/.exec(k);
+    if (!m) { out[k] = to[k]; continue; }
+    const i = +m[1];
+    if (dir < 0 && i === at) continue;          // the key itself is gone
+    out[(i >= at ? i + dir : i) + '_' + m[2]] = to[k];
+  }
+  bt.tangentOffsets = out;
+}
+
 class AnimationRegistry {
   constructor() {
     this.tracks = new Map(); // Map<MeshID, { times, positions, quaternions, scales, playbackTime, lastUpdate }>
@@ -417,6 +440,75 @@ class AnimationRegistry {
     }, 33.3);
   }
 
+  // (see the module-level shiftTangentOffsets — it is a plain function because it is pure and
+  // has nothing to do with the registry's state.)
+
+  // WHICH SHAPES A TAKE IS ACTUALLY PERFORMING — the ones being driven live, i.e. previewed.
+  //
+  // Recording every shape on the mesh would be the obvious reading of "record the blendshapes"
+  // and it is the wrong one: it writes a key per frame for shapes you never touched, so anything
+  // already animated is overwritten with a flat line by the act of recording something else. The
+  // preview map is exactly the set under your hand — the pad puts its four there, and only its
+  // four — so it is both the cheapest answer and the right one.
+  _performedShapes(track) {
+    const p = track && track.blendshapePreview;
+    return p && p.size ? [...p.keys()] : [];
+  }
+
+  // Write one weight key per performed shape at `t`. Deliberately NOT setBlendshapeWeight: that
+  // quantises to the fps grid and pushes its own undo entry per call, which is right for a slider
+  // you let go of and wrong thirty times a second. The take's undo is the one stopRecording
+  // pushes, exactly as it is for a transform take.
+  _captureBlendshapeKeys(t) {
+    const track = this.tracks.get(this.activeRecordingId);
+    if (!track || !track.blendshapes) return 0;
+    if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
+    const names = this._performedShapes(track);
+
+    // QUANTISE TO THE FRAME GRID, exactly as setBlendshapeWeight does. This is not tidiness; an
+    // unquantised sweep is what made a recorded take erratic. The capture rate and the frame rate
+    // are unrelated numbers, so raw transport times land wherever the tick happened to fire — and
+    // sooner or later two land a millisecond or two apart with different values. That pair is a
+    // near-vertical segment, and because the auto-tangents at each key are derived from their
+    // NEIGHBOURS the overshoot does not stay local: it propagates into the segments either side.
+    //
+    // Measured on an identical, perfectly linear performance: max deviation from linear was 0.000
+    // at even spacing, 0.011 with ordinary jitter, and 0.091 — nine per cent of full travel — with
+    // one near-coincident pair in the middle. matt: "the motion is very erratic; either the
+    // tangent interpolation is wrong, or its laying down keys wrong." Neither, in the end: the
+    // keys were right and the interpolation was right, and the TIMES were wrong.
+    //
+    // On the grid, near-duplicates collapse onto the same frame and the insert below overwrites,
+    // so the last sample of a frame wins — which is also what makes the dopesheet and a
+    // frame-by-frame scrub agree with what was performed.
+    const fps = window._animFPS || 24;
+    t = Math.round(t * fps) / fps;
+
+    let n = 0;
+    for (const name of names) {
+      if (!track.blendshapes.has(name)) continue;
+      let bt = track.blendshapeTracks.get(name);
+      if (!bt) track.blendshapeTracks.set(name, (bt = { times: [], values: [] }));
+      const v = track.blendshapePreview.get(name);
+      // Sorted insert, so a take that wraps the loop does not leave the curve running backwards.
+      let lo = 0, hi = bt.times.length;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (bt.times[mid] < t) lo = mid + 1; else hi = mid; }
+      if (bt.times[lo] === t) { bt.values[lo] = v; }
+      else {
+        bt.times.splice(lo, 0, t); bt.values.splice(lo, 0, v);
+        // TANGENT OVERRIDES ARE KEYED BY KEY INDEX (`${i}_right_dt` and friends), so an insert
+        // shifts every override above it onto the wrong key. Left alone this is silent curve
+        // corruption that only shows up on a track someone had hand-tuned in the graph editor.
+        shiftTangentOffsets(bt, lo, +1);
+      }
+      n++;
+    }
+    if (n && window._animMasterDuration !== undefined && t > (window._animMasterDuration || 0)) {
+      window._animMasterDuration = t;
+    }
+    return n;
+  }
+
   captureTick() {
     if (window.app && window.app._mesh && !this.recordingTargets?.length) {
       const liveMesh = window.app._mesh;
@@ -483,11 +575,26 @@ class AnimationRegistry {
       && elapsed >= rangeEnd - 1e-4;
     if (stopAtRangeEnd) elapsed = rangeEnd;
 
-    // #30 unify (2026-07-06): shape (vertex) capture no longer runs on this setInterval —
-    // it moved into update()'s render-loop rebase so display + capture share ONE clock
-    // (killed a two-clock race) and keys snap to a fixed frame grid (killed per-loop
-    // rolling drift). See `_captureShapeKeyGridded`. captureTick now handles transform only.
-    if (window._animKeyMode === 'shape') return;
+    // THE ACTIVE KEY MODE DECIDES WHAT A TAKE RECORDS, and this dispatch is exhaustive on
+    // purpose. matt: "the record mode should respect the XF/SH/BS/SR modes, and only record keys
+    // for the states that are active."
+    //
+    // It used to be a single early-out for 'shape' with everything else FALLING THROUGH to the
+    // transform writer below — so recording in BS mode wrote transform keys and no weights, and
+    // recording in SR mode wrote transform keys over a frame-replacement take. Neither is a mode
+    // the user selected; both are the absence of a branch reading as a decision.
+    //
+    // The mode is a RADIO (see the mode buttons in GuiTimeline), so exactly one type is captured.
+    // A fall-through default is what caused this, so there is none: every mode names itself.
+    const _mode = window._animKeyMode;
+    // #30 unify (2026-07-06): shape (vertex) capture no longer runs on this setInterval — it
+    // moved into update()'s render-loop rebase so display + capture share ONE clock (killed a
+    // two-clock race) and keys snap to a fixed frame grid (killed per-loop rolling drift). See
+    // `_captureShapeKeyGridded`. `0` is the legacy value for shape, still read elsewhere.
+    if (_mode === 'shape' || _mode === 0) return;
+    // SR frames are AUTHORED (new / duplicate / delete), not swept up by a transport pass. There
+    // is nothing continuous to sample, and the transform keys it used to write were pure damage.
+    if (_mode === 'shaperep') return;
 
     if (window._animLoopEnabled !== false && window._animMasterDuration && window._animMasterDuration > 0) {
       const rawElapsed = elapsed;
@@ -502,6 +609,24 @@ class AnimationRegistry {
         for (const target of targets) {
           const targetTrack = this.tracks.get(target.getID());
           if (!targetTrack) continue;
+          // Blendshape overdub: same rule as the transform channels below — a pass over ground
+          // you have already recorded REPLACES it rather than piling a second performance on
+          // top. Only the shapes actually being performed are touched; a shape you are not
+          // driving keeps whatever it had.
+          if (window._animKeyMode === 'blendshape' && targetTrack.blendshapeTracks) {
+            for (const name of this._performedShapes(targetTrack)) {
+              const bt = targetTrack.blendshapeTracks.get(name);
+              if (!bt) continue;
+              for (let i = bt.times.length - 1; i >= 0; i--) {
+                if (inWindow(bt.times[i])) {
+                  bt.times.splice(i, 1);
+                  bt.values.splice(i, 1);
+                  // Same index-shift hazard as the insert — see shiftTangentOffsets.
+                  shiftTangentOffsets(bt, i, -1);
+                }
+              }
+            }
+          }
           for (let i = targetTrack.times.length - 1; i >= 0; i--) {
             if (inWindow(targetTrack.times[i])) {
               targetTrack.times.splice(i, 1);
@@ -521,6 +646,17 @@ class AnimationRegistry {
       if (elapsed >= this.lastCaptureWriteTime && elapsed - this.lastCaptureWriteTime < rate) return;
     }
     this.lastCaptureWriteTime = elapsed;
+
+    // BLENDSHAPE CAPTURE. Without this, BS mode fell through to the transform writer below and
+    // recorded the mesh's MATRIX — so a blendshape take produced transform keys and not one
+    // weight key. matt: "the playhead moved, but it didn't record any BS keys." It was never
+    // implemented: the BS button selects which key type `+` adds and which lanes are drawn, and
+    // nothing ever taught the recorder about it.
+    if (_mode === 'blendshape') {
+      this._captureBlendshapeKeys(elapsed);
+      if (stopAtRangeEnd) this.stopRecording();
+      return;
+    }
 
     if (targets.length > 1) {
       for (const target of targets) this._writeTransformKey(target, elapsed);
@@ -981,6 +1117,23 @@ class AnimationRegistry {
 
     if (this.captureTimer) clearInterval(this.captureTimer);
     this.captureTimer = null;
+
+    // THE PREVIEW MUST STAND DOWN once the take exists, or the performance is invisible. The pad
+    // holds its four weights in the preview map, and a preview OUTRANKS the curve by design — so
+    // the keys just recorded would be masked by the pose the pad was left in, and playback would
+    // show a frozen face while the dopesheet showed a full take. Cleared only for a blendshape
+    // take: any other mode's preview belongs to whatever put it there.
+    if (window._animKeyMode === 'blendshape') {
+      const recTrack = this.tracks.get(this.activeRecordingId);
+      if (recTrack && recTrack.blendshapePreview && recTrack.blendshapePreview.size) {
+        recTrack.blendshapePreview.clear();
+        const m = this.activeMesh;
+        if (m) this.applyBlendshapes(m);
+        // The pad's handle now says something the mesh does not; put it back to neutral so the
+        // two agree. (It is the same object either way — a stale handle is a lie about state.)
+        window._blendshapePad?.reset?.();
+      }
+    }
 
     const track = this.tracks.get(this.activeRecordingId);
     const takeTargets = this.recordingTargets?.length ? this.recordingTargets.slice()
@@ -1819,6 +1972,56 @@ class AnimationRegistry {
     this.applyBlendshapes(mesh);
   }
 
+  // A LIVE WEIGHT THAT IS NOT A KEY.
+  //
+  // `setBlendshapeWeight` writes a key at the quantised playhead — right for a slider you drag to
+  // author a value, wrong for anything that moves continuously while you are still deciding. The
+  // kaospad sweeps four weights at once; keying every frame of that would bury the track in keys
+  // nobody asked for, and there would be no way to try a pose and change your mind.
+  //
+  // So a preview is an OVERRIDE LAYER: while a name is in the map its value wins over the curve,
+  // and clearing the map returns the shape to whatever the animation says, with nothing to undo.
+  // Committing is a separate, explicit act that writes ordinary keys through the ordinary path.
+  blendshapePreviewAt(track, name, bTrack) {
+    const p = track.blendshapePreview;
+    if (p && p.has(name)) return p.get(name);
+    if (!bTrack || bTrack.times.length === 0) return 0;
+    return this.evaluateScalarTrack(bTrack, track.playbackTime);
+  }
+
+  // Set (or clear, with null) one previewed weight. Returns true if anything actually changed, so
+  // a caller driving four at once can recomposite exactly once instead of four times.
+  setBlendshapePreview(mesh, name, value) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.has(name)) return false;
+    if (!track.blendshapePreview) track.blendshapePreview = new Map();
+    const p = track.blendshapePreview;
+    if (value === null || value === undefined) return p.delete(name);
+    if (p.get(name) === value) return false;
+    p.set(name, value);
+    return true;
+  }
+
+  clearBlendshapePreview(mesh) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapePreview || !track.blendshapePreview.size) return false;
+    track.blendshapePreview.clear();
+    this.applyBlendshapes(mesh);
+    return true;
+  }
+
+  // Turn whatever is previewed into real keys at the playhead, then drop the override. The keys
+  // go through setBlendshapeWeight, so they are quantised, undoable and indistinguishable from
+  // keys made any other way.
+  commitBlendshapePreview(mesh) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapePreview || !track.blendshapePreview.size) return 0;
+    const pairs = [...track.blendshapePreview.entries()];
+    track.blendshapePreview.clear();
+    for (const [name, value] of pairs) this.setBlendshapeWeight(mesh, name, value);
+    return pairs.length;
+  }
+
   applyBlendshapes(mesh, baseVerts) {
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes) return;
@@ -1839,10 +2042,14 @@ class AnimationRegistry {
     const muted = track.blendshapeMuted;
     track.blendshapes.forEach((delta, name) => {
       const bTrack = track.blendshapeTracks.get(name);
-      if (!bTrack || bTrack.times.length === 0) return;
+      // A PREVIEWED SHAPE NEEDS NO KEYS. The early-out is right for playback — an unkeyed shape
+      // contributes nothing — but it also made a never-keyed shape impossible to preview, which
+      // is every shape the first time you reach for it on the pad.
+      const previewing = track.blendshapePreview && track.blendshapePreview.has(name);
+      if ((!bTrack || bTrack.times.length === 0) && !previewing) return;
       if (muted && muted.has(name)) return;
 
-      const weight = this.evaluateScalarTrack(bTrack, track.playbackTime);
+      const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight !== 0) {
         for (let i = 0; i < v.length; i++) {
           v[i] += delta[i] * weight;
@@ -1948,8 +2155,14 @@ class AnimationRegistry {
       if (name === activeName) return;
       if (muted && muted.has(name)) return;
       const bTrack = track.blendshapeTracks.get(name);
-      if (!bTrack || bTrack.times.length === 0) return;
-      const weight = this.evaluateScalarTrack(bTrack, track.playbackTime);
+      // THE SAME WEIGHT applyBlendshapes USED, previews included. These two are counterparts:
+      // that one ADDS the other layers into what you see, this one SUBTRACTS them back out so a
+      // sculpt captures only the layer being edited. Let them disagree about a previewed weight
+      // and the difference is silently baked into the delta — the shape would absorb whatever
+      // the pad happened to be showing at the moment of the stroke.
+      const previewingO = track.blendshapePreview && track.blendshapePreview.has(name);
+      if ((!bTrack || bTrack.times.length === 0) && !previewingO) return;
+      const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);
       for (let i = 0; i < out.length; i++) out[i] += delta[i] * weight;
@@ -2912,36 +3125,20 @@ class AnimationRegistry {
     // meshes, blendshapes, visibility -- carries on evaluating normally.
     if (window._bindPoseHold && (mesh._isBone || mesh._isPinTarget)) return;
 
-    // Recording mesh: normally fully suppressed so the live performance isn't stomped by
-    // playback. EXCEPT a shape (vertex) take — there the loop must keep playing so you
-    // can see prior waves and puppeteer new ones on top; we only suppress the ShotSculpt
-    // vertex-write WHILE a stroke is actively deforming this mesh (below).
-    let liveShapeStroke = false;
-    const isRecordingTarget = this.recordingTargets?.some((m) => m.getID() === mesh.getID())
-      || mesh.getID() === this.activeRecordingId;
-    if (this.isRecording && isRecordingTarget) {
-      if (window._animKeyMode !== 'shape') return;
-      const app = window.app;
-      liveShapeStroke = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));
-      // Stroke ended → drop the per-stroke rebase baseline + capture latches so the next
-      // stroke re-begins cleanly (topology re-latched, first grid cell writes).
-      if (!liveShapeStroke) {
-        // Falling edge: a wave just finished. Push a per-wave undo (using the pre-stroke
-        // snapshot as the "before") so releasing the trigger + undo removes exactly that
-        // last recorded motion — squashed so it also reverts the sculpt's geometry state.
-        if (this._shapeWasStroking && this._shapeStrokeSnap) {
-          this._pushShapeWaveUndo(mesh.getID(), this._shapeStrokeSnap);
-        }
-        // Same, for a LAYER stroke (restores that layer's keys, squashed with the sculpt).
-        if (this._shapeWasStroking && this._shapeLayerStrokeSnap) {
-          this._pushShapeLayerWaveUndo(mesh.getID(), this._shapeLayerStrokeSnap);
-        }
-        this._shapeStrokeSnap = null; this._dynBase = null; this._shapeLayerStrokeSnap = null;
-        this._lastGridFrame = -1; this._shapeCaptureLen = -1;
-      }
-      this._shapeWasStroking = liveShapeStroke;
-    }
-
+    // THE TRANSPORT ADVANCES BEFORE ANY MESH IS SUPPRESSED, and that ordering is the bug fix.
+    //
+    // The playhead is a GLOBAL clock that happens to live in a per-mesh function, so it only ever
+    // ticked as a side effect of evaluating some mesh. The recording target is suppressed here
+    // (and skipped outright in Scene's loop) for every mode except 'shape' -- and in a blendshape
+    // session that mesh is usually the ONLY mesh. Result: record armed, count-in ran, isRecording
+    // and _animPlaying both true, capture timer ticking, and the playhead frozen at zero, because
+    // nothing in the scene was eligible to advance it. matt: "record with the 3.2.1 countdown
+    // never actually started the playhead moving."
+    //
+    // Which mesh gets EVALUATED is a per-mesh question; what time it is, is not. Advancing first
+    // changes no evaluation at all -- the suppression below is untouched -- it just stops the
+    // clock depending on it. The `rawDt >= 8` guard makes it idempotent, so calling this once per
+    // mesh per frame still advances time exactly once.
     const now = performance.now();
 
     if (!window._animPlaying) {
@@ -3007,6 +3204,37 @@ class AnimationRegistry {
       }
     }
 
+    // Recording mesh: normally fully suppressed so the live performance isn't stomped by
+    // playback. EXCEPT a shape (vertex) take — there the loop must keep playing so you
+    // can see prior waves and puppeteer new ones on top; we only suppress the ShotSculpt
+    // vertex-write WHILE a stroke is actively deforming this mesh (below).
+    let liveShapeStroke = false;
+    const isRecordingTarget = this.recordingTargets?.some((m) => m.getID() === mesh.getID())
+      || mesh.getID() === this.activeRecordingId;
+    if (this.isRecording && isRecordingTarget) {
+      if (window._animKeyMode !== 'shape') return;
+      const app = window.app;
+      liveShapeStroke = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));
+      // Stroke ended → drop the per-stroke rebase baseline + capture latches so the next
+      // stroke re-begins cleanly (topology re-latched, first grid cell writes).
+      if (!liveShapeStroke) {
+        // Falling edge: a wave just finished. Push a per-wave undo (using the pre-stroke
+        // snapshot as the "before") so releasing the trigger + undo removes exactly that
+        // last recorded motion — squashed so it also reverts the sculpt's geometry state.
+        if (this._shapeWasStroking && this._shapeStrokeSnap) {
+          this._pushShapeWaveUndo(mesh.getID(), this._shapeStrokeSnap);
+        }
+        // Same, for a LAYER stroke (restores that layer's keys, squashed with the sculpt).
+        if (this._shapeWasStroking && this._shapeLayerStrokeSnap) {
+          this._pushShapeLayerWaveUndo(mesh.getID(), this._shapeLayerStrokeSnap);
+        }
+        this._shapeStrokeSnap = null; this._dynBase = null; this._shapeLayerStrokeSnap = null;
+        this._lastGridFrame = -1; this._shapeCaptureLen = -1;
+      }
+      this._shapeWasStroking = liveShapeStroke;
+    }
+
+
     const track = this.tracks.get(mesh.getID());
     if (!track || track.muted) {
       if (track && track.muted && track.restPos && mesh.getMatrix) {
@@ -3033,6 +3261,26 @@ class AnimationRegistry {
     }
 
     track.playbackTime = this.globalPlaybackTime || 0;
+
+    // PRESSING PLAY ENDS POSING. A preview outranks the keyed curve — that is what makes the
+    // kaospad able to show a pose without writing one — so a preview left set makes the
+    // animation for those shapes INVISIBLE. And `_push` writes an entry for every assigned
+    // shape INCLUDING ZEROS, so simply touching the pad pins four shapes at whatever it says
+    // until something clears them. matt recorded a take, pressed play, and nothing moved; a
+    // manual `_blendshapePad.reset()` brought it straight back.
+    //
+    // A preview is a POSING state and playback is a PLAYBACK state, so entering the second ends
+    // the first. Doing it here rather than on the play button catches every route into playback
+    // — the button, a take finishing and auto-playing, a script — from one place.
+    //
+    // NOT WHILE RECORDING, and that exception is the whole reason this is not simply "clear on
+    // _animPlaying": a take sets _animPlaying too, and there the pad IS the input being captured.
+    // Clearing then would erase the performance as it was being played.
+    if (window._animPlaying && !this.isRecording
+        && track.blendshapePreview && track.blendshapePreview.size) {
+      track.blendshapePreview.clear();
+      window._blendshapePad?.reset?.();
+    }
 
     // Visibility track: drive the object's shown/hidden state from its keyed
     // timeline. Step-held, both ends clamped. Null = not vis-animated → leave the

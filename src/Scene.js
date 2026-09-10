@@ -1540,13 +1540,10 @@ class Scene {
         if (this._meshes) {
           for (let i = 0; i < this._meshes.length; i++) {
             const m = this._meshes[i];
-            // Skip playback for the mesh being recorded — EXCEPT a shape (vertex) take,
-            // where the loop must keep playing so you can puppeteer in waves (update()
-            // suppresses only the vertex-write during an active stroke).
-            if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId
-                && window._animKeyMode !== 'shape') {
-              continue;
-            }
+            // THE RECORDING MESH IS STILL PASSED TO update(), which suppresses its own
+            // EVALUATION. Skipping the call outright also skipped the global transport clock
+            // that lives inside it, so a single-mesh blendshape take had nothing left in the
+            // scene able to advance the playhead — see the note by the clock in update().
             window._animationRegistry.update(m);
           }
           this._drawFullScene = true;
@@ -1565,13 +1562,8 @@ class Scene {
       if (this._meshes) {
         for (let i = 0; i < this._meshes.length; i++) {
           const m = this._meshes[i];
-          // Skip playback for the mesh being recorded — EXCEPT a shape (vertex) take,
-          // where the loop must keep playing so you can puppeteer in waves (update()
-          // suppresses only the vertex-write during an active stroke).
-          if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId
-              && window._animKeyMode !== 'shape') {
-            continue;
-          }
+          // Same as the XR loop above: update() suppresses the recording mesh's own evaluation,
+          // but it must still be CALLED or the global transport clock inside it never ticks.
           window._animationRegistry.update(m);
         }
         this._drawFullScene = true; // Ensure we redraw

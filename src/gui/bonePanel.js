@@ -27,8 +27,13 @@ const XR_ONLY_MODES = [];
 
 const MODES = [
   ['draw', 'Draw'],
-  ['fk', 'Tweak FK'],
-  ['free', 'Tweak Free'],
+  // SEL/ IN THE NAME, because selecting IS what these modes are for half the time. The Bones
+  // tool has draw / fk / free / pose / radius / joint / ik and no plain Select, so picking a
+  // joint without editing it means choosing whichever mode does the least harm — and these two
+  // are that mode. matt's own call: a rename rather than an eighth mode, because the behaviour
+  // is already right and only the label was hiding it.
+  ['fk', 'Sel/Tweak FK'],
+  ['free', 'Sel/Tweak Free'],
   ['pose', 'Pose'],
   ['radius', 'Radius'],
   ['joint', 'Tweak Joint'],

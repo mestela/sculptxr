@@ -233,11 +233,21 @@ export default class BlendshapeStackPanel {
     return [...track.blendshapes.keys()].reverse();
   }
 
+  // THE WEIGHT THE MESH IS ACTUALLY WEARING, previews included.
+  //
+  // This is the THIRD reader of a blendshape weight — applyBlendshapes and otherLayersOffset are
+  // the other two — and reading the curve directly made it the odd one out the moment the kaospad
+  // could drive a weight without keying it. Observed: the pad held D at 0.6 and this slider still
+  // read 1.00, the last committed key. A slider that disagrees with the mesh in front of it is
+  // worse than no slider, because it is the thing you would check to find out what is going on.
   _weightOf(name) {
     const track = this._track();
-    const bTrack = track?.blendshapeTracks?.get(name);
+    if (!track) return 0;
+    const bTrack = track.blendshapeTracks?.get(name);
+    const reg = window._animationRegistry;
+    if (reg && reg.blendshapePreviewAt) return reg.blendshapePreviewAt(track, name, bTrack);
     if (!bTrack || bTrack.times.length === 0) return 0;
-    return window._animationRegistry.evaluateScalarTrack(bTrack, track.playbackTime || 0);
+    return reg.evaluateScalarTrack(bTrack, track.playbackTime || 0);
   }
 
   // ── Drawing ──────────────────────────────────────────────────────────────────
