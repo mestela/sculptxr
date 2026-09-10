@@ -204,16 +204,38 @@ class BlendshapePad {
     this.draw();
   }
 
-  // The square the handle lives in, inset for the labels.
+  // EMBEDDED MODE: draw into someone else's canvas at a given rect, and hit-test in that same
+  // canvas's coordinates. The VR blendshape panel is one canvas rasterised to one texture with
+  // one hit map, so the pad has to live INSIDE it rather than beside it — a second VR panel
+  // would mean a second texture, a second plane and a second hit path for one control.
+  //
+  // Same object either way. The desktop mount is just the embedded case with its own canvas and
+  // an origin of (0, 0), which is what keeps the maths and the feel identical in VR and out.
+  embed(ctx, x, y, w, h) {
+    this._ctx = ctx;
+    this._originX = x; this._originY = y;
+    this._cssW = w; this._cssH = h;
+    this._embedded = true;
+    return this;
+  }
+
+  // The square the handle lives in, inset for the labels. In canvas coordinates, so the origin
+  // is added here once and every hit test and every draw inherits it.
   _padRect() {
     const pad = 34, top = 8, bot = 30;
     const size = Math.min(this._cssW - pad * 2, this._cssH - top - bot);
-    return { x: (this._cssW - size) / 2, y: top, s: size };
+    return { x: (this._originX || 0) + (this._cssW - size) / 2,
+             y: (this._originY || 0) + top, s: size };
   }
 
   _onDown(e) {
     const r = this._canvas.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    this.pointerDown(e.clientX - r.left, e.clientY - r.top);
+  }
+
+  // ── Point-based core, in CANVAS coordinates — shared by the mouse and the VR ray, exactly as
+  // the stack panel's own core is. The DOM handlers above only convert client space into it.
+  pointerDown(mx, my) {
 
     for (const b of this._btns) {
       if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
@@ -239,34 +261,53 @@ class BlendshapePad {
     const p = this._padRect();
     if (mx < p.x || mx > p.x + p.s || my < p.y || my > p.y + p.s) return;
     this._dragging = true;
-    this._canvas.setPointerCapture?.(e.pointerId);
-    this._onMove(e);
+    this.pointerMove(mx, my);
   }
 
   _onMove(e) {
-    if (!this._dragging) return;
+    if (!this._dragging || !this._canvas) return;
     const r = this._canvas.getBoundingClientRect();
+    this.pointerMove(e.clientX - r.left, e.clientY - r.top);
+  }
+
+  pointerMove(mx, my) {
+    if (!this._dragging) return;
     const p = this._padRect();
-    let x = ((e.clientX - r.left) - p.x) / p.s * 2 - 1;
-    let y = -(((e.clientY - r.top) - p.y) / p.s * 2 - 1);   // screen y is down, the pad's is up
-    this._x = Math.max(-1, Math.min(1, x));
-    this._y = Math.max(-1, Math.min(1, y));
+    // Screen y grows downward and the pad's grows up, which is the one place a VR ray and a
+    // mouse could have disagreed — so the flip lives here, in the shared core, not per host.
+    this._x = Math.max(-1, Math.min(1, (mx - p.x) / p.s * 2 - 1));
+    this._y = Math.max(-1, Math.min(1, -((my - p.y) / p.s * 2 - 1)));
     this._push();
     this.draw();
   }
 
-  _onUp() {
+  _onUp() { this.pointerUp(); }
+
+  pointerUp() {
     if (!this._dragging) return;
     this._dragging = false;
     this.draw();
+  }
+
+  // Does this canvas point belong to the pad at all? The host asks before routing, so a press
+  // on the rows above never reaches the handle and vice versa.
+  hits(mx, my) {
+    const p = this._padRect();
+    const bottom = (this._originY || 0) + this._cssH;
+    return my >= (this._originY || 0) && my <= bottom
+      && mx >= (this._originX || 0) && mx <= (this._originX || 0) + this._cssW;
   }
 
   draw() {
     const ctx = this._ctx;
     if (!ctx) return;
     const W = this._cssW, H = this._cssH, d = this._dpr;
-    ctx.setTransform(d, 0, 0, d, 0, 0);
-    ctx.clearRect(0, 0, W, H);
+    if (!this._embedded) {
+      // Only when the canvas is ours. Embedded, the host owns the transform and the clear —
+      // resetting it here would undo the host's own scaling and wipe the rows above.
+      ctx.setTransform(d, 0, 0, d, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+    }
 
     const p = this._padRect();
     const cx = p.x + p.s / 2, cy = p.y + p.s / 2;

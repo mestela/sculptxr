@@ -2066,7 +2066,21 @@ class AnimationRegistry {
     // Guard: prevent the updateGeometry intercept from treating this recomposition
     // as a sculpt stroke and incorrectly rebasing baseShape or layer deltas.
     track._applyingBS = true;
-    if (mesh.updateGeometry) mesh.updateGeometry();
+    // SKIP THE OCTREE, exactly as the skin pass does (Skinning.js, and the note in
+    // Mesh.updateGeometry). A bare updateGeometry() has `iFaces === undefined`, which means a FULL
+    // computeOctree() — and this function now runs every frame of a blendshape take and every
+    // frame of playback, not just when a slider is let go.
+    //
+    // Measured on a 99k-vertex head with four shapes live: applyBlendshapes 25.9ms, of which the
+    // vertex maths was 2.3ms and updateGeometry 25.0ms. The frame budget at 72Hz is 13.9ms, so
+    // one recomposite blew it on its own. matt: "once i start recording, the entire system is very
+    // slow during both recording and playback."
+    //
+    // Safe for the same reason it is safe for skinning: a blendshape moves VERTICES and never
+    // touches topology, so the octree is merely out of date rather than wrong. Marked stale, and
+    // the first query that actually needs it rebuilds it (ensureOctree) — which during a
+    // performance is no query at all.
+    if (mesh.updateGeometry) mesh.updateGeometry(undefined, undefined, true);
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
     track._applyingBS = false;
   }

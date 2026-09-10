@@ -20,6 +20,7 @@
 
 import { arkitByRegion, arkitEntry, arkitUnifiedFor } from '../editing/ArkitBlendshapes.js';
 import { Theme } from './theme.js';
+import BlendshapePad from './BlendshapePad.js';
 
 // FontAwesome 6 Free (Solid, weight 900) glyphs — drawn on the canvas, never emoji.
 const FA = {
@@ -44,6 +45,11 @@ const BASE_H    = 30;
 const TRACK_H   = 6;
 const NAME_X    = PAD + 4;  // name text left edge
 const TRACK_X0  = PAD + 4;  // slider track left edge (full row width)
+
+// How much of the VR canvas the kaospad takes at the bottom. Fixed rather than a fraction: the
+// pad is a square plus its labels and buttons, so it wants an absolute size, and the rows above
+// simply get whatever is left.
+const VR_PAD_H = 190;
 
 export default class BlendshapeStackPanel {
   constructor(main) {
@@ -147,6 +153,18 @@ export default class BlendshapeStackPanel {
     this._ctx = this._canvas.getContext('2d');
     this._ctx.setTransform(1, 0, 0, 1, 0, 0);
     window._blendshapeStackPanelVR = this;
+
+    // THE KAOSPAD, INSIDE THIS CANVAS rather than beside it. The VR panel is one canvas
+    // rasterised to one texture with one hit map, so a second panel would mean a second texture,
+    // a second plane and a second hit path for one control. Embedded, it inherits all three.
+    //
+    // Same class the desktop uses — the desktop mount is just the embedded case with its own
+    // canvas at origin (0,0) — so the weights, the feel and the neutral centre cannot drift
+    // between VR and desktop.
+    this._pad = new BlendshapePad(this._main)
+      .embed(this._ctx, 0, cssH - VR_PAD_H, cssW, VR_PAD_H);
+    this._padReserve = VR_PAD_H;
+
     this._startSyncLoop();
     this.draw();
     return this._canvas;
@@ -288,6 +306,20 @@ export default class BlendshapeStackPanel {
     this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
 
     if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
+
+    // The pad last, so it draws over the rows if a very long stack would otherwise run into it —
+    // it is a fixed reservation at the bottom and the list is the thing that has to give.
+    if (this._pad) {
+      ctx.save();
+      ctx.fillStyle = Theme.mantle;
+      ctx.fillRect(0, H - this._padReserve, W, this._padReserve);
+      ctx.strokeStyle = Theme.surface0;
+      ctx.beginPath();
+      ctx.moveTo(0, H - this._padReserve + 0.5); ctx.lineTo(W, H - this._padReserve + 0.5);
+      ctx.stroke();
+      this._pad.draw();
+      ctx.restore();
+    }
 
     if (this._picker) this._drawPicker(ctx, W, H);
   }
@@ -509,6 +541,9 @@ export default class BlendshapeStackPanel {
   // ── Point-based core (shared by mouse/pen/touch and VR ray) ──────────────────
   _pointerDown(p, solo = false) {
     if (this._picker) { this._pickerDown(p); return; }
+    // The pad owns everything below the divider. Asked FIRST so a press in its area never falls
+    // through to the row hit-test, which would otherwise classify it as the bottom-most layer.
+    if (this._pad && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
 
@@ -573,6 +608,9 @@ export default class BlendshapeStackPanel {
 
   _pointerMove(p) {
     if (this._picker) { this._pickerMove(p); return; }
+    // LATCHED on the press, not re-hit-tested: a drag that starts on the pad has to keep going
+    // when the ray wanders off it, exactly as the weight sliders above do.
+    if (this._padActive) { this._pad.pointerMove(p.x, p.y); return; }
     if (this._reorderName) {
       this._reorderCurY = p.y;
       if (!this._reorderActive && Math.abs(p.y - this._reorderStartY) > 6) {
@@ -615,6 +653,7 @@ export default class BlendshapeStackPanel {
   clearHover() { if (this._hover) { this._hover = null; this.draw(); } }
 
   _pointerUp() {
+    if (this._padActive) { this._padActive = false; this._pad.pointerUp(); return; }
     if (this._picker) { this._pickerUp(); return; }
     if (this._reorderName) {
       const dragged = this._reorderActive;

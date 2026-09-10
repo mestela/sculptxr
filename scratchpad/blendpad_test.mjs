@@ -41,6 +41,14 @@
 //                           silently masks the recorded animation for its four shapes
 //   BP_INJECT=releaseonrec  the release fires during RECORDING too, erasing the performance as
 //                           it is being captured
+//   BP_INJECT=noembedorigin the embedded pad ignores its origin, so in the VR panel it draws and
+//                           hit-tests at the top-left instead of in its reserved strip
+//   BP_INJECT=padclears     the embedded pad clears the whole canvas, wiping the layer rows the
+//                           host drew above it
+//   BP_INJECT=rowsteal      the row hit-test runs before the pad's, so a press on the pad is
+//                           classified as the bottom-most layer
+//   BP_INJECT=octreerebuild the recomposite rebuilds the octree every frame again — 25.9ms per
+//                           call on a 99k-vertex mesh against a 13.9ms budget at 72Hz
 //   BP_INJECT=sliderblind   the stack panel's sliders read the curve instead of the previewed
 //                           weight, so they disagree with the mesh in front of them
 //   BP_INJECT=nounkeyed     a never-keyed shape cannot be previewed, which is every shape the
@@ -100,6 +108,17 @@ if (inject === 'bilinear') {
 } else if (inject === 'releaseonrec') {
   REG = cut(REG, "    if (window._animPlaying && !this.isRecording\n        && track.blendshapePreview && track.blendshapePreview.size) {",
     '    if (window._animPlaying\n        && track.blendshapePreview && track.blendshapePreview.size) {', inject);
+} else if (inject === 'noembedorigin') {
+  PAD = cut(PAD, "    return { x: (this._originX || 0) + (this._cssW - size) / 2,\n             y: (this._originY || 0) + top, s: size };",
+    '    return { x: (this._cssW - size) / 2, y: top, s: size };', inject);
+} else if (inject === 'padclears') {
+  PAD = cut(PAD, '    if (!this._embedded) {', '    if (true) {', inject);
+} else if (inject === 'rowsteal') {
+  STACK = cut(STACK, '    if (this._pad && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }',
+    '', inject);
+} else if (inject === 'octreerebuild') {
+  REG = cut(REG, '    if (mesh.updateGeometry) mesh.updateGeometry(undefined, undefined, true);',
+    '    if (mesh.updateGeometry) mesh.updateGeometry();', inject);
 } else if (inject === 'nounkeyed') {
   REG = cut(REG, '      const previewing = track.blendshapePreview && track.blendshapePreview.has(name);',
     '      const previewing = false;', inject);
@@ -326,6 +345,52 @@ check('the pad shows when it is holding an override',
     && /ctx\.strokeStyle = holding \? /.test(PAD));
 check('...and the button names what it will do while held',
   /holding \? 'Release' : 'Reset'/.test(PAD));
+
+// ── THE SAME PAD IN VR ────────────────────────────────────────────────────────────────
+// The VR blendshape panel is ONE canvas rasterised to ONE texture with ONE hit map, so the pad
+// lives inside it rather than beside it — a second VR panel would mean a second texture, a second
+// plane and a second hit path for one control. The desktop mount is the same embedded case with
+// its own canvas at origin (0,0), which is what stops the weights or the feel drifting apart.
+check('the pad can be embedded in another canvas at an offset',
+  /embed\(ctx, x, y, w, h\) \{/.test(PAD)
+    && /this\._originX = x; this\._originY = y;/.test(PAD));
+check('...and its geometry is in CANVAS coordinates, origin included',
+  /return \{ x: \(this\._originX \|\| 0\) \+ \(this\._cssW - size\) \/ 2,/.test(PAD),
+  'ignoring the origin puts the square and every hit test at the top-left of the host canvas');
+check('...and it does NOT clear a canvas it does not own',
+  /if \(!this\._embedded\) \{[\s\S]{0,300}?ctx\.clearRect\(0, 0, W, H\);/.test(PAD),
+  'clearing the host canvas wipes the layer rows drawn above it');
+check('...with one point-based core shared by the mouse and the VR ray',
+  /pointerDown\(mx, my\) \{/.test(PAD) && /pointerMove\(mx, my\) \{/.test(PAD)
+    && /hits\(mx, my\) \{/.test(PAD));
+check('...and the screen-to-pad Y flip lives in that core, not per host',
+  /this\._y = Math\.max\(-1, Math\.min\(1, -\(\(my - p\.y\) \/ p\.s \* 2 - 1\)\)\);/.test(PAD),
+  'a flip duplicated per host is a flip that will disagree between VR and desktop');
+
+// The VR host: the pad is asked FIRST, and a drag latches so it survives the ray wandering off.
+check('the VR stack panel embeds a pad in its own canvas',
+  /this\._pad = new BlendshapePad\(this\._main\)\s*\n\s*\.embed\(this\._ctx, 0, cssH - VR_PAD_H, cssW, VR_PAD_H\);/.test(STACK));
+check('...and asks it BEFORE the row hit-test',
+  /if \(this\._pad && this\._pad\.hits\(p\.x, p\.y\)\) \{ this\._padActive = true;/.test(STACK),
+  'otherwise a press on the pad is classified as the bottom-most layer row');
+check('...latching the drag, so it survives the ray leaving the pad',
+  /if \(this\._padActive\) \{ this\._pad\.pointerMove\(p\.x, p\.y\); return; \}/.test(STACK)
+    && /if \(this\._padActive\) \{ this\._padActive = false; this\._pad\.pointerUp\(\); return; \}/.test(STACK));
+
+// ── COST ──────────────────────────────────────────────────────────────────────────────
+// applyBlendshapes went from "runs when a slider is released" to "runs every frame of a take and
+// every frame of playback", and a bare updateGeometry() means iFaces === undefined, which means a
+// FULL computeOctree. Measured on a 99k-vertex head with four shapes live: 25.9ms per call, of
+// which the vertex maths was 2.3ms and updateGeometry 25.0ms, against a 13.9ms budget at 72Hz.
+// Skipping the octree took it to 10.9ms.
+//
+// THE CODEBASE HAD ALREADY FOUND THIS ONCE, for the skin pass — the note in Mesh.updateGeometry
+// records 49,666 vertices at 29ms a frame, "a full octree rebuild, per frame, for a query nothing
+// was making". Same shape, different caller.
+check('the recomposite does not rebuild the octree every frame',
+  /mesh\.updateGeometry\(undefined, undefined, true\)/.test(REG),
+  'a blendshape moves VERTICES and never touches topology, so the octree is out of date rather '
+    + 'than wrong; ensureOctree rebuilds it for the first query that actually needs it');
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');
 process.exit(failures ? 1 : 0);
