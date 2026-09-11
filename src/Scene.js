@@ -3503,9 +3503,30 @@ class Scene {
   // Add/remove a mesh's three.js object to/from the render scene graph. Kept as
   // helpers so the add/remove paths AND undo/redo (StateAddRemove) stay in sync —
   // forgetting the scene-graph re-add on undo is why "delete → undo" did nothing.
+  // PUT IT BACK WHERE IT CAME FROM, which for a parented mesh is not the world group.
+  //
+  // This added to `_worldGroup` unconditionally, the mirror image of the bug `detachMeshThree`
+  // below was written to fix. A mesh's render object lives under its PARENT's render object and
+  // its matrix is LOCAL TO THAT PARENT — so re-adding it to the world group leaves the matrix
+  // being read as world coordinates, and the object turns up somewhere it has no business being.
+  // Small local offset plus a head-sized parent usually means "inside the head", which from the
+  // outside is indistinguishable from not being restored at all. matt: parented an eye under a
+  // head, deleted it by accident, undid, "can see it in the outliner, but not in the viewport."
+  //
+  // This was KNOWN and fixed only for rigging — see Skeleton.healGraph, which repairs it for
+  // joints and says so explicitly, on the reasoning that the parenting assumption lived in the
+  // rig. It does not any more: parenting is an ordinary scene operation on ordinary meshes, so
+  // the repair belongs in the shared add/remove path where every caller gets it.
+  //
+  // Falls back to the world group when the parent is gone — deleting a parent and a child
+  // together and undoing must not attach the child to a detached object.
   attachMeshThree(mesh) {
     var t = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
-    if (t && this._worldGroup) this._worldGroup.add(t);
+    if (!t) return;
+    var p = mesh._parentMesh;
+    var pt = p && this._meshes.includes(p) && p.getThreeMesh && p.getThreeMesh();
+    var target = pt || this._worldGroup;
+    if (target) target.add(t);
   }
 
   // TAKE IT OUT OF WHEREVER IT ACTUALLY IS.
@@ -8252,7 +8273,39 @@ class Scene {
           let _winner = _panelHits[0] ?? null;
           let _winnerName = _winner?.name ?? null;
           const _trigger = source.gamepad?.buttons[0];
-          const _pressed = _trigger ? (_trigger.value > 0.1 || _trigger.pressed) : false;
+          const _hand = source.handedness === 'left' ? 'L' : 'R';
+
+          // A SCHMITT TRIGGER, NOT A THRESHOLD.
+          //
+          // UI presses deliberately fire at a very light squeeze — the trigger's travel is long
+          // and a precise click at the bottom of it is genuinely hard, so a small depress counts.
+          // The cost of a low line is that an analog axis SITS on it: a finger resting at the
+          // bite point wanders either side of 0.1 and every crossing is another down-edge. One
+          // physical press then arrives as several.
+          //
+          // So pressing and releasing use different levels: it takes 0.10 to go down and has to
+          // fall below 0.04 to come back up. In between, whatever it was, it stays. That is the
+          // standard answer to a noisy comparator and it costs nothing — the light press is
+          // exactly as light as before, it just cannot flutter.
+          //
+          // Per hand: two controllers, two independent fingers.
+          if (!this._vrTrigHeld) this._vrTrigHeld = { L: false, R: false };
+          const _tv = _trigger ? _trigger.value : 0;
+          const _pressed = _trigger
+            ? (_trigger.pressed || (this._vrTrigHeld[_hand] ? _tv > 0.04 : _tv > 0.10))
+            : false;
+          this._vrTrigHeld[_hand] = _pressed;
+
+          // ONE PRESS BELONGS TO ONE SURFACE, FOR AS LONG AS IT IS HELD. See the note at the
+          // dispatch loop below. Hoisted to here so the branches that handle the timeline, the
+          // blendshape panel and the resize grips can consult it too — they are equally plausible
+          // things to be sitting behind a keyboard when its confirm button closes it.
+          if (!this._vrPressOwner) this._vrPressOwner = { L: null, R: null };
+          if (!_pressed) this._vrPressOwner[_hand] = null;
+          // True when this press was captured by something that is no longer the winner — so a
+          // still-held trigger must not open a NEW interaction anywhere else.
+          const _pressCaptured = (name) =>
+            _pressed && this._vrPressOwner[_hand] && this._vrPressOwner[_hand] !== name;
 
           // Phase 2b: Drag lock — keep routing to whichever panel has an active
           // slider drag even after the controller ray exits its bounds.
@@ -8325,10 +8378,38 @@ class Scene {
           if (this._vrConfirm?.mesh?.visible)
             _allVisible.push({ name: 'VrConfirm', panel: this._vrConfirm, pressKey: '_vcWasPressed' });
 
+          // ONE PRESS BELONGS TO ONE PANEL, FOR AS LONG AS IT IS HELD.
+          //
+          // Panels are resolved nearest-first and only the winner is dispatched to, so two panels
+          // never take the same press in the same FRAME. The leak is across frames: a button that
+          // CLOSES its own panel — the keyboard's confirm — hides the mesh while the trigger is
+          // still down, so on the very next frame that panel is gone from the hit list, whatever
+          // was behind it becomes the winner, its own `wasPressed` is false, and the still-held
+          // trigger reads as a brand-new press on it. matt renamed an object in the outliner and
+          // the confirm press fell through onto the panel underneath and spawned a mesh.
+          //
+          // So the press is CAPTURED by whichever panel receives its down-edge, and no other
+          // panel may take a down-edge until the trigger is released. Pointer-capture semantics,
+          // the same rule the slider drag-lock above already applies to moves. If the owner
+          // vanishes mid-press, the press simply goes nowhere — which is right: it was spent on
+          // the button that closed it.
+          //
+          // Per hand, because the two controllers are independent pointers.
           for (const v of _allVisible) {
             if (v.name === _winnerName) {
+              // Blocked only for a NEW press. A panel that already owns this press keeps
+              // receiving move and release as normal.
+              const _blocked = !this[v.pressKey] && _pressCaptured(v.name);
+              if (_blocked) {
+                // Still count as pointing at UI, so the press cannot fall through to sculpting
+                // either — and leave the press flag alone, or the release would arrive as a click.
+                this._isPointingAtMenu = true;
+                this._updateBPCursor?.(_winner.hit.point, true);
+                continue;
+              }
               const justDown = _pressed && !this[v.pressKey];
               const justUp   = !_pressed && this[v.pressKey];
+              if (justDown) this._vrPressOwner[_hand] = v.name;
               if (justDown)    v.panel.onVRPress(_winner.hit.uv);
               else if (justUp) v.panel.onVRRelease(_winner.hit.uv);
               else             v.panel.onVRMove(_winner.hit.uv, source.handedness,
@@ -8376,6 +8457,7 @@ class Scene {
             } else if (!this._vtlDragActive) {
               const justDown  = _pressed && !this._vtlWasPressed;
               const justUp    = !_pressed && this._vtlWasPressed;
+              if (justDown) this._vrPressOwner[_hand] = 'VRTimeline';
               // Non-dominant trigger held = additive marquee (Shift-equivalent in VR)
               const _addShift = !!this._vrSecondaryTriggerPressed;
               if (justDown)    this._onVRTimelineHit(_winner.hit.uv, 'down', true,     _addShift);
@@ -8442,6 +8524,7 @@ class Scene {
             const _solo     = !!this._vrSecondaryTriggerPressed;
             const _justDown = _pressed && !this._vbsWasPressed;
             const _justUp   = !_pressed && this._vbsWasPressed;
+            if (_justDown) this._vrPressOwner[_hand] = 'VRBlendshapes';
             if (_justDown)    this._onVRBlendshapesHit(_winner.hit.uv, 'down', _solo);
             else if (_justUp) this._onVRBlendshapesHit(_winner.hit.uv, 'up',   _solo);
             else              this._onVRBlendshapesHit(_winner.hit.uv, 'move', _solo);
@@ -8501,11 +8584,18 @@ class Scene {
           }
 
           // VRTimeline resize handle — trigger starts a resize drag tracked via ray-plane intersection
+          // A press captured elsewhere must not start a resize, a scrub or a key drag either —
+          // same rule as the panels below, applied to the surfaces that dispatch on their own.
+          if (_winner && _pressCaptured(_winnerName) && !this[_winner.pressKey]) {
+            _winner = null; _winnerName = null;
+          }
+
           if (_winner?.isBlendResize) {
             this._isPointingAtMenu = true;
             this._updateBPCursor?.(_winner.hit.point, true);
             const justDown = _pressed && !this._vbsResizeWasPressed;
             if (justDown && !this._vbsResizeActive) {
+              this._vrPressOwner[_hand] = 'VRBlendResize';
               this._vbsResizeState = this._beginVRPanelResize(this._vrBlendMesh);
               this._vbsResizeActive = true;
               this._vbsResizeHand = source.handedness;
@@ -8537,6 +8627,7 @@ class Scene {
             this._updateBPCursor?.(_winner.hit.point, true);
             const justDown = _pressed && !this._vtlResizeWasPressed;
             if (justDown && !this._vtlResizeActive) {
+              this._vrPressOwner[_hand] = 'VRTimelineResize';
               const tl = this._vrTimelineMesh;
               const q  = tl.quaternion;
               // Mesh axes in world space (scale is always 1 for timeline mesh)
