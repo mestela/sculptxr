@@ -500,6 +500,10 @@ class Gui {
     // stack: the stack is a LIST and this is a continuous 2D surface, and the panel's hit-testing
     // is built around rows.
     this._ctrlBlendPad = new BlendshapePad(this._main).mount(blendshapesPanel);
+    // The stack panel's toolbar carries the four slot buttons, so it needs a reference to the pad
+    // it assigns to. On desktop the pad is a SIBLING canvas rather than embedded in the stack's
+    // own, which is exactly why the buttons only ever appeared in VR until now — see attachPad.
+    this._ctrlBlendshapes.attachPad(this._ctrlBlendPad);
     // Tab ref so a blocked sculpt can pulse the icon when the panel isn't visible.
     this._ctrlBlendshapes._tabEl = blendshapesTab;
 

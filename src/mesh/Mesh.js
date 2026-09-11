@@ -560,8 +560,12 @@ class Mesh {
       // refuse the write entirely; the moved verts are transient and get cleaned up
       // by the next applyBlendshapes recompose. This is the corruption backstop that
       // does not depend on the start() gate firing.
+      // PREVIEW-AWARE, like the start() gate and applyBlendshapes. The subtraction below is only
+      // valid if the layer is showing at full strength, and what it is SHOWING is the previewed
+      // weight wherever one exists — the curve is what is stored, not what is on screen.
       const _bt = _track.blendshapeTracks?.get(_name);
-      const _w  = _bt ? _reg.evaluateScalarTrack(_bt, _track.playbackTime || 0) : 0;
+      const _w  = _reg.blendshapePreviewAt ? _reg.blendshapePreviewAt(_track, _name, _bt)
+                                           : (_bt ? _reg.evaluateScalarTrack(_bt, _track.playbackTime || 0) : 0);
       if (Math.abs(_w - 1) > 1e-3 || (_track.blendshapeMuted && _track.blendshapeMuted.has(_name))) {
         if (window._blendshapeStackPanel?.flash) window._blendshapeStackPanel.flash();
         if (window._blendshapeStackPanelVR?.flash) window._blendshapeStackPanelVR.flash();

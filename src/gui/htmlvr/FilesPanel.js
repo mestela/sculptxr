@@ -16,7 +16,7 @@ export function openBrowserSavesDOMOverlay(main) {
   backdrop.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;pointer-events:auto;';
 
   const panel = document.createElement('div');
-  panel.style.cssText = 'background:#1e1e2e;border-radius:12px;border:2px solid #585b70;overflow:hidden;width:440px;max-height:70vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.8);font-family:system-ui,-apple-system,sans-serif;color:#cdd6f4;box-sizing:border-box;';
+  panel.style.cssText = 'background:#1e1e2e;border-radius:12px;border:2px solid #585b70;overflow:hidden;width:min(560px,92vw);height:min(760px,88vh);display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.8);font-family:system-ui,-apple-system,sans-serif;color:#cdd6f4;box-sizing:border-box;';
 
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#181825;border-bottom:1px solid #313244;flex-shrink:0;';
@@ -31,7 +31,26 @@ export function openBrowserSavesDOMOverlay(main) {
   header.appendChild(closeBtn);
 
   const body = document.createElement('div');
-  body.style.cssText = 'overflow-y:auto;padding:8px;flex:1;min-height:0;';
+  // A COLUMN, so the list below can be told to fill whatever is left.
+  body.style.cssText = 'padding:8px;flex:1;min-height:0;display:flex;flex-direction:column;';
+
+  // THE LIST IS CAPPED FOR VR, AND THIS IS NOT VR.
+  //
+  // `.mm-storage-list` is shared with the main menu panel, where its max-height is a fraction of
+  // MM_BODY_H — a FIXED 456px, deliberately so, because that panel is a mesh whose size must not
+  // change when you switch tabs. Carried into this desktop dialog the cap came out at 283px
+  // inside a window seven hundred pixels taller, so the saves list was a letterbox with an acre
+  // of empty dialog underneath. matt: "i just tried to use the browser save dialog, its very
+  // short on desktop."
+  //
+  // Overridden here rather than changing the shared rule, because the VR number is right for VR:
+  // one panel has a fixed height by design, the other should use the room it has. The list still
+  // scrolls ITSELF rather than letting the dialog scroll, so the toolbars stay put and the custom
+  // scrollbar track — which is positioned against the list — keeps matching what it scrolls.
+  const fit = document.createElement('style');
+  fit.textContent =
+    '#' + OVERLAY_ID + ' .mm-storage-wrap { flex:1; min-height:0; display:flex; flex-direction:column; }\n' +
+    '#' + OVERLAY_ID + ' .mm-storage-list { max-height:none; flex:1; min-height:0; }';
 
   const build = async () => {
     await guiFiles?.prepareBrowserSavePage?.();
@@ -43,6 +62,7 @@ export function openBrowserSavesDOMOverlay(main) {
 
   panel.appendChild(header);
   panel.appendChild(body);
+  backdrop.appendChild(fit);
   backdrop.appendChild(panel);
   document.body.appendChild(backdrop);
 

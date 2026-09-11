@@ -392,7 +392,11 @@ check('the collider list is built lazily, not per particle',
 // v11 saved three of the eight parameters. drag, ground, groundY, inertia and maxBend have been
 // silently dropped on every save since physics bones shipped — a pre-existing bug this section
 // fixes because the new flag needed a home anyway.
-check('the format version moved for the new section', /const SKEL_VERSION = 14;/.test(SKEL));
+check('the format version moved for the new section',
+  /const SKEL_VERSION = (1[4-9]|[2-9]\\d);/.test(SKEL)
+    && /v14 the physics params v11 forgot/.test(SKEL),
+  'pinning the exact number makes this fail on the NEXT section rather than on a real defect; '
+    + 'what matters is that the physics params got a version of their own and it is recorded');
 check('collide is written to the file', /co: p\.collide \? 1 : 0/.test(SKEL));
 check('...along with the five parameters v11 forgot',
   /dr: p\.drag/.test(SKEL) && /gr: p\.ground \? 1 : 0/.test(SKEL) && /gy: p\.groundY/.test(SKEL)

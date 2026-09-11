@@ -513,7 +513,7 @@ Export.exportSGL = function (meshes, main) {
     // block — FrameGroup's reader only inspects the final 8 bytes of the file, so anything
     // appended after it makes it silently skip its own data.
     try {
-      var skelBuf = Skeleton.serialize(meshes);
+      var skelBuf = Skeleton.serialize(meshes, main);
       if (skelBuf && skelBuf.byteLength) parts.push(skelBuf);
     } catch (e) {
       console.error('[Skeleton] export append failed', e);

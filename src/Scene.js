@@ -14,6 +14,10 @@ import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
 // The occluded pass is a FRACTION of the visible one, so one slider moves both and the ghost is
 // always the fainter of the two -- "more transparent where it is behind the mesh".
 const GRID_GHOST_FRACTION = 0.4;
+// Saccade smoothness at full strength, as a time constant in seconds — see the easing in the
+// constraint tick. Long enough that a slow head drifts rather than steps; short enough that a
+// half-way setting still reads as a flick.
+const SAC_SMOOTH_TAU_MAX = 0.45;
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -2771,11 +2775,43 @@ class Scene {
         if (!m._sacNext || now > m._sacNext) {
           const a = (m._saccadeAmp ?? 5);
           const spd = (m._saccadeSpeed ?? 1); // higher → darts more often
-          m._sacOff = new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, 0);
+          m._sacGoal = new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, 0);
           m._sacNext = now + (150 + Math.random() * 500) / spd;
+          if (!m._sacOff) m._sacOff = m._sacGoal.clone();   // first dart starts where it lands
         }
+
+        // SMOOTHNESS: EASE TOWARD THE DART INSTEAD OF SNAPPING TO IT.
+        //
+        // An eye SHOULD snap — that is what a saccade is, and it stays the default at 0. But the
+        // same primitive at low speed and low amplitude is exactly what an idle head wants, and
+        // there the jump is the one thing giving it away. matt: "it could be great for applying
+        // to the head itself at a low speed and low amplitude, it just needs to smoothly
+        // interpolate rather than jump from pose to pose."
+        //
+        // SMOOTHNESS IS A TIME CONSTANT, not a per-frame lerp factor. A plain `lerp(x, goal, k)`
+        // every frame means something different at 60Hz, 72Hz and 90Hz — the same slider would
+        // read as a different amount of smoothing on each headset, and this codebase has paid for
+        // that mistake before (see the spring rate note in PhysicsBones). Exponential decay
+        // against real elapsed time is rate-independent: halve the frame rate and each step is
+        // twice as large, so the motion is identical.
+        //
+        // At 0 the time constant is 0 and this collapses to an assignment — the old behaviour
+        // exactly, not an approximation of it.
+        const sm = m._saccadeSmooth ?? 0;
+        if (m._sacGoal) {
+          const tau = sm * SAC_SMOOTH_TAU_MAX;
+          if (tau <= 1e-4) {
+            m._sacOff.copy(m._sacGoal);
+          } else {
+            const dt = Math.min(0.1, (now - (m._sacLast || now)) / 1000);  // clamp a tab-switch
+            m._sacOff.lerp(m._sacGoal, 1 - Math.exp(-dt / tau));
+          }
+        }
+        m._sacLast = now;
       } else {
         m._sacOff = null;
+        m._sacGoal = null;
+        m._sacLast = 0;
       }
 
       if (hasAim) {
@@ -2941,6 +2977,19 @@ class Scene {
   getSaccadeAmp(eyeId) {
     const eye = this._meshes.find((m) => m.getID() === eyeId);
     return eye ? (eye._saccadeAmp ?? 5) : 5;
+  }
+
+  // Saccade smoothness, 0..1, as a TIME CONSTANT in seconds at full strength. 0.45s is long
+  // enough that a slow head drifts rather than steps, and short enough that an eye set part-way
+  // still reads as a flick rather than a glide.
+  setSaccadeSmooth(eyeId, v) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    if (eye) eye._saccadeSmooth = Math.max(0, Math.min(1, v));
+  }
+
+  getSaccadeSmooth(eyeId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    return eye ? (eye._saccadeSmooth ?? 0) : 0;
   }
 
   // Saccade speed: scales how often the eye darts (higher = more frequent flicks).
@@ -4115,6 +4164,15 @@ class Scene {
       newMesh.setShaderType(getOptionsURL().shader);
       newMesh.setFlatShading?.(getOptionsURL().flatshading);
     }
+    // CARRY THE ANIMATION ACROSS THE ID CHANGE. Every topology edit lands here — a voxel remesh,
+    // and the undo/redo swaps in SculptManager — and each one builds a mesh with a NEW id. Tracks
+    // are keyed by id, so without this the blendshape panel reads the new id, finds nothing, and
+    // the layers appear to have vanished; the next record arm's ghost sweep then deleted the
+    // orphan for real. Done HERE rather than in each caller because this is the one place every
+    // replacement passes through — the skin-bind warning above is here for the same reason.
+    try { window._animationRegistry?.migrateTrack?.(mesh.getID(), newMesh.getID(), newMesh); }
+    catch (e) { console.warn('[Animation] track migration failed', e); }
+
     var index = this.getIndexMesh(mesh);
     if (index >= 0) this._meshes[index] = newMesh;
     
@@ -6375,12 +6433,20 @@ class Scene {
   // VR timeline canvas→texture pattern). Portrait panel; point + dominant trigger
   // to interact, secondary trigger + eye = solo.
   _openVRBlendshapes() {
-    // Half the previous size. Both the canvas px AND the world plane shrink by the
-    // same factor (1500 px/m kept), so UI elements stay the same physical size to
-    // the user — the panel just shows less at once, it doesn't scale the content.
-    const _worldW = 0.17, _worldH = 0.23;       // portrait layer stack (was 0.34×0.46)
-    const _cssW   = Math.round(_worldW * 1500); // 255
-    const _cssH   = Math.round(_worldH * 1500); // 345
+    // SIZE IS THE USER'S, and it persists — the corner grip resizes this panel exactly as it does
+    // the timeline, and the choice survives a reload the same way.
+    //
+    // The old fixed 0.17x0.23m is 255x345 css px at 1500 px/m, and that is where "i can only see
+    // 4" came from: 345px, minus a 38px toolbar, a 30px Base row and the pad's share, leaves room
+    // for about four 46px rows and the rest run off the bottom with no way to reach them. The
+    // default is bigger now and, more to the point, it is no longer a ceiling.
+    const _opts = getOptionsURL();
+    const _worldW = _opts.vrBlendW > 0 ? _opts.vrBlendW : 0.26;
+    const _worldH = _opts.vrBlendH > 0 ? _opts.vrBlendH : 0.42;
+    // 1500 px/m, the same ratio the world plane uses, so UI elements keep their physical size as
+    // the panel grows — resizing shows MORE, it does not magnify.
+    const _cssW   = Math.round(_worldW * 1500);
+    const _cssH   = Math.round(_worldH * 1500);
 
     if (!this._vrBlendPanel) {
       // VR instance shares all state via window._animationRegistry; getMesh() comes
@@ -6401,6 +6467,10 @@ class Scene {
       this._vrBlendMesh = new THREE.Mesh(geo, mat);
       this._vrBlendPanel._vrMesh = this._vrBlendMesh; // so the panel can anchor the keyboard to itself
       this._scene.add(this._vrBlendMesh);
+      // The corner grip, same one the timeline has. A long layer list was unreachable before this
+      // — the panel was a fixed height and the rows simply ran off the bottom.
+      this._vrBlendResizeHandle = this._makeVRResizeGrip();
+      this._layoutVRResizeGrip(this._vrBlendResizeHandle, this._vrBlendMesh);
       if (window.screenLog) window.screenLog(`[VR Blendshapes] mesh created ${_worldW}×${_worldH}m`, 'cyan');
     }
 
@@ -6440,6 +6510,20 @@ class Scene {
     if (this._vrBlendCloseBtn.parent !== this._vrBlendMesh) this._vrBlendMesh.add(this._vrBlendCloseBtn);
     this._layoutCloseBtn(this._vrBlendCloseBtn, this._vrBlendMesh);
     this._vrBlendCloseBtn.visible = true;
+    // REOPEN AT THE PERSISTED SIZE. The mesh and canvas are built once and reused, so without
+    // this a resized panel came back at whatever it was first created with.
+    if (this._vrBlendMesh) {
+      const gw = this._vrBlendMesh.geometry.parameters.width;
+      const gh = this._vrBlendMesh.geometry.parameters.height;
+      if (Math.abs(gw - _worldW) > 1e-4 || Math.abs(gh - _worldH) > 1e-4) {
+        this._vrBlendMesh.geometry.dispose();
+        this._vrBlendMesh.geometry = new THREE.PlaneGeometry(_worldW, _worldH);
+        this._vrBlendMesh.scale.set(1, 1, 1);
+        this._vrBlendPanel.resizeVRCanvas(_cssW, _cssH);
+        if (this._vrBlendTexture) { this._vrBlendTexture.dispose(); this._vrBlendTexture.needsUpdate = true; }
+      }
+      this._layoutVRResizeGrip(this._vrBlendResizeHandle, this._vrBlendMesh);
+    }
     this._vrBlendPanel.setVRVisible(true);
     if (this._vrBlendTexture) this._vrBlendTexture.needsUpdate = true;
     this._mainMenuPanel?._element?.querySelector('#mm-bs-btn')?.classList.add('tl-on');
@@ -6457,6 +6541,9 @@ class Scene {
   _onVRBlendshapesHit(uv, phase, solo = false) {
     const panel = this._vrBlendPanel;
     if (!panel) return;
+    // A resize drag is not a press on the panel's contents. Without this the grab that grows the
+    // panel also lands on whatever row happens to be under the corner.
+    if (this._vbsResizeActive) return;
     const x =        uv.x  * panel._cssW;
     const y = (1.0 - uv.y) * panel._cssH; // flipY=true → invert Y
     panel.vrPointer(x, y, phase, solo);
@@ -6495,6 +6582,96 @@ class Scene {
     btn.quaternion.identity(); // local to parent
   }
   _layoutTimelineCloseBtn() { this._layoutCloseBtn(this._vrTimelineCloseBtn, this._vrTimelineMesh); }
+
+  // ── RESIZABLE VR PANELS, ONE IMPLEMENTATION ──────────────────────────────────────────
+  //
+  // The timeline grew a corner grip first; the blendshape panel needs the identical gesture, and
+  // the identical gesture written twice is how this codebase has repeatedly ended up with two
+  // copies that disagree. So the mechanics live here once and each panel supplies a DESCRIPTOR
+  // saying what to resize and within what bounds.
+  //
+  // The maths is worth stating because it is the part that looks arbitrary: the drag holds the
+  // panel's TOP-LEFT corner fixed and moves the opposite one, so the panel grows away from you
+  // rather than re-centring under your hand. That corner, the mesh's right/down axes and the
+  // plane of its face are all captured ONCE on press — recomputing them per frame from a panel
+  // that is itself moving is a feedback loop, and the panel chases the controller.
+
+  // Build the grip quad. Same three-diagonal-lines glyph the timeline has always used.
+  _makeVRResizeGrip() {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const x = c.getContext('2d');
+    x.clearRect(0, 0, 64, 64);
+    x.strokeStyle = '#89dceb'; x.lineWidth = 4; x.lineCap = 'round';
+    for (const [x1, y1, x2, y2] of [[16, 56, 56, 16], [28, 56, 56, 28], [40, 56, 56, 40]]) {
+      x.beginPath(); x.moveTo(x1, y1); x.lineTo(x2, y2); x.stroke();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true,
+      side: THREE.DoubleSide, depthTest: true, depthWrite: false });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.028, 0.028), mat);
+    m.renderOrder = VR_PANEL_RENDER_ORDER + 1;
+    m.frustumCulled = false;
+    m.visible = false;
+    return m;
+  }
+
+  // Park the grip in the panel's own space, bottom-right. A CHILD, so it inherits transform and
+  // visibility and cannot disagree with the panel about either — see the note below.
+  _layoutVRResizeGrip(grip, panelMesh) {
+    if (!grip || !panelMesh) return;
+    if (grip.parent !== panelMesh) panelMesh.add(grip);
+    const hw = panelMesh.geometry.parameters.width  * 0.5;
+    const hh = panelMesh.geometry.parameters.height * 0.5;
+    grip.position.set(hw - 0.014, -hh + 0.014, 0.002);
+    grip.quaternion.identity();
+    grip.visible = true;
+  }
+
+  // Capture the frame the drag happens in. Returns the state the apply step needs.
+  _beginVRPanelResize(panelMesh) {
+    const q = panelMesh.quaternion;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+    const down  = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
+    const w = panelMesh.geometry.parameters.width;
+    const h = panelMesh.geometry.parameters.height;
+    return {
+      // Top-left = centre - right*(w/2) - down*(h/2). Held fixed for the whole drag.
+      corner: panelMesh.position.clone()
+        .addScaledVector(right, -w / 2).addScaledVector(down, -h / 2),
+      right, down,
+      plane: new THREE.Plane().setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(0, 0, 1).applyQuaternion(q), panelMesh.position),
+    };
+  }
+
+  // One frame of the drag. `d` is the descriptor:
+  //   mesh, texture, panel (anything with resizeVRCanvas), px  (css px per world metre),
+  //   minW/maxW/minH/maxH (metres), optW/optH (saveOption keys), after() (re-place children)
+  _applyVRPanelResize(ray, st, d) {
+    const hit = new THREE.Vector3();
+    if (!ray.intersectPlane(st.plane, hit)) return false;
+    const delta = hit.sub(st.corner);
+    const w = Math.max(d.minW, Math.min(d.maxW, delta.dot(st.right)));
+    const h = Math.max(d.minH, Math.min(d.maxH, delta.dot(st.down)));
+    if (!d.panel || !d.mesh) return false;
+
+    d.panel.resizeVRCanvas(Math.round(w * d.px), Math.round(h * d.px));
+    // dispose() clears three's cached GL texture size, so the re-upload uses the NEW canvas
+    // dimensions instead of stretching the old allocation into the new quad.
+    if (d.texture) { d.texture.dispose(); d.texture.needsUpdate = true; }
+    d.mesh.geometry.dispose();
+    d.mesh.geometry = new THREE.PlaneGeometry(w, h);
+    d.mesh.scale.set(1, 1, 1);
+    // Re-place the children AFTER the half-extents changed, or the close button and the grip
+    // itself sit at the old corners.
+    d.after?.();
+    d.mesh.position.copy(st.corner)
+      .addScaledVector(st.right, w / 2).addScaledVector(st.down, h / 2);
+    if (d.optW) window.saveOption?.(d.optW, +w.toFixed(3), 400);
+    if (d.optH) window.saveOption?.(d.optH, +h.toFixed(3), 400);
+    return true;
+  }
 
   // THE CORNER GRIP, PLACED IN THE PANEL'S OWN SPACE.
   //
@@ -8037,6 +8214,10 @@ class Scene {
             // The panel's visibility as well as the grip's own: as a CHILD the grip keeps its
             // flag true while a hidden parent stops it being drawn, so `visible` alone would
             // leave an invisible grip hittable.
+            if (this._vrBlendResizeHandle?.visible && this._vrBlendMesh?.visible) {
+              const hb = _rc.intersectObject(this._vrBlendResizeHandle);
+              if (hb.length > 0) _panelHits.push({ name: 'VRBlendResize', panel: null, hit: hb[0], pressKey: '_vbsResizeWasPressed', isBlendResize: true });
+            }
             if (this._vrResizeHandle?.visible && this._vrTimelineMesh?.visible) {
               const h = _rc.intersectObject(this._vrResizeHandle);
               if (h.length > 0) _panelHits.push({ name: 'VRTimelineResize', panel: null, hit: h[0], pressKey: '_vtlResizeWasPressed', isTimelineResize: true });
@@ -8320,6 +8501,36 @@ class Scene {
           }
 
           // VRTimeline resize handle — trigger starts a resize drag tracked via ray-plane intersection
+          if (_winner?.isBlendResize) {
+            this._isPointingAtMenu = true;
+            this._updateBPCursor?.(_winner.hit.point, true);
+            const justDown = _pressed && !this._vbsResizeWasPressed;
+            if (justDown && !this._vbsResizeActive) {
+              this._vbsResizeState = this._beginVRPanelResize(this._vrBlendMesh);
+              this._vbsResizeActive = true;
+              this._vbsResizeHand = source.handedness;
+            }
+            if (!_pressed) { this._vbsResizeActive = false; this._vbsResizeHand = null; }
+            this._vbsResizeWasPressed = _pressed;
+          } else if (this._vbsResizeWasPressed) {
+            this._vbsResizeWasPressed = false;
+          }
+
+          if (this._vbsResizeActive && this._vbsResizeHand === source.handedness && this._vbsResizeState) {
+            this._applyVRPanelResize(_rc.ray, this._vbsResizeState, {
+              mesh: this._vrBlendMesh, texture: this._vrBlendTexture, panel: this._vrBlendPanel,
+              // px per metre, matching the panel's own mount ratio so the canvas keeps its scale
+              // instead of the text growing as the panel does.
+              px: 1500,
+              minW: 0.16, maxW: 0.90, minH: 0.16, maxH: 1.10,
+              optW: 'vrBlendW', optH: 'vrBlendH',
+              after: () => {
+                this._layoutVRResizeGrip(this._vrBlendResizeHandle, this._vrBlendMesh);
+                if (this._vrBlendCloseBtn) this._layoutCloseBtn(this._vrBlendCloseBtn, this._vrBlendMesh);
+              },
+            });
+          }
+
           if (_winner?.isTimelineResize) {
             this._vtlIsPointing = true;
             this._isPointingAtMenu = true;

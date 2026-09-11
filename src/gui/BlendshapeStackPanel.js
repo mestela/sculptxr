@@ -46,10 +46,25 @@ const TRACK_H   = 6;
 const NAME_X    = PAD + 4;  // name text left edge
 const TRACK_X0  = PAD + 4;  // slider track left edge (full row width)
 
-// How much of the VR canvas the kaospad takes at the bottom. Fixed rather than a fraction: the
-// pad is a square plus its labels and buttons, so it wants an absolute size, and the rows above
-// simply get whatever is left.
-const VR_PAD_H = 190;
+// THE PAD'S SHARE OF THE VR CANVAS — a RANGE, not a number.
+//
+// It shipped as a flat 190px reservation at the bottom, which meant a long layer list simply ran
+// underneath it and became unreachable. matt: "in vr the panel blocks the blendshape layers, it
+// should all resize."
+//
+// So the rows are served first, up to what they actually need, and the pad takes what is left
+// between a floor and a ceiling. Below the floor a pad is not a control any more — it is a square
+// too small to aim a ray at — so the rows stop winning there and the list is the thing that
+// clips. Above the ceiling it would just be a large empty square.
+// Raised once the side labels were rotated. Before that the square was WIDTH-limited by the two
+// side gutters, so a taller strip bought nothing; rotating made the gutters a line-height each and
+// handed the constraint to the HEIGHT, which is this number. Measured on a 420-wide VR panel: the
+// square went 152 -> 115 on rotation alone (the win went to the gutters, not the pad) and 115 ->
+// 185 once the strip was allowed to grow into it.
+// A share of the panel (see _layoutPad), bounded at both ends: below the floor the square stops
+// being a ray target, and above the cap a very tall panel would be mostly pad.
+const VR_PAD_MAX_ABS = 420;
+const VR_PAD_MIN = 118;
 
 export default class BlendshapeStackPanel {
   constructor(main) {
@@ -90,6 +105,24 @@ export default class BlendshapeStackPanel {
     // ARKit name picker overlay (null = closed). When open it captures all input.
     this._picker = null;
     this._pendingNewName = null; // default layer pre-created by 'New', awaiting a picker rename
+  }
+
+  // POINT AT A PAD THIS PANEL DOES NOT OWN.
+  //
+  // The toolbar's four slot buttons assign the selected layer to a pad side, and they were gated
+  // on `this._pad` — which only exists in VR, where the pad is EMBEDDED in this canvas. On desktop
+  // the pad is a sibling canvas mounted next to this one, so the panel had no reference and the
+  // buttons simply never drew. matt: "the toolbar hasn't been updated to allow me to assign the
+  // selected blendshape to pad regions" — on the host he was actually using.
+  //
+  // So ownership and reference are separate things: `_padOwned` decides whether this panel LAYS
+  // OUT, DRAWS and HIT-TESTS the pad (VR only), and `_pad` decides whether it can ASSIGN to one
+  // (both). Conflating them is what made the feature VR-only by accident.
+  attachPad(pad) {
+    this._pad = pad;
+    this._padOwned = false;
+    this.draw();
+    return this;
   }
 
   // Mount the canvas into a host DOM element (a wa-tab-panel for desktop).
@@ -161,13 +194,31 @@ export default class BlendshapeStackPanel {
     // Same class the desktop uses — the desktop mount is just the embedded case with its own
     // canvas at origin (0,0) — so the weights, the feel and the neutral centre cannot drift
     // between VR and desktop.
-    this._pad = new BlendshapePad(this._main)
-      .embed(this._ctx, 0, cssH - VR_PAD_H, cssW, VR_PAD_H);
-    this._padReserve = VR_PAD_H;
+    this._pad = new BlendshapePad(this._main);
+    this._padOwned = true;      // VR draws and hit-tests it; desktop's is a sibling canvas
+    this._padReserve = VR_PAD_MIN;   // real value comes from _layoutPad, which needs _cssH
+    this._layoutPad();
 
     this._startSyncLoop();
     this.draw();
     return this._canvas;
+  }
+
+  // Grow or shrink the VR canvas, driven by the corner grip. Same shape as
+  // GuiTimeline.resizeVRCanvas, because they are the same gesture on the same kind of object.
+  //
+  // This is what makes the layer list usable: the panel was a fixed 700px tall, so past about
+  // four layers the rest were simply off the bottom with no way to reach them. matt: "i can only
+  // see 4, as i add more the old ones get pushed off the list and i can't see them anymore."
+  // Scrolling would have been the other answer; resizing is the one he asked for and the one the
+  // animation panel already sets a precedent for.
+  resizeVRCanvas(newCssW, newCssH) {
+    this._cssW = Math.round(newCssW);
+    this._cssH = Math.round(newCssH);
+    this._canvas.width  = this._cssW;
+    this._canvas.height = this._cssH;
+    this._ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.draw();          // re-shares the rows/pad split for the new height
   }
 
   // Scene calls this when the VR panel mesh is shown/hidden so the sync loop knows
@@ -268,6 +319,33 @@ export default class BlendshapeStackPanel {
     return reg.evaluateScalarTrack(bTrack, track.playbackTime || 0);
   }
 
+  // Re-share the canvas between the rows and the pad. Cheap, and run every draw so adding or
+  // deleting a layer re-balances immediately rather than at some later refresh.
+  _layoutPad() {
+    if (!this._padOwned || !this._pad) return;
+    const track = this._track();
+    const nRows = track?.blendshapes ? track.blendshapes.size : 0;
+    const rowsWant = TOOLBAR_H + nRows * ROW_H + BASE_H;
+    const left = this._cssH - rowsWant;
+
+    // A SHARE, NOT LEFTOVERS — and that distinction is the whole balance of this panel.
+    //
+    // "Rows first, pad gets what remains" sounds fair and starves the pad the moment a rig has a
+    // realistic number of shapes: measured at the default size with ten layers, the pad fell to
+    // its floor and the square came out FORTY-TWO PIXELS, which is not a control. Meanwhile a rig
+    // with two layers left the pad sitting in a sea of empty rows.
+    //
+    // So the pad takes the LARGER of a fixed share of the panel and whatever the rows genuinely
+    // do not want. Few layers and it grows into the space; many, and it still keeps a third and
+    // the LIST is what has to give — which is the right way round now the panel resizes, because
+    // "I need to see more layers" has a direct answer (make it taller) and "my pad is 42px" did
+    // not. matt asked for both ends of this: "make it as tall and wide as i need it to be if i
+    // want to see lots of blendshapes, and/or make the pad large or small".
+    const share = Math.round(this._cssH * 0.36);
+    this._padReserve = Math.max(VR_PAD_MIN, Math.min(VR_PAD_MAX_ABS, Math.max(share, left)));
+    this._pad.embed(this._ctx, 0, this._cssH - this._padReserve, this._cssW, this._padReserve);
+  }
+
   // ── Drawing ──────────────────────────────────────────────────────────────────
   draw() {
     const ctx = this._ctx;
@@ -280,6 +358,7 @@ export default class BlendshapeStackPanel {
 
     this._rows = [];
     this._toolbarBtns = [];
+    if (this._padOwned) this._layoutPad();
 
     this._drawToolbar(ctx, W);
 
@@ -296,6 +375,14 @@ export default class BlendshapeStackPanel {
     const editing = track?.editingBlendshape || null;
 
     const names = this._layerNames();
+    // CLIPPED to the space above the pad. Without this the rows draw underneath it and the pad
+    // paints over them — which is not "hidden", it is a row you can still HIT but cannot SEE.
+    if (this._padOwned) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, H - this._padReserve);
+      ctx.clip();
+    }
     let y = TOOLBAR_H;
     for (const name of names) {
       this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
@@ -306,10 +393,11 @@ export default class BlendshapeStackPanel {
     this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
 
     if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
+    if (this._padOwned) ctx.restore();
 
     // The pad last, so it draws over the rows if a very long stack would otherwise run into it —
     // it is a fixed reservation at the bottom and the list is the thing that has to give.
-    if (this._pad) {
+    if (this._padOwned) {
       ctx.save();
       ctx.fillStyle = Theme.mantle;
       ctx.fillRect(0, H - this._padReserve, W, this._padReserve);
@@ -340,8 +428,69 @@ export default class BlendshapeStackPanel {
     this._drawIconBtn(ctx, newBtn, FA.plus,  Theme.blue, this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
     this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : Theme.surface2, this._hover?.btn === 'del');
+
+    // ── THE FOUR PAD SLOTS ────────────────────────────────────────────────────────────
+    //
+    // Assignment used to be click-a-label-to-CYCLE, on the pad itself. matt: "i think clicking
+    // through to cycle the names is poor UI. fine if there's less than 6 blendshapes, awful if
+    // there's 30." He is right and it is worse than that — cycling is O(n) presses to reach one
+    // shape, with no way to go back a step, and it is the only control here whose cost grows with
+    // the size of the rig.
+    //
+    // His design instead: four buttons up here, each a SQUARE WITH ONE SIDE BOLDER, and the
+    // selected layer goes to that side. So it reads as "put this one there" — a pick-then-place
+    // in two presses regardless of whether the mesh has four shapes or forty — and the icon says
+    // WHICH side without needing a word for it.
+    if (this._pad) {
+      const selected = this._track()?.editingBlendshape || null;
+      let sx = PAD + (bw + 6) * 2 + 10;
+      for (const slot of ['left', 'right', 'up', 'down']) {
+        const b = { id: 'slot_' + slot, slot, x: sx, y: by, w: bh, h: bh };
+        this._toolbarBtns.push(b);
+        this._drawSlotBtn(ctx, b, slot, selected, this._hover?.btn === b.id);
+        sx += bh + 4;
+      }
+    }
     // VR close is a corner mesh owned by Scene (same style as the timeline), not an
     // on-canvas button — see Scene._vrBlendCloseBtn.
+  }
+
+  // A square with one side drawn bold — the side this button assigns to. Drawn rather than a
+  // glyph because no icon font has "square with a heavy left edge" x4, and because the shape IS
+  // the explanation: it is a little picture of the pad with one edge called out.
+  _drawSlotBtn(ctx, b, slot, selected, hot) {
+    const assigned = this._pad?._assign?.[slot] || null;
+    ctx.fillStyle = hot ? Theme.surface1 : Theme.surface0;
+    this._roundRect(ctx, b.x, b.y, b.w, b.h, 4);
+    ctx.fill();
+
+    const m = 7;
+    const x0 = b.x + m, y0 = b.y + m, x1 = b.x + b.w - m, y1 = b.y + b.h - m;
+    // The four thin sides first, then the one that matters over the top of them.
+    ctx.strokeStyle = Theme.surface2;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+
+    // FILLED WHEN THE SLOT HAS A SHAPE, hollow when it is empty — so the row of four says what
+    // the pad is currently wired to at a glance, which the pad's own rotated labels cannot do
+    // from across a room.
+    ctx.strokeStyle = assigned ? Theme.blue : Theme.overlay0;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    if (slot === 'left')  { ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); }
+    if (slot === 'right') { ctx.moveTo(x1, y0); ctx.lineTo(x1, y1); }
+    if (slot === 'up')    { ctx.moveTo(x0, y0); ctx.lineTo(x1, y0); }
+    if (slot === 'down')  { ctx.moveTo(x0, y1); ctx.lineTo(x1, y1); }
+    ctx.stroke();
+
+    // Dimmed when there is nothing selected to place — the button still works (it CLEARS the
+    // slot) but it should not look like the primary action when no layer is picked.
+    if (!selected) {
+      ctx.fillStyle = 'rgba(30,30,46,0.45)';
+      this._roundRect(ctx, b.x, b.y, b.w, b.h, 4);
+      ctx.fill();
+    }
+    ctx.lineWidth = 1;
   }
 
   _drawIconBtn(ctx, b, glyph, color, hot = false) {
@@ -543,7 +692,7 @@ export default class BlendshapeStackPanel {
     if (this._picker) { this._pickerDown(p); return; }
     // The pad owns everything below the divider. Asked FIRST so a press in its area never falls
     // through to the row hit-test, which would otherwise classify it as the bottom-most layer.
-    if (this._pad && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }
+    if (this._padOwned && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
 
@@ -749,6 +898,23 @@ export default class BlendshapeStackPanel {
     const mesh = this._mesh();
     if (!mesh) return;
     const reg = window._animationRegistry;
+
+    // PLACE THE SELECTED LAYER ON A PAD SIDE. Pick a layer, press a side — two presses, and the
+    // cost does not grow with the number of shapes the way cycling did.
+    //
+    // With NOTHING selected this CLEARS the slot, which is the only other thing a side button
+    // could sensibly mean and saves inventing a separate "unassign" affordance. Pressing a side
+    // that already holds the selected layer clears it too, so the button is a toggle and there is
+    // always a way back to empty.
+    if (id.startsWith('slot_') && this._pad) {
+      const slot = id.slice(5);
+      const selected = this._track()?.editingBlendshape || null;
+      const cur = this._pad._assign[slot];
+      this._pad.assign(slot, (!selected || cur === selected) ? null : selected);
+      this.draw();
+      return;
+    }
+
     if (id === 'new') {
       // Create + activate a default layer IMMEDIATELY so the Base is protected (and locked
       // per #39) — otherwise sculpting while the picker is open silently edits the Base and
@@ -999,7 +1165,14 @@ export default class BlendshapeStackPanel {
       // Snap the layer fully on so "click row → sculpt" works immediately.
       // Sculpting is only permitted at weight 1 (see SculptManager gate); a fresh
       // or animated-down layer would otherwise be silently un-sculptable.
-      if (Math.abs(this._weightOf(name) - 1) > 1e-4) {
+      //
+      // THE CURVE, NOT THE PREVIEW. This decides whether to write a weight KEY, and a preview is
+      // not a key — it is a live override that vanishes when the pad is released. Guarding on the
+      // preview-aware read meant that whenever a preview happened to sit at 1 this wrote nothing,
+      // and the sculpt gate (which reads the curve) then saw an unkeyed layer, evaluated 0, and
+      // refused to sculpt. The layer looked fully on and could not be touched.
+      const track2 = reg.tracks.get(mesh.getID());
+      if (Math.abs(reg.blendshapeCurveWeight(track2, name) - 1) > 1e-4) {
         reg.setBlendshapeWeight(mesh, name, 1);
       }
     }

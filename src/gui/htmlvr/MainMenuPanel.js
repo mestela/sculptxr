@@ -437,6 +437,13 @@ const CSS = `
   color: #89b4fa;
   border-color: #89b4fa;
 }
+/* A TICK DRAWN FROM THE STATE, for toggles that opt in with .mm-tick.
+   Same approach as the mini panel: the .active class is the single source of truth, so the
+   indicator cannot disagree with the highlight the way a tick typed into the label can.
+   Opt-in rather than applied to every .mm-toggle, because the others here spell their state out
+   in words (On / Off) and changing those was not asked for.
+   NOTE: this whole block is a JS TEMPLATE LITERAL. No backticks anywhere, comments included. */
+.mm-toggle.mm-tick.active::before { content: '✓ '; }
 
 /* Choice grid (combobox replacement) */
 .mm-choice-grid {
@@ -1765,6 +1772,7 @@ export function buildSectionHTML_scene(main) {
     const saccading = !!main.isSaccading?.(selId);
     const sacAmp   = main.getSaccadeAmp?.(selId) ?? 5;
     const sacSpeed = main.getSaccadeSpeed?.(selId) ?? 1;
+    const sacSmooth = +(main.getSaccadeSmooth?.(selId) ?? 0).toFixed(2);
 
     const trs = main.getTransformTRS?.(selId) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
     const _f = (n) => (Math.round(n * 1000) / 1000);
@@ -1823,6 +1831,11 @@ export function buildSectionHTML_scene(main) {
         <span class="mm-lbl">Speed</span>
         <input type="range" id="mm-rig-sac-speed" min="0.1" max="3" step="0.1" value="${sacSpeed}">
         <span class="mm-val" id="mm-rig-sac-speed-val">${sacSpeed}</span>
+      </div>
+      <div class="mm-row" id="mm-rig-sac-smooth-row" style="${saccading ? '' : 'display:none'}">
+        <span class="mm-lbl">Smooth</span>
+        <input type="range" id="mm-rig-sac-smooth" min="0" max="1" step="0.05" value="${sacSmooth}">
+        <span class="mm-val" id="mm-rig-sac-smooth-val">${sacSmooth}</span>
       </div>
     `;
   }
@@ -2441,9 +2454,7 @@ function buildSculptingHTML(main, part) {
     </button>
 
     <div class="mm-section-title">Symmetry</div>
-    <button class="mm-toggle${symOn ? ' active' : ''}" id="mm-sym-toggle">
-      Mirror Symmetry ${symOn ? '✓ On' : 'Off'}
-    </button>
+    <button class="mm-toggle mm-tick${symOn ? ' active' : ''}" id="mm-sym-toggle">Sym</button>
     <div class="mm-row" style="gap:6px">
       <button class="mm-action-btn" id="mm-sym-lr" style="flex:1">Symmetrize L→R</button>
       <button class="mm-action-btn" id="mm-sym-rl" style="flex:1">Symmetrize R→L</button>
@@ -3635,6 +3646,11 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     main.setSaccadeSpeed?.(sel.getID(), v);
   });
 
+  wireSlider(el.querySelector('#mm-rig-sac-smooth'), el.querySelector('#mm-rig-sac-smooth-val'), (v) => {
+    const sel = selOne(); if (!sel) return;
+    main.setSaccadeSmooth?.(sel.getID(), v);
+  });
+
   el.querySelector('#mm-bake-t')?.addEventListener('click', () => {
     const sel = selOne(); if (!sel) return;
     main.bakeTranslate?.(sel.getID());
@@ -4145,8 +4161,9 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   if (symToggle && sm) {
     symToggle.addEventListener('click', () => {
       sm._symmetry = !sm._symmetry;
+      // The class IS the state: the tick follows it in CSS (.mm-tick.active). Rewriting the
+      // label here would put the long form straight back on the first press.
       symToggle.classList.toggle('active', sm._symmetry);
-      symToggle.textContent = `Mirror Symmetry ${sm._symmetry ? '✓ On' : 'Off'}`;
       main.render?.();
       lightRepaintFn();
     });

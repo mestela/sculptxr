@@ -251,8 +251,20 @@ class SculptManager {
     }
     if (track.blendshapeLocked?.has?.(name)) return false; // locked layer
     if (track.blendshapeMuted?.has?.(name)) return false;  // hidden layer
-    const bTrack = track.blendshapeTracks?.get(name);
-    const w = bTrack ? reg.evaluateScalarTrack(bTrack, track.playbackTime || 0) : 0;
+    // THE WEIGHT THE MESH IS ACTUALLY WEARING, previews included — not the curve.
+    //
+    // The capture is `delta = verts - base - otherLayers` and it assumes the active layer is
+    // contributing at FULL strength. What decides that is what the mesh is currently displaying,
+    // which is the previewed weight where one exists. Reading the curve instead meant a pad
+    // holding this layer at 0.4 still passed the gate: the stroke would be captured as though the
+    // layer were fully on, and the delta written would be wrong by a factor of 1/0.4.
+    //
+    // So this is deliberately the SAME reader as applyBlendshapes and the capture guard in
+    // Mesh.updateGeometry. Four places ask "how much of this layer is showing" and they must all
+    // get one answer; they did not, and that disagreement is what locked the tools out.
+    const w = reg.blendshapePreviewAt
+      ? reg.blendshapePreviewAt(track, name, track.blendshapeTracks?.get(name))
+      : 0;
     return Math.abs(w - 1) < 1e-3;
   }
 

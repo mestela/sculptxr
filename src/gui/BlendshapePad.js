@@ -160,12 +160,28 @@ class BlendshapePad {
     const w = weightsFor(this._x, this._y, this._assign, !!window._padBilinear);
     let changed = false;
 
-    // Clear any assigned shape that is not in the new set, or a slot emptied mid-drag would stay
-    // stuck at its last value with nothing driving it.
-    for (const s of SLOTS) {
-      const n = this._assign[s];
-      if (n && !(n in w)) changed = reg.setBlendshapePreview(mesh, n, 0) || changed;
+    // RELEASE EVERY SHAPE THIS PAD HAS EVER DRIVEN AND NO LONGER DRIVES.
+    //
+    // This used to iterate `_assign` and clear the shapes still in it that were not in the new
+    // weight set — which covers a slot emptied mid-drag and MISSES the important case entirely:
+    // when a slot is REASSIGNED, the outgoing shape is no longer in `_assign`, so nothing ever
+    // let go of it. Its preview entry simply stayed in the map for the rest of the session.
+    //
+    // Two consequences, and matt hit both. Its animation stayed masked (a preview outranks the
+    // curve). And `_performedShapes` reads the preview map, so the NEXT take recorded it too —
+    // frozen at whatever the pad had last left it at — writing a second flat pass of keys over an
+    // already-good performance. matt: "i made 4 eye blendshapes... recorded them. looked great...
+    // i then re-enabled the eye blendshapes, the keys have gone weird again. is the record process
+    // trying to record extra keys on top of the existing blendshape keys, even when the pad isn't
+    // driving them?" Yes, it was.
+    //
+    // Tracked on the pad rather than by reconciling the whole preview map, so this only ever
+    // releases what the PAD put there and never something another caller is holding.
+    if (!this._driven) this._driven = new Set();
+    for (const n of this._driven) {
+      if (!(n in w)) { changed = reg.setBlendshapePreview(mesh, n, null) || changed; }
     }
+    this._driven = new Set(Object.keys(w));
     for (const name of Object.keys(w)) {
       changed = reg.setBlendshapePreview(mesh, name, w[name]) || changed;
     }
@@ -221,12 +237,49 @@ class BlendshapePad {
 
   // The square the handle lives in, inset for the labels. In canvas coordinates, so the origin
   // is added here once and every hit test and every draw inherits it.
+  //
+  // THE INSETS ARE THE LABEL GUTTERS, and they were far too tight — matt: "text for hitzones on
+  // all sides too small, too cramped". The side gutters have to hold a shape name and the top and
+  // bottom ones a name plus the button row, so they are sized from the font rather than from a
+  // number that looked right against one particular panel width.
   _padRect() {
-    const pad = 34, top = 8, bot = 30;
-    const size = Math.min(this._cssW - pad * 2, this._cssH - top - bot);
+    const g = this._gutter();
+    const size = Math.min(this._cssW - g.side * 2, this._cssH - g.top - g.bot);
     return { x: (this._originX || 0) + (this._cssW - size) / 2,
-             y: (this._originY || 0) + top, s: size };
+             y: (this._originY || 0) + g.top, s: size };
   }
+
+  // Label/button gutters, derived from the label font so they scale together.
+  //
+  // THE SIDE LABELS ARE ROTATED, so a side gutter costs the height of a line rather than the
+  // width of a word. Horizontal side text meant the gutters had to be wide enough for the longest
+  // shape name — which is unbounded, and which squeezed the square down to nothing on a VR panel.
+  // matt: "now the label areas take up too much room, making the pad very small. maybe the left
+  // and right labels can be rotated?"
+  //
+  // Left reads bottom-to-top and right reads top-to-bottom, which is his call and also the
+  // convention that keeps both label baselines facing OUTWARD from the square — the text leans
+  // away from the pad on each side rather than one of them reading upside down.
+  _gutter() {
+    const f = this._font();
+    // The side gutters hold one rotated line, the top one label, the bottom a label plus the
+    // button row — so they are not the same multiple. Tight on purpose: every pixel here is a
+    // pixel the square does not get, and the square is the control.
+    return { side: Math.round(f * 1.5), top: Math.round(f * 1.9), bot: Math.round(f * 2.9) };
+  }
+
+  // Label size — FROM THE WIDTH, never the height, and capped.
+  //
+  // It was min(width, height), which on an embedded pad means the STRIP HEIGHT — and that is a
+  // feedback loop against itself: give the strip more room for a bigger square, the font grows,
+  // the gutters are multiples of the font, and the gutters eat the room you just added. Measured:
+  // raising the strip from 190 to 260 moved the square 115 -> 154 instead of 115 -> 185, with the
+  // difference going straight into larger margins.
+  //
+  // The panel's WIDTH is the stable dimension — it does not change when the rows/pad split moves —
+  // so the text size is tied to that, floored for headset legibility and capped so a wide desktop
+  // panel does not end up with billboard labels around a small square.
+  _font() { return Math.max(13, Math.min(18, Math.round(this._cssW * 0.042))); }
 
   _onDown(e) {
     const r = this._canvas.getBoundingClientRect();
@@ -245,18 +298,13 @@ class BlendshapePad {
         return;
       }
     }
-    // A click on a label cycles that slot through the available shapes — assignment with no
-    // second panel to build. Cheap, and enough to find out whether the pad is worth more UI.
-    for (const h of this._slotHit) {
-      if (mx >= h.x && mx <= h.x + h.w && my >= h.y && my <= h.y + h.h) {
-        const names = this.shapeNames();
-        if (!names.length) return;
-        const cur = names.indexOf(this._assign[h.slot]);
-        const next = cur + 1 >= names.length ? null : names[cur + 1];
-        this.assign(h.slot, cur === -1 ? names[0] : next);
-        return;
-      }
-    }
+    // NO CLICK-TO-CYCLE HERE ANY MORE. It was O(n) presses to reach one shape with no way back
+    // a step, and the only control in this panel whose cost grew with the size of the rig. matt:
+    // "fine if there's less than 6 blendshapes, awful if there's 30." Assignment moved to the
+    // four side buttons in the stack panel's toolbar; these labels are now display only.
+    //
+    // `_slotHit` is still built by draw() because the rotated labels need their clip rects, and
+    // keeping one source for "where does this label live" is what stops the two drifting.
 
     const p = this._padRect();
     if (mx < p.x || mx > p.x + p.s || my < p.y || my > p.y + p.s) return;
@@ -330,20 +378,62 @@ class BlendshapePad {
     ctx.stroke();
 
     this._slotHit = [];
-    ctx.font = '10px system-ui, sans-serif';
+    const f = this._font();
+    const g = this._gutter();
+    ctx.font = f + 'px system-ui, sans-serif';
     ctx.textBaseline = 'middle';
     for (const s of SLOTS) {
       const [sx, sy] = SLOT_POS[s];
       const name = this._assign[s];
-      const lx = cx + sx * (p.s / 2 + 4), ly = cy - sy * (p.s / 2 + 4);
-      ctx.textAlign = sx === 0 ? 'center' : (sx > 0 ? 'left' : 'right');
-      ctx.fillStyle = name ? '#cdd6f4' : '#585b70';
+      const gap = Math.round(f * 0.5);
+      const lx = cx + sx * (p.s / 2 + gap), ly = cy - sy * (p.s / 2 + gap);
       const label = name || '+';
-      const tw = ctx.measureText(label).width;
-      const ty = sy === 0 ? ly : (sy > 0 ? p.y - 2 : p.y + p.s + 10);
-      ctx.fillText(label, lx, ty);
-      const hx = sx > 0 ? lx : (sx < 0 ? lx - tw : lx - tw / 2);
-      this._slotHit.push({ slot: s, x: hx - 3, y: ty - 7, w: tw + 6, h: 14 });
+
+      // THE HIT ZONE IS THE GUTTER, NOT THE GLYPHS. It used to be the measured text plus three
+      // pixels — a target sized to the word, which is hard with a mouse and hopeless with a ray
+      // at arm's length. matt: "on desktop assign hitzones too small". Now each label owns the
+      // whole strip of gutter on its side of the square, so the thing you aim at is the region
+      // the label sits in rather than the letters themselves.
+      let hx, hy, hw, hh;
+      if (sx !== 0) {                       // left / right: the full side gutter, FULL square-tall
+        // Full height now the gutter is narrow — the strip is thin, so it has to be long to stay
+        // a realistic ray target.
+        hw = g.side; hh = p.s;
+        hx = sx > 0 ? p.x + p.s : p.x - g.side;
+        hy = p.y;
+      } else {                              // up / down: the full width, gutter-tall
+        hw = p.s; hh = Math.max(f * 1.9, g.top);
+        hx = p.x;
+        hy = sy > 0 ? p.y - hh : p.y + p.s;
+      }
+      this._slotHit.push({ slot: s, x: hx, y: hy, w: hw, h: hh });
+
+      // A faint plate behind an EMPTY slot, so "there is something to assign here" is visible
+      // rather than being a lone '+' floating in space.
+      if (!name) {
+        ctx.fillStyle = 'rgba(88,91,112,0.18)';
+        ctx.fillRect(hx, hy, hw, hh);
+      }
+      ctx.fillStyle = name ? '#cdd6f4' : '#7f849c';
+
+      if (sx !== 0) {
+        // ROTATED, running along the side. Centred on the square's midline and clipped to its
+        // height, so a long shape name is cut off rather than growing the gutter — the gutter is
+        // now a fixed line-height and must stay that way for the square to keep its size.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(hx, hy, hw, hh);
+        ctx.clip();
+        ctx.translate(sx > 0 ? p.x + p.s + hw / 2 : p.x - hw / 2, cy);
+        ctx.rotate(sx > 0 ? Math.PI / 2 : -Math.PI / 2);
+        ctx.textAlign = 'center';
+        ctx.fillText(label, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.textAlign = 'center';
+        const ty = sy > 0 ? p.y - Math.round(f * 0.7) : p.y + p.s + Math.round(f * 0.78);
+        ctx.fillText(label, lx, ty);
+      }
     }
 
     // The handle, with a line back to centre so the distance from neutral is readable at a glance.
@@ -356,7 +446,14 @@ class BlendshapePad {
     ctx.fill();
 
     this._btns = [];
-    const by = p.y + p.s + 14, bw = 52, bh = 16;
+    // Sized from the font like everything else here, and tall enough to be a ray target rather
+    // than a 16px sliver.
+    // Sized so the row and the 'down' label SHARE the bottom gutter without touching, and so the
+    // row keeps a margin off the canvas edge — measured, the previous numbers overlapped the label
+    // by 4px and sat flush against the bottom of the panel.
+    const bh = Math.round(f * 1.4);
+    const bw = Math.max(Math.round(f * 3.6), Math.floor((p.s - 12) / 3));
+    const by = p.y + p.s + Math.round(f * 1.3);
     let bx = p.x;
     // Reset names what it will actually do: while the pad holds an override it is the thing that
     // gives the animation back, and saying so is the difference between finding that and not.
@@ -367,7 +464,7 @@ class BlendshapePad {
       ctx.textAlign = 'center';
       ctx.fillText(text, bx + bw / 2, by + bh / 2);
       this._btns.push({ id, x: bx, y: by, w: bw, h: bh });
-      bx += bw + 6;
+      bx += bw + 6;   // three across, under the square
     }
   }
 }

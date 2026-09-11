@@ -636,6 +636,37 @@ export default class TimelineHelper {
       cloned.activeShapeLayerIdx = track.activeShapeLayerIdx;
       if (track._layerBase) cloned._layerBase = new Float32Array(track._layerBase);
     }
+    // BLENDSHAPE DELTAS AND THE BASE CAGE — the authored content, and the thing this clone used
+    // to drop on the floor.
+    //
+    // `GuiAnimation` does `reg.tracks.set(meshId, cloneTrack(track))`: it REPLACES the track
+    // object. Anything this function does not copy therefore ceases to exist the moment a
+    // keyframe is dragged or a transform box is used. `blendshapeTracks` (the weight CURVES) was
+    // carried; `blendshapes` (the per-vertex DELTAS) never was — so a graph-editor key edit wiped
+    // every sculpted shape on that mesh. matt, after fixing one key and then another: "noticed
+    // the face stopped moving. went back to the blendshape panel, all the blendshapes were gone."
+    // The face stopped because with no deltas applyBlendshapes has nothing to add.
+    //
+    // The note above records shapeLayers being given exactly this treatment for exactly this
+    // reason. Blendshapes are the same shape of data and were missed.
+    //
+    // BY REFERENCE, NOT DEEP-COPIED, and that is deliberate. A delta is one float per vertex
+    // component — on a 99k-vertex head that is ~300k floats EACH, and a clone happens on every
+    // key drag. Copying them would trade a data-loss bug for a stall. Nothing on the key-editing
+    // path mutates a delta: they are written by SCULPTING into a layer, which pushes its own
+    // undo. So the Map is copied (membership is what changes here — which shapes exist) while the
+    // arrays inside are shared.
+    if (track.blendshapes) cloned.blendshapes = new Map(track.blendshapes);
+    if (track.baseShape) cloned.baseShape = track.baseShape;
+    if (track._bsNbVertices) cloned._bsNbVertices = track._bsNbVertices;
+    // The per-layer flags are small and are part of "what the stack looks like", so a clone that
+    // dropped them would un-mute and un-lock layers on any key drag.
+    if (track.blendshapeMuted)  cloned.blendshapeMuted  = new Set(track.blendshapeMuted);
+    if (track.blendshapeLocked) cloned.blendshapeLocked = new Set(track.blendshapeLocked);
+    if (track.blendshapeSolo !== undefined) cloned.blendshapeSolo = track.blendshapeSolo;
+    if (track.editingBlendshape !== undefined) cloned.editingBlendshape = track.editingBlendshape;
+    if (track.baseLocked !== undefined) cloned.baseLocked = track.baseLocked;
+
     // Clone blendshape tracks (Map<string, {times, values, tangentOffsets}>)
     if (track.blendshapeTracks) {
       cloned.blendshapeTracks = new Map();

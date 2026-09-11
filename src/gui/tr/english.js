@@ -151,7 +151,7 @@ var TR = {
 
   sculptCommon: 'Common',
   sculptTool: 'Tool',
-  sculptSymmetry: 'Symmetry',
+  sculptSymmetry: 'Sym',
   sculptContinuous: 'Continuous',
   sculptRadius: 'Radius (-X)',
   sculptIntensity: 'Intensity (-C)',

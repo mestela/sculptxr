@@ -3691,7 +3691,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 14;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision
+const SKEL_VERSION = 15;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3703,7 +3703,9 @@ function pinAboveGroundOf(bone) { return (bone & 128) ? 8 : 0; }
 const NONE = 0xffffffff;
 const INFLUENCES = 4;
 
-Skeleton.serialize = function (meshes) {
+// `main` is needed for the v15 constraint section: the mirror state lives on the SCENE
+// (Scene._mirrors), not on the mesh, so there is nowhere else to read it from.
+Skeleton.serialize = function (meshes, main) {
   if (!meshes || !meshes.length) return null;
   const idxOf = (m) => meshes.indexOf(m);
 
@@ -3846,6 +3848,31 @@ Skeleton.serialize = function (meshes) {
   // offset and roundness sections already follow: a file written here still loads on a build
   // that stops at v13 (it reads the v11 triple and ignores the rest), and a v11 file still loads
   // here (this section is absent and the defaults stand, exactly as today).
+  // v15: THE NODE CONSTRAINTS — aim target, saccades and mirror-X.
+  //
+  // These are rig setup, not a take: they say what a node DOES, the same way a parent link or a
+  // pin does, and every one of them already lives beside those in the panel's constraint row.
+  // None of them was written to the file, so every reload meant rebuilding the eye rig by hand.
+  // matt: "we're not saving the mirror x or eye saccades into the sxr, i have to rebuild it each
+  // time."
+  //
+  // THE AIM TARGET IS AN INDEX, not an id, for the same reason `mir` and `pin` are: ids are
+  // regenerated on load, so an id written to a file points at nothing (or worse, at something
+  // else) when it comes back. Its own section, like every addition since v9, so a file written
+  // here still loads on a build that stops at v14.
+  const rig = [];
+  meshes.forEach((m, i) => {
+    if (!m) return;
+    const aim = (m._lookAtTargetId != null)
+      ? meshes.findIndex((x) => x && x.getID() === m._lookAtTargetId) : -1;
+    const mirrored = !!(main && main.isMirrored && main.isMirrored(m.getID()));
+    if (aim < 0 && !m._saccades && !mirrored) return;   // nothing to say about this node
+    rig.push({ i: i, aim: aim >= 0 ? aim : NONE,
+      sac: m._saccades ? 1 : 0,
+      amp: m._saccadeAmp ?? 5, spd: m._saccadeSpeed ?? 1, smo: m._saccadeSmooth ?? 0,
+      mir: mirrored ? 1 : 0 });
+  });
+
   const phys2 = [];
   meshes.forEach((m, i) => {
     if (!m || !m._isBone || !m._physicsRoot) return;
@@ -3875,7 +3902,11 @@ Skeleton.serialize = function (meshes) {
 
   const vols = [];
 
-  if (!entries.length && !skins.length) return null;
+  // ...OR IF ANY NODE CARRIES A CONSTRAINT. This block is skipped entirely when there is no
+  // hierarchy and no skin, which was right when it only held bones — but v15 put the aim/saccade/
+  // mirror state in here, and a scene can easily have an eye rig and no skeleton at all. Without
+  // `rig` in this test that state was built, saved to nothing, and silently absent on reload.
+  if (!entries.length && !skins.length && !rig.length) return null;
 
   let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
@@ -3889,6 +3920,7 @@ Skeleton.serialize = function (meshes) {
   slots += 1 + rounds.length * 2;
   slots += 1 + phys.length * 4;
   slots += 1 + phys2.length * 7;   // v14: i + drag, ground, groundY, inertia, maxBend, collide
+  slots += 1 + rig.length * 7;     // v15: i + aim, saccades, amp, speed, smooth, mirror
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -3943,6 +3975,12 @@ Skeleton.serialize = function (meshes) {
   for (const ph of phys2) {
     u[o++] = ph.i; f[o++] = ph.dr; u[o++] = ph.gr; f[o++] = ph.gy;
     f[o++] = ph.it; f[o++] = ph.mb; u[o++] = ph.co;
+  }
+
+  u[o++] = rig.length;
+  for (const r of rig) {
+    u[o++] = r.i; u[o++] = r.aim; u[o++] = r.sac;
+    f[o++] = r.amp; f[o++] = r.spd; f[o++] = r.smo; u[o++] = r.mir;
   }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
@@ -4255,6 +4293,29 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         cur.drag = dr; cur.ground = !!gr2; cur.groundY = gy;
         cur.inertia = it; cur.maxBend = mb; cur.collide = !!co;
         m._physicsParams = cur;
+      }
+    }
+
+    // v15: the node constraints. Restored BEFORE the pins are attached only because it reads
+    // nothing they write; the ordering is not load-bearing either way.
+    if (ver >= 15) {
+      const rn = u[o++];
+      for (let i = 0; i < rn; i++) {
+        const mi = u[o++], aimIdx = u[o++], sac = u[o++];
+        const amp = f[o++], spd = f[o++], smo = f[o++], mir = u[o++];
+        const m = meshes[mi];
+        if (!m) continue;
+        // THE AIM TARGET COMES BACK THROUGH THE INDEX, then becomes a live id. Writing the id
+        // itself would have pointed at whatever happened to own that number this session.
+        if (aimIdx !== NONE && meshes[aimIdx]) m._lookAtTargetId = meshes[aimIdx].getID();
+        if (sac) { m._saccades = true; m._saccadeAmp = amp; m._saccadeSpeed = spd; m._saccadeSmooth = smo; }
+        // The mirror is a LIVE CLONE the scene owns, not a flag — so it has to be rebuilt
+        // through the scene rather than assigned here. Guarded: a file can carry a mirror into
+        // a build or context that has no such method.
+        if (mir && main && main.mirrorMesh && !main.isMirrored?.(m.getID())) {
+          try { main.mirrorMesh(m.getID()); }
+          catch (e) { console.warn('[Skeleton] mirror restore failed for mesh', mi, e); }
+        }
       }
     }
 

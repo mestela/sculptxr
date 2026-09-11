@@ -280,9 +280,19 @@ class AnimationRegistry {
     if (window.app && window.app._meshes) {
       const activeIds = new Set(window.app._meshes.map(m => m.getID()));
       for (const existingId of this.tracks.keys()) {
-        if (!activeIds.has(existingId)) {
-          this.tracks.delete(existingId);
+        if (activeIds.has(existingId)) continue;
+        // A GHOST-TRACK SWEEP MUST NOT BIN AUTHORED CONTENT. Transform keys for a deleted mesh
+        // are cheap and reproducible; hand-sculpted blendshape deltas are neither, and this ran
+        // on EVERY record arm. If the mesh is genuinely gone the track is a few kilobytes nobody
+        // will notice; if the id merely CHANGED under a replaceMesh that migrateTrack did not
+        // catch, this is the line that turned a recoverable orphan into permanent loss.
+        const ghost = this.tracks.get(existingId);
+        if (ghost && ghost.blendshapes && ghost.blendshapes.size) {
+          console.warn('[Animation] keeping orphaned track %d: it holds %d blendshape(s)',
+            existingId, ghost.blendshapes.size);
+          continue;
         }
+        this.tracks.delete(existingId);
       }
     }
 
@@ -443,6 +453,128 @@ class AnimationRegistry {
   // (see the module-level shiftTangentOffsets — it is a plain function because it is pure and
   // has nothing to do with the registry's state.)
 
+  // CARRY A TRACK ACROSS A MESH REPLACEMENT.
+  //
+  // A track is keyed by MESH ID, and any topology-changing edit builds a NEW mesh with a new id
+  // and swaps it in (Scene.replaceMesh — voxel remesh, and the undo/redo swaps in SculptManager).
+  // Nothing migrated the track, so the panel — which reads tracks.get(mesh.getID()) — simply
+  // found nothing and the layers appeared to vanish. Worse, the next record arm's ghost-track GC
+  // then DELETED the orphan for real. matt: "in vr its very easy to somehow lose the blendshapes,
+  // they need to be manually rebuilt."
+  //
+  // `Scene.replaceMesh` already warns when a SKIN bind is lost the same way. Blendshapes get the
+  // same courtesy, and rather more: the animation itself is re-keyed and survives.
+  //
+  // THE DELTAS ARE THE PART THAT CANNOT ALWAYS COME. A blendshape delta is one float per vertex
+  // component, so it only means anything against the topology it was sculpted on. Where the new
+  // mesh has a different vertex count the delta is not stale, it is meaningless — so those are
+  // dropped BY NAME and reported, while the names, weights, curves and every other channel carry
+  // over. Undo/redo swaps are the common case and are usually the SAME topology, so in practice
+  // nothing is lost there at all; a remesh loses the sculpted shapes and keeps the animation.
+  migrateTrack(oldId, newId, newMesh) {
+    if (oldId === newId) return false;
+    const track = this.tracks.get(oldId);
+    if (!track) return false;
+    // Never overwrite a track the new mesh already has of its own.
+    if (this.tracks.has(newId)) return false;
+
+    this.tracks.delete(oldId);
+    this.tracks.set(newId, track);
+    this.expectBlendshapeChange(oldId);
+
+    // MATCH ON THE VERTEX COUNT, NOT THE ARRAY LENGTH. `getVertices().length` is an allocated
+    // CAPACITY and the two are not the same number — measured on a plain copy of a 98,306-vertex
+    // mesh, the source array was 297,603 floats and the copy's was 300,288. Comparing capacities
+    // would have thrown away every shape on any replacement that merely re-allocated, which is to
+    // say it would have caused the very bug it is here to fix.
+    //
+    // So the test is "does this delta still describe the same number of vertices"; where it does
+    // and only the capacity moved, the delta is REFITTED into the new array size rather than
+    // discarded. applyBlendshapes iterates the live array's full length, so a delta has to be
+    // exactly that long or it reads past the end and writes NaN across the mesh.
+    const newNb = newMesh && newMesh.getNbVertices ? newMesh.getNbVertices() : 0;
+    const newLen = newMesh && newMesh.getVertices ? newMesh.getVertices().length : 0;
+    const oldNb = track._bsNbVertices || 0;
+    const refit = (arr) => {
+      if (!arr) return null;
+      if (arr.length === newLen) return arr;              // already the right shape
+      const out = new Float32Array(newLen);
+      out.set(arr.subarray(0, Math.min(arr.length, newLen)));
+      return out;
+    };
+    if (newNb && track.blendshapes && track.blendshapes.size) {
+      const sameCount = !oldNb || oldNb === newNb;
+      const dropped = [];
+      for (const [name, delta] of [...track.blendshapes]) {
+        if (!delta) continue;
+        if (sameCount) track.blendshapes.set(name, refit(delta));
+        else { track.blendshapes.delete(name); dropped.push(name); }
+      }
+      if (dropped.length) {
+        this.expectBlendshapeChange(newId);   // announced, so the watchdog does not double-report
+        const why = 'Blendshape shapes lost (' + dropped.join(', ') + '): the mesh was rebuilt by '
+          + 'an edit that changes topology, so their per-vertex data no longer fits. '
+          + 'Their animation is kept — re-sculpt the shapes.';
+        console.warn('[Blendshapes] ' + why);
+        if (window.screenLog) window.screenLog(why, '#f9e2af');
+      }
+      // The base cage is per-vertex too, and a stale one would be applied as if it fitted.
+      if (track.baseShape) track.baseShape = (!oldNb || oldNb === newNb) ? refit(track.baseShape) : null;
+    }
+    if (newNb) track._bsNbVertices = newNb;
+    if (this.activeRecordingId === oldId) this.activeRecordingId = newId;
+    if (track.blendshapePreview) track.blendshapePreview.clear();
+    window._blendshapeStackPanel?._afterStructureChange?.();
+    window._blendshapeStackPanelVR?._afterStructureChange?.();
+    return true;
+  }
+
+  // ── THE BLENDSHAPE WATCHDOG ───────────────────────────────────────────────────────────
+  //
+  // Three separate routes to "my blendshapes vanished" turned up in two days, and they were the
+  // same shape every time: a code path that REBUILDS OR REPLACES a container and silently omits
+  // the authored content. `replaceMesh` re-keyed the track and left it behind; the ghost-track
+  // sweep binned the orphan; `cloneTrack` copied the weight curves and not the vertex deltas.
+  // Each was invisible until a user noticed their face had stopped moving.
+  //
+  // Point fixes do not generalise — the next path that copies a track will forget the same field.
+  // What generalises is NOTICING. This keeps a census of how many shapes each mesh has and shouts
+  // when the number falls without anyone having asked for a deletion. It cannot prevent the loss;
+  // it converts a silent one into a reported one, which is the difference between "this app eats
+  // my work" and "this app told me exactly what happened and when".
+  //
+  // matt's reason for caring, which is the right reason: "i was a big believer in morphin, an
+  // animation app for ipad, but it suffered so many issues like this i had to stop using it."
+  //
+  // DELIBERATE removals announce themselves through `expectBlendshapeChange` so they do not trip
+  // the alarm — a delete, a topology drop in migrateTrack, a scene load.
+  expectBlendshapeChange(meshId) {
+    if (!this._bsCensus) this._bsCensus = new Map();
+    this._bsCensus.delete(meshId);      // re-baselines on the next sweep
+  }
+
+  checkBlendshapeCensus() {
+    if (!this._bsCensus) this._bsCensus = new Map();
+    for (const [id, track] of this.tracks) {
+      const names = track && track.blendshapes ? [...track.blendshapes.keys()] : [];
+      const was = this._bsCensus.get(id);
+      if (was && was.length > names.length) {
+        const lost = was.filter((n) => !names.includes(n));
+        const why = 'Blendshapes disappeared without being deleted: '
+          + (lost.join(', ') || '(count fell from ' + was.length + ' to ' + names.length + ')')
+          + ' on object ' + id + '. This is a bug — please report what you just did.';
+        console.error('[Blendshapes] ' + why);
+        if (window.screenLog) window.screenLog(why, '#f38ba8');
+      }
+      this._bsCensus.set(id, names);
+    }
+    // A track that disappeared entirely takes its census with it, or re-adding the mesh reports
+    // a phantom loss.
+    for (const id of [...this._bsCensus.keys()]) {
+      if (!this.tracks.has(id)) this._bsCensus.delete(id);
+    }
+  }
+
   // WHICH SHAPES A TAKE IS ACTUALLY PERFORMING — the ones being driven live, i.e. previewed.
   //
   // Recording every shape on the mesh would be the obvious reading of "record the blendshapes"
@@ -452,7 +584,13 @@ class AnimationRegistry {
   // four — so it is both the cheapest answer and the right one.
   _performedShapes(track) {
     const p = track && track.blendshapePreview;
-    return p && p.size ? [...p.keys()] : [];
+    if (!p || !p.size) return [];
+    // A MUTED LAYER IS NOT BEING PERFORMED. Hiding a layer is how you set it aside while you work
+    // on another, and a take that wrote keys into it anyway would edit the thing you just put
+    // away. It also contributes nothing visible (applyBlendshapes skips it), so recording it
+    // captures a value nobody can see.
+    const muted = track.blendshapeMuted;
+    return [...p.keys()].filter((n) => !(muted && muted.has(n)));
   }
 
   // Write one weight key per performed shape at `t`. Deliberately NOT setBlendshapeWeight: that
@@ -1751,6 +1889,10 @@ class AnimationRegistry {
         track.editingBlendshape = wasEditing;
       }
       track.baseShape = new Float32Array(mesh.getVertices());
+      // The VERTEX COUNT this track's per-vertex data was authored against. Stored because
+      // `getVertices().length` is a capacity that can change without the topology changing —
+      // see migrateTrack, where telling those two apart is the whole job.
+      track._bsNbVertices = mesh.getNbVertices ? mesh.getNbVertices() : 0;
       // Protect the cage by default once blendshapes exist — accidental base
       // sculpting is otherwise easy and corrupts every layer's reference.
       if (track.baseLocked === undefined) track.baseLocked = true;
@@ -1987,6 +2129,26 @@ class AnimationRegistry {
     if (p && p.has(name)) return p.get(name);
     if (!bTrack || bTrack.times.length === 0) return 0;
     return this.evaluateScalarTrack(bTrack, track.playbackTime);
+  }
+
+  // TWO WEIGHTS, AND CALLERS MUST PICK ON PURPOSE.
+  //
+  // `blendshapePreviewAt` answers "what is the MESH WEARING" — previews included. That is the
+  // right answer for anything about what is on screen: the composite, the sculpt-capture
+  // subtraction, the sliders, and whether a stroke can be safely captured.
+  //
+  // This one answers "what does the CURVE SAY" — the keys alone. That is the right answer for
+  // anything about what is STORED: whether a weight key exists, what to write, what to save.
+  //
+  // Conflating them cost a real bug. `_selectLayer` snaps a new layer to weight 1 so clicking a
+  // row makes it immediately sculptable, and it guarded that with the preview-aware read — so
+  // when a preview happened to read 1 it concluded the key was already there and wrote nothing,
+  // while the sculpt gate (reading the curve) saw no keys, evaluated 0, and refused to sculpt.
+  // matt: "i made 2, started on the third, when my sculpting tools were locked out."
+  blendshapeCurveWeight(track, name) {
+    const bt = track && track.blendshapeTracks && track.blendshapeTracks.get(name);
+    if (!bt || bt.times.length === 0) return 0;
+    return this.evaluateScalarTrack(bt, track.playbackTime || 0);
   }
 
   // Set (or clear, with null) one previewed weight. Returns true if anything actually changed, so
@@ -2237,6 +2399,8 @@ class AnimationRegistry {
   }
 
   deleteBlendshape(mesh, name) {
+    // Announced, so the watchdog reads this as intent rather than loss.
+    if (mesh) this.expectBlendshapeChange(mesh.getID());
     if (!mesh || !name) return;
     const track = this.tracks.get(mesh.getID());
     if (!track) return;
@@ -3275,6 +3439,14 @@ class AnimationRegistry {
     }
 
     track.playbackTime = this.globalPlaybackTime || 0;
+
+    // Once a second, not per frame: it walks the track list and compares name arrays, which is
+    // trivial but not free, and a loss that takes a second to report is still a loss reported.
+    const _bsNow = performance.now();
+    if (!this._bsLastCheck || _bsNow - this._bsLastCheck > 1000) {
+      this._bsLastCheck = _bsNow;
+      try { this.checkBlendshapeCensus(); } catch (_) {}
+    }
 
     // PRESSING PLAY ENDS POSING. A preview outranks the keyed curve — that is what makes the
     // kaospad able to show a pose without writing one — so a preview left set makes the

@@ -237,6 +237,18 @@ const CSS = `
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 #mp-root .mp-toggle-btn.active     { background: #313244; color: #89b4fa; border-color: #585b70; }
+/* THE TICK IS STATE, SO IT IS DRAWN FROM THE STATE.
+   It used to be typed into the label — "✓ Sym" — which meant it was on whether the toggle was or
+   not, while the highlight beside it told the truth. Two indicators, one of them always lying.
+   matt: "It is permanently on. It should toggle along with the button highlighted/disabled
+   visual state."
+   Driven from the .active class rather than by rewriting textContent, because that class is
+   already toggled every refresh and is already known to repaint in VR — whereas a MARKUP change
+   would have to go through _rebuildContent with a revision in the cache key to appear there at
+   all (see the note in HTMLVRPanel). One source of truth, and no new repaint path.
+   NOTE FOR ANYONE EDITING THIS BLOCK: it is a JS TEMPLATE LITERAL. No backticks, anywhere,
+   including in comments — one ends the string and the panel dies on launch. */
+#mp-root .mp-toggle-btn.active::before { content: '✓ '; }
 #mp-root .mp-toggle-btn:hover,
 #mp-root .mp-toggle-btn.hover      { background: #24243e; color: #a6adc8; border-color: #45475a; }
 #mp-root .mp-toggle-btn:active,
@@ -355,8 +367,8 @@ function buildHTML() {
     </div>
     <hr class="mp-divider">
     <div class="mp-toggles">
-      <button class="mp-toggle-btn" id="mp-sym">✓ Sym</button>
-      <button class="mp-toggle-btn" id="mp-neg">✓ Neg</button>
+      <button class="mp-toggle-btn" id="mp-sym">Sym</button>
+      <button class="mp-toggle-btn" id="mp-neg">Neg</button>
       <button class="mp-toggle-btn" id="mp-wire">Wire</button>
     </div>
     <div id="mp-extras"></div>
