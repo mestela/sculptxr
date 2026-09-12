@@ -1,4 +1,4 @@
-# SculptXR (v3.20.22)
+# SculptXR (v3.30.194)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v3.30.194**: **Cast shadows in AR, and the object is the switch**: flag a proxy for the real table as a **Shadow Catcher** and it vanishes except for what the sculpt throws onto it — no enable toggle, no built-in floor, and the **Shadow Light** appears in the scene as an ordinary null you grab, animate and hide like any other object. A light here can only CAST (no sculpt shader reads a THREE.Light), so the controls are the light's position plus how dark and how soft. Alpha can only accumulate, so the shadow hides the real room instead of punching a hole in the model. Which meshes catch, and which object is the light, are saved in the rig footer block. Plus `scanPhantoms()`, which names every object actually drawing and the flag that governs it — and the two stray-marker bugs it found: a pin loaded from a file drew its pick sphere, and Hide All Decorations did not outrank the joint-dot exemptions.
 *   **v3.20.22**: **Sculpt a motion path, and the animation follows**: expose an animation control's path and shape it with the tools you already sculpt with — **Move** displaces the curve under the brush falloff, **Smooth** is a 1D Laplacian along it (noise removal for a hand-recorded take), **Grab** moves a single sample. Falloff runs ALONG the strand, so a walk cycle that passes near itself is not edited in two places at once. Every point keeps its time, so keys move by a delta and tangents survive. Only a *control* is editable — an IK-driven bone is solver output — so a pin draws two curves, the authored one solid and the solved one faint, and the gap between them is the diagnosis. Works in the headset from the stylus tip, and undoes as one step.
 *   **v3.20.6**: **Live rig recording, in both hands**: each VR controller acquires and moves a pin control independently, sharing one capture clock and one undo step, with capture driven by the transport clock so keys stay in sync at every playback speed. Reset returns the rig and its pins to the solver rest pose as one coherent frame. Timeline focus and scene selection are now one thing — the last row, key or object clicked is selected everywhere — and deleting a track removes the whole channel, restoring it as the same object on undo so tangents, layers and rest transforms survive. Plus two-controller timeline zoom, a Record button that can always re-arm, and a rig-visual rebuild that no longer runs twice per frame.
-*   **v3.20.5**: **Shading becomes a viewport preference**: shader and matcap were per-object, so a scene could carry a different look on every mesh; they are now one global setting applied to all ordinary meshes, with bones, pins and reference images left on their own shaders. The VR save gallery opens quickly again (only the twelve cards on the current page are decoded, and captures are taken at the size a card actually is). A wireframe overlay no longer waits for a subdivision change to appear, and all resolutions of a Multimesh share one render object instead of each parsed level keeping its own.
 
 [View Full Release History](docs/releases.md)
 

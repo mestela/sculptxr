@@ -1985,6 +1985,10 @@ export function buildSectionHTML_rendering(main) {
 
   const exposure    = main.getExposure?.() ?? 1.0;
   const gridOpacity = main.getGridOpacity?.() ?? 0.5;
+  const shadowOpac  = main.getShadowOpacity?.() ?? 0.35;
+  const shadowSoft  = main.getShadowSoftness?.() ?? 2.5;
+  const shadowLive  = main.isShadowActive?.() ?? false;
+  const isCatcher   = main.getShadowCatcher?.() ?? false;
   const curvature   = mesh?.getCurvature?.() ?? 0;
   const opacity     = mesh?.getOpacity?.() ?? 1;
   const isFlat      = getOptionsURL().flatshading;
@@ -2095,6 +2099,27 @@ export function buildSectionHTML_rendering(main) {
         <button class="mm-choice${isFlat  ? ' active' : ''}" id="mm-flat-shading">Flat</button>
         <button class="mm-choice${isWire  ? ' active' : ''}" id="mm-wireframe">Wire</button>
         <button class="mm-choice${isSolid ? ' active' : ''}" id="mm-solid">Solid</button>
+      </div>
+      <!-- SHADOW CATCHER IS THE WHOLE SWITCH. There is no enable toggle and no built-in floor:
+           block out the real table, flag it, and it vanishes except for what the sculpt throws on
+           it — and the Shadow Light appears in the scene as an object you move. Want the shadow
+           gone? Hide the proxy, delete it, or take the material off. The two sliders are the only
+           things left that are about how the shadow LOOKS rather than whether it exists, so they
+           go inert until something is actually catching one. -->
+      <button class="mm-toggle${isCatcher ? ' active' : ''}" id="mm-shadow-catcher">Shadow Catcher</button>
+      <div id="mm-shadow-group"${shadowLive ? '' : ' inert aria-disabled="true"'}>
+        <div class="mm-row">
+          <span class="mm-lbl">Shadow Opacity</span>
+          <input type="range" id="mm-shadow-opacity" min="0" max="100" step="1" value="${Math.round(shadowOpac*100)}">
+          <span class="mm-val" id="mm-shadow-opacity-val">${Math.round(shadowOpac*100)}%</span>
+        </div>
+        <!-- Tenths, and up to 24: a PCF radius is useful well below 1 texel, and a real room's
+             area light needs a far wider kernel than a spot's own penumbra gives. -->
+        <div class="mm-row">
+          <span class="mm-lbl">Softness</span>
+          <input type="range" id="mm-shadow-soft" min="0" max="240" step="1" value="${Math.round(shadowSoft*10)}">
+          <span class="mm-val" id="mm-shadow-soft-val">${shadowSoft.toFixed(1)}</span>
+        </div>
       </div>
       </fieldset>
 
@@ -3764,6 +3789,30 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     } catch (_) {}
     main.render?.();
   });
+
+  // SHADOW CATCHER IS THE ONLY SHADOW CONTROL THAT TURNS ANYTHING ON OR OFF. Flagging the
+  // selection makes it a proxy; the light appears on its own on the next frame. The two sliders
+  // below only say how the shadow looks, so they follow whether one is actually being caught.
+  const catchBtn = el.querySelector('#mm-shadow-catcher');
+  catchBtn?.addEventListener('click', () => {
+    const on = !(main.getShadowCatcher?.() ?? false);
+    main.setShadowCatcher?.(on);
+    catchBtn.classList.toggle('active', on);
+    const grp = el.querySelector('#mm-shadow-group');
+    if (grp) {
+      if (on) { grp.removeAttribute('inert'); grp.removeAttribute('aria-disabled'); }
+      else    { grp.setAttribute('inert', ''); grp.setAttribute('aria-disabled', 'true'); }
+    }
+    lightRepaintFn();
+  });
+
+  wireSlider(el.querySelector('#mm-shadow-opacity'), el.querySelector('#mm-shadow-opacity-val'), (v) => {
+    main.setShadowOpacity?.(v / 100);
+  }, (v) => `${v}%`, sliderDirtyFn);
+
+  wireSlider(el.querySelector('#mm-shadow-soft'), el.querySelector('#mm-shadow-soft-val'), (v) => {
+    main.setShadowSoftness?.(v / 10);
+  }, (v) => (v / 10).toFixed(1), sliderDirtyFn);
 
   // OPACITY, NOT TRANSPARENCY. The slider ran backwards — 0 meant fully opaque and you pushed it
   // UP to make the mesh disappear — which is the opposite of every other opacity in the app,

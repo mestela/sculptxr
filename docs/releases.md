@@ -1,3 +1,65 @@
+# v3.30.185 - v3.30.194
+**Cast shadows in AR, and the object is the switch.** Block out a proxy for the real table the
+sculpt is standing on, flag it **Shadow Catcher**, and it disappears except for what the model
+throws onto it. There is no enable toggle, no built-in floor and no button that makes a light: the
+**Shadow Light** appears in the scene as an ordinary object the moment the first proxy exists, and
+hiding the proxy, deleting it or taking the material off is how the shadow goes away again.
+
+**A light in this app can only cast, and that is worth saying plainly.** Every sculpt shader —
+matcap, PBR, flat, normal, UV — computes its own shading from the camera and its own environment
+map, and none of them reads a `THREE.Light`. What a light CAN do is cast, because three renders the
+shadow map with its own depth material straight off the geometry. So this is a shadow caster that
+happens to be spelled as a light; making the sculpt itself respond to it is a shader job and is not
+attempted here.
+
+- **The light is a NULL, not a bespoke gizmo.** It is the same transform-only locator the eye rig
+  and the IK pins use, which means selection, the desktop gizmo, the VR grab, the outliner, undo
+  and keyframing all work on it from the day it was added — and the light can be animated like
+  anything else. Its position IS the setting; there are no angle sliders to disagree with it. It
+  starts at the ORIGIN so it is always somewhere predictable. Its handle is solid geometry — a ball
+  with six rays and a tube down to what it is aimed at — because a null's 1px cruciform cannot be
+  thickened and was a few stray pixels at any distance; the pins are solid for the same reason. The
+  outliner's eye hides the handle and never the light.
+- **Alpha can only accumulate.** In passthrough the framebuffer's alpha is what the compositor
+  reads to decide how much of the real room shows through, and ordinary blending applies to alpha
+  as well as to colour. A shadow is the opposite of a hole — it must HIDE the room — so the colour
+  channels blend normally and the alpha channels can only add. Outside the shadow the material
+  emits alpha 0, so a proxy adds nothing at all and stays invisible.
+- **Softness reaches 24.** A real room's light is an area source and a spot's shadow is not, so the
+  only way to meet one is a wider PCF kernel. Plain PCF, not PCF_SOFT — the "soft" variant ignores
+  `shadow.radius` entirely, which would leave the slider doing nothing.
+- **The flags survive a save.** Which meshes catch the shadow, and which object is the light, ride
+  in the SKEL footer block (v16) rather than in the SGL body — an appended, independently
+  versioned block, so nothing touches the fragile per-mesh binary layout. An older build reads
+  neither bit and gets the pre-feature scene rather than a broken one.
+- **A catcher is not a caster.** A room-sized table proxy excluded from the fit, or the cone widens
+  to cover geometry that never casts and blurs away the only thing the shadow map is for. Proxies
+  receive and do not cast: the real table already has its own shadow.
+
+**Two phantom-marker bugs, found by a tool built to stop guessing at them.** `scanPhantoms()` in
+the console names every object that is actually drawing, says which rig display flag governs it and
+what that flag currently reads, and can hide or blink them. `object.visible` turns out to be the
+way this codebase hides things LEAST — instanced batches scale a hidden slot to zero, merged line
+batches collapse a hidden joint to a point and keep the full draw range, and joint locators are
+hidden through `colorWrite: false` with `visible` deliberately left true. All three had to be
+taught to the scanner before it stopped reporting correctly-hidden rig parts as phantoms.
+
+- **A pin restored from a file drew its pick sphere.** `Skeleton.makePin` ends by making the null
+  non-drawing and hiding its cruciform, because the rig already draws a triad and a gimbal at that
+  transform. The load path never did, so a pin that came back from a `.sxr` drew a small solid ball
+  on the rig — reachable by no rig display flag, because the flags hide the markers and not the
+  null underneath them. Only ever on loaded files, which is why it looked intermittent.
+- **Hide All Decorations now outranks the joint-dot exemptions.** Preselect, selection and isolated
+  joints keep a switched-off rig pointable-at, which is right for the `joints` flag and wrong for a
+  master switch whose whole job is to clear the view — with it thrown, a selected joint went on
+  drawing its dot and nothing would remove it.
+
+**`probeXRLighting()`** answers, on the device, whether the headset can estimate the room's
+lighting: WebXR's Lighting Estimation API does exist and three ships a wrapper for it, but it is
+gated on the platform's own AR stack and iOS Safari has no immersive-AR session at all. The
+`light-estimation` feature is deliberately not requested yet — this project has history of a
+session-feature flag breaking a device.
+
 # v3.20.13 - v3.20.22
 **Sculpt a motion path, and the animation follows.** Expose a control's path, take hold of it
 with the tools you already sculpt with, and the keys move to match. The idea is matt's: see a

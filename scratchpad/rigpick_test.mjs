@@ -406,8 +406,8 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   check('the joint dot visibility is liftable', !!m, 'the placement code moved');
   if (m) {
     const show = (o = {}) => new Function('showJoints', 'isolated',
-      'isHi', 'isSel', 'jointHeld', 'return (' + m[1] + ');')(
-      !!o.showJoints, !!o.isolated, !!o.isHi, !!o.isSel, !!o.jointHeld);
+      'isHi', 'isSel', 'jointHeld', 'decorHidden', 'return (' + m[1] + ');')(
+      !!o.showJoints, !!o.isolated, !!o.isHi, !!o.isSel, !!o.jointHeld, !!o.decorHidden);
 
     check('the flag on draws them', show({ showJoints: true }) === true);
     check('the flag off hides them', show({ showJoints: false }) === false,
@@ -420,6 +420,18 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     check('...and one in a hand', show({ jointHeld: true }) === true);
     check('an ISOLATED joint draws anyway', show({ isolated: true }) === true,
       'it has no capsule at either end: without the dot it is invisible AND unpickable');
+    // HIDE ALL DECORATIONS OUTRANKS EVERY EXEMPTION. The exemptions keep a switched-off rig
+    // pointable-at, which is right for the `joints` flag and wrong for the master switch — its
+    // whole job is to clear the view, and with it thrown there was no control left that would
+    // remove a selected joint's dot. Found by scanPhantoms reporting a joint marker batch
+    // drawing 1 of 33 instances with the flag reading OFF.
+    check('the master switch hides them even when the flag is ON',
+      show({ showJoints: true, decorHidden: true }) === false);
+    check('...and even a selected or isolated one',
+      show({ isSel: true, decorHidden: true }) === false
+        && show({ isolated: true, decorHidden: true }) === false);
+    check('...while leaving every case alone when it is not thrown',
+      show({ isSel: true }) === true && show({ showJoints: true }) === true);
     // WAS: with Solid and Wire both off the dots came back regardless of the flag, so that
     // something still marked a pickable joint. It overrode a switch the user had just thrown,
     // one step after they threw it -- matt turned the dots off, then turned the bone body off,

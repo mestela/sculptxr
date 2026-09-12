@@ -54,9 +54,9 @@ if (inject === 'alphablend') {
   if (!SRC.includes(a)) throw new Error('inject gridbefore: anchor moved');
   SRC = SRC.replace(a, '    this._groundGrid.renderOrder = -1;');
 } else if (inject === 'sliderdrift') {
-  const a = '      this._groundGridGhost.material.opacity = v * GRID_GHOST_FRACTION;';
+  const a = "  setGridOccludedOpacity(val) {\n    const v = Math.min(1, Math.max(0, val));\n    if (this._groundGridGhost) this._groundGridGhost.material.opacity = v;";
   if (!SRC.includes(a)) throw new Error('inject sliderdrift: anchor moved');
-  SRC = SRC.replace(a, '      this._groundGridGhost.material.opacity = v;');
+  SRC = SRC.replace(a, "  setGridOccludedOpacity(val) {\n    const v = Math.min(1, Math.max(0, val));\n    if (this._groundGrid) this._groundGrid.material.opacity = v;");
 } else if (inject === 'nopersist') {
   const a = "    getOptionsURL.saveOption?.('gridOpacity', v, 250);";
   if (!SRC.includes(a)) throw new Error('inject nopersist: anchor moved');
@@ -138,17 +138,21 @@ if (FACTOR[sA] && FACTOR[dA]) {
   // ABSOLUTE, not a fraction. As a fraction it multiplied an already-low default -- 0.5 * 0.35
   // = 0.175 -- and against bright passthrough that reads as nothing at all, which is what "it
   // disappears as I go higher" actually was: the ghost drawing at a strength you cannot see.
-  // FAINTER THAN THE VISIBLE PASS, and derived from it so one slider moves both. Two
-  // independent opacities drift apart the moment either is touched.
+  // THE GHOST HAS ITS OWN NUMBER NOW. It used to track the visible pass by a fixed fraction, and
+  // these two checks asserted exactly that — so they went on failing after the second slider
+  // landed, which is a harness claiming a bug that is actually a decision. How visible the grid
+  // is over nothing and how much of it reads THROUGH the model are two different judgements; the
+  // fraction survives only as the DEFAULT, so an untouched session looks as it always did.
   const frac = Number((SRC.match(/const GRID_GHOST_FRACTION = ([\d.]+);/) || [])[1]);
-  check('...fainter than the visible pass, as a fraction of it',
-    /ghostMat\.opacity = this\._groundGrid\.material\.opacity \* GRID_GHOST_FRACTION;/.test(SRC)
+  check('...fainter than the visible pass until the second slider is touched',
+    /ghostMat\.opacity = getOptionsURL\(\)\.gridOccludedOpacity/.test(SRC)
+      && /this\._groundGrid\.material\.opacity \* GRID_GHOST_FRACTION/.test(SRC)
       && frac > 0 && frac < 1,
     'fraction ' + frac);
-  check('...and the slider keeps the two in step through ONE setter',
-    /setGridOpacity\(val\) \{/.test(SRC)
-      && /_groundGridGhost\.material\.opacity = v \* GRID_GHOST_FRACTION;/.test(SRC),
-    'a slider that writes only the visible pass leaves the ghost at the old strength');
+  check('...and each pass is written by its OWN setter, not one by the other',
+    /setGridOpacity\(val\) \{[\s\S]{0,200}?_groundGrid\.material\.opacity = v;/.test(SRC)
+      && /setGridOccludedOpacity\(val\) \{[\s\S]{0,200}?_groundGridGhost\.material\.opacity = v;/.test(SRC),
+    'the occluded half must not be driven off the visible slider any more');
   // Both halves, because either alone is useless: custom factors that NormalBlending ignores,
   // or CustomBlending pointed at factors that still reduce alpha.
   check('...and it carries the alpha rule too, or it reinstates the hole',

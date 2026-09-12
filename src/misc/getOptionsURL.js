@@ -336,6 +336,12 @@ var getOptionsURL = function () {
   // reload -- it was tuned once and should not have to be tuned again.
   options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.2);
 
+  // Cast shadow. There is no enable flag: flagging a mesh as a Shadow Catcher is what turns the
+  // feature on, so the only settings are the two about how the shadow LOOKS. Both persisted,
+  // because these are tuned once against a real room in AR — see render/SceneShadow.js.
+  options.shadowOpacity  = queryNumber(getVal('shadowOpacity'),  0.0, 1.0, 0.35);
+  options.shadowSoftness = queryNumber(getVal('shadowSoftness'), 0,   24,  2.5);
+
   // Rig
   // How see-through a BOUND mesh is drawn, so the capsules inside it can be seen and sculpted.
   // 1 is opaque, which is what every rig starts as -- this is a working view, turned on while

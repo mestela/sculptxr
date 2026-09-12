@@ -521,7 +521,15 @@ function makeBatch(main, geo, ghost, key) {
 function batchFor(main, key, geoFn, ghost) {
   const all = main._skelBatch || (main._skelBatch = new Map());
   let b = all.get(key);
-  if (!b) { b = makeBatch(main, geoFn(), ghost, key); all.set(key, b); }
+  if (!b) {
+    b = makeBatch(main, geoFn(), ghost, key);
+    // NAMED, so a scene scan can say WHICH batch it is looking at. An instanced batch stays in
+    // the scene with `visible` true whether or not any of its instances are drawn (a hidden slot
+    // is scaled to zero, not removed), so anything walking the graph sees a live object with no
+    // way to tell what it is. See misc/PhantomScan.js.
+    b.mesh.name = 'rigbatch:' + key;
+    all.set(key, b);
+  }
   return b;
 }
 
@@ -532,7 +540,7 @@ function batchFor(main, key, geoFn, ghost) {
 // the fifty draw calls it removes.
 //
 // Per-vertex colour, because the joints tint differently and a merged buffer has one material.
-function makeLineBatch(main, geo, ghost) {
+function makeLineBatch(main, geo, ghost) {  // named by its caller — see batchFor
   const mat = new THREE.LineBasicMaterial({
     vertexColors: true, transparent: true, depthWrite: false,
     opacity: ghost ? 0.35 : 0.9,
@@ -550,7 +558,11 @@ function makeLineBatch(main, geo, ghost) {
 
 function lineBatchSlot(main, key, geoFn, ghost) {
   const all = main._skelBatch || (main._skelBatch = new Map());
-  if (!all.has(key)) all.set(key, makeLineBatch(main, geoFn(), ghost));
+  if (!all.has(key)) {
+    const b = makeLineBatch(main, geoFn(), ghost);
+    b.mesh.name = 'rigbatch:' + key;   // see batchFor
+    all.set(key, b);
+  }
   const slot = makeSlot();
   slot._key = key;
   return slot;
@@ -2581,6 +2593,8 @@ Skeleton.updateVisuals = function (main) {
   const showWire = Skeleton.displayFlag('wire');
   // Pins and joint dots are their own display layers, independent of the bone body.
   const showJoints = Skeleton.displayFlag('joints');
+  // The master switch, read once per pass — see the joint-dot visibility line below.
+  const decorHidden = Skeleton.decorationsHidden();
   const showPins = Skeleton.displayFlag('pins');
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
@@ -2700,7 +2714,14 @@ Skeleton.updateVisuals = function (main) {
       // then is hide the joint at the moment you most want to watch it. The explicit flag still
       // wins — asking for joint spheres means joint spheres — but the automatic preselect,
       // selection and held states all stand down for the duration of the drag.
-      o.visible = showJoints || (!jointHeld && (isolated || isHi || isSel));
+      // HIDE ALL DECORATIONS WINS OVER THE EXEMPTIONS. The preselect/selection/isolated terms
+      // exist so a rig you have switched off is still pointable-at — a good rule for the `joints`
+      // flag on its own, and the wrong one for a master switch whose entire job is to clear the
+      // view of everything drawn on top of the model. With it thrown, a selected joint went on
+      // drawing its dot (and its ghost) and there was no control left that would remove it.
+      // ONE LINE, and `decorHidden` lifted alongside the rest: rigpick_test evaluates this
+      // expression directly, so a term it cannot be handed is a term that crashes the harness.
+      o.visible = !decorHidden && (showJoints || (!jointHeld && (isolated || isHi || isSel)));
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -3691,7 +3712,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 15;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 16;  // v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -3728,7 +3749,13 @@ Skeleton.serialize = function (meshes, main) {
     // under it — the fault that cost six versions to find. Saving a joint as "hidden" would
     // reintroduce it through the loader, so the bit is only ever written for other meshes.
     const hidden = !m._isBone && m.isVisible ? !m.isVisible() : false;
-    if (!parented && !m._isBone && !m._selectLocked && !hidden) return;
+    // A SHADOW CATCHER OR THE SHADOW LIGHT EARNS A ROW TOO. Both are ordinary meshes carrying one
+    // extra boolean, and neither is necessarily parented, a bone, locked or hidden — so without
+    // this the flag has nowhere to be written and a saved scene comes back with the proxy an
+    // ordinary solid and no light at all. matt: "it doesn't seem to be restoring properly, and I
+    // had to make another shadowcaster light."
+    const shadow = !!(m._isShadowCatcher || m._isShadowLight);
+    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow) return;
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
@@ -3755,10 +3782,16 @@ Skeleton.serialize = function (meshes, main) {
       // Appended at the top of the word like every flag before it, so a file written by this
       // build still reads correctly in an older one: the bit is simply ignored there and the pin
       // comes back with its mode intact and the clamp off, which is the pre-feature behaviour.
+      // Bit 8 (v16) = THIS MESH CATCHES THE CAST SHADOW — it wears the shadow material and is
+      // otherwise invisible. Bit 9 (v16) = THIS MESH IS THE SHADOW LIGHT. Both are appended above
+      // every existing flag for the same reason each of those was: an older build reads neither
+      // bit, and gets the proxy back as an ordinary object and the light back as an ordinary
+      // null, which is exactly the pre-feature scene rather than a broken one.
       bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0)
         | (((m._boneIKPin | 0) & 4) << 2)
         | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)
-        | (((m._boneIKPin | 0) & 8) ? 128 : 0),
+        | (((m._boneIKPin | 0) & 8) ? 128 : 0)
+        | (m._isShadowCatcher ? 256 : 0) | (m._isShadowLight ? 512 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
       // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
@@ -4064,6 +4097,18 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       }
     }
 
+    // v16: the shadow flags. Set on the mesh only — SceneShadow's per-frame sweep is what turns
+    // the flag into a material, so there is nothing to rebuild here and no order to get wrong.
+    if (ver >= 16) {
+      for (const row of rows) {
+        if (row.bone & 256) row.mesh._isShadowCatcher = true;
+        if (row.bone & 512) {
+          row.mesh._isShadowLight = true;
+          row.mesh._typeName = 'Shadow Light';
+        }
+      }
+    }
+
     // Restore the joint's own properties first — healGraph keys off _isBone, and the
     // no-draw material is not serialized (same caveat FrameGroup hits with its nulls).
     for (const row of rows) {
@@ -4328,6 +4373,20 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         p.pin._pinnedJoint = p.joint;
         p.pin._isNull = true;
         p.pin.isPickable = false;
+        // NON-DRAWING, the same as a pin made live. `Skeleton.makePin` ends by putting a
+        // colorWrite-off material on the null and hiding its cruciform, because the skeleton pass
+        // draws the triad and gimbal at this transform and the null's own pick sphere would be a
+        // second marker in the same place. This path never did it, so a pin that came back from a
+        // .sxr drew its pick sphere as a small solid ball on the rig — visible with every rig
+        // display flag off, because no flag reaches the null underneath a pin. That is matt's
+        // "phantom spheres/dots that seem to be related to pins or joints", and why they only
+        // appeared on a LOADED file.
+        const _pinTm = p.pin.getThreeMesh && p.pin.getThreeMesh();
+        if (_pinTm) {
+          noDrawMaterial(_pinTm);
+          const _cross = _pinTm.children && _pinTm.children.find((c) => c.name === 'null_cruciform');
+          if (_cross) _cross.visible = false;
+        }
         p.joint._boneIKPinObj = p.pin;
         // THE LIVE STORE IS THE PIN OBJECT, so setting only `_boneIKPin` here would load a rig
         // whose file says "keep above ground" and whose session does not — the clamp would be

@@ -76,6 +76,9 @@ import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder
 import ViewportMenu from './gui/ViewportMenu.js';
 import SkinPreview from './editing/SkinPreview.js';
 import MotionTrail from './editing/MotionTrail.js';
+import SceneShadow from './render/SceneShadow.js';
+import scanPhantoms from './misc/PhantomScan.js';
+import probeXRLighting from './misc/XRLightProbe.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -1840,6 +1843,24 @@ class Scene {
     return saved != null ? saved : (this.getGridOpacity() * GRID_GHOST_FRACTION);
   }
 
+  // Cast shadow — a thin pass-through to SceneShadow so the panels talk to `main` like they do
+  // for every other viewport setting. There is no enable/disable: flagging a mesh as a catcher IS
+  // the switch. See render/SceneShadow.js.
+  setShadowOpacity(v)  { this._sceneShadow?.setOpacity(v); }
+  getShadowOpacity()   { return this._sceneShadow ? this._sceneShadow.getOpacity() : 0.35; }
+  setShadowSoftness(v) { this._sceneShadow?.setSoftness(v); }
+  getShadowSoftness()  { return this._sceneShadow ? this._sceneShadow.getSoftness() : 2.5; }
+  isShadowActive()     { return this._sceneShadow ? this._sceneShadow.isActive() : false; }
+  // Per-object: turn the selection into shadow-catching proxies for real-world surfaces.
+  setShadowCatcher(on) {
+    const ms = this.getSelectedMeshes?.() || [];
+    for (let i = 0; i < ms.length; ++i) this._sceneShadow?.setMeshCatcher(ms[i], on);
+  }
+  getShadowCatcher() {
+    const ms = this.getSelectedMeshes?.() || [];
+    return ms.length > 0 && ms.every(m => this._sceneShadow?.isMeshCatcher(m));
+  }
+
   setToneMapping(val) {
     if (this._renderer) {
       this._renderer.toneMapping = val;
@@ -2045,6 +2066,10 @@ class Scene {
       } catch (e) {
         console.error('Motion trail failed:', e);
       }
+
+      // Keeps the cast shadow's light fitted to the model and new meshes casting. Reads one
+      // boolean and returns while shadows are off.
+      if (this._sceneShadow) this._sceneShadow.update();
 
       // Skinning: last in the deformation stack, and a no-op when no joint has moved
       // since the previous frame (see Skinning.apply's pose stamp).
@@ -2360,6 +2385,18 @@ class Scene {
     this._groundGridGhost.position.y = this._groundGrid.position.y;
     this._groundGridGhost.visible = !!this._showGrid;
     this._worldGroup.add(this._groundGridGhost);
+
+    // The cast shadow. Constructed here because it lives in the world group, so a world grab
+    // carries the light and the shadow along with the model; it builds nothing at all until a
+    // mesh is flagged as a Shadow Catcher. See render/SceneShadow.js for why a light in this app
+    // only casts and never lights.
+    this._sceneShadow = new SceneShadow(this);
+
+    // "What is that dot?" — see misc/PhantomScan.js. Costs an import; runs only when called.
+    window.scanPhantoms = scanPhantoms;
+    // "Can the headset estimate the room's lighting?" — a question only the device can answer.
+    // See misc/XRLightProbe.js.
+    window.probeXRLighting = probeXRLighting;
 
     // Fallback/Legacy Caps init
     WebGLCaps.initWebGLExtensions(this._gl);
