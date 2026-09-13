@@ -1,3 +1,56 @@
+# v3.31.0
+**Apple Vision Pro: hands, menus and sculpting, on a runtime with no controllers.** The headset
+could enter immersive and render the scene, and nothing responded to anything. Four independent
+faults each produced that identical symptom, so fixing any one of them changed nothing visible:
+
+- **`if (!source.gripSpace) continue;`** sat at the top of the input loop. visionOS hands arrive
+  fully tracked — 25 joints with real poses, `tracked-pointer`, profile `generic-hand` — and carry
+  **no gripSpace at all**, so every hand was skipped before the hand-tracking branch could run
+  once. The wrist joint is the stand-in: `XRJointSpace` is an `XRSpace`, so `getPose()` takes it.
+- **A hand's `gamepad` is truthy with an EMPTY buttons array.** Every `if (src.gamepad)` guard in
+  the file sailed past it and then read `undefined` out of it. The last one standing was the
+  trigger read feeding `canSculpt`, so a pinch was detected at every stage and no stroke ever
+  opened. `Scene._padOf()` is now the single answer to "what buttons does this source have", and
+  treats a buttons-less pad as absent.
+- **The pinch test measured joint CENTRES.** A joint pose carries a radius, and two touching
+  fingertips stay roughly the sum of those radii apart — 0.020 on AVP, which is exactly where the
+  old `pinchDist < 0.02` sat. Subtracting the radii turns it into a skin-to-skin gap that means
+  the same thing on any runtime instead of a constant retuned per headset.
+- **three poses the controller grip only from `gripSpace`**, which these hands do not have, so
+  every wrist-mounted panel hung off an object still at the world origin. The grip is now posed
+  from the wrist joint, in a pre-pass — the UI mount reads it earlier in the frame than the input
+  loop runs, so posing it later would hand the panels last frame's wrist.
+
+**And the one that made menus unclickable**: a legacy suppression killed the pinch whenever the
+dominant index tip came within 25cm of the non-dominant wrist. It was written for the canvas
+MiniHUD, which you operated by POKING, and its re-enable is gated on legacy canvas mode — so in
+HTML panel mode nothing ever turned it back on. The wrist panel is now the only menu on a
+hands-only runtime, and clicking it means putting your finger exactly there.
+
+**Menus, with no button to summon them.** Palm-up was built and lost to visionOS's own Home View
+gesture; a gaze/point button was built and lost to being a target you had to acquire. What stuck
+was the obvious thing: the wrist panel is simply visible from the start, with a corner button to
+swap to the main menu and back, and Undo/Redo at the bottom of both — all gated to runtimes that
+have hands and no buttons, so the controller experience is untouched.
+
+**Input tuned by measurement rather than description.** The hand ray runs along the index finger
+on visionOS, about 45 degrees above where you think you are aiming; it is corrected at the three.js
+controller object so the drawn spike and the cast ray cannot disagree, and mirrored for the left
+hand because WebXR gives both hands the same frame convention. The wrist panel's position was
+placed by hand in a grab-to-place mode and the resulting numbers baked in. New **Pinch distance**
+and **Grab speed** settings; the platform's own pinch (`transient-pointer` `selectstart`) counts as
+a press alongside our own detection, and self-heals if a release is ever missed.
+
+- **Clicks are raw.** Hysteresis and two aim assists were added while the suppression above was
+  still undiagnosed, and removed once it was found: detection was never the problem. The
+  radius-relative measurement is what makes the raw signal clean enough to need no filtering.
+- **`avphands_test.mjs`** covers all of it — 46 defect injections, all caught.
+
+**Known limits.** `immersive-ar` is still unsupported on visionOS (Apple confirmed at WWDC26 that
+Safari remains `immersive-vr` only), so AR mode is Quest/Galaxy XR only. The wrist panel placement
+was measured on a left wrist with right dominance; a left-dominant user needs their own grab via
+`window._wristPlace = true`.
+
 # v3.30.185 - v3.30.194
 **Cast shadows in AR, and the object is the switch.** Block out a proxy for the real table the
 sculpt is standing on, flag it **Shadow Catcher**, and it disappears except for what the model

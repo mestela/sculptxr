@@ -377,9 +377,19 @@ const makePin = (m) => {
 // pair that finally named it was "canSculpt=true" from Scene with no [grab] line after it.
 {
   const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  // The preference now lives in Scene._padOf rather than inline here, so assert the PROPERTY
+  // at its new home instead of the old expression: the builder must delegate, and the helper
+  // must reject a buttons-less pad (visionOS hands report gamepad=true with buttons.length 0,
+  // which would otherwise read as a controller that is present and never pressed).
   check('a real gamepad is preferred over the hand-tracking stub',
-    /const _realPad = \(src\.gamepad && src\.gamepad\.buttons && src\.gamepad\.buttons\.length\)\s*\n?\s*\? src\.gamepad : null;/.test(SC),
+    /const _realPad = this\._padOf\(src\);/.test(SC),
     'a controller with its trigger down must never be described to the tools as unpressed');
+  check('...and the helper treats an empty buttons array as no gamepad',
+    /_padOf\(src\)\s*\{[\s\S]*?return \(pad && pad\.buttons && pad\.buttons\.length\) \? pad : null;/.test(SC),
+    'an empty pad that reads as present is a controller that is permanently unpressed');
+  check('...and the resolved pad is what reaches the tools',
+    /buttons: gamepad\.buttons,/.test(SC),
+    're-reading src.gamepad after resolving it is the second-source-of-truth bug again');
   check('...and the stub only serves a source with no gamepad at all',
     /const gamepad = _realPad\s*\n?\s*\|\| \(src\.hand \? \{ buttons: \[\{ pressed: false \}, \{ pressed: false \}\] \} : null\);/.test(SC),
     'genuine hand tracking still needs something with .buttons so downstream need not check');

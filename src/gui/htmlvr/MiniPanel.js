@@ -129,8 +129,69 @@ const CSS = `
 }
 
 /* ── Tool button ──────────────────────────────────────────────────── */
+/* SWAP TO THE MAIN MENU. On a hands-only runtime there is no X/A button to open the main panel
+   with, so the swap has to live on the panels themselves. Plain text rather than a glyph: the VR
+   rasteriser is the only place these are ever read, and an icon that needs explaining is worse
+   than a word.
+   
+   SIDE BY SIDE, NOT ON TOP. The first version floated this over the corner of the full-width
+   tool button, and the tool button won every press. HTMLVRPanel._uvToElement walks children in
+   REVERSE DOM ORDER and returns the first geometric match — it never looks at z-index — so
+   whichever button comes later in the markup takes the hit regardless of what is drawn on top.
+   Reordering would have "fixed" it while leaving two overlapping targets for the next person to
+   trip over, so the row is a flex instead and nothing overlaps at all. */
+.mp-toprow {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  margin-bottom: 10px;
+}
+#mp-swap-btn {
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  background: #1e1e2e;
+  color: #a6adc8;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+#mp-swap-btn:hover, #mp-swap-btn.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
+
+/* HANDS-ONLY CONTROLS. A controller runtime has X/A to swap panels and a thumbstick to undo, so
+   these are dead weight there — present in the markup, revealed by a class, so showing them is a
+   style change and needs only a repaint rather than a markup rebuild. */
+/* ID-QUALIFIED ON PURPOSE. A bare .mp-hands-only display:none ties on specificity with
+   .mp-row display:flex, so source order decides and the row wins — the control then shows on a
+   controller, which is the one device it is meant to stay off. Qualifying with the root id
+   beats any single-class rule, and the reveal below beats this in turn.
+   (No backticks in here: this whole block is inside a JS template literal.) */
+#mp-root .mp-hands-only { display: none; }
+#mp-root.hands-only .mp-hands-only { display: flex; }
+
+#mp-undo-row {
+  gap: 6px;
+  margin-top: 10px;
+}
+#mp-undo-row button {
+  flex: 1;
+  padding: 8px 0;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  background: #1e1e2e;
+  color: #a6adc8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+#mp-undo-row button:hover, #mp-undo-row button.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
+
 #mp-tool-btn {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 9px 12px;
   border: 1px solid #45475a;
   border-radius: 8px;
@@ -143,7 +204,7 @@ const CSS = `
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 0;   /* the flex row owns the spacing now */
   outline: none;
   transition: filter 0.1s;
 }
@@ -351,10 +412,13 @@ function injectCSS() {
 // ── Static HTML ───────────────────────────────────────────────────────────────
 function buildHTML() {
   return `
-    <button id="mp-tool-btn" style="background:${toolTint(0)}">
-      <span id="mp-tool-name">Brush</span>
-      <span class="mp-tool-arrow">▸ All</span>
-    </button>
+    <div class="mp-toprow">
+      <button id="mp-tool-btn" style="background:${toolTint(0)}">
+        <span id="mp-tool-name">Brush</span>
+        <span class="mp-tool-arrow">▸ All</span>
+      </button>
+      <button id="mp-swap-btn" class="mp-hands-only" title="Open the main menu">Menu</button>
+    </div>
     <div class="mp-row">
       <span class="mp-lbl">Radius</span>
       <input type="range" id="mp-radius" min="5" max="250" step="1" value="50">
@@ -372,6 +436,12 @@ function buildHTML() {
       <button class="mp-toggle-btn" id="mp-wire">Wire</button>
     </div>
     <div id="mp-extras"></div>
+    <!-- Bottom of the panel, hands-only: with no thumbstick, this is the only way to undo
+         without leaving whatever you are doing. -->
+    <div id="mp-undo-row" class="mp-hands-only">
+      <button id="mp-undo">Undo</button>
+      <button id="mp-redo">Redo</button>
+    </div>
   `;
 }
 
@@ -493,9 +563,23 @@ export class MiniPanel extends HTMLVRPanel {
       () => main.getSculptManager?.()._symmetry,
       (v) => { const sm = main.getSculptManager?.(); if (sm) { sm._symmetry = v; main.render?.(); } }
     );
+    // NEGATIVE LIVES ON THE TOOL, NOT ON THE MANAGER.
+    //
+    // This read and wrote sculptManager._negative, which nothing in the codebase defines or
+    // consults — every tool carries its own _negative, and the VR path reads
+    // currentTool._negative XOR the subtract override. So the button toggled a property of its
+    // own invention, then read that same property back to decide whether to look active: it lit
+    // up correctly and changed nothing. Symmetry next to it is fine because the manager really
+    // does own _symmetry.
+    //
+    // Not every tool has the flag (it is declared per tool), so a tool without one is left
+    // alone rather than having the property invented on it a second time.
     makeToggle('#mp-neg',
-      () => main.getSculptManager?.()._negative,
-      (v) => { const sm = main.getSculptManager?.(); if (sm) { sm._negative = v; main.render?.(); } }
+      () => !!main.getSculptManager?.()?.getCurrentTool?.()?._negative,
+      (v) => {
+        const t = main.getSculptManager?.()?.getCurrentTool?.();
+        if (t && '_negative' in t) { t._negative = v; main.render?.(); }
+      }
     );
     makeToggle('#mp-wire',
       () => main.getMesh?.()?.getShowWireframe?.() ?? false,
@@ -509,6 +593,18 @@ export class MiniPanel extends HTMLVRPanel {
     // Tool button fires event — Scene.js swaps to ToolPickerPanel
     this._element?.querySelector('#mp-tool-btn')?.addEventListener('click', () => {
       this._element.dispatchEvent(new CustomEvent('mp-show-tool-picker', { bubbles: false }));
+    });
+    // Swap to the main menu. Announced as an event rather than calling Scene directly, exactly
+    // as the tool picker above does — the panel says what happened and Scene decides what that
+    // means, so the panel keeps working if the swap is ever rerouted.
+    this._element?.querySelector('#mp-swap-btn')?.addEventListener('click', () => {
+      this._element.dispatchEvent(new CustomEvent('mp-show-main-menu', { bubbles: false }));
+    });
+    this._element?.querySelector('#mp-undo')?.addEventListener('click', () => {
+      this._element.dispatchEvent(new CustomEvent('mp-undo', { detail: { redo: false }, bubbles: false }));
+    });
+    this._element?.querySelector('#mp-redo')?.addEventListener('click', () => {
+      this._element.dispatchEvent(new CustomEvent('mp-undo', { detail: { redo: true }, bubbles: false }));
     });
     this._wireHUDBody(main);
   }
@@ -1171,7 +1267,8 @@ export class MiniPanel extends HTMLVRPanel {
     root.querySelector('#mp-sym')?.classList.toggle('active', !!sm?._symmetry);
 
     // ── Negative ───────────────────────────────────────────────────────────
-    root.querySelector('#mp-neg')?.classList.toggle('active', !!sm?._negative);
+    // Same source of truth the toggle writes — reading the manager showed a state nothing had.
+    root.querySelector('#mp-neg')?.classList.toggle('active', !!sm?.getCurrentTool?.()?._negative);
 
     // ── Wireframe ──────────────────────────────────────────────────────────
     const wf = main.getMesh?.()?.getShowWireframe?.() ?? false;

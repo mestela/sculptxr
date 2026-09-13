@@ -1917,6 +1917,33 @@ class Scene {
     updateMesh(this._vrControllerRight);
   }
 
+  // PINCH DISTANCE — the skin-to-skin gap at which the fingers count as closed.
+  //
+  // Zero means the tips are actually touching; positive allows a gap, negative requires them to
+  // be pressed together. Tightened from 5mm to 0 after that still misclicked: matt "i'd like the
+  // detected distance between index and thumb to be even smaller, i still get too many
+  // misclicks". His measured deliberate pinch reaches about -17mm, so contact-to-trigger leaves
+  // a wide margin for a real pinch while a hand passing casually through a 5mm gap no longer
+  // fires one.
+  //
+  // Radius-relative, so this number means the same thing on any runtime — it is a real distance
+  // between finger surfaces, not between joint centres.
+  getPinchOn() {
+    if (Number.isFinite(window._pinchOn)) return window._pinchOn;
+    const v = this._guiXR?._uiSettings?.pinchOn;
+    if (Number.isFinite(v)) return v;
+    const o = getOptionsURL.pinchOn;
+    return Number.isFinite(o) ? o : 0.0;
+  }
+
+  // Grab gain: 1.0 is 1:1 with your hand. Settings slider (Navigation), window._grabGain for a
+  // quick trial without opening a menu.
+  getGrabGain() {
+    if (Number.isFinite(window._grabGain)) return window._grabGain;
+    const v = this._guiXR?._uiSettings?.grabGain;
+    return Number.isFinite(v) ? v : 1.0;
+  }
+
   getStylusTilt() {
     if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt !== undefined) {
       return this._guiXR._uiSettings.stylusTilt;
@@ -4421,8 +4448,45 @@ class Scene {
     session.addEventListener('visibilitychange', () => {
       if (session.visibilityState === 'visible') this._recoverXRTransientInput('visibility restore');
     });
+    // THE PLATFORM ALREADY DETECTS THE PINCH, AND IT IS BETTER AT IT THAN WE ARE.
+    //
+    // visionOS's transient-pointer input exists precisely to say "the user is clicking now": the
+    // input array stays empty until a pinch, then a source is added and selectstart fires. That
+    // is Apple's own detector, running on their tracking, tuned by them, and it needs no
+    // hand-tracking permission. Our thumb-to-index measurement is the standard technique and it
+    // is a REIMPLEMENTATION of something the runtime is already telling us.
+    //
+    // So the system pinch is OR'd into the dominant hand's trigger rather than replacing it —
+    // the joint measurement still drives sculpting pressure and still works on runtimes with no
+    // transient-pointer at all (Quest hands), while a click that our thresholds miss still lands
+    // if the platform saw it.
+    //
+    // LIMITATION, stated rather than hidden: a transient-pointer source reports handedness
+    // 'none', so it cannot be attributed to a hand. It is credited to the dominant hand, which
+    // is the one doing the pointing. Pinching the OTHER hand while aiming with the dominant one
+    // will read as a dominant-hand press. window._sysPinch = false disables it.
+    session.addEventListener('selectstart', (e) => {
+      if (e.inputSource?.targetRayMode === 'transient-pointer') this._sysPinchActive = true;
+    });
+    const _sysUp = (e) => {
+      if (e.inputSource?.targetRayMode === 'transient-pointer') this._sysPinchActive = false;
+    };
+    session.addEventListener('selectend', _sysUp);
+    session.addEventListener('select', _sysUp);
+
     session.addEventListener('inputsourceschange', (event) => {
-      if (event.added?.length) this._recoverXRTransientInput('controller restore');
+      // A VISIONOS PINCH IS NOT A CONTROLLER BEING PLUGGED IN.
+      //
+      // Every gaze pinch ADDS a transient-pointer source and every release removes it, so this
+      // fired several times a second — each time running a full recovery that clears hover
+      // state and forces a whole-scene redraw, in the middle of the click the user was trying
+      // to make. It looked like input churn because it WAS input churn, self-inflicted.
+      //
+      // Recovery exists for a controller that genuinely came back (a wake, a reconnect, a
+      // session rebuild). A source that appears for the duration of a pinch is the opposite of
+      // that: it is the input working normally.
+      const real = [...(event.added || [])].filter(s => s.targetRayMode !== 'transient-pointer');
+      if (real.length) this._recoverXRTransientInput('controller restore');
     });
 
     // Cache the standard desktop camera exactly ONCE before any VR resolutions
@@ -5183,6 +5247,14 @@ class Scene {
           this._swapHtmlPanels('picker');
           this._toolPickerPanel?.syncFromState();
         });
+        // NO X/A BUTTON MEANS THE SWAP HAS TO LIVE ON THE PANELS THEMSELVES. On a hands-only
+        // runtime there is nothing to press to reach the main menu, so each panel carries a
+        // corner button to the other one.
+        this._miniPanel._element.addEventListener('mp-show-main-menu', () => {
+          this._swapHtmlPanels('main');
+          if (this._guiPopup) this._guiPopup.closeOverlay();
+        });
+        this._miniPanel._element.addEventListener('mp-undo', (e) => this._doUndoRedo(!!e.detail?.redo));
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MiniPanel created', 'cyan');
       } catch (err) {
         console.error('[HTMLVRPanel] MiniPanel init failed:', err);
@@ -5222,6 +5294,12 @@ class Scene {
         this._mainMenuPanel._element.addEventListener('mm-pin-change', (e) => {
           this._onMainMenuPanelPinChange(e.detail.pinned);
         });
+        // The other half of the panel-to-panel swap (see mp-show-main-menu).
+        this._mainMenuPanel._element.addEventListener('mm-show-mini', () => {
+          this._swapHtmlPanels('mini');
+          if (this._guiPopup) this._guiPopup.closeOverlay();
+        });
+        this._mainMenuPanel._element.addEventListener('mm-undo', (e) => this._doUndoRedo(!!e.detail?.redo));
         this._mainMenuPanel._element.addEventListener('mm-browser-saves-open', () => {
           this._openFilesPanel();
         });
@@ -6841,7 +6919,7 @@ class Scene {
     const mesh = this._vrTimelineMesh;
     if (!tl || !mesh || !mesh.visible || this._vtlResizeActive) { this._endVtlZoom(tl); return; }
 
-    const pressed = (s) => !!(s?.gamepad?.buttons?.[0]) && (s.gamepad.buttons[0].pressed || s.gamepad.buttons[0].value > 0.1);
+    const pressed = (s) => { const b = this._padOf(s)?.buttons?.[0]; return !!b && (b.pressed || b.value > 0.1); };
     if (!pressed(leftSrc) || !pressed(rightSrc)) { this._endVtlZoom(tl); return; }
 
     const hitL = this._raycastTimeline(this._controllerRay(this._vrControllerLeft),  mesh);
@@ -7016,7 +7094,14 @@ class Scene {
         depthTest: false, depthWrite: false, side: THREE.DoubleSide,
       });
       this._bpReticle = new THREE.Mesh(geo, mat);
-      this._bpReticle.renderOrder = 1001;
+      // ABOVE THE PANELS, WHICH IS THE ONLY PLACE IT IS EVER USEFUL.
+      //
+      // It sat at 1001 against panels at 11000, so the one surface whose intersection you most
+      // need to see painted straight over it — matt: "it might be being drawn just under the
+      // menu". Everything here is transparent, so renderOrder is the only lever and a number
+      // chosen in isolation is a guess; taken from the panel constant it cannot drift when that
+      // constant moves.
+      this._bpReticle.renderOrder = VR_PANEL_RENDER_ORDER + 2;
       this._bpReticle.visible = false;
       this._scene.add(this._bpReticle);
     }
@@ -7084,6 +7169,576 @@ class Scene {
     const M = new THREE.Matrix4().compose(pos, rot, A.s);
     mesh.setMatrix(M.elements);
     if (mesh.updateMatrices) mesh.updateMatrices(this._camera);
+  }
+
+  // THE ONE PLACE THAT ANSWERS "WHAT BUTTONS DOES THIS SOURCE HAVE".
+  //
+  // Hands have no real buttons, so the hand-tracking branch synthesises a pad from the pinch
+  // and fist gestures. That pad used to be a loop-local, which meant every OTHER trigger read
+  // in this file went to `src.gamepad` and got whatever the runtime felt like providing —
+  // nothing on Quest hands, and on Apple Vision Pro an object that is truthy with an EMPTY
+  // buttons array, so `buttons[0]` is undefined and every `if (src.gamepad)` guard sails
+  // straight past it. Route trigger reads through here so the synthesised pad wins everywhere
+  // at once rather than at the handful of sites someone remembered to update.
+  _padOf(src) {
+    if (!src) return null;
+    // `src.hand` is the expiry condition, not just a lookup key. The synthesised pad is cached
+    // per handedness across frames, so if you put the hands down and pick the controllers back
+    // up, a cached mock with a stale pinch state would answer for a real controller forever.
+    // A controller source has no hand, so it can never reach the cache.
+    const mock = src.hand && this._mockGamepads && this._mockGamepads[src.handedness];
+    if (mock) return mock;
+    // An empty buttons array is not a gamepad; report it as absent so callers take their
+    // no-controller path instead of reading undefined out of it.
+    const pad = src.gamepad;
+    return (pad && pad.buttons && pad.buttons.length) ? pad : null;
+  }
+
+  // UNDO AND REDO, ROUTED THE SAME WAY THE THUMBSTICK ROUTES THEM.
+  //
+  // A tool gets first refusal (onUndo), because some of them hold state the global stack knows
+  // nothing about; only if it declines does the stack unwind. Copied behaviour would drift from
+  // the thumbstick path, so both now call this.
+  _doUndoRedo(redo) {
+    if (!this._stateManager) return;
+    const tool = this._sculptManager?.getCurrentTool?.();
+    const fn = redo ? 'onRedo' : 'onUndo';
+    if (!(tool && tool[fn] && tool[fn]())) {
+      redo ? this._stateManager.redo() : this._stateManager.undo();
+    }
+    this._main ? this._main.render() : this.render();
+  }
+
+  // HANDS-ONLY UI, APPLIED AS A CLASS RATHER THAN AS SEPARATE MARKUP.
+  //
+  // A controller runtime already has X/A to swap panels and a thumbstick to undo, so putting
+  // those on the panels there is clutter that costs panel space and rasteriser time. On hands
+  // there is no button at all and they are the only way to reach either.
+  //
+  // One class on each panel root, with the extra controls present in the markup and hidden by
+  // CSS. That keeps it a STYLE change rather than a markup change — HTMLVR panels need a full
+  // _rebuildContent plus a cache-key revision when markup changes, and markDirty alone would
+  // silently show a stale texture. Hiding with CSS needs only the repaint.
+  _syncHandsOnlyUI() {
+    const want = this._handsOnlyMode();
+    if (want === this._handsUiClassApplied) return;
+    this._handsUiClassApplied = want;
+    for (const p of [this._miniPanel, this._mainMenuPanel]) {
+      const root = p?._element;
+      if (!root) continue;
+      root.classList.toggle('hands-only', want);
+      p.markDirty?.();
+    }
+  }
+
+  // ONE ANSWER TO "WHERE IS THIS SOURCE AIMING", because three places were asking separately.
+  //
+  // The hand ray is corrected onto the three.js controller object (see _applyHandRayCorrection).
+  // Anything that instead reads frame.getPose(targetRaySpace) gets the RAW visionOS ray, which
+  // runs along the index finger and 45 degrees high — so it disagrees with the spike that is
+  // drawn and with everything else that has been corrected.
+  //
+  // That had already happened twice: sculpting was fixed when it was found, and the brush cursor
+  // was not, which put the radius sphere back at the base of the index finger while the spike it
+  // belongs on pointed somewhere else. matt: "it feels like its at the base of my index finger
+  // rather than on the tip of the spike." A fourth caller would have made the same mistake, so
+  // the question now has one place to be asked.
+  _rayMatrixFor(source, frame, refSpace) {
+    if (source.hand) {
+      const c = source.handedness === 'left' ? this._vrControllerLeft
+              : source.handedness === 'right' ? this._vrControllerRight : null;
+      if (c) return c.matrixWorld.elements;
+    }
+    const pose = source.targetRaySpace ? frame.getPose(source.targetRaySpace, refSpace) : null;
+    return pose ? pose.transform.matrix : null;
+  }
+
+  // ARE THE TWO HANDS' RAY FRAMES MIRRORED? MEASURE IT, ONCE, AND SAY SO.
+  //
+  // The pitch correction is a rotation about the ray frame's own X. If the left hand's frame is
+  // a mirror of the right's, that axis points the opposite way anatomically and the same signed
+  // pitch tilts one hand down and the other up — which is what a spike that is "misoriented, it
+  // should be the same angle but mirrored" looks like. If the frames are NOT mirrored, the same
+  // sign is right for both and any difference is a matter of degree.
+  //
+  // Those two need different fixes and I cannot tell them apart from outside a headset, so this
+  // measures it: project the ray frame's X onto the anatomical thumb-to-pinky axis, taken from
+  // the metacarpals. Same sign on both hands means the frames are NOT mirrored.
+  //
+  // Once per hand per session, unconditionally — it is two lines in the log and it answers a
+  // question that has already cost several sessions of guessing.
+  _reportRayFrame(source, frame, refSpace, ctrl) {
+    if (!this._rayFrameSeen) this._rayFrameSeen = {};
+    const key = source.handedness;
+    if (this._rayFrameSeen[key] || window._rayFrameReport === false) return;
+    const idx = source.hand.get('index-finger-metacarpal');
+    const pnk = source.hand.get('pinky-finger-metacarpal');
+    const pi = idx && frame.getJointPose(idx, refSpace);
+    const pp = pnk && frame.getJointPose(pnk, refSpace);
+    if (!pi || !pp) return;
+    this._rayFrameSeen[key] = true;
+
+    const a = pi.transform.position, b = pp.transform.position;
+    const toPinky = vec3.normalize(vec3.create(), vec3.fromValues(b.x - a.x, b.y - a.y, b.z - a.z));
+    const e = ctrl.matrixWorld.elements;
+    const rayX = vec3.normalize(vec3.create(), vec3.fromValues(e[0], e[1], e[2]));
+    const d = vec3.dot(rayX, toPinky);
+    console.log('[rayframe] ' + key + ' rayX . (index->pinky) = ' + d.toFixed(3)
+      + '  => frame X points ' + (d > 0 ? 'toward the PINKY' : 'toward the THUMB')
+      + '   (same sign on both hands = frames NOT mirrored, one pitch sign is correct for both)');
+  }
+
+  // SHOW THE FINGERTIPS, BECAUSE "IS IT EVEN SEEING MY HAND" IS UNANSWERABLE FROM INSIDE.
+  //
+  // matt: "can we show on screen dots for where the finger and thumb are, so i have a better
+  // sense of if the system is detecting them being brought together". Right question — a failed
+  // click has several indistinguishable causes from inside the headset, and "tracking dropped
+  // the joints" and "the pinch never registered" are two of them. Two dots that follow the tips
+  // and change colour on the latch separate all three at a glance, with no console.
+  //
+  // The colour is driven by the SAME latch the trigger reads, not by a second distance test —
+  // an indicator that agrees with a reimplementation instead of with the real signal is worse
+  // than none, because it confirms whatever it happens to compute.
+  _updateHandDots(source, tp, ip) {
+    const on = window._handDots !== false;
+    if (!on) { if (this._handDots) for (const k in this._handDots) this._handDots[k].visible = false; return; }
+    if (!this._handDots) this._handDots = {};
+    const key = source.handedness === 'left' ? 'L' : 'R';
+    const mk = (name) => {
+      if (this._handDots[name]) return this._handDots[name];
+      const m = new THREE.Mesh(
+        new THREE.SphereGeometry(0.008, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.9 }));
+      m.frustumCulled = false;
+      m.renderOrder = VR_PANEL_RENDER_ORDER + 1;   // or a dot over a menu is invisible
+      this._scene.add(m);
+      this._handDots[name] = m;
+      return m;
+    };
+    const pinching = !!this._pinchLatch?.[key]?.pinch;
+    for (const [suffix, pose] of [['thumb', tp], ['index', ip]]) {
+      const m = mk(key + suffix);
+      if (!pose) { m.visible = false; continue; }   // joint lost: the dot vanishes, which is the signal
+      const p = pose.transform.position;
+      m.position.set(p.x, p.y, p.z);
+      m.visible = true;
+      // Green the instant the latch says the app treats this as a press.
+      m.material.color.setHex(pinching ? 0x35ff6a : 0xffffff);
+      m.updateMatrixWorld(true);
+    }
+  }
+
+  // A HAND'S POINTING RAY IS NOT A CONTROLLER'S, AND VISIONOS AIMS IT HIGH.
+  //
+  // Apple gives a tracked hand a targetRaySpace that runs along the INDEX FINGER. That is a
+  // reasonable reading of "where is this hand pointing" and it is not where you think you are
+  // aiming: matt measured it at about 30 degrees high, and described the fix exactly — the aim
+  // should key off "where my index and thumb would meet when they pinch", not where the index
+  // finger points. Which is right, because the pinch IS the click; aiming from anywhere else
+  // means the thing you press is not the thing you were looking at.
+  //
+  // The controller path has a knob for this already (stylus tilt), but it defaults to 0 and was
+  // dialled in against a physical controller, so it is the wrong place to fix a hand.
+  //
+  // APPLIED TO THE three.js CONTROLLER OBJECT, not at each use. The visual spike is a CHILD of
+  // that object and the panel raycast reads its matrixWorld, so correcting the object keeps the
+  // drawn ray and the cast ray identical by construction. Two separate corrections would drift,
+  // and a ray that does not go where it is drawn is worse than one that is simply wrong.
+  //
+  // window._handRayPitch is degrees, negative aims lower.
+  _applyHandRayCorrection(source, frame, refSpace) {
+    const ctrl = source.handedness === 'left' ? this._vrControllerLeft
+               : source.handedness === 'right' ? this._vrControllerRight : null;
+    if (!ctrl || !source.hand) return;
+
+    // Origin: the pinch point, midway between the tips that come together to click.
+    const tj = source.hand.get('thumb-tip'), ij = source.hand.get('index-finger-tip');
+    const tp = tj && frame.getJointPose(tj, refSpace);
+    const ip = ij && frame.getJointPose(ij, refSpace);
+
+    if (!this._hrQ) { this._hrQ = new THREE.Quaternion(); this._hrV = new THREE.Vector3(); this._hrS = new THREE.Vector3(); }
+    ctrl.matrix.decompose(this._hrV, this._hrQ, this._hrS);
+
+    // SIGNED BY HANDEDNESS, OR THE LEFT SPIKE IS A COPY OF THE RIGHT RATHER THAN ITS MIRROR.
+    //
+    // -30 estimated from the headset, -35 after using it, -45 measured as correct. Applying that
+    // same signed pitch to both hands was wrong in a specific way: matt, holding both hands in
+    // front of him with index and thumb mirrored, got a left spike that "is an exact copy of
+    // this... instead of being a mirror of the spike."
+    //
+    // The pitch is a rotation about the ray frame's own X, and WebXR gives both hands the SAME
+    // frame convention rather than mirrored ones — the same fact that made the wrist yaw need a
+    // handedness sign. So the anatomical meaning of +X flips between hands, and one signed pitch
+    // tilts both the same way in space instead of mirroring them. The same anatomical tilt on
+    // both hands needs opposite signs.
+    //
+    // Per-hand overrides still win outright and are NOT signed, so a value dialled in from the
+    // console means exactly what it says for that hand.
+    const _perHand = source.handedness === 'left' ? window._handRayPitchL : window._handRayPitchR;
+    const _mirror = (source.handedness === 'left' && window._handRayMirror !== false) ? -1 : 1;
+    const deg = Number.isFinite(_perHand)
+      ? _perHand
+      : (window._handRayPitch ?? -45) * _mirror;
+    if (deg) {
+      if (!this._hrFix) this._hrFix = new THREE.Quaternion();
+      // About the ray's OWN x, so the correction is a pitch in the hand's frame rather than a
+      // world-space tilt that changes meaning as you turn your wrist over.
+      this._hrFix.setFromAxisAngle({ x: 1, y: 0, z: 0 }, deg * Math.PI / 180);
+      this._hrQ.multiply(this._hrFix);
+    }
+    if (tp && ip) {
+      const a = tp.transform.position, b = ip.transform.position;
+      this._hrV.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    }
+    // A HAND IN MID-AIR HAS NO WRIST REST. Optical hand tracking jitters, nothing damps it,
+    // and the target is a button a couple of centimetres across at arm's length — matt: "the
+    // right hand controller spike drifts too much, it takes me several attempts to click
+    // anything". So the ray is smoothed toward its raw pose rather than following it exactly.
+    //
+    // Deliberately light. This is the same object the BRUSH aims with, and a heavily damped
+    // sculpting ray would feel like drawing through treacle; the heavy smoothing belongs on the
+    // panel, which is the thing being aimed AT. window._handRaySmooth is the per-frame blend,
+    // 1 = no smoothing.
+    const k = window._handRaySmooth ?? 0.35;
+    const key = source.handedness === 'left' ? 'L' : 'R';
+    if (!this._hrSm) this._hrSm = {};
+    const prev = this._hrSm[key];
+    if (k < 1 && prev) {
+      this._hrV.lerpVectors(prev.p, this._hrV, k);
+      prev.q.slerp(this._hrQ, k);
+      this._hrQ.copy(prev.q);
+    }
+    this._hrSm[key] = { p: this._hrV.clone(), q: this._hrQ.clone() };
+
+    ctrl.matrix.compose(this._hrV, this._hrQ, this._hrS);
+    ctrl.matrix.decompose(ctrl.position, ctrl.quaternion, ctrl.scale);
+    ctrl.updateMatrixWorld(true);
+    this._handRayCorrected = true;
+
+    this._updateHandDots(source, tp, ip);
+    this._reportRayFrame(source, frame, refSpace, ctrl);
+  }
+
+  // WHERE THE WRIST PANEL ACTUALLY GOES, MEASURED BY HAND ON DEVICE 2026-09-13.
+  //
+  // Not derived, not reasoned about from a description — matt grabbed the panel in placement
+  // mode and put it where he wanted it, and this is what came back. Three attempts to compute
+  // this from a verbal description got the rotation right and the position wrong every time,
+  // at one headset session each; the numbers below took one grab.
+  //
+  // The frame is the wrist ANCHOR, which already carries the handedness-signed yaw and the
+  // lateral push in _poseGripFromWrist. So this offset sits ON TOP of those, and the two must
+  // be read together: changing either without re-measuring moves the panel.
+  //
+  // Only applies on a hands-only runtime. A controller keeps the shared slot (wristPanelY /
+  // wristPanelYaw), because a controller in your hand fixes the wrist angle for you and that
+  // slot was tuned against it.
+  //
+  // KNOWN LIMIT: measured on a LEFT wrist with a right-dominant user. The yaw that carries it
+  // is handedness-signed, but this rotation is not mirrored, so a left-dominant user will need
+  // their own grab. Re-run with window._wristPlace = true.
+  // The grab measured the panel's PLANE correctly and its FACING backwards: matt landed it in
+  // the right place and then read it upside down, looking at the back of it. Both symptoms at
+  // once is the signature of a half turn about the panel's own X — that negates up and negates
+  // facing while leaving the left-right axis alone, which is exactly "flipped and reversed".
+  // A half turn about Z would have been upside down but still front-on; about Y, back-on but
+  // still the right way up.
+  //
+  // So the correction is applied about the PANEL's x, not the anchor's, and folded into the
+  // measurement here rather than layered on at use — one number, one place, no composition
+  // order for the next reader to get wrong. Verified: +X unchanged, +Y and +Z both negated.
+  //
+  //   as grabbed: rotXYZ(-157.1,  2.8,  81.4)   upside down, back face
+  //   corrected:  rotXYZ(  22.9, -2.8, -81.4)
+  static get HAND_WRIST_PANEL() {
+    return { p: [0.0001, -0.0017, 0.0253], r: [22.9, -2.8, -81.4] };
+  }
+
+  // PLACEMENT MODE — STOP GUESSING WHERE THE PANEL GOES AND LET matt PUT IT THERE.
+  //
+  // Three rounds of me deriving the wrist transform from a verbal description got the rotation
+  // right and the position wrong, and each round cost a headset session. A description of a
+  // position in 3D is a lossy encoding of the thing itself; grabbing it is not. So: pinch with
+  // the dominant hand and the wrist panel follows that hand rigidly, in six degrees of freedom,
+  // until you let go. Release prints the resulting offset in the wrist's own frame, which is
+  // exactly the numbers needed to bake it in as the default.
+  //
+  // Every button is suppressed while this is on, because a pinch aimed at a panel is otherwise
+  // a click — matt: "just for now disable all the buttons, and let me pinch it to rotate and
+  // place it where it should be."
+  //
+  // TEMPORARY. On by default only on a hands-only runtime, and only until the numbers are in.
+  // OFF by default now the measurement is taken — it suppresses every button while on, so it
+  // must never be the state a user lands in. window._wristPlace = true to re-measure.
+  _wristPlaceActive() { return window._wristPlace === true; }
+
+  _updateWristPlacement(frame, refSpace) {
+    if (!this._wristPlaceActive()) { this._wpDrag = null; return; }
+    if (!this._wristPlaceOffset) {
+      const _hp = Scene.HAND_WRIST_PANEL, _D = Math.PI / 180;
+      this._wristPlaceOffset = new THREE.Matrix4().compose(
+        new THREE.Vector3(_hp.p[0], _hp.p[1], _hp.p[2]),
+        new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(_hp.r[0] * _D, _hp.r[1] * _D, _hp.r[2] * _D, 'XYZ')),
+        new THREE.Vector3(1, 1, 1));
+      console.log('[wrist place] ON — pinch with your ' + (this._dominantHand || 'right')
+        + ' hand to grab the wrist panel and move it. Buttons are disabled. '
+        + 'window._wristPlace=false to turn this off.');
+    }
+    const anchor = this._wristAnchor;
+    if (!anchor) return;
+
+    // The grabbing hand is the DOMINANT one; the panel lives on the other wrist.
+    const dom = this._dominantHand || 'right';
+    let domSrc = null;
+    for (const sc of (this._xrSession?.inputSources || [])) {
+      if (sc.handedness === dom && sc.hand) domSrc = sc;
+    }
+    const pressed = !!this._padOf(domSrc)?.buttons?.[0]?.pressed;
+    if (!domSrc) { this._wpDrag = null; return; }
+
+    // Read the grabbing hand from its WRIST JOINT rather than its grip object, because the grip
+    // carries the very offset we are here to calibrate — driving the drag with it would feed the
+    // correction back into itself.
+    const wj = domSrc.hand.get('wrist');
+    const wp = wj && frame.getJointPose(wj, refSpace);
+    if (!wp) { this._wpDrag = null; return; }
+    if (!this._wpHandM) { this._wpHandM = new THREE.Matrix4(); this._wpTmp = new THREE.Matrix4(); }
+    this._wpHandM.fromArray(wp.transform.matrix);
+
+    // Work in the ANCHOR's frame so both hands stay free to move: what matters is the hand's
+    // pose RELATIVE to the wrist wearing the panel, not either one's absolute pose.
+    anchor.updateMatrixWorld(true);
+    const handInAnchor = this._wpTmp.copy(anchor.matrixWorld).invert().multiply(this._wpHandM);
+
+    if (pressed && !this._wpDrag) {
+      this._wpDrag = {
+        invH0: handInAnchor.clone().invert(),
+        L0: this._wristPlaceOffset.clone(),
+      };
+    } else if (pressed && this._wpDrag) {
+      this._wristPlaceOffset
+        .copy(handInAnchor)
+        .multiply(this._wpDrag.invH0)
+        .multiply(this._wpDrag.L0);
+    } else if (!pressed && this._wpDrag) {
+      this._wpDrag = null;
+      const p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+      this._wristPlaceOffset.decompose(p, q, sc);
+      const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+      const d = (r) => (r * 180 / Math.PI).toFixed(1);
+      const out = 'pos(' + p.x.toFixed(4) + ', ' + p.y.toFixed(4) + ', ' + p.z.toFixed(4) + ')'
+        + '  rotXYZ(' + d(e.x) + ', ' + d(e.y) + ', ' + d(e.z) + ')';
+      window._wristPlaceResult = out;
+      console.log('[wrist place] PLACED  ' + out
+        + '\n              (offset is in the wrist anchor frame; window._wristPlaceResult)');
+    }
+  }
+
+  // THREE POSES THE GRIP FROM gripSpace, AND VISIONOS HANDS DO NOT HAVE ONE.
+  //
+  // Every wrist-mounted panel hangs off the three.js controller GRIP object, and three only
+  // ever writes that object's matrix from `inputSource.gripSpace`. An AVP hand has none, so the
+  // grip sat at the world origin, failed the arm's-length sanity check in the UI mount, and the
+  // panels never reached the hand. Fixing the gripSpace fallback earlier fixed OUR reads; it
+  // did nothing for three's, because three never saw it.
+  //
+  // So pose the grip ourselves from the wrist joint. This is safe to do here because the app's
+  // frame callback runs AFTER three has updated its controllers, so this write lands last; and
+  // because the joint pose is read in renderer.xr.getReferenceSpace(), which is the exact space
+  // three itself uses to pose grips — so the matrix means the same thing to both of us.
+  //
+  // THE WRIST JOINT FRAME, MEASURED RATHER THAN ASSUMED.
+  //
+  // A first guess of -90 degrees put the panel growing out of the PALM with its base across the
+  // base of the fingers. That single observation pins both axes, because the panel is a plane
+  // on the anchor's XY with its +Y up and its +Z facing you:
+  //
+  //   anchor +Y at -90 = -Z of the wrist, and it pointed out of the palm  => +Z_wrist is DORSAL
+  //   anchor +Z at -90 = +Y of the wrist, and the panel stood along the fingers
+  //                                                                      => +Y_wrist is DISTAL
+  //
+  // So the wrist joint's own frame already is what we want: +Y toward the fingertips (the panel
+  // reads upright) and +Z out of the back of the hand (the panel faces you when you look at the
+  // back of your hand, lying flat across it like a watch). The correction is therefore ZERO,
+  // and the knob stays only so the next runtime that disagrees can be dialled in from inside a
+  // session rather than guessed from outside one.
+  //
+  // That settled the ORIENTATION of the frame. Which FACE of the hand to use turned out to be a
+  // separate question with a different answer — see the yaw below.
+  _poseGripFromWrist(source, frame, refSpace) {
+    const grip = source.handedness === 'left' ? this._vrControllerLeftGrip
+               : source.handedness === 'right' ? this._vrControllerRightGrip : null;
+    if (!grip || !source.hand) return;
+    const wj = source.hand.get('wrist');
+    if (!wj) return;
+    const wp = frame.getJointPose(wj, refSpace);
+    if (!wp) return;
+
+    grip.matrix.fromArray(wp.transform.matrix);
+
+    // ROUND THE HAND TO THE THUMB SIDE. The back of the hand was geometrically correct and
+    // ergonomically wrong: hands naturally angle outward, so reading a panel on the dorsal face
+    // means twisting your forearm to square it up. matt described the face he wanted precisely
+    // — rest a fist on a table pinky-side down, and the flat made by the index and thumb is the
+    // surface the menu should lie on. That is the RADIAL face, and with +Y distal and +Z dorsal
+    // already established, its normal is +/-X: a yaw about the wrist, not another pitch.
+    //
+    // Signed by handedness, because WebXR gives both hands the SAME joint frame rather than
+    // mirrored ones — so the anatomical direction of +X flips between them, exactly as it did
+    // for the palm normal earlier. +90 puts it on the thumb side of a left hand.
+    const yaw = (window._wristGripYaw ?? 90) * (source.handedness === 'left' ? 1 : -1);
+    const pitch = window._wristGripPitch ?? 0;
+    if (yaw || pitch) {
+      if (!this._wristGripFix) this._wristGripFix = new THREE.Matrix4();
+      if (!this._wristGripFix2) this._wristGripFix2 = new THREE.Matrix4();
+      this._wristGripFix.makeRotationY(yaw * Math.PI / 180);
+      if (pitch) {
+        this._wristGripFix2.makeRotationX(pitch * Math.PI / 180);
+        this._wristGripFix.multiply(this._wristGripFix2);
+      }
+      grip.matrix.multiply(this._wristGripFix);
+    }
+
+    // ROTATING IT WAS NOT MOVING IT. The yaw alone spun the panel in place about the wrist
+    // axis, so it still straddled the middle of the hand — matt: "as if it was pinned in the
+    // center of the menu where it was, and you've just turned it 90 degrees". To sit ON the
+    // index-finger side it has to be pushed out there as well as turned to face that way.
+    //
+    // The push is along the anchor's own +Z, which is the face the panel looks out of. That
+    // couples the two deliberately: flipping the yaw sign moves the panel to the OTHER side of
+    // the hand AND turns it to face out of that side, instead of leaving it floating off one
+    // side while facing the other. One knob, one coherent result.
+    const outDist = window._wristGripOut ?? 0.045;
+    if (outDist) {
+      if (!this._wristGripOutM) this._wristGripOutM = new THREE.Matrix4();
+      this._wristGripOutM.makeTranslation(0, 0, outDist);
+      grip.matrix.multiply(this._wristGripOutM);
+    }
+    grip.matrix.decompose(grip.position, grip.quaternion, grip.scale);
+    grip.visible = true;
+    grip.updateMatrixWorld(true);
+    this._gripPosedFromWrist = true;
+  }
+
+  // Hands, and nothing with buttons on it. On such a runtime there is no way to TOGGLE a menu,
+  // so the wrist panel cannot start hidden the way it does on a controller device.
+  _handsOnlyMode() {
+    const srcs = this._xrSession?.inputSources;
+    if (!srcs || !srcs.length) return false;
+    let anyHand = false, anyButtons = false;
+    for (const s of srcs) {
+      if (s.hand) anyHand = true;
+      if (s.gamepad && s.gamepad.buttons && s.gamepad.buttons.length > 4) anyButtons = true;
+    }
+    return anyHand && !anyButtons;
+  }
+
+  // A BUTTON YOU LOOK AT, BECAUSE APPLE OWNS EVERY GESTURE WORTH BINDING.
+  //
+  // On visionOS the index pinch is the system select, palm-up is the Home View, and the crown
+  // is recenter. That leaves no posture to claim for "open the menu" without fighting the OS —
+  // palm-up was tried on device and lost to Home View. So instead of inventing a gesture, this
+  // gives gaze something to land on: a small button that follows your view, which you open with
+  // the same look-and-pinch you use for everything else on the platform.
+  //
+  // It deliberately reuses the ordinary panel hit path rather than adding a second input route.
+  // A transient-pointer source has handedness 'none', so the controller lookup upstream returns
+  // null and the raycast falls through to the raw targetRaySpace pose — which IS Apple's gaze
+  // ray, already calibrated, already accurate. The button is just another entry in _panelHits.
+  //
+  // Hidden unless the session is actually driving hands with no buttons (window._gazeMenu
+  // forces it on for testing on a controller device).
+  // OFF BY DEFAULT. Tested on device and it was the wrong shape: matt had to turn his pinching
+  // hand a long way to aim at it, could highlight it but took several attempts to click it. A
+  // target you must acquire is worse than a panel that is simply already on your wrist. Kept
+  // behind a flag because it is the only menu route that survives losing wrist tracking.
+  _gazeMenuWanted() { return window._gazeMenu === true; }
+
+  _ensureGazeMenuButton() {
+    if (this._gazeMenuBtn) return this._gazeMenuBtn;
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 128;
+    const x = c.getContext('2d');
+    const draw = (hot) => {
+      x.clearRect(0, 0, 256, 128);
+      x.fillStyle = hot ? 'rgba(40,90,140,0.95)' : 'rgba(0,0,0,0.72)';
+      x.beginPath(); x.roundRect(4, 4, 248, 120, 22); x.fill();
+      x.strokeStyle = hot ? '#7fd1ff' : '#6a6a6a';
+      x.lineWidth = 4; x.stroke();
+      // Plain text, not a glyph icon — see the no-emoji rule.
+      x.fillStyle = '#fff';
+      x.font = '600 54px -apple-system, Helvetica, Arial, sans-serif';
+      x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText('MENU', 128, 68);
+    };
+    draw(false);
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.045), mat);
+    mesh.frustumCulled = false;
+    // EVERYTHING IN THIS APP IS TRANSPARENT, so layering is manual and renderOrder is the only
+    // lever. This sits above the panels it opens, since a menu button behind its own menu is
+    // unreachable. Kept in the same band as the other always-visible overlays.
+    mesh.renderOrder = VR_PANEL_RENDER_ORDER + 3;
+    mesh.visible = false;
+    this._scene.add(mesh);
+    this._gazeMenuBtn = mesh;
+    this._gazeMenuBtn._redraw = (hot) => { draw(hot); tex.needsUpdate = true; };
+    this._gazeMenuHot = false;
+    return mesh;
+  }
+
+  _updateGazeMenuButton() {
+    const want = this._gazeMenuWanted();
+    if (!want) { if (this._gazeMenuBtn) this._gazeMenuBtn.visible = false; return; }
+    const m = this._ensureGazeMenuButton();
+
+    // THE HEAD POSE MUST COME FROM THE SAME SPACE THE BUTTON LIVES IN.
+    //
+    // frame.getViewerPose(refSpace) is the obvious source and it is the WRONG ONE here: it
+    // reports the head in the reference space, while this mesh is parented into the three.js
+    // scene, and three applies its own camera rig on top. Where those two disagree the button
+    // is placed correctly in a space nobody is looking from — the same two-spaces trap that
+    // cost four sessions on the motion-path work. The XR camera IS the three-side head, so it
+    // needs no conversion and cannot drift from the mesh it positions.
+    const xr = this._renderer && this._renderer.xr;
+    const cam = xr && xr.getCamera && xr.getCamera(this._camera?.getThreeCamera?.());
+    if (!cam) { m.visible = false; return; }
+    cam.updateMatrixWorld(true);
+    const H = cam.matrixWorld.elements;
+    const right = [H[0], H[1], H[2]];
+    const up    = [H[4], H[5], H[6]];
+    const fwd   = [-H[8], -H[9], -H[10]];
+    const hp    = [H[12], H[13], H[14]];
+
+    // Parked below the line of sight and towards the NON-dominant side, so it is never in
+    // front of what you are sculpting but is always a glance away.
+    const D  = window._gazeMenuDist ?? 0.55;
+    const DX = (window._gazeMenuX ?? 0.16) * (this._dominantHand === 'right' ? -1 : 1);
+    const DY = window._gazeMenuY ?? -0.17;
+    const target = [
+      hp[0] + fwd[0] * D + right[0] * DX + up[0] * DY,
+      hp[1] + fwd[1] * D + right[1] * DX + up[1] * DY,
+      hp[2] + fwd[2] * D + right[2] * DX + up[2] * DY,
+    ];
+
+    // EASED, NOT HEAD-LOCKED. A button welded to the head moves with every micro-motion and
+    // reads as dirt on the lens; letting it lag lets your eye treat it as an object in the
+    // room that happens to keep up.
+    if (!m.userData._placed) { m.position.set(target[0], target[1], target[2]); m.userData._placed = true; }
+    else m.position.lerp(new THREE.Vector3(target[0], target[1], target[2]), window._gazeMenuLag ?? 0.12);
+    m.lookAt(hp[0], hp[1], hp[2]);
+    m.visible = true;
+    m.updateMatrixWorld(true);
+  }
+
+  // Called from the panel dispatch when the gaze ray presses the button.
+  _gazeMenuPressed() {
+    const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
+    this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
+    if (this._guiPopup) this._guiPopup.closeOverlay();
+    console.log('[gaze menu] ' + (mainVisible ? 'MainMenu -> MiniPanel' : 'MiniPanel -> MainMenu'));
   }
 
   handleXRInput(frame, refSpace) {
@@ -7169,6 +7824,49 @@ class Scene {
     const sources = session.inputSources;
     window._vrInputSources = sources;
 
+    // BEFORE THE UI MOUNT READS uiGrip.matrixWorld, NOT DURING THE INPUT LOOP.
+    //
+    // The wrist-panel mount runs earlier in this function than the per-source loop does, so
+    // posing the grips down there would hand the panels last frame's wrist. The existing note
+    // on that mount already records what a one-frame lag costs on a hand-carried target:
+    // a single-frame uv jump of 0.44 to 1.09, from a hand that was as still as a hand gets.
+    // A PRESS THAT CANNOT BE RELEASED IS WORSE THAN ONE THAT CANNOT BE MADE.
+    //
+    // The system pinch is latched by selectstart and cleared by selectend/select. If either is
+    // ever missed — a lost frame, a session blur, the source torn down mid-pinch — the trigger
+    // stays down for the rest of the session and every stroke after it is a mis-stroke. matt:
+    // "i'm sure i pull my fingers apart, but it seems to not detect this and will do a
+    // mis-stroke."
+    //
+    // The transient-pointer source EXISTS only for the duration of a pinch, so its absence is an
+    // independent statement that the pinch is over — one that cannot be missed, because it is a
+    // state rather than an event. Checked every frame, so a dropped release self-heals.
+    let _anyTransient = false;
+    for (const _s of sources) if (_s.targetRayMode === 'transient-pointer') _anyTransient = true;
+    if (!_anyTransient) this._sysPinchActive = false;
+
+    for (const _s of sources) {
+      if (_s.hand && !_s.gripSpace) this._poseGripFromWrist(_s, frame, refSpace);
+      if (_s.hand) this._applyHandRayCorrection(_s, frame, refSpace);
+    }
+
+    this._syncHandsOnlyUI();
+    this._updateWristPlacement(frame, refSpace);
+    this._updateGazeMenuButton();
+
+    // NO BUTTONS MEANS NO WAY TO SUMMON A MENU, so the wrist panel starts visible rather than
+    // waiting for a press that can never come. Once only per session: after this the user is
+    // free to swap or close panels like anyone else, and re-showing it every frame would fight
+    // them. matt: "can the minimenu not be just on from the start, and parented to my left hand
+    // like it currently gets parented to the left controller".
+    if (!this._handsUiPrimed && this._handsOnlyMode()) {
+      this._handsUiPrimed = true;
+      try {
+        this._swapHtmlPanels('mini');
+        console.log('[hands] no buttons on this runtime — wrist MiniPanel shown by default');
+      } catch (e) { console.error('[hands] priming the wrist panel failed', e); }
+    }
+
     // Tick Diagnostic Log
     if (!this._tickLog) this._tickLog = 0;
     this._tickLog++;
@@ -7209,8 +7907,8 @@ class Scene {
         // something in the rig with that hand.
         let secondaryHeld = false;
         for (const src of sources) {
-            if (!src.gamepad || src.handedness === this._dominantHand) continue;
-            const t = src.gamepad.buttons[0];
+            if (src.handedness === this._dominantHand) continue;
+            const t = this._padOf(src)?.buttons?.[0];
             if (t && (t.pressed || t.value > 0.5)) secondaryHeld = true;
         }
         const _grabTool = this._sculptManager?.getCurrentTool?.();
@@ -7295,6 +7993,31 @@ class Scene {
           } else {
             uiAnchor.matrix.multiplyMatrices(xrCam.matrixWorld, this._wristHeadOffset);
           }
+          // AND SMOOTH IT, because the thing being aimed at should hold still.
+          //
+          // On a controller the wrist is braced by the device and the panel is steady enough.
+          // A hand has nothing holding it, so the panel inherits every tremor of the arm
+          // WEARING it while the other arm is trying to hit a button on it — two independent
+          // jitters multiplied together. matt: "the menu drifts too much".
+          //
+          // Heavier than the ray's smoothing on purpose. Lag on a target you are aiming at
+          // reads as steadiness; lag on the pointer in your hand reads as broken. Hands only:
+          // the controller path is already stable and its feel is not up for renegotiation.
+          if (this._handsOnlyMode()) {
+            const ks = window._wristSmooth ?? 0.12;
+            if (ks < 1) {
+              if (!this._wsP) { this._wsP = new THREE.Vector3(); this._wsQ = new THREE.Quaternion(); this._wsS = new THREE.Vector3(); }
+              if (!this._wsCur) { this._wsCur = { p: new THREE.Vector3(), q: new THREE.Quaternion(), ok: false }; }
+              uiAnchor.matrix.decompose(this._wsP, this._wsQ, this._wsS);
+              if (this._wsCur.ok) {
+                this._wsCur.p.lerp(this._wsP, ks);
+                this._wsCur.q.slerp(this._wsQ, ks);
+              } else {
+                this._wsCur.p.copy(this._wsP); this._wsCur.q.copy(this._wsQ); this._wsCur.ok = true;
+              }
+              uiAnchor.matrix.compose(this._wsCur.p, this._wsCur.q, this._wsS);
+            }
+          }
           uiAnchor.matrixWorldNeedsUpdate = true;
         }
         if (uiGrip) {
@@ -7311,11 +8034,23 @@ class Scene {
             // one. One number for all of them: they used to sit at different heights and
             // visibly jumped as they swapped. Pinned panels are world-anchored and exempt.
             {
+              const _placing = this._wristPlaceActive() && this._wristPlaceOffset;
+              const _handsSlot = !_placing && this._handsOnlyMode();
               const _wy = wristPanelY(), _wYaw = wristPanelYaw();
               for (const _p of [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel]) {
                 if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiAnchor) continue;
-                _p.mesh.position.y = _wy;
-                _p.mesh.rotation.y = _wYaw;   // same slot, same angle — they used to differ
+                if (_placing) {
+                  // Six degrees of freedom while placing — the whole point is that the fixed
+                  // slot is what we are trying to replace, so it must not be re-imposed here.
+                  this._wristPlaceOffset.decompose(_p.mesh.position, _p.mesh.quaternion, _p.mesh.scale);
+                } else if (_handsSlot) {
+                  const _hp = Scene.HAND_WRIST_PANEL, _D = Math.PI / 180;
+                  _p.mesh.position.set(_hp.p[0], _hp.p[1], _hp.p[2]);
+                  _p.mesh.rotation.set(_hp.r[0] * _D, _hp.r[1] * _D, _hp.r[2] * _D, 'XYZ');
+                } else {
+                  _p.mesh.position.y = _wy;
+                  _p.mesh.rotation.y = _wYaw;   // same slot, same angle — they used to differ
+                }
               }
             }
             if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
@@ -7383,7 +8118,7 @@ class Scene {
     }
 
     const nonDomSource = this._dominantHand === 'left' ? right : left;
-    this._vrSecondaryTriggerPressed = !!(nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed);
+    this._vrSecondaryTriggerPressed = !!this._padOf(nonDomSource)?.buttons?.[0]?.pressed;
 
     // Two-handed VR timeline zoom — evaluated before the per-controller dispatch
     // so an active gesture suppresses the dominant hand's single-pointer pan.
@@ -7440,14 +8175,39 @@ class Scene {
 
 
 
-      if (!source.gripSpace) continue;
+      // NO gripSpace DOES NOT MEAN NO HAND (Apple Vision Pro).
+      //
+      // visionOS hands arrive as fully tracked sources — targetRayMode 'tracked-pointer',
+      // profile 'generic-hand', 25 joints with real poses — but Safari hands up NO gripSpace
+      // at all. This gate sits above everything, so every AVP hand was skipped before the
+      // hand-tracking branch below could run even once: the controller spikes drew, the scene
+      // animated, and not one input event ever landed. Measured on device 2026-09-12:
+      //   left  gripSpace=false gripPose=NULL rayPose=YES
+      //   right gripSpace=false gripPose=NULL rayPose=YES
+      //
+      // The wrist JOINT is the right stand-in: XRJointSpace is an XRSpace, so frame.getPose()
+      // takes it, and it sits where a grip pose sits. Its ORIENTATION convention differs from
+      // grip space (joint spaces point +Y down the bone), so anything mounted on this pose
+      // needs a fixed rotation offset — see _gripSpaceIsWrist below.
+      const gripSpace = source.gripSpace
+        || (source.hand && source.hand.get('wrist'))
+        || source.targetRaySpace;
+      if (!gripSpace) continue;
+      // Downstream pose consumers need to know they are reading a joint, not a grip.
+      const gripIsWrist = !source.gripSpace && !!(source.hand && source.hand.get('wrist'));
+      if (source.handedness === 'left') this._gripSpaceIsWristLeft = gripIsWrist;
+      else if (source.handedness === 'right') this._gripSpaceIsWristRight = gripIsWrist;
 
       // VR Fuzzer Overrides
       // (Fuzzer has been suspended during migration since it relied on manual pose injection)
 
 
       // VR SHORTCUTS
-      if (source.gamepad) {
+      // Thumbsticks and face buttons only — _padOf reports an empty pad as absent, so an AVP
+      // hand (gamepad truthy, buttons and axes both empty) skips this block instead of
+      // indexing undefined out of it. Gesture input is handled in the hand branch below.
+      const pad = this._padOf(source);
+      if (pad) {
         // Unique Persistent State per Controller
         if (!this._vrStateLeft) this._vrStateLeft = { axes: [] };
         if (!this._vrStateRight) this._vrStateRight = { axes: [] };
@@ -7457,7 +8217,7 @@ class Scene {
         // [Step 3] Hand Swap: Radius Control adheres to DOMINANT hand
         const isDom = source.handedness === this._dominantHand;
         const isNonDom = !isDom;
-        const axes = source.gamepad.axes;
+        const axes = pad.axes;
 
         // Thresholds
         const T_PRESS = 0.7;
@@ -7522,7 +8282,7 @@ class Scene {
 
           /*
           // BUTTONS: X (4) = Undo, Y (5) = Redo
-          const btns = source.gamepad.buttons;
+          const btns = pad.buttons;
           if (btns.length > 5) {
             const now = performance.now();
             const DEBOUNCE = 300; // 300ms debounce
@@ -7563,7 +8323,7 @@ class Scene {
           const valY_NonDom = axes[3];
           if ((this._isPointingAtMenu || this._wasPointingAtMenu) && Math.abs(valY_NonDom) > T_PRESS) {
             const domSource = this._dominantHand === 'left' ? left : right;
-            const isSlowMod = domSource?.gamepad?.buttons[0]?.pressed ?? false;
+            const isSlowMod = this._padOf(domSource)?.buttons?.[0]?.pressed ?? false;
             const scrollSpeed = isSlowMod ? 12 : 55; // px per frame at full push; hold trigger for fine scroll
             const delta = valY_NonDom * scrollSpeed; // proportional to stick deflection
 
@@ -7600,7 +8360,7 @@ class Scene {
           const targetRateY = isSecondaryTriggerPressed ? 15 : 30;
 
           if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY) {
-            const isSlowMod = nonDomSource?.gamepad?.buttons[0]?.pressed ?? false;
+            const isSlowMod = this._padOf(nonDomSource)?.buttons?.[0]?.pressed ?? false;
             const scrollSpeed = isSlowMod ? 12 : 55;
             const delta = valY * scrollSpeed; // proportional to stick deflection
 
@@ -7730,7 +8490,7 @@ class Scene {
         }
 
         // --- VR ERGONOMICS: HYBRID BUTTONS ---
-        const btns = source.gamepad.buttons;
+        const btns = pad.buttons;
         if (btns.length > 4) {
           const now = performance.now();
           const HYBRID_THRESHOLD = 300; // ms
@@ -7911,11 +8671,89 @@ class Scene {
           const pinchDist = vec3.distance([pT.x, pT.y, pT.z], [pI.x, pI.y, pI.z]);
           const fistDist = vec3.distance([pM.x, pM.y, pM.z], [pK.x, pK.y, pK.z]);
 
-          isPinching = pinchDist < 0.02; // 2cm pinch threshold
-          isFist = fistDist < 0.05;      // 5cm fist threshold
+          // MEASURE THE GAP BETWEEN THE FINGERS, NOT BETWEEN THE JOINT CENTRES.
+          //
+          // Touching fingertips do NOT read zero apart. A joint pose carries a RADIUS, and the
+          // centres of two touching tips stay separated by roughly the sum of those radii. On
+          // Apple Vision Pro the fingertip radius is 0.010, so fingers pressed together read
+          // about 0.020 between centres — which is why the old bare `pinchDist < 0.02` sat
+          // exactly on the boundary here and behaved like a coin flip, and why measured probe
+          // data looked like two overlapping populations (a real pinch at 0.0176, a relaxed
+          // hand at 0.0201) instead of two clearly separated ones. It was never overlap; it
+          // was the finger thickness being counted as distance.
+          //
+          // Subtracting the radii turns this into an actual skin-to-skin gap that means the
+          // same thing on every device, instead of a constant re-tuned per headset. Quest's
+          // radii differ from Apple's; the formula absorbs that.
+          //
+          // Hysteresis on top, latched per hand: close to ENTER to start, open past EXIT to
+          // stop, so a hand hovering near the boundary cannot chatter at frame rate.
+          const rT = (thumbTip.radius || 0), rI = (indexTip.radius || 0);
+          const pinchGap = pinchDist - rT - rI;   // <=0 means the tips are touching
 
-          // Grab Suppression: Check if Dom index tip is near Non-Dom wrist (25cm)
-          if (source.handedness === this._dominantHand && this._nonDomWristMatrix) {
+          const hKey = source.handedness === 'left' ? 'L' : 'R';
+          if (!this._pinchLatch) this._pinchLatch = {};
+          const latch = this._pinchLatch[hKey] || (this._pinchLatch[hKey] = { pinch: false, fist: false });
+
+          // RAW. ONE THRESHOLD, NO LATCH.
+          //
+          // Detecting the pinch was never the problem — a legacy suppression that zeroed it
+          // within 25cm of the wrist was. Hysteresis was added while that was still undiagnosed
+          // and it bought nothing except a release you had to mean: matt, after the real cause
+          // was fixed, "pinch gesture is still sticky... i don't think detecting a pinch was ever
+          // an issue". So the press follows the fingers directly.
+          //
+          // The measurement stays radius-relative, because that is what makes the signal clean
+          // enough to need no filtering: measured on device, a pinch reads about -0.017 and a
+          // relaxed hand about +0.040, so a 5mm threshold sits in open space with ~20mm of
+          // clearance on both sides. Smoothing a signal that separated is smoothing noise that
+          // is not there.
+          //
+          // The FIST keeps its hysteresis: it is a hold, not a click, and a chattering grip
+          // drops the world mid-drag.
+          const P_ON    = this.getPinchOn();           // skin-to-skin gap, metres
+          const F_ENTER = window._fistEnter  ?? 0.045; // fist is tip-to-knuckle; no radius term
+          const F_EXIT  = window._fistExit   ?? 0.065;
+
+          isPinching = pinchGap < P_ON;
+          latch.fist = latch.fist ? (fistDist < F_EXIT) : (fistDist < F_ENTER);
+          isFist = latch.fist;
+          latch.pinch = isPinching;   // recorded for the fingertip dots, not used as state
+
+          // Live readout for threshold tuning on device: window._pinchTrace = true.
+          if (window._pinchTrace) {
+            this._pinchTraceN = (this._pinchTraceN || 0) + 1;
+            if (this._pinchTraceN % 30 === 0) {
+              console.log('[pinch] ' + hKey + ' dist=' + pinchDist.toFixed(4)
+                + ' r=' + rT.toFixed(3) + '/' + rI.toFixed(3)
+                + ' gap=' + pinchGap.toFixed(4) + (latch.pinch ? '  PINCH' : '')
+                + ' fistDist=' + fistDist.toFixed(4) + (latch.fist ? '  FIST' : ''));
+            }
+          }
+
+          // THIS SUPPRESSION IS WHY THE WRIST PANEL COULD NOT BE CLICKED.
+          //
+          // It kills the pinch whenever the dominant index tip comes within 25cm of the
+          // non-dominant wrist. That was written for the legacy canvas MiniHUD, which you
+          // operated by POKING it — so a pinch near the wrist had to be ignored or you would
+          // sculpt while reaching for the menu. In HTML panel mode nothing ever turns it back
+          // on: the re-enable below is gated on _legacyVrCanvasEnabled(), so the pinch is simply
+          // dead inside that radius.
+          //
+          // The wrist panel is now the ONLY menu on a hands-only runtime, and clicking it means
+          // putting your index finger right there. Measured: ray-to-panel distances of 0.16 to
+          // 0.24m, i.e. entirely inside the 25cm sphere, for a whole session of pinches that
+          // produced not one press edge — while the fingertip dots went green throughout,
+          // because they read the raw latch and this zeroes the value AFTER it.
+          //
+          // matt: "if i got my hand close to the menu, and did a slow pinch, the dots went green,
+          // but a click was never detected... if i did it as fast as possible, it seemed to
+          // work." A fast reach pinches while still outside the radius. That is the tell.
+          //
+          // So it only applies where it means something: legacy canvas mode with that HUD up.
+          const _legacyMiniHud = this._legacyVrCanvasEnabled() && this._guiMini && this._guiMini._isVisible;
+          if (!_legacyMiniHud) this._isMiniHUDActive = false;   // never leave it latched on
+          if (_legacyMiniHud && source.handedness === this._dominantHand && this._nonDomWristMatrix) {
              const wristPos = { x: this._nonDomWristMatrix[12], y: this._nonDomWristMatrix[13], z: this._nonDomWristMatrix[14] };
              const dist = vec3.distance([pI.x, pI.y, pI.z], [wristPos.x, wristPos.y, wristPos.z]);
              
@@ -7965,26 +8803,43 @@ class Scene {
           if (pm && wrist && wrist.transform) this._drivePuppetHead(pm, wrist.transform);
         }
 
+        // The platform's own pinch counts as a press for the pointing hand (see enterXR).
+        if (window._sysPinch !== false && this._sysPinchActive
+            && source.handedness === this._dominantHand) {
+          isPinching = true;
+        }
+
         mockGamepad = {
           buttons: [
             { pressed: isPinching, value: isPinching ? 1.0 : 0.0 }, // Trigger (Sculpt / UI Click)
             { pressed: isFist, value: isFist ? 1.0 : 0.0 },         // Grip (Move World)
             { pressed: false, value: 0 },
             { pressed: false, value: 0 },
+            // X/A — no hand gesture is bound here on purpose. Palm-up was built and tested on
+            // device and LOST to visionOS's own Home View gesture, which owns that posture; the
+            // index pinch is the system select and the crown is recenter, so there is no posture
+            // left to claim without fighting the OS. The menu is reached by looking at the gaze
+            // button instead (see _updateGazeMenuButton), which needs no gesture at all.
             { pressed: false, value: 0 },
             { pressed: false, value: 0 }
           ],
           axes: [0, 0, 0, 0]
         };
+        // Published for the button-list builder below, which runs in a different function and
+        // so cannot see this loop-local. Without it that builder hands the sculpt manager the
+        // hand's REAL gamepad — see the note there.
+        if (!this._mockGamepads) this._mockGamepads = {};
+        this._mockGamepads[source.handedness] = mockGamepad;
       } else {
         if (source.handedness === 'left') this._isHandTrackingLeft = false;
         if (source.handedness === 'right') this._isHandTrackingRight = false;
+        if (this._mockGamepads) this._mockGamepads[source.handedness] = null;
       }
       
       const activeGamepad = mockGamepad || source.gamepad;
 
       // 1. Common Pose Gathering (for All Tasks)
-      const worldPose = frame.getPose(source.gripSpace, refSpace);
+      const worldPose = frame.getPose(gripSpace, refSpace);
       if (worldPose) {
         // Capture Unscaled Poses for Menu Attachment
         const p = worldPose.transform.position;
@@ -8008,9 +8863,9 @@ class Scene {
           } else {
             this._vrDominantRayMatrix = null;
           }
-        } else if (source.gripSpace) {
+        } else if (gripSpace) {
           // Fallback to Grip Space if Ray is missing (rare but possible)
-          const gripPose = frame.getPose(source.gripSpace, refSpace);
+          const gripPose = frame.getPose(gripSpace, refSpace);
           if (gripPose) {
             this._vrDominantRayMatrix = gripPose.transform.matrix;
           }
@@ -8150,8 +9005,8 @@ class Scene {
         } else {
           // Fallback to raw Frame Pos if Three.js objects are somehow missing
           let rayPose = source.targetRaySpace ? frame.getPose(source.targetRaySpace, refSpace) : null;
-          if (!rayPose && source.gripSpace) {
-             rayPose = frame.getPose(source.gripSpace, refSpace);
+          if (!rayPose && gripSpace) {
+             rayPose = frame.getPose(gripSpace, refSpace);
              isFallback = true;
           }
           if (rayPose) {
@@ -8303,14 +9158,28 @@ class Scene {
               const h = _rc.intersectObject(this._vrBlendCloseBtn, false);
               if (h.length > 0) _panelHits.push({ name: 'VRBlendClose', panel: null, hit: h[0], pressKey: '_vbsCloseWasPressed', isBlendClose: true });
             }
+            if (this._gazeMenuBtn?.visible) {
+              const h = _rc.intersectObject(this._gazeMenuBtn, false);
+              if (h.length > 0) _panelHits.push({ name: 'GazeMenu', panel: null, hit: h[0], pressKey: '_gmWasPressed', isGazeMenu: true });
+            }
           }
 
           // Phase 2: nearest hit wins
           _panelHits.sort((a, b) => a.hit.distance - b.hit.distance);
           let _winner = _panelHits[0] ?? null;
           let _winnerName = _winner?.name ?? null;
-          const _trigger = source.gamepad?.buttons[0];
-          const _hand = source.handedness === 'left' ? 'L' : 'R';
+          const _trigger = this._padOf(source)?.buttons?.[0];
+          // A GAZE PINCH AND A RIGHT-HAND PINCH ARE THE SAME PHYSICAL ACT ON VISION PRO.
+          //
+          // Pinching your right hand produces BOTH a hand source (our synthesised trigger) and a
+          // separate transient-pointer source carrying the gaze ray. Both arrive in this loop on
+          // the same frame. Handedness 'none' would fall into the 'R' bucket below and the two
+          // would then share one Schmitt latch and one press owner — so one pinch would look
+          // like a press that had already been captured by something else, and the second source
+          // to arrive would be ignored. The gaze ray gets its own key.
+          const _hand = source.targetRayMode === 'transient-pointer'
+            ? 'G'
+            : (source.handedness === 'left' ? 'L' : 'R');
 
           // A SCHMITT TRIGGER, NOT A THRESHOLD.
           //
@@ -8326,18 +9195,54 @@ class Scene {
           // exactly as light as before, it just cannot flutter.
           //
           // Per hand: two controllers, two independent fingers.
-          if (!this._vrTrigHeld) this._vrTrigHeld = { L: false, R: false };
+          if (!this._vrTrigHeld) this._vrTrigHeld = { L: false, R: false, G: false };
           const _tv = _trigger ? _trigger.value : 0;
-          const _pressed = _trigger
+          // PLACEMENT MODE SWALLOWS EVERY PRESS. While the panel is being positioned by hand,
+          // the same pinch that carries it would otherwise also be clicking whatever it is
+          // dragged across — so no surface sees a press at all until placement is turned off.
+          const _pressed = (_trigger && !this._wristPlaceActive())
             ? (_trigger.pressed || (this._vrTrigHeld[_hand] ? _tv > 0.04 : _tv > 0.10))
             : false;
           this._vrTrigHeld[_hand] = _pressed;
+
+          // EVERY PINCH, NOT JUST THE ONES THAT REACH A PANEL.
+          //
+          // The per-panel edge line only prints inside the winner branch, so a press made while
+          // the ray is off the panel leaves no trace at all — and "I pinched ten times and one
+          // worked" is indistinguishable from "I pinched once".
+          if (window._menuTrace) {
+            if (!this._mtPrev) this._mtPrev = {};
+            if (this._mtPrev[_hand] !== _pressed) {
+              this._mtPrev[_hand] = _pressed;
+              console.log('[menu] TRIGGER ' + _hand + (_pressed ? ' DOWN' : ' UP  ')
+                + ' winner=' + (_winnerName || 'NONE')
+                + ' hits=' + (_panelHits.length || 0));
+            }
+          }
+
+          // HOISTED ABOVE ITS FIRST READER, AND IT HAS TO STAY THERE.
+          //
+          // Initialised further down once, next to _pressCaptured, which meant the first thing
+          // to read it dereferenced undefined and threw — and because the throw came BEFORE the
+          // initialiser, it threw again every frame after, killing the whole panel dispatch for
+          // the life of the session. It presented as "100% not getting any of my clicks".
+          // It was also deleted once by accident while removing unrelated code above it, and the
+          // harness caught that, which is why the check exists.
+          if (!this._vrPressOwner) this._vrPressOwner = { L: null, R: null, G: null };
+
+          // NO CLICK ASSISTS. The press goes where the ray is pointing, at the moment the
+          // fingers close, and nowhere else.
+          //
+          // There were two here — a lookback that clicked the last button the ray had been over,
+          // and a sticky target that honoured a panel the press had just left. Both were written
+          // to paper over a pinch that was being suppressed near the wrist. With the real cause
+          // fixed they are guesses about intent standing between the user and the button, and a
+          // click that lands somewhere you did not point is worse than one that misses.
 
           // ONE PRESS BELONGS TO ONE SURFACE, FOR AS LONG AS IT IS HELD. See the note at the
           // dispatch loop below. Hoisted to here so the branches that handle the timeline, the
           // blendshape panel and the resize grips can consult it too — they are equally plausible
           // things to be sitting behind a keyboard when its confirm button closes it.
-          if (!this._vrPressOwner) this._vrPressOwner = { L: null, R: null };
           if (!_pressed) this._vrPressOwner[_hand] = null;
           // True when this press was captured by something that is no longer the winner — so a
           // still-held trigger must not open a NEW interaction anywhere else.
@@ -8432,6 +9337,27 @@ class Scene {
           // the button that closed it.
           //
           // Per hand, because the two controllers are independent pointers.
+          // WHY DID MY CLICK NOT LAND? window._menuTrace = true.
+          //
+          // Every stage of a menu press is a local in this function, so from outside it the
+          // whole thing is opaque: a ray that misses, a winner that loses to a nearer panel, a
+          // trigger that reads unpressed, and a press captured by something else all look
+          // identical from the headset -- nothing happens. This prints the chain so the failing
+          // stage names itself, in the same shape as the input diag that found the stroke bug.
+          if (window._menuTrace) {
+            this._mtN = (this._mtN || 0) + 1;
+            if (this._mtN % 20 === 0) {
+              console.log('[menu] ' + source.handedness + '/' + _hand
+                + ' hits=' + (_panelHits.length ? _panelHits.map(h => h.name + '@' + h.hit.distance.toFixed(2)).join(',') : 'NONE')
+                + ' winner=' + (_winnerName || 'null')
+                + ' trig=' + (_trigger ? (_trigger.pressed ? 'down' : 'up') + '/' + (_trigger.value ?? 0).toFixed(2) : 'NO-TRIGGER')
+                + ' pressed=' + _pressed
+                + ' owner=' + JSON.stringify(this._vrPressOwner)
+                + ' placing=' + this._wristPlaceActive()
+                + ' visible=[' + _allVisible.map(v => v.name).join(',') + ']');
+            }
+          }
+
           for (const v of _allVisible) {
             if (v.name === _winnerName) {
               // Blocked only for a NEW press. A panel that already owns this press keeps
@@ -8446,6 +9372,32 @@ class Scene {
               }
               const justDown = _pressed && !this[v.pressKey];
               const justUp   = !_pressed && this[v.pressKey];
+
+              // THE PRESS DECISION, REPORTED WHERE IT IS ACTUALLY MADE.
+              //
+              // The previous trace stopped at "which panel", so three different outcomes all
+              // looked like nothing happening: a press that never became a down-edge, a
+              // down-edge blocked by another surface owning the press, and a down-edge that
+              // landed cleanly between two buttons. Dots going green while hover kept working
+              // says the latch is on and this branch is being reached, so the fault is one of
+              // those three and the line below names which.
+              if (window._menuTrace && (justDown || justUp || _pressed !== this[v.pressKey])) {
+                let desc = 'n/a', btnTxt = 'NONE';
+                try {
+                  const hit = v.panel._uvToElement ? v.panel._uvToElement(_winner.hit.uv) : null;
+                  const el = hit && hit.el;
+                  if (el) {
+                    desc = el.tagName.toLowerCase()
+                      + (el.className ? '.' + String(el.className).split(' ').filter(Boolean).join('.') : '');
+                    const b = el.closest ? el.closest('button') : null;
+                    if (b) btnTxt = '"' + (b.textContent || '').trim().slice(0, 24) + '"';
+                  }
+                } catch (e) { desc = 'uvToElement threw: ' + e.message; }
+                console.log('[menu] ' + v.name + ' justDown=' + justDown + ' justUp=' + justUp
+                  + ' pressed=' + _pressed + ' wasPressed=' + !!this[v.pressKey]
+                  + ' blocked=' + _blocked + ' owner=' + (this._vrPressOwner[_hand] || 'null')
+                  + ' element=' + desc + ' button=' + btnTxt);
+              }
               if (justDown) this._vrPressOwner[_hand] = v.name;
               if (justDown)    v.panel.onVRPress(_winner.hit.uv);
               else if (justUp) v.panel.onVRRelease(_winner.hit.uv);
@@ -8620,6 +9572,21 @@ class Scene {
             this._vbsCloseWasPressed = false;
           }
 
+          // Gaze menu button — the only way to open a menu on a runtime with no buttons.
+          // Same press-edge shape as the close buttons above, plus a hover repaint so the
+          // button acknowledges the ray; on Vision Pro that highlight is the ONLY feedback
+          // available before you commit, because Apple gives no gaze direction until you pinch.
+          if (_winner?.isGazeMenu) {
+            this._isPointingAtMenu = true;
+            this._updateBPCursor?.(_winner.hit.point, true);
+            if (!this._gazeMenuHot) { this._gazeMenuHot = true; this._gazeMenuBtn._redraw(true); }
+            if (_pressed && !this._gmWasPressed) this._gazeMenuPressed();
+            this._gmWasPressed = _pressed;
+          } else {
+            if (this._gazeMenuHot) { this._gazeMenuHot = false; this._gazeMenuBtn?._redraw(false); }
+            if (this._gmWasPressed) this._gmWasPressed = false;
+          }
+
           // VRTimeline resize handle — trigger starts a resize drag tracked via ray-plane intersection
           // A press captured elsewhere must not start a resize, a scrub or a key drag either —
           // same rule as the panels below, applied to the surfaces that dispatch on their own.
@@ -8788,11 +9755,12 @@ class Scene {
           let pressed = false;
           let bottomedOut = false;
           let depth = 0;
-          if (source.gamepad && source.gamepad.buttons[0]) {
+          const _trigBtn = this._padOf(source)?.buttons?.[0];
+          if (_trigBtn) {
             // FIRE EARLY: Trigger UI hits at 10% depression instead of waiting for a full physical click
-            depth = source.gamepad.buttons[0].value;
-            pressed = depth > 0.1 || source.gamepad.buttons[0].pressed;
-            bottomedOut = depth >= 0.99 || source.gamepad.buttons[0].pressed;
+            depth = _trigBtn.value;
+            pressed = depth > 0.1 || _trigBtn.pressed;
+            bottomedOut = depth >= 0.99 || _trigBtn.pressed;
           }
 
           // DRAG CAPTURE LOCK
@@ -8901,13 +9869,13 @@ class Scene {
 
       // 3. Navigation Data (Base Space - Stable coordinates)
       if (this._baseRefSpace) {
-        const basePose = frame.getPose(source.gripSpace, this._baseRefSpace);
+        const basePose = frame.getPose(gripSpace, this._baseRefSpace);
         if (basePose) {
           const originBase = [basePose.transform.position.x, basePose.transform.position.y, basePose.transform.position.z];
 
           // Grip Button (Button 1 or Trigger/Squeeze?)
           // Usually Button 1 is Squeeze. Button 0 is Trigger.
-          const isGrip = source.gamepad && source.gamepad.buttons[1] && source.gamepad.buttons[1].pressed;
+          const isGrip = !!this._padOf(source)?.buttons?.[1]?.pressed;
 
           const rot = basePose.transform.orientation; // Quaternion {x,y,z,w}
           const rotQuat = quat.fromValues(rot.x, rot.y, rot.z, rot.w);
@@ -8927,7 +9895,7 @@ class Scene {
           const mmCanStart    = this._mainMenuPanel?.pinned && mmOnPanel && isGrip && !this._mmDragActive && !this._vtlIsPointing && !_panelDragBusy && !_worldNavBusy;
           const mmCanContinue = this._mmDragActive && this._mmDragHand === source.handedness && isGrip;
           if (mmCanStart || mmCanContinue) {
-            const refPose = frame.getPose(source.gripSpace, refSpace);
+            const refPose = frame.getPose(gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
               const q = refPose.transform.orientation;
@@ -8963,7 +9931,7 @@ class Scene {
           const canContinueVtlDrag = this._vtlDragActive && this._vtlDragHand === source.handedness && isGrip;
 
           if (canStartVtlDrag || canContinueVtlDrag) {
-            const refPose = frame.getPose(source.gripSpace, refSpace);
+            const refPose = frame.getPose(gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
               const q = refPose.transform.orientation;
@@ -8998,7 +9966,7 @@ class Scene {
           const canStartVbsDrag    = this._vrBlendMesh?.visible && this._vbsIsPointing && isGrip && !this._vbsDragActive && !_panelDragBusy && !_worldNavBusy;
           const canContinueVbsDrag = this._vbsDragActive && this._vbsDragHand === source.handedness && isGrip;
           if (canStartVbsDrag || canContinueVbsDrag) {
-            const refPose = frame.getPose(source.gripSpace, refSpace);
+            const refPose = frame.getPose(gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
               const q = refPose.transform.orientation;
@@ -9026,7 +9994,7 @@ class Scene {
 
           // ── TornOffPanel grip drags ───────────────────────────────────────
           if (this._tornOffPanels.size > 0) {
-            const refPose = isGrip ? frame.getPose(source.gripSpace, refSpace) : null;
+            const refPose = isGrip ? frame.getPose(gripSpace, refSpace) : null;
             const curPos  = refPose ? new THREE.Vector3(refPose.transform.position.x, refPose.transform.position.y, refPose.transform.position.z) : null;
             const curQuat = refPose ? new THREE.Quaternion(refPose.transform.orientation.x, refPose.transform.orientation.y, refPose.transform.orientation.z, refPose.transform.orientation.w) : null;
 
@@ -9069,7 +10037,7 @@ class Scene {
       }
 
       // 4. Stylus / Trigger Dominance
-      if (source.gamepad && source.gamepad.buttons[0] && source.gamepad.buttons[0].pressed) {
+      if (this._padOf(source)?.buttons?.[0]?.pressed) {
         if (this._vrAmbidextrousCursors || source.handedness === this._dominantHand) {
           this._activeHandedness = source.handedness;
         }
@@ -9095,7 +10063,7 @@ class Scene {
          // For 'rightPressed' logic here, we just need to re-query the hardware.
          return false; // Handled below safely
       }
-      return src.gamepad && src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed;
+      return !!this._padOf(src)?.buttons?.[0]?.pressed;
     };
     
     // We update this check to be more robust, delegating the actual evaluation to the specific activeSource later
@@ -10022,9 +10990,24 @@ class Scene {
       const delta = vec3.create();
       vec3.sub(delta, origin, gState.startPoint);
 
+      // GRAB GAIN — how far the world moves per unit of hand movement.
+      //
+      // 1:1 is the honest default and it is not always the comfortable one. With a controller
+      // your hand is braced and a grab is a deliberate haul; a fist gesture in mid-air is looser
+      // and the same motion throws the scene. matt on the AVP: "if i use the fist gesture to
+      // grip the world with a single hand, its too fast and aggressive."
+      //
+      // Applied to the DELTA rather than to the accumulated position, so the grab stays a pure
+      // scaling of your movement with no drift: startPoint still advances to the real hand each
+      // frame, so gain < 1 simply means the world lags your hand by a constant ratio rather than
+      // accumulating an offset that has to be paid back on release.
+      //
+      // The rotation is left alone: a rotation gain makes your hand and the world disagree about
+      // WHICH WAY IS UP, which is a different and much worse sensation than moving slowly.
+      const gGain = this.getGrabGain();
       // Threshold for jitter (Translation)
       if (vec3.length(delta) > 0.0001) {
-        this.moveWorld([delta[0], delta[1], delta[2]]);
+        this.moveWorld([delta[0] * gGain, delta[1] * gGain, delta[2] * gGain]);
         vec3.copy(gState.startPoint, origin);
         // #19: smooth the per-frame motion into the glide velocity (EMA).
         vec3.lerp(this._navGlide.vel, this._navGlide.vel, delta, 0.4);
@@ -10171,8 +11154,23 @@ class Scene {
     const pose = frame.getPose(space, refSpace);
     if (!pose) return;
 
-    const p = pose.transform.position;
-    const q = pose.transform.orientation;
+    let p = pose.transform.position;
+    let q = pose.transform.orientation;
+
+    // SCULPTING MUST AIM WHERE THE MENUS AIM. This path reads the raw targetRaySpace pose,
+    // which is the UNCORRECTED one — so without this the brush would keep the 30-degree-high
+    // visionOS hand ray while the panels used the corrected one, and the drawn spike would
+    // match neither. Read the same controller object _applyHandRayCorrection writes, so there
+    // is exactly one aim in the session.
+    if (source.hand) {
+      const _m = this._rayMatrixFor(source, frame, refSpace);
+      if (_m) {
+        if (!this._hrPv) { this._hrPv = new THREE.Vector3(); this._hrPq = new THREE.Quaternion(); this._hrPs = new THREE.Vector3(); this._hrPm = new THREE.Matrix4(); }
+        this._hrPm.fromArray(_m).decompose(this._hrPv, this._hrPq, this._hrPs);
+        p = { x: this._hrPv.x, y: this._hrPv.y, z: this._hrPv.z };
+        q = { x: this._hrPq.x, y: this._hrPq.y, z: this._hrPq.z, w: this._hrPq.w };
+      }
+    }
 
     // [v0.8.212] Detect physical movement to trigger auto-hide of desktop UI
     const posVec = vec3.fromValues(p.x, p.y, p.z);
@@ -10188,9 +11186,10 @@ class Scene {
       vec3.copy(this._vrLastPosRight, posVec);
     }
 
-    if (source.gamepad) {
-      for (let i = 0; i < source.gamepad.buttons.length; i++) {
-        if (source.gamepad.buttons[i].pressed) VRActivityDetected = true;
+    const _actPad = this._padOf(source);
+    if (_actPad) {
+      for (let i = 0; i < _actPad.buttons.length; i++) {
+        if (_actPad.buttons[i].pressed) VRActivityDetected = true;
       }
     }
 
@@ -10328,7 +11327,7 @@ class Scene {
     // LATCH TRIGGERS AFTER MENU INTERACTION
     // If the user was just pointing at a menu and clicked, the trigger is still pressed.
     // We must block ALL new strokes until that trigger is fully released to 0.
-    const trigger = source.gamepad && source.gamepad.buttons ? source.gamepad.buttons[0] : { pressed: false, value: 0 };
+    const trigger = this._padOf(source)?.buttons?.[0] || { pressed: false, value: 0 };
 
     // Set the latch if we are pointing at a menu and the trigger goes down
     if (this._isPointingAtMenu && trigger.value > 0.1) {
@@ -10378,7 +11377,16 @@ class Scene {
       const btnSession = this._xrSession;
       if (btnSession && btnSession.inputSources) {
         for (const src of btnSession.inputSources) {
-          if (src.gamepad) btnControllers.push({ handedness: src.handedness, buttons: src.gamepad.buttons });
+          // `src.gamepad` IS TRUTHY ON HANDS, AND ITS BUTTONS ARRAY IS EMPTY.
+          //
+          // An AVP hand source reports gamepad=true with buttons.length===0, so the old
+          // `if (src.gamepad)` test passed and then pushed a zero-length array: every button
+          // the sculpt manager asked about came back undefined, silently, on a device where
+          // pinch had already been detected perfectly well. The synthesised pad has to win
+          // wherever one exists — a hand's real pad carries nothing worth reading.
+          const mock = this._mockGamepads && this._mockGamepads[src.handedness];
+          const pad = mock || src.gamepad;
+          if (pad) btnControllers.push({ handedness: src.handedness, buttons: pad.buttons });
         }
       }
       this._lastXRControllers = btnControllers; // button-only: no matrix, by design
@@ -10573,7 +11581,11 @@ class Scene {
     }
 
     // 5. Stroke Lifecycle (Corrected API)
-    const buttons = source.gamepad.buttons;
+    // Through _padOf, because a visionOS hand reports a gamepad whose buttons array is EMPTY.
+    // Reading it directly left analogValue at 0, so isTriggerPressed was false, so canSculpt was
+    // false, and no stroke ever opened — with the pinch detected perfectly at every earlier
+    // stage. Measured: latch/mock/pad all fired 10 times, sculpting 0% of frames.
+    const buttons = this._padOf(source)?.buttons || [];
     // PHASE 11 Fix: If we are already sculpting/dragging with this hand, it IS the trigger state that matters
     // regardless of global dominance.
     const isDominant = (source.handedness === this._dominantHand);
@@ -10660,9 +11672,9 @@ class Scene {
 
     if (session && session.inputSources && !this._isPointingAtMenu && !this._wasPointingAtMenu) {
       for (let src of session.inputSources) {
-        if (src.handedness === nonDomHand && src.gamepad) {
+        if (src.handedness === nonDomHand) {
           // Button 0 (Index Trigger)
-          if (src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
+          if (this._padOf(src)?.buttons?.[0]?.pressed) {
             // Apply contextual override based on the active tool
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
@@ -11168,8 +12180,11 @@ class Scene {
             //
             // The stub still exists for a genuine hand source, which has no gamepad, so the
             // downstream code that reads buttons does not have to check.
-            const _realPad = (src.gamepad && src.gamepad.buttons && src.gamepad.buttons.length)
-              ? src.gamepad : null;
+            // _padOf answers with the gesture-synthesised pad for a hand and rejects an empty
+            // one, so the stub below is now only a last resort for a hand whose gestures have
+            // not been evaluated yet this session — it is no longer the normal hand path, which
+            // is what made every hand read as permanently unpressed.
+            const _realPad = this._padOf(src);
             const gamepad = _realPad
               || (src.hand ? { buttons: [{ pressed: false }, { pressed: false }] } : null);
             if (!gamepad) continue;
@@ -11232,7 +12247,7 @@ class Scene {
 
               xrControllers.push({
                 handedness: src.handedness,
-                buttons: src.gamepad.buttons,
+                buttons: gamepad.buttons, // resolved above; src.gamepad is empty on AVP hands
                 matrix: sceneMat, // VIRTUAL SCENE MATRIX
                 rayOrigin: controllerRayOrigin,
                 rayDirection: controllerRayDirection,
@@ -11264,8 +12279,8 @@ class Scene {
            } else {
              triggerValue = 0.0;
            }
-        } else if (source && source.gamepad && source.gamepad.buttons[0]) {
-          triggerValue = source.gamepad.buttons[0].value;
+        } else if (this._padOf(source)?.buttons?.[0]) {
+          triggerValue = this._padOf(source).buttons[0].value;
         }
 
         // Universal Sub Mode: Apply Effective Negative State to Tool
@@ -11432,10 +12447,10 @@ class Scene {
             if (!source.targetRaySpace) continue;
             const isLeft = source.handedness === 'left';
             
-            const pose = frame.getPose(source.targetRaySpace, refSpace);
-            if (!pose) continue;
+            // Through the shared accessor: a hand's raw targetRaySpace is the uncorrected ray.
+            const m = this._rayMatrixFor(source, frame, refSpace);
+            if (!m) continue;
 
-            const m = pose.transform.matrix;
             const origin = [m[12], m[13], m[14]];
             const untiltedDir = vec3.fromValues(-m[8], -m[9], -m[10]);
             vec3.normalize(untiltedDir, untiltedDir);

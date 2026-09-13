@@ -208,6 +208,14 @@ var getOptionsURL = function () {
   options.stylusLength = queryNumber(getVal('stylusLength'), 0.0, 0.30, 0.10);
   options.stylusOffset = queryNumber(getVal('stylusOffset'), -0.15, 0.15, 0.0);
   options.stylusTilt = queryNumber(getVal('stylusTilt'), -45.0, 45.0, 0.0);
+  // World-grab gain: how far the world moves per unit of hand movement. 1.0 is 1:1. Lower suits
+  // an unbraced hand gesture, which throws the scene at the same speed a controller grab hauls
+  // it. Floor of 0.25 rather than 0 so the grab can never become inert and look broken.
+  options.grabGain = queryNumber(getVal('grabGain'), 0.25, 2.0, 1.0);
+  // Pinch distance: skin-to-skin gap (metres) at which finger and thumb count as closed. 0 is
+  // contact; negative requires them pressed together. Measured deliberate pinches reach about
+  // -0.017, so the usable range sits well inside this.
+  options.pinchOn = queryNumber(getVal('pinchOn'), -0.010, 0.015, 0.0);
   options.gizmoScale = queryNumber(getVal('gizmoScale'), 5.0, 100.0, 15.625); // [5-100], default 15.625 (0.5 of 31.25)
   options.gizmoSizeMul = queryNumber(getVal('gizmoSizeMul'), 0.25, 2.0, 1.0); // user size multiplier for the VR transform gizmo
   // Centre handle of the VR gizmo carries the controller's ROTATION as well as its

@@ -92,7 +92,7 @@ check('the modifier has a single definition',
   /multiSelectHeld\(\) \{\s*\n\s*return !!this\._vrSecondaryTriggerPressed;\s*\n\s*\}/.test(SCENE),
   'four copies of "is the secondary trigger down" is four chances to disagree');
 check('...reading the flag Scene already computes every frame',
-  /this\._vrSecondaryTriggerPressed = !!\(nonDomSource/.test(SCENE),
+  /this\._vrSecondaryTriggerPressed = !!this\._padOf\(nonDomSource\)/.test(SCENE),
   'the gesture already existed and was already read — only the wire was missing');
 
 // ── coverage: every selection path honours it ────────────────────────────────

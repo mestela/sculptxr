@@ -87,6 +87,9 @@ const MM_TABS_W    = 50;    // left tab-strip width
 const MM_MENUBAR_H = 44;    // top menubar height (px) — must match actual rendered height
 // Body height is fixed so the mesh never changes dimensions on tab switch.
 const MM_BODY_H    = 456;   // height below menubar (scrollable content lives here)
+// Hands-only undo/redo strip pinned to the bottom. The body loses exactly this much when it is
+// shown, so the two never overlap and no content is hidden underneath it.
+const MM_UNDO_H    = 38;
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -167,6 +170,49 @@ const CSS = `
   flex-shrink: 0;
 }
 .mm-pin-btn:hover, .mm-pin-btn.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
+
+/* HANDS-ONLY CONTROLS — see the note in MiniPanel. Present in the markup, revealed by a class on
+   the root, so it stays a style change and needs only a repaint. A controller runtime has X/A
+   and a thumbstick for these. */
+/* ID-QUALIFIED ON PURPOSE. A bare .mm-hands-only display:none ties on specificity with
+   .mm-row display:flex, so source order decides and the row wins — the control then shows on a
+   controller, which is the one device it is meant to stay off. Qualifying with the root id
+   beats any single-class rule, and the reveal below beats this in turn.
+   (No backticks in here: this whole block is inside a JS template literal.) */
+#mm-root .mm-hands-only { display: none; }
+#mm-root.hands-only .mm-hands-only { display: flex; }
+#mm-root.hands-only #mm-undo-row { display: flex; }
+
+/* ABSOLUTE, AND THE BODY GIVES UP THE ROOM FOR IT.
+   #mm-body is position:absolute, so it is out of normal flow — a static sibling after it does
+   not land below it, it lands immediately after the menubar and draws across the top of the
+   panel. matt: "they seem to be drawing over/under the menu buttons at the top."
+   So the row is pinned to the bottom, and the body is shortened by exactly its height when the
+   row is shown, rather than the row being laid over content that is still there. */
+#mm-undo-row {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: ${MM_UNDO_H}px;
+  box-sizing: border-box;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #1e1e2e;
+  border-top: 1px solid #313244;
+}
+#mm-root.hands-only #mm-body { height: ${MM_BODY_H - MM_UNDO_H}px; }
+#mm-undo-row button {
+  flex: 1;
+  padding: 7px 0;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  background: #1e1e2e;
+  color: #a6adc8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+#mm-undo-row button:hover, #mm-undo-row button.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
 .mm-pin-btn.active {
   background: rgba(203,166,247,0.15);
   color: #cba6f7;
@@ -1009,6 +1055,11 @@ function buildShellHTML() {
       <button class="mm-menu-btn" data-menu="settings">Settings</button>
       <button class="mm-menu-btn" data-menu="about">About</button>
       <div style="flex:1"></div>
+      <!-- BACK TO THE WRIST PANEL. On a hands-only runtime there is no X/A button to swap with,
+           so the swap lives on the panels. Plain text, not a glyph: an icon that needs
+           explaining is worse than a word, and these are only ever read through the VR
+           rasteriser. -->
+      <button class="mm-pin-btn mm-hands-only" id="mm-mini-btn" title="Back to the wrist panel">Mini</button>
       <button class="mm-pin-btn" id="mm-pin-btn" title="Pin panel in world space">${ICON_PIN}</button>
     </div>
     <div id="mm-body">
@@ -1024,6 +1075,11 @@ function buildShellHTML() {
       </div>
       <div id="mm-content"></div>
       <div id="mm-sbar-track" class="mm-scrollbar-track"><div id="mm-sbar-thumb" class="mm-scrollbar-thumb"></div></div>
+    </div>
+    <!-- Bottom of the panel, hands-only: no thumbstick means no other way to undo. -->
+    <div id="mm-undo-row" class="mm-hands-only">
+      <button id="mm-undo">Undo</button>
+      <button id="mm-redo">Redo</button>
     </div>
   `;
 }
@@ -1504,6 +1560,8 @@ function buildMenuHTML_settings(main) {
 
   const triggerCurve  = ui.triggerCurve    ?? opts.triggerCurve    ?? 0.5;
   const stylusLength  = ui.stylusLength    ?? opts.stylusLength    ?? 0.10;
+  const grabGain      = ui.grabGain        ?? opts.grabGain        ?? 1.0;
+  const pinchOn       = ui.pinchOn         ?? opts.pinchOn         ?? 0.0;
   const stylusOffset  = ui.stylusOffset    ?? opts.stylusOffset    ?? 0.0;
   const stylusTilt    = ui.stylusTilt      ?? opts.stylusTilt      ?? 0;
   const gizmoSizeMul  = opts.gizmoSizeMul  ?? 1.0;
@@ -1552,6 +1610,21 @@ function buildMenuHTML_settings(main) {
       <span class="mm-lbl">Trigger sensitivity</span>
       <input type="range" id="mm-trigger" min="0" max="100" step="5" value="${Math.round(triggerCurve*100)}">
       <span class="mm-val" id="mm-trigger-val">${Math.round(triggerCurve*100)}%</span>
+    </div>
+
+    <div class="mm-row">
+      <span class="mm-lbl">Grab speed</span>
+      <input type="range" id="mm-grab-gain" min="25" max="200" step="5" value="${Math.round(grabGain*100)}">
+      <span class="mm-val" id="mm-grab-gain-val">${Math.round(grabGain*100)}%</span>
+    </div>
+
+    <!-- Hands only: a controller has a physical trigger and no pinch to calibrate. Shown in
+         millimetres because that is what it is — the gap between finger and thumb SURFACES at
+         which a click registers. Lower is tighter; negative needs them pressed together. -->
+    <div class="mm-row mm-hands-only">
+      <span class="mm-lbl">Pinch distance</span>
+      <input type="range" id="mm-pinch-on" min="-10" max="15" step="1" value="${Math.round(pinchOn*1000)}">
+      <span class="mm-val" id="mm-pinch-on-val">${Math.round(pinchOn*1000)}mm</span>
     </div>
 
     <div class="mm-section-title">Stylus</div>
@@ -2649,6 +2722,21 @@ export class MainMenuPanel extends HTMLVRPanel {
       this.markDirty();
     });
 
+    // Swap back to the wrist panel — announced, so Scene decides what the swap means.
+    const miniBtn = root.querySelector('#mm-mini-btn');
+    if (miniBtn) {
+      miniBtn.addEventListener('click', () => {
+        this._element.dispatchEvent(new CustomEvent('mm-show-mini', { bubbles: false }));
+      });
+    }
+
+    const _uBtn = root.querySelector('#mm-undo');
+    const _rBtn = root.querySelector('#mm-redo');
+    if (_uBtn) _uBtn.addEventListener('click', () =>
+      this._element.dispatchEvent(new CustomEvent('mm-undo', { detail: { redo: false }, bubbles: false })));
+    if (_rBtn) _rBtn.addEventListener('click', () =>
+      this._element.dispatchEvent(new CustomEvent('mm-undo', { detail: { redo: true }, bubbles: false })));
+
     // Pin button
     const pinBtn = root.querySelector('#mm-pin-btn');
     if (pinBtn) {
@@ -2997,6 +3085,20 @@ export class MainMenuPanel extends HTMLVRPanel {
       if (ui) ui.triggerCurve = f;
       opts.saveOption('triggerCurve', f, 500);
     }, (v) => `${v}%`);
+
+    // Grab speed — world movement per unit of hand movement while gripping.
+    this._wireSlider(q('#mm-grab-gain'), q('#mm-grab-gain-val'), (v) => {
+      const f = v / 100;
+      if (ui) ui.grabGain = f;
+      opts.saveOption('grabGain', f, 500);
+    }, (v) => `${v}%`);
+
+    // Pinch distance — millimetres of finger-to-thumb gap that still counts as a click.
+    this._wireSlider(q('#mm-pinch-on'), q('#mm-pinch-on-val'), (v) => {
+      const f = v / 1000;
+      if (ui) ui.pinchOn = f;
+      opts.saveOption('pinchOn', f, 500);
+    }, (v) => `${v}mm`);
 
     // Stylus
     this._wireSlider(q('#mm-stylus-len'), q('#mm-stylus-len-val'), (v) => {
