@@ -4507,10 +4507,13 @@ class Scene {
     // transient-pointer at all (Quest hands), while a click that our thresholds miss still lands
     // if the platform saw it.
     //
-    // LIMITATION, stated rather than hidden: a transient-pointer source reports handedness
-    // 'none', so it cannot be attributed to a hand. It is credited to the dominant hand, which
-    // is the one doing the pointing. Pinching the OTHER hand while aiming with the dominant one
-    // will read as a dominant-hand press. window._sysPinch = false disables it.
+    // WHICH HAND IT BELONGS TO IS DECIDED BY OUR OWN JOINTS, not by the source. A
+    // transient-pointer source reports handedness 'none', and crediting it to the dominant hand
+    // unconditionally meant an offhand pinch read as a dominant-hand press — which is how
+    // pinching the left hand alone started a smooth stroke on visionOS. The dispatch compares
+    // the two hands' measured pinch gaps and declines the credit when the other hand is clearly
+    // the closed one; with no measurement available it credits the dominant hand as before.
+    // window._sysPinch = false disables it entirely; window._sysPinchMargin is the margin.
     session.addEventListener('selectstart', (e) => {
       if (e.inputSource?.targetRayMode === 'transient-pointer') this._sysPinchActive = true;
     });
@@ -9370,6 +9373,11 @@ class Scene {
           const F_EXIT  = window._fistExit   ?? 0.065;
 
           isPinching = pinchGap < P_ON;
+          // KEPT FOR THE SYSTEM-PINCH ATTRIBUTION BELOW. A transient-pointer source cannot say
+          // which hand pinched; our own joints can, and the comparison between the two hands is
+          // what decides who a platform pinch belongs to.
+          if (!this._pinchGap) this._pinchGap = {};
+          this._pinchGap[hKey] = pinchGap;
           latch.fist = latch.fist ? (fistDist < F_EXIT) : (fistDist < F_ENTER);
           isFist = latch.fist;
           latch.pinch = isPinching;   // recorded for the fingertip dots, not used as state
@@ -9457,10 +9465,30 @@ class Scene {
           if (pm && wrist && wrist.transform) this._drivePuppetHead(pm, wrist.transform);
         }
 
-        // The platform's own pinch counts as a press for the pointing hand (see enterXR).
+        // The platform's own pinch counts as a press for the pointing hand (see enterXR) —
+        // UNLESS OUR OWN JOINTS SAY IT WAS THE OTHER HAND.
+        //
+        // A transient-pointer source reports handedness 'none', so the platform cannot tell us
+        // who pinched and this credited the dominant hand unconditionally. That is the documented
+        // limitation in enterXR, and it is what made an offhand pinch read as a dominant-hand
+        // press: matt, on visionOS, "pinching the left hand starts smooth straight away... its
+        // still directly doing a smooth when only the left pinch is active". Gating the tool
+        // swap on both triggers could not help, because this was fabricating the second one.
+        //
+        // We cannot name the pinching hand from the platform, but we can rule one out: if the
+        // OTHER hand's measured gap is clearly smaller than this one's, the pinch is theirs. A
+        // relative comparison rather than a threshold, so it carries across devices whose
+        // absolute gaps differ by more than this margin does. With no measurement to go on
+        // (no joints, no permission) it falls through to the old behaviour, which is the whole
+        // point of the feature: catching a pinch our own thresholds missed.
         if (window._sysPinch !== false && this._sysPinchActive
             && source.handedness === this._dominantHand) {
-          isPinching = true;
+          const _dk = this._dominantHand === 'left' ? 'L' : 'R';
+          const _ok = _dk === 'L' ? 'R' : 'L';
+          const _dg = this._pinchGap?.[_dk], _og = this._pinchGap?.[_ok];
+          const _margin = window._sysPinchMargin ?? 0.010;
+          const _otherOwnsIt = Number.isFinite(_dg) && Number.isFinite(_og) && _og < _dg - _margin;
+          if (!_otherOwnsIt) isPinching = true;
         }
 
         mockGamepad = {
@@ -12412,7 +12440,27 @@ class Scene {
     let isColorSmoothOverride = false;
     let previousToolIndex = -1;
 
-    if (session && session.inputSources && !this._isPointingAtMenu && !this._wasPointingAtMenu) {
+    // BOTH TRIGGERS, NOT JUST THE OFFHAND ONE.
+    //
+    // This asked only whether the non-dominant trigger was held, and swapped the active tool to
+    // Smooth on the spot. With controllers that is invisible: the swap sits there doing nothing
+    // until you pull the dominant trigger, so "held the offhand trigger" and "held both" look
+    // the same from inside. With hands on visionOS they do not — matt: "pinching the left hand
+    // starts smooth straight away. it should be if both left AND right pinch (ie trigger) are
+    // pressed that smooth should work."
+    //
+    // A modifier is a modifier: it qualifies an action rather than being one. So the dominant
+    // trigger has to be down as well, and the override is armed by the pair.
+    let _domPressed = false;
+    if (session && session.inputSources) {
+      for (let src of session.inputSources) {
+        if (src.handedness === this._dominantHand && this._padOf(src)?.buttons?.[0]?.pressed) {
+          _domPressed = true; break;
+        }
+      }
+    }
+    if (session && session.inputSources && _domPressed
+        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {
       for (let src of session.inputSources) {
         if (src.handedness === nonDomHand) {
           // Button 0 (Index Trigger)

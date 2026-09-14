@@ -140,6 +140,10 @@
 //                          gesture recogniser with our own thresholds on a runtime that has both
 //   AVP_INJECT=rawhandpad the hand pad is passed through unnormalised, so grasp lands on the
 //                          index bound to A/X and a fist toggles subtract or opens the menu
+//   AVP_INJECT=syspinchdom     a platform pinch is credited to the dominant hand whichever hand
+//                              actually made it
+//   AVP_INJECT=offhandsmooth   the offhand trigger alone arms Smooth, so a left pinch starts
+//                              smoothing with nothing else held
 //   AVP_INJECT=foveateall      maximum foveation on every runtime, gaze-tracked or not
 //   AVP_INJECT=nofistfill      a one-button hand pad drops the fist latch on the floor
 //   AVP_INJECT=fistbeatsruntime the runtime's own grasp is never remembered, so our fist keeps
@@ -248,7 +252,7 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('          if (_legacyMiniHud && source.handedness === this._dominantHand && this._nonDomWristMatrix) {',
         '          if (source.handedness === this._dominantHand && this._nonDomWristMatrix) {', 'suppression gate');
   } else if (inj === 'nosyspinch') {
-    sub("          isPinching = true;\n        }\n\n        mockGamepad = {", '\n        }\n\n        mockGamepad = {', 'system pinch');
+    sub("          if (!_otherOwnsIt) isPinching = true;\n        }\n\n        mockGamepad = {", '\n        }\n\n        mockGamepad = {', 'system pinch');
   } else if (inj === 'nosysheal') {
     sub('    if (!_anyTransient) this._sysPinchActive = false;', '', 'pinch self-heal');
   } else if (inj === 'loosepinch') {
@@ -329,6 +333,11 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('    if (!this._isHandSource(src)) return pad;', '    return pad;', 'hand pad normalise');
   } else if (inj === 'keepscale') {
     sub('                  if (window._panelKeepScale !== true) _p.mesh.scale.set(1, _hp.sy, 1);', '', 'scale normalise');
+  } else if (inj === 'syspinchdom') {
+    sub('          if (!_otherOwnsIt) isPinching = true;', '          isPinching = true;', 'system pinch attribution');
+  } else if (inj === 'offhandsmooth') {
+    sub('    if (session && session.inputSources && _domPressed\n        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {',
+        '    if (session && session.inputSources\n        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {', 'both-trigger gate');
   } else if (inj === 'foveateall') {
     sub('        : (Number.isFinite(getOptionsURL()[\'foveation\']) ? getOptionsURL()[\'foveation\']\n                                                         : (this._isQuestStandalone ? 0 : 1));',
         '        : 1;', 'foveation gate');
@@ -753,6 +762,28 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /_vrTrigHeld = \{ L: false, R: false, G: false \};/.test(SRC)
       && /_vrPressOwner = \{ L: null, R: null, G: null \};/.test(SRC));
 
+  // ── the smooth modifier qualifies an action rather than being one ─────────
+  check('the smooth override needs the dominant trigger as well as the offhand one',
+    /if \(session && session\.inputSources && _domPressed\s*\n\s*&& !this\._isPointingAtMenu && !this\._wasPointingAtMenu\) \{/.test(SRC),
+    'on hands the offhand pinch alone swapped the tool to Smooth and started smoothing');
+  check('...with the dominant press read through the same accessor as every other press',
+    /if \(src\.handedness === this\._dominantHand && this\._padOf\(src\)\?\.buttons\?\.\[0\]\?\.pressed\) \{/.test(SRC),
+    'src.gamepad directly is how hands got missed everywhere else in this file');
+
+  // ...AND THE SECOND TRIGGER THE GATE WAS LOOKING FOR WAS BEING FABRICATED. A transient-pointer
+  // source has handedness 'none', so a platform pinch was credited to the dominant hand whichever
+  // hand made it — an offhand pinch arrived as a dominant press and armed the pair by itself.
+  check('a platform pinch is refused when our own joints say the other hand made it',
+    /const _otherOwnsIt = Number\.isFinite\(_dg\) && Number\.isFinite\(_og\) && _og < _dg - _margin;/.test(SRC)
+      && /if \(!_otherOwnsIt\) isPinching = true;/.test(SRC),
+    'crediting the dominant hand unconditionally turns an offhand pinch into a dominant press');
+  check('...by comparing the two hands rather than thresholding one',
+    /this\._pinchGap\[hKey\] = pinchGap;/.test(SRC),
+    'absolute gaps differ per device by more than this margin does');
+  check('...and falls through to the old behaviour with no measurement to go on',
+    /Number\.isFinite\(_dg\) && Number\.isFinite\(_og\)/.test(SRC),
+    'catching a pinch our own thresholds missed is the entire point of the feature');
+
   // ── foveation is off where it is not gaze-driven ──────────────────────────
   // three defaults it to maximum and this app never touched it. On an eye-tracked headset the
   // sharp region follows your gaze and you never see it; on a Quest it is fixed and radial, and
@@ -1102,7 +1133,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /session\.addEventListener\('selectend', _sysUp\);[\s\S]{0,80}?session\.addEventListener\('select', _sysUp\);/.test(SRC),
     'a missed release latches the trigger down for the rest of the session');
   check('...OR\u2019d into our detection, not replacing it',
-    /if \(window\._sysPinch !== false && this\._sysPinchActive[\s\S]{0,120}?isPinching = true;/.test(SRC),
+    /if \(window\._sysPinch !== false && this\._sysPinchActive[\s\S]{0,520}?isPinching = true;/.test(SRC),
     'Quest hands have no transient-pointer, and sculpting still needs the joint measurement');
 
   // NO CLICK ASSISTS. Both were written to paper over a pinch that was being suppressed near
