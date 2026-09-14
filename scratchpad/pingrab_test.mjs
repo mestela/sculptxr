@@ -260,9 +260,15 @@ const makePin = (m) => {
 // seem to care about the preselect highlight" — because the highlight and the grab were
 // answering from two different pick rules.
 {
+  // ...and on the selected mesh not being LOCKED, which is the other half of the same bug: this
+  // fallback does not go through picking, so the lock every other route honours never reached it.
   check('the air fallback is gated on nothing rig-ish being under the controller',
-    /if \(!mesh && !rigUnder && this\._main\.getMesh\(\)/.test(GRAB),
+    /if \(!mesh && !rigUnder && !_selLocked && this\._main\.getMesh\(\)/.test(GRAB),
     'a miss while aiming at a pin must mean "you missed", not "take the body"');
+  check('...and never hands back a LOCKED mesh',
+    /const _selLocked = !!\(this\._main\.getMesh\(\) && this\._main\.getMesh\(\)\._selectLocked\);/.test(GRAB)
+      && /if \(mesh\._selectLocked\) return;/.test(GRAB),
+    'picking skips a locked mesh; this path reads the selection directly and skipped the lock');
   check('...reading the same highlight the user can SEE',
     /const rigUnder = \(this\._main\._skelHighlightId \?\? -1\) >= 0\s*\n?\s*\|\| \(this\._main\._pinHighlightId \?\? -1\) >= 0;/.test(GRAB),
     'the highlight is a promise; anything else makes the two disagree about what is under you');

@@ -45,17 +45,10 @@ class Grab extends SculptBase {
     return !!this._grabbedMesh || !!this._vrPinGesture || this._vrPinGrabs.size > 0;
   }
 
+  // One implementation, in Skeleton, because the Select tool needs the identical ray — see the
+  // note there. Kept as a method so every call site in this file reads the same as before.
   _pinControllerRay(controller) {
-    if (!controller?.matrix) return null;
-    const origin = controller.rayOrigin ? vec3.clone(controller.rayOrigin) : vec3.create();
-    const direction = controller.rayDirection ? vec3.clone(controller.rayDirection) : vec3.create();
-    if (!controller.rayOrigin || !controller.rayDirection) {
-      vec3.transformMat4(origin, [0, 0, 0], controller.matrix);
-      vec3.transformMat4(direction, [0, 0, -1], controller.matrix);
-      vec3.sub(direction, direction, origin);
-      vec3.normalize(direction, direction);
-    }
-    return { origin, direction };
+    return Skeleton.controllerRay(controller);
   }
 
   _pickPinForController(picking, controller) {
@@ -590,6 +583,20 @@ class Grab extends SculptBase {
     // preselection is exactly how the mouse and VR picks drifted apart earlier.
     if (!this._main._xrSession && !this._grabbedMesh) {
       Skeleton.hoverRigFromMouse(this._main, this._main.getPicking?.());
+    } else if (this._grabbedMesh) {
+      // A GRAB IN FLIGHT IS NOT A PRESELECTION.
+      //
+      // The highlight answers "what would the next press take". Once the press has happened
+      // there is no next press to answer for, and the object is plainly moving with your hand —
+      // it does not need a box to say which one it is. Nothing was clearing it, because the
+      // hover that sets it is skipped for the duration of the drag, so the last preselection
+      // simply stayed lit and rode the object around. matt: "i meant a preselect highlight that
+      // runs based on what is nearest and will be selected in the viewport, not a preselect
+      // highlight around the thing while its actively being moved."
+      //
+      // Released, the hover above resumes on the next frame and lights whatever is under the
+      // cursor then — which may well be the same object, and correctly so.
+      this._main.setMeshHoverHighlight?.(-1);
     }
 
     const main = this._main;
@@ -929,6 +936,14 @@ class Grab extends SculptBase {
               || (this._main._pinHighlightId ?? -1) !== wasP) {
             Skeleton.updateVisuals(this._main);
           }
+          // ...and an ordinary mesh under the ray gets the outline, which is the only
+          // preselection it can carry. Same promise as the rig highlight: what the trigger
+          // takes, shown BEFORE you pull it.
+          Skeleton.applyMeshHover(this._main, node ? null : mesh);
+        } else {
+          // Holding it is not aiming at it — see the note in preUpdate. The outline goes the
+          // moment the grab takes something, and the hover brings it back on release.
+          this._main.setMeshHoverHighlight?.(-1);
         }
 
         // THE AIR FALLBACK MUST NOT FIRE WHEN YOU WERE AIMING AT THE RIG.
@@ -947,7 +962,16 @@ class Grab extends SculptBase {
         // you, so which one answered depended on where the nearest rig node happened to be.
         const rigUnder = (this._main._skelHighlightId ?? -1) >= 0
           || (this._main._pinHighlightId ?? -1) >= 0;
-        if (!mesh && !rigUnder && this._main.getMesh() && this._main.getMesh().isVisible()) {
+        // ...AND NOT WHEN THE SELECTED MESH IS LOCKED, which is the other half of the same bug.
+        //
+        // Picking skips a locked mesh, so the ray can never take one -- but this fallback does
+        // not go through picking at all, it reads the selection directly. matt locked the skin,
+        // hid the rig so nothing would be lit, reached for another piece, missed, and the
+        // fallback handed him the locked skin: "if something is locked, it just shouldn't be
+        // able to be moved." A lock that every route honours except the one that bypasses
+        // picking is not a lock.
+        const _selLocked = !!(this._main.getMesh() && this._main.getMesh()._selectLocked);
+        if (!mesh && !rigUnder && !_selLocked && this._main.getMesh() && this._main.getMesh().isVisible()) {
           mesh = this._main.getMesh();
         }
         if (!mesh && rigUnder) {
@@ -959,6 +983,7 @@ class Grab extends SculptBase {
 
         if (mesh) {
           if (mesh._isVoxel) return; // LOCK TRANSFORM
+          if (mesh._selectLocked) return; // and a locked mesh is not takeable by any route
           this._press(active.handedness, { OUTCOME: 'took mesh #' + mesh.getID(),
             kind: mesh._isPinTarget ? 'pin' : (mesh._isBone ? 'bone/joint' : 'ordinary mesh') });
           this._grabbedMesh = mesh;

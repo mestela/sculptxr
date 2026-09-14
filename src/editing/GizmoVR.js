@@ -264,8 +264,10 @@ class GizmoVR {
 
   update(camera) {
     // 1. Calculate Center
-    let meshes = this._main.getSelectedMeshes();
-    if (meshes.length === 0 && this._main.getMesh()) {
+    let meshes = this._main.getTransformableMeshes();
+    // The fallback honours the lock too -- otherwise it hands the gizmo straight back the mesh
+    // the filter above just removed.
+    if (meshes.length === 0 && this._main.getMesh() && !this._main.getMesh()._selectLocked) {
       meshes = [this._main.getMesh()];
     }
     const center = [0.0, 0.0, 0.0];

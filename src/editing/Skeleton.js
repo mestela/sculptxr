@@ -4,7 +4,7 @@ import RigPending from './RigPending.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
-import { mat4 } from 'gl-matrix';
+import { mat4, vec3 } from 'gl-matrix';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
@@ -1950,6 +1950,17 @@ function applyRigHover(main, node) {
   }
 }
 
+// THE OTHER HALF OF THE SAME ANSWER. Every hover route already computes what is under the
+// pointer and then throws the result away unless it is a rig node; this keeps the other case.
+// Cheap to call every time: setMeshHoverHighlight returns on its first line when the id has not
+// moved, which is the overwhelming majority of frames.
+function applyMeshHover(main, mesh) {
+  if (hoverFrozen(main)) return;
+  const on = Skeleton.displayFlag('meshHover') && mesh && !isRigNode(mesh);
+  main.setMeshHoverHighlight?.(on ? mesh.getID() : -1);
+}
+Skeleton.applyMeshHover = applyMeshHover;
+
 function applyRigHovers(main, nodes, primaryNode, hands = []) {
   if (hoverFrozen(main)) return;
   const jointIds = nodes.filter((n) => n && !n._isPinTarget).map((n) => n.getID());
@@ -2022,6 +2033,7 @@ Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
     return got;
   });
   applyRigHover(main, isRigNode(hit) ? hit : null);
+  applyMeshHover(main, hit);
 };
 
 // VR: pick from the controller ray Scene supplies. NOT derived from the controller matrix —
@@ -2042,21 +2054,56 @@ Skeleton.hoverRigFromRay = function (main, picking, origin, dir, meshes) {
 // VR Grab supplies a complete controller snapshot even though Scene dispatches the tool
 // through the dominant hand. Pick both rays so each controller gets independent preselection;
 // keep the dominant ray in the legacy singular fields used by face-button actions.
+// A CONTROLLER'S AIMING RAY, in engine space. Lives here because two tools need exactly the
+// same one: Grab's hover branch and the Select tool both feed it to hoverRigFromRays, and two
+// implementations of "where is this controller pointing" is how the mouse and VR picks drifted
+// apart the last time. Prefers the ray Scene computed; falls back to the controller matrix.
+Skeleton.controllerRay = function (controller) {
+  if (!controller || !controller.matrix) return null;
+  if (controller.rayOrigin && controller.rayDirection) {
+    return { origin: vec3.clone(controller.rayOrigin), direction: vec3.clone(controller.rayDirection) };
+  }
+  const origin = vec3.create();
+  const direction = vec3.create();
+  vec3.transformMat4(origin, [0, 0, 0], controller.matrix);
+  vec3.transformMat4(direction, [0, 0, -1], controller.matrix);
+  vec3.sub(direction, direction, origin);
+  vec3.normalize(direction, direction);
+  return { origin, direction };
+};
+
 Skeleton.hoverRigFromRays = function (main, picking, rays, primaryHand) {
   if (!main || !picking || !rays?.length || !hoverDue(main, 'vr')) return;
-  const vis = main.getMeshes().filter((m) => m.isVisible() && isRigNode(m));
+  // ORDINARY MESHES ARE CANDIDATES HERE TOO.
+  //
+  // This list was filtered to rig nodes, so in VR a mesh could never BE the hit and the hover
+  // had nothing to say about one -- the mesh outline only ever appeared on the frame the
+  // trigger went down, because the block that set it lives in the trigger branch. From inside
+  // the headset that is simply "there are no highlights". matt: "i have them all turned off
+  // apart from mesh hover, but i get no highlights."
+  //
+  // Safe to widen, and this is the part worth being clear about: the x-ray property the filter
+  // was protecting -- skin must not occlude the bone behind it -- is enforced INSIDE the pick,
+  // by the rig-beats-mesh rule, not by leaving meshes out of the list. A bone under the ray
+  // still wins over the body in front of it; a mesh wins only where no rig node is in reach, or
+  // where it is furniture hung off one.
+  const vis = main.getMeshes().filter((m) => m.isVisible() && (isRigNode(m) || m.isPickable !== false));
   let hoveredBone = null;
   const hits = rays.map(({ origin, direction }) => {
-    const hit = pickPreserving(picking, () => {
+    return pickPreserving(picking, () => {
       const got = picking.intersectionRayMeshes(vis, origin, direction, true) ? picking.getMesh() : null;
       if (picking._rigHitSegment) hoveredBone = picking._rigHitSegment;
       return got;
     });
-    return isRigNode(hit) ? hit : null;
   });
   main._rigHoverBone = hoveredBone;
   const primaryIndex = Math.max(0, rays.findIndex((r) => r.handedness === primaryHand));
-  applyRigHovers(main, hits, hits[primaryIndex] || null, rays.map((r) => r.handedness));
+  const rigHits = hits.map((h) => (isRigNode(h) ? h : null));
+  applyRigHovers(main, rigHits, rigHits[primaryIndex] || null, rays.map((r) => r.handedness));
+  // ONE BOX, so it follows the PRIMARY hand. The rig can light a node per controller because
+  // each node draws its own marker; there is a single outline object and two of them pointing
+  // at different meshes has no answer.
+  applyMeshHover(main, hits[primaryIndex]);
 };
 
 Skeleton.setHighlight = function (main, joint) {
@@ -4466,6 +4513,17 @@ const DISPLAY_FLAGS = {
   // rotation as a whole, which is the thing you want when judging a curve rather than editing
   // one key of it.
   gnomonsAll: ['_boneShowGnomonsAll', 'boneShowGnomonsAll', false],
+  // THE HOVER OUTLINE ON ORDINARY MESHES -- the same yellow box the outliner draws, driven from
+  // the viewport by the selection-style tools. A joint under the ray warms up and a mesh did
+  // not, so with the rig hidden (the state in which meshes ARE what you reach for) there was no
+  // preselection at all and you pressed on faith. matt: "maybe grab should also have an option
+  // for those preselect highlights on meshes? that would make it more clear whats going on."
+  //
+  // DELIBERATELY NOT IN DECOR_FLAGS. Hiding all decorations is exactly the moment this matters
+  // most -- it is the state where the rig stops being pickable and meshes take over -- so the
+  // master switch that clears the rig off the screen must not take the mesh's own marker with
+  // it. snapPlane/snapAxis sit outside that set for the same kind of reason.
+  meshHover: ['_meshHoverHighlight', 'meshHoverHighlight', true],
 };
 Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
 Skeleton.flushBatches = flushBatches;

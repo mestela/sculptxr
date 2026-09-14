@@ -525,8 +525,10 @@ class Gizmo {
   }
 
   _computeCenterGizmo(center = [0.0, 0.0, 0.0]) {
-    var meshes = this._main.getSelectedMeshes();
-    if (meshes.length === 0 && this._main.getMesh()) {
+    var meshes = this._main.getTransformableMeshes();
+    // ...and the fallback to the active mesh honours the lock too, or it hands the gizmo back
+    // exactly the mesh the filter above just removed.
+    if (meshes.length === 0 && this._main.getMesh() && !this._main.getMesh()._selectLocked) {
       meshes = [this._main.getMesh()];
     }
 
@@ -624,7 +626,7 @@ class Gizmo {
     //   min 20 cm (10 su) → always clearly visible
     //   max 60 cm (30 su) → never overwhelming
     var scaleFactor = 0.30 * vrScale; // default 30 cm
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
     if (meshes.length > 0) {
       var mesh0 = meshes[0];
       if (mesh0.getOctree) {
@@ -765,7 +767,7 @@ class Gizmo {
   }
 
   _saveEditMatrices() {
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
 
     // translation part
     var center = this._computeCenterGizmo();
@@ -891,7 +893,7 @@ class Gizmo {
     angle %= Math.PI * 2;
     var nbAxis = this._selected._nbAxis;
 
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
     for (var i = 0; i < meshes.length; ++i) {
       var mrot = meshes[i].getEditMatrix();
       mat4.identity(mrot);
@@ -982,7 +984,7 @@ class Gizmo {
   _updateMatrixTranslate(inter) {
     var tmp = [0, 0, 0];
 
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
     for (var i = 0; i < meshes.length; ++i) {
       vec3.transformMat4(tmp, inter, this._editScaleRotInv[i]);
       
@@ -1118,7 +1120,7 @@ class Gizmo {
   }
 
   _updateTrackballEdit() {
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
     var v0 = this._trackStartVec;
     var v1 = this._arcballVec(this._main._mouseX, this._main._mouseY);
 
@@ -1178,7 +1180,7 @@ class Gizmo {
       inter[nbAxis] += scaleMult;
     }
 
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
     for (var i = 0; i < meshes.length; ++i) {
       var edim = meshes[i].getEditMatrix();
       mat4.identity(edim);
@@ -1223,9 +1225,20 @@ class Gizmo {
   render(camera) {
     this._updateMatrices(camera);
 
+    // NOTHING TO MOVE, NOTHING TO DRAW.
+    //
+    // This state is reachable two ways now: clicking empty space in the outliner drops the
+    // selection outright, and a selection made entirely of LOCKED meshes filters down to
+    // nothing. A gizmo left floating at the world origin over neither is an offer to drag
+    // something that is not there -- every handle it draws is inert, because every loop that
+    // would move something iterates the same empty list.
+    const _movable = this._main.getTransformableMeshes().length > 0
+      || !!(this._main.getMesh() && !this._main.getMesh()._selectLocked);
+    if (this._group) this._group.visible = _movable;
+    if (!_movable) return;
+
     // Hide all first, Three.js handles rendering via scene graph
     if (this._group) {
-      this._group.visible = true;
       this._group.children.forEach(child => child.visible = false);
     }
 
@@ -1289,7 +1302,7 @@ class Gizmo {
   // object then moves through the scene graph natively — children and the
   // wireframe follow for free, and the shader's uEM preview is a no-op.
   _applyEditLive() {
-    var meshes = this._main.getSelectedMeshes();
+    var meshes = this._main.getTransformableMeshes();
     for (var i = 0; i < meshes.length; ++i) {
       if (!this._startLocal[i]) continue;
       var em = meshes[i].getEditMatrix();

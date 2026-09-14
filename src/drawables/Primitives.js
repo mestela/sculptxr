@@ -191,6 +191,131 @@ var createCylinderArray = function (
   };
 };
 
+// An ALL-QUAD cylinder. `createCylinderArray` above fans each cap to a single pole vertex and
+// splits every side quad into two tris, so it can never be reversed: Reversion.computeReverse
+// only works on a mesh that IS the subdivision of a coarser one, and a triangle fan is not.
+//
+// Here the sides are a ring grid and each cap is a square lattice whose PERIMETER IS THE RING
+// (no pole), so the whole thing is quads with only the four lattice corners extraordinary --
+// exactly the cube's situation, which reverses fine. Subdivide it and Reverse walks it back
+// down to a clean low-poly cylinder.
+//
+// radSegments is rounded to a multiple of 4, because a lattice with capSegments per side has
+// 4*capSegments perimeter points and those points have to BE the ring's vertices.
+var createCylinderQuadArray = function (radius = 0.5, height = 1.0, radSegments = 32, heightSegments = 2) {
+  var m = Math.max(1, Math.round(radSegments / 4)); // cap lattice segments per side
+  var N = m * 4;                                    // actual radial segments
+  var H = Math.max(1, Math.round(heightSegments));
+  var heightHalf = height * 0.5;
+
+  var nbInner = (m - 1) * (m - 1);                  // cap lattice vertices NOT on the ring
+  var topBase = (H + 1) * N;
+  var botBase = topBase + nbInner;
+  var nbVertices = botBase + nbInner;
+  var nbFaces = H * N + 2 * m * m;
+
+  var vAr = new Float32Array(nbVertices * 3);
+  var fAr = new Uint32Array(nbFaces * 4);
+
+  var i = 0;
+  var j = 0;
+  var a = 0;
+  var b = 0;
+  var k = 0;
+
+  // Rings, top (i = 0) to bottom (i = H). Same parametrisation as the tri cylinder:
+  // x = sin(u), z = cos(u), so increasing j runs +z -> +x -> -z, counter-clockwise seen
+  // from above, which is what makes the cap winding below point outwards.
+  for (i = 0; i <= H; ++i) {
+    var y = heightHalf - i * height / H;
+    for (j = 0; j < N; ++j) {
+      var u = Math.PI * 2 * j / N;
+      k = 3 * (i * N + j);
+      vAr[k] = radius * Math.sin(u);
+      vAr[k + 1] = y;
+      vAr[k + 2] = radius * Math.cos(u);
+    }
+  }
+
+  // Lattice point (a, b) -> index into the ring, or -1 when it is an interior point.
+  // The four edges are walked in one loop, (0,0) -> (m,0) -> (m,m) -> (0,m), so the walk
+  // circulates the same way the ring does.
+  var perim = function (aa, bb) {
+    if (bb === 0 && aa < m) return aa;
+    if (aa === m && bb < m) return m + bb;
+    if (bb === m && aa > 0) return 2 * m + (m - aa);
+    if (aa === 0 && bb > 0) return 3 * m + (m - bb);
+    return -1;
+  };
+
+  var capVert = function (isTop, aa, bb) {
+    var p = perim(aa, bb);
+    if (p >= 0) return (isTop ? 0 : H) * N + p;
+    return (isTop ? topBase : botBase) + (bb - 1) * (m - 1) + (aa - 1);
+  };
+
+  // Interior lattice points by Coons interpolation of the four boundary edges. The boundary
+  // is a circle, so this fills the disc smoothly for any m; for m = 2 it is just the centre.
+  var px = function (isTop, aa, bb) { return vAr[capVert(isTop, aa, bb) * 3]; };
+  var pz = function (isTop, aa, bb) { return vAr[capVert(isTop, aa, bb) * 3 + 2]; };
+  for (var t = 0; t < 2; ++t) {
+    var isTop = t === 0;
+    var yCap = isTop ? heightHalf : -heightHalf;
+    for (b = 1; b < m; ++b) {
+      for (a = 1; a < m; ++a) {
+        var s = a / m;
+        var q = b / m;
+        var x = (1 - q) * px(isTop, a, 0) + q * px(isTop, a, m) + (1 - s) * px(isTop, 0, b) + s * px(isTop, m, b) -
+          ((1 - s) * (1 - q) * px(isTop, 0, 0) + s * (1 - q) * px(isTop, m, 0) + (1 - s) * q * px(isTop, 0, m) + s * q * px(isTop, m, m));
+        var z = (1 - q) * pz(isTop, a, 0) + q * pz(isTop, a, m) + (1 - s) * pz(isTop, 0, b) + s * pz(isTop, m, b) -
+          ((1 - s) * (1 - q) * pz(isTop, 0, 0) + s * (1 - q) * pz(isTop, m, 0) + (1 - s) * q * pz(isTop, 0, m) + s * q * pz(isTop, m, m));
+        k = 3 * ((isTop ? topBase : botBase) + (b - 1) * (m - 1) + (a - 1));
+        vAr[k] = x;
+        vAr[k + 1] = yCap;
+        vAr[k + 2] = z;
+      }
+    }
+  }
+
+  var id = 0;
+
+  // Sides. Down the wall first, then around: (i, j) -> (i+1, j) -> (i+1, j+1) -> (i, j+1)
+  // is the order that points outwards; the reverse of it faces into the tube.
+  for (i = 0; i < H; ++i) {
+    for (j = 0; j < N; ++j) {
+      var jn = j === N - 1 ? 0 : j + 1;
+      k = 4 * id++;
+      fAr[k] = i * N + j;
+      fAr[k + 1] = (i + 1) * N + j;
+      fAr[k + 2] = (i + 1) * N + jn;
+      fAr[k + 3] = i * N + jn;
+    }
+  }
+
+  // Caps. The lattice order is already counter-clockwise seen from +y, so the top takes it
+  // as-is and the bottom takes it reversed.
+  for (b = 0; b < m; ++b) {
+    for (a = 0; a < m; ++a) {
+      k = 4 * id++;
+      fAr[k] = capVert(true, a, b);
+      fAr[k + 1] = capVert(true, a + 1, b);
+      fAr[k + 2] = capVert(true, a + 1, b + 1);
+      fAr[k + 3] = capVert(true, a, b + 1);
+
+      k = 4 * id++;
+      fAr[k] = capVert(false, a, b);
+      fAr[k + 1] = capVert(false, a, b + 1);
+      fAr[k + 2] = capVert(false, a + 1, b + 1);
+      fAr[k + 3] = capVert(false, a + 1, b);
+    }
+  }
+
+  return {
+    vertices: vAr,
+    faces: fAr
+  };
+};
+
 var createSphereArray = function (radius = 0.5, latSegments = 32, longSegments = 32) {
   var vAr = new Float32Array((latSegments + 1) * (longSegments + 1) * 3);
   // EACH quad produces 2 triangles (8 indices including TRI_INDEX separators)
@@ -446,6 +571,10 @@ Primitives.createCube = function (gl) {
 
 Primitives.createCylinder = function (gl) {
   return createMesh(gl, createCylinderArray.apply(this, slice.call(arguments, 1)));
+};
+
+Primitives.createCylinderQuad = function (gl) {
+  return createMesh(gl, createCylinderQuadArray.apply(this, slice.call(arguments, 1)));
 };
 
 Primitives.createSphere = function (gl) {

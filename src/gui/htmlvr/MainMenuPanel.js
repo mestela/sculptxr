@@ -1930,7 +1930,11 @@ export function buildSectionHTML_scene(main) {
             ? (main._rigPendingSubject == null ? 'Click EYE (list or 3D)…' : 'Click TARGET (list or 3D)…')
             : 'Aim at…'}
         </button>
-        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Mirror across X (eye rig)">Mirror X</button>
+        <!-- NOT the Mirror button in the toolbar above, and the name has to say so. This one is
+             a live eye-rig constraint: a render-only twin that reflects POSITION and then aims
+             itself at the source's look-at target, so the pair converges. It ignores rotation
+             on purpose. The toolbar's Mirror makes real reflected COPIES, rotation and all. -->
+        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Eye rig: live twin reflected across X that re-aims itself at the same target (rotation is NOT copied). For real mirrored copies use Mirror in the toolbar.">Mirror Eye</button>
         <!-- SACCADES JOINS THE ROW. It is a constraint like the other three — something the node
              does on its own once switched on — and it sat alone on a full-width line below them
              for no reason but the order it was written in. Its two sliders stay underneath and
@@ -1970,6 +1974,7 @@ export function buildSectionHTML_scene(main) {
     <div class="mm-toolbar">
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
+      <button class="mm-tool-btn" id="mm-mirror-sel" title="Mirror selected across X — new copies, position AND rotation reflected"${hasSel ? '' : ' disabled'}>${faIcon('right-left')}</button>
       <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}>${faIcon('link-slash')}</button>
       <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}>${faIcon(selAnyVisible ? 'eye' : 'eye-slash')}</button>
       <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}>${faIcon('pen')}</button>
@@ -1984,6 +1989,7 @@ export function buildSectionHTML_scene(main) {
     <div class="mm-add-row">
       <button class="mm-action-btn" id="mm-add-cube">Cube</button>
       <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
+      <button class="mm-action-btn" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cyl</button>
       <button class="mm-action-btn" id="mm-add-null">Null</button>
       <button class="mm-action-btn" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
       <button class="mm-action-btn" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
@@ -3679,8 +3685,12 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // NO RESET HERE. This wiring re-runs on every panel repaint, and a repaint can happen while
   // the pointer is sitting on a row — so clearing the id here fought the hover instead of
   // tidying after it. The capture-phase clear below and the leave handler are enough.
-  el.addEventListener('pointermove', () => setPanelHover(-1), true);
-  el.addEventListener('pointerleave', () => setPanelHover(-1));
+  // CLEARING CLEARS BOTH CHANNELS. A rig row lights through the rig's preselection, a plain
+  // mesh through its own bounds outline, and the row under the pointer changes kind as you move
+  // down the list -- so clearing only the one you happened to set last leaves the other lit.
+  const clearHover = () => { setPanelHover(-1); main.setMeshHoverHighlight?.(-1); };
+  el.addEventListener('pointermove', () => clearHover(), true);
+  el.addEventListener('pointerleave', () => clearHover());
   const rows = el.querySelectorAll('[data-action="select"]');
   rows.forEach(btn => {
     const onRow = (why) => {
@@ -3690,20 +3700,41 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
           + (mesh ? (mesh._permanentStaticLabel || mesh.getID()) : 'NO MESH')
           + ' rig=' + !!(mesh && (mesh._isBone || mesh._isPinTarget)));
       }
-      // An ordinary mesh has no rig marker to light, so it clears rather than lingering.
-      if (!mesh || !(mesh._isBone || mesh._isPinTarget)) return;
-      setPanelHover(mesh.getID());
+      if (!mesh) return;
+      // A rig node lights through the rig's own preselection channel; anything else gets the
+      // bounds outline, which is the only highlight a shared-material mesh can carry. Both are
+      // the same yellow, because in both places it answers the same question.
+      if (mesh._isBone || mesh._isPinTarget) { setPanelHover(mesh.getID()); return; }
+      main.setMeshHoverHighlight?.(mesh.getID());
     };
     // TWO SOURCES, because the two platforms deliver hover differently. On a flat screen it is
     // a real pointermove. In VR there IS no pointer event — hover is a 3D quad precisely so it
     // does not repaint the panel — so HTMLVRPanel announces what its quad found instead.
     btn.addEventListener('pointermove', () => onRow('pointer'));
     btn.addEventListener('vrhover', () => onRow('vr'));
-    btn.addEventListener('vrhoverout', () => setPanelHover(-1));
+    btn.addEventListener('vrhoverout', () => clearHover());
   });
   if (window._outlinerHoverTrace) {
     console.log('[outlinerHover] wired ' + rows.length + ' rows');
   }
+
+  // CLICKING EMPTY SPACE IN THE LIST DROPS THE SELECTION.
+  //
+  // There was no way to select NOTHING, so a selection you could not reach past was permanent
+  // until you found something else to click. matt got round one by picking a pin far from what
+  // he was aiming at -- a workaround for a missing verb: "i should be able to click in empty
+  // space in the outliner, and that should drop all selected objects." Every file browser and
+  // every DCC outliner does this, and the list has a FIXED height precisely so there is empty
+  // space under the rows to click on.
+  //
+  // A click that landed inside a row is that row's business and is left alone: its own listener
+  // has already run, and a deselect here would immediately undo the select it just made.
+  el.querySelector('.mm-outliner-list')?.addEventListener('click', (e) => {
+    if (e.target.closest && e.target.closest('.mm-outliner-row')) return;
+    cancelPending();          // an armed set-parent/aim is asking you to click a NODE
+    main.setOrUnsetMesh?.(null);
+    main.render?.(); repaintFn();
+  });
 
   el.querySelectorAll('[data-action="select"]').forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -3753,6 +3784,7 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   };
   el.querySelector('#mm-add-sphere')?.addEventListener('click', () => addPrimitive(() => main.addSphere?.()));
   el.querySelector('#mm-add-cube')?.addEventListener('click', () => addPrimitive(() => main.addCube?.()));
+  el.querySelector('#mm-add-cylinder')?.addEventListener('click', () => addPrimitive(() => main.addCylinder?.()));
   // ASYNC, unlike the others: the geometry is a fetched asset. addPrimitive expects `make()` to
   // return the mesh synchronously (it may adopt it into a frame group), so the await happens
   // first and the shared path runs once the mesh exists.
@@ -3778,6 +3810,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
   el.querySelector('#mm-instance')?.addEventListener('click', () => {
     main.instanceSelection?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-mirror-sel')?.addEventListener('click', () => {
+    main.mirrorSelection?.(0); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-make-unique')?.addEventListener('click', () => {
     main.makeUniqueSelection?.(); main.render?.(); repaintFn();

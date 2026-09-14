@@ -127,6 +127,22 @@ window.dumpMeshTopology = function() {
 };
 
 // How far the thing that matrix describes is from the head, in metres. Decides whether a
+// TOOLS THE OFFHAND TRIGGER ALREADY MEANS SOMETHING TO.
+//
+// Holding the non-dominant trigger swaps the active tool for Smooth — a modifier, so the
+// dominant trigger has to be down too. That is right for a brush and wrong for any tool that has
+// already claimed the same button, because the swap happens BEFORE dispatch: the tool you chose
+// never runs at all, and what you get is Smooth.
+//
+// Grab claims it for independent pin manipulation. Select claims it as its multi-select
+// modifier, which is the whole of what it was asked for — matt: "i chose the select tool in vr,
+// if i hold down the other trigger, it smooths the meshes i select." Voxel and Extrude are here
+// because smoothing means nothing to either.
+//
+// By CONSTRUCTOR NAME because that is what the check had, and the names are asserted in
+// multiselect_test so a rename cannot quietly empty this set.
+const NO_SMOOTH_OVERRIDE = new Set(['SculptVoxel', 'Extrude', 'Grab', 'SelectTool']);
+
 // controller pose is one a human arm could have produced -- see the wrist anchor. MODULE SCOPE:
 // a class body cannot hold a bare function declaration, and putting it there was a syntax error
 // that took the whole app down.
@@ -1244,6 +1260,16 @@ class Scene {
       }
     }
 
+    // A GIZMO NEEDS SOMETHING TO MOVE, and only a selection change can say so.
+    //
+    // The gizmo group's visibility was decided once, at the tool switch, and nothing
+    // re-evaluated it — so emptying the selection (newly reachable by clicking blank space in
+    // the outliner) or locking everything in it left the gizmo floating at the world origin
+    // offering to drag nothing. Gizmo.render guards itself the same way, but it runs from
+    // postRender, which does not run while there is no mesh, so it can hide the gizmo and never
+    // bring it back.
+    this.getSculptManager?.()?.syncTransformGizmoVisibility?.();
+
     this.getGui().updateMesh();
     this.render();
     return mesh;
@@ -2317,7 +2343,12 @@ class Scene {
     // Keep the outliner transform fields in sync with live manipulation (gizmo/grab),
     // throttled to every few frames to avoid per-frame DOM churn.
     this._xfSyncTick = (this._xfSyncTick || 0) + 1;
-    if (this._xfSyncTick % 4 === 0) this._syncOutlinerTransformFields();
+    if (this._xfSyncTick % 4 === 0) {
+      this._syncOutlinerTransformFields();
+      // Same tick, same reason: the selection changes from more places than any one hook sees,
+      // and this only does work when the set of ids actually moved.
+      this._updateMeshSelectionBoxes();
+    }
   }
 
   initWebGL() {
@@ -3039,6 +3070,22 @@ class Scene {
 
   // Selection lock: a locked mesh can't be picked/selected/sculpted in the viewport
   // (the picking scans skip it); it can still be selected from the outliner.
+  // THE SELECTION, MINUS WHAT IS LOCKED -- what may be MOVED, as distinct from what is selected.
+  //
+  // A locked mesh still selects, still shows its transform fields and still reads as selected in
+  // the outliner; what it must not do is move. The padlock only ever gated PICKING, so a locked
+  // mesh that was already the selection was dragged by the gizmo exactly as if it were not.
+  //
+  // A separate accessor rather than a filter inside getSelectedMeshes, because the selection is
+  // read for a dozen other purposes -- delete, merge, duplicate, mirror, the outliner's own
+  // highlight -- and "what is selected" and "what may move" are different questions. Only the
+  // things that move objects ask this one, and they must ALL ask it: the gizmo keeps
+  // index-parallel arrays (_startLocal, _editScaleRotInv) against this list, so a site left
+  // reading the unfiltered selection would put every index one out.
+  getTransformableMeshes() {
+    return this._selectMeshes.filter((m) => !m._selectLocked);
+  }
+
   isSelectLocked(id) {
     const m = this._meshes.find((x) => x.getID() === id);
     return !!(m && m._selectLocked);
@@ -3111,6 +3158,116 @@ class Scene {
   getSaccadeSpeed(eyeId) {
     const eye = this._meshes.find((m) => m.getID() === eyeId);
     return eye ? (eye._saccadeSpeed ?? 1) : 1;
+  }
+
+  // ── The mesh outline layer: HOVER in yellow, SELECTION in cyan ──────────────
+  //
+  // A rig node has a preselection channel and a selection colour of its own. A plain mesh has
+  // neither, and cannot easily be given them -- ShaderManager hands out ONE material per shader
+  // TYPE, shared by every mesh using it, so there is no per-mesh colour to push a highlight into
+  // without teaching all of this app's custom shaders about a tint they do not have.
+  //
+  // So both states are drawn BESIDE the mesh rather than in it: a wire box on the mesh's own
+  // local bounds, parented to its render object so it rides the transform, the parent chain and
+  // the pose for free. Depth test off so it reads through the model, and a render order under
+  // the rig's (9996+) so it never covers a joint marker or the cursor.
+  //
+  // THE TWO COLOURS ARE THE RIG'S OWN, and mean the same things they mean there: yellow
+  // (0xffd733) is preselection, "what the next press takes"; cyan (0x00e5ff) is confirmed
+  // selection. matt: "it should maintain the bounding box wireframe, but turn cyan to indicate
+  // whats selected."
+  //
+  // Yellow WINS on a mesh that is both, which is also the rig's rule: while you are pointing at
+  // something, what the press would do outranks what is already true.
+  _makeOutlineBox(color, name) {
+    // ONE unit box geometry per outline, placed by its own matrix -- so a different mesh, or the
+    // same mesh after a sculpt stroke changed its bounds, is a matrix write rather than a
+    // geometry rebuild.
+    const box = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+      new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false, transparent: true, opacity: 0.9 }));
+    box.name = name;
+    box.matrixAutoUpdate = false;
+    box.frustumCulled = false;
+    box.renderOrder = 9995;
+    box.isPickable = false;
+    // AND ACTUALLY UNPICKABLE. `isPickable` is this app's flag and three has never heard of it;
+    // three's own raycast walks children recursively regardless. These boxes hang off real
+    // meshes, so the only reliable way to keep them out of every raycast is to give them no
+    // raycast at all.
+    box.raycast = function () {};
+    return box;
+  }
+
+  // Fit `box` to `mesh`'s local bounds and hang it off the mesh's render object.
+  _fitOutlineBox(box, mesh) {
+    const tm = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
+    if (!tm) { box.visible = false; return false; }
+    const b = mesh.getLocalBound();
+    const sx = Math.max(b[3] - b[0], 1e-6);
+    const sy = Math.max(b[4] - b[1], 1e-6);
+    const sz = Math.max(b[5] - b[2], 1e-6);
+    box.matrix.makeScale(sx, sy, sz);
+    box.matrix.setPosition((b[0] + b[3]) * 0.5, (b[1] + b[4]) * 0.5, (b[2] + b[5]) * 0.5);
+    box.matrixWorldNeedsUpdate = true;
+    if (box.parent !== tm) tm.add(box);
+    box.visible = true;
+    return true;
+  }
+
+  setMeshHoverHighlight(id) {
+    const next = (id == null) ? -1 : id;
+    if (this._meshHoverId === next) return;   // no work unless the answer moved
+    this._meshHoverId = next;
+    this._updateMeshHoverHighlight();
+    // The hovered mesh drops its cyan box while yellow is on it, and takes it back on the way
+    // out — so the swap has to happen with the hover, not only on a selection change.
+    this._updateMeshSelectionBoxes(true);
+    this.render();
+  }
+
+  _updateMeshHoverHighlight() {
+    const id = this._meshHoverId;
+    const mesh = (id != null && id >= 0) ? this._meshes.find((m) => m.getID() === id) : null;
+    if (!mesh) { if (this._meshHoverBox) this._meshHoverBox.visible = false; return; }
+    if (!this._meshHoverBox) this._meshHoverBox = this._makeOutlineBox(0xffd733, 'mesh_hover_outline');
+    this._fitOutlineBox(this._meshHoverBox, mesh);
+  }
+
+  // The cyan boxes, one per selected mesh.
+  //
+  // Driven off a SIGNATURE rather than a hook, because the selection is changed from more places
+  // than any one of them knows about: setOrUnsetMesh, undo and redo, a delete, the frame groups,
+  // and tests poking `_selectMeshes` directly. A cheap string compare once every few frames is
+  // honest about that, where a hook on the one obvious caller would quietly miss the rest.
+  // `force` re-reads even when the signature has not moved, for the hover swap above.
+  _updateMeshSelectionBoxes(force) {
+    if (!this._meshSelBoxes) this._meshSelBoxes = new Map();
+    const on = Skeleton.displayFlag('meshHover');
+    // Rig nodes are excluded: a selected joint or pin already turns cyan through the rig's own
+    // markers, and a second cyan marker around the same thing says nothing extra.
+    const sel = on ? (this._selectMeshes || []).filter(
+      (m) => m && !m._isBone && !m._isPinTarget && m.getID() !== this._meshHoverId) : [];
+    const sig = sel.map((m) => m.getID()).join(',');
+    if (!force && sig === this._meshSelBoxSig) return;
+    this._meshSelBoxSig = sig;
+
+    const live = new Set();
+    for (const mesh of sel) {
+      const id = mesh.getID();
+      live.add(id);
+      let box = this._meshSelBoxes.get(id);
+      if (!box) {
+        box = this._makeOutlineBox(0x00e5ff, 'mesh_select_outline');
+        this._meshSelBoxes.set(id, box);
+      }
+      this._fitOutlineBox(box, mesh);
+    }
+    for (const [id, box] of this._meshSelBoxes) {
+      if (live.has(id)) continue;
+      if (box.parent) box.parent.remove(box);
+      this._meshSelBoxes.delete(id);
+    }
   }
 
   isMirrored(sourceId) {
@@ -3576,12 +3733,23 @@ class Scene {
     return voxelTool ? voxelTool._voxelMesh : null;
   }
 
+  // Built from the ALL-QUAD cylinder, not Primitives.createCylinder -- that one is triangles
+  // with a pole at the centre of each cap, which Reverse (Reversion.computeReverse) can never
+  // walk back down.
+  //
+  // ONE level, not subdivideClamp's ~50k faces like the cube and sphere: here the low-poly
+  // base IS the shape, and Subdivide adds levels on demand. LINEAR, so the wall stays a true
+  // cylinder instead of Catmull-Clark rounding the rims into a pill, and Reverse lands back
+  // on the clean low-poly base.
   addCylinder() {
-    var mesh = new Multimesh(Primitives.createCylinder(this._gl));
+    var mesh = new Multimesh(Primitives.createCylinderQuad(this._gl, 0.5, 1.0, 32, 2));
     mesh.normalizeSize();
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
-    this.subdivideClamp(mesh);
+    Subdivision.LINEAR = true;
+    mesh.addLevel();
+    Subdivision.LINEAR = false;
     mesh._typeName = "Cylinder";
+    mesh.isQuad = true;
     return this._addPrimitive(mesh);
   }
 
@@ -4321,6 +4489,29 @@ class Scene {
     }
   }
 
+  // A COPY BELONGS WHERE THE ORIGINAL BELONGS, and losing that is not a cosmetic difference.
+  //
+  // copyData carries the matrix, and a parented mesh's matrix is LOCAL TO ITS PARENT. Add the
+  // copy to the world group instead and that local matrix is read as a world one -- so a part
+  // parented under a joint, whose local scale is LARGE precisely because the joint's own scale
+  // is small, comes out enormous. A joint is sized `unit * 0.036`, so the copy can be tens of
+  // times the size of the thing it was copied from: it swallows the scene, and every pick after
+  // that lands on it. matt: "i could duplicate it, but then once duplicated, it was
+  // hard/impossible to choose other things."
+  //
+  // SILENT, so a copy is ONE undo step rather than an add and a reparent -- undoing the add
+  // takes the copy and its parent link away together anyway. The matrix is rewritten AFTER the
+  // reparent because setMeshParent's `attach` preserves the WORLD transform and overwrites
+  // whatever local matrix was there; the copy wants its source's local matrix, exactly.
+  _inheritParent(copy, source) {
+    const p = source._parentMesh;
+    if (!p) return copy;
+    this.setMeshParent(copy.getID(), p.getID(), { silent: true });
+    mat4.copy(copy.getMatrix(), source.getMatrix());
+    Skeleton.syncThree(copy);
+    return copy;
+  }
+
   duplicateSelection() {
     var meshes = this._selectMeshes.slice();
     var mesh = null;
@@ -4330,9 +4521,94 @@ class Scene {
       copy.copyData(mesh);
 
       this.addNewMesh(copy);
+      this._inheritParent(copy, mesh);
     }
 
     this.setMesh(mesh);
+  }
+
+  // A TRUE mirror of the selection across the parent-local `axis` plane (0 = X, the axis
+  // everything else in the app treats as the symmetry axis), as new independent objects.
+  //
+  // NOT the eye-rig "Mirror Eye" toggle (toggleMirror, above), which is a live render-only
+  // twin that reflects POSITION and then re-derives its OWN aim from the source's look-at
+  // target -- deliberately, so a pair of eyes converges rather than staring parallel. It
+  // never touches rotation, which is right for an eye and useless for anything placed at an
+  // angle: matt built a robot out of hinges and servos and there was no way to get the far
+  // side of it.
+  //
+  // The reflection of a placement M is S*M, with S = diag(-1,1,1). Its determinant is
+  // NEGATIVE -- an inside-out transform that the picker, the sculpt tools and every one of
+  // this app's custom shaders would have to be taught about. So it is split instead:
+  //
+  //     S*M = (S*M*S)*S
+  //
+  // The right-hand S reflects the GEOMETRY in local space (and reverses the winding, so the
+  // normals still point out); S*M*S places it, and is a proper rigid transform. Both halves
+  // have a positive determinant, so nothing downstream ever sees a mirrored matrix.
+  //
+  // Parent-local rather than world, matching the eye mirror: a part hung off the torso
+  // mirrors across the TORSO's centreline and keeps doing so when the torso turns. An
+  // unparented part has no parent frame, so that is world X = 0.
+  mirrorSelection(axis = 0) {
+    const meshes = this._selectMeshes.slice();
+    if (!meshes.length) return null;
+    let last = null;
+    for (const mesh of meshes) {
+      const copy = new MeshStatic(mesh.getGL());
+      copy.copyData(mesh);
+      copy._typeName = mesh._typeName;
+      copy._permanentStaticLabel = (mesh._permanentStaticLabel || mesh._typeName || 'Mesh') + ' Mirror';
+      this._mirrorGeometry(copy, axis);
+      this.addNewMesh(copy);
+      // Parent first and copy the source's local matrix, exactly as a duplicate does -- then
+      // reflect that matrix in place. Doing it in this order matters: setMeshParent's `attach`
+      // preserves the WORLD transform and overwrites the local matrix, so a reflection written
+      // before the reparent would be thrown away.
+      this._inheritParent(copy, mesh);
+      this._reflectMatrix(copy.getMatrix(), axis);
+      Skeleton.syncThree(copy);
+      last = copy;
+    }
+    if (last) this.setMesh(last);
+    this.render();
+    return last;
+  }
+
+  // S*M*S for S = diag(-1,1,1) (axis 0), in place. Conjugating by a reflection is just
+  // negating that row and that column: the position and every rotation out of the mirror
+  // plane flip, and the element they share flips twice and so stays put.
+  _reflectMatrix(m, axis) {
+    for (let j = 0; j < 4; ++j) m[axis + 4 * j] = -m[axis + 4 * j]; // row
+    for (let i = 0; i < 4; ++i) m[axis * 4 + i] = -m[axis * 4 + i]; // column
+  }
+
+  // The other half of the reflection: negate `axis` on every vertex in LOCAL space and
+  // reverse every face's winding, so a chiral part (a bracket, a cut-away servo horn) comes
+  // out actually mirrored rather than merely turned around. A symmetric part -- which is most
+  // of what gets mirrored -- is unchanged by it.
+  _mirrorGeometry(mesh, axis) {
+    const v = mesh.getVertices();
+    for (let i = axis, l = v.length; i < l; i += 3) v[i] = -v[i];
+
+    // Faces are 4 slots wide; a triangle is [a, b, c, TRI_INDEX], so the separator has to stay
+    // in slot 3 and only a and c swap.
+    const flip = (f) => {
+      if (!f) return;
+      for (let i = 0, l = f.length; i < l; i += 4) {
+        let t = f[i];
+        if (f[i + 3] === Utils.TRI_INDEX) { f[i] = f[i + 2]; f[i + 2] = t; continue; }
+        f[i] = f[i + 3]; f[i + 3] = t;
+        t = f[i + 1]; f[i + 1] = f[i + 2]; f[i + 2] = t;
+      }
+    };
+    flip(mesh.getFaces());
+    // The UV face list runs parallel to the face list, so it has to be turned the same way or
+    // the texture corners stop matching the vertices they belong to.
+    if (mesh.hasUV && mesh.hasUV()) flip(mesh.getFacesTexCoord());
+
+    mesh.init();
+    mesh.initRender();
   }
 
   // Linked instance of the current selection: each new node SHARES its source's geometry
@@ -4345,6 +4621,7 @@ class Scene {
       const inst = new MeshStatic(mesh.getGL());
       inst.shareData(mesh);
       this.addNewMesh(inst);
+      this._inheritParent(inst, mesh);
       last = inst;
     }
     if (last) this.setMesh(last);
@@ -12636,10 +12913,7 @@ class Scene {
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
               isColorSmoothOverride = true;
-            } else if (activeTool && activeTool.constructor.name !== 'SculptVoxel' &&
-                       activeTool.constructor.name !== 'Extrude' && activeTool.constructor.name !== 'Grab') {
-              // Grab consumes both index triggers for independent pin manipulation. Do not
-              // replace it with Smooth while the non-dominant trigger is held.
+            } else if (activeTool && !NO_SMOOTH_OVERRIDE.has(activeTool.constructor.name)) {
               isSmoothOverride = true;
             }
             break;

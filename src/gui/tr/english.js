@@ -131,6 +131,9 @@ var TR = {
   sculptTransform: 'Transform (E)',
   sculptVoxel: 'Voxel',
   sculptGrab: 'Grab (G)',
+  // The Select tool. English only for now, like the other recent additions — TR falls back to
+  // the key itself, and a raw 'sculptSelect' on screen is worse than an untranslated word.
+  sculptSelect: 'Select',
   sculptTransformVR: 'Transform VR',
   sculptDeleteFace: 'Delete Face',
   sculptCutTool: 'Cut Tool',

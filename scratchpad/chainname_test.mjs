@@ -28,6 +28,19 @@
 //   CN_INJECT=nopins       pins keep their old labels, pointing at joints that no longer exist
 //                          under that name
 //   CN_INJECT=rederiveside the side suffix is re-derived instead of preserved
+//   CN_INJECT=meshnohover  an ordinary mesh row goes back to lighting nothing, so the outliner
+//                          hover answers "what is this" for joints and stays silent for meshes
+//   CN_INJECT=noviewhover  the VIEWPORT hover throws a non-rig hit away again, so pointing Grab
+//                          at a mesh shows nothing and the press is taken on faith
+//   CN_INJECT=hoverridesgrab  nothing drops the outline when a grab takes something, so the
+//                          last preselection stays lit and rides the object around the scene
+//   CN_INJECT=vrrigonlyhover  the VR hover list goes back to rig nodes only, so a mesh can
+//                          never BE the hit and the headset shows no mesh highlight at all
+//   CN_INJECT=noselbox     the cyan selection boxes stop being maintained, so the outline is a
+//                          hover-only layer again and nothing says what IS selected
+//   CN_INJECT=selboxsig    the selection boxes are rebuilt only when the id set changes and
+//                          never on the hover swap, so the hovered mesh keeps its cyan box under
+//                          the yellow one and the pair read as a double outline
 import fs from 'fs';
 import path from 'path';
 
@@ -39,6 +52,8 @@ const HP_RAW = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'),
 let SC_PATCH = (t) => t;
 let SK_PATCH = (t) => t;
 let HP_PATCH = (t) => t;
+let MM_PATCH = (t) => t;
+let GR_PATCH = (t) => t;
 
 {
   const inj = process.env.CN_INJECT || '';
@@ -64,6 +79,42 @@ let HP_PATCH = (t) => t;
     const a = "      if (next) next.dispatchEvent(new CustomEvent('vrhover', { bubbles: true }));";
     if (!HP_RAW.includes(a)) throw new Error('inject novrhover: anchor moved');
     HP_PATCH = (t) => t.replace(a, '');
+  } else if (inj === 'meshnohover') {
+    // The row handler goes back to bailing on anything that is not a rig node, which is how the
+    // outliner shipped: hovering a joint lit it and hovering a mesh did nothing at all.
+    const a = "      main.setMeshHoverHighlight?.(mesh.getID());";
+    const MMP = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+    if (!MMP.includes(a)) throw new Error('inject meshnohover: anchor moved');
+    MM_PATCH = (t) => t.replace(a, '');
+  } else if (inj === 'noviewhover') {
+    // SK_PATCH, not SRC. SK_RAW was captured from SRC before this block runs, and the hover
+    // checks read SK_PATCH(SK_RAW) -- mutating SRC here applied the defect to a copy nothing
+    // looks at, which the sweep reported as MISSED rather than as a pass.
+    const a = '  applyMeshHover(main, hit);';
+    if (!SRC.includes(a)) throw new Error('inject noviewhover: anchor moved');
+    SK_PATCH = (t) => t.replace(a, '');
+  } else if (inj === 'vrrigonlyhover') {
+    const a = "  const vis = main.getMeshes().filter((m) => m.isVisible() && (isRigNode(m) || m.isPickable !== false));";
+    if (!SRC.includes(a)) throw new Error('inject vrrigonlyhover: anchor moved');
+    SK_PATCH = (t) => t.replace(a,
+      '  const vis = main.getMeshes().filter((m) => m.isVisible() && isRigNode(m));');
+  } else if (inj === 'noselbox') {
+    const a = '      this._updateMeshSelectionBoxes();';
+    if (!SC_RAW.includes(a)) throw new Error('inject noselbox: anchor moved');
+    SC_PATCH = (t) => t.replace(a, '');
+  } else if (inj === 'selboxsig') {
+    const a = '    this._updateMeshSelectionBoxes(true);';
+    if (!SC_RAW.includes(a)) throw new Error('inject selboxsig: anchor moved');
+    SC_PATCH = (t) => t.replace(a, '');
+  } else if (inj === 'hoverridesgrab') {
+    // Both clears go. The hover that sets the outline is skipped for the duration of a drag, so
+    // with nothing clearing it the last preselection simply stays lit on the moving object --
+    // which is what it looked like before this was fixed, and reads as the wrong feature.
+    const a = '      this._main.setMeshHoverHighlight?.(-1);\n    }';
+    const b = '          this._main.setMeshHoverHighlight?.(-1);\n        }';
+    const GRB = fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8');
+    if (!GRB.includes(a) || !GRB.includes(b)) throw new Error('inject hoverridesgrab: anchor moved');
+    GR_PATCH = (t) => t.replace(a, '    }').replace(b, '        }');
   } else if (inj === 'nolatch') {
     // The preselection is free to chase the hand while the menu is open again, so the
     // highlight walks to whatever bone is nearest behind the wheel.
@@ -336,7 +387,7 @@ const label = (m) => m._permanentStaticLabel;
 // screen and do nothing in a headset.
 {
   const SK = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
-  const MM = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+  const MM = MM_PATCH(fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8'));
   check('the panel hover has a channel the ray cannot overwrite',
     /const panelHi = main\._rigPanelHoverId;/.test(SK)
       && /hiAll\.add\(panelHi\); pinHiAll\.add\(panelHi\);/.test(SK),
@@ -370,9 +421,17 @@ const label = (m) => m._permanentStaticLabel;
   check('...including when the ray leaves the panel entirely',
     /clearHover\(\) \{[\s\S]{0,300}?_announceHover\(null, this\._hoverEl\)/.test(HP),
     'a highlight that outlives the thing pointing at it is worse than none');
+  // THE CLEAR NOW CLEARS TWO CHANNELS, so it went through a named function and this check had
+  // to follow it there. The property is unchanged -- a capture-phase pointermove at the panel
+  // root, running before the row's own handler -- but an ordinary mesh lights through its own
+  // bounds outline rather than the rig's preselection, and a clear that dropped only one of
+  // them left the other lit when the pointer moved between rows of different kinds.
   check('...cleared on the capture phase so moving OFF a row clears it',
-    /el\.addEventListener\('pointermove', \(\) => setPanelHover\(-1\), true\)/.test(MM),
+    /el\.addEventListener\('pointermove', \(\) => clearHover\(\), true\)/.test(MM),
     'capture runs before the target, so the row can set it straight back');
+  check('...and the clear drops BOTH the rig hover and the mesh outline',
+    /const clearHover = \(\) => \{ setPanelHover\(-1\); main\.setMeshHoverHighlight\?\.\(-1\); \};/.test(MM),
+    'the row under the pointer changes kind as you move down the list');
   // AND NOTHING RESETS IT AT WIRE TIME. This wiring re-runs on every panel repaint, and a
   // repaint can land while the pointer is sitting on a row — so a reset here fought the hover
   // instead of tidying after it. The capture clear and the leave handler cover staleness.
@@ -382,6 +441,142 @@ const label = (m) => m._permanentStaticLabel;
   check('...with no repaint unless the answer moved',
     /if \(main\._rigPanelHoverId === id\) return;/.test(MM),
     'this runs on every pointermove over the panel');
+
+  // AN ORDINARY MESH LIGHTS TOO. The hover answered "what is this row" for a joint and said
+  // nothing for a mesh, which is most of the outliner. matt: "it would be useful to have meshes
+  // also flash, or show an outline, for a preselection highlight when pointed at in the
+  // outliner too."
+  const SC2 = SC_PATCH(SC_RAW);
+  check('a non-rig row lights the mesh instead of bailing',
+    /if \(mesh\._isBone \|\| mesh\._isPinTarget\) \{ setPanelHover\(mesh\.getID\(\)\); return; \}/.test(MM)
+      && /main\.setMeshHoverHighlight\?\.\(mesh\.getID\(\)\);/.test(MM),
+    'the rig had a preselection channel and a plain mesh had nothing');
+  check('...through a highlight Scene actually implements',
+    /setMeshHoverHighlight\(id\) \{/.test(SC2) && /_updateMeshHoverHighlight\(\) \{/.test(SC2));
+  // ONE factory now, because there are two colours of the same box — the construction moved out
+  // of the hover function and above it.
+  check('...drawn BESIDE the mesh, not tinted into it',
+    /_makeOutlineBox\(color, name\) \{[\s\S]{0,600}?new THREE\.LineSegments\(/.test(SC2),
+    'ShaderManager hands out one material per shader TYPE, shared by every mesh using it');
+  check('...parented to the mesh, so it rides the transform and the pose',
+    /if \(box\.parent !== tm\) tm\.add\(box\);/.test(SC2),
+    'a world-space box would have to be recomputed every time anything moved');
+  check('...reading through the model but never writing depth',
+    /depthTest: false, depthWrite: false/.test(SC2),
+    'an always-on-top outline that writes depth punches a hole in what is behind it');
+  check('...and under the rig in render order, so it covers no marker',
+    /box\.renderOrder = (\d+);/.test(SC2) && +/box\.renderOrder = (\d+);/.exec(SC2)[1] < 9996,
+    'the rig lives at 9996 and up; a highlight must not sit on top of a joint');
+  check('...with no repaint unless the answer moved',
+    /if \(this\._meshHoverId === next\) return;/.test(SC2),
+    'this runs on every pointermove over the panel too');
+  check('the box is out of every raycast, not just this app\'s picker',
+    /box\.raycast = function \(\) \{\};/.test(SC2),
+    'isPickable is this app\'s flag; three\'s own raycast walks children regardless');
+
+  // ...AND FROM THE VIEWPORT, NOT ONLY THE OUTLINER. A joint under the pointer warms up and a
+  // mesh did not, so with the rig hidden -- the state in which meshes ARE what you reach for --
+  // Grab offered no preselection at all. matt: "maybe grab should also have an option for those
+  // preselect highlights on meshes? that would make it more clear whats going on."
+  const SK2 = SK_PATCH(SK_RAW);
+  const GR = GR_PATCH(fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8'));
+  check('the desktop hover keeps the non-rig answer instead of dropping it',
+    /applyRigHover\(main, isRigNode\(hit\) \? hit : null\);\s*\n\s*applyMeshHover\(main, hit\);/.test(SK2),
+    'every hover route already computed it and then threw it away unless it was a rig node');
+  check('...and the VR grab ray does the same',
+    /Skeleton\.applyMeshHover\(this\._main, node \? null : mesh\);/.test(GR),
+    'a preselection on one platform is half a preselection');
+  check('...never lighting both at once',
+    /const on = Skeleton\.displayFlag\('meshHover'\) && mesh && !isRigNode\(mesh\);/.test(SK2),
+    'the highlight answers ONE question: what does the next press take');
+  check('...and the same freeze the rig hover obeys while a menu is up',
+    /function applyMeshHover\(main, mesh\) \{\s*\n\s*if \(hoverFrozen\(main\)\) return;/.test(SK2),
+    'the subject of an open context menu must not be overwritten by the hand moving to it');
+
+  // A DISPLAY LAYER WITH NO TOGGLE IS THE JOINT-DOTS MISTAKE AGAIN -- this file already fails
+  // once on exactly that, so a new layer arrives with its switch.
+  const BP = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
+  check('the mesh hover is a real display flag',
+    /meshHover: \['_meshHoverHighlight', 'meshHoverHighlight', true\]/.test(SK2),
+    'on by default: its absence is what made Grab read as guesswork');
+  check('...reachable from the panel',
+    /flagButton\(c, 'mesh-hover', 'Mesh Box'/.test(BP) && /flag\('mesh-hover', 'meshHover'\);/.test(BP));
+  check('...and NOT swept away by Hide All Decorations',
+    !/'wire', 'joints', 'pins'[\s\S]{0,200}?'meshHover'/.test(SK2)
+      && !/DECOR_FLAGS = new Set\(\[[^\]]*meshHover/.test(SK2),
+    'hiding the rig is exactly when the mesh outline matters most');
+  // A GRAB IN FLIGHT IS NOT A PRESELECTION. The highlight answers "what would the next press
+  // take"; once the press has happened there is no next press to answer for, and the object is
+  // plainly moving with your hand. The hover that sets it is skipped for the duration of the
+  // drag, so without an explicit clear the last preselection stayed lit and rode the object
+  // around. matt: "not a preselect highlight around the thing while its actively being moved."
+  check('...dropped the moment a grab takes something, on the desktop',
+    /\} else if \(this\._grabbedMesh\) \{[\s\S]{0,900}?this\._main\.setMeshHoverHighlight\?\.\(-1\);/.test(GR),
+    'the hover is skipped mid-drag, so nothing else can clear it');
+  check('...and in VR, where the same block is skipped for the same reason',
+    /\} else \{[\s\S]{0,300}?this\._main\.setMeshHoverHighlight\?\.\(-1\);\s*\n\s*\}/.test(GR),
+    'a preselection that survives the press is not a preselection');
+  check('...and NOT by refusing to light it again afterwards',
+    /if \(!this\._main\._xrSession && !this\._grabbedMesh\) \{\s*\n\s*Skeleton\.hoverRigFromMouse/.test(GR),
+    'released, the hover has to resume and light whatever is under the cursor then');
+  // THE HEADSET HOVERS FROM A DIFFERENT BRANCH ENTIRELY, and that is where this was missing.
+  //
+  // Grab's VR update has a HOVER branch (no trigger) and a trigger branch, and the mesh outline
+  // was only set in the trigger one -- so in VR it could not appear until you had already
+  // pressed, which from inside the headset is "there are no highlights". The hover branch calls
+  // hoverRigFromRays, whose candidate list was filtered to rig nodes, so a mesh could not even
+  // BE the hit. matt: "i have them all turned off apart from mesh hover, but i get no
+  // highlights."
+  check('the VR hover considers ordinary meshes, not only rig nodes',
+    /const vis = main\.getMeshes\(\)\.filter\(\(m\) => m\.isVisible\(\) && \(isRigNode\(m\) \|\| m\.isPickable !== false\)\);/.test(SK2),
+    'filtered to rig nodes, a mesh can never be the hit and the headset shows nothing');
+  check('...and lights the mesh from that branch',
+    /applyMeshHover\(main, hits\[primaryIndex\]\);/.test(SK2),
+    'the trigger branch is too late: by then you have already committed to the press');
+  check('...from the PRIMARY hand, since there is one outline and two controllers',
+    /const primaryIndex = Math\.max\(0, rays\.findIndex[\s\S]{0,900}?applyMeshHover\(main, hits\[primaryIndex\]\);/.test(SK2),
+    'two hands pointing at different meshes has no answer for a single box');
+  check('...while the rig side still takes a node per controller',
+    /const rigHits = hits\.map\(\(h\) => \(isRigNode\(h\) \? h : null\)\);\s*\n\s*applyRigHovers\(main, rigHits/.test(SK2),
+    'each node draws its own marker, so the rig can light one per hand');
+  // AND THE RIG-ASSIGNMENT RAY IS DELIBERATELY NOT WIDENED. hoverRigFromRay is called with
+  // RigPending.targets -- the gesture is asking you to click a NODE, and offering a mesh it
+  // would refuse is the bug that path's own filter exists to prevent.
+  check('the narrow rig-assignment hover stays narrow',
+    /Skeleton\.hoverRigFromRay = function[\s\S]{0,600}?filter\(\(m\) => m\.isVisible\(\) && isRigNode\(m\)\)/.test(SK2),
+    'that one is asking "which NODE", and must not offer something it would refuse');
+  // TWO tools drive it now -- Grab and Select -- so leaving BOTH is what has to clear it.
+  // THE SELECTION GETS A BOX TOO, in the rig's own cyan. matt: "it should maintain the bounding
+  // box wireframe, but turn cyan to indicate whats selected."
+  check('the outline layer has both of the rig\'s colours',
+    /_makeOutlineBox\(0xffd733, 'mesh_hover_outline'\)/.test(SC2)
+      && /_makeOutlineBox\(0x00e5ff, 'mesh_select_outline'\)/.test(SC2),
+    'yellow is preselection and cyan is confirmed selection, everywhere in this app');
+  check('...one cyan box per selected mesh, kept in a map',
+    /this\._meshSelBoxes\.set\(id, box\);/.test(SC2) && /this\._meshSelBoxes\.delete\(id\);/.test(SC2),
+    'a multi-selection is several meshes and the old single box could only mark one');
+  check('...removed from the scene graph when they stop applying',
+    /if \(box\.parent\) box\.parent\.remove\(box\);/.test(SC2),
+    'deleting the map entry alone leaves the line object hanging off the mesh');
+  check('...and YELLOW WINS on a mesh that is both',
+    /m\.getID\(\) !== this\._meshHoverId/.test(SC2),
+    'what the next press would do outranks what is already true — the rig\'s own rule');
+  check('...re-read on the hover swap, not only when the id set moves',
+    /this\._updateMeshSelectionBoxes\(true\);/.test(SC2),
+    'the hovered mesh drops its cyan box and has to take it back on the way out');
+  check('the selection is watched by SIGNATURE, not by one hook',
+    /const sig = sel\.map\(\(m\) => m\.getID\(\)\)\.join\(','\);/.test(SC2)
+      && /if \(!force && sig === this\._meshSelBoxSig\) return;/.test(SC2),
+    'undo, delete, frame groups and setOrUnsetMesh all change it and none of them knows this exists');
+  check('...on the same throttled tick as the outliner fields',
+    /this\._syncOutlinerTransformFields\(\);\s*\n[\s\S]{0,300}?this\._updateMeshSelectionBoxes\(\);/.test(SC2));
+  check('...and a selected rig node is left to the rig',
+    /!m\._isBone && !m\._isPinTarget/.test(SC2),
+    'a joint already turns cyan through its own marker');
+  check('...and cleared when you leave the tools that drive it',
+    /if \(id !== Enums\.Tools\.GRAB && id !== Enums\.Tools\.SELECT\) this\._main\.setMeshHoverHighlight\?\.\(-1\);/
+      .test(fs.readFileSync(path.join(REPO, 'src/editing/SculptManager.js'), 'utf8')),
+    'a tool gets no frame in which to tidy up after it has stopped being the tool');
 }
 
 
@@ -442,7 +637,7 @@ const label = (m) => m._permanentStaticLabel;
   check('a rename bumps the outliner revision', (r.main._outlinerRev | 0) > before,
     'without it the panel has no way to know its text is stale');
 
-  const MM = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+  const MM = MM_PATCH(fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8'));
   check('...and the panel content key reads it',
     /_outlinerRev \| 0\}`;/.test(MM),
     'the key decides whether the DOM is rebuilt at all');
@@ -494,9 +689,14 @@ const label = (m) => m._permanentStaticLabel;
     'got ' + (m && m[1]) + ', was 0.08');
 
   const BP = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
+  // displayFlagRAW, and that is the correct call rather than a slip: the panel must show what
+  // the flag is SET to, not an answer masked by Hide All Decorations -- a button that reads as
+  // off because something else is off is a button lying about what pressing it will do. Every
+  // other flag in that refresh block reads raw; this check simply predates displayFlagRaw and
+  // had been failing on the literal ever since.
   check('and it is reachable from the panel',
     /flagButton\(c, 'names', 'Names'/.test(BP) && /flag\('names', 'names'\);/.test(BP)
-      && /setFlag\('names', Skeleton\.displayFlag\('names'\)\);/.test(BP),
+      && /setFlag\('names', Skeleton\.displayFlagRaw\('names'\)\);/.test(BP),
     'a display layer with no toggle is the joint-dots mistake again');
 }
 

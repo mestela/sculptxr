@@ -14,6 +14,7 @@ export const SCULPT_TOOLS = [
   { id: Enums.Tools.PAINT,         label: 'Paint'     },
   { id: Enums.Tools.PAINT_GROUP,   label: 'Groups'    },
   { id: Enums.Tools.MOVE,          label: 'Move'      },
+  { id: Enums.Tools.SELECT,        label: 'Select'    },
   { id: Enums.Tools.GRAB,          label: 'Grab'      },
   { id: Enums.Tools.DRAG,          label: 'Drag'      },
   { id: Enums.Tools.SLIDE,         label: 'Slide'     },

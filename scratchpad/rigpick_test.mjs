@@ -27,6 +27,10 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
 //   PICK_INJECT=pinovershot   the pin tint goes back above preselection, so hovering a pinned
 //                             bone shows nothing
 //   PICK_INJECT=spherealways  the joint dot goes back to being drawn unconditionally
+//   PICK_INJECT=rigeatschild  the rig goes back to beating a mesh unconditionally, so a hinge
+//                             parented to a joint cannot be pointed at in the viewport
+//   PICK_INJECT=hiddenpickable  the pick stops asking whether a rig node is DRAWN, so hiding
+//                             every decoration leaves an invisible joint under every reach
 {
   const inj = process.env.PICK_INJECT || '';
   if (inj === 'alwaystip') {
@@ -69,6 +73,17 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
       + ' ? PIN_FULL_COLOR : PIN_POS_COLOR) : (boneHeld ? SELECT_COLOR : (boneHot ? HILITE_COLOR');
     SKEL = SKEL.replace(': (tintMode === 1 ? PIN_POS_COLOR : restTint))));',
       ': (tintMode === 1 ? PIN_POS_COLOR : restTint)))));');
+  } else if (inj === 'rigeatschild') {
+    const a = 'if (nearRig && !isRigFurniture(nearMesh)) {';
+    if (!SRC.includes(a)) throw new Error('inject rigeatschild: anchor moved');
+    SRC = SRC.split(a).join('if (nearRig) {');
+  } else if (inj === 'hiddenpickable') {
+    // Both gates go, which is the state this shipped in: a joint locator stays in the mesh list
+    // whatever the display flags say, so the pick went on taking it out of an empty screen.
+    const a = '      if (isRig && !rigNodeVisible(mesh)) continue;';
+    const b = '        if (!rigNodeVisible(mesh)) continue;';
+    if (!SRC.includes(a) || !SRC.includes(b)) throw new Error('inject hiddenpickable: anchor moved');
+    SRC = SRC.replace(a, '').replace(b, '');
   } else if (inj === 'spherealways') {
     const a = 'o.visible = showJoints || isolated || isHi || isSel || jointHeld;';
     if (!SKEL.includes(a)) throw new Error('inject spherealways: anchor moved');
@@ -80,9 +95,39 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
 
 // The rule that broke: a rig hit must be adopted even when no mesh was hit at all.
+// STILL WITHOUT REQUIRING ONE. The condition gained a second clause -- rig FURNITURE, a mesh
+// parented to a joint or a pin, beats the node it hangs on -- and the historical bug this guards
+// against is the guard ever asking for `nearMesh` to exist. It does not: isRigFurniture(null)
+// is false, so a hit on a bone with no mesh behind it is adopted exactly as before. Asserted as
+// "no nearMesh truthiness test", not as a fixed string, so the next clause cannot break it.
 check('a rig hit is adopted without requiring a mesh hit',
-  /if \(nearRig\) \{\s*\n\s*nearMesh = nearRig;/.test(SRC),
+  /if \(nearRig && !isRigFurniture\(nearMesh\)\) \{\s*\n\s*nearMesh = nearRig;/.test(SRC)
+    && !/if \(nearRig && nearMesh/.test(SRC),
   'the guard still requires nearMesh, so a lone bone reports nothing');
+{
+  const i = SRC.indexOf('function isRigFurniture(');
+  check('...and the furniture test is liftable', i > 0, 'isRigFurniture moved');
+  const lifted = SRC.slice(i, SRC.indexOf('\n}', i) + 2);
+  const furn = (over) => new Function('window', lifted + '\nreturn isRigFurniture;')(over || {});
+  check('...answering false for nothing at all', furn()(null) === false,
+    'a rig hit with no mesh behind it must still be adopted');
+  check('...false for an unparented mesh', furn()({}) === false);
+  check('...false for a mesh parented to another MESH', furn()({ _parentMesh: {} }) === false,
+    'an ordinary hierarchy is not rig furniture');
+  check('a mesh hung off a joint IS furniture',
+    furn()({ _parentMesh: { _isBone: true } }) === true,
+    'a hinge or a servo is drawn in the open and is what you are pointing at');
+  check('...and so is one hung off a pin',
+    furn()({ _parentMesh: { _isPinTarget: true } }) === true);
+  // A BOUND SKIN IS NOT FURNITURE, which is the whole reason the parent link is a safe
+  // discriminator: binding writes _skinW and never reparents, so the skin keeps no parent and
+  // the rig goes on winning through it.
+  check('a bound skin is not furniture', furn()({ _skinW: new Float32Array(3) }) === false,
+    'the rig lives inside the skin; that is the case the rule exists for');
+  check('and the old behaviour is one flag away',
+    furn({ _rigBeatsChildMesh: true })({ _parentMesh: { _isBone: true } }) === false,
+    'a joint fully enclosed by its own child mesh needs a way back');
+}
 
 // PIN PRIORITY IS A TIE-BREAK, NOT A RANK. The original rule was `score = tAlong - rank*1e6`,
 // which let a pin ANYWHERE inside the cone beat a bone directly under the cursor — rank
@@ -129,6 +174,50 @@ check('a rig hit is adopted without requiring a mesh hit',
   check('and it reads no depth, no zone size, no epsilon',
     !/tAlong|cone|reach|1e-/.test(lifted),
     'every one of those was a tuning constant pretending to be a rule');
+}
+
+// YOU CANNOT PICK WHAT IS NOT DRAWN. Hiding the rig hides the MARKERS; the joint locators and
+// pin nulls stay in the mesh list, and the pick went on taking them. matt, in the Grab tool with
+// decorations off: "if all nodes are hidden, then they shouldn't be grabbable."
+{
+  const i = SRC.indexOf('function rigNodeVisible(');
+  check('the visibility gate is liftable', i > 0, 'rigNodeVisible moved');
+  const lifted = SRC.slice(i, SRC.indexOf('\n}', i) + 2);
+  // A fake Skeleton whose displayFlag answers from a set, which is all the gate reads.
+  const vis = (...on) => new Function('Skeleton', lifted + '\nreturn rigNodeVisible;')(
+    { displayFlag: (n) => on.includes(n) });
+  const JOINT = { _isBone: true }, PIN = { _isPinTarget: true };
+
+  check('everything on: both kinds are pickable',
+    vis('joints', 'solid', 'wire', 'pins')(JOINT) && vis('joints', 'solid', 'wire', 'pins')(PIN));
+  check('nothing drawn: neither kind is pickable',
+    !vis()(JOINT) && !vis()(PIN),
+    'this is the master decorations switch, and the reach has to fall through to the meshes');
+  check('pins only: the pin is pickable and the joint is not',
+    vis('pins')(PIN) && !vis('pins')(JOINT),
+    'matt: "if only pins are visible, they get priority"');
+  check('the joint dot alone is enough to make a joint pickable', vis('joints')(JOINT));
+  check('...and so is the bone body on its own', vis('solid')(JOINT));
+  check('...and the bone edge overlay on its own', vis('wire')(JOINT),
+    'any one of the three IS a marker on screen, so any one of them earns the pick');
+  check('a joint is not made pickable by the pin layer', !vis('pins')(JOINT));
+  check('a pin is not made pickable by the joint or bone layers',
+    !vis('joints', 'solid', 'wire')(PIN));
+
+  // NO SEPARATE MASTER-SWITCH TEST, because there must not be a separate master-switch LINE:
+  // displayFlag already answers no for all four while decorations are hidden, and a second
+  // check of the same thing is a second place for the two to disagree.
+  check('the gate asks displayFlag and nothing else',
+    !/decorationsHidden/.test(lifted),
+    'displayFlag already gates on the master switch; asking twice is two answers to keep in step');
+
+  // AND IT IS ACTUALLY WIRED INTO BOTH PICKS. The desktop ray and the VR proximity reach are
+  // separate loops, and a gate in one of them fixes the platform you are not wearing.
+  check('the desktop pick consults it',
+    /if \(isRig && !rigNodeVisible\(mesh\)\) continue;/.test(SRC));
+  check('...and so does the VR proximity reach',
+    /if \(includeRig && \(mesh\._isBone \|\| mesh\._isPinTarget\)\) \{\s*\n\s*if \(!rigNodeVisible\(mesh\)\) continue;/.test(SRC),
+    'a gate on one platform is no gate at all');
 }
 
 // THE RADIUS IS THE TOOL'S OWN RADIUS, so "within x radius" means the sphere on screen.
@@ -253,8 +342,11 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     !/rScore/.test(vr), 'the thing that took four rounds to not get right');
 
   check('VR: a lone rig hit is adopted without a mesh hit',
-    /if \(nearRig\) \{[\s\S]{0,400}?nearMesh = nearRig;/.test(vr),
+    /if \(nearRig && !isRigFurniture\(nearMesh\)\) \{[\s\S]{0,400}?nearMesh = nearRig;/.test(vr),
     'the same guard that broke the desktop path');
+  check('VR: and furniture beats the node it hangs on there too',
+    /isRigFurniture\(nearMesh\)/.test(vr),
+    'a rule on one platform is half a rule');
 }
 
 // THE TWO TRANSFORM TOOLS. Transform.js (desktop) and TransformVR.js (VR) are the same tool

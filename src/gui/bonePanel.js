@@ -329,6 +329,11 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlagRaw('trails'))}
       ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlagRaw('gnomons'))}
       ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlagRaw('gnomonsAll'))}
+      <!-- Not a rig layer, but this is the preselection panel and that is what it is: the wire
+           box an ordinary mesh shows, yellow while pointed at and cyan while selected. Hide All
+           Decorations deliberately leaves it alone; see the flag's note in Skeleton. The key is
+           still meshHover, so nobody's saved setting resets over a rename. -->
+      ${flagButton(c, 'mesh-hover', 'Mesh Box', Skeleton.displayFlagRaw('meshHover'))}
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule Opacity</span>
@@ -510,6 +515,7 @@ export function wireBoneSection(root, main, opts) {
   flag('trails', 'trails');
   flag('gnomons', 'gnomons');
   flag('gnomons-all', 'gnomonsAll');
+  flag('mesh-hover', 'meshHover');
 
   // Toggling the weight preview has to repaint or restore immediately — the flag alone
   // changes nothing until something re-solves.
@@ -1073,6 +1079,7 @@ export function syncBoneSection(root, main) {
   setFlag('trails', Skeleton.displayFlagRaw('trails'));
   setFlag('gnomons', Skeleton.displayFlagRaw('gnomons'));
   setFlag('gnomons-all', Skeleton.displayFlagRaw('gnomonsAll'));
+  setFlag('mesh-hover', Skeleton.displayFlagRaw('meshHover'));
 
   const xrayInput2 = q('xray'), xrayVal2 = q('xray-val');
   if (xrayInput2) {

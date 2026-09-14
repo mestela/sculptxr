@@ -50,7 +50,10 @@ Enums.Tools = {
   INSET: 31,
   GEODESIC_POSE: 32,
   PAINT_GROUP: 33,
-  BONE_DRAW: 34
+  BONE_DRAW: 34,
+  // Picks things and does nothing else — see SelectTool. Appended, never renumbered: these
+  // indices are persisted in settings and asserted by the harnesses.
+  SELECT: 35
 };
 
 // display shader type

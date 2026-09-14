@@ -1,3 +1,68 @@
+# v3.36.0
+**A Select tool, and a lot of things that could not be selected.** Every way to choose an object in
+the viewport also moved it — Grab takes hold on the same press, the transforms put a gizmo under
+your hand — so aiming at a small part meant nudging it. matt: "even with grab i found it was too
+easy to nudge things out of place." **Select** has no verb at all: its stroke methods are
+overridden to nothing and `start` returns false, so pressing cannot write a matrix or a vertex.
+**Holding the other controller's trigger** makes a press add to the selection instead of replacing
+it, read on the trigger EDGE per hand — a held trigger at 90Hz with the modifier down would
+otherwise toggle the same object forty-five times a second. Two traps behind it: the offhand
+trigger already swaps the whole tool for Smooth *before dispatch*, so Select had to join the
+exclusion set Grab was already in (now a named set rather than a chain of `!==`, which is where
+the next tool gets forgotten); and Scene calls `start()` on the VR trigger as well as dispatching
+`updateXR`, so without a guard a headset press also picked from wherever the desktop mouse was
+left.
+
+**The mesh outline layer.** A rig node has a preselection channel and a selection colour; a plain
+mesh had neither, and cannot easily be given them — ShaderManager hands out ONE material per
+shader TYPE, shared by every mesh using it, so there is no per-mesh colour to push a highlight
+into without teaching every custom shader about a tint it does not have. So both states are drawn
+BESIDE the mesh: a wire box on its own local bounds, parented to its render object so it rides the
+transform, the parent chain and the pose for free. **Yellow is preselection, cyan is selection** —
+the rig's own colours, meaning the same things — and yellow wins on a mesh that is both, because
+what the next press would do outranks what is already true. Driven from the outliner rows and from
+Grab and Select in the viewport, and dropped the moment a grab takes something: a preselection
+that survives the press is not a preselection.
+
+**You cannot pick what is not drawn.** Joint locators and pin nulls stay in the mesh list whatever
+the display flags say, so with decorations off the pick went on taking them out of an empty-looking
+screen — in Grab, every reach at the model came back holding an invisible joint. A rig node is now
+a pick target only while something marking it is on screen, and with everything off the reach falls
+through to the meshes.
+
+**Rig furniture beats the joint it hangs on.** "A rig node beats a mesh" exists because the
+skeleton lives INSIDE the sculpt — bones sit behind the surface, and nearest-hit would leave the
+skin permanently in the way of its own rig. A mesh PARENTED to a joint is the opposite case: a
+hinge, a servo, a bracket, hung there on purpose and drawn in the open. Pointing straight at one
+and getting the joint underneath was the mirror image of the bug that rule was written to fix. Safe
+because binding writes `_skinW` and never reparents, so a bound skin has no parent and the rule
+still protects it. `window._rigBeatsChildMesh = true` restores the old behaviour.
+
+**Locked means cannot be MOVED, not merely cannot be picked.** The padlock only ever gated picking,
+so a locked mesh that was still the selection was edited by everything acting on the selection
+rather than on what is under the cursor — including Grab's VR air fallback, which does not go
+through picking at all. A stroke is now refused while the active mesh is locked, and
+`getTransformableMeshes()` (the selection minus what is locked) is what every gizmo site reads.
+Tools that find their own target on the press — Grab, both Transforms, Bone Draw, Select — stay
+exempt, because locking the skin is exactly what you do IN ORDER to reach past it.
+
+**Copies belong where the original belongs.** `copyData` carries the matrix, and a parented mesh's
+matrix is LOCAL TO ITS PARENT — so a part under a joint, whose local scale is large precisely
+because the joint's own scale is small, came out many times too big, swallowed the scene and took
+every pick after that. Duplicate, instance and mirror now re-hang the copy where its source hangs.
+
+**Mirror**, as a real operation: reflected copies with position AND rotation mirrored, across the
+parent-local X. The eye-rig toggle is renamed **Mirror Eye** and says what it is — a live twin that
+re-aims itself and ignores rotation on purpose. The reflection of a placement M is S·M, whose
+determinant is negative; split as (S·M·S)·S so the geometry reflects in local space and the
+placement stays a proper rigid transform, and nothing downstream ever sees a mirrored matrix.
+
+**Cylinder**, all quads, so Reverse walks it back down to a clean low-poly base — the old one fans
+each cap to a pole and could never be reversed. Spawns at one subdivision level; Subdivide adds
+more on demand.
+
+**Clicking empty space in the outliner drops the selection**, which had no verb at all.
+
 # v3.31.0
 **Apple Vision Pro: hands, menus and sculpting, on a runtime with no controllers.** The headset
 could enter immersive and render the scene, and nothing responded to anything. Four independent

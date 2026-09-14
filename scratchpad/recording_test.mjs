@@ -195,8 +195,12 @@ check('Scene supplies the actual stylus ray for every controller',
     && /const stylusLen = this\.getStylusLength\(\)/.test(scene)
     && /Math\.sin\(stylusTilt\) \* stylusLen/.test(scene)
     && /Math\.cos\(stylusTilt\) \* stylusLen/.test(scene));
+// A NAMED SET NOW, not a chain of !== comparisons — a chain is where the next tool that claims
+// the offhand trigger gets forgotten, which is exactly what happened to Select. The property is
+// unchanged: a tool in this set keeps the trigger instead of being swapped for Smooth.
 check('secondary trigger reaches Grab instead of activating temporary Smooth',
-  /activeTool\.constructor\.name !== 'Grab'/.test(scene));
+  /const NO_SMOOTH_OVERRIDE = new Set\(\[[^\]]*'Grab'[^\]]*\]\);/.test(scene)
+    && /!NO_SMOOTH_OVERRIDE\.has\(activeTool\.constructor\.name\)/.test(scene));
 check('Grab hides the brush radius cursor',
   /tool\.constructor\.name === 'Grab'/.test(scene)
     && /cursorGroup\.visible = !isTransformTool/.test(scene));

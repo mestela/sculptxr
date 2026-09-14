@@ -23,6 +23,21 @@ const TOPOLOGY_TOOLS = new Set([
   Enums.Tools.EDGE_CREATE,
 ]);
 
+// TOOLS THAT FIND THEIR OWN TARGET on the press, rather than acting on whatever is selected.
+//
+// The lock gate in start() asks about the ACTIVE mesh, and for these that is not the thing about
+// to move: Grab and both Transforms re-pick under the cursor (and picking already skips a locked
+// mesh), and Bone Draw creates joints of its own. Gating them on the active mesh would be the
+// reported bug turned inside out -- locking the skin is exactly what you do IN ORDER to rig over
+// it and reach past it for something else, so a lock that stopped Grab dead would break the one
+// workflow the lock exists for.
+const SELF_TARGETING_TOOLS = new Set([
+  Enums.Tools.GRAB, Enums.Tools.TRANSFORM, Enums.Tools.TRANSFORM_VR, Enums.Tools.BONE_DRAW,
+  // Select most of all: it is the tool you reach for precisely BECAUSE something locked is in
+  // the way, and it cannot move anything even if it picks the locked mesh itself.
+  Enums.Tools.SELECT,
+]);
+
 class SculptManager {
 
   constructor(main) {
@@ -45,6 +60,31 @@ class SculptManager {
     this._quadRemeshTimeout = null;
 
     this.init();
+  }
+
+  // WHICH GIZMO IS UP: the one matching the current tool, and only while there is something it
+  // could actually move.
+  //
+  // The tool-switch branch this replaces was the only thing that ever set these, so the answer
+  // was fixed at switch time and the selection could empty underneath it — which it now does,
+  // since clicking blank space in the outliner drops the selection outright and a selection of
+  // nothing but LOCKED meshes filters down to empty. Either one left a gizmo floating at the
+  // world origin offering to drag something that is not there. Gizmo.render() guards itself the
+  // same way, but it only runs from postRender, which only runs while there IS a mesh — so a
+  // selection change has to be able to answer this on its own. Scene.setOrUnsetMesh calls it.
+  syncTransformGizmoVisibility(toolId = this._toolIndex) {
+    const main = this._main;
+    const movable = !!(main.getTransformableMeshes
+      && (main.getTransformableMeshes().length > 0
+        || (main.getMesh() && !main.getMesh()._selectLocked)));
+    const tDesktop = this._tools[Enums.Tools.TRANSFORM];
+    if (tDesktop && tDesktop._gizmo && tDesktop._gizmo._group) {
+      tDesktop._gizmo._group.visible = movable && (toolId === Enums.Tools.TRANSFORM);
+    }
+    const tVR = this._tools[Enums.Tools.TRANSFORM_VR];
+    if (tVR && tVR._gizmo && tVR._gizmo._group) {
+      tVR._gizmo._group.visible = movable && (toolId === Enums.Tools.TRANSFORM_VR);
+    }
   }
 
   // Hide both transform gizmo groups (Transform → Gizmo.js, TransformVR → GizmoVR.js).
@@ -129,14 +169,13 @@ class SculptManager {
 
     // Hide the VR gizmo when not using TransformVR, and hide the desktop gizmo
     // when not using Transform — so switching away clears both groups.
-    const tDesktop = this._tools[Enums.Tools.TRANSFORM];
-    if (tDesktop && tDesktop._gizmo && tDesktop._gizmo._group) {
-      tDesktop._gizmo._group.visible = (id === Enums.Tools.TRANSFORM);
-    }
-    const tVR = this._tools[Enums.Tools.TRANSFORM_VR];
-    if (tVR && tVR._gizmo && tVR._gizmo._group) {
-      tVR._gizmo._group.visible = (id === Enums.Tools.TRANSFORM_VR);
-    }
+    this.syncTransformGizmoVisibility(id);
+
+    // The mesh hover outline is driven from the per-frame hover in Grab and Select, so leaving
+    // both of them stops the thing that would clear it. Dropped here rather than in the tool,
+    // because a tool does not get a frame in which to tidy up after it has stopped being the
+    // tool.
+    if (id !== Enums.Tools.GRAB && id !== Enums.Tools.SELECT) this._main.setMeshHoverHighlight?.(-1);
 
     // LAST, and only on a real change. Last because the panels read the state this method has
     // been setting — wireframe, group view, which gizmo is up — and a sync run partway through
@@ -276,6 +315,26 @@ class SculptManager {
     // entirely — reaching for the iPad, say — and tear up the mesh. Gate at start()
     // so EVERY input route is covered: nothing has begun yet, so nothing to undo.
     if (window._sculptLocked) return false;
+
+    // A LOCKED MESH CANNOT BE EDITED, not merely "cannot be picked".
+    //
+    // The padlock only ever gated PICKING, so a locked mesh that was still the SELECTION --
+    // clicked in the outliner, or simply left over from before the lock -- was edited by every
+    // tool that acts on the selection rather than on what is under the cursor. matt locked the
+    // skin to work around it, reached for another piece, and the skin moved: "if something is
+    // locked, it just shouldn't be able to be moved."
+    //
+    // Here for the same reason as the two gates below it: start() is the one place every input
+    // route passes through, and nothing has begun yet, so there is nothing to undo.
+    const _active = this._main.getMesh && this._main.getMesh();
+    if (_active && _active._selectLocked && !SELF_TARGETING_TOOLS.has(this._toolIndex)) {
+      // SAID OUT LOUD. A tool that quietly does nothing reads as a broken tool -- the whole
+      // reason the lock was confusing in the first place was that it never announced itself.
+      if (window.screenLog) {
+        window.screenLog((_active._permanentStaticLabel || 'This mesh') + ' is locked — unlock it to edit', '#f9e2af');
+      }
+      return false;
+    }
 
     // A RIG ASSIGNMENT IS ALSO A "DO NOTHING" MODE while it is armed. matt: "grab should be
     // disabled during this process, i shouldn't be able to move or tweak anything." He is

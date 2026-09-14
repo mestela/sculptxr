@@ -4,6 +4,7 @@ import PosedSymmetry from '../editing/PosedSymmetry.js';
 import Tablet from '../misc/Tablet.js';
 import Utils from '../misc/Utils.js';
 import TR from '../gui/GuiTR.js';
+import Skeleton from '../editing/Skeleton.js';
 
 var _TMP_NEAR = [0.0, 0.0, 0.0];
 var _TMP_SYMOFF = [0.0, 0.0, 0.0];
@@ -81,6 +82,55 @@ const BONE_SELECT = (main) => {
 // Enums is not imported here and importing it for one number would drag the tool tables into
 // the pick loop's module. The index is stable and asserted in rigpick_test.
 const BONE_DRAW_TOOL = 34;
+
+// YOU CANNOT PICK WHAT IS NOT DRAWN.
+//
+// A joint locator and a pin null stay in the mesh list whatever the rig's display flags say --
+// hiding a decoration hides the MARKER, not the node -- so the pick loop went on taking them out
+// of an empty-looking screen. With decorations off in the Grab tool, every reach at the model
+// came back holding an invisible joint. matt: "if all nodes are hidden, then they shouldn't be
+// grabbable."
+//
+// So a rig node is a pick target only while something MARKING it is on screen: a pin needs the
+// pin layer, a joint needs its dot or the bone body/edge drawn from it. `displayFlag` already
+// answers no for all four while the master decorations switch is on, so that case needs no line
+// of its own -- with everything off nothing here is pickable and the reach falls through to the
+// meshes, which is the rule matt asked for. Pins keeping priority over bones is `rigWinner`
+// below and is unaffected: with only the pin layer on, the bones are simply not candidates.
+function rigNodeVisible(mesh) {
+  if (mesh._isPinTarget) return Skeleton.displayFlag('pins');
+  return Skeleton.displayFlag('joints')
+    || Skeleton.displayFlag('solid')
+    || Skeleton.displayFlag('wire');
+}
+
+// RIG FURNITURE: an ordinary mesh hung off a joint or a pin.
+//
+// The rule further down -- a rig node beats a mesh whenever one was asked for -- exists because
+// the skeleton lives INSIDE the sculpt: bones sit behind the surface from almost every angle, so
+// nearest-hit would leave the skin permanently in the way of its own rig and you would end up
+// hiding the mesh to reach a hip.
+//
+// A mesh PARENTED to a rig node is the opposite case. It is not hiding anything and it is not
+// something the rig is buried in -- it was hung there on purpose and it is drawn out in the
+// open: a hinge, a servo, a bracket. Pointing straight at it and getting the joint underneath is
+// the mirror image of the bug that rule was written to fix. matt: "i still can't select meshes
+// that are children of bones, not interactively in the viewport anyway."
+//
+// A BOUND SKIN IS NOT THIS, which is what makes the discriminator safe: binding writes `_skinW`
+// and never reparents anything, so a bound skin has no parent and the rule still protects it.
+// Only furniture has the parent link.
+//
+// THE COST, stated rather than discovered: a joint entirely enclosed by its own child mesh can
+// no longer be picked out of it, and has to come from the outliner or from its pin. That is the
+// same trade the old rule made in the other direction, and this way round the thing that wins is
+// the thing you can see. `window._rigBeatsChildMesh = true` restores the old behaviour with no
+// rebuild.
+function isRigFurniture(mesh) {
+  if (window._rigBeatsChildMesh === true) return false;
+  const p = mesh && mesh._parentMesh;
+  return !!(p && (p._isBone || p._isPinTarget));
+}
 
 // WHICH ONE YOU MEANT, in two lines and one number.
 //
@@ -361,6 +411,7 @@ class Picking {
       var isRig = !!(mesh._isBone || mesh._isPinTarget);
       if (!mesh.isVisible() || mesh._selectLocked) continue;
       if (mesh.isPickable === false && !(includeRig && isRig)) continue;
+      if (isRig && !rigNodeVisible(mesh)) continue;
 
       // RIG NODES ARE PICKED AS POINTS IN A CONE, not as geometry.
       //
@@ -535,7 +586,7 @@ class Picking {
     // nearMesh, so requiring one meant a hit on a bone with no mesh behind it reported NOTHING
     // — which read as the rig having become unselectable altogether.
     var nearRig = rigWinner(nearPin, nearPinD, nearBone, nearBoneD);
-    if (nearRig) {
+    if (nearRig && !isRigFurniture(nearMesh)) {
       nearMesh = nearRig;
       nearFace = nearRigFace;
       vec3.copy(_TMP_INTER_1, _TMP_INTER_RIG);
@@ -587,6 +638,7 @@ class Picking {
       // VR rig nodes are selected entirely by controller proximity. Reaching for a joint or
       // pin is more predictable than aiming a ray at it, especially during two-hand posing.
       if (includeRig && (mesh._isBone || mesh._isPinTarget)) {
+        if (!rigNodeVisible(mesh)) continue;
         _TMP_RIG_P[0] = _TMP_MS[12]; _TMP_RIG_P[1] = _TMP_MS[13]; _TMP_RIG_P[2] = _TMP_MS[14];
         vec3.sub(_TMP_RIG_W, _TMP_RIG_P, origin);
         // Coordinates are in model space; convert to physical metres so world scale does not
@@ -684,7 +736,7 @@ class Picking {
     // require nearMesh: rig nodes are tested on their own path and never set it, and requiring
     // one is what made a lone bone report nothing on the desktop side.
     var nearRig = rigWinner(nearPin, nearPinD, nearBone, nearBoneD);
-    if (nearRig) {
+    if (nearRig && !isRigFurniture(nearMesh)) {
       nearMesh = nearRig;
       nearFace = -1;
       // Local coords: callers transform this by the mesh matrix, and a locator's origin is its

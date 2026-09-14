@@ -19,6 +19,21 @@
 //                         pin path in the headset -- the exclusion is the feature
 //   MS_INJECT=outliner    the outliner row goes back to single-select
 //   MS_INJECT=dope        the dopesheet name goes back to single-select
+//   MS_INJECT=lockedits   the lock goes back to gating PICKING only, so a locked mesh that is
+//                         still the selection is edited by every tool that acts on the selection
+//   MS_INJECT=lockmoves   getTransformableMeshes stops filtering, so the gizmo drags a locked
+//                         mesh exactly as if the padlock were off
+//   MS_INJECT=noblank     clicking empty space in the outliner stops dropping the selection,
+//                         leaving no way at all to select nothing
+//   MS_INJECT=selectlevel the Select tool's VR press reads the trigger LEVEL instead of its
+//                         EDGE, so a held trigger re-selects at 90Hz -- which with the modifier
+//                         down toggles the same object in and out forty-five times a second
+//   MS_INJECT=selectnomulti  the other controller's trigger stops meaning multi-select, so the
+//                         one thing the tool was asked for is gone
+//   MS_INJECT=selectvrmouse  the Select tool's desktop start() stops bailing in VR, so a
+//                         headset press ALSO picks from wherever the mouse pointer was left
+//   MS_INJECT=selectsmooth  Select drops out of the offhand-trigger exclusion list, so holding
+//                         the modifier swaps the whole tool for Smooth before it ever runs
 import fs from 'fs';
 import path from 'path';
 
@@ -32,6 +47,13 @@ let SB = R('src/editing/tools/SculptBase.js');
 let PANEL = R('src/gui/htmlvr/MainMenuPanel.js');
 let TL = R('src/gui/GuiTimeline.js');
 let GVR = R('src/editing/GizmoVR.js');
+let SM = R('src/editing/SculptManager.js');
+let GZ = R('src/editing/Gizmo.js');
+let SEL = R('src/editing/tools/SelectTool.js');
+const ENUMS = R('src/misc/Enums.js');
+const TOOLS = R('src/editing/tools/Tools.js');
+const TLIST = R('src/gui/htmlvr/toolLists.js');
+const TREN = R('src/gui/tr/english.js');
 
 {
   const i = process.env.MS_INJECT || '';
@@ -46,6 +68,25 @@ let GVR = R('src/editing/GizmoVR.js');
     'if (!main.setOrUnsetMesh(mesh, ctrl || main.multiSelectHeld?.())) return false;', i);
   else if (i === 'outliner') PANEL = cut(PANEL,
     'main.setOrUnsetMesh?.(mesh, _multi);', 'main.setOrUnsetMesh?.(mesh, false);', i);
+  else if (i === 'lockedits') SM = cut(SM,
+    "if (_active && _active._selectLocked && !SELF_TARGETING_TOOLS.has(this._toolIndex)) {",
+    'if (false) {', i);
+  else if (i === 'lockmoves') SCENE = cut(SCENE,
+    'return this._selectMeshes.filter((m) => !m._selectLocked);',
+    'return this._selectMeshes;', i);
+  else if (i === 'noblank') PANEL = cut(PANEL,
+    "    if (e.target.closest && e.target.closest('.mm-outliner-row')) return;",
+    '    return;', i);
+  else if (i === 'selectlevel') SEL = cut(SEL,
+    'if (!down || was) return;', 'if (!down) return;', i);
+  else if (i === 'selectnomulti') SEL = cut(SEL,
+    "const multi = controllers.some((c) => c !== me && c.buttons && c.buttons[0] && c.buttons[0].pressed);",
+    'const multi = false;', i);
+  else if (i === 'selectvrmouse') SEL = cut(SEL,
+    'if (main._xrSession) return false;', '', i);
+  else if (i === 'selectsmooth') SCENE = cut(SCENE,
+    "const NO_SMOOTH_OVERRIDE = new Set(['SculptVoxel', 'Extrude', 'Grab', 'SelectTool']);",
+    "const NO_SMOOTH_OVERRIDE = new Set(['SculptVoxel', 'Extrude', 'Grab']);", i);
   else if (i === 'dope') TL = cut(TL,
     'this._main.setOrUnsetMesh?.(mesh, _multi, true);',
     'this._main.setMesh?.(mesh, true);', i);
@@ -147,8 +188,14 @@ check('the transform tools already act on the whole selection',
   /var meshes = this\._main\.getSelectedMeshes\(\);/.test(TR)
     && /const sel = main\.getSelectedMeshes\(\);/.test(TVR),
   'building a set is only worth it because the tools already consume one');
+// getTRANSFORMABLEMeshes, not getSelectedMeshes: same list, minus what is locked. The gizmo
+// keeps index-parallel arrays against it (_startLocal, _editScaleRotInv), so EVERY site has to
+// read the same accessor or the indices go one out -- which is why this counts them rather than
+// finding one.
 check('...and so does the gizmo',
-  (R('src/editing/Gizmo.js').match(/this\._main\.getSelectedMeshes\(\)/g) || []).length >= 5);
+  (R('src/editing/Gizmo.js').match(/this\._main\.getTransformableMeshes\(\)/g) || []).length >= 5
+    && !/this\._main\.getSelectedMeshes\(\)/.test(R('src/editing/Gizmo.js')),
+  'one site left on the unfiltered selection puts every parallel index out by one');
 
 
 // ── A PRESS ON A MEMBER OF THE SET DOES NOT COLLAPSE IT ─────────────────────
@@ -175,7 +222,7 @@ check('...and so does the gizmo',
       && /if \(!inSet\) \{/.test(TVR),
     'this is the press that begins the drag; reselecting here is what made the gizmo snap');
   check('...and GizmoVR transforms the whole set, which is why it is worth preserving',
-    /let meshes = this\._main\.getSelectedMeshes\(\);/.test(fs.readFileSync(path.join(REPO, 'src/editing/GizmoVR.js'), 'utf8')),
+    /let meshes = this\._main\.getTransformableMeshes\(\);/.test(fs.readFileSync(path.join(REPO, 'src/editing/GizmoVR.js'), 'utf8')),
     'the VR gizmo is a separate class from the desktop one and had to be checked separately');
   check('...only when there IS more than one, so ordinary click-to-select is untouched',
     /getSelectedMeshes\(\)\.length > 1/.test(TR));
@@ -204,7 +251,7 @@ check('...and so does the gizmo',
 {
   check('every selected object’s start pose is captured at gesture start',
     /this\._dragStart = new Map\(\);/.test(TVR)
-      && /for \(const m of \(main\.getSelectedMeshes\(\) \|\| \[\]\)\)/.test(TVR),
+      && /for \(const m of \(main\.getTransformableMeshes\(\) \|\| \[\]\)\)/.test(TVR),
     'the delta needs something to apply to');
   check('...in MODEL space, matching the matrix the delta is computed from',
     /if \(m\.getModelSpaceMatrix\) m\.getModelSpaceMatrix\(sm\);/.test(TVR));
@@ -295,6 +342,192 @@ check('...and so does the gizmo',
     /for \(const \[m, sm\] of this\._dragStart\) \{[\s\S]{0,200}?this\._applyMatrixOne\(m, om\);/.test(TVR)
       && !/this\._applyMatrixOne\(mesh, mat\);\s*\n\s*\}\s*\n\s*\}\s*\n\s*_applyMatrixOne/.test(TVR),
     'on a multi-selection every member moves by the same rule, the dragged one included');
+}
+
+// ── LOCKED MEANS "CANNOT BE MOVED", not merely "cannot be picked" ────────────
+//
+// The padlock only ever gated picking, so a locked mesh that was still the SELECTION -- clicked
+// in the outliner, or simply left over from before the lock -- was edited by every tool that
+// acts on the selection rather than on what is under the cursor. matt locked the skin to work
+// around it, reached for another piece, and the skin moved: "if something is locked, it just
+// shouldn't be able to be moved."
+{
+  check('the selection and what may MOVE are different questions',
+    /getTransformableMeshes\(\) \{\s*\n\s*return this\._selectMeshes\.filter\(\(m\) => !m\._selectLocked\);/.test(SCENE),
+    'a locked mesh still selects and still shows its transform fields; it just cannot be dragged');
+  check('...and getSelectedMeshes is left alone, because delete and duplicate still want it',
+    /getSelectedMeshes\(\)[\s\S]{0,120}?_selectMeshes/.test(SCENE)
+      && !/getSelectedMeshes\(\) \{[\s\S]{0,200}?_selectLocked/.test(SCENE));
+
+  check('a stroke is refused while the active mesh is locked',
+    /if \(_active && _active\._selectLocked && !SELF_TARGETING_TOOLS\.has\(this\._toolIndex\)\)/.test(SM),
+    'every input route passes through start(), and nothing has begun yet to undo');
+  check('...and says so rather than reading as a broken tool',
+    /is locked — unlock it to edit/.test(SM),
+    'a tool that quietly does nothing is why the lock was confusing in the first place');
+
+  // THE EXEMPTION IS THE POINT, and it is the reported bug turned inside out. Locking the skin
+  // is exactly what you do IN ORDER to rig over it and reach PAST it for something else, so a
+  // gate that stopped Grab dead because the selection happened to be locked would break the one
+  // workflow the lock exists for. These four find their own target on the press.
+  const _self = /const SELF_TARGETING_TOOLS = new Set\(\[([\s\S]*?)\]\);/.exec(SM)?.[1] ?? '';
+  check('the tools that find their own target are exempt',
+    ['GRAB', 'TRANSFORM', 'TRANSFORM_VR', 'BONE_DRAW'].every((t) =>
+      new RegExp('Enums\\.Tools\\.' + t + '\\b').test(_self)),
+    'a lock that stopped Grab would break the very workflow the lock exists for');
+
+  check('the gizmo will not show with nothing it could move',
+    /const _movable = this\._main\.getTransformableMeshes\(\)\.length > 0/.test(GZ)
+      && /if \(this\._group\) this\._group\.visible = _movable;/.test(GZ),
+    'a gizmo at the world origin over nothing is an offer to drag something that is not there');
+  check('...and a selection change re-answers that, since postRender cannot',
+    /syncTransformGizmoVisibility\(toolId = this\._toolIndex\) \{/.test(SM)
+      && /syncTransformGizmoVisibility\?\.\(\);/.test(SCENE),
+    'postRender does not run while there is no mesh, so it can hide it and never bring it back');
+  check('...for BOTH gizmos, from the one place the tool switch used to decide it',
+    /tDesktop\._gizmo\._group\.visible = movable && \(toolId === Enums\.Tools\.TRANSFORM\)/.test(SM)
+      && /tVR\._gizmo\._group\.visible = movable && \(toolId === Enums\.Tools\.TRANSFORM_VR\)/.test(SM));
+}
+
+// ── CLICKING EMPTY SPACE DROPS THE SELECTION ─────────────────────────────────
+//
+// There was no way to select NOTHING, so a selection you could not reach past was permanent
+// until you found something else to click. matt got round one by picking a pin far from what he
+// was aiming at -- a workaround for a missing verb.
+{
+  check('the outliner list takes a click of its own',
+    /querySelector\('\.mm-outliner-list'\)\?\.addEventListener\('click'/.test(PANEL));
+  check('...which deselects everything',
+    /main\.setOrUnsetMesh\?\.\(null\);/.test(PANEL),
+    'setOrUnsetMesh(null) empties the set and clears the active mesh');
+  check('...and leaves a click that landed on a ROW to that row',
+    /if \(e\.target\.closest && e\.target\.closest\('\.mm-outliner-row'\)\) return;/.test(PANEL),
+    'the row listener has already run; deselecting here would undo the select it just made');
+  check('...cancelling an armed rig assignment with it',
+    /if \(e\.target\.closest && e\.target\.closest\('\.mm-outliner-row'\)\) return;\s*\n\s*cancelPending\(\);/.test(PANEL),
+    'set-parent is waiting for you to click a NODE, and you just said "none"');
+}
+
+// ── A COPY BELONGS WHERE THE ORIGINAL BELONGS ────────────────────────────────
+//
+// copyData carries the matrix, and a parented mesh's matrix is LOCAL TO ITS PARENT. Added to
+// the world group instead, that local matrix is read as a world one -- so a part parented under
+// a joint, whose local scale is LARGE precisely because the joint's own scale is small, came out
+// many times too big, swallowed the scene, and took every pick after that. matt: "i could
+// duplicate it, but then once duplicated, it was hard/impossible to choose other things."
+{
+  check('there is one place that re-hangs a copy where its source hangs',
+    /_inheritParent\(copy, source\) \{/.test(SCENE));
+  check('...parent first, matrix second',
+    /setMeshParent\(copy\.getID\(\), p\.getID\(\), \{ silent: true \}\);\s*\n\s*mat4\.copy\(copy\.getMatrix\(\), source\.getMatrix\(\)\);/.test(SCENE),
+    "setMeshParent's attach preserves the WORLD transform and overwrites the local matrix");
+  check('...silently, so a copy is ONE undo step',
+    /setMeshParent\(copy\.getID\(\), p\.getID\(\), \{ silent: true \}\)/.test(SCENE));
+  for (const [what, near] of [['duplicate', 'copy.copyData(mesh);'],
+                              ['instance', 'inst.shareData(mesh);'],
+                              ['mirror', 'this._reflectMatrix(copy.getMatrix(), axis);']]) {
+    const i = SCENE.indexOf(near);
+    check('...and ' + what + ' uses it',
+      i > 0 && /_inheritParent\(/.test(SCENE.slice(Math.max(0, i - 400), i + 400)),
+      'every route that copies a mesh carries the same local matrix and the same hazard');
+  }
+}
+
+// ── SELECT: A TOOL WITH NO VERB ──────────────────────────────────────────────
+//
+// Every other way to choose something in the viewport also moves it -- Grab takes hold on the
+// same press, the transforms put a gizmo under your hand -- so aiming at a small part and
+// pressing means nudging it. matt: "even with grab i found it was too easy to nudge things out
+// of place. maybe select would be good."
+{
+  check('SELECT is appended to the tool enum, never renumbered',
+    /BONE_DRAW: 34,[\s\S]{0,300}?SELECT: 35/.test(ENUMS),
+    'these indices are persisted in settings and asserted by other harnesses');
+  check('...registered as a tool class and a uiName',
+    /Tools\[Enums\.Tools\.SELECT\] = SelectTool;/.test(TOOLS)
+      && /Tools\[Enums\.Tools\.SELECT\]\.uiName = 'sculptSelect';/.test(TOOLS));
+  check('...offered in the menu the headset actually uses',
+    /\{ id: Enums\.Tools\.SELECT,\s*label: 'Select'\s*\}/.test(TLIST),
+    'toolLists is the single source for both the main menu and the VR tool picker');
+  check('...with a translation, so the button is not a raw key',
+    /sculptSelect: 'Select',/.test(TREN));
+
+  // IT CANNOT MOVE ANYTHING, and that is structural rather than incidental: the base class's
+  // update/end RUN A SCULPT STROKE, so inheriting them is exactly how a "selection" tool would
+  // quietly acquire the ability to deform something.
+  check('the stroke verbs are overridden to nothing',
+    /\n  update\(\) \{\}\n  end\(\) \{\}\n  updateContinuous\(\) \{\}/.test(SEL),
+    'inheriting SculptBase.update is how a select tool learns to sculpt');
+  check('...and start never opens a stroke',
+    /return false;   \/\/ never a stroke/.test(SEL),
+    'the manager marks a stroke active on a truthy start(), and then end() has work to do');
+  check('...nor writes a matrix or a vertex anywhere in the file',
+    !/getMatrix\(\)|getVertices\(\)|setModelSpaceMatrix|_editMatrix/.test(SEL),
+    'the whole point is that pressing cannot nudge what you were only pointing at');
+
+  // THE OTHER CONTROLLER'S TRIGGER IS THE MODIFIER — the one thing matt asked for by name.
+  check('the modifier is any hand that is not the one that pressed',
+    /const multi = controllers\.some\(\(c\) => c !== me && c\.buttons && c\.buttons\[0\] && c\.buttons\[0\]\.pressed\);/.test(SEL),
+    'asked symmetrically because either controller can be the one pointing in this tool');
+  check('...and it reaches setOrUnsetMesh, which owns add/remove',
+    /main\.setOrUnsetMesh\(hit, multi, true\);/.test(SEL));
+  check('the VR press is an EDGE, not a level',
+    /this\._vrTriggerWas\[me && me\.handedness\] = down;\s*\n\s*if \(!down \|\| was\) return;/.test(SEL),
+    'a held trigger arrives at 90Hz, and with the modifier down that toggles 45 times a second');
+  check('...per hand, since Scene dispatches once per input source',
+    /this\._vrTriggerWas = \{\};/.test(SEL));
+
+  check('a VR press does NOT fall through to the desktop mouse pick',
+    /if \(main\._xrSession\) return false;/.test(SEL),
+    'Scene calls start() on the trigger too, and _mouseX in a headset is wherever it was left');
+  check('...and a button-only controller cannot select either',
+    /if \(!me \|\| !me\.matrix\) return;/.test(SEL),
+    'the menu-guard path sends buttons with no pose; that press belongs to the menu');
+  check('a VR air press changes nothing',
+    /if \(!hit\) return;/.test(SEL),
+    'a stray pull must not wipe a multi-selection you spent a minute building');
+  check('...while a DESKTOP click on nothing clears the selection',
+    /main\.setOrUnsetMesh\(hit, hit \? !!\(ctrl \|\| main\.multiSelectHeld\?\.\(\)\) : false, true\);/.test(SEL),
+    'the viewport twin of clicking blank space in the outliner');
+
+  // BOTH call sites, counted off the lines rather than with a bracket-matching regex: the
+  // desktop one's arguments contain their own parentheses (`multiSelectHeld?.()`), which a
+  // naive [^)]* stops dead in the middle of.
+  check('selecting does not switch you off the Select tool',
+    SEL.split('\n').filter((l) => l.includes('setOrUnsetMesh(') && /,\s*true\)/.test(l)).length === 2,
+    'setOrUnsetMesh does tool-context switching unless keepTool is passed');
+  check('it opts out of the 300ms blanket debounce',
+    /isDragAction\(\) \{ return true; \}/.test(SEL),
+    'measured: clicks 300ms apart were dropped and the selection stuck on the first press');
+  check('...and guards the case the debounce was really for',
+    /_repeatPress\(hit\) \{[\s\S]{0,400}?id === this\._lastHitId && \(now - this\._lastHitMs\) < 250/.test(SEL),
+    "iPad double-fire on a ctrl-click toggles twice and looks like it did nothing");
+
+  // THE OFFHAND TRIGGER CANNOT ALSO MEAN SMOOTH, or the tool never runs at all.
+  //
+  // Holding the non-dominant trigger swaps the active tool for Smooth BEFORE dispatch, so a tool
+  // that claims the same button for its own modifier gets replaced rather than modified. matt:
+  // "i chose the select tool in vr, if i hold down the other trigger, it smooths the meshes i
+  // select." Grab was already excluded for the identical reason.
+  check('Select is exempt from the offhand smooth override',
+    /const NO_SMOOTH_OVERRIDE = new Set\(\['SculptVoxel', 'Extrude', 'Grab', 'SelectTool'\]\);/.test(SCENE),
+    'the swap happens before dispatch, so the tool you chose never runs');
+  check('...and the check reads that set rather than a chain of !==',
+    /!NO_SMOOTH_OVERRIDE\.has\(activeTool\.constructor\.name\)/.test(SCENE),
+    'a growing chain of name comparisons is where the next tool gets forgotten');
+  check('...matching the class name this file actually exports',
+    /class SelectTool extends SculptBase/.test(SEL),
+    'the set is keyed by constructor name, so a rename would silently empty it');
+
+  check('and the lock gate lets it through',
+    /Enums\.Tools\.SELECT,/.test(SM),
+    'Select is the tool you reach for BECAUSE something locked is in the way');
+  check('...and it keeps the hover outline alive like Grab',
+    /if \(id !== Enums\.Tools\.GRAB && id !== Enums\.Tools\.SELECT\) this\._main\.setMeshHoverHighlight\?\.\(-1\);/.test(SM));
+  check('one controller-ray helper, not two',
+    /Skeleton\.controllerRay = function \(controller\)/.test(R('src/editing/Skeleton.js'))
+      && /return Skeleton\.controllerRay\(controller\);/.test(GRAB),
+    'two implementations of "where is this controller pointing" is how the picks drifted before');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

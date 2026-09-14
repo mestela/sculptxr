@@ -324,6 +324,9 @@ var getOptionsURL = function () {
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
   options.boneShowGnomons = queryBool(getVal('boneShowGnomons'), false);
   options.boneShowGnomonsAll = queryBool(getVal('boneShowGnomonsAll'), false);
+  // The hover outline on ordinary meshes — see Skeleton's DISPLAY_FLAGS. On by default: it is
+  // the only preselection a mesh can carry, and its absence is what made Grab read as guesswork.
+  options.meshHoverHighlight = queryBool(getVal('meshHoverHighlight'), true);
   // Which half of a VR grab is applied. Both on is the ordinary 6DOF grab; translation off
   // turns a grabbed joint from an IK effector into a plain FK rotation.
   options.grabTranslate = queryBool(getVal('grabTranslate'), true);

@@ -283,6 +283,10 @@ class TransformVR extends SculptBase {
       // Find Mesh to Drag
       const mesh = this.getMesh();
       if (!mesh || mesh._isVoxel) return;
+      // A LOCKED MESH IS NOT DRAGGABLE. The gizmo's own target list is already filtered
+      // (getTransformableMeshes), but this tool drags `_dragMesh` by design and reads the
+      // ACTIVE mesh for it -- which the filter never sees.
+      if (mesh._selectLocked) return;
 
       this._initInput = true;
       this._vrActiveHand = currentHand;
@@ -326,7 +330,7 @@ class TransformVR extends SculptBase {
       // Each is MODEL space, matching `_startMeshMatrix`, because that is the space the delta
       // is computed in.
       this._dragStart = new Map();
-      for (const m of (main.getSelectedMeshes() || [])) {
+      for (const m of (main.getTransformableMeshes() || [])) {
         const sm = mat4.create();
         if (m.getModelSpaceMatrix) m.getModelSpaceMatrix(sm);
         else mat4.copy(sm, m.getMatrix());
