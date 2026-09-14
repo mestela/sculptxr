@@ -56,6 +56,10 @@
 //                          the controller slot and the measurement was for nothing
 //   AVP_INJECT=rayhigh     the hand-ray pitch goes back to zero, restoring the 30-degree-high
 //                          visionOS index-finger aim
+//   AVP_INJECT=noanatomy  the ray goes back to a runtime frame instead of joint anatomy, so its
+//                          direction depends on a convention nobody documented
+//   AVP_INJECT=staleraydir the ray orientation goes back to targetRaySpace only, which on a
+//                          generic-fixed-hand runtime does not turn with the hand
 //   AVP_INJECT=rayfinger   the ray origin stays at the targetRay pose instead of the pinch point
 //   AVP_INJECT=raysplit    sculpting goes back to the raw uncorrected pose, so the brush and the
 //                          menus aim differently and the drawn spike matches neither
@@ -73,6 +77,12 @@
 //   AVP_INJECT=swapover   the swap button overlaps the tool button again, where the reverse
 //                          DOM-order hit walk hands every press to the tool button
 //   AVP_INJECT=nosysheal  a dropped selectend can latch the trigger down for the session again
+//   AVP_INJECT=earlylatch  the hands-only class latches before the panels exist, so the wrist
+//                          panel keeps its controller layout for the rest of the session
+//   AVP_INJECT=norebuild  the class change repaints without rebuilding, so the DOM updates and
+//                          the rasterised texture keeps the old layout
+//   AVP_INJECT=queuedpaint the class change only queues a repaint, so the revealed controls stay
+//                          invisible behind a stale texture
 //   AVP_INJECT=handsalways the hands-only controls show on every device, including ones with a
 //                          button for them already
 //   AVP_INJECT=undoflow   the main-menu undo row goes back into normal flow, where it draws over
@@ -84,6 +94,80 @@
 //   AVP_INJECT=rawpinch   the pinch latch comes back, so the release needs a deliberate gesture
 //   AVP_INJECT=loosepinch the pinch threshold goes back to a loose literal in the loop, so it
 //                          fires on a hand passing through and cannot be tuned in-headset
+//   AVP_INJECT=numpadpush the numpad goes back to a fixed forward push, which a sideways offset
+//                          on an angled panel beats, leaving it behind the panel
+//   AVP_INJECT=partialreset the controller slot resets only .y again, so x and z keep the hand
+//                          placement and the panel returns at the wrong angle
+//   AVP_INJECT=pressonly   hands-only is true only WHILE a hand button is pressed, so it
+//                          oscillates between pinches
+//   AVP_INJECT=nomirrorback leaving hands mode stops restoring scale.y = -1, so the controller
+//                          slot gets an un-mirrored panel
+//   AVP_INJECT=kbnopose   the keyboard stops copying the parent pose, so it no longer starts
+//                          where the panel it belongs to is
+//   AVP_INJECT=hovercull  the hover quad goes back to single-sided, so a normalised parent
+//                          back-face culls it and the highlight never appears
+//   AVP_INJECT=modaldepth modals are depth-sorted again, so a keyboard positioned behind the
+//                          dialog it serves stays hidden however high its render order
+//   AVP_INJECT=modaltie   modal overlays go back to the panel render band, so a keyboard ties
+//                          with the dialog it serves and can draw behind it
+//   AVP_INJECT=kbmirror   the overlay stops matching its source panel's mirror sign, so the
+//                          keyboard comes up flipped over a normalised panel
+//   AVP_INJECT=optprop    an option is read as a property off the getOptionsURL function instead
+//                          of calling it, so the saved value never loads
+//   AVP_INJECT=opaquedots the fingertip dots go back to near-full opacity, punching holes in the
+//                          menus they draw over
+//   AVP_INJECT=stalepitch  the pitch default reverts to the -45 measured against a construction
+//                          that no longer exists
+//   AVP_INJECT=livedrag    the live spike follows its own slider again, closing the feedback loop
+//                          that runs the value to its limit
+//   AVP_INJECT=swapgroups  the hand spike rows go back to being hidden unless hands are in use
+//   AVP_INJECT=spikedrift  a mode switch stops re-applying the spike geometry, so the drawn spike
+//                          and the picking tip disagree
+//   AVP_INJECT=wireframeprev the radius preview goes back to inventing a wireframe material
+//                          instead of borrowing the brush cursor's fresnel shell
+//   AVP_INJECT=nodragpoint the drag-lock hit drops its world point again, so nothing can draw at
+//                          the intersection during a slider drag
+//   AVP_INJECT=anysliderpreview the radius preview arms on ANY slider drag, not just radius
+//   AVP_INJECT=onestylus   hands share the controller stylus length again, so the spike is tuned
+//                          for a device that is not in use
+//   AVP_INJECT=doubletilt  the controller's stylus tilt applies to hands too, rotating a ray that
+//                          _applyHandRayCorrection has already pitched
+//   AVP_INJECT=analogvalue the hand pad passes the raw closure value through, so the post-menu
+//                          latch never releases and the first pinch after a menu is swallowed
+//   AVP_INJECT=hardcodedrz  the keyboard's Rz180 undo is hardcoded again, flipping it whenever a
+//                          panel has a normalised scale
+//   AVP_INJECT=mockwins   the synthesised pad outranks the runtime's again, replacing a working
+//                          gesture recogniser with our own thresholds on a runtime that has both
+//   AVP_INJECT=rawhandpad the hand pad is passed through unnormalised, so grasp lands on the
+//                          index bound to A/X and a fist toggles subtract or opens the menu
+//   AVP_INJECT=offsetbox       planes measured from the border box while the rasteriser uses the
+//                              client box, so every bordered panel is stretched
+//   AVP_INJECT=rootborder      a real border on the panel root, whose bottom and right fall
+//                              outside the SVG viewport and take the content with them
+//   AVP_INJECT=swapbacktoprow  the wrist panel's swap goes back beside the tool button
+//   AVP_INJECT=nobtnshrink     menubar labels cannot shrink, so a wider-metric engine pushes the
+//                              pin off the right edge instead of clipping a label
+//   AVP_INJECT=minibtnback     the wrist-panel swap is back in the menubar, which has no room
+//                              for it and loses the pin off the right edge
+//   AVP_INJECT=unhandedcursor  a handedness-'none' pinch source drives the right hand's cursor
+//                              and hides it for as long as the pinch is held
+//   AVP_INJECT=onesign    both placement constants share one mirror sign, so the runtime whose
+//                         number was measured at the other sign renders upside down
+//   AVP_INJECT=keepscale   the hands slot stops normalising scale, so the panel's -1 y-scale
+//                          mirrors it and the measured rotation renders flipped
+//   AVP_INJECT=analoghand  a hand press goes back through the analog Schmitt, which its resting
+//                          value latches on permanently
+//   AVP_INJECT=onepanelnum  both runtimes share the visionOS placement, which means nothing in
+//                          Galaxy XR's grip frame
+//   AVP_INJECT=jointonlyplace  placement requires a wrist joint again, so the grab silently does
+//                          nothing on a runtime whose hands have none
+//   AVP_INJECT=logonlytrace the menu trace goes back to console-only, invisible on Galaxy XR
+//   AVP_INJECT=xrhandonly  hand detection goes back to !!source.hand, so Galaxy XR hands — which
+//                          have no joints and five buttons — read as controllers
+//   AVP_INJECT=presencetest hands-only goes back to testing whether a buttoned source EXISTS, so
+//                          a put-down controller keeps the menus away on Galaxy XR
+//   AVP_INJECT=primeonce  the panel priming stops re-arming, so a second switch to hands shows
+//                          no menu at all
 //   AVP_INJECT=classtie   the hands-only hide rule loses its id qualifier and ties with .mm-row,
 //                          showing hands-only controls to controller users
 //   AVP_INJECT=negmanager the Neg toggle goes back to writing sculptManager._negative, a property
@@ -111,7 +195,12 @@ import path from 'path';
 const REPO = '/Users/mattestela/sculptxr';
 let SRC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 let MP    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MiniPanel.js'), 'utf8');
-const OPT = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
+let OPT   = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
+let HVP   = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
+const SGL = fs.readFileSync(path.join(REPO, 'src/SculptGL.js'), 'utf8');
+let KBD   = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/VrKeyboard.js'), 'utf8');
+let NUM   = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/VrNumpad.js'), 'utf8');
+const CNF = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/VrConfirm.js'), 'utf8');
 let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
 
 {
@@ -123,7 +212,7 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   if (inj === 'gripgate') {
     sub('      const gripSpace = source.gripSpace\n', '      const gripSpace = source.gripSpace;\n      if (!source.gripSpace) continue;\n      const _dead = source.gripSpace\n', 'gate');
   } else if (inj === 'emptypad') {
-    sub('return (pad && pad.buttons && pad.buttons.length) ? pad : null;', 'return pad || null;', 'padOf');
+    sub('if (!pad || !pad.buttons || !pad.buttons.length) return null;', 'if (!pad) return null;', 'padOf');
   } else if (inj === 'rawtrigger') {
     sub('    const buttons = this._padOf(source)?.buttons || [];', '    const buttons = source.gamepad.buttons;', 'trigger');
   } else if (inj === 'centres') {
@@ -159,6 +248,118 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'loosepinch') {
     sub('          const P_ON    = this.getPinchOn();           // skin-to-skin gap, metres',
         '          const P_ON    = 0.005;', 'pinch accessor');
+  } else if (inj === 'numpadpush') {
+    const a = '          const target = Math.max(0.05, panelDist - gap);   // never inside the viewer\'s head';
+    if (!NUM.includes(a)) throw new Error('inject numpadpush: anchor moved (numpad distance)');
+    NUM = NUM.replace(a, '          const target = here - gap;');
+  } else if (inj === 'partialreset') {
+    sub('                  _p.mesh.position.set(0, _wy, 0);\n                  _p.mesh.rotation.set(0, _wYaw, 0);',
+        '                  _p.mesh.position.y = _wy;\n                  _p.mesh.rotation.y = _wYaw;', 'slot reset');
+  } else if (inj === 'pressonly') {
+    sub('      if (this._padOf(s2)?.buttons?.[0]?.pressed) { this._lastHandUse = now; break; }\n    }\n    if (Number.isFinite(this._lastHandUse) && this._lastHandUse >= this._lastControllerUse) return true;',
+        '      if (this._padOf(s2)?.buttons?.[0]?.pressed) return true;\n    }', 'hand use memory');
+  } else if (inj === 'nomirrorback') {
+    sub('                  if (_p.mesh.scale.y > 0) _p.mesh.scale.set(1, -1, 1);', '', 'mirror restore');
+  } else if (inj === 'kbnopose') {
+    const a = '    this.mesh.position.copy(panelWorldPos);';
+    if (!KBD.includes(a)) throw new Error('inject kbnopose: anchor moved (parent pose copy)');
+    KBD = KBD.replace(a, '    this.mesh.position.set(0, 0, 0);');
+  } else if (inj === 'hovercull') {
+    const a = '        side: THREE.DoubleSide,';
+    if (!HVP.includes(a)) throw new Error('inject hovercull: anchor moved (quad side)');
+    HVP = HVP.replace(a, '');
+  } else if (inj === 'modaldepth') {
+    const a = '      depthTest: !_modal,   // z-sorted against the panel — no draw-order tricks';
+    if (!HVP.includes(a)) throw new Error('inject modaldepth: anchor moved (modal depth)');
+    HVP = HVP.replace(a, '      depthTest: true,');
+  } else if (inj === 'modaltie') {
+    const a = 'export const VR_MODAL_ORDER_BUMP = 2;';
+    if (!HVP.includes(a)) throw new Error('inject modaltie: anchor moved (modal bump)');
+    HVP = HVP.replace(a, 'export const VR_MODAL_ORDER_BUMP = 0;');
+  } else if (inj === 'kbmirror') {
+    const a = '    if (this.mesh && pMesh.scale) {';
+    if (!KBD.includes(a)) throw new Error('inject kbmirror: anchor moved (mirror sign)');
+    KBD = KBD.replace(a, '    if (false) {');
+  } else if (inj === 'optprop') {
+    sub("    const o = getOptionsURL()[key];   // called — see the note in getPinchOn",
+        '    const o = getOptionsURL[key];', 'option read');
+  } else if (inj === 'opaquedots') {
+    sub('          opacity: window._handDotOpacity ?? 0.45,', '          opacity: 0.95,', 'dot opacity');
+  } else if (inj === 'stalepitch') {
+    const a = "options.handRayPitch = queryNumber(getVal('handraypitch'), -80, 80, 20);";
+    if (!OPT.includes(a)) throw new Error('inject stalepitch: anchor moved (pitch default)');
+    OPT = OPT.replace(a, "options.handRayPitch = queryNumber(getVal('handraypitch'), -80, 20, -45);");
+  } else if (inj === 'livedrag') {
+    sub('    if (this._spikeFreeze) return this._spikeFreeze.length;   // frozen while its own slider is dragged', '', 'spike freeze');
+  } else if (inj === 'swapgroups') {
+    const a = '<div class="mm-section-title">Hand spike</div>';
+    if (!MM.includes(a)) throw new Error('inject swapgroups: anchor moved (hand spike title)');
+    MM = MM.replace(a, '<div class="mm-section-title mm-hands-only">Hand spike</div>');
+  } else if (inj === 'spikedrift') {
+    sub('      this.updateStylusLength?.(this.getStylusLength());', '', 'spike re-apply');
+  } else if (inj === 'wireframeprev') {
+    sub("      const m = src.material.clone();", '      const m = { wireframe: true };', 'borrowed material');
+  } else if (inj === 'nodragpoint') {
+    sub('}, distance: 0, point: _hit.clone() } };', '}, distance: 0 } };', 'drag hit point');
+  } else if (inj === 'anysliderpreview') {
+    sub("            if (_locked && /radius/i.test(_sliderId)) this._radiusPreviewOn = true;",
+        '            if (_locked) this._radiusPreviewOn = true;', 'radius arm');
+  } else if (inj === 'onestylus') {
+    sub("    if (this._handsOnlyMode()) return this._handStylus('handStylusLength', 0.05);", '', 'hand stylus length');
+  } else if (inj === 'doubletilt') {
+    sub('    if (this._handsOnlyMode()) return 0.0;\n    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt',
+        '    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt', 'hand tilt rule');
+  } else if (inj === 'analogvalue') {
+    sub('    view.buttons[0].value   = view.buttons[0].pressed ? 1 : 0;',
+        '    view.buttons[0].value   = sel ? (sel.value || 0) : 0;', 'binary value');
+  } else if (inj === 'hardcodedrz') {
+    const a = '  if (sy < 0) q.multiply(new THREE.Quaternion(0, 0, 1, 0));';
+    if (!HVP.includes(a)) throw new Error('inject hardcodedrz: anchor moved (panelWorldQuat)');
+    HVP = HVP.replace(a, '  q.multiply(new THREE.Quaternion(0, 0, 1, 0));');
+  } else if (inj === 'mockwins') {
+    sub('    const mock = src.hand && !realHasButtons && this._mockGamepads && this._mockGamepads[src.handedness];',
+        '    const mock = src.hand && this._mockGamepads && this._mockGamepads[src.handedness];', 'pad precedence');
+  } else if (inj === 'rawhandpad') {
+    sub('    if (!this._isHandSource(src)) return pad;', '    return pad;', 'hand pad normalise');
+  } else if (inj === 'keepscale') {
+    sub('                  if (window._panelKeepScale !== true) _p.mesh.scale.set(1, _hp.sy, 1);', '', 'scale normalise');
+  } else if (inj === 'offsetbox') {
+    HVP = HVP.replace('  const w = el.clientWidth  || el.offsetWidth  || fallbackW;\n  const h = el.clientHeight || el.offsetHeight || fallbackH;',
+                      '  const w = el.offsetWidth || fallbackW;\n  const h = el.offsetHeight || fallbackH;');
+  } else if (inj === 'rootborder') {
+    MM = MM.replace('  box-shadow: inset 0 0 0 2px #585b70;', '  border: 2px solid #585b70;');
+  } else if (inj === 'swapbacktoprow') {
+    MP = MP.replace('      <button id="mp-swap-btn" title="Open the main menu">Menu</button>\n', '')
+           .replace('      </button>\n    </div>', '      </button>\n      <button id="mp-swap-btn" class="mp-hands-only" title="Open the main menu">Menu</button>\n    </div>');
+  } else if (inj === 'nobtnshrink') {
+    MM = MM.replace('  min-width: 0;\n  overflow: hidden;\n  padding: 5px 11px;', '  padding: 5px 11px;');
+  } else if (inj === 'minibtnback') {
+    MM = MM.replace('      <button class="mm-pin-btn" id="mm-pin-btn" title="Pin panel in world space">',
+      '      <button class="mm-pin-btn mm-hands-only" id="mm-mini-btn" title="Back to the wrist panel">Mini</button>\n      <button class="mm-pin-btn" id="mm-pin-btn" title="Pin panel in world space">');
+  } else if (inj === 'unhandedcursor') {
+    sub("            const cursorGroup = !_handed ? null : (isLeft ? this._vrCursorLeft : this._vrCursorRight);\n            const controllerGroup = !_handed ? null : (isLeft ? this._vrControllerLeft : this._vrControllerRight);",
+        "            const cursorGroup = isLeft ? this._vrCursorLeft : this._vrCursorRight;\n            const controllerGroup = isLeft ? this._vrControllerLeft : this._vrControllerRight;",
+        'unhanded cursor guard');
+  } else if (inj === 'onesign') {
+    sub('r: [22.9, -2.8, -81.4], sy: -1', 'r: [22.9, -2.8, -81.4], sy: 1', 'wrist mirror sign');
+  } else if (inj === 'analoghand') {
+    sub('            ? (_handSrc\n                ? !!_trigger.pressed\n                : (_trigger.pressed',
+        '            ? ((false)\n                ? !!_trigger.pressed\n                : (_trigger.pressed', 'hand press rule');
+  } else if (inj === 'onepanelnum') {
+    sub('                  const _hp = this._handPanelPlacement(), _D = Math.PI / 180;',
+        '                  const _hp = Scene.HAND_WRIST_PANEL, _D = Math.PI / 180;', 'placement choice');
+  } else if (inj === 'jointonlyplace') {
+    sub('    if (!wp && domSrc.gripSpace) wp = frame.getPose(domSrc.gripSpace, refSpace);', '', 'grip fallback');
+  } else if (inj === 'logonlytrace') {
+    sub('    window._menuLog.push(t);', '', 'trace buffer');
+  } else if (inj === 'xrhandonly') {
+    sub("      if (this._isHandSource(s)) { anyHand = true; continue; }   // hands never count as controllers,",
+        '      if (s.hand) { anyHand = true; continue; }', 'hand classification');
+  } else if (inj === 'presencetest') {
+    sub('    const idleMs = window._handsOnlyIdleMs ?? 3000;\n    return (now - this._lastControllerUse) > idleMs;',
+        '    return false;', 'idle test');
+  } else if (inj === 'primeonce') {
+    sub('    if (!want) this._handsUiPrimed = false;', '', 'priming re-arm');
   } else if (inj === 'classtie') {
     const a = '#mm-root .mm-hands-only { display: none; }';
     if (!MM.includes(a)) throw new Error('inject classtie: anchor moved (hands-only hide)');
@@ -184,6 +385,12 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'gainrot') {
     sub('          this.rotateWorld(qDelta, origin); // Pivot around HAND (origin)',
         '          this.rotateWorld(qDelta, origin, gGain); // Pivot around HAND (origin)', 'rotate gain');
+  } else if (inj === 'earlylatch') {
+    sub('    if (!panels.length) return;', '', 'panel readiness guard');
+  } else if (inj === 'norebuild') {
+    sub('        p.syncFromState?.();\n        p._rebuildContent?.();', '', 'panel rebuild');
+  } else if (inj === 'queuedpaint') {
+    sub('      if (p.flushPaint) p.flushPaint(); else p.markDirty?.();', '      p.markDirty?.();', 'forced repaint');
   } else if (inj === 'handsalways') {
     const a = '#mp-root.hands-only .mp-hands-only { display: flex; }';
     if (!MP.includes(a)) throw new Error('inject handsalways: anchor moved (hands css)');
@@ -201,11 +408,11 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'noedgelog') {
     // Remove the log itself. (Removing the _mtPrev assignment instead would make it log every
     // frame — spam, not silence — so it would not be the defect this injection claims.)
-    sub("              console.log('[menu] TRIGGER ' + _hand + (_pressed ? ' DOWN' : ' UP  ')", "              console.log(('' + _hand", 'edge log');
+    sub("              this._traceOut('TRIGGER ' + _hand + (_pressed ? ' DOWN' : ' UP  ')", "              this._traceOut(('' + _hand", 'edge log');
   } else if (inj === 'dotsfrozen') {
     sub('      if (!pose) { m.visible = false; continue; }', '      if (!pose) { continue; }', 'dot hide');
   } else if (inj === 'reticleunder') {
-    sub('      this._bpReticle.renderOrder = VR_PANEL_RENDER_ORDER + 2;',
+    sub('      this._bpReticle.renderOrder = VR_PANEL_RENDER_ORDER + 8;',
         '      this._bpReticle.renderOrder = 1001;', 'reticle order');
   } else if (inj === 'dotsown') {
     sub('    const pinching = !!this._pinchLatch?.[key]?.pinch;',
@@ -220,10 +427,16 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('          if (!_pressed) this._vrPressOwner[_hand] = null;',
         '          if (!_pressed) this._vrPressOwner[_hand] = null;\n          if (!this._vrPressOwner) this._vrPressOwner = { L: null, R: null, G: null };', 'init');
   } else if (inj === 'stiffpanel') {
-    sub('            const ks = window._wristSmooth ?? 0.12;', '            const ks = 1;', 'panel smoothing');
+    sub('              : (window._wristSmooth ?? 0.12);', '              : 1;', 'panel smoothing');
   } else if (inj === 'rayhigh') {
-    sub('    const deg = Number.isFinite(_perHand)\n      ? _perHand\n      : (window._handRayPitch ?? -45) * _mirror;',
+    sub('    const deg = Number.isFinite(_perHand) ? _perHand : _base * _mirror;',
         '    const deg = 0;', 'ray pitch');
+  } else if (inj === 'noanatomy') {
+    sub("    const _jointRay = (window._handRayFromJoints !== false)\n      ? this._handRayFromJoints(source, frame, refSpace) : null;",
+        '    const _jointRay = null;', 'joint ray');
+  } else if (inj === 'staleraydir') {
+    sub('    const _poseSpace = _jointRay ? null : (source.gripSpace || source.targetRaySpace);',
+        '    const _poseSpace = _jointRay ? null : source.targetRaySpace;', 'ray rotation source');
   } else if (inj === 'rayfinger') {
     sub('      this._hrV.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);', '', 'pinch origin');
   } else if (inj === 'raysplit') {
@@ -239,7 +452,9 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('          const _pressed = (_trigger && !this._wristPlaceActive())',
         '          const _pressed = (_trigger)', 'press gate');
   } else if (inj === 'placegrip') {
-    sub("    const wj = domSrc.hand.get('wrist');", "    const wj = domSrc.hand.get('index-finger-metacarpal');", 'drag source');
+    // Read the drag from the GRIP — the object carrying the offset being calibrated — so the
+    // correction feeds back into its own measurement.
+    sub("    const wj = domSrc.hand && domSrc.hand.get('wrist');", '    const wj = null;', 'drag source');
   } else if (inj === 'gripcentred') {
     sub('const outDist = window._wristGripOut ?? 0.045;', 'const outDist = 0;', 'lateral offset');
   } else if (inj === 'gripunsigned') {
@@ -251,7 +466,8 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'gazebehind') {
     sub('    mesh.renderOrder = VR_PANEL_RENDER_ORDER + 3;', '', 'render order');
   } else if (inj === 'stalemock') {
-    sub('const mock = src.hand && this._mockGamepads && this._mockGamepads[src.handedness];', 'const mock = this._mockGamepads && this._mockGamepads[src.handedness];', 'expiry');
+    sub('const mock = src.hand && !realHasButtons && this._mockGamepads && this._mockGamepads[src.handedness];',
+        'const mock = this._mockGamepads && this._mockGamepads[src.handedness];', 'expiry');
   }
 }
 
@@ -280,10 +496,42 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /_padOf\(src\) \{/.test(SRC),
     'the same bug appeared at nine sites because nine sites asked independently');
   check('...and an empty buttons array counts as NO gamepad',
-    /return \(pad && pad\.buttons && pad\.buttons\.length\) \? pad : null;/.test(SRC),
+    /if \(!pad \|\| !pad\.buttons \|\| !pad\.buttons\.length\) return null;/.test(SRC),
     'truthy-with-no-buttons is what slipped past every if (src.gamepad) guard');
+  // A GESTURE PAD HAS TWO SIGNALS, NOT SIX. Galaxy XR gives hands a 5-button pad and puts GRASP
+  // where this app had bound A/X — so a fist toggled add/subtract and opened the menu. The
+  // length is what did it: the face-button handlers gate on `btns.length > 4`, which a 5-button
+  // gesture pad passes while having no face buttons at all.
+  check('a hand pad is normalised to select and grasp only',
+    /view\.buttons\[1\]\.pressed = grasp;/.test(SRC)
+      && /buttons: \[\{ pressed: false, value: 0 \}, \{ pressed: false, value: 0 \}\]/.test(SRC),
+    'a two-button view fails the length > 4 gate, which is what stops the A/X misfire');
+  // The VALUE matters as much as the flag: the post-menu latch blocks a new stroke until the
+  // trigger is "fully released" at <= 0.05, and a hand's analog closure value idles near 0.3 —
+  // so the first pinch after using a menu was swallowed until an exaggerated unpinch.
+  check('a hand pad reports a BINARY value, not the raw closure signal',
+    /view\.buttons\[0\]\.value   = view\.buttons\[0\]\.pressed \? 1 : 0;/.test(SRC),
+    'consumers that read value rather than pressed must agree with the ones that read pressed');
+
+  check('...with grasp taken as any pressed button above select, not a guessed index',
+    /for \(let i = 1; i < pad\.buttons\.length; i\+\+\) \{[\s\S]{0,140}?grasp = true; break;/.test(SRC),
+    'a gesture pad has only select and grasp to report, so the slot it uses is what it means');
+  check('...leaving a real controller pad untouched',
+    /if \(!this\._isHandSource\(src\)\) return pad;/.test(SRC),
+    'normalising a Touch controller would delete its face buttons and thumbstick');
+  check('...and cached, since this is read every frame per source',
+    /this\._handPadView\[key\] \|\| \(this\._handPadView\[key\] = \{/.test(SRC));
+
+  // Preferring the mock for ANY jointed source was right while the only jointed runtime reported
+  // an empty pad. Galaxy XR now gives BOTH joints and a working gesture pad, and the runtime's
+  // recogniser is the one that made clicking reliable there.
+  check('a runtime gesture pad outranks our synthesised one',
+    /const realHasButtons = !!\(src\.gamepad && src\.gamepad\.buttons && src\.gamepad\.buttons\.length\);/.test(SRC)
+      && /const mock = src\.hand && !realHasButtons &&/.test(SRC),
+    'our thresholds are a reimplementation of a decision the runtime already publishes');
+
   check('...and a cached mock can never answer for a controller',
-    /const mock = src\.hand && this\._mockGamepads/.test(SRC),
+    /const mock = src\.hand && !realHasButtons && this\._mockGamepads/.test(SRC),
     'put the hands down, pick the controllers up, and a frozen pinch would answer forever');
 
   check('the canSculpt trigger reads through the helper',
@@ -417,9 +665,55 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...once per session, not every frame',
     /this\._handsUiPrimed = true;/.test(SRC),
     're-showing it every frame would fight the user the moment they closed it');
-  check('...and only when hands are present AND nothing carries buttons',
-    /return anyHand && !anyButtons;/.test(SRC),
-    'forcing it on for a controller user takes away a choice they already have');
+  // AN ANALOG THRESHOLD IS FOR AN ANALOG TRIGGER. Measured on Galaxy XR, a hand's trigger value
+  // is a continuous hand-closure signal idling at 0.2-0.5 with the runtime's own pressed flag
+  // reading UP throughout: "trig=up/0.41 pressed=true". The Schmitt latches at 0.10 and releases
+  // at 0.04, which that signal never reaches — so one pinch latched the press on permanently.
+  // Replaying matt's capture: the Schmitt fires on 14 of 18 frames, the flag on 1.
+  check('a hand press uses the runtime\u2019s gesture boolean, not an analog threshold',
+    /\? \(_handSrc\s*\n\s*\? !!_trigger\.pressed/.test(SRC),
+    'a value that rests above the release threshold can never let go');
+  check('...while a controller keeps its Schmitt trigger',
+    /: \(_trigger\.pressed \|\| \(this\._vrTrigHeld\[_hand\] \? _tv > 0\.04 : _tv > 0\.10\)\)\)/.test(SRC),
+    'a physical trigger rests at 0 and a light press must still count');
+  check('...and sculpting applies the same exception',
+    /const _handPress = this\._isHandSource\(source\) && !!\(buttons && buttons\[0\] && buttons\[0\]\.pressed\);/.test(SRC),
+    'a stuck press on the sculpt path is a stroke that never ends');
+
+  // A HAND IS NOT ALWAYS AN XRHand. Measured on Galaxy XR: xrHand=false, joints=0, gripSpace=true,
+  // a 5-BUTTON gamepad, profiles "generic-hand-select-grasp, generic-hand-select,
+  // generic-fixed-hand". The runtime recognises the gestures itself and hands us buttons — so
+  // its hand sources were claimed by the controller test and the hands-only UI never appeared.
+  check('a hand is identified by profile, not only by XRHand',
+    /_isHandSource\(src\) \{/.test(SRC)
+      && /p\.startsWith\('generic-hand'\) \|\| p === 'generic-fixed-hand'/.test(SRC),
+    'Galaxy XR hands carry five buttons and no joints; !!source.hand misses them entirely');
+  check('...and a hand never counts as a controller, however many buttons it carries',
+    /if \(this\._isHandSource\(s\)\) \{ anyHand = true; continue; \}/.test(SRC),
+    'counting its five buttons as a controller is exactly what kept the menus away');
+
+  // PRESENT IS NOT IN USE. Put the controllers down on a Galaxy XR and hands take over, but the
+  // controllers stay ENUMERATED — so a buttons-exist test says "controllers" forever and the
+  // hands-only menus never appear on the one device that most needs them mid-session.
+  check('hands-only keys off controller USE, not controller presence',
+    /const idleMs = window\._handsOnlyIdleMs \?\? 3000;/.test(SRC)
+      && /return \(now - this\._lastControllerUse\) > idleMs;/.test(SRC),
+    'a put-down controller is still in inputSources, asleep');
+  check('...counting both buttons and thumbsticks as use',
+    /const moved   = \(pad\.axes \|\| \[\]\)\.some\(\(a\) => Math\.abs\(a\) > 0\.2\);/.test(SRC),
+    'a stick-only interaction would otherwise look idle and steal the menus mid-use');
+  check('...with the idle clock starting when a pad is first SEEN, not at zero',
+    /if \(this\._lastControllerUse === undefined\) this\._lastControllerUse = now;/.test(SRC),
+    'from zero, a session opening with untouched controllers flips the moment the window elapses');
+  check('...and never without hands, however idle the controllers are',
+    /if \(!anyHand\) return false;/.test(SRC),
+    'idle controllers and no hands is just a paused user');
+  check('...while a session with no CONTROLLER at all qualifies immediately',
+    /if \(!anyController\) return true;/.test(SRC),
+    'visionOS has nothing to go idle, so waiting out a timer there would delay every menu');
+  check('the panel priming re-arms on the way out, not once per session',
+    /if \(!want\) this\._handsUiPrimed = false;/.test(SRC),
+    'putting the controllers down a second time is equally a moment with no button to press');
 
   check('the gaze button still draws above the panels it opens',
     /mesh\.renderOrder = VR_PANEL_RENDER_ORDER \+ 3;/.test(SRC),
@@ -435,6 +729,21 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...in both the Schmitt latch and the press owner',
     /_vrTrigHeld = \{ L: false, R: false, G: false \};/.test(SRC)
       && /_vrPressOwner = \{ L: null, R: null, G: null \};/.test(SRC));
+
+  // ...AND THE SAME 'none' HANDEDNESS REACHES THE CURSOR LOOP, where every `isLeft ? … : …`
+  // silently means "left or right". The transient source took the RIGHT cursor, failed the
+  // active-hand test, and hid it — so holding an offhand pinch for alt-smooth blanked the brush
+  // sphere on the hand actually sculpting.
+  check('an unhanded source owns no cursor group',
+    /const _handed = source\.handedness === 'left' \|\| source\.handedness === 'right';/.test(SRC)
+      && /const cursorGroup = !_handed \? null : \(isLeft \? this\._vrCursorLeft : this\._vrCursorRight\);/.test(SRC),
+    "a transient pinch source is not the right hand, and hiding the right hand's sphere is the bug");
+  check('...nor a controller group, which is what drops it from the loop',
+    /const controllerGroup = !_handed \? null : \(isLeft \? this\._vrControllerLeft : this\._vrControllerRight\);/.test(SRC),
+    'without this the source runs the whole cursor body against the right hand\u2019s objects');
+  check('...and the guard still hides a cursor whose controller is genuinely unmapped',
+    /if \(!controllerGroup\) \{ if \(cursorGroup\) cursorGroup\.visible = false; continue; \}/.test(SRC),
+    'a handed source with no controller is a real unmapped-handedness case and must still hide');
 }
 
 // ── 4b. placement mode: stop describing the transform and grab it ────────────
@@ -449,9 +758,15 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     'defining the tool without calling it leaves the same guessing game');
   check('...driven by the DOMINANT hand, since the panel is on the other wrist',
     /const dom = this\._dominantHand \|\| 'right';/.test(SRC));
-  check('...read from the wrist JOINT, not the grip it is calibrating',
-    /const wj = domSrc\.hand\.get\('wrist'\);/.test(SRC),
+  check('...found by profile, so a jointless hand still qualifies',
+    /if \(sc\.handedness === dom && this\._isHandSource\(sc\)\) domSrc = sc;/.test(SRC),
+    'requiring source.hand made the grab silently do nothing on Galaxy XR, every frame');
+  check('...read from the wrist JOINT where one exists',
+    /const wj = domSrc\.hand && domSrc\.hand\.get\('wrist'\);/.test(SRC),
     'driving the drag with the grip feeds the correction being measured back into itself');
+  check('...and falling back to the grip pose where there are none',
+    /if \(!wp && domSrc\.gripSpace\) wp = frame\.getPose\(domSrc\.gripSpace, refSpace\);/.test(SRC),
+    'Galaxy XR hands have no joints at all — a joint-only read cannot place anything there');
   check('...in the anchor frame, so both hands stay free to move',
     /copy\(anchor\.matrixWorld\)\.invert\(\)\.multiply\(this\._wpHandM\)/.test(SRC),
     'absolute poses would drag the panel whenever the WEARING hand moved');
@@ -466,6 +781,18 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /window\._wristPlaceResult = out;/.test(SRC),
     'a placement you cannot read back has to be redone in the headset every time');
 
+  // console.log output never reaches the remote console on Galaxy XR, so every probe written
+  // this session was invisible there. Returned values do arrive.
+  check('the menu trace is also readable as a value, not only as a log',
+    /_traceOut\(line\) \{/.test(SRC) && /window\._menuLog\.push\(t\);/.test(SRC),
+    'a trace that can only be logged is no trace at all on a device that swallows logs');
+  check('...capped, since it is written from the frame loop',
+    /if \(window\._menuLog\.length > 60\) window\._menuLog\.shift\(\);/.test(SRC),
+    'an unbounded array written per frame grows for the life of the session');
+  check('...and every trace line goes through it',
+    !/console\.log\('\[menu\] /.test(SRC),
+    'one line left logging directly is the one line you need and cannot see');
+
   // A pinch that carries the panel would otherwise also click whatever it is dragged across.
   check('every press is swallowed while placing',
     /const _pressed = \(_trigger && !this\._wristPlaceActive\(\)\)/.test(SRC),
@@ -479,8 +806,46 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // The measurement is the deliverable: a placement nobody baked in has to be redone.
   check('the measured placement is baked in as the hands-only default',
     /static get HAND_WRIST_PANEL\(\)/.test(SRC)
-      && /\{ p: \[0\.0001, -0\.0017, 0\.0253\], r: \[22\.9, -2\.8, -81\.4\] \}/.test(SRC),
+      && /\{ p: \[0\.0001, -0\.0017, 0\.0253\], r: \[22\.9, -2\.8, -81\.4\], sy: -1 \}/.test(SRC),
     'measured on device 2026-09-13 — three derivations from a description failed first');
+
+  // TWO frames, two measurements. visionOS hands have no gripSpace so the app synthesises a wrist
+  // -joint anchor; Galaxy XR hands are controller-shaped and bring a real grip. Neither number is
+  // derivable from the other, so both are measured and the runtime picks.
+  check('the grip-frame placement is measured separately',
+    /static get HAND_GRIP_PANEL\(\)/.test(SRC)
+      && /\{ p: \[-0\.0135, -0\.0421, -0\.0713\], r: \[-1\.4, 28\.2, -15\.2\], sy: 1 \}/.test(SRC),
+    'measured on Galaxy XR 2026-09-14; the wrist-joint number means nothing in a grip frame');
+  check('...chosen by where the anchor pose came from, not by device sniffing',
+    /const fromWrist = nonDom === 'Left' \? this\._gripSpaceIsWristLeft : this\._gripSpaceIsWristRight;/.test(SRC),
+    'the wrist substitution already records when it ran — that is the honest signal');
+  check('...off the NON-dominant hand, which is the one wearing the panel',
+    /const nonDom = this\._dominantHand === 'left' \? 'Right' : 'Left';/.test(SRC));
+  // Defining the chooser is not the same as using it: a mount that reads one constant directly
+  // looks entirely correct and silently gives every runtime the visionOS number.
+  // THE MIRROR SIGN TRAVELS WITH THE NUMBER. A panel mesh is built at scale.y=-1; placement mode
+  // decomposes a matrix and hands it back at +1. The visionOS number has the half-turn correction
+  // folded in and is right at -1; the Galaxy XR number was grabbed raw and is right at +1. A
+  // single normalised sign here is correct for exactly one runtime and upside down in the other.
+  check('the hands slot takes its mirror sign from the same constant as the rotation',
+    /if \(window\._panelKeepScale !== true\) _p\.mesh\.scale\.set\(1, _hp\.sy, 1\);/.test(SRC),
+    'one hardcoded sign renders one of the two runtimes flipped and back-facing');
+  check('...and the two constants disagree about it, which is the point',
+    /r: \[22\.9, -2\.8, -81\.4\], sy: -1/.test(SRC) && /r: \[-1\.4, 28\.2, -15\.2\], sy: 1/.test(SRC),
+    'equal signs mean the field is decorative and one runtime is still wrong');
+  // The controller slot now restores the mirror on the way out (see below), but must otherwise
+  // keep the shared lift/yaw it was tuned with.
+  check('...and the controller slot keeps its own lift and yaw',
+    /_p\.mesh\.position\.set\(0, _wy, 0\);\s*\n\s*_p\.mesh\.rotation\.set\(0, _wYaw, 0\);/.test(SRC),
+    'the controller path was tuned against a controller and must not inherit the hand placement');
+
+  check('...and the panel mount actually asks it, rather than naming a constant',
+    /const _hp = this\._handPanelPlacement\(\), _D = Math\.PI \/ 180;[\s\S]{0,200}?_p\.mesh\.rotation\.set/.test(SRC),
+    'a hardcoded constant at the point of use makes the chooser decorative');
+  check('...and both are frozen singletons, not rebuilt per frame',
+    /Scene\._HWP \|\| \(Scene\._HWP = Object\.freeze\(/.test(SRC)
+      && /Scene\._HGP \|\| \(Scene\._HGP = Object\.freeze\(/.test(SRC),
+    'the mount reads these every frame, and identity is what lets a test assert which is in use');
   // The grab got the plane right and the facing backwards; the half turn about the panel's own
   // X is folded INTO the constant, so there is no composition order to get wrong at use.
   check('...with the facing flip folded in, not layered on',
@@ -510,19 +875,63 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...at the three.js controller object, so the drawn ray cannot diverge from the cast one',
     /ctrl\.matrix\.compose\(this\._hrV, this\._hrQ, this\._hrS\);[\s\S]{0,200}?ctrl\.updateMatrixWorld\(true\);/.test(SRC),
     'the visual spike is a child of that object; correcting each use separately would drift');
+  // Position was overwritten from the joints; rotation was inherited from whatever three last
+  // wrote to the controller object. When three has not posed it this frame, only half the
+  // transform is live — the spike translates with the hand and does not turn.
+  // EVERY orientation bug in this file was the same shape: a runtime hands us a frame, we guess
+  // its convention, and measure a correction per device. With joints there is nothing to guess —
+  // matt's description of the ray he wanted is itself a construction from two joint positions.
+  check('the ray is built from joint anatomy when joints exist',
+    /_handRayFromJoints\(source, frame, refSpace\) \{/.test(SRC)
+      && /const _jointRay = \(window\._handRayFromJoints !== false\)/.test(SRC),
+    'a runtime frame needs a per-device constant; two joints need none');
+  check('...origin at the pinch point, because that IS the click',
+    /this\._jrA\.set\(\(tx \+ ix\) \/ 2, \(ty \+ iy\) \/ 2, \(tz \+ iz\) \/ 2\);/.test(SRC));
+  check('...aimed from the metacarpal bases toward it',
+    /this\._jrM\.lookAt\(this\._jrB, this\._jrA, this\._jrUp\);/.test(SRC),
+    'the axis the hand already makes when you pinch and point');
+  check('...with the roll defined by the palm normal rather than left to lookAt',
+    /this\._jrUp\.crossVectors\(this\._jrU, this\._jrV\)\.normalize\(\);/.test(SRC),
+    'an undefined up makes the spike roll unpredictably as the hand turns');
+  check('...returning null on degenerate joints instead of NaN',
+    /if \(this\._jrA\.distanceToSquared\(this\._jrB\) < 1e-8\) return null;/.test(SRC),
+    'coincident joints would make lookAt produce a NaN quaternion');
+  check('...and the runtime-frame path still runs when there are no joints',
+    /const _poseSpace = _jointRay \? null : \(source\.gripSpace \|\| source\.targetRaySpace\);/.test(SRC),
+    'a jointless runtime must still get a ray');
+
+  // The spike translated and would not rotate while the Move tool's 6DOF was perfect. Move reads
+  // gripSpace; the spike read targetRaySpace — and Galaxy XR hands advertise GENERIC-FIXED-HAND,
+  // a ray that is declared not to track hand orientation. Nothing was broken; we read the pose
+  // that does not turn.
+  check('the runtime-frame fallback prefers the GRIP, as every working 6DOF path does',
+    /source\.gripSpace \|\| source\.targetRaySpace\);/.test(SRC),
+    'a fixed target ray does not turn with the hand, and says so in its profile');
+  check('...falling back to the target ray where there is no grip',
+    /if \(_poseSpace\) \{[\s\S]{0,140}?if \(_rp\) \{/.test(SRC),
+    'visionOS hands carry no gripSpace and their target ray tracks properly');
+  check('...read from the pose rather than inherited from the controller object',
+    /this\._hrM\.fromArray\(_m\)\.decompose\(this\._hrTmpV, this\._hrQ, this\._hrTmpS\);/.test(SRC),
+    'inheriting it assumes three posed that object this frame, and it may not have');
+
   check('...with the origin at the pinch point, not the fingertip',
     /this\._hrV\.set\(\(a\.x \+ b\.x\) \/ 2, \(a\.y \+ b\.y\) \/ 2, \(a\.z \+ b\.z\) \/ 2\);/.test(SRC),
     'aiming from anywhere but the click point means you press what you were not looking at');
   check('...pitched about the ray\u2019s own x, not a world axis',
     /this\._hrFix\.setFromAxisAngle\(\{ x: 1, y: 0, z: 0 \}, deg \* Math\.PI \/ 180\);/.test(SRC),
     'a world-space tilt changes meaning as you turn your wrist over');
-  {
-    // -30 estimated, -35 after use, -45 measured as correct. A measurement, so pin it.
-    const d = /_handRayPitch \?\? (-?[\d.]+)/.exec(SRC);
-    check('...by the measured amount, downward',
-      !!d && parseFloat(d[1]) === -45,
-      'measured on device 2026-09-13; a zero default is the uncorrected visionOS ray');
-  }
+  // +20 measured on Galaxy XR against the ANATOMICAL ray. The earlier -45 was measured against
+  // visionOS's targetRaySpace, before the ray was rebuilt from joints — a construction that no
+  // longer exists, so that number is stale rather than a second device's value.
+  check('the pitch default is the value measured against the current construction',
+    /options\.handRayPitch = queryNumber\(getVal\('handraypitch'\), -80, 80, 20\);/.test(OPT),
+    'carrying a number measured against a construction that no longer exists is worse than one device');
+  check('...with the option default owning it, not a call-site fallback',
+    /this\._handStylus\('handRayPitch', 20\)/.test(SRC),
+    'the option default outranks the fallback, so disagreeing values silently resolve to the option');
+  check('...and range past it, since the measured value was its own old maximum',
+    /min="-80" max="80"/.test(MM),
+    'a setting whose correct value is its ceiling cannot be tuned in one direction');
   // The same signed pitch on both hands produced a left spike that was a COPY of the right
   // rather than its mirror: the pitch rotates about the ray frame's own X, and WebXR gives both
   // hands the SAME frame convention, so the anatomical meaning of +X flips and one sign tilts
@@ -531,13 +940,16 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /const _mirror = \(source\.handedness === 'left' && window\._handRayMirror !== false\) \? -1 : 1;/.test(SRC),
     'one signed pitch copies the right spike onto the left instead of mirroring it');
   check('...applied to the shared default only, so an override stays literal',
-    /\(window\._handRayPitch \?\? -45\) \* _mirror;/.test(SRC),
+    /const deg = Number\.isFinite\(_perHand\) \? _perHand : _base \* _mirror;/.test(SRC),
     'a signed override would mean the opposite of what was typed for one hand');
   check('each hand can override the shared pitch',
     /const _perHand = source\.handedness === 'left' \? window\._handRayPitchL : window\._handRayPitchR;/.test(SRC),
     'one number for both hands assumes a symmetry that has not been measured');
   check('...falling back to the shared default, so nothing changes until it is set',
-    /Number\.isFinite\(_perHand\)\s*\n?\s*\? _perHand\s*\n?\s*: \(window\._handRayPitch \?\? -45\) \* _mirror;/.test(SRC));
+    /Number\.isFinite\(_perHand\) \? _perHand : _base \* _mirror;/.test(SRC));
+  check('...with the window override ranking above the saved setting',
+    /Number\.isFinite\(window\._handRayPitch\)\s*\n\s*\? window\._handRayPitch\s*\n\s*: this\._handStylus\('handRayPitch', 20\);/.test(SRC),
+    'a console trial must win, or tuning fights the slider silently');
   check('...and the frames are measured rather than assumed',
     /_reportRayFrame\(source, frame, refSpace, ctrl\) \{/.test(SRC)
       && /this\._reportRayFrame\(source, frame, refSpace, ctrl\);/.test(SRC),
@@ -573,7 +985,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     })(),
     'lag on the target reads as steadiness; lag on the pointer in your hand reads as broken');
   check('...and only on hands, leaving the controller feel alone',
-    /if \(this\._handsOnlyMode\(\)\) \{[\s\S]{0,400}?const ks = window\._wristSmooth/.test(SRC),
+    /if \(this\._handsOnlyMode\(\)\) \{[\s\S]{0,900}?const ks = _bigUp/.test(SRC),
     'a controller braces the wrist; its feel is not up for renegotiation');
   check('...without the brush inheriting the panel smoothing',
     !/_wristSmooth/.test(SRC.slice(SRC.indexOf('_applyHandRayCorrection'), SRC.indexOf('_applyHandRayCorrection') + 2500)),
@@ -633,7 +1045,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // The per-panel edge line only prints inside the winner branch, so presses made off-panel
   // left no trace: "I pinched ten times and one worked" looked like "I pinched once".
   check('every trigger edge is logged, not only the ones that reach a panel',
-    /'\[menu\] TRIGGER ' \+ _hand/.test(SRC),
+    /this\._traceOut\('TRIGGER ' \+ _hand/.test(SRC),
     'without it, pinches that miss entirely are invisible and the counts cannot be compared');
 
   // "Is it even seeing my hand" has to be answerable without a console.
@@ -644,12 +1056,21 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /const pinching = !!this\._pinchLatch\?\.\[key\]\?\.pinch;/.test(SRC),
     'an indicator that recomputes the test confirms itself instead of the real signal');
   check('...drawn above the panels, or a dot inside a menu is invisible',
-    /m\.renderOrder = VR_PANEL_RENDER_ORDER \+ 1;/.test(SRC));
+    /m\.renderOrder = VR_PANEL_RENDER_ORDER \+ 7;/.test(SRC));
+  // Drawing on top at full opacity punches holes in whatever is being read underneath.
+  check('...translucent, since they draw over menus',
+    /opacity: window\._handDotOpacity \?\? 0\.45,/.test(SRC),
+    'a dot that draws over a panel at full opacity hides the thing it is pointing at');
+  check('...re-read each frame so the knob needs no reload',
+    /m\.material\.opacity = window\._handDotOpacity \?\? 0\.45;/.test(SRC));
+  check('...with the pinch state carried by COLOUR, not by alpha',
+    /m\.material\.color\.setHex\(pinching \? 0x35ff6a : 0xffffff\);/.test(SRC),
+    'two signals on one channel means neither can be read confidently');
 
   // The ray's intersection dot sat at 1001 against panels at 11000 — painted over by the one
   // surface whose intersection you most need to see.
   check('the ray reticle draws above the panels',
-    /this\._bpReticle\.renderOrder = VR_PANEL_RENDER_ORDER \+ 2;/.test(SRC),
+    /this\._bpReticle\.renderOrder = VR_PANEL_RENDER_ORDER \+ 8;/.test(SRC),
     'a hit indicator hidden by the thing it is indicating a hit on is worse than none');
   check('...and every overlay order is taken from the panel constant, not guessed',
     !/renderOrder = 1000[01];/.test(SRC) && !/_bpReticle\.renderOrder = 1001;/.test(SRC),
@@ -690,8 +1111,60 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /<button id="mp-swap-btn"/.test(MP) && /mp-show-main-menu/.test(MP),
     'a hands-only runtime has no button to open the main panel with');
   check('...and the main menu carries one back',
-    /<button class="mm-pin-btn mm-hands-only" id="mm-mini-btn"/.test(MM) && /mm-show-mini/.test(MM),
+    /<button id="mm-mini-btn"/.test(MM) && /mm-show-mini/.test(MM),
     'a one-way swap strands you in the panel you swapped to');
+  // IN THE HANDS-ONLY ROW, NOT THE MENUBAR. The menubar is six menu buttons and the pin, and at
+  // 480px that already reaches the edge — a seventh button pushed the pin off the panel on
+  // Vision Pro and half-covered it on Galaxy XR. The bottom row is hands-only already and has
+  // the room, so the control lives there and the menubar is the same on both input kinds.
+  check('...from the bottom row, which is where the room is',
+    /<div id="mm-undo-row" class="mm-hands-only">[\s\S]{0,400}?<button id="mm-mini-btn"[\s\S]{0,80}?<\/div>/.test(MM),
+    'the menubar has no space for it and the pin is what gets pushed out');
+  // AND THE ROW MUST SURVIVE AN ENGINE THAT LAYS THE SAME LABELS OUT WIDER. matt: "it renders
+  // differently on avp vs gxr". A flex item with nowrap text will not shrink below its content
+  // unless min-width allows it, so without this the overflow goes to the one item that cannot
+  // shrink — the pin — and pushes it off the panel.
+  check('the menu buttons give up label width before the pin leaves the panel',
+    /\.mm-menu-btn \{[\s\S]{0,700}?min-width: 0;\s*\n\s*overflow: hidden;/.test(MM),
+    'nowrap text with auto min-width cannot shrink, so the fixed-width pin is what moves');
+  check('...and the pin itself still refuses to shrink',
+    /\.mm-pin-btn \{[\s\S]{0,400}?flex-shrink: 0;/.test(MM),
+    'a squashed pin is a different bug, not a fix');
+
+  // The wrist panel's swap made the same journey, and lands in the same corner: two swaps in
+  // two panels should not be in two different places.
+  check('the wrist panel swap sits in its hands-only bottom row',
+    /<div id="mp-undo-row" class="mp-hands-only">[\s\S]{0,400}?<button id="mp-swap-btn"[\s\S]{0,80}?<\/div>/.test(MP),
+    'beside the tool button it crowds the top of a panel that is mostly top');
+  // The toprow BLOCK, not "anywhere between the toprow and a </div>" — a lazy [\s\S]*? happily
+  // crosses the close tag and finds the button in the row below, which made this pass as a
+  // false failure the first time it was written.
+  check('...and no longer beside the tool button',
+    !/mp-swap-btn/.test((MP.split('<div class="mp-toprow">')[1] || '').split('</div>')[0]),
+    'two homes at once is two hit targets for the same action');
+
+  // ── the rasteriser measures the CLIENT box ─────────────────────────────────
+  // A real border is outside it, so the bottom and right of the content go with it.
+  check('the plane is measured with the box the rasteriser rasterises',
+    /export function panelPixelSize\(el, fallbackW, fallbackH\) \{\s*\n\s*const w = el\.clientWidth  \|\| el\.offsetWidth  \|\| fallbackW;/.test(HVP)
+      && /const h = el\.clientHeight \|\| el\.offsetHeight \|\| fallbackH;/.test(HVP),
+    'offsetHeight includes a border the SVG viewport does not, so plane and bitmap differ');
+  check('...at creation, at resize, and in the aspect check alike',
+    (HVP.match(/panelPixelSize\(el, /g) || []).length >= 3,
+    'one of the three measuring a different box re-introduces the mismatch it fixes');
+  check('the main panel frames itself with an inset shadow, not a border',
+    /box-shadow: inset 0 0 0 2px #585b70;/.test(MM) && !/#mm-root \{[\s\S]{0,600}?\n  border: 2px solid/.test(MM),
+    'a border puts content outside the client box, where the rasteriser cuts it off');
+  check('...and its height is then exactly its content',
+    /root\.style\.height = \(MM_MENUBAR_H \+ MM_BODY_H\) \+ 'px';/.test(MM),
+    'the +4 was the border allowance; keeping it leaves 4px of dead panel below the content');
+  check('the wrist panel frames itself the same way',
+    /box-shadow: inset 0 0 0 1px #313244;/.test(MP) && !/#mp-root \{[\s\S]{0,400}?\n  border: 1px solid/.test(MP),
+    'the same cut, one pixel at a time');
+
+  check('...and the menubar is left with the pin as its only right-hand button',
+    !/id="mm-menubar"[\s\S]*?id="mm-mini-btn"[\s\S]*?<div id="mm-body">/.test(MM),
+    'a hands-only button back in the menubar re-crowds the row it was moved out of');
   check('...both announced as events, not direct Scene calls',
     /dispatchEvent\(new CustomEvent\('mp-show-main-menu'/.test(MP)
       && /dispatchEvent\(new CustomEvent\('mm-show-mini'/.test(MM),
@@ -724,9 +1197,52 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...and hidden by default, on both panels',
     /\.mp-hands-only \{ display: none; \}/.test(MP) && /\.mm-hands-only \{ display: none; \}/.test(MM),
     'a controller user gets buttons they already have, taking panel space and rasteriser time');
+  // Leaving hands mode has to undo what entering it did, or the panel is left un-mirrored in a
+  // slot that assumes it is mirrored — the menus swap and come up wrong.
+  check('the panel mirror is restored when leaving hands mode',
+    /if \(_p\.mesh\.scale\.y > 0\) _p\.mesh\.scale\.set\(1, -1, 1\);/.test(SRC),
+    'scale.y = -1 is what a panel is built with; the hands slot normalises it and must put it back');
+  // The hands slot writes all three components; this branch only ever set .y, so x and z kept
+  // the hand values and the panel came back at the hand's angle in a controller slot.
+  check('...along with every component the hands slot writes',
+    /_p\.mesh\.position\.set\(0, _wy, 0\);\s*\n\s*_p\.mesh\.rotation\.set\(0, _wYaw, 0\);/.test(SRC),
+    'resetting only the components this slot sets leaves the others carrying the hand placement');
+  // The idle window stops a still controller stealing the UI; it should not make someone who has
+  // visibly started using their hands wait it out.
+  // Returning true only WHILE a hand button is pressed oscillated — true during a pinch, false
+  // between pinches — so the class and the placement latched and unlatched at gesture rate.
+  check('a moment of proof is REMEMBERED, not merely noticed',
+    /\{ this\._lastHandUse = now; break; \}/.test(SRC),
+    'a rule that is true only during the gesture flickers between gestures');
+  check('...and whichever input was used most recently wins',
+    /if \(Number\.isFinite\(this\._lastHandUse\) && this\._lastHandUse >= this\._lastControllerUse\) return true;/.test(SRC),
+    'symmetric, so neither input can be stolen by the other merely sitting there');
+
   check('...and the class is only re-applied when it changes',
     /if \(want === this\._handsUiClassApplied\) return;/.test(SRC),
     'a markDirty every frame re-rasterises the panel for nothing');
+
+  // The latch fired on the frame hands-only first became true, which at session start can be
+  // before the panels have elements — so the class went nowhere and the latch said "done".
+  check('...but does not latch before the panels exist to receive it',
+    /const panels = \[this\._miniPanel, this\._mainMenuPanel\]\.filter\(\(p\) => p && p\._element\);\s*\n\s*if \(!panels\.length\) return;/.test(SRC),
+    'latching on a frame with no panels leaves the controller layout for the whole session');
+  check('...and flushes the repaint rather than queueing it',
+    /if \(p\.flushPaint\) p\.flushPaint\(\); else p\.markDirty\?\.\(\);/.test(SRC),
+    'a queued repaint superseded by the panel\u2019s own first paint leaves the stale texture up');
+  // REPAINT IS NOT REBUILD. The class updates the DOM at once — the hover quad measured the live
+  // DOM and was laid out for the hands panel — while the rasterised texture stayed on the
+  // controller layout, because the polyfill caches against content and a class that only changes
+  // which rules apply does not move that cache.
+  check('...having asked the panel to rebuild its content first',
+    /p\.syncFromState\?\.\(\);\s*\n\s*p\._rebuildContent\?\.\(\);/.test(SRC),
+    'a hover highlight in the right places over a picture of the wrong panel');
+  check('...before the flush, not after it',
+    SRC.indexOf('p._rebuildContent?.();') < SRC.indexOf('if (p.flushPaint) p.flushPaint();'),
+    'flushing a texture and then changing the content repaints the old one');
+  check('...and a throwing rebuild still leaves the class and the flush intact',
+    /\} catch \(e\) \{ console\.warn\('\[hands\] rebuilding the panel content failed', e\); \}/.test(SRC),
+    'one panel failing to rebuild must not strand the other in the wrong layout');
 
   // With no thumbstick there is no other way to undo without leaving what you are doing.
   check('both panels carry undo and redo',
@@ -802,6 +1318,287 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...and persisted like its neighbours',
     /opts\.saveOption\('grabGain', f, 500\);/.test(MM),
     'a setting that resets on reload is a slider, not a preference');
+}
+
+// ── 4g3. a modal overlay draws in front of the panel that summoned it ────────
+//
+// Every panel shared VR_PANEL_RENDER_ORDER, so a keyboard and the browser-save dialog it exists
+// to type into TIED — and three resolves a tie by traversal order. The keyboard came up behind.
+// Everything here is transparent, so there is no depth to fall back on: renderOrder is the lever.
+{
+  check('modal overlays have their own band',
+    /export const VR_MODAL_ORDER_BUMP = 2;/.test(HVP)
+      && /VR_PANEL_RENDER_ORDER \+ \(this\._isModalOverlay \? VR_MODAL_ORDER_BUMP : 0\)/.test(HVP),
+    'a tie is not an order — it resolves by whatever was added first');
+  // Render order only decides between things that both survive the DEPTH test. The keyboard sits
+  // below and slightly behind the dialog it serves, so raising its order alone changed nothing —
+  // depth hid it either way. A modal is the one case where the answer is always "in front".
+  // THE WHOLE RULE: same pose as the parent, then 1cm toward the headset. Three attempts got
+  // this wrong by adding cleverness on top of a simple spec — a nudge along the panel normal
+  // (only "in front" if the panel faces you), a push toward the head (which also threw it upward
+  // from a panel below eye level), and a vertical offset from reading "above/below" as height
+  // when stacking order was meant.
+  check('the keyboard copies the parent panel pose exactly',
+    /this\.mesh\.position\.copy\(panelWorldPos\);/.test(KBD)
+      && /this\.mesh\.quaternion\.copy\(panelQuat\);/.test(KBD),
+    'every offset beyond this was something invented rather than asked for');
+  check('...with no vertical term at all',
+    !/yField/.test(KBD) && !/_kbTopGap/.test(KBD),
+    'the field position used to move it, so it landed differently per input touched');
+  check('...stepping toward the viewer by a centimetre',
+    /const gap = window\._kbFrontGap \?\? 0\.01;/.test(KBD)
+      && /this\.mesh\.position\.addScaledVector\(toCam\.normalize\(\), gap\)/.test(KBD),
+    'in front means toward the head, and one centimetre is what was asked for');
+  check('...and the viewer position is actually asked for',
+    /const camPos = this\._viewerPosition\(\);/.test(KBD),
+    'a fallback that is always taken is not a fallback, it is the behaviour');
+  check('...falling back to the panel normal when there is no camera',
+    /else this\.mesh\.position\.addScaledVector\(toUser, gap\);/.test(KBD));
+
+  // The keyboard COPIES its parent's pose, so a fixed step toward the head puts it in front. The
+  // numpad deliberately sits BESIDE the field, and on an angled panel that sideways move carries
+  // it away from you — measured, it ended up farther from the head than the panel it floats over.
+  check('the numpad is brought to a DISTANCE from the head, not pushed by one',
+    /const target = Math\.max\(0\.05, panelDist - gap\);[\s\S]{0,160}?addScaledVector\(toCam\.normalize\(\), here - target\);/.test(NUM),
+    'a fixed push cannot beat an arbitrary sideways offset on an arbitrarily angled panel');
+  check('...clamped so it can never land inside the viewer',
+    /Math\.max\(0\.05, panelDist - gap\)/.test(NUM));
+  check('...keeping the sideways placement that stops it covering the field',
+    /addScaledVector\(right,  xFromFieldCentre \+ numW \/ 2 \+ GAP\)/.test(NUM),
+    'a numpad on top of the number you are editing is worse than one that is hard to see');
+
+  // The hover quad is a CHILD of the panel mesh, so the parent's mirror decides which way its
+  // local +Y points. The existing comment in _showHover warns that negating cy "puts every
+  // highlight on the mirrored row" — which is exactly what a normalised parent does to the
+  // un-negated form, the same failure arriving from the other direction.
+  // Found, positioned, marked visible — and invisible. Default FrontSide worked only because
+  // every panel carried scale.y = -1, which flips the quad's winding toward the viewer.
+  check('the hover quad is double-sided, so the parent mirror cannot cull it',
+    /side: THREE\.DoubleSide,\s*\n\s*\}\)\);/.test(HVP),
+    'a normalised parent back-face culled it: quadVisible true with nothing on screen');
+  // The quad and the texture share the panel's local space, so a parent mirror flips BOTH and
+  // the mapping needs no sign term. Adding one inverted every highlight on the hands panels.
+  check('the hover mapping carries no parent-dependent sign term',
+    !/ySign/.test(HVP)
+      && /q\.position\.set\(\(cx - 0\.5\) \* this\._meshWidth, \(cy - 0\.5\) \* meshH, 0\.001\);/.test(HVP),
+    'content and highlight mirror together; correcting for the parent double-corrects');
+
+  // One helper, on the base class, rather than a copy per overlay to keep in step.
+  check('the viewer position is shared by every panel',
+    /_viewerPosition\(\) \{/.test(HVP) && !/_viewerPosition\(\) \{/.test(KBD),
+    'three copies of "where is the head" is three places for it to drift');
+
+  check('...and modals are not depth-sorted against the panel that summoned them',
+    /depthWrite: !_modal,/.test(HVP) && /depthTest: !_modal,/.test(HVP),
+    'a higher render order cannot rescue something the depth test has already discarded');
+  check('...while ordinary panels keep depth, so geometry still occludes them',
+    /const _modal = !!this\._isModalOverlay;/.test(HVP),
+    'turning depth off for every panel would float menus through the model');
+
+  check('...claimed by all three overlays',
+    /this\._isModalOverlay = true;/.test(KBD) && /this\._isModalOverlay = true;/.test(NUM)
+      && /this\._isModalOverlay = true;/.test(CNF));
+  check('...set BEFORE init, or the bump is never applied',
+    KBD.indexOf('this._isModalOverlay = true;') < KBD.indexOf('this.init(scene, camera, renderer);'),
+    'init reads the flag; setting it afterwards leaves the mesh at the panel band');
+  check('...and kept BELOW the pointer ray, which already sits at +5',
+    /VR_MODAL_ORDER_BUMP = 2;/.test(HVP),
+    'a modal above the ray hides the ray you aim with inside the keyboard you aim at');
+  check('the pointer stays at the top of the ladder',
+    /this\._bpReticle\.renderOrder = VR_PANEL_RENDER_ORDER \+ 8;/.test(SRC)
+      && /m\.renderOrder = VR_PANEL_RENDER_ORDER \+ 7;/.test(SRC),
+    'a hit dot buried under a keyboard vanishes exactly when precise aim matters most');
+}
+
+// ── 4g2. an overlay must mirror the way the panel it sits against mirrors ────
+{
+  // Measured: kbScale [1,-1,1] against mainScale [1,1,1]. Both carried -1 historically, so the
+  // two mirrors cancelled; normalising the wrist panels left the keyboard mirrored alone.
+  // Bind it to its guard: the assignment sitting inside an `if (false)` reads identically.
+  check('the overlay copies the source panel\u2019s mirror SIGN',
+    /if \(this\.mesh && pMesh\.scale\) \{\s*\n\s*const _sy = Math\.abs\(this\.mesh\.scale\.y\) \* \(pMesh\.scale\.y < 0 \? -1 : 1\);/.test(KBD),
+    'a keyboard that mirrors when its source does not comes up upside down');
+  check('...on all three overlays, not just the one that was reported',
+    /Math\.abs\(this\.mesh\.scale\.y\)/.test(NUM) && /Math\.abs\(this\.mesh\.scale\.y\)/.test(CNF),
+    'the numpad and confirm would flip the same way the moment they were opened');
+  check('...copying the sign rather than forcing a value',
+    /\? -1 : 1\);/.test(KBD),
+    'forcing +1 would break the controller path, where the source panel still mirrors');
+}
+
+// ── 4g. the Rz(180) compensation, conditional on the scale that causes it ────
+//
+// Panel meshes normally carry scale.y = -1, which puts a spurious half turn into the world
+// quaternion. Keyboard, numpad and confirm each undid that with a hardcoded multiply — correct
+// exactly as long as EVERY panel always had that scale. The hands-only wrist slot normalises it,
+// so the hardcoded undo introduced the very flip it exists to remove.
+{
+  check('the compensation is shared, not repeated per panel',
+    /export function panelWorldQuat\(mesh, out\) \{/.test(HVP),
+    'three copies of an assumption is three places for it to go stale');
+  check('...and applied only when the scale actually calls for it',
+    /const sy = mesh\.scale \? mesh\.scale\.y : 1;\s*\n\s*if \(sy < 0\) q\.multiply/.test(HVP),
+    'assuming the scale is what broke the keyboard when one panel stopped having it');
+  check('...with every hardcoded undo removed',
+    !/multiply\(new THREE\.Quaternion\(0, 0, 1, 0\)\)/.test(KBD + NUM + CNF),
+    'one left behind is one panel that still flips');
+  check('...and all three panels using the helper',
+    /panelWorldQuat\(pMesh\)/.test(KBD) && /panelWorldQuat\(animMesh\)/.test(NUM)
+      && /panelWorldQuat\(panelMesh\)/.test(CNF));
+}
+
+// ── 4h0. you cannot aim a tool with the tool you are aiming ──────────────────
+//
+// Dragging a spike slider moved the spike, which moved the ray, which moved where the ray met
+// the panel, which moved the slider. A closed loop that reached the end of its range in under a
+// second and left the app unusable until localStorage was cleared by hand.
+{
+  check('the live spike is frozen for the duration of its own drag',
+    /if \(this\._spikeFreeze\) return this\._spikeFreeze\.length;/.test(SRC)
+      && /if \(this\._spikeFreeze\) return this\._spikeFreeze\.offset;/.test(SRC)
+      && /if \(this\._spikeFreeze\) return this\._spikeFreeze\.tilt;/.test(SRC),
+    'a control that moves the instrument measuring it is a feedback loop, not a setting');
+  check('...snapshotted from the live accessors when the drag begins',
+    /this\._spikeFreeze = \{\s*\n\s*length: this\.getStylusLength\(\),/.test(SRC),
+    'the freeze must hold what was on screen, not a stored value that may differ');
+  check('...and released on drag end, so the new value commits',
+    /this\._spikeFreeze = null;\s*\n\s*this\._spikePending = null;/.test(SRC));
+
+  check('the pending value is shown on a COPY of the spike',
+    /const m = real\.clone\(\);/.test(SRC) && /m\.name = 'stylus_spike_preview';/.test(SRC),
+    'a preview that is not the thing previewed is an approximation of the answer');
+  check('...drawn over everything, so a shorter pending length cannot hide inside the live one',
+    /o\.material\.depthTest = false;[\s\S]{0,200}?o\.renderOrder = VR_PANEL_RENDER_ORDER \+ 6;/.test(SRC),
+    'matt asked for 100% draw on top for exactly this reason');
+  check('...parented alongside the real spike, so it inherits the live aim',
+    /real\.parent\.add\(m\);/.test(SRC),
+    'only the property being edited should differ between them');
+  check('...and hidden when nothing is being dragged',
+    /if \(!pending\) \{[\s\S]{0,140}?this\._spikePreviewMesh\.visible = false;/.test(SRC));
+}
+
+// ── 4h. the spike is a different tool in a hand than in a controller ─────────
+//
+// A controller is a rigid object you brace against, so a long spike reads as an extension of it.
+// A pinch has no shaft: the tip is centimetres from your fingers and length only amplifies
+// tremor. One global compromise served neither.
+{
+  check('the stylus settings split by input kind',
+    /if \(this\._handsOnlyMode\(\)\) return this\._handStylus\('handStylusLength', 0\.05\);/.test(SRC)
+      && /if \(this\._handsOnlyMode\(\)\) return this\._handStylus\('handStylusOffset', 0\.0\);/.test(SRC),
+    'a spike tuned for a controller is the wrong spike for a pinch');
+  check('...leaving the controller values untouched',
+    /return this\._isQuestStandalone \? 0\.15 : 0\.10;/.test(SRC),
+    'those were tuned against a controller; adding a hand variant must not move them');
+  check('...and stylus tilt is forced to ZERO for hands, as a rule not a default',
+    /if \(this\._handsOnlyMode\(\)\) return 0\.0;\s*\n\s*if \(this\._guiXR && this\._guiXR\._uiSettings && this\._guiXR\._uiSettings\.stylusTilt/.test(SRC),
+    'the hand ray is already pitched by _applyHandRayCorrection; letting tilt through rotates it twice');
+  check('...with the hand angle persisted, not only a console override',
+    /this\._handStylus\('handRayPitch', 20\)/.test(SRC),
+    'a slider that reverts on reload is worse than no slider');
+  // BOTH SETS ALWAYS VISIBLE. Hiding one depending on what you are holding makes the controls
+  // change identity silently — matt: "dont do the magical swap of parameters".
+  check('...and both spike groups are always visible, never swapped by input kind',
+    /<div class="mm-section-title">Hand spike<\/div>/.test(MM)
+      && /<div class="mm-section-title">Controller spike<\/div>/.test(MM)
+      && !/mm-row mm-hands-only">\s*\n\s*<span class="mm-lbl">Length/.test(MM),
+    'a control whose meaning depends on what you are holding cannot be reasoned about');
+  check('...and persisted like their neighbours',
+    /opts\.saveOption\('handStylusLength', f, 500\);/.test(MM)
+      && /opts\.saveOption\('handRayPitch', v, 500\);/.test(MM));
+
+  // Measured on Galaxy XR: enabledFeatures lacked hand-tracking entirely — requested as OPTIONAL
+  // and silently refused, leaving gesture-only sources with no joints.
+  check('hand joints can be demanded as a required feature',
+    /requiredFeatures: \['hand-tracking'\]/.test(SGL),
+    'an optional feature may be dropped without explanation, and was');
+  check('...opt-in, because a refused REQUIRED feature can stop VR starting at all',
+    /if \(_wantHands\) \{/.test(SGL) && /_reqHandsOutcome = _wantHands \? 'attempting'/.test(SGL),
+    'the retry may land after the user activation is spent; not a default worth risking');
+  check('...and falling back to the optional request rather than failing',
+    /falling back to the optional request/.test(SGL));
+}
+
+// ── 4i. the drawn spike and the picking tip, and a radius you can see ────────
+{
+  // getStylus*() decide where the TIP is computed; the spike you SEE is a mesh moved only by
+  // updateStylus*(). Switching input kind changes the accessors and touches no mesh.
+  // Bound to the mode-switch site specifically: the same two calls now also appear on the
+  // drag-release path, so an unanchored match finds one while the other is gone.
+  check('a mode switch re-applies the spike geometry',
+    /if \(!want\) this\._handsUiPrimed = false;[\s\S]{0,1200}?this\.updateStylusLength\?\.\(this\.getStylusLength\(\)\);/.test(SRC),
+    'otherwise the drawn spike keeps the controller length while picking uses the hand one');
+  check('...and a drag release re-applies it too',
+    /this\._updateSpikePreview\(null\);[\s\S]{0,300}?this\.updateStylusLength\?\.\(this\.getStylusLength\(\)\);/.test(SRC),
+    'the frozen value is replaced by the committed one, and the mesh must follow it');
+  check('...and the hand sliders move the mesh as the controller ones do',
+    /main\.updateStylusLength\?\.\(f\);[\s\S]{0,200}?opts\.saveOption\('handStylusLength'/.test(MM),
+    'writing the setting alone moves the tip and not the spike');
+
+  // A radius is a size in the scene, and the only way to see it was to let go and move away.
+  check('the radius is previewed at the menu intersection while dragging',
+    /_updateRadiusPreview\(point, radiusPhys\) \{/.test(SRC)
+      && /this\._updateRadiusPreview\(_winner\.hit\.point, this\._vrBrushPhysicalRadius\);/.test(SRC),
+    'setting a size blind and checking it afterwards is two steps for one decision');
+  check('...armed only by a radius slider, not any drag',
+    /if \(_locked && \/radius\/i\.test\(_sliderId\)\) this\._radiusPreviewOn = true;/.test(SRC),
+    'a sphere appearing while dragging intensity would be noise');
+  check('...using the SAME radius the brush cursor uses',
+    /this\._vrBrushPhysicalRadius\)/.test(SRC),
+    'a second calculation is a second thing that can disagree with what you then paint');
+  // The winner synthesised during a slider drag carried uv and distance only, so anything that
+  // wants to draw AT the intersection had nothing to position against and silently drew nothing.
+  check('the drag-lock hit carries a world point, not just a UV',
+    /\}, distance: 0, point: _hit\.clone\(\) \} \};/.test(SRC),
+    'the reticle and the radius preview both position from hit.point');
+  check('...and hidden when there is no radius to show',
+    /if \(r <= 0\) \{ this\._radiusPreview\.visible = false; return; \}/.test(SRC));
+  check('...drawn above the panel it is dragged on',
+    /m\.renderOrder = VR_PANEL_RENDER_ORDER \+ 4;/.test(SRC));
+
+  // A preview that does not look like the thing it previews teaches the user they are two
+  // different things. The app already draws "here is the brush radius" — borrow it.
+  check('the preview borrows the cursor\u2019s own material rather than inventing one',
+    /const src = cur\?\.getObjectByName\?\.\('volume_sphere'\);/.test(SRC)
+      && /const m = src\.material\.clone\(\);/.test(SRC),
+    'a wireframe was a design decision with no basis — the fresnel shell is the house style');
+  check('...cloned, not shared, so depth can differ',
+    /m\.depthTest = false;     \/\/ over the menu it is being set on/.test(SRC),
+    'the preview draws over the panel being dragged; the in-world cursor must not');
+  check('...and upgrades if it was built before the cursor existed',
+    /if \(this\._radiusPreview && !this\._radiusPreviewBorrowed\) \{/.test(SRC),
+    'baking in the fallback on first use would keep the wrong look for the whole session');
+  check('...with no wireframe anywhere in the preview',
+    !/wireframe: true/.test(SRC),
+    'the fallback must not reintroduce the look being removed');
+
+  // The hand-tracking grant is decided once at session start, where it is easy to miss.
+  // A debug flag that collides with another instrument's flag turns BOTH on, and buries the one
+  // line you wanted under the other's output. _panelTrace already belonged to misc/PanelTrace.js.
+  check('the placement readout does not collide with PanelTrace\u2019s flag',
+    /if \(window\._panelPlace\) \{/.test(SRC) && !/if \(window\._panelTrace\) \{/.test(SRC),
+    'turning on one instrument must not turn on an unrelated one');
+
+  // getOptionsURL's default export is a FUNCTION. Reading `getOptionsURL.x` is a property on the
+  // function object — always undefined — so a setting read that way silently never loads and the
+  // slider only appears to work until the next reload.
+  check('option reads CALL getOptionsURL rather than reading properties off it',
+    /getOptionsURL\(\)\[key\]/.test(SRC) && /getOptionsURL\(\)\[ 'pinchOn' \]/.test(SRC)
+      && /getOptionsURL\(\)\.requireHands/.test(SGL),
+    'a property on the function object is undefined, so the saved value never arrives');
+
+  // A window flag must be set before the session starts and is lost on reload — which produced
+  // "not attempted" three times running. A URL option cannot be mistimed.
+  check('required hand-tracking can be asked for by URL, not only a window flag',
+    /options\.requireHands = queryBool\(getVal\('requirehands'\), false\);/.test(OPT),
+    'readUrlParameters lowercases every key, so a camelCase lookup never matches the URL');
+  check('...with either source accepted',
+    /\(window\._requireHands === true\) \|\| !!getOptionsURL\(\)\.requireHands/.test(SGL));
+
+  check('the required-hands outcome is recorded, not only logged',
+    /window\._reqHandsOutcome = 'refused: ' \+ e\.name/.test(SGL)
+      && /window\._reqHandsOutcome = 'granted: '/.test(SGL),
+    'the one answer that says whether joints are reachable must outlive the log line');
 }
 
 // ── 5. the button is placed in the space it actually lives in ────────────────

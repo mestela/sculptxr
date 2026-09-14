@@ -124,7 +124,10 @@ const CSS = `
   font-family: system-ui, -apple-system, sans-serif;
   box-sizing: border-box;
   border-radius: 12px;
-  border: 1px solid #313244;
+  /* An inset shadow rather than a border, for the reason spelled out in MainMenuPanel: the
+     rasteriser's SVG is the CLIENT box, so a real border takes content off the bottom and
+     right edges with it. */
+  box-shadow: inset 0 0 0 1px #313244;
   user-select: none;
 }
 
@@ -133,32 +136,19 @@ const CSS = `
    with, so the swap has to live on the panels themselves. Plain text rather than a glyph: the VR
    rasteriser is the only place these are ever read, and an icon that needs explaining is worse
    than a word.
-   
-   SIDE BY SIDE, NOT ON TOP. The first version floated this over the corner of the full-width
-   tool button, and the tool button won every press. HTMLVRPanel._uvToElement walks children in
-   REVERSE DOM ORDER and returns the first geometric match — it never looks at z-index — so
-   whichever button comes later in the markup takes the hit regardless of what is drawn on top.
-   Reordering would have "fixed" it while leaving two overlapping targets for the next person to
-   trip over, so the row is a flex instead and nothing overlaps at all. */
+
+   IT LIVES IN THE HANDS-ONLY ROW AT THE BOTTOM, alongside Undo/Redo, which is where the main
+   panel's swap ended up for want of room in its menubar. Two earlier homes, both wrong: floated
+   over the corner of the tool button, where the tool button won every press (_uvToElement walks
+   children in REVERSE DOM ORDER and returns the first geometric match — it never looks at
+   z-index), and then beside it in this row, where it crowded the top. The bottom row is
+   hands-only already and styles its own buttons, so this one needs nothing but a home. */
 .mp-toprow {
   display: flex;
   gap: 6px;
   align-items: stretch;
   margin-bottom: 10px;
 }
-#mp-swap-btn {
-  flex-shrink: 0;
-  padding: 5px 10px;
-  border: 1px solid #45475a;
-  border-radius: 8px;
-  background: #1e1e2e;
-  color: #a6adc8;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  outline: none;
-}
-#mp-swap-btn:hover, #mp-swap-btn.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
 
 /* HANDS-ONLY CONTROLS. A controller runtime has X/A to swap panels and a thumbstick to undo, so
    these are dead weight there — present in the markup, revealed by a class, so showing them is a
@@ -417,7 +407,6 @@ function buildHTML() {
         <span id="mp-tool-name">Brush</span>
         <span class="mp-tool-arrow">▸ All</span>
       </button>
-      <button id="mp-swap-btn" class="mp-hands-only" title="Open the main menu">Menu</button>
     </div>
     <div class="mp-row">
       <span class="mp-lbl">Radius</span>
@@ -437,10 +426,13 @@ function buildHTML() {
     </div>
     <div id="mp-extras"></div>
     <!-- Bottom of the panel, hands-only: with no thumbstick, this is the only way to undo
-         without leaving whatever you are doing. -->
+         without leaving whatever you are doing, and with no X/A button the swap to the main menu
+         has nowhere else to go either. Lower right, the same corner it sits in on the main
+         panel, so the two swaps are in the same place as each other. -->
     <div id="mp-undo-row" class="mp-hands-only">
       <button id="mp-undo">Undo</button>
       <button id="mp-redo">Redo</button>
+      <button id="mp-swap-btn" title="Open the main menu">Menu</button>
     </div>
   `;
 }

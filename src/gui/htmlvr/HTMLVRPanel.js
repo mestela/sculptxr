@@ -121,6 +121,29 @@ export function setMenuColorGrade(b01, s01, g01) {
 // UI and nothing in the world should paint over it.
 export const VR_PANEL_RENDER_ORDER = 11000;
 
+// MODAL OVERLAYS NEED THEIR OWN BAND, BECAUSE A TIE IS NOT AN ORDER.
+//
+// Every panel shared VR_PANEL_RENDER_ORDER, so a keyboard and the dialog it is serving tied —
+// and three resolves a tie by traversal order, which is effectively the order things happened to
+// be added. The keyboard came up BEHIND the browser-save dialog it exists to type into.
+//
+// Everything here is transparent, so renderOrder is the only lever (there is no depth to fall
+// back on). A panel that is summoned BY another panel is by definition in front of it.
+//
+// THE LADDER, so the next addition does not collide by accident. All relative to this constant:
+//   +0  ordinary panels
+//   +1  panel-attached furniture (hover quad, resize handle)
+//   +2  MODAL OVERLAYS  (keyboard, numpad, confirm)  <- this constant
+//   +3  gaze menu button
+//   +4  radius preview sphere
+//   +5  pointer ray / timeline laser      (pre-existing)
+//   +7  fingertip dots
+//   +8  ray reticle — the pointer is the top, or it vanishes when aim matters most
+//
+// 2 rather than a larger number on purpose: the pointer ray already sits at +5, and a modal
+// above IT would hide the ray you are aiming with inside the keyboard you are aiming at.
+export const VR_MODAL_ORDER_BUMP = 2;
+
 export const VR_PANEL_PX_PER_M = 1800;
 
 // HOW HIGH A WRIST PANEL SITS ABOVE THE CONTROLLER — ONE NUMBER FOR ALL OF THEM.
@@ -151,6 +174,25 @@ export const WRIST_PANEL_Y = 0.075;
 // answer rather than two equally-arbitrary ends.
 export const WRIST_PANEL_YAW = Math.PI / 8;
 
+// THE Rz(180) COMPENSATION, CONDITIONAL ON THE SCALE THAT CAUSES IT.
+//
+// Panel meshes normally carry scale.y = -1, and a negative scale makes getWorldQuaternion come
+// back with a spurious half turn about Z. Three separate panels — keyboard, numpad, confirm —
+// each undid that with a hardcoded multiply, which was correct exactly as long as EVERY panel
+// always had that scale.
+//
+// It stopped being true: the hands-only wrist slot normalises scale to 1 (the placement was
+// measured under a decompose, which writes scale, so it only means what it measured with a unit
+// scale). The hardcoded undo then introduced the very flip it exists to remove, and the keyboard
+// came up upside down. Reading the scale instead of assuming it is correct under both.
+export function panelWorldQuat(mesh, out) {
+  const q = out || new THREE.Quaternion();
+  mesh.getWorldQuaternion(q);
+  const sy = mesh.scale ? mesh.scale.y : 1;
+  if (sy < 0) q.multiply(new THREE.Quaternion(0, 0, 1, 0));
+  return q;
+}
+
 export function wristPanelYaw() {
   const live = window._wristPanelYaw;
   return Number.isFinite(live) ? live : WRIST_PANEL_YAW;
@@ -173,6 +215,28 @@ if (typeof window !== 'undefined') {
       (window._hoverTrace ? ' — one line a second per visible panel, even if it saw no events.' : ''));
     return window._hoverTrace;
   };
+}
+
+// THE RASTERISER SIZES ITS CANVAS FROM THE *CLIENT* BOX, NOT THE BORDER BOX.
+//
+// The polyfill's own line is `const o = t.clientWidth || t.offsetWidth, n = t.clientHeight ||
+// t.offsetHeight`, and it builds an SVG that size with the cloned element placed at 0,0 inside
+// it. clientWidth/Height exclude the border, so a panel with a 2px border hands the rasteriser
+// a viewport 4px shorter and narrower than the element being drawn into it — and the bottom and
+// right of the content fall outside it and are cut. The plane, meanwhile, was built from
+// offsetWidth/offsetHeight, so it was a slightly different shape from the bitmap it carries and
+// stretched whatever survived. matt saw both at once, by different amounts on each runtime:
+// "on avp the mainpanel is being clipped at the bottom by around 8-10 pixels... on gxr the
+// mainpanel is clipped by about 2 pixels".
+//
+// So every plane is measured with the same expression the rasteriser uses. The borders on the
+// panel roots are inset shadows now (see MainMenuPanel/MiniPanel) so there is nothing outside
+// the client box to lose in the first place; this keeps the plane honest for any panel that
+// still has a real one.
+export function panelPixelSize(el, fallbackW, fallbackH) {
+  const w = el.clientWidth  || el.offsetWidth  || fallbackW;
+  const h = el.clientHeight || el.offsetHeight || fallbackH;
+  return { w, h };
 }
 
 export class HTMLVRPanel {
@@ -261,7 +325,10 @@ export class HTMLVRPanel {
     this._checkAspectOnce = false;
     const gp = this.mesh.geometry?.parameters;
     if (!gp) return;
-    const domA = el.offsetWidth / el.offsetHeight;
+    // Same box the plane was built from, or this check disagrees with itself on any panel
+    // whose root has a border and asks for a resize every time it is mounted.
+    const _px  = panelPixelSize(el, 1, 1);
+    const domA = _px.w / _px.h;
     const geoA = gp.width / gp.height;
     if (Math.abs(domA - geoA) > geoA * 0.01) { this._needsResize = true; this.markDirty(); }
   }
@@ -294,16 +361,28 @@ export class HTMLVRPanel {
 
   _createMesh(scene) {
     const el     = this._element;
-    const w      = el.offsetWidth  || 540;
-    const h      = el.offsetHeight || 300;
+    const { w, h } = panelPixelSize(el, 540, 300);
     const aspect = w / h;
     const meshH  = this._meshWidth / aspect;
 
+    // A MODAL MUST NOT BE Z-SORTED AGAINST THE PANEL THAT SUMMONED IT.
+    //
+    // Ordinary panels depth-test on purpose (see the note below): a panel behind geometry should
+    // be hidden by it. But that is also why raising the keyboard's renderOrder did not bring it
+    // to the front — the keyboard is positioned BELOW and slightly behind the dialog it serves,
+    // so depth hid it no matter which order it drew in. Render order only decides between things
+    // that both survive the depth test.
+    //
+    // A modal is the one case where the answer is always "in front": it exists because another
+    // panel asked for it, it is dismissed when it is done, and there is nothing it could
+    // sensibly be occluded by. So for modals only, depth comes off and renderOrder — which is
+    // already set to the modal band — becomes the whole of the layering.
+    const _modal = !!this._isModalOverlay;
     const _mat = new THREE.MeshBasicMaterial({
       side: THREE.DoubleSide,
       transparent: true,
-      depthWrite: true,  // write depth so the laser and scene geometry are properly
-      depthTest: true,   // z-sorted against the panel — no draw-order tricks
+      depthWrite: !_modal,  // write depth so the laser and scene geometry are properly
+      depthTest: !_modal,   // z-sorted against the panel — no draw-order tricks
     });
     _installGrade(_mat); // brightness/saturation/gamma grade from the Settings sliders
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this._meshWidth, meshH), _mat);
@@ -325,7 +404,8 @@ export class HTMLVRPanel {
     // A panel is the nearest thing there is to a HUD, so it goes above the lot. Exported because
     // anything that must sit on a panel (its own close button, the resize handle) has to be able
     // to say "one more than the panel" without knowing the number.
-    this.mesh.renderOrder = VR_PANEL_RENDER_ORDER;
+    // A subclass marks itself modal before calling init(); see VR_MODAL_ORDER_BUMP.
+    this.mesh.renderOrder = VR_PANEL_RENDER_ORDER + (this._isModalOverlay ? VR_MODAL_ORDER_BUMP : 0);
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
     this.mesh.scale.y = -1;
 
@@ -368,8 +448,7 @@ export class HTMLVRPanel {
   resizeMesh() {
     if (!this.mesh || !this._element) return;
     const el     = this._element;
-    const w      = el.offsetWidth  || 240;
-    const h      = el.offsetHeight || 200;
+    const { w, h } = panelPixelSize(el, 240, 200);
     const aspect = w / h;
     const meshH  = this._meshWidth / aspect;
     this.mesh.geometry.dispose();
@@ -547,6 +626,25 @@ export class HTMLVRPanel {
       if (this._needsResize) { requestPaintForced(getHostCanvas()); this._dirty = false; }
       else if (requestPaintScoped(this)) this._dirty = false;
     }
+  }
+
+  /**
+   * Where the viewer's head is, in world space. The XR camera while a session is running (its
+   * matrixWorld IS the head), the bound desktop camera otherwise, null if neither exists yet so
+   * callers can fall back rather than position against a zero.
+   *
+   * On the base class because every modal overlay needs it to place itself in front of the panel
+   * that summoned it, and a copy per overlay is a copy per overlay to keep in step.
+   */
+  _viewerPosition() {
+    const xr = this._renderer?.xr;
+    if (xr?.isPresenting && xr.getCamera) {
+      const c = xr.getCamera();
+      if (c) { c.updateMatrixWorld(true); return new THREE.Vector3().setFromMatrixPosition(c.matrixWorld); }
+    }
+    const d = this._desktopCamera;
+    if (d) { d.updateMatrixWorld(true); return new THREE.Vector3().setFromMatrixPosition(d.matrixWorld); }
+    return null;
   }
 
   markDirty() {
@@ -904,6 +1002,17 @@ export class HTMLVRPanel {
       new THREE.MeshBasicMaterial({
         color: 0xffffff, transparent: true, opacity: 0.16,
         depthTest: false, depthWrite: false, toneMapped: false,
+        // DOUBLE-SIDED, BECAUSE ITS FACING IS DECIDED BY THE PARENT'S MIRROR.
+        //
+        // Default FrontSide worked only because every panel carried scale.y = -1, which flips
+        // the quad's winding toward the viewer. The hands-only wrist slot normalises the panel
+        // to +1 and the quad was then back-face culled: found, positioned, marked visible, and
+        // invisible. The debug read said it all — hoverable "Wire", quadVisible true, nothing
+        // on screen.
+        //
+        // A one-pixel-thick highlight has no meaningful back, so there is nothing to lose by
+        // drawing both sides and one fewer assumption about the parent to get wrong.
+        side: THREE.DoubleSide,
       }));
     m.renderOrder = (this.mesh.renderOrder || 0) + 1;
     m.frustumCulled = false;
@@ -968,7 +1077,26 @@ export class HTMLVRPanel {
     const q = this._hoverMesh();
     const { el } = this._uvToElement(uv);
     const target = this._hoverable(el);
+
+    // WHAT THIS FUNCTION DECIDED, readable as a value. _hoverStat measures how much the uv is
+    // MOVING, which answers a different question entirely — it cannot say whether a hoverable
+    // element was found or whether the quad ended up visible, and those are the two ways a
+    // highlight goes missing. window._hoverTrace = true, then read window._hoverDbg.
+    if (window._hoverTrace) {
+      window._hoverDbg = {
+        uv: { x: +uv.x.toFixed(3), y: +uv.y.toFixed(3) },
+        el: el ? (el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).split(' ')[0] : '')) : null,
+        hoverable: target ? (target.tagName.toLowerCase() + ' "' + (target.textContent || '').trim().slice(0, 18) + '"') : null,
+        parentScaleY: this.mesh?.scale?.y,
+        parentOrder: this.mesh?.renderOrder,
+        quadOrder: q?.renderOrder,
+        quadInScene: !!q?.parent,
+        quadVisible: null,     // filled in below once decided
+      };
+    }
+
     if (!target) {
+      if (window._hoverDbg) window._hoverDbg.quadVisible = false;
       this._announceHover(null, this._hoverEl);
       q.visible = false; this._hoverEl = null; return;
     }
@@ -976,7 +1104,11 @@ export class HTMLVRPanel {
     // under the ray at a different place than it was, and skipping the measure would leave the
     // highlight behind at the old position.
     const scrolled = this._hoverScrollTop !== this._scrollTopOf(target);
-    if (target === this._hoverEl && !scrolled) { q.visible = true; return; }
+    if (target === this._hoverEl && !scrolled) {
+      q.visible = true;
+      if (window._hoverDbg) { window._hoverDbg.quadVisible = true; window._hoverDbg.cached = true; }
+      return;
+    }
     this._announceHover(target, this._hoverEl);
     this._hoverScrollTop = this._scrollTopOf(target);
     this._hoverEl = target;
@@ -1002,12 +1134,29 @@ export class HTMLVRPanel {
     // DOM-down and plane-up already agree here. Negating this is the obvious-looking thing and
     // it is wrong: it puts every highlight on the mirrored row, which looks plausible enough
     // that a check asserting it passed for a whole version.
+    //
+    // AND IT HOLDS UNDER EITHER PARENT MIRROR, which is worth stating because it looks as though
+    // it should not. The quad is a CHILD of the panel mesh, so a negative parent scale.y flips
+    // where its local +Y renders — but it flips the TEXTURE by exactly the same amount, and the
+    // quad is positioned in the same local space the texture is mapped in. Content and highlight
+    // mirror together, so the mapping needs no sign term.
+    //
+    // One was added here on the theory that the parent mattered, and it inverted every highlight
+    // on the hands-only panels. The bug it was chasing was the quad being back-face CULLED (see
+    // the DoubleSide note in _hoverMesh) — a different thing that happened to appear at the same
+    // time, because both were exposed by the same normalised scale.
     const cx = (left - panelRect.left + (right - left) / 2) / panelRect.width;
     const cy = (top - panelRect.top + (bot - top) / 2) / panelRect.height;
     q.scale.set(this._meshWidth * ((right - left) / panelRect.width),
                 meshH * ((bot - top) / panelRect.height), 1);
     q.position.set((cx - 0.5) * this._meshWidth, (cy - 0.5) * meshH, 0.001);
     q.visible = true;
+    if (window._hoverDbg) {
+      window._hoverDbg.quadVisible = true;
+      window._hoverDbg.quadLocal = [+q.position.x.toFixed(4), +q.position.y.toFixed(4), +q.position.z.toFixed(4)];
+      window._hoverDbg.quadScale = [+q.scale.x.toFixed(4), +q.scale.y.toFixed(4)];
+      window._hoverDbg.quadOpacity = q.material?.opacity;
+    }
   }
 
   // The nearest ancestor that actually scrolls, as a rect. Null when nothing does, in which

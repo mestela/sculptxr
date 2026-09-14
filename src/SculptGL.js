@@ -1994,7 +1994,51 @@ class SculptGL extends Scene {
     }
 
     try {
-      const session = await navigator.xr.requestSession(mode, {
+      let session0 = null;
+
+      // ASKING FOR HAND JOINTS AS A *REQUIRED* FEATURE, OPT-IN.
+      //
+      // Measured on Galaxy XR: enabledFeatures came back ["local","viewer","bounded-floor",
+      // "local-floor"] — hand-tracking was requested as OPTIONAL and silently refused, so the
+      // runtime fell back to gesture-only controller sources with no joints at all. Optional
+      // features may be dropped without explanation; required ones make the runtime either grant
+      // or reject.
+      //
+      // Rejecting is the risk, and it is why this is behind a flag rather than the default: a
+      // required feature the runtime will not grant makes requestSession throw, and by the time
+      // the retry runs the user activation may be spent — which would mean the headset cannot
+      // enter VR at all. Not a trade worth making automatically on a device that works today.
+      //
+      //   window._requireHands = true   then enter VR
+      //
+      // If joints appear, this becomes the default for that runtime. If the session fails to
+      // start, set it back to false and nothing is lost.
+      // EITHER SOURCE. The window flag is convenient mid-session; the URL option cannot be
+      // mistimed, which matters because this is read once at session start and a reload clears
+      // the flag — "not attempted" was the answer three times in a row for exactly that reason.
+      const _wantHands = (window._requireHands === true) || !!getOptionsURL().requireHands;
+      window._reqHandsOutcome = _wantHands ? 'attempting' : 'not attempted (set ?requireHands=1)';
+      if (_wantHands) {
+        try {
+          const s2 = await navigator.xr.requestSession(mode, {
+            requiredFeatures: ['hand-tracking'],
+            optionalFeatures: ['local-floor', 'bounded-floor'],
+          });
+          window._reqHandsOutcome = 'granted: ' + JSON.stringify([...(s2.enabledFeatures || [])]);
+          console.log('[XR] hand-tracking GRANTED as a required feature; enabledFeatures='
+            + JSON.stringify([...(s2.enabledFeatures || [])]));
+          session0 = s2;
+        } catch (e) {
+          // Recorded, not just logged: this is the one answer needed to know whether joints are
+          // reachable on a runtime, and it is decided once at session start where it is easy to
+          // miss. window._reqHandsOutcome survives for as long as the page does.
+          window._reqHandsOutcome = 'refused: ' + e.name + ' — ' + (e.message || '');
+          console.warn('[XR] hand-tracking refused as a required feature (' + e.name
+            + '); falling back to the optional request. Joints will not be available.');
+        }
+      }
+
+      const session = session0 || await navigator.xr.requestSession(mode, {
         // NOTE: do NOT add 'layers' here. Requesting the XRLayers feature causes
         // Three.js to use XRProjectionLayer instead of XRWebGLLayer, which triggers
         // a ~5-second compositor setup delay on Samsung GalaxyXR / Adreno devices.

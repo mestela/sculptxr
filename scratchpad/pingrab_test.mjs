@@ -385,7 +385,7 @@ const makePin = (m) => {
     /const _realPad = this\._padOf\(src\);/.test(SC),
     'a controller with its trigger down must never be described to the tools as unpressed');
   check('...and the helper treats an empty buttons array as no gamepad',
-    /_padOf\(src\)\s*\{[\s\S]*?return \(pad && pad\.buttons && pad\.buttons\.length\) \? pad : null;/.test(SC),
+    /_padOf\(src\)\s*\{[\s\S]*?if \(!pad \|\| !pad\.buttons \|\| !pad\.buttons\.length\) return null;/.test(SC),
     'an empty pad that reads as present is a controller that is permanently unpressed');
   check('...and the resolved pad is what reaches the tools',
     /buttons: gamepad\.buttons,/.test(SC),

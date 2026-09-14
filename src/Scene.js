@@ -1878,7 +1878,27 @@ class Scene {
     if (window.screenLog) window.screenLog(`Dominant Hand: ${this._dominantHand}`, "lime");
   }
 
+  // THE SPIKE IS NOT THE SAME TOOL IN A HAND AS IT IS IN A CONTROLLER.
+  //
+  // A controller is a rigid object you brace against: a long spike reads as an extension of it
+  // and the extra reach is useful. A pinch has no shaft — the tip is a couple of centimetres
+  // from your fingers and a long spike just amplifies tremor. matt: "with the controllers a
+  // longer spike is better and the angle needs to be specific, with hands a shorter spike is
+  // better with a different angle."
+  //
+  // So the three stylus settings split by input kind rather than being one global compromise.
+  // The controller values are untouched — they were tuned against a controller and nothing about
+  // adding a hand variant should move them.
+  _handStylus(key, fallback) {
+    const v = this._guiXR?._uiSettings?.[key];
+    if (Number.isFinite(v)) return v;
+    const o = getOptionsURL()[key];   // called — see the note in getPinchOn
+    return Number.isFinite(o) ? o : fallback;
+  }
+
   getStylusLength() {
+    if (this._spikeFreeze) return this._spikeFreeze.length;   // frozen while its own slider is dragged
+    if (this._handsOnlyMode()) return this._handStylus('handStylusLength', 0.05);
     if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusLength !== undefined) {
       return this._guiXR._uiSettings.stylusLength;
     }
@@ -1899,6 +1919,8 @@ class Scene {
   }
 
   getStylusOffset() {
+    if (this._spikeFreeze) return this._spikeFreeze.offset;   // frozen while its own slider is dragged
+    if (this._handsOnlyMode()) return this._handStylus('handStylusOffset', 0.0);
     if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusOffset !== undefined) {
       return this._guiXR._uiSettings.stylusOffset;
     }
@@ -1932,7 +1954,10 @@ class Scene {
     if (Number.isFinite(window._pinchOn)) return window._pinchOn;
     const v = this._guiXR?._uiSettings?.pinchOn;
     if (Number.isFinite(v)) return v;
-    const o = getOptionsURL.pinchOn;
+    // CALLED, not read as a property: the default export is a function and `getOptionsURL.x`
+    // is a property on the function object — always undefined, so the saved value was never
+    // read and the setting only appeared to work until the next reload.
+    const o = getOptionsURL()[ 'pinchOn' ];
     return Number.isFinite(o) ? o : 0.0;
   }
 
@@ -1945,6 +1970,15 @@ class Scene {
   }
 
   getStylusTilt() {
+    if (this._spikeFreeze) return this._spikeFreeze.tilt;   // frozen while its own slider is dragged
+    // ZERO FOR HANDS, AND NOT AS A DEFAULT — AS A RULE.
+    //
+    // A hand's ray is already pitched by _applyHandRayCorrection (window._handRayPitch, -45 by
+    // measurement), applied to the controller object itself so the drawn spike and the cast ray
+    // stay identical. Letting the controller's stylus tilt through as well would apply a second
+    // rotation to the same ray from a setting the user dialled in for a physical controller. It
+    // reads as 0 today only because the controller default happens to be 0.
+    if (this._handsOnlyMode()) return 0.0;
     if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt !== undefined) {
       return this._guiXR._uiSettings.stylusTilt;
     }
@@ -7101,7 +7135,10 @@ class Scene {
       // menu". Everything here is transparent, so renderOrder is the only lever and a number
       // chosen in isolation is a guess; taken from the panel constant it cannot drift when that
       // constant moves.
-      this._bpReticle.renderOrder = VR_PANEL_RENDER_ORDER + 2;
+      // ABOVE THE MODALS TOO (+5), or the hit dot is buried exactly when you are typing on a
+      // keyboard — the moment precise aim matters most. The pointer is the top of the ladder:
+      //   panels +0 | gaze button +3 | radius preview +4 | modal overlays +5 | dots +7 | ray +8
+      this._bpReticle.renderOrder = VR_PANEL_RENDER_ORDER + 8;
       this._bpReticle.visible = false;
       this._scene.add(this._bpReticle);
     }
@@ -7186,12 +7223,71 @@ class Scene {
     // per handedness across frames, so if you put the hands down and pick the controllers back
     // up, a cached mock with a stale pinch state would answer for a real controller forever.
     // A controller source has no hand, so it can never reach the cache.
-    const mock = src.hand && this._mockGamepads && this._mockGamepads[src.handedness];
+    // THE RUNTIME'S OWN RECOGNISER OUTRANKS OURS, WHEN IT HAS ONE.
+    //
+    // This used to prefer the synthesised pad for any source carrying joints, which was right
+    // while the only jointed runtime (visionOS) reported an EMPTY gamepad. Galaxy XR now gives
+    // BOTH — 25 joints and a working gesture pad — and preferring the mock there would throw
+    // away the recogniser that finally made clicking reliable in favour of our own thresholds.
+    //
+    // So: a real pad with buttons wins; the mock is the fallback for a runtime that has none.
+    // Joints stay useful either way — they draw the dots and pose the wrist; they just stop
+    // being the source of truth for "is this a press" on a runtime that already answers that.
+    const realHasButtons = !!(src.gamepad && src.gamepad.buttons && src.gamepad.buttons.length);
+    const mock = src.hand && !realHasButtons && this._mockGamepads && this._mockGamepads[src.handedness];
     if (mock) return mock;
     // An empty buttons array is not a gamepad; report it as absent so callers take their
     // no-controller path instead of reading undefined out of it.
     const pad = src.gamepad;
-    return (pad && pad.buttons && pad.buttons.length) ? pad : null;
+    if (!pad || !pad.buttons || !pad.buttons.length) return null;
+
+    // A GESTURE PAD HAS TWO SIGNALS, NOT SIX, AND THE EXTRA SLOTS ARE NOT FACE BUTTONS.
+    //
+    // Galaxy XR presents hands as controller-shaped sources with a 5-button pad, and puts GRASP
+    // at an index this app had already bound to A/X. So a fist toggled add/subtract on the
+    // dominant hand and opened the menu on the non-dominant one — matt found it by accident,
+    // which is the tell that nobody chose it.
+    //
+    // The length is what did it: `btns.length > 4` is how the A/X handlers decide a pad has face
+    // buttons, and a 5-button gesture pad passes that test while having none.
+    //
+    // So hands get a NORMALISED view: select at 0, grasp at 1, nothing above. That matches the
+    // pad this app synthesises for visionOS hands, so both runtimes now mean the same thing by
+    // the same index, and the face-button handlers correctly see a pad too short to act on.
+    //
+    // Grasp is taken as "any button above 0 that the runtime reports pressed" rather than a
+    // guessed index. A gesture pad only has select and grasp to report, so whichever slot it
+    // uses, that is what it means — and this cannot go stale if the runtime renumbers them.
+    if (!this._isHandSource(src)) return pad;
+    if (!this._handPadView) this._handPadView = {};
+    const key = src.handedness || 'none';
+    const view = this._handPadView[key] || (this._handPadView[key] = {
+      buttons: [{ pressed: false, value: 0 }, { pressed: false, value: 0 }],
+      axes: [0, 0, 0, 0],
+    });
+    // THE VALUE MUST BE BINARY TOO, NOT JUST THE FLAG.
+    //
+    // Passing the runtime's analog value through looks harmless and is not: a hand's value is a
+    // continuous closure signal that idles around 0.3, and code elsewhere reads VALUE rather
+    // than `pressed`. The post-menu latch is the one that bit — it blocks a new stroke until the
+    // trigger is "fully released" at <= 0.05, which that signal never reaches, so the first
+    // pinch after using a menu was swallowed and only an exaggerated unpinch cleared it. matt:
+    // "the first pinch on the sculpt after i select a tool often gets lost... i seem to have to
+    // do a really over exaggerated unpinch".
+    //
+    // A gesture has no travel to report. Derive the value FROM the decision, so every consumer
+    // of either field agrees.
+    const sel = pad.buttons[0];
+    view.buttons[0].pressed = !!(sel && sel.pressed);
+    view.buttons[0].value   = view.buttons[0].pressed ? 1 : 0;
+    let grasp = false;
+    for (let i = 1; i < pad.buttons.length; i++) {
+      const b = pad.buttons[i];
+      if (b && b.pressed) { grasp = true; break; }
+    }
+    view.buttons[1].pressed = grasp;
+    view.buttons[1].value   = grasp ? 1 : 0;
+    return view;
   }
 
   // UNDO AND REDO, ROUTED THE SAME WAY THE THUMBSTICK ROUTES THEM.
@@ -7222,12 +7318,60 @@ class Scene {
   _syncHandsOnlyUI() {
     const want = this._handsOnlyMode();
     if (want === this._handsUiClassApplied) return;
+
+    // DO NOT LATCH BEFORE THE PANELS EXIST.
+    //
+    // This ran once, on the frame hands-only first became true, and latched. At session start
+    // that frame can arrive before the panels have elements — so the class went nowhere, the
+    // latch said "done", and the wrist panel kept its controller layout for the rest of the
+    // session. It only corrected itself when something ELSE forced a rebuild, which is why
+    // opening the tool selector fixed it: matt, "as soon as i bring up the tool selector, the
+    // correct hand controller variant appears."
+    //
+    // So the latch is set only once there is something to apply the class to. Until then this
+    // returns without latching and tries again next frame.
+    const panels = [this._miniPanel, this._mainMenuPanel].filter((p) => p && p._element);
+    if (!panels.length) return;
     this._handsUiClassApplied = want;
-    for (const p of [this._miniPanel, this._mainMenuPanel]) {
-      const root = p?._element;
-      if (!root) continue;
-      root.classList.toggle('hands-only', want);
-      p.markDirty?.();
+    // RE-ARM THE PANEL PRIMING ON THE WAY OUT, so each switch BACK into hands shows the wrist
+    // panel again. Priming is once-per-entry rather than once-per-session: picking the
+    // controllers up and putting them down again is exactly the moment there is no button to
+    // summon a menu with, and a latch set at session start would only ever help the first time.
+    // Only on the transition out, so closing the panel while in hands mode does not reopen it.
+    if (!want) this._handsUiPrimed = false;
+
+    // THE DRAWN SPIKE AND THE PICKING TIP ARE TWO DIFFERENT THINGS, AND THE MODE MOVES ONLY ONE.
+    //
+    // getStylusLength()/Offset() decide where the tip is computed. The spike you SEE is a mesh
+    // whose scale and position are written by updateStylusLength()/Offset(), which historically
+    // only ran when a slider moved. Switching between controller and hand values changes what
+    // the accessors return and touches no mesh — so the drawn spike kept the controller length
+    // while picking used the hand one. matt, after a hands-only session: "the tip of the
+    // controller spike and the pivot for the sphere radius indicator are misaligned."
+    //
+    // The transition is the moment to re-apply it, which is exactly where we already are.
+    try {
+      this.updateStylusLength?.(this.getStylusLength());
+      this.updateStylusOffset?.(this.getStylusOffset());
+    } catch (e) { console.warn('[hands] re-applying the spike geometry failed', e); }
+    for (const p of panels) {
+      p._element.classList.toggle('hands-only', want);
+
+      // REBUILD, NOT JUST REPAINT. This is the distinction the HTMLVR notes keep warning about
+      // and it caught me anyway: the class change updates the DOM immediately — the hover quad
+      // measures the live DOM and was correctly laid out for the hands panel — while the
+      // RASTERISED TEXTURE stayed on the controller layout. matt saw exactly that split: a hover
+      // highlight in the right places over a picture of the wrong panel.
+      //
+      // flushPaint re-rasterises, but the polyfill caches against content, and a class that only
+      // changes which rules apply does not move that cache. Asking the panel to rebuild its own
+      // content is what invalidates it — which is why selecting a tool fixed it, since the swap
+      // rebuilds on the way back.
+      try {
+        p.syncFromState?.();
+        p._rebuildContent?.();
+      } catch (e) { console.warn('[hands] rebuilding the panel content failed', e); }
+      if (p.flushPaint) p.flushPaint(); else p.markDirty?.();
     }
   }
 
@@ -7288,6 +7432,110 @@ class Scene {
       + '   (same sign on both hands = frames NOT mirrored, one pitch sign is correct for both)');
   }
 
+  // THE PREVIEW SPIKE — the value you are choosing, on a copy, drawn over everything.
+  //
+  // Cloned from the real spike so it IS the thing being previewed rather than an approximation
+  // of it, and depth-tested off with a high render order so a shorter pending length cannot hide
+  // inside the longer live one. matt: "it shows it on a copy of the spike, set to 100% draw on
+  // top, so it cant be hidden under the real spike if the length is made shorter."
+  //
+  // Parented to the same controller object as the real spike, so it inherits the live aim and
+  // only the property being edited differs — which is the whole point of a preview.
+  _updateSpikePreview(pending) {
+    if (!pending) {
+      if (this._spikePreviewMesh) this._spikePreviewMesh.visible = false;
+      return;
+    }
+    const dom = this._dominantHand || 'right';
+    const ctrl = dom === 'left' ? this._vrControllerLeft : this._vrControllerRight;
+    const real = ctrl?.getObjectByName?.('stylus_spike');
+    if (!real) { if (this._spikePreviewMesh) this._spikePreviewMesh.visible = false; return; }
+
+    if (!this._spikePreviewMesh || this._spikePreviewMesh.userData._srcId !== real.id) {
+      if (this._spikePreviewMesh?.parent) this._spikePreviewMesh.parent.remove(this._spikePreviewMesh);
+      const m = real.clone();
+      m.name = 'stylus_spike_preview';
+      m.userData._srcId = real.id;
+      m.traverse((o) => {
+        if (!o.material) return;
+        o.material = o.material.clone();
+        o.material.depthTest = false;
+        o.material.depthWrite = false;
+        o.material.transparent = true;
+        if (o.material.opacity !== undefined) o.material.opacity = 0.9;
+        o.renderOrder = VR_PANEL_RENDER_ORDER + 6;   // over the panel AND over the real spike
+        o.frustumCulled = false;
+      });
+      m.renderOrder = VR_PANEL_RENDER_ORDER + 6;
+      m.frustumCulled = false;
+      real.parent.add(m);
+      this._spikePreviewMesh = m;
+    }
+
+    const p = this._spikePreviewMesh;
+    p.position.copy(real.position);
+    p.quaternion.copy(real.quaternion);
+    p.scale.copy(real.scale);
+
+    // Only the property under the finger differs from the live spike.
+    const v = pending.value;
+    if (/len/.test(pending.id))      p.scale.z = (v / 100) / 0.10;
+    else if (/off/.test(pending.id)) p.position.z = real.position.z - ((v / 100) - this.getStylusOffset());
+    else if (/pitch|tilt/.test(pending.id)) {
+      const cur = /pitch/.test(pending.id) ? 0 : this.getStylusTilt();
+      p.rotation.x = real.rotation.x + ((v - cur) * Math.PI / 180);
+    }
+    p.visible = true;
+    p.updateMatrixWorld(true);
+  }
+
+  // THE RAY, AS AN ANATOMICAL CONSTRUCTION.
+  //
+  //   origin    = the pinch point — where thumb and index tips meet. That IS the click, so it is
+  //               where the ray should start.
+  //   direction = from the midpoint of the two METACARPAL bases toward that pinch point. It is
+  //               the axis your hand already makes when you pinch and point.
+  //   up        = the palm normal, from two vectors lying in the palm, so the roll is defined
+  //               and stable rather than left to whatever lookAt picks by default.
+  //
+  // Convention-free: no runtime frame is consulted, so nothing here needs a per-device constant.
+  _handRayFromJoints(source, frame, refSpace) {
+    const h = source.hand;
+    if (!h || !frame.getJointPose) return null;
+    const jp = (n) => { const j = h.get(n); return j ? frame.getJointPose(j, refSpace) : null; };
+    const tTip = jp('thumb-tip'), iTip = jp('index-finger-tip');
+    const tBase = jp('thumb-metacarpal'), iBase = jp('index-finger-metacarpal');
+    const pBase = jp('pinky-finger-metacarpal'), wrist = jp('wrist');
+    if (!tTip || !iTip || !tBase || !iBase || !pBase || !wrist) return null;
+
+    if (!this._jrA) {
+      this._jrA = new THREE.Vector3(); this._jrB = new THREE.Vector3();
+      this._jrUp = new THREE.Vector3(); this._jrM = new THREE.Matrix4();
+      this._jrQ = new THREE.Quaternion(); this._jrT = new THREE.Vector3();
+      this._jrU = new THREE.Vector3(); this._jrV = new THREE.Vector3();
+    }
+    const P = (p) => [p.transform.position.x, p.transform.position.y, p.transform.position.z];
+    const [tx, ty, tz] = P(tTip), [ix, iy, iz] = P(iTip);
+    this._jrA.set((tx + ix) / 2, (ty + iy) / 2, (tz + iz) / 2);          // pinch point
+    const [bx, by, bz] = P(tBase), [jx, jy, jz] = P(iBase);
+    this._jrB.set((bx + jx) / 2, (by + jy) / 2, (bz + jz) / 2);          // base of the pinch
+
+    // Palm normal, for a defined roll. Cross of two vectors lying in the palm.
+    const [wx, wy, wz] = P(wrist), [px, py, pz] = P(pBase);
+    this._jrU.set(jx - wx, jy - wy, jz - wz);
+    this._jrV.set(px - wx, py - wy, pz - wz);
+    this._jrUp.crossVectors(this._jrU, this._jrV).normalize();
+    if (!Number.isFinite(this._jrUp.x) || this._jrUp.lengthSq() < 1e-8) this._jrUp.set(0, 1, 0);
+
+    // Degenerate hands (joints coincident) would make lookAt produce NaN.
+    if (this._jrA.distanceToSquared(this._jrB) < 1e-8) return null;
+
+    // lookAt builds a rotation whose -Z faces the target, which is the ray convention here.
+    this._jrM.lookAt(this._jrB, this._jrA, this._jrUp);
+    this._jrQ.setFromRotationMatrix(this._jrM);
+    return { origin: this._jrA, quaternion: this._jrQ };
+  }
+
   // SHOW THE FINGERTIPS, BECAUSE "IS IT EVEN SEEING MY HAND" IS UNANSWERABLE FROM INSIDE.
   //
   // matt: "can we show on screen dots for where the finger and thumb are, so i have a better
@@ -7306,11 +7554,18 @@ class Scene {
     const key = source.handedness === 'left' ? 'L' : 'R';
     const mk = (name) => {
       if (this._handDots[name]) return this._handDots[name];
+      // TRANSLUCENT. These draw over everything, menus included, because a dot hidden behind a
+      // panel cannot report tracking on the panel you are pointing at. Drawing on top at full
+      // opacity makes them punch holes in whatever you are reading — matt asked for 50% or
+      // lower. Low enough to read through, opaque enough to see against a bright panel.
       const m = new THREE.Mesh(
         new THREE.SphereGeometry(0.008, 12, 8),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.9 }));
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff, depthTest: false, transparent: true,
+          opacity: window._handDotOpacity ?? 0.45,
+        }));
       m.frustumCulled = false;
-      m.renderOrder = VR_PANEL_RENDER_ORDER + 1;   // or a dot over a menu is invisible
+      m.renderOrder = VR_PANEL_RENDER_ORDER + 7;   // above modals too — see the ladder above
       this._scene.add(m);
       this._handDots[name] = m;
       return m;
@@ -7324,6 +7579,9 @@ class Scene {
       m.visible = true;
       // Green the instant the latch says the app treats this as a press.
       m.material.color.setHex(pinching ? 0x35ff6a : 0xffffff);
+      // Re-read each frame so the knob works without a reload, and so the pinch state does not
+      // get its own opacity by accident — the colour carries that signal, not the alpha.
+      m.material.opacity = window._handDotOpacity ?? 0.45;
       m.updateMatrixWorld(true);
     }
   }
@@ -7359,6 +7617,59 @@ class Scene {
     if (!this._hrQ) { this._hrQ = new THREE.Quaternion(); this._hrV = new THREE.Vector3(); this._hrS = new THREE.Vector3(); }
     ctrl.matrix.decompose(this._hrV, this._hrQ, this._hrS);
 
+    // GRIP FIRST, BECAUSE SOME RUNTIMES' TARGET RAY DOES NOT TURN.
+    //
+    // The spike translated with the hand and refused to rotate, while the Move tool's 6DOF was
+    // perfect — matt asked why they differ, which is the whole answer: Move reads gripSpace and
+    // the spike read targetRaySpace.
+    //
+    // And the profile says so out loud. Galaxy XR hands advertise "generic-hand-select-grasp,
+    // generic-hand-select, GENERIC-FIXED-HAND" — a fixed ray, one that does not track hand
+    // orientation. Nothing was broken; we were reading the pose that is declared not to turn.
+    //
+    // So: gripSpace when the source has one (it is the hand's own tracked frame, and it is what
+    // every working 6DOF path in this app already uses), targetRaySpace when it does not —
+    // visionOS hands carry no gripSpace at all and their target ray tracks properly.
+    //
+    // NOTE for the pitch: a grip frame and a pointing frame do not share an orientation
+    // convention, so the correction that suits one will not suit the other. That is why the
+    // angle is a per-runtime measurement rather than one constant.
+    // BUILD THE RAY FROM THE HAND, NOT FROM THE RUNTIME'S FRAME.
+    //
+    // Every orientation bug in this file has been the same shape: a runtime hands us a frame, we
+    // guess its convention, and measure a correction per device. visionOS wants one number, the
+    // Galaxy XR grip wants another, and at pitch 0 the grip's forward pointed ACROSS the palm —
+    // matt: "its vector matches an arrow drawn from the base of my pinky to the base of my index
+    // finger... not facing in the direction of my thumb and index pinch."
+    //
+    // With joints we do not have to guess at all. matt's own description of the ray he wanted is
+    // a construction: "from the midpoint of the base of my index and thumb, pointing towards
+    // where my index and thumb would meet if i click." Both ends are joints, so the direction is
+    // theirs and needs no per-runtime constant — the same on any runtime that reports a skeleton.
+    //
+    // The pitch knob survives for taste, but it should now be a small adjustment rather than a
+    // 45-degree correction for a frame nobody documented. window._handRayFromJoints = false
+    // falls back to the runtime frame.
+    const _jointRay = (window._handRayFromJoints !== false)
+      ? this._handRayFromJoints(source, frame, refSpace) : null;
+    if (_jointRay) {
+      this._hrQ.copy(_jointRay.quaternion);
+      this._hrV.copy(_jointRay.origin);
+      this._handRaySpaceUsed = 'joints';
+    }
+    const _poseSpace = _jointRay ? null : (source.gripSpace || source.targetRaySpace);
+    if (_poseSpace) {
+      const _rp = frame.getPose(_poseSpace, refSpace);
+      if (_rp) {
+        const _m = _rp.transform.matrix;
+        if (!this._hrM) this._hrM = new THREE.Matrix4();
+        if (!this._hrTmpV) { this._hrTmpV = new THREE.Vector3(); this._hrTmpS = new THREE.Vector3(); }
+        this._hrM.fromArray(_m).decompose(this._hrTmpV, this._hrQ, this._hrTmpS);
+        this._hrV.copy(this._hrTmpV);   // base position too, until the joints override it below
+        this._handRaySpaceUsed = source.gripSpace ? 'grip' : 'targetRay';
+      }
+    }
+
     // SIGNED BY HANDEDNESS, OR THE LEFT SPIKE IS A COPY OF THE RIGHT RATHER THAN ITS MIRROR.
     //
     // -30 estimated from the headset, -35 after using it, -45 measured as correct. Applying that
@@ -7376,9 +7687,23 @@ class Scene {
     // console means exactly what it says for that hand.
     const _perHand = source.handedness === 'left' ? window._handRayPitchL : window._handRayPitchR;
     const _mirror = (source.handedness === 'left' && window._handRayMirror !== false) ? -1 : 1;
-    const deg = Number.isFinite(_perHand)
-      ? _perHand
-      : (window._handRayPitch ?? -45) * _mirror;
+    // Window override first (a console trial), then the saved setting, then the measurement.
+    // Without the middle term the Angle slider would work until the next reload and then
+    // silently revert, which is worse than not having the slider.
+    // +20, MEASURED ON GALAXY XR AGAINST THE ANATOMICAL RAY (2026-09-14).
+    //
+    // The old -45 was measured against a completely different construction — visionOS's
+    // targetRaySpace, before the ray was rebuilt from joints — so it is stale, not a second
+    // device's value. Carrying a number measured against a construction that no longer exists
+    // would be worse than carrying one measured against the current one on a single device.
+    //
+    // So both runtimes start from the measured value. If the Vision Pro turns out to want
+    // something different NOW, it gets its own constant the way the panel placement did — keyed
+    // on gripSpace presence, and measured rather than derived.
+    const _base = Number.isFinite(window._handRayPitch)
+      ? window._handRayPitch
+      : this._handStylus('handRayPitch', 20);
+    const deg = Number.isFinite(_perHand) ? _perHand : _base * _mirror;
     if (deg) {
       if (!this._hrFix) this._hrFix = new THREE.Quaternion();
       // About the ray's OWN x, so the correction is a pitch in the hand's frame rather than a
@@ -7450,8 +7775,42 @@ class Scene {
   //
   //   as grabbed: rotXYZ(-157.1,  2.8,  81.4)   upside down, back face
   //   corrected:  rotXYZ(  22.9, -2.8, -81.4)
+  //
+  // FROZEN SINGLETONS, not fresh literals. A getter that builds a new object each call is read
+  // from the panel mount every frame, which is an allocation per frame for a constant — and it
+  // makes the two indistinguishable by identity, so nothing can assert WHICH one is in use.
+  // THE MIRROR SIGN IS PART OF THE MEASUREMENT, not a separate fact. An HTMLVRPanel is built at
+  // scale.y = -1 (it compensates for flipY=false in the rasterised texture), while placement mode
+  // decomposes a matrix and so hands the panel back at +1. A number grabbed in one state and
+  // applied in the other renders flipped — which is why normalising every hand panel to +1 fixed
+  // Galaxy XR and turned the Vision Pro's menus upside down in the same stroke. The visionOS
+  // number already has the half-turn correction above folded in, so it is right at the panel's
+  // natural -1; the Galaxy XR number was grabbed raw and is right at +1. One `sy` per constant,
+  // read at the point of use, is the whole of it.
   static get HAND_WRIST_PANEL() {
-    return { p: [0.0001, -0.0017, 0.0253], r: [22.9, -2.8, -81.4] };
+    return Scene._HWP || (Scene._HWP = Object.freeze({ p: [0.0001, -0.0017, 0.0253], r: [22.9, -2.8, -81.4], sy: -1 }));
+  }
+
+  // ...AND THE SAME THING MEASURED IN THE OTHER RUNTIME'S FRAME, on Galaxy XR 2026-09-14.
+  //
+  // These two are not interchangeable and neither is derivable from the other. The visionOS
+  // number sits in a WRIST JOINT frame that this app synthesises because Safari gives hands no
+  // gripSpace; the Galaxy XR number sits in the runtime's own GRIP frame, because its hands are
+  // controller-shaped sources that have one. Different origins, different axis conventions.
+  //
+  // Also measured by hand rather than derived, for the same reason as the first: matt grabbed it
+  // and put it where he wanted it.
+  static get HAND_GRIP_PANEL() {
+    return Scene._HGP || (Scene._HGP = Object.freeze({ p: [-0.0135, -0.0421, -0.0713], r: [-1.4, 28.2, -15.2], sy: 1 }));
+  }
+
+  // Which of the two applies is decided by where the anchor's pose came from, not by guessing at
+  // the device: the wrist-joint substitution sets a flag when it runs, and the panel hangs off
+  // the NON-dominant grip.
+  _handPanelPlacement() {
+    const nonDom = this._dominantHand === 'left' ? 'Right' : 'Left';
+    const fromWrist = nonDom === 'Left' ? this._gripSpaceIsWristLeft : this._gripSpaceIsWristRight;
+    return fromWrist ? Scene.HAND_WRIST_PANEL : Scene.HAND_GRIP_PANEL;
   }
 
   // PLACEMENT MODE — STOP GUESSING WHERE THE PANEL GOES AND LET matt PUT IT THERE.
@@ -7475,7 +7834,7 @@ class Scene {
   _updateWristPlacement(frame, refSpace) {
     if (!this._wristPlaceActive()) { this._wpDrag = null; return; }
     if (!this._wristPlaceOffset) {
-      const _hp = Scene.HAND_WRIST_PANEL, _D = Math.PI / 180;
+      const _hp = this._handPanelPlacement(), _D = Math.PI / 180;
       this._wristPlaceOffset = new THREE.Matrix4().compose(
         new THREE.Vector3(_hp.p[0], _hp.p[1], _hp.p[2]),
         new THREE.Quaternion().setFromEuler(
@@ -7492,16 +7851,22 @@ class Scene {
     const dom = this._dominantHand || 'right';
     let domSrc = null;
     for (const sc of (this._xrSession?.inputSources || [])) {
-      if (sc.handedness === dom && sc.hand) domSrc = sc;
+      if (sc.handedness === dom && this._isHandSource(sc)) domSrc = sc;
     }
     const pressed = !!this._padOf(domSrc)?.buttons?.[0]?.pressed;
     if (!domSrc) { this._wpDrag = null; return; }
 
-    // Read the grabbing hand from its WRIST JOINT rather than its grip object, because the grip
-    // carries the very offset we are here to calibrate — driving the drag with it would feed the
-    // correction back into itself.
-    const wj = domSrc.hand.get('wrist');
-    const wp = wj && frame.getJointPose(wj, refSpace);
+    // WHICHEVER POSE THIS RUNTIME ACTUALLY HAS.
+    //
+    // Preferred: the WRIST JOINT, because the grip object carries the very offset being
+    // calibrated and driving the drag with it would feed the correction back into itself.
+    // But Galaxy XR hands have no joints at all — they are controller-shaped sources with a real
+    // gripSpace — so requiring a joint meant the grab silently did nothing there, every frame.
+    // The raw gripSpace pose is the fallback: it is not the offset we are measuring (that lives
+    // on the panel's local transform), so it is safe to drag with.
+    const wj = domSrc.hand && domSrc.hand.get('wrist');
+    let wp = wj ? frame.getJointPose(wj, refSpace) : null;
+    if (!wp && domSrc.gripSpace) wp = frame.getPose(domSrc.gripSpace, refSpace);
     if (!wp) { this._wpDrag = null; return; }
     if (!this._wpHandM) { this._wpHandM = new THREE.Matrix4(); this._wpTmp = new THREE.Matrix4(); }
     this._wpHandM.fromArray(wp.transform.matrix);
@@ -7623,15 +7988,157 @@ class Scene {
 
   // Hands, and nothing with buttons on it. On such a runtime there is no way to TOGGLE a menu,
   // so the wrist panel cannot start hidden the way it does on a controller device.
+  // PRESENT IS NOT THE SAME AS IN USE.
+  //
+  // The first version asked "does any source have buttons", which is the right question only on
+  // a runtime that never had controllers. Put the controllers down on a Galaxy XR and hands take
+  // over — but the controllers stay ENUMERATED in inputSources, asleep, so a buttons-exist test
+  // says "controllers" forever and the hands-only menus never appear. matt: "on gxr when i put
+  // the controllers down it shows wireframe spheres where my hands are... but i can't bring up
+  // the menus."
+  //
+  // So the test is USE, not presence: hands tracked, and nothing with buttons touched recently.
+  // A controller picked back up fails the idle test on its first press — before the button it is
+  // pressing can be read, because the press itself is what resets the timer — so the hands-only
+  // controls go away on the same frame the controller comes back.
+  //
+  // The idle clock starts when a buttoned source is first SEEN, not at zero, or a session that
+  // opens with untouched controllers would flip to hands-only the moment the window elapsed.
+  // The radius preview sphere. BORROWED FROM THE BRUSH CURSOR, not invented.
+  //
+  // The first version used a wireframe, which was a design decision I had no business making:
+  // this app already has a way of drawing "here is the brush radius" — the fresnel x-ray shell
+  // on the cursor — and a preview that does not look like the thing it previews teaches the user
+  // that they are two different things. matt: "its drawing it with a wireframe material rather
+  // than the usual xray/fresnel falloff material."
+  //
+  // So the material and geometry are taken from the live cursor's volume_sphere. Cloning the
+  // MATERIAL rather than sharing it keeps the preview's depth settings independent — it needs to
+  // draw over the panel being dragged, which the in-world cursor does not.
+  _radiusPreviewMaterial() {
+    const cur = this._vrCursorRight || this._vrCursorLeft;
+    const src = cur?.getObjectByName?.('volume_sphere');
+    if (src?.material?.clone) {
+      const m = src.material.clone();
+      m.depthTest = false;     // over the menu it is being set on
+      m.depthWrite = false;
+      return m;
+    }
+    return null;   // cursor not built yet — try again next time rather than bake a fallback in
+  }
+
+  _updateRadiusPreview(point, radiusPhys) {
+    if (this._radiusPreview && !this._radiusPreviewBorrowed) {
+      // Built before the cursor existed; replace it now that the real material is available.
+      const better = this._radiusPreviewMaterial();
+      if (better) {
+        this._radiusPreview.material?.dispose?.();
+        this._radiusPreview.material = better;
+        this._radiusPreviewBorrowed = true;
+      }
+    }
+    if (!this._radiusPreview) {
+      const geo = new THREE.SphereGeometry(1, 32, 24);
+      const mat = this._radiusPreviewMaterial();
+      this._radiusPreviewBorrowed = !!mat;
+      const m = new THREE.Mesh(geo, mat || new THREE.MeshBasicMaterial({
+        color: 0x4488ff, transparent: true, opacity: 0.35,
+        depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      m.frustumCulled = false;
+      m.renderOrder = VR_PANEL_RENDER_ORDER + 4;
+      m.visible = false;
+      this._scene.add(m);
+      this._radiusPreview = m;
+    }
+    const r = Number.isFinite(radiusPhys) ? radiusPhys : 0;
+    if (r <= 0) { this._radiusPreview.visible = false; return; }
+    this._radiusPreview.position.copy(point);
+    this._radiusPreview.scale.setScalar(r);
+    this._radiusPreview.visible = true;
+    this._radiusPreview.updateMatrixWorld(true);
+  }
+
+  // A TRACE YOU CANNOT READ IS NOT A TRACE.
+  //
+  // Every probe this project has written goes through console.log, and on the Galaxy XR that
+  // output never reaches the remote console — this app wraps console.log (index.html), and
+  // whatever else is in the way, the result is silence. Returned VALUES do arrive, so the same
+  // lines are also kept in a capped ring buffer that can simply be evaluated:
+  //
+  //   window._menuTrace = true;  ...gesture...  JSON.stringify(window._menuLog)
+  //
+  // Capped, because this is written from the frame loop and an unbounded array would grow for
+  // the life of the session.
+  _traceOut(line) {
+    const t = '[menu] ' + line;
+    console.log(t);
+    if (!window._menuLog) window._menuLog = [];
+    window._menuLog.push(t);
+    if (window._menuLog.length > 60) window._menuLog.shift();
+  }
+
+  // A HAND IS NOT ALWAYS AN XRHand. TWO RUNTIMES, TWO SHAPES.
+  //
+  // visionOS gives hands as XRHand: 25 joints, no gamepad, no gripSpace. Galaxy XR gives them as
+  // CONTROLLER-SHAPED sources — measured on device: xrHand=false, joints=0, gripSpace=true, a
+  // 5-button gamepad, and profiles "generic-hand-select-grasp, generic-hand-select,
+  // generic-fixed-hand". The runtime does the gesture recognition itself and hands us buttons.
+  //
+  // So `!!source.hand` is not the question. It is the question for JOINTS — dots, wrist poses,
+  // our own pinch measurement — but not for "is the user using their hands", and conflating the
+  // two is why the Galaxy XR showed no menus: its hand sources carry five buttons, so the
+  // controller test claimed them and the hands-only UI never appeared.
+  //
+  // The profile is the portable answer. Real controllers advertise hardware names
+  // (meta-quest-touch-plus, oculus-touch) or generic-trigger-squeeze-thumbstick; none of them
+  // begin "generic-hand".
+  _isHandSource(src) {
+    if (!src) return false;
+    if (src.hand) return true;
+    const profiles = src.profiles || [];
+    for (const p of profiles) {
+      if (p.startsWith('generic-hand') || p === 'generic-fixed-hand') return true;
+    }
+    return false;
+  }
+
   _handsOnlyMode() {
     const srcs = this._xrSession?.inputSources;
     if (!srcs || !srcs.length) return false;
-    let anyHand = false, anyButtons = false;
+    const now = performance.now();
+    let anyHand = false, anyController = false;
     for (const s of srcs) {
-      if (s.hand) anyHand = true;
-      if (s.gamepad && s.gamepad.buttons && s.gamepad.buttons.length > 4) anyButtons = true;
+      if (this._isHandSource(s)) { anyHand = true; continue; }   // hands never count as controllers,
+      const pad = s.gamepad;                                      // however many buttons they carry
+      if (!pad || !pad.buttons || pad.buttons.length <= 4) continue;
+      anyController = true;
+      if (this._lastControllerUse === undefined) this._lastControllerUse = now;
+      const pressed = pad.buttons.some((b) => b && (b.pressed || b.value > 0.1));
+      const moved   = (pad.axes || []).some((a) => Math.abs(a) > 0.2);
+      if (pressed || moved) this._lastControllerUse = now;
     }
-    return anyHand && !anyButtons;
+    if (!anyHand) return false;
+    if (!anyController) return true;       // nothing but hands present
+
+    // WHICHEVER INPUT WAS USED MOST RECENTLY WINS.
+    //
+    // The first attempt returned true only WHILE a hand button was pressed, which oscillated:
+    // true during a pinch, false between pinches, so the class and the panel placement latched
+    // and unlatched at gesture rate. A moment of proof has to be remembered, not merely noticed.
+    //
+    // Recording both and comparing is symmetric and needs no special case in either direction:
+    // pinch and the menus come to your hand, pick up a controller and press anything and they go
+    // back, and neither can be stolen by the other merely sitting there.
+    for (const s2 of srcs) {
+      if (!this._isHandSource(s2)) continue;
+      if (this._padOf(s2)?.buttons?.[0]?.pressed) { this._lastHandUse = now; break; }
+    }
+    if (Number.isFinite(this._lastHandUse) && this._lastHandUse >= this._lastControllerUse) return true;
+
+    // Neither has been used yet this session: fall back to "the controllers have gone quiet".
+    const idleMs = window._handsOnlyIdleMs ?? 3000;
+    return (now - this._lastControllerUse) > idleMs;
   }
 
   // A BUTTON YOU LOOK AT, BECAUSE APPLE OWNS EVERY GESTURE WORTH BINDING.
@@ -8004,7 +8511,20 @@ class Scene {
           // reads as steadiness; lag on the pointer in your hand reads as broken. Hands only:
           // the controller path is already stable and its feel is not up for renegotiation.
           if (this._handsOnlyMode()) {
-            const ks = window._wristSmooth ?? 0.12;
+            // A BIG PANEL NEEDS MORE DAMPING THAN A SMALL ONE, FROM THE SAME JITTER.
+            //
+            // Every wrist panel hangs off this one anchor, so they share its smoothing exactly —
+            // matt asked whether they do, and they do. What they do not share is LEVERAGE: the
+            // anchor's angular wobble is multiplied by distance from it, so the main menu's far
+            // edge swings several times as far as the mini panel's for the same tremor. Equal
+            // damping is what makes the small one calm and the big one dance.
+            //
+            // So the constant is chosen by what is actually on screen. Only while a large panel
+            // is up, so the mini panel keeps the responsiveness it has now.
+            const _bigUp = !!(this._mainMenuPanel?.mesh?.visible || this._filesPanel?.mesh?.visible);
+            const ks = _bigUp
+              ? (window._wristSmoothBig ?? 0.05)
+              : (window._wristSmooth ?? 0.12);
             if (ks < 1) {
               if (!this._wsP) { this._wsP = new THREE.Vector3(); this._wsQ = new THREE.Quaternion(); this._wsS = new THREE.Vector3(); }
               if (!this._wsCur) { this._wsCur = { p: new THREE.Vector3(), q: new THREE.Quaternion(), ok: false }; }
@@ -8036,6 +8556,31 @@ class Scene {
             {
               const _placing = this._wristPlaceActive() && this._wristPlaceOffset;
               const _handsSlot = !_placing && this._handsOnlyMode();
+              // NOT _panelTrace — that name was already taken by misc/PanelTrace.js, which is a
+              // whole paint-timing instrument. Turning this on turned that on too and buried the
+              // one line wanted under a stream of paint logs.
+              //
+              // Readable without the console: window._panelPlace = true, then window._panelDbg.
+              if (window._panelPlace) {
+                const _m = this._miniPanel?.mesh;
+                const _D = 180 / Math.PI;
+                window._panelDbg = {
+                  placing: !!_placing, handsSlot: !!_handsSlot,
+                  usingWristConst: this._handPanelPlacement() === Scene.HAND_WRIST_PANEL,
+                  gripIsWristL: this._gripSpaceIsWristLeft, gripIsWristR: this._gripSpaceIsWristRight,
+                  miniPos: _m ? [+_m.position.x.toFixed(4), +_m.position.y.toFixed(4), +_m.position.z.toFixed(4)] : null,
+                  miniRot: _m ? [+(_m.rotation.x*_D).toFixed(1), +(_m.rotation.y*_D).toFixed(1), +(_m.rotation.z*_D).toFixed(1)] : null,
+                  miniScale: _m ? [+_m.scale.x.toFixed(3), +_m.scale.y.toFixed(3), +_m.scale.z.toFixed(3)] : null,
+                  parentedToAnchor: _m ? (_m.parent === uiAnchor) : null,
+                  // The keyboard flip is a SCALE-SIGN question on both the source panel and the
+                  // keyboard itself, so report both rather than inferring from one.
+                  kbScale: this._vrKeyboard?.mesh
+                    ? [this._vrKeyboard.mesh.scale.x, this._vrKeyboard.mesh.scale.y, this._vrKeyboard.mesh.scale.z] : null,
+                  kbVisible: !!this._vrKeyboard?.mesh?.visible,
+                  mainScale: this._mainMenuPanel?.mesh
+                    ? [this._mainMenuPanel.mesh.scale.x, this._mainMenuPanel.mesh.scale.y, this._mainMenuPanel.mesh.scale.z] : null,
+                };
+              }
               const _wy = wristPanelY(), _wYaw = wristPanelYaw();
               for (const _p of [this._miniPanel, this._toolPickerPanel, this._mainMenuPanel]) {
                 if (!_p?.mesh || _p.pinned || _p.mesh.parent !== uiAnchor) continue;
@@ -8044,12 +8589,34 @@ class Scene {
                   // slot is what we are trying to replace, so it must not be re-imposed here.
                   this._wristPlaceOffset.decompose(_p.mesh.position, _p.mesh.quaternion, _p.mesh.scale);
                 } else if (_handsSlot) {
-                  const _hp = Scene.HAND_WRIST_PANEL, _D = Math.PI / 180;
+                  const _hp = this._handPanelPlacement(), _D = Math.PI / 180;
                   _p.mesh.position.set(_hp.p[0], _hp.p[1], _hp.p[2]);
                   _p.mesh.rotation.set(_hp.r[0] * _D, _hp.r[1] * _D, _hp.r[2] * _D, 'XYZ');
+                  // SCALE, TOO — and it comes from the SAME constant as the rotation.
+                  //
+                  // The placing branch decomposes a full matrix, which WRITES scale; this one
+                  // sets position and rotation, so the mirror it leaves behind has to be stated.
+                  // Normalising every hand panel to +1 here is what broke the Vision Pro: its
+                  // number carries the half-turn correction and is right at the panel's natural
+                  // -1, while the Galaxy XR number was grabbed raw and is right at +1. Applying
+                  // one of them at the other's mirror is an upside-down, back-facing menu.
+                  if (window._panelKeepScale !== true) _p.mesh.scale.set(1, _hp.sy, 1);
                 } else {
-                  _p.mesh.position.y = _wy;
-                  _p.mesh.rotation.y = _wYaw;   // same slot, same angle — they used to differ
+                  // RESTORE THE NATURAL MIRROR ON THE WAY OUT.
+                  //
+                  // scale.y = -1 is what an HTMLVRPanel is built with — it compensates for
+                  // flipY=false in the rasterised texture. The hands slot normalises it to 1
+                  // because the placement was measured that way, and nothing put it back, so
+                  // switching to controllers mid-session left the panel un-mirrored in a slot
+                  // that assumes it is mirrored: the menus swapped and came up wrong.
+                  if (_p.mesh.scale.y > 0) _p.mesh.scale.set(1, -1, 1);
+                  // RESET EVERY COMPONENT THE HANDS SLOT WRITES, not just the ones this slot
+                  // sets. The hands placement writes all three position and rotation components;
+                  // this branch only ever set .y, so x and z kept the hand values and the panel
+                  // came back at the hand's angle in a controller slot. That is the "menus swap
+                  // but are oriented wrong" on the way out.
+                  _p.mesh.position.set(0, _wy, 0);
+                  _p.mesh.rotation.set(0, _wYaw, 0);   // same slot, same angle — they used to differ
                 }
               }
             }
@@ -9197,11 +9764,29 @@ class Scene {
           // Per hand: two controllers, two independent fingers.
           if (!this._vrTrigHeld) this._vrTrigHeld = { L: false, R: false, G: false };
           const _tv = _trigger ? _trigger.value : 0;
-          // PLACEMENT MODE SWALLOWS EVERY PRESS. While the panel is being positioned by hand,
-          // the same pinch that carries it would otherwise also be clicking whatever it is
-          // dragged across — so no surface sees a press at all until placement is turned off.
+          // AN ANALOG THRESHOLD IS FOR AN ANALOG TRIGGER, AND A HAND DOES NOT HAVE ONE.
+          //
+          // The Schmitt below exists because a controller's trigger is a long physical travel
+          // that rests at 0 and a light press must count. A Galaxy XR hand reports something
+          // quite different: a CONTINUOUS "how closed is this hand" value that idles around
+          // 0.2-0.5 and essentially never returns to 0. Measured, with the runtime's own pressed
+          // flag reading UP the whole time:
+          //
+          //   trig=up/0.41 pressed=true     trig=up/0.30 pressed=true     trig=up/0.12 pressed=true
+          //
+          // Once such a signal crosses the 0.10 entry it can never fall under the 0.04 release,
+          // so one real pinch latched the press on for good: clicks that fired with the fingers
+          // 2cm apart, pinches that appeared to do nothing because it was already down, and no
+          // hover, because hover is the branch that only runs between edges.
+          //
+          // A hand runtime has already DECIDED. `pressed` is its gesture recogniser's boolean
+          // output, and it is strictly better than anything we can infer from a value whose
+          // resting point is not zero. So hands use the flag and controllers keep the Schmitt.
+          const _handSrc = this._isHandSource(source);
           const _pressed = (_trigger && !this._wristPlaceActive())
-            ? (_trigger.pressed || (this._vrTrigHeld[_hand] ? _tv > 0.04 : _tv > 0.10))
+            ? (_handSrc
+                ? !!_trigger.pressed
+                : (_trigger.pressed || (this._vrTrigHeld[_hand] ? _tv > 0.04 : _tv > 0.10)))
             : false;
           this._vrTrigHeld[_hand] = _pressed;
 
@@ -9214,7 +9799,7 @@ class Scene {
             if (!this._mtPrev) this._mtPrev = {};
             if (this._mtPrev[_hand] !== _pressed) {
               this._mtPrev[_hand] = _pressed;
-              console.log('[menu] TRIGGER ' + _hand + (_pressed ? ' DOWN' : ' UP  ')
+              this._traceOut('TRIGGER ' + _hand + (_pressed ? ' DOWN' : ' UP  ')
                 + ' winner=' + (_winnerName || 'NONE')
                 + ' hits=' + (_panelHits.length || 0));
             }
@@ -9267,6 +9852,55 @@ class Scene {
               _dragCandidates.push({ name: 'TornOff:' + sectionId, panel, pressKey: '_topWasPressed_' + sectionId });
             });
             const _locked = _dragCandidates.find(v => v.panel?._sliderDragTarget && v.panel?.mesh);
+            // SHOW THE RADIUS WHERE THE USER IS LOOKING, WHILE THEY SET IT.
+            //
+            // Dragging the radius slider changes a number whose meaning is a size in the scene,
+            // and the only way to see that size was to let go, move the controller off the panel
+            // and watch the cursor. matt: "it would be good to draw the sphere radius at the menu
+            // intersection point during the menu drag, so the user can directly see what the
+            // radius is, vs having to move the controller away to preview."
+            //
+            // Drawn at the ray's intersection with the panel, so it appears where you are already
+            // looking. It is the same physical radius the brush cursor uses, so what you see here
+            // is what you will get — not a second calculation that can disagree with the first.
+            this._radiusPreviewOn = false;
+            // YOU CANNOT AIM A TOOL WITH THE TOOL YOU ARE AIMING.
+            //
+            // Dragging a spike slider moved the spike, which moved the ray, which moved where the
+            // ray met the panel, which moved the slider — a closed loop that accelerated to the
+            // end of its range in under a second and left the app unusable until localStorage was
+            // cleared by hand. matt: "its far too easy to get into a runaway process and end up
+            // with an unusable value."
+            //
+            // So the live spike is FROZEN for the duration of the drag: the accessors return the
+            // value the drag started with, no matter what the slider writes. The pending value is
+            // shown on a separate preview spike instead, so you can see the setting you are
+            // choosing without it being able to affect the aim you are choosing it with.
+            const _spikeIds = /mm-hand-len|mm-hand-off|mm-hand-pitch|mm-stylus-len|mm-stylus-off|mm-stylus-tilt/;
+            const _sliderId = _locked?.panel?._sliderDragTarget?.id || '';
+            if (_locked && /radius/i.test(_sliderId)) this._radiusPreviewOn = true;
+            if (_spikeIds.test(_sliderId)) {
+              if (!this._spikeFreeze) {
+                // Snapshot on the frame the drag begins, from the live accessors, so the freeze
+                // holds exactly what was on screen a moment ago.
+                this._spikeFreeze = {
+                  length: this.getStylusLength(),
+                  offset: this.getStylusOffset(),
+                  tilt:   this.getStylusTilt(),
+                };
+              }
+              this._spikePending = { id: _sliderId, value: parseFloat(_locked.panel._sliderDragTarget.value) };
+            } else if (this._spikeFreeze) {
+              // Released: the slider's value is now the committed one, so stop overriding.
+              this._spikeFreeze = null;
+              this._spikePending = null;
+              this._updateSpikePreview(null);
+              try {
+                this.updateStylusLength?.(this.getStylusLength());
+                this.updateStylusOffset?.(this.getStylusOffset());
+              } catch (e) { /* geometry re-apply is best effort */ }
+            }
+            if (this._spikePending) this._updateSpikePreview(this._spikePending);
             if (_locked) {
               const pm = _locked.panel.mesh;
               // Use the panel's WORLD transform — the wrist panels (mini/brush) are
@@ -9286,10 +9920,16 @@ class Scene {
                 const _local = pm.worldToLocal(_hit.clone());
                 const _hw = (pm.geometry.parameters?.width  ?? 0.3) * 0.5;
                 const _hh = (pm.geometry.parameters?.height ?? 0.4) * 0.5;
+                // CARRY THE WORLD POINT, not just the UV.
+                //
+                // This synthesised hit had uv and distance only, so anything downstream that
+                // wants to draw AT the intersection — the ray reticle, and now the radius
+                // preview — had nothing to position against and silently drew nothing. _hit is
+                // already the world-space plane intersection, so it costs one clone.
                 _winner = { ..._locked, hit: { uv: {
                   x:       (_local.x + _hw) / (_hw * 2),
                   y: 1.0 - (_local.y + _hh) / (_hh * 2),
-                }, distance: 0 } };
+                }, distance: 0, point: _hit.clone() } };
                 _winnerName = _locked.name;
               }
             }
@@ -9347,7 +9987,7 @@ class Scene {
           if (window._menuTrace) {
             this._mtN = (this._mtN || 0) + 1;
             if (this._mtN % 20 === 0) {
-              console.log('[menu] ' + source.handedness + '/' + _hand
+              this._traceOut(source.handedness + '/' + _hand
                 + ' hits=' + (_panelHits.length ? _panelHits.map(h => h.name + '@' + h.hit.distance.toFixed(2)).join(',') : 'NONE')
                 + ' winner=' + (_winnerName || 'null')
                 + ' trig=' + (_trigger ? (_trigger.pressed ? 'down' : 'up') + '/' + (_trigger.value ?? 0).toFixed(2) : 'NO-TRIGGER')
@@ -9393,7 +10033,7 @@ class Scene {
                     if (b) btnTxt = '"' + (b.textContent || '').trim().slice(0, 24) + '"';
                   }
                 } catch (e) { desc = 'uvToElement threw: ' + e.message; }
-                console.log('[menu] ' + v.name + ' justDown=' + justDown + ' justUp=' + justUp
+                this._traceOut(v.name + ' justDown=' + justDown + ' justUp=' + justUp
                   + ' pressed=' + _pressed + ' wasPressed=' + !!this[v.pressKey]
                   + ' blocked=' + _blocked + ' owner=' + (this._vrPressOwner[_hand] || 'null')
                   + ' element=' + desc + ' button=' + btnTxt);
@@ -9570,6 +10210,12 @@ class Scene {
             this._vbsCloseWasPressed = _pressed;
           } else if (this._vbsCloseWasPressed) {
             this._vbsCloseWasPressed = false;
+          }
+
+          if (this._radiusPreviewOn && _winner?.hit?.point) {
+            this._updateRadiusPreview(_winner.hit.point, this._vrBrushPhysicalRadius);
+          } else if (this._radiusPreview && this._radiusPreview.visible) {
+            this._radiusPreview.visible = false;
           }
 
           // Gaze menu button — the only way to open a menu on a runtime with no buttons.
@@ -11605,9 +12251,18 @@ class Scene {
       analogValue = buttons[0].value;
     }
     
-    // Evaluate if the trigger has crossed the user's defined physical threshold
+    // Evaluate if the trigger has crossed the user's defined physical threshold.
+    //
+    // SAME EXCEPTION AS THE PANEL PRESS: a hand's trigger value is a continuous hand-closure
+    // signal that rests well above zero, so a threshold on it either latches on for ever or
+    // fires while the hand is merely relaxed. The runtime's own `pressed` boolean is its gesture
+    // recogniser's answer, and trigger sensitivity is a setting about a PHYSICAL trigger's
+    // travel — it has nothing to calibrate on a gesture.
+    const _handPress = this._isHandSource(source) && !!(buttons && buttons[0] && buttons[0].pressed);
     let isTriggerPressed = false;
-    if (this._vrLockedHand === source.handedness) {
+    if (this._isHandSource(source)) {
+      isTriggerPressed = (this._vrLockedHand === source.handedness || isDominant) && _handPress;
+    } else if (this._vrLockedHand === source.handedness) {
        isTriggerPressed = analogValue >= triggerThreshold;
     } else {
        isTriggerPressed = (isDominant && analogValue >= triggerThreshold);
@@ -12489,8 +13144,20 @@ class Scene {
             vec3.normalize(dirEngine, dirEngine);
 
             const uiHitDist = isLeft ? this._vrUIHitDistLeft : this._vrUIHitDistRight;
-            const cursorGroup = isLeft ? this._vrCursorLeft : this._vrCursorRight;
-            const controllerGroup = isLeft ? this._vrControllerLeft : this._vrControllerRight;
+            // 'NOT LEFT' IS NOT THE SAME AS 'RIGHT'. A visionOS pinch ADDS a transient-pointer
+            // source for the duration of the pinch, and its handedness is 'none' — so every
+            // isLeft ternary in this loop handed it the RIGHT cursor. It is not the active hand,
+            // so the offhand branch below hid that cursor, and the brush sphere vanished for as
+            // long as the offhand pinch was held: matt, pinching left for alt-smooth, "the
+            // sphere radius indicator goes invisible".
+            //
+            // An unhanded source owns no cursor, so it gets none and the guard below drops it
+            // without touching anyone else's visibility. Deliberately NOT a `continue` at the
+            // top of the loop: the gaze ray this source carries is the input route the gaze
+            // menu button runs on, and that is upstream of here.
+            const _handed = source.handedness === 'left' || source.handedness === 'right';
+            const cursorGroup = !_handed ? null : (isLeft ? this._vrCursorLeft : this._vrCursorRight);
+            const controllerGroup = !_handed ? null : (isLeft ? this._vrControllerLeft : this._vrControllerRight);
             if (!controllerGroup) { if (cursorGroup) cursorGroup.visible = false; continue; } // Safe guard for unmapped handedness
             const pointerLine = controllerGroup.getObjectByName('pointer_ray_root');
 

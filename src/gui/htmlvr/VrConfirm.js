@@ -13,7 +13,7 @@
  *   window._vrConfirmPanel.close()   — dismiss without confirming
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, panelWorldQuat } from './HTMLVRPanel.js';
 import { injectUITokens } from './uiTokens.js';
 import * as THREE from 'three';
 
@@ -102,6 +102,8 @@ export class VrConfirm extends HTMLVRPanel {
     this._closedAt    = 0;
     this._startHidden = true;
 
+    // Summoned BY another panel, so it draws in front of one. See VR_MODAL_ORDER_BUMP.
+    this._isModalOverlay = true;
     this.init(scene, camera, renderer);
     this._waitForMeshThenWire();
   }
@@ -171,9 +173,21 @@ export class VrConfirm extends HTMLVRPanel {
     const panelWorldPos = new THREE.Vector3();
     panelMesh.getWorldPosition(panelWorldPos);
 
-    const panelQuat = new THREE.Quaternion();
-    panelMesh.getWorldQuaternion(panelQuat);
-    panelQuat.multiply(new THREE.Quaternion(0, 0, 1, 0));
+    // Conditional on the panel's ACTUAL scale — the hands-only wrist slot normalises it,
+    // and undoing a half turn that is not there flips this panel. See panelWorldQuat.
+    const panelQuat = panelWorldQuat(panelMesh);
+    // MATCH THE SOURCE PANEL'S MIRROR SIGN.
+    //
+    // These meshes carry scale.y = -1 like every HTMLVRPanel, and that was invisible for as long
+    // as the panel they position against carried it too — the two mirrors cancelled. The
+    // hands-only wrist slot normalises the source panel's scale, so this one was left mirrored
+    // on its own and came up flipped. Measured: kbScale [1,-1,1] against mainScale [1,1,1].
+    //
+    // Copying the SIGN rather than forcing a value keeps both conventions working.
+    if (this.mesh && panelMesh.scale) {
+      const _sy = Math.abs(this.mesh.scale.y) * (panelMesh.scale.y < 0 ? -1 : 1);
+      if (this.mesh.scale.y !== _sy) this.mesh.scale.y = _sy;
+    }
 
     const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(panelQuat); // panel front normal
     this.mesh.position.copy(panelWorldPos).addScaledVector(toUser, 0.04); // 4 cm in front

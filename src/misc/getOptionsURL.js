@@ -216,6 +216,27 @@ var getOptionsURL = function () {
   // contact; negative requires them pressed together. Measured deliberate pinches reach about
   // -0.017, so the usable range sits well inside this.
   options.pinchOn = queryNumber(getVal('pinchOn'), -0.010, 0.015, 0.0);
+  // Hand-tracking spike: a pinch has no shaft to extend, so the tip sits close to the fingers.
+  // Separate from the controller values, which were tuned against a controller.
+  options.handStylusLength = queryNumber(getVal('handStylusLength'), 0.0, 0.20, 0.05);
+  options.handStylusOffset = queryNumber(getVal('handStylusOffset'), -0.10, 0.10, 0.0);
+  // Hand ray pitch, degrees, applied to the anatomical ray (see _handRayFromJoints).
+  //
+  // +20 measured on Galaxy XR 2026-09-14. The earlier -45 was measured against a DIFFERENT
+  // construction — visionOS's targetRaySpace, before the ray was rebuilt from joints — so it is
+  // stale rather than a second device's value.
+  //
+  // Range widened past the old +20 ceiling, which the measured value sat exactly on: a setting
+  // whose correct value is its own maximum cannot be tuned in one direction.
+  options.handRayPitch = queryNumber(getVal('handraypitch'), -80, 80, 20);
+  // Ask for hand-tracking as a REQUIRED feature. A window flag has to be set before the session
+  // starts and is lost on reload, which is a sequencing trap in a headset; a URL option cannot
+  // be mistimed. ?requireHands=1
+  //
+  // LOWERCASE KEY ON PURPOSE: readUrlParameters() lowercases every key it parses, so a camelCase
+  // lookup can only ever match the localStorage half of getVal and never the URL half. Several
+  // options above are written camelCase and quietly work for saved settings only.
+  options.requireHands = queryBool(getVal('requirehands'), false);
   options.gizmoScale = queryNumber(getVal('gizmoScale'), 5.0, 100.0, 15.625); // [5-100], default 15.625 (0.5 of 31.25)
   options.gizmoSizeMul = queryNumber(getVal('gizmoSizeMul'), 0.25, 2.0, 1.0); // user size multiplier for the VR transform gizmo
   // Centre handle of the VR gizmo carries the controller's ROTATION as well as its

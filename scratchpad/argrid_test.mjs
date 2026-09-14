@@ -192,8 +192,12 @@ if (FACTOR[sA] && FACTOR[dA]) {
     panelOrder > ghost && panelOrder > main,
     'panel renderOrder ' + panelOrder + ' vs grid ' + main + '/' + ghost
       + ' -- at 0 the panel draws first and the ghost paints the floor over the menu');
+  // Still true for ORDINARY panels, which is what this check is about — the flags are now
+  // derived from _isModalOverlay so that a modal (keyboard/numpad/confirm) can opt out, since a
+  // modal positioned behind the panel that summoned it was being depth-hidden from it.
   check('...and the panel still depth-tests, so this is order and not a trick',
-    /depthWrite: true,/.test(PANEL) && /depthTest: true,/.test(PANEL));
+    /const _modal = !!this\._isModalOverlay;/.test(PANEL)
+      && /depthWrite: !_modal,/.test(PANEL) && /depthTest: !_modal,/.test(PANEL));
   check('...and the grid stays under the rig overlays too',
     ghost < 9996, 'bone ghosts sit at 9998');
   check('...and neither pass writes depth',

@@ -13,7 +13,7 @@
  *   window._vrNumpad.close()  — dismiss without confirming
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, panelWorldQuat } from './HTMLVRPanel.js';
 import * as THREE from 'three';
 
 // ── Shared CSS ────────────────────────────────────────────────────────────────
@@ -275,6 +275,8 @@ export class VrNumpad extends HTMLVRPanel {
     this._desktopEl  = null; // DOM overlay element when open on desktop
     this._startHidden = true;
 
+    // Summoned BY another panel, so it draws in front of one. See VR_MODAL_ORDER_BUMP.
+    this._isModalOverlay = true;
     this.init(scene, camera, renderer);
     this._waitForMeshThenWire();
   }
@@ -586,9 +588,21 @@ export class VrNumpad extends HTMLVRPanel {
     //  • Pinned  (scale.x=-1 after decompose): getWorldQuat = R_true·Rz180 → corrected = R_true ✓
     //  • Controller (scale.y=-1, det<0 same):  getWorldQuat = Q_ctrl·Rx(-90)·Rz180 → corrected = Q_ctrl·Rx(-90) ✓
     //  • Torn-off (scale.y=-1):                getWorldQuat = camQuat·Rz180 → corrected = camQuat ✓
-    const panelQuat = new THREE.Quaternion();
-    animMesh.getWorldQuaternion(panelQuat);
-    panelQuat.multiply(new THREE.Quaternion(0, 0, 1, 0));
+    // Conditional on the panel's ACTUAL scale — the hands-only wrist slot normalises it,
+    // and undoing a half turn that is not there flips this panel. See panelWorldQuat.
+    const panelQuat = panelWorldQuat(animMesh);
+    // MATCH THE SOURCE PANEL'S MIRROR SIGN.
+    //
+    // These meshes carry scale.y = -1 like every HTMLVRPanel, and that was invisible for as long
+    // as the panel they position against carried it too — the two mirrors cancelled. The
+    // hands-only wrist slot normalises the source panel's scale, so this one was left mirrored
+    // on its own and came up flipped. Measured: kbScale [1,-1,1] against mainScale [1,1,1].
+    //
+    // Copying the SIGN rather than forcing a value keeps both conventions working.
+    if (this.mesh && animMesh.scale) {
+      const _sy = Math.abs(this.mesh.scale.y) * (animMesh.scale.y < 0 ? -1 : 1);
+      if (this.mesh.scale.y !== _sy) this.mesh.scale.y = _sy;
+    }
 
     // ── Panel-space axes for positioning ─────────────────────────────────────
     // Using the panel's OWN axes (derived from panelQuat) means the offset
@@ -633,7 +647,42 @@ export class VrNumpad extends HTMLVRPanel {
       .copy(panelWorldPos)
       .addScaledVector(right,  xFromFieldCentre + numW / 2 + GAP)
       .addScaledVector(up,     yOffset)
-      .addScaledVector(toUser, 0.04); // 4 cm toward user (positive = in front of panel)
+      .addScaledVector(toUser, 0);    // forward handled below, as a distance from the head
+
+    // IN FRONT OF THE PANEL FROM WHERE YOU ARE, NOT ALONG ITS NORMAL.
+    //
+    // The 4cm along the panel's own +Z that used to live here is "in front" only when the panel
+    // faces you, and the wrist panels are angled to the hand — so the numpad sat level with the
+    // main panel or behind it. The keyboard had exactly this bug and the fix is the same one,
+    // applied here so the two overlays do not drift apart again.
+    //
+    // The sideways placement above is kept: a numpad beside the field it edits does not cover
+    // what you are reading, which is the point of putting it there.
+    {
+      // BROUGHT TO A DISTANCE, NOT PUSHED BY ONE.
+      //
+      // The keyboard copies its parent's pose, so a 1cm step toward the head is enough to put it
+      // in front. The numpad deliberately sits BESIDE the field, and on an angled panel that
+      // sideways move carries it away from you — measured, 6cm sideways beat a 1cm forward nudge
+      // and it ended up 3cm FARTHER from the head than the panel it was floating over.
+      //
+      // So the target is a distance rather than a delta: put it exactly a centimetre nearer the
+      // head than the panel is. That holds however far to the side it went and however the panel
+      // is angled, which a fixed push cannot.
+      const camPos = this._viewerPosition ? this._viewerPosition() : null;
+      const gap = window._numpadFrontGap ?? 0.01;
+      if (camPos) {
+        const panelDist = camPos.distanceTo(panelWorldPos);
+        const toCam = camPos.clone().sub(this.mesh.position);
+        const here = toCam.length();
+        if (here > 1e-6) {
+          const target = Math.max(0.05, panelDist - gap);   // never inside the viewer's head
+          this.mesh.position.addScaledVector(toCam.normalize(), here - target);
+        }
+      } else {
+        this.mesh.position.addScaledVector(toUser, gap);
+      }
+    }
 
     // Inherit the panel's true rotation so the numpad tilts with the panel.
     this.mesh.quaternion.copy(panelQuat);

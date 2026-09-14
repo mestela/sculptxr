@@ -17,7 +17,7 @@
  *   window._vrKeyboard.close()
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, panelWorldQuat } from './HTMLVRPanel.js';
 import * as THREE from 'three';
 
 // ── Layout ────────────────────────────────────────────────────────────────────
@@ -165,6 +165,8 @@ export class VrKeyboard extends HTMLVRPanel {
     this._activeEl    = null; // element currently receiving refreshes (VR panel or desktop panel)
     this._startHidden = true;
 
+    // Summoned BY another panel, so it draws in front of one. See VR_MODAL_ORDER_BUMP.
+    this._isModalOverlay = true;
     this.init(scene, camera, renderer);
     this._waitForMeshThenWire();
   }
@@ -357,31 +359,47 @@ export class VrKeyboard extends HTMLVRPanel {
     const panelWorldPos = new THREE.Vector3();
     pMesh.getWorldPosition(panelWorldPos);
 
-    const panelQuat = new THREE.Quaternion();
-    pMesh.getWorldQuaternion(panelQuat);
-    panelQuat.multiply(new THREE.Quaternion(0, 0, 1, 0)); // undo the scale.y=-1 Rz180
+    // Conditional on the panel's ACTUAL scale — the wrist slot normalises it, and undoing a
+    // half turn that is not there is what flipped this panel. See panelWorldQuat.
+    const panelQuat = panelWorldQuat(pMesh);
+    // MATCH THE SOURCE PANEL'S MIRROR SIGN.
+    //
+    // These meshes carry scale.y = -1 like every HTMLVRPanel, and that was invisible for as long
+    // as the panel they position against carried it too — the two mirrors cancelled. The
+    // hands-only wrist slot normalises the source panel's scale, so this one was left mirrored
+    // on its own and came up flipped. Measured: kbScale [1,-1,1] against mainScale [1,1,1].
+    //
+    // Copying the SIGN rather than forcing a value keeps both conventions working.
+    if (this.mesh && pMesh.scale) {
+      const _sy = Math.abs(this.mesh.scale.y) * (pMesh.scale.y < 0 ? -1 : 1);
+      if (this.mesh.scale.y !== _sy) this.mesh.scale.y = _sy;
+    }
 
-    const up     = new THREE.Vector3(0, 1, 0).applyQuaternion(panelQuat);
     const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(panelQuat);
 
-    // Vertical: drop to just below the field (or panel centre if no field hint).
-    let yField = 0;
-    const meshH = pMesh.geometry?.parameters?.height ?? 0;
-    if (sourceEl && sourcePanel._element && meshH) {
-      const panelRect = sourcePanel._element.getBoundingClientRect();
-      const elRect    = sourceEl.getBoundingClientRect();
-      if (panelRect.width > 0 && panelRect.height > 0) {
-        const relY = (elRect.top + elRect.height / 2 - panelRect.top) / panelRect.height;
-        yField = (0.5 - relY) * meshH;
-      }
-    }
-    const kbH = this.mesh.geometry?.parameters?.height ?? 0.18;
-    const GAP = 0.02;
+    // (No vertical term. The keyboard takes the parent's pose exactly; see below. The field
+    // position used to shift it up or down, which made it land somewhere different depending on
+    // which input you touched.)
+    // SAME POSE AS THE PARENT, THEN 1cm TOWARD THE HEADSET. That is the whole rule.
+    //
+    // Three attempts got this wrong by adding cleverness on top of a simple spec. The first
+    // nudged along the panel's own normal, which is only "in front" if the panel faces you. The
+    // second pushed toward the head, which on a panel below eye level also threw it upward. The
+    // third read matt's "above/below" as vertical when he meant STACKING ORDER — sheets of
+    // paper, not height — and sent it toward the floor. His words, once he restated them
+    // precisely: "start in the same position and rotation as the browser save panel, move it 1cm
+    // in-front, towards the VR headset."
+    //
+    // No vertical term at all. Copy the pose, step toward the viewer, done. The panel normal
+    // remains the fallback for when there is no camera to ask.
+    this.mesh.position.copy(panelWorldPos);
 
-    this.mesh.position
-      .copy(panelWorldPos)
-      .addScaledVector(up,     yField - kbH / 2 - GAP)
-      .addScaledVector(toUser, 0.04);
+    const camPos = this._viewerPosition();
+    const gap = window._kbFrontGap ?? 0.01;
+    const toCam = camPos ? camPos.clone().sub(this.mesh.position) : null;
+    if (toCam && toCam.lengthSq() > 1e-9) this.mesh.position.addScaledVector(toCam.normalize(), gap);
+    else this.mesh.position.addScaledVector(toUser, gap);
+
     this.mesh.quaternion.copy(panelQuat);
   }
 

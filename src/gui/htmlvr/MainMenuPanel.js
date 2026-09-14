@@ -114,7 +114,12 @@ const CSS = `
   font-family: system-ui, -apple-system, sans-serif;
   box-sizing: border-box;
   border-radius: 12px;
-  border: 2px solid #585b70;
+  /* AN INSET SHADOW, NOT A BORDER. The rasteriser builds its SVG at the element's CLIENT size
+     and draws the element at 0,0 inside it, so anything in the border box but outside the
+     client box — the bottom and right borders, and whatever they push out of view — is simply
+     cut off. An inset shadow paints inside the client box and costs nothing at the edges.
+     It looks the same; it is measured differently. */
+  box-shadow: inset 0 0 0 2px #585b70;
   overflow: hidden;
   user-select: none;
   /* position:absolute is injected by the polyfill; position:relative makes the
@@ -139,6 +144,14 @@ const CSS = `
   box-sizing: border-box;
 }
 .mm-menu-btn {
+  /* SHRINK BEFORE THE PIN MOVES. The same markup rasterises at different widths on visionOS and
+     on Galaxy XR — matt: "it renders differently on avp vs gxr" — so a row that ends 4px short
+     of the edge in one engine can run past it in the other, and what gets pushed off is the
+     flex-shrink:0 button at the end. A flex item with nowrap text will not shrink below its
+     content unless min-width says it may; with these two it gives up label width instead, and
+     the pin stays on the panel whatever the font metrics turn out to be. */
+  min-width: 0;
+  overflow: hidden;
   padding: 5px 11px;
   border: 1px solid #45475a;
   border-radius: 5px;
@@ -1055,11 +1068,11 @@ function buildShellHTML() {
       <button class="mm-menu-btn" data-menu="settings">Settings</button>
       <button class="mm-menu-btn" data-menu="about">About</button>
       <div style="flex:1"></div>
-      <!-- BACK TO THE WRIST PANEL. On a hands-only runtime there is no X/A button to swap with,
-           so the swap lives on the panels. Plain text, not a glyph: an icon that needs
-           explaining is worse than a word, and these are only ever read through the VR
-           rasteriser. -->
-      <button class="mm-pin-btn mm-hands-only" id="mm-mini-btn" title="Back to the wrist panel">Mini</button>
+      <!-- The swap back to the wrist panel USED TO LIVE HERE, and it does not fit: six menu
+           buttons plus the pin already fill this row to the edge at ${MM_W}px, so a seventh
+           pushed the pin off the panel on Vision Pro and half-covered it on Galaxy XR. It is a
+           hands-only control and there is already a hands-only row with room in it, so it went
+           to the bottom of the panel with Undo/Redo. -->
       <button class="mm-pin-btn" id="mm-pin-btn" title="Pin panel in world space">${ICON_PIN}</button>
     </div>
     <div id="mm-body">
@@ -1076,10 +1089,14 @@ function buildShellHTML() {
       <div id="mm-content"></div>
       <div id="mm-sbar-track" class="mm-scrollbar-track"><div id="mm-sbar-thumb" class="mm-scrollbar-thumb"></div></div>
     </div>
-    <!-- Bottom of the panel, hands-only: no thumbstick means no other way to undo. -->
+    <!-- Bottom of the panel, hands-only: no thumbstick means no other way to undo, and no X/A
+         button means no other way to swap back to the wrist panel. Plain text, not glyphs: an
+         icon that needs explaining is worse than a word, and these are only ever read through
+         the VR rasteriser. -->
     <div id="mm-undo-row" class="mm-hands-only">
       <button id="mm-undo">Undo</button>
       <button id="mm-redo">Redo</button>
+      <button id="mm-mini-btn" title="Back to the wrist panel">Mini</button>
     </div>
   `;
 }
@@ -1562,6 +1579,10 @@ function buildMenuHTML_settings(main) {
   const stylusLength  = ui.stylusLength    ?? opts.stylusLength    ?? 0.10;
   const grabGain      = ui.grabGain        ?? opts.grabGain        ?? 1.0;
   const pinchOn       = ui.pinchOn         ?? opts.pinchOn         ?? 0.0;
+  const hStylusLen    = ui.handStylusLength ?? opts.handStylusLength ?? 0.05;
+  const hStylusOff    = ui.handStylusOffset ?? opts.handStylusOffset ?? 0.0;
+  const hRayPitch     = Number.isFinite(window._handRayPitch) ? window._handRayPitch
+                      : (ui.handRayPitch ?? opts.handRayPitch ?? 20);
   const stylusOffset  = ui.stylusOffset    ?? opts.stylusOffset    ?? 0.0;
   const stylusTilt    = ui.stylusTilt      ?? opts.stylusTilt      ?? 0;
   const gizmoSizeMul  = opts.gizmoSizeMul  ?? 1.0;
@@ -1627,7 +1648,29 @@ function buildMenuHTML_settings(main) {
       <span class="mm-val" id="mm-pinch-on-val">${Math.round(pinchOn*1000)}mm</span>
     </div>
 
-    <div class="mm-section-title">Stylus</div>
+    <!-- ALWAYS VISIBLE, BOTH SETS. These were hidden unless the session was hands-only, which
+         meant the controls silently changed identity depending on what you were holding — matt:
+         "dont do the magical swap of parameters, i hate that behavior in all apps, especially one
+         i'm helping to write." Two labelled groups, both always there, is one more row of screen
+         and no ambiguity about which value you are editing. -->
+    <div class="mm-section-title">Hand spike</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Length</span>
+      <input type="range" id="mm-hand-len" min="0" max="20" step="1" value="${Math.round(hStylusLen*100)}">
+      <span class="mm-val" id="mm-hand-len-val">${Math.round(hStylusLen*100)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Offset</span>
+      <input type="range" id="mm-hand-off" min="-10" max="10" step="1" value="${Math.round(hStylusOff*100)}">
+      <span class="mm-val" id="mm-hand-off-val">${Math.round(hStylusOff*100)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Angle</span>
+      <input type="range" id="mm-hand-pitch" min="-80" max="80" step="1" value="${Math.round(hRayPitch)}">
+      <span class="mm-val" id="mm-hand-pitch-val">${Math.round(hRayPitch)}&deg;</span>
+    </div>
+
+    <div class="mm-section-title">Controller spike</div>
     <div class="mm-row">
       <span class="mm-lbl">Length</span>
       <input type="range" id="mm-stylus-len" min="0" max="30" step="1" value="${Math.round(stylusLength*100)}">
@@ -2590,8 +2633,10 @@ export class MainMenuPanel extends HTMLVRPanel {
     // With all children position:absolute they don't contribute to the parent's
     // auto-height, so without the inline height Ee() would capture 0px.
     root.style.width  = MM_W + 'px';
-    // border-box total = content (MM_MENUBAR_H + MM_BODY_H) + 2×border (2px each)
-    root.style.height = (MM_MENUBAR_H + MM_BODY_H + 4) + 'px';  // = 504px
+    // No border to add: the 2px frame is an inset shadow (see the CSS), so the element is
+    // exactly its content and its client box is the whole of it — which is the box the
+    // rasteriser measures and the plane is now built from.
+    root.style.height = (MM_MENUBAR_H + MM_BODY_H) + 'px';  // = 500px
     root.innerHTML = buildShellHTML();
 
     super(root, MM_W / VR_PANEL_PX_PER_M);
@@ -3099,6 +3144,30 @@ export class MainMenuPanel extends HTMLVRPanel {
       if (ui) ui.pinchOn = f;
       opts.saveOption('pinchOn', f, 500);
     }, (v) => `${v}mm`);
+
+    // Hand spike — length and offset in centimetres, angle in degrees (negative aims lower).
+    // The VISUAL spike is a mesh that only moves when update* is called; the accessors decide
+    // where the picking TIP is. Writing the setting alone moves one and not the other, which is
+    // how the drawn spike and the radius sphere end up in different places.
+    this._wireSlider(q('#mm-hand-len'), q('#mm-hand-len-val'), (v) => {
+      const f = v / 100;
+      if (ui) ui.handStylusLength = f;
+      main.updateStylusLength?.(f);
+      opts.saveOption('handStylusLength', f, 500);
+    });
+    this._wireSlider(q('#mm-hand-off'), q('#mm-hand-off-val'), (v) => {
+      const f = v / 100;
+      if (ui) ui.handStylusOffset = f;
+      main.updateStylusOffset?.(f);
+      opts.saveOption('handStylusOffset', f, 500);
+    });
+    this._wireSlider(q('#mm-hand-pitch'), q('#mm-hand-pitch-val'), (v) => {
+      if (ui) ui.handRayPitch = v;
+      // The ray correction reads the window override first, so keep them in step — otherwise a
+      // value set here would be ignored for as long as a console trial is still in effect.
+      window._handRayPitch = v;
+      opts.saveOption('handRayPitch', v, 500);
+    }, (v) => `${v}\u00B0`);
 
     // Stylus
     this._wireSlider(q('#mm-stylus-len'), q('#mm-stylus-len-val'), (v) => {

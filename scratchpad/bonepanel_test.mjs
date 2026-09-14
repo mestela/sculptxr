@@ -1127,7 +1127,7 @@ check('...and the ghost pass is shaded too, being the half you actually see',
   // Named, because anything that must sit ON a panel has to say "one more than the panel"
   // without knowing the number -- the resize handle sat at a bare 1000 and went under the rig.
   check('...from one named constant the panel furniture can ride on',
-    /this\.mesh\.renderOrder = VR_PANEL_RENDER_ORDER;/.test(PANEL)
+    /this\.mesh\.renderOrder = VR_PANEL_RENDER_ORDER \+ \(this\._isModalOverlay \? VR_MODAL_ORDER_BUMP : 0\);/.test(PANEL)
       && /renderOrder = VR_PANEL_RENDER_ORDER \+ 1;/.test(
         fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8')));
 }

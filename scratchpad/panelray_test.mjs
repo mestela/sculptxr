@@ -170,8 +170,10 @@ check('it is inside the section it costs',
   }
   check('...and no panel still carries its own wrist literal',
     !panels.some(([, src]) => /rotation\.set\(-Math\.PI \/ 2, (0|Math\.PI \/ 8), 0\)/.test(src)));
+  // Now a full set() rather than a .y assignment: the hands-only slot writes all three
+  // components, so the controller slot has to clear the other two or they carry over.
   check('Scene re-seats them every frame, so the lift is tunable from inside a session',
-    /_p\.mesh\.position\.y = _wy;\s*\n\s*_p\.mesh\.rotation\.y = _wYaw;/.test(SC),
+    /_p\.mesh\.position\.set\(0, _wy, 0\);\s*\n\s*_p\.mesh\.rotation\.set\(0, _wYaw, 0\);/.test(SC),
     'a Quest 2 lift guessed from outside the headset is a guess');
   check('...but never a PINNED panel, which is world-anchored',
     /if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiAnchor\) continue;/.test(SC));

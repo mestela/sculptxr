@@ -94,8 +94,9 @@ check('...and is dropped when the panel is rebuilt',
   /markDirty\(\) \{[\s\S]{0,240}?this\._hoverEl = null;/.test(SRC),
   'a repaint usually means new markup, so the measured element may no longer exist');
 check('...and the same element twice does no work',
-  /if \(target === this\._hoverEl && !scrolled\) \{ q\.visible = true; return; \}/.test(SRC),
-  'this runs every frame the ray is on a panel');
+  /if \(target === this\._hoverEl && !scrolled\) \{[\s\S]{0,220}?return;\s*\n\s*\}/.test(SRC)
+    && !/if \(target === this\._hoverEl && !scrolled\) \{[\s\S]{0,220}?getBoundingClientRect/.test(SRC),
+  'this runs every frame the ray is on a panel — the early return must still skip the measure');
 check('...unless the panel scrolled under it',
   /const scrolled = this\._hoverScrollTop !== this\._scrollTopOf\(target\);/.test(SRC),
   'the same row is now somewhere else, and the highlight would stay behind');
@@ -106,9 +107,16 @@ check('...unless the panel scrolled under it',
 // is mapped without inversion. Every highlight landed on the mirrored row, and the check
 // confirmed it was correct. A test written from the same wrong assumption as the code does not
 // catch the mistake, it ratifies it.
+//
+// ...AND THE AGREEMENT IT ASSERTS IS CARRIED BY THE PARENT'S scale.y = -1. The quad is a CHILD
+// of the panel mesh, so that mirror is what makes un-negated cy come out the right way up. The
+// hands-only wrist slot normalises the panel to +1, and the same un-negated expression then
+// produces this very bug from the other direction. So the rule is not "never negate", it is
+// "negate exactly when the parent does not" — read the sign, never assume it.
 check('the panel maps DOM-down straight onto plane-down, without negating',
   /q\.position\.set\(\(cx - 0\.5\) \* this\._meshWidth, \(cy - 0\.5\) \* meshH/.test(SRC),
-  'negating puts every highlight on the mirrored row');
+  'negating puts every highlight on the mirrored row — under EITHER parent mirror, because the '
+  + 'texture flips with the parent exactly as the quad does');
 check('the quad is sized from the measured rect, not a constant',
   /\(right - left\) \/ panelRect\.width/.test(SRC) && /\(bot - top\) \/ panelRect\.height/.test(SRC));
 
