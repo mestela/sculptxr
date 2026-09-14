@@ -140,6 +140,23 @@
 //                          gesture recogniser with our own thresholds on a runtime that has both
 //   AVP_INJECT=rawhandpad the hand pad is passed through unnormalised, so grasp lands on the
 //                          index bound to A/X and a fist toggles subtract or opens the menu
+//   AVP_INJECT=flatslot        the controller slot zeroes the panel's built-in pitch every frame,
+//                              so the menus lie facing the floor instead of along the controller
+//   AVP_INJECT=noresizeflag    the class change does not declare its size change, so the paint
+//                              stays subject to the ambient rate limiter and the plane keeps the
+//                              old aspect
+//   AVP_INJECT=stuckdrag       a slider drag survives the input switch and blocks every repaint
+//   AVP_INJECT=oneflush        the class change asks for one synchronous repaint only, which
+//                              captures the bitmap from before the change
+//   AVP_INJECT=latereturn      the repaint countdown never runs
+//   AVP_INJECT=twospikes       the unused input's objects stay visible, so its spike draws over
+//                              the active one a few centimetres away
+//   AVP_INJECT=handwinsslot    the hand's objects are used whatever is driving, so the panels
+//                              ride the hand grip while you hold a controller
+//   AVP_INJECT=staleclaim      the active objects are chosen at connect time only, so switching
+//                              input mid-session leaves the panels in the old frame
+//   AVP_INJECT=handposealways  the hand pose writes the controller object in controller mode too
+//   AVP_INJECT=dotslinger      the fingertip dots are left up when the hands stop driving
 //   AVP_INJECT=syspinchdom     a platform pinch is credited to the dominant hand whichever hand
 //                              actually made it
 //   AVP_INJECT=offhandsmooth   the offhand trigger alone arms Smooth, so a left pinch starts
@@ -174,8 +191,8 @@
 //   AVP_INJECT=logonlytrace the menu trace goes back to console-only, invisible on Galaxy XR
 //   AVP_INJECT=xrhandonly  hand detection goes back to !!source.hand, so Galaxy XR hands — which
 //                          have no joints and five buttons — read as controllers
-//   AVP_INJECT=presencetest hands-only goes back to testing whether a buttoned source EXISTS, so
-//                          a put-down controller keeps the menus away on Galaxy XR
+//   AVP_INJECT=presencetest    quiet controllers hand the session to the hands on a timer, so a
+//                              session started with controllers flips a few seconds in
 //   AVP_INJECT=primeonce  the panel priming stops re-arming, so a second switch to hands shows
 //                          no menu at all
 //   AVP_INJECT=classtie   the hands-only hide rule loses its id qualifier and ties with .mm-row,
@@ -206,6 +223,7 @@ const REPO = '/Users/mattestela/sculptxr';
 let SRC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 let MP    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MiniPanel.js'), 'utf8');
 let OPT   = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
+let INS   = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/install.js'), 'utf8');
 let HVP   = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
 const SGL = fs.readFileSync(path.join(REPO, 'src/SculptGL.js'), 'utf8');
 let KBD   = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/VrKeyboard.js'), 'utf8');
@@ -263,8 +281,8 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     if (!NUM.includes(a)) throw new Error('inject numpadpush: anchor moved (numpad distance)');
     NUM = NUM.replace(a, '          const target = here - gap;');
   } else if (inj === 'partialreset') {
-    sub('                  _p.mesh.position.set(0, _wy, 0);\n                  _p.mesh.rotation.set(0, _wYaw, 0);',
-        '                  _p.mesh.position.y = _wy;\n                  _p.mesh.rotation.y = _wYaw;', 'slot reset');
+    sub('                  _p.mesh.rotation.set(wristPanelPitch(), _wYaw, 0);',
+        '                  _p.mesh.rotation.y = _wYaw;', 'slot reset');
   } else if (inj === 'pressonly') {
     sub('      if (this._padOf(s2)?.buttons?.[0]?.pressed) { this._lastHandUse = now; break; }\n    }\n    if (Number.isFinite(this._lastHandUse) && this._lastHandUse >= this._lastControllerUse) return true;',
         '      if (this._padOf(s2)?.buttons?.[0]?.pressed) return true;\n    }', 'hand use memory');
@@ -333,6 +351,29 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('    if (!this._isHandSource(src)) return pad;', '    return pad;', 'hand pad normalise');
   } else if (inj === 'keepscale') {
     sub('                  if (window._panelKeepScale !== true) _p.mesh.scale.set(1, _hp.sy, 1);', '', 'scale normalise');
+  } else if (inj === 'flatslot') {
+    sub('                  _p.mesh.rotation.set(wristPanelPitch(), _wYaw, 0);',
+        '                  _p.mesh.rotation.set(0, _wYaw, 0);', 'controller slot pitch');
+  } else if (inj === 'noresizeflag') {
+    sub('      p._needsResize = true;', '', 'transition resize flag');
+  } else if (inj === 'stuckdrag') {
+    sub('      p._sliderDragTarget = null;', '', 'drag release');
+  } else if (inj === 'oneflush') {
+    sub('      this._handsRepaintUntil = performance.now() + (window._handsRepaintMs ?? 1000);', '', 'repaint window');
+  } else if (inj === 'latereturn') {
+    sub('    if (this._handsRepaintUntil && performance.now() < this._handsRepaintUntil) {',
+        '    if (false && this._handsRepaintUntil) {', 'countdown placement');
+  } else if (inj === 'twospikes') {
+    sub('        if (other.ctl)  other.ctl.visible  = false;', '', 'inactive input hide');
+  } else if (inj === 'handwinsslot') {
+    sub("      const pick = (wantHand ? (S.hand[h] || S.ctl[h]) : (S.ctl[h] || S.hand[h])) || null;",
+        "      const pick = (S.hand[h] || S.ctl[h]) || null;", 'active input choice');
+  } else if (inj === 'staleclaim') {
+    sub('    this._applyActiveInputObjects();\n\n    // ONLY WHILE THE HANDS ARE THE INPUT', '\n    // ONLY WHILE THE HANDS ARE THE INPUT', 'per-frame re-derive');
+  } else if (inj === 'handposealways') {
+    sub('    const _handsDrive = this._handsOnlyMode();\n    if (_handsDrive) {', '    const _handsDrive = true;\n    if (_handsDrive) {', 'hand pose gate');
+  } else if (inj === 'dotslinger') {
+    sub('    } else {\n      this._hideHandDots();\n    }', '    }', 'dot hiding');
   } else if (inj === 'syspinchdom') {
     sub('          if (!_otherOwnsIt) isPinching = true;', '          isPinching = true;', 'system pinch attribution');
   } else if (inj === 'offhandsmooth') {
@@ -382,8 +423,8 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub("      if (this._isHandSource(s)) { anyHand = true; continue; }   // hands never count as controllers,",
         '      if (s.hand) { anyHand = true; continue; }', 'hand classification');
   } else if (inj === 'presencetest') {
-    sub('    const idleMs = window._handsOnlyIdleMs ?? 3000;\n    return (now - this._lastControllerUse) > idleMs;',
-        '    return false;', 'idle test');
+    sub('    return false;\n  }\n\n  // A BUTTON YOU LOOK AT',
+        '    return (now - this._lastControllerUse) > (window._handsOnlyIdleMs ?? 3000);\n  }\n\n  // A BUTTON YOU LOOK AT', 'idle test');
   } else if (inj === 'primeonce') {
     sub('    if (!want) this._handsUiPrimed = false;', '', 'priming re-arm');
   } else if (inj === 'classtie') {
@@ -724,19 +765,26 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /if \(this\._isHandSource\(s\)\) \{ anyHand = true; continue; \}/.test(SRC),
     'counting its five buttons as a controller is exactly what kept the menus away');
 
-  // PRESENT IS NOT IN USE. Put the controllers down on a Galaxy XR and hands take over, but the
-  // controllers stay ENUMERATED — so a buttons-exist test says "controllers" forever and the
-  // hands-only menus never appear on the one device that most needs them mid-session.
-  check('hands-only keys off controller USE, not controller presence',
-    /const idleMs = window\._handsOnlyIdleMs \?\? 3000;/.test(SRC)
-      && /return \(now - this\._lastControllerUse\) > idleMs;/.test(SRC),
-    'a put-down controller is still in inputSources, asleep');
+  // PRESENT IS NOT IN USE — but SILENCE IS NOT USE EITHER, and that was the harder half. Hands
+  // are reported the whole time on both runtimes, so their presence proves nothing; a connected
+  // controller proves you picked one up. The tie therefore goes to the controller, and one pinch
+  // takes it back.
+  check('an unused controller holds the session against an unused hand',
+    /return false;\s*\n  \}\s*\n\s*\/\/ A BUTTON YOU LOOK AT/.test(SRC)
+      && !/_handsOnlyIdleMs/.test(SRC),
+    'a timer read a silence as a decision and flipped the menus while matt held the controllers');
+  check('...while a hand that IS used wins immediately',
+    /if \(this\._padOf\(s2\)\?\.buttons\?\.\[0\]\?\.pressed\) \{ this\._lastHandUse = now; break; \}/.test(SRC),
+    'without this the only way back to the hands UI is unplugging a controller');
+  check('...and a controller that disappears stops holding anything',
+    /if \(!anyController\) return true;/.test(SRC),
+    'put-down controllers power off and leave the list, which is the real put-down signal');
   check('...counting both buttons and thumbsticks as use',
     /const moved   = \(pad\.axes \|\| \[\]\)\.some\(\(a\) => Math\.abs\(a\) > 0\.2\);/.test(SRC),
     'a stick-only interaction would otherwise look idle and steal the menus mid-use');
-  check('...with the idle clock starting when a pad is first SEEN, not at zero',
+  check('...with the controller clock starting when a pad is first SEEN, not at zero',
     /if \(this\._lastControllerUse === undefined\) this\._lastControllerUse = now;/.test(SRC),
-    'from zero, a session opening with untouched controllers flips the moment the window elapses');
+    'from zero, the most-recent-use comparison treats an untouched controller as ancient');
   check('...and never without hands, however idle the controllers are',
     /if \(!anyHand\) return false;/.test(SRC),
     'idle controllers and no hands is just a paused user');
@@ -761,6 +809,45 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...in both the Schmitt latch and the press owner',
     /_vrTrigHeld = \{ L: false, R: false, G: false \};/.test(SRC)
       && /_vrPressOwner = \{ L: null, R: null, G: null \};/.test(SRC));
+
+  // ── the frame and the offset are chosen by ONE decision ───────────────────
+  // Galaxy XR with hand tracking permitted connects FOUR sources, two of them claiming 'left'.
+  // three poses each controller object from the one source at its index, so whichever source
+  // owned the slot decided the FRAME — while _handsOnlyMode() decided the PLACEMENT. Two
+  // mechanisms answering the same question: the controller slot applied in a hand grip frame is
+  // menus through the controller facing the floor, and the hand placement in a controller grip
+  // frame is menus facing the sky.
+  check('both input kinds are remembered rather than competing for one slot',
+    /this\._srcObjs\[_isHand \? 'hand' : 'ctl'\]\[hand\] =\s*\n\s*\{ ctl: controller, grip: this\._renderer\.xr\.getControllerGrip\(i\) \};/.test(SRC),
+    'last-to-connect-wins makes the frame a race, and the placement does not know who won');
+  check('...and the active one is selected from the same decision as the placement',
+    /const wantHand = this\._handsOnlyMode\(\);/.test(SRC)
+      && /const pick = \(wantHand \? \(S\.hand\[h\] \|\| S\.ctl\[h\]\) : \(S\.ctl\[h\] \|\| S\.hand\[h\]\)\) \|\| null;/.test(SRC),
+    'a placement measured in one frame and applied in another is wrong by whatever they differ by');
+  check('...falling back to the other kind when there is only one',
+    /S\.hand\[h\] \|\| S\.ctl\[h\]/.test(SRC) && /S\.ctl\[h\] \|\| S\.hand\[h\]/.test(SRC),
+    'visionOS has no controllers and a controller session has no hands driving');
+  check('...re-derived every frame, not only at connect time',
+    /if \(!_anyTransient\) this\._sysPinchActive = false;\s*\n[\s\S]{0,220}?this\._applyActiveInputObjects\(\);/.test(SRC),
+    'which input is driving changes mid-session and the objects have to follow it');
+  check('...and the kind NOT chosen is hidden, not merely unreferenced',
+    /for \(const other of \[S\.hand\[h\], S\.ctl\[h\]\]\) \{[\s\S]{0,200}?other\.ctl\.visible  = false;[\s\S]{0,80}?other\.grip\.visible = false;/.test(SRC),
+    'the other object still has a spike and a ray on it, and the runtime still poses it');
+  check('...and a disconnect forgets only the entry that object was',
+    /if \(e && e\.ctl === controller\) delete this\._srcObjs\[kind\]\[hand\];/.test(SRC),
+    'clearing by handedness alone drops the other kind with it');
+
+  // ── the hand pose writes the CONTROLLER object, so it must not run in controller mode ──
+  check('the hand pose runs only while the hands are the input',
+    /const _handsDrive = this\._handsOnlyMode\(\);\s*\n\s*if \(_handsDrive\) \{[\s\S]{0,240}?this\._applyHandRayCorrection\(_s, frame, refSpace\);/.test(SRC),
+    'Galaxy XR reports joints while you hold the controllers, so this overwrote the grip pose');
+  check('...and the fingertip dots are turned off rather than merely abandoned',
+    /\} else \{\s*\n\s*this\._hideHandDots\(\);\s*\n\s*\}/.test(SRC)
+      && /_hideHandDots\(\) \{/.test(SRC),
+    'a path that stops running leaves whatever it last drew hanging in the air');
+  check('...through the same helper the visibility flag uses',
+    /if \(!on\) \{ this\._hideHandDots\(\); return; \}/.test(SRC),
+    'two ways to hide the same dots drift apart');
 
   // ── the smooth modifier qualifies an action rather than being one ─────────
   check('the smooth override needs the dominant trigger as well as the offhand one',
@@ -939,9 +1026,21 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     'equal signs mean the field is decorative and one runtime is still wrong');
   // The controller slot now restores the mirror on the way out (see below), but must otherwise
   // keep the shared lift/yaw it was tuned with.
-  check('...and the controller slot keeps its own lift and yaw',
-    /_p\.mesh\.position\.set\(0, _wy, 0\);\s*\n\s*_p\.mesh\.rotation\.set\(0, _wYaw, 0\);/.test(SRC),
-    'the controller path was tuned against a controller and must not inherit the hand placement');
+  // ...AND ITS PITCH, WHICH IS THE PART THAT WAS MISSED. Every wrist panel is constructed with
+  // rotation (-90, yaw, 0); the -90 about X lies it back along the controller. The slot has to
+  // write whole vectors (the hands slot writes all three components and they must be undone) and
+  // it wrote a bare 0 for X, wiping that pitch every frame — menus facing the floor.
+  check('...and the controller slot keeps its own lift, yaw AND pitch',
+    /_p\.mesh\.position\.set\(0, _wy, 0\);[\s\S]{0,900}?_p\.mesh\.rotation\.set\(wristPanelPitch\(\), _wYaw, 0\);/.test(SRC),
+    'a bare 0 for the X rotation is not "no pitch", it is the wrong pitch');
+  check('...from the same constant the panels are built with',
+    /export const WRIST_PANEL_PITCH = -Math\.PI \/ 2;/.test(HVP)
+      && /this\.mesh\.rotation\.set\(wristPanelPitch\(\), wristPanelYaw\(\), 0\);/.test(MP)
+      && /this\.mesh\.rotation\.set\(wristPanelPitch\(\), wristPanelYaw\(\), 0\);/.test(MM),
+    'a number in three constructors that the code overwriting it has never heard of');
+  check('...and no panel still hardcodes the raw literal',
+    !/rotation\.set\(-Math\.PI \/ 2, wristPanelYaw\(\), 0\)/.test(MP + MM + HVP),
+    'one panel left behind drifts the moment the constant changes');
 
   check('...and the panel mount actually asks it, rather than naming a constant',
     /const _hp = this\._handPanelPlacement\(\), _D = Math\.PI \/ 180;[\s\S]{0,200}?_p\.mesh\.rotation\.set/.test(SRC),
@@ -1309,7 +1408,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // The hands slot writes all three components; this branch only ever set .y, so x and z kept
   // the hand values and the panel came back at the hand's angle in a controller slot.
   check('...along with every component the hands slot writes',
-    /_p\.mesh\.position\.set\(0, _wy, 0\);\s*\n\s*_p\.mesh\.rotation\.set\(0, _wYaw, 0\);/.test(SRC),
+    /_p\.mesh\.position\.set\(0, _wy, 0\);[\s\S]{0,900}?_p\.mesh\.rotation\.set\(wristPanelPitch\(\), _wYaw, 0\);/.test(SRC),
     'resetting only the components this slot sets leaves the others carrying the hand placement');
   // The idle window stops a still controller stealing the UI; it should not make someone who has
   // visibly started using their hands wait it out.
@@ -1344,6 +1443,37 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...before the flush, not after it',
     SRC.indexOf('p._rebuildContent?.();') < SRC.indexOf('if (p.flushPaint) p.flushPaint();'),
     'flushing a texture and then changing the content repaints the old one');
+  // AND KEEPS ASKING. The rasteriser is async — the polyfill awaits an SVG build and an image
+  // decode, while captureElementImage returns the canvas recorded so far — so the capture taken
+  // straight after a class change is the bitmap from before it, and it clears _dirty on the way
+  // past. Measured on device as cls:'hands-only', mounted:true, dirty:false, wrong texture.
+  // THE CLASS CHANGES THE PANEL'S SIZE. Measured in a desktop repro: the wrist panel goes from
+  // 203px tall to 245px when the hands-only row joins the flow. That needs _needsResize for the
+  // MESH (the plane otherwise keeps the old aspect and stretches the new texture onto it), and
+  // _needsResize is also the only path that bypasses the 200ms ambient rate limiter. It is why
+  // opening the tool selector always fixed this and nothing else did — that rebuild sets the
+  // same flag.
+  check('the transition declares the resize it actually is',
+    /p\._needsResize = true;/.test(SRC),
+    'a politely-requested repaint is one the rate limiter may simply drop');
+  check('...and drops any live slider drag, which blocks repaints outright',
+    /p\._sliderDragTarget = null;/.test(SRC)
+      && /if \(this\._dirty && !this\._sliderDragTarget\) \{/.test(HVP),
+    'update() refuses to repaint while a drag is live, and the input just changed under it');
+  check('...and the repaint is re-requested afterwards, in TIME not frames',
+    /this\._handsRepaintUntil = performance\.now\(\) \+ \(window\._handsRepaintMs \?\? 1000\);/.test(SRC)
+      && /if \(this\._handsRepaintUntil && performance\.now\(\) < this\._handsRepaintUntil\) \{[\s\S]{0,220}?p\.markDirty\?\.\(\);/.test(SRC),
+    'repaints are throttled to one per 200ms, so a handful of frames expires before any paint');
+  check('...long enough to outlast that throttle by several windows',
+    /PAINT_MIN_MS = 200;/.test(INS) && (1000 > 200 * 3),
+    'one window is a coin flip on whether the single permitted paint is the one that lands');
+  check('...and dirty is re-set AFTER the flush, which clears it',
+    /if \(p\.flushPaint\) p\.flushPaint\(\); else p\.markDirty\?\.\(\);[\s\S]{0,220}?p\.markDirty\?\.\(\);/.test(SRC),
+    'flushPaint clears _dirty before requesting, so a throttled request leaves it never retrying');
+  check('...from ABOVE the latch return, or the countdown never runs',
+    SRC.indexOf('if (this._handsRepaintUntil && performance.now() < this._handsRepaintUntil) {')
+      < SRC.indexOf('if (want === this._handsUiClassApplied) return;'),
+    'the transition latches on its first frame and this function returns early ever after');
   check('...and a throwing rebuild still leaves the class and the flush intact',
     /\} catch \(e\) \{ console\.warn\('\[hands\] rebuilding the panel content failed', e\); \}/.test(SRC),
     'one panel failing to rebuild must not strand the other in the wrong layout');

@@ -18,7 +18,7 @@ import RigPending    from '../../editing/RigPending.js';
  *   this._miniPanel.bindDesktopPointers(renderer, camera);
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M, wristPanelY, wristPanelYaw } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
@@ -491,7 +491,7 @@ export class MiniPanel extends HTMLVRPanel {
     if (this.mesh) {
       // Matches legacy MiniHUD wrist positioning
       this.mesh.position.set(0, wristPanelY(), -0.05);
-      this.mesh.rotation.set(-Math.PI / 2, wristPanelYaw(), 0);
+      this.mesh.rotation.set(wristPanelPitch(), wristPanelYaw(), 0);
     }
     // Initial state sync once everything is live.
     requestAnimationFrame(() => this.syncFromState());

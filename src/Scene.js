@@ -58,7 +58,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER } from './gui/htmlvr/HTMLVRPanel.js';
+import { registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -5838,19 +5838,31 @@ class Scene {
 
             // Keep the 'connected' listener purely for diagnostic logging, 
             // AND robust static mapping!
+            // A REAL CONTROLLER OUTRANKS A HAND FOR THE SAME HANDEDNESS.
+            //
+            // On Galaxy XR with hand tracking permitted, FOUR sources connect: two controllers
+            // and two hands, and both of the left ones say handedness 'left'. This assigned on
+            // handedness alone, so the last to connect won — and when that was the hand, the
+            // wrist panels spent the session hanging off the HAND's grip object while the user
+            // held a controller. three poses that object itself, every frame, from the hand's
+            // gripSpace, which is why the panels' own transform read perfectly correct in
+            // _panelDbg and they still rendered through the controller facing the floor. matt:
+            // "normaly the menus rest mostly flat to the back of the controllers. now they slice
+            // right through them."
+            //
+            // A hand may still claim a slot nothing else wants — that is how hands-only runtimes
+            // get a controller object at all — but it never displaces a controller.
             controller.addEventListener('connected', (event) => {
                 if (event.data && event.data.handedness) {
                     const hand = event.data.handedness;
                     const profiles = event.data.profiles ? event.data.profiles.join(', ') : 'none';
                     // if (window.screenLog) window.screenLog(`[XR] ${hand} profiles: [${profiles}]`, "cyan");
 
-                    if (hand === 'left') {
-                        this._vrControllerLeft = controller;
-                        this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(i);
-                    } else if (hand === 'right') {
-                        this._vrControllerRight = controller;
-                        this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(i);
-                    }
+                    const _isHand = this._isHandSource(event.data);
+                    this._srcObjs = this._srcObjs || { hand: {}, ctl: {} };
+                    this._srcObjs[_isHand ? 'hand' : 'ctl'][hand] =
+                      { ctl: controller, grip: this._renderer.xr.getControllerGrip(i) };
+                    this._applyActiveInputObjects();
                 }
             });
 
@@ -5859,13 +5871,16 @@ class Scene {
                 // console.log(`[SculptGL] Controller [${i}] Disconnected (${hand})`);
                 // if (window.screenLog) window.screenLog(`[XR] Controller [${i}] Disconnected (${hand})`, "red");
 
-                if (hand === 'left' && this._vrControllerLeft === controller) {
-                    this._vrControllerLeft = null;
-                    this._vrControllerLeftGrip = null;
-                } else if (hand === 'right' && this._vrControllerRight === controller) {
-                    this._vrControllerRight = null;
-                    this._vrControllerRightGrip = null;
+                if (hand !== 'left' && hand !== 'right') return;
+                // Forget the ENTRY this object was, whichever kind it was, and re-derive. A
+                // controller that powers off when you put it down must leave the hand able to
+                // take over, and a hand that stops being reported must not strand the panels on
+                // a dead object.
+                for (const kind of ['hand', 'ctl']) {
+                    const e = this._srcObjs?.[kind]?.[hand];
+                    if (e && e.ctl === controller) delete this._srcObjs[kind][hand];
                 }
+                this._applyActiveInputObjects();
             });
           }
 
@@ -7380,6 +7395,36 @@ class Scene {
   // silently show a stale texture. Hiding with CSS needs only the repaint.
   _syncHandsOnlyUI() {
     const want = this._handsOnlyMode();
+
+    // ONE FLUSH IS NOT ENOUGH, BECAUSE THE RASTERISER IS ASYNCHRONOUS.
+    //
+    // flushPaint() drains the polyfill's rAF queue synchronously, but the polyfill's own update()
+    // awaits buildSvg() and then an image decode, while captureElementImage() hands back the
+    // canvas recorded SO FAR. So the capture taken immediately after a class change is the
+    // bitmap from before it — and it clears _dirty on the way past, so nothing ever asks again.
+    // The panel then sits with the correct DOM (which is why the hover quad was right) under the
+    // previous layout's texture until something unrelated forces a rebuild: matt, "the minipanel
+    // actual text/buttons only update once i select a tool and back again", with the state
+    // reading cls:'hands-only', mounted:true, dirty:false.
+    //
+    // The main menu escaped it only because _rebuildContent() starts further dirty cycles of its
+    // own; the wrist panel has no such method, so its single missed capture was permanent.
+    //
+    // AND IT HAS TO ASK IN MILLISECONDS, NOT IN FRAMES. Repaints are throttled to one per
+    // PAINT_MIN_MS (200ms, the host canvas's ~5fps ceiling for ambient repaints), so the first
+    // attempt at this — six FRAMES, about 70ms on this headset — expired before a single paint
+    // was ever permitted. Worse, flushPaint() clears _dirty before requesting, so when that one
+    // request is throttled away the panel is left not-dirty and never retries: exactly the
+    // "texture never repaints until I open the tool selector" that started this.
+    //
+    // A second of asking covers several throttle windows and any decode that lands late. It
+    // costs a handful of repaints of two panels, once per input switch.
+    if (this._handsRepaintUntil && performance.now() < this._handsRepaintUntil) {
+      for (const p of [this._miniPanel, this._mainMenuPanel]) {
+        if (p && p._element) p.markDirty?.();
+      }
+    }
+
     if (want === this._handsUiClassApplied) return;
 
     // DO NOT LATCH BEFORE THE PANELS EXIST.
@@ -7434,7 +7479,27 @@ class Scene {
         p.syncFromState?.();
         p._rebuildContent?.();
       } catch (e) { console.warn('[hands] rebuilding the panel content failed', e); }
+      // THE PANEL CHANGES SIZE, SO THIS IS A RESIZE — and that is the whole fix.
+      //
+      // Revealed by reproducing it on the desktop: toggling the class takes the wrist panel from
+      // 203px tall to 245px, because the hands-only row is added to the flow. A size change needs
+      // _needsResize for the MESH (the plane keeps the old aspect otherwise and the texture is
+      // stretched onto it), and _needsResize is also the ONE path that bypasses the 200ms ambient
+      // rate limiter via requestPaintForced. Without it the repaint is merely requested politely,
+      // and the limiter is free to drop it.
+      //
+      // It is also why opening the tool selector has always fixed it: that rebuild sets this same
+      // flag in syncFromState, so the forced paint it triggers is the one that finally lands.
+      p._needsResize = true;
+      // A DRAG CANNOT SURVIVE THE INPUT CHANGING UNDER IT, and update() refuses to repaint at all
+      // while one is live (`if (this._dirty && !this._sliderDragTarget)`). Putting the controllers
+      // down mid-drag would otherwise leave the panel frozen with no way to release it.
+      p._sliderDragTarget = null;
       if (p.flushPaint) p.flushPaint(); else p.markDirty?.();
+      // ...and keep asking, for the reason at the top of this function. markDirty AFTER the
+      // flush, because the flush cleared the flag on its way past.
+      p.markDirty?.();
+      this._handsRepaintUntil = performance.now() + (window._handsRepaintMs ?? 1000);
     }
   }
 
@@ -7633,9 +7698,16 @@ class Scene {
   // The colour is driven by the SAME latch the trigger reads, not by a second distance test —
   // an indicator that agrees with a reimplementation instead of with the real signal is worse
   // than none, because it confirms whatever it happens to compute.
+  // Hiding them is its own entry point, because the dots are drawn from the hand-pose path and
+  // that path stops running the moment controllers take over — so nothing would be left to turn
+  // them off, and they hung in the air through a controller session.
+  _hideHandDots() {
+    if (this._handDots) for (const k in this._handDots) this._handDots[k].visible = false;
+  }
+
   _updateHandDots(source, tp, ip) {
     const on = window._handDots !== false;
-    if (!on) { if (this._handDots) for (const k in this._handDots) this._handDots[k].visible = false; return; }
+    if (!on) { this._hideHandDots(); return; }
     if (!this._handDots) this._handDots = {};
     const key = source.handedness === 'left' ? 'L' : 'R';
     const mk = (name) => {
@@ -8193,6 +8265,56 @@ class Scene {
     return false;
   }
 
+  // ONE OBJECT PER HAND, POINTED AT WHICHEVER INPUT IS ACTUALLY DRIVING.
+  //
+  // `_vrControllerLeft/Right` and their grips are the single surface the whole app reads: the
+  // spike hangs off them, the hand ray is written onto them, the cursor rides them and the wrist
+  // panels hang off the grip. three poses each of those objects from ONE input source — the one
+  // at its index — so whichever source owns the slot decides the frame everything else sits in.
+  //
+  // On a runtime with only one kind of input that is nobody's decision. On Galaxy XR with hand
+  // tracking permitted there are FOUR sources, two of them claiming 'left', and it very much is:
+  // the panel PLACEMENT is chosen by _handsOnlyMode(), while the FRAME it is applied in was
+  // decided by whichever source connected last. Two mechanisms answering the same question, free
+  // to disagree — and when they did, the panels were placed with one input's offsets in the
+  // other input's frame. That is every orientation report on this device: menus through the
+  // controller facing the floor when the controller slot met a hand grip, and facing the sky
+  // when the hand placement met a controller grip.
+  //
+  // So both kinds are remembered as they connect and the ACTIVE one is selected here, from the
+  // same _handsOnlyMode() that picks the placement. The pair can no longer disagree. Falls back
+  // to the other kind when there is only one, which is what visionOS (hands, never controllers)
+  // and a controller-only session each need.
+  _applyActiveInputObjects() {
+    const S = this._srcObjs;
+    if (!S) return;
+    const wantHand = this._handsOnlyMode();
+    for (const h of ['left', 'right']) {
+      const pick = (wantHand ? (S.hand[h] || S.ctl[h]) : (S.ctl[h] || S.hand[h])) || null;
+      // AND THE ONE NOT CHOSEN IS HIDDEN, because it is not an abstraction — it is a three
+      // object with a spike and a pointer ray hanging off it, and the runtime keeps giving it a
+      // pose. Both were drawing: the hand's spike carries the hand length and sits within a few
+      // centimetres of the controller's, since the hand in question is holding the controller.
+      // matt: "the radius indicator was in the right positions, but the controlle spike was
+      // still in the hands only mode" — two spikes, and the one he could see was the stale one.
+      //
+      // Written here rather than left to three, which sets visible from pose presence every
+      // frame; the app's frame callback runs after three's update, so this lands last.
+      for (const other of [S.hand[h], S.ctl[h]]) {
+        if (!other || other === pick) continue;
+        if (other.ctl)  other.ctl.visible  = false;
+        if (other.grip) other.grip.visible = false;
+      }
+      if (h === 'left') {
+        this._vrControllerLeft     = pick ? pick.ctl  : null;
+        this._vrControllerLeftGrip = pick ? pick.grip : null;
+      } else {
+        this._vrControllerRight     = pick ? pick.ctl  : null;
+        this._vrControllerRightGrip = pick ? pick.grip : null;
+      }
+    }
+  }
+
   _handsOnlyMode() {
     const srcs = this._xrSession?.inputSources;
     if (!srcs || !srcs.length) return false;
@@ -8226,9 +8348,22 @@ class Scene {
     }
     if (Number.isFinite(this._lastHandUse) && this._lastHandUse >= this._lastControllerUse) return true;
 
-    // Neither has been used yet this session: fall back to "the controllers have gone quiet".
-    const idleMs = window._handsOnlyIdleMs ?? 3000;
-    return (now - this._lastControllerUse) > idleMs;
+    // NEITHER HAS BEEN USED YET, AND A PRESENT CONTROLLER WINS THAT TIE.
+    //
+    // This used to fall back to "the controllers have gone quiet for 3 seconds", which reads a
+    // silence as a decision. It is not one: a session that opens with controllers in your hands
+    // is silent for as long as you do not press anything, so the menus flipped to the hand
+    // placement on their own a few seconds in, while you were still holding the controllers.
+    // matt, setting up a recording on the Galaxy XR: "if i start in controllers mode the menus
+    // are at the wrong orientation."
+    //
+    // A tracked hand is not evidence of anything on these runtimes — both report hands the whole
+    // time, whether you are using them or not. A CONNECTED CONTROLLER is evidence: you picked it
+    // up and turned it on. So it holds the session until a hand is actually used, which takes
+    // one pinch and is detected above. Putting the controllers down is still covered without any
+    // timer, and better: they power off, the source disappears, `anyController` goes false, and
+    // the branch above returns true on its own.
+    return false;
   }
 
   // A BUTTON YOU LOOK AT, BECAUSE APPLE OWNS EVERY GESTURE WORTH BINDING.
@@ -8442,9 +8577,32 @@ class Scene {
     for (const _s of sources) if (_s.targetRayMode === 'transient-pointer') _anyTransient = true;
     if (!_anyTransient) this._sysPinchActive = false;
 
-    for (const _s of sources) {
-      if (_s.hand && !_s.gripSpace) this._poseGripFromWrist(_s, frame, refSpace);
-      if (_s.hand) this._applyHandRayCorrection(_s, frame, refSpace);
+    // Re-derived every frame, because which input is driving changes mid-session and the objects
+    // have to follow it there — not only at connect time.
+    this._applyActiveInputObjects();
+
+    // ONLY WHILE THE HANDS ARE THE INPUT. Both of these WRITE THE CONTROLLER OBJECT — the same
+    // three object the wrist panels hang off and the spike is drawn from — and they were run for
+    // any source carrying joints, every frame, whatever the user was actually holding.
+    //
+    // On visionOS that is harmless, because there is nothing else to hold. On Galaxy XR it is
+    // not: its hands report joints AND a gripSpace, and the runtime keeps reporting them while
+    // you hold the controllers. So the hand pose was overwriting the real controller pose every
+    // frame, pitching the panels by the hand-ray angle and hanging them off the pinch point.
+    // matt: "normaly the menus rest mostly flat to the back of the controllers. now they slice
+    // right through them... the menu itself is facing towards the floor" — with the panel's own
+    // local transform reading exactly right in _panelDbg, which is what pointed at the parent.
+    //
+    // The fingertip dots come from the same path, which is why they also stayed up in controller
+    // mode; they now get turned off explicitly rather than by the path ceasing to run.
+    const _handsDrive = this._handsOnlyMode();
+    if (_handsDrive) {
+      for (const _s of sources) {
+        if (_s.hand && !_s.gripSpace) this._poseGripFromWrist(_s, frame, refSpace);
+        if (_s.hand) this._applyHandRayCorrection(_s, frame, refSpace);
+      }
+    } else {
+      this._hideHandDots();
     }
 
     this._syncHandsOnlyUI();
@@ -8706,7 +8864,13 @@ class Scene {
                   // came back at the hand's angle in a controller slot. That is the "menus swap
                   // but are oriented wrong" on the way out.
                   _p.mesh.position.set(0, _wy, 0);
-                  _p.mesh.rotation.set(0, _wYaw, 0);   // same slot, same angle — they used to differ
+                  // THE PITCH IS PART OF THE SLOT, not a leftover from construction. Writing the
+                  // whole vector here is right — the hands slot writes all three and they have to
+                  // be undone — but it must write the value the panel was BUILT with, and this
+                  // wrote a bare 0. The -90 about X is what lies the panel back along the
+                  // controller like a watch face; zeroing it every frame turned the menus to face
+                  // the floor. Shared constant now, so the slot and the constructors cannot drift.
+                  _p.mesh.rotation.set(wristPanelPitch(), _wYaw, 0);
                 }
               }
             }
@@ -8750,14 +8914,17 @@ class Scene {
       for (let i = 0; i < sources.length; i++) {
         const h = sources[i] && sources[i].handedness;
         if (h !== 'left' && h !== 'right') continue;
-        const known = h === 'left' ? this._vrControllerLeft : this._vrControllerRight;
+        const _isHand = this._isHandSource(sources[i]);
+        this._srcObjs = this._srcObjs || { hand: {}, ctl: {} };
+        const known = this._srcObjs[_isHand ? 'hand' : 'ctl'][h];
         if (known) continue;
         const c = this._renderer.xr.getController(i);
         const g = this._renderer.xr.getControllerGrip(i);
         if (!c) continue;
-        if (h === 'left') { this._vrControllerLeft = c; this._vrControllerLeftGrip = g; }
-        else { this._vrControllerRight = c; this._vrControllerRightGrip = g; }
-        console.info('[XR] re-mapped ' + h + ' controller (source ' + i + ')');
+        this._srcObjs[_isHand ? 'hand' : 'ctl'][h] = { ctl: c, grip: g };
+        this._applyActiveInputObjects();
+        console.info('[XR] re-mapped ' + h + ' ' + (_isHand ? 'hand' : 'controller')
+          + ' (source ' + i + ')');
       }
     }
 

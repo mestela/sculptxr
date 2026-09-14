@@ -165,7 +165,7 @@ check('it is inside the section it costs',
   for (const [name, src] of panels) {
     check(name + ' takes both from the shared source',
       /position\.set\([^)]*wristPanelY\(\)/.test(src)
-        && /rotation\.set\(-Math\.PI \/ 2, wristPanelYaw\(\), 0\)/.test(src),
+        && /rotation\.set\(wristPanelPitch\(\), wristPanelYaw\(\), 0\)/.test(src),
       'a literal here is how the three drifted apart in the first place');
   }
   check('...and no panel still carries its own wrist literal',
@@ -173,7 +173,7 @@ check('it is inside the section it costs',
   // Now a full set() rather than a .y assignment: the hands-only slot writes all three
   // components, so the controller slot has to clear the other two or they carry over.
   check('Scene re-seats them every frame, so the lift is tunable from inside a session',
-    /_p\.mesh\.position\.set\(0, _wy, 0\);\s*\n\s*_p\.mesh\.rotation\.set\(0, _wYaw, 0\);/.test(SC),
+    /_p\.mesh\.position\.set\(0, _wy, 0\);[\s\S]{0,900}?_p\.mesh\.rotation\.set\(wristPanelPitch\(\), _wYaw, 0\);/.test(SC),
     'a Quest 2 lift guessed from outside the headset is a guess');
   check('...but never a PINNED panel, which is world-anchored',
     /if \(!_p\?\.mesh \|\| _p\.pinned \|\| _p\.mesh\.parent !== uiAnchor\) continue;/.test(SC));

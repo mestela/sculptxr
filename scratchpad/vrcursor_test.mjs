@@ -42,7 +42,7 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
     if (!SRC.includes(a)) throw new Error('inject wipemap: anchor moved');
     SRC = SRC.replace(a, '    this._vrControllerLeft = null;\n    this._vrControllerRight = null;\n' + a);
   } else if (inj === 'noremap') {
-    const a = "        const known = h === 'left' ? this._vrControllerLeft : this._vrControllerRight;";
+    const a = "        const known = this._srcObjs[_isHand ? 'hand' : 'ctl'][h];";
     if (!SRC.includes(a)) throw new Error('inject noremap: anchor moved');
     SRC = SRC.replace(a, '        const known = true;');
   } else if (inj === 'culled') {
@@ -234,29 +234,38 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 // matt's log, exactly: frame 1358 `vis: visible -> visible-blurred, sources: 2 -> 0`; frame
 // 1536 back again; frame 1537 `curVis: true -> false`, with nothing else moving.
 {
+  // SLICED TO AN ANCHOR, NOT TO A BYTE COUNT. This took a fixed 6000-character window from the
+  // branch opener, and the block grew past it — so `elseBranch` came back empty and the check
+  // passed on nothing at all. The injection sweep caught it as a MISSED, which is exactly what
+  // that sweep is for. An empty slice now fails loudly instead.
   const i = SRC.indexOf('if (sources && sources.length > 0) {');
-  const tail = SRC.slice(i, i + 6000);
-  const elseBranch = tail.slice(tail.indexOf('\n    } else {'), tail.indexOf('\n    }\n', tail.indexOf('\n    } else {')));
+  const tail = SRC.slice(i, SRC.indexOf('// AND REBUILD THE MAPPING IF IT IS MISSING', i));
+  const _elseAt = tail.indexOf('\n    } else {');
+  const elseBranch = _elseAt < 0 ? '' : tail.slice(_elseAt, tail.indexOf('\n    }\n', _elseAt));
+  check('the empty-source branch is where this check thinks it is',
+    elseBranch.length > 200,
+    'a slice that misses its target passes every test written against it');
   check('an empty-source frame does not wipe the mapping',
     !/_vrControllerLeft = null/.test(elseBranch) && !/_vrControllerRight = null/.test(elseBranch),
     'only the connected listener can rebuild it, and it does not fire on un-blur');
 
-  // The 'disconnected' listener is the real signal, and it must still do its job.
+  // The 'disconnected' listener is the real signal, and it must still do its job — now against
+  // the per-kind register rather than the live fields, which are derived from it every frame.
   check('a genuine disconnect still clears it',
-    /'disconnected'[\s\S]{0,400}?this\._vrControllerLeft = null;/.test(SRC),
+    /'disconnected', \(event\)[\s\S]{0,1000}?delete this\._srcObjs\[kind\]\[hand\];/.test(SRC),
     'not wiping on an empty frame must not mean never wiping');
-  check('...and only for the controller that actually went',
-    /this\._vrControllerLeft === controller/.test(SRC),
-    'clearing by handedness alone would drop a mapping that had already been replaced');
+  check('...and only for the object that actually went',
+    /if \(e && e\.ctl === controller\) delete this\._srcObjs\[kind\]\[hand\];/.test(SRC),
+    'clearing by handedness alone drops the other kind of input with it');
 
-  // Belt and braces: rebuild a missing mapping from the live sources.
+  // Belt and braces: rebuild a missing entry from the live sources.
   check('a missing mapping is rebuilt from the live sources',
-    /const known = h === 'left' \? this\._vrControllerLeft : this\._vrControllerRight;/.test(SRC));
+    /const known = this\._srcObjs\[_isHand \? 'hand' : 'ctl'\]\[h\];/.test(SRC));
   check('...only filling gaps, so it never fights the connected listener',
     /if \(known\) continue;/.test(SRC),
     'overwriting a good mapping every frame is a different bug');
   check('...and it says so, because a silent repair hides the fault',
-    /re-mapped ' \+ h \+ ' controller/.test(SRC));
+    /re-mapped ' \+ h \+ ' ' \+ \(_isHand \? 'hand' : 'controller'\)/.test(SRC));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

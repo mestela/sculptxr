@@ -193,6 +193,27 @@ export function panelWorldQuat(mesh, out) {
   return q;
 }
 
+// THE PITCH THAT LIES THE PANEL FLAT AGAINST THE CONTROLLER.
+//
+// Every wrist panel is CONSTRUCTED with rotation (-90, yaw, 0) — the -90 about X is what turns
+// the panel from standing upright to lying back along the controller, the way a watch face lies
+// on a wrist. It lived only in the three panels' constructors, so the wrist slot in Scene could
+// re-impose position and yaw each frame without ever knowing about it.
+//
+// That worked while the slot wrote only the components it owned (`position.y`, `rotation.y`).
+// When it started writing whole vectors — to reset everything the hands slot writes — it wiped
+// the pitch on every frame, and the panels turned to face the floor. matt: "normaly the menus
+// rest mostly flat to the back of the controllers. now they slice right through them."
+//
+// So it is a shared constant now, read by the constructors AND by the slot, rather than a
+// number that exists in three places and is known to none of the code that overwrites it.
+export const WRIST_PANEL_PITCH = -Math.PI / 2;
+
+export function wristPanelPitch() {
+  const live = window._wristPanelPitch;
+  return Number.isFinite(live) ? live : WRIST_PANEL_PITCH;
+}
+
 export function wristPanelYaw() {
   const live = window._wristPanelYaw;
   return Number.isFinite(live) ? live : WRIST_PANEL_YAW;
