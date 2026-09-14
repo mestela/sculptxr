@@ -4874,6 +4874,29 @@ class Scene {
       console.log('[XR] foveation ' + _fov + (this._isQuestStandalone ? ' (fixed-foveation runtime)' : ''));
     } catch (e) { console.warn('[XR] setting foveation failed', e); }
 
+    // WHAT THE COMPOSITOR IS DOING WITH OUR FRAME, RECORDED AT SESSION START.
+    //
+    // visionOS composites the user's real hands into the frame ("punch-through"), and whether
+    // our depth buffer has any say in that is `ignoreDepthValues` — measured true on visionOS
+    // 2026-09-15, which means no material flag, render order or depth trick can put a menu in
+    // front of a hand. It is worth knowing WHICH session that was: the behaviour was there on one
+    // run and gone after a reload, and environmentBlendMode ('alpha-blend' for passthrough,
+    // 'opaque' for fully immersive) is the state most likely to explain the difference.
+    //
+    // Recorded on window as well as logged, because the console in a headset is a 5-second
+    // window and this is the line worth having when the symptom next appears.
+    try {
+      const _bl = session.renderState?.baseLayer;
+      window._xrComposite = {
+        blend: session.environmentBlendMode,
+        mode: session.mode || (session.interactionMode ? 'interaction:' + session.interactionMode : null),
+        ignoreDepthValues: _bl ? _bl.ignoreDepthValues : null,
+        layer: _bl ? 'baseLayer' : 'projectionLayer',
+        features: [...(session.enabledFeatures || [])],
+      };
+      console.log('[XR] compositor ' + JSON.stringify(window._xrComposite));
+    } catch (e) { console.warn('[XR] reading the compositor state failed', e); }
+
     // Reset per-session telemetry flags.
     window._firstXRFrameLogged = false;
     window._firstXRInputHandled = false;

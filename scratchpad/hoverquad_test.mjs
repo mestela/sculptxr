@@ -21,9 +21,11 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('a plain hover does NOT dispatch into the DOM',
     /this\._showHover\(uv\);/.test(fn),
     'a pointermove changes :hover, and that re-rasterises the entire panel');
-  check('...but a slider DRAG still does',
-    /if \(this\._sliderDragTarget\) \{ this\._vrDispatch\('pointermove'/.test(fn),
-    'a slider genuinely needs the DOM to move');
+  // A slider drag, and now a scroll drag: both need the DOM to hear the movement. Nothing else
+  // does, which is the whole point of this file.
+  check('...but a slider or scroll DRAG still does',
+    /if \(this\._sliderDragTarget \|\| this\._dragScroll\) \{\s*\n\s*this\._vrDispatch\('pointermove'/.test(fn),
+    'a slider genuinely needs the DOM to move, and so does dragging the panel to scroll it');
 }
 
 // ── the highlight itself ─────────────────────────────────────────────────────
@@ -76,7 +78,7 @@ check('...and out of the tone mapper, like the other overlays',
 // against the old spelling reported correct code as broken. That has happened three times this
 // session with exactly this shape of assertion.
 check('a hover records which hand owns it',
-  /onVRMove\(uv, hand[^)]*\) \{[\s\S]{0,320}?this\._hoverHand = hand;/.test(SRC));
+  /onVRMove\(uv, hand[^)]*\) \{[\s\S]{0,900}?this\._hoverHand = hand;/.test(SRC));
 check('...and only that hand can end it',
   /if \(hand === undefined \|\| hand === this\._hoverHand\) this\.clearHover\(\);/.test(SRC),
   'the other hand pointing elsewhere must not clear this hand\'s highlight');

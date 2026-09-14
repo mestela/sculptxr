@@ -709,7 +709,17 @@ export class HTMLVRPanel {
   onVRMove(uv, hand, rayOrigin) {
     if (!this.mesh) return;
     if (window._hoverTrace) this._hoverStat(uv, hand, rayOrigin);
-    if (this._sliderDragTarget) { this._vrDispatch('pointermove', uv, 0, true); return; }
+    // A DRAG NEEDS THE MOVES TO REACH THE DISPATCH, and only a slider drag used to.
+    //
+    // This is why drag-to-scroll did nothing on device while it passed every desktop test: the
+    // tests called _vrDispatch directly, and the real path never calls it for a move unless a
+    // slider owns the press. Everything else here is hover, which is deliberate — a pointermove
+    // into the offscreen DOM activates :hover and costs a full rasterisation — so the scroll
+    // drag joins the one existing exception rather than lifting it.
+    if (this._sliderDragTarget || this._dragScroll) {
+      this._vrDispatch('pointermove', uv, 1, true);
+      return;
+    }
     this._hoverHand = hand;
     this._lastUV = uv;          // where the ray is, for onVRScroll to decide WHAT to scroll
     this._showHover(uv);
@@ -895,6 +905,11 @@ export class HTMLVRPanel {
     // suppresses repaint (update() skips paint while dragging) and captures input.
     if (this._sliderDragTarget) { this._sliderDragTarget = null; this.markDirty(); }
     if (this._scrollDrag) this._scrollDrag = null;
+    // Same for a drag-scroll: a ray that leaves the panel mid-drag must not come back to a
+    // scroll still anchored to where it started, which would jump the content on the first move.
+    if (this._dragScroll) { this._dragScroll = null; this.markDirty(); }
+    // ...and a press whose release will never arrive on this panel must not fire a click later.
+    this._pendingClick = null;
   }
 
   /**
@@ -1230,6 +1245,33 @@ export class HTMLVRPanel {
     this._sliderDragTarget.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  // WHY A DRAG DID OR DID NOT SCROLL, one line per event, kept on window.
+  //
+  // Three things can each stop it and they are indistinguishable from inside a headset: the move
+  // never reaching _vrDispatch at all (the fault above), the press finding nothing scrollable
+  // under it, or the deadzone never being crossed. Each is named here rather than inferred.
+  //
+  // window._dragTrace = true, then read window._dragLog. Capped, because this is written from
+  // the frame loop.
+  _dragTraceOut(type, el, absX, absY) {
+    if (type === 'pointermove' && !this._dragScroll) return;   // hover noise, nothing to say
+    const d = this._dragScroll;
+    const sc = d ? d.el : (this._scrollClipEl(el) || this._findScrollable(this._element));
+    const line = '[drag] ' + (this.constructor?.name || 'panel') + ' ' + type
+      + ' el=' + (el ? el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).split(' ')[0] : '') : 'none')
+      + ' y=' + Math.round(absY)
+      + ' scrollable=' + (sc ? (sc.id || sc.className || 'yes') : 'NONE')
+      + ' span=' + (sc ? Math.max(0, sc.scrollHeight - sc.clientHeight) : 0)
+      + ' drag=' + (d ? (d.armed ? 'ARMED' : 'pending') : 'none')
+      + (d ? ' dy=' + Math.round(absY - d.y0) + ' top=' + Math.round(d.el.scrollTop) : '')
+      + ' pendingClick=' + (this._pendingClick ? 'yes' : 'no')
+      + ' slider=' + (this._sliderDragTarget ? 'yes' : 'no');
+    console.log(line);
+    if (!window._dragLog) window._dragLog = [];
+    window._dragLog.push(line);
+    if (window._dragLog.length > 80) window._dragLog.shift();
+  }
+
   _vrDispatch(type, uv, buttons, isVR = false) {
     if (!this.mesh) return;
     const { el, absX, absY } = this._uvToElement(uv);
@@ -1298,6 +1340,62 @@ export class HTMLVRPanel {
       if (type === 'pointermove') return;
     }
 
+    // DRAG THE PANEL TO SCROLL IT, the way 3ds Max let you drag a rollout.
+    //
+    // A hand has no thumbstick, and the custom scrollbar is a few pixels wide — a target you
+    // have to acquire with an unbraced arm. matt: "with pure hands/finger tracking the
+    // mainpanels are hard to manpulate, the scrollbar is too narrow."
+    //
+    // NOT FROM A CONTROL, though, and that is not timidity: in VR the click fires on
+    // POINTERDOWN (see the dispatch below — deliberately, so it lands before your aim drifts),
+    // so a drag beginning on a button has already pressed it by the time it moves. Backgrounds,
+    // labels, headers, row padding and the gaps between rows are all fair game, which on these
+    // panels is most of their area.
+    //
+    // Content follows the finger, as it does on every touch surface: drag down and the content
+    // comes down with you, so scrollTop decreases.
+    if (window._dragTrace) this._dragTraceOut(type, el, absX, absY);
+    if (type === 'pointerdown' && !this._sliderDragTarget && !this._scrollDrag) {
+      const sc = this._scrollClipEl(el) || this._findScrollable(this._element);
+      // Only a container that actually overflows: on a short panel this would otherwise eat
+      // every press and give nothing back.
+      if (sc && sc.scrollHeight > sc.clientHeight + 1) {
+        this._dragScroll = { el: sc, y0: absY, top0: sc.scrollTop, armed: false };
+      }
+    }
+    if (type === 'pointerup' && this._dragScroll) { this._dragScroll = null; this.markDirty(); }
+    if (this._dragScroll && type === 'pointermove') {
+      const d = this._dragScroll;
+      const dy = absY - d.y0;
+      // A DEADZONE, THEN RE-BASE. An unbraced hand wanders a couple of pixels while it holds a
+      // pinch; without this the panel creeps. Re-basing at the moment it arms means the content
+      // does not jump by the deadzone on the first frame of a real drag.
+      const min = window._panelDragScrollMin ?? 18;
+      if (!d.armed) {
+        if (Math.abs(dy) < min) return;
+        d.armed = true;
+        d.y0 = absY;
+        d.top0 = d.el.scrollTop;
+        // THIS IS A DRAG, SO IT IS NOT A CLICK — and it has to be said HERE, because this branch
+        // returns before the tap/drag code below ever runs. Without it a drag scrolled the panel
+        // and pressed the button it started on, which is the worst of both.
+        this._pendingClick = null;
+        return;
+      }
+      this._pendingClick = null;
+      const span = Math.max(0, d.el.scrollHeight - d.el.clientHeight);
+      d.el.scrollTop = Math.max(0, Math.min(span, d.top0 - (absY - d.y0)));
+      this._updateScrollThumb(d.el);
+      // Same throttle as the thumbstick path: the scroll position moves every frame (so the DOM
+      // and the hit test stay honest) while the rasterisation is rate-limited, with a final
+      // repaint once it stops.
+      const now = performance.now();
+      if (now - (this._scrollRasterTs || 0) > 120) { this._scrollRasterTs = now; this.markDirty(); }
+      clearTimeout(this._scrollStopTimer);
+      this._scrollStopTimer = setTimeout(() => { this.markDirty(); }, 150);
+      return;
+    }
+
     // Button hover/active visual state — track whether anything visual changed.
     let changed = (type === 'pointerdown' || type === 'pointerup');
     const btn = el.closest('button');
@@ -1333,10 +1431,38 @@ export class HTMLVRPanel {
       }));
     }
 
-    // VR: fire click immediately on pointerdown (at the ~10% threshold moment, before aim drifts).
-    // Desktop: fire click on pointerup — standard mouse press-release semantics.
+    // A TAP IS A CLICK; A DRAG IS A SCROLL. The click used to fire on POINTERDOWN in VR, on the
+    // reasoning that the press is the moment you meant it and aim drifts afterwards. That is
+    // still true of the aim, and it is incompatible with dragging the panel to scroll it: nearly
+    // every point on the main panel is a button (measured: only the section headers are not), so
+    // a drag-to-scroll that refuses to start on a control cannot start at all, and one that does
+    // start has already pressed the button it began on.
+    //
+    // So the click waits for the release, and is cancelled BY THE SCROLL ARMING — not by its own
+    // measure of travel. That distinction is the whole of it: a second threshold, tested
+    // independently, cancelled the click at 6px whether or not the scroll had engaged, so any
+    // drift lost the press and nothing scrolled. matt: "its impossible to click any buttons, the
+    // tiniest drift is interpreted as a scroll."
+    //
+    // One recogniser owns the threshold and the tap dies only when that recogniser WINS, which is
+    // the ordinary touch-slop arrangement (Android's ViewConfiguration, iOS's gesture
+    // recognisers): below slop nothing has happened yet, and a press is still a press.
+    //
+    // window._vrClickOnPress = true restores the old behaviour in a session, without a reload,
+    // if this turns out to feel worse in the hand than it reads here.
     if (isVR && type === 'pointerdown' && !drag) {
-      target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
+      if (window._vrClickOnPress === true) {
+        target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
+      } else {
+        this._pendingClick = { target, x: absX, y: absY };
+      }
+    } else if (isVR && type === 'pointerup') {
+      const pc = this._pendingClick;
+      this._pendingClick = null;
+      // The target from the PRESS, not from wherever the release landed: a hand that slips a few
+      // pixels onto the next button between press and release must not press that one instead.
+      if (pc && !drag) pc.target.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
     } else if (!isVR && type === 'pointerup') {
       target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
     }

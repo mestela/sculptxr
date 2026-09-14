@@ -149,6 +149,15 @@
 //   AVP_INJECT=oneflush        the class change asks for one synchronous repaint only, which
 //                              captures the bitmap from before the change
 //   AVP_INJECT=latereturn      the repaint countdown never runs
+//   AVP_INJECT=dragfromcontrol the drag arms without cancelling the pending click, so a scroll
+//                              also presses the button it started on
+//   AVP_INJECT=movesdontreach  only a slider drag forwards its moves, so the scroll drag is
+//                              created on press and never hears the movement
+//   AVP_INJECT=clickonpress    the VR click fires on the press again, so every drag clicks
+//   AVP_INJECT=tinyslop        the slop goes back inside the tremor of a held pinch, so every
+//                              press becomes a scroll
+//   AVP_INJECT=nodeadzone      no deadzone, so a held pinch creeps the panel
+//   AVP_INJECT=stuckdragscroll the drag anchor survives the release
 //   AVP_INJECT=twospikes       the unused input's objects stay visible, so its spike draws over
 //                              the active one a few centimetres away
 //   AVP_INJECT=handwinsslot    the hand's objects are used whatever is driving, so the panels
@@ -161,6 +170,8 @@
 //                              actually made it
 //   AVP_INJECT=offhandsmooth   the offhand trigger alone arms Smooth, so a left pinch starts
 //                              smoothing with nothing else held
+//   AVP_INJECT=nocompositelog  the compositor state is computed and thrown away, so the next
+//                              punch-through report has nothing to say which session it was
 //   AVP_INJECT=foveateall      maximum foveation on every runtime, gaze-tracked or not
 //   AVP_INJECT=nofistfill      a one-button hand pad drops the fist latch on the floor
 //   AVP_INJECT=fistbeatsruntime the runtime's own grasp is never remembered, so our fist keeps
@@ -363,6 +374,20 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'latereturn') {
     sub('    if (this._handsRepaintUntil && performance.now() < this._handsRepaintUntil) {',
         '    if (false && this._handsRepaintUntil) {', 'countdown placement');
+  } else if (inj === 'dragfromcontrol') {
+    HVP = HVP.replace("        this._pendingClick = null;\n        return;\n      }", "        return;\n      }");
+  } else if (inj === 'movesdontreach') {
+    HVP = HVP.replace("    if (this._sliderDragTarget || this._dragScroll) {", "    if (this._sliderDragTarget) {");
+  } else if (inj === 'clickonpress') {
+    HVP = HVP.replace("        this._pendingClick = { target, x: absX, y: absY };",
+                      "        target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));");
+  } else if (inj === 'tinyslop') {
+    HVP = HVP.replace('      const min = window._panelDragScrollMin ?? 18;',
+                      '      const min = window._panelDragScrollMin ?? 6;');
+  } else if (inj === 'nodeadzone') {
+    HVP = HVP.replace("        if (Math.abs(dy) < min) return;", "        if (false) return;");
+  } else if (inj === 'stuckdragscroll') {
+    HVP = HVP.replace("    if (type === 'pointerup' && this._dragScroll) { this._dragScroll = null; this.markDirty(); }", "");
   } else if (inj === 'twospikes') {
     sub('        if (other.ctl)  other.ctl.visible  = false;', '', 'inactive input hide');
   } else if (inj === 'handwinsslot') {
@@ -379,6 +404,8 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'offhandsmooth') {
     sub('    if (session && session.inputSources && _domPressed\n        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {',
         '    if (session && session.inputSources\n        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {', 'both-trigger gate');
+  } else if (inj === 'nocompositelog') {
+    sub('      window._xrComposite = {', '      const _unused = {', 'compositor record');
   } else if (inj === 'foveateall') {
     sub('        : (Number.isFinite(getOptionsURL()[\'foveation\']) ? getOptionsURL()[\'foveation\']\n                                                         : (this._isQuestStandalone ? 0 : 1));',
         '        : 1;', 'foveation gate');
@@ -810,6 +837,79 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /_vrTrigHeld = \{ L: false, R: false, G: false \};/.test(SRC)
       && /_vrPressOwner = \{ L: null, R: null, G: null \};/.test(SRC));
 
+  // ── drag the panel to scroll it ───────────────────────────────────────────
+  // A hand has no thumbstick and the scrollbar is a few pixels wide.
+  check('a drag on the panel body scrolls it',
+    /this\._dragScroll = \{ el: sc, y0: absY, top0: sc\.scrollTop, armed: false \};/.test(HVP)
+      && /d\.el\.scrollTop = Math\.max\(0, Math\.min\(span, d\.top0 - \(absY - d\.y0\)\)\);/.test(HVP),
+    'the narrow scrollbar is the only scroll route a hand has without this');
+  // FROM ANYWHERE, INCLUDING A BUTTON. Measured across the main panel: every sampled point
+  // except the section headers is a button, so a drag that refuses to start on a control cannot
+  // start at all. Which means the VR click can no longer fire on the press.
+  check('a VR click waits for the release rather than firing on the press',
+    /this\._pendingClick = \{ target, x: absX, y: absY \};/.test(HVP)
+      && /if \(pc && !drag\) pc\.target\.dispatchEvent\(/.test(HVP),
+    'a drag beginning on a button would otherwise have pressed it on the way down');
+  // ONE ARBITER. The click had its own threshold, tested independently of whether the scroll had
+  // engaged, so any drift past 6px killed the press while nothing scrolled — matt: "its
+  // impossible to click any buttons, the tiniest drift is interpreted as a scroll". The tap now
+  // dies only when the scroll WINS, which is the ordinary touch-slop arrangement.
+  check('the click is cancelled by the scroll arming, not by a threshold of its own',
+    !/Math\.abs\(absY - pc\.y\) >= min/.test(HVP)
+      && /d\.armed = true;[\s\S]{0,400}?this\._pendingClick = null;/.test(HVP),
+    'two independent thresholds means the stricter one silently owns the gesture');
+  check('...with a slop an unbraced arm can actually hold',
+    /const min = window\._panelDragScrollMin \?\? 18;/.test(HVP),
+    'measured behaviour: 6px is inside a held pinch\u2019s tremor at arm\u2019s length');
+  check('...measured vertically only, so sideways drift never costs a click',
+    /const dy = absY - d\.y0;[\s\S]{0,400}?if \(Math\.abs\(dy\) < min\) return;/.test(HVP),
+    'a scroll is a vertical gesture and horizontal wander is not evidence of one');
+  check('...and cancelled INSIDE the scroll branch, which returns before that code',
+    /d\.top0 = d\.el\.scrollTop;\s*\n(\s*\/\/[^\n]*\n)*\s*this\._pendingClick = null;/.test(HVP),
+    'measured: the drag scrolled the panel and clicked the button, because the cancel was unreachable');
+  check('...firing on the PRESS target, not wherever the release landed',
+    /pc\.target\.dispatchEvent\(/.test(HVP),
+    'a hand that slips onto the next button between press and release must not press that one');
+  check('...with the old behaviour reachable in-session if it feels worse',
+    /if \(window\._vrClickOnPress === true\) \{/.test(HVP),
+    'this changes the feel of every button in VR and must be revertible without a reload');
+  // THE MOVES HAVE TO REACH THE DISPATCH. onVRMove only forwarded a pointermove when a SLIDER
+  // owned the press — everything else there is hover, deliberately, because a pointermove into
+  // the offscreen DOM activates :hover and costs a full rasterisation. So drag-to-scroll passed
+  // every desktop test (which called _vrDispatch directly) and did nothing whatever on device.
+  check('a live scroll drag forwards its moves to the dispatch',
+    /if \(this\._sliderDragTarget \|\| this\._dragScroll\) \{\s*\n\s*this\._vrDispatch\('pointermove', uv, 1, true\);/.test(HVP),
+    'without this the drag state is created on press and never hears about the movement');
+  check('...and hover-only moves still do NOT, which is the expensive path',
+    /this\._showHover\(uv\);/.test(HVP)
+      && !/this\._vrDispatch\('pointermove', uv, 0, true\);\s*\n\s*this\._hoverHand/.test(HVP),
+    'a pointermove per frame into the DOM is a full rasterisation per frame');
+  check('...with a trace that names which of the three stopped it',
+    /if \(window\._dragTrace\) this\._dragTraceOut\(type, el, absX, absY\);/.test(HVP)
+      && /scrollable=' \+ \(sc \? \(sc\.id \|\| sc\.className \|\| 'yes'\) : 'NONE'\)/.test(HVP),
+    'move-never-arrived, nothing-scrollable and deadzone-never-crossed look identical from inside');
+  check('...and only writes about a move once a drag is live',
+    /if \(type === 'pointermove' && !this\._dragScroll\) return;   \/\/ hover noise/.test(HVP),
+    'a line per hover frame at 70Hz is unreadable and changes the timing it reports');
+
+  check('...and only where there is something to scroll',
+    /if \(sc && sc\.scrollHeight > sc\.clientHeight \+ 1\) \{/.test(HVP),
+    'a short panel would otherwise swallow every press on its background');
+  check('...with a deadzone before it engages at all',
+    /const min = window\._panelDragScrollMin \?\? 18;/.test(HVP)
+      && /if \(Math\.abs\(dy\) < min\) return;/.test(HVP),
+    'an unbraced hand wanders while it holds a pinch, and the panel creeps');
+  check('...that re-bases rather than jumping when it does',
+    /d\.armed = true;\s*\n\s*d\.y0 = absY;\s*\n\s*d\.top0 = d\.el\.scrollTop;/.test(HVP),
+    'applying the deadzone as displacement makes the content leap on the first real frame');
+  check('...released on pointerup and on a ray that leaves mid-drag',
+    /if \(type === 'pointerup' && this\._dragScroll\) \{ this\._dragScroll = null; this\.markDirty\(\); \}/.test(HVP)
+      && /if \(this\._dragScroll\) \{ this\._dragScroll = null; this\.markDirty\(\); \}/.test(HVP),
+    'a stuck drag anchor jumps the content the moment the ray comes back');
+  check('...and rate-limits the rasterisation, as the thumbstick path does',
+    /if \(now - \(this\._scrollRasterTs \|\| 0\) > 120\) \{ this\._scrollRasterTs = now; this\.markDirty\(\); \}[\s\S]{0,200}?this\._scrollStopTimer = setTimeout/.test(HVP),
+    'a full SVG rasterisation per frame of a continuous scroll is the framerate');
+
   // ── the frame and the offset are chosen by ONE decision ───────────────────
   // Galaxy XR with hand tracking permitted connects FOUR sources, two of them claiming 'left'.
   // three poses each controller object from the one source at its index, so whichever source
@@ -875,6 +975,21 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // three defaults it to maximum and this app never touched it. On an eye-tracked headset the
   // sharp region follows your gaze and you never see it; on a Quest it is fixed and radial, and
   // this app's hands and wrist panels live in the part of the field it throws away.
+  // ── what the compositor does with our frame, recorded once ────────────────
+  // ignoreDepthValues true (visionOS, 2026-09-15) means the hand punch-through ignores our depth
+  // entirely, so no material flag can change the layering. The state is worth recording because
+  // the symptom came and went between reloads.
+  check('the compositor state is recorded at session start',
+    /window\._xrComposite = \{[\s\S]{0,320}?ignoreDepthValues: _bl \? _bl\.ignoreDepthValues : null,/.test(SRC),
+    'a headset console is a 5-second window; this is the line worth having afterwards');
+  check('...including the blend mode, which is the state most likely to differ',
+    /blend: session\.environmentBlendMode,/.test(SRC),
+    "'alpha-blend' passthrough and 'opaque' immersive are the two runs that behaved differently");
+  check('...on window as well as in the log, and never throwing into the session start',
+    /window\._xrComposite = /.test(SRC)
+      && /catch \(e\) \{ console\.warn\('\[XR\] reading the compositor state failed', e\); \}/.test(SRC),
+    'a diagnostic that can break entering VR is worse than no diagnostic');
+
   check('the session sets foveation explicitly rather than taking the default',
     /this\._renderer\.xr\.setFoveation\(_fov\);/.test(SRC),
     "three's default is 1.0, which is maximum, which is the pixellated periphery");
