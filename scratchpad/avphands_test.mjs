@@ -140,6 +140,12 @@
 //                          gesture recogniser with our own thresholds on a runtime that has both
 //   AVP_INJECT=rawhandpad the hand pad is passed through unnormalised, so grasp lands on the
 //                          index bound to A/X and a fist toggles subtract or opens the menu
+//   AVP_INJECT=foveateall      maximum foveation on every runtime, gaze-tracked or not
+//   AVP_INJECT=nofistfill      a one-button hand pad drops the fist latch on the floor
+//   AVP_INJECT=fistbeatsruntime the runtime's own grasp is never remembered, so our fist keeps
+//                              overriding a runtime that answers this itself
+//   AVP_INJECT=tipmidpoint     the raw tip midpoint overwrites the stabilised ray origin again
+//   AVP_INJECT=contactpinch    the pinch threshold is contact, which a Quest 2 never reaches
 //   AVP_INJECT=offsetbox       planes measured from the border box while the rasteriser uses the
 //                              client box, so every bordered panel is stretched
 //   AVP_INJECT=rootborder      a real border on the panel root, whose bottom and right fall
@@ -323,6 +329,17 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('    if (!this._isHandSource(src)) return pad;', '    return pad;', 'hand pad normalise');
   } else if (inj === 'keepscale') {
     sub('                  if (window._panelKeepScale !== true) _p.mesh.scale.set(1, _hp.sy, 1);', '', 'scale normalise');
+  } else if (inj === 'foveateall') {
+    sub('        : (Number.isFinite(getOptionsURL()[\'foveation\']) ? getOptionsURL()[\'foveation\']\n                                                         : (this._isQuestStandalone ? 0 : 1));',
+        '        : 1;', 'foveation gate');
+  } else if (inj === 'nofistfill') {
+    sub('    view.buttons[1].pressed = grasp || _ownFist;', '    view.buttons[1].pressed = grasp;', 'fist fallback');
+  } else if (inj === 'fistbeatsruntime') {
+    sub('    if (grasp) this._rtGraspSeen[_hk] = true;', '', 'runtime grasp memory');
+  } else if (inj === 'tipmidpoint') {
+    sub('    if (!_jointRay && tp && ip) {', '    if (tp && ip) {', 'joint-ray origin gate');
+  } else if (inj === 'contactpinch') {
+    sub('    return Number.isFinite(o) ? o : 0.022;', '    return Number.isFinite(o) ? o : 0.0;', 'pinch default');
   } else if (inj === 'offsetbox') {
     HVP = HVP.replace('  const w = el.clientWidth  || el.offsetWidth  || fallbackW;\n  const h = el.clientHeight || el.offsetHeight || fallbackH;',
                       '  const w = el.offsetWidth || fallbackW;\n  const h = el.offsetHeight || fallbackH;');
@@ -503,7 +520,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // length is what did it: the face-button handlers gate on `btns.length > 4`, which a 5-button
   // gesture pad passes while having no face buttons at all.
   check('a hand pad is normalised to select and grasp only',
-    /view\.buttons\[1\]\.pressed = grasp;/.test(SRC)
+    /view\.buttons\[1\]\.pressed = grasp \|\| _ownFist;/.test(SRC)
       && /buttons: \[\{ pressed: false, value: 0 \}, \{ pressed: false, value: 0 \}\]/.test(SRC),
     'a two-button view fails the length > 4 gate, which is what stops the A/X misfire');
   // The VALUE matters as much as the flag: the post-menu latch blocks a new stroke until the
@@ -558,9 +575,12 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...read through one accessor rather than a literal',
     /const P_ON    = this\.getPinchOn\(\);/.test(SRC) && /getPinchOn\(\) \{/.test(SRC),
     'a constant in the loop cannot be tuned from inside a headset');
-  check('...defaulting to CONTACT, after 5mm still misclicked',
-    /return Number\.isFinite\(o\) \? o : 0\.0;/.test(SRC),
-    'a hand passing casually through a 5mm gap should not fire a click');
+  // CONTACT WAS THE OLD DEFAULT, and it was wrong for a reason no amount of radius arithmetic
+  // absorbs: a Quest 2 pinch reads a gap of 0.011-0.018 and never reaches contact at all, while
+  // its relaxed hand reads 0.045-0.072. 0.022 clears every measured population on every device.
+  check('...defaulting to a measured gap that all three devices clear',
+    /return Number\.isFinite\(o\) \? o : 0\.022;/.test(SRC),
+    'at contact a Quest 2 reads "not pinching" through a deliberate pinch');
   check('...with Number.isFinite, so a deliberate 0 is not treated as unset',
     /if \(Number\.isFinite\(window\._pinchOn\)\) return window\._pinchOn;/.test(SRC),
     'a truthiness test would silently ignore the default value itself');
@@ -569,8 +589,11 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
       && /<div class="mm-row mm-hands-only">/.test(MM),
     'a controller has a physical trigger and no pinch to calibrate');
   check('...over a range that spans the measured populations',
-    /options\.pinchOn = queryNumber\(getVal\('pinchOn'\), -0\.010, 0\.015, 0\.0\);/.test(OPT),
-    'measured: a deliberate pinch reaches about -0.017, a relaxed hand about +0.040');
+    /options\.pinchOn = queryNumber\(getVal\('pinchOn'\), -0\.010, 0\.050, 0\.022\);/.test(OPT),
+    'a range stopping at 0.015 cannot express a working threshold for a Quest 2');
+  check('...and the slider itself reaches that far',
+    /<input type="range" id="mm-pinch-on" min="-10" max="50" step="1"/.test(MM),
+    'a setting the UI cannot express is a setting only the console has');
   check('...and persisted',
     /opts\.saveOption\('pinchOn', f, 500\);/.test(MM));
 
@@ -729,6 +752,56 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...in both the Schmitt latch and the press owner',
     /_vrTrigHeld = \{ L: false, R: false, G: false \};/.test(SRC)
       && /_vrPressOwner = \{ L: null, R: null, G: null \};/.test(SRC));
+
+  // ── foveation is off where it is not gaze-driven ──────────────────────────
+  // three defaults it to maximum and this app never touched it. On an eye-tracked headset the
+  // sharp region follows your gaze and you never see it; on a Quest it is fixed and radial, and
+  // this app's hands and wrist panels live in the part of the field it throws away.
+  check('the session sets foveation explicitly rather than taking the default',
+    /this\._renderer\.xr\.setFoveation\(_fov\);/.test(SRC),
+    "three's default is 1.0, which is maximum, which is the pixellated periphery");
+  check('...off on a fixed-foveation runtime, unchanged elsewhere',
+    /\(this\._isQuestStandalone \? 0 : 1\)/.test(SRC),
+    'one value for every headset either wastes fill rate or blurs the part you look at');
+  // The flag it keys on is a BROWSER test, not a model test — every runtime that reaches us
+  // through Oculus Browser gets fixed foveation in WebXR, the eye-tracked Quest Pro included.
+  check('...keyed on the browser, not on a headset model string',
+    /this\._isQuestStandalone = \/OculusBrowser\/\.test\(navigator\.userAgent\);/.test(SRC),
+    'a model list needs a new string per device and gets the Quest Pro wrong either way');
+  check('...and overridable in both directions, since foveation buys back fill rate',
+    /Number\.isFinite\(window\._foveation\)/.test(SRC)
+      && /options\.foveation = queryNumber\(getVal\('foveation'\), 0, 1, undefined\);/.test(OPT),
+    'a Quest is short of exactly the fill rate this spends, so it has to be a trade');
+
+  // ── the fist reaches something on a pad that has no grasp ─────────────────
+  check('our own fist fills in until the runtime shows it has a grasp of its own',
+    /const _ownFist = !grasp && !this\._rtGraspSeen\[_hk\]\s*\n\s*&& !!\(this\._pinchLatch && this\._pinchLatch\[_hk\]\?\.fist\);/.test(SRC)
+      && /view\.buttons\[1\]\.pressed = grasp \|\| _ownFist;/.test(SRC),
+    'without it a fist that latches perfectly well reaches nothing at all');
+  // MEASURED, after a first attempt gated on pad LENGTH missed: a Quest 2 hand pad is ten
+  // buttons long with only index 0 ever pressed, so "short pad" is not the tell. Whether
+  // anything above select has ever pressed is.
+  check('...decided by what the pad has ever DONE, not how long it is',
+    !/pad\.buttons\.length < \d/.test(SRC) && /if \(grasp\) this\._rtGraspSeen\[_hk\] = true;/.test(SRC),
+    'a runtime pads its button list out to whatever length it likes');
+  check('...and remembered, since an open hand looks exactly like an absent grasp',
+    /if \(!this\._rtGraspSeen\) this\._rtGraspSeen = \{\};/.test(SRC),
+    'deciding per frame hands the fist back to us every time the runtime relaxes its grip');
+  check('...with the value derived from the decision, as the select is',
+    /view\.buttons\[1\]\.value   = view\.buttons\[1\]\.pressed \? 1 : 0;/.test(SRC),
+    'consumers read value as often as pressed and the two must agree');
+
+  // ── the ray origin does not move because you pinched ───────────────────────
+  check('the ray origin sits at a smoothed reach along the anatomical direction',
+    /this\._jrT\.subVectors\(this\._jrA, this\._jrB\)\.normalize\(\)\.multiplyScalar\(_rsm\)\.add\(this\._jrB\);/.test(SRC)
+      && /return \{ origin: this\._jrT, quaternion: this\._jrQ \};/.test(SRC),
+    'the tips are what the gesture moves, so an origin on them travels through every pinch');
+  check('...smoothed hard, since a hand does not change size while you use it',
+    /const _rk = window\._handReachSmooth \?\? 0\.02;/.test(SRC),
+    'a light filter passes most of the gesture travel straight through');
+  check('...and the raw tip midpoint no longer overwrites it',
+    /if \(!_jointRay && tp && ip\) \{/.test(SRC),
+    'the override ran after the construction, so the stable origin could never take effect');
 
   // ...AND THE SAME 'none' HANDEDNESS REACHES THE CURSOR LOOP, where every `isLeft ? … : …`
   // silently means "left or right". The transient source took the RIGHT cursor, failed the

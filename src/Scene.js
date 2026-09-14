@@ -1958,7 +1958,19 @@ class Scene {
     // is a property on the function object — always undefined, so the saved value was never
     // read and the setting only appeared to work until the next reload.
     const o = getOptionsURL()[ 'pinchOn' ];
-    return Number.isFinite(o) ? o : 0.0;
+    // 0.022 m OF SKIN-TO-SKIN GAP, NOT CONTACT.
+    //
+    // This was 0 — tips touching — on the reasoning that subtracting the reported joint radii
+    // turns the measurement into a real gap that means the same thing on every device. It does
+    // not. Measured on a Quest 2 (radii 0.009/0.007): a deliberate pinch reads a gap of 0.011 to
+    // 0.018 and never reaches contact, while a relaxed hand reads 0.045 to 0.072. The runtime's
+    // own gesture button still fired, which is why sculpting worked at all there — but every
+    // consumer of OUR pinch signal was reading "not pinching" throughout.
+    //
+    // 0.022 sits in open space on both devices: above the Quest 2's pinch by 4mm and below its
+    // relaxed hand by 23mm, and the Vision Pro (pinch -0.017, relaxed +0.040) clears it by 39mm
+    // and 18mm. One threshold, both runtimes, with the nearest miss 4mm away.
+    return Number.isFinite(o) ? o : 0.022;
   }
 
   // Grab gain: 1.0 is 1:1 with your hand. Settings slider (Navigation), window._grabGain for a
@@ -4553,6 +4565,34 @@ class Scene {
     await this._renderer.xr.setSession(session);
     const t1 = performance.now();
     if (window.screenLog) window.screenLog(`[XR] setSession Resolved (+${Math.round(t1 - window._xrSessionStartT)}ms total, setSession took ${Math.round(t1-t0)}ms)`, "lime");
+
+    // FOVEATION IS OFF WHERE IT IS NOT GAZE-DRIVEN.
+    //
+    // three defaults the XR compositor's foveation to 1.0 — maximum — and nothing here ever
+    // changed it. On a headset with eye tracking the reduction follows your gaze, so the sharp
+    // region is wherever you happen to be looking and it is invisible; the Vision Pro and Galaxy
+    // XR are both that. The Quest family is not: its foveation is FIXED, radial from the centre
+    // of each eye buffer, and this app puts your hands, the spike and the wrist panels low in
+    // the field — so you spend the session looking at pixels the compositor has written off as
+    // peripheral. matt on a Quest 2: "the lower half or 1/3 of the display renders really
+    // pixellated", and setFoveation(0) settled it on the spot.
+    //
+    // Keyed on the BROWSER, not on a headset model. Every runtime that reaches us through Oculus
+    // Browser gets fixed foveation in WebXR — including the eye-tracked Quest Pro, whose gaze
+    // foveation is not wired to this — so the model is the wrong thing to ask about and would
+    // need a new string for every device released.
+    //
+    // Foveation exists to buy back fill rate, which is exactly what a Quest is short of, so this
+    // is a trade rather than a free win. window._foveation, or ?foveation=, overrides it in
+    // either direction.
+    try {
+      const _fov = Number.isFinite(window._foveation)
+        ? window._foveation
+        : (Number.isFinite(getOptionsURL()['foveation']) ? getOptionsURL()['foveation']
+                                                         : (this._isQuestStandalone ? 0 : 1));
+      this._renderer.xr.setFoveation(_fov);
+      console.log('[XR] foveation ' + _fov + (this._isQuestStandalone ? ' (fixed-foveation runtime)' : ''));
+    } catch (e) { console.warn('[XR] setting foveation failed', e); }
 
     // Reset per-session telemetry flags.
     window._firstXRFrameLogged = false;
@@ -7285,8 +7325,28 @@ class Scene {
       const b = pad.buttons[i];
       if (b && b.pressed) { grasp = true; break; }
     }
-    view.buttons[1].pressed = grasp;
-    view.buttons[1].value   = grasp ? 1 : 0;
+    // A RUNTIME THAT RECOGNISES A PINCH DOES NOT NECESSARILY RECOGNISE A FIST.
+    //
+    // The mock pad carries our own fist latch on this same index, and it is discarded the moment
+    // a runtime reports any buttons of its own — which is right for the pinch, whose recogniser
+    // beats ours, and silently wrong for the fist when the runtime has no grasp to report. A
+    // Quest 2 is exactly that case, and its shape is why the first attempt at this missed:
+    // measured on device, its hand pad is TEN buttons long with only index 0 ever pressed, so a
+    // fallback gated on a short pad never fired. matt: "it doesn't recognise the fist gesture".
+    //
+    // BUTTON COUNT SAYS NOTHING. A pad's length is whatever the runtime pads it out to; what
+    // matters is whether anything above select has EVER reported a press. So that is what is
+    // remembered, per hand, for the life of the session: until the runtime demonstrates it has a
+    // grasp signal, ours fills the gap; from the first real grasp onward it is the runtime's
+    // question to answer and this stops arguing with it. Sticky, because "not pressed right now"
+    // is exactly what a grasp button looks like when your hand is open.
+    const _hk = src.handedness === 'left' ? 'L' : 'R';
+    if (!this._rtGraspSeen) this._rtGraspSeen = {};
+    if (grasp) this._rtGraspSeen[_hk] = true;
+    const _ownFist = !grasp && !this._rtGraspSeen[_hk]
+      && !!(this._pinchLatch && this._pinchLatch[_hk]?.fist);
+    view.buttons[1].pressed = grasp || _ownFist;
+    view.buttons[1].value   = view.buttons[1].pressed ? 1 : 0;
     return view;
   }
 
@@ -7533,7 +7593,30 @@ class Scene {
     // lookAt builds a rotation whose -Z faces the target, which is the ray convention here.
     this._jrM.lookAt(this._jrB, this._jrA, this._jrUp);
     this._jrQ.setFromRotationMatrix(this._jrM);
-    return { origin: this._jrA, quaternion: this._jrQ };
+
+    // THE ORIGIN MUST NOT MOVE BECAUSE YOU PINCHED.
+    //
+    // It was the tip midpoint, and the tips are the part of the hand the gesture MOVES — so the
+    // ray's origin travelled through the pinch, every time, and the spike went with it. On the
+    // Vision Pro and Galaxy XR the two tips converge symmetrically enough that the midpoint
+    // barely shifts and it does not show. On a Quest 2 it shows badly: the tips are noisier, and
+    // the moment they touch they occlude each other from the cameras so the estimate snaps.
+    // matt: "the spike jumps noticably when i pinch".
+    //
+    // So the DIRECTION is still the anatomical one (knuckle base toward the pinch, which is the
+    // ray matt described and asked for), and the origin is placed along it at a REACH that is
+    // smoothed hard — the hand's size does not change while you use it, so a slow filter loses
+    // nothing real and rejects the whole of the gesture's travel. The knuckle base itself is
+    // stable in a way the tips are not: it is a rigid landmark, not a moving one.
+    const _reach = Math.sqrt(this._jrA.distanceToSquared(this._jrB));
+    const _rk = window._handReachSmooth ?? 0.02;   // per-frame blend; 1 = follow the tips exactly
+    if (!this._jrReach) this._jrReach = {};
+    const _rkey = source.handedness === 'left' ? 'L' : 'R';
+    const _prev = this._jrReach[_rkey];
+    const _rsm = (_rk < 1 && Number.isFinite(_prev)) ? _prev + (_reach - _prev) * _rk : _reach;
+    this._jrReach[_rkey] = _rsm;
+    this._jrT.subVectors(this._jrA, this._jrB).normalize().multiplyScalar(_rsm).add(this._jrB);
+    return { origin: this._jrT, quaternion: this._jrQ };
   }
 
   // SHOW THE FINGERTIPS, BECAUSE "IS IT EVEN SEEING MY HAND" IS UNANSWERABLE FROM INSIDE.
@@ -7711,7 +7794,11 @@ class Scene {
       this._hrFix.setFromAxisAngle({ x: 1, y: 0, z: 0 }, deg * Math.PI / 180);
       this._hrQ.multiply(this._hrFix);
     }
-    if (tp && ip) {
+    // ...AND ONLY WHEN THERE IS NO JOINT RAY TO OVERRIDE. This line put the origin back on the
+    // raw tip midpoint AFTER the joint construction had already placed it, so the stabilised
+    // origin above could never have taken effect: the fix and the bug were both present, and the
+    // bug ran last. It stays for the fallback path, where tp/ip are the only positions there are.
+    if (!_jointRay && tp && ip) {
       const a = tp.transform.position, b = ip.transform.position;
       this._hrV.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
     }

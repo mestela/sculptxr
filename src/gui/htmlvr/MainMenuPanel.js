@@ -1578,7 +1578,7 @@ function buildMenuHTML_settings(main) {
   const triggerCurve  = ui.triggerCurve    ?? opts.triggerCurve    ?? 0.5;
   const stylusLength  = ui.stylusLength    ?? opts.stylusLength    ?? 0.10;
   const grabGain      = ui.grabGain        ?? opts.grabGain        ?? 1.0;
-  const pinchOn       = ui.pinchOn         ?? opts.pinchOn         ?? 0.0;
+  const pinchOn       = ui.pinchOn         ?? opts.pinchOn         ?? 0.022;
   const hStylusLen    = ui.handStylusLength ?? opts.handStylusLength ?? 0.05;
   const hStylusOff    = ui.handStylusOffset ?? opts.handStylusOffset ?? 0.0;
   const hRayPitch     = Number.isFinite(window._handRayPitch) ? window._handRayPitch
@@ -1644,7 +1644,9 @@ function buildMenuHTML_settings(main) {
          which a click registers. Lower is tighter; negative needs them pressed together. -->
     <div class="mm-row mm-hands-only">
       <span class="mm-lbl">Pinch distance</span>
-      <input type="range" id="mm-pinch-on" min="-10" max="15" step="1" value="${Math.round(pinchOn*1000)}">
+      <!-- To 50mm, because a Quest 2's pinch reads a ~11mm gap and its relaxed hand 45mm+: a
+           slider that stopped at 15 could not reach a working threshold for that device. -->
+      <input type="range" id="mm-pinch-on" min="-10" max="50" step="1" value="${Math.round(pinchOn*1000)}">
       <span class="mm-val" id="mm-pinch-on-val">${Math.round(pinchOn*1000)}mm</span>
     </div>
 

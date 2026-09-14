@@ -215,7 +215,14 @@ var getOptionsURL = function () {
   // Pinch distance: skin-to-skin gap (metres) at which finger and thumb count as closed. 0 is
   // contact; negative requires them pressed together. Measured deliberate pinches reach about
   // -0.017, so the usable range sits well inside this.
-  options.pinchOn = queryNumber(getVal('pinchOn'), -0.010, 0.015, 0.0);
+  // The range has to reach a Quest 2, whose pinch bottoms out at a gap of ~0.011 and whose
+  // relaxed hand sits at 0.045+ — a slider that stopped at 0.015 could not express a working
+  // threshold for that device at all. Default 0.022; see Scene.getPinchOn for the measurements.
+  options.pinchOn = queryNumber(getVal('pinchOn'), -0.010, 0.050, 0.022);
+  // XR compositor foveation, 0 (full resolution everywhere) to 1 (three's default maximum).
+  // Left undefined unless asked for, so the per-runtime default in enterXR decides: off where
+  // foveation is fixed rather than gaze-driven, three's default everywhere else.
+  options.foveation = queryNumber(getVal('foveation'), 0, 1, undefined);
   // Hand-tracking spike: a pinch has no shaft to extend, so the tip sits close to the fingers.
   // Separate from the controller values, which were tuned against a controller.
   options.handStylusLength = queryNumber(getVal('handStylusLength'), 0.0, 0.20, 0.05);
