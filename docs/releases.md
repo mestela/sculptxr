@@ -1,3 +1,70 @@
+# v3.38.0
+**Audio on the timeline.** Load a clip and it plays against the transport, scrubs under the
+playhead, follows the playback speed and draws its waveform behind the frame numbers — built for
+lipsync and timing reference, which is why it is one track and not a mixer. The whole file is
+decoded up front into an `AudioBuffer`, so scrubbing is **not a seek**: there is no seeking an
+AudioBuffer, you stop the node you had and `start(when, offset)` a new one at the sample you want.
+That is sample-accurate, roughly two thousand times finer than the frame grid, so frame-accurate
+audio cost nothing to get right.
+
+**The engine follows the transport; it does not hook it.** `window._animPlaying` is written from
+about twenty-five places — the registry, the panels, the timeline, MotionTrail, PhysicsBones,
+Skinning — every one a play, pause, stop, scrub, bake or suppress-while-solving. Hooking that many
+call sites means hooking the next one too, and missing it. So `sync()` runs ONCE PER FRAME from
+Scene's render loop, reads the transport state as it actually is, and reconciles. Level-triggered,
+not edge-triggered: a play path nobody remembered to tell us about still starts the audio, and a
+PAUSE reaches the audio through the same call.
+
+**The sound hardware's clock is the better one.** The transport accumulates against
+`performance.now()`; audio plays against `AudioContext`'s own clock, and the two slide apart. Over
+a dialogue take that slide separates the mouth from the voice — precisely what the clip was loaded
+to judge. So `masterTime` offers a correction, and refuses to give one whenever the two disagree by
+more than a quarter second: a gap that size is not drift, it is a seek or a loop wrap the transport
+has just performed and the audio node has not been re-anchored to yet. Believing it there drags the
+playhead back into the loop it just left.
+
+**Three ways to hear it, because the transport has three modes and only one is playback.** Playing
+forward at any speed is the node at that `playbackRate` — pitched, like a tape machine, which is
+what Maya and Premiere do and what anyone reading a performance at half speed expects. A speed
+change re-rates the running node rather than restarting it, with the clock anchor re-cut BEFORE the
+rate changes; re-cutting it after attributes the whole elapsed span to the new rate, which then
+reads as drift and restarts the clip anyway — a click on every speed click. Reverse is silent:
+`playbackRate` cannot go negative.
+
+**Dragging is granular scrubbing.** A drag has no rate, only a position, so the clip is replayed in
+short overlapping windows AT the playhead. Spacing under length is what makes that continuous
+rather than stuttered, and both are settings (Audio Scrub, in both settings panels from one
+declaration) because dialogue wants a longer grain than a drum loop. Each grain is faded 4ms at
+both ends — a buffer cut at an arbitrary sample starts and ends on a step, and a step is a click.
+**A press is a request to hear the playhead**, and it is the one scrub event a level-triggered path
+cannot see: pressing without moving produced nothing, and the first sound arrived only once you had
+dragged far enough for a frame to tick. matt: "i suspect that is where the lag impression comes
+from." He was right — the latency was never in the audio path, it was silence waiting for movement.
+The press deliberately ignores the grain throttle, because always-sounds is the entire point.
+
+**Loading it, on a headset.** The timeline's own Audio menu works on desktop but its file dialog
+never opened on Vision Pro: that canvas gets SYNTHETIC mouse events (index.html maps touches to
+`new MouseEvent` so dragging works at all), and WebKit will not open a picker from those. The menu
+now clicks straight through on a real gesture and otherwise waits for the trusted tail of the same
+tap. But the reliable answer was simpler — **audio comes in through the ordinary Import**, and by
+extension through a drag-and-drop. `Open` will not clear the scene for an audio-only selection: a
+clip is not what is loaded, it rides alongside the model.
+
+**The transport is never the control that goes missing.** Found while testing the above in VR. The
+toolbar laid the transport out as "centred, but not left of the left-hand group", with nothing said
+about the right edge — so on a narrow panel the left group pushed play, pause and record clean off
+the end. Graph mode's 191px of tangent controls has done this to anything under ~820px for a long
+time; the new Audio button moved the dope-sheet threshold from 570 to 622. A VR timeline is
+`worldW * 1500`, so 0.4–0.5m is 600–750px, right in that band. Clamping alone would only trade a
+missing transport for one drawn on top of the buttons it overlaps, so the transport is clamped into
+view and the left-hand buttons it would sit on are dropped, right-to-left, keeping the mode toggle
+longest. The drop happens inside `_toolbarBtnDefs`, which both the draw and the hit test read, so a
+button that is not shown is also not clickable.
+
+Harnesses: `scratchpad/audiotrack_test.mjs` (68 cases, twelve defect injections) and
+`scratchpad/timelinebar_test.mjs` (77 cases, two) — the latter runs the real layout method
+extracted from source, and its `noclamp` injection reproduces the off-edge transport exactly.
+
 # v3.36.0
 **A Select tool, and a lot of things that could not be selected.** Every way to choose an object in
 the viewport also moved it — Grab takes hold on the same press, the transforms put a gizmo under

@@ -444,6 +444,179 @@ export default class GuiTimeline {
       w: 140, h: 3 * 24, cellH: 24 } : null;
   }
 
+  // THE AUDIO MENU. Same canvas-native construction as the channel menu above — one draw, one
+  // hit test — so it reaches the synthetic VR timeline events as well as desktop pointers.
+  //
+  // Loading is desktop-only by necessity: it opens a file picker, and there is no file picker
+  // inside an immersive session. Everything AFTER loading (playback, mute, the waveform) works
+  // in VR unchanged, because the engine is driven from the render loop rather than from here.
+  _audioMenuCommands() {
+    const at = window._audioTrack;
+    const has = !!at?.hasClip?.();
+    return [
+      { label: 'Load audio\u2026', enabled: true,
+        run: () => this._openFilePicker('audioopen') },
+      { label: (at?.isMuted?.() ? '\u2003  ' : '\u2713  ') + 'Audible', enabled: has,
+        run: () => at?.setMuted?.(!at.isMuted()) },
+      { label: 'Clear', enabled: has, run: () => at?.clear?.() },
+    ];
+  }
+
+  // OPEN A FILE PICKER FROM A CLICK THAT MAY NOT BE A REAL ONE.
+  //
+  // A file input only opens from a genuine user gesture, and on iPad and Vision Pro the clicks
+  // this canvas receives are not one: index.html maps touches to SYNTHETIC MouseEvents (a
+  // `new MouseEvent` dispatched from a touchstart handler, so isTrusted is false), which is how
+  // dragging works on a canvas that Hammer.js otherwise swallows. WebKit is stricter than
+  // Chromium about what counts here -- a touchstart is not, by itself, enough activation to
+  // open a picker -- so `input.click()` from inside that synthetic handler does nothing at all,
+  // silently. Which is exactly "the file dialog never pops up on AVP", with no error to chase.
+  //
+  // So: click straight through when the gesture is real (desktop, the common path), and
+  // otherwise ARM and wait for the trusted tail of the very same tap -- the touchend or click
+  // that follows the touchstart a frame or two later. The picker still opens on the tap the
+  // user made; it just opens on the end of it rather than the start.
+  //
+  // The arm times out because in an immersive session there is no trusted DOM click coming at
+  // all, and an arm left lying around would open a picker on whatever the user did next, after
+  // taking the headset off.
+  _openFilePicker(id) {
+    const input = document.getElementById(id);
+    // Make the input momentarily real before clicking it. The hidden file inputs are parked at
+    // opacity 0 with pointer-events none and a negative z-index, and some browsers decline to
+    // open a picker for an element in that state. GuiFiles.addFile has done this for the mesh
+    // importer for a long time -- which is itself a clue about which path is the reliable one --
+    // and there is no reason for this one to be more fragile than that.
+    const clickInput = (el) => {
+      const pe = el.style.pointerEvents, z = el.style.zIndex;
+      el.style.pointerEvents = 'auto';
+      el.style.zIndex = '9999';
+      el.click();
+      setTimeout(() => { el.style.pointerEvents = pe; el.style.zIndex = z; }, 500);
+    };
+
+    if (!input) { console.warn(`[TL audio] no #${id} input in the document`); return; }
+
+    if (this._lastEventTrusted) { clickInput(input); return; }
+
+    console.log(`[TL audio] synthetic click — deferring #${id} to the trusted end of this tap`);
+    const types = ['touchend', 'pointerup', 'click'];
+    let timer = null;
+    const cleanup = () => {
+      types.forEach(t => window.removeEventListener(t, fire, true));
+      if (timer) clearTimeout(timer);
+    };
+    function fire(ev) {
+      if (!ev || !ev.isTrusted) return;
+      cleanup();
+      try { clickInput(input); } catch (err) { console.warn('[TL audio] picker refused', err); }
+    }
+    types.forEach(t => window.addEventListener(t, fire, true));
+    timer = setTimeout(() => {
+      cleanup();
+      console.warn('[TL audio] no trusted gesture arrived — a file picker cannot open from here'
+        + ' (an immersive session has no file dialog; load the clip on the flatscreen first)');
+    }, 2000);
+  }
+
+  // Sound the playhead the instant a scrub begins, rather than a frame later and only if it
+  // moved. Called at the two places that start a playhead drag; everything after the press is
+  // handled by the per-frame reconcile in AudioTrack.sync.
+  _scrubPress() {
+    const at = window._audioTrack;
+    if (!at?.hasClip?.()) return;
+    const reg = window._animationRegistry;
+    at.scrubTouch(reg && Number.isFinite(reg.globalPlaybackTime)
+      ? reg.globalPlaybackTime : (window._animCurrentTime || 0));
+  }
+
+  _audioMenuRect() {
+    const btn = this._toolbarBtnDefs().find(b => b.id === 'audio');
+    // Right-aligned under the button for the same reason as the channel menu: a 140px menu
+    // hanging off a narrow button must not run past the edge of a narrow timeline.
+    return btn ? { x: Math.max(2, btn.x + btn.w - 140), y: btn.y + btn.h,
+      w: 140, h: 3 * 24, cellH: 24 } : null;
+  }
+
+  _drawAudioMenu(ctx) {
+    if (!this._audioMenuOpen) return;
+    const r = this._audioMenuRect();
+    if (!r) return;
+    ctx.save();
+    ctx.fillStyle = Theme.crust; ctx.strokeStyle = Theme.surface1; ctx.lineWidth = 1;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    this._audioMenuCommands().forEach((cmd, i) => {
+      const y = r.y + i * r.cellH;
+      const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
+        && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
+      if (hov && cmd.enabled !== false) {
+        ctx.fillStyle = Theme.surface1;
+        ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2);
+      }
+      ctx.fillStyle = cmd.enabled === false ? Theme.surface2 : Theme.text;
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(cmd.label, r.x + 8, y + r.cellH / 2);
+    });
+    ctx.restore();
+  }
+
+  // THE WAVEFORM, DRAWN AS THE RULER'S BACKGROUND.
+  //
+  // It sits behind the frame ticks rather than in a lane of its own, which is not a compromise
+  // — for lipsync it is the right place. The thing you actually do with a dialogue track is
+  // read a frame number off a consonant, and putting the envelope directly behind the numbers
+  // means that reading is one glance with nothing to line up. It also costs the layout nothing:
+  // every lane offset and hit test in this file measures from HEADER_H, and a waveform lane
+  // would have moved all of them.
+  //
+  // COLUMN-WISE MIN/MAX, NOT A SAMPLE PER PIXEL. Each pixel column takes the envelope of every
+  // peak bucket that falls inside it, so zooming out summarises instead of aliasing — sampling
+  // one value per column makes a 44kHz buffer into noise whose shape changes as you scroll.
+  _drawWaveform(ctx, tlX, tlW, y, h, loopStart, visibleDuration) {
+    const at = window._audioTrack;
+    if (!at?.hasClip?.()) return;
+    const peaks = at.peaks();
+    if (!peaks) return;
+
+    const dur = at.duration();
+    const off = at.offset();
+    const mid = y + h / 2;
+    const half = h / 2 - 1;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(tlX, y, tlW, h);
+    ctx.clip();
+    // Dimmed while muted, so "I can see it but I cannot hear it" is visible rather than
+    // something you rediscover by pressing play.
+    ctx.globalAlpha = at.isMuted() ? 0.25 : 0.55;
+    ctx.fillStyle = Theme.sky;
+
+    const secPerPx = visibleDuration / tlW;
+    for (let px = 0; px < tlW; px++) {
+      const t0 = loopStart + px * secPerPx - off;
+      const t1 = t0 + secPerPx;
+      if (t1 <= 0 || t0 >= dur) continue;
+      let b0 = Math.floor(Math.max(0, t0) / dur * peaks.count);
+      let b1 = Math.ceil(Math.min(dur, t1) / dur * peaks.count);
+      b0 = Math.max(0, Math.min(peaks.count - 1, b0));
+      b1 = Math.max(b0 + 1, Math.min(peaks.count, b1));
+      let lo = 1, hi = -1;
+      for (let b = b0; b < b1; b++) {
+        if (peaks.min[b] < lo) lo = peaks.min[b];
+        if (peaks.max[b] > hi) hi = peaks.max[b];
+      }
+      if (hi < lo) continue;
+      const yTop = mid - hi * half;
+      const yBot = mid - lo * half;
+      ctx.fillRect(tlX + px, yTop, 1, Math.max(1, yBot - yTop));
+    }
+    ctx.restore();
+  }
+
   _drawRecOptMenu(ctx) {
     if (!this._recOptMenuOpen) return;
     const r = this._recOptRect();
@@ -3512,6 +3685,12 @@ export default class GuiTimeline {
     // (see SculptGL.js / Scene.js autokey blocks).
     btns.push({ id: 'autokey', x: bx, y: 5, w: 40, h: 20, label: 'Auto', active: !!window._animAutoKey, tooltip: 'Autokey: auto-key the active object on edit' });
     bx += 48;
+    // Audio — load / mute / clear one clip against the transport. Text label rather than a
+    // glyph: the FA speaker icons read as a volume control, and this is a track, not a fader.
+    btns.push({ id: 'audio', x: bx, y: 5, w: 44, h: 20, label: 'Audio',
+      active: !!window._audioTrack?.hasClip?.() && !window._audioTrack.isMuted(),
+      tooltip: 'Audio track: load a clip, mute it, or clear it' });
+    bx += 52;
     // "…" context menu — the flatscreen (desktop/iPad) skin of the VR radial's command
     // model (Scene._resolveRadialCommands): Copy / Paste / Paste Link / Dup / Make Unique
     // / Delete on the current key/frame selection. Opens a DOM popup on click.
@@ -3529,12 +3708,42 @@ export default class GuiTimeline {
       { id: 'end',       icon: '',                                             tooltip: 'Go to end' },
       { id: 'record',    icon: '',    active: armed,                           tooltip: armed ? 'Disarm recording' : 'Arm recording' },
     ];
+    // Remember where the left-hand group ended, so the transport can be told to stay clear of
+    // it -- and, when there is not room for both, so the left group can be the one that yields.
+    const _leftBtnCount = btns.length;
     const _tbBtnW = 38, _tbBtnGap = 6;
     // The channel dropdown rides directly on Record, narrow and with no gap before it, so it
     // reads as part of that button rather than as a seventh transport control.
     const _recOptW = 16;
     const _tbTotal = _tbDefs.length * _tbBtnW + (_tbDefs.length - 1) * _tbBtnGap + _recOptW;
+    // THE TRANSPORT IS NEVER THE CONTROL THAT GOES MISSING.
+    //
+    // It was laid out as "centred, but not left of the left-hand group", with nothing said about
+    // the RIGHT edge -- so on a narrow panel the left group pushed it clean off the end and play,
+    // pause and record simply were not there. matt, testing on Vision Pro: "if i resize the panel
+    // wider to expose the play controls, i get a lot of strange overlap/overdraw issues."
+    //
+    // Two widths make that happen. Graph mode adds 191px of tangent controls, which has always
+    // pushed the transport past the edge of anything under ~820px; and the Audio button added 52
+    // more, moving the dope-sheet threshold from 570 to 622. So it is an old fragility that a new
+    // button walked into, and clamping the transport alone would only trade a missing transport
+    // for a transport drawn on top of the buttons it overlaps -- which is the overdraw.
+    //
+    // So: clamp the transport into view, then DROP whichever left-hand buttons it would now sit
+    // on. Dropping happens here, in the one function both the draw and the hit test read, so a
+    // button that is not shown is also not clickable -- the alternative is an invisible control
+    // that still swallows presses.
     let _tbX = Math.max(_leftSafeEnd, Math.round((this._cssWidth - _tbTotal) / 2));
+    const _tbMax = this._cssWidth - _tbTotal - 8;
+    if (_tbX > _tbMax) {
+      _tbX = Math.max(8, _tbMax);
+      // Right-to-left: the rightmost of the left-hand group is the first to go, which keeps the
+      // mode toggle (leftmost, and the one you need to get back out of graph mode) longest.
+      for (let i = _leftBtnCount - 1; i >= 0; i--) {
+        if (btns[i].x + btns[i].w <= _tbX - 8) break;
+        btns.splice(i, 1);
+      }
+    }
     _tbDefs.forEach(def => {
       btns.push({ ...def, x: _tbX, y: 5, w: _tbBtnW, h: 20 });
       _tbX += _tbBtnW + _tbBtnGap;
@@ -3694,6 +3903,14 @@ export default class GuiTimeline {
     // downstream are reached through several paths and none of them carry the event. The VR
     // half is read live from Scene.multiSelectHeld and needs no capture.
     this._lastModifierDown = !!(e && (e.ctrlKey || e.metaKey || e.shiftKey));
+    // Whether THIS click carries a real user gesture, captured for the same reason as the
+    // modifier above: the command closures downstream never see the event. Only _openFilePicker
+    // cares, and it cares a lot -- see the note there.
+    this._lastEventTrusted = !!(e && e.isTrusted);
+    // Any real click on the timeline is a chance to take an audio context out of the suspended
+    // state Safari parks it in. Pressing Play is such a click, which is why this is here rather
+    // than somewhere audio-specific: it makes the very first play audible on iOS/visionOS.
+    if (this._lastEventTrusted) window._audioTrack?.unlock?.();
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
@@ -3712,6 +3929,26 @@ export default class GuiTimeline {
       this._recOptMenuOpen = false;
       // Deliberately no `return`: the click that dismisses the menu still lands on whatever it
       // was over, which is what makes closing it feel free rather than like a wasted click.
+      this.draw();
+    }
+
+    // Audio menu: Load and Clear are commands, Audible is a switch, so a hit closes the menu
+    // only for the two that have nothing left to look at.
+    if (this._audioMenuOpen) {
+      const ar = this._audioMenuRect();
+      if (ar && rx >= ar.x && rx <= ar.x + ar.w && ry >= ar.y && ry < ar.y + ar.h) {
+        const idx = Math.floor((ry - ar.y) / ar.cellH);
+        const cmd = this._audioMenuCommands()[idx];
+        if (cmd && cmd.enabled !== false) {
+          try { cmd.run?.(); } catch (err) { console.error('[TL audio] command failed', err); }
+          if (idx !== 1) this._audioMenuOpen = false;
+        }
+        this.draw();
+        return;
+      }
+      this._audioMenuOpen = false;
+      // Same as the channel menu: no `return`, so the dismissing click still lands on
+      // whatever it was over.
       this.draw();
     }
 
@@ -3789,6 +4026,7 @@ export default class GuiTimeline {
     if (ry >= TOOLBAR_BOTTOM && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
+      this._scrubPress();
       return;
     }
 
@@ -4014,6 +4252,13 @@ export default class GuiTimeline {
             this._speedMenuOpen = false;
             this.draw();
             return;
+          case 'audio':
+            this._audioMenuOpen = !this._audioMenuOpen;
+            this._contextMenuOpen = false;
+            this._speedMenuOpen = false;
+            this._recOptMenuOpen = false;
+            this.draw();
+            return;
           case 'rewind': {
             const _reg = window._animationRegistry;
             const _t0 = window._animLoopStart ?? 0;
@@ -4099,6 +4344,7 @@ export default class GuiTimeline {
       }
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
+      this._scrubPress();
     } else {
       // Gutter click/drag for Graph Editor channels in Desktop Timeline
       if (this._mode === 'graph' && rx < 200 && ry > HEADER_H) {
@@ -6281,6 +6527,9 @@ export default class GuiTimeline {
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(tlX, w.y + rulerY, tlW, rulerH);
 
+    // Behind the ticks, which are drawn next and therefore read on top of it.
+    this._drawWaveform(ctx, tlX, tlW, w.y + rulerY, rulerH, loopStart, visibleDuration);
+
     // Adaptive tick interval based on pixels-per-frame
     const totalFrames = visibleDuration * fps;
     const pxPerFrame = tlW / Math.max(1, totalFrames);
@@ -6411,6 +6660,7 @@ export default class GuiTimeline {
       this._drawSpeedMenu(ctx);
       this._drawContextMenu(ctx);
       this._drawRecOptMenu(ctx);
+      this._drawAudioMenu(ctx);
       // Graph mode returns before the dopesheet tail below. Still publish the completed
       // draw so Scene uploads its changed canvas texture in VR (transport state included).
       this._drawRevision = (this._drawRevision || 0) + 1;
@@ -6480,6 +6730,7 @@ export default class GuiTimeline {
     this._drawSpeedMenu(ctx);
     this._drawContextMenu(ctx);
     this._drawRecOptMenu(ctx);
+    this._drawAudioMenu(ctx);
     this._drawRevision = (this._drawRevision || 0) + 1;
   }
 }

@@ -3339,6 +3339,19 @@ class AnimationRegistry {
         const speed = window._animPlaybackSpeed !== undefined ? window._animPlaybackSpeed : 1.0;
         this.globalPlaybackTime += dt * dir * speed;
 
+        // WHEN THERE IS AUDIO, THE SOUND HARDWARE'S CLOCK IS THE BETTER ONE. The line above
+        // accumulates against performance.now(); the audio plays against AudioContext's own
+        // clock, and the two slide apart. Over a dialogue take that slide separates the mouth
+        // from the voice, which is precisely what the clip was loaded to judge.
+        //
+        // Offered as a correction, not a handover: masterTime returns null whenever the two
+        // disagree by more than a quarter of a second, because a gap that size is a seek, a
+        // loop wrap or a speed change this function has just performed and the audio node has
+        // not been re-anchored to yet. Believing it there would drag the playhead back into
+        // the loop it had just left.
+        const _aTime = window._audioTrack?.masterTime?.(this.globalPlaybackTime);
+        if (_aTime !== null && _aTime !== undefined) this.globalPlaybackTime = _aTime;
+
         window._animLastDt = dt;
 
         const lStart = window._animLoopStart ?? 0.0;

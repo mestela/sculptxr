@@ -335,6 +335,14 @@ var getOptionsURL = function () {
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 
   // Input
+  // Scrub-grain shape, in SECONDS (the settings sliders show milliseconds). Spacing wants to
+  // stay under length: overlapping grains are what make a drag sound continuous rather than
+  // stuttered, so the ranges deliberately allow both and the panel says which way is which.
+  options.audioScrub        = queryBool(getVal('audioScrub'),        true);
+  options.audioGrainSec     = queryNumber(getVal('audioGrainSec'),     0.01, 0.5,  0.09);
+  options.audioGrainSpacing = queryNumber(getVal('audioGrainSpacing'), 0.01, 0.4,  0.05);
+  options.audioGrainFade    = queryNumber(getVal('audioGrainFade'),    0.0,  0.05, 0.004);
+
   options.tabletRadiusFactor    = queryNumber(getVal('tabletRadiusFactor'),    0.0, 1.0,   0.75);
   options.tabletIntensityFactor = queryNumber(getVal('tabletIntensityFactor'), 0.0, 1.0,   0.0);
 

@@ -1152,7 +1152,7 @@ export function buildMenuHTML_files(main) {
     <button class="mm-action-btn" id="mm-export-sxr">Save scene to disk (.sxr)</button>
 
     <div class="mm-section-title">Import</div>
-    <button class="mm-action-btn" id="mm-import-obj">Import mesh… (obj, sgl, ply, stl)</button>
+    <button class="mm-action-btn" id="mm-import-obj">Import mesh or audio… (obj, sgl, ply, stl, glb, mp3, wav)</button>
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
@@ -1388,6 +1388,81 @@ export function wireDevToggles(q, paint) {
         paint?.();
       });
     }
+  }
+}
+
+// THE SCRUB-GRAIN CONTROLS, DECLARED ONCE — same reason as buildDevToggles above, and the same
+// standing rule: "i want desktop and vr to conform as much as possible, use the same code as
+// much as possible, otherwise we end up in this situation over and over."
+//
+// Dragging a playhead has no playback rate, only a position, so it is made audible by replaying
+// a short window of the clip AT the playhead, over and over (AudioTrack._grain). These three
+// numbers are that window, and the right values depend on the material — dialogue wants a longer
+// grain than a drum loop — which is why they are a setting and not a constant.
+//
+// SPACING SHOULD STAY UNDER LENGTH. Consecutive grains then overlap, and that overlap is what
+// makes a drag sound continuous instead of stuttered. The ranges deliberately allow the other
+// way round, because a deliberately gappy scrub is a legitimate thing to want.
+//
+// Stored in seconds (what the Web Audio scheduler takes), shown in milliseconds (what anyone
+// thinks in). Every key here is declared in getOptionsURL.js — without that it stops persisting
+// and nothing says so.
+const AUDIO_GRAINS = [
+  { id: 'mm-audio-grain-len',  label: 'Grain length',  win: '_audioGrainSec',
+    opt: 'audioGrainSec',     min: 20, max: 250, step: 5, dflt: 0.09 },
+  { id: 'mm-audio-grain-gap',  label: 'Grain spacing', win: '_audioGrainSpacing',
+    opt: 'audioGrainSpacing', min: 10, max: 200, step: 5, dflt: 0.05 },
+  { id: 'mm-audio-grain-fade', label: 'Grain fade',    win: '_audioGrainFade',
+    opt: 'audioGrainFade',    min: 0,  max: 20,  step: 1, dflt: 0.004 },
+];
+
+// Live window value, then the saved setting, then the default — the same ladder AudioTrack reads
+// through, so the slider cannot show one number while the engine uses another.
+const grainMs = (g, opts) => Math.round(
+  (Number.isFinite(window[g.win]) ? window[g.win] : (opts[g.opt] ?? g.dflt)) * 1000);
+
+export function buildAudioSectionHTML(renderToggle) {
+  const opts = getOptionsURL();
+  const on = window._audioScrub !== undefined ? !!window._audioScrub : (opts.audioScrub !== false);
+  const rows = AUDIO_GRAINS.map((g) => {
+    const ms = grainMs(g, opts);
+    return `<div class="mm-row">
+      <span class="mm-lbl">${g.label}</span>
+      <input type="range" id="${g.id}" min="${g.min}" max="${g.max}" step="${g.step}" value="${ms}">
+      <span class="mm-val" id="${g.id}-val">${ms}ms</span>
+    </div>`;
+  }).join('\n    ');
+  return `<div class="mm-section-title">Audio Scrub</div>
+    ${renderToggle('mm-audio-scrub', 'Scrub audio', on)}
+    ${rows}`;
+}
+
+// `slide` is passed in because the two panels wire sliders differently: the VR panel needs a
+// dirty hook so the rasteriser repaints the texture, the desktop sidebar is live DOM and needs
+// nothing. Both toggle shapes are handled for the same reason as wireDevToggles — a button
+// carries its state in a class, a checkbox in `checked`, and the setting does not care.
+export function wireAudioSection(q, slide, paint) {
+  const el = q('#mm-audio-scrub');
+  if (el) {
+    const apply = (on) => { window._audioScrub = !!on; getOptionsURL.saveOption('audioScrub', !!on); };
+    if (el.tagName === 'INPUT') {
+      el.addEventListener('change', (e) => { apply(e.target.checked); paint?.(); });
+    } else {
+      el.addEventListener('click', () => {
+        // Read the current state the same way the markup does — `!== false`, so an unset
+        // value reads as ON — or the first click on a never-touched toggle turns it off while
+        // the button was drawn lit.
+        apply(!(window._audioScrub !== false));
+        el.classList.toggle('active', !!window._audioScrub);
+        paint?.();
+      });
+    }
+  }
+  for (const g of AUDIO_GRAINS) {
+    slide(q('#' + g.id), q('#' + g.id + '-val'), (ms) => {
+      window[g.win] = ms / 1000;
+      getOptionsURL.saveOption(g.opt, ms / 1000, 300);
+    }, (v) => `${Math.round(v)}ms`);
   }
 }
 
@@ -1753,6 +1828,9 @@ function buildMenuHTML_settings(main) {
     <div class="mm-section-title">Blendshapes</div>
     <button class="mm-action-btn" id="mm-bs-backup">Backup Shapes</button>
     <button class="mm-action-btn" id="mm-bs-restore">Restore Shapes</button>
+
+    ${buildAudioSectionHTML((id, label, on) =>
+      `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`)}
 
     <div class="mm-section-title">Physics &amp; Diagnostics</div>
     ${buildDevToggles((id, label, on) =>
@@ -3125,6 +3203,9 @@ export class MainMenuPanel extends HTMLVRPanel {
     // the console on the gxr." PhysicsBones.setSolver persists it through the same option store
     // as every other setting here, so it survives a reload like they do.
     wireDevToggles(q, paint);
+    // `_wireSlider` rather than the bare one: in VR a slider drag has to mark the panel dirty
+    // or the texture keeps showing the old number.
+    wireAudioSection(q, (sl, val, cb, fmt) => this._wireSlider(sl, val, cb, fmt), paint);
     q('#mm-ambi')?.addEventListener('click', () => {
       main._vrAmbidextrousCursors = !main._vrAmbidextrousCursors;
       opts.saveOption('ambidextrousCursors', main._vrAmbidextrousCursors);
@@ -4907,6 +4988,9 @@ export function buildMenuHTML_desktopSettings(main) {
       <input type="range" id="mm-tablet-intensity" min="0" max="1" step="0.01" value="${ifact}">
       <span class="mm-val" id="mm-tablet-intensity-val">${ifact.toFixed(2)}</span>
     </div>
+    ${buildAudioSectionHTML((id, label, on) =>
+      `<label class="mm-check-row"><span>${label}</span><input type="checkbox" id="${id}"${
+        on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`)}
     <div class="mm-section-title">Advanced</div>
     <label class="mm-check-row"><span>Show debug log</span><input type="checkbox" id="mm-debug-log"${debugActive ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <label class="mm-check-row"><span>Show Eruda console</span><input type="checkbox" id="mm-eruda-console"><span class="mm-checkmark"></span></label>
@@ -4940,6 +5024,9 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   // The same list the VR panel wires, from the same place. These settings are owned by their
   // modules (PhysicsBones, PanelTrace), which persist them, rather than by a bare window write.
   wireDevToggles(q, repaintFn);
+
+  // No dirty hook here, same as the rest of this panel: live DOM renders itself.
+  wireAudioSection(q, wireSlider, repaintFn);
 
   wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
     (v) => { Tablet.radiusFactor    = v; getOptionsURL.saveOption('tabletRadiusFactor',    v, 300); }, v => v.toFixed(2));

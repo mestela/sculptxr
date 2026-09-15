@@ -1603,6 +1603,27 @@ class Scene {
       }
     }
 
+    // AUDIO FOLLOWS THE TRANSPORT, RECONCILED ONCE PER FRAME.
+    //
+    // Deliberately OUTSIDE both playback blocks above and gated on nothing: this call is how a
+    // PAUSE reaches the audio as much as a play. `_animPlaying` is written from around
+    // twenty-five places -- panels, timeline, registry, MotionTrail, PhysicsBones, Skinning --
+    // and hooking them individually would mean hooking the next one that appears, too. Reading
+    // the state each frame and reconciling is level-triggered, so every one of those paths
+    // works without knowing audio exists. See AudioTrack.sync.
+    if (window._audioTrack && window._audioTrack.hasClip()) {
+      const _reg = window._animationRegistry;
+      window._audioTrack.sync(
+        // The registry's own field, not the _animCurrentTime mirror: the mirror is only
+        // written from inside update(), which is skipped entirely when the scene holds no
+        // animatable mesh, and a clock that silently stops is worse than no clock.
+        _reg && Number.isFinite(_reg.globalPlaybackTime)
+          ? _reg.globalPlaybackTime : (window._animCurrentTime || 0),
+        !!window._animPlaying,
+        window._animPlaybackSpeed !== undefined ? window._animPlaybackSpeed : 1.0,
+        _reg && _reg.playbackDirection !== undefined ? _reg.playbackDirection : 1);
+    }
+
     // PHYSICS BONES, on the pose playback just wrote and before the pins are re-seated.
     //
     // LIVE ALL THE TIME, not only during playback. matt: "they should live sim in general grab

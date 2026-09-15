@@ -18,6 +18,7 @@ var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
 
 import ReferenceManager from './editing/ReferenceManager.js';
+import AudioTrack from './editing/AudioTrack.js';
 import { FrameGroup } from './editing/FrameGroup.js';
 
 // Manage events
@@ -110,6 +111,13 @@ class SculptGL extends Scene {
     // Re-anchor the head to your current hand pose (call if it drifts off).
     window.recenterPuppet = () => { this._puppetAnchor = null; if (window.screenLog) window.screenLog('🧦 Puppet re-centered', 'lime'); };
     this._referenceManager = new ReferenceManager(this);
+
+    // One audio clip against the timeline, for lipsync and timing reference. Global because
+    // it is a property of the TRANSPORT, not of this instance: the timeline draws its
+    // waveform, Scene's render loop drives it, and the registry reads its clock -- three
+    // callers with no other reason to know about SculptGL.
+    this._audioTrack = new AudioTrack();
+    window._audioTrack = this._audioTrack;
 
     // Frame-by-frame animation as real outliner objects + keyframed visibility (voxel
     // frames own worker distance-field slots). Replaced the old FrameAnimation cel system.
@@ -1414,21 +1422,62 @@ class SculptGL extends Scene {
     return;
   }
 
+  // AUDIO ARRIVES THROUGH THE ORDINARY IMPORT, and by extension through a drag-and-drop, which
+  // is a bonus rather than the point. The timeline's own Audio > Load works on desktop but the
+  // file dialog never opened from it on Vision Pro -- matt: "i still can't load audio from the
+  // animation button on avp. can we try via the file->import button instead?" Import is a path
+  // that demonstrably works there, so the cheapest fix is to let it carry audio too rather than
+  // keep guessing at what WebKit wants from a canvas-drawn menu.
+  //
+  // Matched on the END of the name, and checked before getFileType, which uses `includes` and
+  // would claim "take3.obj.mp3" as an obj.
+  static isAudioFile(name) {
+    return /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|aif|aiff)$/i.test(name || '');
+  }
+
   loadFiles(event) {
     event.stopPropagation();
     event.preventDefault();
     var files = event.dataTransfer ? event.dataTransfer.files : event.target.files;
     if (window.screenLog) window.screenLog(`Files detected: ${files.length}`, "yellow");
+
+    // OPEN MUST NOT WIPE THE SCENE FOR A SOUND. `Open` means "replace what is loaded", and an
+    // audio clip is not what is loaded -- it rides alongside the model. So the replace only
+    // happens if at least one real model came with the selection; picking a lone mp3 from Open
+    // would otherwise clear the scene and give you a waveform in exchange for your work.
+    var anyModel = false;
+    for (var k = 0; k < files.length; ++k) {
+      if (!SculptGL.isAudioFile(files[k].name)) { anyModel = true; break; }
+    }
     // OPEN REPLACES, IMPORT ADDS. This path has always appended, which is Import's behaviour --
     // there was simply no Open, so a menu offering one button could not say which it was. The
     // flag is set by whichever button was pressed and consumed HERE, once, before the first
     // file: clearing per file would throw away the earlier ones in a multi-select.
     if (window._fileOpenReplace) {
       window._fileOpenReplace = false;
-      this.clearScene();
+      if (anyModel) this.clearScene();
     }
     for (var i = 0, nb = files.length; i < nb; ++i) {
       var file = files[i];
+      if (SculptGL.isAudioFile(file.name)) {
+        if (window.screenLog) window.screenLog(`Audio: ${file.name}`, "cyan");
+        if (window._audioTrack) {
+          // unlock() as well as load: this call arrives from a real file-picker gesture, which
+          // on iOS/visionOS is the kind of moment Safari will let an AudioContext start in.
+          window._audioTrack.loadFile(file).then((ok) => {
+            if (ok) window._audioTrack.unlock();
+            if (window.screenLog && !ok) window.screenLog(`Audio decode failed: ${file.name}`, 'red');
+          });
+        } else {
+          console.warn('[audio] no audio track on window — clip ignored');
+        }
+        // The input is reset here as well as in readFile: an audio-only selection never
+        // reaches readFile, and without this picking the same file twice in a row does nothing
+        // the second time (no change event, because the value did not change).
+        var _fo = document.getElementById('fileopen');
+        if (_fo) _fo.value = '';
+        continue;
+      }
       var fileType = this.getFileType(file.name);
       if (window.screenLog) window.screenLog(`Reading: ${file.name} (${fileType})`, "yellow");
       this.readFile(file, fileType);
