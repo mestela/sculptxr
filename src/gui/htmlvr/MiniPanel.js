@@ -23,6 +23,7 @@ import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
+import { wireGroups } from './uiTokens.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
@@ -115,6 +116,21 @@ const toolName = (id) => TOOL_NAMES[id] ?? `Tool ${id}`;
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
+/* Collapsible group headings (ui reorg mockup). The markup comes from uiTokens.collapsibleHTML,
+   which the bone panel emits into BOTH panels, so the wrist needs the same rules -- the two
+   panels do not share a stylesheet. Sized down for this panel's narrower column. */
+.mm-group-head {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  margin: 5px 0 2px 0; padding: 3px 3px;
+  background: none; border: 0; border-radius: 4px;
+  color: #a6adc8; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  cursor: pointer; text-align: left;
+}
+.mm-group-head:hover, .mm-group-head.hover { background: #313244; color: #cdd6f4; }
+.mm-group-chev { font-size: 8px; width: 9px; flex-shrink: 0; color: #6c7086; }
+.mm-group-body.collapsed { display: none; }
+
 /* ── MiniPanel — Catppuccin Mocha ──────────────────────────────────── */
 #mp-root {
   width: 240px;
@@ -616,6 +632,9 @@ export class MiniPanel extends HTMLVRPanel {
     const sm  = main.getSculptManager?.();
     const idx = sm?.getToolIndex?.() ?? -1;
 
+    // Collapsible groups emitted by the shared bone panel (ui reorg mockup).
+    wireGroups(extras, () => this.markDirty());
+
     // ── Brush extras ───────────────────────────────────────────────────────
     if (idx === Enums.Tools.BRUSH) {
       const makeToolToggle = (id, prop) => {
@@ -678,9 +697,13 @@ export class MiniPanel extends HTMLVRPanel {
       grabBtn('#mp-grab-rotate', 'rotate');
       // Same entry point the main menu uses, so the two cannot drift: press to arm, press again
       // to cancel, and the viewport completes it.
-      extrasEl.querySelector('#mp-set-parent')?.addEventListener('click', () => {
+      // `extras`, not `extrasEl`. This function's local is `extras`; `extrasEl` is the PARAMETER
+      // name over in _syncExtrasActive, and it does not exist here -- so this line threw a
+      // ReferenceError out of _wireExtras every time the Grab extras were wired, killing Set
+      // Parent on the wrist and everything after the call in syncFromState with it.
+      extras.querySelector('#mp-set-parent')?.addEventListener('click', () => {
         RigPending.toggle(this._main, 'parent');
-        extrasEl.querySelector('#mp-set-parent')
+        extras.querySelector('#mp-set-parent')
           ?.classList.toggle('active', this._main?._rigPendingMode === 'parent');
       });
     }

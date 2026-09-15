@@ -53,6 +53,7 @@ import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
 import { faIcon, setFaIcon } from './faIcons.js';
+import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles } from './uiTokens.js';
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
@@ -80,6 +81,35 @@ export function sectionHeaderHTML(sectionId) {
 // The section the panel opens on, and the one the tab strip marks active. Named rather than
 // positional so the two cannot disagree.
 const DEFAULT_SECTION = 'sculpting';
+
+// ── UI REORG MOCKUP (branch ui-reorg-mockup) ────────────────────────────────
+//
+// A LAYOUT EXPERIMENT BEHIND A SWITCH, not a decision. Everything it changes is markup and
+// CSS; no command moves and no wiring changes, so the old layout is always one toggle away
+// and the two can be compared on the same build in the same session.
+//
+// ON BY DEFAULT on this branch, because the point of the branch is to look at it. Flip it in
+// Settings (both panels carry the toggle, see DEV_TOGGLES) or with window._uiReorg = false.
+//
+// What it does:
+//   - menubar:  Background + Reference fold into one View menu, which also absorbs the
+//               Rendering and Camera SECTIONS. Six buttons become five, and the row has room
+//               again -- it was full at ${MM_W}px, which is what killed the first version of
+//               this plan (a seventh button pushed the pin off the panel on Vision Pro).
+//   - tabstrip: Rendering and Camera leave (they are in View now). Blendshapes and Timeline
+//               are LAUNCHERS rather than tabs -- they spawn other panels while looking
+//               exactly like the six that switch content -- so they drop below a divider.
+//               Nine buttons become five plus two launchers.
+//   - content:  the Sculpt and Mesh Edit grids collapse; the bone panel's once-a-session
+//               blocks collapse.
+//
+// REVEALED BY A CLASS ON THE ROOT, not rebuilt. Same trick as the hands-only row: the shell
+// is built once in the constructor, so anything that has to survive a toggle must already be
+// in the markup with CSS deciding whether it shows. A rebuild would work too and would mean
+// tearing down a live panel mid-session to look at a layout.
+// uiReorg() lives in uiTokens.js so bonePanel can read it without a cycle. Re-exported
+// here because this is where the rest of the panel vocabulary is imported from.
+export { uiReorg };
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
 export const MM_W  = 480;   // total DOM width  (px)
@@ -241,6 +271,40 @@ const CSS = `
 }
 
 /* ── Left tab strip ──────────────────────────────────────────── */
+/* ── UI reorg mockup: what the class on the root switches ────────────────────
+   Both layouts are in the markup at all times; these rules choose one. Everything here is
+   display and order only, so a toggle is a repaint and never a rebuild. */
+/* TWO CLASSES ON THE ROOT, NOT AN ID, and both selectors below are two-class deep on purpose.
+   Scoping to #mm-root looked tidier and was wrong twice over: a single-class .mm-reorg-only
+   display rule ties on specificity with any single-class rule that sets display, and then
+   source order decides it (the same trap the MiniPanel's hands-only row documents), and an id
+   selector matches only THE root -- so a torn-off section, a floated copy, or anything else
+   rendering this markup under a different id silently gets the legacy layout. */
+.ui-legacy .mm-reorg-only { display: none; }
+.ui-reorg .mm-legacy-only { display: none; }
+/* The launcher group: same buttons, pushed to the bottom of the strip and fenced off, so a
+   button that opens another panel no longer looks like a button that switches this one. */
+/* Only the FIRST launcher pushes. auto margin on both made each one claim its share of the
+   free space, so the two ended up spread down the strip instead of grouped at the bottom. */
+.ui-reorg #mm-tabstrip .mm-tab-launcher.mm-tab-launcher-first {
+  margin-top: auto;
+  border-top: 2px solid #45475a;
+  padding-top: 8px;
+}
+/* A collapsed group keeps its heading: the whole argument for collapsing rather than
+   subtabbing is that the other group stays visible, named, and one click away. */
+.mm-group-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  margin: 6px 0 3px 0; padding: 3px 4px;
+  background: none; border: 0; border-radius: 4px;
+  color: #a6adc8; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  cursor: pointer; text-align: left;
+}
+.mm-group-head:hover, .mm-group-head.hover { background: #313244; color: #cdd6f4; }
+.mm-group-chev { font-size: 9px; width: 10px; flex-shrink: 0; color: #6c7086; }
+.mm-group-body.collapsed { display: none; }
+
 #mm-tabstrip {
   position: absolute;
   top: 0; left: 0;
@@ -377,6 +441,80 @@ const CSS = `
 }
 .mm-section-title:first-child { padding-top: 0; }
 
+/* ── DENSITY (ui reorg mockup) ───────────────────────────────────────────────
+   ASK THE STRUCTURAL QUESTION, DO NOT GUESS AT IT. This rule was widened three times before
+   landing here, and each widening was the same mistake: naming the containers it expected the
+   controls to be in. They are 2 to 4 levels down and the depth varies by section -- a button
+   can sit in div.shader-pbr, or in fieldset.mm-disabled-group inside it, or in div.mm-if-uv
+   inside that. A named list cannot keep up, and when it falls behind the symptom is nasty:
+   half the panel packs and half does not, with nothing on screen saying why.
+
+   :has() asks "does this element directly contain a control" instead, so it finds them at
+   whatever depth they turn out to be.
+
+   THE HEADINGS DO THE GROUPING FOR FREE. Anything not given a smaller basis stays at 100
+   percent, and section titles are in that default -- so a title forces a line break, a run of
+   controls between two titles packs together, and controls under different headings never end
+   up side by side. No wrappers, no per-section column counts.
+
+   THE BASIS IS THE ADAPTIVE MECHANISM. At 190px a 410px main panel fits two rows and a 240px
+   wrist panel fits one, from the same markup.
+
+   (no backticks in here, and no double-dash: this is inside a template literal and it is also
+   serialised as XML by the rasteriser. panelxml_test checks both.) */
+.mm-dense,
+.mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0 10px;
+}
+.mm-dense > *,
+.mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn) > * {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.mm-dense > .mm-row,
+.mm-dense *:has(> .mm-row) > .mm-row { flex: 1 1 190px; }
+
+/* A lone short button does not need its own row. The View page alone carried ten of them at
+   396px for labels of one to three words. */
+.mm-dense > .mm-toggle,
+.mm-dense > .mm-action-btn,
+.mm-dense *:has(> .mm-toggle) > .mm-toggle,
+.mm-dense *:has(> .mm-action-btn) > .mm-action-btn { flex: 1 1 170px; }
+
+/* A collapsible heading is a divider: it must never share a line with what it labels. */
+.mm-dense .mm-group-head { flex: 1 1 100%; }
+
+.mm-row { flex: 1 1 190px; }
+
+/* A LONE SHORT BUTTON DOES NOT NEED ITS OWN ROW. The View page alone carried ten of them at
+   396px for labels of one to three words -- Ground Plane, Shadow Catcher, Hide All
+   Decorations, Pivot, Fill, Show references -- about 270px of height for content that pairs
+   into half that. */
+.mm-dense > .mm-toggle,
+.mm-dense > .mm-action-btn,
+.mm-dense .mm-group-body > .mm-toggle,
+.mm-dense .mm-group-body > .mm-action-btn { flex: 1 1 170px; }
+
+/* A collapsible heading is a divider: it must never share a line with what it labels. */
+.mm-dense .mm-group-head { flex: 1 1 100%; }
+
+.mm-row { flex: 1 1 190px; }
+
+/* FULL-WIDTH SINGLE BUTTONS PACK TOO. The View page alone carried ten of them at 396px for
+   labels of one to three words -- Ground Plane, Shadow Catcher, Hide All Decorations, Pivot,
+   Fill, Show references -- which is about 270px of height for content that pairs into half
+   that.
+
+   THE HEADINGS DO THE GROUPING FOR FREE. Section titles stay at flex-basis 100 percent, so a
+   title forces a line break and a run of buttons between two titles packs together and no
+   further. Buttons under different headings can never end up side by side, without anyone
+   having to wrap them in anything. */
+.mm-dense > .mm-toggle,
+.mm-dense > .mm-action-btn { flex: 1 1 170px; }
+
 .mm-row {
   display: flex;
   align-items: center;
@@ -512,6 +650,13 @@ const CSS = `
 }
 .mm-choice-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
 .mm-choice-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+/* cols-4 WAS USED AND NEVER DEFINED. The Export format row (glb / obj / ply / stl) asks for it,
+   and with no rule to match, .mm-choice-grid's bare display:grid gave it ONE column -- so four
+   short buttons have been stacking vertically down the full width of the panel, in the VR menu
+   and the desktop sidebar both, for as long as that markup has existed. Nothing errors for a
+   class that does not exist, which is why it survived; panelxml_test now checks the family. */
+
+.mm-choice-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
 .mm-choice-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
 .mm-choice {
   padding: 6px 4px;
@@ -1063,8 +1208,9 @@ function buildShellHTML() {
            Same idea and same position as the desktop strip. -->
       <button class="mm-menu-btn" data-menu="files">Files</button>
       <button class="mm-menu-btn" data-menu="history">History</button>
-      <button class="mm-menu-btn" data-menu="background">Background</button>
-      <button class="mm-menu-btn" data-menu="reference">Reference</button>
+      <button class="mm-menu-btn mm-legacy-only" data-menu="background">Background</button>
+      <button class="mm-menu-btn mm-legacy-only" data-menu="reference">Reference</button>
+      <button class="mm-menu-btn mm-reorg-only" data-menu="view">View</button>
       <button class="mm-menu-btn" data-menu="settings">Settings</button>
       <button class="mm-menu-btn" data-menu="about">About</button>
       <div style="flex:1"></div>
@@ -1077,14 +1223,21 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        ${['scene','rendering','camera','topology','sculpting','properties'].map((s) =>
+        ${['scene','topology','sculpting','properties'].map((s) =>
           // Active by NAME, not by index: the tab that opens is the default section, and
           // hardcoding its position means adding a tab silently opens a different one.
           `<button class="mm-tab-btn${s === DEFAULT_SECTION ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
         ).join('\n        ')}
-        <button class="mm-tab-btn mm-tl-btn" id="mm-bs-btn" title="Blendshapes">${TAB_ICONS.blendshapes}</button>
+        ${['rendering','camera'].map((s) =>
+          // In the reorg these two live in the View menu instead. Kept in the markup so the
+          // toggle is a repaint, and so the legacy layout is unchanged by any of this.
+          `<button class="mm-tab-btn mm-legacy-only" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
+        ).join('\n        ')}
         <button class="mm-tab-btn" data-section="animation" title="Animation">${TAB_ICONS.animation}</button>
-        <button class="mm-tab-btn mm-tl-btn" id="mm-tl-btn" title="Timeline">${TAB_ICONS.timeline}</button>
+        <!-- LAUNCHERS, NOT TABS. These two open other panels; they never switch this one.
+             In the reorg a divider says so. -->
+        <button class="mm-tab-btn mm-tl-btn mm-tab-launcher mm-tab-launcher-first" id="mm-bs-btn" title="Blendshapes">${TAB_ICONS.blendshapes}</button>
+        <button class="mm-tab-btn mm-tl-btn mm-tab-launcher" id="mm-tl-btn" title="Timeline">${TAB_ICONS.timeline}</button>
       </div>
       <div id="mm-content"></div>
       <div id="mm-sbar-track" class="mm-scrollbar-track"><div id="mm-sbar-thumb" class="mm-scrollbar-thumb"></div></div>
@@ -1138,21 +1291,37 @@ export function buildMenuHTML_files(main) {
   const objAppend = guiFiles?._objColorAppended ?? false;
 
   return `
+    ${/* THE HEADING IS THE VERB, THE BUTTON IS THE OBJECT.
+          "Save" over three buttons that each begin with the word Save spends the row on
+          something the heading already said -- matt: "the section title says SAVE, then the
+          buttons say save, save as, save to scene, lots of repeated info."
+
+          EXPORT ALREADY DOES THIS and is the model: heading Export, buttons glb / obj / ply /
+          stl. Nobody has ever wondered what those do.
+
+          It is not only tidiness. A long label cannot share a line with anything, so the
+          repeated verb is also the reason these buttons each claim a full row -- trimming the
+          labels is what lets the density rules pack them at all. The format list moves to the
+          tooltip, where it is available and not in the way. */ ''}
     <div class="mm-section-title">Open</div>
-    <button class="mm-action-btn" id="mm-open-scene">Open scene…</button>
-    <button class="mm-action-btn" id="mm-browser-saves">Browser Saves…</button>
-    <button class="mm-action-btn${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene">
-      ${main._clearSceneConfirm ? 'Confirm clear (no undo)' : 'New scene…'}
-    </button>
+    <button class="mm-action-btn" id="mm-open-scene" title="Open a scene from disk">Scene…</button>
+    <button class="mm-action-btn" id="mm-browser-saves" title="Open a scene saved in this browser">Browser saves…</button>
+    <button class="mm-action-btn${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
+      title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New…'}</button>
 
     <div class="mm-section-title">Save</div>
+    ${/* The button names the FILE it would land on rather than saying Save again, which is the
+          thing the original comment here was protecting: with Save you want to be certain what
+          it is about to overwrite. Under a heading that already says Save, the filename alone
+          says it better than "Save (filename)" did. */ ''}
     <button class="mm-action-btn" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
-      title="${curSave ? 'Save back over ' + curSave : 'Nothing open yet — use Save As'}">Save${curSave ? ' (' + curSave + ')' : ''}</button>
-    <button class="mm-action-btn" id="mm-browser-save-quick">Save As…</button>
-    <button class="mm-action-btn" id="mm-export-sxr">Save scene to disk (.sxr)</button>
+      title="${curSave ? 'Save back over ' + curSave : 'Nothing open yet — use As…'}">${curSave || 'Nothing open yet'}</button>
+    <button class="mm-action-btn" id="mm-browser-save-quick" title="Save as a new browser save">As…</button>
+    <button class="mm-action-btn" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">To disk (.sxr)</button>
 
     <div class="mm-section-title">Import</div>
-    <button class="mm-action-btn" id="mm-import-obj">Import mesh or audio… (obj, sgl, ply, stl, glb, mp3, wav)</button>
+    <button class="mm-action-btn" id="mm-import-obj"
+      title="Import a mesh or audio file — obj, sgl, ply, stl, glb, mp3, wav">Mesh or audio…</button>
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
@@ -1256,6 +1425,17 @@ export function buildMenuHTML_reference() {
 // buttons, the sidebar uses check rows -- through a renderer they each pass in. One id per
 // setting, one place to add the next one, and neither panel can drift from the other again.
 const DEV_TOGGLES = [
+  // UI REORG MOCKUP (branch ui-reorg-mockup). Live in VR: the layouts are both in the markup
+  // and a class on the root picks one, so this is a repaint. On DESKTOP the sidebar's tab strip
+  // is built once at startup, so that half needs a reload -- hence the label.
+  { id: 'mm-ui-reorg',    label: 'UI Reorg (desktop: reload)',
+    get: () => uiReorg(),
+    set: (on) => {
+      window._uiReorg = on;
+      getOptionsURL.saveOption('uiReorg', on, 0);
+      applyUISweep();
+      for (const p of (window._mmPanels || [])) { try { p._applyReorgClass?.(); p._lastContentKey = ''; p._rebuildContent?.(); } catch (_) {} }
+    } },
   { id: 'mm-phys-xpbd',   label: 'Constraint Solver (XPBD)',
     get: () => !!window._physXPBD,      set: (on) => PhysicsBones.setSolver(on) },
   { id: 'mm-panel-trace', label: 'Trace Panel Visibility',
@@ -1843,6 +2023,30 @@ function buildMenuHTML_settings(main) {
   `;
 }
 
+// THE VIEW PAGE (ui reorg mockup) -- Rendering, Camera, Background and Reference as one
+// scrollable page.
+//
+// They are one category: how the scene is lit, drawn, framed and referenced, all set once and
+// left. Two of them were TABS and two were MENUS, which is the split this reorg is trying to
+// remove -- the tab strip should hold what you switch between while working, and none of these
+// four is that.
+//
+// Concatenation, not a new layout. The four builders are untouched and their ids are disjoint,
+// so the existing wire functions each find their own controls and miss the rest -- the same
+// arrangement Rendering/Camera and Sculpting/Properties already use.
+export function buildMenuHTML_view(main) {
+  // GROUPED, NOT GLUED. The first version concatenated the four builders flat, which put ten
+  // section headings into one scroll with no way to collapse any of them -- matt: "the view
+  // menu still looks really poorly laid out", and he was right. Four groups, one open.
+  //
+  // Rendering opens because it is the one with the controls you actually reach for (shader,
+  // opacity, the rig display flags); the other three are set once.
+  return collapsibleHTML('view-rendering', 'Rendering', buildSectionHTML_rendering(main))
+    + collapsibleHTML('view-camera', 'Camera', buildSectionHTML_camera(main), false)
+    + collapsibleHTML('view-background', 'Background', buildMenuHTML_background(main), false)
+    + collapsibleHTML('view-reference', 'Reference', buildMenuHTML_reference(), false);
+}
+
 export function buildMenuHTML_about() {
   const releaseHTML = (() => {
     try {
@@ -2093,6 +2297,11 @@ export function buildSectionHTML_topology(main) {
     : '';
 
   return `
+    ${/* THE THREE PAIRS HERE STAY PAIRS. The sweep for two-line sections flagged this one as
+         six buttons across three rows, but each row is a matched opposition -- Level down
+         against Level up, Subdivide against Reverse, Del Lower against Del Higher -- and the
+         pairing IS the information. Repacking them three-across would put Reverse next to Del
+         Lower and say they belong together. Compressed layout is not worth a false grouping. */ ''}
     <div class="mm-section-title">Multiresolution</div>
     ${multiInfo}
     <div class="mm-btn-pair">
@@ -2355,11 +2564,13 @@ export function buildSectionHTML_camera(main) {
   return `
     <div id="mm-camera-root">
       <div class="mm-section-title">Camera Reset</div>
-      <div class="mm-btn-pair">
+      ${/* FOUR ONE-WORD BUTTONS, ONE ROW. They were two mm-btn-pairs, which is a hardcoded
+           two-column grid, so four labels of five letters each took two lines of a 410px
+           panel. They are also a single set -- four views of the same thing -- so splitting
+           them across rows implied a grouping that is not there. */ ''}
+      <div class="mm-choice-grid cols-4">
         <button class="mm-action-btn" id="mm-cam-center">Center</button>
         <button class="mm-action-btn" id="mm-cam-front">Front</button>
-      </div>
-      <div class="mm-btn-pair">
         <button class="mm-action-btn" id="mm-cam-left">Left</button>
         <button class="mm-action-btn" id="mm-cam-top">Top</button>
       </div>
@@ -2413,6 +2624,10 @@ export function buildSectionHTML_camera(main) {
 // Helper: encode a 0-1 rgb vec3 component as two hex digits.
 const _toHex2 = v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
 
+// The Alpha picker's last row is a verb rather than an alpha. Spelled so it cannot collide with
+// a real alpha name, which are file-derived.
+const ALPHA_IMPORT = '__import__';
+
 // TOOLS AND PROPERTIES ARE TWO PAGES, not one long scroll.
 //
 // The tool grids are a wall of buttons and they sit ABOVE everything that describes the tool
@@ -2442,6 +2657,15 @@ function buildSculptingHTML(main, part) {
   ).join('');
 
   if (part === 'tools') {
+    // 19 sculpt tools + 11 mesh tools is ten rows of a three-column grid, which is most of the
+    // panel's body before anything else renders. Collapsing one of them is the whole fix: they
+    // are close to two different applications and you are rarely picking from both.
+    if (uiReorg()) {
+      return collapsibleHTML('tools-sculpt', 'Sculpt',
+               `<div class="mm-choice-grid cols-3">${sculptBtns}</div>`)
+           + collapsibleHTML('tools-mesh', 'Mesh Edit',
+               `<div class="mm-choice-grid cols-3">${meshBtns}</div>`, false);
+    }
     return `
     <div class="mm-section-title">Sculpt</div>
     <div class="mm-choice-grid cols-3">${sculptBtns}</div>
@@ -2632,10 +2856,20 @@ function buildSculptingHTML(main, part) {
     if (tool._idAlpha !== undefined) {
       const alphaNames = Object.keys(Picking.ALPHAS_NAMES);
       const currentAlpha = tool._idAlpha ?? alphaNames[0];
+      // IMPORT IS THE LAST OPTION, NOT A SECOND CONTROL. Picking an alpha and adding one to
+      // the list are the same question -- "which alpha" -- so they belong in the same control.
+      // As a button beside the picker it cost the section a second line to say a thing the
+      // picker could say in one of its own rows. matt: "the import option could just be the
+      // last option of the combobox."
+      //
+      // The sentinel value is handled in the wiring, which restores the trigger's label: the
+      // list is a list of alphas and Import is a verb, so leaving it showing as the current
+      // selection would be a lie about what the brush is using.
       brushHTML += `
         <div class="mm-section-title">Alpha</div>
-        ${buildSelectHTML('mm-alpha-select', alphaNames.map(n => ({ val: n, label: n })), currentAlpha)}
-        <button class="mm-action-btn" id="mm-alpha-import" style="margin-top:3px">Import alpha…</button>`;
+        ${buildSelectHTML('mm-alpha-select',
+            alphaNames.map(n => ({ val: n, label: n })).concat([{ val: ALPHA_IMPORT, label: 'Import…' }]),
+            currentAlpha)}`;
     }
 
     // ── Paint-specific controls ──────────────────────────────────────
@@ -2712,6 +2946,7 @@ export class MainMenuPanel extends HTMLVRPanel {
    */
   constructor(main, scene, camera, renderer) {
     injectCSS();
+    applyUISweep();
 
     const root = document.createElement('div');
     root.id = 'mm-root';
@@ -2736,7 +2971,20 @@ export class MainMenuPanel extends HTMLVRPanel {
     this._tornOffSections = new Set(); // sections currently floating as TornOffPanels
 
     this.init(scene, camera, renderer);
+    this._applyReorgClass();
+    (window._mmPanels = window._mmPanels || []).push(this);
     this._waitForMeshThenWire(main);
+  }
+
+  // The reorg is a class on the root; see uiReorg().
+  _applyReorgClass() {
+    const on = uiReorg();
+    applyUISweep();
+    this._element?.querySelector('#mm-content')?.classList.toggle('mm-dense', on);
+    // BOTH classes, always exactly one of them. The CSS keys off each by name so that every
+    // rule is two classes deep and cannot lose a specificity tie; see the note in the CSS.
+    this._element?.classList.toggle('ui-reorg', on);
+    this._element?.classList.toggle('ui-legacy', !on);
   }
 
   get pinned() { return this._pinned; }
@@ -2961,9 +3209,10 @@ export class MainMenuPanel extends HTMLVRPanel {
       // what it contains — a rename above all. Without it the key is identical after a rename
       // (same section, same mesh count) and the rebuild below is skipped, so the panel keeps
       // showing the old names until something unrelated forces it. See Skeleton.refreshOutliner.
-      : `sec:${this._activeSection}:${shaderType}:${meshCount}:${curTool}:${symOn}:${contOn}`
+      : `sec:${this._activeSection}:${shaderType}:${meshCount}:${curTool}:${symOn}:${contOn}:${uiReorg() ? 1 : 0}`
         + `:${this._main._outlinerRev | 0}`;
 
+    this._applyReorgClass();
     if (key === this._lastContentKey) return;
     this._lastContentKey = key;
 
@@ -2987,6 +3236,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'history':    html = buildMenuHTML_history(main);    break;
         case 'background': html = buildMenuHTML_background(main); break;
         case 'reference':  html = buildMenuHTML_reference();     break;
+        case 'view':       html = buildMenuHTML_view(main);      break;
         case 'settings':   html = buildMenuHTML_settings(main);  break;
         case 'about':      html = buildMenuHTML_about();         break;
       }
@@ -3037,6 +3287,11 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
     }
 
+    // Every section title on this page becomes a collapsible, collapsed unless it has been
+    // opened before. Runs on the fresh markup and before the wiring, so the heads it creates
+    // are wired by the same pass as the ones the builders emit.
+    if (uiReorg()) groupSectionTitles(contentEl);
+
     this._wireContent();
 
     // Sync custom scrollbar thumb after content changes
@@ -3078,6 +3333,7 @@ export class MainMenuPanel extends HTMLVRPanel {
 
   _wireContent() {
     const main = this._main;
+    wireGroups(this._element, () => this.markDirty());
     if (this._activeMenu) {
       this._wireMenu(this._activeMenu, main);
     } else {
@@ -3112,6 +3368,19 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     } else if (menu === 'history') {
       wireMenuHistory(el, main, paint);
+    } else if (menu === 'view') {
+      // All four, on one root. Disjoint ids means each pass wires its own controls and finds
+      // null for everything else, so there is no second copy of any of them to drift.
+      const fullRepaint = () => { this._lastContentKey = ''; this._rebuildContent(); };
+      wireSectionRendering(el, main, fullRepaint, paint, paint);
+      wireMenuBackground(el, main, paint);
+      q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
+      q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
+      q('#mm-ref-show')?.addEventListener('click', () => {
+        q('#mm-ref-show')?.classList.toggle('active');
+        paint();
+      });
+
     } else if (menu === 'background') {
       wireMenuBackground(el, main, paint);
     } else if (menu === 'reference') {
@@ -4477,20 +4746,26 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     // ── Alpha brush texture ───────────────────────────────────────────────────
     if (tool._idAlpha !== undefined) {
       wireSelect(el, 'mm-alpha-select', (v) => {
-        tool._idAlpha = v; main.render?.();
-      }, lightRepaintFn);
-
-      el.querySelector('#mm-alpha-import')?.addEventListener('click', () => {
+        if (v !== ALPHA_IMPORT) { tool._idAlpha = v; main.render?.(); return; }
+        // PUT THE LABEL BACK FIRST. wireSelect has already written the clicked row's text onto
+        // the trigger, and "Import..." is not an alpha -- leaving it there would have the
+        // control reporting a selection the brush does not have, for as long as the file dialog
+        // is open and for good if it is cancelled.
+        const trig = el.querySelector('#mm-alpha-select');
+        if (trig && trig.childNodes[0]) trig.childNodes[0].textContent = String(tool._idAlpha ?? '');
+        el.querySelectorAll('#mm-alpha-select-wrap .mm-select-opt').forEach((b) => {
+          b.classList.toggle('active', b.dataset.val === String(tool._idAlpha));
+        });
         const input = document.getElementById('alphaopen');
         if (!input) return;
         // Wire a one-shot handler: load the alpha then rebuild this section.
         const onAlphaLoaded = () => {
           input.removeEventListener('change', onAlphaLoaded);
-          repaintFn(); // rebuild so the new alpha appears in the buttons
+          repaintFn(); // rebuild so the new alpha appears in the list
         };
         input.addEventListener('change', onAlphaLoaded);
         input.click();
-      });
+      }, lightRepaintFn);
     }
   }
 
@@ -4882,11 +5157,14 @@ export function buildMenuHTML_background(main) {
       <span class="mm-val" id="mm-bg-blur-val">${blur.toFixed(2)}</span>
     </div>
     <div class="mm-section-title">Image</div>
-    <div class="mm-btn-pair">
+    ${/* The lone Fill toggle was costing a second line for one four-letter word. It joins the
+         two actions: the sweep gives a toggle and an action the same shape, so the only thing
+         that distinguishes them is the active state, which is the one that should. */ ''}
+    <div class="mm-choice-grid cols-3">
       <button class="mm-action-btn" id="mm-bg-reset">Reset</button>
       <button class="mm-action-btn" id="mm-bg-import">Import…</button>
+      <button class="mm-toggle${fill?' active':''}" id="mm-bg-fill">Fill</button>
     </div>
-    <button class="mm-toggle${fill?' active':''}" id="mm-bg-fill">Fill</button>
   `;
 }
 
