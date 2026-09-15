@@ -229,11 +229,29 @@ export function uiDiag() {
   return out;
 }
 
-export function toggleGroup(key) {
+// Write an explicit state. Used by the click handler, which derives "what it is now" from what
+// is actually on screen rather than recomputing it.
+export function setGroup(key, open) {
   const g = store();
-  g[key] = !groupOpen(key);
+  g[key] = !!open;
   persist();
   return g[key];
+}
+
+// TOGGLING MUST FLIP WHAT YOU CAN SEE, and that is not the same as flipping what groupOpen()
+// computes. groupOpen's own default is `true`, while groupSectionTitles renders with `false` --
+// so for a section with nothing stored yet the panel drew it COLLAPSED while this function
+// believed it was OPEN. The first click then wrote `false`, which changed nothing on screen, and
+// only the second flipped it to `true`.
+//
+// matt, in the headset: "i have to click the menu headers twice; once to select, once to open."
+// It was never a VR input problem -- the click was arriving both times -- and it applied to every
+// section on a fresh profile on both platforms.
+//
+// `dflt` is what the CALLER knows was rendered. wireGroups passes the state it reads off the DOM,
+// which cannot disagree with what the user is looking at.
+export function toggleGroup(key, dflt) {
+  return setGroup(key, !groupOpen(key, dflt));
 }
 
 // `key` is the state key AND the data attribute the wiring looks for, so a group cannot be
@@ -289,10 +307,16 @@ export function wireGroups(root, repaint) {
     head._groupWired = true;
     head.addEventListener('click', () => {
       const key = head.dataset.group;
-      const open = toggleGroup(key);
+      // THE TRUTH IS THE DOM. The body carries .collapsed, which is what the user can see, so
+      // toggling reads that rather than recomputing a default that may not be the one this page
+      // rendered with. See toggleGroup for what went wrong when it did recompute.
+      const body = root.querySelector(`[data-group-body="${key}"]`);
+      const open = body
+        ? setGroup(key, body.classList.contains('collapsed'))
+        : toggleGroup(key);
       // Scoped to THIS root: the same key is rendered in every panel, and a document-wide
       // query would flip the off-screen VR copy's class and leave this one alone.
-      root.querySelector(`[data-group-body="${key}"]`)?.classList.toggle('collapsed', !open);
+      body?.classList.toggle('collapsed', !open);
       const chev = head.querySelector('.mm-group-chev');
       if (chev) chev.innerHTML = chevIcon(open);
       repaint?.();
