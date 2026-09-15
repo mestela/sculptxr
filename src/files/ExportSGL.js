@@ -15,12 +15,14 @@ var Export = {};
 // 11 camera framing (view transform) in the header
 // 12 per-face group ids (_facesGroups; steers guided quad remesh)
 // 13 animation playback range (master duration, start, end)
-Export.VERSION = 14;
+// 15 project range START (the range slider's outer left handle; the end is the master duration)
+Export.VERSION = 15;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
 
-  var nbBytes = 4 * (1 + 3 + 4 + 13 + 3 + 1);
+  // ...+ 4 for the v13 playback range and the v15 project start, which sit together in the header.
+  var nbBytes = 4 * (1 + 3 + 4 + 13 + 4 + 1);
 
   for (var i = 0; i < nbMeshes; ++i) {
     var mesh = meshes[i];
@@ -148,6 +150,10 @@ Export.exportSGL = function (meshes, main) {
     f32a[off++] = window._animMasterDuration ?? 2;
     f32a[off++] = window._animLoopStart ?? 0;
     f32a[off++] = window._animLoopEnd ?? window._animMasterDuration ?? 2;
+    // v15: the PROJECT range's start. Its end is the master duration above — every consumer
+    // already treats that as an absolute end time — so only the start was missing, and without
+    // it the range slider's outer left handle survived a reload only as long as the tab did.
+    f32a[off++] = window._animProjectStart ?? 0;
 
     u32a[off++] = nbMeshes;
 

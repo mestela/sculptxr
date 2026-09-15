@@ -63,6 +63,11 @@ Import.importSGL = function (buffer, gl, main) {
       window._animMasterDuration = f32a[off++];
       window._animLoopStart = f32a[off++];
       window._animLoopEnd = f32a[off++];
+      // RESET BEFORE READING, so a v13/v14 file does not inherit the project start of whatever
+      // was loaded before it. Zero is what the project start has always implicitly been, so an
+      // older file lands exactly where it used to.
+      window._animProjectStart = 0;
+      if (version >= 15) window._animProjectStart = f32a[off++];
     }
   }
 
