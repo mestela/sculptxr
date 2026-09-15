@@ -181,11 +181,23 @@ export function collapsibleHTML(key, label, bodyHTML, dflt = true) {
 // imports bonePanel -- asking for it the other way round is a cycle, and in a cycle the
 // function is in its temporal dead zone for whichever module happens to evaluate first. This
 // module imports nothing from gui/, so nothing can loop back through it.
+// THE FLAG IS RETIRED, AND IT HAD TO BE.
+//
+// It was an A/B switch while this was an experiment, and it wrote its state to localStorage --
+// which is PER DEVICE. So flipping it once in a headset to compare left that headset on the old
+// layout permanently, while the desktop it was being compared against stayed on the new one.
+// matt: "on gxr in vr, almost every section, both menus and panels, are fully expanded." That is
+// exactly what uiReorg() === false renders: no collapsible sections and none of the styling,
+// reproduced here by setting the stored option false.
+//
+// The saved option is no longer READ, so a device that still has `uiReorg: false` sitting in
+// its settings recovers on the next load with no migration needed.
+//
+// The window flag survives as a session-only escape hatch for comparing the two in a console.
+// It cannot persist, which is the whole point.
 export function uiReorg() {
-  // The window flag is the LIVE override (a toggle mid-session, or the console); the saved
-  // option is what a fresh load starts from.
   if (window._uiReorg != null) return !!window._uiReorg;
-  return getOptionsURL().uiReorg !== false;
+  return true;
 }
 
 // ONE WIRING PASS, USED BY ALL THREE PANELS.

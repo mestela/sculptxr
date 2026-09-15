@@ -183,9 +183,6 @@ var getOptionsURL = function () {
   options.leftHandMode = queryBool(getVal('leftHandMode'), false);
   options.aimPickingMode = queryBool(getVal('aimPickingMode'), false); // Default false
   options.debugMode = queryBool(getVal('debugMode'), false);
-  // UI REORG MOCKUP (branch ui-reorg-mockup). Default ON here because looking at it is the
-  // point of the branch; the Settings toggle writes this so the choice survives a reload.
-  options.uiReorg = queryBool(getVal('uiReorg'), true);
   // Which physics-bone solver runs. Off is the force solver, which is still the default: the
   // constraint one removes the pin-activation pop but does not yet land the hand on the pin.
   options.physicsXPBD = queryBool(getVal('physicsXPBD'), false);

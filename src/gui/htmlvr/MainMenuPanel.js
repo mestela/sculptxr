@@ -1452,17 +1452,6 @@ export function buildMenuHTML_reference() {
 // buttons, the sidebar uses check rows -- through a renderer they each pass in. One id per
 // setting, one place to add the next one, and neither panel can drift from the other again.
 const DEV_TOGGLES = [
-  // UI REORG MOCKUP (branch ui-reorg-mockup). Live in VR: the layouts are both in the markup
-  // and a class on the root picks one, so this is a repaint. On DESKTOP the sidebar's tab strip
-  // is built once at startup, so that half needs a reload -- hence the label.
-  { id: 'mm-ui-reorg',    label: 'UI Reorg (desktop: reload)',
-    get: () => uiReorg(),
-    set: (on) => {
-      window._uiReorg = on;
-      getOptionsURL.saveOption('uiReorg', on, 0);
-      applyUISweep();
-      for (const p of (window._mmPanels || [])) { try { p._applyReorgClass?.(); p._lastContentKey = ''; p._rebuildContent?.(); } catch (_) {} }
-    } },
   { id: 'mm-phys-xpbd',   label: 'Constraint Solver (XPBD)',
     get: () => !!window._physXPBD,      set: (on) => PhysicsBones.setSolver(on) },
   { id: 'mm-panel-trace', label: 'Trace Panel Visibility',
@@ -1863,6 +1852,103 @@ function wireWireframeSection(el, main, paint, dirty) {
   });
 }
 
+
+// ── SETTINGS SECTIONS THAT ARE NOT ABOUT THE PLATFORM, DECLARED ONCE ─────────
+//
+// There are two Settings pages -- buildMenuHTML_settings for VR, buildMenuHTML_desktopSettings
+// for the sidebar -- and they had grown entirely different SECTION LISTS: fifteen headings in
+// the headset against seven on the desktop. Three sections were already shared through builders
+// (wireframe, audio, dev toggles) for exactly this reason, and the rest had drifted.
+//
+// These four are not about the platform at all. Tone mapping and exposure, mesh curvature, the
+// ground grid and the blendshape backup are the same settings wherever you are sitting, and
+// they were reachable only in a headset. matt: "they of COURSE should match to desktop."
+//
+// What stays VR-only is what genuinely is: the hand and controller spikes, pinch thresholds,
+// head-height calibration, the controller model, and the Menu brightness/saturation/gamma,
+// which is the LUT applied to the rasterised panel texture and means nothing on a monitor.
+export function buildSharedSettingsHTML(main) {
+  const curvature      = main.getMesh?.()?.getCurvature?.() ?? 0;
+  const gridOpacity    = main.getGridOpacity?.() ?? 0.5;
+  const gridOccOpacity = main.getGridOccludedOpacity?.() ?? 0.2;
+  const exposure       = main.getExposure?.() ?? 1.0;
+  const curTM          = main.getToneMapping?.() ?? 0;
+  const tmBtns = [
+    { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
+    { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
+  ].map(t => `<button class="mm-choice${curTM === t.id ? ' active' : ''}" data-tonemap="${t.id}">${t.label}</button>`).join('');
+
+  return `
+    <div class="mm-section-title">Tone Mapping</div>
+    <div class="mm-choice-grid cols-5">${tmBtns}</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Exposure</span>
+      <input type="range" id="mm-exposure" min="0" max="300" step="5" value="${Math.round(exposure*100)}">
+      <span class="mm-val" id="mm-exposure-val">${exposure.toFixed(2)}</span>
+    </div>
+
+    <div class="mm-section-title">Mesh</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Curvature</span>
+      <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature*20)}">
+      <span class="mm-val" id="mm-curvature-val">${Math.round(curvature*20)}</span>
+    </div>
+
+    <div class="mm-section-title">Ground Plane</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Grid Opacity</span>
+      <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
+      <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Grid Occluded Opacity</span>
+      <input type="range" id="mm-grid-occ-opacity" min="0" max="100" step="5" value="${Math.round(gridOccOpacity*100)}">
+      <span class="mm-val" id="mm-grid-occ-opacity-val">${gridOccOpacity.toFixed(2)}</span>
+    </div>
+
+    <div class="mm-section-title">Blendshapes</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-bs-backup">Backup Shapes</button>
+      <button class="mm-action-btn" id="mm-bs-restore">Restore Shapes</button>
+    </div>
+  `;
+}
+
+// The matching wiring, so neither page can gain a control the other cannot operate.
+export function wireSharedSettings(el, main, paint) {
+  const q = (id) => el.querySelector(id);
+  wireSlider(q('#mm-curvature'), q('#mm-curvature-val'), (v) => {
+    const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [main.getMesh?.()];
+    ms?.forEach((m) => m?.setCurvature?.(v / 20)); main.render?.();
+  }, null, paint);
+  wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
+    main.setGridOpacity?.(v / 100);
+  }, (v) => (v / 100).toFixed(2), paint);
+  // The part of the grid drawn BEHIND objects, on its own number rather than a fraction of the
+  // one above -- see Scene.setGridOccludedOpacity.
+  wireSlider(q('#mm-grid-occ-opacity'), q('#mm-grid-occ-opacity-val'), (v) => {
+    main.setGridOccludedOpacity?.(v / 100);
+  }, (v) => (v / 100).toFixed(2), paint);
+  wireSlider(q('#mm-exposure'), q('#mm-exposure-val'), (v) => {
+    main.setExposure?.(v / 100); main.render?.();
+  }, (v) => (v / 100).toFixed(2), paint);
+  el.querySelectorAll('[data-tonemap]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      main.setToneMapping?.(parseInt(btn.dataset.tonemap, 10));
+      el.querySelectorAll('[data-tonemap]').forEach((b) => b.classList.toggle('active', b === btn));
+      paint?.();
+    });
+  });
+  q('#mm-bs-backup')?.addEventListener('click', () => {
+    window.bsBackup?.();
+    window.screenLog?.('Blendshapes backed up', 'lime');
+  });
+  q('#mm-bs-restore')?.addEventListener('click', () => {
+    window.bsRestore?.();
+    window.screenLog?.('Blendshapes restored from backup', 'cyan');
+  });
+}
+
 function buildMenuHTML_settings(main) {
   const gx  = main._guiXR ?? main.getGuiXR?.();
   const ui  = gx?._uiSettings ?? {};
@@ -1999,32 +2085,7 @@ function buildMenuHTML_settings(main) {
 
     ${buildWireframeSectionHTML(main)}
 
-    <div class="mm-section-title">Tone Mapping</div>
-    <div class="mm-choice-grid cols-5">${tmBtns}</div>
-    <div class="mm-row">
-      <span class="mm-lbl">Exposure</span>
-      <input type="range" id="mm-exposure" min="0" max="300" step="5" value="${Math.round(exposure*100)}">
-      <span class="mm-val" id="mm-exposure-val">${exposure.toFixed(2)}</span>
-    </div>
-
-    <div class="mm-section-title">Mesh</div>
-    <div class="mm-row">
-      <span class="mm-lbl">Curvature</span>
-      <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature*20)}">
-      <span class="mm-val" id="mm-curvature-val">${Math.round(curvature*20)}</span>
-    </div>
-
-    <div class="mm-section-title">Ground Plane</div>
-    <div class="mm-row">
-      <span class="mm-lbl">Grid Opacity</span>
-      <input type="range" id="mm-grid-opacity" min="0" max="100" step="5" value="${Math.round(gridOpacity*100)}">
-      <span class="mm-val" id="mm-grid-opacity-val">${gridOpacity.toFixed(2)}</span>
-    </div>
-    <div class="mm-row">
-      <span class="mm-lbl">Grid Occluded Opacity</span>
-      <input type="range" id="mm-grid-occ-opacity" min="0" max="100" step="5" value="${Math.round(gridOccOpacity*100)}">
-      <span class="mm-val" id="mm-grid-occ-opacity-val">${gridOccOpacity.toFixed(2)}</span>
-    </div>
+    ${buildSharedSettingsHTML(main)}
 
     <div class="mm-section-title">Menu</div>
     <div class="mm-row">
@@ -2042,10 +2103,6 @@ function buildMenuHTML_settings(main) {
       <input type="range" id="mm-menu-gamma" min="0" max="100" step="5" value="${Math.round(menuGamma*100)}">
       <span class="mm-val" id="mm-menu-gamma-val">${Math.round(menuGamma*100)}%</span>
     </div>
-
-    <div class="mm-section-title">Blendshapes</div>
-    <button class="mm-action-btn" id="mm-bs-backup">Backup Shapes</button>
-    <button class="mm-action-btn" id="mm-bs-restore">Restore Shapes</button>
 
     ${buildAudioSectionHTML((id, label, on) =>
       `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`)}
@@ -3454,34 +3511,10 @@ export class MainMenuPanel extends HTMLVRPanel {
     // copied from wireSectionRendering rather than shared, because that function wires a SECTION
     // and this wires a MENU, and the two are reached by different routes. The ids are unique, so
     // the pair cannot both be live at once.
-    // Curvature moved here from Rendering: matt reports it does nothing in VR, so it is a
-    // desktop-only tuning control rather than something to keep beside the daily switches.
-    wireSlider(q('#mm-curvature'), q('#mm-curvature-val'), (v) => {
-      const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [main.getMesh?.()];
-      ms?.forEach(m => m?.setCurvature?.(v / 20)); main.render?.();
-    }, null);
-
-    wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
-      main.setGridOpacity?.(v / 100);
-    }, (v) => (v / 100).toFixed(2));
-
-    // The part of the grid drawn BEHIND objects, on its own number rather than a fraction of the
-    // one above — see Scene.setGridOccludedOpacity.
-    wireSlider(q('#mm-grid-occ-opacity'), q('#mm-grid-occ-opacity-val'), (v) => {
-      main.setGridOccludedOpacity?.(v / 100);
-    }, (v) => (v / 100).toFixed(2));
-
-    wireSlider(q('#mm-exposure'), q('#mm-exposure-val'), (v) => {
-      main.setExposure?.(v / 100); main.render?.();
-    }, (v) => (v / 100).toFixed(2));
-
-    el.querySelectorAll('[data-tonemap]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        main.setToneMapping?.(parseInt(btn.dataset.tonemap, 10));
-        el.querySelectorAll('[data-tonemap]').forEach(b => b.classList.toggle('active', b === btn));
-        paint();
-      });
-    });
+    // The platform-neutral sections, from the shared pair. Curvature used to carry a note here
+    // saying it was "a desktop-only tuning control" while living in a VR-only page, which is the
+    // contradiction this extraction resolves: it is on both pages now.
+    wireSharedSettings(el, main, paint);
 
     // Relaunch the floating controller-button guide. Clearing _btnLabels forces a
     // rebuild with the CURRENT dominant hand (so toggling Left Hand Mode then re-showing
@@ -3662,14 +3695,6 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Blendshape safety net — snapshot/restore all layer deltas + base (undo-
     // independent). Console helpers aren't reachable in standalone VR, so surface
     // them here. screenLog gives on-device confirmation.
-    q('#mm-bs-backup')?.addEventListener('click', () => {
-      window.bsBackup?.();
-      window.screenLog?.('Blendshapes backed up', 'lime');
-    });
-    q('#mm-bs-restore')?.addEventListener('click', () => {
-      window.bsRestore?.();
-      window.screenLog?.('Blendshapes restored from backup', 'cyan');
-    });
   }
 
   // ── Section event wiring ───────────────────────────────────────────────────
@@ -5300,6 +5325,8 @@ export function buildMenuHTML_desktopSettings(main) {
 
   return `${ipadSection}${physSection}
     ${buildWireframeSectionHTML(main)}
+    ${/* The four platform-neutral sections, which until now existed only in the headset. */ ''}
+    ${buildSharedSettingsHTML(main)}
     <div class="mm-section-title">Numeric Input</div>
     ${chk('Always show numpad', opts.alwaysNumpad)}
     <div class="mm-section-title">Pen Pressure</div>
@@ -5333,6 +5360,10 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   // The wireframe block, same code as the VR panel. No dirty hook: this menu is live DOM rather
   // than a rasterised texture, so there is nothing to mark.
   wireWireframeSection(el, main, repaintFn);
+
+  // ...and the four platform-neutral sections, from the same builder the VR page uses, so a
+  // control cannot exist on one page and be inoperable on the other.
+  wireSharedSettings(el, main, repaintFn);
 
   const wireCheck = (id, optKey, windowKey) => {
     q(id)?.addEventListener('change', (e) => {
