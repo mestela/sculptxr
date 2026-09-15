@@ -1,6 +1,7 @@
 import TR from './GuiTR.js';
 import { TAB_ICONS } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
+import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen } from './htmlvr/uiTokens.js';
 
 // The tab the sidebar opens on when nothing has been remembered and nothing is pinned.
 const DESKTOP_DEFAULT_TAB = 'sculpting';
@@ -25,6 +26,7 @@ import {
   buildMenuHTML_history,    wireMenuHistory,
   buildMenuHTML_background, wireMenuBackground,
   buildMenuHTML_reference,  wireMenuReference,
+  buildMenuHTML_view,
   buildMenuHTML_desktopSettings, wireMenuDesktopSettings,
   buildMenuHTML_about,    wireMenuAbout,
 } from './htmlvr/MainMenuPanel.js';
@@ -433,7 +435,21 @@ class Gui {
     const propertiesTab = createTab('properties', 'Properties');
     const animationTab = createTab('animation', 'Animation');
     const blendshapesTab = createTab('blendshapes', 'Blendshapes');
+    applyUISweep();
     const timelineTab  = createTab('timeline',  'Timeline');
+
+    // UI REORG MOCKUP: Rendering and Camera move into the View menu, so their tabs go. Hidden
+    // rather than not created, because the panels, the pin/float machinery and the default-tab
+    // fallback below all still look them up by name -- removing the tabs would mean touching
+    // every one of those, for a layout experiment.
+    //
+    // DESKTOP NEEDS A RELOAD to change this, unlike VR: the sidebar's strip is assembled once
+    // here at startup, while the VR panel keeps both layouts in its markup and picks one with a
+    // class. The Settings toggle says so on its label.
+    if (uiReorg()) {
+      renderingTab.style.display = 'none';
+      cameraTab.style.display = 'none';
+    }
 
     // WHICH TAB OPENS.
     //
@@ -683,8 +699,20 @@ class Gui {
     const menuDefs = [
       { id: 'files',      label: 'Files ▾',      buildFn: buildMenuHTML_files,      wireFn: wireMenuFiles,      extraArgs: [() => openBrowserSavesDOMOverlay(main)] },
       { id: 'history',    label: 'History ▾',    buildFn: buildMenuHTML_history,    wireFn: wireMenuHistory },
-      { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
-      { id: 'reference',  label: 'Reference ▾',  buildFn: buildMenuHTML_reference,  wireFn: wireMenuReference },
+      // UI REORG MOCKUP: Background, Reference, Rendering and Camera are one category -- how
+      // the scene is lit, drawn, framed and referenced -- and all four are set once and left.
+      // Two were menus and two were tabs, which is exactly the split this is trying to remove.
+      ...(uiReorg()
+        ? [{ id: 'view', label: 'View ▾', buildFn: buildMenuHTML_view,
+             wireFn: (el, main, repaint) => {
+               wireSectionRendering(el, main, repaint, repaint, repaint);
+               wireMenuBackground(el, main, repaint);
+               wireMenuReference(el, main, repaint);
+             } }]
+        : [
+          { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
+          { id: 'reference',  label: 'Reference ▾',  buildFn: buildMenuHTML_reference,  wireFn: wireMenuReference },
+        ]),
       { id: 'settings',   label: 'Settings ▾',   buildFn: buildMenuHTML_desktopSettings, wireFn: wireMenuDesktopSettings },
       { id: 'about',      label: 'About ▾',      buildFn: buildMenuHTML_about,      wireFn: wireMenuAbout },
     ];
@@ -798,7 +826,18 @@ class Gui {
     const main    = this._main;
     const rebuild = () => {
       dd.innerHTML = def.buildFn(main);
+      // THE DESKTOP MENUS ARE A THIRD RENDERING PATH. The sidebar's tab panels go through
+      // _decorateDesktopSection and the VR panel through _rebuildContent; these dropdowns go
+      // through neither, so Settings kept every section expanded on desktop while the same
+      // builder collapsed cleanly in the headset. matt: "settings looks unchanged on desktop."
+      //
+      // Third time this session that a change landed on two of the three roots and quietly
+      // missed one. The three paths are the thing to remember about this codebase's UI.
+      if (uiReorg()) groupSectionTitles(dd, { defaultOpen: pageDefaultOpen(def.id) });
       def.wireFn(dd, main, rebuild, ...(def.extraArgs ?? []));
+      // Wired AFTER the builder's own pass, and covering both kinds of heading: the ones
+      // groupSectionTitles just created and the ones a builder emitted itself (View).
+      wireGroups(dd, () => {});
     };
     rebuild();
   }
@@ -1089,6 +1128,11 @@ class Gui {
   }
 
   _decorateDesktopSection(panelEl, sectionId) {
+    // EVERY desktop section passes through here, which is why the group wiring lives here and
+    // not in each builder: the sidebar renders the same shared markup the VR panels do, and it
+    // was the one of the three roots with nothing listening.
+    if (uiReorg()) groupSectionTitles(panelEl, { defaultOpen: false });
+    wireGroups(panelEl, () => {});
     panelEl.insertAdjacentHTML('afterbegin', sectionHeaderHTML(sectionId));
     panelEl.querySelector('#mm-section-pin-btn')
       ?.addEventListener('click', () => this.floatSection(sectionId));

@@ -6,6 +6,7 @@ import PhysicsBones from '../editing/PhysicsBones.js';
 import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
+import { collapsibleHTML, uiReorg } from './htmlvr/uiTokens.js';
 
 // The Bones tool's controls, in ONE place, for every panel that shows them.
 //
@@ -169,6 +170,117 @@ export function buildBoneAuthoringHTML(main, style) {
   //
   // Nothing is removed, only placed. The main menu still shows every control.
   const full = style !== 'mp';
+
+  // ── UI REORG MOCKUP: the same blocks, grouped by how often you touch them ──────────────
+  //
+  // The panel crams two orthogonal axes into one column -- pointer MODE (seven of them) and
+  // lifecycle STAGE (author, skin, pose, physics, display) -- which is why it reads as a wall
+  // rather than as a long list.
+  //
+  // So: the mode row and the snaps stay put, because they are what you touch every few
+  // seconds. Setup and Physics become groups. Collapsed rather than tabbed, because you
+  // genuinely do cross between these -- bind, pose, find the weights wrong, go back -- and a
+  // tab punishes that while a collapse does not.
+  //
+  // BOTH DEFAULT CLOSED, and Physics only became so after measuring. Open, it made the WRIST
+  // panel taller than the layout it replaced (458px -> 492px): `full` had already kept Setup,
+  // Bind and the skin sliders off the wrist, so there was nothing there left to collapse and
+  // the group contributed a heading and nothing else. Closed, the heading replaces the two
+  // buttons it hides and the panel gets shorter instead.
+  //
+  // The state is sticky per session (see groupOpen), so opening it once while tuning a jiggle
+  // keeps it open for as long as that matters.
+  if (uiReorg()) {
+    const setupBody = `
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
+      <button class="${c.action}" id="bone-skin">Make Skin</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
+      ${bound ? '<button class="' + c.action + '" id="bone-unbind">Unbind</button>' : ''}
+    </div>
+    ${anyBound ? `
+    <div class="${c.row}">
+      <span class="${c.lbl}">X-Ray</span>
+      <input type="range" id="bone-xray" min="5" max="100" step="1" value="${xray}">
+      <span class="${c.val}" id="bone-xray-val">${xray}%</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Mush</span>
+      <input type="range" id="bone-mush" min="0" max="60" step="1" value="${mush}">
+      <span class="${c.val}" id="bone-mush-val">${mush}</span>
+    </div>` : `
+    <div class="${c.row}" style="opacity:0.6">
+      <span class="${c.lbl}">X-Ray / Mush</span>
+      <span class="${c.val}" style="flex:1;text-align:left">need a bound mesh, press Bind</span>
+    </div>`}`;
+
+    const physBody = `
+    <div class="${c.btnRow}">
+      <button class="${c.action}${physOn ? ' active' : ''}" id="bone-phys">${physOn ? 'Physics On' : 'Physics Bone'}</button>
+      <button class="${c.action}" id="bone-phys-bake">Bake Physics</button>
+    </div>
+    ${physTarget ? `
+    ${sectionTitle(c, 'Physics: ' + physName)}
+    <div class="${c.row}">
+      <span class="${c.lbl}">Weight</span>
+      <input type="range" id="bone-phys-weight" min="0" max="100" step="1" value="${Math.round(physW * 100)}">
+      <span class="${c.val}" id="bone-phys-weight-val">${Math.round(physW * 100)}</span>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-phys-key">Key Weight</button>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Stiffness</span>
+      <input type="range" id="bone-phys-stiff" min="1" max="99" step="1" value="${Math.round(physP.stiffness * 100)}">
+      <span class="${c.val}" id="bone-phys-stiff-val">${Math.round(physP.stiffness * 100)}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Gravity</span>
+      <input type="range" id="bone-phys-grav" min="0" max="300" step="5" value="${Math.round(physP.gravity * 100)}">
+      <span class="${c.val}" id="bone-phys-grav-val">${physP.gravity.toFixed(2)}g</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Damping</span>
+      <input type="range" id="bone-phys-damp" min="0" max="99" step="1" value="${Math.round(physP.damping * 100)}">
+      <span class="${c.val}" id="bone-phys-damp-val">${Math.round(physP.damping * 100)}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Follow${xpbd ? ' (n/a)' : ''}</span>
+      <input type="range" id="bone-phys-inert" min="0" max="100" step="1" value="${Math.round(physP.inertia * 100)}"${xpbd ? ' disabled' : ''}>
+      <span class="${c.val}" id="bone-phys-inert-val">${Math.round(physP.inertia * 100)}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Drag</span>
+      <input type="range" id="bone-phys-drag" min="0" max="100" step="1" value="${Math.round(physP.drag * 100)}">
+      <span class="${c.val}" id="bone-phys-drag-val">${Math.round(physP.drag * 100)}</span>
+    </div>
+    <div class="${c.toggles}">
+      ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
+      ${flagButton(c, 'phys-collide', 'Self Collision', physP.collide)}
+    </div>` : ''}`;
+
+    return `
+    ${sectionTitle(c, 'Rig Authoring')}
+    <div class="${c.grid}">${modeBtns}</div>
+    ${roundTarget ? `<div class="${c.row}">
+      <span class="${c.lbl}">Sharpness (${roundName})</span>
+      <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
+      <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
+    </div>` : ''}
+    <div class="${c.toggles}">
+      ${flagButton(c, 'snap', 'Snap Plane', snap)}
+      ${flagButton(c, 'axis', 'Snap Axis', axis)}
+      ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
+    </div>
+    ${full ? collapsibleHTML('bone-setup', 'Setup', setupBody, false) : ''}
+    ${collapsibleHTML('bone-physics', 'Physics', physBody, false)}
+  `;
+  }
 
   return `
     ${sectionTitle(c, 'Rig Authoring')}

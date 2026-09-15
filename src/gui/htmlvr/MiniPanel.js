@@ -23,6 +23,8 @@ import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
+import { toolLabel }  from './toolLists.js';
+import { wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
@@ -79,42 +81,40 @@ function pathChannelHTML() {
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
-const TOOL_NAMES = {
-  [Enums.Tools.BRUSH]:        'Brush',
-  [Enums.Tools.INFLATE]:      'Inflate',
-  [Enums.Tools.TWIST]:        'Twist',
-  [Enums.Tools.SMOOTH]:       'Smooth',
-  [Enums.Tools.FLATTEN]:      'Flatten',
-  [Enums.Tools.PINCH]:        'Pinch',
-  [Enums.Tools.CREASE]:       'Crease',
-  [Enums.Tools.DRAG]:         'Drag',
-  [Enums.Tools.RELAX]:        'Relax',
-  [Enums.Tools.PAINT]:        'Paint',
-  [Enums.Tools.MOVE]:         'Move',
-  [Enums.Tools.MASKING]:      'Masking',
-  [Enums.Tools.LOCALSCALE]:   'Scale',
-  [Enums.Tools.TRANSFORM]:    'Transform',
-  [Enums.Tools.VOXEL]:        'Voxel',
-  [Enums.Tools.GRAB]:         'Grab',
-  [Enums.Tools.TRANSFORM_VR]: 'Transform',
-  [Enums.Tools.SLIDE]:        'Slide',
-  [Enums.Tools.DELETE_FACE]:  'Del Face',
-  [Enums.Tools.FILL_HOLE]:    'Fill Hole',
-  [Enums.Tools.DISSOLVE_EDGE]:'Dis.Edge',
-  [Enums.Tools.SPLIT_FACE]:   'Split',
-  [Enums.Tools.SPIN_EDGE]:    'Spin',
-  [Enums.Tools.COLLAPSE_EDGE]:'Col.Edge',
-  [Enums.Tools.DISSOLVE_VERTEX]:'Dis.Vert',
-  [Enums.Tools.WELD]:         'Weld',
-  [Enums.Tools.CUT_TOOL]:     'Cut',
-  [Enums.Tools.EXTRUDE]:      'Extrude',
-  [Enums.Tools.INSET]:        'Inset',
-  [Enums.Tools.BONE_DRAW]:    'Bones',
-};
-const toolName = (id) => TOOL_NAMES[id] ?? `Tool ${id}`;
+// FROM THE REGISTRY, NOT A SECOND COPY. This file used to carry its own TOOL_NAMES map, which
+// is how the wrist panel came to call the Select tool "Tool 35": SELECT was appended to the
+// enum and added to toolLists, and nothing made this copy follow. See TOOL_LABELS.
+const toolName = (id) => toolLabel(id);
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
+/* Collapsible group headings (ui reorg mockup). The markup comes from uiTokens.collapsibleHTML,
+   which the bone panel emits into BOTH panels, so the wrist needs the same rules -- the two
+   panels do not share a stylesheet. Sized down for this panel's narrower column. */
+.mm-group-head {
+  display: flex; align-items: center; gap: 5px; width: 100%;
+  margin: 5px 0 2px 0; padding: 3px 3px;
+  background: none; border: 0; border-radius: 4px;
+  color: #a6adc8; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  cursor: pointer; text-align: left;
+}
+.mm-group-head:hover, .mm-group-head.hover { background: #313244; color: #cdd6f4; }
+.mm-group-chev { font-size: 8px; width: 9px; flex-shrink: 0; color: #6c7086; }
+/* COLLAPSED MEANS HIDDEN, WHATEVER ELSE IS SAID ABOUT THE ELEMENT.
+   Without the !important this rule LOSES. A collapsed body that directly contains a row or a
+   button matches the density container selector, which resolves to display:flex, and that
+   selector scores (0,3,0) against this rule's (0,2,0) -- so the section carried the class,
+   reported itself collapsed, and rendered in full.
+   It only bit the VR main panel, because .mm-dense is on #mm-content and nowhere else: the
+   desktop sidebar and the animation panel were always right, which is exactly the shape matt
+   reported -- "on gxr in vr, almost every section, both menus and panels, are fully expanded"
+   while the desktop looked correct.
+   The specificity also crept up as the density selectors gained :has() and :not() parts, so
+   this worked earlier in the branch and stopped. window.uiDiag() reports it directly now:
+   collapsedButStillVisible. */
+.mm-group-body.collapsed { display: none !important; }
+
 /* ── MiniPanel — Catppuccin Mocha ──────────────────────────────────── */
 #mp-root {
   width: 240px;
@@ -453,6 +453,10 @@ export class MiniPanel extends HTMLVRPanel {
 
     const root = document.createElement('div');
     root.id = 'mp-root';
+    // The sweep is scoped on a .ui-reorg ANCESTOR, and the rasteriser serialises this root on
+    // its own -- so the class has to be on the root itself or none of the styling reaches VR.
+    applyUISweep();
+    tagReorgRoot(root);
     root.innerHTML = buildHTML();
 
     // Width derived from the shared px/m ratio so fonts match the other panels
@@ -616,6 +620,9 @@ export class MiniPanel extends HTMLVRPanel {
     const sm  = main.getSculptManager?.();
     const idx = sm?.getToolIndex?.() ?? -1;
 
+    // Collapsible groups emitted by the shared bone panel (ui reorg mockup).
+    wireGroups(extras, () => this.markDirty());
+
     // ── Brush extras ───────────────────────────────────────────────────────
     if (idx === Enums.Tools.BRUSH) {
       const makeToolToggle = (id, prop) => {
@@ -678,9 +685,13 @@ export class MiniPanel extends HTMLVRPanel {
       grabBtn('#mp-grab-rotate', 'rotate');
       // Same entry point the main menu uses, so the two cannot drift: press to arm, press again
       // to cancel, and the viewport completes it.
-      extrasEl.querySelector('#mp-set-parent')?.addEventListener('click', () => {
+      // `extras`, not `extrasEl`. This function's local is `extras`; `extrasEl` is the PARAMETER
+      // name over in _syncExtrasActive, and it does not exist here -- so this line threw a
+      // ReferenceError out of _wireExtras every time the Grab extras were wired, killing Set
+      // Parent on the wrist and everything after the call in syncFromState with it.
+      extras.querySelector('#mp-set-parent')?.addEventListener('click', () => {
         RigPending.toggle(this._main, 'parent');
-        extrasEl.querySelector('#mp-set-parent')
+        extras.querySelector('#mp-set-parent')
           ?.classList.toggle('active', this._main?._rigPendingMode === 'parent');
       });
     }

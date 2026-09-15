@@ -15,6 +15,7 @@
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import { faIcon } from './faIcons.js';
+import { uiReorg, groupSectionTitles, wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
 import TimelineHelper from '../TimelineHelper.js';
 import IKSolver from '../../editing/IKSolver.js';
 import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
@@ -27,9 +28,9 @@ import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bon
 const CSS = `
 /* ── Animation section — Catppuccin Mocha ───────────────────────────────── */
 .acp-root {
-  color: #cdd6f4;
+  color: var(--ui-text);
   font-family: system-ui, -apple-system, sans-serif;
-  font-size: 12px;
+  font-size: var(--ui-ctl-fs);
   user-select: none;
 }
 .acp-root .acp-section {
@@ -41,10 +42,81 @@ const CSS = `
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #585b70;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--ui-ctl-border);
   padding-bottom: 4px;
   margin-bottom: 8px;
 }
+/* ── DENSITY (ui reorg mockup) ───────────────────────────────────────────────
+   THE PANEL HAD NO DENSITY MODEL: every control claimed a full row, and the exceptions were
+   hand-made per section as fixed column counts. Two things follow from that. Short controls
+   waste the row -- "Count in" is a 67px checkbox sitting alone across 290px -- and a hardcoded
+   two-column rule can only be right at ONE width, while these builders render into a 410px
+   main panel AND a 240px wrist panel.
+
+   So: auto-fit grids instead of fixed counts, and packing is opt-in per control class rather
+   than a blanket change to the container. Density then follows the width it is actually given
+   and there is one set of markup for both.
+
+   matt: "a lot of other sections feel like we're wasting a lot of horizontal space ... many
+   buttons and sliders don't need to be on a single row." */
+
+/* Checkboxes pack. They are the worst offenders: 14px tall, 67-176px wide, one per row. */
+.acp-root.acp-dense .acp-stack {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+/* DEFAULT STAYS "OWN ROW". Inverting the default would repack every control in the panel
+   including the ones that need their width, so the flip is opt-in and everything else is
+   explicitly held at full width. */
+.acp-root.acp-dense .acp-stack > * { flex: 1 1 100%; min-width: 0; }
+.acp-root.acp-dense .acp-stack > .acp-check-row { flex: 0 1 auto; }
+
+/* Numeric fields: label BESIDE the input, not above it. The stack was costing a 13px label
+   line plus a gap for a value that is never more than three characters, so five of these ran
+   to 100px of height for what is now about half that. */
+.acp-root.acp-dense .acp-frame-grid {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+/* THE FIELD ROW SIZES TO ITS CONTENT. auto-fit with a 1fr track still hands every field an
+   equal share of the panel, which is how a two-digit FPS ended up in a 130px box. Flex with a
+   fixed field width and wrapping lets each cell take only what it needs, and the row then
+   holds as many as the width allows -- more at 410px than at 240px, from one set of markup. */
+.acp-root.acp-dense .acp-frame-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.acp-root.acp-dense .acp-frame-fields .acp-frame-cell { flex: 0 0 auto; }
+/* Wide enough for five digits at the control type size, which covers a frame count nobody
+   will reach; tabular-nums means the glyphs are all one width so this cannot be wrong by a
+   character. */
+.acp-root.acp-dense .acp-frame-fields input[type=number] {
+  flex: 0 0 auto;
+  width: 56px;
+  text-align: right;
+}
+.acp-root.acp-dense .acp-frame-cell {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.acp-root.acp-dense .acp-frame-cell label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.acp-root.acp-dense .acp-frame-cell input[type=number] {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
+  text-align: right;
+}
+
 .acp-root .acp-stack {
   display: flex;
   flex-direction: column;
@@ -58,20 +130,20 @@ const CSS = `
 .acp-root .acp-lbl {
   width: 80px;
   font-size: 11px;
-  color: #a6adc8;
+  color: var(--ui-text-dim);
   flex-shrink: 0;
 }
 .acp-root .acp-val {
   width: 36px;
   text-align: right;
   font-size: 11px;
-  color: #89b4fa;
+  color: var(--ui-accent);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .acp-root input[type=range] {
   flex: 1;
-  accent-color: #89b4fa;
+  accent-color: var(--ui-accent);
   height: 4px;
   cursor: pointer;
   min-width: 0;
@@ -88,41 +160,41 @@ const CSS = `
 }
 .acp-root .acp-frame-cell label {
   font-size: 10px;
-  color: #6c7086;
+  color: var(--ui-text-dim);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 .acp-root .acp-frame-cell input[type=number] {
   width: 100%;
-  padding: 5px 8px;
-  background: #181825;
-  border: 1px solid #313244;
-  border-radius: 6px;
-  color: #cdd6f4;
-  font-size: 13px;
+  padding: 0 6px;
+  background: var(--ui-ctl-bg);
+  border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r);
+  color: var(--ui-text);
+  font-size: var(--ui-ctl-fs);
   font-variant-numeric: tabular-nums;
   box-sizing: border-box;
   outline: none;
 }
-.acp-root .acp-frame-cell input[type=number]:focus { border-color: #89b4fa; }
+.acp-root .acp-frame-cell input[type=number]:focus { border-color: var(--ui-accent); }
 .acp-root .acp-row input[type=number] {
-  flex: 1; min-width: 0; padding: 5px 8px;
-  background: #181825; border: 1px solid #313244; border-radius: 6px;
-  color: #cdd6f4; font-size: 13px; font-variant-numeric: tabular-nums;
+  flex: 1; min-width: 0; padding: 0 6px;
+  background: var(--ui-ctl-bg); border: 1px solid var(--ui-ctl-border); border-radius: var(--ui-ctl-r);
+  color: var(--ui-text); font-size: var(--ui-ctl-fs); font-variant-numeric: tabular-nums;
   box-sizing: border-box; outline: none;
 }
-.acp-root .acp-row input[type=number]:focus { border-color: #89b4fa; }
+.acp-root .acp-row input[type=number]:focus { border-color: var(--ui-accent); }
 .acp-root .acp-check-row {
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-size: 12px;
-  color: #a6adc8;
+  font-size: var(--ui-ctl-fs);
+  color: var(--ui-text-dim);
 }
 .acp-root .acp-check-row input[type=checkbox] {
   width: 14px; height: 14px;
-  accent-color: #89b4fa;
+  accent-color: var(--ui-accent);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -141,7 +213,7 @@ const CSS = `
 }
 .acp-root .acp-key-inspector .acp-frame-cell label {
   font-size: 10px;
-  color: #888;
+  color: var(--ui-text-dim);
   white-space: nowrap;
   min-width: 10px;
   text-align: right;
@@ -160,10 +232,12 @@ const CSS = `
 }
 .acp-root .acp-transport button {
   padding: 9px 0;
-  border: 1px solid #313244;
-  border-radius: 6px;
-  background: #181825;
-  color: #a6adc8;
+  border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r);
+  background: var(--ui-ctl-bg);
+  color: var(--ui-text-dim);
+  /* An ICON size, not the control type size: a glyph and a word do not read the same at one
+     value. The only deliberate exception to the type scale in this file. */
   font-size: 13px;
   cursor: pointer;
   text-align: center;
@@ -171,8 +245,8 @@ const CSS = `
   transition: background 0.1s, color 0.1s;
 }
 .acp-root .acp-transport button:hover,
-.acp-root .acp-transport button.hover    { background: #24243e; color: #cdd6f4; }
-.acp-root .acp-transport button.active   { background: #313244; color: #a6e3a1; border-color: #a6e3a1; }
+.acp-root .acp-transport button.hover    { background: var(--ui-ctl-bg-hover); color: var(--ui-text); }
+.acp-root .acp-transport button.active   { background: var(--ui-ctl-bg-active); color: var(--ui-text); border-color: var(--ui-accent); }
 .acp-root .acp-transport button.recording { background: #3d1e2e; color: #f38ba8; border-color: #f38ba8; }
 .acp-root .acp-transport button.armed { background: #3d3320; color: #f9e2af; border-color: #f9e2af; }
 .acp-root .acp-btn-grid {
@@ -182,10 +256,10 @@ const CSS = `
 .acp-root .acp-btn-grid button {
   flex: 1;
   padding: 8px 4px;
-  border: 1px solid #313244;
-  border-radius: 6px;
-  background: #181825;
-  color: #a6adc8;
+  border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r);
+  background: var(--ui-ctl-bg);
+  color: var(--ui-text-dim);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
@@ -194,43 +268,47 @@ const CSS = `
   transition: background 0.1s;
 }
 .acp-root .acp-btn-grid button:hover,
-.acp-root .acp-btn-grid button.hover { background: #24243e; color: #cdd6f4; }
-.acp-root .acp-btn-grid button.active { background: #313244; color: #cba6f7; border-color: #cba6f7; }
+.acp-root .acp-btn-grid button.hover { background: var(--ui-ctl-bg-hover); color: var(--ui-text); }
+.acp-root .acp-btn-grid button.active { background: var(--ui-ctl-bg-active); color: var(--ui-text); border-color: var(--ui-accent); }
 /* Nothing selected to act on. Dimmed rather than hidden: the button moving or vanishing would
    reflow the grid, and a control that comes and goes is harder to aim at than one that greys. */
 .acp-root .acp-btn-grid button.acp-dim { opacity: 0.35; cursor: default; }
-.acp-root .acp-btn-grid button.acp-dim:hover { background: #181825; color: inherit; }
+.acp-root .acp-btn-grid button.acp-dim:hover { background: var(--ui-ctl-bg); color: inherit; }
 .acp-root .acp-btn-grid button.danger { color: #f38ba8; border-color: #f38ba8; }
 .acp-root .acp-btn-grid button.danger:hover,
 .acp-root .acp-btn-grid button.danger.hover { background: #3d1e2e; }
 .acp-root .acp-select { width: 100%; }
 .acp-root .acp-select-trigger {
   width: 100%; padding: 5px 8px; box-sizing: border-box;
-  background: #181825; color: #cdd6f4; border: 1px solid #313244;
-  border-radius: 6px; font-size: 11px; cursor: pointer; text-align: left;
+  background: var(--ui-ctl-bg); color: var(--ui-text); border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r); font-size: 11px; cursor: pointer; text-align: left;
   display: flex; justify-content: space-between; align-items: center; outline: none;
 }
 .acp-root .acp-select-trigger::after { content: ' ▾'; color: #585b70; flex-shrink: 0; }
 .acp-root .acp-select-opts {
-  border: 1px solid #313244; border-top: none; border-radius: 0 0 6px 6px;
-  background: #181825; overflow: hidden;
+  border: 1px solid var(--ui-ctl-border); border-top: none; border-radius: 0 0 6px 6px;
+  background: var(--ui-ctl-bg); overflow: hidden;
 }
 .acp-root .acp-select-opt {
   display: block; width: 100%; text-align: left; padding: 6px 12px;
-  background: transparent; color: #a6adc8; border: none; font-size: 11px;
+  background: transparent; color: var(--ui-text-dim); border: none; font-size: 11px;
   cursor: pointer; box-sizing: border-box; outline: none;
 }
 .acp-root .acp-select-opt:hover,
-.acp-root .acp-select-opt.hover { background: #24243e; color: #cdd6f4; }
-.acp-root .acp-select-opt.active { color: #89b4fa; }
+.acp-root .acp-select-opt.hover { background: var(--ui-ctl-bg-hover); color: var(--ui-text); }
+.acp-root .acp-select-opt.active { color: var(--ui-accent); }
+/* NO PURPLE. This button carried a lilac border and lilac text of its own -- the only control
+   in the app in that colour, and nothing was being said by it. The sweep was overriding it only
+   by stylesheet order, which is not a thing to rely on; removed at source instead.
+   matt: "i see on desktop its STILL using purple highlights and other bullshit, get rid of it." */
 .acp-root .acp-btn-full {
   width: 100%;
   padding: 9px;
-  border: 1px solid #cba6f7;
-  border-radius: 6px;
-  background: #181825;
-  color: #cba6f7;
-  font-size: 12px;
+  border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r);
+  background: var(--ui-ctl-bg);
+  color: var(--ui-text);
+  font-size: var(--ui-ctl-fs);
   font-weight: 600;
   cursor: pointer;
   text-align: center;
@@ -238,14 +316,14 @@ const CSS = `
   transition: background 0.1s;
 }
 .acp-root .acp-btn-full:hover,
-.acp-root .acp-btn-full.hover { background: #2a2040; }
+.acp-root .acp-btn-full.hover { background: var(--ui-ctl-bg-hover); }
 .acp-root .acp-btn-clear {
   width: 100%;
   padding: 8px;
-  border: 1px solid #45475a;
-  border-radius: 6px;
-  background: #181825;
-  color: #6c7086;
+  border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r);
+  background: var(--ui-ctl-bg);
+  color: var(--ui-text-dim);
   font-size: 11px;
   cursor: pointer;
   text-align: center;
@@ -257,11 +335,11 @@ const CSS = `
 .acp-root .acp-btn-timeline {
   width: 100%;
   padding: 9px;
-  border: 1px solid #89b4fa;
-  border-radius: 6px;
-  background: #181825;
-  color: #89b4fa;
-  font-size: 12px;
+  border: 1px solid var(--ui-accent);
+  border-radius: var(--ui-ctl-r);
+  background: var(--ui-ctl-bg);
+  color: var(--ui-accent);
+  font-size: var(--ui-ctl-fs);
   font-weight: 600;
   cursor: pointer;
   text-align: center;
@@ -269,18 +347,18 @@ const CSS = `
   transition: background 0.1s, color 0.1s;
 }
 .acp-root .acp-btn-timeline:hover,
-.acp-root .acp-btn-timeline.hover { background: #1a2040; }
-.acp-root .acp-btn-timeline.active { background: #1e2d5a; color: #cdd6f4; border-color: #89b4fa; box-shadow: 0 0 0 1px #89b4fa; }
+.acp-root .acp-btn-timeline.hover { background: var(--ui-ctl-bg-hover); }
+.acp-root .acp-btn-timeline.active { background: var(--ui-ctl-bg-active); color: var(--ui-text); border-color: var(--ui-accent); }
 .acp-root .acp-addkey-row { display: flex; gap: 6px; align-items: stretch; }
 .acp-root .acp-addkey-row .acp-btn-full { flex: 3; width: auto; }
 .acp-root .acp-btn-autokey {
   flex: 1;
   padding: 9px 6px;
   border: 1px solid #757575;
-  border-radius: 6px;
+  border-radius: var(--ui-ctl-r);
   background: #141414;
-  color: #757575;
-  font-size: 12px;
+  color: var(--ui-text-dim);
+  font-size: var(--ui-ctl-fs);
   font-weight: 600;
   cursor: pointer;
   text-align: center;
@@ -288,21 +366,21 @@ const CSS = `
   transition: background 0.1s, color 0.1s;
 }
 .acp-root .acp-btn-autokey:hover,
-.acp-root .acp-btn-autokey.hover { background: #1e1e1e; }
-.acp-root .acp-btn-autokey.active { background: #94e2d5; color: #1e1e2e; border-color: #94e2d5; }
+.acp-root .acp-btn-autokey.hover { background: var(--ui-ctl-bg-hover); }
+.acp-root .acp-btn-autokey.active { background: var(--ui-ctl-bg-active); color: var(--ui-text); border-color: var(--ui-accent); }
 .acp-root .acp-mode-row {
   display: flex;
   gap: 0;
-  border-radius: 6px;
+  border-radius: var(--ui-ctl-r);
   overflow: hidden;
-  border: 1px solid #313244;
+  border: 1px solid var(--ui-ctl-border);
 }
 .acp-root .acp-mode-btn {
   flex: 1;
   padding: 7px 0;
   border: none;
-  background: #181825;
-  color: #6c7086;
+  background: var(--ui-ctl-bg);
+  color: var(--ui-text-dim);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
@@ -310,9 +388,13 @@ const CSS = `
   outline: none;
   transition: background 0.1s, color 0.1s;
 }
-.acp-root .acp-mode-btn.active { background: #313244; color: #cba6f7; }
+.acp-root .acp-mode-btn.active {
+  background: var(--ui-ctl-bg-active);
+  color: var(--ui-text);
+  border-color: var(--ui-accent);
+}
 .acp-root .acp-mode-btn:hover:not(.active),
-.acp-root .acp-mode-btn.hover:not(.active) { background: #24243e; color: #a6adc8; }
+.acp-root .acp-mode-btn.hover:not(.active) { background: var(--ui-ctl-bg-hover); color: var(--ui-text-dim); }
 .acp-root .acp-placeholder {
   font-size: 11px;
   color: #45475a;
@@ -321,22 +403,22 @@ const CSS = `
 }
 .acp-root .acp-bs-create { display: flex; gap: 6px; }
 .acp-root .acp-bs-create input[type=text] {
-  flex: 1; padding: 5px 8px; background: #181825; border: 1px solid #313244;
-  border-radius: 6px; color: #cdd6f4; font-size: 12px; outline: none;
+  flex: 1; padding: 5px 8px; background: var(--ui-ctl-bg); border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r); color: var(--ui-text); font-size: var(--ui-ctl-fs); outline: none;
 }
-.acp-root .acp-bs-create input[type=text]:focus { border-color: #89b4fa; }
+.acp-root .acp-bs-create input[type=text]:focus { border-color: var(--ui-accent); }
 .acp-root .acp-bs-create button {
-  padding: 5px 12px; background: #181825; border: 1px solid #313244;
-  border-radius: 6px; color: #a6e3a1; font-size: 14px; font-weight: 700;
+  padding: 5px 12px; background: var(--ui-ctl-bg); border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r); color: #a6e3a1; font-size: var(--ui-ctl-fs); font-weight: 700;
   cursor: pointer; outline: none; flex-shrink: 0;
 }
-.acp-root .acp-bs-create button:hover { background: #1e3a2a; border-color: #a6e3a1; }
+.acp-root .acp-bs-create button:hover { background: var(--ui-ctl-bg-hover); border-color: #a6e3a1; }
 .acp-root .acp-bs-row {
-  border: 1px solid #313244; border-radius: 7px; padding: 7px 9px; background: #181825;
+  border: 1px solid var(--ui-ctl-border); border-radius: var(--ui-ctl-r); padding: 7px 9px; background: var(--ui-ctl-bg);
 }
 .acp-root .acp-bs-row.editing { border-color: #a6e3a1; background: #131d18; }
 .acp-root .acp-bs-base {
-  border: 1px solid #45475a; border-radius: 7px; padding: 6px 9px; background: #1e1e2e;
+  border: 1px solid var(--ui-ctl-border); border-radius: var(--ui-ctl-r); padding: 6px 9px; background: #1e1e2e;
   display: flex; align-items: center; gap: 6px; cursor: pointer;
 }
 .acp-root .acp-bs-base:hover { border-color: #585b70; }
@@ -346,23 +428,23 @@ const CSS = `
 .acp-root .acp-bs-base.editing .acp-bs-label { color: #a6e3a1; font-style: normal; }
 .acp-root .acp-bs-header { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 .acp-root .acp-bs-num {
-  width: 52px; padding: 3px 5px; background: #1e1e2e; border: 1px solid #313244;
-  border-radius: 5px; color: #89b4fa; font-size: 11px; font-variant-numeric: tabular-nums;
+  width: 52px; padding: 3px 5px; background: #1e1e2e; border: 1px solid var(--ui-ctl-border);
+  border-radius: var(--ui-ctl-r); color: var(--ui-accent); font-size: 11px; font-variant-numeric: tabular-nums;
   text-align: right; outline: none; flex-shrink: 0;
 }
-.acp-root .acp-bs-num:focus { border-color: #89b4fa; }
+.acp-root .acp-bs-num:focus { border-color: var(--ui-accent); }
 .acp-root .acp-bs-rename-input {
-  flex: 1; min-width: 0; padding: 1px 4px; font-size: 12px; font-family: inherit;
-  background: #1e1e2e; color: #cdd6f4; border: 1px solid #89b4fa; border-radius: 3px; outline: none;
+  flex: 1; min-width: 0; padding: 1px 4px; font-size: var(--ui-ctl-fs); font-family: inherit;
+  background: #1e1e2e; color: var(--ui-text); border: 1px solid var(--ui-accent); border-radius: var(--ui-ctl-r); outline: none;
 }
 .acp-root .acp-bs-label {
-  flex: 1; font-size: 12px; color: #cdd6f4; cursor: pointer;
+  flex: 1; font-size: var(--ui-ctl-fs); color: var(--ui-text); cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .acp-root .acp-bs-label:hover { color: #fff; }
 .acp-root .acp-bs-row.editing .acp-bs-label { color: #a6e3a1; }
 .acp-root .acp-bs-edit {
-  width: 14px; height: 14px; border-radius: 50%; border: 2px solid #45475a;
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ui-ctl-border);
   background: transparent; cursor: pointer; outline: none; flex-shrink: 0; padding: 0;
   transition: border-color 0.1s, background 0.1s;
 }
@@ -371,21 +453,21 @@ const CSS = `
   display: flex; gap: 4px; align-items: center;
 }
 .acp-root .acp-bs-toolbar button {
-  flex: 1; padding: 5px 4px; border: 1px solid #313244; border-radius: 6px;
-  background: #181825; color: #a6adc8; font-size: 11px; cursor: pointer; outline: none;
+  flex: 1; padding: 5px 4px; border: 1px solid var(--ui-ctl-border); border-radius: var(--ui-ctl-r);
+  background: var(--ui-ctl-bg); color: var(--ui-text-dim); font-size: 11px; cursor: pointer; outline: none;
   transition: background 0.1s, color 0.1s;
 }
-.acp-root .acp-bs-toolbar button:hover { background: #24243e; color: #cdd6f4; }
-.acp-root #acp-bs-del-btn { color: #6c7086; }
+.acp-root .acp-bs-toolbar button:hover { background: var(--ui-ctl-bg-hover); color: var(--ui-text); }
+.acp-root #acp-bs-del-btn { color: var(--ui-text-dim); }
 .acp-root #acp-bs-del-btn:hover { color: #f38ba8; border-color: #f38ba8; background: #3d1e2e; }
 .acp-root .acp-bs-key:hover { color: #ff9944; border-color: #ff9944; background: #3a2a1e; }
-.acp-root .acp-bs-mode { display: flex; border: 1px solid #45475a; border-radius: 5px; overflow: hidden; flex-shrink: 0; }
+.acp-root .acp-bs-mode { display: flex; border: 1px solid var(--ui-ctl-border); border-radius: var(--ui-ctl-r); overflow: hidden; flex-shrink: 0; }
 .acp-root .acp-bs-mode button {
   flex: none; padding: 4px 9px; font-size: 11px; background: transparent; border: none;
-  color: #6c7086; cursor: pointer; outline: none; transition: background 0.1s, color 0.1s;
+  color: var(--ui-text-dim); cursor: pointer; outline: none; transition: background 0.1s, color 0.1s;
 }
-.acp-root .acp-bs-mode button:hover { color: #cdd6f4; }
-.acp-root .acp-bs-mode button.active { background: #313244; color: #cdd6f4; }
+.acp-root .acp-bs-mode button:hover { color: var(--ui-text); }
+.acp-root .acp-bs-mode button.active { background: #313244; color: var(--ui-text); }
 .acp-root .acp-bs-slider:disabled, .acp-root .acp-bs-num:disabled { opacity: 0.3; pointer-events: none; }
 `;
 
@@ -406,12 +488,30 @@ export function injectAnimCSS() {
 // alone, so the Trails toggle existed in the main menu and was unreachable from the desktop
 // sidebar's Animation tab — the same control in one of the two places that show it.
 export function buildAnimationSectionHTML(main, style) {
-  return `<div class="acp-root">
+  // THE DENSITY CLASS GOES ON THIS ROOT, not on an ancestor. The desktop sidebar renders this
+  // same markup into a wa-tab-panel that is nowhere near #mm-root, so a `.ui-reorg .acp-...`
+  // selector would style the VR copy and silently skip the sidebar -- which is the exact shape
+  // of bug the shared-builder rule exists to prevent.
+  return `<div class="acp-root${uiReorg() ? ' acp-dense' : ''}">
     <!-- 1. Animation -->
     <div class="acp-section">
-      <div class="acp-section-title">Animation</div>
+      ${/* "Animation" as a heading INSIDE the animation panel named the panel, not the
+           section. These five fields are the frame range and the rate it plays at, so the
+           heading says that. matt's word. */ ''}
+      <div class="acp-section-title">Frame Range</div>
       <div class="acp-stack">
-        <div class="acp-frame-grid" style="grid-template-columns:repeat(2,1fr)">
+        ${/* ONE ROW OF FIELDS, NOT TWO GRIDS. These five are the same kind of thing -- the
+             numbers that describe the take -- and they were split across a hardcoded
+             two-column grid and a hardcoded three-column one, so each field claimed a third or
+             a half of the panel to hold two digits. matt: "fps and speed take up 1.5 rows for
+             2 labels and 2 numbers that will always be less than 2 digits wide."
+
+             Merged into one container so they can flow together. Under the dense layout the
+             cells size to their CONTENT and wrap, so the row holds as many as the width
+             allows and no column count has to be chosen for a panel that renders at 240px,
+             305px and 410px. The legacy path still sees a plain acp-frame-grid and lays them
+             out three-up exactly as before. */ ''}
+        <div class="acp-frame-grid acp-frame-fields">
           <div class="acp-frame-cell">
             <label>FPS</label>
             <input type="number" id="acp-fps" min="1" max="60" step="1" value="24">
@@ -420,8 +520,6 @@ export function buildAnimationSectionHTML(main, style) {
             <label>Speed</label>
             <input type="number" id="acp-speed" min="0.1" max="4" step="0.1" value="1">
           </div>
-        </div>
-        <div class="acp-frame-grid">
           <div class="acp-frame-cell">
             <label>Duration</label>
             <input type="number" id="acp-duration" min="1" step="1" value="48">
@@ -1628,6 +1726,10 @@ export class AnimationControlPanel extends HTMLVRPanel {
     root.id        = 'acp-root';
     root.className = 'acp-root';
     root.innerHTML = buildAnimationSectionHTML(main, 'acp');
+    // Same reason as the wrist panel: this root is serialised on its own for the rasteriser, so
+    // the sweep's .ui-reorg ancestor has to be the root itself.
+    applyUISweep();
+    tagReorgRoot(root);
 
     super(root, 560 / VR_PANEL_PX_PER_M);
 
@@ -1637,6 +1739,19 @@ export class AnimationControlPanel extends HTMLVRPanel {
     this._lastBsCount     = 0;
 
     this.init(scene, camera, renderer);
+
+    // A FOURTH RENDERING PATH. This panel builds its own root once, here, and hands the same
+    // element to the VR scene AND to the desktop sidebar's Animation tab -- so it goes through
+    // neither MainMenuPanel._rebuildContent, nor Gui._decorateDesktopSection, nor
+    // Gui._openDropdown. Its section titles were the last ones in the app still uncollapsible.
+    //
+    // Grouped BEFORE the wiring runs: moving an element does not lose its listeners, and
+    // _waitForMeshThenWire queries by id against this same root either way.
+    if (uiReorg()) {
+      groupSectionTitles(root, { selector: '.acp-section-title' });
+      wireGroups(root, () => this.markDirty());
+    }
+
     this._waitForMeshThenWire(main);
   }
 

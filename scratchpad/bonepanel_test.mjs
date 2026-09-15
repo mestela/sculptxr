@@ -93,6 +93,28 @@ const SkinMesh = {};
 // Stubbed to "none", which is the state every existing rig is in.
 const WeightCage = { cages: () => (globalThis.__cages || []) };
 const IKSolver = { pinnedJoints: () => [{},{}] };
+// UI REORG MOCKUP. The panel imports these two from uiTokens, and this harness strips every
+// import line -- so without stubs here buildBoneAuthoringHTML throws ReferenceError on the
+// first call and the whole file reports as one failure with no message.
+//
+// uiReorg() is driven by a global so the SAME harness can assert both layouts: set
+// globalThis.__uiReorg to pick one. Defaults to the legacy layout, which is what every check
+// written before this branch is describing.
+const uiReorg = () => !!globalThis.__uiReorg;
+const groupOpen = (key, dflt = true) => {
+  const g = (globalThis.__uiGroups = globalThis.__uiGroups || {});
+  if (g[key] == null) g[key] = dflt;
+  return !!g[key];
+};
+// Same markup the real helper emits, so a check can look for a group by name and can tell an
+// open one from a collapsed one.
+const collapsibleHTML = (key, label, bodyHTML, dflt = true) => {
+  const open = groupOpen(key, dflt);
+  return '<button class="mm-group-head" data-group="' + key + '">'
+    + '<span class="mm-group-chev">' + (open ? '&#9662;' : '&#9656;') + '</span>' + label + '</button>'
+    + '<div class="mm-group-body' + (open ? '' : ' collapsed') + '" data-group-body="' + key + '">'
+    + bodyHTML + '</div>';
+};
 `;
 const mod = await import('data:text/javascript,' + encodeURIComponent(stub + body));
 const {
@@ -199,12 +221,36 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
       && /export function buildSectionHTML_sculpting\(main\) \{ return buildSculptingHTML\(main, 'tools'\); \}/.test(MAIN_SRC)
       && /export function buildSectionHTML_properties\(main\) \{ return buildSculptingHTML\(main, 'props'\); \}/.test(MAIN_SRC),
     'both pages read the same tool state, so two builders would be two things to keep in step');
-  check('...and the tool grids are on exactly one of them',
-    (MAIN_SRC.match(/mm-choice-grid cols-3">\$\{sculptBtns\}/g) || []).length === 1,
-    'the wall of buttons is the thing being moved out of the way');
+  // ANCHORED ON THE INTENT, NOT ON ONE LITERAL. This counted the exact string
+  // `mm-choice-grid cols-3">${sculptBtns}` and demanded exactly one, which said "the grid is
+  // built in one place" when what it means is "the grid is on the TOOLS page and not the props
+  // one". The ui-reorg branch renders the same grid twice inside `part === 'tools'` -- once
+  // plain, once wrapped in a collapsible -- so the count went to two while the thing being
+  // asserted stayed true. Split the function at the tools early-return and ask the real
+  // question of each half.
+  {
+    const fn = MAIN_SRC.slice(MAIN_SRC.indexOf('function buildSculptingHTML(main, part)'));
+    const toolsAt = fn.indexOf("if (part === 'tools')");
+    // Everything from the tools branch to the brush section is the tools half; the props half
+    // is what follows, and it must never mention the grids.
+    const propsAt = fn.indexOf('Brush settings');
+    const toolsHalf = fn.slice(toolsAt, propsAt);
+    const propsHalf = fn.slice(propsAt);
+    check('...and the tool grids are on exactly one of them',
+      toolsAt > 0 && propsAt > toolsAt
+        && /sculptBtns/.test(toolsHalf) && /meshBtns/.test(toolsHalf)
+        && !/sculptBtns|meshBtns/.test(propsHalf),
+      'the wall of buttons is the thing being moved out of the way');
+  }
 
+  // The tab strip used to be one array literal and this matched it whole. It is two arrays now
+  // (the ui-reorg branch moves Rendering and Camera into the View menu and renders their tabs
+  // from a second list), so match the STRIP rather than one spelling of its contents -- the
+  // question is whether 'properties' is a tab at all, not how the list is punctuated.
+  const TABSTRIP = MAIN_SRC.slice(MAIN_SRC.indexOf('<div id="mm-tabstrip">'),
+                                  MAIN_SRC.indexOf('<div id="mm-content">'));
   check('Properties is a real section, not a special case',
-    /'scene','rendering','camera','topology','sculpting','properties'/.test(MAIN_SRC)
+    /'properties'/.test(TABSTRIP) && /'sculpting'/.test(TABSTRIP) && /'scene'/.test(TABSTRIP)
       && /case 'properties': html = buildSectionHTML_properties\(main\); break;/.test(MAIN_SRC)
       && /properties: 'Properties'/.test(MAIN_SRC)
       && /properties: _fa\(/.test(ICONS),
@@ -945,9 +991,30 @@ check('the physics solver is in the shared toggle list',
   'the only way to switch solver in a headset is a console that is not there');
 check('...and it reads the live flag, so it cannot lie after a console switch',
   /get: \(\) => !!window\._physXPBD/.test(MAIN_SRC));
+// ANCHORED ON THE CLAIM, NOT ON ONE CALL SPELLING. This counted the exact text
+// `buildDevToggles((id, label, on) =>` and demanded exactly two, which says "the VR page calls
+// it twice with an inline arrow" when what it means is "both pages render from the shared
+// list". The list is rendered in groups now (ui / trace / other) and the desktop page passes
+// named helpers rather than inline arrows, so the count moved while the claim stayed true.
 check('both panels build their toggles from that list',
-  (MAIN_SRC.match(/buildDevToggles\(\(id, label, on\) =>/g) || []).length === 2,
+  (() => {
+    const vr = MAIN_SRC.slice(MAIN_SRC.indexOf('function buildMenuHTML_settings(main)'),
+                              MAIN_SRC.indexOf('export function buildMenuHTML_desktopSettings'));
+    const dk = MAIN_SRC.slice(MAIN_SRC.indexOf('export function buildMenuHTML_desktopSettings'));
+    return /buildDevToggles\(/.test(vr) && /buildDevToggles\(/.test(dk);
+  })(),
   'a second copy is how the two drifted apart in the first place');
+// ...and every toggle in the list reaches a page. The groups partition the list, so a toggle
+// that matched none of them would render nowhere and be invisible on both platforms.
+check('...and the groups cover the whole list between them',
+  (() => {
+    const m = MAIN_SRC.match(/const want = \(t\) => group == null[\s\S]{0,400}?;/);
+    if (!m) return false;
+    const w = m[0];
+    return /'ui'/.test(w) && /'trace'/.test(w) && /isTrace\(t\) && !isUi\(t\)/.test(w)
+      && /!isTrace\(t\) && !isUi\(t\)/.test(w);
+  })(),
+  'a toggle matching no group renders on neither page');
 check('...and both wire it from the same place',
   /wireDevToggles\(q, paint\);/.test(MAIN_SRC) && /wireDevToggles\(q, repaintFn\);/.test(MAIN_SRC),
   'the VR panel repaints through paint(), the sidebar through repaintFn');

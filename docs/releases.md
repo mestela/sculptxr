@@ -1,3 +1,77 @@
+# v3.41.0
+**The panels become menus you can close.** Every section title in every panel is now a
+collapsible heading, collapsed by default, so a page opens as a list of its own sections instead
+of a scroll. Settings went from an endless column to fourteen headings in one view; the animation
+panel from 697px to 196px. Done as a DOM pass over the built markup rather than edits to a dozen
+builders, so a section added tomorrow is collapsible the day it appears. Open/closed state is
+stored in localStorage and holds **only explicit clicks** — defaults are computed, never written,
+so a default can still be changed later for someone who has already run the app.
+
+**Navigation, rebalanced rather than grown.** The tab strip was doing four jobs at once: switching
+this panel's content, holding set-once config, and launching two other windows entirely. Rendering
+and Camera move into a new **View** menu beside Background and Reference; Blendshapes and Timeline
+drop below a divider as the launchers they are. Nine tabs become five, the menubar six becomes
+five, and the View menu reads as a desktop menu with submenus — which is the shape a panel wants
+when everything has to stay inside the canvas.
+
+**One control vocabulary.** `uiTokens.js` had described itself as the single source of truth for
+the panel look since it was written, and the three big panels referenced **zero** of its
+variables. That is the whole explanation for eleven control heights, nine surfaces and six type
+sizes: there was a system and nobody used it. Now applied — heights 9 → 6, surfaces 9 → 5, type
+sizes 6 → 4 — with one resting surface, one active tint, one radius and one shared left edge, so
+labels line up down the column. The animation panel was a parallel vocabulary of its own and was
+conformed at source: 29 hex colours → 16, **four** different hover greys → one, **four** different
+active looks → one, and its native checkbox replaced with the 13px box the other panels draw.
+
+**Density that follows the width it is given.** These builders render into a 410px main panel, a
+305px sidebar and a 240px wrist panel, and a hardcoded column count can only be right at one of
+them. Field rows size to their content and wrap: the take fields were 100px of two fixed grids and
+are now 66px at the widths in use and 30px when the row fits. The Tools page went from 455px
+against a 456px body — it fit by one pixel — to 332px. Containers that already lay themselves out
+are opted **out**, because repacking a row that was authored compact makes it worse.
+
+**Fit and finish.** Labels stop repeating their own heading (Export already did this: heading
+Export, buttons glb / obj / ply / stl), which is also what lets short buttons share a row. Alpha's
+import is the last row of its own picker rather than a second control. `Reset UI to Defaults` in
+Settings restores the section states and the menu colour grade, for the panel you have graded into
+illegibility and cannot read your way out of. The **Pose** tool (GeodesicPoseTool) is hidden — rig-
+free two-anchor bending whose last feature work predates the entire rigging system, and which
+shared the word Pose with the Bones tool's own Pose mode.
+
+**Bugs, several of them older than this work.**
+- **Offhand Smooth let the primary tool through on a light pull.** The sculpt path opens a stroke
+  on the analog value against the trigger-sensitivity threshold; the Smooth override asked the
+  runtime's `pressed` boolean, which trips near a full pull. So a small pull started a stroke that
+  the override never armed for. One `_isTriggerDown()` now answers it for both.
+- **Collapsed sections rendered in full in the VR panel.** `.collapsed { display: none }` lost a
+  specificity contest to the density container rule (0,2,0 against 0,3,0), and only in the VR
+  panel, because `.mm-dense` is on `#mm-content` and nowhere else.
+- **The first click on a section did nothing.** `groupOpen`'s default was open while the renderer
+  drew closed, so the first click wrote a value that changed nothing and the second flipped it.
+- **`.cols-4` was used and defined nowhere**, so the four Export format buttons had been stacking
+  down the full panel width in both hosts for as long as that markup existed.
+- **`MiniPanel._wireExtras` threw on every Grab wiring** (`extrasEl` where the local is `extras`),
+  killing Set Parent on the wrist and everything after it in `syncFromState`.
+- **The Select tool read as "Tool 35" on the wrist panel** — a second private copy of the tool
+  names. One `TOOL_LABELS` registry now covers all 36, and Scene's quick-swap stops toasting a
+  bare "Tool" for mesh-edit tools.
+
+**Six hosts render these builders**, which is the thing to remember about this UI layer: the VR
+panel, the desktop sidebar tabs, the desktop top-bar menus, the animation panel's own root, a
+torn-off section in VR, and a floated section on the desktop. Four separate bugs this cycle were a
+change landing on some of them and not the rest. The two Settings pages had grown different section
+lists — fifteen headings against seven — and four sections that are not about the platform at all
+(tone mapping, mesh curvature, the ground grid, blendshape backup) were reachable only in a
+headset; they are shared now.
+
+**Instrumentation.** `window.uiDiag()` reports, per panel root, whether the styling reached it,
+what is stored, whether the section pass ran, and how many collapsed bodies are **still visible** —
+which is the field that found the specificity bug. Harnesses gained guards for a stray backtick
+inside an injected stylesheet (it closes the template literal and surfaces as a ReferenceError
+naming a word from a CSS comment), for every `cols-N` used in markup being defined in CSS, and for
+every tool in the enum having a label. New `trigger_test.mjs` proves the offhand-Smooth fix against
+the reported symptom without a headset.
+
 # v3.40.0
 **Motion trails for anything with keys, and a long hunt through three.js to make them visible on a
 Vision Pro.** The trail was rig-only, which made it a rigging feature rather than an animation one:

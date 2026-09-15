@@ -1,5 +1,11 @@
 import Enums from './Enums.js';
 
+// THE MENU COLOUR GRADE, IN ONE PLACE. Brightness, saturation and gamma applied to the
+// rasterised panel texture. Three consumers want these numbers -- the option reader, the
+// one-time v3.4.x migration, and the Settings reset -- and three copies of a tuned value is how
+// they end up disagreeing.
+export const MENU_GRADE_DEFAULTS = { brightness: 0.65, saturation: 0.50, gamma: 0.0 };
+
 var keyAction = Enums.KeyAction;
 
 var queryBool = function (value, def) {
@@ -199,9 +205,12 @@ var getOptionsURL = function () {
   // stays on by default and `wireframeColor` only takes over when it is turned off.
   options.wireframeSurface = queryBool(getVal('wireframeSurface'), true);
   options.wireframeColor = queryHex(getVal('wireframeColor'), '#000000');
-  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.65); // matt-tuned menu look
-  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.50);
-  options.menuGamma      = queryNumber(getVal('menuGamma'),      0.0, 1.0, 0.0);  // (0.5 = neutral γ 1.0)
+  // matt-tuned menu look. The three numbers live in MENU_GRADE_DEFAULTS (below) so the read
+  // path, the one-time migration and the Settings "Reset UI to Defaults" action cannot each
+  // carry their own idea of what the default is.
+  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, MENU_GRADE_DEFAULTS.brightness);
+  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, MENU_GRADE_DEFAULTS.saturation);
+  options.menuGamma      = queryNumber(getVal('menuGamma'),      0.0, 1.0, MENU_GRADE_DEFAULTS.gamma);  // (0.5 = neutral γ 1.0)
   options.offsetY = queryNumber(getVal('offsetY'), -2.0, 0.0, -1.2);
   const isMobileVR = typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent);
   options.wireframeType = queryNumber(getVal('wireframeType'), 0, 2, 2); // Force 2 (Full Mode) for spatial topology tests
@@ -402,9 +411,10 @@ var getOptionsURL = function () {
   try {
     if (typeof localStorage !== 'undefined' && !localStorage.getItem('menuGradeDefaultsV2')) {
       localStorage.setItem('menuGradeDefaultsV2', '1');
-      options.menuBrightness = 0.65; getOptionsURL.saveOption('menuBrightness', 0.65, 0);
-      options.menuSaturation = 0.50; getOptionsURL.saveOption('menuSaturation', 0.50, 0);
-      options.menuGamma      = 0.0;  getOptionsURL.saveOption('menuGamma',      0.0,  0);
+      const d = MENU_GRADE_DEFAULTS;
+      options.menuBrightness = d.brightness; getOptionsURL.saveOption('menuBrightness', d.brightness, 0);
+      options.menuSaturation = d.saturation; getOptionsURL.saveOption('menuSaturation', d.saturation, 0);
+      options.menuGamma      = d.gamma;      getOptionsURL.saveOption('menuGamma',      d.gamma,      0);
     }
   } catch (e) { /* localStorage unavailable — fall through with read defaults */ }
 
