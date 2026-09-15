@@ -484,5 +484,8 @@ console.log('\nimport routing: which files are audio');
   check('song.mp3.obj is NOT audio', isAudio('song.mp3.obj') === false);
 }
 
-console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`);
+// The wording matters: run_all.mjs tests for "all checks passed" or "tests passed", so a file
+// that only says "N passed" is counted as a FAILURE by the suite while reporting green alone.
+console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`
+  + (fail ? '' : '  — all checks passed'));
 process.exit(fail ? 1 : 0);

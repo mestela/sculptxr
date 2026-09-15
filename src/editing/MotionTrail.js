@@ -84,13 +84,36 @@ function range() {
 //
 // The CURRENT node is forced to the front, because the head of this list is the strand that
 // gets the editable dots and gnomons. Whatever you touched last is what you are editing.
+// A PLAIN ANIMATED OBJECT IS A CONTROL TOO. The filter here was rig-only, which made the trail
+// a rigging feature rather than an animation one — matt, after mocapping the default sphere with
+// hands on a Vision Pro: "it looks like its limited to only bones. I think thats a needless
+// restriction. if object has transform keys, we should show the motion path for it."
+//
+// It fits the load-bearing rule rather than bending it. Only a CONTROL is editable, because an
+// IK bone's position is solver output while a pin is a free 6DOF control — and a keyed mesh is
+// as free as a pin: its keys ARE its position, with nothing downstream reinterpreting them. So
+// it draws one curve, authored and editable, and no faint solved twin, because there is no
+// solver to disagree with.
+//
+// KEYS, NOT A TRACK. Every registered object has a track whether or not anything was keyed on
+// it, so testing for the track alone would trail every object in the scene the moment it was
+// selected.
+// Has this object had a TRANSFORM key authored on it? Module scope because both the target
+// filter and the curve builder ask, and two copies of "what counts as animated" is two answers.
+function xfKeyed(m) {
+  const reg = window._animationRegistry;
+  const t = m && reg && reg.tracks && reg.tracks.get(m.getID());
+  return !!(t && t.times && t.times.length);
+}
+
 function trailTargets(main) {
   const inScene = (m) => (main.getMeshes() || []).indexOf(m) >= 0;
   const isRig = (m) => !!(m && (Skeleton.isJoint(m) || (m._isPinTarget && m._pinnedJoint)));
+  const trailable = (m) => !!m && (isRig(m) || xfKeyed(m));
   const cur = main.getMesh && main.getMesh();
   const sel = (main.getSelectedMeshes && main.getSelectedMeshes()) || [];
-  const picked = sel.filter(isRig);
-  if (isRig(cur)) {
+  const picked = sel.filter(trailable);
+  if (trailable(cur)) {
     const at = picked.indexOf(cur);
     if (at >= 0) picked.splice(at, 1);
     picked.unshift(cur);
@@ -145,6 +168,10 @@ function trailed(main) {
     } else if (t._isPinTarget && t._pinnedJoint) {
       if (keyed(t)) add(t, true);
       add(t._pinnedJoint, false);
+    } else if (xfKeyed(t)) {
+      // One curve, and it is the editable one. Nothing reinterprets a plain object's keys, so
+      // there is no second "solved" strand to draw and no gap between the two to diagnose.
+      add(t, true);
     }
   }
   return out;
@@ -213,13 +240,33 @@ function signature(main, joints, r) {
 // Real playback iterates every mesh in the scene (Scene.js), so it never had this bug. This is
 // the same set narrowed to the rig, because a curve that only needs transforms should not drag
 // every vertex snapshot in the scene through the sampler.
-function animated(main, reg) {
+// WHAT HAS TO BE EVALUATED TO PLOT THE CURVE, which is not the same question as what is being
+// drawn. Each sample re-poses these at one time and then reads the trailed objects' matrices.
+//
+// It walked `Skeleton.joints(main)` and nothing else, which is why widening the TARGETS was not
+// enough on its own: with no skeleton in the scene this returned an empty list, samplePaths took
+// its `if (!joints.length) return null` exit, and a keyed sphere drew no curve at all. matt:
+// "i start with the default sphere, grab tool, record, move it around ... i don't see a motion
+// trail for the sphere."
+//
+// It fails the same way even with a rig present, and more quietly: the list would be non-empty,
+// so the sampler would run — but the sphere itself would never be evaluated, every sample would
+// read the pose it happens to be sitting in, and the curve would come out as a point.
+//
+// The targets are added rather than the whole scene ON PURPOSE. Evaluating everything would drag
+// every shape track and vertex snapshot through a sampler that only needs transforms, once per
+// sample — see the note in evaluateAt.
+function animated(main, reg, targets) {
   if (!reg || !reg.tracks) return [];
   const out = [];
   for (const j of Skeleton.joints(main)) {
     if (reg.tracks.get(j.getID())) out.push(j);
     const p = IKSolver.pinObject(j);
     if (p && reg.tracks.get(p.getID())) out.push(p);
+  }
+  for (const tg of (targets || [])) {
+    const o = (tg && tg.obj) || tg;
+    if (o && reg.tracks.get(o.getID()) && out.indexOf(o) < 0) out.push(o);
   }
   return out;
 }
@@ -309,7 +356,7 @@ function samplePaths(main, targets) {
   const reg = window._animationRegistry;
   const r = range();
   if (!reg || !r) return null;
-  const joints = animated(main, reg);
+  const joints = animated(main, reg, targets);
   if (!joints.length) return null;
 
   const n = Math.max(2, Math.round(tune('_trailSamples', SAMPLES)));
@@ -544,6 +591,57 @@ const TRAIL_PX = 1.5;
 // array on every call to expand a polyline into pairs, and the curve is rewritten every frame
 // of a drag. Expanding it here into a buffer that gets reused costs nothing per frame, and it
 // leaves one geometry type and one update path instead of two of each.
+// THREE OVERWRITES THE RESOLUTION IMMEDIATELY BEFORE EVERY DRAW, AND IN A SESSION IT WRITES THE
+// WRONG NUMBER. This is the whole of the oversized-trail bug, and no amount of setting the
+// uniform ourselves could have fixed it — measured on the device, our sync wrote 156 times across
+// 155 frames and the value still read 1x1, because the clobber happens after every one of them.
+//
+// LineSegments2.onBeforeRender (three 0.183) does:
+//     renderer.getViewport( _viewport );
+//     this.material.uniforms.resolution.value.set( _viewport.z, _viewport.w );
+//
+// and `getViewport` returns WebGLRenderer's `_viewport`, which is only ever written by setViewport
+// and setSize. The XR path sets `camera.viewport` on each eye camera and never touches `_viewport`
+// at all — and `setSize` refuses outright while presenting ("Can't change size while VR device is
+// presenting"). So for the whole session the fat lines are sized against whatever the flat canvas
+// viewport was at the instant the session began, frozen. On a headset where that happens to be a
+// sane number the error passes for taste; on Vision Pro it was 1x1, and a 1.5px line divided by 1
+// is most of the screen.
+//
+// So the override reads the same per-eye viewport three itself uses for the camera — see
+// viewportSize — and falls back to three's own behaviour outside a session, where getViewport is
+// correct and is also what every other fat line in the app is measured against.
+function fatBeforeRender(main, basePx) {
+  return function (renderer) {
+    const u = this.material && this.material.uniforms;
+    if (!u || !u.resolution) return;
+    const r = viewportSize(main);
+    let w, h;
+    if (r.w > 1 && r.h > 1) { w = r.w; h = r.h; }
+    else { renderer.getViewport(_fatVp); w = _fatVp.z; h = _fatVp.w; }
+    u.resolution.value.set(w, h);
+
+    // A PIXEL IS NOT A CONSTANT ANGULAR SIZE. linewidth is in screen pixels, and a fat line's
+    // width in clip space is px / resolution — so the same px count is five times thinner on a
+    // 4851-wide eye than on a 1408-wide canvas. Having finally got the resolution right, that is
+    // exactly what showed up: matt, "thats drawing properly finally. its very thin."
+    //
+    // So the width is carried as a FRACTION of the viewport instead, anchored to the width these
+    // numbers were tuned at. NEVER SCALED DOWN, only up: desktop and GalaxyXR already look the
+    // way matt signed off on, and a "fix" that thinned them would be trading one complaint for
+    // another. Below the reference width this is exactly the old behaviour.
+    if (basePx > 0 && this.material) {
+      const k = Math.max(1, w / REF_VIEWPORT_W) * tune('_trailWidthScale', 1);
+      this.material.linewidth = basePx * k;
+    }
+  };
+}
+const _fatVp = new THREE.Vector4();
+// The viewport width TRAIL_PX and GNOMON_PX were chosen against. Roughly a desktop viewport, and
+// within a few percent of a Vision Pro's flat canvas — so on everything that already looked right
+// the scale factor is 1 and nothing moves.
+const REF_VIEWPORT_W = 1400;
+
 function makeFat(main, px, opacity, order) {
   const g = Skeleton.overlayGroup(main);
   const seg = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
@@ -578,6 +676,8 @@ function makeFat(main, px, opacity, order) {
   seg.frustumCulled = false;
   seg.isPickable = false;
   seg.renderOrder = order;
+  // Replaces three's own, which reads a viewport the XR path never updates — see above.
+  seg.onBeforeRender = fatBeforeRender(main, px);
   g.add(seg);
   return seg;
 }
@@ -633,14 +733,57 @@ function pushFat(main, obj, state, pos, col, segs) {
   g.instanceCount = segs;
 }
 
-// A screen-space width needs to know what the screen is. Read every draw rather than pushed
-// from a resize hook: a hook has to be added to every path that can change the viewport, and
-// the one that gets forgotten leaves the lines the wrong thickness with nothing to point at.
+// A screen-space width needs to know what the screen is. Read every FRAME rather than pushed from
+// a resize hook: a hook has to be added to every path that can change the viewport, and the one
+// that gets forgotten leaves the lines the wrong thickness with nothing to point at.
+//
+// It used to say "every draw" and be called only from pushFat, which is a rebuild and not a
+// draw — see the note in perFrame for what that cost. The call in pushFat is kept so a freshly
+// built line is right on its first frame rather than one frame late.
 function syncResolution(main, mat) {
-  const cam = main.getCamera && main.getCamera();
-  const w = (cam && cam._width) || 1;
-  const h = (cam && cam._height) || 1;
-  if (mat.resolution.x !== w || mat.resolution.y !== h) mat.resolution.set(w, h);
+  const r = viewportSize(main);
+  if (!mat || !mat.resolution || typeof mat.resolution.set !== 'function') {
+    main._trailResErr = 'material has no settable resolution';
+    return false;
+  }
+  if (mat.resolution.x !== r.w || mat.resolution.y !== r.h) {
+    mat.resolution.set(r.w, r.h);
+    main._trailSyncN = (main._trailSyncN || 0) + 1;
+  }
+  return true;
+}
+
+// THE BUFFER BEING DRAWN INTO, WHICH IN A SESSION IS NOT THE CANVAS.
+//
+// A fat line's width is screen PIXELS divided by this resolution, so getting it wrong scales
+// every curve and triad directly. It read SculptGL's own camera, which is sized from the DOM
+// canvas by Scene.onCanvasResize and knows nothing about an XR framebuffer. On a headset whose
+// canvas happens to be a similar size to its eye buffer the error is small enough to pass for
+// taste; on Vision Pro it is not. matt: "on AVP the trails are comically large, enough that it
+// totally overwhelms the view and i can't see anything."
+//
+// Nothing to do with the object being a mesh rather than a bone — a bone trail on that headset
+// is wrong by exactly the same factor, and has been since fat lines landed. It only surfaced now
+// because a mesh is the first thing anyone trails without building a rig first.
+//
+// PER EYE, from three's XR camera, because that is the viewport a fat line is actually measured
+// against. The base layer's framebuffer holds both eyes side by side, so it is the fallback and
+// its width is halved; the canvas is the last resort, for the flatscreen case where it is right.
+function viewportSize(main) {
+  const r = main && main._renderer;
+  if (r && r.xr && r.xr.isPresenting) {
+    const xrCam = r.xr.getCamera && r.xr.getCamera();
+    const sub = xrCam && xrCam.cameras && xrCam.cameras[0];
+    const vp = sub && sub.viewport;
+    if (vp && vp.z > 0 && vp.w > 0) return { w: vp.z, h: vp.w };
+    const bl = r.xr.getSession && r.xr.getSession()
+      && r.xr.getSession().renderState && r.xr.getSession().renderState.baseLayer;
+    if (bl && bl.framebufferWidth > 0 && bl.framebufferHeight > 0) {
+      return { w: Math.max(1, bl.framebufferWidth / 2), h: bl.framebufferHeight };
+    }
+  }
+  const cam = main && main.getCamera && main.getCamera();
+  return { w: (cam && cam._width) || 1, h: (cam && cam._height) || 1 };
 }
 
 // Sized off the scene, not a constant: the same triad has to be legible on a head and on a
@@ -845,8 +988,11 @@ MotionTrail.drawGnomons = function (main) {
 
   if (window._trailTrace) {
     const r = v.gnomons.material.resolution;
+    const vp = viewportSize(main);
     console.log('[trail] gnomons segs=' + (verts / 2) + ' len=' + L.toFixed(4) +
-      ' res=' + r.x + 'x' + r.y + ' vis=' + v.gnomons.visible);
+      ' res=' + r.x + 'x' + r.y + ' vp=' + Math.round(vp.w) + 'x' + Math.round(vp.h) +
+      ' xr=' + !!(main._renderer && main._renderer.xr && main._renderer.xr.isPresenting) +
+      ' vis=' + v.gnomons.visible);
   }
 };
 
@@ -858,6 +1004,12 @@ MotionTrail.drawGnomons = function (main) {
 //   scale   — 1 - (keys from the playhead) / 10. A triad nine keys from the playhead is drawn
 //             at a TENTH of full size, on purpose. If minScale is small and unit is right, the
 //             triads are not the wrong size; the playhead is somewhere else.
+//
+// And a THIRD input that is not a length at all: `res`, the buffer a fat line's pixel width is
+// divided by. It is reported here as well because a wrong resolution does not look like a
+// resolution bug, it looks like everything being the wrong size — and in a session it is the
+// number most likely to be wrong, since the canvas it used to be read from is not the buffer
+// being drawn into. In an immersive session `res` should be ONE EYE, not the canvas.
 // WHY IS THE TRAIL BEHIND THE MESH. Everything in the source says it cannot be: depthTest is
 // off and the render order is 9998 against a mesh's 0. So the answer is a runtime fact, and
 // there is exactly one that the source cannot show -- three.js renders ALL transparent objects
@@ -944,12 +1096,94 @@ window.jointDotDiag = function () {
   return { flags: flags, joints: joints.length, forced: forced };
 };
 
+// WHAT THE DRAWN TRAIL IS MEASURED AGAINST. Split out of gnomonDiag because it has nothing to do
+// with triads and everything to do with the CURVES, and gating it behind gnomon data meant that
+// the one question worth asking about an oversized trail could only be asked by someone who had
+// also turned rotation on and had a pin. matt, with a trail plainly on screen in front of him:
+// "its asking me to make pins ... i was displaying a motion trail, why can't it tell me the info
+// it needs when that is visible?" Quite right — a diagnostic that demands a setup the user does
+// not have, to report on something already drawn, is not a diagnostic.
+//
+// Reads the resolution off the CURVE material, not the gnomon one: LineMaterial clones its
+// uniforms per material, so they are separate numbers and the curves are the ones that looked
+// wrong.
+window.trailDiag = function () {
+  const main = _lastMain;
+  if (!main) { console.log('[trail] nothing has drawn yet'); return null; }
+  const v = main._trailVis;
+  const line = v && v.lines && v.lines.find((l) => l && l.material && l.material.resolution);
+  const res = line && line.material.resolution;
+  const vp = viewportSize(main);
+  const inXR = !!(main._renderer && main._renderer.xr && main._renderer.xr.isPresenting);
+  const cam = main.getCamera && main.getCamera();
+  const cw = (cam && cam._width) | 0, chh = (cam && cam._height) | 0;
+
+  console.log('[trail] ' + VERSION
+    + '  perFrameCalls=' + (main._trailFrameN || 0)
+    + ' resWrites=' + (main._trailSyncN || 0)
+    + (main._trailResErr ? '  ERROR: ' + main._trailResErr : ''));
+  console.log('[trail] strands=' + ((main._trailStrands && main._trailStrands.length) || 0)
+    + ' lines=' + ((v && v.lines && v.lines.length) || 0)
+    + '  lineRes=' + (res ? Math.round(res.x) + 'x' + Math.round(res.y) : 'none drawn')
+    + '  viewport=' + Math.round(vp.w) + 'x' + Math.round(vp.h)
+    + '  canvas=' + cw + 'x' + chh
+    + '  xrPresenting=' + inXR
+    + (line ? '  widthPx=' + (line.material.linewidth || 0).toFixed(2)
+        + ' (x' + (Math.max(1, vp.w / 1400) * tune('_trailWidthScale', 1)).toFixed(2) + ')' : ''));
+
+  // A fat line's width is PIXELS / resolution. Small resolution means wide lines, and the two
+  // ways to get a small one are a collapsed canvas and a session that never reported a viewport.
+  if (cw <= 1 || chh <= 1) {
+    console.log('[trail] the CANVAS is ' + cw + 'x' + chh + ' — anything sized from it is wrong, '
+      + 'not just the trail (the RTT targets and gl.viewport come through the same resize).');
+  }
+  if (inXR && res && Math.abs(res.x - cw) < 1 && Math.abs(vp.w - cw) > 1) {
+    console.log('[trail] in a session and the line resolution is still the CANVAS — the eye '
+      + 'viewport was not picked up, which is what makes the curves oversized.');
+  }
+  if (res && vp.w > 0 && Math.abs(res.x - vp.w) > 1) {
+    console.log('[trail] lineRes and viewport disagree: the material has not been re-synced since '
+      + 'the viewport changed. One draw should fix it; if it persists, syncResolution is not '
+      + 'reaching this material.');
+  }
+  // A LIVE PROBE, because reporting a number twice has already told us nothing twice. Write the
+  // viewport onto the material right here and read it straight back: that separates "perFrame is
+  // not running" from "the write does not stick on this material", which the passive report
+  // cannot, and which are fixed in completely different places.
+  if (line) {
+    const before = { x: res.x, y: res.y };
+    let threw = null;
+    try { res.set(vp.w, vp.h); } catch (e) { threw = (e && e.message) || String(e); }
+    const after = { x: res.x, y: res.y };
+    console.log('[trail] probe: set ' + Math.round(before.x) + 'x' + Math.round(before.y)
+      + ' -> ' + Math.round(after.x) + 'x' + Math.round(after.y)
+      + (threw ? '  THREW: ' + threw : ''));
+    if (!threw && Math.abs(after.x - vp.w) < 1) {
+      console.log('[trail] the write STICKS, so the material is fine — perFrame is either not '
+        + 'running (perFrameCalls above should be climbing) or not reaching this object. If the '
+        + 'trail looks right for a moment after running this and then goes wrong again, '
+        + 'something else is writing 1x1 back.');
+    } else if (!threw) {
+      console.log('[trail] the write did NOT stick — this material\'s resolution is not a plain '
+        + 'settable vector, which is where the fix belongs.');
+    }
+  }
+  return { version: VERSION, perFrameCalls: main._trailFrameN || 0,
+    resWrites: main._trailSyncN || 0, resErr: main._trailResErr || null,
+    lineRes: res ? { x: res.x, y: res.y } : null, viewport: vp,
+    canvas: { w: cw, h: chh }, xrPresenting: inXR };
+};
+
 window.gnomonDiag = function () {
   const main = _lastMain;
+  // The line/viewport half first, and unconditionally: it is answerable whenever anything has
+  // drawn, and it is the half that explains an oversized trail.
+  window.trailDiag();
   const d = main && main._trailVis && main._trailVis.gnomonDbg;
   if (!d) {
-    console.log('[gnomon] nothing drawn yet — turn Trails and Rotation on, with a keyed pin '
-      + 'selected, then run this again');
+    console.log('[gnomon] no triads drawn. That needs Rotation on AND an authored (editable) '
+      + 'curve — a keyed object or a keyed pin. The trail itself does not need either, so if a '
+      + 'curve is on screen the [trail] line above is the one to read.');
     return null;
   }
   console.log('[gnomon] unit=' + d.unit.toFixed(4) + ' fullLength=' + d.L.toFixed(4)
@@ -967,9 +1201,13 @@ window.gnomonDiag = function () {
       + (r.hasQuats ? '' : '  <-- no orientations, so no triads')
       + (r.keys && !r.drawn ? '  <-- every key out of reach of the playhead' : ''));
   }
+  // THE THIRD INPUT, AND THE ONE THAT DOES NOT LOOK LIKE ITSELF. A fat line's width is pixels
+  // divided by this; get it wrong and nothing looks like a resolution bug, everything just looks
+  // the wrong size. In a session it must be ONE EYE, not the flat canvas.
   console.log('[gnomon] maxScale well under 1 means the PLAYHEAD is far from the keys, not that '
     + 'the triads are small. unit far from the size of your sculpt means the scene unit is the '
-    + 'problem — check window.rigUnit().');
+    + 'problem — check window.rigUnit(). For anything about WIDTH rather than length, read the '
+    + '[trail] line above instead: that is a resolution question, not a geometry one.');
   return d;
 };
 
@@ -1179,6 +1417,37 @@ window.trailTrace = function (on) {
 };
 
 MotionTrail.perFrame = function (main) {
+  // THE RESOLUTION IS A PER-FRAME FACT, NOT A PER-REBUILD ONE, and that distinction is the whole
+  // bug. syncResolution lived only inside pushFat, which runs when the curve's GEOMETRY is
+  // rewritten — i.e. on a rebuild. So whatever the viewport happened to be when the trail was
+  // first built is what the material keeps, however far the viewport moves afterwards.
+  //
+  // On Vision Pro the trail is built during session start, before the canvas has been sized and
+  // before three has populated the XR camera's per-eye viewport (three.js #21188 notes the
+  // viewport is not available on the first frame after presenting). Every source reads empty,
+  // viewportSize falls all the way through to its `|| 1`, and the material is left at 1x1 — a
+  // 1.5px line then covers most of the screen. Measured on the device: lineRes 1x1 against a
+  // 4851x3889 eye viewport and a perfectly healthy 1408x1840 canvas. matt: "the trails are
+  // comically large, enough that it totally overwhelms the view and i can't see anything."
+  //
+  // Nothing rebuilds it afterwards because nothing about the ANIMATION changed, so it never
+  // recovered. GalaxyXR escaped it by having its canvas and its viewport ready in time.
+  //
+  // Cheap: a compare and, almost always, no write.
+  // Counted FIRST, before anything that can throw, so "did this run at all" is answerable
+  // separately from "did it work". Scene wraps the whole trail in a try/catch, so an exception
+  // in here is invisible unless it is recorded on the way past.
+  if (main) main._trailFrameN = (main._trailFrameN || 0) + 1;
+  const v = main && main._trailVis;
+  if (v) {
+    try {
+      for (const line of (v.lines || [])) if (line && line.material) syncResolution(main, line.material);
+      if (v.gnomons && v.gnomons.material) syncResolution(main, v.gnomons.material);
+    } catch (e) {
+      // Isolated on purpose: a line width must not be able to stop the colours and the triads.
+      main._trailResErr = (e && e.message) || String(e);
+    }
+  }
   MotionTrail.recolor(main);
   MotionTrail.drawGnomons(main);
 };

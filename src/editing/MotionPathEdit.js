@@ -157,6 +157,34 @@ MotionPathEdit.hit = function (points, project, x, y, radiusPx) {
 // The authored curves on screen. Each carries the `base` that places its samples in the global
 // numbering the dots are drawn and highlighted by -- carried BY the strand precisely so this
 // side and the drawing side cannot compute it differently.
+// WHEN THE PATHS ARE UP, THE PATHS ARE ALL YOU EDIT.
+//
+// Acquisition used to be purely spatial — press the curve and you edit the curve, press anywhere
+// else and the stroke fell through to the mesh. That is the better rule for a BONE, which is
+// point-like: "near the curve" and "on the control" coincide, and no press is ambiguous.
+//
+// A MESH is a volume the curve runs THROUGH. A slowly-moving object can have its entire path
+// inside its own silhouette, so most presses on it are also "near the curve" and vertex
+// sculpting quietly becomes unreachable. matt: "its unlikely people are going to want to sculpt
+// both at once, and even in that scenario, they can tear off the scene view panel and toggle
+// that way."
+//
+// So this is a MODE, and deliberately a visible one — the mode is whether you can see a curve.
+// It also buys the thing a proximity test cannot: on a 900k multires mesh the stroke never
+// reaches `intersectionMouseMeshes` at all, because the answer was known before the raycast.
+//
+// "Visible" means DRAWN, not merely enabled, and the strands answer that on their own: the flag
+// is consulted once, by MotionTrail.update, which calls MotionTrail.clear the moment it is off --
+// and clear() nulls both _trailStrand and _trailStrands. So a strand exists exactly when a curve
+// is on screen. Reading the flag again here would mean importing Skeleton into this module for a
+// second opinion it cannot improve on, and an import cycle for the privilege.
+//
+// It also means the flag ON with nothing keyed selected leaves no strands and no mode, which is
+// right: a tool that refused to sculpt because of a curve that is not there would just be broken.
+MotionPathEdit.owns = function (main) {
+  return !!main && MotionPathEdit.strandsOf(main).length > 0;
+};
+
 MotionPathEdit.strandsOf = function (main) {
   const list = main && main._trailStrands;
   if (list && list.length) return list;
@@ -1078,7 +1106,8 @@ window.pathDiag = function () {
   const main = window.app;
   const strand = main && main._trailStrand;
   if (!strand || !strand.points || !strand.points.length) {
-    console.log('[path] no strand — turn Trails on with a keyed pin selected');
+    console.log('[path] no strand — turn Trails on with a keyed object selected (any object with '
+      + 'transform keys will do; it does not have to be a rig pin)');
     return null;
   }
   const camera = main.getCamera();

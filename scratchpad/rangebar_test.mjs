@@ -433,5 +433,8 @@ console.log('\nthe drawn region is always the clamped one');
   check('a zero-length project still yields a usable span', p.end > p.start, `${p.start}..${p.end}`);
 }
 
-console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`);
+// The wording matters: run_all.mjs tests for "all checks passed" or "tests passed", so a file
+// that only says "N passed" is counted as a FAILURE by the suite while reporting green alone.
+console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`
+  + (fail ? '' : '  — all checks passed'));
 process.exit(fail ? 1 : 0);

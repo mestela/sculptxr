@@ -6852,7 +6852,9 @@ class Scene {
     // saved world pose tended to reopen far from the user.
     const cam = this._camera?.getThreeCamera();
     const mm  = this._mainMenuPanel?.mesh;
-    if (cam) {
+    // A pose remembered from earlier in this session outranks the first-open placement.
+    const _tlRestored = this._restorePanelPose('timeline', this._vrTimelineMesh);
+    if (cam && !_tlRestored) {
       if (mm) {
         // BESIDE THE MENU, NOT ON TOP OF IT. This used to open at the menu's exact world
         // position — matt: "it appears over where the mainpanel, confusing."
@@ -6982,6 +6984,8 @@ class Scene {
   }
 
   _closeVRTimeline() {
+    // Remember where it was BEFORE hiding it, so re-showing puts it back rather than re-placing.
+    if (this._vrTimelineMesh) this._stashPanelPose('timeline', this._vrTimelineMesh);
     if (this._vrTimelineMesh) this._vrTimelineMesh.visible = false;
     if (this._vrTimelineCloseBtn) this._vrTimelineCloseBtn.visible = false;
     if (this._vrResizeHandle) this._vrResizeHandle.visible = false;
@@ -7044,7 +7048,9 @@ class Scene {
     // it sits next to the menu from the user's viewpoint.
     const mm  = this._mainMenuPanel?.mesh;
     const cam = this._camera?.getThreeCamera();
-    if (cam) {
+    // As with the timeline: a pose remembered this session beats the first-open placement.
+    const _bsRestored = this._restorePanelPose('blendshapes', this._vrBlendMesh);
+    if (cam && !_bsRestored) {
       const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
       if (mm) {
         // By EDGES, the same rule the timeline uses — see _extentAlong. This one goes RIGHT, so
@@ -7094,6 +7100,7 @@ class Scene {
   }
 
   _closeVRBlendshapes() {
+    if (this._vrBlendMesh) this._stashPanelPose('blendshapes', this._vrBlendMesh);
     if (this._vrBlendMesh) this._vrBlendMesh.visible = false;
     if (this._vrBlendCloseBtn) this._vrBlendCloseBtn.visible = false;
     this._vrBlendPanel?.setVRVisible(false);
@@ -8886,6 +8893,8 @@ class Scene {
     this._vrUIHitDistRight  = Infinity;  // from persisting when _isPointingAtMenu is set by another source
     this._vrUIHitSourceLeft  = null;     // debug: which panel set the left hit distance
     this._vrUIHitSourceRight = null;     // debug: which panel set the right hit distance
+    // THE PANEL THE RAY WAS ON, AND WHEN — see _panelGrabIntent.
+    this._panelRayLatch = { left: null, right: null };
 
     const session = frame.session;
     const sources = session.inputSources;
@@ -10662,8 +10671,8 @@ class Scene {
                                                   window._hoverTrace ? _rc.ray.origin : null);
               this[v.pressKey] = _pressed;
               this._isPointingAtMenu = true;
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = _winnerName; }
-              else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = _winnerName; }
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = _winnerName; this._panelRayLatch.left = { name: this._vrUIHitSourceLeft, t: performance.now() }; }
+              else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = _winnerName; this._panelRayLatch.right = { name: this._vrUIHitSourceRight, t: performance.now() }; }
               this._updateBPCursor?.(_winner.hit.point, true);
             } else {
               if (this[v.pressKey]) {
@@ -10685,8 +10694,8 @@ class Scene {
           if (_winner?.isTimeline) {
             this._vtlIsPointing = true;
             this._isPointingAtMenu = true;
-            if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRTimeline'; }
-            else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRTimeline'; }
+            if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRTimeline'; this._panelRayLatch.left = { name: this._vrUIHitSourceLeft, t: performance.now() }; }
+            else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRTimeline'; this._panelRayLatch.right = { name: this._vrUIHitSourceRight, t: performance.now() }; }
             this._updateBPCursor?.(_winner.hit.point, true);
             // While a gesture that OWNS the panel is running, don't also pan/select with the
             // dominant hand — just keep the press latch in sync so the release is not seen as
@@ -10764,8 +10773,8 @@ class Scene {
             this._isPointingAtMenu = true;
             this._vbsIsPointing    = true;
             this._vbsPanelPointed  = true; // for hover-clear in the render loop
-            if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRBlendshapes'; }
-            else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRBlendshapes'; }
+            if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRBlendshapes'; this._panelRayLatch.left = { name: this._vrUIHitSourceLeft, t: performance.now() }; }
+            else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRBlendshapes'; this._panelRayLatch.right = { name: this._vrUIHitSourceRight, t: performance.now() }; }
             this._updateBPCursor?.(_winner.hit.point, true);
             const _solo     = !!this._vrSecondaryTriggerPressed;
             const _justDown = _pressed && !this._vbsWasPressed;
@@ -11086,8 +11095,8 @@ class Scene {
             // Calc Laser Distance (visual clamping)
             if (this._vrLaser && hit) {
               const legacyName = targetGuiXR === this._guiXR ? 'LegacyMenu' : targetGuiXR === this._guiMini ? 'LegacyMiniHUD' : 'LegacyPopup';
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = hit.distance; this._vrUIHitSourceLeft  = legacyName; }
-              else                              { this._vrUIHitDistRight = hit.distance; this._vrUIHitSourceRight = legacyName; }
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = hit.distance; this._vrUIHitSourceLeft  = legacyName; this._panelRayLatch.left = { name: this._vrUIHitSourceLeft, t: performance.now() }; }
+              else                              { this._vrUIHitDistRight = hit.distance; this._vrUIHitSourceRight = legacyName; this._panelRayLatch.right = { name: this._vrUIHitSourceRight, t: performance.now() }; }
             }
 
           } else {
@@ -11190,7 +11199,11 @@ class Scene {
           // ── VR Timeline grip drag ─────────────────────────────────────────
           // Start: laser must be specifically on the timeline (_vtlIsPointing).
           // Continue: keep dragging as long as grip is held, regardless of laser position.
-          const canStartVtlDrag  = this._vrTimelineMesh?.visible && this._vtlIsPointing && isGrip && !this._vtlDragActive && !_panelDragBusy && !_worldNavBusy;
+          // The live ray OR what it was on a moment ago — see _panelGrabIntent for why the
+          // difference matters with a fist.
+          const _vtlIntent = this._vtlIsPointing
+            || this._panelGrabIntent(source.handedness)?.name === 'VRTimeline';
+          const canStartVtlDrag  = this._vrTimelineMesh?.visible && _vtlIntent && isGrip && !this._vtlDragActive && !_panelDragBusy && !_worldNavBusy;
           const canContinueVtlDrag = this._vtlDragActive && this._vtlDragHand === source.handedness && isGrip;
 
           if (canStartVtlDrag || canContinueVtlDrag) {
@@ -11296,6 +11309,23 @@ class Scene {
             });
           }
           // ── end TornOffPanel grip drags ───────────────────────────────────
+
+          // A MISSED PANEL GRAB MUST COST NOTHING. This is the half that was actually punishing:
+          // a fist that failed to land on the panel fell straight through to world navigation and
+          // spun the entire scene, so every near-miss had to be undone before trying again. matt:
+          // "i kept missing the grab and it would turn the world instead."
+          //
+          // If the ray is on a panel, or was a moment ago, the grip belongs to that panel whether
+          // or not a drag actually started — so a miss does nothing at all and you simply close
+          // your hand again. The world is still grabbable everywhere that is not a panel, which
+          // is almost everywhere.
+          //
+          // window._panelGrabGuard = false restores the old fall-through in-session.
+          if (isGrip && window._panelGrabGuard !== false
+              && (this._isPointingAtMenu || this._panelGrabIntent(source.handedness))) {
+            if (source.handedness === 'left') { leftGrip = false; }
+            else                              { rightGrip = false; }
+          }
         }
       }
 
@@ -12226,6 +12256,80 @@ class Scene {
       left:  make(domLeft ? 'PRIMARY' : 'SECONDARY', domLeft ? dom('X') : non('X')),
       right: make(domLeft ? 'SECONDARY' : 'PRIMARY', domLeft ? non('A') : dom('A')),
     };
+  }
+
+  // WHAT THE HAND WAS AIMING AT JUST BEFORE IT CLOSED.
+  //
+  // Making a fist MOVES THE RAY. The grip pose and its direction come from the hand, and closing
+  // it swings both — so the ray slides off the panel at the exact moment you commit to grabbing
+  // it. That is why aiming more carefully does not help, and why a preselection highlight would
+  // not have either: it would be correct right up until the instant it stopped being correct.
+  //
+  // This is the same shape as the v3.37.0 finding that a VR click had to move from the press to
+  // the release because the drag had already moved the hand. Here the answer is a short memory
+  // instead: the panel the ray was on a moment ago is the panel you meant.
+  //
+  // matt: "i kept missing the grab and it would turn the world instead ... an active laser
+  // pointer hit on that panel IS a preselection event."
+  _panelGrabIntent(handedness) {
+    const l = this._panelRayLatch && this._panelRayLatch[handedness];
+    if (!l || !l.name) return null;
+    const grace = Number.isFinite(window._panelGrabGraceMs) ? window._panelGrabGraceMs : 350;
+    return (performance.now() - l.t) <= grace ? l : null;
+  }
+
+  // WHERE A PANEL WAS WHEN YOU PUT IT AWAY, kept for the session only.
+  //
+  // Toggling a panel off and on from the icon bar re-ran its first-open placement, so any panel
+  // you had positioned snapped back beside the main menu. matt: "if i toggle their vis off and on
+  // with the mainpanel icon bar, they should just be where i left them."
+  //
+  // STORED RELATIVE TO THE HEAD, not in world space, and that is matt's own framing of it: "i
+  // don't mind if they forget between sessions (honestly the state of world tracking in all
+  // headset is terrible, i dont trust it)." A world pose restored after you have walked two steps
+  // puts the panel behind you; a head-relative one always comes back in front, in the same place
+  // you left it in your own frame. For the common case — toggling it off and straight back on —
+  // the two are identical, because the head has not moved.
+  //
+  // YAW ONLY. Taking the full head rotation means re-showing a panel while looking up puts it
+  // above you and tilted, which is not where you left it by any reading. Heading is the part of
+  // where you are looking that a panel should follow; pitch and roll are not.
+  _headFrame() {
+    const cam = this._camera && this._camera.getThreeCamera && this._camera.getThreeCamera();
+    if (!cam) return null;
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    fwd.y = 0;
+    // Straight up or down: the heading is undefined, so keep the last usable one rather than
+    // snapping to an arbitrary axis.
+    if (fwd.lengthSq() < 1e-8) {
+      if (!this._lastHeadYaw) return null;
+      return { pos: cam.position.clone(), quat: this._lastHeadYaw.clone() };
+    }
+    fwd.normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), fwd);
+    this._lastHeadYaw = quat.clone();
+    return { pos: cam.position.clone(), quat: quat };
+  }
+
+  _stashPanelPose(key, mesh) {
+    const h = this._headFrame();
+    if (!h || !mesh) return false;
+    const inv = h.quat.clone().invert();
+    this._panelPoseStash = this._panelPoseStash || {};
+    this._panelPoseStash[key] = {
+      pos: mesh.position.clone().sub(h.pos).applyQuaternion(inv),
+      quat: inv.clone().multiply(mesh.quaternion),
+    };
+    return true;
+  }
+
+  _restorePanelPose(key, mesh) {
+    const st = this._panelPoseStash && this._panelPoseStash[key];
+    const h = this._headFrame();
+    if (!st || !h || !mesh) return false;
+    mesh.position.copy(st.pos).applyQuaternion(h.quat).add(h.pos);
+    mesh.quaternion.copy(h.quat).multiply(st.quat);
+    return true;
   }
 
   _hasPanelDragActive(handedness) {

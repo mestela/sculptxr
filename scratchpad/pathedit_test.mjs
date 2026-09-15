@@ -1149,11 +1149,52 @@ const qAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3])));
     'rendering every move turns a hover into a per-pixel redraw of the whole scene');
   check('...and never while a drag is live, which renders itself',
     /if \(!main \|\| !main\._trailStrand \|\| main\._pathEdit\) return false;/.test(MPS));
+  // THE ORDER FLIPPED, AND IT HAD TO. The base pick is now gated behind _pathsOwnStroke(), so a
+  // hoverTick sitting after it would simply not run in the case the gate exists for — the paths
+  // being up is exactly when the path hover matters. hoverTick does not read the mesh pick
+  // (it projects the drawn strand), so nothing is owed to the old sequence.
+  //
+  // WHILE THE PATHS ARE DRAWN, THE PATHS ARE ALL YOU EDIT. Proximity alone was right for a
+  // point-like bone and wrong for a mesh, whose own silhouette can contain its whole path. The
+  // gate is also what keeps a 900k multires out of the raycast entirely.
+  // The INJ_BODY mechanism rewrites the MotionPathEdit source; these checks read the TOOL files,
+  // so the gate needs an injection of its own or the four cases below are green by construction.
+  //   PE_INJECT=nopathgate      the press falls through to the mesh again
+  //   PE_INJECT=meshhoverfirst  the mesh hover runs before the path hover, so the path hover is
+  //                             the thing skipped by the gate — backwards
+  const _ti = process.env.PE_INJECT || '';
+  const TOOL_INJ =
+    _ti === 'nopathgate'     ? ['    if (this._pathsOwnStroke()) return false;\n', '']
+  : _ti === 'meshhoverfirst' ? ['MotionPathEdit.hoverTick(this._main);\n    if (this._pathsOwnStroke()) return;\n    super.preUpdate(canBeContinuous);',
+                                'super.preUpdate(canBeContinuous);\n    MotionPathEdit.hoverTick(this._main);']
+  : null;
+  const readTool = (f) => {
+    let t = fs.readFileSync(path.join(REPO, f), 'utf8');
+    if (TOOL_INJ) {
+      if (!t.includes(TOOL_INJ[0])) throw new Error(`inject ${_ti}: tool anchor moved in ${f}`);
+      t = t.split(TOOL_INJ[0]).join(TOOL_INJ[1]);
+    }
+    return t;
+  };
+
   for (const f of ['src/editing/tools/Move.js', 'src/editing/tools/Smooth.js']) {
-    const T = fs.readFileSync(path.join(REPO, f), 'utf8');
-    check(f.split('/').pop() + ' calls it from preUpdate, after the base pick',
-      /preUpdate\(canBeContinuous\) \{\s*\n\s*super\.preUpdate\(canBeContinuous\);\s*\n\s*MotionPathEdit\.hoverTick\(this\._main\);/.test(T));
+    const name = f.split('/').pop();
+    const T = readTool(f);
+    check(name + ' calls hoverTick from preUpdate, before the gated base pick',
+      /preUpdate\(canBeContinuous\) \{[\s\S]{0,400}?MotionPathEdit\.hoverTick\(this\._main\);\s*\n\s*if \(this\._pathsOwnStroke\(\)\) return;\s*\n\s*super\.preUpdate\(canBeContinuous\);/.test(T),
+      'the mesh hover raycast must be the part that is skipped, not the path hover');
+    check(name + ': a press that misses every curve does not reach the mesh',
+      /if \(this\._pathsOwnStroke\(\)\) return false;\s*\n\s*return super\.start\(ctrl\);/.test(T)
+        || /if \(this\._pathsOwnStroke\(\)\) return false;/.test(T),
+      'otherwise the gate saves nothing on the press, which is the expensive one');
+    check(name + ': the same rule applies in a headset',
+      /MotionPathEdit\.strokeXR\([\s\S]{0,400}?if \(this\._pathsOwnStroke\(\)\) return;/.test(T));
+    check(name + ': the gate is one shared predicate, not a copy of the test',
+      /_pathsOwnStroke\(\) \{\s*\n\s*return MotionPathEdit\.owns\(this\._main\);/.test(T));
   }
+  check('owns() means a curve is DRAWN, not that the flag is on',
+    /MotionPathEdit\.owns = function \(main\) \{[\s\S]{0,200}?strandsOf\(main\)\.length > 0;/.test(MPS),
+    'the flag on with nothing keyed draws nothing, and must not disable sculpting');
   check('...and NOT from SculptBase, which cannot import it',
     !/MotionPathEdit/.test(fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8')),
     'the import cycle leaves MotionPathEdit undefined at load — module_load_test catches it');

@@ -120,5 +120,8 @@ for (const width of [420, 500, 640, 900]) {
   check(`w=${width}: no duplicate ids`, new Set(ids).size === ids.length, ids.join(','));
 }
 
-console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`);
+// The wording matters: run_all.mjs tests for "all checks passed" or "tests passed", so a file
+// that only says "N passed" is counted as a FAILURE by the suite while reporting green alone.
+console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`
+  + (fail ? '' : '  — all checks passed'));
 process.exit(fail ? 1 : 0);

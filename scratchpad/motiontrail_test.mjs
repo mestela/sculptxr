@@ -10,6 +10,15 @@
 // Run: node scratchpad/motiontrail_test.mjs
 //   TRAIL_INJECT=noplayguard  sample without suppressing playback
 //   TRAIL_INJECT=nopins       leave pins out of the fingerprint
+//   TRAIL_INJECT=rawpixelwidth  width is a raw pixel count, so a high-res eye draws it hair-thin
+//   TRAIL_INJECT=widthscalesdown the scale also shrinks, thinning desktop and GalaxyXR
+//   TRAIL_INJECT=threebeforerender three's own onBeforeRender wins, so a session freezes the
+//                              resolution at the flat viewport — the Vision Pro bug
+//   TRAIL_INJECT=rebuildonlyres the resolution is set only on rebuild, so it never catches up
+//   TRAIL_INJECT=canvasres     the fat-line resolution comes from the canvas even in a session
+//   TRAIL_INJECT=rigonlyeval   only rig joints are evaluated, so a keyed mesh plots nothing
+//   TRAIL_INJECT=rigonlytrail  the old rig-only filter: a keyed mesh gets no path
+//   TRAIL_INJECT=trackisenough a track counts as animated, so every selected object trails
 //   TRAIL_INJECT=jointignorespin  a selected JOINT ignores the pin on it, so the trail depends
 //                             on which of the two the pick happened to return
 //   TRAIL_INJECT=headonly     only the head of a multi-selection trails, the rest are dropped
@@ -29,7 +38,64 @@ const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
 
 const inject = process.env.TRAIL_INJECT || '';
-if (inject === 'jointignorespin') {
+if (inject === 'threebeforerender') {
+  // Let three's own onBeforeRender stand: in a session it writes the frozen flat viewport over
+  // the resolution before every draw, which is the oversized-trail bug in one line.
+  const a = `    let w, h;
+    if (r.w > 1 && r.h > 1) { w = r.w; h = r.h; }
+    else { renderer.getViewport(_fatVp); w = _fatVp.z; h = _fatVp.w; }`;
+  if (!SRC.includes(a)) throw new Error('inject threebeforerender: anchor moved');
+  SRC = SRC.replace(a, `    let w, h;
+    renderer.getViewport(_fatVp); w = _fatVp.z; h = _fatVp.w;`);
+} else if (inject === 'rawpixelwidth') {
+  // Width back to a raw pixel count: correct in pixels, and five times too thin on an eye
+  // buffer five times wider than the canvas it was tuned on.
+  const a = `      const k = Math.max(1, w / REF_VIEWPORT_W) * tune('_trailWidthScale', 1);
+      this.material.linewidth = basePx * k;`;
+  if (!SRC.includes(a)) throw new Error('inject rawpixelwidth: anchor moved');
+  SRC = SRC.replace(a, '      this.material.linewidth = basePx;');
+} else if (inject === 'widthscalesdown') {
+  // Scaling down as well as up: a "fix" that thins the desktop look that was already signed off.
+  const a = "Math.max(1, w / REF_VIEWPORT_W)";
+  if (!SRC.includes(a)) throw new Error('inject widthscalesdown: anchor moved');
+  SRC = SRC.replace(a, "(w / REF_VIEWPORT_W)");
+} else if (inject === 'rebuildonlyres') {
+  // The shipped bug: the resolution is only ever set when the geometry is rewritten, so a
+  // viewport that changes after the trail was built is never picked up.
+  const a = `      for (const line of (v.lines || [])) if (line && line.material) syncResolution(main, line.material);
+      if (v.gnomons && v.gnomons.material) syncResolution(main, v.gnomons.material);`;
+  if (!SRC.includes(a)) throw new Error('inject rebuildonlyres: anchor moved');
+  SRC = SRC.replace(a, '');
+} else if (inject === 'canvasres') {
+  // The shipped behaviour: the fat-line resolution is read from the flat canvas even in a
+  // session, so on a headset whose eye buffer differs from its canvas every line is mis-scaled.
+  const a = `  const r = main && main._renderer;
+  if (r && r.xr && r.xr.isPresenting) {`;
+  if (!SRC.includes(a)) throw new Error('inject canvasres: anchor moved');
+  SRC = SRC.replace(a, `  const r = main && main._renderer;
+  if (false) {`);
+} else if (inject === 'rigonlyeval') {
+  // The shipped bug: only rig joints are evaluated, so a keyed mesh either bails out of the
+  // sampler entirely (no rig present) or is sampled without ever being posed (rig present).
+  const a = `  for (const tg of (targets || [])) {
+    const o = (tg && tg.obj) || tg;
+    if (o && reg.tracks.get(o.getID()) && out.indexOf(o) < 0) out.push(o);
+  }
+`;
+  if (!SRC.includes(a)) throw new Error('inject rigonlyeval: anchor moved');
+  SRC = SRC.replace(a, '');
+} else if (inject === 'rigonlytrail') {
+  // The old rig-only filter: a keyed mesh is invisible to the trail.
+  const a = '  const trailable = (m) => !!m && (isRig(m) || xfKeyed(m));';
+  if (!SRC.includes(a)) throw new Error('inject rigonlytrail: anchor moved');
+  SRC = SRC.replace(a, '  const trailable = (m) => isRig(m);');
+} else if (inject === 'trackisenough') {
+  // Test for the TRACK rather than for keys: every registered object has one, so everything
+  // selected would sprout a path.
+  const a = "  return !!(t && t.times && t.times.length);";
+  if (!SRC.includes(a)) throw new Error('inject trackisenough: anchor moved');
+  SRC = SRC.replace(a, '  return !!t;');
+} else if (inject === 'jointignorespin') {
   const a = "      if (pin && pin._isPinTarget && keyed(pin)) add(pin, true);";
   if (!SRC.includes(a)) throw new Error('inject jointignorespin: anchor moved');
   SRC = SRC.replace(a, '');
@@ -101,7 +167,7 @@ const MotionPathEdit = { hoverIndex: () => (globalThis.__hover == null ? -1 : gl
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_motiontrail_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + body +
-  '\nexport { samplePaths, signature, range, trailed, animated, sampleTimes, timeColor };\nexport default MotionTrail;\n');
+  '\nexport { samplePaths, signature, range, trailed, animated, sampleTimes, timeColor, viewportSize, fatBeforeRender };\nexport default MotionTrail;\n');
 
 const mod = await import(outPath + '?v=' + Date.now());
 const { samplePaths, signature, range } = mod;
@@ -205,6 +271,229 @@ function setup(times) {
     Math.abs(j._p[0] - 0.75) < 1e-9, j._p[0]);
   check('the last solve was the restoring one',
     Math.abs(globalThis.__solves[globalThis.__solves.length - 1] - 0.75) < 1e-9);
+}
+
+// --- 2b. A KEYED MESH IN A SCENE WITH NO RIG STILL PLOTS A CURVE -----------------------
+//
+// The case that got shipped broken. Widening the TARGET filter made the sphere a trail target,
+// and nothing drew — because `animated()` walked Skeleton.joints() and nothing else, so with no
+// skeleton in the scene it returned an empty list and samplePaths took its `!joints.length`
+// exit before sampling anything. matt: "i start with the default sphere, grab tool, record, move
+// it around ... i don't see a motion trail for the sphere."
+//
+// Note what the earlier `trailed()` cases could NOT see: they asked which objects were chosen,
+// which was right all along. Choosing an object and being able to plot it are two questions, and
+// only the second one was broken.
+{
+  const box = { _id: nextId++, _p: [0, 0, 0], _track: { times: [0, 1, 2] },
+    getID() { return this._id; },
+    getModelSpaceMatrix() {
+      return [1,0,0,0, 0,1,0,0, 0,0,1,0, this._p[0], this._p[1], this._p[2], 1];
+    } };
+  // No `_isBone` on it, and nothing else in the scene — Skeleton.joints() returns [].
+  const main = scene([box]);
+  const reg = registry([box]);
+  window._animationRegistry = reg;
+  window._animLoopStart = 0; window._animLoopEnd = 2; window._animMasterDuration = 2;
+  window._animPlaying = false; window._flag_trails = true;
+  globalThis.__solves = [];
+  window._trailSamples = 5;
+
+  check('there is no rig in this fixture at all',
+    main.getMeshes().filter((m) => m._isBone).length === 0);
+
+  const paths = samplePaths(main, [{ obj: box, control: true }]);
+  check('a keyed mesh with no rig in the scene still samples', !!paths && paths[0].length === 5,
+    paths ? paths[0].length : 'null — the sampler bailed before it evaluated anything');
+
+  if (paths) {
+    // THE CURVE HAS TO MOVE. Getting past the length check is not enough on its own: if the box
+    // is never evaluated, every sample reads the pose it happens to be sitting in and the curve
+    // comes out as one point repeated — a "path" that draws nothing and looks like the flag
+    // being off.
+    const xs = paths[0].map((p) => p.x);
+    check('...and the samples are distinct, not one pose repeated',
+      new Set(xs.map((v) => v.toFixed(6))).size === 5, xs.join(','));
+    check('...spanning the range', Math.abs(xs[0]) < 1e-9 && Math.abs(xs[4] - 2) < 1e-9,
+      xs.join(','));
+    check('...and it is the CONTROL, so orientations are collected too',
+      !!paths.quats && !!paths.quats[0] && paths.quats[0].length === 5);
+  }
+}
+
+// --- 2c. THE BUFFER A FAT LINE IS MEASURED AGAINST -------------------------------------
+//
+// A fat line's width is screen PIXELS divided by the material's resolution, so this number
+// scales every curve and triad directly — and when it is wrong nothing looks like a resolution
+// bug, everything just looks the wrong size. It read SculptGL's camera, which is sized from the
+// DOM canvas and knows nothing about an XR framebuffer. matt, on Vision Pro: "the trails are
+// comically large, enough that it totally overwhelms the view and i can't see anything."
+{
+  const cam = { _width: 1200, _height: 800 };
+  const base = { getCamera: () => cam };
+
+  check('flatscreen uses the canvas', (() => {
+    const r = mod.viewportSize(base);
+    return r.w === 1200 && r.h === 800;
+  })());
+
+  // ONE EYE, from three's XR camera — that is the viewport a fat line is measured against.
+  const withXR = (xr) => Object.assign({}, base, { _renderer: { xr: xr } });
+  const eye = withXR({ isPresenting: true,
+    getCamera: () => ({ cameras: [{ viewport: { z: 1920, w: 1824 } }] }) });
+  check('a session uses the eye viewport, not the canvas', (() => {
+    const r = mod.viewportSize(eye);
+    return r.w === 1920 && r.h === 1824;
+  })(), JSON.stringify(mod.viewportSize(eye)));
+
+  // The base layer holds BOTH eyes side by side, so its width is halved.
+  const layer = withXR({ isPresenting: true,
+    getCamera: () => null,
+    getSession: () => ({ renderState: { baseLayer: { framebufferWidth: 3840, framebufferHeight: 1824 } } }) });
+  check('falling back to the base layer halves it for one eye', (() => {
+    const r = mod.viewportSize(layer);
+    return r.w === 1920 && r.h === 1824;
+  })(), JSON.stringify(mod.viewportSize(layer)));
+
+  // A session that reports nothing usable must not yield 0 or NaN: a resolution of zero divides
+  // the width by zero, which is the comically-large failure in its purest form.
+  const empty = withXR({ isPresenting: true, getCamera: () => null, getSession: () => null });
+  const e = mod.viewportSize(empty);
+  check('a session with nothing to report falls back to the canvas', e.w === 1200 && e.h === 800,
+    JSON.stringify(e));
+
+  const zero = withXR({ isPresenting: true,
+    getCamera: () => ({ cameras: [{ viewport: { z: 0, w: 0 } }] }), getSession: () => null });
+  const z = mod.viewportSize(zero);
+  check('a zero viewport is refused rather than used', z.w > 0 && z.h > 0, JSON.stringify(z));
+
+  check('no renderer at all is survivable', (() => {
+    const r = mod.viewportSize({});
+    return r.w >= 1 && r.h >= 1;
+  })());
+
+  // NOT PRESENTING means the canvas, even with an xr object hanging around.
+  const idle = withXR({ isPresenting: false,
+    getCamera: () => ({ cameras: [{ viewport: { z: 1920, w: 1824 } }] }) });
+  check('an idle xr manager does not steal the resolution', (() => {
+    const r = mod.viewportSize(idle);
+    return r.w === 1200 && r.h === 800;
+  })());
+}
+
+// --- 2d. THE RESOLUTION IS RE-SYNCED EVERY FRAME, NOT ONLY ON REBUILD ------------------
+//
+// The bug this exists for: syncResolution lived only inside pushFat, which runs when the curve's
+// GEOMETRY is rewritten. So the viewport captured at build time is kept for as long as the trail
+// is not rebuilt — and on Vision Pro the trail is built during session start, before the canvas
+// is sized and before three populates the per-eye viewport, so the material was left at 1x1 and a
+// 1.5px line covered most of the screen. Measured on the device: lineRes 1x1 against a 4851x3889
+// viewport and a healthy 1408x1840 canvas.
+//
+// What makes it testable is that perFrame runs whether or not anything was rebuilt.
+{
+  const cam = { _width: 1, _height: 1 };
+  const res = { x: 1, y: 1, set(w, h) { this.x = w; this.y = h; } };
+  const gres = { x: 1, y: 1, set(w, h) { this.x = w; this.y = h; } };
+  const main = {
+    getCamera: () => cam,
+    _trailVis: { lines: [{ material: { resolution: res } }],
+                 gnomons: { material: { resolution: gres } } },
+  };
+
+  // Nothing rebuilt; the only thing that changed is the viewport. That is the real sequence.
+  mod.default.perFrame(main);
+  check('a frame with no rebuild still syncs from the canvas', res.x === 1 && res.y === 1,
+    `${res.x}x${res.y}`);
+
+  cam._width = 1408; cam._height = 1840;
+  mod.default.perFrame(main);
+  check('...and picks up the canvas once it has a size', res.x === 1408 && res.y === 1840,
+    `${res.x}x${res.y} — left at its build-time value is the shipped bug`);
+
+  // Entering a session moves it again, still with no rebuild.
+  main._renderer = { xr: { isPresenting: true,
+    getCamera: () => ({ cameras: [{ viewport: { z: 4851, w: 3889 } }] }) } };
+  mod.default.perFrame(main);
+  check('a session moves it to the eye viewport, with nothing rebuilt',
+    res.x === 4851 && res.y === 3889, `${res.x}x${res.y}`);
+  check('the gnomon material is synced too, from the same pass',
+    gres.x === 4851 && gres.y === 3889, `${gres.x}x${gres.y}`);
+
+  // A trail that has not drawn anything must not throw here — perFrame runs every frame.
+  mod.default.perFrame({ getCamera: () => cam });
+  mod.default.perFrame({});
+  check('perFrame survives having nothing to sync', true);
+}
+
+// --- 2e. THREE'S OWN onBeforeRender IS OVERRIDDEN, AND WHY ------------------------------
+//
+// LineSegments2.onBeforeRender sets the resolution uniform from renderer.getViewport() right
+// before every draw. In an XR session that is the WRONG number: WebGLRenderer's _viewport is only
+// written by setViewport/setSize, the XR path sets camera.viewport on the eye cameras and never
+// touches it, and setSize refuses outright while presenting. So it is frozen at whatever the flat
+// canvas viewport was when the session began — on Vision Pro, 1x1.
+//
+// This is why writing the uniform ourselves could not work: measured on the device, 156 writes
+// across 155 frames and the value still read 1x1, because the clobber lands after every one.
+{
+  const uniforms = { resolution: { value: { x: 0, y: 0, set(w, h) { this.x = w; this.y = h; } } } };
+  const obj = { material: { uniforms } };
+  obj.material.linewidth = 1.5;
+  const before = mod.fatBeforeRender({
+    getCamera: () => ({ _width: 1408, _height: 1840 }),
+    _renderer: { xr: { isPresenting: true,
+      getCamera: () => ({ cameras: [{ viewport: { z: 4851, w: 3889 } }] }) } },
+  }, 1.5);
+
+  // The renderer reports the stale flat viewport, exactly as it does on the device.
+  const stale = { getViewport: (v) => { v.z = 1; v.w = 1; return v; } };
+  before.call(obj, stale);
+  check('in a session it uses the eye viewport, not what the renderer reports',
+    uniforms.resolution.value.x === 4851 && uniforms.resolution.value.y === 3889,
+    `${uniforms.resolution.value.x}x${uniforms.resolution.value.y} — three's number is 1x1 here`);
+
+  // Outside a session three is right, and is also what every other fat line is measured by.
+  const flatBefore = mod.fatBeforeRender({ getCamera: () => ({ _width: 900, _height: 600 }) }, 1.5);
+  const flatObj = { material: { uniforms: { resolution: { value: { x: 0, y: 0,
+    set(w, h) { this.x = w; this.y = h; } } } } } };
+  flatBefore.call(flatObj, { getViewport: (v) => { v.z = 900; v.w = 600; return v; } });
+  check('outside a session it agrees with three', flatObj.material.uniforms.resolution.value.x === 900);
+
+  // A degenerate viewport must fall back rather than be used: 1x1 IS the bug.
+  const badObj = { material: { uniforms: { resolution: { value: { x: 0, y: 0,
+    set(w, h) { this.x = w; this.y = h; } } } } } };
+  const noCam = mod.fatBeforeRender({ getCamera: () => ({ _width: 0, _height: 0 }) }, 1.5);
+  noCam.call(badObj, { getViewport: (v) => { v.z = 900; v.w = 600; return v; } });
+  check('a degenerate viewport falls back to the renderer', badObj.material.uniforms.resolution.value.x === 900,
+    String(badObj.material.uniforms.resolution.value.x));
+
+  // A PIXEL IS NOT A CONSTANT ANGULAR SIZE. px/resolution is the clip-space width, so the same
+  // px count is five times thinner on a 4851-wide eye than on a 1408-wide canvas — which is what
+  // the trail looked like once the resolution was finally right.
+  check('a high-resolution eye gets a proportionally wider line',
+    Math.abs(obj.material.linewidth - 1.5 * (4851 / 1400)) < 1e-6,
+    String(obj.material.linewidth));
+
+  // NEVER THINNER. Desktop and GalaxyXR already look the way they were signed off; a narrow
+  // viewport must be left exactly as it was rather than scaled down.
+  flatObj.material.linewidth = 1.5;
+  flatBefore.call(flatObj, { getViewport: (v) => { v.z = 900; v.w = 600; return v; } });
+  check('a small viewport is left alone, not scaled down',
+    flatObj.material.linewidth === 1.5, String(flatObj.material.linewidth));
+
+  // And the taste knob multiplies on top.
+  globalThis.window._trailWidthScale = 2;
+  before.call(obj, stale);
+  check('the width scale multiplies on top',
+    Math.abs(obj.material.linewidth - 1.5 * (4851 / 1400) * 2) < 1e-6,
+    String(obj.material.linewidth));
+  delete globalThis.window._trailWidthScale;
+
+  // A material with no uniforms must not throw — this runs before every draw.
+  check('an object with no resolution uniform is survivable', (() => {
+    try { before.call({ material: {} }, stale); return true; } catch (e) { return false; }
+  })());
 }
 
 // --- 3. playback is suppressed while sampling ------------------------------------------
@@ -404,6 +693,54 @@ function setup(times) {
   check('a joint whose pin has no keys trails only itself',
     jointUnkeyed.length === 1 && jointUnkeyed[0].obj === j);
   reg.tracks.set(pin.getID(), { times: [0, 1, 2] });
+
+  // A PLAIN KEYED MESH TRAILS. The filter used to be rig-only, which made the trail a rigging
+  // feature rather than an animation one: mocap a sphere with your hands and there was no path
+  // to look at. A keyed mesh is as free a control as a pin — its keys ARE its position — so it
+  // gets ONE curve, authored and editable, and no solved twin, because nothing reinterprets it.
+  {
+    const box = { _id: 950, _p: [0, 0, 0], getID() { return this._id; },
+      getModelSpaceMatrix() { return [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]; } };
+    const meshes = main.getMeshes();
+    const prevSel = main.getSelectedMeshes;
+    main.getMeshes = () => meshes.concat([box]);
+    main.getMesh = () => box;
+    main.getSelectedMeshes = () => [box];
+
+    // A track with no keys is what every registered object has; it must NOT make the object a
+    // trail target, or selecting anything at all would draw a path.
+    reg.tracks.set(box.getID(), { times: [] });
+    main._trailTargets = null;   // drop the sticky target, or it answers for the box
+    const none = mod.trailed(main);
+    check('an unkeyed mesh does not become a trail target', none.length === 0,
+      JSON.stringify(none.map((t) => [t.obj.getID(), t.control])));
+
+    reg.tracks.set(box.getID(), { times: [0, 1, 2] });
+    const one = mod.trailed(main);
+    check('a keyed mesh trails, once', one.length === 1 && one[0].obj === box,
+      JSON.stringify(one.map((t) => [t.obj.getID(), t.control])));
+    check('...flagged as the CONTROL, so it is editable', one[0] && one[0].control === true);
+
+    // A mesh with no track at all is the ordinary case and must stay silent.
+    reg.tracks.delete(box.getID());
+    main._trailTargets = null;
+    check('a mesh with no track does not trail', mod.trailed(main).length === 0);
+
+    // ...but a mesh that DID qualify stays sticky, like every other target: a Move stroke that
+    // misses the curve must not make the path vanish out from under the next attempt.
+    reg.tracks.set(box.getID(), { times: [0, 1, 2] });
+    mod.trailed(main);
+    main.getMesh = () => null;
+    main.getSelectedMeshes = () => [];
+    const stuck = mod.trailed(main);
+    check('a keyed mesh stays the target after the selection drops',
+      stuck.length === 1 && stuck[0].obj === box,
+      JSON.stringify(stuck.map((t) => [t.obj.getID(), t.control])));
+
+    main.getMeshes = () => meshes;
+    main.getSelectedMeshes = prevSel;
+    main.getMesh = () => j;
+  }
 
   // And a joint with no pin at all is unchanged.
   j._boneIKPinObj = null;

@@ -55,13 +55,26 @@ class Smooth extends SculptBase {
   // without closing an import cycle (MotionTrail already reaches back through redrawHook for
   // the same reason). These two tools are the only ones that can edit a path anyway.
   preUpdate(canBeContinuous) {
-    super.preUpdate(canBeContinuous);
+    // See Move.preUpdate: path hover always, mesh hover only when the paths are not up.
     MotionPathEdit.hoverTick(this._main);
+    if (this._pathsOwnStroke()) return;
+    super.preUpdate(canBeContinuous);
+  }
+
+  // THE PATHS OWN THE STROKE WHILE THEY ARE ON SCREEN — see MotionPathEdit.owns. Both halves of
+  // the tool are gated, not just the press: preUpdate is where the per-frame HOVER raycast
+  // happens, and skipping it is most of the point on a heavy mesh. A press that misses every
+  // curve returns false rather than falling through, so nothing sculpts and the camera gets the
+  // drag instead.
+  _pathsOwnStroke() {
+    return MotionPathEdit.owns(this._main);
   }
 
   start(ctrl) {
     const main = this._main;
     if (MotionPathEdit.begin(main, main._mouseX, main._mouseY, this.getScreenRadius())) return true;
+    // Missed every curve while curves are drawn: the mesh is not the target — see Move.start.
+    if (this._pathsOwnStroke()) return false;
     return super.start(ctrl);
   }
 
@@ -87,6 +100,7 @@ class Smooth extends SculptBase {
 
   updateXR(picking, isPressed, origin, dir, options) {
     if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'smooth', this._intensity, options)) return;
+    if (this._pathsOwnStroke()) return;
     return super.updateXR(picking, isPressed, origin, dir, options);
   }
 

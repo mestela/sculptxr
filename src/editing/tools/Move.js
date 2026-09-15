@@ -46,8 +46,20 @@ class Move extends SculptBase {
   // without closing an import cycle (MotionTrail already reaches back through redrawHook for
   // the same reason). These two tools are the only ones that can edit a path anyway.
   preUpdate(canBeContinuous) {
-    super.preUpdate(canBeContinuous);
+    // The path hover first, and the MESH hover only if the paths are not up: super.preUpdate
+    // raycasts the mesh every frame, which is the cost worth not paying on a 900k multires.
     MotionPathEdit.hoverTick(this._main);
+    if (this._pathsOwnStroke()) return;
+    super.preUpdate(canBeContinuous);
+  }
+
+  // THE PATHS OWN THE STROKE WHILE THEY ARE ON SCREEN — see MotionPathEdit.owns. Both halves of
+  // the tool are gated, not just the press: preUpdate is where the per-frame HOVER raycast
+  // happens, and skipping it is most of the point on a heavy mesh. A press that misses every
+  // curve returns false rather than falling through, so nothing sculpts and the camera gets the
+  // drag instead.
+  _pathsOwnStroke() {
+    return MotionPathEdit.owns(this._main);
   }
 
   start(ctrl) {
@@ -55,6 +67,9 @@ class Move extends SculptBase {
     if (MotionPathEdit.begin(main, main._mouseX, main._mouseY, this.getScreenRadius())) {
       return true;
     }
+    // Missed every curve, but the curves are on screen: the mesh is not the target right now,
+    // so the stroke ends here rather than reaching the raycast in super.start.
+    if (this._pathsOwnStroke()) return false;
     return super.start(ctrl);
   }
 
@@ -536,6 +551,9 @@ class Move extends SculptBase {
     // _intensity damps the TWIST the same way it does on a mesh, so the strength slider means
     // the same thing on a curve as it does under an ordinary Move.
     if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'move', this._intensity, options)) return;
+    // Same rule in the headset as on the desktop: a reach that found no curve while curves are
+    // drawn does nothing, rather than deforming whatever happened to be behind them.
+    if (this._pathsOwnStroke()) return;
 
     // Custom Move Logic:
     // Hover: Update Anchor (_lastVRPos) continuously so we are ready to drag from current pos.

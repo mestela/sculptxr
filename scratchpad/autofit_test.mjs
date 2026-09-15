@@ -163,5 +163,8 @@ console.log('\n_watchMasterDuration: rubbish in');
   check('a real value after rubbish takes the baseline, not a fit', tl.fits === 0);
 }
 
-console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`);
+// The wording matters: run_all.mjs tests for "all checks passed" or "tests passed", so a file
+// that only says "N passed" is counted as a FAILURE by the suite while reporting green alone.
+console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`
+  + (fail ? '' : '  — all checks passed'));
 process.exit(fail ? 1 : 0);

@@ -1,3 +1,68 @@
+# v3.40.0
+**Motion trails for anything with keys, and a long hunt through three.js to make them visible on a
+Vision Pro.** The trail was rig-only, which made it a rigging feature rather than an animation one:
+mocap a sphere with your hands and there was no path to look at. matt: "it looks like its limited
+to only bones. I think thats a needless restriction." A keyed mesh is as free a control as a pin —
+its keys ARE its position, with nothing downstream reinterpreting them — so it draws one curve,
+authored and editable, and no faint solved twin.
+
+**Choosing an object and being able to PLOT it are two questions.** Widening the target filter was
+not enough and the first attempt shipped broken, because `animated()` walked `Skeleton.joints()`
+and nothing else: with no skeleton in the scene it returned an empty list and the sampler bailed
+before evaluating anything. It would have failed more quietly WITH a rig — the sampler would run,
+the sphere would never be posed, and every sample would read the same point.
+
+**WHILE THE PATHS ARE DRAWN, THE PATHS ARE ALL YOU EDIT.** Acquisition used to be purely spatial,
+which is right for a point-like bone and wrong for a mesh, whose own silhouette can contain its
+whole path — so vertex sculpting quietly became unreachable. The gate is a visible mode (can you
+see a curve?) and it also keeps a 900k multires out of the raycast entirely: `preUpdate` skips the
+per-frame mesh hover and `start` never reaches `intersectionMouseMeshes`.
+
+**THE OVERSIZED TRAIL ON VISION PRO WAS THREE.JS, AND IT TOOK FOUR ROUNDS.** Each round was a real
+defect and none of them was the one:
+- `syncResolution` read SculptGL's camera, sized from the DOM canvas, which is not the buffer being
+  drawn into. Fixed by reading three's own per-eye viewport (`xr.getCamera().cameras[n].viewport`)
+  — the undocumented route three.js issue #21188 exists to replace.
+- It was called only from `pushFat`, i.e. on REBUILD, so a viewport that changed after the trail
+  was built was never picked up. Moved into `perFrame`.
+- Neither helped, and the counters said why: 156 writes across 155 frames with the value still
+  reading 1x1. **`LineSegments2.onBeforeRender` overwrites the uniform from
+  `renderer.getViewport()` immediately before every draw** — and that returns `_viewport`, which
+  only `setViewport`/`setSize` ever write. The XR path sets `camera.viewport` on the eye cameras
+  and never touches it, and `setSize` refuses outright while presenting. So for a whole session the
+  lines are sized by the flat viewport frozen at session start: 1x1 on that headset, and a 1.5px
+  line divided by 1 is most of the screen. Overridden.
+- Then it was hair-thin, because a PIXEL IS NOT A CONSTANT ANGULAR SIZE: 1.5px across a 4851-wide
+  eye is a fifth of 1.5px on a 1408-wide canvas. Width is now a fraction of the viewport, scaled UP
+  only — desktop and GalaxyXR already looked the way they were signed off.
+
+**The diagnostic had to be fixed before the bug could be.** It gated the one useful number behind
+gnomon data, so it demanded a rig pin from someone staring at a trail. matt: "why can't it tell me
+the info it needs when that is visible?" `trailDiag()` now answers whenever anything has drawn,
+names the build, counts the frames and the writes, and PROBES the material live — which is what
+finally separated "not running" from "running and clobbered".
+
+**Grabbing a VR panel: the gesture destroys its own aim.** Closing a hand swings the grip pose and
+its ray, so the laser slides off the panel at the instant you commit — and a miss fell through to
+world navigation and spun the scene, so every near-miss had to be undone. matt: "i kept missing the
+grab and it would turn the world instead." The panel the ray was on within 350ms is now the panel
+you meant, and a fist near a panel never turns the world. Same shape as the v3.37.0 finding that a
+VR click had to move from the press to the release.
+
+**Panels remember where you left them, for the session.** Toggling one off and on re-ran its
+first-open placement. Stored relative to the HEAD and by HEADING only — matt: "i dont trust world
+tracking" — so it comes back in front of you rather than behind, and looking up does not put it
+overhead.
+
+**And the suite was lying.** `run_all.mjs` tests for particular success wording, and seven
+harnesses (five new, two long-standing) ended with a phrase it did not accept — counted as
+FAILURES in the total while reporting green alone. The real baseline is **72/78**, with six genuine
+standing failures. A file that fails in the total and passes on its own is the worst of both: the
+total stops being believed, which is exactly what happened.
+
+Harnesses: `panelgrab_test.mjs` (24 cases, four injections), plus new sections in
+`motiontrail_test` (six injections) and `pathedit_test`.
+
 # v3.39.0
 **A range slider, Maya's way.** A new lane between the toolbar and the frame ruler, reading left
 to right: **global start, range start, range end, global end**. The track always spans the whole
