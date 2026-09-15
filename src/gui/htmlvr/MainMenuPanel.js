@@ -27,7 +27,7 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
-import getOptionsURL from '../../misc/getOptionsURL.js';
+import getOptionsURL, { MENU_GRADE_DEFAULTS } from '../../misc/getOptionsURL.js';
 import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
@@ -1470,6 +1470,25 @@ const DEV_TOGGLES = [
   { id: 'mm-ui-reset', label: 'Reset UI to Defaults', action: true,
     run: () => {
       resetUIDefaults();
+      // ...AND THE MENU COLOUR GRADE. The Settings > Menu sliders tint the rasterised panel
+      // texture, and a panel graded into illegibility is exactly the state you cannot read your
+      // way out of -- which makes it the other half of "put the interface back". matt: "the
+      // reset, it should reset the settings, 'menu' section for the interface color,
+      // brightness, saturation, gamma."
+      //
+      // Written to the live settings object, saved, and applied, in that order: the object is
+      // what the sliders read when the page rebuilds, the save is what survives a reload, and
+      // setMenuColorGrade is what changes the pixels without waiting for either.
+      try {
+        const d = MENU_GRADE_DEFAULTS;
+        const gx = window.app?._guiXR ?? window.app?.getGuiXR?.();
+        const ui = gx?._uiSettings;
+        if (ui) { ui.menuBrightness = d.brightness; ui.menuSaturation = d.saturation; ui.menuGamma = d.gamma; }
+        getOptionsURL.saveOption('menuBrightness', d.brightness, 0);
+        getOptionsURL.saveOption('menuSaturation', d.saturation, 0);
+        getOptionsURL.saveOption('menuGamma', d.gamma, 0);
+        setMenuColorGrade(d.brightness, d.saturation, d.gamma);
+      } catch (_) {}
       // Rebuild everything that draws sections, on both hosts: the VR panels rebuild from their
       // own content key, and the desktop sidebar and menus rebuild when next opened.
       for (const p of (window._mmPanels || [])) {
