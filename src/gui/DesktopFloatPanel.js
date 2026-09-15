@@ -1,4 +1,5 @@
 import { SECTION_LABELS } from './htmlvr/MainMenuPanel.js';
+import { groupSectionTitles, wireGroups, uiReorg } from './htmlvr/uiTokens.js';
 import { TAB_ICONS } from './tabIcons.js';
 import { ICON_DOCK } from './tabIcons.js';
 
@@ -62,6 +63,10 @@ export class DesktopFloatPanel {
     if (!this._el) return;
     const body = this._el.querySelector('.dfp-body');
     body.innerHTML = this._build();
+    // Same two passes as every other host of these builders: a floated section must not lose
+    // its collapsibles just for being floated. See TornOffPanel for the VR twin of this.
+    if (uiReorg()) groupSectionTitles(body);
+    wireGroups(body, () => {});
     this._wire?.(body, () => this.rebuild());
   }
 

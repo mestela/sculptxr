@@ -1,5 +1,6 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import { notePanelRebuild } from './install.js';
+import { groupSectionTitles, wireGroups, uiReorg, tagReorgRoot } from './uiTokens.js';
 import { ICON_DOCK, TAB_ICONS } from '../tabIcons.js';
 import {
   MM_W, injectMMCSS,
@@ -147,7 +148,18 @@ export class TornOffPanel extends HTMLVRPanel {
     this._lastHTML = html;
 
     contentEl.innerHTML = html;
+    // A TORN-OFF SECTION IS THE SAME SECTION. It renders the same builders as the docked panel,
+    // so it needs the same two passes -- otherwise floating a section turns its collapsibles
+    // back into plain expanded headings and it stops matching the panel it came out of.
+    //
+    // The root is tagged as well: the sweep is scoped on a .ui-reorg ancestor and this panel is
+    // rasterised on its own, so without the class none of the styling reaches it either.
+    if (uiReorg()) {
+      tagReorgRoot(this._element);
+      groupSectionTitles(contentEl);
+    }
     this._wireSection(main);
+    wireGroups(this._element, () => this.markDirty());
     fixSliderDrag(contentEl);
     refreshVRScrollbar(contentEl, this._element.querySelector('.mm-scrollbar-thumb'));
     // flushPaint forces an immediate polyfill capture so the texture is
