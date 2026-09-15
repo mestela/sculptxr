@@ -11766,6 +11766,36 @@ class Scene {
   //
   // Acts on the preselected joint first and the selection second, which is the same rule the B
   // menu uses -- in the headset you are already pointing at the joint you mean.
+  // ── IS THIS TRIGGER DOWN? ONE ANSWER ────────────────────────────────────────
+  //
+  // Trigger sensitivity maps the slider (0 Hard .. 1 Light) onto a threshold of 0.9 .. 0.1 on
+  // the ANALOG value. A light setting means a sculpt stroke starts well before the runtime
+  // calls the button `pressed`.
+  //
+  // The offhand-Smooth override was asking `buttons[0].pressed` instead -- the runtime's own
+  // boolean, which trips near a full pull. So with a light setting a small pull passed the
+  // sculpt threshold and started a stroke, while the override never armed: you got the primary
+  // tool where you had asked for Smooth. matt: "if i pull the primary trigger a small amount,
+  // it lets the primary tool get through, causing nasty glitches when i expected it to be
+  // smoothing." A full pull crossed both tests, which is why it worked sometimes.
+  //
+  // HANDS KEEP THE RUNTIME'S BOOLEAN, for the reason written at the sculpt test: a hand's
+  // trigger value is a continuous closure signal that rests well above zero, so a travel
+  // threshold on it either latches on for ever or fires on a relaxed hand. Sensitivity is a
+  // setting about a physical trigger and has nothing to calibrate on a gesture.
+  _triggerThreshold() {
+    const ui = this._guiXR && this._guiXR._uiSettings;
+    // slider is 0.0 (Hard) to 1.0 (Light) -> threshold 0.9 (Hard) to 0.1 (Light)
+    return (ui && ui.triggerCurve !== undefined) ? 0.9 - (ui.triggerCurve * 0.8) : 0.5;
+  }
+
+  _isTriggerDown(source) {
+    const b = this._padOf(source)?.buttons?.[0];
+    if (!b) return false;
+    if (this._isHandSource(source)) return !!b.pressed;
+    return (b.value ?? 0) >= this._triggerThreshold();
+  }
+
   _resolvePinJoint() {
     const hov = Skeleton.hoveredJoint(this);
     if (hov) return hov;
@@ -12988,19 +13018,14 @@ class Scene {
     // Reading it directly left analogValue at 0, so isTriggerPressed was false, so canSculpt was
     // false, and no stroke ever opened — with the pinch detected perfectly at every earlier
     // stage. Measured: latch/mock/pad all fired 10 times, sculpting 0% of frames.
+
     const buttons = this._padOf(source)?.buttons || [];
     // PHASE 11 Fix: If we are already sculpting/dragging with this hand, it IS the trigger state that matters
     // regardless of global dominance.
     const isDominant = (source.handedness === this._dominantHand);
     
     // Evaluate custom trigger sensitivity threshold
-    let triggerThreshold = 0.5; // Default middle
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.triggerCurve !== undefined) {
-      // slider is 0.0 (Hard) to 1.0 (Light)
-      // We map this to a threshold of 0.9 (Hard) to 0.1 (Light)
-      const uiVal = this._guiXR._uiSettings.triggerCurve;
-      triggerThreshold = 0.9 - (uiVal * 0.8);
-    }
+    const triggerThreshold = this._triggerThreshold();
     
     // Safe extract analog value
     let analogValue = 0.0;
@@ -13096,7 +13121,7 @@ class Scene {
     let _domPressed = false;
     if (session && session.inputSources) {
       for (let src of session.inputSources) {
-        if (src.handedness === this._dominantHand && this._padOf(src)?.buttons?.[0]?.pressed) {
+        if (src.handedness === this._dominantHand && this._isTriggerDown(src)) {
           _domPressed = true; break;
         }
       }
@@ -13105,8 +13130,9 @@ class Scene {
         && !this._isPointingAtMenu && !this._wasPointingAtMenu) {
       for (let src of session.inputSources) {
         if (src.handedness === nonDomHand) {
-          // Button 0 (Index Trigger)
-          if (this._padOf(src)?.buttons?.[0]?.pressed) {
+          // Button 0 (Index Trigger), through the same threshold the sculpt path uses -- the
+          // modifier and the thing it modifies have to agree about what "held" means.
+          if (this._isTriggerDown(src)) {
             // Apply contextual override based on the active tool
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
