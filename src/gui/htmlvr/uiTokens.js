@@ -1,4 +1,5 @@
 import getOptionsURL from '../../misc/getOptionsURL.js';
+import { faIcon } from './faIcons.js';
 /**
  * uiTokens — single source of truth for the panel visual language.
  *
@@ -103,15 +104,63 @@ export function injectUITokens() {
 // State is global and keyed by name so it survives the panel rebuilds that replace this markup
 // wholesale, and so the main panel and a torn-off copy agree.
 
+// One place that decides what the marker looks like, so the builder and the click handler
+// cannot draw two different things.
+export function chevIcon(open) {
+  return faIcon(open ? 'chevron-down' : 'chevron-right', { size: 11 });
+}
+
+// ── SECTION STATE: DEFAULTS, CHOICES, AND STORAGE ────────────────────────────
+//
+// THE MAP HOLDS EXPLICIT CHOICES ONLY. The first version latched the default into the map the
+// first time a section was rendered, which made a default indistinguishable from something the
+// user had opened -- and once persisted, a default could never be changed again for anyone who
+// had already run the app. Defaults are computed, never stored; only a click writes.
+const STORE_KEY = 'sculptxr.uiGroups';
+
+// WHICH SECTIONS OPEN ON A FRESH PROFILE, by the slug of their heading. matt's list.
+const DEFAULT_OPEN = new Set([
+  'sec:open', 'sec:save',            // Files: the two you came for
+  'sec:rendering',                   // View
+  'sec:multiresolution',             // Topology
+  'sec:sculpt',                      // Tools
+  'sec:brush', 'sec:symmetry',       // Properties
+  'sec:frame-range', 'sec:transport' // Animation
+]);
+
+// PAGES WHOSE SECTIONS ALL OPEN. History and About are short and are read rather than operated
+// -- collapsing them buys nothing and costs a click per section. Everything else starts closed
+// unless it is named in DEFAULT_OPEN above.
+const ALL_OPEN_PAGES = new Set(['history', 'about']);
+export function pageDefaultOpen(id) { return ALL_OPEN_PAGES.has(id); }
+
+function store() {
+  if (window._uiGroups) return window._uiGroups;
+  let loaded = {};
+  try {
+    const raw = window.localStorage?.getItem(STORE_KEY);
+    if (raw) loaded = JSON.parse(raw) || {};
+  } catch (_) { /* private window, cleared storage, bad JSON: start fresh rather than throw */ }
+  return (window._uiGroups = loaded);
+}
+
+function persist() {
+  try { window.localStorage?.setItem(STORE_KEY, JSON.stringify(window._uiGroups || {})); }
+  catch (_) { /* quota or blocked storage: the session still works, it just will not be remembered */ }
+}
+
+// `dflt` is what the CALLER wants for a page with no per-section opinion (History and About ask
+// for everything open). DEFAULT_OPEN overrides it for the named sections.
 export function groupOpen(key, dflt = true) {
-  const g = (window._uiGroups = window._uiGroups || {});
-  if (g[key] == null) g[key] = dflt;
-  return !!g[key];
+  const g = store();
+  if (g[key] != null) return !!g[key];
+  return DEFAULT_OPEN.has(key) ? true : !!dflt;
 }
 
 export function toggleGroup(key) {
-  const g = (window._uiGroups = window._uiGroups || {});
+  const g = store();
   g[key] = !groupOpen(key);
+  persist();
   return g[key];
 }
 
@@ -121,7 +170,7 @@ export function collapsibleHTML(key, label, bodyHTML, dflt = true) {
   const open = groupOpen(key, dflt);
   return `
     <button class="mm-group-head" data-group="${key}">
-      <span class="mm-group-chev">${open ? '&#9662;' : '&#9656;'}</span>${label}
+      <span class="mm-group-chev">${chevIcon(open)}</span>${label}
     </button>
     <div class="mm-group-body${open ? '' : ' collapsed'}" data-group-body="${key}">${bodyHTML}</div>`;
 }
@@ -161,7 +210,7 @@ export function wireGroups(root, repaint) {
       // query would flip the off-screen VR copy's class and leave this one alone.
       root.querySelector(`[data-group-body="${key}"]`)?.classList.toggle('collapsed', !open);
       const chev = head.querySelector('.mm-group-chev');
-      if (chev) chev.innerHTML = open ? '&#9662;' : '&#9656;';
+      if (chev) chev.innerHTML = chevIcon(open);
       repaint?.();
     });
   });
@@ -184,32 +233,40 @@ export function wireGroups(root, repaint) {
 // able to look at it next to what it replaces. Fold it into the base rules and delete the
 // originals once the look is agreed.
 //
-// HOOKED ON THE ROOT ELEMENT, not on a panel. The desktop sidebar, the wrist panel and the VR
-// main menu are three different roots in three different places, and the sidebar is not inside
-// any of them -- a per-panel class would sweep two of the three and silently skip the one matt
-// looks at most.
+// HOOKED ON THE ROOT ELEMENT **AND** ON EVERY PANEL ROOT.
+//
+// The first version scoped every rule on `html.ui-reorg`, which works in the browser and does
+// NOTHING IN VR: the rasteriser serialises a panel into its own SVG document, and the <html>
+// element of that document carries none of this page's classes. So the whole sweep was absent
+// from the one place the panels are actually looked at -- headings fell back to the user
+// agent's button centring, which is exactly what matt saw ("in vr those collapsible sections
+// titles are still centered").
+//
+// Scoped on a bare `.ui-reorg` instead, and the class is put on documentElement (so the desktop
+// sidebar, which is inside no panel root, still matches) AND on each panel root (which IS
+// inside the serialised fragment). One selector, both renderers.
 const SWEEP_CSS = `
 /* Everything a person presses, types into, or drags: one height, one radius, one border,
    one type size, one resting surface. */
-html.ui-reorg .mm-action-btn,
-html.ui-reorg .mm-toggle,
-html.ui-reorg .mm-choice,
-html.ui-reorg .mm-select-trigger,
-html.ui-reorg .mm-tool-btn,
-html.ui-reorg .mm-xf,
-html.ui-reorg .mm-xf-bake,
-html.ui-reorg .mm-text-input,
-html.ui-reorg .mp-action-btn,
-html.ui-reorg .mp-toggle-btn,
-html.ui-reorg .mp-voxel-btn,
-html.ui-reorg .mp-keep-btn,
-html.ui-reorg .acp-btn-full,
-html.ui-reorg .acp-btn-clear,
-html.ui-reorg .acp-btn-autokey,
-html.ui-reorg .acp-mode-btn,
-html.ui-reorg .acp-btn-grid button,
-html.ui-reorg .acp-addkey-row button,
-html.ui-reorg .acp-select-trigger {
+.ui-reorg .mm-action-btn,
+.ui-reorg .mm-toggle,
+.ui-reorg .mm-choice,
+.ui-reorg .mm-select-trigger,
+.ui-reorg .mm-tool-btn,
+.ui-reorg .mm-xf,
+.ui-reorg .mm-xf-bake,
+.ui-reorg .mm-text-input,
+.ui-reorg .mp-action-btn,
+.ui-reorg .mp-toggle-btn,
+.ui-reorg .mp-voxel-btn,
+.ui-reorg .mp-keep-btn,
+.ui-reorg .acp-btn-full,
+.ui-reorg .acp-btn-clear,
+.ui-reorg .acp-btn-autokey,
+.ui-reorg .acp-mode-btn,
+.ui-reorg .acp-btn-grid button,
+.ui-reorg .acp-addkey-row button,
+.ui-reorg .acp-select-trigger {
   min-height: var(--ui-ctl-h);
   height: auto;
   box-sizing: border-box;
@@ -228,41 +285,41 @@ html.ui-reorg .acp-select-trigger {
 
 /* ONE ACTIVE LOOK. The panels had at least three: a filled grey, a tinted wash, and a border
    colour change, for the same meaning. */
-html.ui-reorg .mm-action-btn.active,
-html.ui-reorg .mm-toggle.active,
-html.ui-reorg .mm-choice.active,
-html.ui-reorg .mp-toggle-btn.active,
-html.ui-reorg .mp-voxel-btn.active,
-html.ui-reorg .mp-keep-btn.active,
-html.ui-reorg .acp-mode-btn.active,
-html.ui-reorg .acp-btn-autokey.active {
+.ui-reorg .mm-action-btn.active,
+.ui-reorg .mm-toggle.active,
+.ui-reorg .mm-choice.active,
+.ui-reorg .mp-toggle-btn.active,
+.ui-reorg .mp-voxel-btn.active,
+.ui-reorg .mp-keep-btn.active,
+.ui-reorg .acp-mode-btn.active,
+.ui-reorg .acp-btn-autokey.active {
   background: var(--ui-ctl-bg-active);
   border-color: var(--ui-accent);
   color: var(--ui-text);
 }
 
 /* Text and number fields read left, not centred: you are reading a value, not a label. */
-html.ui-reorg .mm-xf,
-html.ui-reorg .mm-text-input { justify-content: flex-start; text-align: left; }
+.ui-reorg .mm-xf,
+.ui-reorg .mm-text-input { justify-content: flex-start; text-align: left; }
 
 /* THE SHARED LEFT EDGE. A button's label starts at its own horizontal padding; a row's label
    started at zero, because rows have no border and never had any. So every label in the column
    sat at one of two different x positions and nothing lined up -- matt: "nothing is vertically
    aligned". Same padding on the row puts its text on the same edge as the button text above it. */
-html.ui-reorg .mm-row,
-html.ui-reorg .acp-row {
+.ui-reorg .mm-row,
+.ui-reorg .acp-row {
   min-height: var(--ui-ctl-h-sm);
   padding-left: var(--ui-ctl-px);
   padding-right: var(--ui-ctl-px);
   box-sizing: border-box;
 }
-html.ui-reorg .mm-check-row,
-html.ui-reorg .acp-check-row { padding-left: var(--ui-ctl-px); box-sizing: border-box; }
+.ui-reorg .mm-check-row,
+.ui-reorg .acp-check-row { padding-left: var(--ui-ctl-px); box-sizing: border-box; }
 
 /* One heading size and weight, and the same left edge again. */
-html.ui-reorg .mm-section-title,
-html.ui-reorg .acp-section-title,
-html.ui-reorg .mm-group-head {
+.ui-reorg .mm-section-title,
+.ui-reorg .acp-section-title,
+.ui-reorg .mm-group-head {
   font-size: var(--ui-head-fs);
   font-weight: var(--ui-head-fw);
   text-transform: uppercase;
@@ -279,21 +336,44 @@ html.ui-reorg .mm-group-head {
    word was, while everything underneath was left aligned. It read as decoration rather than as
    the start of a section. text-align does not fix it because the flex box has already placed
    the line. */
-html.ui-reorg .mm-group-head {
+.ui-reorg .mm-group-head {
   padding-left: 0;
+  /* BLOCK, NOT FLEX. justify-content:flex-start fixes the centring in the browser, but this
+     markup is also serialised into an SVG and rasterised for the VR panel, and a flex <button>
+     is exactly the kind of thing that comes back centred there -- the user agent's own button
+     centring reasserting when the flex layout does not survive. A block box with text-align
+     needs nothing preserved to land on the left. */
+  display: block;
   justify-content: flex-start;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-html.ui-reorg .mm-group-chev {
-  width: var(--ui-ctl-px);
+/* THE CHEVRON IS AN ICON NOW, NOT A CHARACTER. A 9px unicode triangle is legible on a monitor
+   and is not legible through the VR rasteriser at arm's length -- matt: "so small as to be
+   unreadable in vr". It is also the house rule: FontAwesome paths or plain text, never a glyph.
+   Sized to the heading's own type rather than smaller than it. */
+.ui-reorg .mm-group-chev {
+  display: inline-block;
+  width: 16px;
   margin-left: 0;
   text-align: left;
   flex-shrink: 0;
+  color: var(--ui-text-dim);
+  vertical-align: -0.1em;
 }
+.ui-reorg .mm-group-chev svg { width: 11px; height: 11px; fill: currentColor; }
+
+/* NO DEAD SPACE UNDER THE PANEL TITLE. The section header carries an 8px bottom margin and
+   every heading a 5px top one, so the first heading sat 13px below a rule it belongs directly
+   under. matt: "there's a useless gap at the top between the primary panel title and the first
+   collapsible section title." */
+.ui-reorg .mm-section-header + .mm-group-head { margin-top: 0; }
 
 /* The outliner rows were 8px, the only type in the app that small. They keep their own tinted
    surface, which carries selection state, but take the shared radius and border. */
-html.ui-reorg .mm-mesh-btn {
+.ui-reorg .mm-mesh-btn {
   font-size: var(--ui-ctl-fs);
   min-height: var(--ui-ctl-h-sm);
   border-radius: var(--ui-ctl-r);
@@ -301,16 +381,16 @@ html.ui-reorg .mm-mesh-btn {
 
 /* Compact rows and headings settle on the small height rather than near it: 25, 26 and 27 were
    each one control finding its own answer to the same question. */
-html.ui-reorg .mm-check-row,
-html.ui-reorg .acp-check-row,
-html.ui-reorg .mm-group-head { min-height: var(--ui-ctl-h-sm); }
+.ui-reorg .mm-check-row,
+.ui-reorg .acp-check-row,
+.ui-reorg .mm-group-head { min-height: var(--ui-ctl-h-sm); }
 
 /* A heading is not a control: no radius, no border, no surface. It reads as a label because it
    looks nothing like the things under it. */
-html.ui-reorg .mm-group-head { border-radius: 0; border: 0; background: none; }
+.ui-reorg .mm-group-head { border-radius: 0; border: 0; background: none; }
 
 /* The section pin was 26px and 13px type, the only two of either in the panel. */
-html.ui-reorg .mm-section-pin-btn {
+.ui-reorg .mm-section-pin-btn {
   min-height: var(--ui-ctl-h-sm);
   font-size: var(--ui-ctl-fs);
   border-radius: var(--ui-ctl-r);
@@ -321,7 +401,7 @@ html.ui-reorg .mm-section-pin-btn {
 /* A SWATCH IS ITS OWN VALUE. The wireframe colour chip is the one button whose background is
    the thing it means, so it keeps it and takes only the frame and the radius. Normalising it
    to the control grey would have hidden the colour it exists to show. */
-html.ui-reorg #mm-wf-swatch {
+.ui-reorg #mm-wf-swatch {
   min-height: var(--ui-ctl-h-sm);
   border-radius: var(--ui-ctl-r);
   border: 1px solid var(--ui-ctl-border);
@@ -338,7 +418,7 @@ html.ui-reorg #mm-wf-swatch {
    ("8 buttons across feels like a good use of space"). Only its chrome conforms: same radius,
    same border, same resting surface, same height as every other control. Its glyphs keep their
    own size, because an icon and a word do not read at the same point size. */
-html.ui-reorg .acp-transport button {
+.ui-reorg .acp-transport button {
   /* HEIGHT, not just min-height. The row is a grid track sized to its content, and an icon
      button's line box carries descender space the glyph never uses -- so a 13px icon in a
      zero-padding button still measured 35px and set the track. Every other control in the app
@@ -354,7 +434,7 @@ html.ui-reorg .acp-transport button {
 /* THE SEGMENTED CONTROL LOSES ITS FRAME. acp-mode-row drew a rounded border around three
    buttons that had none of their own; the sweep gives those three the standard button chrome,
    so the container frame became a second box drawn around three boxes. */
-html.ui-reorg .acp-mode-row {
+.ui-reorg .acp-mode-row {
   border: 0;
   border-radius: 0;
   overflow: visible;
@@ -363,7 +443,7 @@ html.ui-reorg .acp-mode-row {
 
 /* Number fields: the same control as everything else you type into. They were radius 6 and
    13px type against the panel's 5 and 11. */
-html.ui-reorg .acp-frame-cell input[type=number] {
+.ui-reorg .acp-frame-cell input[type=number] {
   min-height: var(--ui-ctl-h);
   border: 1px solid var(--ui-ctl-border);
   border-radius: var(--ui-ctl-r);
@@ -373,7 +453,7 @@ html.ui-reorg .acp-frame-cell input[type=number] {
 }
 /* The key inspector packs many small fields into one row on purpose, so it takes the COMPACT
    height rather than the full one -- conforming to the scale, not flattening the distinction. */
-html.ui-reorg .acp-key-inspector .acp-frame-cell input {
+.ui-reorg .acp-key-inspector .acp-frame-cell input {
   min-height: var(--ui-ctl-h-sm);
   height: auto;
   /* Border and background as well as size. Setting only the metrics left these falling back to
@@ -401,7 +481,7 @@ html.ui-reorg .acp-key-inspector .acp-frame-cell input {
 
    3px radius, not the control radius: a 13px box at 5px reads as a blob, and matching the
    panel beside it is the entire point of this pass. */
-html.ui-reorg .acp-check-row input[type=checkbox] {
+.ui-reorg .acp-check-row input[type=checkbox] {
   appearance: none;
   -webkit-appearance: none;
   width: 13px;
@@ -414,12 +494,12 @@ html.ui-reorg .acp-check-row input[type=checkbox] {
   position: relative;
   cursor: pointer;
 }
-html.ui-reorg .acp-check-row input[type=checkbox]:checked {
+.ui-reorg .acp-check-row input[type=checkbox]:checked {
   background: var(--ui-accent);
   border-color: var(--ui-accent);
 }
 /* The tick, drawn the same way the mm checkmark draws it. */
-html.ui-reorg .acp-check-row input[type=checkbox]:checked::after {
+.ui-reorg .acp-check-row input[type=checkbox]:checked::after {
   content: '';
   position: absolute;
   left: 3px;
@@ -434,8 +514,8 @@ html.ui-reorg .acp-check-row input[type=checkbox]:checked::after {
 }
 
 /* 12px was the only body size in the app that was neither 11 nor 13. */
-html.ui-reorg .acp-root,
-html.ui-reorg .acp-check-row { font-size: var(--ui-ctl-fs); }
+.ui-reorg .acp-root,
+.ui-reorg .acp-check-row { font-size: var(--ui-ctl-fs); }
 
 /* Native range inputs keep their own metrics: accent-color already themes them, and forcing a
    height onto the track fights the browser's thumb sizing for no gain. Deliberately out of
@@ -445,10 +525,21 @@ html.ui-reorg .acp-check-row { font-size: var(--ui-ctl-fs); }
 let _sweepEl = null;
 // Called on every reorg toggle as well as at startup, so the A/B switch reaches the styling and
 // not only the layout.
+// Every root that might be serialised on its own. Called again whenever a panel is built, so a
+// root created after startup still gets tagged.
+export function tagReorgRoot(el) {
+  if (!el) return;
+  el.classList.toggle('ui-reorg', uiReorg());
+}
+
 export function applyUISweep() {
   injectUITokens();
   const on = uiReorg();
   document.documentElement.classList.toggle('ui-reorg', on);
+  // The panel roots as well: see the note above about the rasteriser's own document.
+  document.querySelectorAll('#mm-root, #mp-root, .acp-root').forEach((el) => {
+    el.classList.toggle('ui-reorg', on);
+  });
   if (!_sweepEl) {
     _sweepEl = document.createElement('style');
     _sweepEl.setAttribute('data-ui-sweep', '');
@@ -521,7 +612,7 @@ export function groupSectionTitles(root, opts) {
     head.dataset.sectionWrapped = '1';
     const chev = document.createElement('span');
     chev.className = 'mm-group-chev';
-    chev.innerHTML = open ? '&#9662;' : '&#9656;';
+    chev.innerHTML = chevIcon(open);
     head.appendChild(chev);
     head.appendChild(document.createTextNode(text));
 

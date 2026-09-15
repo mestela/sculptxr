@@ -53,7 +53,7 @@ import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
 import { faIcon, setFaIcon } from './faIcons.js';
-import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles } from './uiTokens.js';
+import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen } from './uiTokens.js';
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
@@ -120,6 +120,21 @@ const MM_BODY_H    = 456;   // height below menubar (scrollable content lives he
 // Hands-only undo/redo strip pinned to the bottom. The body loses exactly this much when it is
 // shown, so the two never overlap and no content is hidden underneath it.
 const MM_UNDO_H    = 38;
+
+// CONTAINERS THAT ALREADY LAY THEMSELVES OUT, excluded from the density rules below.
+//
+// The density exists for content that is one control per row. A row authored to be compact is
+// not that, and repacking it makes it worse: the Scene page's add-row puts six primitive
+// buttons on ONE line at 38-57px each, and a 170px flex-basis turned that into three rows of
+// 193px blocks. The four rig-constraint buttons went from one row to two the same way.
+// matt, comparing the hosts: "the desktop layout is good and compact, match it" -- the sidebar
+// was right precisely because these rules had never been applied to it.
+//
+// Written INTO the dense selectors rather than as an override after them. As a separate
+// opt-out it lost on specificity to the :has() rules and changed nothing, which is the sort of
+// silent no-op this file has produced twice already.
+const AUTHORED_ROWS = ':not(.mm-add-row, .mm-rig-btn-row, .mm-btn-pair, .mm-choice-grid, '
+  + '.mm-toolbar, .mm-xform-row, .mm-check-pair, .acp-transport, .acp-btn-grid, .acp-frame-grid)';
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -463,26 +478,38 @@ const CSS = `
    (no backticks in here, and no double-dash: this is inside a template literal and it is also
    serialised as XML by the rasteriser. panelxml_test checks both.) */
 .mm-dense,
-.mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn) {
+.mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn)${AUTHORED_ROWS} {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
+  /* ALIGN-CONTENT, WHICH IS THE ONE THAT BITES. A wrapping flex container defaults to
+     stretching its LINES to fill its height, and this container has a fixed 456px height. So a
+     page of seven collapsed headings became seven flex lines each stretched to a seventh of the
+     panel: 27px headings sitting 55px apart, floating down an otherwise empty box.
+
+     This is what matt saw on the collapsed Topology panel in the headset, and it is the same
+     thing reported earlier as a "big gap between collapsed sections" -- which was then wrongly
+     blamed on the panel being a fixed-size quad. The quad does not help, but the gap is this.
+
+     align-items governs an item within its line and was already set; it does nothing about the
+     lines themselves. */
+  align-content: flex-start;
   gap: 0 10px;
 }
 .mm-dense > *,
-.mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn) > * {
+.mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn)${AUTHORED_ROWS} > * {
   flex: 1 1 100%;
   min-width: 0;
 }
 .mm-dense > .mm-row,
-.mm-dense *:has(> .mm-row) > .mm-row { flex: 1 1 190px; }
+.mm-dense *:has(> .mm-row)${AUTHORED_ROWS} > .mm-row { flex: 1 1 190px; }
 
 /* A lone short button does not need its own row. The View page alone carried ten of them at
    396px for labels of one to three words. */
 .mm-dense > .mm-toggle,
 .mm-dense > .mm-action-btn,
-.mm-dense *:has(> .mm-toggle) > .mm-toggle,
-.mm-dense *:has(> .mm-action-btn) > .mm-action-btn { flex: 1 1 170px; }
+.mm-dense *:has(> .mm-toggle)${AUTHORED_ROWS} > .mm-toggle,
+.mm-dense *:has(> .mm-action-btn)${AUTHORED_ROWS} > .mm-action-btn { flex: 1 1 170px; }
 
 /* A collapsible heading is a divider: it must never share a line with what it labels. */
 .mm-dense .mm-group-head { flex: 1 1 100%; }
@@ -1545,8 +1572,19 @@ const DEV_TOGGLES = [
     } },
 ];
 
-export function buildDevToggles(render, renderAction) {
-  return DEV_TOGGLES.map((t) => (t.action
+// WHICH OF THESE IS A TRACE. Ten of the sixteen dev toggles are tracers, and they were all
+// rendered into one block under "Physics Bones" -- a heading that describes two of them.
+// matt: "anything with 'trace' in the name should be under a 'trace' section."
+//
+// Read off the LABEL rather than kept as a second field, so a tracer added later lands in the
+// right section by being named like one, with nothing to remember.
+const isTrace = (t) => /trace/i.test(t.label);
+
+// `group` is 'trace', 'other', or undefined for everything (the old behaviour, still used by
+// wireDevToggles' contract that every id is rendered somewhere).
+export function buildDevToggles(render, renderAction, group) {
+  const want = (t) => group == null || (group === 'trace' ? isTrace(t) : !isTrace(t));
+  return DEV_TOGGLES.filter(want).map((t) => (t.action
     ? (renderAction ? renderAction(t.id, t.label) : '')
     : render(t.id, t.label, t.get()))).join('\n    ');
 }
@@ -2015,7 +2053,12 @@ function buildMenuHTML_settings(main) {
     <div class="mm-section-title">Physics &amp; Diagnostics</div>
     ${buildDevToggles((id, label, on) =>
       `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`,
-      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`)}
+      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`, 'other')}
+
+    <div class="mm-section-title">Trace</div>
+    ${buildDevToggles((id, label, on) =>
+      `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`,
+      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`, 'trace')}
 
     <div class="mm-section-title">Debug</div>
     <button class="mm-toggle${debugMode ? ' active' : ''}" id="mm-debug-mode">Debug Mode (HUD Logs)</button>
@@ -3290,7 +3333,7 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Every section title on this page becomes a collapsible, collapsed unless it has been
     // opened before. Runs on the fresh markup and before the wiring, so the heads it creates
     // are wired by the same pass as the ones the builders emit.
-    if (uiReorg()) groupSectionTitles(contentEl);
+    if (uiReorg()) groupSectionTitles(contentEl, { defaultOpen: pageDefaultOpen(this._activeMenu) });
 
     this._wireContent();
 
@@ -5244,12 +5287,16 @@ export function buildMenuHTML_desktopSettings(main) {
   ` : '';
 
   const debugActive = !!document.getElementById('log')?.style.display && document.getElementById('log').style.display !== 'none';
+  const _devChk = (id, label, on) =>
+    `<label class="mm-check-row"><span>${label}</span><input type="checkbox" id="${id}"${
+      on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`;
+  const _devAct = (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`;
   const physSection = `
     <div class="mm-section-title">Physics Bones</div>
-    ${buildDevToggles((id, label, on) =>
-      `<label class="mm-check-row"><span>${label}</span><input type="checkbox" id="${id}"${
-        on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`,
-      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`)}`;
+    ${buildDevToggles(_devChk, _devAct, 'other')}
+
+    <div class="mm-section-title">Trace</div>
+    ${buildDevToggles(_devChk, _devAct, 'trace')}`;
 
   return `${ipadSection}${physSection}
     ${buildWireframeSectionHTML(main)}

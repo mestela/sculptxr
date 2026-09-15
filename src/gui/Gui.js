@@ -1,7 +1,7 @@
 import TR from './GuiTR.js';
 import { TAB_ICONS } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
-import { uiReorg, wireGroups, applyUISweep, groupSectionTitles } from './htmlvr/uiTokens.js';
+import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen } from './htmlvr/uiTokens.js';
 
 // The tab the sidebar opens on when nothing has been remembered and nothing is pinned.
 const DESKTOP_DEFAULT_TAB = 'sculpting';
@@ -833,7 +833,7 @@ class Gui {
       //
       // Third time this session that a change landed on two of the three roots and quietly
       // missed one. The three paths are the thing to remember about this codebase's UI.
-      if (uiReorg()) groupSectionTitles(dd);
+      if (uiReorg()) groupSectionTitles(dd, { defaultOpen: pageDefaultOpen(def.id) });
       def.wireFn(dd, main, rebuild, ...(def.extraArgs ?? []));
       // Wired AFTER the builder's own pass, and covering both kinds of heading: the ones
       // groupSectionTitles just created and the ones a builder emitted itself (View).

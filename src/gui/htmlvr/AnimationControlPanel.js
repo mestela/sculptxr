@@ -15,7 +15,7 @@
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import { faIcon } from './faIcons.js';
-import { uiReorg, groupSectionTitles, wireGroups } from './uiTokens.js';
+import { uiReorg, groupSectionTitles, wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
 import TimelineHelper from '../TimelineHelper.js';
 import IKSolver from '../../editing/IKSolver.js';
 import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
@@ -297,13 +297,17 @@ const CSS = `
 .acp-root .acp-select-opt:hover,
 .acp-root .acp-select-opt.hover { background: var(--ui-ctl-bg-hover); color: var(--ui-text); }
 .acp-root .acp-select-opt.active { color: var(--ui-accent); }
+/* NO PURPLE. This button carried a lilac border and lilac text of its own -- the only control
+   in the app in that colour, and nothing was being said by it. The sweep was overriding it only
+   by stylesheet order, which is not a thing to rely on; removed at source instead.
+   matt: "i see on desktop its STILL using purple highlights and other bullshit, get rid of it." */
 .acp-root .acp-btn-full {
   width: 100%;
   padding: 9px;
-  border: 1px solid #cba6f7;
+  border: 1px solid var(--ui-ctl-border);
   border-radius: var(--ui-ctl-r);
   background: var(--ui-ctl-bg);
-  color: #cba6f7;
+  color: var(--ui-text);
   font-size: var(--ui-ctl-fs);
   font-weight: 600;
   cursor: pointer;
@@ -384,7 +388,11 @@ const CSS = `
   outline: none;
   transition: background 0.1s, color 0.1s;
 }
-.acp-root .acp-mode-btn.active { background: #313244; color: #cba6f7; }
+.acp-root .acp-mode-btn.active {
+  background: var(--ui-ctl-bg-active);
+  color: var(--ui-text);
+  border-color: var(--ui-accent);
+}
 .acp-root .acp-mode-btn:hover:not(.active),
 .acp-root .acp-mode-btn.hover:not(.active) { background: var(--ui-ctl-bg-hover); color: var(--ui-text-dim); }
 .acp-root .acp-placeholder {
@@ -487,7 +495,10 @@ export function buildAnimationSectionHTML(main, style) {
   return `<div class="acp-root${uiReorg() ? ' acp-dense' : ''}">
     <!-- 1. Animation -->
     <div class="acp-section">
-      <div class="acp-section-title">Animation</div>
+      ${/* "Animation" as a heading INSIDE the animation panel named the panel, not the
+           section. These five fields are the frame range and the rate it plays at, so the
+           heading says that. matt's word. */ ''}
+      <div class="acp-section-title">Frame Range</div>
       <div class="acp-stack">
         ${/* ONE ROW OF FIELDS, NOT TWO GRIDS. These five are the same kind of thing -- the
              numbers that describe the take -- and they were split across a hardcoded
@@ -1715,6 +1726,10 @@ export class AnimationControlPanel extends HTMLVRPanel {
     root.id        = 'acp-root';
     root.className = 'acp-root';
     root.innerHTML = buildAnimationSectionHTML(main, 'acp');
+    // Same reason as the wrist panel: this root is serialised on its own for the rasteriser, so
+    // the sweep's .ui-reorg ancestor has to be the root itself.
+    applyUISweep();
+    tagReorgRoot(root);
 
     super(root, 560 / VR_PANEL_PX_PER_M);
 

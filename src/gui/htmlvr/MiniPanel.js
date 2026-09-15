@@ -23,7 +23,8 @@ import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
-import { wireGroups } from './uiTokens.js';
+import { toolLabel }  from './toolLists.js';
+import { wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
@@ -80,39 +81,10 @@ function pathChannelHTML() {
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
-const TOOL_NAMES = {
-  [Enums.Tools.BRUSH]:        'Brush',
-  [Enums.Tools.INFLATE]:      'Inflate',
-  [Enums.Tools.TWIST]:        'Twist',
-  [Enums.Tools.SMOOTH]:       'Smooth',
-  [Enums.Tools.FLATTEN]:      'Flatten',
-  [Enums.Tools.PINCH]:        'Pinch',
-  [Enums.Tools.CREASE]:       'Crease',
-  [Enums.Tools.DRAG]:         'Drag',
-  [Enums.Tools.RELAX]:        'Relax',
-  [Enums.Tools.PAINT]:        'Paint',
-  [Enums.Tools.MOVE]:         'Move',
-  [Enums.Tools.MASKING]:      'Masking',
-  [Enums.Tools.LOCALSCALE]:   'Scale',
-  [Enums.Tools.TRANSFORM]:    'Transform',
-  [Enums.Tools.VOXEL]:        'Voxel',
-  [Enums.Tools.GRAB]:         'Grab',
-  [Enums.Tools.TRANSFORM_VR]: 'Transform',
-  [Enums.Tools.SLIDE]:        'Slide',
-  [Enums.Tools.DELETE_FACE]:  'Del Face',
-  [Enums.Tools.FILL_HOLE]:    'Fill Hole',
-  [Enums.Tools.DISSOLVE_EDGE]:'Dis.Edge',
-  [Enums.Tools.SPLIT_FACE]:   'Split',
-  [Enums.Tools.SPIN_EDGE]:    'Spin',
-  [Enums.Tools.COLLAPSE_EDGE]:'Col.Edge',
-  [Enums.Tools.DISSOLVE_VERTEX]:'Dis.Vert',
-  [Enums.Tools.WELD]:         'Weld',
-  [Enums.Tools.CUT_TOOL]:     'Cut',
-  [Enums.Tools.EXTRUDE]:      'Extrude',
-  [Enums.Tools.INSET]:        'Inset',
-  [Enums.Tools.BONE_DRAW]:    'Bones',
-};
-const toolName = (id) => TOOL_NAMES[id] ?? `Tool ${id}`;
+// FROM THE REGISTRY, NOT A SECOND COPY. This file used to carry its own TOOL_NAMES map, which
+// is how the wrist panel came to call the Select tool "Tool 35": SELECT was appended to the
+// enum and added to toolLists, and nothing made this copy follow. See TOOL_LABELS.
+const toolName = (id) => toolLabel(id);
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -469,6 +441,10 @@ export class MiniPanel extends HTMLVRPanel {
 
     const root = document.createElement('div');
     root.id = 'mp-root';
+    // The sweep is scoped on a .ui-reorg ANCESTOR, and the rasteriser serialises this root on
+    // its own -- so the class has to be on the root itself or none of the styling reaches VR.
+    applyUISweep();
+    tagReorgRoot(root);
     root.innerHTML = buildHTML();
 
     // Width derived from the shared px/m ratio so fonts match the other panels

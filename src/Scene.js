@@ -23,7 +23,7 @@ import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
 import Utils from './misc/Utils.js';
 import SculptManager from './editing/SculptManager.js';
-import { SCULPT_TOOLS } from './gui/htmlvr/toolLists.js';
+import { SCULPT_TOOLS, toolLabel } from './gui/htmlvr/toolLists.js';
 import Subdivision from './editing/Subdivision.js';
 import Import from './files/Import.js';
 import Gui from './gui/Gui.js';
@@ -12190,7 +12190,10 @@ class Scene {
     this._trackToolHistory();
     const h = this._toolHistory;
     const cur = sm.getToolIndex();
-    const labelOf = (id) => SCULPT_TOOLS.find(t => t.id === id)?.label || 'Tool';
+    // From the registry rather than by searching SCULPT_TOOLS: that search misses every
+    // MESH_TOOLS entry, so swapping to Extrude or Weld toasted a bare "Tool". Same root cause
+    // as the wrist panel's "Tool 35" -- a name looked up somewhere other than where names live.
+    const labelOf = (id) => toolLabel(id);
     if (h.length < 2) { this._showToolToast(labelOf(cur)); return; } // nothing to swap to yet
     const target = (cur === h[0]) ? h[1] : h[0];
     sm.setToolIndex(target);
