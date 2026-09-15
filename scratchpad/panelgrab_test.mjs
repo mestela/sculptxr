@@ -13,6 +13,7 @@
 // Run: node scratchpad/panelgrab_test.mjs
 //   GRAB_INJECT=nolatch     the grab needs a LIVE ray hit, so the fist's own motion loses it
 //   GRAB_INJECT=noguard     a missed panel grab falls through and turns the world
+//   GRAB_INJECT=controllercard hands are shown the controller card, naming a trigger and a stick
 //   GRAB_INJECT=headingfollows the stash is heading-relative, so the panel swings round to face
 //                              wherever you turned — the bug matt reported
 //   GRAB_INJECT=foreverlatch the latch never expires, so a panel hit minutes ago still wins
@@ -36,6 +37,11 @@ if (inject === 'nolatch') {
             if (source.handedness === 'left') { leftGrip = false; }
             else                              { rightGrip = false; }
           }`);
+} else if (inject === 'controllercard') {
+  // The shipped behaviour before this: hands are handed the CONTROLLER card, which names a
+  // trigger, a grip button and a thumbstick that are not there.
+  cut(`      handed(h) ? (isDom ? domHand : nonHand) : (isDom ? dom(face) : non(face));`,
+      `      (isDom ? dom(face) : non(face));`);
 } else if (inject === 'headingfollows') {
   // The first attempt: rotate the offset into a heading frame and back out, so the panel swings
   // round to face wherever you have turned. Looking at your wrist to re-show it is exactly that.
@@ -248,6 +254,59 @@ console.log('\na hidden panel comes back where you left it');
   check('no camera means no restore either',
     Object.assign({ _camera: null, _panelPoseStash: self._panelPoseStash }, api)
       ._restorePanelPose('timeline', left) === false);
+}
+
+console.log('\nthe intro cards describe the input you are actually holding');
+{
+  // The cards are the first thing shown on entering immersive, and every line of the controller
+  // version names something a hand does not have — no trigger, no grip button, no thumbstick. On
+  // a hands-only session that is worse than no card at all.
+  //
+  // Checked structurally against the real source: these are canvas draws, so what can be asserted
+  // is which list is chosen, that the hand list mentions no controller parts, and that the choice
+  // is per HAND and by DOMINANCE rather than by left/right.
+  // SRC is the injected copy, so GRAB_INJECT reaches this section too.
+  const S = SRC;
+  const defAt = S.indexOf('  _ensureButtonLabels() {');
+  if (defAt < 0) throw new Error('_ensureButtonLabels moved — this section tests nothing');
+  const block = S.slice(defAt, S.indexOf('\n  }\n', S.indexOf('this._btnLabels = {', defAt)));
+  if (!block.includes('domLeft')) throw new Error('the card builder moved — this section tests nothing');
+
+  const hasHandLists = block.includes('const BOTH_FISTS');
+  const handLists = hasHandLists
+    ? block.slice(block.indexOf('const BOTH_FISTS'), block.indexOf('const domLeft')) : '';
+  check('a hands card exists at all', hasHandLists,
+    'without one, a hands-only session is shown the controller mapping');
+  for (const word of ['Trigger', 'Grip', 'Stick', 'Squeeze']) {
+    check(`the hands card never mentions "${word}"`, !handLists.includes(word),
+      'a hand has no such control, and the card is the first thing a new user reads');
+  }
+  for (const word of ['Pinch', 'Fist', 'Both fists']) {
+    check(`the hands card names "${word}"`, handLists.includes(word));
+  }
+  check('Smooth is described as BOTH hands pinching, which is what the code requires',
+    /Both pinch/.test(handLists) && /Smooth/.test(handLists), handLists.slice(0, 200));
+  check('...and no ring finger is invented', !/ring/i.test(handLists),
+    'there is no ring-finger gesture in this app; the only hand gestures are pinch and fist');
+
+  check('hands are actually GIVEN that card',
+    /handed\(h\) \? \(isDom \? domHand : nonHand\)/.test(block),
+    'the lists can exist and still never be selected');
+  check('the choice is made PER HAND, not once for the session',
+    /forHand\('left'[\s\S]{0,120}?forHand\('right'/.test(block),
+    'one hand can hold a controller while the other is bare');
+  check('...and by dominance, so left-handed mode still reads correctly',
+    /const domLeft = this\._dominantHand === 'left'/.test(block)
+      && /forHand\('left', domLeft/.test(block));
+  check('the cards rebuild when the input kind changes',
+    /_btnLabelSig !== _sig/.test(block),
+    'put the controllers down mid-session and the card must stop describing a trigger');
+  check('the signature includes both hands and the dominant hand',
+    /_handInput\?\.left[\s\S]{0,120}?_handInput\?\.right[\s\S]{0,80}?_dominantHand/.test(block));
+
+  // The flag it reads has to be written somewhere that sees the source.
+  check('_handInput is recorded where the source is in hand',
+    /this\._handInput\[src\.handedness\] = !!src\.hand;/.test(S));
 }
 
 console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`

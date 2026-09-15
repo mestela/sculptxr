@@ -7633,6 +7633,14 @@ class Scene {
     // So: a real pad with buttons wins; the mock is the fallback for a runtime that has none.
     // Joints stay useful either way — they draw the dots and pose the wrist; they just stop
     // being the source of truth for "is this a press" on a runtime that already answers that.
+    // WHICH KIND OF INPUT THIS HAND IS HOLDING, recorded here because this is already the one
+    // place that has the source in front of it. The button-label cards read it: a hand has no
+    // trigger, grip button or stick to describe, whether or not the runtime brings its own
+    // gesture recogniser. See _ensureButtonLabels.
+    if (src.handedness === 'left' || src.handedness === 'right') {
+      this._handInput = this._handInput || {};
+      this._handInput[src.handedness] = !!src.hand;
+    }
     const realHasButtons = !!(src.gamepad && src.gamepad.buttons && src.gamepad.buttons.length);
     const mock = src.hand && !realHasButtons && this._mockGamepads && this._mockGamepads[src.handedness];
     if (mock) return mock;
@@ -12210,7 +12218,17 @@ class Scene {
   // #23 Floating controller button labels — built once, content reflects the current
   // VR button map. Shown only while window._vrShowButtonLabels is true.
   _ensureButtonLabels() {
+    // REBUILD WHEN THE INPUT KIND CHANGES. Put the controllers down mid-session and the cards
+    // would otherwise keep describing a trigger and a thumbstick you are no longer holding.
+    const _sig = (this._handInput?.left ? 'H' : 'C') + (this._handInput?.right ? 'H' : 'C')
+      + (this._dominantHand === 'left' ? 'L' : 'R');
+    if (this._btnLabels && this._btnLabelSig !== _sig) {
+      this._btnLabels.left?.mesh?.removeFromParent?.();
+      this._btnLabels.right?.mesh?.removeFromParent?.();
+      this._btnLabels = null;
+    }
     if (this._btnLabels) return;
+    this._btnLabelSig = _sig;
     const make = (title, lines) => {
       const o = this._makeVrTextPlane(384, 384, 0.1);
       const { ctx, canvas, tex } = o;
@@ -12251,10 +12269,35 @@ class Scene {
       ['Stick Up/Down', 'Scroll menu'], ['Stick Left/Right', 'Undo / Redo'],
       ['Stick click', 'Tool swap'], [face, 'Menu'],
     ];
+    // HANDS HAVE NONE OF THE ABOVE. On a hands-only session every line in those two lists names
+    // a control that does not exist, which is worse than no card at all — it is the first thing
+    // shown on entering immersive, and it was describing a controller nobody is holding.
+    // matt gave the mapping verbatim; it is transcribed rather than re-derived.
+    //
+    // Still PRIMARY/SECONDARY rather than left/right, so left-handed mode reads correctly — the
+    // hand that sculpts is the dominant one, not necessarily the right.
+    const BOTH_FISTS = ['Both fists', 'Scale + rotate world'];
+    const FIST = ['Fist', 'Move world, or nearest panel'];
+    const domHand = [
+      ['Pinch', 'Sculpt, press buttons'],
+      FIST, BOTH_FISTS,
+    ];
+    const nonHand = [
+      ['Pinch', 'Alt mode'],
+      // BOTH hands pinching, which is what the code actually requires — see the offhand-Smooth
+      // block further down, and matt's own report that fixed it: "it should be if both left AND
+      // right pinch (ie trigger) are pressed that smooth should work." A modifier qualifies an
+      // action rather than being one, so the dominant pinch has to be down as well.
+      ['Both pinch', 'Smooth'],
+      FIST, BOTH_FISTS,
+    ];
     const domLeft = this._dominantHand === 'left';
+    const handed = (h) => !!(this._handInput && this._handInput[h]);
+    const forHand = (h, isDom, face) =>
+      handed(h) ? (isDom ? domHand : nonHand) : (isDom ? dom(face) : non(face));
     this._btnLabels = {
-      left:  make(domLeft ? 'PRIMARY' : 'SECONDARY', domLeft ? dom('X') : non('X')),
-      right: make(domLeft ? 'SECONDARY' : 'PRIMARY', domLeft ? non('A') : dom('A')),
+      left:  make(domLeft ? 'PRIMARY' : 'SECONDARY', forHand('left', domLeft, 'X')),
+      right: make(domLeft ? 'SECONDARY' : 'PRIMARY', forHand('right', !domLeft, 'A')),
     };
   }
 
