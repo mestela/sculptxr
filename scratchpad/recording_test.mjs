@@ -75,10 +75,16 @@ const header = +(tl.match(/const HEADER_H = (\d+);/)?.[1] || 0);
 check('recording controls use the expanded toolbar area, not the gutter',
   header >= 80 && /let rx = 205;[\s\S]{0,1800}?x: rx, y: 31, h: 20/.test(tl),
   'HEADER_H=' + header);
-check('frame ruler starts below both toolbar rows',
-  /const rulerY = TOOLBAR_BOTTOM;/.test(tl));
+// The header now carries a third band — the range slider — between the toolbar rows and the
+// ruler. The invariant is unchanged and is what these two guard: the ruler begins below
+// everything above it, and the playhead cap begins where the ruler does, so the cap cannot be
+// drawn over the range handles.
+check('frame ruler starts below the toolbar rows and the range lane',
+  /const rulerY = TOOLBAR_BOTTOM \+ RANGE_H;/.test(tl));
 check('playhead cap stays inside the ruler strip',
-  /const capStartY = TOOLBAR_BOTTOM;/.test(tl));
+  /const capStartY = TOOLBAR_BOTTOM \+ RANGE_H;/.test(tl));
+check('the header is tall enough for all three bands',
+  header >= 55 + (+(tl.match(/const RANGE_H = (\d+);/)?.[1] || 0)) + 30, 'HEADER_H=' + header);
 check('horizontal key edits do not clamp to the old duration',
   /const newTime = Math\.max\(0, key\.time \+ dt\);/.test(reg)
     && !/Math\.min\(masterDuration, key\.time \+ dt\)/.test(reg));
@@ -92,10 +98,19 @@ check('dopesheet scrubbing uses the visible viewport too',
 for (const id of ['loop', 'trigger', 'countin', 'reset-rig']) {
   check('timeline exposes ' + id, tl.includes(`id: '${id}'`));
 }
-check('timeline exposes editable playback range fields',
-  tl.includes("id: 'range-start'") && tl.includes("id: 'range-end'")
-    && /_editPlaybackRange\('start', hit\)/.test(tl)
-    && /_editPlaybackRange\('end', hit\)/.test(tl));
+// THE RANGE MOVED, THE REQUIREMENT DID NOT. It used to be two buttons on the transport row
+// ("Start 39" / "End 86"); it is now the range slider, where a handle released without moving
+// opens its own number and the two global fields open theirs. What these guard is that all four
+// stay TYPEABLE — that is the only path to the VR numpad, and dragging a handle to an exact
+// frame in a headset is hopeless.
+check('the playback range is typeable from the range bar handles',
+  /_editPlaybackRange\(d\.kind === 'loop-start' \? 'start' : 'end'/.test(tl));
+check('the global range is typeable from its own fields',
+  /_editPlaybackRange\(kind === 'field-start' \? 'projstart' : 'projend'/.test(tl));
+check('all four range kinds reach the numeric editor',
+  /LABEL = \{ start:[\s\S]{0,200}?projstart:[\s\S]{0,120}?projend:/.test(tl));
+check('the range editor still offers the VR numpad',
+  /window\._vrNumpad\?\.shouldUse\?\.\(\)/.test(tl));
 check('timeline exposes a canvas-native playback speed combobox',
   /const PLAYBACK_SPEEDS = \[0\.25, 0\.5, 0\.75, 1, 1\.5, 2\];/.test(tl)
     && tl.includes("id: 'speed'")

@@ -1,3 +1,57 @@
+# v3.39.0
+**A range slider, Maya's way.** A new lane between the toolbar and the frame ruler, reading left
+to right: **global start, range start, range end, global end**. The track always spans the whole
+global range, so where the bar sits in it says which part of the shot you are on without reading
+a number. The ruler above shows the **playback** range — that pairing is the point of having two
+ranges, and without it the bar edits a value nothing reacts to. matt: "changing the global start
+end updates the timeline, changing the range start end, or dragging the range bar does nothing."
+The global fields only appeared to work because changing the length wakes the auto-fit, which
+reaches the same view by a different road.
+
+**The global range is typed; the playback range is dragged.** The first attempt made both
+draggable, with the global range as two 10px grips in the lane's margins — matt: "i cant use this
+even on desktop cos the regions are too small, it will be impossible in vr." A number field is
+the right control for a value you set once and leave, and it routes through the existing range
+editor, which means it reaches the **VR numpad**: a 10px grip never would. The playback handles
+are 30px and **carry their own frame number**, which is what makes them a target rather than a
+hairline; they straddle the bar's edge by 6px so a range shoved against the end of the track is
+still grabbable from outside it. A handle **released without moving opens its number for typing**
+— the same no-move-is-a-click rule the SR frame markers use — because dropping the transport's
+Start/End buttons otherwise took away the only way to type a playback frame.
+
+**Handles get half the bar each, with no minimum.** A floor looks like kindness and is not: any
+floor above half the bar makes the two handles overlap on exactly the narrow range that needed
+the help, and the one tested second becomes unreachable — you could move that range but never
+shorten it again. What keeps a hairline range grabbable is the 6px that lives OUTSIDE the bar,
+which cannot collide with the other handle however narrow the bar gets.
+
+**The editor has to fit its own text**, which the control it stands in for may not. `width =
+btn.w - 10` on a content-box input was written for 68px buttons and gave them a comfortable 58px;
+the same sum turns a 30px handle into a 20px box, about three characters, right-aligned, so the
+number loses its front. The input is border-box now, sized to the larger of the control and a
+floor wide enough to read, and pushed back onto the canvas when that widening would hang it off
+the right edge — which the global END field, sitting hard against the right margin, is exactly
+the case for.
+
+**A length change fits the view, when there is nothing to lose.** matt noticed Fit All already
+did the work; the length is written from eight places, so it is WATCHED rather than hooked. The
+empty test asks about KEYS and not tracks — every registered object has a track whether or not it
+is keyed, so `tracks.size` would call the timeline occupied the moment anything was selected —
+and it counts all five channels a key can live in. Fires in both directions: a shortened timeline
+leaves the view too wide, which wants fitting just as much.
+
+**The mesh outline belongs to the selection tools.** The cyan box showed under every tool; while
+you are sculpting it tells you nothing you did not know and sits between your eye and the surface.
+Gated to Grab and Select. The yellow hover box needed nothing — only those two ever set it, and
+SculptManager already clears it on the way out. No hook on the tool change either: the signature
+that drives the boxes is built from the boxes that should exist, so an empty selection IS a
+signature change.
+
+Harnesses: `scratchpad/rangebar_test.mjs` (63 cases, nine injections) and
+`scratchpad/autofit_test.mjs` (22 cases, four). Three injections were dead when first written and
+each in the same shape — a case asserting the values looked reasonable rather than the property
+the code exists to guarantee. Worth remembering: green is only worth what the injections prove.
+
 # v3.38.0
 **Audio on the timeline.** Load a clip and it plays against the transport, scrubs under the
 playhead, follows the playback speed and draws its waveform behind the frame numbers — built for

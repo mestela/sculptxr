@@ -20,8 +20,32 @@ const tlLog = (...a) => { if (window._tlTrace) console.log('[tl]', ...a); };
 // Timeline header height (toolbar row + gutter key-mode row + frame ruler). Single
 // source of truth — referenced everywhere the lanes/ruler/hit-tests offset from the
 // header. Bump this alone to resize the header.
-const HEADER_H = 90;
+const HEADER_H = 112;
 const TOOLBAR_BOTTOM = 55;
+
+// THE RANGE BAR LANE, between the toolbar and the frame ruler.
+//
+// Maya's range slider, and Blender's and Ableton's: a bar whose extent is the PROJECT range,
+// carrying the PLAYBACK range as a draggable region inside it. Two ranges, because they answer
+// different questions -- how long is this shot, and which part of it am I working on right now --
+// and conflating them is why scrubbing a loop used to mean retyping the end frame.
+//
+// Sits ABOVE the ruler rather than below it, so the ruler keeps its 35px and the waveform drawn
+// behind the frame numbers is untouched. HEADER_H grew by exactly RANGE_H; every lane offset and
+// hit test in this file measures from HEADER_H, so that is the whole of the layout change.
+const RANGE_H = 22;
+// THE GLOBAL RANGE IS TYPED, NOT DRAGGED. It was two 10px grips in the lane's margins, and matt
+// was right that this is unusable: "i cant use this even on desktop cos the regions are too
+// small, it will be impossible in vr." A number field is the correct control for a value you set
+// once and then leave — and it routes through the VR numpad, so it is reachable in a headset,
+// which no 10px grip ever will be.
+const RANGE_FIELD_W = 54;
+// The drag handles carry their own frame number, which is what makes them big enough to grab.
+// Maya's are the same idea: the handle IS the readout. Wide enough for four digits at 9px.
+const RANGE_HANDLE_W = 30;
+// Handles straddle the bar's edge, so the last few pixels of a range pushed hard against the end
+// of the track are still grabbable from outside it.
+const RANGE_HANDLE_OUT = 6;
 const KEY_DRAG_FREE_THRESHOLD = 50;
 const PLAYBACK_SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2];
 
@@ -282,6 +306,12 @@ export default class GuiTimeline {
     this._rangeInput.inputMode = 'numeric';
     Object.assign(this._rangeInput.style, {
       position: 'absolute', height: '18px', font: '10px monospace',
+      // BORDER-BOX, so the width set by _rangeInputBox is the width you see. With the default
+      // content-box the 4px padding and 1px border are added OUTSIDE it and the caller has to
+      // remember to subtract 10 — which is the sum that turned a 30px range handle into a 20px
+      // text box. The other two inputs below keep content-box; their callers still pass rects
+      // wide enough that it does not show, and changing them here would silently narrow both.
+      boxSizing: 'border-box',
       padding: '1px 4px', textAlign: 'right',
       background: '#1a2a1a', border: '1px solid #446644', color: '#88ddaa',
       borderRadius: '3px', outline: 'none', display: 'none', zIndex: '50',
@@ -343,17 +373,57 @@ export default class GuiTimeline {
     _done();
   }
 
+  // FOUR KINDS NOW, not two: the playback range this has always set, plus the GLOBAL range the
+  // new lane's two number fields set. One function because the clamping rules are the same
+  // question asked twice — no range may invert, and the playback range lives inside the global
+  // one — and two functions would be two places to get the second half of that wrong.
   _setPlaybackRangeFrame(kind, frame) {
     const fps = window._animFPS || 24;
     const minGap = 1 / fps;
     const t = Math.max(0, Math.round(Number(frame) || 0) / fps);
-    if (kind === 'start') {
+    if (kind === 'projstart' || kind === 'projend') {
+      if (kind === 'projstart') {
+        window._animProjectStart = Math.min(t, (window._animMasterDuration ?? t + minGap) - minGap);
+      } else {
+        window._animMasterDuration = Math.max(t, (window._animProjectStart ?? 0) + minGap);
+      }
+      // The playback range is carried in front of the global edge rather than merely clamped
+      // for drawing, so the bar and the transport cannot disagree about where playback runs.
+      const np = this.projectRange();
+      const nl = this.playbackRange();
+      window._animLoopStart = nl.start;
+      window._animLoopEnd = Math.max(nl.start + minGap, Math.min(np.end, nl.end));
+    } else if (kind === 'start') {
       window._animLoopStart = Math.min(t, (window._animLoopEnd ?? t + minGap) - minGap);
     } else {
       window._animLoopEnd = Math.max(t, (window._animLoopStart ?? 0) + minGap);
     }
+    this._syncViewToPlaybackRange();
     window._animSyncKeyInspector?.();
     this.draw();
+  }
+
+  // WHERE THE EDITOR GOES, given the control it is standing in for.
+  //
+  // The editor has to fit its own TEXT, which the control it replaces may not: a range handle is
+  // 30px because that is a comfortable thing to grab, not because a frame number needs 30px, and
+  // a right-aligned number in a box too narrow for it loses its leading digits. matt: "on desktop
+  // the edited value is getting clipped/cropped."
+  //
+  // So it takes the larger of the control's width and a floor wide enough for five digits plus a
+  // caret, and is then pushed back onto the canvas if that widening ran it off the right edge --
+  // the global END field sits hard against the right margin, so widening it is exactly the case
+  // that would hang the editor off the panel.
+  _rangeInputBox(btn) {
+    const MIN_W = 48;
+    const w = Math.max(MIN_W, Math.round(btn.w || 0));
+    const maxLeft = Math.max(0, (this._cssWidth || 0) - w - 2);
+    return {
+      left: Math.max(0, Math.min(Math.round(btn.x || 0), maxLeft)),
+      top: Math.round(btn.y || 0),
+      w,
+      h: Math.max(18, Math.round(btn.h || 18)),
+    };
   }
 
   _commitRangeInput() {
@@ -363,18 +433,25 @@ export default class GuiTimeline {
 
   _editPlaybackRange(kind, btn) {
     const fps = window._animFPS || 24;
-    const value = Math.round((kind === 'start' ? (window._animLoopStart ?? 0)
-      : (window._animLoopEnd ?? window._animMasterDuration ?? 2)) * fps);
+    const LABEL = { start: 'Playback Start', end: 'Playback End',
+                    projstart: 'Global Start', projend: 'Global End' };
+    const raw = kind === 'projstart' ? (window._animProjectStart ?? 0)
+              : kind === 'projend'   ? (window._animMasterDuration ?? 2)
+              : kind === 'start'     ? (window._animLoopStart ?? 0)
+              :                        (window._animLoopEnd ?? window._animMasterDuration ?? 2);
+    const value = Math.round(raw * fps);
     if (window._vrNumpad?.shouldUse?.()) {
       if (window._vrNumpad.isBlockingOpen) return;
-      window._vrNumpad.open(value, { label: kind === 'start' ? 'Playback Start' : 'Playback End', integer: true },
+      window._vrNumpad.open(value, { label: LABEL[kind] || 'Range', integer: true },
         (v) => this._setPlaybackRangeFrame(kind, v), null, null, this._main?._vrTimelineMesh || null);
       return;
     }
     this._rangeInputKind = kind;
-    this._rangeInput.style.left = Math.round(btn.x) + 'px';
-    this._rangeInput.style.top = Math.round(btn.y) + 'px';
-    this._rangeInput.style.width = (btn.w - 10) + 'px';
+    const box = this._rangeInputBox(btn);
+    this._rangeInput.style.left = box.left + 'px';
+    this._rangeInput.style.top = box.top + 'px';
+    this._rangeInput.style.width = box.w + 'px';
+    this._rangeInput.style.height = box.h + 'px';
     this._rangeInput.style.display = 'block';
     this._rangeInput.value = String(value);
     this._rangeInput.focus();
@@ -1511,7 +1588,7 @@ export default class GuiTimeline {
     const playheadX = tlX + playheadAlpha * tlW;
 
     if (playheadX >= tlX && playheadX <= tlX + tlW) {
-      const capStartY = TOOLBAR_BOTTOM;
+      const capStartY = TOOLBAR_BOTTOM + RANGE_H;
       const phHovered = Math.abs(this._lastMouseX - playheadX) < 10
                      && this._lastMouseY >= capStartY && this._lastMouseY <= this._cssHeight;
       const phColor = phHovered ? '#88bbff' : TL_ACCENT;
@@ -3557,6 +3634,8 @@ export default class GuiTimeline {
     };
     const loop = () => {
       if (this._visible) {
+        // Before the draw, so a length change and the frame that shows it are the same frame.
+        this._watchMasterDuration();
         const now = performance.now();
         const inXR = !!window.app?._renderer?.xr?.isPresenting;
         // A full-size canvas upload is expensive on a standalone headset. The playhead does
@@ -3570,6 +3649,303 @@ export default class GuiTimeline {
       requestAnimationFrame(loop);
     };
     loop();
+  }
+
+  // THE PROJECT RANGE. Start is a new global, defaulting to 0 -- which is what it has silently
+  // been until now. End is `_animMasterDuration`, which every consumer already treats as an
+  // absolute end time (`_animLoopEnd ?? _animMasterDuration`), so nothing has to be renamed or
+  // migrated for the pair to make sense together.
+  //
+  // NOT PERSISTED YET: a project start survives a reload only as long as the tab lives, because
+  // the .sxr footer has a slot for the duration and none for a start. Worth adding, but changing
+  // the file format to carry it is its own job.
+  projectRange() {
+    const end = (window._animMasterDuration !== undefined && window._animMasterDuration > 0)
+      ? window._animMasterDuration : 2.0;
+    let start = Number.isFinite(window._animProjectStart) ? window._animProjectStart : 0;
+    if (start > end - 1e-6) start = Math.max(0, end - 1e-6);
+    return { start, end };
+  }
+
+  // The playback range, clamped into the project range. Read through this rather than off the
+  // globals so the bar can never draw a region outside the bar.
+  playbackRange() {
+    const p = this.projectRange();
+    let a = window._animLoopStart !== undefined ? window._animLoopStart : p.start;
+    let b = window._animLoopEnd !== undefined ? window._animLoopEnd : p.end;
+    a = Math.max(p.start, Math.min(p.end, a));
+    b = Math.max(p.start, Math.min(p.end, b));
+    if (b < a) { const t = a; a = b; b = t; }
+    return { start: a, end: b };
+  }
+
+  // ONE GEOMETRY FUNCTION, READ BY THE DRAW AND BY THE HIT TEST. The lesson this file has already
+  // learned twice -- the dopesheet scroll and the toolbar buttons -- is that two copies of a
+  // layout calculation drift, and the symptom is a control that highlights under the cursor and
+  // then will not take the click.
+  _rangeBarGeom() {
+    const y = TOOLBAR_BOTTOM;
+    const tlX = 200;
+    const tlW = this._cssWidth - 200;
+    const p = this.projectRange();
+    const l = this.playbackRange();
+
+    // A number field at each end of the lane, the track between them. Maya's layout exactly:
+    // global start, range start, range end, global end, read left to right.
+    const fs = { x: tlX, y: y + 2, w: RANGE_FIELD_W, h: RANGE_H - 4 };
+    const fe = { x: tlX + tlW - RANGE_FIELD_W, y: y + 2, w: RANGE_FIELD_W, h: RANGE_H - 4 };
+    const x0 = fs.x + fs.w + 4;
+    const x1 = fe.x - 4;
+
+    const span = Math.max(1e-6, p.end - p.start);
+    const toX = (t) => x0 + ((t - p.start) / span) * Math.max(0, x1 - x0);
+    const toT = (x) => p.start + ((x - x0) / Math.max(1, x1 - x0)) * span;
+    const lx0 = toX(l.start);
+    const lx1 = toX(l.end);
+
+    // HALF THE BAR EACH, AT MOST, AND NO MINIMUM. A short range would otherwise give two
+    // full-width handles that overlap, and the one tested second becomes unreachable — you could
+    // move a range but never shorten it again.
+    //
+    // A floor here looks like kindness and is not: any floor above half the bar recreates the
+    // overlap it was meant to prevent, on exactly the narrow range that needed the help. What
+    // keeps a hairline range grabbable instead is RANGE_HANDLE_OUT, which lives OUTSIDE the bar
+    // and so cannot collide with the other handle however narrow the bar gets.
+    const hw = Math.min(RANGE_HANDLE_W, (lx1 - lx0) / 2);
+    return { y, h: RANGE_H, tlX, tlW, fs, fe, x0, x1, proj: p, loop: l, span, toX, toT, lx0, lx1,
+      hA: [lx0 - RANGE_HANDLE_OUT, lx0 + hw],
+      hB: [lx1 - hw, lx1 + RANGE_HANDLE_OUT] };
+  }
+  _drawRangeBar(ctx) {
+    const g = this._rangeBarGeom();
+    if (g.x1 <= g.x0) return;
+    const fps = window._animFPS || 24;
+    const hot = this._rangeDrag ? this._rangeDrag.kind
+      : this._rangeBarHit(this._lastMouseX, this._lastMouseY);
+    const F = (t) => String(Math.round(t * fps));
+
+    ctx.fillStyle = Theme.mantle;
+    ctx.fillRect(g.tlX, g.y, g.tlW, g.h);
+
+    // The two global fields. Drawn like the toolbar's own fields so they read as typeable.
+    for (const [kind, r, val] of [['field-start', g.fs, g.proj.start],
+                                  ['field-end',   g.fe, g.proj.end]]) {
+      ctx.fillStyle = Theme.crust;
+      ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 3); ctx.fill();
+      ctx.strokeStyle = hot === kind ? TL_ACCENT : Theme.surface1;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, 3); ctx.stroke();
+      ctx.fillStyle = Theme.subtext;
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(F(val), r.x + r.w / 2, r.y + r.h / 2);
+    }
+
+    // The track spans the whole global range, always — so the bar's position in it reads as
+    // "which part of the shot am I on" at a glance, without consulting the numbers.
+    ctx.fillStyle = Theme.crust;
+    ctx.fillRect(g.x0, g.y + 3, g.x1 - g.x0, g.h - 6);
+
+    // The playback range.
+    const lw = Math.max(2, g.lx1 - g.lx0);
+    ctx.fillStyle = hot === 'loop-mid' ? Theme.surface2 : Theme.surface1;
+    ctx.fillRect(g.lx0, g.y + 3, lw, g.h - 6);
+
+    // The handles, each carrying its own frame number — which is what makes them a target you
+    // can hit rather than a hairline you have to aim at.
+    for (const [kind, span, val, align] of [['loop-start', g.hA, g.loop.start, 'left'],
+                                            ['loop-end',   g.hB, g.loop.end,   'right']]) {
+      const hx = Math.max(g.x0, Math.min(g.x1, span[0] + RANGE_HANDLE_OUT));
+      const hw2 = Math.max(4, span[1] - span[0] - RANGE_HANDLE_OUT);
+      ctx.fillStyle = hot === kind ? '#88bbff' : TL_ACCENT;
+      ctx.beginPath();
+      ctx.roundRect(align === 'left' ? hx : hx - 0, g.y + 2, hw2, g.h - 4, 2);
+      ctx.fill();
+      if (hw2 >= 16) {
+        ctx.fillStyle = Theme.crust;
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(F(val), hx + hw2 / 2, g.y + g.h / 2);
+      }
+    }
+  }
+  // Which part of the bar is under (rx, ry), or null. Edges before middle, so a narrow playback
+  // region can still be resized rather than only slid.
+  _rangeBarHit(rx, ry) {
+    const g = this._rangeBarGeom();
+    if (!(ry >= g.y && ry < g.y + g.h)) return null;
+    const inR = (r) => rx >= r.x && rx <= r.x + r.w;
+    if (inR(g.fs)) return 'field-start';
+    if (inR(g.fe)) return 'field-end';
+    // Handles before the body: a short range must stay resizable, not merely slidable.
+    if (rx >= g.hA[0] && rx <= g.hA[1]) return 'loop-start';
+    if (rx >= g.hB[0] && rx <= g.hB[1]) return 'loop-end';
+    if (rx > g.lx0 && rx < g.lx1) return 'loop-mid';
+    return null;
+  }
+  // Snap to the frame grid unless the user has turned snapping off — the same switch the keys
+  // and the playhead obey, because a range that lands between frames is a range whose end frame
+  // reads as one number and behaves as another.
+  // THE HANDLE NUMBER IS ALSO A FIELD. Dropping the transport's Start/End buttons took away the
+  // only way to TYPE a playback frame — which matters most in VR, where typing means the numpad
+  // and dragging a handle to an exact frame is hopeless. So a handle released without moving
+  // opens its number for editing, the same no-move-is-a-click rule the SR frame markers use.
+  _rangeHandleRect(kind) {
+    const g = this._rangeBarGeom();
+    const span = kind === 'loop-start' ? g.hA : g.hB;
+    const x = span[0] + RANGE_HANDLE_OUT;
+    return { x: Math.round(x), y: g.y + 2, w: Math.max(28, span[1] - x), h: g.h - 4 };
+  }
+
+  _rangeBarUp() {
+    const d = this._rangeDrag;
+    this._rangeDrag = null;
+    if (d && !d.moved && (d.kind === 'loop-start' || d.kind === 'loop-end')) {
+      this._editPlaybackRange(d.kind === 'loop-start' ? 'start' : 'end',
+        this._rangeHandleRect(d.kind));
+    }
+    this.draw();
+  }
+
+  _rangeSnap(t) {
+    if (window._animSnapToFrame === false) return t;
+    const fps = window._animFPS || 24;
+    return Math.round(t * fps) / fps;
+  }
+
+  _rangeBarDown(rx, ry) {
+    const kind = this._rangeBarHit(rx, ry);
+    if (!kind) return false;
+    const g = this._rangeBarGeom();
+    // A GLOBAL FIELD IS TYPED, NOT DRAGGED. Routed through the same editor the transport's own
+    // range buttons use, which means it reaches the VR numpad — the reason these are fields at
+    // all rather than the grips they replaced.
+    if (kind === 'field-start' || kind === 'field-end') {
+      this._editPlaybackRange(kind === 'field-start' ? 'projstart' : 'projend',
+        kind === 'field-start' ? g.fs : g.fe);
+      return true;
+    }
+    this._rangeDrag = {
+      kind,
+      grabT: g.toT(rx),
+      downX: rx, moved: false,
+      loop0: g.loop.start, loop1: g.loop.end,
+      proj0: g.proj.start, proj1: g.proj.end,
+    };
+    this.draw();
+    return true;
+  }
+
+  _rangeBarMove(rx) {
+    const d = this._rangeDrag;
+    if (!d) return;
+    // A few pixels of slop before this counts as a drag, so a click that wobbles is still a
+    // click. Below, a handle released without ever moving opens its number for typing.
+    if (Math.abs(rx - d.downX) > 3) d.moved = true;
+    const g = this._rangeBarGeom();
+    const fps = window._animFPS || 24;
+    const minSpan = 1 / fps;          // one frame: a zero-length range has no meaning
+    const t = this._rangeSnap(g.toT(rx));
+
+    if (d.kind === 'loop-start') {
+      window._animLoopStart = Math.max(d.proj0, Math.min(d.loop1 - minSpan, t));
+    } else if (d.kind === 'loop-end') {
+      window._animLoopEnd = Math.min(d.proj1, Math.max(d.loop0 + minSpan, t));
+    } else if (d.kind === 'loop-mid') {
+      // SLIDE, KEEPING THE LENGTH. Clamped as a whole rather than per-end: clamping the ends
+      // independently would let the region squash against the edge of the project instead of
+      // stopping there, and you would not get its length back on the way out.
+      const len = d.loop1 - d.loop0;
+      let a = this._rangeSnap(d.loop0 + (g.toT(rx) - d.grabT));
+      a = Math.max(d.proj0, Math.min(d.proj1 - len, a));
+      window._animLoopStart = a;
+      window._animLoopEnd = a + len;
+    }
+    this._syncViewToPlaybackRange();
+    this.draw();
+  }
+
+  // THE RULER SHOWS THE PLAYBACK RANGE. That is what the range slider is FOR — in Maya the time
+  // slider spans the playback range and the range slider spans the whole animation, which is the
+  // pair matt asked for. Without this the bar edits a number nothing reacts to: matt, "changing
+  // the global start/end updates the timeline, changing the range start end, or dragging the
+  // range bar does nothing." The global fields appeared to work only because changing the length
+  // wakes the auto-fit, which sets the same view by a different route.
+  //
+  // Manual wheel zoom still wins until the range is touched again; the range bar is a way to say
+  // "show me this part", not a lock on the view.
+  _syncViewToPlaybackRange() {
+    const l = this.playbackRange();
+    this._viewStart = l.start;
+    this._viewDuration = Math.max(0.1, l.end - l.start);
+  }
+
+  // FIT ALL, as a method rather than a switch case, because two things now ask for it: the
+  // button, and the automatic fit when the timeline length changes under an empty timeline. Two
+  // copies of a view calculation is two chances for the button and the automatic one to disagree
+  // about what "fit" means.
+  //
+  // Auto-fits Y to the value range and X to the loop range. The one-second floor stops a tiny
+  // loop range, or tightly clustered keys, zooming the view in to two frames.
+  fitAll() {
+    this.autoFitGraph();
+    const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+    this._viewStart = ls;
+    this._viewDuration = Math.max(le - ls, 1.0);
+  }
+
+  // IS THERE ANYTHING AUTHORED IN HERE AT ALL? Deliberately asks about KEYS and not about
+  // tracks: a track with no keys is what every newly registered object has, so testing
+  // `tracks.size` would decide the timeline was occupied the moment anything was selected.
+  //
+  // Every channel counts, because each is something you can lose the view of: transform keys,
+  // shape (vertex) keys, visibility keys, shape LAYER keys, and blendshape weights. The field
+  // names are the ones the registry actually creates -- see the track initialisers there.
+  _hasAnyKeys() {
+    const reg = window._animationRegistry;
+    if (!reg || !reg.tracks) return false;
+    for (const tr of reg.tracks.values()) {
+      if (!tr) continue;
+      if (tr.times && tr.times.length) return true;
+      if (tr.shapeTimes && tr.shapeTimes.length) return true;
+      if (tr.visTimes && tr.visTimes.length) return true;
+      if (tr.shapeLayers) {
+        for (const L of tr.shapeLayers) if (L && L.shapeTimes && L.shapeTimes.length) return true;
+      }
+      if (tr.blendshapeTracks) {
+        for (const bt of tr.blendshapeTracks.values()) if (bt && bt.times && bt.times.length) return true;
+      }
+    }
+    return false;
+  }
+
+  // THE LENGTH CHANGED AND THERE IS NOTHING TO LOSE, SO FIT TO IT.
+  //
+  // matt: "if i make the timeline length 240 and press the fit all button, it zooms the timeline
+  // to the correct length, so i guess if we just make that event fire when the timeline length is
+  // changed AND if there are no existing keys, we're all good."
+  //
+  // Watched rather than hooked, for the usual reason: the length is written from eight places --
+  // the desktop animation panel, the VR control panel, the VR menu's range fields, the frame
+  // groups, three paths inside the registry, and the .sxr importer -- and a hook on the one the
+  // user is most likely to use would quietly miss the other seven.
+  //
+  // THE EMPTY TEST IS WHAT MAKES THIS SAFE. Once a single key exists the view is something the
+  // user has arranged, and moving it out from under them on an unrelated length edit would be
+  // the kind of help nobody asked for. Fires in both directions: shortening a timeline leaves
+  // the view too wide, which wants fitting just as much.
+  _watchMasterDuration() {
+    const dur = window._animMasterDuration;
+    if (!Number.isFinite(dur)) return;
+    if (this._lastMasterDuration === undefined) { this._lastMasterDuration = dur; return; }
+    if (dur === this._lastMasterDuration) return;
+    this._lastMasterDuration = dur;
+    if (this._hasAnyKeys()) return;
+    this.fitAll();
   }
 
   // [Step 1] Helpers for 2-finger scroll and wheel zoom.
@@ -3613,6 +3989,7 @@ export default class GuiTimeline {
   }
 
   _cancelActiveAction() {
+    this._rangeDrag = null;
     this._isDraggingPlayhead = false;
     this._isDraggingKeyframe = false;
     this._isDraggingMarquee = false;
@@ -3773,10 +4150,14 @@ export default class GuiTimeline {
         tooltip: 'Begin recording after a countdown' },
       { id: 'reset-rig', label: 'Reset Rig + Pins', w: 112,
         tooltip: 'Return the skeleton and pin controls to their rest pose' },
-      { id: 'range-start', label: `Start ${Math.round((window._animLoopStart ?? 0) * (window._animFPS || 24))}`, w: 68,
-        tooltip: 'Playback range start frame' },
-      { id: 'range-end', label: `End ${Math.round((window._animLoopEnd ?? window._animMasterDuration ?? 2) * (window._animFPS || 24))}`, w: 68,
-        tooltip: 'Playback range end frame' },
+      // The playback range used to live here as two 68px buttons reading "Start 39" / "End 86".
+      // It now lives ON the range slider, where the numbers sit at the ends of the thing they
+      // describe and need no prefix to say what they are. matt: "drop them to be inline at the
+      // start/end of the range slider. and lose the 'start' and 'end' prefix, it should be clear
+      // by association what they represent." That is 150px back on the RECORDING row -- a
+      // different row from the transport, so it does not move the transport's clipping
+      // thresholds, but it does bring this row's right edge in from 745px to 595px, which is
+      // the difference between fitting and not on a 700px VR panel.
       { id: 'speed', label: `Speed ${window._animPlaybackSpeed || 1}x ▾`, w: 78,
         tooltip: 'Playback speed' },
     ];
@@ -4023,7 +4404,13 @@ export default class GuiTimeline {
     // but are drawn only at y 5-25, so the ruler row has priority here.
     const _tlX = 200;
     const _tlW = this._cssWidth - 220;
-    if (ry >= TOOLBAR_BOTTOM && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
+    // The range lane sits in the top RANGE_H of this band and answers first; the playhead drag
+    // below must not also claim those pixels, or grabbing a range handle scrubs instead.
+    if (ry >= TOOLBAR_BOTTOM && ry < TOOLBAR_BOTTOM + RANGE_H) {
+      if (this._rangeBarDown(rx, ry)) return;
+      return;   // the lane's own dead zones are still the lane's, not the playhead's
+    }
+    if (ry >= TOOLBAR_BOTTOM + RANGE_H && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
       this._scrubPress();
@@ -4209,18 +4596,9 @@ export default class GuiTimeline {
             }
             break;
           }
-          case 'fit': {
-            // Fit All: auto-fit Y to value range, X to loop range.
-            // Minimum view is 1 second so we don't zoom in to 2 frames when
-            // keys are tightly clustered or the loop range is tiny.
-            this.autoFitGraph();
-            const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-            const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-            const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
-            this._viewStart = ls;
-            this._viewDuration = Math.max(le - ls, 1.0);
+          case 'fit':
+            this.fitAll();
             break;
-          }
           case 'tangents':
             window._animShowTangents = !window._animShowTangents;
             break;
@@ -4327,12 +4705,6 @@ export default class GuiTimeline {
           case 'reset-rig':
             IKSolver.resetRigAndPins(this._main);
             break;
-          case 'range-start':
-            this._editPlaybackRange('start', hit);
-            return;
-          case 'range-end':
-            this._editPlaybackRange('end', hit);
-            return;
           case 'speed':
             this._speedMenuOpen = !this._speedMenuOpen;
             this._contextMenuOpen = false;
@@ -5049,6 +5421,12 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    if (this._rangeDrag) {
+      const rect = this._canvas.getBoundingClientRect();
+      this._rangeBarMove(e.clientX - rect.left);
+      return;
+    }
+
     // Shape-layer multiselect drag-through (#34): paint the same select/deselect state onto
     // each layer row the cursor passes over (same mesh).
     if (this._layerDotDrag) {
@@ -5588,6 +5966,8 @@ export default class GuiTimeline {
   }
 
   _onMouseUpBody(e) {
+    if (this._rangeDrag) { this._rangeBarUp(); return; }
+
     // SR frame marker release: no-move = click → jump playhead to that frame; moved =
     // retime → sort children + rebuild the flipbook vis, as one undo step.
     if (this._srDrag) {
@@ -6518,11 +6898,14 @@ export default class GuiTimeline {
     const loopStartF = Math.round(loopStart * fps);
     const loopEndF = Math.round(loopEnd * fps);
 
+    this._drawRangeBar(ctx);
+
     // --- Frame ruler strip (below both toolbar rows) ---
     // Keep this tied to the toolbar hit-test boundary. A hardcoded y=28 here used
     // to repaint the ruler over the recording controls even though HEADER_H had
     // already been expanded for them.
-    const rulerY = TOOLBAR_BOTTOM;
+    // Below the range lane, so the ruler keeps the height it had and the waveform with it.
+    const rulerY = TOOLBAR_BOTTOM + RANGE_H;
     const rulerH = headerH - rulerY;
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(tlX, w.y + rulerY, tlW, rulerH);

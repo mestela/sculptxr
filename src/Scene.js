@@ -3264,7 +3264,21 @@ class Scene {
   // `force` re-reads even when the signature has not moved, for the hover swap above.
   _updateMeshSelectionBoxes(force) {
     if (!this._meshSelBoxes) this._meshSelBoxes = new Map();
-    const on = Skeleton.displayFlag('meshHover');
+    // THE OUTLINE IS A SELECTION AFFORDANCE, SO IT BELONGS TO THE SELECTION TOOLS. matt: "the box
+    // highlight on meshes that is on by default, i think that should only be visible for the
+    // select and grab tool, it should be hidden otherwise." Which is right: while you are
+    // sculpting, a cyan box around the thing you are sculpting tells you nothing you did not
+    // already know, and sits between your eye and the surface.
+    //
+    // The YELLOW hover box needs no gate of its own -- only Grab and Select ever set it, and
+    // SculptManager already clears it on the way out of both. This is about the cyan one.
+    //
+    // NO HOOK ON THE TOOL CHANGE, deliberately, and none is needed: the signature below is built
+    // from the boxes that should exist, so dropping the selection to empty when the tool is
+    // wrong IS a signature change, and the every-fourth-frame pass picks it up like any other.
+    const _tool = this._sculptManager ? this._sculptManager.getToolIndex() : -1;
+    const _selTool = _tool === Enums.Tools.GRAB || _tool === Enums.Tools.SELECT;
+    const on = Skeleton.displayFlag('meshHover') && _selTool;
     // Rig nodes are excluded: a selected joint or pin already turns cyan through the rig's own
     // markers, and a second cyan marker around the same thing says nothing extra.
     const sel = on ? (this._selectMeshes || []).filter(
