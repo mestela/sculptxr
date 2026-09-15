@@ -13,7 +13,8 @@
 // Run: node scratchpad/panelgrab_test.mjs
 //   GRAB_INJECT=nolatch     the grab needs a LIVE ray hit, so the fist's own motion loses it
 //   GRAB_INJECT=noguard     a missed panel grab falls through and turns the world
-//   GRAB_INJECT=fullheadrot  the stash takes the whole head rotation, not just the heading
+//   GRAB_INJECT=headingfollows the stash is heading-relative, so the panel swings round to face
+//                              wherever you turned — the bug matt reported
 //   GRAB_INJECT=foreverlatch the latch never expires, so a panel hit minutes ago still wins
 import fs from 'fs';
 
@@ -35,12 +36,22 @@ if (inject === 'nolatch') {
             if (source.handedness === 'left') { leftGrip = false; }
             else                              { rightGrip = false; }
           }`);
-} else if (inject === 'fullheadrot') {
-  // Take the whole head rotation instead of the heading: re-showing while looking up puts the
-  // panel above you and tilted, which is not where you left it by any reading.
-  const a = `  fwd.y = 0;`;
-  if (!SRC.includes(a)) throw new Error('inject fullheadrot: anchor moved');
-  SRC = SRC.replace(a, '');
+} else if (inject === 'headingfollows') {
+  // The first attempt: rotate the offset into a heading frame and back out, so the panel swings
+  // round to face wherever you have turned. Looking at your wrist to re-show it is exactly that.
+  const a = `      pos: mesh.position.clone().sub(hp),   // world axes — deliberately NOT rotated into any frame
+      quat: mesh.quaternion.clone(),        // the orientation you left it at, unmodified`;
+  if (!SRC.includes(a)) throw new Error('inject headingfollows: anchor moved');
+  const q = "const _y = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, "
+    + "new THREE.Euler().setFromQuaternion(this._camera.getThreeCamera().quaternion, 'YXZ').y, 0, 'YXZ'));";
+  SRC = SRC.replace(a, `      pos: (() => { ${q} return mesh.position.clone().sub(hp).applyQuaternion(_y.clone().invert()); })(),
+      quat: (() => { ${q} return _y.clone().invert().multiply(mesh.quaternion); })(),`);
+  const b = `    mesh.position.copy(hp).add(st.pos);
+    mesh.quaternion.copy(st.quat);`;
+  if (!SRC.includes(b)) throw new Error('inject headingfollows: restore anchor moved');
+  SRC = SRC.replace(b, `    ${q}
+    mesh.position.copy(st.pos).applyQuaternion(_y).add(hp);
+    mesh.quaternion.copy(_y).multiply(st.quat);`);
 } else if (inject === 'foreverlatch') {
   cut('    return (performance.now() - l.t) <= grace ? l : null;', '    return l;');
 }
@@ -165,9 +176,12 @@ console.log('\na missed panel grab does not turn the world');
 // that only says "N passed" is counted as a FAILURE by the suite while reporting green alone.
 console.log('\na hidden panel comes back where you left it');
 {
-  // The round trip is what matters: stash a pose, move the head, restore, and the panel should be
-  // in the same place RELATIVE TO THE HEAD rather than the same world spot. matt does not trust
-  // headset world tracking, and a world pose restored after two steps puts the panel behind you.
+  // THE SHAPE THAT WAS WRONG FIRST TIME: storing the offset in a heading-aligned frame made the
+  // panel swing with the head, and the way you re-show a panel is by looking down at the wrist
+  // menu — which turns your head. So it arrived facing wherever you had just turned to.
+  //
+  // The rule now: anchored to head POSITION, head ROTATION ignored entirely. Stand still and it
+  // is a world-space restore; walk, and it comes with you instead of being stranded behind.
   const THREE = await import(`${REPO}/node_modules/three/build/three.module.js`);
   const mk = (name) => {
     const src = SRC.match(new RegExp(`\\n  ${name} \\{\\n([\\s\\S]*?)\\n  \\}\\n`));
@@ -175,54 +189,65 @@ console.log('\na hidden panel comes back where you left it');
     return src[1];
   };
   const api = new Function('THREE', `return {
-    _headFrame: function () {${mk('_headFrame\\(\\)')}},
+    _headPos: function () {${mk('_headPos\\(\\)')}},
     _stashPanelPose: function (key, mesh) {${mk('_stashPanelPose\\(key, mesh\\)')}},
     _restorePanelPose: function (key, mesh) {${mk('_restorePanelPose\\(key, mesh\\)')}},
   };`)(THREE);
 
-  const head = (x, z, yaw, pitch) => {
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch || 0, yaw || 0, 0, 'YXZ'));
-    return { _camera: { getThreeCamera: () => ({ position: new THREE.Vector3(x, 1.6, z), quaternion: q }) } };
-  };
-  const panel = (x, y, z) => ({ position: new THREE.Vector3(x, y, z), quaternion: new THREE.Quaternion() });
+  const head = (x, y, z, yaw, pitch) => ({ _camera: { getThreeCamera: () => ({
+    position: new THREE.Vector3(x, y, z),
+    quaternion: new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(pitch || 0, yaw || 0, 0, 'YXZ')) }) } });
+  const panel = (x, y, z) => ({ position: new THREE.Vector3(x, y, z),
+    quaternion: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0.4, 0, 'YXZ')) });
 
-  const self = Object.assign(head(0, 0, 0), api);
-  const p = panel(0.3, 1.4, -0.6);
-  check('stashing succeeds with a camera', self._stashPanelPose('timeline', p) === true);
-  check('restoring an unknown key does nothing', self._restorePanelPose('nope', p) === false);
+  const WHERE = new THREE.Vector3(0.3, 1.4, -0.6);
+  const self = Object.assign(head(0, 1.6, 0, 0), api);
+  const left = panel(WHERE.x, WHERE.y, WHERE.z);
+  const leftQuat = left.quaternion.clone();
+  check('stashing succeeds with a camera', self._stashPanelPose('timeline', left) === true);
+  check('restoring an unknown key does nothing', self._restorePanelPose('nope', left) === false);
 
-  // Same head pose: the panel must come back exactly where it was.
-  const p2 = panel(0, 0, 0);
-  self._restorePanelPose('timeline', p2);
+  const same = panel(0, 0, 0);
+  self._restorePanelPose('timeline', same);
   check('an unmoved head puts it back in the same world spot',
-    p2.position.distanceTo(new THREE.Vector3(0.3, 1.4, -0.6)) < 1e-6,
-    p2.position.toArray().join(','));
+    same.position.distanceTo(WHERE) < 1e-6, same.position.toArray().join(','));
 
-  // Turned 90 degrees and stepped aside: it should be in front of the NEW heading, at the same
-  // offset — not stranded where the world pose was.
-  const turned = Object.assign(head(2, 2, Math.PI / 2), api);
-  turned._panelPoseStash = self._panelPoseStash;
-  const p3 = panel(0, 0, 0);
-  turned._restorePanelPose('timeline', p3);
-  check('after turning it follows the heading rather than the world',
-    p3.position.distanceTo(new THREE.Vector3(0.3, 1.4, -0.6)) > 0.5,
-    p3.position.toArray().join(','));
-  check('...and keeps its distance from the head',
-    Math.abs(p3.position.distanceTo(new THREE.Vector3(2, 1.6, 2))
-      - new THREE.Vector3(0.3, 1.4, -0.6).distanceTo(new THREE.Vector3(0, 1.6, 0))) < 1e-6,
-    String(p3.position.distanceTo(new THREE.Vector3(2, 1.6, 2))));
+  // THE REPORTED BUG. Look down at the wrist menu — which turns the head — and re-show. The
+  // panel must NOT follow the heading round to face you.
+  const atWrist = Object.assign(head(0, 1.6, 0, 1.1, -0.9), api);
+  atWrist._panelPoseStash = self._panelPoseStash;
+  const back = panel(0, 0, 0);
+  atWrist._restorePanelPose('timeline', back);
+  check('turning to look at the wrist does NOT drag the panel round',
+    back.position.distanceTo(WHERE) < 1e-6,
+    `${back.position.toArray().join(',')} — a heading-relative stash puts it in front of wherever you turned`);
+  check('...and its orientation is the one you left it at',
+    back.quaternion.angleTo(leftQuat) < 1e-6, String(back.quaternion.angleTo(leftQuat)));
 
-  // YAW ONLY. Looking up and re-showing must not put the panel above you and tilted.
-  const lookingUp = Object.assign(head(0, 0, 0, -1.2), api);
-  lookingUp._panelPoseStash = self._panelPoseStash;
-  const p4 = panel(0, 0, 0);
-  lookingUp._restorePanelPose('timeline', p4);
-  check('pitch is ignored, so looking up does not lift the panel',
-    Math.abs(p4.position.y - 1.4) < 1e-6,
-    `${p4.position.y} — taking the full head rotation puts it overhead`);
+  // Walking DOES carry it, which is the concession to tracking drift.
+  const moved = Object.assign(head(2, 1.6, 2, 2.5), api);
+  moved._panelPoseStash = self._panelPoseStash;
+  const carried = panel(0, 0, 0);
+  moved._restorePanelPose('timeline', carried);
+  check('walking carries it by the same world offset',
+    carried.position.distanceTo(new THREE.Vector3(WHERE.x + 2, WHERE.y, WHERE.z + 2)) < 1e-6,
+    carried.position.toArray().join(','));
+  check('...still without turning it', carried.quaternion.angleTo(leftQuat) < 1e-6);
+
+  // Height: crouching carries it down with you, and only by how far you actually moved.
+  const crouch = Object.assign(head(0, 1.1, 0, 0), api);
+  crouch._panelPoseStash = self._panelPoseStash;
+  const low = panel(0, 0, 0);
+  crouch._restorePanelPose('timeline', low);
+  check('height follows head height, one for one',
+    Math.abs(low.position.y - (WHERE.y - 0.5)) < 1e-6, String(low.position.y));
 
   check('no camera means no stash and no crash',
-    Object.assign({ _camera: null }, api)._stashPanelPose('x', p) === false);
+    Object.assign({ _camera: null }, api)._stashPanelPose('x', left) === false);
+  check('no camera means no restore either',
+    Object.assign({ _camera: null, _panelPoseStash: self._panelPoseStash }, api)
+      ._restorePanelPose('timeline', left) === false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed${inject ? `  [inject=${inject}]` : ''}`

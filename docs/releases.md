@@ -50,9 +50,18 @@ you meant, and a fist near a panel never turns the world. Same shape as the v3.3
 VR click had to move from the press to the release.
 
 **Panels remember where you left them, for the session.** Toggling one off and on re-ran its
-first-open placement. Stored relative to the HEAD and by HEADING only — matt: "i dont trust world
-tracking" — so it comes back in front of you rather than behind, and looking up does not put it
-overhead.
+first-open placement. Anchored to head POSITION with head ROTATION IGNORED ENTIRELY — stand still
+and it is a world-space restore; walk, and it comes with you rather than being stranded behind,
+which is the concession to tracking drift and the reason to anchor at all: matt, "i dont trust
+world tracking".
+
+The first attempt stored it in a HEADING-aligned frame, and the way you re-show a panel is by
+looking down at the wrist menu — which turns your head, so it arrived facing wherever you had just
+turned to, every time. matt: "i would have expected it to restore to where i had it in world
+space ... store and recall relative to the headset position, but as if the headset rotation is
+zeroed out." Worth recording that the refinement made it *more* convincing on the way past: pitch
+was clamped out as a correctness measure, which was fixing the wrong axis while the heading — the
+one that actually moved — was left following the head.
 
 **And the suite was lying.** `run_all.mjs` tests for particular success wording, and seven
 harnesses (five new, two long-standing) ended with a phrase it did not accept — counted as

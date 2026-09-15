@@ -12281,54 +12281,44 @@ class Scene {
   // WHERE A PANEL WAS WHEN YOU PUT IT AWAY, kept for the session only.
   //
   // Toggling a panel off and on from the icon bar re-ran its first-open placement, so any panel
-  // you had positioned snapped back beside the main menu. matt: "if i toggle their vis off and on
-  // with the mainpanel icon bar, they should just be where i left them."
+  // you had positioned snapped back beside the main menu.
   //
-  // STORED RELATIVE TO THE HEAD, not in world space, and that is matt's own framing of it: "i
-  // don't mind if they forget between sessions (honestly the state of world tracking in all
-  // headset is terrible, i dont trust it)." A world pose restored after you have walked two steps
-  // puts the panel behind you; a head-relative one always comes back in front, in the same place
-  // you left it in your own frame. For the common case — toggling it off and straight back on —
-  // the two are identical, because the head has not moved.
+  // ANCHORED TO HEAD POSITION, WITH HEAD ROTATION IGNORED ENTIRELY. The first attempt stored the
+  // offset in a heading-aligned frame, which meant the panel SWUNG WITH YOUR HEADING — and the
+  // way you re-show a panel is by looking down at the wrist menu, which turns your head. So it
+  // came back facing wherever you had just turned to, every time. matt: "i looked down at my
+  // wrist menu and turned it on again, the graph editor appears directly in my view a little down
+  // and to the right. i would have expected it to restore to where i had it in world space."
   //
-  // YAW ONLY. Taking the full head rotation means re-showing a panel while looking up puts it
-  // above you and tilted, which is not where you left it by any reading. Heading is the part of
-  // where you are looking that a panel should follow; pitch and roll are not.
-  _headFrame() {
+  // So the offset is kept in WORLD AXES and the orientation is kept as it was; only head POSITION
+  // is used as the anchor. matt's own reading of it: "store and recall relative to the headset
+  // position, but as if the headset rotation is zeroed out." Stand still and it is a world-space
+  // restore, which is what you expect. Walk, and it comes with you rather than being stranded
+  // behind — which is the concession to tracking drift, and the reason to anchor at all: "i dont
+  // mind if they forget between sessions (honestly the state of world tracking in all headset is
+  // terrible, i dont trust it)."
+  _headPos() {
     const cam = this._camera && this._camera.getThreeCamera && this._camera.getThreeCamera();
-    if (!cam) return null;
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-    fwd.y = 0;
-    // Straight up or down: the heading is undefined, so keep the last usable one rather than
-    // snapping to an arbitrary axis.
-    if (fwd.lengthSq() < 1e-8) {
-      if (!this._lastHeadYaw) return null;
-      return { pos: cam.position.clone(), quat: this._lastHeadYaw.clone() };
-    }
-    fwd.normalize();
-    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), fwd);
-    this._lastHeadYaw = quat.clone();
-    return { pos: cam.position.clone(), quat: quat };
+    return cam ? cam.position.clone() : null;
   }
 
   _stashPanelPose(key, mesh) {
-    const h = this._headFrame();
-    if (!h || !mesh) return false;
-    const inv = h.quat.clone().invert();
+    const hp = this._headPos();
+    if (!hp || !mesh) return false;
     this._panelPoseStash = this._panelPoseStash || {};
     this._panelPoseStash[key] = {
-      pos: mesh.position.clone().sub(h.pos).applyQuaternion(inv),
-      quat: inv.clone().multiply(mesh.quaternion),
+      pos: mesh.position.clone().sub(hp),   // world axes — deliberately NOT rotated into any frame
+      quat: mesh.quaternion.clone(),        // the orientation you left it at, unmodified
     };
     return true;
   }
 
   _restorePanelPose(key, mesh) {
     const st = this._panelPoseStash && this._panelPoseStash[key];
-    const h = this._headFrame();
-    if (!st || !h || !mesh) return false;
-    mesh.position.copy(st.pos).applyQuaternion(h.quat).add(h.pos);
-    mesh.quaternion.copy(h.quat).multiply(st.quat);
+    const hp = this._headPos();
+    if (!st || !hp || !mesh) return false;
+    mesh.position.copy(hp).add(st.pos);
+    mesh.quaternion.copy(st.quat);
     return true;
   }
 
