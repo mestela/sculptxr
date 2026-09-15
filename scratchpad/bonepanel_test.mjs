@@ -991,9 +991,30 @@ check('the physics solver is in the shared toggle list',
   'the only way to switch solver in a headset is a console that is not there');
 check('...and it reads the live flag, so it cannot lie after a console switch',
   /get: \(\) => !!window\._physXPBD/.test(MAIN_SRC));
+// ANCHORED ON THE CLAIM, NOT ON ONE CALL SPELLING. This counted the exact text
+// `buildDevToggles((id, label, on) =>` and demanded exactly two, which says "the VR page calls
+// it twice with an inline arrow" when what it means is "both pages render from the shared
+// list". The list is rendered in groups now (ui / trace / other) and the desktop page passes
+// named helpers rather than inline arrows, so the count moved while the claim stayed true.
 check('both panels build their toggles from that list',
-  (MAIN_SRC.match(/buildDevToggles\(\(id, label, on\) =>/g) || []).length === 2,
+  (() => {
+    const vr = MAIN_SRC.slice(MAIN_SRC.indexOf('function buildMenuHTML_settings(main)'),
+                              MAIN_SRC.indexOf('export function buildMenuHTML_desktopSettings'));
+    const dk = MAIN_SRC.slice(MAIN_SRC.indexOf('export function buildMenuHTML_desktopSettings'));
+    return /buildDevToggles\(/.test(vr) && /buildDevToggles\(/.test(dk);
+  })(),
   'a second copy is how the two drifted apart in the first place');
+// ...and every toggle in the list reaches a page. The groups partition the list, so a toggle
+// that matched none of them would render nowhere and be invisible on both platforms.
+check('...and the groups cover the whole list between them',
+  (() => {
+    const m = MAIN_SRC.match(/const want = \(t\) => group == null[\s\S]{0,400}?;/);
+    if (!m) return false;
+    const w = m[0];
+    return /'ui'/.test(w) && /'trace'/.test(w) && /isTrace\(t\) && !isUi\(t\)/.test(w)
+      && /!isTrace\(t\) && !isUi\(t\)/.test(w);
+  })(),
+  'a toggle matching no group renders on neither page');
 check('...and both wire it from the same place',
   /wireDevToggles\(q, paint\);/.test(MAIN_SRC) && /wireDevToggles\(q, repaintFn\);/.test(MAIN_SRC),
   'the VR panel repaints through paint(), the sidebar through repaintFn');

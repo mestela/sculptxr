@@ -53,7 +53,7 @@ import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
 import { faIcon, setFaIcon } from './faIcons.js';
-import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen } from './uiTokens.js';
+import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen, resetUIDefaults } from './uiTokens.js';
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
@@ -318,7 +318,19 @@ const CSS = `
 }
 .mm-group-head:hover, .mm-group-head.hover { background: #313244; color: #cdd6f4; }
 .mm-group-chev { font-size: 9px; width: 10px; flex-shrink: 0; color: #6c7086; }
-.mm-group-body.collapsed { display: none; }
+/* COLLAPSED MEANS HIDDEN, WHATEVER ELSE IS SAID ABOUT THE ELEMENT.
+   Without the !important this rule LOSES. A collapsed body that directly contains a row or a
+   button matches the density container selector, which resolves to display:flex, and that
+   selector scores (0,3,0) against this rule's (0,2,0) -- so the section carried the class,
+   reported itself collapsed, and rendered in full.
+   It only bit the VR main panel, because .mm-dense is on #mm-content and nowhere else: the
+   desktop sidebar and the animation panel were always right, which is exactly the shape matt
+   reported -- "on gxr in vr, almost every section, both menus and panels, are fully expanded"
+   while the desktop looked correct.
+   The specificity also crept up as the density selectors gained :has() and :not() parts, so
+   this worked earlier in the branch and stopped. window.uiDiag() reports it directly now:
+   collapsedButStillVisible. */
+.mm-group-body.collapsed { display: none !important; }
 
 #mm-tabstrip {
   position: absolute;
@@ -1452,6 +1464,20 @@ export function buildMenuHTML_reference() {
 // buttons, the sidebar uses check rows -- through a renderer they each pass in. One id per
 // setting, one place to add the next one, and neither panel can drift from the other again.
 const DEV_TOGGLES = [
+  // IN THE SHARED LIST so it appears in the VR Settings page AND the desktop one, which is the
+  // whole reason this list exists. A reset that you can only reach on the platform that is
+  // already behaving would be useless.
+  { id: 'mm-ui-reset', label: 'Reset UI to Defaults', action: true,
+    run: () => {
+      resetUIDefaults();
+      // Rebuild everything that draws sections, on both hosts: the VR panels rebuild from their
+      // own content key, and the desktop sidebar and menus rebuild when next opened.
+      for (const p of (window._mmPanels || [])) {
+        try { p._lastContentKey = ''; p._rebuildContent?.(); } catch (_) {}
+      }
+      try { window.app?.getGui?.()?._closeAllDropdowns?.(); } catch (_) {}
+      try { window.screenLog?.('UI reset to defaults', 'lime'); } catch (_) {}
+    } },
   { id: 'mm-phys-xpbd',   label: 'Constraint Solver (XPBD)',
     get: () => !!window._physXPBD,      set: (on) => PhysicsBones.setSolver(on) },
   { id: 'mm-panel-trace', label: 'Trace Panel Visibility',
@@ -1568,11 +1594,18 @@ const DEV_TOGGLES = [
 // Read off the LABEL rather than kept as a second field, so a tracer added later lands in the
 // right section by being named like one, with nothing to remember.
 const isTrace = (t) => /trace/i.test(t.label);
+// The UI reset is not a diagnostic and does not belong under a physics heading; it gets its own
+// section on both pages. Matched by id rather than by label so renaming the button cannot
+// silently move it back in with the tracers.
+const isUi = (t) => t.id === 'mm-ui-reset';
 
-// `group` is 'trace', 'other', or undefined for everything (the old behaviour, still used by
-// wireDevToggles' contract that every id is rendered somewhere).
+// `group` is 'ui', 'trace', 'other', or undefined for everything (still used by wireDevToggles'
+// contract that every id is rendered somewhere).
 export function buildDevToggles(render, renderAction, group) {
-  const want = (t) => group == null || (group === 'trace' ? isTrace(t) : !isTrace(t));
+  const want = (t) => group == null
+    || (group === 'ui' ? isUi(t)
+      : group === 'trace' ? (isTrace(t) && !isUi(t))
+      : (!isTrace(t) && !isUi(t)));
   return DEV_TOGGLES.filter(want).map((t) => (t.action
     ? (renderAction ? renderAction(t.id, t.label) : '')
     : render(t.id, t.label, t.get()))).join('\n    ');
@@ -2106,6 +2139,11 @@ function buildMenuHTML_settings(main) {
 
     ${buildAudioSectionHTML((id, label, on) =>
       `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`)}
+
+    <div class="mm-section-title">UI</div>
+    ${buildDevToggles((id, label, on) =>
+      `<button class="mm-toggle${on ? ' active' : ''}" id="${id}">${label}</button>`,
+      (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`, 'ui')}
 
     <div class="mm-section-title">Physics &amp; Diagnostics</div>
     ${buildDevToggles((id, label, on) =>
@@ -5317,6 +5355,9 @@ export function buildMenuHTML_desktopSettings(main) {
       on ? ' checked' : ''}><span class="mm-checkmark"></span></label>`;
   const _devAct = (id, label) => `<button class="mm-action-btn" id="${id}">${label}</button>`;
   const physSection = `
+    <div class="mm-section-title">UI</div>
+    ${buildDevToggles(_devChk, _devAct, 'ui')}
+
     <div class="mm-section-title">Physics Bones</div>
     ${buildDevToggles(_devChk, _devAct, 'other')}
 

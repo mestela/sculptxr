@@ -446,8 +446,12 @@ check('...and so does the gizmo',
   check('...registered as a tool class and a uiName',
     /Tools\[Enums\.Tools\.SELECT\] = SelectTool;/.test(TOOLS)
       && /Tools\[Enums\.Tools\.SELECT\]\.uiName = 'sculptSelect';/.test(TOOLS));
+  // The list entries carry no spelling of their own any more -- a name comes from TOOL_LABELS,
+  // which is what stopped the wrist panel calling this tool "Tool 35". So ask the two things
+  // that matter separately: the tool is IN the picker list, and it HAS a name.
   check('...offered in the menu the headset actually uses',
-    /\{ id: Enums\.Tools\.SELECT,\s*label: 'Select'\s*\}/.test(TLIST),
+    /entry\(Enums\.Tools\.SELECT\)/.test(TLIST)
+      && /\[Enums\.Tools\.SELECT\]:\s*'Select'/.test(TLIST),
     'toolLists is the single source for both the main menu and the VR tool picker');
   check('...with a translation, so the button is not a raw key',
     /sculptSelect: 'Select',/.test(TREN));

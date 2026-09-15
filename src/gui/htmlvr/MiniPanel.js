@@ -101,7 +101,19 @@ const CSS = `
 }
 .mm-group-head:hover, .mm-group-head.hover { background: #313244; color: #cdd6f4; }
 .mm-group-chev { font-size: 8px; width: 9px; flex-shrink: 0; color: #6c7086; }
-.mm-group-body.collapsed { display: none; }
+/* COLLAPSED MEANS HIDDEN, WHATEVER ELSE IS SAID ABOUT THE ELEMENT.
+   Without the !important this rule LOSES. A collapsed body that directly contains a row or a
+   button matches the density container selector, which resolves to display:flex, and that
+   selector scores (0,3,0) against this rule's (0,2,0) -- so the section carried the class,
+   reported itself collapsed, and rendered in full.
+   It only bit the VR main panel, because .mm-dense is on #mm-content and nowhere else: the
+   desktop sidebar and the animation panel were always right, which is exactly the shape matt
+   reported -- "on gxr in vr, almost every section, both menus and panels, are fully expanded"
+   while the desktop looked correct.
+   The specificity also crept up as the density selectors gained :has() and :not() parts, so
+   this worked earlier in the branch and stopped. window.uiDiag() reports it directly now:
+   collapsedButStillVisible. */
+.mm-group-body.collapsed { display: none !important; }
 
 /* ── MiniPanel — Catppuccin Mocha ──────────────────────────────────── */
 #mp-root {

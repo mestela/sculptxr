@@ -157,6 +157,78 @@ export function groupOpen(key, dflt = true) {
   return DEFAULT_OPEN.has(key) ? true : !!dflt;
 }
 
+// ── RESET THE UI TO ITS DEFAULTS ─────────────────────────────────────────────
+//
+// matt: "how about we add a thing to settings to force the UI back to defaults, which should do
+// the expand/collapse sections as i outlined earlier, and then stores it."
+//
+// Two steps, and both matter. Clearing the map alone would be enough for the sections to RENDER
+// correctly, because defaults are computed -- but it would leave nothing written, so there is no
+// way to tell a reset profile from one that has never been touched, and nothing to inspect when
+// a device disagrees with another. Writing the named sections makes the state concrete.
+//
+// Everything not named stays absent from the map and falls to its computed default, which is
+// closed, or open for the whole-page cases (History, About). That is deliberate: storing a
+// `false` for every section in the app would freeze today's answer into every profile and make
+// a future change to DEFAULT_OPEN invisible to anyone who had ever pressed this.
+export function resetUIDefaults() {
+  const g = (window._uiGroups = {});
+  for (const key of DEFAULT_OPEN) g[key] = true;
+  persist();
+  return g;
+}
+
+// ── WHY IS THIS PANEL NOT COLLAPSING? ────────────────────────────────────────
+//
+// window.uiDiag() — read it over remote debugging, which is how the headsets are instrumented
+// here. It answers, in order, every question that has been guessed at rather than measured:
+// is the reorg even on, what is actually stored, did the section pass run, do the collapsed
+// bodies actually compute to display:none, and does this engine support the selector features
+// the layout leans on.
+//
+// Written because two wrong diagnoses were offered from a desktop browser for a fault only
+// visible in a headset. A device that disagrees with another should be asked, not modelled.
+export function uiDiag() {
+  const out = { reorg: uiReorg(), windowFlag: window._uiReorg ?? '(unset)' };
+  try { out.version = document.getElementById('build-version')?.textContent || '(none)'; } catch (_) {}
+  try {
+    out.storedRaw = window.localStorage?.getItem(STORE_KEY) || '(nothing stored)';
+    out.storedOpen = Object.entries(window._uiGroups || {}).filter(([, v]) => v).map(([k]) => k);
+    out.storedClosed = Object.entries(window._uiGroups || {}).filter(([, v]) => !v).map(([k]) => k);
+  } catch (e) { out.storedRaw = 'localStorage threw: ' + e.message; }
+  // Feature support the layout depends on. :has() drives the density selectors, and a selector
+  // list containing an unsupported :has() is dropped WHOLE by the parser.
+  try {
+    out.supports_has = CSS.supports('selector(:has(> div))');
+    out.supports_not_list = CSS.supports('selector(:not(.a, .b))');
+  } catch (_) { out.supports_has = out.supports_not_list = 'CSS.supports unavailable'; }
+
+  const panels = [];
+  for (const sel of ['#mm-root', '#mp-root', '.acp-root']) {
+    document.querySelectorAll(sel).forEach((root) => {
+      const heads = root.querySelectorAll('.mm-group-head');
+      const bodies = root.querySelectorAll('.mm-group-body');
+      const collapsed = [...bodies].filter((b) => b.classList.contains('collapsed'));
+      const reallyHidden = collapsed.filter((b) => getComputedStyle(b).display === 'none');
+      panels.push({
+        sel: sel,
+        hasReorgClass: root.classList.contains('ui-reorg'),
+        heads: heads.length,
+        plainTitlesLeft: root.querySelectorAll('.mm-section-title, .acp-section-title').length,
+        collapsedBodies: collapsed.length,
+        // THE ONE THAT MATTERS if the sections exist and still look open: the class is on the
+        // element but the rule that hides it lost to something else.
+        collapsedButStillVisible: collapsed.length - reallyHidden.length,
+      });
+    });
+  }
+  out.panels = panels;
+  out.htmlHasReorgClass = document.documentElement.classList.contains('ui-reorg');
+  out.sweepStyleInHead = !!document.querySelector('style[data-ui-sweep]');
+  try { console.log(JSON.stringify(out, null, 2)); } catch (_) { console.log(out); }
+  return out;
+}
+
 export function toggleGroup(key) {
   const g = store();
   g[key] = !groupOpen(key);
@@ -546,6 +618,8 @@ export function tagReorgRoot(el) {
 
 export function applyUISweep() {
   injectUITokens();
+  // Reachable from a headset console with no import; see uiDiag.
+  try { window.uiDiag = uiDiag; window.resetUIDefaults = resetUIDefaults; } catch (_) {}
   const on = uiReorg();
   document.documentElement.classList.toggle('ui-reorg', on);
   // The panel roots as well: see the note above about the rasteriser's own document.
