@@ -776,7 +776,7 @@ class BoneDrawTool extends SculptBase {
     this._hot = !!plane && this._snapEnabled()
       && Math.abs(Skeleton.planeDistance(pos, plane)) <= this._planeSnap();
     Skeleton.showPreview(main, parent ? Skeleton.jointPos(parent, _pos) : null,
-      this._resolve(pos, plane, _eff, parent));
+      this._resolve(pos, plane, _eff, parent), this._hot);
     this._refresh();
   }
 
@@ -1853,11 +1853,13 @@ class BoneDrawTool extends SculptBase {
     // desktop path had always hidden it (see syncPlane) and the two disagreed. matt: "if i turn
     // off snap plane in the bone tools, we should hide it in the 3d view as well."
     const plane = this._snapEnabled() ? Skeleton.symmetryPlane(main) : null;
+    // ONE FIELD FOR "INSIDE THE SNAP BAND", set here as the desktop path sets it in
+    // _drawFeedback. It used to be computed inline for the highlight and nowhere else, so the VR
+    // path had the fact and no name for it -- and the preview cursor, which now has to show the
+    // same thing, would have been a third copy of the same test.
+    this._hot = !!plane && Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap();
     if (!plane) Skeleton.hidePlane(main);
-    else {
-      Skeleton.updatePlane(main, plane,
-        Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap(), _tip);
-    }
+    else Skeleton.updatePlane(main, plane, this._hot, _tip);
 
     // CLEARED EACH FRAME, then set by the modes that actually resolve a bone. This tool does
     // its own picking, so nothing else here would ever clear it — and a stale value names a
@@ -2084,7 +2086,7 @@ class BoneDrawTool extends SculptBase {
     // where the joint will actually land once snapping is applied — not the raw tip, so
     // what you see is what you commit.
     Skeleton.showPreview(main, parent ? Skeleton.jointPos(parent, _pos) : null,
-      this._resolve(_tip, plane, _eff, parent));
+      this._resolve(_tip, plane, _eff, parent), this._hot);
   }
 
   // ---- A-button trace -------------------------------------------------------------

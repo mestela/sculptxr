@@ -60,6 +60,10 @@ const PIN_SOFT_COLOR = 0xa6e3a1;
 const PIN_LINK_COLOR = 0xcba6f7;
 const _pinHSL = { h: 0, s: 0, l: 0 };   // scratch for the pin-weight saturation ramp
 const PLANE_COLOR = 0x89b4fa;
+// The snap-plane cursor's radius, in METRES OF ROOM -- half of the 2cm diameter matt asked for.
+// Deliberately not a fraction of sceneUnit: it is a "can you see it" marker, not a "does it match
+// the bones" one, so it has to be the same size on a thimble and on a building.
+const DISC_RADIUS_M = 0.01;
 const PLANE_HOT = 0xa6e3a1;
 const PIN_COLOR = 0xf38ba8;
 const GHOST_OPACITY = 0.35;
@@ -3294,7 +3298,7 @@ Skeleton.updateVisuals = function (main) {
 
 // Preview bone: parent joint (or a free-floating marker) to the live controller tip, so
 // you always see the bone you are about to commit before you commit it.
-Skeleton.showPreview = function (main, fromPos, toPos) {
+Skeleton.showPreview = function (main, fromPos, toPos, hot) {
   const g = skelGroup(main);
   if (!main._skelPreview) {
     const p = makePair(boneGeometry(), 0xffffff);
@@ -3302,8 +3306,27 @@ Skeleton.showPreview = function (main, fromPos, toPos) {
     p.solid.material.depthWrite = false;
     const d = makePair(jointGeometry(), JOINT_COLOR);
     d.solid.material.transparent = true; d.solid.material.opacity = 0.8;
-    g.add(p.solid, p.ghost, d.solid, d.ghost);
-    main._skelPreview = { bone: p, dot: d };
+    // THE CURSOR SAYS WHICH WAY THE SNAP PLANE FACES.
+    //
+    // A sphere is the same from every direction, which is exactly the information the cursor
+    // needed to carry: with the snap plane on, the one thing you want to know is which way it
+    // lies and whether you are on it. matt: "its generally unclear how to drag to stay on the
+    // symmetry plane... rather than drawing a sphere under the cursor, draw a disk, that way its
+    // clear which direction the symmetry plane lies."
+    //
+    // A disc lying IN the plane answers both at once: face-on it is a circle, edge-on it is a
+    // line, and every angle between reads as the tilt of the plane you are drawing against.
+    // DoubleSide because you can be on either side of it, and it is drawn after the plane fill so
+    // it stays legible over it.
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 48), new THREE.MeshBasicMaterial({
+      color: PLANE_COLOR, side: THREE.DoubleSide,
+      transparent: true, opacity: 0.55, depthWrite: false, depthTest: false, toneMapped: false,
+    }));
+    disc.isPickable = false;
+    disc.frustumCulled = false;
+    disc.renderOrder = 9998;   // over the plane fill (9997), under the panels
+    g.add(p.solid, p.ghost, d.solid, d.ghost, disc);
+    main._skelPreview = { bone: p, dot: d, disc: disc };
   }
   const pv = main._skelPreview;
   const jr = Skeleton.sceneUnit(main) * JOINT_R_FRAC;
@@ -3314,11 +3337,42 @@ Skeleton.showPreview = function (main, fromPos, toPos) {
   // looks exactly like not having ended it, and the only other signal is a log line that is
   // hidden by default.
   const rooting = !fromPos;
+
+  // THE DISC REPLACES THE DOT WHILE THE SNAP IS ABOUT TO FIRE, rather than joining it: two
+  // markers on one point is two things to read, and the dot is the one carrying less -- a sphere
+  // says where, which the disc says too, and says the orientation as well.
+  //
+  // `hot` IS THE GATE, not the plane's existence. With the plane merely switched on the disc sat
+  // under the cursor everywhere in the scene, which says "you are snapping" at every point where
+  // you are not. matt: "it should only be active when the symmetry plane snapping is going to be
+  // active, ie when the symmetry plane itself highlights." So the cursor and the plane highlight
+  // now answer to the same fact -- inside the snap band -- and cannot disagree about it.
+  const snapPlane = hot && Skeleton.displayFlag('snapPlane') ? Skeleton.symmetryPlane(main) : null;
+  const disc = pv.disc;
+  if (disc) {
+    disc.visible = !!snapPlane;
+    if (snapPlane) {
+      disc.position.copy(toPos);
+      // Lying IN the plane: CircleGeometry is built in XY with a +Z normal, the same frame the
+      // plane fill is built in, so it takes the same rotation. See updatePlane.
+      disc.quaternion.setFromUnitVectors(_zAxis, snapPlane.normal);
+      // A FIXED SIZE IN THE ROOM, NOT IN THE MODEL. Everything else the rig draws is scaled by
+      // sceneUnit, which is right for a marker that has to match the bones and wrong for one you
+      // are meant to spot: on a small sculpt it would be a speck. matt asked for "a 2cm diameter
+      // disc", so 1cm of radius, divided back out through the world group's scale -- the rig is
+      // drawn inside a scaled group, so a constant there is not a constant in the room.
+      const ws = g.getWorldScale(_sTmp);
+      const unit = Math.abs(ws.x) > 1e-9 ? ws.x : 1;
+      disc.scale.setScalar(DISC_RADIUS_M / unit);
+      disc.updateMatrix(); disc.matrixWorldNeedsUpdate = true;
+    }
+  }
+
   for (const o of [pv.dot.solid, pv.dot.ghost]) {
     o.position.copy(toPos);
     o.scale.setScalar(rooting ? jr * 0.6 : jr);
     o.material.color.setHex(rooting ? PLANE_COLOR : JOINT_COLOR);
-    o.visible = true;
+    o.visible = !snapPlane;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
   }
 
@@ -3338,6 +3392,7 @@ Skeleton.hidePreview = function (main) {
   const pv = main._skelPreview;
   if (!pv) return;
   for (const o of [pv.bone.solid, pv.bone.ghost, pv.dot.solid, pv.dot.ghost]) o.visible = false;
+  if (pv.disc) pv.disc.visible = false;
 };
 
 // Nearest existing joint to a model-space point, within `maxDist`. This is what makes
