@@ -1,3 +1,44 @@
+# v3.42.0
+**A bone is not a thing, and the rig finally agrees.** Maya's own documentation is blunt about it
+— *"bones do not have nodes... bones are only visual cues that illustrate the relationships
+between joints"* — and this app already agreed under the hood: no bone object exists anywhere,
+the bone pick returns a joint, the capsule radius lives on a joint, Split takes a joint. What was
+wrong was **which** joint, in three places at once. A capsule lit from either end, so a mid-chain
+selection spanned two segments and named neither. The joint pick and the bone pick used different
+*kinds* of threshold — an absolute band against four times a bone's own radius — leaving a wide
+shell where the bone lit up and the joint did not. And the press and the hover called different
+picks, so a bone would highlight and then refuse the click. There is one resolver now: the joint
+under your hand, or the **root** of the bone under it. Select any of the five bones fanning off a
+wrist and you get the wrist, exactly as Maya does.
+
+**Colours you can read a selection by.** Selection moves from cyan to Maya's highlight green, and
+the per-chain bone palette gets out of its way properly: the hue arcs around both state colours
+are reserved, the green and cyan ends are dropped entirely, and what is left is eight hues from
+blue through magenta to orange — nearest one 0.116 away from a state colour where the closest used
+to be 0.028. The chains also give up 20% of their value, so a highlight reads as *brighter* rather
+than merely different. Selected now beats preselected, too: pointing at something already selected
+no longer repaints it yellow.
+
+**Pins reach both panels.** The last of the marking-menu-only commands — five pin modes, Ground,
+and the five weight operations — land in the Pose column of the main panel *and* the wrist panel,
+which is every surface including a hands-only runtime. Two of them, Rotation Only and Aim, were
+unreachable on iPad by any route at all. The panel acts on the **selection** where the ring acts on
+**hover**: one function, two target resolvers, and no remembered target to write to a joint you can
+no longer see.
+
+**Chain editing, and three ways to finish one.** Split Above, Split Below, Dissolve and Name join
+the bone panel. Ending a chain used to be the A button, and a hand has no A button — so a hands-only
+session could start a chain and never close it. Three routes now: a pinch with your off hand, a tap
+on the joint you are hanging from, or right-click on desktop.
+
+**Fixes.** A solve is no longer mistaken for an authored pose, so IK-dragging a physics chain stops
+baking the pull into the rig. Every bone operation respects the symmetry toggle — the physics flag,
+all seven sliders and both collision toggles had been mirroring regardless of it. Paint colour is a
+colour wheel instead of a native picker, which never survived being rasterised into a VR panel. The
+VR keyboard appears in front of the panel that summoned it rather than 0.7m out and on top. The
+stylus spike's tip lines up with the pick point in hands mode. Duplicate copies a whole chain, and
+stops handing the copy the original's mirror twin.
+
 # v3.41.0
 **The panels become menus you can close.** Every section title in every panel is now a
 collapsible heading, collapsed by default, so a page opens as a list of its own sections instead
