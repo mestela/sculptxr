@@ -5,8 +5,8 @@ const check = (name, ok, extra) => {
   if (!ok) fails++;
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok || !extra ? '' : '  — ' + extra));
 };
-const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
-const PANEL = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
+const SKIN = fs.readFileSync(new URL('../src/editing/Skinning.js', import.meta.url).pathname, 'utf8');
+const PANEL = fs.readFileSync(new URL('../src/gui/bonePanel.js', import.meta.url).pathname, 'utf8');
 
 // ── THERE WAS NOTHING TO GO BACK TO ───────────────────────────────────────────────────────
 //

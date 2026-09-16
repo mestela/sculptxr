@@ -16,7 +16,7 @@
 //   BAR_INJECT=nodrop    it is clamped, but colliding left buttons are not dropped (overdraw)
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(`${REPO}/src/gui/GuiTimeline.js`, 'utf8');
 
 const inject = process.env.BAR_INJECT || '';

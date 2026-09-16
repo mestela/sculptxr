@@ -13,7 +13,7 @@
 //                           later field by one float on an older file
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let EXP = fs.readFileSync(`${REPO}/src/files/ExportSGL.js`, 'utf8');
 let IMP = fs.readFileSync(`${REPO}/src/files/ImportSGL.js`, 'utf8');
 

@@ -22,7 +22,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/RigTopology.js'), 'utf8');
 
 {
@@ -382,7 +382,7 @@ const chain = (main, meshes, n) => {
   // it was sitting a few hundred lines away being used by a menu command. The rule outlived
   // its reason and became a rule against fixing the bug. matt found it: "tweak fk for bones
   // mirror position but not rotation."
-  const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const SK = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
   check('the MIRROR twin mirrors the whole transform, rotation included',
     /Skeleton\.mirrorModelMatrix\(g\.joint, g\.plane, _mTwin\);/.test(BD)
       && /g\.twin\.setModelSpaceMatrix\(_mTwin\.elements\);/.test(BD)
@@ -495,7 +495,7 @@ const chain = (main, meshes, n) => {
 // the outliner is empty, but bones are still visible in the viewport, left behind from the
 // previous scene."
 {
-  const SKEL2 = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const SKEL2 = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
   const empty = (SKEL2.match(/if \(!joints\.length\) \{[\s\S]*?\n  \}/) || [''])[0];
   check('the empty-rig path disposes the per-joint entries', /disposeEntry\(main, id\)/.test(empty));
   check('...AND flushes the batches, which is what is actually drawn',

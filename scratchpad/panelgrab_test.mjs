@@ -19,7 +19,7 @@
 //   GRAB_INJECT=foreverlatch the latch never expires, so a panel hit minutes ago still wins
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(`${REPO}/src/Scene.js`, 'utf8');
 
 const inject = process.env.GRAB_INJECT || '';

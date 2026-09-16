@@ -8,7 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/MotionPathEdit.js'), 'utf8');
 const body = SRC.split('\n').filter((l) => !/^import\s/.test(l))
   .filter((l) => !/^export default/.test(l)).join('\n');

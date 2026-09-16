@@ -20,7 +20,7 @@
 //                             can only be slid, never resized
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(`${REPO}/src/gui/GuiTimeline.js`, 'utf8');
 
 const inject = process.env.RANGE_INJECT || '';

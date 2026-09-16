@@ -6,7 +6,7 @@ const check = (name, ok, extra) => {
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok || !extra ? '' : '  — ' + extra));
 };
 
-const R = '/Users/mattestela/sculptxr/src/gui/htmlvr/';
+const R = new URL('../src/gui/htmlvr/', import.meta.url).pathname;
 const INSTALL = fs.readFileSync(R + 'install.js', 'utf8');
 const PANEL   = fs.readFileSync(R + 'HTMLVRPanel.js', 'utf8');
 const TORN    = fs.readFileSync(R + 'TornOffPanel.js', 'utf8');
@@ -193,7 +193,7 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
 // mounted panel.
 {
   const ACP = fs.readFileSync(R + 'AnimationControlPanel.js', 'utf8');
-  const SCENE = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  const SCENE = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
 
   check('the animation panel repaints only when its render changed',
     /const sig = this\._renderSig\(\);\s*\n\s*if \(sig !== this\._lastRenderSig\) \{/.test(ACP),
@@ -275,8 +275,8 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
 // property read cannot reach 400ms in 15 seconds unless updateVisuals itself runs many times a
 // frame. It has 57 call sites and nothing said how many fire together.
 {
-  const SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
-  const SCENE2 = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  const SKEL = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
+  const SCENE2 = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
   check('every skeleton refresh is counted',
     /Skeleton\.updateVisuals = function \(main\) \{[\s\S]{0,600}?window\._skelVisCalls = \(window\._skelVisCalls \| 0\) \+ 1;/.test(SKEL),
     'no count, so "many times a frame" stays a theory');
@@ -360,8 +360,8 @@ const MM      = fs.readFileSync(R + 'MainMenuPanel.js', 'utf8');
 // The rule is the polarity, not the volume: an instrument defaults off and is switched on from
 // the settings menu, like every other one here.
 {
-  const SCENE3 = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
-  const GRAB = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/Grab.js', 'utf8');
+  const SCENE3 = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
+  const GRAB = fs.readFileSync(new URL('../src/editing/tools/Grab.js', import.meta.url).pathname, 'utf8');
   check('no trace is gated opt-out any more',
     !/!window\._grabQuiet/.test(SCENE3) && !/!window\._grabQuiet/.test(GRAB)
       && !/if \(window\._grabQuiet\) return;/.test(GRAB),

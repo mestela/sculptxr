@@ -1,4 +1,4 @@
-import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+import * as THREE from '../node_modules/three/build/three.module.js';
 const mod = await import('./_ik_gen.mjs?v=' + Date.now());
 const { default: IK, makeJoint: J, makeMain, Skeleton, modelMat } = mod;
 const pos = (j) => Skeleton.jointPos(j);

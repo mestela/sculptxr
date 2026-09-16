@@ -4,7 +4,7 @@
 // the bone lengths came back with it. Bone length is the solver's own invariant, so any loss
 // is the bug and not a tolerance.
 import IKSolver, { makeJoint as J, makeMain, Skeleton, modelMat } from './_ik_gen.mjs';
-const THREE = await import('/Users/mattestela/sculptxr/node_modules/three/build/three.module.js');
+const THREE = await import('../node_modules/three/build/three.module.js');
 
 const pos = (j) => Skeleton.jointPos(j);
 const lens = (r) => [pos(r.el).distanceTo(pos(r.sh)), pos(r.ha).distanceTo(pos(r.el))];

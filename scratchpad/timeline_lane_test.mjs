@@ -12,7 +12,7 @@
 // Run: node scratchpad/timeline_lane_test.mjs   (from the repo root)
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const read = (f) => fs.readFileSync(REPO + '/' + f, 'utf8');
 const strip = (s) => s.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 

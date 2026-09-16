@@ -13,11 +13,11 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+import * as THREE from '../node_modules/three/build/three.module.js';
 
-const REPO = '/Users/mattestela/sculptxr';
-const MINI = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MiniPanel.js', 'utf8');
-const BONE = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
+const REPO = new URL('..', import.meta.url).pathname;
+const MINI = fs.readFileSync(new URL('../src/gui/htmlvr/MiniPanel.js', import.meta.url).pathname, 'utf8');
+const BONE = fs.readFileSync(new URL('../src/gui/bonePanel.js', import.meta.url).pathname, 'utf8');
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/PhysicsBones.js'), 'utf8');
 
 // A mock rig with REAL forward kinematics, because the module now stores and restores joint
@@ -750,7 +750,7 @@ check('the wrist panel rebuilds when the bone selection changes',
   check('...with nothing left that can freeze it',
     !/_mpNoRebuild/.test(noComments(MINI))
       && !/_mpNoRebuild/.test(noComments(
-        fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8'))),
+        fs.readFileSync(new URL('../src/gui/htmlvr/MainMenuPanel.js', import.meta.url).pathname, 'utf8'))),
     'a user-reachable switch whose effect is this bug is worse than the bug');
 }
 // Joints only: keying on the whole selection would rebuild on every sculpt selection change,

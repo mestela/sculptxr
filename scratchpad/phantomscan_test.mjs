@@ -22,7 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(path.join(REPO, 'src/misc/PhantomScan.js'), 'utf8');
 const SKEL = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 

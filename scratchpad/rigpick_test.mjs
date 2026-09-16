@@ -5,10 +5,10 @@
 // behind it — nearMesh was never assigned on the rig path. Both were only findable by clicking.
 // The cone test is pure geometry, so it can be checked directly.
 import fs from 'fs';
-import { vec3, mat4 } from '/Users/mattestela/sculptxr/node_modules/gl-matrix/esm/index.js';
+import { vec3, mat4 } from '../node_modules/gl-matrix/esm/index.js';
 
-let SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Picking.js', 'utf8');
-let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+let SRC = fs.readFileSync(new URL('../src/math3d/Picking.js', import.meta.url).pathname, 'utf8');
+let SKEL = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
 
 // Defect injections (standing lesson 1):
 //   PICK_INJECT=alwaystip     a bone hit always reports its TIP joint, so the root — which is
@@ -270,7 +270,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 // The ortho zoom is DERIVED from the fov and viewport, not a tuned constant — a constant only
 // matches perspective at one canvas height, and toggling projection jumped the apparent size.
 {
-  const CAM = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Camera.js', 'utf8');
+  const CAM = fs.readFileSync(new URL('../src/math3d/Camera.js', import.meta.url).pathname, 'utf8');
   // Comment lines stripped first: the constant is named in the prose explaining why it went,
   // and a test that cannot tell code from commentary reports the fix as the bug.
   const camCode = CAM.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
@@ -354,8 +354,8 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 // headset. TransformVR had no pick of ANY kind: it transformed whatever was already selected,
 // so a bone or a pin could never be reached in VR. These assert the two picks stay in step.
 {
-  const DESK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/Transform.js', 'utf8');
-  const VR = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/TransformVR.js', 'utf8');
+  const DESK = fs.readFileSync(new URL('../src/editing/tools/Transform.js', import.meta.url).pathname, 'utf8');
+  const VR = fs.readFileSync(new URL('../src/editing/tools/TransformVR.js', import.meta.url).pathname, 'utf8');
 
   check('desktop Transform picks with the rig included',
     /intersectionMouseMeshes\(main\.getMeshes\(\), main\._mouseX, main\._mouseY, false, true\)/.test(DESK));
@@ -586,7 +586,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
       tint({ boneHeld: true, tintMode: 2 }) === SELECT);
     check('no per-hand colours survive anywhere',
       !/HAND_COLOR/.test(SRC) && !/HAND_COLOR/.test(
-        fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8')),
+        fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8')),
       'red and green by handedness is what was confusing');
   }
   // EITHER END, not just the tip. Only the tip would mean hovering the ROOT lights nothing at
@@ -656,7 +656,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 // And the radius has to actually be PUBLISHED, or the widening above reads undefined forever
 // and the whole thing is a no-op that looks implemented.
 {
-  const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const SK = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
   check('the drawing code publishes the marker radius',
     /pinObj\._pickRadius = r;/.test(SK));
   check('...taking the LARGEST visible part',
@@ -733,7 +733,7 @@ check('...with both manual overrides still winning',
     && /if \(window\._rigBoneSelect === true\) return true;/.test(SRC));
 check('...and the tool index it compares against is the real one',
   /const BONE_DRAW_TOOL = 34;/.test(SRC)
-    && /BONE_DRAW:\s*34/.test(fs.readFileSync('/Users/mattestela/sculptxr/src/misc/Enums.js', 'utf8')),
+    && /BONE_DRAW:\s*34/.test(fs.readFileSync(new URL('../src/misc/Enums.js', import.meta.url).pathname, 'utf8')),
   'a hardcoded index that drifts from Enums silently disables bone selection everywhere');
 check('...with the escape hatch still one flag away',
   /window\._rigBoneSelect = false/.test(SRC),
@@ -747,7 +747,7 @@ check('...and the zone widening is the only thing left gated',
     && !/BONE_SELECT\(this\._main\) \? offAxis/.test(SRC),
   'the blended scores are gone entirely now, so there is nothing left to gate there');
 {
-  const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const SK = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
   // The dots are a flag again rather than a consequence of this switch — see the section
   // above. What still must hold is that they DEFAULT to drawn, because bone selection ships
   // off and the dot is then the only marker for the thing being aimed at.
@@ -769,7 +769,7 @@ check('...and the zone widening is the only thing left gated',
     /this\._main\?\._vrBrushPhysicalRadius \|\| \(window\._rigPickProximityVR \|\| 0\.11\)/.test(SRC),
     'a constant of its own is a number nobody can adjust while working');
 
-  const SC = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  const SC = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
   check('...and Scene publishes exactly what it draws the sphere at',
     /this\._vrBrushPhysicalRadius = physicalRadius;/.test(SC),
     'two numbers for one radius is how the sphere ends up lying about the pick');
@@ -790,7 +790,7 @@ check('...and the zone widening is the only thing left gated',
 // is what you aim with, so reaching for a pin was off by the length of the controller. Scene
 // computes the tip exactly and passes it as `tipOrigin`.
 {
-  const SM = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/SculptManager.js', 'utf8');
+  const SM = fs.readFileSync(new URL('../src/editing/SculptManager.js', import.meta.url).pathname, 'utf8');
   const armed = SM.slice(SM.indexOf('if (RigPending.armed(this._main)) {'));
   const branch = armed.slice(0, armed.indexOf('\n      return;'));
   check('the armed branch takes the tip, not the pivot',
@@ -816,7 +816,7 @@ check('...and the zone widening is the only thing left gated',
   // This harness uses absolute paths and has no `path` import — reuse the sources it already
   // read rather than adding one.
   const PK = SRC, SK = SKEL;
-  const SC = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  const SC = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
 
   check('bone selection is on in the bone tool and off elsewhere',
     /return idx === BONE_DRAW_TOOL;/.test(PK),
@@ -859,7 +859,7 @@ check('...and the zone widening is the only thing left gated',
   // splitting. matt: "not in the bone tool when in draw mode, which again is when you'd be most
   // likely to need it for the bone split."
   {
-    const BD = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+    const BD = fs.readFileSync(new URL('../src/editing/tools/BoneDrawTool.js', import.meta.url).pathname, 'utf8');
     check('draw mode publishes the nearest bone',
       /main\._rigHoverBone = parent \? null : this\._pickBone\(_tip\);/.test(BD));
     check('...but only BETWEEN chains',
@@ -917,7 +917,7 @@ check('...and the zone widening is the only thing left gated',
 // stipple on the capsule rig went from 5.23 speckle pixels per thousand lit at the old ratio to
 // 0.91 at 2000:1. matt: "on desktop it's actually chattering and z-fighting really badly."
 {
-  const CAM2 = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Camera.js', 'utf8')
+  const CAM2 = fs.readFileSync(new URL('../src/math3d/Camera.js', import.meta.url).pathname, 'utf8')
     .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
   check('the near plane is floored against the far plane, not against a constant',
     /this\._near = Math\.max\(this\._far \/ 2000, 0\.001, distToBoxCenter - boxRadius\);/.test(CAM2),

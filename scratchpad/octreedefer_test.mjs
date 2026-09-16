@@ -17,9 +17,9 @@
 // Run: node scratchpad/octreedefer_test.mjs
 import fs from 'fs';
 
-const MESH = fs.readFileSync('/Users/mattestela/sculptxr/src/mesh/Mesh.js', 'utf8');
-const MULTI = fs.readFileSync('/Users/mattestela/sculptxr/src/mesh/multiresolution/Multimesh.js', 'utf8');
-const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
+const MESH = fs.readFileSync(new URL('../src/mesh/Mesh.js', import.meta.url).pathname, 'utf8');
+const MULTI = fs.readFileSync(new URL('../src/mesh/multiresolution/Multimesh.js', import.meta.url).pathname, 'utf8');
+const SKIN = fs.readFileSync(new URL('../src/editing/Skinning.js', import.meta.url).pathname, 'utf8');
 
 let failures = 0;
 function check(name, ok, detail) {

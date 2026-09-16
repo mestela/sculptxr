@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 const SKIN = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
 const SYM = fs.readFileSync(path.join(REPO, 'src/editing/PosedSymmetry.js'), 'utf8');

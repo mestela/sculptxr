@@ -16,7 +16,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const read = (f) => fs.readFileSync(path.join(REPO, f), 'utf8');
 const strip = (s) => s.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 

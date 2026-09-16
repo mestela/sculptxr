@@ -17,7 +17,7 @@
 //   FIT_INJECT=growonly      only a longer timeline fits; shortening leaves the view too wide
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(`${REPO}/src/gui/GuiTimeline.js`, 'utf8');
 
 const inject = process.env.FIT_INJECT || '';

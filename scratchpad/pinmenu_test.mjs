@@ -19,7 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let IKS = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
 let SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 

@@ -7,7 +7,7 @@ const check = (name, ok, extra) => {
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok || !extra ? '' : '  — ' + extra));
 };
 
-const ROOT = '/Users/mattestela/sculptxr/src';
+const ROOT = new URL('../src', import.meta.url).pathname;
 
 // ── PANEL MARKUP IS SERIALISED AS XML, AND XML FORBIDS `--` INSIDE A COMMENT ──────────────
 //

@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);

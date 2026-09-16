@@ -19,7 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const glm = await import(path.join(REPO, 'node_modules/gl-matrix/esm/index.js'));
 const mat4 = glm.mat4;
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');

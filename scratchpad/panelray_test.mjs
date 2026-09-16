@@ -11,7 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
@@ -280,7 +280,7 @@ check('it is inside the section it costs',
     'a 419x800 capture at mean alpha 0 paints the panel out of existence');
   check('...and every panel is armed when someone else re-lays out the canvas',
     /p\._suspectBlank = true;\s*\n\s*p\.markDirty\(\);/.test(
-      fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/install.js', 'utf8')),
+      fs.readFileSync(new URL('../src/gui/htmlvr/install.js', import.meta.url).pathname, 'utf8')),
     'only the panel that moved is armed, and it is the others that go blank');
   check('...but only where there is a good texture to keep',
     /this\._texture && this\._suspectBlank && _bitmapIsBlank/.test(HP1),

@@ -15,9 +15,9 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+import * as THREE from '../node_modules/three/build/three.module.js';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
 
 // Lift the two functions under test plus the distance they share, rather than the whole module:

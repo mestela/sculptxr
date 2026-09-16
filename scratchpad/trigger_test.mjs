@@ -1,6 +1,6 @@
 // Extract the two helpers and prove the fix against the reported symptom, with no browser.
 import fs from 'fs';
-const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+const SRC = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
 
 let fails = 0;
 const check = (n, ok, extra) => { if (!ok) fails++;

@@ -1,7 +1,7 @@
 // Structural regression checks for the global, persistent viewport shader mode.
 import fs from 'fs';
 
-const root = '/Users/mattestela/sculptxr/src/';
+const root = new URL('../src/', import.meta.url).pathname;
 const read = path => fs.readFileSync(root + path, 'utf8');
 const options = read('misc/getOptionsURL.js');
 const scene = read('Scene.js');

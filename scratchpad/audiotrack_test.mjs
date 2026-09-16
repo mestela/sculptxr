@@ -20,7 +20,7 @@
 //   AUDIO_INJECT=peaksample      peaks take one sample per bucket instead of the envelope
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(`${REPO}/src/editing/AudioTrack.js`, 'utf8');
 
 // Injections anchor on exact source lines and THROW when the anchor moves. A refactor that

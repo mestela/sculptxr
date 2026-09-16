@@ -19,7 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let ACP = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/AnimationControlPanel.js'), 'utf8');
 let TLW = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
 const TL = TLW;

@@ -17,7 +17,7 @@ import fs from 'fs';
 // — which is the whole reason the registry exists.
 const FLAG_ROWS = {};
 {
-  const src = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const src = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
   const block = /const DISPLAY_FLAGS = \{([\s\S]*?)\n\};/.exec(src);
   for (const m of (block ? block[1] : '').matchAll(/(\w+): \['(\w+)', '(\w+)', (true|false)\]/g)) {
     FLAG_ROWS[m[1]] = [m[2], m[3], m[4] === 'true'];
@@ -26,7 +26,7 @@ const FLAG_ROWS = {};
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/tools/BoneDrawTool.js'), 'utf8');
 

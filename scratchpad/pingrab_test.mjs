@@ -22,7 +22,7 @@ import fs from 'fs';
 import path from 'path';
 import { mat4 } from 'gl-matrix';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const R = (f) => fs.readFileSync(path.join(REPO, f), 'utf8');
 let GRAB = R('src/editing/tools/Grab.js');
 let SKEL = R('src/editing/Skeleton.js');

@@ -21,9 +21,9 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+import * as THREE from '../node_modules/three/build/three.module.js';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 const SRC_REL = process.env.SKIN_SRC || 'src/editing/SkinMesh.js';
 // SKIN_RELAX=0 builds the raw cage without the relax pass. Worth having as a switch rather

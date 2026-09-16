@@ -5,7 +5,7 @@ const check = (name, ok, extra) => {
   if (!ok) fails++;
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok || !extra ? '' : '  — ' + extra));
 };
-const ROOT = '/Users/mattestela/sculptxr/';
+const ROOT = new URL('../', import.meta.url).pathname;
 const ICONS   = fs.readFileSync(ROOT + 'src/gui/htmlvr/faIcons.js', 'utf8');
 const INSTALL = fs.readFileSync(ROOT + 'src/gui/htmlvr/install.js', 'utf8');
 const MM      = fs.readFileSync(ROOT + 'src/gui/htmlvr/MainMenuPanel.js', 'utf8');

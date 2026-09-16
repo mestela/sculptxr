@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
 
@@ -151,8 +151,8 @@ function boundMesh(levels, boundAt) {
 // every joint inside it. Reuses the outliner's lock, which the picking scans already honour —
 // so it stays selectable FROM the outliner, and Unbind hands it back.
 {
-  const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
-  const PICK = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Picking.js', 'utf8');
+  const SKIN = fs.readFileSync(new URL('../src/editing/Skinning.js', import.meta.url).pathname, 'utf8');
+  const PICK = fs.readFileSync(new URL('../src/math3d/Picking.js', import.meta.url).pathname, 'utf8');
 
   const bindFn = SKIN.slice(SKIN.indexOf('Skinning.bind = function'),
                             SKIN.indexOf('Skinning.unbind = function'));
@@ -185,7 +185,7 @@ function boundMesh(levels, boundAt) {
   // format, so a reloaded character was pickable again — the ray back to catching the skin
   // instead of the joints inside it. Derived on load from the bind state, which IS in the file.
   {
-    const SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+    const SKEL = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
     const i = SKEL.indexOf('mesh._skinDirty = true;');
     const near = i === -1 ? '' : SKEL.slice(i, i + 900);
     check('a reload does not invent one either',

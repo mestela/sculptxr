@@ -41,7 +41,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let XF = fs.readFileSync(path.join(REPO, 'src/editing/xfChannel.js'), 'utf8');
 let TL = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
 let HELP = fs.readFileSync(path.join(REPO, 'src/gui/TimelineHelper.js'), 'utf8');

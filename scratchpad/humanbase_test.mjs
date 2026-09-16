@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const R = (f) => fs.readFileSync(path.join(REPO, f), 'utf8');
 const LOADER = R('src/drawables/HumanBase.js');
 const TOOL = R('tools/make_humanbase.mjs');

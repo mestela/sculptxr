@@ -14,7 +14,7 @@ import path from 'path';
 
 import { spawnSync } from 'child_process';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const MODULES = [
   'src/editing/Skeleton.js',
   'src/editing/IKSolver.js',

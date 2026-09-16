@@ -6,9 +6,9 @@
 // Run: node scratchpad/transformopts_test.mjs   (from the repo root)
 import fs from 'fs';
 import path from 'path';
-import { vec3, mat4, quat } from '/Users/mattestela/sculptxr/node_modules/gl-matrix/esm/index.js';
+import { vec3, mat4, quat } from '../node_modules/gl-matrix/esm/index.js';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const read = (f) => fs.readFileSync(path.join(REPO, f), 'utf8');
 const strip = (s) => s.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 

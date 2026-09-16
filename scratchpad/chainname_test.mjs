@@ -44,7 +44,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 const SC_RAW = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 const SK_RAW = SRC;

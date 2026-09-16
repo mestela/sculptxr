@@ -6,7 +6,7 @@ const check = (name, ok, extra) => {
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok || !extra ? '' : '  — ' + extra));
 };
 
-const ROOT = '/Users/mattestela/sculptxr/src';
+const ROOT = new URL('../src', import.meta.url).pathname;
 
 // ── EVERY TOOL IN THE ENUM HAS A NAME, IN ONE PLACE ──────────────────────────────────────
 //

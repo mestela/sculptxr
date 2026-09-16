@@ -6,7 +6,7 @@
 //
 // Run: node scratchpad/ik_test.mjs && node scratchpad/_ikdet.mjs
 import IKSolver, { makeJoint as J, makeMain, Skeleton } from './_ik_gen.mjs';
-import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+import * as THREE from '../node_modules/three/build/three.module.js';
 
 // A body, not a leg: hips at the root with a spine above and two pinned legs below. The
 // ambiguity the doc measures needs BOTH — a pinned ankle leaves the knee free on a circle,

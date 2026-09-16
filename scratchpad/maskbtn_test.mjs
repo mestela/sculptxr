@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let PANEL = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MiniPanel.js'), 'utf8');
 const TOOL = fs.readFileSync(path.join(REPO, 'src/editing/tools/Masking.js'), 'utf8');
 

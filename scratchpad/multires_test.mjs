@@ -13,7 +13,7 @@
 // Run: node scratchpad/multires_test.mjs
 import fs from 'fs';
 
-const PATH = '/Users/mattestela/sculptxr/src/mesh/multiresolution/MeshResolution.js';
+const PATH = new URL('../src/mesh/multiresolution/MeshResolution.js', import.meta.url).pathname;
 const SRC = fs.readFileSync(PATH, 'utf8');
 
 let failures = 0;

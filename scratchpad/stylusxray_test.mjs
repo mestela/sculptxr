@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 const ENUMS = fs.readFileSync(path.join(REPO, 'src/misc/Enums.js'), 'utf8');
 

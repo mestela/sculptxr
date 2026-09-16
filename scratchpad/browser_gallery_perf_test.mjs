@@ -1,9 +1,9 @@
 // Structural checks for keeping the browser-save gallery cheap enough for HTML→VR paint.
 import fs from 'fs';
 
-const files = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/GuiFiles.js', 'utf8');
-const menu = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
-const panel = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/FilesPanel.js', 'utf8');
+const files = fs.readFileSync(new URL('../src/gui/GuiFiles.js', import.meta.url).pathname, 'utf8');
+const menu = fs.readFileSync(new URL('../src/gui/htmlvr/MainMenuPanel.js', import.meta.url).pathname, 'utf8');
+const panel = fs.readFileSync(new URL('../src/gui/htmlvr/FilesPanel.js', import.meta.url).pathname, 'utf8');
 let fails = 0;
 const check = (name, ok) => {
   console.log(`${ok ? '  ok  ' : '  FAIL'} ${name}`);
@@ -75,7 +75,7 @@ check('...Open sets the replace flag, Import clears it',
     && /q\('#mm-import-obj'\)[\s\S]{0,200}?window\._fileOpenReplace = false;/.test(menu));
 check('...and the flag is consumed once, before the first file',
   /if \(window\._fileOpenReplace\) \{\s*\n\s*window\._fileOpenReplace = false;\s*\n\s*this\.clearScene\(\);/.test(
-    fs.readFileSync('/Users/mattestela/sculptxr/src/SculptGL.js', 'utf8')),
+    fs.readFileSync(new URL('../src/SculptGL.js', import.meta.url).pathname, 'utf8')),
   'clearing per file would throw away the earlier ones in a multi-select');
 
 

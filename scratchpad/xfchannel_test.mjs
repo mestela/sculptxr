@@ -5,9 +5,9 @@
 // GuiTimeline needs a canvas and a DOM, which these functions do not.
 import fs from 'fs';
 import path from 'path';
-import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
+import * as THREE from '../node_modules/three/build/three.module.js';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
 const XF = fs.readFileSync(path.join(REPO, 'src/editing/xfChannel.js'), 'utf8');
 

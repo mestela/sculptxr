@@ -6,7 +6,7 @@ const check = (name, ok, extra) => {
   if (!ok) fails++;
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok || !extra ? '' : '  — ' + extra));
 };
-const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+const SRC = fs.readFileSync(new URL('../src/editing/tools/BoneDrawTool.js', import.meta.url).pathname, 'utf8');
 
 // ── UNDO/REDO OF A DRAWN JOINT MUST BE THE IDENTITY ───────────────────────────────────────
 //
@@ -80,7 +80,7 @@ const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDr
 // a world matrix sees the whole hierarchy. The scene unit is the joint extent when nothing is
 // bound, so a half-updated graph resizes every marker in the rig.
 {
-  const RT = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/RigTopology.js', 'utf8');
+  const RT = fs.readFileSync(new URL('../src/editing/RigTopology.js', import.meta.url).pathname, 'utf8');
   check('RigTopology still restores the matrix after the reparent',
     RT.indexOf('setMeshParent(e.mesh.getID()') < RT.indexOf('mat4.copy(e.mesh.getMatrix(), e.matrix)'),
     'the reference implementation for this has changed and the two paths now disagree');
@@ -98,8 +98,8 @@ const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDr
 // codebase already (the dissolve undo, and the reparent early-return). Reading the code did not
 // separate them, so the trace reports both at once.
 {
-  const BD = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
-  const MM2 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
+  const BD = fs.readFileSync(new URL('../src/editing/tools/BoneDrawTool.js', import.meta.url).pathname, 'utf8');
+  const MM2 = fs.readFileSync(new URL('../src/gui/htmlvr/MainMenuPanel.js', import.meta.url).pathname, 'utf8');
   const tr = (BD.match(/if \(window\._tweakTrace[\s\S]*?\n    \}/) || [''])[0];
 
   check('the tweak trace reports the joint AND its parent', /parent=/.test(tr),
@@ -145,7 +145,7 @@ const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDr
   check('a joint\'s model scale is its parent\'s times its own', holds,
     'the recorded measurement no longer reproduces, so the model of the bug is wrong');
 
-  const BD2 = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+  const BD2 = fs.readFileSync(new URL('../src/editing/tools/BoneDrawTool.js', import.meta.url).pathname, 'utf8');
   check('a grab is measured before and after, not only during',
     /g\._tweakBefore/.test(BD2) && /line\('GRAB  ', B\.joint, snap\(g\.joint\)\);/.test(BD2),
     'within one drag every number is constant, so per-frame lines cannot see accumulation');
@@ -192,7 +192,7 @@ const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDr
   check('...while keeping the twin\'s own size leaves it untouched',
     twinAfterFixed.model === twinBefore.model && twinAfterFixed.local === twinBefore.local);
 
-  const BD3 = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/BoneDrawTool.js', 'utf8');
+  const BD3 = fs.readFileSync(new URL('../src/editing/tools/BoneDrawTool.js', import.meta.url).pathname, 'utf8');
   check('the twin write keeps the twin\'s magnitudes',
     /_mTwinCur\.fromArray\(g\.twin\.getModelSpaceMatrix\(\)\);/.test(BD3)
       && /Math\.abs\(_vTwinKeep\.x\)/.test(BD3),

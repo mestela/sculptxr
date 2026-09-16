@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const THREE = await import(path.join(REPO, 'node_modules/three/build/three.module.js'));
 
 const file = process.argv[2] || path.join(process.env.HOME, 'Documents/claude/skel01.sxr');

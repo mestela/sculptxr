@@ -35,7 +35,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const THREE = await import(path.join(REPO, 'node_modules/three/build/three.module.js'));
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
 let SKEL_INJ = false;

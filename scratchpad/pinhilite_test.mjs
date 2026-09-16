@@ -19,7 +19,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 
 {
@@ -229,6 +229,6 @@ check('no leader is drawn from a pin that is asking for nothing',
 check('...reading the weight through the solver own accessor, not a copy of it',
   /const pinW = pinObj && window\._ikPinWeightOf \? window\._ikPinWeightOf\(j\) : 1;/.test(SRC)
     && /window\._ikPinWeightOf = IKSolver\.pinWeight;/.test(
-      fs.readFileSync('/Users/mattestela/sculptxr/src/editing/IKSolver.js', 'utf8')));
+      fs.readFileSync(new URL('../src/editing/IKSolver.js', import.meta.url).pathname, 'utf8')));
 
 process.exit(failures ? 1 : 0);

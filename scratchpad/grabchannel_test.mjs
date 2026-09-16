@@ -25,7 +25,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 let CH = fs.readFileSync(path.join(REPO, 'src/editing/grabChannels.js'), 'utf8');
 let GRAB = fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8');
 let PANEL = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MiniPanel.js'), 'utf8');

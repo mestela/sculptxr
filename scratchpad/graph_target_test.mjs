@@ -7,7 +7,7 @@
 // Run: node scratchpad/graph_target_test.mjs   (from the repo root)
 import fs from 'fs';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(REPO + '/src/gui/GuiTimeline.js', 'utf8');
 const code = SRC.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 

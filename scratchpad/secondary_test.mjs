@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/SecondaryAction.js'), 'utf8');
 const GL = fs.readFileSync(path.join(REPO, 'src/SculptGL.js'), 'utf8');
 

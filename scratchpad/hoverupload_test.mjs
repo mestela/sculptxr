@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const REPO = '/Users/mattestela/sculptxr';
+const REPO = new URL('..', import.meta.url).pathname;
 const BASE = fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8');
 const MOVE = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
 let failures = 0;
