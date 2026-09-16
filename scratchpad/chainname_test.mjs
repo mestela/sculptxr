@@ -638,8 +638,11 @@ const label = (m) => m._permanentStaticLabel;
     'without it the panel has no way to know its text is stale');
 
   const MM = MM_PATCH(fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8'));
+  // Anchored on the TERM, not on it being last in the key: the key grows as sections gain their
+  // own revisions (the paint picker's, most recently), and an anchor that spelled out the end of
+  // the line failed on an addition that left this term exactly where it was.
   check('...and the panel content key reads it',
-    /_outlinerRev \| 0\}`;/.test(MM),
+    /_outlinerRev \| 0\}/.test(MM),
     'the key decides whether the DOM is rebuilt at all');
 
   // SRC, not a fresh read: a check that re-reads the file cannot see an injected defect, so it

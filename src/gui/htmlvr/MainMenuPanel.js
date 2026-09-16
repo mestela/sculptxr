@@ -1739,7 +1739,18 @@ export function wireAudioSection(q, slide, paint) {
 // IS THE PICKER OPEN. Module-level rather than on the element because the panels rebuild their
 // DOM on every repaint, so anything stored on the markup is gone by the time you look at it — and
 // only one of the two panels is live at a time, which is the same contract the shared ids rely on.
+// Is `a` anywhere above `b` in the parent chain? Used to reduce a selection to the roots it
+// implies, so duplicating a shoulder and its elbow together copies one arm rather than nesting a
+// second forearm inside the copy.
+function isAncestorOf(a, b) {
+  for (let n = b && b._parentMesh; n; n = n._parentMesh) if (n === a) return true;
+  return false;
+}
+
 let _wfPickerOpen = false;
+// The paint wheel needs neither an open flag nor a revision: it is always there, so its markup
+// never changes and there is nothing for the rebuild cache to miss. Both existed briefly, for the
+// swatch-and-OK version this replaced.
 
 // ...AND A REVISION THAT SAYS THIS SECTION'S MARKUP CHANGED.
 //
@@ -3041,15 +3052,32 @@ function buildSculptingHTML(main, part) {
 
     // ── Paint-specific controls ──────────────────────────────────────
     if (cur === Enums.Tools.PAINT && tool._color) {
-      const hexColor  = '#' + _toHex2(tool._color[0]) + _toHex2(tool._color[1]) + _toHex2(tool._color[2]);
+      // ColorWheel, PERMANENTLY OPEN, not a native colour input behind a swatch.
+      //
+      // The native picker is one of the controls that does not survive being rasterised into a VR
+      // panel, so paint colour was unsettable in a headset -- and paint is not a desktop-only
+      // tool. First cut put the wheel behind a swatch with an OK button, copying the wireframe
+      // colour's shape, and in the headset it came apart: the swatch left, the wheel right, OK
+      // sharing a line with the roughness slider. matt: "its a mess... i don't think the ok dialog
+      // is needed, can it just have the colour wheel permanently open, with a swatch next to it?
+      // closer to how the minipanel is laid out."
+      //
+      // So it is the MiniPanel's layout: one wheel with `extras`, which carries its own
+      // foreground/background swatches, the swap arrow and the eyedropper in its header. No open
+      // state, no OK, and no revision feeding the rebuild key -- the markup no longer changes, so
+      // there is nothing for the cache to miss.
+      //
+      // ITS OWN LINE, CENTRED. The density pass gives a bare child `flex: 1 1 100%` (its own line)
+      // and an `.mm-row` `flex: 1 1 190px` (packed beside its neighbours), so the `mm-row` wrapper
+      // WAS the misalignment. A plain centring div rather than none at all, because `1 1 100%`
+      // also stretches the wheel's own 200px box to the full panel width and leaves the ring
+      // hanging off the left of a 396px slab.
       const roughness = Math.round((tool._material?.[0] ?? 0.5) * 100);
       const metallic  = Math.round((tool._material?.[1] ?? 0.0) * 100);
       brushHTML += `
         <div class="mm-section-title">Paint</div>
-        <div class="mm-row">
-          <span class="mm-lbl">Color</span>
-          <input type="color" id="mm-paint-color" value="${hexColor}"
-            style="width:44px;height:22px;padding:1px 2px;border:1px solid #45475a;border-radius:4px;background:#313244;cursor:pointer;flex-shrink:0">
+        <div style="display:flex;justify-content:center">
+          ${buildColorWheelHTML({ prefix: 'mm-paint-cw', size: 200, extras: true })}
         </div>
         <div class="mm-row">
           <span class="mm-lbl">Roughness</span>
@@ -4291,7 +4319,20 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     cancelPending(); main.addVoxelObject?.(); main.render?.(); repaintFn(); // empty voxel space + Voxel tool
   });
   el.querySelector('#mm-duplicate')?.addEventListener('click', () => {
-    main.duplicateSelection?.(); main.render?.(); repaintFn();
+    // A JOINT DUPLICATES ITS CHAIN, not itself. duplicateSelection copies one mesh and inherits
+    // its parent, which on a joint is a lone joint hanging off the same parent -- and it carries
+    // `_boneMirror` across, so the copy claims the original's twin. See Skeleton.duplicateChain.
+    const sel = main.getSelectedMeshes?.() ?? [];
+    const joints = sel.filter((m) => Skeleton.isJoint(m));
+    if (joints.length && joints.length === sel.length) {
+      // ROOTS ONLY. Selecting a shoulder and its elbow means one arm, not an arm plus a forearm
+      // nested inside the copy of the arm.
+      const roots = joints.filter((j) => !joints.some((o) => o !== j && isAncestorOf(o, j)));
+      for (const j of roots) Skeleton.duplicateChain(main, j);
+    } else {
+      main.duplicateSelection?.();
+    }
+    main.render?.(); repaintFn();
   });
   el.querySelector('#mm-instance')?.addEventListener('click', () => {
     main.instanceSelection?.(); main.render?.(); repaintFn();
@@ -4806,14 +4847,45 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
 
     // ── Paint-specific ────────────────────────────────────────────────────────
     if (tool._color) {
-      el.querySelector('#mm-paint-color')?.addEventListener('input', (e) => {
-        const h = e.target.value;
-        tool._color[0] = parseInt(h.slice(1, 3), 16) / 255;
-        tool._color[1] = parseInt(h.slice(3, 5), 16) / 255;
-        tool._color[2] = parseInt(h.slice(5, 7), 16) / 255;
-        main.render?.();
-        sliderDirtyFn?.();
-      });
+      const pcw = el.querySelector('#mm-paint-cw');
+      if (pcw) {
+        // The panel rebuilds its DOM on every repaint, so an old wheel's document-level
+        // pointermove and pointerup listeners would accumulate one set per repaint.
+        el._paintWheel?.dispose?.();
+        // The tool is looked up on every call rather than captured: the wheel outlives a tool
+        // switch, and a captured tool would go on editing the one that is no longer selected.
+        // Same reasoning, same code, as the MiniPanel's copy.
+        const paintTool = () => {
+          let t = sm?.getCurrentTool?.();
+          if (!t?._color) t = sm?.getTool?.(Enums.Tools.PAINT);
+          return t?._color ? t : null;
+        };
+        // `_color` IS rgb in 0..1, which is the wheel's own currency -- no hex round trip here,
+        // unlike the wireframe colour, which is stored as a hex string.
+        el._paintWheel = new ColorWheel(pcw, {
+          prefix: 'mm-paint-cw', size: 200,
+          get: () => paintTool()?._color ?? null,
+          set: (rgb) => {
+            const t = paintTool();
+            if (t) { t._color[0] = rgb[0]; t._color[1] = rgb[1]; t._color[2] = rgb[2]; }
+          },
+          render: () => main.render?.(),
+          extras: {
+            secondary: () => paintTool()?._colorSecondary ?? [0, 0, 0],
+            picking:   () => !!paintTool()?._pickColor,
+            togglePick: () => { const t = paintTool(); if (t) t._pickColor = !t._pickColor; },
+            swap: () => {
+              const t = paintTool();
+              if (!t) return;
+              if (typeof t.swapColors === 'function') { t.swapColors(); return; }
+              if (!t._colorSecondary) return;
+              const tmp = [t._color[0], t._color[1], t._color[2]];
+              t._color[0] = t._colorSecondary[0]; t._color[1] = t._colorSecondary[1]; t._color[2] = t._colorSecondary[2];
+              t._colorSecondary[0] = tmp[0]; t._colorSecondary[1] = tmp[1]; t._colorSecondary[2] = tmp[2];
+            },
+          },
+        });
+      }
       wireSlider(el.querySelector('#mm-paint-roughness'), el.querySelector('#mm-paint-roughness-val'),
         (v) => { if (tool._material) tool._material[0] = v / 100; main.render?.(); },
         (v) => `${v}%`, sliderDirtyFn);

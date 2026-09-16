@@ -1810,6 +1810,67 @@ function sideOf(j) {
 //
 // No uniquing. Labels are not keys — ids are — so a duplicate is cosmetic rather than
 // corrupting, and dedup logic here would buy little and surprise more.
+// ── DUPLICATE A CHAIN (audit item A3) ─────────────────────────────────────────────────────
+//
+// The outliner's Duplicate button has always existed and has always been wrong on a joint: it
+// runs main.duplicateSelection, which copies each SELECTED mesh and inherits its parent. On a
+// joint that gives you one lone joint hanging off the same parent -- not a limb -- and it copies
+// the joint's fields wholesale, including `_boneMirror`, so the copy claims the ORIGINAL's twin
+// and every mirrored edit afterwards writes to the wrong side. matt: "do we not have a duplicate
+// chain in the outliner? if not, we should."
+//
+// THE WHOLE SUBTREE, NOT chainFrom's SINGLE CHAIN. Those two questions have different right
+// answers: naming stops at a fork because a hand and its fingers are five chains with five names,
+// while duplicating an arm that stopped at the wrist would hand you an arm with no fingers, which
+// is never what was meant. So this walks every descendant.
+//
+// WHAT IS DELIBERATELY NOT COPIED:
+//   * `_boneMirror` -- the copy has no twin. Carrying the source's is the bug above.
+//   * pins -- a pin is a statement about where THIS joint is held, and duplicating it would put
+//     two pins on one anchor.
+//   * `_physicsRoot` and its params -- a second simulated chain in the same place, both swinging,
+//     is a surprise rather than a convenience. Flag the copy yourself if you want it.
+// What IS copied is the shape: the local matrix, the capsule radius and the joint's own extents,
+// because those ARE the limb you asked for a copy of.
+Skeleton.duplicateChain = function (main, joint) {
+  if (!main || !Skeleton.isJoint(joint)) return null;
+  const all = [];
+  (function walk(j) {
+    all.push(j);
+    for (const k of Skeleton.childJoints(main, j)) if (Skeleton.isJoint(k)) walk(k);
+  })(joint);
+
+  // Parents before children: createJoint parents as it goes, and a child created before its
+  // parent exists has nothing to hang from. The walk above is already in that order.
+  const copyOf = new Map();
+  let rootCopy = null;
+  for (const src of all) {
+    const srcParent = src._parentMesh;
+    const parent = copyOf.get(srcParent) || (src === joint ? srcParent : null);
+    const name = (src._permanentStaticLabel || 'bone') + ' Copy';
+    const made = Skeleton.createJoint(main, Skeleton.jointPos(src, new THREE.Vector3()), parent, name);
+    if (!made) continue;
+    // THE LOCAL MATRIX, not just the position. createJoint places by world position and then
+    // setMeshParent's attach preserves that world transform -- which is right for where it sits
+    // and says nothing about its ROTATION, and a joint's rotation is half of what a pose is.
+    mat4.copy(made.getMatrix(), src.getMatrix());
+    Skeleton.syncThree(made);
+    if (src._boneRadius) made._boneRadius = src._boneRadius;
+    if (src._jointRadius) made._jointRadius = src._jointRadius;
+    if (src._jointShape) made._jointShape = Object.assign({}, src._jointShape);
+    // The copy is born at rest, exactly as a drawn joint is: whatever pose the source was in is
+    // its pose, and the rest it should return to is where the copy actually is.
+    made._ikRest = mat4.clone(made.getMatrix());
+    copyOf.set(src, made);
+    if (!rootCopy) rootCopy = made;
+  }
+  if (rootCopy) {
+    main.setMesh?.(rootCopy);
+    Skeleton.refreshOutliner(main);
+  }
+  return rootCopy;
+};
+
 Skeleton.nameChain = function (main, joint, name) {
   const clean = String(name || '').trim().replace(/[^\w-]+/g, '_');
   if (!main || !joint || !clean) return false;

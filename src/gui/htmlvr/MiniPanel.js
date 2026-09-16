@@ -929,17 +929,6 @@ export class MiniPanel extends HTMLVRPanel {
       }
     }
 
-    // ── TransformVR extras ─────────────────────────────────────────────────
-    if (idx === Enums.Tools.TRANSFORM_VR) {
-      extras.querySelectorAll('[data-tvr-mode]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const mode = parseInt(btn.dataset.tvrMode, 10);
-          const t    = sm?.getCurrentTool?.();
-          if (t) { t._mode = mode; main.render?.(); }
-          this.syncFromState();
-        });
-      });
-    }
   }
 
   // ── Incremental extras-state sync (no innerHTML rebuild) ─────────────────
@@ -970,7 +959,7 @@ export class MiniPanel extends HTMLVRPanel {
         extrasEl.querySelector('#mp-grab-rotate')?.classList.toggle('active', gch.rotate);
       }
     } else if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
-      syncTransformSection(extrasEl);
+      syncTransformSection(extrasEl, this._main);
       if (idx === Enums.Tools.TRANSFORM_VR) syncBoneSection(extrasEl, this._main);
 
     } else if (idx === Enums.Tools.VOXEL) {
@@ -1211,23 +1200,10 @@ export class MiniPanel extends HTMLVRPanel {
       `;
     }
 
-    // ── TransformVR ────────────────────────────────────────────────────────
-    if (idx === Enums.Tools.TRANSFORM_VR) {
-      const t    = sm.getCurrentTool?.();
-      const mode = t?._mode ?? 0;
-      const modes = [
-        { id: 0, label: 'Move'   },
-        { id: 1, label: 'Rotate' },
-        { id: 2, label: 'Scale'  },
-      ];
-      const btns = modes.map(m =>
-        `<button class="mp-toggle-btn${mode === m.id ? ' active' : ''}" data-tvr-mode="${m.id}">${m.label}</button>`
-      ).join('');
-      return `
-        <hr class="mp-divider">
-        <div class="mp-toggles">${btns}</div>
-      `;
-    }
+    // TransformVR's Move / Rotate / Scale used to be built HERE, privately, which is why the main
+    // panel had no way to change the gizmo's mode at all. It lives in the shared builder now (see
+    // transformPanel.XF_MODES) and arrives through the Transform case above, so both panels get
+    // it and there is one copy instead of two.
 
     return '';
   }
