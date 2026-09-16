@@ -133,7 +133,7 @@ class BoneDrawTool extends SculptBase {
     this._chainName = 'bone';
     this._chainIndex = 0;
 
-    this._mode = 'draw';       // draw | tweak | pose | radius | ik
+    this._mode = 'draw';       // select | draw | tweak | pose | radius | joint | ik
     this._compensate = true;   // tweak: pin the dragged joint's children in world space
     this._hilite = null;       // preselected joint
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
@@ -152,6 +152,7 @@ class BoneDrawTool extends SculptBase {
 
   // Four modes, selected from the mini panel on the non-dominant controller:
   //   draw  place joints
+  //   select  pick a joint and nothing else — the one mode that cannot move anything
   //   fk    tweak, children FOLLOW the dragged joint (plain forward kinematics)
   //   free  tweak, children STAY PUT (the dragged joint moves on its own — drag the knee,
   //         thigh and shin re-aim, foot and toes do not move)
@@ -159,6 +160,7 @@ class BoneDrawTool extends SculptBase {
   //         which is what makes FK free here. Tweak edits the rest skeleton, pose moves
   //         the character — two different jobs, so they are two different modes.
   modeKey() {
+    if (this._mode === 'select') return 'select';
     if (this._mode === 'draw') return 'draw';
     if (this._mode === 'pose') return 'pose';
     if (this._mode === 'radius') return 'radius';
@@ -180,7 +182,7 @@ class BoneDrawTool extends SculptBase {
   }
 
   setModeKey(key) {
-    const named = { draw: 'draw', pose: 'pose', radius: 'radius', joint: 'joint', ik: 'ik' };
+    const named = { select: 'select', draw: 'draw', pose: 'pose', radius: 'radius', joint: 'joint', ik: 'ik' };
     const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
@@ -785,6 +787,19 @@ class BoneDrawTool extends SculptBase {
     this._traceMode('screen drag');
     const main = this._main;
     const startX = main._mouseX, startY = main._mouseY;
+
+    // SELECT: pick the joint and stop there. No drag is started, so nothing can move — which is
+    // the entire feature. It still returns TRUE on a hit, because claiming the press is what
+    // stops the camera orbiting away from the joint you just picked; on a miss it returns false
+    // and the click orbits as it always did.
+    if (this._mode === 'select') {
+      const pick = this._pickJointScreen();
+      if (!pick) return false;
+      this._selectLater(pick);
+      this._hilite = pick;
+      Skeleton.setHighlight(main, pick);
+      return true;
+    }
 
     // Desktop: the same handles, picked in screen space through the drag plane. The plane sits
     // on the joint, so a drag reads as "move this face" the way it does in the headset.
@@ -1858,6 +1873,20 @@ class BoneDrawTool extends SculptBase {
     // The pick is the same one Draw already does, so this costs a pick per frame and makes the
     // highlight — and therefore Split — follow the hand in Pose, Tweak and IK too.
     main._rigHoverBone = this._pickBone(_tip);
+
+    // SELECT, in the headset: highlight what the hand is near, and on the press edge select it.
+    // No grab is begun and no release path is needed, so there is nothing for a hand that drifts
+    // mid-press to drag. Every other mode below picks a joint AND starts something with it; this
+    // one is that first half on its own.
+    if (this._mode === 'select') {
+      Skeleton.hidePreview(main);
+      Skeleton.hidePlane(main);
+      const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+      if (down && hit) this._selectLater(hit);
+      this._hilite = hit;
+      Skeleton.setHighlight(main, hit);
+      return;
+    }
 
     if (this._mode === 'pose') {
       Skeleton.hidePreview(main);

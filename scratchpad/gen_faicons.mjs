@@ -6,6 +6,13 @@ const NAMES = [
   'rotate-left','rotate-right','chevron-right','chevron-down','link','link-slash',
   'cake-candles','copy','eye','eye-slash','pen','trash','lock','lock-open','cube',
   'asterisk','arrows-rotate',
+  // The outliner's physics-bone marker: a joint that swings, and everything under it.
+  'wind',
+  // THESE TWO WERE HAND-ADDED TO THE OUTPUT AND NOT TO THIS LIST, so the first regeneration
+  // after them silently deleted both -- Mirror's icon and the Camera tab's, each of which reads
+  // as a blank square when faIcon cannot find the name. Anything added to faIcons.js belongs
+  // here; the file says do not hand-edit for exactly this reason.
+  'right-left','video',
   // tab + chip icons (resolved from their codepoints)
   'thumbtack','arrow-left','sitemap','photo-film','draw-polygon','toolbox','sliders',
   'film','layer-group','bezier-curve',

@@ -6,7 +6,7 @@ import PhysicsBones from '../editing/PhysicsBones.js';
 import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
-import { collapsibleHTML, uiReorg } from './htmlvr/uiTokens.js';
+import { collapsibleHTML, uiReorg, squeezeLabel } from './htmlvr/uiTokens.js';
 
 // The Bones tool's controls, in ONE place, for every panel that shows them.
 //
@@ -27,14 +27,24 @@ import { collapsibleHTML, uiReorg } from './htmlvr/uiTokens.js';
 const XR_ONLY_MODES = [];
 
 const MODES = [
+  // SELECT IS A MODE NOW, AND THE NAMES GO BACK TO SAYING ONE THING EACH.
+  //
+  // There was no plain Select, so picking a joint without editing it meant choosing whichever
+  // mode did the least harm — and the fix taken at the time was to say so in the label, hence
+  // "Sel/Tweak FK". That is a signpost pointing at a missing mode. A tweak mode still moves the
+  // joint if your hand moves while you press, which on a wrist-mounted panel in a headset it
+  // always does a little, so "selecting" through one was never free.
+  //
+  // matt: "add a select mode that does only select, and you can shorten the labels for Sel/Tweak
+  // FK and Sel/Tweak Free back to just Tweak FK and Tweak Free." Both halves of that are the same
+  // change: once the mode exists, the labels have nothing left to apologise for.
+  //
+  // FIRST IN THE LIST, because it is the only mode that cannot damage the rig, which makes it the
+  // right place to land and the right place to come back to.
+  ['select', 'Select'],
   ['draw', 'Draw'],
-  // SEL/ IN THE NAME, because selecting IS what these modes are for half the time. The Bones
-  // tool has draw / fk / free / pose / radius / joint / ik and no plain Select, so picking a
-  // joint without editing it means choosing whichever mode does the least harm — and these two
-  // are that mode. matt's own call: a rename rather than an eighth mode, because the behaviour
-  // is already right and only the label was hiding it.
-  ['fk', 'Sel/Tweak FK'],
-  ['free', 'Sel/Tweak Free'],
+  ['fk', 'Tweak FK'],
+  ['free', 'Tweak Free'],
   ['pose', 'Pose'],
   ['radius', 'Radius'],
   ['joint', 'Tweak Joint'],
@@ -43,8 +53,14 @@ const MODES = [
 
 // Class dialects. `grid`/`toggle`/`action` are the three shapes the panel uses.
 const DIALECT = {
-  mp: { grid: 'mp-voxel-grid', gridBtn: 'mp-voxel-btn', toggles: 'mp-toggles',
+  // `chip` and `act` are CHARACTER BUDGETS, not a style: how much text one button can show at
+  // three across and at two across in a 216px-wide wrist panel. Measured in the running panel,
+  // not guessed. Only the wrist declares them -- the menu and the sidebar are wide enough that
+  // nothing has ever needed shortening there, and a budget they do not need is a budget that
+  // would quietly shorten labels on a 600px-wide sidebar.
+  mp: { grid: 'mp-voxel-grid', gridBtn: 'mp-voxel-btn', toggles: 'mp-toggles cols-3',
         toggle: 'mp-toggle-btn', row: 'mp-row', lbl: 'mp-lbl', val: 'mp-val',
+        chip: 11, act: 16,
         btnRow: 'mp-btn-row', action: 'mp-action-btn', divider: 'mp-divider',
         // A toggle that stands ALONE rather than sitting in the chip grid — for a switch that
         // governs the grid rather than belonging to it.
@@ -67,6 +83,31 @@ const DIALECT = {
 
 function pinLabel(n) { return n ? `Clear Pins (${n})` : 'Clear Pins'; }
 
+// A joint's display name, for the places that have to SAY which joint. Module scope because both
+// the builder and syncBoneSection need it -- the sync rewrites the physics readout every pass, so
+// the two have to agree on the name or the row would change wording on its own.
+function jointLabel(j) { return (j && (j._permanentStaticLabel || ('joint ' + j.getID()))) || ''; }
+
+// WHAT THE PHYSICS SLIDERS ARE POINTED AT, in one place because TWO places need to say it and
+// they must never disagree: the builder writes it into the markup, and syncBoneSection rewrites
+// it every pass so it cannot go stale. Written separately at first, and they already differed --
+// the builder named the mirror twin and the sync did not, so the row would have shortened itself
+// one sync after it was drawn.
+//
+// It names BOTH joints when the edit is mirrored, because a drag writes to the twin too and
+// naming one would be telling half the truth about what is about to change.
+//
+// NO PREFIX AND ONE LINE. It said "Editing <name>" in a two-cell row, and a row's label cell is
+// the narrow left column -- so a mirrored pair wrapped onto a second line. matt: "there's no need
+// to split over 2 lines, and the 'editing' prefix is useless." The word was carrying nothing the
+// section heading above it does not already say, and the row is one full-width cell now.
+function physAimLabel(main, t) {
+  if (!t) return 'Defaults \u2014 no physics bone';
+  const twin = Skeleton.mirrorEdits(main) && t._boneMirror
+    && main.getMeshes?.().includes(t._boneMirror) && t._boneMirror !== t ? t._boneMirror : null;
+  return jointLabel(t) + (twin ? ' + ' + jointLabel(twin) : '');
+}
+
 // `isXR` decides whether the controller-only modes are offered. It is asked of the app, not
 // of the dialect: the `mm` markup is used by the desktop sidebar AND by the main menu inside
 // a headset, so keying it to the class names would disable the modes in the one place they
@@ -78,7 +119,8 @@ function sectionTitle(c, label) {
 }
 
 function flagButton(c, id, label, val) {
-  return `<button class="${c.toggle}${val ? ' active' : ''}" id="bone-${id}">${label}</button>`;
+  return `<button class="${c.toggle}${val ? ' active' : ''}" id="bone-${id}">${
+    squeezeLabel(label, c.chip)}</button>`;
 }
 
 // Rig construction and bind diagnostics. This is the only block tied to Bone Draw: the modes,
@@ -95,7 +137,7 @@ export function buildBoneAuthoringHTML(main, style) {
     const off = !isXR && XR_ONLY_MODES.indexOf(key) !== -1;
     const tip = off ? ' title="Needs a VR controller — grab a joint and move it in 6DOF"' : '';
     return `<button class="${c.gridBtn}${on(key)}${off ? ' mm-dim' : ''}" id="bone-${key}"` +
-      `${off ? ' disabled' : ''}${tip}>${label}</button>`;
+      `${off ? ' disabled' : ''}${tip}>${squeezeLabel(label, c.chip)}</button>`;
   }).join('');
 
   const f     = (k) => Skeleton.displayFlag(k);
@@ -146,7 +188,7 @@ export function buildBoneAuthoringHTML(main, style) {
   const xpbd = !!window._physXPBD;
   // BOTH NAMES WHEN THERE ARE TWO. A drag writes to the mirror twin as well, so a header naming
   // one joint would be telling half the truth about what the sliders are about to change.
-  const jointName = (j) => (j && (j._permanentStaticLabel || ('joint ' + j.getID()))) || '';
+  const jointName = jointLabel;
   // ...AND ONLY WHEN SYMMETRY IS ON. A twin exists for the life of any joint drawn with symmetry,
   // so testing for one meant physics could never be flagged on a single side. See
   // Skeleton.mirrorEdits.
@@ -158,6 +200,18 @@ export function buildBoneAuthoringHTML(main, style) {
   const physW = physTarget ? PhysicsBones.weight(physTarget) : 1;
   const physName = physTarget
     ? jointName(physTarget) + (physTwin ? ' + ' + jointName(physTwin) : '') : '';
+  // WHAT THE SLIDERS ARE POINTED AT, SAID OUT LOUD.
+  //
+  // A heading naming the joint was tried and rejected -- "it doesn't stay up to date, its just
+  // confusing" -- and it deserved to be: a heading is built once and the selection moves on
+  // without it. This is the same fact in a place that CANNOT go stale, because syncBoneSection
+  // rewrites it on every sync, the way the pin count and the Hide Decorations label already work.
+  //
+  // It earns its row now in a way it did not then. With the sticky target gone the sliders act on
+  // the selection, and with no chain selected they act on the DEFAULTS -- which is useful but is
+  // the one state that would otherwise be silent: you would move a slider, see a number change,
+  // and watch the rig do nothing.
+  const physAim = physAimLabel(main, physTarget);
   const xray = Math.round(Skinning.skinOpacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
@@ -170,6 +224,20 @@ export function buildBoneAuthoringHTML(main, style) {
   //
   // Nothing is removed, only placed. The main menu still shows every control.
   const full = style !== 'mp';
+  // ...AND THEN FOLDING ARRIVED, WHICH IS THE BETTER ANSWER IT WAS DENIED AT THE TIME.
+  //
+  // `full` was the only tool available before there were collapsible sections, and it bought the
+  // wrist panel's height by making the wrist and the Properties page DIFFERENT PANELS -- which is
+  // a round trip rather than a saving. matt, on using it: "i found myself swapping between the
+  // bones tool minipanel and the bones tool properties, i'm sure there's stuff in the bones panel
+  // that isn't in the properties panel." There was, and it was Setup, and only Setup.
+  //
+  // So Setup is on the wrist too now, closed, costing the 27px of its heading instead of the
+  // ~180px of the block. The two panels render the same controls again, and the once-a-session
+  // operations sit behind a fold -- which is a better place for Make Skin and Bind than an inline
+  // button on the panel strapped to your arm.
+  //
+  // `full` still gates the legacy branch below, which uiReorg() no longer reaches.
 
   // ── UI REORG MOCKUP: the same blocks, grouped by how often you touch them ──────────────
   //
@@ -182,15 +250,19 @@ export function buildBoneAuthoringHTML(main, style) {
   // genuinely do cross between these -- bind, pose, find the weights wrong, go back -- and a
   // tab punishes that while a collapse does not.
   //
-  // BOTH DEFAULT CLOSED, and Physics only became so after measuring. Open, it made the WRIST
-  // panel taller than the layout it replaced (458px -> 492px): `full` had already kept Setup,
-  // Bind and the skin sliders off the wrist, so there was nothing there left to collapse and
-  // the group contributed a heading and nothing else. Closed, the heading replaces the two
-  // buttons it hides and the panel gets shorter instead.
+  // SETUP DEFAULTS CLOSED; PHYSICS DEFAULTS OPEN, because they are folded for opposite reasons.
+  // Setup is always there and is once-a-session work, so closed is its resting state. The
+  // physics fold holds only the per-joint sliders and only EXISTS while a flagged joint is
+  // selected -- and selecting one is how you say you are about to tune it, so it arrives open.
   //
-  // The state is sticky per session (see groupOpen), so opening it once while tuning a jiggle
-  // keeps it open for as long as that matters.
+  // The state is sticky per session (see groupOpen), so closing it once to get the rig back in
+  // view keeps it closed for as long as that matters.
   if (uiReorg()) {
+    // Capsules and Bind are PAIRED on one row. Each had a row of its own and stretched the full
+    // width, which put three different button widths into four rows -- the same raggedness matt
+    // objected to, arriving from the markup this time rather than from the layout. Unbind keeps a
+    // row to itself: it is the destructive one, and it only exists once there is something to
+    // undo.
     const setupBody = `
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
@@ -198,11 +270,11 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
-    </div>
-    <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
-      ${bound ? '<button class="' + c.action + '" id="bone-unbind">Unbind</button>' : ''}
     </div>
+    ${bound ? `<div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-unbind">Unbind</button>
+    </div>` : ''}
     ${anyBound ? `
     <div class="${c.row}">
       <span class="${c.lbl}">X-Ray</span>
@@ -219,13 +291,33 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.val}" style="flex:1;text-align:left">need a bound mesh, press Bind</span>
     </div>`}`;
 
-    const physBody = `
+    const physButtons = `
     <div class="${c.btnRow}">
       <button class="${c.action}${physOn ? ' active' : ''}" id="bone-phys">${physOn ? 'Physics On' : 'Physics Bone'}</button>
       <button class="${c.action}" id="bone-phys-bake">Bake Physics</button>
+    </div>`;
+
+    // THE WHOLE SECTION EXISTS FROM THE START, AND IT IS LIVE FROM THE START.
+    //
+    // These rows used to be rendered only while a flagged joint was selected, on the reasoning
+    // that "a panel that renders dead sliders the rest of the time is more things to read past".
+    // That trades one cost for a worse one: the section's CONTENTS changed under your hand the
+    // moment you flagged a joint, so its shape was never the same twice. matt: "all the options
+    // for physics should be there from the start, not just built the first time i enable physics
+    // on a bone" -- and the reading-past problem is answered by the fold, which is what a fold is
+    // for.
+    //
+    // NOT DISABLED EITHER, which was the first answer and the wrong one. With no joint selected
+    // the sliders edit PhysicsBones.DEFAULTS -- the values the next joint you flag will be given.
+    // matt: "i think its valid for someone to setup the values to a state they know is good, then
+    // enable physics." So the section always does something; what it acts on is the joint when
+    // there is one and the defaults when there is not, which is the same selection-or-fallback
+    // rule the rest of this panel runs on.
+    const physParams = `
+    <div class="${c.row}">
+      <span class="${c.val}" id="bone-phys-aim"
+        style="flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${physAim}</span>
     </div>
-    ${physTarget ? `
-    ${sectionTitle(c, 'Physics: ' + physName)}
     <div class="${c.row}">
       <span class="${c.lbl}">Weight</span>
       <input type="range" id="bone-phys-weight" min="0" max="100" step="1" value="${Math.round(physW * 100)}">
@@ -262,23 +354,47 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.toggles}">
       ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
       ${flagButton(c, 'phys-collide', 'Self Collision', physP.collide)}
-    </div>` : ''}`;
+    </div>`;
 
-    return `
-    ${sectionTitle(c, 'Rig Authoring')}
+    // EVERY BLOCK IS A SECTION, AND EVERY SECTION FOLDS. matt: "make all the sections
+    // collapsible. so have a 'mode' section, a 'view and assist' where you can fold the view
+    // modes and the snap/sym buttons, a 'pose' section for the last 4 buttons, and a 'physics'
+    // section."
+    //
+    // The panel had one bare grid, one bare toggle row, two folds and a loose pair of buttons, so
+    // there was no rule about what a heading meant -- some things had one, some did not, and the
+    // ones that did were the long ones. Uniform folds give the column a single rhythm and make
+    // the panel's shape a statement of what it contains rather than of what happened to be tall.
+    //
+    // VIEW AND ASSIST holds the two things that change what you SEE and what the pointer does to
+    // it, which is why the display chips move in here from the wrist panel's own markup -- see
+    // buildBoneQuickDisplayHTML. Both halves are set-and-forget within a task, which is what makes
+    // the fold cheap.
+    //
+    // MODE DEFAULTS OPEN. It is the one block you touch between every other action, and a fold in
+    // front of it would be a tax on all of them. The rest default closed; Physics opens itself
+    // when there is a flagged joint selected, because selecting one is how you said you were
+    // about to tune it.
+    const modeBody = `
     <div class="${c.grid}">${modeBtns}</div>
     ${roundTarget ? `<div class="${c.row}">
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>` : ''}
+    </div>` : ''}`;
+
+    const viewBody = buildBoneQuickDisplayHTML(main, style) + `
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
       ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
-    </div>
-    ${full ? collapsibleHTML('bone-setup', 'Setup', setupBody, false) : ''}
-    ${collapsibleHTML('bone-physics', 'Physics', physBody, false)}
+    </div>`;
+
+    return `
+    ${collapsibleHTML('bone-mode', 'Mode', modeBody, true)}
+    ${collapsibleHTML('bone-view', 'View and Assist', viewBody, false)}
+    ${collapsibleHTML('bone-setup', 'Setup', setupBody, false)}
+    ${collapsibleHTML('bone-physics', 'Physics', physButtons + physParams, !!physTarget)}
   `;
   }
 
@@ -396,8 +512,7 @@ export function buildBonePoseHTML(main, style) {
   const c = DIALECT[style] || DIALECT.mm;
   const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.anyBound(main);
-  return `
-    ${sectionTitle(c, 'Pose')}
+  const poseBody = `
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
       <button class="${c.action}" id="bone-restpose"
@@ -413,7 +528,17 @@ export function buildBonePoseHTML(main, style) {
           Skinning.bindPoseHeld() ? 'Leave Bind Pose' : 'Sculpt Bind Pose'}</button>
       <button class="${c.action}" id="bone-revert"
         title="Throw away every sculpt made since the mesh was bound and put the bind shape back. Not an undo — it does not care how the shape got here, which is what makes it useful when a stroke went wrong in a way you cannot walk back. The rig, the weights and the pose are untouched.">Revert to Bind Shape</button>
-    </div>` : ''}
+    </div>` : ''}`;
+
+  // A SECTION LIKE THE REST OF THEM. It was the one block left with a plain title, which on the
+  // wrist panel means no title at all -- DIALECT.mp has no title class, so sectionTitle there
+  // renders a divider and nothing else, and four unlabelled buttons simply appeared under the
+  // physics ones. Open by default: posing is what you are doing when this panel is up.
+  if (uiReorg()) return collapsibleHTML('bone-pose', 'Pose', poseBody, true);
+
+  return `
+    ${sectionTitle(c, 'Pose')}
+    ${poseBody}
   `;
 }
 
@@ -843,9 +968,12 @@ export function wireBoneSection(root, main, opts) {
       // here instead would write to whatever you had grabbed to shake the rig with.
       const t = PhysicsBones.panelTarget(main,
         (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
-      if (!t) return;
       const v = parseInt(input.value, 10) / scale;
-      for (const j of withTwin(t)) PhysicsBones.setParams(j, { [key]: v });
+      // NO JOINT MEANS THE DEFAULTS, not nothing. Setting the values you want and THEN flagging a
+      // joint is a real way to work, and setRoot copies the defaults into whatever it flags -- so
+      // this slider does the same job either way round. See PhysicsBones.setDefaults.
+      if (t) for (const j of withTwin(t)) PhysicsBones.setParams(j, { [key]: v });
+      else PhysicsBones.setDefaults({ [key]: v });
       if (val) val.textContent = fmt(v);
       main.render?.();
     });
@@ -901,11 +1029,10 @@ export function wireBoneSection(root, main, opts) {
   q('phys-ground')?.addEventListener('click', () => {
     const t = PhysicsBones.panelTarget(main,
       (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
-    if (!t) return;
-    const on = !PhysicsBones.params(t).ground;
-    for (const j of withTwin(t)) {
-      PhysicsBones.setParams(j, { ground: on, groundY: PhysicsBones.groundHeight(main) });
-    }
+    const on = !(t ? PhysicsBones.params(t) : PhysicsBones.DEFAULTS).ground;
+    const patch = { ground: on, groundY: PhysicsBones.groundHeight(main) };
+    if (t) for (const j of withTwin(t)) PhysicsBones.setParams(j, patch);
+    else PhysicsBones.setDefaults(patch);
     rebuild();
     main.render?.();
   });
@@ -915,9 +1042,9 @@ export function wireBoneSection(root, main, opts) {
   q('phys-collide')?.addEventListener('click', () => {
     const t = PhysicsBones.panelTarget(main,
       (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
-    if (!t) return;
-    const on = !PhysicsBones.params(t).collide;
-    for (const j of withTwin(t)) PhysicsBones.setParams(j, { collide: on });
+    const on = !(t ? PhysicsBones.params(t) : PhysicsBones.DEFAULTS).collide;
+    if (t) for (const j of withTwin(t)) PhysicsBones.setParams(j, { collide: on });
+    else PhysicsBones.setDefaults({ collide: on });
     rebuild();
     main.render?.();
   });
@@ -1080,6 +1207,11 @@ export function wireBoneSection(root, main, opts) {
   //     from particles still standing where the swing left them.
   // "the rest can take over control once i jump the timeline" — nothing here touches the keys.
   q('restpose')?.addEventListener('click', () => {
+    // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
+    // next physics step pulled the chain straight off it again, toward a target adopted from
+    // whatever last wrote the joint -- an IK drag, typically. Cleared here, the step re-derives
+    // it from _ikRest. See PhysicsBones.clearRest.
+    PhysicsBones.clearRest(main);
     PhysicsBones.reset(main);
     const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
     window._physicsNeedsInit = true;
@@ -1211,6 +1343,17 @@ export function syncBoneSection(root, main) {
   // shows whatever was true when the markup was last built.
   const unpin = q('unpin');
   if (unpin) unpin.textContent = pinLabel(IKSolver.pinnedJoints(main).length);
+
+  // WHAT THE PHYSICS SLIDERS ARE POINTED AT. Rewritten every sync for the same reason as the pin
+  // count, and it is the reason this readout is allowed to exist at all: the version of it that
+  // lived in the section HEADING was built once and then lied. Here it cannot be older than the
+  // last sync, and it says the defaults case out loud rather than leaving a live slider that
+  // appears to do nothing.
+  const aim = q('phys-aim');
+  if (aim) {
+    aim.textContent = physAimLabel(main, PhysicsBones.panelTarget(main,
+      (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m))));
+  }
 }
 
 export { Enums };

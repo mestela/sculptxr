@@ -775,5 +775,113 @@ check('...and the rest is first captured from the authored one, in BOTH solvers'
   (SRC.match(/link\.parent\._ikRest \|\| link\.parent\.getMatrix\(\)/g) || []).length === 2,
   'one solver still learns its rest from whatever pose it happens to see');
 
+// ── WHICH CHAIN THE SLIDERS EDIT ─────────────────────────────────────────────
+//
+// THE SELECTION, AND NOTHING ELSE. This was sticky — it remembered the last physics joint, so you
+// could select the hips to shake the rig and go on tuning the tail — and the stickiness is gone.
+//
+// It was hidden state deciding what a slider writes. Flag the arms, build a tail, pick a tail
+// joint, tune it, and the arm changed instead; matt: "the ones i set for the tail were also
+// affecting physics for the arm", and then "the stickiness is a UI hack... i think we drop the
+// stickyness."
+//
+// The case it was built for is answered differently now: with no chain selected the sliders edit
+// DEFAULTS, so they still do something while you are shaking the rig, and the panel says which of
+// the two it is doing rather than leaving you to remember.
+{
+  ALL.length = 0; nextId = 1;
+  const spine    = J(0, 0, 0);
+  const shoulder = J(1, 0, 0, spine);    // arm chain root
+  const elbow    = J(2, 0, 0, shoulder);
+  const tail0    = J(0, -1, 0, spine);   // tail chain root
+  const tail1    = J(0, -2, 0, tail0);
+  shoulder._physicsRoot = true;
+  tail0._physicsRoot = true;
+
+  const main = { _physicsPanelTarget: null, getMeshes: () => ALL };
+  const aim = (sel) => { const t = PB.panelTarget(main, sel); return t ? t._id : null; };
+
+  check('selecting a chain root aims the sliders at it',
+    aim([shoulder]) === shoulder._id);
+  check('...and so does selecting any joint INSIDE another chain',
+    aim([tail1]) === tail0._id,
+    'a tail joint below the flagged one left the panel pointing at the arm');
+  check('...while a joint in no chain aims at nothing, rather than at what you last touched',
+    aim([spine]) === null,
+    'a remembered target is visible nowhere, so every wrong guess about it is silent');
+  check('...and a selection spanning two chains is ambiguous, so it picks neither',
+    aim([elbow, tail1]) === null);
+  check('...but one chain named twice is not ambiguous',
+    aim([shoulder, elbow]) === shoulder._id);
+
+  // Nothing carries over between calls: the answer is a function of the selection it was handed,
+  // which is the whole of the change. Asked twice in a row with nothing selected, it must not
+  // still be holding the last one.
+  aim([tail1]);
+  check('the aim keeps no memory between calls', aim([]) === null);
+
+  // The aim cannot outlive the flag, or the sliders would edit a joint that is no longer a
+  // physics bone and nothing on screen would say so.
+  delete shoulder._physicsRoot;
+  check('un-flagging a joint takes it out of the aim', aim([elbow]) === null);
+}
+
+// ── REST POSE HAS TO TAKE THE SPRING TARGET WITH IT ──────────────────────────
+//
+// `_physRest` is what the chain springs toward, and it is adopted from the live pose whenever
+// something other than the sim writes a joint. Rest Pose restored every joint onto `_ikRest`
+// correctly — and then the next step pulled the chain straight back off it, toward a target
+// adopted from an IK drag. matt: "there was a trace of it still visible in the rest pose."
+{
+  ALL.length = 0; nextId = 1;
+  const body_ = J(0, 0, 0);
+  const t0 = J(0, -1, 0, body_);
+  const t1 = J(0, -2, 0, t0);
+  t0._physicsRoot = true;
+  // A corrupted target, as a drag leaves one, plus the authored rest it should have kept.
+  t0._ikRest = Array.prototype.slice.call(t0._mat);
+  t1._ikRest = Array.prototype.slice.call(t1._mat);
+  t0._physRest = new Array(16).fill(7);
+  t1._physRest = new Array(16).fill(7);
+  t1._physWritten = new Array(16).fill(7);
+
+  const main = { getMeshes: () => ALL };
+  const cleared = PB.clearRest(main);
+  check('Rest Pose flushes the spring target', cleared === 2 && !t0._physRest && !t1._physRest,
+    'the joint went back and the thing pulling it off went with it');
+  check('...and the written marker too, so the next step re-derives rather than compares',
+    !t0._physWritten && !t1._physWritten);
+  check('...leaving the authored rest alone, which is the one definition of rest',
+    !!t0._ikRest && !!t1._ikRest,
+    'clearRest must not rewrite _ikRest; draw and tweak are the only things that touch it');
+}
+
+// ── A SOLVE IS NOT AN AUTHORED POSE, WHOEVER ASKED FOR IT ────────────────────
+//
+// The spring target is adopted from the live pose whenever something other than the sim writes a
+// joint — right for a key, a gizmo or an undo, wrong for the solver. That guard existed but only
+// covered PINNED solves: an interactive IK drag went through IKSolver.solve, which published
+// nothing, so the pull became the chain's target and was written into the file. matt: "wherever i
+// let go, that seems baked into the skeleton."
+{
+  const SOLVER = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
+  check('the interactive drag publishes what it owns, as the pin hold does',
+    /publishOwned\(solverOwned\(main, \(pins \|\| IKSolver\.activePins\(main\)\)\.concat\(\[effector\]\)\)\);/.test(SOLVER),
+    'a drag that publishes nothing is a solve the sim reads as an authored pose');
+  check('...and the set is stamped, so a stale one cannot suppress adoption for ever',
+    /window\._ikOwnedAt = /.test(SOLVER) && /now - at\) < OWNED_FRESH_MS/.test(SRC),
+    'nothing ever cleared it, so after one pinned solve those joints could never adopt again');
+
+  // THE TARGET IS WRITE-ONCE. Persisting it is what lets a reset survive the state map being
+  // thrown away; ADOPTING into it is what let a drag outlive the reset meant to undo it.
+  check('the adopted target lives in the step state, never on the joint',
+    !/_physRest = Array\.prototype\.slice\.call\(now\)/.test(SRC),
+    'a pose adopted once outlived its reset and went into the file');
+  check('...and the persisted one is captured from the authored rest, once',
+    /if \(!link\.parent\._physRest\) \{[\s\S]{0,200}?_ikRest \|\| link\.parent\.getMatrix\(\)/.test(SRC));
+  check('...so a reset prefers _ikRest, the only pose draw and tweak write',
+    /const rest = joint\._ikRest \|\| joint\._physRest;/.test(SRC));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

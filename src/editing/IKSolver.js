@@ -651,6 +651,26 @@ function seedFromRest(main, keep, owned) {
 // which is exactly what markActive lights. Built on a throwaway graph because the answer is
 // needed BEFORE the real one is built — the reset changes the positions the real graph reads.
 // A few nodes and a walk per pin; the graph is rebuilt every solve anyway.
+// PUBLISHED FOR PhysicsBones, WITH A TIMESTAMP.
+//
+// Physics decides what a chain springs toward by asking "did something other than me write this
+// joint?", and a yes means "that is the authored pose now". Right for a key, a gizmo or an undo,
+// and wrong for this solver: our output is one frame's answer, not a new authored pose.
+//
+// It used to be published by holdPins alone, which meant two holes. An INTERACTIVE drag goes
+// through IKSolver.solve and published nothing, so dragging the end of a physics chain made the
+// pulled pose that chain's target for ever — matt: "wherever i let go, that seems baked into the
+// skeleton." And nothing ever CLEARED the set, so after any pinned solve those joints could never
+// legitimately adopt an authored pose again.
+//
+// A timestamp fixes both: physics trusts the set only while it is this frame's. Nothing has to
+// clear it, and nothing has to guarantee an order between the two systems.
+function publishOwned(ids) {
+  window._ikOwnedIds = ids;
+  window._ikOwnedAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  return ids;
+}
+
 function solverOwned(main, pins) {
   const nodes = buildGraph(main);
   const anchors = [];
@@ -1668,6 +1688,10 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   }
 
   const root = rootOf(eff);
+  // THE DRAG OWNS WHAT IT IS ABOUT TO WRITE, and says so for the same reason holdPins does: a
+  // solve is not an authored pose. The effector is an anchor here as well as the pins, because a
+  // hand drag pulls its whole limb whether or not anything is pinned. See publishOwned.
+  publishOwned(solverOwned(main, (pins || IKSolver.activePins(main)).concat([effector])));
   const targets = new Map();
   // The dragged joint wins over its own pin: grabbing a pinned joint is an unambiguous
   // statement that you want it somewhere else, and refusing to move would read as a bug.
@@ -1961,8 +1985,7 @@ IKSolver.holdPins = function (main) {
   // for a key, a gizmo or an undo, and wrong for this solver: our output is one frame's answer,
   // not a new rest. Without this, activating a pin on a physics chain made the solved pose the
   // chain's rest for ever after, so a rewind restored the posed arm instead of the bind arm.
-  const ownedIds = solverOwned(main, pins);
-  window._ikOwnedIds = ownedIds;
+  const ownedIds = publishOwned(solverOwned(main, pins));
   if (written && window._ikSeedFromRest !== false) {
     seedFromRest(main, written, ownedIds);
   }

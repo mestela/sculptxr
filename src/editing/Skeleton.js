@@ -132,6 +132,79 @@ function boneEdgeGeometry() {
 let _jointGeo = null;
 function jointGeometry() { return (_jointGeo = _jointGeo || new THREE.SphereGeometry(1, 10, 8)); }
 
+// ---- PHYSICS BONES ARE A DIFFERENT SHAPE ---------------------------------------
+//
+// A flagged joint and everything under it simulates, and there was no way to see that anywhere:
+// the panel named the joint in a heading, which went stale the moment the selection moved, and
+// nothing in the viewport or the outliner said anything at all. matt: "the physics header section
+// displays the name of physics bones, don't do this. it doesn't stay up to date, its just
+// confusing. better would be some visual indicator both in the outliner and in the 3dview."
+//
+// COLOUR IS NOT AVAILABLE. It is already carrying preselection (yellow), selection (cyan) and
+// the per-joint tint the rig draws in, so a physics colour would either be overridden exactly
+// when you were pointing at the thing or would override the states that tell you what a press
+// will do. Shape is the one channel with nothing in it. matt: "we can't use colour, as the bones
+// are random colours in bones mode. change the bone shape maybe, and the joint icon?"
+//
+// So: box instead of sphere at the joint, and a straight beam instead of the tapered octahedron
+// along the bone. Both read at a glance and neither costs a draw call -- they are two more
+// instanced batches, and a joint is in one or the other, never both. This is a DISPLAY variant
+// only and has nothing to do with the joint VOLUMES that were built and removed: nothing here
+// touches skinning, picking or the capsule envelope.
+//
+// Same local frame as the shapes they replace, so every line of placement code is untouched:
+// the bone spans y 0..1 with x/z scaled by the bone width, the joint is a unit radius.
+let _bonePhysGeo = null;
+function bonePhysGeometry() {
+  if (_bonePhysGeo) return _bonePhysGeo;
+  // Narrower than the octahedron's widest ring (±1) so a beam does not read as fatter than the
+  // bone it replaces -- it is a straight extrusion, so it carries its full width the whole way
+  // where the octahedron only reaches that width for an instant.
+  const g = new THREE.BoxGeometry(1.2, 1, 1.2);
+  g.translate(0, 0.5, 0);
+  return (_bonePhysGeo = g);
+}
+
+let _bonePhysEdgeGeo = null;
+function bonePhysEdgeGeometry() {
+  return (_bonePhysEdgeGeo = _bonePhysEdgeGeo
+    || new THREE.EdgesGeometry(bonePhysGeometry(), 1));
+}
+
+let _jointPhysGeo = null;
+function jointPhysGeometry() {
+  // 1.5 across, so the box's faces sit just inside the sphere's radius and its corners just
+  // outside: the same visual weight, a different silhouette.
+  return (_jointPhysGeo = _jointPhysGeo || new THREE.BoxGeometry(1.5, 1.5, 1.5));
+}
+
+// Is this joint simulated? True for a flagged root AND for everything hanging below it, because
+// what the marker has to answer is "does this bone swing", and the whole chain does. Walking up
+// is what makes that cheap: no map to build, no list to keep in step with the flags, and it is
+// a handful of property reads per joint on a rig of thirty.
+function physicsGoverned(j) {
+  for (let n = j; n; n = n._parentMesh) if (n._physicsRoot) return true;
+  return false;
+}
+
+// ...AND THE BONE IS ONE JOINT HIGHER THAN THE JOINT IT BELONGS TO.
+//
+// A joint owns the bone that ENDS at it -- parent -> j -- which is the convention `_boneRadius`
+// and the capsule bind already use. So asking physicsGoverned about the joint marked the bone
+// ABOVE the flag: flag the elbow and the shoulder-to-elbow bone turned into a beam. matt: "it
+// seems to affect one chain too high... it should just be from the elbow down."
+//
+// The rig agrees with him for a physical reason rather than a drawing one: the flagged joint is
+// the ANCHOR, it rotates and does not translate, so it is not in the particle list at all (see
+// PhysicsBones.chain). The bone hanging off it is the first thing that actually swings. Asking
+// about the PARENT is the same question shifted by exactly that one link.
+//
+// The joint marker still goes on the flagged joint itself -- it is where the physics starts, and
+// that is worth saying.
+function physicsBoneGoverned(j) {
+  return physicsGoverned(j && j._parentMesh);
+}
+
 // ---- IK pin markers ------------------------------------------------------------
 //
 // A pin has three states and the marker has to say WHICH, at a glance, in a headset, while
@@ -583,6 +656,26 @@ function batchSlot(main, key, geoFn, ghost, keyHi) {
   return slot;
 }
 
+// A SECOND SHAPE FOR THE SAME SLOT, chosen per frame by `slot._phys`.
+//
+// The same trick as `keyHi` one function up, for a different reason: keyHi exists because
+// opacity cannot ride on an instance, this exists because GEOMETRY cannot. A joint is drawn from
+// one batch or the other and never both, so this costs one more draw call per pass and nothing
+// per joint. Independent of `_hi`, which the joint and bone slots do not use -- they say
+// preselection in colour.
+function physVariant(main, slot, key, geoFn, ghost) {
+  batchFor(main, key, geoFn, ghost);
+  slot._keyPhys = key;
+  return slot;
+}
+
+function physLineVariant(main, slot, key, geoFn, ghost) {
+  const all = main._skelBatch || (main._skelBatch = new Map());
+  if (!all.has(key)) lineBatchSlot(main, key, geoFn, ghost);   // makes the batch; slot discarded
+  slot._keyPhys = key;
+  return slot;
+}
+
 // One pass over every slot, at the end of the frame's visual update.
 // THE CAPSULE BATCHES CARRY WHAT AN INSTANCE CANNOT: opacity, depth-write and render order are
 // material state, so they are set on the batch once a pass rather than per joint. Everything else
@@ -646,7 +739,8 @@ function flushBatches(main) {
   const bySlot = new Map();
   for (const e of main._skelVis.values()) {
     for (const slot of e._slots || []) {
-      const key = (slot._hi && slot._keyHi) ? slot._keyHi : slot._key;
+      const key = (slot._phys && slot._keyPhys) ? slot._keyPhys
+        : ((slot._hi && slot._keyHi) ? slot._keyHi : slot._key);
       let list = bySlot.get(key);
       if (!list) bySlot.set(key, (list = []));
       list.push(slot);
@@ -2233,8 +2327,12 @@ function ensureEntry(main, id) {
     // MERGED. One LineSegments for every joint's edges rather than two per joint — the same
     // reason the bodies are instanced, and the wireframe is on by default so it was carrying
     // fifty of the remaining draw calls.
-    const wire = lineBatchSlot(main, 'wire', boneEdgeGeometry, false);
-    const wireGhost = lineBatchSlot(main, 'wire-ghost', boneEdgeGeometry, true);
+    const wire = physLineVariant(main,
+      lineBatchSlot(main, 'wire', boneEdgeGeometry, false),
+      'wire-phys', bonePhysEdgeGeometry, false);
+    const wireGhost = physLineVariant(main,
+      lineBatchSlot(main, 'wire-ghost', boneEdgeGeometry, true),
+      'wire-phys-ghost', bonePhysEdgeGeometry, true);
 
     // The dashed leader from a pinned joint to the anchor it is trying to reach. Two points,
     // rewritten each frame; the dash pattern needs computeLineDistances() after every move.
@@ -2257,12 +2355,16 @@ function ensureEntry(main, id) {
       // only on pinned joints, capsules and labels are off by default, so none of them carry
       // the same weight.
       bone: {
-        solid: batchSlot(main, 'bone', boneGeometry, false),
-        ghost: batchSlot(main, 'bone-ghost', boneGeometry, true),
+        solid: physVariant(main, batchSlot(main, 'bone', boneGeometry, false),
+          'bone-phys', bonePhysGeometry, false),
+        ghost: physVariant(main, batchSlot(main, 'bone-ghost', boneGeometry, true),
+          'bone-phys-ghost', bonePhysGeometry, true),
       },
       joint: {
-        solid: batchSlot(main, 'joint', jointGeometry, false),
-        ghost: batchSlot(main, 'joint-ghost', jointGeometry, true),
+        solid: physVariant(main, batchSlot(main, 'joint', jointGeometry, false),
+          'joint-phys', jointPhysGeometry, false),
+        ghost: physVariant(main, batchSlot(main, 'joint-ghost', jointGeometry, true),
+          'joint-phys-ghost', jointPhysGeometry, true),
       },
       wire: { solid: wire, ghost: wireGhost },
       label: makeLabel(),
@@ -2663,6 +2765,17 @@ Skeleton.updateVisuals = function (main) {
     const id = j.getID();
     live.add(id);
     const e = ensureEntry(main, id);
+
+    // WHICH BATCH THIS JOINT'S SHAPES COME FROM, decided once here rather than inside any of the
+    // placement loops below -- they are delicate enough that rigbatch_test checks they were not
+    // rewritten, and nothing about placement changes: a box and a sphere occupy the same local
+    // frame. See physicsGoverned.
+    {
+      const phBone = physicsBoneGoverned(j);
+      e.bone.solid._phys = e.bone.ghost._phys = phBone;
+      e.wire.solid._phys = e.wire.ghost._phys = phBone;
+      e.joint.solid._phys = e.joint.ghost._phys = physicsGoverned(j);
+    }
 
     // Hidden by the outliner (its own eye, or an ancestor's). Everything this joint draws
     // goes away; the entry itself stays so unhiding costs nothing.
@@ -4526,6 +4639,9 @@ const DISPLAY_FLAGS = {
   meshHover: ['_meshHoverHighlight', 'meshHoverHighlight', true],
 };
 Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
+// Published for the outliner, which marks the same joints in its rows. Assigned here with the
+// rest of the surface rather than beside the function, which is above where Skeleton exists.
+Skeleton.physicsGoverned = physicsGoverned;
 Skeleton.flushBatches = flushBatches;
 Skeleton.clearBatches = clearBatches;
 

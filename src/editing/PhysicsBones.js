@@ -91,6 +91,22 @@ PhysicsBones.groundHeight = function (main) {
 
 PhysicsBones.DEFAULTS = DEFAULTS;
 
+// THE DEFAULTS ARE EDITABLE, and that is what the panel's sliders write when no flagged joint is
+// selected. matt: "i think its valid for someone to setup the values to a state they know is
+// good, then enable physics."
+//
+// It costs nothing to support because setRoot already copies DEFAULTS into the joint it flags, so
+// "set it up first" and "flag it then tune it" arrive at the same place by the same route. The
+// alternative -- a separate pending-values object applied on flag -- would be a second copy of
+// every parameter to keep in step, for a difference nobody could see.
+//
+// Session-scoped on purpose: these are "what I am working in right now" values, not a preference.
+// A rig that is saved carries its own per-joint params, so nothing here changes what a file means.
+PhysicsBones.setDefaults = function (patch) {
+  Object.assign(DEFAULTS, patch || {});
+  return DEFAULTS;
+};
+
 PhysicsBones.isRoot = function (j) { return !!(j && j._physicsRoot); };
 
 // ---- blend weight (roadmap #48's scalar channel) -----------------------------
@@ -189,21 +205,44 @@ PhysicsBones.setRoot = function (main, j, on) {
   return true;
 };
 
-// WHICH JOINT THE PANEL'S SLIDERS EDIT, which is deliberately NOT "whatever is selected".
+// The physics root governing this joint — itself if it is flagged, else the nearest flagged
+// ancestor, else null. The same walk Skeleton.physicsGoverned does, returning the joint rather
+// than a boolean, because "which chain is this in" is the question the panel has to answer.
+PhysicsBones.rootOf = function (j) {
+  for (let n = j; n; n = n._parentMesh) if (n._physicsRoot) return n;
+  return null;
+};
+
+// WHICH CHAIN THE PANEL'S SLIDERS EDIT: the one in the current selection, and nothing else.
 //
-// Tuning a jiggle means shaking the rig and watching it, and shaking it means selecting the joint
-// you want to shake — so a panel that followed the selection took its own controls away the
-// moment you went to test them. This remembers the last physics joint that was selected and
-// keeps returning it: select the antenna once, then select the hips and shake all you like.
+// THIS USED TO BE STICKY, and the stickiness is gone. It existed for a real problem — tuning a
+// jiggle means shaking the rig, shaking it means selecting the joint you shake WITH, and a panel
+// that followed the selection took its own controls away at that moment — but remembering the
+// last physics joint solved that by making the panel act on something you could no longer see.
+// matt: "the stickiness is a UI hack, and means we run the risk of people modifying physics
+// properties they didn't want, or being surprised when changing physics properties to setup a new
+// chain still affects the old chain. i think we drop the stickyness."
 //
-// Cleared when the joint stops being a physics bone or leaves the scene, so it cannot point at
-// something that is no longer there.
+// Hidden state that decides what a slider writes is worth more scepticism than a round trip. The
+// selection is visible in the viewport and in the outliner; a remembered target is visible
+// nowhere, so every wrong guess about it is silent and lands in the file.
+//
+// What replaces it is NOT the old round trip: with no chain selected the sliders edit DEFAULTS —
+// the values the next joint you flag will be given — so the controls still do something useful
+// while you are shaking the hips, and the panel says which of the two it is doing. See
+// setDefaults, and the readout in bonePanel.
+//
+// Two chains at once is ambiguous, so it answers null and the sliders fall to the defaults rather
+// than silently picking one of them.
 PhysicsBones.panelTarget = function (main, selected) {
-  const sel = (selected || []).filter((j) => PhysicsBones.isRoot(j));
-  if (sel.length === 1) main._physicsPanelTarget = sel[0];
-  const t = main._physicsPanelTarget;
-  if (!t || !PhysicsBones.isRoot(t)) { main._physicsPanelTarget = null; return null; }
-  if (main.getMeshes && !main.getMeshes().includes(t)) { main._physicsPanelTarget = null; return null; }
+  const roots = [];
+  for (const j of (selected || [])) {
+    const r = PhysicsBones.rootOf(j);
+    if (r && roots.indexOf(r) === -1) roots.push(r);
+  }
+  let t = roots.length === 1 ? roots[0] : null;
+  if (t && main.getMeshes && !main.getMeshes().includes(t)) t = null;
+  main._physicsPanelTarget = t;   // published for anything that wants to know, never read back
   return t;
 };
 
@@ -324,6 +363,50 @@ let _lastTime = null;
 // So the joints are put back to the pose they had before physics touched them, and only then is
 // the state cleared. A reset is now the honest thing its name claims: the chain returns to where
 // the animation or the author last put it.
+// FORGET THE SPRING TARGET, so the next step re-derives it from the authored rest.
+//
+// `_physRest` is what the chain springs TOWARD, and it is adopted from the live pose whenever
+// something other than the sim writes a joint — which is how a keyed tail follows its animation,
+// and also how an IK drag makes the pulled pose the target for ever. Rest Pose put every joint
+// back on `_ikRest` correctly and then the next physics step pulled the chain straight back off
+// it, so the reset looked like it had restored a broken pose. matt: "there was a trace of it
+// still visible in the rest pose... shouldn't activating the rest pose flush the physRest?"
+//
+// It should, and it needs no control of its own: Rest Pose already means everything goes back,
+// and this was the one thing that did not. Clearing it rather than rewriting it from `_ikRest`
+// keeps one definition of the rest in one place — the step re-captures from `_ikRest` when it
+// finds nothing here.
+//
+// This is the symptom, not the cause. The drag should never have been able to write a target in
+// the first place; see the note in panelTarget's neighbourhood and the adopt rule in step().
+// DID THE SOLVER WRITE THIS JOINT ON THE FRAME WE ARE LOOKING AT?
+//
+// IKSolver publishes the joints it owns with a timestamp (see publishOwned). The stamp is what
+// makes this self-clearing: nothing has to tear the set down, and a set left over from a solve
+// two seconds ago cannot go on suppressing adoption for ever — which it did, because nothing
+// ever cleared it.
+//
+// One frame at 60Hz is 16ms; 120 leaves room for a slow frame without letting a stale set count.
+const OWNED_FRESH_MS = 120;
+function solverWrote(id) {
+  const ids = window._ikOwnedIds;
+  if (!ids || !ids.has(id)) return false;
+  const at = window._ikOwnedAt || 0;
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  return (now - at) < OWNED_FRESH_MS;
+}
+
+PhysicsBones.clearRest = function (main) {
+  if (!main) return 0;
+  let n = 0;
+  for (const j of Skeleton.joints(main)) {
+    if (j._physRest) { delete j._physRest; n++; }
+    delete j._physWritten;
+  }
+  _state.clear();
+  return n;
+};
+
 PhysicsBones.reset = function (main) {
   // The hold stands every rig driver down, and reset is one: it WRITES joints (that is its job,
   // putting them back on the pose physics started from), and a seek runs it -- so with the bind
@@ -351,14 +434,18 @@ PhysicsBones.reset = function (main) {
       if (joint._ikRest) { mat4Copy(joint.getMatrix(), joint._ikRest); Skeleton.syncThree(joint); }
       return;
     }
-    if (!joint._physRest) return;
+    // `_ikRest` FIRST, and `_physRest` only for a rig that has none. They are the same pose now
+    // that nothing adopts into `_physRest` -- but only one of them is guaranteed to be the pose
+    // the rig was DRAWN in, so that is the one to prefer when both exist.
+    const rest = joint._ikRest || joint._physRest;
+    if (!rest) return;
     // ...unless something else has written the joint since, in which case that is the pose now
     // and putting our older one back would undo it. Same rule the step uses.
     const now = joint.getMatrix();
     for (let k = 0; k < 16; k++) {
       if (Math.abs(now[k] - joint._physWritten[k]) > 1e-9) return;
     }
-    mat4Copy(now, joint._physRest);
+    mat4Copy(now, rest);
     Skeleton.syncThree(joint);
   };
   if (main) {
@@ -688,11 +775,16 @@ PhysicsBones.step = function (main, dt) {
       // back: a rewind restored the waving arm as though it were the bind pose, and each loop
       // re-adopted it. Measured on weight.sxr, playing one pass then rewinding to frame 0: the
       // pinned right arm sat 2.52 units off, while the three chains with no pin returned to 0.
-      const solverPosed = window._ikOwnedIds && window._ikOwnedIds.has(link.parent.getID());
+      const solverPosed = solverWrote(link.parent.getID());
       if (same && st.rest) { mat4Copy(now, st.rest); Skeleton.syncThree(link.parent); }
       // Re-pointed on the joint as well: assigning a NEW array here would otherwise leave the
       // joint holding the old one, and the two copies of "rest" would drift apart.
-      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); link.parent._physRest = st.rest; }
+      // ADOPTED INTO THE STEP'S STATE ONLY, never onto the joint. `_physRest` persisted this, so a
+      // pose adopted once outlived the reset that was supposed to undo it and was written into the
+      // file. The authored rest is `_ikRest` and nothing here may write it: matt: "the only thing
+      // that should change the rest pose is draw or tweak. everything else is a modification to
+      // the pose, not the rest pose."
+      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); }
       // else: the solver posed it this frame. Leave it where the solve put it -- physics layers
       // on top of that -- but keep the rest we already had, so a reset still has a pose to
       // return to that nothing simulated or solved ever wrote.
@@ -741,11 +833,18 @@ PhysicsBones.step = function (main, dt) {
         // FROM THE AUTHORED REST where there is one -- both solvers, same rule. Capturing
         // "wherever it was the first time the sim ran" makes a saved mid-swing pose the
         // permanent rest, which is how a file came back with bent arms on frame 1.
+        // WRITE-ONCE, AND FROM THE AUTHORED POSE. It is persisted on the joint because reset()
+        // throws the state map away and a seek runs reset on every frame you land on -- held only
+        // in the map, the next step found it missing and captured it fresh from the pose physics
+        // had just bent. What was wrong was never the persistence, it was that the adopt branch
+        // below used to REASSIGN it: a pose adopted once outlived the reset meant to undo it and
+        // went into the file. Captured here and never written again, so it can only ever be the
+        // rest the rig was drawn in.
         if (!link.parent._physRest) {
           link.parent._physRest = Array.prototype.slice.call(
             link.parent._ikRest || link.parent.getMatrix());
         }
-        pst.rest = link.parent._physRest;
+        pst.rest = Array.prototype.slice.call(link.parent._physRest);
       }
 
       // The particle's own radius — what makes it a sphere rather than a point. Read per joint
@@ -1132,9 +1231,14 @@ PhysicsBones.stepXPBD = function (main, dt) {
       for (let k = 0; k < 16; k++) {
         if (Math.abs(now[k] - st.written[k]) > 1e-9) { same = false; break; }
       }
-      const solverPosed = window._ikOwnedIds && window._ikOwnedIds.has(link.parent.getID());
+      const solverPosed = solverWrote(link.parent.getID());
       if (same && st.rest) { mat4Copy(now, st.rest); Skeleton.syncThree(link.parent); }
-      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); link.parent._physRest = st.rest; }
+      // ADOPTED INTO THE STEP'S STATE ONLY, never onto the joint. `_physRest` persisted this, so a
+      // pose adopted once outlived the reset that was supposed to undo it and was written into the
+      // file. The authored rest is `_ikRest` and nothing here may write it: matt: "the only thing
+      // that should change the rest pose is draw or tweak. everything else is a modification to
+      // the pose, not the rest pose."
+      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); }
     }
 
     // THE ANIMATED SHAPE OF THE CHAIN, read once per frame before anything is simulated: each
@@ -1364,11 +1468,18 @@ PhysicsBones.stepXPBD = function (main, dt) {
       if (!pst.rest) {
         // FROM THE AUTHORED REST where there is one, for the same reason: capturing "wherever it
         // was the first time the sim ran" makes a saved mid-swing pose the permanent rest.
+        // WRITE-ONCE, AND FROM THE AUTHORED POSE. It is persisted on the joint because reset()
+        // throws the state map away and a seek runs reset on every frame you land on -- held only
+        // in the map, the next step found it missing and captured it fresh from the pose physics
+        // had just bent. What was wrong was never the persistence, it was that the adopt branch
+        // below used to REASSIGN it: a pose adopted once outlived the reset meant to undo it and
+        // went into the file. Captured here and never written again, so it can only ever be the
+        // rest the rig was drawn in.
         if (!link.parent._physRest) {
           link.parent._physRest = Array.prototype.slice.call(
             link.parent._ikRest || link.parent.getMatrix());
         }
-        pst.rest = link.parent._physRest;
+        pst.rest = Array.prototype.slice.call(link.parent._physRest);
       }
       Skeleton.jointPos(link.parent, _xPar);
       Skeleton.jointPos(j, _xAnim);

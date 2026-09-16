@@ -50,8 +50,12 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
 
 // ── the two highest-count kinds are instanced ────────────────────────────────
+// Anchored on the CALL, not on its position in the object literal: the slot is wrapped in
+// physVariant now (a second batch holding the physics-bone shape), and an anchor that spelled out
+// the whole line failed on a change that left the instancing exactly as it was.
 check('the bone body is instanced, not a Mesh per joint',
-  /bone: \{\s*\n\s*solid: batchSlot\(main, 'bone', boneGeometry, false\)/.test(SRC));
+  /batchSlot\(main, 'bone', boneGeometry, false\)/.test(SRC)
+    && /bone: \{/.test(SRC));
 // The shaft used to be a Mesh per bone, on the reasoning that its per-bone taper "one instanced
 // draw cannot express". That was true of UNIFORMS and not of the thing itself: the taper is two
 // half-extent vectors, which are per-instance ATTRIBUTES, and the rotation it also wanted is
@@ -137,7 +141,38 @@ check('...and the taper attributes grow with the batch',
   /if \(isShaftKey\(key\)\) ensureTaperAttrs\(m, cap\);/.test(SRC),
   'a rig that gains a joint writes taper data past the end of the buffer');
 check('the joint dot is instanced too',
-  /joint: \{\s*\n\s*solid: batchSlot\(main, 'joint', jointGeometry, false\)/.test(SRC));
+  /batchSlot\(main, 'joint', jointGeometry, false\)/.test(SRC) && /joint: \{/.test(SRC));
+// ── THE PHYSICS-BONE SHAPE IS A BATCH, NOT A MESH ────────────────────────────
+//
+// A flagged joint and its chain draw a box and a beam instead of a sphere and an octahedron, and
+// the cheap way to do that is a second INSTANCED batch the slot is routed to per frame -- the
+// same shape as the existing keyHi trick. The expensive way, and the one to catch here, is a
+// Mesh per physics joint, which would put the per-joint draw calls back one rig at a time.
+check('the physics shapes are batches the slot is routed to',
+  /physVariant\(main, batchSlot\(main, 'joint'/.test(SRC)
+    && /physVariant\(main, batchSlot\(main, 'bone'/.test(SRC)
+    && !/new THREE\.Mesh\(jointPhysGeometry/.test(SRC));
+check('...chosen by a per-frame flag, with highlight routing still ahead of it',
+  /slot\._phys && slot\._keyPhys/.test(SRC) && /slot\._hi && slot\._keyHi/.test(SRC));
+check('...and the wireframe overlay follows the same shape',
+  /'wire-phys', bonePhysEdgeGeometry/.test(SRC),
+  'a box drawn with the octahedron edge lines is worse than either on its own');
+// The whole chain, not only the flagged joint: what the marker answers is "does this bone swing".
+check('every joint under a flagged root is marked, not just the root',
+  /for \(let n = j; n; n = n\._parentMesh\) if \(n\._physicsRoot\) return true/.test(SRC));
+// ...BUT THE BONE IS ASKED ABOUT THE PARENT, NOT THE JOINT.
+//
+// A joint owns the bone that ENDS at it, so the joint's own answer marks the bone one link too
+// high -- flag the elbow and the shoulder-to-elbow bone became a beam. The flagged joint is the
+// anchor and does not translate, so the first thing that actually swings is the bone BELOW it.
+check('the bone shape is one link below the flag, not one above',
+  /function physicsBoneGoverned\(j\) \{\s*\n\s*return physicsGoverned\(j && j\._parentMesh\);/.test(SRC));
+check('...and the bone and its wireframe both read that one, while the joint reads its own',
+  /e\.bone\.solid\._phys = e\.bone\.ghost\._phys = phBone;/.test(SRC)
+    && /e\.wire\.solid\._phys = e\.wire\.ghost\._phys = phBone;/.test(SRC)
+    && /e\.joint\.solid\._phys = e\.joint\.ghost\._phys = physicsGoverned\(j\);/.test(SRC),
+  'the wireframe following the solid is what keeps a beam from being drawn with octahedron edges');
+
 check('...and the xray ghost is its own batch, not a second pass over the first',
   /'bone-ghost', boneGeometry, true/.test(SRC) && /'joint-ghost', jointGeometry, true/.test(SRC),
   'the ghost needs GreaterDepth and its own opacity, so it cannot share a material');

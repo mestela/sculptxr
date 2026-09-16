@@ -354,6 +354,24 @@ export class HTMLVRPanel {
     if (Math.abs(domA - geoA) > geoA * 0.01) { this._needsResize = true; this.markDirty(); }
   }
 
+  // THE PANEL CAN CHANGE ITS OWN SIZE, AND UNTIL COLLAPSIBLE SECTIONS NOTHING DID.
+  //
+  // _checkAspectOnce is armed by _setHostMounted only, on the reasoning written above it: "a
+  // panel that changes its own content already raises the flag correctly". That was true while
+  // every content change went through a rebuild, which sets _needsResize itself. A collapsible
+  // section is the first control that changes the panel's HEIGHT without one -- it toggles a
+  // class, repaints, and nothing measures anything. The wrist panel's root is height:auto, so
+  // opening Physics grew it 478 -> 510px while the plane kept the old aspect: the texture was
+  // stretched onto the wrong-shaped quad and every UV after it resolved to the wrong row. From
+  // the outside that reads as "the collapsible does not work".
+  //
+  // ARMS THE MEASUREMENT, DOES NOT FORCE THE RESIZE. Setting _needsResize directly would dispose
+  // the texture on every toggle -- a blank frame, and a flash -- including on the fixed-height
+  // panels where the size did not actually change. _checkPlaneAspect measures first and only
+  // raises the flag on a genuine mismatch, which is the same one-shot it does on a mount, and
+  // deliberately not the per-frame check that froze the main menu (see update()).
+  noteContentResized() { this._checkAspectOnce = true; this.markDirty(); }
+
   dispose() {
     unregisterPanel(this);
     this.unbindDesktopPointers();
@@ -1288,6 +1306,20 @@ export class HTMLVRPanel {
     // Two conditions now: the search is limited to the nearest ROW, and the slider it finds has
     // to be vertically under the ray. A row has one slider, so this can only ever grab the one
     // you are pointing at.
+    // A DISABLED CONTROL IS ONLY DISABLED IN A REAL BROWSER.
+    //
+    // Everything below synthesises input: the slider drag writes `value` and dispatches 'input'
+    // itself, and the tap dispatches its own MouseEvent. None of that consults `disabled`, and
+    // `pointer-events: none` says nothing to _uvToElement either -- that is a geometric walk over
+    // rectangles, not a hit test the browser runs. So a dimmed, inert-looking control was fully
+    // draggable and fully clickable through a VR ray, which is worse than not dimming it.
+    //
+    // `:disabled` rather than `.disabled`, because the property reflects the ATTRIBUTE only: a
+    // control inside a disabled <fieldset> is disabled and says `.disabled === false`. The
+    // fieldset is how whole blocks are switched off here (the shader panel's, and the physics
+    // sliders while no flagged joint is selected), so the property would have missed every one.
+    const disabledEl = (n) => !!(n && n.matches && n.matches(':disabled'));
+
     if (type === 'pointerdown') {
       let rangeEl = null;
       if (el.tagName === 'INPUT' && el.type === 'range') {
@@ -1303,7 +1335,7 @@ export class HTMLVRPanel {
           if (absY >= r.top - pad && absY <= r.bottom + pad) rangeEl = cand;
         }
       }
-      if (rangeEl) this._sliderDragTarget = rangeEl;
+      if (rangeEl && !disabledEl(rangeEl)) this._sliderDragTarget = rangeEl;
     }
     if (type === 'pointerup') this._sliderDragTarget = null;
 
@@ -1451,7 +1483,10 @@ export class HTMLVRPanel {
     // window._vrClickOnPress = true restores the old behaviour in a session, without a reload,
     // if this turns out to feel worse in the hand than it reads here.
     if (isVR && type === 'pointerdown' && !drag) {
-      if (window._vrClickOnPress === true) {
+      const dead = disabledEl(target) || disabledEl(target.closest && target.closest('button, input, select'));
+      if (dead) {
+        this._pendingClick = null;
+      } else if (window._vrClickOnPress === true) {
         target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
       } else {
         this._pendingClick = { target, x: absX, y: absY };

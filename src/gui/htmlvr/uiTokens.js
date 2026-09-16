@@ -256,6 +256,38 @@ export function toggleGroup(key, dflt) {
 
 // `key` is the state key AND the data attribute the wiring looks for, so a group cannot be
 // rendered under one name and toggled under another.
+// VOWEL DECIMATION, for a label that will not fit its column.
+//
+// Even columns are the layout's job (min-width:0, above); a label too long for the column it
+// lands in is the markup's. Clipping loses the end of the word, an ellipsis loses the end AND
+// spends two characters saying so, and shrinking the type makes one button a different size from
+// its neighbours -- which is the thing being fixed. matt: "if text cant fit, try vowel
+// decimation."
+//
+// Vowels go from the RIGHT, and never the first letter of a word: English reads fine without its
+// interior vowels ("Tweak Jnt", "Capsls") and badly without its leading ones. The first letter of
+// each word is what you actually scan for, so it is the last thing to give up.
+//
+// A hard truncation is the floor, for a long word with no vowels left to give. Nothing here is
+// clever about syllables on purpose: this is a fallback that should almost never fire, and a
+// label that needs it every time is a label to rename, not to compress.
+const VOWELS = 'aeiouAEIOU';
+export function squeezeLabel(label, maxChars) {
+  const s = String(label ?? '');
+  if (!maxChars || s.length <= maxChars) return s;
+  const ch = [...s];
+  // A word boundary is a space or a slash, so "Sel/Tweak" protects the S and the T.
+  const startsWord = (i) => i === 0 || ch[i - 1] === ' ' || ch[i - 1] === '/';
+  let len = ch.length;
+  for (let i = ch.length - 1; i >= 0 && len > maxChars; i--) {
+    if (ch[i] === null || startsWord(i) || !VOWELS.includes(ch[i])) continue;
+    ch[i] = null;
+    len--;
+  }
+  const out = ch.filter((c) => c !== null).join('');
+  return out.length <= maxChars ? out : out.slice(0, maxChars);
+}
+
 export function collapsibleHTML(key, label, bodyHTML, dflt = true) {
   const open = groupOpen(key, dflt);
   return `
@@ -389,6 +421,16 @@ const SWEEP_CSS = `
   align-items: center;
   justify-content: center;
   text-align: center;
+  /* THREE ACROSS MEANS THREE OF THE SAME WIDTH, and neither 1fr nor flex:1 delivers that
+     on its own: both give an item an automatic minimum size of its MIN-CONTENT, so one long
+     label widens its own column and every button in the row ends up a different size. The mode
+     grid was the worst of it -- Draw 55px, Sel/Tweak FK 72px, Sel/Tweak Free 80px, in a grid
+     declared repeat(3, 1fr). matt: "the different button widths looks awful. if its 3 buttons
+     across, make it 3 even buttons."
+     min-width:0 removes that floor, so 1fr is really 1fr and a flex-basis of 0 is really 0. What
+     a label does when it then does not fit is a question for the markup, not for the layout --
+     see squeezeLabel. */
+  min-width: 0;
 }
 
 /* ONE ACTIVE LOOK. The panels had at least three: a filled grey, a tinted wash, and a border

@@ -159,7 +159,7 @@ export class TornOffPanel extends HTMLVRPanel {
       groupSectionTitles(contentEl);
     }
     this._wireSection(main);
-    wireGroups(this._element, () => this.markDirty());
+    wireGroups(this._element, () => this.noteContentResized());
     fixSliderDrag(contentEl);
     refreshVRScrollbar(contentEl, this._element.querySelector('.mm-scrollbar-thumb'));
     // flushPaint forces an immediate polyfill capture so the texture is

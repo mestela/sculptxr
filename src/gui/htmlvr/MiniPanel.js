@@ -29,7 +29,6 @@ import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
   buildBoneSectionHTML,
-  buildBoneQuickDisplayHTML,
   buildBonePoseHTML,
   wireBoneSection,
   syncBoneSection,
@@ -273,6 +272,14 @@ const CSS = `
 /* Two toggle rows in one section -- Move and Smooth both have them -- were flush against each
    other: the gap property spaces buttons WITHIN a row and says nothing about the row below. */
 #mp-root .mp-toggles + .mp-toggles { margin-top: 6px; }
+/* ONE COLUMN RHYTHM DOWN THE PANEL. A flex row divides itself by how many chips are in it, so
+   a row of five and a row of three below it shared no edges and the panel read as a jumble.
+   Opting a row into the same three columns the mode grid uses lines every chip in the panel up
+   with the one above it -- and a row of five simply becomes 3 + 2, still on those columns. */
+#mp-root .mp-toggles.cols-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 #mp-root .mp-toggle-btn {
   flex: 1;
   padding: 6px 4px;
@@ -621,7 +628,9 @@ export class MiniPanel extends HTMLVRPanel {
     const idx = sm?.getToolIndex?.() ?? -1;
 
     // Collapsible groups emitted by the shared bone panel (ui reorg mockup).
-    wireGroups(extras, () => this.markDirty());
+    // noteContentResized, not markDirty: a section opening changes this panel's HEIGHT, and the
+    // plane has to be re-measured or the texture lands on the old one. See HTMLVRPanel.
+    wireGroups(extras, () => this.noteContentResized());
 
     // ── Brush extras ───────────────────────────────────────────────────────
     if (idx === Enums.Tools.BRUSH) {
@@ -1030,11 +1039,12 @@ export class MiniPanel extends HTMLVRPanel {
     // here rather than on a face button: the modes do not fit two buttons without each one
     // changing meaning by mode, which is what made the previous binding opaque.
     if (idx === Enums.Tools.BONE_DRAW) {
-      // The four display toggles you reach for while rigging, first — this panel has no Rig
-      // Display section of its own, and going to the main menu to switch between solid and
-      // wireframe is a round trip in the middle of the thing you are looking at.
-      return buildBoneQuickDisplayHTML(this._main, 'mp')
-        + buildBoneSectionHTML(this._main, 'mp');
+      // The quick display toggles used to be prepended HERE, because the wrist panel had no Rig
+      // Display of its own and swapping solid for wireframe meant a trip to the main menu. They
+      // now live inside the shared builder's "View and Assist" section, which puts them on both
+      // panels and inside a fold, so this is one call again. Prepending them as well would render
+      // the same five ids twice in one root and the second copy would win every wiring lookup.
+      return buildBoneSectionHTML(this._main, 'mp');
     }
 
     if (idx === Enums.Tools.GRAB) {

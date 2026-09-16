@@ -75,12 +75,21 @@ const PhysicsBones = {
   WEIGHT: 'physicsWeight',
   weight: (j) => (globalThis.__physW == null ? 1 : globalThis.__physW),
   setWeightKey: () => true,
+  // Resolves through the governing ROOT and remembers nothing, as the real one does: the answer
+  // is a function of the selection it was handed. Behaviour is asserted in physicsbones_test
+  // against the real module; this only has to agree with it.
+  rootOf: (j) => { for (let n = j; n; n = n._parentMesh) if (n._physicsRoot) return n; return null; },
   panelTarget: (main, sel) => {
-    const one = (sel || []).filter((j) => j && j._physicsRoot);
-    if (one.length === 1) main._physicsPanelTarget = one[0];
-    const t = main._physicsPanelTarget;
-    return (t && t._physicsRoot) ? t : null;
+    const roots = [];
+    for (const j of (sel || [])) {
+      const r = PhysicsBones.rootOf(j);
+      if (r && roots.indexOf(r) === -1) roots.push(r);
+    }
+    const t = roots.length === 1 ? roots[0] : null;
+    main._physicsPanelTarget = t;
+    return t;
   },
+  setDefaults(patch) { Object.assign(this.DEFAULTS, patch || {}); return this.DEFAULTS; },
 };
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => !!globalThis.__bound, refreshWeightColorsAll(){},
   mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){},
@@ -101,6 +110,27 @@ const IKSolver = { pinnedJoints: () => [{},{}] };
 // globalThis.__uiReorg to pick one. Defaults to the legacy layout, which is what every check
 // written before this branch is describing.
 const uiReorg = () => !!globalThis.__uiReorg;
+// squeezeLabel, copied from uiTokens rather than approximated: the panel now runs every chip and
+// mode label through it, so a stub that returned the label unchanged would make every width check
+// below agree with itself and prove nothing.
+const VOWELS = 'aeiouAEIOU';
+const squeezeLabel = (label, maxChars) => {
+  const t = String(label ?? '');
+  if (!maxChars || t.length <= maxChars) return t;
+  const ch = [...t];
+  const startsWord = (i) => i === 0 || ch[i - 1] === ' ' || ch[i - 1] === '/';
+  let len = ch.length;
+  for (let i = ch.length - 1; i >= 0 && len > maxChars; i--) {
+    if (ch[i] === null || startsWord(i) || !VOWELS.includes(ch[i])) continue;
+    ch[i] = null;
+    len--;
+  }
+  const out = ch.filter((c) => c !== null).join('');
+  return out.length <= maxChars ? out : out.slice(0, maxChars);
+};
+// Published so the checks outside the stub can exercise the helper itself, not only its effect
+// on the markup.
+globalThis.__squeeze = squeezeLabel;
 const groupOpen = (key, dflt = true) => {
   const g = (globalThis.__uiGroups = globalThis.__uiGroups || {});
   if (g[key] == null) g[key] = dflt;
@@ -515,8 +545,15 @@ check('Unbind appears once a mesh is bound', boundHTML.includes('id="bone-unbind
 globalThis.__sel = [{ _isBone: true, getID: () => 1, _physicsRoot: true,
   _physicsParams: { stiffness: 0.2, damping: 0.5, gravity: 1.5, drag: 0.1, ground: true } }];
 const physHTML = buildBoneAuthoringHTML(main, 'mm');
+// ...AND THE REORG LAYOUT, which is the only one that ships. Without it this check was comparing
+// the wiring against markup the app never renders, so a control that exists ONLY in the shipping
+// layout (the physics readout, say) read as wired to nothing — while a control that had quietly
+// stopped being emitted there would have gone unnoticed, which is the failure this check is for.
+globalThis.__uiReorg = true;
+const reorgHTML = buildBoneAuthoringHTML(main, 'mm') + buildBonePoseHTML(main, 'mm');
+globalThis.__uiReorg = false;
 globalThis.__sel = [];
-const all = vr + boundHTML + display + animation + physHTML;
+const all = vr + boundHTML + display + animation + physHTML + reorgHTML;
 const missing = [...new Set(wired)].filter(id => !all.includes('id="bone-' + id + '"') && id !== 'rad-val');
 check('every wired id exists in the markup', missing.length === 0, missing.join(','));
 
@@ -723,6 +760,9 @@ check('shader-specific groups mute instead of hiding',
   check('...and the bake button with it', none.includes('id="bone-phys-bake"'));
   main._physicsPanelTarget = null;
   const virgin = buildBoneAuthoringHTML(main, 'mm');
+  // LEGACY LAYOUT ONLY -- this block runs with uiReorg() false, which the app no longer reaches.
+  // The shipping layout builds the sliders always and DISABLES them instead; see the physics fold
+  // block below for the checks that describe it.
   check('...but the sliders are not, until a physics joint has been picked',
     !virgin.includes('id="bone-phys-stiff"'),
     'with nothing ever targeted they would have nothing to edit');
@@ -733,6 +773,160 @@ check('shader-specific groups mute instead of hiding',
   check('a flagged joint grows stiffness, gravity and damping',
     on.includes('id="bone-phys-stiff"') && on.includes('id="bone-phys-grav"')
     && on.includes('id="bone-phys-damp"'));
+
+  // PHYSICS IS ONE SECTION AGAIN, BUTTONS AND SLIDERS TOGETHER.
+  //
+  // It was briefly split -- buttons out, sliders folded -- because as one group it hid two
+  // buttons and spent a heading to do it. That stopped being the right trade once EVERY block
+  // became a section: a two-button section among five sections is a rhythm, where a two-button
+  // fold among loose controls was an oddity. matt: "a 'physics' section (yes even though it has 2
+  // buttons, i think if a bone has physics, we can now afford to put the sliders in that
+  // section)."
+  //
+  // It opens itself when a flagged joint is selected, which is the one moment its contents grew
+  // from two buttons to ten rows, and is also how you said you were about to tune it.
+  {
+    const wasReorg = globalThis.__uiReorg;
+    const wasGroups = globalThis.__uiGroups;
+    globalThis.__uiReorg = true;
+    // The stub remembers the first default it is given for a key, exactly as the real store does,
+    // so each of these two builds needs a clean one or the second inherits the first's answer.
+    globalThis.__uiGroups = {};
+    const foldOn = buildBoneAuthoringHTML(main, 'mm');
+    const keep = globalThis.__sel;
+    globalThis.__sel = [];
+    const before = main._physicsPanelTarget;
+    main._physicsPanelTarget = null;
+    globalThis.__uiGroups = {};
+    const foldNone = buildBoneAuthoringHTML(main, 'mm');
+    globalThis.__sel = keep;
+    main._physicsPanelTarget = before;
+    globalThis.__uiReorg = wasReorg;
+    globalThis.__uiGroups = wasGroups;
+
+    check('physics is a section whether or not a joint is flagged',
+      foldNone.includes('data-group="bone-physics"') && foldOn.includes('data-group="bone-physics"'));
+    check('...holding the buttons and the sliders together',
+      /data-group-body="bone-physics"[\s\S]*id="bone-phys"[\s\S]*id="bone-phys-stiff"/.test(foldOn),
+      'splitting them put the heading between a control and the thing it turns on');
+    // THE HEADING DOES NOT NAME THE JOINT. It used to, on the rule that a physics control should
+    // say what it is about -- but a group heading is built when the panel is built and the
+    // selection moves on without it, so it was a name that went stale and then lied. matt: "the
+    // physics header section displays the name of physics bones, don't do this. it doesn't stay
+    // up to date, its just confusing." Which joint is flagged is answered in the viewport and the
+    // outliner instead, where it can be right every frame.
+    check('...and does not carry a joint name that will go stale',
+      !/data-group="bone-physics"[\s\S]{0,160}Physics: /.test(foldOn));
+    check('...and open, because selecting the joint is how you asked to tune it',
+      !/collapsed"\s+data-group-body="bone-physics"/.test(foldOn));
+    check('...but closed while nothing is being tuned',
+      /collapsed"\s+data-group-body="bone-physics"/.test(foldNone));
+
+    // EVERY CONTROL EXISTS FROM THE START. Rendering the sliders only while a flagged joint was
+    // selected meant the section's contents changed under your hand the moment you flagged one,
+    // so its shape was never the same twice. matt: "all the options for physics should be there
+    // from the start, not just built the first time i enable physics on a bone."
+    check('the physics sliders are built whether or not a joint is flagged',
+      ['weight', 'stiff', 'grav', 'damp', 'inert', 'drag']
+        .every((k) => foldNone.includes('id="bone-phys-' + k + '"')),
+      'a section that grows new controls when you use it is one you cannot learn the shape of');
+    // AND LIVE, NOT DISABLED. Dimming them was the first answer and the wrong one: setting the
+    // values you want and THEN flagging a joint is a real way to work, and setRoot copies the
+    // defaults into whatever it flags, so the same slider does the same job either way round.
+    // matt: "i think its valid for someone to setup the values to a state they know is good, then
+    // enable physics."
+    check('...and live rather than dimmed, because with no joint they edit the defaults',
+      !/mm-disabled-group/.test(foldNone) && !/mm-disabled-group/.test(foldOn));
+    check('...which the wiring actually does, rather than returning on no target',
+      /else PhysicsBones\.setDefaults\(\{ \[key\]: v \}\);/.test(SRC)
+        && /else PhysicsBones\.setDefaults\(patch\);/.test(SRC)
+        && /else PhysicsBones\.setDefaults\(\{ collide: on \}\);/.test(SRC),
+      'a live-looking slider that silently does nothing is worse than a dimmed one');
+    check('...and the flags read the defaults too, or they would toggle from the wrong state',
+      /!\(t \? PhysicsBones\.params\(t\) : PhysicsBones\.DEFAULTS\)\.ground/.test(SRC)
+        && /!\(t \? PhysicsBones\.params\(t\) : PhysicsBones\.DEFAULTS\)\.collide/.test(SRC));
+  }
+
+// ── A PLAIN SELECT MODE, AND THE LABELS THAT WERE STANDING IN FOR IT ──────────────────
+//
+// "Sel/Tweak FK" was a label describing a missing feature: with no Select mode, picking a joint
+// meant using whichever mode did the least harm, and a tweak mode still moves the joint when your
+// hand drifts — which on a wrist panel in a headset it always does a little.
+{
+  const wasReorg = globalThis.__uiReorg;
+  globalThis.__uiReorg = true;
+  const auth = buildBoneAuthoringHTML(main, 'mm');
+  const wrist = buildBoneAuthoringHTML(main, 'mp');
+  globalThis.__uiReorg = wasReorg;
+
+  check('there is a Select mode', auth.includes('id="bone-select"') && wrist.includes('id="bone-select"'));
+  check('...so the tweak modes no longer apologise in their labels',
+    !/Sel\/Tweak/.test(auth) && auth.includes('>Tweak FK<') && auth.includes('>Tweak Free<'),
+    'the slash was standing in for the mode that now exists');
+  check('...and it is first, being the only mode that cannot damage the rig',
+    auth.indexOf('id="bone-select"') < auth.indexOf('id="bone-draw"'));
+}
+
+// ── VOWEL DECIMATION ──────────────────────────────────────────────────────────────────
+//
+// The fallback for a label too long for its column, once the column stopped resizing itself to
+// fit (min-width:0 in the sweep). matt: "if text cant fit, try vowel decimation."
+{
+  check('a label too long for its column loses interior vowels from the right',
+    globalThis.__squeeze('Tweak Joint', 9) === 'Tweak Jnt');
+  check('...and never the first letter of a word',
+    globalThis.__squeeze('Capsules', 5)[0] === 'C' && globalThis.__squeeze('Sel/Tweak Free', 10).includes('/T'),
+    'the leading letter is what you scan for, so it is the last thing to give up');
+  check('...leaving a label that already fits alone',
+    globalThis.__squeeze('Wire', 11) === 'Wire' && globalThis.__squeeze('IK', 11) === 'IK');
+  check('...and hard-truncating when there are no vowels left to give',
+    globalThis.__squeeze('Strengths', 4).length === 4);
+
+  // THE POINT OF THE BUDGET IS THAT IT NEVER FIRES. A panel whose labels all need decimating is a
+  // panel with the wrong labels, so this asserts the current set FITS at three across on the
+  // 216px wrist panel — 11 characters, measured in the running panel. A future label that busts
+  // it should be renamed here, not silently compressed in the headset.
+  const wasReorg = globalThis.__uiReorg;
+  globalThis.__uiReorg = true;
+  const wrist = buildBoneAuthoringHTML(main, 'mp');
+  globalThis.__uiReorg = wasReorg;
+  const chips = [...wrist.matchAll(/<button class="mp-(?:voxel|toggle)-btn[^"]*"[^>]*>([^<]*)</g)]
+    .map((m) => m[1].trim());
+  const over = chips.filter((t) => t.length > 11);
+  check('every wrist chip label fits its column without being squeezed',
+    chips.length > 0 && over.length === 0,
+    'too long, rename rather than decimate: ' + over.join(', '));
+}
+
+// THE WRIST AND THE PROPERTIES PAGE RENDER THE SAME CONTROLS.
+//
+// They did not, and nothing said so: `full` dropped the Setup block on the wrist, which was the
+// right trade before collapsible sections existed and a round trip afterwards. matt: "i found
+// myself swapping between the bones tool minipanel and the bones tool properties, i'm sure
+// there's stuff in the bones panel that isn't in the properties panel."
+//
+// Asserted as a SET OF IDS rather than as markup, because the two are deliberately different
+// markup -- different dialect, different classes, different widths. What must not differ is which
+// controls you can reach, and a divergence here is invisible until someone is in a headset
+// swapping panels to find a button. Anything genuinely wrist-only should be added to the
+// exceptions below WITH ITS REASON, not left to be discovered.
+{
+  const wasReorg = globalThis.__uiReorg;
+  globalThis.__uiReorg = true;
+  const ids = (html) => new Set([...html.matchAll(/id="(bone-[a-z0-9-]+)"/g)].map((m) => m[1]));
+  const wrist = ids(buildBoneSectionHTML(main, 'mp'));
+  const props = ids(buildBoneSectionHTML(main, 'mm'));
+  globalThis.__uiReorg = wasReorg;
+
+  const missing = [...props].filter((id) => !wrist.has(id));
+  const extra   = [...wrist].filter((id) => !props.has(id));
+  check('the wrist panel reaches every bone control the Properties page does',
+    missing.length === 0,
+    missing.length ? 'only on Properties: ' + missing.join(', ') : '');
+  check('...and offers nothing the Properties page cannot',
+    extra.length === 0,
+    extra.length ? 'only on the wrist: ' + extra.join(', ') : '');
+}
   check('...showing that joint\'s own values',
     on.includes('value="20"') && on.includes('value="150"') && on.includes('value="50"'),
     'a slider that always shows the default is a slider that lies about the state');
@@ -880,52 +1074,77 @@ check('shader-specific groups mute instead of hiding',
     quick.includes('mp-toggle-btn') && !quick.includes('mm-choice'));
 }
 
-// ── THE WRIST PANEL IS A WRIST PANEL AGAIN ────────────────────────────────────────────
+// ── THE WRIST PANEL IS A WRIST PANEL, AND STILL A WHOLE PANEL ─────────────────────────
 //
 // matt: "the bones minipanel is hardly a minipanel anymore, its massive... it needs a tidy up."
-// Offered folding, columns or fewer things, he picked fewer things — so the split is by HOW
-// OFTEN you reach for a control, not by what subsystem it belongs to. Constantly: the mode, the
-// snaps, the physics you are tuning by watching. Once a session: Make Skin, Bake Capsules, Reset
-// Radii, Bind, and the two skin sliders. The main menu still shows everything.
+// Offered folding, columns or fewer things, he picked fewer things — so `full` dropped Make Skin,
+// Bake Capsules, Reset Radii, Bind and the two skin sliders from the wrist entirely.
+//
+// THAT ANSWER WAS SUPERSEDED BY THE ONE HE WAS DENIED AT THE TIME. Once sections could fold, a
+// control removed from the wrist was no longer buying height — it was buying a round trip.
+// matt: "i found myself swapping between the bones tool minipanel and the bones tool properties,
+// i'm sure there's stuff in the bones panel that isn't in the properties panel."
+//
+// So the split is now by DEPTH, not by presence: what you touch constantly is inline, what you do
+// once a session is one heading away. Asserted by ORDER against the fold marker, since that is
+// what "behind the fold" means in this markup.
 {
+  const wasReorg = globalThis.__uiReorg;
+  globalThis.__uiReorg = true;
   const wristAuth = buildBoneAuthoringHTML(main, 'mp');
   const menuAuth = buildBoneAuthoringHTML(main, 'mm');
+  globalThis.__uiReorg = wasReorg;
+
+  const fold = wristAuth.indexOf('data-group-body="bone-setup"');
+  const at = (k) => wristAuth.indexOf('id="bone-' + k + '"');
 
   check('the wrist keeps the mode buttons',
     ['draw', 'fk', 'free', 'pose', 'radius', 'joint', 'ik']
-      .every((k) => wristAuth.includes('id="bone-' + k + '"')));
+      .every((k) => at(k) >= 0));
   check('...and the snaps, which you toggle while drawing',
-    wristAuth.includes('id="bone-snap"') && wristAuth.includes('id="bone-axis"'));
+    at('snap') >= 0 && at('axis') >= 0);
   check('...and physics, which is tuned by watching',
-    wristAuth.includes('id="bone-phys"') && wristAuth.includes('id="bone-phys-bake"'));
+    at('phys') >= 0 && at('phys-bake') >= 0);
+  check('...all of them in front of the fold, where one press reaches them',
+    fold > 0 && ['draw', 'pose', 'ik', 'snap', 'axis'].every((k) => at(k) < fold),
+    'these are the controls you touch every few seconds; a heading in the way is a tax on each one');
 
   const onceAJob = ['skin', 'cages', 'rad-all', 'bind'];
-  check('the once-a-session operations are off the wrist',
-    onceAJob.every((k) => !wristAuth.includes('id="bone-' + k + '"')),
-    onceAJob.filter((k) => wristAuth.includes('id="bone-' + k + '"')).join(',') + ' still there');
+  check('the once-a-session operations are BEHIND the fold, not missing from the wrist',
+    onceAJob.every((k) => at(k) > fold),
+    onceAJob.filter((k) => at(k) < 0).join(',') + ' not on the wrist at all');
+  check('...and the fold is closed until asked for',
+    /class="[^"]*collapsed"\s+data-group-body="bone-setup"/.test(wristAuth),
+    'open, it is the tall panel matt complained about with an extra heading on top');
   check('...and every one of them is still in the main menu',
     onceAJob.every((k) => menuAuth.includes('id="bone-' + k + '"')),
     'this is a placement, not a removal — losing a control would be a worse bug than a tall panel');
 
-  // The measurement behind the complaint, so a future addition that quietly re-inflates the
-  // wrist panel shows up as a number rather than as a feeling.
+  // The measurement behind the complaint, so a future addition that quietly re-inflates the wrist
+  // panel shows up as a number rather than as a feeling. It is no longer wrist-vs-menu — those
+  // render the same controls now, deliberately — but folded-vs-whole within the wrist itself.
   const rows = (html) => (html.match(/<div class="[^"]*"/g) || []).length;
-  check('the wrist panel is meaningfully shorter than the menu',
-    rows(wristAuth) < rows(menuAuth) - 2,
-    'wrist ' + rows(wristAuth) + ' rows vs menu ' + rows(menuAuth));
+  const visible = rows(wristAuth.slice(0, fold));
+  check('the wrist panel shows meaningfully less than it holds',
+    visible < rows(wristAuth) - 2,
+    visible + ' rows in front of the fold vs ' + rows(wristAuth) + ' in the panel');
 }
 
-// ── THE SLIDERS STAY PUT WHILE YOU SHAKE THE RIG ──────────────────────────────────────
+// ── WHAT THE SLIDERS ARE POINTED AT, SAID IN THE PANEL ────────────────────────────────
 //
-// matt: "to test i want to be able to jiggle the setup from the hips, while adjusting values.
-// the issue is that i can only jiggle the hips in ik mode... but i can only adjust the physics
-// bones values by selecting the physics bone while in the bone tool. it's a lot of back and
-// forth."
+// This block used to describe a STICKY target: the sliders aimed at the last physics joint you
+// picked and stayed there, so you could select the hips to shake the rig and go on tuning the
+// tail. matt asked for that ("it's a lot of back and forth") and then, having been bitten by it,
+// asked for it back out: "the stickiness is a UI hack, and means we run the risk of people
+// modifying physics properties they didn't want... i think we drop the stickyness."
 //
-// Tuning a jiggle means shaking the rig and watching, and shaking it means SELECTING the thing
-// you shake — so controls that follow the selection remove themselves exactly when you go to use
-// them. The sliders aim at the last physics joint you picked and stay there.
+// So the aim is the selection, and the case the stickiness existed for is answered another way:
+// with no chain selected the sliders edit the DEFAULTS, which is useful rather than dead, and the
+// panel SAYS which of the two it is doing. That readout is the part worth checking here — a live
+// slider whose target you cannot see is the fault both versions of this were trying to avoid.
 {
+  const wasReorg = globalThis.__uiReorg;
+  globalThis.__uiReorg = true;
   const antenna = { _isBone: true, getID: () => 7, _permanentStaticLabel: 'antenna_L',
     _physicsRoot: true, _physicsParams: { stiffness: 0.3, damping: 0.5, gravity: 1, drag: 0.1 } };
   const hips = { _isBone: true, getID: () => 1, _permanentStaticLabel: 'hips' };
@@ -933,13 +1152,13 @@ check('shader-specific groups mute instead of hiding',
 
   globalThis.__sel = [antenna];
   const picked = buildBoneAuthoringHTML(main, 'mm');
-  check('picking a physics joint aims the sliders at it',
-    picked.includes('id="bone-phys-stiff"') && /Physics: antenna_L/.test(picked),
-    'the panel names the joint it is editing, so it can never be mistaken for the selection');
+  check('picking a physics joint aims the sliders at it, and the panel says so',
+    picked.includes('id="bone-phys-stiff"') && />antenna_L</.test(picked),
+    'a slider whose target is not on screen is one you cannot trust');
 
-  // matt: "maybe as a helper, show above the physics sliders the name of the joint(s) being
-  // adjusted?" Plural, and rightly — a drag writes to the mirror twin too, so naming one joint
-  // would be telling half the truth about what is about to change.
+  // A drag writes to the mirror twin too, so naming one joint would be telling half the truth
+  // about what is about to change. matt: "show above the physics sliders the name of the joint(s)
+  // being adjusted?" -- plural, and rightly.
   const twinR = { _isBone: true, getID: () => 8, _permanentStaticLabel: 'antenna_R',
     _physicsRoot: true };
   antenna._boneMirror = twinR;
@@ -947,13 +1166,11 @@ check('shader-specific groups mute instead of hiding',
   globalThis.__meshes = [antenna, twinR];
   const pair = buildBoneAuthoringHTML(main, 'mm');
   check('...naming BOTH joints when the edit is mirrored',
-    /Physics: antenna_L \+ antenna_R/.test(pair),
-    'the header has to say everything the sliders will write to');
+    />antenna_L \+ antenna_R</.test(pair));
 
-  // ...AND ONE JOINT WHEN IT IS NOT. This is the half that was missing entirely: a joint drawn
-  // with symmetry on keeps its twin for the rest of its life, so testing for a twin meant physics
-  // could never be flagged on a single side however the toggle was set. matt: "right now i don't
-  // think i can do that asymmetrically."
+  // ...AND ONE JOINT WHEN IT IS NOT. A joint drawn with symmetry on keeps its twin for the rest
+  // of its life, so testing for a twin meant physics could never be flagged on a single side
+  // however the toggle was set. matt: "right now i don't think i can do that asymmetrically."
   globalThis.__sym = false;
   const solo = buildBoneAuthoringHTML(main, 'mm');
   globalThis.__sym = true;
@@ -965,17 +1182,29 @@ check('shader-specific groups mute instead of hiding',
 
   globalThis.__sel = [hips];
   const shaking = buildBoneAuthoringHTML(main, 'mm');
-  check('...and they are still there once you select the hips to shake it',
-    shaking.includes('id="bone-phys-stiff"') && /Physics: antenna_L/.test(shaking),
-    'this is the whole point: tune and test without swapping selection back and forth');
+  check('the controls are still there once you select the hips to shake the rig',
+    shaking.includes('id="bone-phys-stiff"'),
+    'they are what you came to adjust; taking them away is the round trip this all started with');
+  check('...but they are aimed at the DEFAULTS, and the panel says that too',
+    /Defaults \u2014 no physics bone/.test(shaking) && !/>antenna_L</.test(shaking),
+    'the old answer was to keep writing antenna_L from off screen, which is the hack matt cut');
   check('...while the FLAG button still reads the selection',
     /Physics Bone<\/button>/.test(shaking),
-    'one control reads the target and the other the selection — flagging a NEW joint has to '
-    + 'act on what is selected, or nothing could ever be flagged');
+    'one control reads the aim and the other the selection -- flagging a NEW joint has to act on '
+    + 'what is selected, or nothing could ever be flagged');
+
+  // The readout is rewritten by the SYNC as well as by the builder, because the builder runs once
+  // and the selection moves on without it -- which is exactly why the earlier version of this,
+  // living in the section heading, was thrown out for going stale.
+  check('...and the sync rewrites it, so it cannot go stale between rebuilds',
+    /const aim = q\('phys-aim'\);/.test(SRC) && /aim\.textContent = physAimLabel\(/.test(SRC));
+  check('...from the same helper the builder uses, so the two cannot drift',
+    (SRC.match(/physAimLabel\(/g) || []).length >= 3,
+    'written twice they already differed: one named the mirror twin and the other did not');
 
   globalThis.__sel = [];
   main._physicsPanelTarget = null;
-  globalThis.__sel = [];
+  globalThis.__uiReorg = wasReorg;
 }
 
 // ── THE PHYSICS SOLVER IS A SETTING, NOT AN ENV VAR ───────────────────────────────────

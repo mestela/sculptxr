@@ -1749,7 +1749,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
     // _waitForMeshThenWire queries by id against this same root either way.
     if (uiReorg()) {
       groupSectionTitles(root, { selector: '.acp-section-title' });
-      wireGroups(root, () => this.markDirty());
+      wireGroups(root, () => this.noteContentResized());
     }
 
     this._waitForMeshThenWire(main);

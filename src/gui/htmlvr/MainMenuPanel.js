@@ -2283,6 +2283,16 @@ export function buildSectionHTML_scene(main) {
     const isSel = selected.includes(m);
     const isNull = !!m._isNull;
     const typeIcon = isNull ? 'fa-asterisk' : 'fa-cube';
+    // WHICH JOINTS SIMULATE, said in the list as well as in the viewport. The panel used to
+    // answer this by naming the joint in the Physics heading, which is built once and then goes
+    // stale as the selection moves. matt: "it doesn't stay up to date, its just confusing. better
+    // would be some visual indicator both in the outliner and in the 3dview."
+    //
+    // A trailing icon, exactly as a linked instance already marks itself, so the row's name and
+    // its indent are untouched -- the outliner is a tree you read down the left edge, and a
+    // marker that moved the text would cost more than it tells you. It marks the whole governed
+    // chain rather than only the flagged root, which is what the rig actually does.
+    const isPhys = Skeleton.physicsGoverned?.(m) && Skeleton.isJoint?.(m);
     // During a pending pick, rows read as targets (and the subject can't pick itself).
     const isSubject = pendingMode && m.getID() === main._rigPendingSubject;
     const pickCls = pendingMode ? (isSubject ? ' rig-subject' : ' rig-target') : '';
@@ -2302,7 +2312,7 @@ export function buildSectionHTML_scene(main) {
           ? `<button class="mm-collapse-btn" data-mesh-id="${m._permanentStaticId}" data-action="collapse" style="margin-left:${depth * 14}px" title="${collapsed ? 'Expand' : 'Collapse'}">${faIcon(collapsed ? 'chevron-right' : 'chevron-down')}</button>`
           : `<span class="mm-collapse-spacer" style="margin-left:${depth * 14}px"></span>`}
         <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" title="Select — rename from the toolbar, or double-click">
-          ${faIcon(typeIcon, { cls: 'mm-node-icon' })}<span class="mm-node-name">${m._permanentStaticLabel}</span>${main.isLinked?.(m) ? faIcon('link', { size: 10, style: 'margin-left:5px;color:#89dceb', title: 'Linked instance — shares geometry; edits affect all occurrences' }) : ''}
+          ${faIcon(typeIcon, { cls: 'mm-node-icon' })}<span class="mm-node-name">${m._permanentStaticLabel}</span>${main.isLinked?.(m) ? faIcon('link', { size: 10, style: 'margin-left:5px;color:#89dceb', title: 'Linked instance — shares geometry; edits affect all occurrences' }) : ''}${isPhys ? faIcon('wind', { size: 10, style: 'margin-left:5px;color:#a6e3a1', title: 'Physics bone — this joint swings, or hangs below one that does' }) : ''}
         </button>
       </div>`;
   };
@@ -3490,7 +3500,7 @@ export class MainMenuPanel extends HTMLVRPanel {
 
   _wireContent() {
     const main = this._main;
-    wireGroups(this._element, () => this.markDirty());
+    wireGroups(this._element, () => this.noteContentResized());
     if (this._activeMenu) {
       this._wireMenu(this._activeMenu, main);
     } else {

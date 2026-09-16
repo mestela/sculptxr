@@ -298,14 +298,22 @@ const HOLD = (() => {
 // adopts the current pose whenever something other than the sim wrote the joint, and the solver
 // writing a pinned chain is not an authored rest. Without this the solved pose became the
 // chain's rest for ever -- weight.sxr, one pass then rewind: the pinned arm 2.52 units off.
+// Published through ONE helper now, and stamped with the time — physics trusts the set only
+// while it is this frame's. The interactive drag publishes too (see IKSolver.solve): without
+// that, dragging the end of a physics chain made the pulled pose that chain's target for ever,
+// and with no timestamp the set from a pinned solve was never cleared and those joints could
+// never adopt an authored pose again.
 check('the owned set is published for the simulation to read',
-  /window\._ikOwnedIds = ownedIds;/.test(IKS),
+  /window\._ikOwnedIds = ids;/.test(IKS) && /window\._ikOwnedAt = /.test(IKS),
   'physics adopts the solved pose as its rest and never returns to bind');
+check('...from the interactive drag as well as from the pin hold',
+  (IKS.match(/publishOwned\(/g) || []).length >= 3,
+  'a hand drag that publishes nothing is a solve physics reads as an authored pose');
 
 check('...and holdPins uses that list, since it is what decides ownership',
   HOLD.length > 0
     && /const pins = IKSolver\.activePins\(main\);/.test(HOLD)
-    && /const ownedIds = solverOwned\(main, pins\);/.test(HOLD)
+    && /const ownedIds = publishOwned\(solverOwned\(main, pins\)\);/.test(HOLD)
     && /seedFromRest\(main, written, ownedIds\);/.test(HOLD),
   'a zero-weight pin left in this list keeps its chain owned, and seedFromRest then resets that '
     + 'chain to rest before every solve -- which is the snap');

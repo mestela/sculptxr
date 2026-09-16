@@ -123,5 +123,30 @@ const px = (block, prop) => {
     '"Apply To All" names a value the panel no longer has');
 }
 
+// ── A DISABLED CONTROL IS ONLY DISABLED IN A REAL BROWSER ────────────────────
+//
+// Everything in _vrDispatch synthesises input: the slider drag writes `value` and dispatches
+// 'input' itself, and a tap dispatches its own MouseEvent. None of that consults `disabled`, and
+// `pointer-events: none` says nothing to _uvToElement either -- that walk is a rectangle test
+// this file wrote, not one the browser runs. So a dimmed, inert-looking control was fully
+// draggable and fully clickable through a ray, which is worse than not dimming it at all: the
+// panel says the control is off and the headset says it is on.
+//
+// Found when the physics sliders started rendering always-but-disabled rather than appearing
+// with the flag, but the hole was already there -- the Follow slider disables itself under XPBD
+// and had been draggable the whole time.
+{
+  const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/HTMLVRPanel.js'), 'utf8');
+  check('a disabled slider cannot be dragged by a ray',
+    /if \(rangeEl && !disabledEl\(rangeEl\)\) this\._sliderDragTarget = rangeEl;/.test(PANEL));
+  check('...and a disabled button takes no click',
+    /const dead = disabledEl\(target\)[\s\S]{0,200}?this\._pendingClick = null;/.test(PANEL));
+  // `.disabled` reflects the ATTRIBUTE only, so a control inside a disabled <fieldset> reports
+  // false -- and the fieldset is how whole blocks are switched off in these panels.
+  check('...asked with :disabled, so a disabled fieldset counts',
+    /matches\(':disabled'\)/.test(PANEL),
+    'the .disabled property would have missed every block-level switch-off in the app');
+}
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);
