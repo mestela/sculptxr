@@ -101,6 +101,36 @@ function jointLabel(j) { return (j && (j._permanentStaticLabel || ('joint ' + j.
 // the narrow left column -- so a mirrored pair wrapped onto a second line. matt: "there's no need
 // to split over 2 lines, and the 'editing' prefix is useless." The word was carrying nothing the
 // section heading above it does not already say, and the row is one full-width cell now.
+// WHICH JOINT A PIN CONTROL ACTS ON.
+//
+// THE PANEL ACTS ON THE SELECTION; THE MARKING MENU KEEPS ACTING ON HOVER. That is the rule the
+// whole pin plan hangs off: every command in the A ring resolves through Skeleton.hoveredJoint
+// and freezes it at open, which a panel button cannot do -- there is nothing under the pointer
+// when you reach for a panel. One function, two target resolvers.
+//
+// Resolves a PIN to the joint it holds, the same as the ring's _resolvePinJoint: a pin is the
+// thing you grab in the viewport, so selecting one and then finding the pin controls dead would
+// be the obvious bug.
+//
+// No memory. The physics sliders had a sticky target and it was cut for good reasons that apply
+// here unchanged -- matt: "the stickiness is a UI hack, and means we run the risk of people
+// modifying physics properties they didn't want."
+function rigPanelTarget(main) {
+  const sel = (main.getSelectedMeshes?.() || []).filter((m) => m && (m._isBone || m._isPinTarget));
+  if (sel.length !== 1) return null;
+  const one = sel[0];
+  if (one._isPinTarget) return one._pinnedJoint || null;
+  return one._isBone ? one : null;
+}
+
+// Clear Keys removes the weight CHANNEL, so it means nothing without one. The ring's own test,
+// verbatim: an unkeyed pin is fully on with no curve at all, which is the state a rig starts in.
+function pinHasKeys(joint) {
+  const reg = window._animationRegistry;
+  const pin = joint ? IKSolver.pinObject(joint) : null;
+  return !!(pin && reg && reg.scalarTrack && reg.scalarTrack(pin, IKSolver.PIN_WEIGHT, false));
+}
+
 function physAimLabel(main, t) {
   if (!t) return 'Defaults \u2014 no physics bone';
   const twin = Skeleton.mirrorEdits(main) && t._boneMirror
@@ -530,11 +560,79 @@ export function buildBonePoseHTML(main, style) {
         title="Throw away every sculpt made since the mesh was bound and put the bind shape back. Not an undo — it does not care how the shape got here, which is what makes it useful when a stroke went wrong in a way you cannot walk back. The rig, the weights and the pose are untouched.">Revert to Bind Shape</button>
     </div>` : ''}`;
 
+  // ── PINS (audit groups B and C) ─────────────────────────────────────────────────────
+  //
+  // Eleven commands that existed ONLY in the VR marking menu, two of them -- Rotation Only and
+  // Aim -- unreachable on iPad by any route at all. The main panel's Pose block had Clear Pins
+  // and nothing else, which is an all-pins wipe rather than a per-joint mode.
+  //
+  // HERE, because buildBonePoseHTML is already rendered by the main panel AND the wrist panel,
+  // and by all three tools that bind the A-button pin cycle -- Bone Draw, Grab and TransformVR.
+  // One builder, every surface, including the hands-only runtime where the wrist panel is the
+  // only menu there is.
+  //
+  // The mode you are in reads ACTIVE rather than dimmed. The ring dims it, because in a marking
+  // menu dimming is the only channel available to say "you are already here"; a panel has the
+  // active state every other mode row in this file already uses, and inverting that one row
+  // would be the odd one out.
+  const pinTarget = rigPanelTarget(main);
+  const pinMode = pinTarget ? IKSolver.pinMode(pinTarget) : 0;
+  const pinOn = (m) => (pinMode === m ? ' active' : '');
+  const pinChip = (id, label, m) =>
+    `<button class="${c.toggle}${pinOn(m)}" id="bone-${id}">${squeezeLabel(label, c.chip)}</button>`;
+
+  // GROUND COMPOSES WITH ALL FOUR MODES rather than being a fifth one, so it is a flag and not a
+  // chip in the mode set. Its label carries its state, as the ring's does: dimming would say
+  // "choosing this does nothing", which is true of a mode you are in and false of a toggle.
+  const ground = pinTarget && pinMode ? IKSolver.keepsAboveGround(pinTarget) : false;
+  const pinWeightBody = `
+    <div class="${c.toggles}">
+      <button class="${c.toggle}" id="bone-pin-act">Activate</button>
+      <button class="${c.toggle}" id="bone-pin-deact">Deactivate</button>
+      <button class="${c.toggle}" id="bone-pin-match">Match</button>
+    </div>
+    <div class="${c.toggles}">
+      <button class="${c.toggle}" id="bone-pin-half">Half</button>
+      <button class="${c.toggle}" id="bone-pin-clear"${pinHasKeys(pinTarget) ? '' : ' disabled'}>Clear Keys</button>
+    </div>`;
+
+  // DIMMED WITH NO JOINT SELECTED, and deliberately NOT the answer the physics sliders got.
+  //
+  // Those stay live and edit DEFAULTS, because setting the values you want and then flagging a
+  // joint is a real way to work. The same move was considered here -- the mode a NEW pin gets,
+  // which the A-button cycle currently hardcodes -- and rejected once the layout was in front of
+  // matt: "there's only one button to push, your choice of pin, so preselection options makes no
+  // sense here."
+  //
+  // Which is the distinction, and it is worth keeping straight: physics is a flag you set and
+  // then tune, so its parameters have a life before the flag exists. A pin is ONE act with the
+  // mode chosen inside it, so there is no before to configure.
+  const pinsBody = `
+    <div class="${c.row}">
+      <span class="${c.val}" id="bone-pin-aim"
+        style="flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${
+          pinTarget ? jointLabel(pinTarget) : 'No joint selected'}</span>
+    </div>
+    <fieldset class="mm-disabled-group"${pinTarget ? '' : ' disabled'}>
+    <div class="${c.toggles}">
+      ${pinChip('pin-pos', 'Position', IKSolver.PIN_POS)}
+      ${pinChip('pin-full', 'Pos + Rot', IKSolver.PIN_FULL)}
+      ${pinChip('pin-rot', 'Rot Only', IKSolver.PIN_ROT)}
+    </div>
+    <div class="${c.toggles}">
+      ${pinChip('pin-aimmode', 'Aim', IKSolver.PIN_SOFT)}
+      <button class="${c.toggle}" id="bone-pin-none">Unpin</button>
+      ${pinMode ? flagButton(c, 'pin-ground', ground ? 'Ground On' : 'Ground Off', ground) : ''}
+    </div>
+    ${pinMode ? pinWeightBody : ''}
+    </fieldset>`;
+
   // A SECTION LIKE THE REST OF THEM. It was the one block left with a plain title, which on the
   // wrist panel means no title at all -- DIALECT.mp has no title class, so sectionTitle there
   // renders a divider and nothing else, and four unlabelled buttons simply appeared under the
   // physics ones. Open by default: posing is what you are doing when this panel is up.
-  if (uiReorg()) return collapsibleHTML('bone-pose', 'Pose', poseBody, true);
+  if (uiReorg()) return collapsibleHTML('bone-pose', 'Pose', poseBody, true)
+    + collapsibleHTML('bone-pins', 'Pins', pinsBody, false);
 
   return `
     ${sectionTitle(c, 'Pose')}
@@ -1206,6 +1304,41 @@ export function wireBoneSection(root, main, opts) {
   //   then the re-init flag, so the first step after this seeds from the rest pose rather than
   //     from particles still standing where the swing left them.
   // "the rest can take over control once i jump the timeline" — nothing here touches the keys.
+  // ── PINS (audit groups B and C) ──────────────────────────────────────────────
+  //
+  // Each handler is the ring's `run` with one substitution: the target comes from
+  // rigPanelTarget instead of from the hover. Same call, same arguments, same undo — a second
+  // implementation of any of these would be a second thing to keep in step, and the ring is
+  // the one that has been in use.
+  //
+  // `rebuild` rather than `refresh` throughout: a mode change decides which controls EXIST
+  // (Ground and the whole weight block appear only on a pin), so a pass that only re-classed
+  // would leave the panel showing the previous mode's set.
+  {
+    const aimed = () => rigPanelTarget(main);
+    const pinCmd = (id, run) => q(id)?.addEventListener('click', () => {
+      const j = aimed();
+      if (!j) { say('Bones: select one joint to pin', false); return; }
+      run(j);
+      rebuild();
+      main.render?.();
+    });
+    pinCmd('pin-pos',     (j) => IKSolver.setPinMode(main, j, IKSolver.PIN_POS));
+    pinCmd('pin-full',    (j) => IKSolver.setPinMode(main, j, IKSolver.PIN_FULL));
+    pinCmd('pin-rot',     (j) => IKSolver.setPinMode(main, j, IKSolver.PIN_ROT));
+    pinCmd('pin-aimmode', (j) => IKSolver.setPinMode(main, j, IKSolver.PIN_SOFT));
+    pinCmd('pin-none',    (j) => IKSolver.setPinMode(main, j, IKSolver.PIN_NONE));
+    pinCmd('pin-ground',  (j) => IKSolver.togglePinGround(main, j));
+    // WEIGHT. "Here" was doing the work in the ring's labels and the column is too narrow to
+    // keep it -- but all four act AT THE PLAYHEAD, which is what the word was saying. The
+    // section they sit in only exists on a pinned joint, so the context carries it.
+    pinCmd('pin-act',   (j) => IKSolver.setPinActive(main, j, true));
+    pinCmd('pin-deact', (j) => IKSolver.setPinActive(main, j, false));
+    pinCmd('pin-match', (j) => IKSolver.matchPinHere(main, j));
+    pinCmd('pin-half',  (j) => IKSolver.setPinWeightKey(main, j, 0.5));
+    pinCmd('pin-clear', (j) => IKSolver.clearPinWeight(main, j));
+  }
+
   q('restpose')?.addEventListener('click', () => {
     // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
     // next physics step pulled the chain straight off it again, toward a target adopted from
@@ -1349,6 +1482,21 @@ export function syncBoneSection(root, main) {
   // lived in the section HEADING was built once and then lied. Here it cannot be older than the
   // last sync, and it says the defaults case out loud rather than leaving a live slider that
   // appears to do nothing.
+  // WHICH JOINT THE PIN CONTROLS ACT ON, rewritten every sync for the same reason the physics
+  // readout is: the markup is built once and the selection moves on without it.
+  const pinAim = q('pin-aim');
+  if (pinAim) {
+    const t = rigPanelTarget(main);
+    pinAim.textContent = t ? jointLabel(t) : 'No joint selected';
+    // AND THE DIMMING WITH IT. The readout was synced and the fieldset was not, so a panel built
+    // with a joint selected kept live-looking controls after the selection was dropped -- the
+    // row said "No joint selected" directly above six chips that looked pressable. Whatever says
+    // there is no target has to be the same thing that stops you acting on it.
+    const fs = pinAim.closest('[data-group-body="bone-pins"]')?.querySelector('fieldset')
+      || root.querySelector('#bone-pin-pos')?.closest('fieldset');
+    if (fs) fs.disabled = !t;
+  }
+
   const aim = q('phys-aim');
   if (aim) {
     aim.textContent = physAimLabel(main, PhysicsBones.panelTarget(main,

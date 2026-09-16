@@ -1,17 +1,17 @@
 // Structural checks on the shared bones panel markup: both dialects, the XR gating, and
 // that the ids the wiring looks for are the ids the markup emits.
 import fs from 'fs';
-const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
-const MINI_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MiniPanel.js', 'utf8');
-const MAIN_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
-const SKEL_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+const SRC = fs.readFileSync(new URL('../src/gui/bonePanel.js', import.meta.url).pathname, 'utf8');
+const MINI_SRC = fs.readFileSync(new URL('../src/gui/htmlvr/MiniPanel.js', import.meta.url).pathname, 'utf8');
+const MAIN_SRC = fs.readFileSync(new URL('../src/gui/htmlvr/MainMenuPanel.js', import.meta.url).pathname, 'utf8');
+const SKEL_SRC = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
 const body = SRC.split('\n').filter(l => !/^import\s/.test(l)).filter(l => !/^export \{ Enums/.test(l)).join('\n');
 globalThis.window = {};
 
 // The display flags are read through Skeleton now, so the stub below carries the SAME defaults
 // the real registry does — PARSED OUT of the real source rather than retyped here, or this
 // harness would happily pass while the shipped defaults said something else.
-const FLAG_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+const FLAG_SRC = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
 const FLAG_DEFAULTS = {};
 {
   const block = /const DISPLAY_FLAGS = \{([\s\S]*?)\n\};/.exec(FLAG_SRC);
@@ -101,7 +101,19 @@ const SkinMesh = {};
 // The panel asks whether any weight cages exist so it can label one button Bake or Delete.
 // Stubbed to "none", which is the state every existing rig is in.
 const WeightCage = { cages: () => (globalThis.__cages || []) };
-const IKSolver = { pinnedJoints: () => [{},{}] };
+// The pin surface the Pins section reads. Mode constants matter to the markup (which chip reads
+// active), so they are the real values rather than placeholders; the commands are stubs because
+// what this file checks is that the panel OFFERS them, not what they do.
+const IKSolver = {
+  pinnedJoints: () => [{}, {}],
+  PIN_NONE: 0, PIN_POS: 1, PIN_FULL: 3, PIN_ROT: 4, PIN_SOFT: 8,
+  PIN_WEIGHT: 'pinWeight',
+  pinMode: (j) => (j && j._pinMode) | 0,
+  pinObject: (j) => (j && j._pin) || null,
+  keepsAboveGround: (j) => !!(j && j._pinGround),
+  setPinMode(){}, togglePinGround(){}, setPinActive(){}, matchPinHere(){},
+  setPinWeightKey(){}, clearPinWeight(){},
+};
 // UI REORG MOCKUP. The panel imports these two from uiTokens, and this harness strips every
 // import line -- so without stubs here buildBoneAuthoringHTML throws ReferenceError on the
 // first call and the whole file reports as one failure with no message.
@@ -221,7 +233,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 // are getting unreliable. after editing a character i went back to the bone parameters to
 // adjust delta mush, but that slider was missing."
 {
-  const SCN2 = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  const SCN2 = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
   check('losing a binding to a topology edit is announced',
     /if \(Skinning\.isBound\(mesh\) && !Skinning\.isBound\(newMesh\)\) \{/.test(SCN2)
       && /Bind lost: /.test(SCN2),
@@ -241,9 +253,9 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 // for all the tools for both sculpting and lowpoly gets in the way of all the tool related
 // buttons and state at the bottom."
 {
-  const TORN = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/TornOffPanel.js', 'utf8');
-  const GUI  = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/Gui.js', 'utf8');
-  const ICONS = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/tabIcons.js', 'utf8');
+  const TORN = fs.readFileSync(new URL('../src/gui/htmlvr/TornOffPanel.js', import.meta.url).pathname, 'utf8');
+  const GUI  = fs.readFileSync(new URL('../src/gui/Gui.js', import.meta.url).pathname, 'utf8');
+  const ICONS = fs.readFileSync(new URL('../src/gui/tabIcons.js', import.meta.url).pathname, 'utf8');
 
   check('one builder produces both pages',
     /function buildSculptingHTML\(main, part\)/.test(MAIN_SRC)
@@ -322,7 +334,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
       + 'tools tab leaves it describing the previous one');
 
   // ── PINNING, ON BOTH PLATFORMS ────────────────────────────────────────────────────────
-  const DFP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
+  const DFP = fs.readFileSync(new URL('../src/gui/DesktopFloatPanel.js', import.meta.url).pathname, 'utf8');
   check('a desktop section can be floated out of the sidebar',
     /floatSection\(sectionId, at\) \{/.test(GUI) && /redockSection\(sectionId\) \{/.test(GUI)
       && /class DesktopFloatPanel/.test(DFP));
@@ -366,8 +378,8 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // expect them back next session. matt: "pin states for panels on desktop should be
   // persistent, remember state and position."
   {
-    const OPTS = fs.readFileSync('/Users/mattestela/sculptxr/src/misc/getOptionsURL.js', 'utf8');
-    const DFP2 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
+    const OPTS = fs.readFileSync(new URL('../src/misc/getOptionsURL.js', import.meta.url).pathname, 'utf8');
+    const DFP2 = fs.readFileSync(new URL('../src/gui/DesktopFloatPanel.js', import.meta.url).pathname, 'utf8');
     check('pin state is saved through the shared option store',
       /getOptionsURL\.saveOption\('desktopPins', map, 250\);/.test(GUI)
         && /options\.desktopPins = \(dp && typeof dp === 'object'\) \? dp : null;/.test(OPTS),
@@ -396,7 +408,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // exactly as it did when it held the controls. matt: "in the sidebar their icon should be
   // dimmed if they've been pinned."
   {
-    const DFP3 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/DesktopFloatPanel.js', 'utf8');
+    const DFP3 = fs.readFileSync(new URL('../src/gui/DesktopFloatPanel.js', import.meta.url).pathname, 'utf8');
     check('a pinned section dims its sidebar tab',
       /_updatePinnedTabStates\(\) \{/.test(GUI)
         && (GUI.match(/this\._updatePinnedTabStates\(\);/g) || []).length >= 2,
@@ -448,8 +460,8 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // fixed in v3.30.72. matt: "i notice in vr that the outliner isn't updating when pinned
   // either."
   {
-    const SCN = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
-    const TORN2 = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/TornOffPanel.js', 'utf8');
+    const SCN = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
+    const TORN2 = fs.readFileSync(new URL('../src/gui/htmlvr/TornOffPanel.js', import.meta.url).pathname, 'utf8');
     check('marking the VR panel dirty reaches its torn-off sections',
       /markDirty\(\) \{\n\s*super\.markDirty\(\);[\s\S]{0,500}?for \(const p of this\._tornPanels\) p\.requestSync\?\.\(\);/.test(MAIN_SRC),
       'fixed where "this panel changed" ARRIVES, not at the seven call sites -- so callers that '
@@ -489,7 +501,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
   // panel it is". A row of chips answers "what is pinned"; it does not answer "what is THIS".
   //
   // The strips are gone. The recall they also offered lives on each panel's own redock button.
-  const TORN_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/TornOffPanel.js', 'utf8');
+  const TORN_SRC = fs.readFileSync(new URL('../src/gui/htmlvr/TornOffPanel.js', import.meta.url).pathname, 'utf8');
   check('a torn-off VR panel wears its own section icon',
     /class="mm-torn-icon"[^]{0,200}?TAB_ICONS\[sectionId\]/.test(TORN_SRC),
     'nothing on the panel says which section it is except the word');
@@ -523,7 +535,7 @@ check('...and says so on the same line, including when the bind fails',
   /NOT bound: \$\{\(bnd && bnd\.why\)/.test(SRC),
   'the skin still exists after a failed bind, and silence there reads as "binding is broken"');
 {
-  const SKINMESH = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/SkinMesh.js', 'utf8');
+  const SKINMESH = fs.readFileSync(new URL('../src/editing/SkinMesh.js', import.meta.url).pathname, 'utf8');
   check('...which needs build() to hand the mesh back',
     /return \{ ok: true, mesh: mesh,/.test(SKINMESH),
     'the caller cannot bind what it cannot name');
@@ -677,8 +689,8 @@ check('shader-specific groups mute instead of hiding',
 // The fix is composition in ONE place: the shared animation section carries the block, and
 // neither host appends it. Assert that, not the presence of a string in each file.
 {
-  const ACP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/AnimationControlPanel.js', 'utf8');
-  const MM  = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
+  const ACP = fs.readFileSync(new URL('../src/gui/htmlvr/AnimationControlPanel.js', import.meta.url).pathname, 'utf8');
+  const MM  = fs.readFileSync(new URL('../src/gui/htmlvr/MainMenuPanel.js', import.meta.url).pathname, 'utf8');
 
   check('the shared animation section composes the rig-animation block',
     /buildBoneAnimationHTML\(main, style \|\| 'acp'\)/.test(ACP));
@@ -698,7 +710,7 @@ check('shader-specific groups mute instead of hiding',
 
 // ── Display flags: defaults, one registry, and persistence ──────────────────────
 {
-  const OPTS = fs.readFileSync('/Users/mattestela/sculptxr/src/misc/getOptionsURL.js', 'utf8');
+  const OPTS = fs.readFileSync(new URL('../src/misc/getOptionsURL.js', import.meta.url).pathname, 'utf8');
 
   // Capsules and weights are DIAGNOSTICS drawn over the sculpt. Neither is what you want to
   // be looking at the moment the tool opens.
@@ -735,7 +747,7 @@ check('shader-specific groups mute instead of hiding',
   // every reader — the arrangement that made flipping a default an eight-file edit.
   for (const f of ['src/gui/bonePanel.js', 'src/editing/Skeleton.js', 'src/editing/Skinning.js',
                    'src/editing/tools/BoneDrawTool.js']) {
-    const t = fs.readFileSync('/Users/mattestela/sculptxr/' + f, 'utf8')
+    const t = fs.readFileSync(new URL('../', import.meta.url).pathname + f, 'utf8')
       .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')
       .replace(/const DISPLAY_FLAGS[\s\S]*?\n\};/, '');
     const raw = /window\._bone(Show|Snap)\w+\s*(!==|===|=[^=])/.test(t);
@@ -1255,7 +1267,7 @@ check('...and both wire it from the same place',
 // pressed Properties and got Topology" is a question about that walk and can only be asked from
 // inside a headset.
 {
-  const HP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8');
+  const HP = fs.readFileSync(new URL('../src/gui/htmlvr/HTMLVRPanel.js', import.meta.url).pathname, 'utf8');
   // THE RAY-HIT TRACE HAS LEFT THE MENU, ON PURPOSE. It was added to answer one question -- "I
   // press Properties and get Topology" -- and that turned out to be a double hyphen in an HTML
   // comment breaking the SVG, not the bounding-box walk it was built to inspect. The instrument
@@ -1264,7 +1276,7 @@ check('...and both wire it from the same place',
   // required?" If the walk is ever suspect again, the toggle comes back with the question.
   check('the ray-hit trace still exists to be switched on',
     /window\._hoverTrace = on !== false;/.test(
-      fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8')),
+      fs.readFileSync(new URL('../src/gui/htmlvr/HTMLVRPanel.js', import.meta.url).pathname, 'utf8')),
     'removing the menu entry must not delete the instrument behind it');
   check('...and names the element it resolved to well enough to tell tabs apart',
     /t\.dataset\?\.section \|\| t\.dataset\?\.menu \|\| t\.id \|\| t\.className/.test(HP),
@@ -1278,7 +1290,7 @@ check('the skin frame trace is in the shared toggle list',
 check('...and it reads the live flag',
   /get: \(\) => !!window\._skinTrace/.test(MAIN_SRC));
 {
-  const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
+  const SKIN = fs.readFileSync(new URL('../src/editing/Skinning.js', import.meta.url).pathname, 'utf8');
   check('...and the trace breaks the frame into the four phases',
     /'ms total \| lbs ' \+ ms\(_t0, _t1\)/.test(SKIN)
       && /' mush ' \+ ms\(_t1, _t2\) \+ ' synth ' \+ ms\(_t2, _t3\) \+ ' refresh ' \+ ms\(_t3, now\)/.test(SKIN)
@@ -1329,7 +1341,7 @@ check('...using the same RigPending entry point as the main menu, not a copy',
 // the class. panelxml_test now sweeps ALL of src, so this file just makes sure that sweep is
 // still there rather than keeping a narrower copy alive to disagree with it.
 {
-  const XMLT = fs.readFileSync('/Users/mattestela/sculptxr/scratchpad/panelxml_test.mjs', 'utf8');
+  const XMLT = fs.readFileSync(new URL('../scratchpad/panelxml_test.mjs', import.meta.url).pathname, 'utf8');
   check('the "--" sweep exists and walks the whole tree',
     /<!--\(\[\\s\\S\]\*\?\)-->/.test(XMLT) && /function walk\(d\)/.test(XMLT),
     'panelxml_test no longer sweeps src, and nothing else does');
@@ -1414,7 +1426,7 @@ check('...and the ghost pass is shaded too, being the half you actually see',
 // reading. matt: "almost all the bones display options (bone solid, bone wireframe, joints,
 // capsules, pins etc) draw over the vr panels."
 {
-  const PANEL = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/HTMLVRPanel.js', 'utf8');
+  const PANEL = fs.readFileSync(new URL('../src/gui/htmlvr/HTMLVRPanel.js', import.meta.url).pathname, 'utf8');
   const panelOrder = Number((PANEL.match(/VR_PANEL_RENDER_ORDER = (\d+);/) || [])[1]);
   const rigOrders = [...SKEL_SRC.matchAll(/renderOrder = (\d{3,});/g)].map((m) => Number(m[1]));
   check('the VR panels draw above every rig overlay',
@@ -1425,7 +1437,7 @@ check('...and the ghost pass is shaded too, being the half you actually see',
   check('...from one named constant the panel furniture can ride on',
     /this\.mesh\.renderOrder = VR_PANEL_RENDER_ORDER \+ \(this\._isModalOverlay \? VR_MODAL_ORDER_BUMP : 0\);/.test(PANEL)
       && /renderOrder = VR_PANEL_RENDER_ORDER \+ 1;/.test(
-        fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8')));
+        fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8')));
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
