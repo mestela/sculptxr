@@ -3158,6 +3158,11 @@ export class MainMenuPanel extends HTMLVRPanel {
     super(root, MM_W / VR_PANEL_PX_PER_M);
 
     this._main           = main;
+    // SO A SECTION CAN NAME THE PANEL IT IS IN. The section builders are shared with the desktop
+    // sidebar and are handed an ELEMENT, not a panel -- but anything that summons a floating VR
+    // panel (the keyboard, the name chooser) has to say what to float in front of. On the desktop
+    // hosts this stays undefined, which is the right answer there: there is nothing to float.
+    root._vrPanel = this;
     this._activeMenu    = null;     // null | 'files'|'history'|'reference'|'settings'|'about'
     this._activeSection = DEFAULT_SECTION; // scene|topology|rendering|sculpting|properties|animation
     this._lastContentKey = '';      // avoids redundant rebuilds
@@ -3815,7 +3820,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'animation') {
       this._wireSectionAnimation(el, lightRepaint);
-      wireBoneSection(el, main, { refresh: lightRepaint, rebuild: lightRepaint });
+      wireBoneSection(el, main, { refresh: lightRepaint, rebuild: lightRepaint, panel: el._vrPanel || null });
     }
   }
 
@@ -4469,7 +4474,7 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : (mesh ? [mesh] : []);
   const ShaderPBR = Shader[Enums.Shader.PBR];
 
-  wireBoneSection(el, main, { refresh: fullRepaintFn, rebuild: fullRepaintFn });
+  wireBoneSection(el, main, { refresh: fullRepaintFn, rebuild: fullRepaintFn, panel: el._vrPanel || null });
 
   el.querySelectorAll('[data-shader]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4721,7 +4726,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   // reachable at all on iPad and desktop — it lived only in the VR wrist panel before.
   // Both callbacks repaint: this panel has no in-place state sync, so a rebuild is how a
   // toggle shows that it toggled.
-  wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn });
+  wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
   wireTransformSection(el, main, { refresh: repaintFn });
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {

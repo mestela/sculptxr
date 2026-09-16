@@ -655,6 +655,7 @@ export class MiniPanel extends HTMLVRPanel {
 
     if (idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB || idx === Enums.Tools.TRANSFORM_VR) {
       wireBoneSection(extras, main, {
+        panel: this,
         refresh: () => this.syncFromState(),
         // Binding and Make Skin change WHICH buttons exist, and the extras markup is only
         // rebuilt when the tool changes, so those have to force one.

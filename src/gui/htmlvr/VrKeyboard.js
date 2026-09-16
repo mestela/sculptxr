@@ -144,6 +144,7 @@ function buildPanelEl() {
     <button class="vrk-key" data-k=".">.</button>
     <button class="vrk-key vrk-ok" id="vrk-ok">&#x2713;</button>
   </div>
+  <div id="vrk-choices" style="display:none"></div>
 </div>`;
   return wrap.firstElementChild;
 }
@@ -301,6 +302,75 @@ export class VrKeyboard extends HTMLVRPanel {
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
+  // ── A LIST OF SUGGESTIONS, IN THE SAME FLOATING PANEL ───────────────────────
+  //
+  // Typing a name one pinch at a time is a lot of work for a word the app already knows, so the
+  // list comes first and the keys are the way out of it. matt: "lets offer a list first, and
+  // keyboard as a last option... center axis names in one column, other names in another, the
+  // 'keyboard...' option at the bottom."
+  //
+  // THE SAME PANEL, not a new one, and that is the whole reason it is here rather than in
+  // bonePanel: this class already knows how to place itself in front of the panel that summoned
+  // it (see _positionForSource). A second floating panel would be a second copy of that, and the
+  // placement is exactly the thing that has been wrong.
+  openChoices(config = {}, onPick, sourcePanel = null) {
+    const cols = config.columns || [];
+    if (!this.shouldUse() || !cols.length) {
+      // No headset: the keyboard's own desktop overlay is a better answer than a list of twelve
+      // buttons in a DOM modal, and it is already built.
+      this.open(config.current ?? '', config, onPick, null, sourcePanel);
+      return;
+    }
+    this._config    = config;
+    this._onConfirm = onPick;
+    this._onCancel  = config.onCancel ?? null;
+    this._str       = config.current != null ? String(config.current) : '';
+
+    const host = this._element.querySelector('#vrk-choices');
+    if (host) {
+      const col = (list) => `<div style="flex:1;display:flex;flex-direction:column;gap:6px">` +
+        list.map((nm) => `<button class="vrk-key" data-choice="${escapeHtml(nm)}">${escapeHtml(nm)}</button>`).join('') +
+        `</div>`;
+      host.innerHTML = `
+        <div style="display:flex;gap:6px">${cols.map(col).join('')}</div>
+        <div class="vrk-row" style="margin-top:8px">
+          <button class="vrk-key vrk-cancel" id="vrk-ch-cancel">&#x2715;</button>
+          <button class="vrk-key vrk-wide" id="vrk-ch-keys">Keyboard</button>
+        </div>`;
+      host.querySelectorAll('[data-choice]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const cb = this._onConfirm; const v = b.dataset.choice;
+          this._onCancel = null;
+          this.close();
+          cb?.(v);
+        });
+      });
+      host.querySelector('#vrk-ch-cancel')?.addEventListener('click', () => this.close());
+      // The long way round, reusing everything below: same panel, same placement, same confirm.
+      host.querySelector('#vrk-ch-keys')?.addEventListener('click', () => {
+        this._showChoices(false);
+        this._refresh();
+        this.markDirty();
+      });
+    }
+    this.open(this._str, config, onPick, null, sourcePanel);
+    this._showChoices(true);
+    this.markDirty();
+    this.flushPaint();
+  }
+
+  // Which half of the panel is live. The keys stay in the DOM so switching costs no rebuild.
+  _showChoices(on) {
+    const el = this._element;
+    if (!el) return;
+    el.querySelectorAll('.vrk-row, .vrk-display').forEach((r) => {
+      if (r.closest('#vrk-choices')) return;
+      r.style.display = on ? 'none' : '';
+    });
+    const host = el.querySelector('#vrk-choices');
+    if (host) host.style.display = on ? '' : 'none';
+  }
+
   open(currentValue, config = {}, onConfirm, sourceEl = null, sourcePanel = null, anchorMesh = null) {
     const xrPresenting = !!window.app?._renderer?.xr?.isPresenting;
     const panelVisible = sourcePanel ? !!sourcePanel.mesh?.visible : true;
@@ -322,6 +392,9 @@ export class VrKeyboard extends HTMLVRPanel {
 
     const label = this._element.querySelector('#vrk-label');
     if (label) label.textContent = config.label ?? 'Name';
+    // A plain open() is always the KEYS. openChoices calls this and then swaps, so this default
+    // is what puts the panel back for the next caller.
+    this._showChoices(false);
     this._refresh();
 
     if (!this.mesh) return;

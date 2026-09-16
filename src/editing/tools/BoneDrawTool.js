@@ -98,6 +98,9 @@ const _mTwinCur = new THREE.Matrix4(), _vTwinKeep = new THREE.Vector3();
 const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3();
 const _axis = new THREE.Vector3(), _hit = new THREE.Vector3();
 const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
+
+// How far off a bone still counts as pointing at it, in multiples of that bone's own radius.
+const BONE_PICK_SLACK = 1.5;
 // The tip plus the grab's held offset. It lived in a block of scratch shared with the volume
 // drag, and went out with it when the volumes were removed — leaving _dragTo referring to a
 // name that no longer existed, so a VR tweak grab threw on its first moved frame and Tweak FK
@@ -248,6 +251,19 @@ class BoneDrawTool extends SculptBase {
     setTimeout(() => {
       if (joint && main.getMeshes().includes(joint)) main.setMesh?.(joint);
     }, 0);
+  }
+
+  // ONE DOOR FOR "SOMETHING OUTSIDE ASKED ME TO END THE CHAIN", so every input route asks the
+  // same question and gets the same answer. Returns whether it did anything, which is what lets
+  // the caller fall through to its own behaviour when there was no chain open -- right-click
+  // means the viewport menu again the moment the chain is closed.
+  endChainFromInput() {
+    if (this._mode !== 'draw' || !this._validParent()) return false;
+    this.endChain();
+    Skeleton.hidePreview(this._main);
+    if (window.screenLog) window.screenLog('Bones: chain ended', 'cyan');
+    this._refresh?.();
+    return true;
   }
 
   endChain() {
@@ -575,7 +591,10 @@ class BoneDrawTool extends SculptBase {
   _pickBoneScreen() {
     const main = this._main;
     const mx = main._mouseX, my = main._mouseY;
-    let best = null, bestD = this._pickPx() * 4;
+    // The same slack the 3D pick uses, in screen pixels: on or just off the drawn capsule. It was
+    // FOUR times the joint radius here too, which is the halo that made a bone light from much
+    // further away than the joint at its end. See BONE_PICK_SLACK.
+    let best = null, bestD = this._pickPx() * BONE_PICK_SLACK;
     for (const j of Skeleton.joints(main)) {
       if (!Skeleton.jointVisible(j)) continue;
       const parent = j._parentMesh;
@@ -587,6 +606,17 @@ class BoneDrawTool extends SculptBase {
       if (d < bestD) { bestD = d; best = j; }
     }
     return best;
+  }
+
+  // The screen twin of _pickRigNode: the joint under the cursor, else the ROOT of the bone under
+  // it. Same reasoning, same Maya model -- see the note there.
+  _pickRigNodeScreen() {
+    const j = this._pickJointScreen();
+    if (j) return j;
+    const bone = this._pickBoneScreen();
+    const root = bone && bone._parentMesh;
+    const main = this._main;
+    return (root && Skeleton.isJoint(root) && main.getMeshes().includes(root)) ? root : null;
   }
 
   // Movement below this (device px) is a TAP, not a drag. Only IK reads it, to tell "cycle
@@ -793,7 +823,11 @@ class BoneDrawTool extends SculptBase {
     // stops the camera orbiting away from the joint you just picked; on a miss it returns false
     // and the click orbits as it always did.
     if (this._mode === 'select') {
-      const pick = this._pickJointScreen();
+      // THE SAME PICK THE HOVER USES. It was _pickJointScreen while the hover had already moved to
+      // _pickRigNodeScreen, so a bone lit up and then refused the click -- matt: "i get a preselect
+      // highlight on bones, but i can't click them to select." What lights has to be what a press
+      // takes, or the highlight is a promise the tool does not keep.
+      const pick = this._pickRigNodeScreen();
       if (!pick) return false;
       this._selectLater(pick);
       this._hilite = pick;
@@ -839,7 +873,9 @@ class BoneDrawTool extends SculptBase {
       return true;
     }
 
-    const joint = this._pickJointScreen();
+    // Pose, Tweak and IK all grab A JOINT, so they resolve a hovered bone to its root exactly as
+    // the highlight does.
+    const joint = this._pickRigNodeScreen();
     if (!joint) return false;
 
     Skeleton.jointPos(joint, _jp);
@@ -970,7 +1006,7 @@ class BoneDrawTool extends SculptBase {
       // it rather than dropping a loose joint on top — the same branching gesture as in VR,
       // and _place reads _hilite so what lit up is exactly what gets used.
       const parent = this._validParent();
-      const hilite = parent ? null : this._pickJointScreen();
+      const hilite = parent ? null : this._pickRigNodeScreen();
       if (hilite !== this._hilite) {
         this._hilite = hilite;
         Skeleton.setHighlight(main, hilite);
@@ -1028,8 +1064,11 @@ class BoneDrawTool extends SculptBase {
       Skeleton.highlightScaleHandle(this._main, null);
     }
 
-    const hit = this._drag ? this._drag.joint
-      : (this._mode === 'radius' ? this._pickBoneScreen() : this._pickJointScreen());
+    // RADIUS SIZES A JOINT -- _beginRadius writes `_jointRadius`, and the VR branch has always
+    // picked a joint for it. The desktop hover was picking a SEGMENT here (_pickBoneScreen), so it
+    // lit the bone and then grabbed whichever joint was nearest, which is a different thing. One
+    // pick for every mode now: what lights is what a press takes.
+    const hit = this._drag ? this._drag.joint : this._pickRigNodeScreen();
     if (hit === this._hilite) return;
     this._hilite = hit;
     Skeleton.setHighlight(this._main, hit);
@@ -1454,9 +1493,65 @@ class BoneDrawTool extends SculptBase {
   // Pick by RELATIVE distance (distance / radius), not absolute: the capsules differ hugely
   // in size across a rig, and the one you mean is the one you are inside or nearest the shell
   // of — not whichever bone's centreline happens to be closest to your hand.
+  // THE BONE AND THE JOINT HAVE TO AGREE ABOUT "NEAR".
+  //
+  // They did not, and not by a tunable amount -- they were different KINDS of threshold. A joint
+  // is picked within an ABSOLUTE band (pickJoint with _snapDist, sceneUnit * 0.05); a bone was
+  // picked within a RELATIVE one, anything inside FOUR TIMES its own radius. On an ordinary rig
+  // that is about three times the joint's band, so there is a wide shell where the bone lights
+  // and the joint does not -- which is not read as "the bone is near" but as the highlight being
+  // arbitrary. matt: "i can be a lot further from a bone and it will turn yellow, vs i need to be
+  // much closer to a joint."
+  //
+  // So acceptance is now the DRAWN BONE, plus a half-radius of slack: you are on it, or as good
+  // as. Tying it to the capsule you can see is what makes it predictable -- a fat bone catches
+  // from further out because it IS further out, and `ref` already floors a hairline bone at 5% of
+  // its own length so a thin one stays reachable.
+  //
+  // Not "the same band the joint uses", which was the first fix and is wrong in the other
+  // direction: a joint's band is measured from a POINT and a bone's from a SEGMENT, so matching
+  // the numbers still lights the bone and not the joint anywhere along a long bone's middle --
+  // the exact confusion being removed. Smaller than the joint band is the safe side to be on.
+  //
+  // The RANKING stays relative. Which of two overlapping bones you mean is a question about their
+  // sizes -- a thin finger beside a thick palm -- and the distance in radii is the right answer to
+  // it. What changed is only how far away a bone may be and still count at all.
+  // WHAT THE HAND IS POINTING AT, AS ONE JOINT.
+  //
+  // A BONE IS NOT A THING. Maya's own documentation is blunt about it -- "bones do not have nodes,
+  // and they do not have a physical or calculable presence in your scene. Bones are only visual
+  // cues that illustrate the relationships between joints" -- and this app agrees under the hood
+  // already: there is no bone object anywhere, _pickBone returns a JOINT, `_boneRadius` lives on a
+  // joint, RigTopology.split takes a joint.
+  //
+  // WHICH joint a bone belongs to is the part that was wrong. Maya draws a bone from a joint
+  // towards each of its children, "the narrow part pointing in the downward direction of the
+  // hierarchy" -- wide at the parent, tapering to the child -- so the bone reads as belonging to
+  // the joint it grows OUT of, and a wrist with five fingers simply draws five. Clicking any of
+  // them selects the wrist. matt: "i think selecting any of those 5 fanned out bones in the hand
+  // should select the wrist joint."
+  //
+  // _pickBone names the segment by its FAR end (the child), which is the right identity for an
+  // edit -- Split cuts `parent -> joint` and has to know which one. It is the wrong answer for
+  // SELECTION: pointing at a bone picked the joint at its tip, which then lit that joint's own
+  // child bone, so you highlighted one segment and selected the joint belonging to another. That
+  // is the confusion, and it is a mismatch rather than a threshold.
+  //
+  // So: the joint under the hand if there is one, else the ROOT of the bone under the hand.
+  _pickRigNode(pos) {
+    const main = this._main;
+    const j = Skeleton.pickJoint(main, pos, this._snapDist());
+    if (j) return j;
+    const bone = this._pickBone(pos);
+    const root = bone && bone._parentMesh;
+    return (root && Skeleton.isJoint(root) && main.getMeshes().includes(root)) ? root : null;
+  }
+
+  // Multiples of the bone's own radius. 4 was the old ceiling and is the halo matt saw.
+  // 1.5 is 'on the capsule, or just off it'.
   _pickBone(pos) {
     const main = this._main;
-    let best = null, bestT = 4;
+    let best = null, bestT = BONE_PICK_SLACK;
     for (const j of Skeleton.joints(main)) {
       if (!Skeleton.jointVisible(j)) continue; // hidden capsules are not grabbable
       const d = Skeleton.boneDistance(main, j, pos);
@@ -1883,7 +1978,7 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'select') {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
-      const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+      const hit = this._pickRigNode(_tip);
       if (down && hit) this._selectLater(hit);
       this._hilite = hit;
       Skeleton.setHighlight(main, hit);
@@ -1896,7 +1991,9 @@ class BoneDrawTool extends SculptBase {
       const q = (options && options.quat) || main._vrControllerQuat;
       const poseHand = (options && options.handedness) || null;
       if (down && q && !this._pose) {
-        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+        // _pickRigNode, not pickJoint: the highlight resolves a hovered bone to its root, and a
+        // press has to take what the highlight promised. Same in Tweak and IK below.
+        const hit = this._pickRigNode(_tip);
         if (hit) { this._beginPose(hit, q); this._grabHand = poseHand; }
       }
       // Same ownership rule as the tweak grab above — one drag, one hand.
@@ -1904,8 +2001,7 @@ class BoneDrawTool extends SculptBase {
         if (isPressed && q) this._poseTo(q);
         else this._releasePose();
       }
-      this._hilite = this._pose ? this._pose.joint
-                                : Skeleton.pickJoint(main, _tip, this._snapDist());
+      this._hilite = this._pose ? this._pose.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       return;
     }
@@ -1925,7 +2021,7 @@ class BoneDrawTool extends SculptBase {
           this._beginScale(hj, grip, Skeleton.boneRadiusOf(main, hj));
           this._grabHand = scHand;
         } else {
-          const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+          const hit = this._pickRigNode(_tip);
           if (hit) this._selectLater(hit);   // no handle under the hand: selecting is all it can mean
         }
       }
@@ -1936,8 +2032,7 @@ class BoneDrawTool extends SculptBase {
       Skeleton.highlightScaleHandle(main,
         this._scale ? this._scale.grip
           : Skeleton.pickScaleHandle(main, _tip, this._snapDist() * 1.2));
-      this._hilite = this._scale ? this._scale.joint
-        : Skeleton.pickJoint(main, _tip, this._snapDist());
+      this._hilite = this._scale ? this._scale.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       main._rigHoverBone = this._pickBone(_tip);
       return;
@@ -1949,15 +2044,14 @@ class BoneDrawTool extends SculptBase {
       const qIK = (options && options.quat) || main._vrControllerQuat;
       const ikHand = (options && options.handedness) || null;
       if (down && !this._ik) {
-        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+        const hit = this._pickRigNode(_tip);
         if (hit) { this._beginIK(hit, qIK); this._grabHand = ikHand; }
       }
       if (this._ik && (!this._grabHand || !ikHand || ikHand === this._grabHand)) {
         if (isPressed) this._ikTo(_tip, qIK);
         else this._releaseIK();
       }
-      this._hilite = this._ik ? this._ik.joint
-                              : Skeleton.pickJoint(main, _tip, this._snapDist());
+      this._hilite = this._ik ? this._ik.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       return;
     }
@@ -1970,15 +2064,14 @@ class BoneDrawTool extends SculptBase {
       // end and resize the other, which is the exact confusion the bone capsule's
       // nearest-end rule was added to prevent.
       if (down) {
-        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+        const hit = this._pickRigNode(_tip);
         if (!this._radius && hit) this._beginRadius(hit);
       }
       if (this._radius) {
         if (isPressed) this._radiusTo(_tip);
         else this._releaseRadius();
       }
-      this._hilite = this._radius ? this._radius.joint
-        : Skeleton.pickJoint(main, _tip, this._snapDist());
+      this._hilite = this._radius ? this._radius.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       // Split still wants a BONE, and this mode no longer resolves one — so it reads the bone
       // under the hand separately rather than inheriting the highlight.
@@ -1992,7 +2085,7 @@ class BoneDrawTool extends SculptBase {
       const hand = (options && options.handedness) || null;
       // `&& !this._grab`: a grab already in hand is never re-picked, whatever the edge says.
       if (down && !this._grab) {
-        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+        const hit = this._pickRigNode(_tip);
         if (hit) { this._beginGrab(hit, qTweak, _tip); this._grabHand = hand; }
       }
       // ONLY THE HAND THAT GRABBED MAY DRIVE OR RELEASE THE GRAB.
@@ -2054,8 +2147,7 @@ class BoneDrawTool extends SculptBase {
           + ' compensate=' + (this._compensate ? 1 : 0));
       }
       // Preselect whatever the tip is nearest to, unless a drag already owns a joint.
-      this._hilite = this._grab ? this._grab.joint
-                                : Skeleton.pickJoint(main, _tip, this._snapDist());
+      this._hilite = this._grab ? this._grab.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       return;
     }
@@ -2063,7 +2155,7 @@ class BoneDrawTool extends SculptBase {
     // DRAW. Between chains the nearest joint is preselected, so a trigger there roots the
     // new chain at it instead of dropping a loose joint on top of it.
     const parent = this._validParent();
-    this._hilite = parent ? null : Skeleton.pickJoint(main, _tip, this._snapDist());
+    this._hilite = parent ? null : this._pickRigNode(_tip);
     Skeleton.setHighlight(main, this._hilite);
 
     // AND THE NEAREST BONE, because Draw is exactly where you reach for Split.
@@ -2078,6 +2170,23 @@ class BoneDrawTool extends SculptBase {
     main._rigHoverBone = parent ? null : this._pickBone(_tip);
 
     if (down) {
+      // The OFF-HAND end gesture is decided in Scene, not here: updateXR is only ever handed the
+      // DOMINANT source, so a press from the other hand never reaches this function. See the
+      // off-hand block by the trigger edge tracker there.
+      // TAP THE JOINT YOU ARE HANGING FROM TO END THE CHAIN, as the desktop path has always
+      // done (see _isEndTap). matt, drawing with hands: "if i draw out a bone chain, i can't end
+      // it" -- because ending it was the A button, and a hand has no A button. This is the same
+      // gesture desktop uses, measured in the room instead of on the screen.
+      //
+      // The band is the SNAP distance, not the pick distance: _snapDist is what "the tip is on
+      // this joint" already means everywhere else in this tool, and a second threshold would be a
+      // second answer to one question.
+      if (parent && Skeleton.jointPos(parent, _jp).distanceTo(_tip) <= this._snapDist()) {
+        this.endChain();
+        Skeleton.hidePreview(main);
+        if (window.screenLog) window.screenLog('Bones: chain ended', 'cyan');
+        return;
+      }
       this._place(_tip);
       return;
     }

@@ -290,9 +290,15 @@ check('...and it can still be re-measured when the scene really does change',
   // The same CONSTANT, not the same hex: a highlight is one colour across the rig, and the
   // check that pinned it to a literal reported a deliberate repaint as a regression.
   check('...in the same colour the joints use',
-    /setHex\(jointHeld \? SELECT_COLOR\s*\n?\s*: \(isHi \? HILITE_COLOR/.test(SRC)
+    /setHex\(jointHeld \|\| isSel \? SELECT_COLOR\s*\n?\s*: \(isHi \? HILITE_COLOR/.test(SRC)
       && /setHex\(pinHeld \? SELECT_COLOR : \(pinHot \? HILITE_COLOR/.test(SRC),
     'the two must read one constant, or they drift apart');
+  // ...AND SELECTED OUTRANKS PRESELECTED, on the joint and on the bone alike. Preselect was tested
+  // first, so pointing at something already selected repainted it yellow.
+  check('a selected thing stays selected-coloured under the cursor',
+    /jointHeld \|\| isSel \? SELECT_COLOR/.test(SRC)
+      && /\(boneHeld \|\| boneSel\) \? SELECT_COLOR/.test(SRC),
+    'the highlight flicked between the two as the hand moved');
 }
 
 
@@ -474,9 +480,22 @@ check('...and it can still be re-measured when the scene really does change',
 {
   const SKIN = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
   const CAGE = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
+  // Anchored on the ARGUMENT that matters, not on the whole call: the hue is no longer
+  // `i / BONE_PALETTE_SIZE` -- the palette skips the arcs reserved for preselection and selection
+  // (see chainHue) -- and spelling out the first argument failed on a change that left the colour
+  // space exactly where it was.
+  // Only the colour SPACE is pinned here. Hue comes from chainHue and lightness is a named
+  // constant now (the chains were pulled 20% down so the state colours pop), so spelling either
+  // out would fail this check on a change it is not about.
   check('the identity palette states its colour space',
-    /setHSL\(i \/ BONE_PALETTE_SIZE, 0\.95, 0\.55, THREE\.SRGBColorSpace\)/.test(SRC),
+    /setHSL\([^)]*THREE\.SRGBColorSpace\)/.test(SRC),
     "setHSL's default is the working space, which is linear -- the colour is then converted twice");
+  // ...and the reserved arcs are real, or a chain can wear the selection colour again.
+  check('the chain palette keeps clear of the preselect and select hues',
+    /const CHAIN_HUE_EXCLUDE = \[0\.134, 0\.444\];/.test(SRC)
+      && /function chainHue\(i, n\)/.test(SRC)
+      && !/hueGap\(i \/ BONE_PALETTE_SIZE, a \/ BONE_PALETTE_SIZE\)/.test(SRC),
+    'the avoidance maths has to compare the hues the slots actually have, not their indices');
   check('...and the unmanaged pipeline has its own accessor',
     /Skeleton\.boneColorSRGB = function/.test(SRC) && /convertLinearToSRGB\(\)/.test(SRC));
   check('...which the skin-weight colours use',

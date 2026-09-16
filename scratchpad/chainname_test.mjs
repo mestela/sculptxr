@@ -546,12 +546,16 @@ const label = (m) => m._permanentStaticLabel;
     /Skeleton\.hoverRigFromRay = function[\s\S]{0,600}?filter\(\(m\) => m\.isVisible\(\) && isRigNode\(m\)\)/.test(SK2),
     'that one is asking "which NODE", and must not offer something it would refuse');
   // TWO tools drive it now -- Grab and Select -- so leaving BOTH is what has to clear it.
-  // THE SELECTION GETS A BOX TOO, in the rig's own cyan. matt: "it should maintain the bounding
-  // box wireframe, but turn cyan to indicate whats selected."
+  // THE SELECTION GETS A BOX TOO, in the rig's own selection colour. matt: "it should maintain the
+  // bounding box wireframe, but turn cyan to indicate whats selected." It was cyan then and is
+  // Maya's highlight green now -- the cyan sat too close to the random per-chain bone colours to
+  // read as "this one". What matters here is that the box uses the SAME value the rig does, so
+  // this reads it off Skeleton rather than spelling it out twice.
+  const SELECT_HEX = /const SELECT_COLOR = (0x[0-9a-f]+);/.exec(SK_RAW)[1];
   check('the outline layer has both of the rig\'s colours',
     /_makeOutlineBox\(0xffd733, 'mesh_hover_outline'\)/.test(SC2)
-      && /_makeOutlineBox\(0x00e5ff, 'mesh_select_outline'\)/.test(SC2),
-    'yellow is preselection and cyan is confirmed selection, everywhere in this app');
+      && new RegExp('_makeOutlineBox\\(' + SELECT_HEX + ", 'mesh_select_outline'\\)").test(SC2),
+    'yellow is preselection and the rig selection colour is confirmed selection, everywhere');
   check('...one cyan box per selected mesh, kept in a map',
     /this\._meshSelBoxes\.set\(id, box\);/.test(SC2) && /this\._meshSelBoxes\.delete\(id\);/.test(SC2),
     'a multi-selection is several meshes and the old single box could only mark one');

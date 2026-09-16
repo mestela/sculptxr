@@ -1576,6 +1576,17 @@ class SculptGL extends Scene {
       this._rightClickX = this._rightClickY = null;
       this._rightMoved = false;
       if (wasClick) {
+        // ...UNLESS A BONE CHAIN IS OPEN, in which case right-click ENDS IT. matt: "in desktop,
+        // r.click should also end the chain."
+        //
+        // Ahead of the menu rather than beside it: while you are mid-chain the ring's commands are
+        // all about a rig you have not finished drawing, and ending the chain is the one thing you
+        // reach for. The gate is narrow on purpose -- Bone Draw, draw mode, a chain actually in
+        // progress -- so right-click means the menu again the moment the chain is closed.
+        const tool = this._sculptManager?.getCurrentTool?.();
+        const endedChain = !!(tool && typeof tool.endChainFromInput === 'function'
+          && tool.endChainFromInput());
+        if (!endedChain) {
         // THE MARKING MENU, NOT THE PIN CYCLE. The secondary action's only entry is PIN, and PIN
         // is a CYCLE — unpinned -> position -> position+rotation — which is precisely what the VR
         // A ring was built to replace: "five states is two too many for a cycle, a ring shows all
@@ -1589,6 +1600,7 @@ class SculptGL extends Scene {
         if (!opened) {
           SecondaryAction.fire(this);
           if (this._modifierButton) this._modifierButton.refresh();
+        }
         }
       }
     }

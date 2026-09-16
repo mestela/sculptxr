@@ -49,9 +49,12 @@ check('a hand ignores the analog threshold and uses pressed',
     && hand._isTriggerDown(controller(0.0, true)) === true,
   'a resting hand reads high, so a travel threshold would latch on for ever');
 
-// And the two call sites now ask the same question.
+// And every call site asks the same question. Counted as "at least both", not "exactly two": the
+// off-hand end-chain gesture asks it a third time, for the same reason the other two do -- it must
+// agree with the Smooth modifier about whether the dominant hand is held, or one press would mean
+// two things.
 check('the smooth override asks _isTriggerDown for BOTH hands',
-  (SRC.match(/this\._isTriggerDown\(src\)/g) || []).length === 2,
+  (SRC.match(/this\._isTriggerDown\(src\)/g) || []).length >= 2,
   'the modifier and the thing it modifies have to agree about what "held" means');
 check('...and no call site still reads buttons[0].pressed for the override',
   !/handedness === this\._dominantHand && this\._padOf\(src\)\?\.buttons\?\.\[0\]\?\.pressed/.test(SRC));

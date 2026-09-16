@@ -589,22 +589,33 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
         fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8')),
       'red and green by handedness is what was confusing');
   }
-  // EITHER END, not just the tip. Only the tip would mean hovering the ROOT lights nothing at
-  // all, since the root is nobody's tip — the same trap the pick itself had, and the reason a
-  // hit maps to the nearest end rather than always the child.
+  // THE ROOT END ONLY, which is the reverse of what this block used to assert.
+  //
+  // It lit a capsule from EITHER end, so a mid-chain joint lit the bones above AND below it. In
+  // use that spans two segments and says which joint it is about only by implication, and with a
+  // preselect on one end and a selection on the other you get a yellow bone and a green one
+  // meeting at a joint that is neither. matt: "sometimes you're highlighting the bone parent as
+  // well, or making the parent yellow, or other strange combos."
+  //
+  // Maya's model settled it: a bone is not a node, it is drawn from a joint towards each of its
+  // children, and selecting any of the five bones fanning off a wrist selects the wrist. So a
+  // joint lights the bones BELOW it -- which is the parent's id, `pid`, since an entry draws
+  // `parent -> j`. The joint with nothing to light is the chain TIP, and its marker is the whole
+  // of it.
   for (const [what, expr] of [['preselect', 'boneHot'], ['selection', 'boneSel']]) {
     const hm = new RegExp('const ' + expr + ' = (.+?);\n').exec(SKEL);
     check(`the ${what} rule is liftable`, !!hm);
     if (!hm) continue;
     // `hoverBone`/`j` only appear in the preselect rule; passing them to both is harmless and
-    // keeps one evaluator. With no segment hovered, hoverBone is null and BOTH rules fall back
-    // to the either-end behaviour these checks were written for.
+    // keeps one evaluator. With no segment hovered, hoverBone is null and both rules fall back to
+    // the root-end test.
     const lit = (tip, head) => new Function('isHi', 'isSel', 'hiAll', 'sel', 'pid', 'hoverBone', 'j',
       'return (' + hm[1] + ');')(tip, tip, new Set(head ? [7] : []), new Set(head ? [7] : []),
       7, null, {});
-    check(`${what}: the joint at the TIP lights this capsule`, lit(true, false) === true);
-    check(`${what}: so does the joint at the HEAD`, lit(false, true) === true,
-      'the root is only ever a head — light only tips and it has no feedback at all');
+    check(`${what}: the joint at the ROOT lights this capsule`, lit(false, true) === true,
+      'a joint lights what hangs off it, which is how a fork lights all of its children at once');
+    check(`${what}: the joint at the TIP does NOT`, lit(true, false) === false,
+      'lighting both ends spans two segments and names neither');
     check(`${what}: and an unrelated joint lights nothing`, !lit(false, false));
   }
 
@@ -618,9 +629,9 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     const bone = {}, other = {};
     check('a hovered segment lights only itself', hot(bone, bone) === true);
     check('...and not the bones hanging off its ends', hot(bone, other) === false,
-      'either-end lighting lit a joint’s own bone AND every bone below it');
-    check('...while no segment hovered keeps the either-end rule',
-      hot(null, other) === true, 'the root has no segment of its own to be hovered by');
+      'a hovered segment is what Split acts on, so it must be the only one lit');
+    check('...while no segment hovered falls back to the root-end rule',
+      hot(null, other) === true, 'the fallback still lights what hangs off the preselected joint');
   }
 }
 
@@ -904,8 +915,8 @@ check('...and the zone widening is the only thing left gated',
 
   // WHAT IS LIT IS WHAT GETS SPLIT.
   check('exactly one bone reads as hovered when a segment is under the cursor',
-    /const boneHot = hoverBone \? \(hoverBone === j\) : \(isHi \|\| hiAll\.has\(pid\)\);/.test(SK),
-    'either-end lighting lit a joint’s own bone AND every bone hanging off it');
+    /const boneHot = hoverBone \? \(hoverBone === j\) : hiAll\.has\(pid\);/.test(SK),
+    'the fallback lights what hangs off the preselected joint; the segment itself wins over it');
 }
 
 // ── DEPTH PRECISION IS A RATIO ────────────────────────────────────────────────────────────

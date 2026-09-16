@@ -39,7 +39,12 @@ const JOINT_COLOR = 0x9aa0ac;
 const BONE_COLOR = 0x6c7280;
 const BONE_EDGE = 0x1e1e2e;
 const HILITE_COLOR = 0xffd733;  // preselection: yellow — "this is what the next press takes"
-const SELECT_COLOR = 0x00e5ff; // confirmed selection: cyan, and only ever this
+// CONFIRMED SELECTION. Was cyan (0x00e5ff), which sat too close to the random per-chain bone
+// colours to read as "this one" -- and was not vibrant enough to win against them. matt: "the cyan
+// especially isn't very vibrant. lets swap the cyan for the maya highlight colour which is roughly
+// (0,255,170)." Same green Maya uses for a selected component, and it has no neighbour in the
+// chain palette -- see CHAIN_HUE_EXCLUDE.
+const SELECT_COLOR = 0x00ffaa;
 // NO PER-HAND COLOURS. The rig used to tint whatever each controller was touching red or
 // green by handedness, which put a third and fourth colour on a surface that already has to say
 // "aimed at" and "selected" — and the hand doing it is the one thing you can already see,
@@ -1442,7 +1447,11 @@ Skeleton.highlightScaleHandle = function (main, grip) {
 // taking the palette entry furthest in hue from its parent, its grandparent, and the siblings
 // already assigned. A hash spreads colours evenly over the WHOLE rig, which says nothing about
 // whether any particular adjacent pair is distinguishable.
-const BONE_PALETTE_SIZE = 12;
+// EIGHT, not twelve: four went when the green and cyan ends of the range did, and the spacing
+// between the survivors is held at the 0.053 it already had rather than repacking twelve into a
+// smaller arc. A busy rig reuses a colour sooner; the parent/sibling avoidance below is what
+// keeps the ones that TOUCH apart, and that is the case a reuse could actually confuse.
+const BONE_PALETTE_SIZE = 8;
 const _paletteColors = [];
 function paletteColor(i) {
   let c = _paletteColors[i];
@@ -1458,10 +1467,64 @@ function paletteColor(i) {
     // is exactly the comparison matt made: "if i turn on weights on the skin, they're fully
     // saturated... the capsules feel like they're at least half the saturation of the weight
     // and bones colours". Same palette, two pipelines, one of them converting twice.
-    c = _paletteColors[i] = new THREE.Color().setHSL(i / BONE_PALETTE_SIZE, 0.95, 0.55, THREE.SRGBColorSpace);
-    c._hue = i / BONE_PALETTE_SIZE;
+    const h = chainHue(i, BONE_PALETTE_SIZE);
+    // ...AND DIMMER THAN THE STATE COLOURS, which is the other half of making a selection read.
+    //
+    // Keeping the chains clear of yellow and green in HUE stopped them being mistaken for a
+    // selection; it did not make the selection POP, because a full-value chain is exactly as
+    // bright as the marker sitting on it. matt: "at a glance they still look like just regular
+    // bones, not a selection." So the palette gives up 20% of its value and the two state colours
+    // keep all of theirs -- 0.55 -> 0.44. Saturation is untouched: a washed-out rig would read as
+    // disabled rather than as unselected.
+    c = _paletteColors[i] = new THREE.Color().setHSL(h, 0.95, CHAIN_LIGHTNESS, THREE.SRGBColorSpace);
+    c._hue = h;
   }
   return c;
+}
+
+// THE STATE COLOURS ARE NOT AVAILABLE TO THE CHAINS.
+//
+// Preselection is yellow and selection is Maya green, and a random chain landing on either hue
+// means the rig is wearing the colour that is supposed to mean "this one". matt: "if we're going
+// to use yellow and cyan for preselect highlight, can we keep those colours or nearby colours
+// away from the random bone chains? it makes it hard to see what is selected."
+//
+// SKIPPING SLOTS WAS NOT ENOUGH, and the arithmetic says why. Twelve hues on an even grid sit
+// 0.083 apart, so a band only ever catches the single NEAREST slot and its neighbours stay where
+// they were -- 0x1ff9f9 sat 0.056 from the green and 0x1ff91f 0.111, and matt saw both: "i still
+// see a cyan and a green that are too close to the maya highlight colour."
+//
+// So the palette is not a grid any more. Two arcs of hue are reserved outright, and the twelve
+// colours are spread evenly through WHAT IS LEFT -- which keeps all twelve (skipping cost two)
+// and puts the nearest one 0.093 away instead of 0.028. The cost is chain-to-chain spacing,
+// 0.083 -> 0.053, and that is the right thing to spend: two chains a little closer in hue is a
+// smaller problem than a chain wearing the selection colour, and the parent/sibling avoidance
+// below already keeps the ones that TOUCH far apart.
+const CHAIN_HUE_EXCLUDE = [0.134, 0.444];   // 0xffd733 preselect, 0x00ffaa select
+
+// ONE ARC, AND IT STARTS PAST CYAN.
+//
+// A band either side of each state colour left two arcs and twelve colours, and matt cut the
+// first four of them by eye: the two yellow-greens between preselect and select (0x8bf91f,
+// 0x46f91f) and the two cyan-blues just past select (0x1fc8f9, 0x1f83f9). "remove the first 4
+// colours from the usable palette for bones."
+//
+// Which collapses to something simpler than a band: the short arc BETWEEN the two state hues is
+// gone entirely -- there is not enough room between yellow and green for a colour that reads as
+// neither -- so what is left is one run from blue round through purple, magenta and red to
+// orange. Nothing green, nothing cyan, nothing yellow.
+//
+// 0.620 is where the cut lands, not a band measured from 0.444: a hue has to be far enough from
+// the green to read as blue, and that is further than it needs to be from the yellow.
+const CHAIN_ARC = [0.620, CHAIN_HUE_EXCLUDE[0] + 1 - 0.09];   // 0.620 .. 1.044
+// 20% below the 0.55 the palette was authored at -- see the note where it is used.
+const CHAIN_LIGHTNESS = 0.44;
+const CHAIN_ARC_TOTAL = CHAIN_ARC[1] - CHAIN_ARC[0];
+
+// Slot index -> hue. The half-step keeps the first slot off the very edge of the arc, so the
+// worst case is half a step inside it rather than exactly on the boundary.
+function chainHue(i, n) {
+  return (CHAIN_ARC[0] + ((i + 0.5) / n) * CHAIN_ARC_TOTAL) % 1;
 }
 
 function hueGap(a, b) {
@@ -1490,7 +1553,9 @@ function assignBoneColors(main, joints) {
     let best = 0, bestScore = -Infinity;
     for (let i = 0; i < BONE_PALETTE_SIZE; i++) {
       let near = 1;
-      for (const a of avoid) near = Math.min(near, hueGap(i / BONE_PALETTE_SIZE, a / BONE_PALETTE_SIZE));
+      // REAL HUES, not slot fractions: the slots are no longer evenly spaced (see chainHue), so
+      // comparing indices would measure a distance the colours do not have.
+      for (const a of avoid) near = Math.min(near, hueGap(chainHue(i, BONE_PALETTE_SIZE), chainHue(a, BONE_PALETTE_SIZE)));
       // Distance from the colours that touch this one comes first; even usage across the rig
       // is only a tie-break, so a busy rig still cycles rather than clumping.
       const score = near * 10 - used[i];
@@ -2909,6 +2974,13 @@ Skeleton.updateVisuals = function (main) {
     const jR = j._jointRadius > 0 ? j._jointRadius : bR;
     const ownR = (bR && jR) ? Math.min(bR, jR) : (bR || jR);
     const jd = ownR > 1e-9 ? Math.min(jr, ownR * 0.6) : jr;
+    // SELECTED BEATS PRESELECTED. Held, then selected, then preselected, then the base colour.
+    // Preselect used to be tested first, so pointing at something already selected repainted it
+    // yellow and it flicked between the two as the hand moved. matt: "if i select a joint, it
+    // sometimes shows cyan, other times yellow... selected takes precidence." Which is right:
+    // preselect answers "what would the next press take", and on a thing already taken that is the
+    // less useful of the two answers. Written here rather than in the loop for the reason the note
+    // below gives.
     // NO SIZE CHANGE ON SELECTION. It used to swell to 1.7x, which is a lot of movement to report
     // a fact the colour already reports — and at finger scale the swollen marker covers the joint
     // and its neighbours both. matt: "the scaling up of the selected joint is SUPER annoying.
@@ -2919,8 +2991,8 @@ Skeleton.updateVisuals = function (main) {
       o.scale.setScalar(jd);
       // Held and selected are the same statement, so the same colour: cyan. Preselect is
       // yellow, and it loses to a hand actually on the thing.
-      o.material.color.setHex(jointHeld ? SELECT_COLOR
-        : (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
+      o.material.color.setHex(jointHeld || isSel ? SELECT_COLOR
+        : (isHi ? HILITE_COLOR : JOINT_COLOR));
       // OFF MEANS OFF. There used to be a `noBoneBody` term here — with the bone body and the
       // wireframe both switched off, the dots came back on their own so that something still
       // marked a joint that was perfectly pickable. Reasonable in the abstract and wrong in
@@ -3211,31 +3283,53 @@ Skeleton.updateVisuals = function (main) {
     // rather than in place, and the thing the colour reports is that it is held at all.
     // PRESELECTION AND SELECTION LIVE HERE NOW, since there is no joint dot to carry them.
     //
-    // A capsule lights when EITHER of its ends is the joint in question, so hovering a mid-chain
-    // joint lights the bones above and below it and the pair of them reads as "this joint" —
-    // which is what a single capsule could never say, and the reason the dot survived as long
-    // as it did. At the end of a chain only one lights, and that is still unambiguous.
+    // A JOINT LIGHTS ITSELF AND THE BONE BELOW IT. ONE BONE, DOWNWARD, ALWAYS.
+    //
+    // This used to light a bone when EITHER of its ends was the joint in question, on the
+    // reasoning that the pair above and below read as "this joint" in a way one capsule could
+    // not. In use it reads as neither: a mid-chain selection lit two bones, so the highlight
+    // spanned two segments and you could not tell which joint it was about -- and with a
+    // preselection on one end and a selection on the other you got a yellow bone and a green one
+    // meeting at a joint that was neither. matt: "its still confusing... sometimes you're
+    // highlighting the bone parent as well, or making the parent yellow, or other strange combos."
+    //
+    // So it is the CHILD bone only. `e` is the entry for joint `j` and draws `parent -> j`, so
+    // this bone belongs to `parent` looking down -- which is why the test is on the PARENT's id
+    // and `isSel`/`isHi` (this joint's own state) are deliberately not in it.
+    //
+    // At the end of a chain there is no bone below, so nothing lights but the joint marker.
+    // matt: "if the very end of a bone chain is selected, just make that joint tip be cyan."
+    // That falls out of the rule rather than being a case in it.
+    //
+    // NOTE this is the opposite hand from the "a joint owns the bone that ENDS at it" convention
+    // used by the capsule radius, Split and the physics shapes. Those are about which bone an
+    // EDIT acts on; this is about which bone a joint should paint to say where it is. A joint at
+    // the top of a chain has no bone above it to own, and would then be unable to show itself.
     //
     // Above the pin tint, unlike the identity colour: a pin is a standing state you can go and
     // look at, while preselection is the answer to "what does this press do" and is worth
     // nothing at all if something else can cover it.
     const pid = parent.getID();
-    const boneHeld = jointHeld || held(pid);
+    // Held follows the same downward rule: grabbing a joint lights the bone below it, so a drag
+    // reads the same way a selection does rather than lighting one more segment than it.
+    const boneHeld = held(pid);
     // ONE BONE READS AS HOVERED, not every bone touching a hovered joint.
     //
-    // `isHi || hiAll.has(pid)` lights a bone when EITHER of its ends is highlighted — so
-    // hovering one joint lit its own bone and every bone hanging off it. That is fine as "the
-    // joint you are near" and useless as "the bone this is about to split", which is the
-    // question Split asks. When a segment is actually under the cursor, that segment alone is
-    // hot, so what is lit is what gets split.
-    // The latch wins while a context menu is up — see the note in Scene where it is set. What
-    // is lit has to be what the menu will act on, and the hand has to move to choose.
+    // When a segment is actually under the cursor, that segment alone is hot, so what is lit is
+    // what gets split. The latch wins while a context menu is up — see the note in Scene where it
+    // is set. What is lit has to be what the menu will act on, and the hand has to move to choose.
+    //
+    // The FALLBACK, for when no segment resolved, follows the same downward rule as the selection
+    // above: the preselected joint lights the bone below it and nothing else. It used to be
+    // `isHi || hiAll.has(pid)`, which lit both.
     const hoverBone = main._rigHoverBoneLatch || main._rigHoverBone;
-    const boneHot = hoverBone ? (hoverBone === j) : (isHi || hiAll.has(pid));
-    const boneSel = isSel || sel.has(pid);
-    const boneTint = boneHeld ? SELECT_COLOR : (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR
+    const boneHot = hoverBone ? (hoverBone === j) : hiAll.has(pid);
+    const boneSel = sel.has(pid);
+    // Same precedence as the joint marker above: selected outranks preselected, so a bone does not
+    // flick to yellow when the hand passes over something already chosen.
+    const boneTint = (boneHeld || boneSel) ? SELECT_COLOR : (boneHot ? HILITE_COLOR
       : ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR
-        : (tintMode === 1 ? PIN_POS_COLOR : restTint))));
+        : (tintMode === 1 ? PIN_POS_COLOR : restTint)));
     // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
     // Its whole job is to make the bone's roll and taper legible, and it can only do that by
     // contrasting with the body it sits on — matched exactly, the ridge lines disappear into

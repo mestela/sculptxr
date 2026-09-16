@@ -6,6 +6,7 @@ import PhysicsBones from '../editing/PhysicsBones.js';
 import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
+import RigTopology from '../editing/RigTopology.js';
 import { collapsibleHTML, uiReorg, squeezeLabel } from './htmlvr/uiTokens.js';
 
 // The Bones tool's controls, in ONE place, for every panel that shows them.
@@ -129,6 +130,21 @@ function pinHasKeys(joint) {
   const reg = window._animationRegistry;
   const pin = joint ? IKSolver.pinObject(joint) : null;
   return !!(pin && reg && reg.scalarTrack && reg.scalarTrack(pin, IKSolver.PIN_WEIGHT, false));
+}
+
+// The readout both rig sections use: which joint the panel resolved, or why it resolved none.
+// One function because two sections say the same sentence, and they must not drift.
+// The one joint below this one, or null at a fork or a leaf. Split Below has no unambiguous
+// target at a fork -- which is the same rule chainFrom stops on, for the same reason.
+function soleChild(main, joint) {
+  if (!main || !joint) return null;
+  const kids = Skeleton.childJoints(main, joint).filter((k) => Skeleton.isJoint(k));
+  return kids.length === 1 ? kids[0] : null;
+}
+
+function pinTargetLabel(main) {
+  const t = rigPanelTarget(main);
+  return t ? jointLabel(t) : 'No joint selected';
 }
 
 function physAimLabel(main, t) {
@@ -420,8 +436,53 @@ export function buildBoneAuthoringHTML(main, style) {
       ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
     </div>`;
 
+    // ── CHAIN (audit items A1, A2, A5) ────────────────────────────────────────────────
+    //
+    // Split, Dissolve and Name chain existed only in the VR marking menu. All three are per-bone
+    // STRUCTURAL edits, which is the same question the Pins section answers, so they answer it the
+    // same way: rigPanelTarget, and a row saying which joint it resolved to.
+    //
+    // NOT GATED ON THE BONE TOOL, unlike the ring's copies of Split and Dissolve. That gate is
+    // about how the RING resolves its target: it takes the bone under the hand, and bone selection
+    // is only on in Bone Draw (see BONE_SELECT in Picking for why it cannot be on in Grab). A
+    // panel has no hover and resolves a selected JOINT, which every tool can give it -- so gating
+    // here would disable a command whose target the pick can perfectly well find. The same
+    // reasoning already leaves the ring's Name chain ungated.
+    //
+    // SPLIT IS TWO BUTTONS, because one was a guess. RigTopology.split takes a JOINT and cuts the
+    // bone `parent -> joint` -- the same "a joint owns the bone that ends at it" convention the
+    // capsule radius and the physics shapes use. That is unambiguous in the code and invisible in
+    // the panel: with a joint selected, "Split" could mean either of the two bones touching it.
+    // matt: "lets go 'split->parent' and 'split->child', so its unambiguous."
+    //
+    // ABOVE / BELOW rather than parent / child in the label, because that is what you are looking
+    // at while you press it -- the bone on the far side of the joint from the tip you just drew.
+    // Below asks the same function about the CHILD joint, so one implementation serves both.
+    //
+    // Split Below needs exactly ONE child: at a fork there is no "the" bone below, and splitting
+    // an arbitrary one of three fingers is the kind of guess this pair of buttons exists to kill.
+    const chainAim = rigPanelTarget(main);
+    const chainBody = `
+    <div class="${c.row}">
+      <span class="${c.val}" id="bone-chain-aim"
+        style="flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${
+          pinTargetLabel(main)}</span>
+    </div>
+    <div class="${c.toggles}">
+      <button class="${c.toggle}" id="bone-split-up"${
+        RigTopology.canSplit(main, chainAim) ? '' : ' disabled'}>Split Above</button>
+      <button class="${c.toggle}" id="bone-split-down"${
+        RigTopology.canSplit(main, soleChild(main, chainAim)) ? '' : ' disabled'}>Split Below</button>
+      <button class="${c.toggle}" id="bone-dissolve"${
+        RigTopology.canDissolve(main, chainAim) ? '' : ' disabled'}>Dissolve</button>
+    </div>
+    <div class="${c.toggles}">
+      <button class="${c.toggle}" id="bone-name-chain"${chainAim ? '' : ' disabled'}>Name</button>
+    </div>`;
+
     return `
     ${collapsibleHTML('bone-mode', 'Mode', modeBody, true)}
+    ${collapsibleHTML('bone-chain', 'Chain', chainBody, false)}
     ${collapsibleHTML('bone-view', 'View and Assist', viewBody, false)}
     ${collapsibleHTML('bone-setup', 'Setup', setupBody, false)}
     ${collapsibleHTML('bone-physics', 'Physics', physButtons + physParams, !!physTarget)}
@@ -611,7 +672,7 @@ export function buildBonePoseHTML(main, style) {
     <div class="${c.row}">
       <span class="${c.val}" id="bone-pin-aim"
         style="flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${
-          pinTarget ? jointLabel(pinTarget) : 'No joint selected'}</span>
+          pinTargetLabel(main)}</span>
     </div>
     <fieldset class="mm-disabled-group"${pinTarget ? '' : ' disabled'}>
     <div class="${c.toggles}">
@@ -1016,10 +1077,20 @@ export function wireBoneSection(root, main, opts) {
   // antenna be physics, its right mirror should also do that. same for adjusting physics
   // properties." The parameters are all scalars — a stiffness has no handedness — so they copy
   // across rather than reflecting, unlike a joint offset.
+  // ...AND ONLY WHILE THE SYMMETRY TOGGLE IS ON. This checked that a twin EXISTED and nothing
+  // else, so every operation it backs -- the physics flag, all seven physics parameters, both
+  // collision toggles and now Dissolve -- mirrored whatever the toggle said. A joint drawn with
+  // symmetry on carries `_boneMirror` for the rest of its life, so "has a twin" is not an answer
+  // to "should this edit mirror". matt: "it should have been clear that i mean it should respect
+  // the symmetry toggle. if on, dissolve with symmetry. if off, don't... all bone operations
+  // should respect the symmetry toggle."
+  //
+  // Skeleton.mirrorEdits is the app's one answer to that question, and the display side of this
+  // panel already asked it (see physTwin) -- so the panel was NAMING one joint and EDITING two.
   const withTwin = (j) => {
     const out = [j];
     const t = j._boneMirror;
-    if (t && main.getMeshes?.().includes(t) && t !== j) out.push(t);
+    if (Skeleton.mirrorEdits(main) && t && main.getMeshes?.().includes(t) && t !== j) out.push(t);
     return out;
   };
 
@@ -1314,6 +1385,59 @@ export function wireBoneSection(root, main, opts) {
   // `rebuild` rather than `refresh` throughout: a mode change decides which controls EXIST
   // (Ground and the whole weight block appear only on a pin), so a pass that only re-classed
   // would leave the panel showing the previous mode's set.
+  // ── CHAIN (audit items A1, A2, A5) ───────────────────────────────────────────
+  //
+  // The ring's own calls, with the target coming from the selection instead of the hover. Split
+  // and Dissolve take the JOINT and act on the bone above it; Name opens the keyboard that
+  // already exists, with a window.prompt fallback for a flat screen -- copied from the ring's
+  // Keyboard wedge rather than reimplemented, so both routes ask the same question the same way.
+  {
+    const aimedChain = () => rigPanelTarget(main);
+    const chainCmd = (id, run) => q(id)?.addEventListener('click', () => {
+      const j = aimedChain();
+      if (!j) { say('Bones: select one joint first', false); return; }
+      run(j);
+      rebuild();
+      main.render?.();
+    });
+    chainCmd('split-up',   (j) => RigTopology.split(main, j));
+    // The child's OWN bone is the one below this joint, so Split Below is the same call asked
+    // about a different joint -- see soleChild for why a fork offers nothing.
+    chainCmd('split-down', (j) => { const k = soleChild(main, j); if (k) RigTopology.split(main, k); });
+    // DISSOLVE FOLLOWS THE MIRROR, like every other rig edit in this tool. matt: "dissolve should
+    // work with symmetry." withTwin is the same helper the physics flag and its sliders use, so
+    // the twin is included on exactly the same terms -- only while mirrorEdits is on, and only
+    // when the twin is a different live joint.
+    chainCmd('dissolve', (j) => { for (const t of withTwin(j)) RigTopology.dissolve(main, t); });
+    // A LIST FIRST, THE KEYBOARD LAST, IN A PANEL THAT FLOATS IN FRONT OF THIS ONE.
+    //
+    // It was the keyboard and nothing else, which is the wrong order of preference: the names
+    // people use are the twelve the marking menu already suggests, and pinch-typing "spine" one
+    // letter at a time is a lot of work for a word the app knows. Putting the list INLINE in this
+    // section was worse again -- matt: "super ugly and a massive waste of space... i meant a
+    // floating panel to give a list of names."
+    //
+    // `opts.panel` is how it knows what to float in front of: the keyboard positions itself
+    // against a source panel when it is given one and falls back to 0.7m straight ahead when it
+    // is not, which is the "far away in depth, drawn on top" that has been irritating matt.
+    chainCmd('name-chain', (j) => {
+      const n = Skeleton.chainFrom(main, j).length;
+      // The number is stripped so renaming twice does not give you `arm_01_01`.
+      const cur = (j._permanentStaticLabel || '').replace(/_\d+(_[LR])?$/, '');
+      const apply = (text) => { if (text) { Skeleton.nameChain(main, j, text); rebuild(); main.render?.(); } };
+      const kb = window._vrKeyboard;
+      if (kb && kb.shouldUse && kb.shouldUse()) {
+        kb.openChoices({
+          label: 'Name chain (' + n + ' joints)',
+          columns: [Skeleton.AXIS_NAMES, Skeleton.LIMB_NAMES],
+          current: cur, maxLength: 24,
+        }, apply, opts.panel || null);
+        return;
+      }
+      apply(window.prompt('Name this chain of ' + n + ' joints', cur));
+    });
+  }
+
   {
     const aimed = () => rigPanelTarget(main);
     const pinCmd = (id, run) => q(id)?.addEventListener('click', () => {
@@ -1484,10 +1608,13 @@ export function syncBoneSection(root, main) {
   // appears to do nothing.
   // WHICH JOINT THE PIN CONTROLS ACT ON, rewritten every sync for the same reason the physics
   // readout is: the markup is built once and the selection moves on without it.
+  const chainAim = q('chain-aim');
+  if (chainAim) chainAim.textContent = pinTargetLabel(main);
+
   const pinAim = q('pin-aim');
   if (pinAim) {
     const t = rigPanelTarget(main);
-    pinAim.textContent = t ? jointLabel(t) : 'No joint selected';
+    pinAim.textContent = pinTargetLabel(main);
     // AND THE DIMMING WITH IT. The readout was synced and the fieldset was not, so a panel built
     // with a joint selected kept live-looking controls after the selection was dropped -- the
     // row said "No joint selected" directly above six chips that looked pressable. Whatever says

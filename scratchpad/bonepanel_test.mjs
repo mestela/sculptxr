@@ -26,6 +26,14 @@ let _capSeg = null;
 const DEFAULT_FLAGS = ${JSON.stringify(FLAG_DEFAULTS)};
 const Skeleton = {
   joints: () => [], radiusFraction: () => 0.25, defaultRadiusFrac: () => 0.25,
+  // Split Below asks for the single joint under this one, so the builder walks children now.
+  childJoints: (main, j) => ((globalThis.__kids && globalThis.__kids.get(j)) || []),
+  // The Chain section offers these as buttons now rather than opening the keyboard, so the
+  // builder reads them. The REAL lists, so a check can assert the panel and the marking menu
+  // suggest the same words.
+  AXIS_NAMES: ['spine', 'neck', 'head', 'hips', 'tail'],
+  LIMB_NAMES: ['arm', 'forearm', 'hand', 'finger', 'thumb', 'leg', 'foot'],
+  nameChain(){ return true; },
   DISPLAY_FLAGS: ${JSON.stringify(FLAG_DEFAULTS)},
   displayFlag: (n) => (_flagState[n] != null ? _flagState[n] : !!${JSON.stringify(FLAG_DEFAULTS)}[n]),
   setDisplayFlag: (n, v) => { _flagState[n] = !!v; },
@@ -98,6 +106,14 @@ const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => !!global
   // The bind-pose hold: the Pose block asks whether it is on, to name and light its button.
   bindPoseHeld: () => !!globalThis.__bindHeld, enterBindPose(){}, exitBindPose(){} };
 const SkinMesh = {};
+// The Chain section asks whether each verb is possible before it draws the button, so the stub has
+// to answer -- with the REAL rules, simplified: split needs a parent joint above it, dissolve
+// needs a joint that exists.
+const RigTopology = {
+  canSplit: (main, j) => !!(j && j._isBone && j._parentMesh && j._parentMesh._isBone),
+  canDissolve: (main, j) => !!(j && j._isBone),
+  split(){}, dissolve(){},
+};
 // The panel asks whether any weight cages exist so it can label one button Bake or Delete.
 // Stubbed to "none", which is the state every existing rig is in.
 const WeightCage = { cages: () => (globalThis.__cages || []) };

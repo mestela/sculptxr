@@ -1952,17 +1952,21 @@ class Scene {
     return this._isQuestStandalone ? 0.15 : 0.10;
   }
 
+  // Every spike in the registry, not the two currently-cached controllers -- see the note where
+  // they are registered. A spike whose controller has gone stays in the set and is simply written
+  // again next time, which costs two property writes and cannot go stale.
+  _eachSpike(fn) {
+    for (const spike of (this._spikeMeshes || [])) { if (spike) fn(spike); }
+    // The cached pair as well, in case one was made before the registry existed.
+    for (const ctrl of [this._vrControllerLeft, this._vrControllerRight]) {
+      const spike = ctrl && ctrl.getObjectByName('stylus_spike');
+      if (spike && !(this._spikeMeshes && this._spikeMeshes.has(spike))) fn(spike);
+    }
+  }
+
   updateStylusLength(val) {
     const scaleFactor = val / 0.10;
-    const updateMesh = (ctrl) => {
-      if (!ctrl) return;
-      const spike = ctrl.getObjectByName('stylus_spike');
-      if (spike) {
-        spike.scale.set(1, 1, scaleFactor);
-      }
-    };
-    updateMesh(this._vrControllerLeft);
-    updateMesh(this._vrControllerRight);
+    this._eachSpike((spike) => { spike.scale.set(1, 1, scaleFactor); });
   }
 
   getStylusOffset() {
@@ -1975,15 +1979,8 @@ class Scene {
   }
 
   updateStylusOffset(val) {
-    const updateMesh = (ctrl) => {
-      if (!ctrl) return;
-      const spike = ctrl.getObjectByName('stylus_spike');
-      if (spike) {
-        spike.position.z = -val; // Negative to shift forward, Positive to shift backward
-      }
-    };
-    updateMesh(this._vrControllerLeft);
-    updateMesh(this._vrControllerRight);
+    // Negative to shift forward, Positive to shift backward.
+    this._eachSpike((spike) => { spike.position.z = -val; });
   }
 
   // PINCH DISTANCE — the skin-to-skin gap at which the fingers count as closed.
@@ -3194,9 +3191,11 @@ class Scene {
   // the rig's (9996+) so it never covers a joint marker or the cursor.
   //
   // THE TWO COLOURS ARE THE RIG'S OWN, and mean the same things they mean there: yellow
-  // (0xffd733) is preselection, "what the next press takes"; cyan (0x00e5ff) is confirmed
-  // selection. matt: "it should maintain the bounding box wireframe, but turn cyan to indicate
-  // whats selected."
+  // (0xffd733) is preselection, "what the next press takes"; 0x00ffaa is confirmed selection.
+  // matt: "it should maintain the bounding box wireframe, but turn cyan to indicate whats
+  // selected." It was cyan then; it is Maya's highlight green now, for the reason recorded on
+  // SELECT_COLOR in Skeleton -- and the box has to move with the rig or the two disagree about
+  // what selection looks like."
   //
   // Yellow WINS on a mesh that is both, which is also the rig's rule: while you are pointing at
   // something, what the press would do outranks what is already true.
@@ -3293,7 +3292,7 @@ class Scene {
       live.add(id);
       let box = this._meshSelBoxes.get(id);
       if (!box) {
-        box = this._makeOutlineBox(0x00e5ff, 'mesh_select_outline');
+        box = this._makeOutlineBox(0x00ffaa, 'mesh_select_outline');
         this._meshSelBoxes.set(id, box);
       }
       this._fitOutlineBox(box, mesh);
@@ -6139,6 +6138,17 @@ class Scene {
             const spikeMesh = new THREE.Mesh(spikeGeo, spikeMat);
             spikeMesh.name = 'stylus_spike';
             controller.add(spikeMesh);
+            // EVERY SPIKE EVER MADE, so a resize can reach all of them.
+            //
+            // updateStylusLength/Offset used to write to `_vrControllerLeft/Right` only, and those
+            // two are REASSIGNED as sources come and go -- a real controller outranks a hand for
+            // the same handedness, see the mapping below. So on a runtime where hands arrive after
+            // controllers, the spike you are looking at was hanging off an object the resize no
+            // longer named, and it kept the controller's 0.10/0.15 while picking used the hand's
+            // 0.05. matt: "the spike in hands free mode seems offset from the actual pointer
+            // selection position, its like the tip of the spike is too far forward." Exactly twice
+            // too far, on Quest.
+            (this._spikeMeshes = this._spikeMeshes || new Set()).add(spikeMesh);
 
             // Xray ghost of the spike — a child (inherits length/offset/tilt) that draws ONLY
             // where the spike is occluded (depthFunc GreaterDepth), revealing the tip through
@@ -13095,6 +13105,39 @@ class Scene {
       // the interesting thing is whether THIS press reached the tool.
       if (raw && !this._trigWas[hand]) { this._pressEdgeHand = hand; this._pressEdgeCall = hand; }
       this._trigWas[hand] = raw;
+    }
+
+    // THE OFF HAND ENDS A BONE CHAIN.
+    //
+    // Ending a chain was the A button, and a hand has no A button, so hands-only had no way out of
+    // one at all. matt: "in vr with hands, i couldn't end a chain by a pinch tap with my left
+    // hand."
+    //
+    // IT HAS TO READ THE OFF HAND ITSELF, which is the part I got wrong twice. A tool cannot do
+    // it: updateXR is only ever called with the DOMINANT source (see the activeSource selection --
+    // "FORCE DOMINANT HAND"), so a press from the other hand never reaches a tool. And THIS
+    // function is per-source and also only ever called for the dominant hand, so the shared press
+    // edge above (`_pressEdgeCall`) can only ever name that hand -- comparing it to the off hand
+    // was comparing the dominant hand against itself. So the state is kept here, and the hand is
+    // found in the session's own input list rather than assumed to be the one we were called for.
+    //
+    // NOT A MODIFIER. An earlier cut required the dominant trigger to be idle, on the grounds that
+    // both-held already means the Smooth override. matt: "this shouldn't be treated as a modifier,
+    // it should be just i pinch with my off-hand, doesn't matter what my on-hand is doing, it
+    // should just end the chain." Which is right: Smooth is about a stroke, and there is no stroke
+    // to modify while you are placing joints.
+    {
+      const offHand = this._dominantHand === 'left' ? 'right' : 'left';
+      let offDown = false;
+      for (const src of (frame.session?.inputSources || [])) {
+        if (src.handedness === offHand && this._isTriggerDown(src)) { offDown = true; break; }
+      }
+      // Rising edge only, or a held pinch would end a chain, then the next, then the next.
+      if (offDown && !this._offHandWas) {
+        const t = this._sculptManager?.getCurrentTool?.();
+        if (t && typeof t.endChainFromInput === 'function') t.endChainFromInput();
+      }
+      this._offHandWas = offDown;
     }
 
     // VR Ergonomics: Temporary Modifiers
