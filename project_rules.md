@@ -27,9 +27,19 @@ MANDATORY: You MUST read `overview.md` (repo root) and `docs/code_summary.md` fo
 1.  **Documentation**:
     -   **Add** new release notes to top of `docs/releases.md`.
     -   **Update** `README.md`: Keep only the **latest 3 releases**. Link to `docs/releases.md` for older history.
-2.  **Version**:
-    -   **Increment** version in `index.html` (e.g., `<title>SculptXR v0.7.121</title>`).
-    -   **Increment** version in `src/Version.js` (e.g., `export const VERSION = 'v1.0.72';`).
+2.  **Version** — **USE `node bump.mjs <major|minor|patch>`**, which is the single source of
+    truth and keeps `package.json`, `src/Version.js` and BOTH version strings in `index.html`
+    in step. Do not hand-edit them.
+    -   **THERE ARE TWO VERSIONS IN index.html** and they are not interchangeable: the
+        `<title>` *and* a `VERSION:` comment a few lines below it. `deploy.sh` syncs
+        `src/Version.js` from **the comment**, and overwrites whatever is in that file — so
+        bumping the title and Version.js by hand (which is what this rule used to say) ships
+        working code that reports the PREVIOUS version in the VR/screen log and in
+        `version.json`. Happened on v3.46.0: production served 3.46.0 while calling itself
+        3.45.0, and it took a redeploy to correct.
+    -   The deploy script's own safety net compares the title against `.last_deployed_version`
+        and auto-bumps the patch if they match, so a corrective redeploy of the SAME version
+        needs that file put back first.
 3.  **Deploy**:
     -   Run `./deploy.sh` (Production) or `./deploy_beta.sh` (Beta).
 
