@@ -1351,6 +1351,29 @@ check('...and naming the failures when several are bound at once',
   /failed: \$\{bad\.map\(\(r\) => r\.name \|\| '\?'\)\.join\(', '\)\}/.test(SRC),
   'a count alone leaves you clicking each mesh to find out which ones missed');
 
+// ── A HIDDEN MESH IS NOT SKINNED ─────────────────────────────────────────────────────
+//
+// The pass costs what its vertices cost -- mush, normals, buffer upload -- and paying that for
+// something nobody can see is the one case where the work is definitely wasted. matt: "i would
+// assume that hiding parts of the skin would boost performance, but i can still feel the skin
+// system calculating everything, even when its not displayed."
+// Measured on the camel, 9 bound meshes: 58.8ms all visible, 19.0ms with only the body shown.
+{
+const SKIN_HIDE = fs.readFileSync(new URL('../src/editing/Skinning.js', import.meta.url).pathname, 'utf8');
+check('skinning skips a hidden mesh',
+  /if \(m\.isVisible && !m\.isVisible\(\)\) \{ hidden\+\+; continue; \}/.test(SKIN_HIDE),
+  'the deformation of something nobody can see is the one safely skippable cost here');
+// Safe only because the pose STAMP is left untouched by the skip: on the first visible frame
+// poseChanged() compares against the pose from before the hide, finds it different, and
+// re-skins. Nothing has to watch for the unhide. Verified: the catch-up frame matches a
+// from-scratch recompute exactly (max difference 0).
+check('...and nothing has to notice the unhide, because the stamp is left stale',
+  /SAFE TO SKIP BECAUSE THE STAMP REMEMBERS/.test(SKIN_HIDE));
+check('...with the count said out loud in the trace',
+  /\(hidden \? hidden \+ ' hidden, ' : ''\)/.test(SKIN_HIDE),
+  'a mesh silently not deforming is exactly the bug this could become');
+}
+
 check('no panel still carries its own solver toggle',
   !/q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC)
     && !/q\('#mm-phys-xpbd'\)\?\.addEventListener/.test(MAIN_SRC),

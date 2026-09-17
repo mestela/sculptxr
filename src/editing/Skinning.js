@@ -1889,12 +1889,27 @@ Skinning.update = function (main) {
 
   const trace = !!window._skinTrace;
   const t0 = trace ? performance.now() : 0;
-  let bound = 0, ran = 0;
+  let bound = 0, ran = 0, hidden = 0;
   const did = trace ? [] : null;
 
   for (let i = 0; i < meshes.length; i++) {
     const m = meshes[i];
     if (!Skinning.isBound(m)) continue;
+    // A HIDDEN MESH IS NOT SKINNED. The pass costs what its vertices cost -- the mush, the
+    // normals, the buffer upload -- and paying that for something nobody can see is the one
+    // case where the work is definitely wasted. matt: "i would assume that hiding parts of the
+    // skin would boost performance, but i can still feel the skin system calculating
+    // everything, even when its not displayed."
+    //
+    // SAFE TO SKIP BECAUSE THE STAMP REMEMBERS. Skipping leaves `_skinStampBuf` holding the pose
+    // from before, so whenever the mesh is shown again poseChanged() compares against that old
+    // pose, finds it different, and re-skins on the first visible frame. Nothing needs to watch
+    // for the unhide.
+    //
+    // The cost of this: a hidden bound mesh holds a STALE POSE in its vertex array. Nothing on
+    // screen can tell, but an export taken while it is hidden writes that stale pose. Showing it
+    // first is the fix, and that is a better trade than skinning everything forever.
+    if (m.isVisible && !m.isVisible()) { hidden++; continue; }
     bound++;
     // A mesh whose pose has not moved returns false and costs the stamp check only; it is
     // counted as bound but never appears as a row, so the rows are what the frame ACTUALLY did.
@@ -1915,7 +1930,8 @@ Skinning.update = function (main) {
   // wrapper, which passes the arguments straight through without substituting -- so a
   // printf-style call arrives as its literal format string followed by the numbers.
   let out = '[skin] frame ' + f(now - t0) + 'ms | ' + bound + ' bound, ' + ran
-    + ' skinned, ' + did[0][1].joints + ' joints, mush x' + Skinning.mushIterations();
+    + ' skinned, ' + (hidden ? hidden + ' hidden, ' : '')
+    + did[0][1].joints + ' joints, mush x' + Skinning.mushIterations();
   for (let i = 0; i < did.length; i++) {
     const d = did[i][1], p = d.phase;
     out += '\n  ' + f(d.total) + 'ms  ' + label(did[i][0])
