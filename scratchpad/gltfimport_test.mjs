@@ -333,8 +333,8 @@ check('the tool toast does not run on desktop',
 // modes: in ordinary PBR viewing the geometry carried no `uv` attribute and the index buffer
 // used the UNDUPLICATED triangles, so the seam vertices the app had already built never
 // reached the GPU. A textured mesh needs the same pipeline for the ordinary shader.
-check('a mesh with an albedo map runs the uv pipeline',
-  /return !!\(this\._albedoMap && this\.hasUV\(\)\);/.test(MESH),
+check('a mesh with a texture map runs the uv pipeline',
+  /return !!\(this\.hasTextureMap\(\) && this\.hasUV\(\)\);/.test(MESH),
   'without this the geometry has no uv attribute and there is nothing to sample');
 check('...and switching it on rebuilds the duplicates and the buffers',
   /if \(this\.hasUV\(\)\) \{ this\.updateDuplicateGeometry\(\); this\.updateDrawArrays\(\); \}/.test(MESH),
@@ -345,7 +345,7 @@ check('...and switching it on rebuilds the duplicates and the buffers',
 // every mesh in the scene.
 check('a textured mesh gets its own material',
   /ShaderManager\.getMaterialFor = function\(mesh, shaderId\)/.test(SHMGR)
-    && /\(mesh\.getAlbedoMap && mesh\.getAlbedoMap\(\)\)/.test(SHMGR)
+    && /\(mesh\.hasTextureMap && mesh\.hasTextureMap\(\)\)/.test(SHMGR)
     && /if \(!needsOwn\) return shared;/.test(SHMGR),
   'a shared material cannot carry a per-mesh texture');
 check('...and every material assignment goes through it',
@@ -378,7 +378,7 @@ check('a transmissive material is read off the glTF material',
 // Removing the DIFFUSE and keeping the reflection is the difference between glass and fog:
 // fading the whole shaded result with opacity takes the highlights down with it.
 check('transmission removes the diffuse, not the highlights',
-  /vec3 albedo = linColor \* \(1\.0 - vMetallic\) \* \(1\.0 - uTransmission\);/.test(PBR),
+  /vec3 albedo = linColor \* \(1\.0 - metallic\) \* \(1\.0 - uTransmission\);/.test(PBR),
   'scaling the final colour by opacity instead makes a clear shell read as milky');
 check('...with a fresnel-weighted alpha so a curved clear surface still reads as curved',
   /float fres = pow\(1\.0 - clamp\(dot\(normal, -normalize\(vVertex\)\), 0\.0, 1\.0\), 3\.0\);/.test(PBR));
@@ -397,6 +397,39 @@ check('...restored when transmission goes back to zero',
 // Refraction is NOT claimed: bending what is behind needs the scene in a buffer first.
 check('...and the shader says plainly that ior is read and ignored',
   /What this is NOT: refraction/.test(PBR));
+
+// ── metal/rough map, and the lighting it needed ─────────────────────────────────────
+check('the packed metal/rough texture is imported',
+  /const withRM = prims\.map\(matOf\)\.find\(\(m\) => m && \(m\.roughnessMap \|\| m\.metalnessMap\)\);/.test(SRC));
+check('...left LINEAR, unlike the colour map',
+  /NO colorSpace here, unlike the albedo map/.test(SRC),
+  'calling data sRGB bends every roughness value on the way in');
+check('...roughness from GREEN and metalness from BLUE, times their factors',
+  /roughness = max\( 0\.0001, uRoughFactor \* rm\.g \);/.test(PBR)
+    && /metallic = uMetalFactor \* rm\.b;/.test(PBR));
+// The map REPLACES the per-vertex values, the opposite of what the albedo map does: glTF has
+// no per-vertex roughness, so where a file carries the texture the texture is authoritative.
+check('...replacing the per-vertex values rather than multiplying them',
+  /THE MAP REPLACES the per-vertex values/.test(PBR));
+check('...and any map, not just albedo, turns on the uv pipeline',
+  /hasTextureMap\(\) \{ return !!\(this\._albedoMap \|\| this\._roughMetalMap\); \}/.test(MESH)
+    && /return !!\(this\.hasTextureMap\(\) && this\.hasUV\(\)\);/.test(MESH));
+
+// THE ENVIRONMENT HAS BEEN UNBOUND SINCE THE THREE.JS PORT. The mocked gl that intercepts the
+// legacy uniform calls had no TEXTURE0 constant, so `gl.TEXTURE0` was undefined, the unit
+// resolved to NaN, and the bind looked up `uTextureNaN` and found nothing. uTexture0 stayed
+// null, computeIBL_UE4 had no panorama, and the shader ran on SH ambient alone -- which is why
+// roughness and metalness had no visible effect at all.
+check('the mocked gl carries the texture constants the shaders ask it for',
+  /mockGL\.TEXTURE0 = 0x84C0;/.test(SHMGR) && /mockGL\.TEXTURE_2D = 0x0DE1;/.test(SHMGR),
+  'without them the environment map silently never binds');
+check('...and a missing constant falls back to unit 0 rather than NaN',
+  /var u = \(typeof unit === 'number' && isFinite\(unit\)\) \? unit - 0x84C0 : 0;/.test(SHMGR),
+  'NaN is what made this silent: a bad unit should cost the wrong texture, not the binding');
+// uEnvSize is the panorama's dimensions and the specular lookup needs them for its mip.
+check('the environment learns its own size when it loads',
+  /if \(tex && tex\.image\) env\.size = \[tex\.image\.width, tex\.image\.height\];/.test(PBR),
+  'no environment declares a size, so the guard in updateUniforms never fired and it sat at 0,0');
 
 console.log(fails ? '\n' + fails + ' FAILURE(S)' : '\nall checks passed');
 process.exit(fails ? 1 : 0);

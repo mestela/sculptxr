@@ -56,7 +56,9 @@ ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness',
   'uAlbedoMap', 'uHasAlbedo',
   // KHR_materials_transmission, as much of it as an IBL-only shader can honour. See the
   // fragment for what it does and what it deliberately does not.
-  'uTransmission'];
+  'uTransmission',
+  // glTF's packed metallicRoughnessTexture and its two factors.
+  'uRoughMetalMap', 'uHasRoughMetal', 'uRoughFactor', 'uMetalFactor'];
 Array.prototype.push.apply(ShaderPBR.uniformNames, ShaderBase.uniformNames.commonUniforms);
 
 ShaderPBR.vertex = [
@@ -103,6 +105,10 @@ ShaderPBR.fragment = [
   'uniform sampler2D uAlbedoMap;',
   'uniform float uHasAlbedo;',
   'uniform float uTransmission;',
+  'uniform sampler2D uRoughMetalMap;',
+  'uniform float uHasRoughMetal;',
+  'uniform float uRoughFactor;',
+  'uniform float uMetalFactor;',
   'uniform float uAlpha;',
   ShaderBase.strings.fragColorUniforms,
   ShaderBase.strings.fragColorFunction,
@@ -111,6 +117,21 @@ ShaderPBR.fragment = [
   'void main(void) {',
   '  vec3 normal = getNormal();',
   '  float roughness = max( 0.0001, vRoughness );',
+  '  float metallic = vMetallic;',
+  // glTF packs ROUGHNESS IN GREEN and METALNESS IN BLUE of one texture, each scaled by its
+  // factor. Sampled linearly -- this is data, not colour, and marking it sRGB would bend the
+  // values on the way in.
+  //
+  // THE MAP REPLACES the per-vertex values rather than multiplying them, which is the opposite
+  // of what the albedo map does and is deliberate. Nomad writes BOTH: a per-vertex roughness in
+  // COLOR_1 and a texture, and for the camel's body they disagree (0.251 against a factor of 1
+  // with all the variation in the image). glTF has no per-vertex roughness at all, so when a
+  // file carries the texture the texture is what the author was looking at.
+  '  if (uHasRoughMetal > 0.5) {',
+  '    vec3 rm = texture2D(uRoughMetalMap, vAlbedoUv).rgb;',
+  '    roughness = max( 0.0001, uRoughFactor * rm.g );',
+  '    metallic = uMetalFactor * rm.b;',
+  '  }',
   // THE MAP MULTIPLIES THE VERTEX COLOUR, it does not replace it. That is what glTF means by
   // baseColorFactor x baseColorTexture, and it is also what makes the two work together here:
   // a Nomad export puts flat colour in the vertex attribute and detail in the image, and a
@@ -127,8 +148,8 @@ ShaderPBR.fragment = [
   // What this is NOT: refraction. Bending what is behind the surface needs the scene rendered
   // to a buffer first, which this pipeline has no pass for, so the glTF's ior is read and
   // ignored. For a thin eye shell there is nothing to bend anyway.
-  '  vec3 albedo = linColor * (1.0 - vMetallic) * (1.0 - uTransmission);',
-  '  vec3 specular = mix( vec3(0.04), linColor, vMetallic);',
+  '  vec3 albedo = linColor * (1.0 - metallic) * (1.0 - uTransmission);',
+  '  vec3 specular = mix( vec3(0.04), linColor, metallic);',
   '',
   '  vec3 color = uExposure * computeIBL_UE4( normal, -normalize(vVertex), albedo, roughness, specular );',
   // FRESNEL-WEIGHTED ALPHA: a glancing surface reflects and a head-on one lets you through,
@@ -146,8 +167,13 @@ ShaderPBR.fragment = [
 
 ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   if (env.texture !== undefined) return env.texture;
-  
-  env.texture = new THREE.TextureLoader().load(env.path, function() {
+
+  env.texture = new THREE.TextureLoader().load(env.path, function (tex) {
+    // uEnvSize IS THE PANORAMA'S DIMENSIONS, and the specular lookup needs them to pick a mip
+    // for the roughness it is given. No environment here carries a `size`, so the guard in
+    // updateUniforms (`if (env.size)`) never fired and the uniform sat at (0, 0). Taken from the
+    // image, which is the only place the number honestly comes from and is not known until now.
+    if (tex && tex.image) env.size = [tex.image.width, tex.image.height];
     if (main) main.render();
   });
   return env.texture;

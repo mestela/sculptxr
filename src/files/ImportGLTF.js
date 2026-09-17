@@ -308,6 +308,22 @@ function buildMesh(prims, gl, name, stats) {
   const trans = prims.map(matOf).find((m) => m && m.transmission > 0);
   if (trans && mesh.setTransmission) mesh.setTransmission(trans.transmission);
 
+  // The packed metal/rough texture. GLTFLoader hangs the SAME image on both metalnessMap and
+  // roughnessMap because glTF packs them together, so either one finds it.
+  //
+  // NO colorSpace here, unlike the albedo map: this is linear data and calling it sRGB would
+  // bend every roughness value on the way in.
+  const withRM = prims.map(matOf).find((m) => m && (m.roughnessMap || m.metalnessMap));
+  if (withRM && mesh.setRoughMetalMap) {
+    const rm = withRM.roughnessMap || withRM.metalnessMap;
+    rm.flipY = false;
+    rm.needsUpdate = true;
+    mesh.setRoughMetalMap(rm,
+      withRM.roughness === undefined ? 1 : withRM.roughness,
+      withRM.metalness === undefined ? 1 : withRM.metalness);
+    if (stats) stats.roughMetalMapped++;
+  }
+
   const withMap = prims.map(matOf).find((m) => m && m.map);
   if (withMap) {
     const tex = withMap.map;
@@ -368,6 +384,7 @@ Import.importGLTF = function (data, gl, onDone, onFail) {
     const used = json.extensionsUsed || [];
     const stats = { meshes: 0, verts: 0, quads: 0, merged: 0, uvs: 0,
                     transmissive: 0, textured: 0, perVertexMaterial: 0, vertexColours: 0,
+                    roughMetalMapped: 0,
                     // Who wrote the file, so the caller can apply that source's unit
                     // conversion -- Nomad's units are not scene units. See Scene.loadScene.
                     generator: (json.asset && json.asset.generator) || '',

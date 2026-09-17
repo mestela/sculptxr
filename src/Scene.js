@@ -4115,7 +4115,8 @@ class Scene {
           + (stats.perVertexMaterial ? ', ' + stats.perVertexMaterial + ' with per-vertex rough/metal' : '')
           // Said because neither has anywhere to go yet and both change how the model looks:
           // a transmissive material is the glass eye, and a texture is the thing the UVs are for.
-          + (stats.textured ? ', ' + stats.textured + ' textured (maps not imported yet)' : '')
+          + (stats.textured ? ', ' + stats.textured + ' with colour maps' : '')
+          + (stats.roughMetalMapped ? ', ' + stats.roughMetalMapped + ' with metal/rough maps' : '')
           + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '');
         console.log('[load] ' + msg);
         if (window.screenLog) window.screenLog(msg, 'lime');
@@ -4186,6 +4187,9 @@ class Scene {
       // importer can only set it on the level it built. Same reason the label is copied here.
       if (innerMesh._albedoMap && mesh.setAlbedoMap) mesh.setAlbedoMap(innerMesh._albedoMap);
       if (innerMesh._transmission && mesh.setTransmission) mesh.setTransmission(innerMesh._transmission);
+      if (innerMesh._roughMetalMap && mesh.setRoughMetalMap) {
+        mesh.setRoughMetalMap(innerMesh._roughMetalMap, innerMesh._roughFactor, innerMesh._metalFactor);
+      }
       if (innerMesh._permanentStaticId) {
         mesh._permanentStaticId = innerMesh._permanentStaticId;
       }

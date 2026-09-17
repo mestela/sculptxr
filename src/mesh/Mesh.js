@@ -2501,6 +2501,27 @@ class Mesh {
   // the shared one would put the last textured mesh's image on every mesh in the scene.
   getAlbedoMap() { return this._albedoMap || null; }
 
+  // THE METAL/ROUGH MAP, glTF's packed metallicRoughnessTexture: roughness in GREEN, metalness
+  // in BLUE, each multiplied by its factor. Linear data, not colour -- see the importer.
+  getRoughMetalMap() { return this._roughMetalMap || null; }
+  getRoughFactor() { return this._roughFactor === undefined ? 1 : this._roughFactor; }
+  getMetalFactor() { return this._metalFactor === undefined ? 1 : this._metalFactor; }
+
+  setRoughMetalMap(tex, roughFactor, metalFactor) {
+    this._roughMetalMap = tex || null;
+    if (roughFactor !== undefined) this._roughFactor = roughFactor;
+    if (metalFactor !== undefined) this._metalFactor = metalFactor;
+    if (this._renderData && this._renderData._threeMesh) {
+      this._renderData._threeMesh.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+      if (this.hasUV()) { this.updateDuplicateGeometry(); this.updateDrawArrays(); }
+      this.updateBuffers();
+    }
+  }
+
+  // ANY map at all, which is what the uv pipeline and the per-mesh material both turn on for.
+  // Asking about the albedo map specifically was right while it was the only one.
+  hasTextureMap() { return !!(this._albedoMap || this._roughMetalMap); }
+
   // HOW MUCH OF WHAT IS BEHIND THIS SURFACE COMES THROUGH IT. 0 is an ordinary opaque surface,
   // 1 is clear glass. Separate from opacity on purpose: opacity fades the whole shaded result
   // including its highlights, which makes glass look like fog, while transmission removes the
@@ -2537,7 +2558,7 @@ class Mesh {
   isUsingTexCoords() {
     var shaderType = this._renderData._shaderType;
     if (shaderType === Enums.Shader.UV || shaderType === Enums.Shader.PAINTUV) return true;
-    return !!(this._albedoMap && this.hasUV());
+    return !!(this.hasTextureMap() && this.hasUV());
   }
 
   isTransparent() {

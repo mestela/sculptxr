@@ -168,7 +168,7 @@ ShaderManager.getMaterial = function(shaderId) {
 ShaderManager.getMaterialFor = function(mesh, shaderId) {
   var shared = this.getMaterial(shaderId);
   if (!shared || !mesh) return shared;
-  var needsOwn = (mesh.getAlbedoMap && mesh.getAlbedoMap()) ||
+  var needsOwn = (mesh.hasTextureMap && mesh.hasTextureMap()) ||
                  (mesh.getTransmission && mesh.getTransmission() > 0);
   if (!needsOwn) return shared;
   // ONLY THE SHADER THAT SAMPLES IT. PBR is the one with uAlbedoMap; every other mode (UV,
@@ -278,9 +278,22 @@ ShaderManager.updateUniforms = function(mesh, main) {
     pixelStorei: function() {}
   };
   
+  // THE GL CONSTANTS THE SHADERS ASK THE MOCK FOR. Without them `gl.TEXTURE0` is undefined,
+  // `undefined - 0x84C0` is NaN, and the bind below looks up `uTextureNaN` and quietly finds
+  // nothing -- which is why the PBR environment map has been unbound since the Three.js port.
+  // uTexture0 stayed null, computeIBL_UE4 had no panorama to sample, and the shader ran on its
+  // 9-coefficient SH ambient alone: flat diffuse, no specular, and ROUGHNESS AND METALNESS WITH
+  // NO VISIBLE EFFECT AT ALL. Measured before the fix: roughness 0.02 and 1.0 rendered
+  // identically (mean 79.7, sd 13.79 both); after, 88.7/24.9 against 81.8/13.8.
+  mockGL.TEXTURE0 = 0x84C0;
+  mockGL.TEXTURE_2D = 0x0DE1;
+
   var activeTexUnit = 0;
   mockGL.activeTexture = function(unit) {
-    activeTexUnit = unit - 0x84C0; // gl.TEXTURE0 is 33984 (0x84C0)
+    // Falls back to unit 0 rather than NaN: a missing constant should cost the wrong texture
+    // unit at worst, not silently drop the binding.
+    var u = (typeof unit === 'number' && isFinite(unit)) ? unit - 0x84C0 : 0;  // gl.TEXTURE0 is 33984
+    activeTexUnit = u;
   };
   mockGL.createTexture = function() { return {}; };
   mockGL.bindTexture = function(target, tex) { 
@@ -338,6 +351,13 @@ ShaderManager.updateUniforms = function(mesh, main) {
       }
       unifs.uAlbedoMap.value = amap || ShaderManager._dummyTex;
       unifs.uHasAlbedo.value = amap ? 1 : 0;
+    }
+    if (unifs.uRoughMetalMap) {
+      var rmap = mesh.getRoughMetalMap ? mesh.getRoughMetalMap() : null;
+      unifs.uRoughMetalMap.value = rmap || ShaderManager._dummyTex;
+      unifs.uHasRoughMetal.value = rmap ? 1 : 0;
+      unifs.uRoughFactor.value = mesh.getRoughFactor ? mesh.getRoughFactor() : 1;
+      unifs.uMetalFactor.value = mesh.getMetalFactor ? mesh.getMetalFactor() : 1;
     }
     if (unifs.uTransmission) {
       unifs.uTransmission.value = mesh.getTransmission ? mesh.getTransmission() : 0;
