@@ -345,7 +345,8 @@ check('...and switching it on rebuilds the duplicates and the buffers',
 // every mesh in the scene.
 check('a textured mesh gets its own material',
   /ShaderManager\.getMaterialFor = function\(mesh, shaderId\)/.test(SHMGR)
-    && /if \(!shared \|\| !mesh \|\| !mesh\.getAlbedoMap \|\| !mesh\.getAlbedoMap\(\)\) return shared;/.test(SHMGR),
+    && /\(mesh\.getAlbedoMap && mesh\.getAlbedoMap\(\)\)/.test(SHMGR)
+    && /if \(!needsOwn\) return shared;/.test(SHMGR),
   'a shared material cannot carry a per-mesh texture');
 check('...and every material assignment goes through it',
   !/= ShaderManager\.getMaterial\(this\.getShaderType\(\)\);/.test(MESH)
@@ -365,6 +366,37 @@ check('...through the same sRGB conversion the vertex colour uses',
   'two conversions would let the map and the colour it multiplies drift a gamma apart');
 check('...and the texture is marked sRGB with glTF flipY',
   /tex\.colorSpace = THREE_SRGB;/.test(SRC) && /tex\.flipY = false;/.test(SRC));
+
+// ── transmission ────────────────────────────────────────────────────────────────────
+//
+// KHR_materials_transmission, as much of it as an IBL-only shader can honour. The camel's outer
+// eye is transmissionFactor 1 and imported as an opaque white shell over the iris.
+check('a transmissive material is read off the glTF material',
+  /const trans = prims\.map\(matOf\)\.find\(\(m\) => m && m\.transmission > 0\);/.test(SRC)
+    && /mesh\.setTransmission\(trans\.transmission\)/.test(SRC));
+
+// Removing the DIFFUSE and keeping the reflection is the difference between glass and fog:
+// fading the whole shaded result with opacity takes the highlights down with it.
+check('transmission removes the diffuse, not the highlights',
+  /vec3 albedo = linColor \* \(1\.0 - vMetallic\) \* \(1\.0 - uTransmission\);/.test(PBR),
+  'scaling the final colour by opacity instead makes a clear shell read as milky');
+check('...with a fresnel-weighted alpha so a curved clear surface still reads as curved',
+  /float fres = pow\(1\.0 - clamp\(dot\(normal, -normalize\(vVertex\)\), 0\.0, 1\.0\), 3\.0\);/.test(PBR));
+
+// Every sculpt material writes depth, which is right for a solid and fatal for a shell with
+// something inside it.
+check('a transmissive mesh stops writing depth',
+  /per\[shaderId\]\.depthWrite = !\(mesh\.getTransmission && mesh\.getTransmission\(\) > 0\);/.test(SHMGR),
+  'writing depth hides the iris inside the eye and punches a hole in what is behind');
+check('...and gets its own material to do it on',
+  /\(mesh\.getTransmission && mesh\.getTransmission\(\) > 0\)/.test(SHMGR)
+    && /var needsOwn =/.test(SHMGR));
+check('...restored when transmission goes back to zero',
+  !/if \(mesh\.getTransmission && mesh\.getTransmission\(\) > 0\) \{\s*\n\s*per\[shaderId\]\.depthWrite = false;/.test(SHMGR),
+  'a mesh keeping its own material for another reason would keep depth off for good');
+// Refraction is NOT claimed: bending what is behind needs the scene in a buffer first.
+check('...and the shader says plainly that ior is read and ignored',
+  /What this is NOT: refraction/.test(PBR));
 
 console.log(fails ? '\n' + fails + ' FAILURE(S)' : '\nall checks passed');
 process.exit(fails ? 1 : 0);

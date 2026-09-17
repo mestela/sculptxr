@@ -303,6 +303,11 @@ function buildMesh(prims, gl, name, stats) {
   // (the camel's body has a single colour map across all three of its primitives), which is why
   // this is a limit and not a bug today. Normal and metal/rough maps are not taken at all yet --
   // there is no sampler for them.
+  // KHR_materials_transmission, which GLTFLoader has already decoded onto the material. Read
+  // before the map so a transmissive surface is one whatever else it carries.
+  const trans = prims.map(matOf).find((m) => m && m.transmission > 0);
+  if (trans && mesh.setTransmission) mesh.setTransmission(trans.transmission);
+
   const withMap = prims.map(matOf).find((m) => m && m.map);
   if (withMap) {
     const tex = withMap.map;
@@ -323,8 +328,7 @@ function buildMesh(prims, gl, name, stats) {
       for (let i = 0; i < perPrim[p].length; i++) if (perPrim[p][i].length === 4) stats.quads++;
     if (uvAttr) stats.uvs++;
     if (colAttr && colAttr.count === nbOld) stats.vertexColours++;
-    const tm = prims.map(matOf).find((m) => m && m.transmission > 0);
-    if (tm) stats.transmissive++;
+    if (trans) stats.transmissive++;
     if (prims.map(matOf).some((m) => m && m.map)) stats.textured++;
   }
   return mesh;

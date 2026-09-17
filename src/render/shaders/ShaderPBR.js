@@ -53,7 +53,10 @@ ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness',
   // The mesh's own base-colour map. uTexture0 is the ENVIRONMENT and always has been, so a
   // second sampler is the only place an imported albedo image can go. Bound per mesh by
   // ShaderManager.updateUniforms, onto a material that mesh owns -- see getMaterialFor.
-  'uAlbedoMap', 'uHasAlbedo'];
+  'uAlbedoMap', 'uHasAlbedo',
+  // KHR_materials_transmission, as much of it as an IBL-only shader can honour. See the
+  // fragment for what it does and what it deliberately does not.
+  'uTransmission'];
 Array.prototype.push.apply(ShaderPBR.uniformNames, ShaderBase.uniformNames.commonUniforms);
 
 ShaderPBR.vertex = [
@@ -99,6 +102,7 @@ ShaderPBR.fragment = [
   'varying vec2 vAlbedoUv;',
   'uniform sampler2D uAlbedoMap;',
   'uniform float uHasAlbedo;',
+  'uniform float uTransmission;',
   'uniform float uAlpha;',
   ShaderBase.strings.fragColorUniforms,
   ShaderBase.strings.fragColorFunction,
@@ -116,11 +120,27 @@ ShaderPBR.fragment = [
   '  vec3 baseColor = vAlbedo;',
   '  if (uHasAlbedo > 0.5) baseColor *= texture2D(uAlbedoMap, vAlbedoUv).rgb;',
   '  vec3 linColor = sRGBToLinear(baseColor);',
-  '  vec3 albedo = linColor * (1.0 - vMetallic);',
+  // TRANSMISSION REMOVES THE DIFFUSE AND KEEPS THE REFLECTION, which is the difference between
+  // glass and fog. Fading the whole shaded result with opacity would take the highlights down
+  // with it and the eye would read as a milky shell; a clear surface still has a bright rim.
+  //
+  // What this is NOT: refraction. Bending what is behind the surface needs the scene rendered
+  // to a buffer first, which this pipeline has no pass for, so the glTF's ior is read and
+  // ignored. For a thin eye shell there is nothing to bend anyway.
+  '  vec3 albedo = linColor * (1.0 - vMetallic) * (1.0 - uTransmission);',
   '  vec3 specular = mix( vec3(0.04), linColor, vMetallic);',
   '',
   '  vec3 color = uExposure * computeIBL_UE4( normal, -normalize(vVertex), albedo, roughness, specular );',
-  '  gl_FragColor = encodeFragColor(color, uAlpha);',
+  // FRESNEL-WEIGHTED ALPHA: a glancing surface reflects and a head-on one lets you through,
+  // which is what makes a curved clear object read as curved rather than as a flat hole. The
+  // 0.12 keeps a little of the surface visible face-on so it never disappears entirely -- it
+  // is the one number here worth tuning by eye.
+  '  float alpha = uAlpha;',
+  '  if (uTransmission > 0.0) {',
+  '    float fres = pow(1.0 - clamp(dot(normal, -normalize(vVertex)), 0.0, 1.0), 3.0);',
+  '    alpha = mix(alpha, alpha * clamp(fres + 0.12, 0.0, 1.0), uTransmission);',
+  '  }',
+  '  gl_FragColor = encodeFragColor(color, alpha);',
   '}'
 ].join('\n');
 

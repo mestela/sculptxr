@@ -167,7 +167,10 @@ ShaderManager.getMaterial = function(shaderId) {
  */
 ShaderManager.getMaterialFor = function(mesh, shaderId) {
   var shared = this.getMaterial(shaderId);
-  if (!shared || !mesh || !mesh.getAlbedoMap || !mesh.getAlbedoMap()) return shared;
+  if (!shared || !mesh) return shared;
+  var needsOwn = (mesh.getAlbedoMap && mesh.getAlbedoMap()) ||
+                 (mesh.getTransmission && mesh.getTransmission() > 0);
+  if (!needsOwn) return shared;
   // ONLY THE SHADER THAT SAMPLES IT. PBR is the one with uAlbedoMap; every other mode (UV,
   // Matcap, Flat, Normal...) has no use for the map and every reason to keep the shared
   // material, whose uniforms the legacy path sets up by shader id. Cloning them too broke UV
@@ -183,6 +186,14 @@ ShaderManager.getMaterialFor = function(mesh, shaderId) {
     m.userData.sculptPerMesh = true;
     per[shaderId] = m;
   }
+  // A TRANSMISSIVE SURFACE MUST NOT WRITE DEPTH. Every sculpt material writes depth, which is
+  // right for a solid; a glass eye that writes it hides the iris sitting inside it and punches
+  // a hole in whatever else is behind. Three sorts the transparent pass back to front already,
+  // so dropping the depth write is the whole fix -- no render order to negotiate.
+  // Written every time rather than only when transmissive: a mesh that keeps its own material
+  // for another reason (it has a map) and whose transmission is later turned off would
+  // otherwise keep the depth write switched off for good.
+  per[shaderId].depthWrite = !(mesh.getTransmission && mesh.getTransmission() > 0);
   return per[shaderId];
 };
 
@@ -327,6 +338,9 @@ ShaderManager.updateUniforms = function(mesh, main) {
       }
       unifs.uAlbedoMap.value = amap || ShaderManager._dummyTex;
       unifs.uHasAlbedo.value = amap ? 1 : 0;
+    }
+    if (unifs.uTransmission) {
+      unifs.uTransmission.value = mesh.getTransmission ? mesh.getTransmission() : 0;
     }
 
     material.uniformsNeedUpdate = true;

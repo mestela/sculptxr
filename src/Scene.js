@@ -4185,6 +4185,7 @@ class Scene {
       // The albedo map rides on the WRAPPER too: the renderer asks the Multimesh for it, and an
       // importer can only set it on the level it built. Same reason the label is copied here.
       if (innerMesh._albedoMap && mesh.setAlbedoMap) mesh.setAlbedoMap(innerMesh._albedoMap);
+      if (innerMesh._transmission && mesh.setTransmission) mesh.setTransmission(innerMesh._transmission);
       if (innerMesh._permanentStaticId) {
         mesh._permanentStaticId = innerMesh._permanentStaticId;
       }

@@ -2501,6 +2501,19 @@ class Mesh {
   // the shared one would put the last textured mesh's image on every mesh in the scene.
   getAlbedoMap() { return this._albedoMap || null; }
 
+  // HOW MUCH OF WHAT IS BEHIND THIS SURFACE COMES THROUGH IT. 0 is an ordinary opaque surface,
+  // 1 is clear glass. Separate from opacity on purpose: opacity fades the whole shaded result
+  // including its highlights, which makes glass look like fog, while transmission removes the
+  // DIFFUSE and leaves the reflection -- which is what actually reads as glass.
+  getTransmission() { return this._transmission || 0; }
+
+  setTransmission(t) {
+    this._transmission = t || 0;
+    if (this._renderData && this._renderData._threeMesh) {
+      this._renderData._threeMesh.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+    }
+  }
+
   setAlbedoMap(tex) {
     this._albedoMap = tex || null;
     // The UV pipeline is switched on by isUsingTexCoords, and everything downstream of it --
