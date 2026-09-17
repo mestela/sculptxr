@@ -1,3 +1,64 @@
+# v3.46.0
+**glTF comes in, and materials arrive with it.** SculptXR has exported glb since long before it
+could read one, so `getFileType` answered 'glb' for a file nothing could open and the load ended
+in silence. There is an importer now, and the work in it is not the parsing -- GLTFLoader does
+that -- it is the three things a sculpting application needs that glTF does not carry.
+
+**Quads.** glTF has none, and this is a quad-first app. FB_ngon_encoding carries them anyway, and
+decoding it RESTORES the authored topology rather than guessing at it. But the declaration is not
+the test, because Nomad does not declare it: measured on a real Nomad 11 export, `extensionsUsed`
+lists only the KHR material extensions while the index data is fan-encoded throughout. The
+STRUCTURE is the test instead -- a fan chains, each triangle starting its edge where the last one
+finished, and two triangles sharing a vertex AND the edge between them are a quad. The camel comes
+in as **10,599 quads**. **Seams.** glTF stores UVs per vertex, so it splits the position array
+wherever they differ; imported verbatim every seam is a crack, two vertices where the surface has
+one, and a brush moves one side and not the other. Positions weld on exact equality and the split
+is kept in the uv corner indices. **A primitive is not an object** -- one material per primitive
+means a three-material body is three primitives of one mesh, which turned a 6-object camel into
+13, each copy carrying all the vertices and a third of the faces. They merge back, and the two
+eyes stay two, because they are two nodes on one mesh rather than two primitives. Nomad's units
+are not scene units either: a glb from the same scene takes the same x50 the live link has always
+applied.
+
+**Then the materials, and the environment that was never bound.** `COLOR_0` is a normalized ushort
+-- white is 65535 -- so read raw it clamps to 1 and every model imported white. `COLOR_1` turns
+out not to be a second colour set at all: Nomad packs (roughness, metalness, mask) there, which is
+exactly this app's per-vertex material vector, both being SculptGL descendants. **The UV pipeline
+was already complete and simply never switched on** outside the two UV *display* modes, so in
+ordinary viewing the geometry carried no uv attribute and the index used the unduplicated
+triangles. Albedo, metal/rough and normal maps all land now; a texture cannot live on a shared
+material, so a textured mesh gets its own. **Normal maps carry no tangent attribute** -- the frame
+is rebuilt per pixel from derivatives, which in a sculpting app is the correct call rather than a
+shortcut, since a tangent is derived from positions and uvs and goes stale the moment a brush
+moves a vertex.
+
+And underneath all of it: **the IBL environment has been unbound since the Three.js port**. The
+mocked gl that intercepts the legacy uniform calls had no TEXTURE0 constant, so `gl.TEXTURE0` was
+undefined, the unit resolved to NaN, and the bind looked up `uTextureNaN` and found nothing.
+uTexture0 stayed null, computeIBL_UE4 had no panorama, and the shader ran on its 9-coefficient SH
+ambient alone -- which is why everything looked unlit and **roughness and metalness had no visible
+effect at all**. Measured before: roughness 0.02 and 1.0 rendered identically. After: 88.7/24.9
+against 81.8/13.8.
+
+**Lights are objects you add and place.** Add > Light drops a point light in and you move it like
+anything else. It is a locator -- `_isLight` and `_isNull` together, the pairing a rig joint uses
+-- so every place that filters real geometry already skips it, and going through the ordinary add
+path buys an outliner row, selection, the gizmo, parenting, keyframes and undo. Range comes from
+the scene it lands in, and falloff is `1/(1 + d^2/r^2)` rather than inverse square, which is
+correct and unusable at this scale.
+
+**Posing got faster, twice.** A **hidden mesh is no longer skinned** -- 58.8ms to 19.0ms on the
+camel with only the body shown, safe because the pose stamp is left stale so the first visible
+frame catches up exactly. And anything rigid can be **parented instead of bound**, which already
+worked and turns out to be worth 1.52x on this character. The skin trace now prints the whole pass
+in one line, named and sorted, instead of one line per mesh on independent throttles -- and no
+longer lies, since `_skinPhase` was a single global object every mesh overwrote.
+
+**Also:** the outliner resizes, holds its scroll and does Ctrl-to-toggle / Shift-for-range like
+every other list; Bind and Unbind both take the whole selection; a transmissive material reads as
+glass rather than an opaque shell; and the VR tool toast is no longer a permanent 11cm panel
+parked at the world origin on desktop.
+
 # v3.45.0
 **The VR keyboard was mirrored, and the axis was the whole story.** Open a pinned panel's Save
 dialog and the keyboard came up reversed left to right. Every guard in that path tested
