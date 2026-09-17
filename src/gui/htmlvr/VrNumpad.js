@@ -13,7 +13,7 @@
  *   window._vrNumpad.close()  — dismiss without confirming
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M, panelWorldQuat } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, matchPanelTransform, frontOfPanelOffset } from './HTMLVRPanel.js';
 import * as THREE from 'three';
 
 // ── Shared CSS ────────────────────────────────────────────────────────────────
@@ -64,6 +64,30 @@ const CSS = `
   grid-template-columns: repeat(4, 1fr);
   gap: 7px;
 }
+/* Zero takes the width the three commands used to, the way space does on the keyboard. */
+.vrn-zero { grid-column: 1 / -1; }
+
+/* THE SHARED COMMAND ROW. Same three buttons, same order, same size, in the same place on the
+   keyboard and the numpad -- see the note in the markup. Its own row so it reads as a group
+   rather than as three more keys. */
+.vrn-cmdrow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 10px;
+}
+.vrn-cmd {
+  background: #313244;
+  border: none;
+  border-radius: 7px;
+  color: #cdd6f4;
+  font-size: 15px;
+  font-weight: 500;
+  height: 46px;
+  cursor: pointer;
+}
+.vrn-cmd:hover, .vrn-cmd.hover { background: #45475a; }
+
 .vrn-btn {
   background: #313244;
   border: none;
@@ -80,18 +104,16 @@ const CSS = `
 }
 .vrn-btn:hover, .vrn-btn.hover  { background: #45475a; }
 .vrn-btn.active { background: #585b70; }
-.vrn-btn.vrn-ok {
-  background: #40a02b;
-  color: #fff;
-  font-size: 20px;
-}
-.vrn-btn.vrn-ok:hover, .vrn-btn.vrn-ok.hover { background: #4ec33a; }
-.vrn-btn.vrn-cancel {
-  background: #e64553;
-  color: #fff;
-  font-size: 20px;
-}
-.vrn-btn.vrn-cancel:hover, .vrn-btn.vrn-cancel.hover { background: #f05e6c; }
+/* COLOUR ONLY -- THE SIZE COMES FROM .vrn-cmd. These carried font-size: 20px, sized for the
+   glyphs they used to hold, and Confirm and Cancel are words now: the row came out with two
+   20px buttons either side of a 15px one. matt: "the 'cancel, clear, confirm' text in the
+   numpad are different sizes, conform them."
+   The .vrn-btn variants are gone with them -- both buttons left the keypad grid, so those
+   selectors could not match anything. */
+.vrn-cmd.vrn-ok { background: #40a02b; color: #fff; }
+.vrn-cmd.vrn-ok:hover, .vrn-cmd.vrn-ok.hover { background: #4ec33a; }
+.vrn-cmd.vrn-cancel { background: #e64553; color: #fff; }
+.vrn-cmd.vrn-cancel:hover, .vrn-cmd.vrn-cancel.hover { background: #f05e6c; }
 .vrn-btn.vrn-back {
   background: #3d2e40;
   color: #f5c2e7;
@@ -146,6 +168,14 @@ function buildPanelEl() {
     <button class="vrn-sign" id="vrn-minus">&minus;</button>
     <button class="vrn-sign active" id="vrn-abs">=</button>
   </div>
+  ${/* THE THREE COMMANDS LEAVE THE KEYPAD. Confirm, Cancel and Clear sat down the right-hand
+       column here and along the bottom row of the keyboard, interleaved with punctuation -- so
+       the same three commands were in two different places depending on which overlay you were
+       looking at, and neither read as a group. matt: "i think the confirm, cancel, clear buttons
+       should be in the same place for both. i suggest at the bottom, in a new row just for them,
+       same size buttons, as cancel, clear, confirm."
+       The right column keeps the three keys that ARE keypad keys -- backspace, negate, decimal
+       point -- and zero takes the full width below them, the way space does on the keyboard. */ ''}
   <div class="vrn-grid">
     <button class="vrn-btn" data-vrn="7">7</button>
     <button class="vrn-btn" data-vrn="8">8</button>
@@ -155,15 +185,14 @@ function buildPanelEl() {
     <button class="vrn-btn" data-vrn="4">4</button>
     <button class="vrn-btn" data-vrn="5">5</button>
     <button class="vrn-btn" data-vrn="6">6</button>
-    <button class="vrn-btn vrn-back" id="vrn-clear">C</button>
+    <button class="vrn-btn" id="vrn-neg" title="Negate">&plusmn;</button>
 
     <button class="vrn-btn" data-vrn="1">1</button>
     <button class="vrn-btn" data-vrn="2">2</button>
     <button class="vrn-btn" data-vrn="3">3</button>
-    <button class="vrn-btn vrn-ok" id="vrn-ok">✓</button>
-
     <button class="vrn-btn" id="vrn-dot">.</button>
-    <button class="vrn-btn" data-vrn="0">0</button>
+
+    <button class="vrn-btn vrn-zero" data-vrn="0">0</button>
     ${/* YOU COULD NOT TYPE A NEGATIVE NUMBER. There was no sign key at all -- this slot was an
          empty button held open with visibility:hidden -- so any field that accepts a negative
          (a position, an offset, a rotation) could only be reduced by going through zero with the
@@ -173,8 +202,11 @@ function buildPanelEl() {
          have explicit '-' and '-0' cases, so the string half of this has been waiting for a
          button since the panel was built. The sign ROW above is a different feature -- it is
          the relative +=/-= mode, only shown when config.relativeExpr is set. */ ''}
-    <button class="vrn-btn" id="vrn-neg" title="Negate">&plusmn;</button>
-    <button class="vrn-btn vrn-cancel" id="vrn-cancel">✕</button>
+  </div>
+  <div class="vrn-cmdrow">
+    <button class="vrn-cmd vrn-cancel" id="vrn-cancel">Cancel</button>
+    <button class="vrn-cmd" id="vrn-clear">Clear</button>
+    <button class="vrn-cmd vrn-ok" id="vrn-ok">Confirm</button>
   </div>
 </div>`;
   return wrap.firstElementChild;
@@ -606,31 +638,11 @@ export class VrNumpad extends HTMLVRPanel {
     const panelWorldPos = new THREE.Vector3();
     animMesh.getWorldPosition(panelWorldPos);
 
-    // ── Panel's true rotation (corrected for scale decomposition) ─────────────
-    // Three.js's Matrix4.decompose absorbs any negative determinant into scaleX.
-    // This happens for ALL HTMLVRPanel meshes (which all have scale.y=-1),
-    // not just pinned ones — and it corrupts the extracted quaternion by an extra
-    // R_z(180°) = Quaternion(0,0,1,0) every time.  Always correct it:
-    //   Q_true = getWorldQuaternion() · Quaternion(0,0,1,0)
-    //
-    //  • Pinned  (scale.x=-1 after decompose): getWorldQuat = R_true·Rz180 → corrected = R_true ✓
-    //  • Controller (scale.y=-1, det<0 same):  getWorldQuat = Q_ctrl·Rx(-90)·Rz180 → corrected = Q_ctrl·Rx(-90) ✓
-    //  • Torn-off (scale.y=-1):                getWorldQuat = camQuat·Rz180 → corrected = camQuat ✓
-    // Conditional on the panel's ACTUAL scale — the hands-only wrist slot normalises it,
-    // and undoing a half turn that is not there flips this panel. See panelWorldQuat.
-    const panelQuat = panelWorldQuat(animMesh);
-    // MATCH THE SOURCE PANEL'S MIRROR SIGN.
-    //
-    // These meshes carry scale.y = -1 like every HTMLVRPanel, and that was invisible for as long
-    // as the panel they position against carried it too — the two mirrors cancelled. The
-    // hands-only wrist slot normalises the source panel's scale, so this one was left mirrored
-    // on its own and came up flipped. Measured: kbScale [1,-1,1] against mainScale [1,1,1].
-    //
-    // Copying the SIGN rather than forcing a value keeps both conventions working.
-    if (this.mesh && animMesh.scale) {
-      const _sy = Math.abs(this.mesh.scale.y) * (animMesh.scale.y < 0 ? -1 : 1);
-      if (this.mesh.scale.y !== _sy) this.mesh.scale.y = _sy;
-    }
+    // ONE RULE, SHARED. This carried its own copy of "undo the half turn, then match the mirror
+    // sign", written against scale.y -- and a panel placed by a decompose carries its mirror on
+    // scale.x instead, so the copy was blind to exactly the case that matters. See
+    // matchPanelTransform in HTMLVRPanel.
+    const panelQuat = matchPanelTransform(this.mesh, animMesh);
 
     // ── Panel-space axes for positioning ─────────────────────────────────────
     // Using the panel's OWN axes (derived from panelQuat) means the offset
@@ -639,9 +651,6 @@ export class VrNumpad extends HTMLVRPanel {
     // own centre the way camera-fixed axes cause.
     const right  = new THREE.Vector3(1, 0, 0).applyQuaternion(panelQuat);
     const up     = new THREE.Vector3(0, 1, 0).applyQuaternion(panelQuat);
-    // Panel's local +Z is its front-face normal; for a panel facing the user
-    // this points toward the user — move in this direction to float in front.
-    const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(panelQuat);
 
     // ── World widths ──────────────────────────────────────────────────────────
     const animW = sourcePanel._meshWidth ?? animMesh.geometry.parameters.width;
@@ -674,43 +683,25 @@ export class VrNumpad extends HTMLVRPanel {
     this.mesh.position
       .copy(panelWorldPos)
       .addScaledVector(right,  xFromFieldCentre + numW / 2 + GAP)
-      .addScaledVector(up,     yOffset)
-      .addScaledVector(toUser, 0);    // forward handled below, as a distance from the head
+      .addScaledVector(up,     yOffset);   // forward handled below, as clearance from the panel
 
-    // IN FRONT OF THE PANEL FROM WHERE YOU ARE, NOT ALONG ITS NORMAL.
+    // CLEARANCE FROM THE PANEL, NOT DISTANCE FROM THE HEAD.
     //
-    // The 4cm along the panel's own +Z that used to live here is "in front" only when the panel
-    // faces you, and the wrist panels are angled to the hand — so the numpad sat level with the
-    // main panel or behind it. The keyboard had exactly this bug and the fix is the same one,
-    // applied here so the two overlays do not drift apart again.
+    // Two rules lived here before this one. The first stepped 4cm along the panel's own +Z, which
+    // is "in front" only when the panel faces you -- on a wrist panel angled to the hand the
+    // numpad sat level with it or behind. The second replaced that with an absolute distance:
+    // exactly a centimetre nearer the head than the panel. That fixed the angled case and broke
+    // the clearance, because distance-from-head is not clearance: a point offset sideways by s on
+    // a panel facing you is sqrt(d^2 + s^2) away, so pulling it to d - gap leaves roughly 13mm of
+    // separation at a 6cm offset and half a metre -- and a different amount at every other pitch.
+    // matt: "between making the panel face me, to facing the floor, the numpad is coplanar with
+    // the parent panel."
     //
-    // The sideways placement above is kept: a numpad beside the field it edits does not cover
-    // what you are reading, which is the point of putting it there.
-    {
-      // BROUGHT TO A DISTANCE, NOT PUSHED BY ONE.
-      //
-      // The keyboard copies its parent's pose, so a 1cm step toward the head is enough to put it
-      // in front. The numpad deliberately sits BESIDE the field, and on an angled panel that
-      // sideways move carries it away from you — measured, 6cm sideways beat a 1cm forward nudge
-      // and it ended up 3cm FARTHER from the head than the panel it was floating over.
-      //
-      // So the target is a distance rather than a delta: put it exactly a centimetre nearer the
-      // head than the panel is. That holds however far to the side it went and however the panel
-      // is angled, which a fixed push cannot.
-      const camPos = this._viewerPosition ? this._viewerPosition() : null;
-      const gap = window._numpadFrontGap ?? 0.01;
-      if (camPos) {
-        const panelDist = camPos.distanceTo(panelWorldPos);
-        const toCam = camPos.clone().sub(this.mesh.position);
-        const here = toCam.length();
-        if (here > 1e-6) {
-          const target = Math.max(0.05, panelDist - gap);   // never inside the viewer's head
-          this.mesh.position.addScaledVector(toCam.normalize(), here - target);
-        }
-      } else {
-        this.mesh.position.addScaledVector(toUser, gap);
-      }
-    }
+    // The normal was right all along; only its SIGN needed the viewer. See frontOfPanelOffset,
+    // which the keyboard uses too -- same rule, same gap, both overlays.
+    this.mesh.position.add(frontOfPanelOffset(
+      panelQuat, panelWorldPos, this._viewerPosition ? this._viewerPosition() : null,
+      window._numpadFrontGap ?? 0.01));
 
     // Inherit the panel's true rotation so the numpad tilts with the panel.
     this.mesh.quaternion.copy(panelQuat);
@@ -784,9 +775,33 @@ export class VrNumpad extends HTMLVRPanel {
    * panel is attached to a moving VR controller.
    */
   _repositionIfTracking() {
-    if (this._sourcePanel?.mesh?.visible && this.mesh?.visible) {
+    if (!this.mesh?.visible) return;
+    // THE PARENT GOING AWAY TAKES THIS WITH IT.
+    //
+    // These overlays are modal and they float in world space rather than being parented to the
+    // panel that summoned them, so closing that panel used to leave the keyboard or numpad
+    // hanging in mid-air over nothing -- still capturing presses, with no way back to the field
+    // it was editing. matt: "if the user presses the X button to close the parent mainpanel, the
+    // popup keyboard/numpad should also close."
+    //
+    // Checked here rather than wired to the X, because this runs every frame the overlay is
+    // visible and so covers EVERY way a parent can leave: the close button, a swap to the wrist
+    // panel, a torn-off section being put away, a panel that is never rebuilt. One test, no list
+    // of exits to keep up to date. Closing (rather than merely hiding) is right: the edit is
+    // abandoned, so the cancel callback should fire exactly as if you had pressed Cancel.
+    // NO DEBOUNCE. The first version waited fifteen frames in case a hide was transient, on the
+    // strength of Scene's restorable "wrist hide episode" (_updateWristHide). That episode fires
+    // only while the off-hand trigger is held AND Grab is holding a pin or a bone -- a state you
+    // cannot be in with a modal keyboard open, doubly so now that a stroke owns the controller
+    // outright. matt: "why the delay? it serves no purpose i can see." He was right: it was
+    // guarding a case that cannot arise, which is a cost with no benefit and a thing to explain
+    // to the next reader. If a real transient ever turns up, THAT is when to wait for it.
+    const _parent = this._sourcePanel ? this._sourcePanel.mesh : this._anchorMesh;
+    if (_parent && !_parent.visible) { this.close(); return; }
+
+    if (this._sourcePanel?.mesh?.visible) {
       this._positionNextToPanel(this._sourcePanel, this._sourceEl);
-    } else if (this._anchorMesh?.visible && this.mesh?.visible) {
+    } else if (this._anchorMesh?.visible) {
       this._positionAtMesh(this._anchorMesh);
     }
   }

@@ -13,7 +13,7 @@
  *   window._vrConfirmPanel.close()   — dismiss without confirming
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M, panelWorldQuat } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, matchPanelTransform } from './HTMLVRPanel.js';
 import { injectUITokens } from './uiTokens.js';
 import * as THREE from 'three';
 
@@ -173,21 +173,9 @@ export class VrConfirm extends HTMLVRPanel {
     const panelWorldPos = new THREE.Vector3();
     panelMesh.getWorldPosition(panelWorldPos);
 
-    // Conditional on the panel's ACTUAL scale — the hands-only wrist slot normalises it,
-    // and undoing a half turn that is not there flips this panel. See panelWorldQuat.
-    const panelQuat = panelWorldQuat(panelMesh);
-    // MATCH THE SOURCE PANEL'S MIRROR SIGN.
-    //
-    // These meshes carry scale.y = -1 like every HTMLVRPanel, and that was invisible for as long
-    // as the panel they position against carried it too — the two mirrors cancelled. The
-    // hands-only wrist slot normalises the source panel's scale, so this one was left mirrored
-    // on its own and came up flipped. Measured: kbScale [1,-1,1] against mainScale [1,1,1].
-    //
-    // Copying the SIGN rather than forcing a value keeps both conventions working.
-    if (this.mesh && panelMesh.scale) {
-      const _sy = Math.abs(this.mesh.scale.y) * (panelMesh.scale.y < 0 ? -1 : 1);
-      if (this.mesh.scale.y !== _sy) this.mesh.scale.y = _sy;
-    }
+    // ONE RULE, SHARED -- see matchPanelTransform in HTMLVRPanel. The copy that lived here tested
+    // scale.y, and a panel placed by a decompose carries its mirror on scale.x.
+    const panelQuat = matchPanelTransform(this.mesh, panelMesh);
 
     const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(panelQuat); // panel front normal
     this.mesh.position.copy(panelWorldPos).addScaledVector(toUser, 0.04); // 4 cm in front
@@ -208,7 +196,31 @@ export class VrConfirm extends HTMLVRPanel {
   // Called each XR frame while visible so the dialog follows its anchor panel
   // (which may be attached to a moving controller).
   _repositionIfTracking() {
-    if (this._anchorMesh?.visible && this.mesh?.visible) {
+    if (!this.mesh?.visible) return;
+    // THE PARENT GOING AWAY TAKES THIS WITH IT.
+    //
+    // These overlays are modal and they float in world space rather than being parented to the
+    // panel that summoned them, so closing that panel used to leave the keyboard or numpad
+    // hanging in mid-air over nothing -- still capturing presses, with no way back to the field
+    // it was editing. matt: "if the user presses the X button to close the parent mainpanel, the
+    // popup keyboard/numpad should also close."
+    //
+    // Checked here rather than wired to the X, because this runs every frame the overlay is
+    // visible and so covers EVERY way a parent can leave: the close button, a swap to the wrist
+    // panel, a torn-off section being put away, a panel that is never rebuilt. One test, no list
+    // of exits to keep up to date. Closing (rather than merely hiding) is right: the edit is
+    // abandoned, so the cancel callback should fire exactly as if you had pressed Cancel.
+    // NO DEBOUNCE. The first version waited fifteen frames in case a hide was transient, on the
+    // strength of Scene's restorable "wrist hide episode" (_updateWristHide). That episode fires
+    // only while the off-hand trigger is held AND Grab is holding a pin or a bone -- a state you
+    // cannot be in with a modal keyboard open, doubly so now that a stroke owns the controller
+    // outright. matt: "why the delay? it serves no purpose i can see." He was right: it was
+    // guarding a case that cannot arise, which is a cost with no benefit and a thing to explain
+    // to the next reader. If a real transient ever turns up, THAT is when to wait for it.
+    const _parent = this._sourcePanel ? this._sourcePanel.mesh : this._anchorMesh;
+    if (_parent && !_parent.visible) { this.close(); return; }
+
+    if (this._anchorMesh?.visible) {
       this._positionAtPanel(this._anchorMesh);
     }
   }

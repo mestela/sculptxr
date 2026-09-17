@@ -1,3 +1,42 @@
+# v3.44.7
+**The VR keyboard was mirrored, and the axis was the whole story.** Open a pinned panel's Save
+dialog and the keyboard came up reversed left to right. Every guard in that path tested
+`scale.y < 0` -- but three's `Matrix4.decompose` folds a negative determinant into **sx** by
+convention, so a panel *placed by decomposing a matrix*, which is what pinning does, arrives as
+`(-1, 1, 1)` rather than the built-in `(1, -1, 1)`. Same mirror, different axis, nothing fired.
+Measured on the repro: `panelScale [-1.0000000224, 0.9999999676, 0.9999999822]`, with the
+"corrected" quaternion identical to the raw one.
+
+It was in three places -- the keyboard, the numpad and the confirm dialog each carried their own
+copy of "undo the half turn, then match the mirror sign". There is one `matchPanelTransform` now:
+decompose the source's world matrix, take its rotation and its scale **signs**, no case analysis.
+A transform that renders the source correctly renders the same kind of object correctly, in any
+convention, on any axis.
+
+**And the numpad's offset was never clearance.** It set an absolute distance from your head --
+the panel's minus a centimetre -- which is not the same thing as standing off the panel's plane,
+and is not even monotonic in it. A point offset sideways by `s` on a panel facing you sits at
+`sqrt(d^2 + s^2)` away, so pulling it to `d - gap` leaves about 13mm at a 6cm offset and half a
+metre, and something different at every other pitch. Clearance from the panel plane, measured:
+
+    pitch      old-distance   old-tohead    new-normal
+       0 deg       13.2 mm       9.7 mm       10.0 mm
+      45 deg        7.4          5.5          10.0
+      70 deg        2.0          1.5          10.0
+     -70 deg        7.0          5.2          10.0
+
+"In front of a panel" means along its normal; the viewer is needed only for the **sign**, since a
+wrist panel's +Z can point away from you. The keyboard had the same fault invisibly -- stepping
+toward the head gives `gap x cos(angle)` -- so both use one `frontOfPanelOffset` now.
+
+**Cancel, Clear and Confirm get a row of their own** on both overlays, same order, same size, at
+the bottom. On the numpad those three used to be the right-hand column; it keeps backspace,
+negate and the decimal point, and zero takes the full width the way space does on the keyboard.
+
+**And a modal no longer outlives its parent**: close the panel that summoned the keyboard, numpad
+or confirm dialog and it closes with it, from a per-frame check that covers every exit rather than
+one button.
+
 # v3.44.0
 **Record starts on the first press.** The internal "armed" flag defaulted to TRUE before anyone had
 armed anything, and `toggleRecord` reads that flag as "a record session is active" — so the first

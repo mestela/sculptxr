@@ -17,7 +17,7 @@
  *   window._vrKeyboard.close()
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M, panelWorldQuat } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, matchPanelTransform, frontOfPanelOffset } from './HTMLVRPanel.js';
 import * as THREE from 'three';
 
 // ── Layout ────────────────────────────────────────────────────────────────────
@@ -94,6 +94,35 @@ const CSS = `
 .vrk-key.vrk-shift.active { background: #585b70; color: #fff; }
 .vrk-key.vrk-back  { flex: 1.6 1 0; background: #3d2e40; color: #f5c2e7; }
 .vrk-key.vrk-back:hover, .vrk-key.vrk-back.hover { background: #5a3d5e; }
+/* THE SHARED COMMAND ROW -- same three buttons, same order, same size, same place as the
+   numpad's. Equal thirds rather than the keys' flex:1, so Cancel, Clear and Confirm are the same
+   width as each other regardless of how many keys the row above happens to hold. */
+.vrk-cmdrow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+.vrk-cmd {
+  background: #313244;
+  border: none;
+  border-radius: 7px;
+  color: #cdd6f4;
+  font-size: 15px;
+  font-weight: 500;
+  height: 44px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.07s;
+}
+.vrk-cmd:hover, .vrk-cmd.hover { background: #45475a; }
+.vrk-cmd.vrk-ok { background: #40a02b; color: #fff; }
+.vrk-cmd.vrk-ok:hover, .vrk-cmd.vrk-ok.hover { background: #4ec33a; }
+.vrk-cmd.vrk-cancel { background: #e64553; color: #fff; }
+.vrk-cmd.vrk-cancel:hover, .vrk-cmd.vrk-cancel.hover { background: #f05e6c; }
+
 .vrk-key.vrk-ok {
   flex: 1.6 1 0; background: #40a02b; color: #fff; font-size: 20px;
 }
@@ -135,14 +164,19 @@ function buildPanelEl() {
   <div class="vrk-label" id="vrk-label">Name</div>
   <div class="vrk-display" id="vrk-display"></div>
   ${keyRows}
+  ${/* PUNCTUATION HERE, COMMANDS BELOW. Cancel and Confirm used to flank this row with Clear
+       tucked in beside them, so the three commands were interleaved with keys and sat in a
+       different place from the numpad's copies. See the command row below. */ ''}
   <div class="vrk-row">
-    <button class="vrk-key vrk-cancel" id="vrk-cancel">&#x2715;</button>
-    <button class="vrk-key vrk-clear" id="vrk-clear">Clear</button>
     <button class="vrk-key" data-k="-">-</button>
     <button class="vrk-key" data-k="_">_</button>
     <button class="vrk-key vrk-wide" id="vrk-space">space</button>
     <button class="vrk-key" data-k=".">.</button>
-    <button class="vrk-key vrk-ok" id="vrk-ok">&#x2713;</button>
+  </div>
+  <div class="vrk-cmdrow">
+    <button class="vrk-cmd vrk-cancel" id="vrk-cancel">Cancel</button>
+    <button class="vrk-cmd" id="vrk-clear">Clear</button>
+    <button class="vrk-cmd vrk-ok" id="vrk-ok">Confirm</button>
   </div>
   <div id="vrk-choices" style="display:none"></div>
 </div>`;
@@ -432,23 +466,33 @@ export class VrKeyboard extends HTMLVRPanel {
     const panelWorldPos = new THREE.Vector3();
     pMesh.getWorldPosition(panelWorldPos);
 
-    // Conditional on the panel's ACTUAL scale — the wrist slot normalises it, and undoing a
-    // half turn that is not there is what flipped this panel. See panelWorldQuat.
-    const panelQuat = panelWorldQuat(pMesh);
-    // MATCH THE SOURCE PANEL'S MIRROR SIGN.
+    // MATCH THE PANEL'S WORLD TRANSFORM. DO NOT REASON ABOUT WHICH AXIS THE MIRROR IS ON.
     //
-    // These meshes carry scale.y = -1 like every HTMLVRPanel, and that was invisible for as long
-    // as the panel they position against carried it too — the two mirrors cancelled. The
-    // hands-only wrist slot normalises the source panel's scale, so this one was left mirrored
-    // on its own and came up flipped. Measured: kbScale [1,-1,1] against mainScale [1,1,1].
+    // Two compensations used to live here -- panelWorldQuat's conditional Rz(180) undo and a
+    // sign-copy of the source panel's scale.y -- and BOTH tested `scale.y < 0`. That is not where
+    // the mirror necessarily is: three's Matrix4.decompose expresses a negative determinant as a
+    // negative *sx* by convention, so any panel placed by decomposing a matrix comes out
+    // (-1, 1, 1) rather than (1, -1, 1). Same mirror, different axis, and every guard misses it.
     //
-    // Copying the SIGN rather than forcing a value keeps both conventions working.
-    if (this.mesh && pMesh.scale) {
-      const _sy = Math.abs(this.mesh.scale.y) * (pMesh.scale.y < 0 ? -1 : 1);
-      if (this.mesh.scale.y !== _sy) this.mesh.scale.y = _sy;
-    }
+    // Measured on matt's repro -- pin the main panel, Files > Save:
+    //   panelScale=[-1.0000000224, 0.9999999676, 0.9999999822]   kbScale=[1,1,1]
+    //   panelWorldQuat = corrected = -0.081,0.320,0.938,0.108     (no compensation ran)
+    //
+    // Which lands the keyboard at correct x diag(-1,1,1): mirrored left to right, his words
+    // exactly. Forcing the keyboard to its own -1 instead gives correct x diag(-1,-1,1), a half
+    // turn -- "that command flipped it vertically, not horizontally". Two wrong answers either
+    // side of the same missing mirror.
+    //
+    // So: decompose the panel's WORLD matrix and take its rotation and its scale SIGNS. The
+    // keyboard is the same kind of object with the same texture convention, so a transform that
+    // renders the panel correctly renders the keyboard correctly, whatever convention it is in
+    // and whichever axis carries the flip. Nothing to keep in step, and nothing to get wrong the
+    // next time a placement writes scale.
+    //
+    // Signs onto the keyboard's OWN magnitudes rather than copying the scale outright: the
+    // keyboard sizes itself from its geometry and a panel is free to be scaled.
+    const panelQuat = matchPanelTransform(this.mesh, pMesh);
 
-    const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(panelQuat);
 
     // (No vertical term. The keyboard takes the parent's pose exactly; see below. The field
     // position used to shift it up or down, which made it land somewhere different depending on
@@ -467,13 +511,25 @@ export class VrKeyboard extends HTMLVRPanel {
     // remains the fallback for when there is no camera to ask.
     this.mesh.position.copy(panelWorldPos);
 
-    const camPos = this._viewerPosition();
-    const gap = window._kbFrontGap ?? 0.01;
-    const toCam = camPos ? camPos.clone().sub(this.mesh.position) : null;
-    if (toCam && toCam.lengthSq() > 1e-9) this.mesh.position.addScaledVector(toCam.normalize(), gap);
-    else this.mesh.position.addScaledVector(toUser, gap);
+    // THE SAME RULE THE NUMPAD USES -- see frontOfPanelOffset. Stepping toward the HEAD instead
+    // of along the normal gives a clearance of gap x cos(angle between them), so it thins out as
+    // the panel is angled away. Concentric with the panel, as this is, that was never visible;
+    // beside it, as the numpad is, it was the whole bug. One rule for both.
+    this.mesh.position.add(frontOfPanelOffset(
+      panelQuat, panelWorldPos, this._viewerPosition(), window._kbFrontGap ?? 0.01));
 
     this.mesh.quaternion.copy(panelQuat);
+
+    if (window._kbTrace) {
+      const _r = (q) => [q.x, q.y, q.z, q.w].map((n) => n.toFixed(3)).join(',');
+      const _wq = new THREE.Quaternion(); pMesh.getWorldQuaternion(_wq);
+      console.log('[kb] panel=' + (sourcePanel.constructor?.name || '?')
+        + ' pinned=' + !!sourcePanel.pinned
+        + ' panelScale=[' + pMesh.scale.x + ',' + pMesh.scale.y + ',' + pMesh.scale.z + ']'
+        + ' kbScale=[' + this.mesh.scale.x + ',' + this.mesh.scale.y + ',' + this.mesh.scale.z + ']'
+        + ' panelWorldQuat=' + _r(_wq)
+        + ' applied=' + _r(panelQuat));
+    }
   }
 
   /** Match a plain (non-HTMLVRPanel) anchor mesh, floating toward the user. */
@@ -499,9 +555,33 @@ export class VrKeyboard extends HTMLVRPanel {
 
   /** Called each XR frame while visible — follows a controller-attached source panel. */
   _repositionIfTracking() {
-    if (this._sourcePanel?.mesh?.visible && this.mesh?.visible) {
+    if (!this.mesh?.visible) return;
+    // THE PARENT GOING AWAY TAKES THIS WITH IT.
+    //
+    // These overlays are modal and they float in world space rather than being parented to the
+    // panel that summoned them, so closing that panel used to leave the keyboard or numpad
+    // hanging in mid-air over nothing -- still capturing presses, with no way back to the field
+    // it was editing. matt: "if the user presses the X button to close the parent mainpanel, the
+    // popup keyboard/numpad should also close."
+    //
+    // Checked here rather than wired to the X, because this runs every frame the overlay is
+    // visible and so covers EVERY way a parent can leave: the close button, a swap to the wrist
+    // panel, a torn-off section being put away, a panel that is never rebuilt. One test, no list
+    // of exits to keep up to date. Closing (rather than merely hiding) is right: the edit is
+    // abandoned, so the cancel callback should fire exactly as if you had pressed Cancel.
+    // NO DEBOUNCE. The first version waited fifteen frames in case a hide was transient, on the
+    // strength of Scene's restorable "wrist hide episode" (_updateWristHide). That episode fires
+    // only while the off-hand trigger is held AND Grab is holding a pin or a bone -- a state you
+    // cannot be in with a modal keyboard open, doubly so now that a stroke owns the controller
+    // outright. matt: "why the delay? it serves no purpose i can see." He was right: it was
+    // guarding a case that cannot arise, which is a cost with no benefit and a thing to explain
+    // to the next reader. If a real transient ever turns up, THAT is when to wait for it.
+    const _parent = this._sourcePanel ? this._sourcePanel.mesh : this._anchorMesh;
+    if (_parent && !_parent.visible) { this.close(); return; }
+
+    if (this._sourcePanel?.mesh?.visible) {
       this._positionForSource(this._sourcePanel, this._sourceEl);
-    } else if (this._anchorMesh?.visible && this.mesh?.visible) {
+    } else if (this._anchorMesh?.visible) {
       this._positionAtMesh(this._anchorMesh);
     }
   }

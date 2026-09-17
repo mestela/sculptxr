@@ -185,12 +185,85 @@ export const WRIST_PANEL_YAW = Math.PI / 8;
 // measured under a decompose, which writes scale, so it only means what it measured with a unit
 // scale). The hardcoded undo then introduced the very flip it exists to remove, and the keyboard
 // came up upside down. Reading the scale instead of assuming it is correct under both.
+// SUPERSEDED BY matchPanelTransform, BECAUSE THE AXIS WAS NEVER THE POINT.
+//
+// This tested `scale.y < 0`, and so did the mirror-sign copy that each of the keyboard, numpad and
+// confirm carried beside it. All four were wrong in the same way: three's Matrix4.decompose folds a
+// negative determinant into *sx* by convention, so a panel PLACED by decomposing a matrix comes out
+// (-1, 1, 1) rather than (1, -1, 1). Same mirror, different axis, every guard blind to it.
+//
+// Measured on a pinned main menu: panelScale [-1.0000000224, 0.9999999676, 0.9999999822], and the
+// "corrected" quaternion identical to the raw one because no branch fired. matt: "keyboard is drawn
+// facing the wrong way, so its mirrored left to right."
+//
+// Kept only so nothing outside this file breaks on the name; there are no callers left in it.
 export function panelWorldQuat(mesh, out) {
   const q = out || new THREE.Quaternion();
   mesh.getWorldQuaternion(q);
   const sy = mesh.scale ? mesh.scale.y : 1;
   if (sy < 0) q.multiply(new THREE.Quaternion(0, 0, 1, 0));
   return q;
+}
+
+// MAKE `mesh` SIT THE WAY `panelMesh` SITS -- rotation AND mirror, whichever axis carries it.
+//
+// The keyboard, the numpad and the confirm dialog are all HTMLVRPanels positioned against another
+// HTMLVRPanel, and all three had their own copy of "undo the half turn, then match the mirror
+// sign", written against `scale.y`. Three copies of one rule is three chances to be wrong, and
+// they were all wrong together.
+//
+// There is no case analysis to get right: decompose the source's WORLD matrix and take its
+// rotation and its scale SIGNS. A transform that renders the source correctly renders the same
+// kind of object correctly, in any convention and on any axis. Signs are applied to the target's
+// OWN magnitudes, since these panels size themselves from their geometry and a source panel is
+// free to be scaled.
+//
+// Returns the quaternion, because every caller also wants the panel's own axes to offset along.
+const _mptQ = new THREE.Quaternion();
+const _mptS = new THREE.Vector3();
+const _mptP = new THREE.Vector3();
+export function matchPanelTransform(mesh, panelMesh, out) {
+  const q = out || new THREE.Quaternion();
+  panelMesh.updateMatrixWorld(true);
+  panelMesh.matrixWorld.decompose(_mptP, _mptQ, _mptS);
+  q.copy(_mptQ);
+  if (mesh && mesh.scale) {
+    const sgn = (v) => (v < 0 ? -1 : 1);
+    mesh.scale.set(Math.abs(mesh.scale.x) * sgn(_mptS.x),
+                   Math.abs(mesh.scale.y) * sgn(_mptS.y),
+                   Math.abs(mesh.scale.z) * sgn(_mptS.z));
+  }
+  return q;
+}
+
+// "IN FRONT OF A PANEL" MEANS ALONG ITS NORMAL, ON THE SIDE YOU ARE ON.
+//
+// Two overlays float over a panel and each solved this differently. The keyboard steps from the
+// panel centre TOWARD THE HEAD; the numpad, which sits beside the edited field rather than on top
+// of it, instead set its DISTANCE FROM THE HEAD to the panel's minus a centimetre. Neither is
+// clearance from the panel, and the numpad's is not even monotonic in it.
+//
+// A point offset sideways by s on a panel facing you is sqrt(d^2 + s^2) from your head, so pulling
+// it to d - gap leaves it barely proud of the plane -- about 13mm for a 6cm offset at half a metre,
+// which reads as coplanar. Pitch the panel and the same rule yields something else entirely.
+// matt: "between making the panel face me, to facing the floor, the numpad is coplanar with the
+// parent panel. between facing me to making it face the sky, the offset raises from 0 to a given,
+// probably correct, offset."
+//
+// The normal is the answer, and the only thing the viewer is needed for is the SIGN -- a wrist
+// panel's +Z can point away from you, which is what the keyboard's toward-the-head rule was
+// working around. Signed normal x gap gives the same clearance at every pitch, on either side,
+// however far to the side the overlay has been placed.
+const _fopN = new THREE.Vector3();
+const _fopV = new THREE.Vector3();
+export function frontOfPanelOffset(panelQuat, panelWorldPos, viewerPos, gap, out) {
+  const o = out || new THREE.Vector3();
+  _fopN.set(0, 0, 1).applyQuaternion(panelQuat);
+  if (viewerPos) {
+    _fopV.copy(viewerPos).sub(panelWorldPos);
+    if (_fopN.dot(_fopV) < 0) _fopN.negate();
+  }
+  return o.copy(_fopN).multiplyScalar(gap);
 }
 
 // THE PITCH THAT LIES THE PANEL FLAT AGAINST THE CONTROLLER.
