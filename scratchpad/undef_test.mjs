@@ -14,19 +14,32 @@ import fs from 'fs';
 import path from 'path';
 
 const REPO = new URL('..', import.meta.url).pathname;
-const FILES = [
-  'src/editing/Skeleton.js',
-  'src/editing/IKSolver.js',
-  'src/editing/xfChannel.js',
-  'src/editing/AnimationRegistry.js',
-  'src/editing/tools/Grab.js',
-  'src/editing/tools/TransformVR.js',
-  'src/editing/tools/BoneDrawTool.js',
-  'src/gui/GuiTimeline.js',
-  'src/gui/TimelineHelper.js',
-  'src/gui/bonePanel.js',
-  'src/math3d/Picking.js',
-];
+// SWEEP EVERYTHING, SUBTRACT A NAMED BASELINE.
+//
+// This used to be a hand-written list of eleven rig and animation files, and the list was the
+// weakness: `symMap` sat undefined in Move.startSculpt -- a plain ReferenceError, thrown whenever
+// the topological symmetry snap actually succeeded -- and Move.js was simply not on it. matt hit
+// it pressing Symmetrize L->R. Fixing that uncovered a SECOND one, `vAr`, in the same function,
+// masked because symMap threw first.
+//
+// So the sweep is now the whole of src/, with the files that are already broken listed here by
+// name. Anything not on this list must be clean, which means a NEW file is covered the day it is
+// written and a newly-broken one fails immediately. Shrinking this list is the cleanup; growing
+// it should take a deliberate decision.
+//
+// Each entry is a live ReferenceError waiting for the branch that reaches it, exactly like the two
+// in Move.js were. They predate this widening and are reported separately rather than fixed in the
+// same breath.
+// EMPTY, AND IT SHOULD STAY THAT WAY. The seven files this listed when the sweep widened were
+// all live ReferenceErrors -- Gizmo's VERTEX_SCALE (removed constant, in a console helper),
+// PosedSymmetry's `b` (moved into a fallback branch by the ownership rewrite, still read by the
+// trace), Remesh's `Mesh` (never imported, thrown by voxelMirror), VoxelState's `cx` (a log after
+// a return), GuiXR's `main` (should have been this._main), GuiVRAnimation's `newData` (redo of a
+// pasted shape key), GuiVRTools' `VERSION` (never imported) -- and all seven are fixed.
+//
+// Adding a name here is a decision to ship a known crash. Prefer fixing it.
+const KNOWN_UNDEF = new Set([]);
+const FILES = ['src/**/*.js'];
 
 let failures = 0;
 const check = (name, ok, detail) => {
@@ -42,7 +55,31 @@ try {
 } catch (e) {
   out = (e.stdout || '') + (e.stderr || '');
 }
-check('no undefined identifiers in the rig and animation files', out.trim() === '', out.trim());
+// eslint prints "<abs path>\n  line:col  error  '<id>' is not defined  no-undef"; attribute each
+// error to the file heading above it, then drop the ones on the baseline.
+const offenders = new Map();
+{
+  let file = null;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('/')) { file = line.trim().replace(REPO.replace(/\/$/, '') + '/', ''); continue; }
+    const m = line.match(/error\s+'([^']+)' is not defined/);
+    if (m && file) {
+      if (!offenders.has(file)) offenders.set(file, new Set());
+      offenders.get(file).add(m[1]);
+    }
+  }
+}
+const fresh = [...offenders.keys()].filter((f) => !KNOWN_UNDEF.has(f));
+check('no undefined identifiers anywhere in src/, outside the named baseline',
+  fresh.length === 0,
+  fresh.map((f) => '    ' + f + ': ' + [...offenders.get(f)].join(', ')).join('\n'));
+
+// And the baseline must not rot: a file that has been FIXED should leave the list, or the list
+// stops meaning "these are the known-bad ones" and starts meaning "nobody has looked".
+const stale = [...KNOWN_UNDEF].filter((f) => !offenders.has(f));
+check('...and the baseline lists only files that are still broken',
+  stale.length === 0,
+  stale.map((f) => '    ' + f + ' is clean now — remove it from KNOWN_UNDEF').join('\n'));
 
 
 // ── A MATERIAL THAT REFUSES TO TEST DEPTH MUST NOT WRITE IT ──────────────────────────────

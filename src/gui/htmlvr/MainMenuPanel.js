@@ -715,7 +715,7 @@ const CSS = `
   color: #89b4fa;
   border-color: #89b4fa;
 }
-.mm-choice.mm-dim { opacity: 0.4; } /* mesh tools while a voxel object is active */
+.mm-choice.mm-dim, .mm-toggle.mm-dim, .mm-action-btn.mm-dim { opacity: 0.4; } /* mesh tools, and symmetry, while a voxel object is active */
 
 /* Action button */
 .mm-action-btn {
@@ -2526,7 +2526,13 @@ export function buildSectionHTML_topology(main) {
       <span class="mm-val" id="mm-quad-steer-val">${topoSteer}</span>
     </div>
     <div class="mm-row">
-      <span class="mm-lbl">Symmetry (X)</span>
+      ${/* NOT THE SYMMETRY TOGGLE. That one is a sculpting mode -- every stroke mirrored across
+           X -- and lives under its own Symmetry heading. This is an argument to ONE operation:
+           quad-remesh half the mesh, then mirror and weld it, so the seam comes out clean.
+           Sharing the word made it read as a stray duplicate of a control that was already on.
+           adurna35: "The symmetry button has a duplicate further down in the panel next to
+           axis/plane i think?" -- it is not a duplicate, it just never said what it was. */ ''}
+      <span class="mm-lbl" title="Remesh one half across X=0, then mirror and weld it, for a clean symmetric seam. Not the sculpting Symmetry toggle.">Mirror Halves</span>
       <input type="checkbox" id="mm-quad-symmetry">
     </div>
     <button class="mm-action-btn" id="mm-quadremesh" ${mesh ? '' : 'disabled'}>Quadremesh</button>
@@ -2822,6 +2828,10 @@ function buildSculptingHTML(main, part) {
   const cur = sm?.getToolIndex?.() ?? -1;
   const tool = sm?.getCurrentTool?.();
   const symOn  = sm?._symmetry ?? false;
+  // A voxel object's surface is a view of the worker's distance field, so nothing that edits
+  // vertices sticks. Covers MeshProxy for the same reason SculptManager.meshToVoxel does.
+  const _symMesh = main.getMesh?.();
+  const symDead = !!(_symMesh && (_symMesh._isVoxel || _symMesh.constructor?.name === 'MeshProxy'));
   const contOn = sm?._continuous ?? false;
 
   // Mesh/sculpt tools don't apply to a voxel object — dim the inactive ones when the Voxel
@@ -3138,11 +3148,28 @@ function buildSculptingHTML(main, part) {
       Sculpt lock ${window._sculptLocked ? '✓ On (tools do nothing)' : 'Off'}
     </button>
 
+    ${/* NOT ON A VOXEL OBJECT, because neither of these can do anything there and both were
+         failing silently. matt: "the sym and symmeerize buttons do nothing."
+
+         Sym: SculptVoxel.stroke never consults the symmetric picking, and getDesktopCursor
+         re-picks from main._mouseX/_mouseY rather than from the picking it is handed -- so the
+         mirrored call deposits in the same place as the first.
+
+         Symmetrize: mesh.symmetrize() moves vertices of the EXTRACTED SURFACE, and the worker
+         regenerates that surface from the distance field on the next edit. The field is the
+         source of truth; the mesh is a view of it.
+
+         Disabled rather than hidden: a control that vanishes teaches nothing, and the tooltip is
+         where the answer goes. The real fix is a field mirror in the worker (which live Sym could
+         share) -- until then this stops the panel claiming something it cannot do. */ ''}
     <div class="mm-section-title">Symmetry</div>
-    <button class="mm-toggle mm-tick${symOn ? ' active' : ''}" id="mm-sym-toggle">Sym</button>
+    <button class="mm-toggle mm-tick${symOn ? ' active' : ''}${symDead ? ' mm-dim' : ''}" id="mm-sym-toggle"${
+      symDead ? ' disabled title="Not available on a voxel object: voxel strokes are not mirrored yet."' : ''}>Sym</button>
     <div class="mm-row" style="gap:6px">
-      <button class="mm-action-btn" id="mm-sym-lr" style="flex:1">Symmetrize L→R</button>
-      <button class="mm-action-btn" id="mm-sym-rl" style="flex:1">Symmetrize R→L</button>
+      <button class="mm-action-btn${symDead ? ' mm-dim' : ''}" id="mm-sym-lr" style="flex:1"${
+        symDead ? ' disabled title="Not available on a voxel object: the surface is rebuilt from the voxel field, so a mirrored mesh would not survive the next edit."' : ''}>Symmetrize L→R</button>
+      <button class="mm-action-btn${symDead ? ' mm-dim' : ''}" id="mm-sym-rl" style="flex:1"${
+        symDead ? ' disabled title="Not available on a voxel object: the surface is rebuilt from the voxel field, so a mirrored mesh would not survive the next edit."' : ''}>Symmetrize R→L</button>
     </div>
     <button class="mm-toggle${contOn ? ' active' : ''}" id="mm-continuous" style="margin-top:4px">
       Continuous ${contOn ? '✓ On' : 'Off'}

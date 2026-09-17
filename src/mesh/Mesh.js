@@ -2568,12 +2568,17 @@ class Mesh {
 
   updateVertexBuffer() {
     var vertices = this.isUsingDrawArrays() ? this.getVerticesDrawArrays() : this.getVertices();
-    
-    if (vertices.length === 6) {
-        // console.warn("🛑 CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+    // AN EMPTY MESH HAS NOTHING TO UPLOAD, and one exists on purpose: addVoxelObject creates a
+    // blank MeshStatic as the grid's host before a single voxel is drawn into it. addNewMesh then
+    // calls setShaderType, which calls updateBuffers, and this dereferenced null on the way past.
+    // matt, pressing the Voxel primitive button: "Cannot read properties of null (reading
+    // 'length') at MeshStatic.updateVertexBuffer".
+    //
+    // The same guard updateNormalBuffer has had all along -- and updateWireframeBuffer carries a
+    // note naming this very case ("a fresh/blank voxel object has nothing to outline"), so the
+    // shape of the problem was already known here; the vertex path just never got it.
+    if (!vertices) return;
 
-    }
-    
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('position');
     
@@ -2642,6 +2647,7 @@ class Mesh {
 
   updateColorBuffer() {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
+    if (!colors) return;   // same empty-mesh case as updateVertexBuffer; this reads colors.length
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('color');
     if (!attr || attr.array.length < colors.length) {
@@ -2662,6 +2668,7 @@ class Mesh {
 
   updateMaterialBuffer() {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
+    if (!materials) return;   // ditto -- it would have been the next line to throw
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('aMaterial');
     if (!attr || attr.array.length < materials.length) {

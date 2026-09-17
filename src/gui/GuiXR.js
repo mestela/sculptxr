@@ -2739,7 +2739,9 @@ export default class GuiXR {
           } else {
             // Legacy Fallbacks
             if (w.id === 'radius') this.updateRadius(val); // Should be covered by onInput now
-            if (w.id === 'fov') { main.getCamera().setFov(val); main.render(); }
+            // `main` -- every other line in this block says `this._main`, and this one would have
+            // thrown for anyone who reached the fov widget through the legacy fallback path.
+            if (w.id === 'fov') { this._main.getCamera().setFov(val); this._main.render(); }
             if (w.id === 'intensity' && this._main.getSculptManager().getCurrentTool()) {
               this._main.getSculptManager().getCurrentTool().setIntensity(val);
             }

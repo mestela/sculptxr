@@ -313,10 +313,16 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
   // make that mistake -- a hand vertex belongs to the hand bone in any pose at all.
   const table = Skinning.jointMirrors(main, mesh);
   const owned = table ? Skinning.blendAtMirrored(mesh, mats, a, table, _psMat) : false;
+  // HOISTED FOR THE TRACE. `b` used to be computed unconditionally -- it WAS how the far side was
+  // found -- and the ownership rewrite moved it into this fallback. The trace below kept reading
+  // it, so turning _symTrace on threw a ReferenceError instead of printing anything, which is the
+  // worst possible failure for a diagnostic. -1 means "ownership answered, nothing was measured",
+  // and the trace says so rather than printing rest[-1] as NaN.
+  let b = -1;
   if (!owned) {
     // Nothing to read: an unpaired joint on a rig not drawn with symmetry on. Measuring is the
     // best answer available with no pairing to consult, and it is what this did before.
-    const b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
+    b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
     if (b < 0) return null;
     Skinning.blendAt(mesh, mats, b, _psMat);
   }
@@ -361,13 +367,17 @@ PosedSymmetry.mirrorPoint = function (main, mesh, pt, ptPlane, nPlane, out, nrm)
       // Also the cage positions of #a and #b, because the two hops each stand or fall on
       // whether the vertex they picked is anywhere near the point they picked it for.
       const posedA = [posed[a * 3], posed[a * 3 + 1], posed[a * 3 + 2]];
-      const restB = [rest[b * 3], rest[b * 3 + 1], rest[b * 3 + 2]];
+      // WHICH ROUTE THE FAR SIDE TOOK is the thing worth seeing here, and it is exactly what the
+      // hoist above makes printable: `owned` means the joint's twin supplied the matrix and no
+      // search happened, so there is no cage#b to report.
+      const restB = b >= 0 ? [rest[b * 3], rest[b * 3 + 1], rest[b * 3 + 2]] : null;
       console.log('[sym] hit ' + f([hx, hy, hz]) + ' -> rest ' + f([rx, ry, rz])
         + ' -> mir ' + f(mir) + ' -> out ' + f(out)
         + ' | cage#' + a + ' at ' + f(posedA) + ' (posed, d='
         + Math.hypot(posedA[0] - hx, posedA[1] - hy, posedA[2] - hz).toFixed(2) + ')'
-        + ' cage#' + b + ' at ' + f(restB) + ' (rest, d='
-        + Math.hypot(restB[0] - mir[0], restB[1] - mir[1], restB[2] - mir[2]).toFixed(2) + ')'
+        + (restB ? ' cage#' + b + ' at ' + f(restB) + ' (rest, d='
+              + Math.hypot(restB[0] - mir[0], restB[1] - mir[1], restB[2] - mir[2]).toFixed(2) + ')'
+            : ' far side by joint OWNERSHIP (no search)')
         + ' | restPlane ' + f(_psPlane) + ' posedPlane ' + f(ptPlane)
         + ' | restBounds x ' + rb[0].toFixed(2) + '..' + rb[3].toFixed(2)
         + ' y ' + rb[1].toFixed(2) + '..' + rb[4].toFixed(2)

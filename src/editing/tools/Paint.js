@@ -2,6 +2,10 @@ import { vec3 } from 'gl-matrix';
 import Utils from '../../misc/Utils.js';
 import Tablet from '../../misc/Tablet.js';
 import SculptBase from './SculptBase.js';
+// Static import checked against the import graph: nothing reachable from Skinning leads back to
+// this file, so there is no cycle here of the kind that stops SculptBase importing MotionPathEdit.
+import Skinning from '../Skinning.js';
+import Skeleton from '../Skeleton.js';
 
 class Paint extends SculptBase {
 
@@ -55,9 +59,34 @@ class Paint extends SculptBase {
     }
   }
 
+  // PAINTING TURNS THE WEIGHT PREVIEW OFF, RATHER THAN BEING SWALLOWED BY IT.
+  //
+  // The preview replaces the mesh's vertex colours with per-bone ones and keeps the originals in
+  // `_skinSavedColors`; hiding it writes that snapshot back. So colour painted while the preview
+  // was up was overwritten the moment it was hidden -- silently, and long enough after the fact
+  // that it read as the paint never having landed.
+  //
+  // Refusing the stroke was the alternative and is worse: you would be told no while looking at a
+  // surface that is plainly paintable. Turning the preview off is what the user is asking for by
+  // painting at all -- you cannot judge a colour against a weight ramp.
+  //
+  // HERE, because pushState runs exactly once per stroke, before a single colour is written, and
+  // already knows not to fire for the eyedropper. Restoring first also means the undo snapshot
+  // below captures the REAL colours, so one undo returns the sculpt to how it looked.
   pushState(force) {
-    if (!this._pickColor || force)
-      this._main.getStateManager().pushStateColorAndMaterial(this.getMesh());
+    if (!this._pickColor || force) {
+      const mesh = this.getMesh();
+      if (mesh && Skinning.weightColorsShown(mesh)) {
+        Skinning.restoreColors(mesh);
+        // The flag as well as the colours: leaving it set would have the next re-skin repaint the
+        // preview straight over the stroke that just turned it off.
+        Skeleton.setDisplayFlag('weights', false);
+        // The wrist panel carries the Weights chip and syncs only every 30 frames; the main menu
+        // rebuilds on its own periodic tick. Same nudge IKSolver uses after a rig edit.
+        this._main._miniPanel?.syncFromState?.();
+      }
+      this._main.getStateManager().pushStateColorAndMaterial(mesh);
+    }
   }
 
   startSculpt() {

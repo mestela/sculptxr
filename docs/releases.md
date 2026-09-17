@@ -1,3 +1,36 @@
+# v3.42.22
+**Crashes, found by widening the net rather than by waiting.** Symmetrize L→R then a Move stroke
+threw `symMap is not defined`: a `const` declared inside a `try` and read fifty lines later, after
+the `catch`. It only fired when the topological snap actually succeeded, because `snapped && symMap`
+short-circuits. Fixing it uncovered a **second** one in the same function — `vAr`, masked because
+`symMap` threw first.
+
+That was the second time this class has cost a session, so `undef_test` stopped being a hand-written
+list of eleven rig files (the list was the weakness: `Move.js` was not on it) and now sweeps **all of
+`src/`** against a named baseline, so a new file is covered the day it is written. The widening found
+seven more live ReferenceErrors, all now fixed: `Gizmo`'s `VERTEX_SCALE` (a removed constant still
+named in a console helper), `PosedSymmetry`'s `b` (moved into a fallback by the ownership rewrite,
+still read by the trace, so `_symTrace` threw instead of printing), `Remesh`'s `Mesh` (never imported
+— `voxelMirror` threw outright), `VoxelState`'s `cx` (a log after a `return`), `GuiXR`'s `main`
+(should have been `this._main`), `GuiVRAnimation`'s `newData` (redo of a pasted shape key), and
+`GuiVRTools`' `VERSION` (never imported, in the update-available banner). The baseline is empty now.
+
+**The Voxel primitive button crashed on press.** `addVoxelObject` creates a deliberately blank mesh
+as the grid's host, so `getVertices()` is null — and `addNewMesh` calls `setShaderType`, which calls
+`updateBuffers`, which did `vertices.length`. `updateNormalBuffer` had guarded this all along and
+`updateWireframeBuffer` carries a note naming the case; the vertex, colour and material paths never
+got it. All three guarded.
+
+**Symmetry is disabled on voxel objects rather than failing silently.** Neither control could work
+there: `SculptVoxel.stroke` never consults the symmetric picking, and `Symmetrize` moves vertices of
+a surface the worker regenerates from the distance field on the next edit. Both are dimmed with a
+tooltip saying why, pending a field mirror in the worker.
+
+**Also:** painting now turns the weight preview off instead of being overwritten by it when the
+preview is hidden; selecting **Bone Draw** clears Hide All Decorations and turns Solid on when
+neither Solid nor Wire is set, so the joints you place are visible; and the Quad Remesh option is
+**Mirror Halves**, which is what it does — it was never a duplicate of the Symmetry toggle.
+
 # v3.42.14
 **The stepping was the falloff, applied sixteen times.** Turning Keep Volume off revealed a ridge
 at the edge of every brush dab — introduced by the density compensation in v3.42.11, which raised

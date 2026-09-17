@@ -653,8 +653,10 @@ class Gizmo {
         console.log("=== Gizmo Scale Debug ===");
         console.log("Gizmo Instance:", this);
         console.log("Current Scale Factor (Base):", scaleFactor);
-        console.log("Vertex Scale Multiplier:", VERTEX_SCALE);
-        console.log("Total Resize Scale:", scaleFactor * VERTEX_SCALE);
+        // VERTEX_SCALE is gone -- see GizmoVR._resize, "we used to call _resize(scaleFactor *
+        // VERTEX_SCALE) ... let's assume VERTEX_SCALE = 1.0". These two lines outlived it and
+        // would throw the moment anyone ran window.debugQueryGizmoScale(). With the multiplier
+        // being 1, the second was printing scaleFactor twice anyway.
 
         if (this._transX && this._transX._drawGeo) {
           var m = this._transX._drawGeo.getMatrix();

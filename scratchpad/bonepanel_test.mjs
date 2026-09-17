@@ -1456,5 +1456,36 @@ check('...and the ghost pass is shaded too, being the half you actually see',
         fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8')));
 }
 
+// ── BONE DRAW RESCUES A VIEW YOU CANNOT DRAW IN ─────────────────────────────
+//
+// The rig draws nothing when Solid and Wire are both off, and `displayFlag` answers no for every
+// decoration while Hide All Decorations is on -- so picking the tool in either state gives you a
+// mode where each joint vanishes as you place it, with the cause two panels away. matt: "people
+// will need to see, and expect to see, the bones they're drawing."
+{
+  const SM = fs.readFileSync(new URL('../src/editing/SculptManager.js', import.meta.url).pathname, 'utf8');
+  const blk = SM.slice(SM.indexOf('A TOOL WHOSE ENTIRE OUTPUT IS INVISIBLE'),
+    SM.indexOf('if (toolChanged) this._main?.syncToolPanels?.();'));
+  check('selecting Bone Draw clears Hide All Decorations',
+    /Skeleton\.decorationsHidden\(\)/.test(blk) && /setDecorationsHidden\(this\._main, false\)/.test(blk),
+    'the master switch gates the READ, so turning solid on under it rescues nothing');
+  check('...and turns Solid on when neither Solid nor Wire is set',
+    /!Skeleton\.displayFlagRaw\('solid'\) && !Skeleton\.displayFlagRaw\('wire'\)/.test(blk)
+      && /setDisplayFlag\('solid', true\)/.test(blk),
+    'both, not either -- solid-on because wire alone was off overrides a choice rather than '
+      + 'rescuing one');
+  // Comments stripped: the block EXPLAINS the gated-read trap by naming displayFlag('solid'),
+  // and an assertion that trips over the note describing the bug it guards is worse than none.
+  const blkCode = blk.replace(/^\s*\/\/.*$/gm, '');
+  check('...reading the RAW flags, not the gated ones',
+    !/displayFlag\('solid'\)/.test(blkCode) && !/displayFlag\('wire'\)/.test(blkCode),
+    'displayFlag answers for the master switch; the stored choice is what has to be tested');
+  check('...only on a real tool change',
+    /if \(toolChanged && id === Enums\.Tools\.BONE_DRAW\)/.test(blk),
+    'otherwise it fights you switching solid off while already holding the tool');
+  check('...before the panels are synced, so the chips repaint with the new state',
+    SM.indexOf('setDisplayFlag(\'solid\', true)') < SM.indexOf('if (toolChanged) this._main?.syncToolPanels?.();'));
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

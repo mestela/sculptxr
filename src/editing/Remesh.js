@@ -7,6 +7,10 @@ import Utils from '../misc/Utils.js';
 import Enums from '../misc/Enums.js';
 import Smooth from './tools/Smooth.js';
 import HoleFilling from './HoleFilling.js';
+// `Mesh.OPTIMIZE` is toggled around nmesh.init() below and was never imported -- a plain
+// ReferenceError in voxelMirror, thrown the moment anyone mirrored a voxel mesh. Import graph
+// checked: nothing reachable from Mesh.js leads back here.
+import Mesh from '../mesh/Mesh.js';
 
 var Remesh = {};
 Remesh.RESOLUTION = 20;

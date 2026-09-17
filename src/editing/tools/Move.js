@@ -133,6 +133,19 @@ class Move extends SculptBase {
         if (mesh) {
           // TOPOLOGICAL SYMMETRY SNAP (Restored from SculptBase)
           let snapped = false;
+          // HOISTED OUT OF THE TRY. This was `const symMap` declared inside the try block below
+          // and read ~50 lines later, after the catch -- which is a plain ReferenceError, not a
+          // subtle one. It only fired when the topological snap SUCCEEDED, because `snapped &&
+          // symMap` short-circuits and never evaluates the second operand otherwise, so the
+          // crash needed symmetry, topological symmetry data, and a hit that actually mapped.
+          // matt hit it pressing Symmetrize L->R and then moving: "Uncaught ReferenceError:
+          // symMap is not defined at Move.startSculpt".
+          let symMap = null;
+          // And the same again for the vertex array: `const vAr` was declared beside symMap inside
+          // the try and read in the proxy loop below it. Masked until now because symMap threw
+          // first -- fixing one uncovered the next, which is the argument for sweeping the whole
+          // tools directory rather than the line that was reported.
+          let vAr = null;
           const pickedFace = picking.getPickedFace();
           if (pickedFace !== -1) {
             try {
@@ -143,11 +156,11 @@ class Move extends SculptBase {
                 if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
                 symData = mesh._symmetryData;
               }
-              const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
+              symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
 
               if (symMap) {
                 const fAr = mesh.getFaces();
-                const vAr = mesh.getVertices();
+                vAr = mesh.getVertices();
                 const iFace = pickedFace * 4;
 
                 if (iFace >= 0 && iFace + 3 < fAr.length) {

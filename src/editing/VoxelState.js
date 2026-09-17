@@ -245,9 +245,9 @@ class VoxelState {
     if (isNegative) {
       return this.subtractSphere(center, radius, shape, brushRotation);
     } else {
+      // A debug log used to sit here, AFTER the return -- unreachable, and reaching for `cx`,
+      // which is a local of addSphere and was never in scope at this level. Dead either way.
       return this.addSphere(center, radius, color, shape, brushRotation);
-      self.postMessage({ type: "LOG", data: "addSphere R="+radius.toFixed(2)+" Cx="+cx.toFixed(1) });
-
     }
   }
 

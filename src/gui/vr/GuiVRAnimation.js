@@ -714,6 +714,27 @@ export default function getAnimationWidgets(main, Enums) {
           window._animationRegistry.pasteShapeKey(targetMesh, targetTime);
           window._animationRegistry.update(targetMesh, true);
 
+          // WHAT REDO PUTS BACK, captured after the paste has happened.
+          //
+          // The redo closure below referenced `newData` and nothing ever defined it, so redoing a
+          // pasted shape key threw a ReferenceError -- undo worked, redo did not, which is the
+          // shape of bug that reads as "undo ate my key". Read back off the track rather than
+          // from the clipboard, so it is the data actually stored, whatever pasteShapeKey did to
+          // it on the way in. Copied, because the track's array is live and the next paste would
+          // otherwise rewrite this undo entry's idea of the past.
+          let newData = null;
+          {
+            const tr = window._animationRegistry.tracks.get(meshId);
+            if (tr && tr.shapeTimes) {
+              for (let i = 0; i < tr.shapeTimes.length; i++) {
+                if (Math.abs(tr.shapeTimes[i] - targetTime) < 0.005) {
+                  newData = new Float32Array(tr.shapes[i]);
+                  break;
+                }
+              }
+            }
+          }
+
           if (main.getStateManager) {
             main.getStateManager().pushStateCustom(
               () => { // UNDO

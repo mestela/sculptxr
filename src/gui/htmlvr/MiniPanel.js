@@ -300,6 +300,7 @@ const CSS = `
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 #mp-root .mp-toggle-btn.active     { background: #313244; color: #89b4fa; border-color: #585b70; }
+#mp-root .mp-toggle-btn.mp-dim     { opacity: 0.4; } /* symmetry on a voxel object */
 /* THE TICK IS STATE, SO IT IS DRAWN FROM THE STATE.
    It used to be typed into the label — "✓ Sym" — which meant it was on whether the toggle was or
    not, while the highlight beside it told the truth. Two indicators, one of them always lying.
@@ -432,6 +433,9 @@ function buildHTML() {
     </div>
     <hr class="mp-divider">
     <div class="mp-toggles">
+      ${/* Disabled on a voxel object -- see the note in MainMenuPanel: voxel strokes are not
+           mirrored, so this toggle had no effect there. Class is applied in syncFromState, which
+           is where the active mesh is known. */ ''}
       <button class="mp-toggle-btn" id="mp-sym">Sym</button>
       <button class="mp-toggle-btn" id="mp-neg">Neg</button>
       <button class="mp-toggle-btn" id="mp-wire">Wire</button>
@@ -1292,7 +1296,15 @@ export class MiniPanel extends HTMLVRPanel {
     }
 
     // ── Symmetry ───────────────────────────────────────────────────────────
-    root.querySelector('#mp-sym')?.classList.toggle('active', !!sm?._symmetry);
+    const _symMesh = main.getMesh?.();
+    const _symDead = !!(_symMesh && (_symMesh._isVoxel || _symMesh.constructor?.name === 'MeshProxy'));
+    const _symBtn = root.querySelector('#mp-sym');
+    if (_symBtn) {
+      _symBtn.classList.toggle('active', !_symDead && !!sm?._symmetry);
+      _symBtn.classList.toggle('mp-dim', _symDead);
+      _symBtn.disabled = _symDead;
+      _symBtn.title = _symDead ? 'Not available on a voxel object: voxel strokes are not mirrored yet.' : '';
+    }
 
     // ── Negative ───────────────────────────────────────────────────────────
     // Same source of truth the toggle writes — reading the manager showed a state nothing had.

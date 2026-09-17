@@ -9,7 +9,27 @@ export default [{
       Blob: 'readonly', URL: 'readonly', XMLHttpRequest: 'readonly', self: 'readonly',
       alert: 'readonly', prompt: 'readonly', confirm: 'readonly', OffscreenCanvas: 'readonly',
       Path2D: 'readonly', ResizeObserver: 'readonly', WebGL2RenderingContext: 'readonly',
-      queueMicrotask: 'readonly' },
+      queueMicrotask: 'readonly',
+      // Added when the sweep widened past the rig files: ordinary browser globals this config had
+      // never needed, not findings. Anything NOT a browser global stays an error on purpose.
+      CustomEvent: 'readonly', Event: 'readonly', MouseEvent: 'readonly', PointerEvent: 'readonly',
+      KeyboardEvent: 'readonly', TouchEvent: 'readonly', WheelEvent: 'readonly',
+      getComputedStyle: 'readonly', HTMLImageElement: 'readonly', HTMLElement: 'readonly',
+      HTMLCanvasElement: 'readonly', CSS: 'readonly', location: 'readonly', history: 'readonly',
+      indexedDB: 'readonly', onerror: 'writable', atob: 'readonly', btoa: 'readonly',
+      DOMParser: 'readonly', XMLSerializer: 'readonly', Worker: 'readonly', WebSocket: 'readonly',
+      AbortController: 'readonly', TextEncoder: 'readonly', TextDecoder: 'readonly',
+      structuredClone: 'readonly', matchMedia: 'readonly', screen: 'readonly',
+      devicePixelRatio: 'readonly', crypto: 'readonly', File: 'readonly', FormData: 'readonly',
+      MutationObserver: 'readonly', IntersectionObserver: 'readonly', Node: 'readonly',
+      SVGElement: 'readonly', Audio: 'readonly', AudioContext: 'readonly', speechSynthesis: 'readonly',
+      XRRigidTransform: 'readonly', XRWebGLLayer: 'readonly', XRRay: 'readonly',
+      GamepadHapticActuator: 'readonly', ImageData: 'readonly', createImageBitmap: 'readonly',
+      Response: 'readonly', Request: 'readonly', Headers: 'readonly', FontFace: 'readonly',
+      URLSearchParams: 'readonly', WebAssembly: 'readonly', SharedArrayBuffer: 'readonly',
+      // Worker scope: src/worker and src/workers run with no window at all.
+      postMessage: 'readonly', importScripts: 'readonly', addEventListener: 'readonly',
+      removeEventListener: 'readonly', close: 'readonly' },
   },
   rules: { 'no-undef': 'error' },
 }];

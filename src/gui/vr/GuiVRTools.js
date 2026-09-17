@@ -1,4 +1,5 @@
 import Enums from '../../misc/Enums.js';
+import { VERSION } from '../../Version.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 import TR from '../GuiTR.js';
 import Tools from '../../editing/tools/Tools.js';
@@ -1217,7 +1218,12 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     
     y += 50 + 5; // Small gap between lines
     
-    const currentVersion = Object.values({VERSION})[0];
+    // `Object.values({VERSION})[0]` is shorthand-property syntax, so it needed a VERSION binding
+    // in scope and there was none -- a ReferenceError in the update-available banner, which is
+    // exactly the code path that only runs when there is something to tell the user. Imported
+    // from Version.js the same way Skeleton and MotionTrail do, and read directly: the object
+    // round-trip was only ever a way of writing the name twice.
+    const currentVersion = VERSION;
     const newVersion = window._availableVersion || '???';
     
     // Line 2: Version Details
