@@ -1775,10 +1775,14 @@ class Scene {
     // ...EXCEPT WHILE THE RIG ITSELF IS BEING EDITED. Drawing or re-parenting bones moves joints
     // as a matter of course, and a chain settling under gravity on top of that is a chain
     // fighting the edit — the same reason the IK pin watcher stands down on this flag.
-    if (window._physicsBonesLive !== false && !this._rigRestEdit) {
+    //
+    // ...AND AFTER THE PINS, NOT BEFORE THEM. See the note at the physics call below: running
+    // first meant every frame's simulation was overwritten by the solve that followed it.
+    // `window._physBeforeIK = true` restores the old placement, which is the A/B this was
+    // decided by and the way back if the order turns out to matter somewhere else.
+    if (this._rigRestEdit) PhysicsBones.reset(this);
+    else if (window._physBeforeIK && window._physicsBonesLive !== false) {
       try { PhysicsBones.tick(this); } catch (e) { console.error('physics bones failed:', e); }
-    } else if (this._rigRestEdit) {
-      PhysicsBones.reset(this);
     }
 
     // Re-seat pinned joints against the pose playback just wrote.
@@ -1846,6 +1850,25 @@ class Scene {
           console.error('IK pin hold failed:', e);
         }
       }
+    }
+
+    // PHYSICS RUNS LAST, AFTER THE PINS. It used to run first, and that is what made dragging a
+    // pin flicker: both author the SAME joints every frame, so with physics first its whole
+    // result was overwritten by the solve a few lines below it -- while its state kept
+    // accumulating, and leaked back out as a jump-and-revert whenever the two answers drifted
+    // apart. Traced on matt's puppet by hooking the matrix write itself: thirteen writes a
+    // frame, five from stepXPBD and the same five from rotateJoint straight afterwards, on
+    // quiet frames and spiking frames alike. matt: "it always looks like a tearing/vsync issue,
+    // the animation appears to be flickering slightly, but if i record and playback, its fine."
+    //
+    // Last is also simply the right place. IK says where the pinned joints have to be; that is
+    // the pose the chain then hangs off, exactly as a DCC evaluates constraints before dynamics.
+    // Playback was never affected because the keys write the same pose on every pass, so there
+    // was nothing for physics to disagree with.
+    //
+    // `window._physBeforeIK = true` puts the old order back, for an A/B.
+    if (window._physicsBonesLive !== false && !this._rigRestEdit && !window._physBeforeIK) {
+      try { PhysicsBones.tick(this); } catch (e) { console.error('physics bones failed:', e); }
     }
 
     // Frame-by-frame (cel) animation. When the timeline is playing OR being
