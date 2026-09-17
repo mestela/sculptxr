@@ -269,6 +269,13 @@ var getOptionsURL = function () {
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
   options.boneShowSkinClaims = queryBool(getVal('boneShowSkinClaims'), false);
   options.boneHideDecor = queryBool(getVal('boneHideDecor'), false);
+  // The kaospad folded away in the blendshape stack panel. Registered here rather than read
+  // straight off _rawSaved so it round-trips through queryBool like every other toggle --
+  // a saved 'false' string would otherwise read as truthy.
+  options.blendPadCollapsed = queryBool(getVal('blendPadCollapsed'), false);
+  // Nav throw strength after releasing a world grab (#19). 0 stops the scene dead, 1 is the
+  // shipped feel. A number rather than a toggle because 'less, but not none' is the request.
+  options.navThrow = queryNumber(getVal('navThrow'), 0, 1, 1);
   {
     // Capsule tessellation — the mobile-VR knob. null = never set, so the shipped 56 stands.
     const raw = getVal('boneCapSegments');

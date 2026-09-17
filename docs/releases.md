@@ -1,3 +1,41 @@
+# v3.42.29
+**The kaospad folds, and the fold bar is on the pad.** The four-slot blend pad takes a third of the
+blendshape panel by design, which is right while posing a face and pure cost otherwise. It now has a
+bar along its own top edge that folds it away, persisted. The first attempt put that chevron in the
+stack panel's toolbar and it did nothing on desktop — there the pad is a *sibling canvas*, so the
+host's reserved-strip maths never reaches it — which is also the argument for where the control
+belongs: the pad is the only object both hosts share, so one implementation serves the embedded VR
+strip and the desktop canvas alike.
+
+**Letting go of a world grab stops moving the scene.** Inertia after a release is a feature; it was
+also shifting things you meant to put down. One number answered two questions — the strongest sample
+in the six-frame buffer supplied both the glide's speed and the decision to glide at all, so a single
+noisy frame while releasing from rest cleared the threshold. The magnitude still comes from the
+strongest sample (Galaxy XR damps controller motion on the release frame, and reading the last frame
+zeroes a real throw); the DECISION now asks whether the motion was sustained across the window —
+at least half the samples over threshold. Measured, per-frame speeds:
+
+    let go from rest, one noisy frame   .0003 .0004 .0002 .0030 .0004 .0003   was fly, now stays
+    let go from rest, pure noise        .0004 .0003 .0005 .0004 .0002 .0006    stays      stays
+    slow deliberate nudge               .0018 .0021 .0025 .0027 .0030 .0028    fly        fly
+    deliberate throw, accelerating      .0010 .0020 .0040 .0070 .0100 .0120    fly        fly
+    throw with damped final frame       .0080 .0090 .0100 .0110 .0120 .0010    fly        fly
+
+Half rather than all, because a throw accelerates and its first samples are slow. There is also a
+**Throw** slider now (Settings > Input, beside Grab speed), 0 meaning the scene stops where you left
+it — inertia had no setting of any kind before.
+
+**Slider rows keep the whole line.** `.mm-lbl` is a fixed 30%: 118px of a full panel, and 57px once
+two rows pack onto one line, so "Grab speed" read "Grab sp...". Pairing was a good trade when a row
+was a label and a checkbox; folding sections buys back far more height than pairing ever did, and it
+does not take the words away. The opt-out is a class applied in JS and an `!important`, because the
+packing rule scores (0,4,0) through `:has()` and `:not()` and there is a bare `.mm-row` rule outside
+`.mm-dense` as well — no scoped selector reaches every case.
+
+**And "Trigger sensitivity" becomes "Press point"**, which is what it is: where in the trigger's
+travel a press registers. There is no pressure to be sensitive to — analog pressure was built and
+deliberately disabled, because a short trigger throw makes you wiggle the start of every stroke.
+
 # v3.42.22
 **Crashes, found by widening the net rather than by waiting.** Symmetrize L→R then a Move stroke
 threw `symMap is not defined`: a `const` declared inside a `try` and read fifty lines later, after

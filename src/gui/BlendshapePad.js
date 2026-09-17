@@ -1,3 +1,6 @@
+import getOptionsURL from '../misc/getOptionsURL.js';
+import { Theme } from './theme.js';
+
 // THE KAOSPAD — four blendshapes from one gesture (roadmap #11).
 //
 // matt's framing: "a xy controller in space, (or xyz cube in vr), blendshapes get mapped to the
@@ -28,6 +31,20 @@
 // try a pose and change your mind.
 
 const SLOTS = ['right', 'left', 'up', 'down'];
+
+// THE FOLD BAR, ON THE PAD ITSELF. The first version of this put a chevron in the stack panel's
+// toolbar, which was wrong twice over: it did nothing on desktop (where the pad is a SIBLING
+// canvas, so the host's _padReserve never reaches it), and it sat nowhere near the thing it
+// governs. matt: "pressing the chevron does nothing. and its up in the toolbar, thats dumb, it
+// should be immediately above the XY pad."
+//
+// A strip along the top of the pad's own rect, drawn and hit-tested by the pad, so ONE
+// implementation serves the embedded VR case and the desktop canvas alike -- the same reason the
+// weights live here rather than in either host.
+//
+// Folded, the pad IS this bar: it has to keep somewhere to press, which is why it collapses to a
+// header rather than to nothing.
+export const PAD_HEADER_H = 22;
 
 // Slot -> the axis reading that drives it. Kept as data because both the weight function and the
 // label drawing need the same answer, and two copies of "which corner is +x" would drift.
@@ -84,6 +101,10 @@ class BlendshapePad {
     this._dragging = false;
     this._slotHit = [];  // { slot, x, y, w, h } for click-to-assign
     this._btns = [];
+    this._collapsed = !!getOptionsURL().blendPadCollapsed;
+    // Set by the host so a fold can ask it to re-measure: the desktop canvas resizes itself, the
+    // VR panel re-shares its reserved strip. The pad does not know which it is in, and should not.
+    this._onFold = null;
   }
 
   mount(host) {
@@ -212,7 +233,7 @@ class BlendshapePad {
     if (!this._host || !this._canvas) return;
     const w = Math.max(120, this._host.clientWidth || this._cssW);
     this._cssW = w;
-    this._cssH = Math.round(w * 0.78);
+    this._cssH = this._collapsed ? PAD_HEADER_H : PAD_HEADER_H + Math.round(w * 0.78);
     this._dpr = window.devicePixelRatio || 1;
     this._canvas.width = Math.round(this._cssW * this._dpr);
     this._canvas.height = Math.round(this._cssH * this._dpr);
@@ -244,9 +265,13 @@ class BlendshapePad {
   // number that looked right against one particular panel width.
   _padRect() {
     const g = this._gutter();
-    const size = Math.min(this._cssW - g.side * 2, this._cssH - g.top - g.bot);
+    // The fold bar owns the top PAD_HEADER_H of the rect, so the square is measured against what
+    // is left and sits below it.
+    const bodyY = (this._originY || 0) + PAD_HEADER_H;
+    const bodyH = this._cssH - PAD_HEADER_H;
+    const size = Math.min(this._cssW - g.side * 2, bodyH - g.top - g.bot);
     return { x: (this._originX || 0) + (this._cssW - size) / 2,
-             y: (this._originY || 0) + g.top, s: size };
+             y: bodyY + g.top, s: size };
   }
 
   // Label/button gutters, derived from the label font so they scale together.
@@ -289,6 +314,11 @@ class BlendshapePad {
   // ── Point-based core, in CANVAS coordinates — shared by the mouse and the VR ray, exactly as
   // the stack panel's own core is. The DOM handlers above only convert client space into it.
   pointerDown(mx, my) {
+    // The bar first, and before the folded bail-out below it -- it is the only thing that still
+    // answers while folded.
+    const hb = this._headerRect();
+    if (mx >= hb.x && mx <= hb.x + hb.w && my >= hb.y && my <= hb.y + hb.h) { this.toggleFold(); return; }
+    if (this._collapsed) return;
 
     for (const b of this._btns) {
       if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
@@ -346,6 +376,49 @@ class BlendshapePad {
       && mx >= (this._originX || 0) && mx <= (this._originX || 0) + this._cssW;
   }
 
+  // The fold bar's rect, in the same canvas coordinates everything else here uses.
+  _headerRect() {
+    return { x: this._originX || 0, y: this._originY || 0, w: this._cssW, h: PAD_HEADER_H };
+  }
+
+  toggleFold() {
+    this._collapsed = !this._collapsed;
+    getOptionsURL.saveOption('blendPadCollapsed', this._collapsed);
+    // The host decides what the fold MEANS to the layout it owns -- a canvas height on desktop,
+    // a share of the panel in VR -- and then redraws. Falling back to _relayout covers the
+    // desktop mount, which is its own host.
+    if (this._onFold) this._onFold(this._collapsed);
+    else if (!this._embedded) this._relayout();
+    else this.draw();
+  }
+
+  _drawHeader(ctx) {
+    const h = this._headerRect();
+    ctx.save();
+    ctx.fillStyle = Theme.mantle;
+    ctx.fillRect(h.x, h.y, h.w, h.h);
+    ctx.strokeStyle = Theme.surface0;
+    ctx.beginPath();
+    ctx.moveTo(h.x, h.y + h.h - 0.5); ctx.lineTo(h.x + h.w, h.y + h.h - 0.5);
+    ctx.stroke();
+
+    // A drawn triangle rather than an icon glyph: this file loads no icon font, and a caret is
+    // three lines. Points DOWN when the pad is open (press to fold it away) and UP when folded.
+    const cx = h.x + 12, cy = h.y + h.h / 2, r = 4;
+    ctx.fillStyle = Theme.subtext0 || '#a6adc8';
+    ctx.beginPath();
+    if (this._collapsed) { ctx.moveTo(cx - r, cy + r / 2); ctx.lineTo(cx + r, cy + r / 2); ctx.lineTo(cx, cy - r / 2 - 2); }
+    else                 { ctx.moveTo(cx - r, cy - r / 2); ctx.lineTo(cx + r, cy - r / 2); ctx.lineTo(cx, cy + r / 2 + 2); }
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('XY Pad', h.x + 24, cy + 0.5);
+    ctx.restore();
+  }
+
   draw() {
     const ctx = this._ctx;
     if (!ctx) return;
@@ -355,6 +428,14 @@ class BlendshapePad {
       // resetting it here would undo the host's own scaling and wipe the rows above.
       ctx.setTransform(d, 0, 0, d, 0, 0);
       ctx.clearRect(0, 0, W, H);
+    }
+
+    this._drawHeader(ctx);
+    if (this._collapsed) {
+      // Nothing below the bar exists while folded. _btns and _slotHit are cleared so a stale
+      // rect from the last open draw cannot take a press in space the pad no longer owns.
+      this._btns = []; this._slotHit = [];
+      return;
     }
 
     const p = this._padRect();

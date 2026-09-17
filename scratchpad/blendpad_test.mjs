@@ -153,13 +153,19 @@ if (inject === 'bilinear') {
   REG = cut(REG, "    if (window._animPlaying && !this.isRecording\n        && track.blendshapePreview && track.blendshapePreview.size) {",
     '    if (window._animPlaying\n        && track.blendshapePreview && track.blendshapePreview.size) {', inject);
 } else if (inject === 'noembedorigin') {
+  // Anchors repointed 2026-09-17: _padRect now offsets past the fold bar, so the y term reads
+  // `bodyY + g.top` rather than `(this._originY || 0) + g.top`. Same defect: drop BOTH origins so
+  // an embedded pad draws and hit-tests at the canvas top-left instead of in its reserved strip.
+  PAD = cut(PAD, "    const bodyY = (this._originY || 0) + PAD_HEADER_H;",
+    '    const bodyY = PAD_HEADER_H;', inject);
   PAD = cut(PAD, "    return { x: (this._originX || 0) + (this._cssW - size) / 2,",
-    '    return { x: (this._cssW - size) / 2 + 0 * (', inject);
-  PAD = cut(PAD, "             y: (this._originY || 0) + g.top, s: size };",
-    '             this._originX || 0), y: g.top, s: size };', inject + '2');
+    '    return { x: (this._cssW - size) / 2,', inject + '2');
 } else if (inject === 'padclears') {
   PAD = cut(PAD, '    if (!this._embedded) {', '    if (true) {', inject);
 } else if (inject === 'rowsteal') {
+  // Anchor churned twice on 2026-09-17: a fold guard joined this line and then left it again when
+  // the control moved onto the pad, where it belongs. Back to the original text; same defect --
+  // remove the pad's first refusal so the rows take the press.
   STACK = cut(STACK, '    if (this._padOwned && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }',
     '', inject);
 } else if (inject === 'octreerebuild') {
@@ -223,7 +229,9 @@ const check = (n, ok, d) => { if (ok) { console.log('  ok   ' + n); return; }
 
 // Lift the exported weight function. It is pure by design precisely so this can happen.
 const src = PAD.slice(PAD.indexOf('const SLOTS ='), PAD.indexOf('class BlendshapePad'));
-const weightsFor = new Function(src.replace('export function', 'function')
+// Strip EVERY export, not just the function's. The slice now also carries `export const
+// PAD_HEADER_H`, and a targeted replace left that one in to throw "Unexpected token 'export'".
+const weightsFor = new Function(src.replace(/^export /gm, '')
   + '\nreturn weightsFor;')();
 
 const A = { right: 'R', left: 'L', up: 'U', down: 'D' };
@@ -476,9 +484,51 @@ check('...re-shared on every draw, so adding a layer re-balances at once',
 check('...and the rows are CLIPPED above the pad, never drawn under it',
   /ctx\.rect\(0, 0, W, H - this\._padReserve\);\s*\n\s*ctx\.clip\(\);/.test(STACK),
   'drawing under the pad leaves a row you can still HIT but cannot SEE');
+// REPOINTED 2026-09-17: the fold guard sits between _padOwned and the hits() call now. The
+// invariant is unchanged and is what is asserted -- the pad is consulted before the rows.
 check('...and asks it BEFORE the row hit-test',
-  /if \(this\._padOwned && this\._pad\.hits\(p\.x, p\.y\)\) \{ this\._padActive = true;/.test(STACK),
+  /if \(this\._padOwned && [^)]*this\._pad\.hits\(p\.x, p\.y\)\) \{ this\._padActive = true;/.test(STACK)
+    && STACK.indexOf('this._pad.hits(p.x, p.y)') < STACK.indexOf('const { row, part } = this._classifyHit(p);'),
   'otherwise a press on the pad is classified as the bottom-most layer row');
+
+// ── FOLDING THE PAD AWAY ──────────────────────────────────────────────────────────────
+//
+// The pad takes a third of the panel by design, which is right while posing a face and pure cost
+// otherwise. adurna35: "Option to collapse the cool new interpolate between 4 layers menu as it
+// takes up a lot of space when sculpting."
+// THE CONTROL BELONGS TO THE PAD, NOT TO A HOST. The first attempt put a chevron in the stack
+// panel's toolbar and it did nothing on DESKTOP, because there the pad is a sibling canvas and the
+// host's _padReserve never reaches it. matt: "pressing the chevron does nothing. and its up in the
+// toolbar, thats dumb, it should be immediately above the XY pad."
+check('the fold bar lives on the pad itself',
+  /export const PAD_HEADER_H/.test(PAD) && /_headerRect\(\)/.test(PAD) && /toggleFold\(\)/.test(PAD),
+  'a host-owned control can only reach the host that owns it; the pad is what both share');
+check('...and neither host carries a fold of its own',
+  !/_padCollapsed/.test(STACK),
+  'two places holding one mode is how the desktop copy came to do nothing');
+check('...the bar answers a press BEFORE the folded bail-out',
+  PAD.indexOf('this.toggleFold(); return;') < PAD.indexOf('if (this._collapsed) return;'),
+  'folded, the bar is the ONLY thing left to press -- bailing first makes the fold one-way');
+check('...and folded, it draws nothing below the bar',
+  /this\._drawHeader\(ctx\);\s*\n\s*if \(this\._collapsed\) \{/.test(PAD)
+    && /this\._btns = \[\]; this\._slotHit = \[\];/.test(PAD),
+  'a stale button rect would keep taking presses in space the pad no longer occupies');
+check('...the square is measured below the bar, not through it',
+  /const bodyH = this\._cssH - PAD_HEADER_H;/.test(PAD),
+  'otherwise the handle sits under the bar and the top gutter is eaten');
+check('...both hosts collapse to the bar, so there is something to press',
+  /this\._collapsed \? PAD_HEADER_H : PAD_HEADER_H \+ Math\.round\(w \* 0\.78\)/.test(PAD)
+    && /this\._padReserve = PAD_HEADER_H;/.test(STACK),
+  'collapsing to zero leaves no affordance now the control is on the pad');
+check('...and the host is told, so it can re-measure what IT owns',
+  /this\._pad\._onFold = \(\) => \{ this\._layoutPad\(\); this\.draw\(\); \};/.test(STACK)
+    && /if \(this\._onFold\) this\._onFold\(this\._collapsed\);/.test(PAD),
+  'the pad must not know whether it is a canvas or a strip');
+check('...and it persists, because it is a working mode not a momentary press',
+  /saveOption\('blendPadCollapsed'/.test(PAD)
+    && /options\.blendPadCollapsed = queryBool\(getVal\('blendPadCollapsed'\), false\)/
+         .test(fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8')),
+  'read through queryBool like every other toggle, or a saved "false" string reads as truthy');
 check('...latching the drag, so it survives the ray leaving the pad',
   /if \(this\._padActive\) \{ this\._pad\.pointerMove\(p\.x, p\.y\); return; \}/.test(STACK)
     && /if \(this\._padActive\) \{ this\._padActive = false; this\._pad\.pointerUp\(\); return; \}/.test(STACK));

@@ -20,7 +20,8 @@
 
 import { arkitByRegion, arkitEntry, arkitUnifiedFor } from '../editing/ArkitBlendshapes.js';
 import { Theme } from './theme.js';
-import BlendshapePad from './BlendshapePad.js';
+import BlendshapePad, { PAD_HEADER_H } from './BlendshapePad.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 // FontAwesome 6 Free (Solid, weight 900) glyphs — drawn on the canvas, never emoji.
 const FA = {
@@ -196,6 +197,10 @@ export default class BlendshapeStackPanel {
     // between VR and desktop.
     this._pad = new BlendshapePad(this._main);
     this._padOwned = true;      // VR draws and hit-tests it; desktop's is a sibling canvas
+    // FOLDED AWAY WHILE SCULPTING -- but the state and the control both belong to the PAD, which
+    // is the only object both hosts share. See PAD_HEADER_H in BlendshapePad. This hook is how a
+    // fold reaches the layout THIS host owns.
+    this._pad._onFold = () => { this._layoutPad(); this.draw(); };
     this._padReserve = VR_PAD_MIN;   // real value comes from _layoutPad, which needs _cssH
     this._layoutPad();
 
@@ -341,6 +346,15 @@ export default class BlendshapeStackPanel {
     // "I need to see more layers" has a direct answer (make it taller) and "my pad is 42px" did
     // not. matt asked for both ends of this: "make it as tall and wide as i need it to be if i
     // want to see lots of blendshapes, and/or make the pad large or small".
+    if (this._pad._collapsed) {
+      // ZERO, not a thin strip. The point of folding it is the space, and the toolbar chevron is
+      // the affordance that says it is still there -- a stub would cost rows to say what the
+      // button already says. embed() at zero height also puts the pad's own hit rect out of
+      // reach, so a press in the space it used to own falls through to the list, as it should.
+      this._padReserve = PAD_HEADER_H;
+      this._pad.embed(this._ctx, 0, this._cssH - PAD_HEADER_H, this._cssW, PAD_HEADER_H);
+      return;
+    }
     const share = Math.round(this._cssH * 0.36);
     this._padReserve = Math.max(VR_PAD_MIN, Math.min(VR_PAD_MAX_ABS, Math.max(share, left)));
     this._pad.embed(this._ctx, 0, this._cssH - this._padReserve, this._cssW, this._padReserve);

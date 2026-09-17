@@ -542,6 +542,41 @@ const CSS = `
 
 .mm-row { flex: 1 1 190px; }
 
+/* A SLIDER ROW KEEPS THE WHOLE LINE, and the reason is the label column rather than the slider.
+   .mm-lbl is a fixed 30% so every control in a panel starts at the same x -- which is right at a
+   full 392px (the longest label here measures 95px against 118px of column) and falls apart the
+   moment two rows pack onto one line: 30% of a 190px half-row is 57px, and "Grab speed" comes out
+   "Grab sp...". matt, reading the settings page: "i can't read the label on these parameters.
+   'grab speed' (i assume) is 'grab sp...', the other is 'trigger ...', i don't know what these
+   do." A control whose name you cannot read is not a control.
+
+   Packing was a good trade when a row was a label and a checkbox. It stopped being one once the
+   sections became collapsible -- matt: "because we're folding parameters now, maybe we don't need
+   to put 2 sliders together?" -- because folding already buys back far more height than pairing
+   ever did, and it buys it without taking the words away.
+
+   Slider rows only. A select or a checkbox row still pairs happily; those labels are short and
+   the control does not need the width.
+
+   TWO THINGS HERE ARE DELIBERATE, AND BOTH WERE MEASURED RATHER THAN GUESSED.
+
+   The class is applied in JS (uiTokens.groupSectionTitles) rather than selected with
+   :has(input[type=range]). Not because :has() is unsupported -- it is -- but because the class is
+   then available to a selector of ANY shape, which matters for the second point.
+
+   And it is !important, which is not usually the answer. The packing it has to beat is
+   .mm-dense :has(> .mm-row):not(...) > .mm-row, and :has() and :not() take the specificity of
+   their most specific argument, so that rule scores (0,4,0). The obvious
+   .mm-dense .mm-row.mm-row-wide is (0,3,0) and loses -- which is exactly what matt saw:
+   "this is what it looks like in vr. still packing into 2 columns, i can't read the labels."
+   Matching (0,4,0) would mean rebuilding that selector's shape here and keeping the two in step
+   for ever. There is also a bare .mm-row { flex: 1 1 190px } that applies OUTSIDE .mm-dense
+   entirely, so any .mm-dense-scoped answer misses the desktop sidebar's rows regardless.
+
+   One class, applied to exactly the rows that need it, opting out of a cascade of packing rules
+   at several specificities. That is the case !important exists for. */
+.mm-row.mm-row-wide { flex: 1 1 100% !important; }
+
 /* FULL-WIDTH SINGLE BUTTONS PACK TOO. The View page alone carried ten of them at 396px for
    labels of one to three words -- Ground Plane, Shadow Catcher, Hide All Decorations, Pivot,
    Fill, Show references -- which is about 270px of height for content that pairs into half
@@ -2020,6 +2055,8 @@ function buildMenuHTML_settings(main) {
   const triggerCurve  = ui.triggerCurve    ?? opts.triggerCurve    ?? 0.5;
   const stylusLength  = ui.stylusLength    ?? opts.stylusLength    ?? 0.10;
   const grabGain      = ui.grabGain        ?? opts.grabGain        ?? 1.0;
+  // Nav throw (#19): how much of your release speed the scene keeps gliding with.
+  const navThrow      = (window._navThrow != null ? +window._navThrow : null) ?? opts.navThrow ?? 1.0;
   const pinchOn       = ui.pinchOn         ?? opts.pinchOn         ?? 0.022;
   const hStylusLen    = ui.handStylusLength ?? opts.handStylusLength ?? 0.05;
   const hStylusOff    = ui.handStylusOffset ?? opts.handStylusOffset ?? 0.0;
@@ -2070,7 +2107,13 @@ function buildMenuHTML_settings(main) {
     <button class="mm-toggle${isAmbi    ? ' active' : ''}" id="mm-ambi">Ambidextrous Cursors</button>
 
     <div class="mm-row">
-      <span class="mm-lbl">Trigger sensitivity</span>
+      ${/* NOT "sensitivity", which reads as a pressure curve -- and there is no pressure here to
+           be sensitive to. Analog pressure was built and deliberately disabled: a controller
+           trigger has a short throw, so driving intensity from it makes you wiggle the start of
+           every stroke. What is left is WHERE IN THE TRAVEL the press registers, which is what
+           this sets. matt, looking at the panel: "what does trigger sensitivity do?" -- a fair
+           question to have to ask about a control you have shipped. */ ''}
+      <span class="mm-lbl" title="How far the trigger must be pulled before a stroke starts. Higher is a lighter pull. Controllers only: hands use Pinch distance.">Press point</span>
       <input type="range" id="mm-trigger" min="0" max="100" step="5" value="${Math.round(triggerCurve*100)}">
       <span class="mm-val" id="mm-trigger-val">${Math.round(triggerCurve*100)}%</span>
     </div>
@@ -2079,6 +2122,16 @@ function buildMenuHTML_settings(main) {
       <span class="mm-lbl">Grab speed</span>
       <input type="range" id="mm-grab-gain" min="25" max="200" step="5" value="${Math.round(grabGain*100)}">
       <span class="mm-val" id="mm-grab-gain-val">${Math.round(grabGain*100)}%</span>
+    </div>
+
+    <!-- Beside Grab speed, because it is the other half of the same gesture: one sets how far the
+         world moves while you hold it, this sets how much of that it keeps once you let go.
+         Off means the scene stops exactly where you left it. -->
+    <div class="mm-row">
+      <span class="mm-lbl">Throw</span>
+      <input type="range" id="mm-nav-throw" min="0" max="100" step="5" value="${Math.round(navThrow*100)}"
+        title="How much speed the scene keeps after you release a world grab. 0 stops it dead.">
+      <span class="mm-val" id="mm-nav-throw-val">${navThrow > 0 ? Math.round(navThrow*100) + '%' : 'Off'}</span>
     </div>
 
     <!-- Hands only: a controller has a physical trigger and no pinch to calibrate. Shown in
@@ -3714,7 +3767,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       paint();
     });
 
-    // Trigger sensitivity
+    // Press point -- where in the trigger's travel a press registers. See _triggerThreshold.
     this._wireSlider(q('#mm-trigger'), q('#mm-trigger-val'), (v) => {
       const f = v / 100;
       if (ui) ui.triggerCurve = f;
@@ -3727,6 +3780,15 @@ export class MainMenuPanel extends HTMLVRPanel {
       if (ui) ui.grabGain = f;
       opts.saveOption('grabGain', f, 500);
     }, (v) => `${v}%`);
+
+    // Throw — how much of the release speed the world keeps. Writes the live global as well as
+    // the saved option so it takes effect on the very next release rather than the next reload;
+    // Scene._navThrowScale reads the live one first, in that order.
+    this._wireSlider(q('#mm-nav-throw'), q('#mm-nav-throw-val'), (v) => {
+      const f = v / 100;
+      window._navThrow = f;
+      opts.saveOption('navThrow', f, 500);
+    }, (v) => (v > 0 ? `${v}%` : 'Off'));
 
     // Pinch distance — millimetres of finger-to-thumb gap that still counts as a click.
     this._wireSlider(q('#mm-pinch-on'), q('#mm-pinch-on-val'), (v) => {

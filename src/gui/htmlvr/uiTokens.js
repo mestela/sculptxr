@@ -722,6 +722,18 @@ const _slug = (t) => t.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(
 
 export function groupSectionTitles(root, opts) {
   if (!root) return;
+  // A SLIDER ROW IS TAGGED SO IT CAN KEEP THE WHOLE LINE.
+  //
+  // .mm-lbl is a fixed 30%: 118px of a full 392px panel, and 57px once two rows pack onto one
+  // line -- so "Grab speed" came out "Grab sp...". See the .mm-row-wide rule in MainMenuPanel for
+  // why the opt-out is a class applied here rather than a :has() selector over there.
+  //
+  // This function is the single pass every panel runs over freshly built content -- all six
+  // render paths -- which is why the tagging lives here rather than in any one of them.
+  try {
+    root.querySelectorAll('.mm-row input[type=range], .acp-row input[type=range]')
+      .forEach((i) => i.parentElement && i.parentElement.classList.add('mm-row-wide'));
+  } catch (_) {}
   const o = opts || {};
   const sel = o.selector || '.mm-section-title, .acp-section-title';
   const prefix = o.prefix || 'sec';

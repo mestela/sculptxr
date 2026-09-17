@@ -11790,6 +11790,16 @@ class Scene {
   // directly and no glide runs. On release, if there was enough residual velocity,
   // keep moving the world with exponential decay until it slows to a stop. Any new
   // grip, two-handed nav, or a sculpt stroke cancels the glide.
+  // 0 = the scene stops where you let go; 1 = the throw as it has always been. Live value first
+  // so a console tweak takes effect on the next release, then the saved one -- the same order
+  // every other persisted VR setting is read in.
+  _navThrowScale() {
+    const live = window._navThrow;
+    if (live != null) return Math.max(0, Math.min(1, +live));
+    const saved = getOptionsURL().navThrow;
+    return saved != null ? Math.max(0, Math.min(1, +saved)) : 1;
+  }
+
   _updateNavGlide() {
     const g = this._navGlide;
     const navActive = this._vrGrip.left.active || this._vrGrip.right.active || this._vrTwoHanded.active;
@@ -11818,9 +11828,49 @@ class Scene {
         let bestA = rotAngle(g.rotVel);
         for (const q of g.rotHist) { const a = rotAngle(q); if (a > bestA) { bestA = a; quat.set(g.rotVel, q[0], q[1], q[2], q[3]); } }
       }
+      // WAS THIS A THROW, AND HOW FAST -- TWO QUESTIONS, TWO ANSWERS.
+      //
+      // Both used to come from the same number: the STRONGEST sample in the window, tested
+      // against the threshold. So a single noisy frame while letting go from rest was enough to
+      // launch, and the scene drifted off the position you had just placed it at.
+      // adurna35: "it always shifts away a little from my intended position when letting go."
+      //
+      // The magnitude still comes from the strongest sample, because that is what the Galaxy XR
+      // fix above needs -- that runtime damps controller motion on the release frame, and taking
+      // the last frame would zero a real throw. But the DECISION now asks whether you were moving
+      // for the window rather than for an instant: at least half the buffered samples over the
+      // threshold. Measured against the five cases that matter (speed per frame):
+      //
+      //   let go from rest, one noisy frame   .0003 .0004 .0002 .0030 .0004 .0003   was FLY, now --
+      //   let go from rest, pure noise        .0004 .0003 .0005 .0004 .0002 .0006    --       --
+      //   slow deliberate nudge               .0018 .0021 .0025 .0027 .0030 .0028   FLY      FLY
+      //   deliberate throw, accelerating      .0010 .0020 .0040 .0070 .0100 .0120   FLY      FLY
+      //   throw with damped final frame (GXR) .0080 .0090 .0100 .0110 .0120 .0010   FLY      FLY
+      //
+      // Half rather than all, because a throw ACCELERATES -- its first samples are slow, and
+      // requiring every one of them would refuse the gesture it exists for.
+      const _sustained = (hist, measure, thresh) => {
+        if (!hist || !hist.length) return false;
+        let n = 0;
+        for (const e of hist) if (measure(e) > thresh) n++;
+        return n >= Math.ceil(hist.length / 2);
+      };
+      const _flyT = _sustained(g.velHist, (v) => Math.hypot(v[0], v[1], v[2]), 0.002);
+      const _flyR = _sustained(g.rotHist, (q) => rotAngle(q), 0.004);
       g.velHist = null; g.rotHist = null;
-      // Launch if translation OR rotation had enough momentum at release.
-      g.gliding = vec3.length(g.vel) > 0.002 || rotAngle(g.rotVel) > 0.004;
+
+      // AND A WAY TO TURN IT DOWN. Inertia had no setting of any kind; the ask was for one.
+      // Scales the launch speed, and 0 means the scene simply stops where you left it.
+      const throwScale = this._navThrowScale();
+      if (throwScale <= 0) {
+        g.gliding = false;
+      } else {
+        if (throwScale !== 1) {
+          vec3.scale(g.vel, g.vel, throwScale);
+          quat.slerp(g.rotVel, QUAT_IDENTITY, g.rotVel, throwScale);
+        }
+        g.gliding = _flyT || _flyR;
+      }
     }
     if (g.gliding) {
       this.moveWorld([g.vel[0], g.vel[1], g.vel[2]]);
@@ -11979,7 +12029,8 @@ class Scene {
   // menu uses -- in the headset you are already pointing at the joint you mean.
   // ── IS THIS TRIGGER DOWN? ONE ANSWER ────────────────────────────────────────
   //
-  // Trigger sensitivity maps the slider (0 Hard .. 1 Light) onto a threshold of 0.9 .. 0.1 on
+  // Press point (labelled "Trigger sensitivity" until v3.42.29) maps the slider (0 Hard .. 1
+  // Light) onto a threshold of 0.9 .. 0.1 on
   // the ANALOG value. A light setting means a sculpt stroke starts well before the runtime
   // calls the button `pressed`.
   //
