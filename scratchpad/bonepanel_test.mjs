@@ -1351,6 +1351,15 @@ check('...and naming the failures when several are bound at once',
   /failed: \$\{bad\.map\(\(r\) => r\.name \|\| '\?'\)\.join\(', '\)\}/.test(SRC),
   'a count alone leaves you clicking each mesh to find out which ones missed');
 
+// Unbind mirrors Bind. Binding seven pieces in one press and unbinding them one at a time is
+// the kind of asymmetry you only notice by having to do it.
+check('Unbind takes the whole selection too',
+  /const targets = \(sel\.length \? sel\.slice\(\) : \[main\.getMesh\?\.\(\)\]\.filter\(Boolean\)\)\s*\n\s*\.filter\(\(m\) => Skinning\.isBound\(m\)\);/.test(SRC)
+    && /for \(const m of targets\) Skinning\.unbind\(m\);/.test(SRC),
+  'Bind acting on a selection while Unbind acts on one mesh is a trap');
+check('...and says nothing rather than pretending when none of them were bound',
+  /Bones: nothing bound in the selection/.test(SRC));
+
 // ── A HIDDEN MESH IS NOT SKINNED ─────────────────────────────────────────────────────
 //
 // The pass costs what its vertices cost -- mush, normals, buffer upload -- and paying that for

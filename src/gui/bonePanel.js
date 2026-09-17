@@ -1402,8 +1402,18 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
+  // UNBINDS THE WHOLE SELECTION, the mirror of Bind. Binding seven pieces in one press and then
+  // unbinding them one at a time is the kind of asymmetry you only notice by having to do it.
+  // matt: "in the same way i can select many objects and bind, i should be able to select many
+  // objects and unbind them."
   q('unbind')?.addEventListener('click', () => {
-    Skinning.unbind(main.getMesh?.());
+    const sel = main.getSelectedMeshes?.() ?? [];
+    const targets = (sel.length ? sel.slice() : [main.getMesh?.()].filter(Boolean))
+      .filter((m) => Skinning.isBound(m));
+    if (!targets.length) { say('Bones: nothing bound in the selection', false); return; }
+    for (const m of targets) Skinning.unbind(m);
+    say('Bones: unbound ' + targets.length
+      + (targets.length === 1 ? ' — ' + (targets[0]._permanentStaticLabel || 'mesh') : ' meshes'), true);
     rebuild();
     main.render?.();
   });
