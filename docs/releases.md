@@ -1,3 +1,44 @@
+# v3.42.7
+**A round of Adurna35's bug report, and one rule learned three times over.** Remesh had been
+quietly leaving the original mesh behind — hidden, present in the outliner, and duplicated by the
+bake that followed — because the swap only ever called `setVisible(false)` on it. It also cost two
+undos, the first landing you in a voxel state that existed for fifty milliseconds and that nobody
+asked for; that is one entry now. The bounding box that would not go away had the same shape of
+cause: `VoxelBounds.render()` calls `setVisible(true)` on its way past, so hiding it lasted exactly
+until the next frame.
+
+**Weights turn off again.** Two unrelated faults wore one face. `weights` sat in the rig's
+decoration set, so with Hide All Decorations on the flag read false while the button kept rendering
+from the raw value — the toggle lit up and did nothing. It is not decoration: every other flag in
+that set draws *over* the model, while the weight preview repaints the mesh's own vertex colours.
+Separately, the colours belong to the bound level, and a multires subdivide leaves you looking at a
+level above it — with the weight colours carried up by the subdivision. Restoring the bound level
+changed nothing you could see. Both paths now push through the existing multires propagation, which
+is a no-op when the displayed level *is* the bound level. Weights also joins the five display chips
+in View and Assist, where it is reached while rigging rather than a panel away.
+
+**Smooth mode.** Hold the off-hand trigger and the thumbstick, the wrist panel and the brush cursor
+all retarget to Smooth — the tool you see in the menu is the tool you are adjusting. The mode is the
+off-hand trigger alone; the *stroke* still wants both, because a modifier qualifies an action rather
+than being one. Getting there took three headset rounds and the lesson is worth stating: "which tool
+am I talking about" was answered in six places, each asking at a different point in a frame, over a
+`_toolIndex` that the stroke dispatch mutates and restores mid-frame. A derived predicate over
+moving state is not a mode. It is latched once per frame now and read everywhere, including by the
+stroke's own picking radius — which is computed some four hundred lines above the tool swap and had
+been sizing every smooth with the clay brush's footprint. And Smooth owns its radius: the old sync
+fired on the trigger pull and overwrote whatever you had just dialled in.
+
+**A stroke owns the controller.** Aim at a panel mid-manipulation and it used to receive the sweep
+as hover and presses — a pin drag across the wrist menu pressed it. There was a guard for this, but
+it asked the *tool*, and only Grab implemented the hook, so Tweak FK went straight through it;
+BoneDrawTool alone has six drag states. The rule that holds without a list of tools is where the
+press began: a trigger closed anywhere that is not a panel owns itself until release, and no rays
+are cast at all while it does. Panels still receive leave, so none is left frozen mid-hover.
+
+**And the number pad can finally type a negative.** There was no sign key — that slot was an empty
+button held open with `visibility:hidden` — so any field accepting a negative could only be reached
+by going through zero on the thumbstick. The entry code had been written for it all along.
+
 # v3.42.0
 **A bone is not a thing, and the rig finally agrees.** Maya's own documentation is blunt about it
 — *"bones do not have nodes... bones are only visual cues that illustrate the relationships

@@ -17,6 +17,8 @@
 //   PG_INJECT=followheld   the rotation-only follow drops its held guard, so the visuals put a
 //                          wrist pin back on its joint while it is being dragged
 //   PG_INJECT=nosave       the VR thumbstick stops persisting the radius it just set
+//   PG_INJECT=smoothradius the thumbstick saves under the CURRENT tool again, so a radius dialled
+//                          in while the smooth shortcut is held is filed as the clay brush's
 //   PG_INJECT=grabtiny     Grab gets its own radius default back
 import fs from 'fs';
 import path from 'path';
@@ -187,15 +189,32 @@ const makePin = (m) => {
 
   let sc = SCENE;
   if (inj === 'nosave') {
-    const a = 'getOptionsURL.saveOption(\n                  `tool_${this._sculptManager.getToolIndex()}_radius`, newVal, 500);';
+    const a = 'getOptionsURL.saveOption(\n                  `tool_${smoothTool ? this._smoothToolIndex() : this._sculptManager.getToolIndex()}_radius`,\n                  newVal, 500);';
     if (!sc.includes(a)) throw new Error('inject nosave: anchor moved');
     sc = sc.replace(a, '');
   }
+  // The window keeps the assertion local to the thumbstick handler rather than matching a save
+  // somewhere else in Scene.js. Widened from +700 2026-09-16: the save call itself did not move,
+  // the comment above it grew, and +700 cut the match in half — the classic "a distance-measuring
+  // regex is a cross-change" failure. Still comfortably inside the one handler.
+  if (inj === 'smoothradius') {
+    const a = '`tool_${smoothTool ? this._smoothToolIndex() : this._sculptManager.getToolIndex()}_radius`';
+    if (!sc.includes(a)) throw new Error('inject smoothradius: anchor moved');
+    sc = sc.replace(a, '`tool_${this._sculptManager.getToolIndex()}_radius`');
+  }
   const blk = sc.slice(sc.indexOf('tools.setRadius(newVal);') - 900,
-    sc.indexOf('tools.setRadius(newVal);') + 700);
+    sc.indexOf('tools.setRadius(newVal);') + 1100);
+  // REPOINTED 2026-09-16: the key is still `tool_<index>_radius`, but the index is now resolved
+  // rather than hardcoded to the current tool — while the smooth shortcut is armed, Smooth is the
+  // tool the stick actually changed, so Smooth is what has to be saved. The invariant the check
+  // exists for is unchanged: the thumbstick persists what it just set, under the per-tool key.
   check('the VR thumbstick saves the radius it just set',
-    /saveOption\(\s*`tool_\$\{this\._sculptManager\.getToolIndex\(\)\}_radius`, newVal, 500\)/.test(blk),
+    /saveOption\(\s*`tool_\$\{[^`]*getToolIndex\(\)[^`]*\}_radius`,\s*newVal, 500\)/.test(blk),
     'this is how the radius is actually set in VR; unsaved, every session started over');
+  check('...against the tool the stick actually changed, not the one it will return to',
+    /`tool_\$\{smoothTool \? this\._smoothToolIndex\(\) : this\._sculptManager\.getToolIndex\(\)\}_radius`/.test(blk),
+    'the smooth override swaps _toolIndex for one frame; saving under getToolIndex alone files '
+    + "Smooth's radius under the clay brush");
   // Was BrushPanel, which was deleted 2026-08-28 — the wrist panel is the surviving slider.
   check('...under the same key the panels write',
     /saveOption\(`tool_\$\{idx\}_radius`/.test(R('src/gui/htmlvr/MiniPanel.js')),

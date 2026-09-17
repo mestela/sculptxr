@@ -164,11 +164,27 @@ function buildPanelEl() {
 
     <button class="vrn-btn" id="vrn-dot">.</button>
     <button class="vrn-btn" data-vrn="0">0</button>
-    <button class="vrn-btn" style="visibility:hidden"></button>
+    ${/* YOU COULD NOT TYPE A NEGATIVE NUMBER. There was no sign key at all -- this slot was an
+         empty button held open with visibility:hidden -- so any field that accepts a negative
+         (a position, an offset, a rotation) could only be reduced by going through zero with the
+         thumbstick. matt found it trying to change -16 to -17: "i realised we have no negative
+         key on the number pad!"
+         The entry code was already written for it: press(), backspace() and the dot key all
+         have explicit '-' and '-0' cases, so the string half of this has been waiting for a
+         button since the panel was built. The sign ROW above is a different feature -- it is
+         the relative +=/-= mode, only shown when config.relativeExpr is set. */ ''}
+    <button class="vrn-btn" id="vrn-neg" title="Negate">&plusmn;</button>
     <button class="vrn-btn vrn-cancel" id="vrn-cancel">✕</button>
   </div>
 </div>`;
   return wrap.firstElementChild;
+}
+
+// Toggle the leading minus. '0' stays '0' -- there is no such thing as -0 to a user, and
+// leaving it as '-0' would show a minus that the next digit press silently absorbs.
+function negateStr(s) {
+  if (!s || s === '0' || s === '-0' || s === '-') return '0';
+  return s.startsWith('-') ? s.slice(1) : '-' + s;
 }
 
 // ── Shared button logic (works on any .vrn-root element) ─────────────────────
@@ -246,6 +262,10 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
 
   el.querySelector('#vrn-clear')?.addEventListener('click', () => {
     setStr('0'); refresh();
+  });
+
+  el.querySelector('#vrn-neg')?.addEventListener('click', () => {
+    setStr(negateStr(getStr())); refresh();
   });
 
   el.querySelector('#vrn-back')?.addEventListener('click', backspace);
@@ -351,6 +371,10 @@ export class VrNumpad extends HTMLVRPanel {
       this._str = '0'; this._refreshVR();
     });
 
+    el.querySelector('#vrn-neg')?.addEventListener('click', () => {
+      this._str = negateStr(this._str); this._refreshVR();
+    });
+
     el.querySelector('#vrn-back')?.addEventListener('click', backspace);
     el.querySelector('#vrn-ok')?.addEventListener('click', confirm);
     el.querySelector('#vrn-cancel')?.addEventListener('click', () => this.close());
@@ -451,6 +475,10 @@ export class VrNumpad extends HTMLVRPanel {
       else if (config.relativeExpr && e.key === '+') { panel.querySelector('#vrn-plus')?.click(); }
       else if (config.relativeExpr && e.key === '-') { panel.querySelector('#vrn-minus')?.click(); }
       else if (config.relativeExpr && e.key === '=') { panel.querySelector('#vrn-abs')?.click(); }
+      // Minus negates the entry when there is no relative mode to claim the key first. Ordered
+      // after those three deliberately: in relative mode '-' already means "subtract from the
+      // current value", which is a different and more specific thing to want.
+      else if (e.key === '-')            { panel.querySelector('#vrn-neg')?.click(); }
       else return;
       e.preventDefault(); e.stopPropagation();
     };

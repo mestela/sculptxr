@@ -521,8 +521,13 @@ export class MiniPanel extends HTMLVRPanel {
         const val = parseFloat(radiusInput.value);
         if (radiusVal) radiusVal.textContent = Math.round(val);
         const sm  = main.getSculptManager?.();
-        const idx = sm?.getToolIndex();
-        const t   = sm?.getCurrentTool?.();
+        // WRITE WHERE THE PANEL IS READING. syncFromState shows effectiveTool()'s radius, and
+        // this wrote getCurrentTool()'s -- so in smooth mode you dragged the slider, the DOM
+        // showed your value, and the next sync read Smooth's untouched radius and put it back.
+        // matt: "as soon as i stop adjusting the sliders, they reset to what they were before."
+        // A control whose read and write disagree about their target is not a control.
+        const idx = main.effectiveToolIndex?.() ?? sm?.getToolIndex();
+        const t   = main.effectiveTool?.() ?? sm?.getCurrentTool?.();
         if (t) {
           t._radius = val;
           getOptionsURL.saveOption(`tool_${idx}_radius`, val, 500);
@@ -541,8 +546,9 @@ export class MiniPanel extends HTMLVRPanel {
         const val = pct / 100;
         if (intensityVal) intensityVal.textContent = Math.round(pct) + '%';
         const sm  = main.getSculptManager?.();
-        const idx = sm?.getToolIndex();
-        const t   = sm?.getCurrentTool?.();
+        // Same as the radius slider above: written to whatever the panel is displaying.
+        const idx = main.effectiveToolIndex?.() ?? sm?.getToolIndex();
+        const t   = main.effectiveTool?.() ?? sm?.getCurrentTool?.();
         if (t) {
           t._intensity = val;
           getOptionsURL.saveOption(`tool_${idx}_intensity`, val, 500);
@@ -1223,13 +1229,28 @@ export class MiniPanel extends HTMLVRPanel {
     const root = this._element;
 
     // ── Tool button ────────────────────────────────────────────────────────
-    const idx      = sm?.getToolIndex?.() ?? 0;
-    const tool     = sm?.getCurrentTool?.();
+    // THE TOOL SHOWN IS THE TOOL THE STICK IS ADJUSTING. Holding the off-hand trigger puts the
+    // app in smooth mode, and the panel used to carry on showing Clay while the thumbstick was
+    // tuning Smooth -- an invisible mode you had to infer from the result.
+    // matt: "the tool i see in the menu right now is the tool i'm adjusting."
+    //
+    // THE NAME AND THE TWO SLIDERS ONLY, not the extras block below. Those three are the answer
+    // to "what am I adjusting"; #mp-extras is a full innerHTML rebuild plus a re-wire plus a
+    // texture resize, and keying it on a momentary modifier would run that twice per trigger
+    // press. The rebuild is the thing that caused the v3.30.39 shader-recompile stall, so it
+    // stays keyed on the tool you actually SELECTED.
+    // THROUGH THE FRAME LATCH, NOT THROUGH THE MANAGER. getToolIndex() is temporarily swapped to
+    // Smooth by the stroke dispatch, so a sync landing mid-stroke read Smooth as the SELECTED
+    // tool and rebuilt the extras block against it. selectedToolIndex is captured before that
+    // swap. See Scene._updateSmoothModeLatch.
+    const idx      = main.selectedToolIndex?.() ?? sm?.getToolIndex?.() ?? 0;
+    const effIdx   = main.effectiveToolIndex?.() ?? idx;
+    const tool     = main.effectiveTool?.() ?? sm?.getCurrentTool?.();
     const toolBtn  = root.querySelector('#mp-tool-btn');
-    const toolName_ = toolName(idx);
+    const toolName_ = toolName(effIdx);
 
     if (toolBtn) {
-      toolBtn.style.background = toolTint(idx);
+      toolBtn.style.background = toolTint(effIdx);
       const nameEl = root.querySelector('#mp-tool-name');
       if (nameEl) nameEl.textContent = toolName_;
     }
@@ -1302,9 +1323,12 @@ export class MiniPanel extends HTMLVRPanel {
         this._wireExtras(main);
         // Defer geometry resize until _onPaint fires with the fresh texture.
         this._needsResize = true;
-      } else if (tool) {
-        // Same tool: only update active-class states in place; never touch innerHTML.
-        this._syncExtrasActive(extrasEl, sm, idx, tool);
+      } else {
+        // Same tool: only update active-class states in place; never touch innerHTML. Asked of
+        // the SELECTED tool, to match the block that is actually rendered -- `tool` above may be
+        // Smooth right now because the off-hand trigger is down.
+        const selTool = main.selectedTool?.() ?? sm?.getCurrentTool?.();
+        if (selTool) this._syncExtrasActive(extrasEl, sm, idx, selTool);
       }
     }
 

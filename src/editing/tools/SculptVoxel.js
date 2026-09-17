@@ -290,6 +290,7 @@ class SculptVoxel extends SculptBase {
     this._cursorMeshSym = this._cursorMeshSymSphere;
 
     this._voxelBounds = new VoxelBounds(main);
+    this._boundsHidden = false;   // latched by bakeToMesh; see there
 
     // [USER REQUEST] Show by default to debug boundaries
     // We use addNewMesh to ensure it is in the render loop.
@@ -708,7 +709,7 @@ class SculptVoxel extends SculptBase {
   }
 
   postRender(selection) {
-    if (this._voxelBounds) {
+    if (this._voxelBounds && !this._boundsHidden) {
       // Only render voxel bounds if in VR to avoid the big green sphere on desktop
       if (this._main._xrSession) {
         this._voxelBounds.render(this._main, this._size, this._identityMatrix);
@@ -1123,7 +1124,7 @@ class SculptVoxel extends SculptBase {
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
-    if (this._voxelBounds) {
+    if (this._voxelBounds && !this._boundsHidden) {
       this._voxelBounds.render(this._main, this._size, this._identityMatrix);
     }
 
@@ -2160,18 +2161,29 @@ class SculptVoxel extends SculptBase {
           newMesh.setShowWireframe(sourceMesh.getShowWireframe());
         }
         
+        // A SWAP TAKES THE OLD MESH OUT OF THE SCENE, it does not merely hide it.
+        //
+        // redoOp used to do `sourceMesh.setVisible(false)` and stop there, so the original stayed
+        // in main.getMeshes() for ever — invisible in the viewport and fully present in the
+        // outliner. Then bakeToMesh adds the baked result as a new mesh on top, and every Remesh
+        // left a second copy behind. adurna35: "remesh always duplicates mesh (intended
+        // behaviour?)" -- no, and this is the half that made it look intended.
+        //
+        // The two ops are now mirror images: each removes the mesh it is replacing from the list
+        // and the world group, and puts the other one back. Spliced by hand rather than through
+        // removeMeshes() because the source mesh has to survive for undo -- removeMeshes disposes.
+        const detach = (m) => this._detachMesh(m);
+        const attach = (m) => this._attachMesh(m);
+
         const undoOp = () => {
           voxelMesh.setVisible(false);
           if (voxelMesh.getThreeMesh()) voxelMesh.getThreeMesh().visible = false;
           
+          attach(sourceMesh);
           sourceMesh.setVisible(true);
           if (sourceMesh.getThreeMesh()) sourceMesh.getThreeMesh().visible = true;
           
-          const idx = this._main.getMeshes().indexOf(voxelMesh);
-          if (idx >= 0) this._main.getMeshes().splice(idx, 1);
-          if (this._main._worldGroup && voxelMesh.getThreeMesh()) {
-            this._main._worldGroup.remove(voxelMesh.getThreeMesh());
-          }
+          detach(voxelMesh);
           
           this._main.setMesh(sourceMesh);
           if (this._main.guiXR) this._main.guiXR.refreshSceneWidget();
@@ -2181,16 +2193,12 @@ class SculptVoxel extends SculptBase {
         const redoOp = () => {
           sourceMesh.setVisible(false);
           if (sourceMesh.getThreeMesh()) sourceMesh.getThreeMesh().visible = false;
+          detach(sourceMesh);
           
           voxelMesh.setVisible(true);
           if (voxelMesh.getThreeMesh()) voxelMesh.getThreeMesh().visible = true;
           
-          if (!this._main.getMeshes().includes(voxelMesh)) {
-            this._main.getMeshes().push(voxelMesh);
-            if (this._main._worldGroup && voxelMesh.getThreeMesh()) {
-              this._main._worldGroup.add(voxelMesh.getThreeMesh());
-            }
-          }
+          attach(voxelMesh);
           
           this._main.setMesh(voxelMesh);
           if (this._main.guiXR) {
@@ -2205,7 +2213,20 @@ class SculptVoxel extends SculptBase {
         };
         
         redoOp();
-        this._main.getStateManager().pushStateCustom(undoOp, redoOp);
+        // ONE ACTION, ONE UNDO ENTRY.
+        //
+        // On the Remesh path this swap is immediately followed by bakeToMesh, which adds the
+        // baked mesh and throws the voxel away — so the voxel mesh exists for about fifty
+        // milliseconds and is not a state anyone wants to land on. Pushing here as well as there
+        // made Remesh cost two undos, the first of which put you in a voxel state you never asked
+        // for. matt: "to undo requires 2 steps; one to delete the remeshed object, the other to
+        // restore the original mesh."
+        //
+        // So the swap only records itself when it IS the whole action (Mesh -> Voxels from the
+        // menu). With a bake pending, the source is handed to bakeToMesh and one combined entry
+        // is pushed there instead.
+        if (this._autoBake) this._remeshSource = sourceMesh;
+        else this._main.getStateManager().pushStateCustom(undoOp, redoOp);
         this._pendingSourceMesh = null;
       } else {
         this._main.addNewMesh(newMesh);
@@ -2218,6 +2239,9 @@ class SculptVoxel extends SculptBase {
     }
     
     this._voxelMesh = newMesh;
+    // A live voxel mesh means a live voxel session, so the grid box is wanted again.
+    // See bakeToMesh for what sets this.
+    this._boundsHidden = false;
 // COMMENTED OUT TO PREVENT SCALE OVERWRITE
 //     // Apply Transformations
 //     var step = this._step;
@@ -2376,6 +2400,22 @@ class SculptVoxel extends SculptBase {
   }
 
   // Bake Voxel Mesh to Standard Multimesh
+  // Take a mesh out of the scene / put it back, without disposing it -- both sides of an undo
+  // need it alive. Parent-aware through the Scene's own helpers: a parented mesh's render object
+  // lives under its PARENT's, not under _worldGroup, so raw worldGroup add/remove loses it.
+  _detachMesh(m) {
+    if (!m) return;
+    const idx = this._main.getMeshes().indexOf(m);
+    if (idx >= 0) this._main.getMeshes().splice(idx, 1);
+    this._main.detachMeshThree?.(m);
+  }
+
+  _attachMesh(m) {
+    if (!m || this._main.getMeshes().includes(m)) return;
+    this._main.getMeshes().push(m);
+    this._main.attachMeshThree?.(m);
+  }
+
   bakeToMesh() {
     if (!this._voxelMesh) {
       if (window.screenLog) window.screenLog("Bake Error: No Voxel Mesh to Bake", "red");
@@ -2385,6 +2425,15 @@ class SculptVoxel extends SculptBase {
     const main = this._main;
     const gl = main._gl;
 
+    // THE BOX HAS TO STAY GONE, and setVisible(false) alone does not manage that:
+    // VoxelBounds.render() calls setVisible(true) on its way past, so every later frame that
+    // reaches postRender/updateXR with the Voxel tool current turns it straight back on. After a
+    // Remesh that is exactly what undo walks you back into -- the bake is unwound, the tool is
+    // voxel again, and a bounding box nothing owns is sitting in the scene. adurna35:
+    // "Remeshing then undoing twice shows a bounding/remeshing vox that doesn't go away."
+    //
+    // A latch instead of a visibility poke, cleared where a new voxel mesh is established.
+    this._boundsHidden = true;
     if (this._voxelBounds) {
       this._voxelBounds.setVisible(false);
     }
@@ -2480,7 +2529,34 @@ class SculptVoxel extends SculptBase {
       }
 
       // 5. Add to Scene
-      main.addNewMesh(multiMesh);
+      //
+      // REMESH IS ONE ACTION. When the swap upstream handed us a source mesh (see
+      // updateVoxelMesh), this add and that swap are halves of the same edit, so addNewMesh's own
+      // entry is suppressed and a single combined one is pushed below: undo puts the original
+      // mesh back and takes the baked one away, in one step.
+      const remeshSrc = this._remeshSource;
+      this._remeshSource = null;
+      main.addNewMesh(multiMesh, !!remeshSrc);
+      if (remeshSrc) {
+        const baked = multiMesh;
+        const undoRemesh = () => {
+          this._detachMesh(baked);
+          this._attachMesh(remeshSrc);
+          remeshSrc.setVisible(true);
+          if (remeshSrc.getThreeMesh()) remeshSrc.getThreeMesh().visible = true;
+          main.setMesh(remeshSrc);
+          main.getGuiXR?.()?.refreshSceneWidget?.();
+        };
+        const redoRemesh = () => {
+          remeshSrc.setVisible(false);
+          if (remeshSrc.getThreeMesh()) remeshSrc.getThreeMesh().visible = false;
+          this._detachMesh(remeshSrc);
+          this._attachMesh(baked);
+          main.setMesh(baked);
+          main.getGuiXR?.()?.refreshSceneWidget?.();
+        };
+        main.getStateManager().pushStateCustom(undoRemesh, redoRemesh);
+      }
 
       // 6. Reset Voxel State (Clear Grid)
       this._worker.postMessage({ type: 'CLEAR' });

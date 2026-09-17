@@ -1197,6 +1197,142 @@ class Scene {
     return !!this._vrSecondaryTriggerPressed;
   }
 
+  // SMOOTH MODE: HOLD THE OFF-HAND TRIGGER AND EVERYTHING IS ABOUT SMOOTH.
+  //
+  // LATCHED ONCE A FRAME, READ EVERYWHERE. The first version of this was a function that each
+  // consumer called when it happened to need an answer -- the thumbstick, the wrist panel, the
+  // cursor, the panel-sync edge check -- and they ran at four different points in the frame,
+  // against state that MUTATES DURING THE FRAME. Two of those inputs move under it:
+  //
+  //   - `_toolIndex` is temporarily swapped to Smooth by the stroke dispatch and restored at the
+  //     end of it, so anything asking mid-dispatch saw the selected tool as Smooth. That made the
+  //     Paint exclusion miss, which is why painting sometimes showed Smooth's radius.
+  //   - `_isPointingAtMenu` is cleared at the top of the frame and recomputed two thousand lines
+  //     later, so the same question had two different answers depending on who asked.
+  //
+  // The result was a mode that appeared to flicker at random. matt: "its a mess." A derived
+  // predicate over mutating state is not a mode; a latch is. This is computed at exactly one
+  // point -- beside `_vrSecondaryTriggerPressed`, which is before the thumbstick, before the
+  // dispatch and before the cursor -- and every consumer reads the stored answer.
+  //
+  // WHY THE OFF-HAND TRIGGER ALONE, and not both: the gesture is hold the modifier, dial in the
+  // strength, THEN pull the dominant trigger to smooth. Gating on both meant the stick only
+  // retargeted once you were already mid-stroke, so in practice it never retargeted at all. The
+  // stroke DISPATCH still requires both (see isSmoothOverride) -- a modifier qualifies an action
+  // rather than being one, and on hands a lone pinch would otherwise start smoothing the moment
+  // you closed your left hand. Two different questions, two different rules, one latch each.
+  _updateSmoothModeLatch() {
+    const sm = this._sculptManager;
+    // ALWAYS RECORD THE SELECTED TOOL, mode or no mode. This is captured before the dispatch's
+    // temporary swap, so it is the only reliable answer to "what tool did the user pick" for the
+    // rest of the frame -- the wrist panel's extras block keys on it.
+    const selIndex = sm?.getToolIndex?.() ?? -1;
+    const activeTool = sm?.getCurrentTool?.() ?? null;
+    const off = { on: false, colour: false, tool: null, index: selIndex, selIndex, selTool: activeTool };
+    this._smoothMode = off;
+    if (!this._xrSession || !this._vrSecondaryTriggerPressed || !activeTool) return;
+
+    // THE OFF HAND'S RAY, NOT EITHER HAND'S. The off-hand trigger is also how you CLICK a panel,
+    // so a trigger pulled while THAT hand aims at one is a click, not smooth mode. This used to
+    // ask `_isPointingAtMenu`, a scene-wide flag with no handedness in it, so aiming the DOMINANT
+    // controller at the wrist panel -- to drag the very sliders smooth mode had just put in front
+    // of you -- cancelled the mode. matt: "it reset back to the primary tool only while i was
+    // laser-pointering at the minipanel."
+    //
+    // Through the per-hand latch rather than the live hit, for the reason _panelGrabIntent uses
+    // it: a ray leaves a panel for a frame at a time and a mode flickering with that is unusable.
+    const offHand = (this._dominantHand || 'right') === 'left' ? 'right' : 'left';
+    if (this._panelGrabIntent(offHand)) return;
+
+    // Paint takes the COLOUR smooth override instead, which is not a tool swap at all -- but it
+    // is still a mode the modifier turns on, so it is latched here with everything else rather
+    // than being re-derived by the dispatch against state that has moved since.
+    if (activeTool.constructor.name === 'Paint') {
+      this._smoothMode = { ...off, colour: true };
+      return;
+    }
+    const allowed = !NO_SMOOTH_OVERRIDE.has(activeTool.constructor.name);
+    if (!allowed) return;
+
+    const idx = this._smoothToolIndex();
+    if (idx === -1) return;
+    const smooth = sm._tools[idx];
+    // Already ON Smooth: there is no second tool to point at, so the mode is a no-op rather than
+    // a state. Everything still resolves to Smooth through selIndex/selTool below.
+    if (!smooth || smooth === activeTool) return;
+
+    this._smoothMode = { on: true, colour: false, tool: smooth, index: idx, selIndex,
+                         selTool: activeTool };
+  }
+
+  // The tool the UI and the thumbstick should be talking about -- the one a stick nudge changes
+  // right now. Both fall through to the selected tool whenever smooth mode is not held, so these
+  // are the ordinary reads the rest of the time.
+  effectiveToolIndex() {
+    const m = this._smoothMode;
+    if (m) return m.index;
+    return this._sculptManager?.getToolIndex?.() ?? -1;
+  }
+
+  effectiveTool() {
+    const m = this._smoothMode;
+    if (m) return m.tool || m.selTool;
+    return this._sculptManager?.getCurrentTool?.() ?? null;
+  }
+
+  // What the user actually PICKED, immune to the dispatch's temporary swap. The wrist panel keys
+  // its tool-specific block on this so a stroke cannot make it rebuild.
+  selectedToolIndex() {
+    const m = this._smoothMode;
+    if (m) return m.selIndex;
+    return this._sculptManager?.getToolIndex?.() ?? -1;
+  }
+
+  selectedTool() {
+    const m = this._smoothMode;
+    if (m) return m.selTool;
+    return this._sculptManager?.getCurrentTool?.() ?? null;
+  }
+
+  // A STROKE OWNS THE CONTROLLER. NOTHING ELSE GETS A LOOK IN.
+  //
+  // While a manipulation is live -- a sculpt stroke, a grabbed mesh, a pin or bone being
+  // puppeteered -- the controller is describing a path through the scene, and that path will
+  // sooner or later sweep across a panel. Every one of those frames used to be delivered to the
+  // panel as hover and press: dragging a pin past the wrist menu fired buttons and moved sliders.
+  // matt: "if the cursor happens to point at a panel during a manipulation, it will start firing
+  // panel events. this absolutely should not happen."
+  //
+  // The rule is the one he stated: while the trigger is down on a manipulation, no panel receives
+  // anything and the rays are not cast at all. Cheaper as well as safer -- the hit test against
+  // every visible panel is the most expensive thing in the block.
+  //
+  // `blocksMiniHudInput` is the tool-side half and is deliberately broader than "is a stroke
+  // open": a two-handed rig gesture spans the interval where one hand has released and the other
+  // still owns a pin, and that interval is exactly when a hand is most likely to swing past the
+  // wrist. It used to shield only the MiniHUD; the whole point of this is that every panel needs
+  // the same shield.
+  _strokeOwnsInput() {
+    if (this._vrSculpting) return true;
+    const tool = this._sculptManager?.getCurrentTool?.();
+    if (!tool) return false;
+    if (tool._grabbedMesh) return true;
+    return !!tool.blocksMiniHudInput?.();
+  }
+
+  // Memoised against the tools array itself: tool identity is fixed after init, and this is now
+  // asked several times a frame (thumbstick, wrist panel, cursor). Keyed on the array rather than
+  // a boolean so a rebuilt SculptManager re-resolves instead of returning a stale index.
+  _smoothToolIndex() {
+    const tools = this._sculptManager?._tools;
+    if (!tools) return -1;
+    if (this._smoothIdxFor !== tools) {
+      this._smoothIdxFor = tools;
+      this._smoothIdx = tools.findIndex(t => t && t.constructor.name === 'Smooth');
+    }
+    return this._smoothIdx;
+  }
+
   setOrUnsetMesh(mesh, multiSelect, keepTool) {
     if (!mesh) {
       this._selectMeshes.length = 0;
@@ -3861,7 +3997,11 @@ class Scene {
     if (target) target.remove(t);
   }
 
-  addNewMesh(mesh) {
+  // `skipUndoState` for a caller that is pushing its OWN combined entry covering this add.
+  // The remesh is the case: it replaces one mesh with another, and two entries for one action
+  // means two undos to get back -- matt: "to undo requires 2 steps; one to delete the remeshed
+  // object, the other to restore the original mesh." See SculptVoxel.bakeToMesh.
+  addNewMesh(mesh, skipUndoState) {
     if (mesh?.setShaderType && !mesh._isBone && !mesh._isNull && !mesh._isReference) {
       mesh.setShaderType(getOptionsURL().shader);
       mesh.setFlatShading?.(getOptionsURL().flatshading);
@@ -3877,7 +4017,7 @@ class Scene {
     if (!mesh._isBone && !mesh._isNull && !mesh._isReference) {
       mesh.setShowWireframe?.(getOptionsURL().wireframe);
     }
-    this._stateManager.pushStateAdd(mesh);
+    if (!skipUndoState) this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
 
     if (this._guiXR && this._guiXR.refreshSceneWidget) {
@@ -5143,6 +5283,11 @@ class Scene {
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
+    // The smooth-mode latch is only refreshed inside the XR frame loop, so leaving it set would
+    // have every effectiveTool()/selectedTool() read on desktop answering with whatever was true
+    // when the headset came off. Cleared, they fall back to the live manager.
+    this._smoothMode = null;
+    this._smoothModeShown = false;
 
     // Hide VR floaters (#23 labels, #29 toast) so they don't linger in the scene.
     if (this._toolToast) this._toolToast.mesh.visible = false;
@@ -9306,6 +9451,20 @@ class Scene {
     const nonDomSource = this._dominantHand === 'left' ? right : left;
     this._vrSecondaryTriggerPressed = !!this._padOf(nonDomSource)?.buttons?.[0]?.pressed;
 
+    // THE ONE PLACE SMOOTH MODE IS DECIDED. Everything downstream reads `_smoothMode` -- see
+    // _updateSmoothModeLatch for why it is a latch and not a function.
+    this._updateSmoothModeLatch();
+
+    // And it has to SHOW when you press the trigger, not up to a third of a second later: the
+    // wrist panel's own sync runs every 30 frames, which is fine for state that drifts and
+    // useless for a mode indicator you hold for a second at a time. Two syncs per press, against
+    // the 30-frame poll that was happening anyway.
+    const _smoothModeNow = !!this._smoothMode.on;
+    if (_smoothModeNow !== this._smoothModeShown) {
+      this._smoothModeShown = _smoothModeNow;
+      try { this._miniPanel?.syncFromState?.(); } catch (_) {}
+    }
+
     // Two-handed VR timeline zoom — evaluated before the per-controller dispatch
     // so an active gesture suppresses the dominant hand's single-pointer pan.
     try { this._updateVRTimelineZoom(left, right); } catch (_) {}
@@ -9599,7 +9758,11 @@ class Scene {
               state.lastRadiusTime = now;
 
               let change = 0.0;
-              const tools = this._sculptManager.getCurrentTool();
+              // THE TOOL DOING THE WORK, not the one that will be current again a frame from now.
+              // See _smoothModeTool: while smooth mode is held, Smooth is what the
+              // stick should be tuning.
+              const smoothTool = this._smoothMode?.tool || null;
+              const tools = smoothTool || this._sculptManager.getCurrentTool();
               const maxRadius = 250.0;
               if (valY < -T_PRESS) change = maxRadius * 0.05 * speedModifier; // UP -> +5% of max
               if (valY > T_PRESS) change = -maxRadius * 0.05 * speedModifier; // DOWN -> -5% of max
@@ -9615,8 +9778,11 @@ class Scene {
                 // started back at the constructor's default no matter what you had dialled in
                 // last time. Same key the panels write, so the two cannot disagree.
                 // Debounced at 500ms, because this fires on every tick of a held stick.
+                // Under the same key the panels write -- and keyed to the tool that was actually
+                // changed, so a radius dialled in while smoothing is saved as Smooth's.
                 getOptionsURL.saveOption(
-                  `tool_${this._sculptManager.getToolIndex()}_radius`, newVal, 500);
+                  `tool_${smoothTool ? this._smoothToolIndex() : this._sculptManager.getToolIndex()}_radius`,
+                  newVal, 500);
 
                 // Update GuiXR and GuiMini Sliders if visible
                 if (this._guiXR) {
@@ -9646,7 +9812,7 @@ class Scene {
               state.lastIntensityTime = now;
 
               let intChange = 0.0;
-              const tools = this._sculptManager.getCurrentTool();
+              const tools = this._smoothMode?.tool || this._sculptManager.getCurrentTool();
 
               if (valX < -T_PRESS) intChange = -0.05 * speedModifier; // Left -> -5%
               if (valX > T_PRESS) intChange = 0.05 * speedModifier;   // Right -> +5%
@@ -10292,7 +10458,21 @@ class Scene {
           // A rig manipulation captures both hands as one gesture. While it is live,
           // an incidental ray across the wrist-mounted MiniHUD must not change values.
           const _miniHudBlocked = !!this._sculptManager.getCurrentTool()?.blocksMiniHudInput?.();
-          if (!_numpadOpen) {
+          // See _strokeOwnsInput. Gated here rather than around the whole block on purpose: with
+          // no hits collected, the phase below still walks _allVisible and sends LEAVE to every
+          // panel, so a panel the ray was on when the stroke began is left un-hovered and
+          // un-pressed rather than frozen mid-hover. Same shape as the modal numpad guard.
+          // HOISTED, because `_hand` is declared ~130 lines below and a const read before its
+          // declaration is a TDZ ReferenceError every frame -- which `node --check` and the build
+          // both pass cleanly. Same trap undef_test exists for.
+          const _handKey = source.targetRayMode === 'transient-pointer'
+            ? 'G'
+            : (source.handedness === 'left' ? 'L' : 'R');
+          // `|| the press belongs to the scene` -- see the claim near the end of this block. Read
+          // from the previous frame, which is correct: the down-edge frame is the one that
+          // DECIDES ownership, and it decides it by whether a panel was under the ray then.
+          const _strokeBusy = this._strokeOwnsInput() || this._vrPressOwner?.[_handKey] === 'scene';
+          if (!_numpadOpen && !_strokeBusy) {
             if (!_miniHudBlocked && this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
               const h = _rc.intersectObject(this._miniPanel.mesh);
               if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
@@ -10388,9 +10568,7 @@ class Scene {
           // would then share one Schmitt latch and one press owner — so one pinch would look
           // like a press that had already been captured by something else, and the second source
           // to arrive would be ignored. The gaze ray gets its own key.
-          const _hand = source.targetRayMode === 'transient-pointer'
-            ? 'G'
-            : (source.handedness === 'left' ? 'L' : 'R');
+          const _hand = _handKey;   // computed above, where the gate needed it
 
           // A SCHMITT TRIGGER, NOT A THRESHOLD.
           //
@@ -10699,7 +10877,13 @@ class Scene {
                 // element happens to be at UV(0.5,0.5), which is exactly where
                 // the FPS slider / play button live in the animation panel.
                 // Always clear the flag so the panel doesn't stay "stuck" pressed.
-                if (!_numpadOpen) v.panel.onVRRelease({ x: 0.5, y: 0.5 });
+                //
+                // A manipulation taking over the controller is the same case as the numpad and
+                // wants the same treatment: the flag has to be cleared or the eventual release
+                // reads as a click, but the synthetic centre-UV release must not be DISPATCHED,
+                // or grabbing a pin while the ray happened to rest on a panel presses whatever
+                // sits at the middle of it. See _strokeOwnsInput.
+                if (!_numpadOpen && !_strokeBusy) v.panel.onVRRelease({ x: 0.5, y: 0.5 });
                 this[v.pressKey] = false;
               }
               // Named, so a panel can tell "the hand that was hovering me left" from "the
@@ -10990,6 +11174,23 @@ class Scene {
             }
             if (!_pressed) { this._vtlResizeActive = false; this._vtlResizeHand = null; }
           }
+
+          // A PRESS THAT BEGAN OFF-PANEL NEVER REACHES A PANEL. This is the general form of the
+          // rule, and the reason it is here rather than in a list of tools:
+          //
+          // _strokeOwnsInput asks the TOOL whether a manipulation is live, and a tool has to
+          // implement the hook to be counted. Grab did; BoneDrawTool did not, so Tweak FK swept
+          // the wrist menu and pressed it. matt: "if i am the controller at a panel during a
+          // drag, it starts affecting the menu." Enumerating tools means the next tool with a
+          // drag state is the next bug, and there are six drag states in BoneDrawTool alone.
+          //
+          // WHERE THE PRESS BEGAN is tool-agnostic and is what the rule is actually about. The
+          // press-owner latch below already exists for exactly this shape -- one press belongs to
+          // one surface for as long as it is held -- it simply had no name for "the scene". Now
+          // it does, and a trigger closed anywhere that is not a panel owns itself until release,
+          // whatever the tool does with it. The gate above then skips hit collection entirely, so
+          // hover stops too, which is the half a press-capture alone would miss.
+          if (_pressed && !this._vrPressOwner[_hand]) this._vrPressOwner[_hand] = 'scene';
 
           // No panel hit — hide panel cursor
           if (!_winner) this._updateBPCursor?.(null, false);
@@ -12749,7 +12950,14 @@ class Scene {
     // Fallback to GuiXR._radius or default
     let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
     if (this._sculptManager) {
-      const tool = this._sculptManager.getCurrentTool();
+      // THE RADIUS THE STROKE USES MUST BE THE TOOL THE STROKE RUNS. This asked
+      // getCurrentTool(), and the smooth override's tool swap happens ~450 lines BELOW here --
+      // so a smooth ran with the clay brush's radius while the cursor and both sliders showed
+      // Smooth's. matt: "the sphere radius indicator is matching my settings, the sliders match,
+      // but if i actually try a smooth, its clearly using the original brush radius and
+      // intensity." The radius is the picking radius too, so this is the whole feel of the
+      // stroke, not just its footprint.
+      const tool = this.effectiveTool();
       if (tool && tool._radius !== undefined) {
         sliderVal = tool._radius / 100.0;
       }
@@ -13169,34 +13377,43 @@ class Scene {
         }
       }
     }
-    if (session && session.inputSources && _domPressed
-        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {
-      for (let src of session.inputSources) {
-        if (src.handedness === nonDomHand) {
-          // Button 0 (Index Trigger), through the same threshold the sculpt path uses -- the
-          // modifier and the thing it modifies have to agree about what "held" means.
-          if (this._isTriggerDown(src)) {
-            // Apply contextual override based on the active tool
-            const activeTool = this._sculptManager.getCurrentTool();
-            if (activeTool && activeTool.constructor.name === 'Paint') {
-              isColorSmoothOverride = true;
-            } else if (activeTool && !NO_SMOOTH_OVERRIDE.has(activeTool.constructor.name)) {
-              isSmoothOverride = true;
-            }
-            break;
-          }
-        }
-      }
+    // ONE RULE, PLUS THE TRIGGER. The mode was decided once at the top of the frame
+    // (_updateSmoothModeLatch) and the stroke adds exactly one condition to it: the dominant
+    // trigger, which is what turns a modifier into an action.
+    //
+    // This block used to re-derive the whole thing for itself -- re-scanning the input sources,
+    // re-reading getCurrentTool(), and gating on `_isPointingAtMenu`, the scene-wide flag with no
+    // handedness in it. So the UI and the stroke answered the same question separately and could
+    // disagree: the wrist panel and the cursor would show Smooth while the stroke ran the clay
+    // brush, because the dominant controller happened to be aimed at the panel. Two sources of
+    // truth for one mode is the bug, and the only fix that stays fixed is having one.
+    //
+    // The tool-eligibility test it used to do lives in the latch now, expressed against the same
+    // `activeTool` and the same NO_SMOOTH_OVERRIDE set.
+    if (_domPressed && this._smoothMode) {
+      if (this._smoothMode.on) isSmoothOverride = true;
+      else if (this._smoothMode.colour) isColorSmoothOverride = true;
     }
 
     if (isSmoothOverride) {
-      const smoothToolIndex = this._sculptManager._tools.findIndex(t => t && t.constructor.name === 'Smooth');
+      const smoothToolIndex = this._smoothToolIndex();
       if (smoothToolIndex !== -1 && this._sculptManager.getCurrentTool() !== this._sculptManager._tools[smoothToolIndex]) {
         previousToolIndex = this._sculptManager._toolIndex;
-        // Sync radius from current tool to smooth tool so size feels consistent
-        const origRadius = this._sculptManager.getCurrentTool()._radius;
+        // SMOOTH OWNS ITS RADIUS. NOTHING IS COPIED ONTO IT HERE.
+        //
+        // There used to be a line here syncing the active brush's radius onto Smooth "so the size
+        // feels consistent". It has to go, and the reason is that smooth mode now lets you SET
+        // that radius: you hold the off-hand trigger, dial Smooth to the size you want, then pull
+        // the dominant trigger -- and this line fired on that pull and overwrote the number you
+        // had just chosen with the clay brush's. Which looked exactly like the app randomly
+        // forgetting the setting. matt: "sometimes if i smooth it keeps these settings, other
+        // times it jumps back to the primary tool size/intensity."
+        //
+        // A value the user can adjust cannot also be a value something else assigns. Intensity was
+        // never synced, so this makes the two consistent, and both now persist per tool through
+        // the thumbstick's saveOption -- which is what adurna35 asked for to begin with: "Option
+        // to have the smooth shortcut rely on the values of the actual smooth tool."
         this._sculptManager._toolIndex = smoothToolIndex;
-        this._sculptManager.getCurrentTool()._radius = origRadius;
       }
     }
 
@@ -13928,7 +14145,19 @@ class Scene {
         // }
 
 
-        const tool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
+        // THE CURSOR DRAWS THE TOOL THAT WILL RUN, which in smooth mode is Smooth. The wrist
+        // panel and the thumbstick already agreed about that; this did not, so the sphere kept
+        // the clay brush's size and its intensity tint while both the sliders beside it moved.
+        // matt: "i don't see the sphere radius indicator change size or colour to indicate the
+        // intensity."
+        //
+        // The whole binding rather than just the two numbers, because _vrBrushPhysicalRadius
+        // below is published as the PICK radius — the cursor and the pick have to be the same
+        // sphere, which is the entire point of that line. Safe for the shape branches further
+        // down: Smooth is never SculptVoxel or Paint, and both of those are excluded from smooth
+        // mode anyway (NO_SMOOTH_OVERRIDE, and Paint takes the colour override instead).
+        // effectiveTool falls through to getCurrentTool whenever smooth mode is not held.
+        const tool = this.effectiveTool?.() ?? (this._sculptManager ? this._sculptManager.getCurrentTool() : null);
         let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
         if (tool && tool._radius !== undefined) {
           sliderVal = tool._radius / 100.0;

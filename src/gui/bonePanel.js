@@ -765,6 +765,15 @@ export function buildBoneQuickDisplayHTML(main, style) {
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
       ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlagRaw('pins'))}
+      ${/* WEIGHTS BELONGS WITH THESE FIVE. It is the display mode you flip most while actually
+           rigging -- bind, look at the falloff, sculpt, look again -- and it lived only in the
+           main menu's Rig Display block, which is a section away in a different panel. matt:
+           "i realised 'weights' should be in the 'view and assist' section of the bone properties
+           too." Same id as the main menu's copy, which is safe for the same reason the other five
+           already are: each panel wires its own root.
+           It also makes six, which fills the three-column grid evenly -- the ragged fifth chip
+           is what adurna35 saw pushed outside the wrist panel. */ ''}
+      ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlagRaw('weights'))}
     </div>
   `;
 }

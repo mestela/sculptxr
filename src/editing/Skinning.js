@@ -965,6 +965,10 @@ Skinning.showWeightColors = function (main, mesh, only) {
     colors[i * 3] = r / total; colors[i * 3 + 1] = g / total; colors[i * 3 + 2] = b / total;
   }
   mesh._skinColorsPainted = true;
+  // Same reason as the restore path: the paint lands on the bound level, and if the mesh is
+  // being DISPLAYED above it the propagation is what carries it to the visible surface.
+  // A no-op unless the levels differ.
+  synthesiseUp(mesh);
   mesh.updateDuplicateColorsAndMaterials(partial ? only : undefined);
   mesh.updateColorBuffer();
   return true;
@@ -974,9 +978,31 @@ Skinning.restoreColors = function (mesh) {
   if (!mesh || !mesh._skinSavedColors) return;
   mesh._skinColorsPainted = false;
   const level = boundLevel(mesh);
-  if (!level || level.getNbVertices() * 3 < mesh._skinSavedColors.length) return; // wrong level: leave it
+  // A SNAPSHOT FOR A TOPOLOGY THAT NO LONGER EXISTS IS NOT WORTH KEEPING. The count only
+  // mismatches because the mesh was rebuilt under the weights, so the saved colours address a
+  // vertex set that is gone and can never be written back. This used to `return` with the
+  // snapshot still set, which latched the mesh into a state it could never leave: every later
+  // hide reached this same line and returned, so the preview stayed painted for the rest of the
+  // session. Dropping it un-sticks the toggle -- the next show takes a fresh snapshot.
+  if (!level || level.getNbVertices() * 3 < mesh._skinSavedColors.length) {
+    mesh._skinSavedColors = null;
+    return;
+  }
   level.getColors().set(mesh._skinSavedColors);
   mesh._skinSavedColors = null;
+  // AND PUSH IT UP TO THE LEVEL YOU ARE LOOKING AT.
+  //
+  // The colours belong to the BOUND level, because that is the only level the weight map
+  // addresses. Subdivide with multires and the displayed level is now above it -- and the
+  // subdivision carried the weight colours up with it, since that is what was painted at the
+  // time. Writing the real colours back into the bound level then changed nothing you could
+  // see, so hiding weights after a subdivide appeared to do nothing at all. matt: "i subdivided
+  // via multires, turned off weights in the panel, but the weights are still there."
+  //
+  // synthesiseUp is the existing multires propagation, the same one the skin pass runs every
+  // frame, and it returns early when the displayed level IS the bound level -- so this costs
+  // nothing in the ordinary case.
+  synthesiseUp(mesh);
   mesh.updateDuplicateColorsAndMaterials();
   mesh.updateColorBuffer();
 };

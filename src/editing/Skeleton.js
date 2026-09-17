@@ -4888,7 +4888,18 @@ Skeleton.setDecorationsHidden = function (main, on) {
 // does. `snapPlane` and `snapAxis` live in the same list and are behaviour — hiding the plane is
 // one thing, silently switching snapping off while you draw is another, and a switch that did
 // both would be lying about what it is for.
-const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'capsuleShaded', 'weights', 'solid',
+//
+// WEIGHTS IS NOT DECORATION, and having it in here is why its toggle looked broken. Every other
+// flag in this set draws something ON TOP of the model; the weight preview repaints the MESH'S
+// OWN vertex colours. Gating it here meant that with Hide All Decorations on, `displayFlag`
+// answered no while the button kept rendering from `displayFlagRaw` -- so the button lit up and
+// nothing happened, and turning it back off also did nothing. adurna35: "Showing and hiding
+// weights seems to work really spotty... It sometimes does nothing / work / work after a delay /
+// invert the button." Two of those four are this line.
+//
+// It leaves for the same reason `meshHover` never joined: the master switch clears the rig off
+// the screen, and it must not silently reach into how the mesh itself is shaded.
+const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'capsuleShaded', 'solid',
   'wire', 'joints', 'pins', 'trails', 'gnomons', 'gnomonsAll', 'skinClaims']);
 
 Skeleton.displayFlag = function (name) {
