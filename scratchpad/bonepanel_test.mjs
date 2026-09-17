@@ -1308,11 +1308,26 @@ check('...and it reads the live flag',
 {
   const SKIN = fs.readFileSync(new URL('../src/editing/Skinning.js', import.meta.url).pathname, 'utf8');
   check('...and the trace breaks the frame into the four phases',
-    /'ms total \| lbs ' \+ ms\(_t0, _t1\)/.test(SKIN)
-      && /' mush ' \+ ms\(_t1, _t2\) \+ ' synth ' \+ ms\(_t2, _t3\) \+ ' refresh ' \+ ms\(_t3, now\)/.test(SKIN)
+    /lbs: _t1 - _t0, mush: _t2 - _t1, synth: _t3 - _t2, refresh: now - _t3/.test(SKIN)
+      && /lbs ' \+ f\(d\.lbs\) \+ ' mush ' \+ f\(d\.mush\)/.test(SKIN)
       && /const _synth = synthesiseUp\(mesh\);/.test(SKIN),
     'a single total cannot tell "the deformation is slow" from "rebuilding the display level '
       + 'is slow", which are different problems with different fixes');
+  // A character imported from Nomad arrives as body, eyes, teeth, lashes -- so the question the
+  // trace is now asked is which PIECE costs what, and seven anonymous lines on seven independent
+  // throttles cannot answer it. One line a second, every bound mesh in it, named and sorted.
+  check('...and names every bound mesh in one line, sorted by cost',
+    /did\.sort\(\(a, b\) => b\[1\]\.total - a\[1\]\.total\);/.test(SKIN)
+      && /label\(did\[i\]\[0\]\)/.test(SKIN)
+      && /_permanentStaticLabel \|\| mesh\._typeName/.test(SKIN),
+    'the per-mesh-versus-per-vertex question is the whole reason to look at this trace, and '
+      + 'an unnamed row cannot answer it');
+  // _skinPhase is one global object. Every mesh's refresh writes into it, so without a clear and
+  // a per-mesh snapshot the last mesh to run donates its breakdown to all the others.
+  check('...and each mesh gets its own refresh breakdown',
+    /if \(window\._skinTrace\) window\._skinPhase = null;/.test(SKIN)
+      && /phase: window\._skinPhase,/.test(SKIN),
+    'one shared phase object silently reports the last mesh\'s numbers as everyone\'s');
 }
 
 check('no panel still carries its own solver toggle',

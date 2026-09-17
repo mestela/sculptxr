@@ -47,6 +47,12 @@ const Skinning = {};
 
 Skinning.isBound = function (mesh) { return !!(mesh && mesh._skinW); };
 
+// A mesh, the way the rest of the app's diagnostics name it. A trace that says "mesh" seven
+// times cannot answer a question about seven meshes.
+function label(mesh) {
+  return (mesh._permanentStaticLabel || mesh._typeName || 'mesh') + '#' + mesh.getID();
+}
+
 // Squared distance from p to segment ab, plus the parametric position along it.
 
 // DISTANCE IN UNITS OF THE ENVELOPE'S OWN SIZE, for a bone whose two ends may differ in all
@@ -550,8 +556,6 @@ function applyMush(mesh, level, out, nbV) {
   // iterations): about 0.12 ms per 1000 vertices, linear in both. A 5k bind level is well
   // inside a 90Hz frame; a 50k one is not, on any headset. `window._skinTrace = true` prints
   // the cost once a second FROM THE DEVICE, which is the only number worth trusting.
-  const t0 = window._skinTrace ? performance.now() : 0;
-
   const off = mesh._skinAdj.off, nb = mesh._skinAdj.nb;
   const sc = mushScratch(mesh, nbV * 3);
   const sm = smoothPositions(out, sc.a, sc.b, off, nb, iters, step);
@@ -575,17 +579,6 @@ function applyMush(mesh, level, out, nbV) {
     out[i3 + 2] += (z - out[i3 + 2]) * amount;
   }
 
-  if (window._skinTrace) {
-    const now = performance.now();
-    if (now - (mesh._skinTraceAt || 0) > 1000) {
-      mesh._skinTraceAt = now;
-      // ONE STRING, no format specifiers: the console here is read through the app's own log
-      // wrapper, which passes the arguments straight through without substituting -- so a
-      // printf-style call arrives as its literal format string followed by the numbers.
-      console.log('[skin] mush ' + nbV + ' verts x ' + iters + ' iters: '
-        + (now - t0).toFixed(2) + 'ms');
-    }
-  }
   return true;
 }
 
@@ -1835,6 +1828,10 @@ Skinning.apply = function (main, mesh) {
     mesh._skinDisp = null;
   }
   const _t3 = window._skinTrace ? performance.now() : 0;
+  // `_skinPhase` is ONE global object that every mesh's refresh writes into, so with more than
+  // one bound mesh the last one to run was overwriting everyone else's breakdown and the trace
+  // was quietly reporting it as theirs. Cleared here and snapshotted below, per mesh.
+  if (window._skinTrace) window._skinPhase = null;
   // SKIP THE OCTREE. A posed frame is not a picked frame: the tree is rebuilt by the first
   // query that needs it, which is the next brush stroke or ray, not the next frame of a drag.
   if (_synth) {
@@ -1844,22 +1841,21 @@ Skinning.apply = function (main, mesh) {
     if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
   }
 
+  // HAND THE NUMBERS UP, do not print them here. One bound mesh made a line per mesh the whole
+  // story; a character built from separate pieces -- body, eyes, teeth, lashes -- makes it seven
+  // lines on seven independent one-second throttles, which is the one shape you cannot read the
+  // actual question out of: is the cost PER MESH or PER VERTEX. Skinning.update prints the whole
+  // frame at once, sorted, so a 400-vertex eye costing as much as a 24k body is visible on sight.
   if (window._skinTrace) {
     const now = performance.now();
-    if (now - (mesh._skinFrameTraceAt || 0) > 1000) {
-      mesh._skinFrameTraceAt = now;
-      const lvl = mesh._meshes ? (mesh._sel | 0) : 0;
-      const top = mesh._meshes ? mesh._meshes[lvl].getNbVertices() : nbV;
-      const ms = (a, b) => (b - a).toFixed(2);
-      const p = window._skinPhase;
-      const n = (v) => (v === undefined ? '-' : v.toFixed(2));
-      console.log('[skin] ' + ms(_t0, now) + 'ms total | lbs ' + ms(_t0, _t1)
-        + ' mush ' + ms(_t1, _t2) + ' synth ' + ms(_t2, _t3) + ' refresh ' + ms(_t3, now)
-        + (p ? ' [norm ' + n(p.norm) + ' oct ' + n(p.oct) + ' draw ' + n(p.draw)
-               + ' buf ' + n(p.buf) + ']' : '')
-        + ' | bound ' + nbV + ' verts @L' + (mesh._meshes ? mesh._meshes.indexOf(level) : 0)
-        + ', showing ' + top + ' verts @L' + lvl);
-    }
+    const lvl = mesh._meshes ? (mesh._sel | 0) : 0;
+    mesh._skinLast = {
+      total: now - _t0, lbs: _t1 - _t0, mush: _t2 - _t1, synth: _t3 - _t2, refresh: now - _t3,
+      phase: window._skinPhase,
+      nbV: nbV, top: mesh._meshes ? mesh._meshes[lvl].getNbVertices() : nbV,
+      bindLvl: mesh._meshes ? mesh._meshes.indexOf(level) : 0, lvl: lvl,
+      joints: joints.length
+    };
   }
   return true;
 };
@@ -1870,13 +1866,67 @@ Skinning.apply = function (main, mesh) {
 // skin pass writes vertices and rebuilds buffers every frame a joint moves, so when something
 // else in the mesh pipeline misbehaves on a bound mesh, being able to take it out of the
 // picture in one line is the difference between a guess and an answer.
+//
+// `window._skinTrace = true` prints ONE line a second covering the WHOLE pass: the frame's
+// total, how many meshes are bound versus how many actually re-skinned, and a row per mesh
+// sorted by cost, named the way the outliner names it. Read it like this:
+//
+//   [skin] frame 7.80ms | 7 bound, 7 skinned, 42 joints, mush x0
+//     5.90ms  Body#3    lbs 2.10 mush 0.00 synth 0.00 refresh 3.80 [...] | 24160v @L0
+//     0.62ms  Eye_L#7   lbs 0.01 mush 0.00 synth 0.00 refresh 0.61 [...] | 412v @L0
+//
+// A 412-vertex eye costing 0.62ms when its arithmetic is 1/60th of the body's is a FIXED cost
+// per mesh, and the answer is to stop paying it seven times. The same eye at 0.02ms says the
+// skin pass is not where the frame went and the thing to look at next is elsewhere -- the
+// constraints pass, or seven transparent meshes' worth of draw calls. That distinction is the
+// entire reason this line exists; do not replace it with a total.
+let _passTraceAt = 0;
+
 Skinning.update = function (main) {
   if (window._skinPause) return;
   const meshes = main.getMeshes();
   if (!meshes) return;
+
+  const trace = !!window._skinTrace;
+  const t0 = trace ? performance.now() : 0;
+  let bound = 0, ran = 0;
+  const did = trace ? [] : null;
+
   for (let i = 0; i < meshes.length; i++) {
-    if (Skinning.isBound(meshes[i])) Skinning.apply(main, meshes[i]);
+    const m = meshes[i];
+    if (!Skinning.isBound(m)) continue;
+    bound++;
+    // A mesh whose pose has not moved returns false and costs the stamp check only; it is
+    // counted as bound but never appears as a row, so the rows are what the frame ACTUALLY did.
+    if (!Skinning.apply(main, m)) continue;
+    ran++;
+    if (trace && m._skinLast) did.push([m, m._skinLast]);
   }
+
+  if (!trace || !ran) return;
+  const now = performance.now();
+  if (now - _passTraceAt < 1000) return;
+  _passTraceAt = now;
+
+  did.sort((a, b) => b[1].total - a[1].total);
+  const f = (v) => v.toFixed(2);
+  const n = (v) => (v === undefined ? '-' : v.toFixed(2));
+  // ONE STRING, no format specifiers: the console here is read through the app's own log
+  // wrapper, which passes the arguments straight through without substituting -- so a
+  // printf-style call arrives as its literal format string followed by the numbers.
+  let out = '[skin] frame ' + f(now - t0) + 'ms | ' + bound + ' bound, ' + ran
+    + ' skinned, ' + did[0][1].joints + ' joints, mush x' + Skinning.mushIterations();
+  for (let i = 0; i < did.length; i++) {
+    const d = did[i][1], p = d.phase;
+    out += '\n  ' + f(d.total) + 'ms  ' + label(did[i][0])
+      + '  lbs ' + f(d.lbs) + ' mush ' + f(d.mush) + ' synth ' + f(d.synth)
+      + ' refresh ' + f(d.refresh)
+      + (p ? ' [norm ' + n(p.norm) + ' oct ' + n(p.oct) + ' draw ' + n(p.draw)
+             + ' geom ' + n(p.geom) + ' buf ' + n(p.buf) + ']' : '')
+      + ' | ' + d.nbV + 'v @L' + d.bindLvl
+      + (d.lvl !== d.bindLvl ? ' -> ' + d.top + 'v @L' + d.lvl : '');
+  }
+  console.log(out);
 };
 
 export default Skinning;
