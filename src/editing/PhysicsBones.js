@@ -43,7 +43,24 @@ const PhysicsBones = {};
 // small to see. It is scaled by Skeleton.sceneUnit now, so 1 drapes the same way whatever size
 // the rig was drawn at.
 const DEFAULTS = { stiffness: 0.25, damping: 0.7, gravity: 1, drag: 0.1, ground: false, groundY: 0,
-  inertia: 0.35, maxBend: 50, collide: false };
+  inertia: 0.35, maxBend: 50, collide: false,
+  // MASS IS THE AXIS STIFFNESS CANNOT REACH. A spring's frequency is sqrt(k/m), and until now
+  // only k was adjustable -- so every setting was a stiff spring and the other controls only
+  // decided whether it rang in a vacuum or in honey. matt: "it always feels like a very stiff
+  // spring... its very black and white, either it oscillates rapidly, or its totally
+  // overconstrained." Measured on his 5-bone puppet at damping 0.15, the frequency floor was
+  // 2.0 Hz at stiffness 0.02, rising to 6.7 and then falling again -- no way to get a slow,
+  // heavy head at all. Four times the mass halves the frequency, which is the missing control.
+  //
+  // A MULTIPLIER, not an absolute: the per-link masses are structural (how much chain hangs
+  // below each joint, which is what makes a root lag and a tip whip) and that relationship has
+  // to survive. This scales all of them together.
+  mass: 1,
+  // Solver quality, per chain, and both finally safe to expose: with lambda accumulating, more
+  // of either converges instead of stiffening. Before that, raising substeps made the chain
+  // WORSE -- residual motion 0 / 1.45 / 10.0 / 21.3 / 34.0 for 1 / 8 / 16 / 32 / 64.
+  substeps: 8,
+  iterations: 1 };
 
 // A SPRING RATE AND A DECAY RATE, not per-frame factors — which is what makes "tune it live,
 // then bake it" true rather than a slogan.
@@ -63,7 +80,28 @@ const DEFAULTS = { stiffness: 0.25, damping: 0.7, gravity: 1, drag: 0.1, ground:
 // infinity and the joint sits exactly on its animated pose. That escape hatch has to be exact or
 // there is no way to tell the feature off from the feature misbehaving.
 const SPRING_SCALE = 30;    // k = SPRING_SCALE * sceneUnit * s/(1-s)
-const DAMP_SCALE = 10;      // velocity decays as exp(-DAMP_SCALE * damping * dt)
+const DAMP_SCALE = 10;      // velocity decays as exp(-DAMP_SCALE * dampRate(damping) * dt)
+
+// DAMPING GETS THE SAME POLE-AT-ONE CURVE STIFFNESS ALREADY HAS, and it should have had it all
+// along -- stiffness maps s/(1-s) so the top of its range means "infinite", while damping was a
+// plain linear scale whose maximum was nowhere near critically damped.
+//
+// What that cost: at damping 0.99, the old curve removed 15% of the velocity per frame
+// (exp(-10 * 0.99 / 60) = 0.848), which permits about ten visible oscillations before the
+// amplitude is gone. Measured on matt's 5-bone puppet at stiffness 0.07: TWELVE oscillations at
+// MAXIMUM damping. matt: "if i set damping up to its max (99), i would expect to see almost no
+// overshoot/spring at all, yet its still at least 8 oscilations."
+//
+// With the pole, the slider reaches what it claims: 0.5 gives the old maximum, 0.9 removes 78% a
+// frame, and 0.99 is a dead stop. The clamp stays at 0.99 so the rate is always finite.
+//
+// THIS CHANGES WHAT EXISTING DAMPING NUMBERS MEAN -- an old 0.99 is about 0.5 on this curve.
+// `window._physDampLinear = true` restores the old straight scale for an A/B.
+function dampRate(d) {
+  const v = Math.max(0, Math.min(0.99, d || 0));
+  if (typeof window !== 'undefined' && window._physDampLinear) return v;
+  return v / (1 - v);
+}
 
 // Earth gravity expressed in scene units, given how big the scene is. A character is roughly two
 // metres, sceneUnit is roughly a character, so a unit is roughly sceneUnit/2 metres — and 9.8
@@ -169,6 +207,7 @@ PhysicsBones.params = function (j) {
     drag: pick('drag'), ground: pick('ground'), groundY: pick('groundY'),
     collide: pick('collide'),
     inertia: pick('inertia'), maxBend: pick('maxBend'),
+    mass: pick('mass'), substeps: pick('substeps'), iterations: pick('iterations'),
   };
 };
 
@@ -188,6 +227,11 @@ PhysicsBones.setParams = function (j, patch) {
     groundY:   take('groundY'),
     inertia:   take('inertia', 0, 1),
     maxBend:   take('maxBend', 0, 180),
+    // Wide, because this is the control that has to span "a feather" and "a sandbag", and the
+    // useful span of a frequency knob is multiplicative. 100x mass is 10x slower.
+    mass:      take('mass', 0.01, 100),
+    substeps:  Math.round(take('substeps', 1, 32)),
+    iterations: Math.round(take('iterations', 1, 16)),
     collide:   !!take('collide'),
   };
   return true;
@@ -282,7 +326,10 @@ PhysicsBones.chain = function (main, root) {
     for (const other of out) if (other.parent === link.joint) n += below.get(other.joint) || 1;
     below.set(link.joint, n);
   }
-  for (const link of out) link.mass = below.get(link.joint) || 1;
+  // The user's multiplier on top of the structural masses, so "heavier" moves the whole chain's
+  // frequency without flattening the root-drags-more relationship the loop above builds.
+  const mScale = Math.max(0.01, PhysicsBones.params(root).mass || 1);
+  for (const link of out) link.mass = (below.get(link.joint) || 1) * mScale;
   return out;
 };
 
@@ -727,7 +774,8 @@ PhysicsBones.step = function (main, dt) {
     const unit = (Skeleton.sceneUnit && Skeleton.sceneUnit(main)) || 1;
     const stiff = Math.min(0.9999, Math.max(0, par.stiffness));
     const k = SPRING_SCALE * unit * (stiff / (1 - stiff));  // spring rate, per second squared
-    const decay = Math.exp(-DAMP_SCALE * par.damping * h);  // exact, so it does not depend on h
+    const lamRate = DAMP_SCALE * dampRate(par.damping);
+    const decay = Math.exp(-lamRate * h);  // exact, so it does not depend on h
     const gAcc = gravityUnits(main, par.gravity);
     const rigid = par.stiffness >= 1;
     // The blend weight is read once per chain per step: it is keyed on the ROOT, because the
@@ -895,7 +943,18 @@ PhysicsBones.step = function (main, dt) {
             _acc.addScaledVector(st.v, -par.drag * sp / (Math.max(unit, 1e-6) * (link.mass || 1)));
           }
         }
-        st.v.addScaledVector(_acc, h).multiplyScalar(decay);
+        // THE EXACT SOLUTION OF v' = a - lambda*v OVER ONE STEP, not `(v + a*h) * decay`.
+        //
+        // The old form is only frame-rate independent while lambda*h is small, and raising the
+        // damping range walked straight into where it is not: a terminal velocity of
+        // a*h*d/(1-d) instead of a/lambda, which at 24fps and lambda 15 is 28% short of the
+        // continuous answer. It had always been approximate; stronger damping merely made it
+        // visible, as three seconds of sag differing by 0.144 across 24/60/120fps.
+        //
+        // v = v*d + (a/lambda)(1 - d) is exact for any h, so the curve above can be as steep as
+        // it likes. Below a lambda worth dividing by, the undamped integration is the limit.
+        if (lamRate > 1e-6) st.v.multiplyScalar(decay).addScaledVector(_acc, (1 - decay) / lamRate);
+        else st.v.addScaledVector(_acc, h);
         _next.copy(_pCur).addScaledVector(st.v, h);
 
       }
@@ -1165,13 +1224,30 @@ const _xM = new THREE.Matrix4();
 // One positional attachment: pull `p` toward `target`, softened by `alpha`. Returns nothing; `p`
 // is moved in place. `w` is the inverse mass. With alpha 0 this is a hard snap, which is what a
 // fully weighted pin should be.
-function solveAttach(p, target, w, alpha, h) {
+// THE MISSING LAMBDA, and it is the whole difference between XPBD and PBD wearing XPBD's
+// clothes. Without an accumulated multiplier every call applies a FRESH full correction, so
+// solving a constraint twice corrects it twice and the iteration count becomes a hidden
+// stiffness multiplier. That is PBD's known weakness and exactly what XPBD exists to remove:
+// the `-aT * lam` term charges each correction against what has already been applied, so more
+// iterations CONVERGE on the compliance's answer instead of stiffening past it.
+//
+// Measured before this: static sag was correctly substep-independent (13.9 / 14.4 / 14.5 / 14.6
+// for 1 / 2 / 4 / 8 substeps -- the compliance term was always right) while STABILITY went the
+// wrong way, residual motion 0 / 0 / 0 / 0.012 / 1.77 / 17.9 / 32.8 for 1 ... 64. A solver that
+// gets worse with more iterations is not converging.
+//
+// `lam` is an array and `li` its slot, reset once per SUBSTEP by the caller -- which is the
+// standard small-steps formulation (Macklin 2019), where alpha~ = alpha/h^2 carries the
+// time-step independence and lambda carries the iteration independence.
+function solveAttach(p, target, w, alpha, h, lam, li) {
   _xDir.subVectors(p, target);
   const C = _xDir.length();
   if (C < 1e-9 || !isFinite(alpha)) return;
   _xDir.multiplyScalar(1 / C);
   const aT = alpha / (h * h);
-  const dl = -C / (w + aT);
+  const prev = lam ? lam[li] : 0;
+  const dl = (-C - aT * prev) / (w + aT);
+  if (lam) lam[li] = prev + dl;
   p.addScaledVector(_xDir, dl * w);
 }
 
@@ -1184,7 +1260,11 @@ function solveAttach(p, target, w, alpha, h) {
 // the fade -- 0.1 to 0.2 units a frame -- and ended 0.82 short of the pin. Sharing the correction
 // is what lets a goal at the tip travel up the chain, which is the same thing FABRIK's backward
 // sweep does and the reason a positional solver can do IK at all.
-function solveDistance(pPar, p, wPar, w, rest) {
+// The same accounting for the length constraint. It is swept DOWN the chain and back UP, which
+// is two iterations of the same constraint in one substep -- so without a multiplier the second
+// sweep corrects an error the first one already removed, and the pair over-corrects. The
+// constraint stays rigid (alpha 0); lambda only stops it being applied twice over.
+function solveDistance(pPar, p, wPar, w, rest, lam, li) {
   _xDir.subVectors(p, pPar);
   const d = _xDir.length();
   if (d < 1e-9) return;
@@ -1192,8 +1272,10 @@ function solveDistance(pPar, p, wPar, w, rest) {
   if (wsum < 1e-12) return;
   _xDir.multiplyScalar(1 / d);
   const C = d - rest;
-  pPar.addScaledVector(_xDir, (wPar / wsum) * C);
-  p.addScaledVector(_xDir, -(w / wsum) * C);
+  let dl = -C;
+  if (lam) { const prev = lam[li]; dl = -C - prev; lam[li] = prev + dl; }
+  pPar.addScaledVector(_xDir, -(wPar / wsum) * dl);
+  p.addScaledVector(_xDir, (w / wsum) * dl);
 }
 
 PhysicsBones.stepXPBD = function (main, dt) {
@@ -1202,8 +1284,9 @@ PhysicsBones.stepXPBD = function (main, dt) {
   _colliders = null;              // per step, same contract as the force solver's
   markAllCollidersStale();
   const frameH = Math.max(1 / 240, Math.min(1 / 20, dt || 1 / 60));
-  const N = Math.max(1, (window._physSubsteps | 0) || PhysicsBones.SUBSTEPS);
-  const h = frameH / N;
+  // Substeps are PER CHAIN now (below); the global stays as an override for bisecting one
+  // setting against another without editing a rig.
+  const Nover = (window._physSubsteps | 0) || 0;
   let moved = 0;
   window._physPinHeld = new Set();
 
@@ -1211,6 +1294,9 @@ PhysicsBones.stepXPBD = function (main, dt) {
     const par = PhysicsBones.params(root);
     const links = PhysicsBones.chain(main, root);
     if (!links.length) continue;
+    const N = Math.max(1, Nover || par.substeps || PhysicsBones.SUBSTEPS);
+    const h = frameH / N;
+    const ITER = Math.max(1, par.iterations || 1);
     const unit = (Skeleton.sceneUnit && Skeleton.sceneUnit(main)) || 1;
     const blend = PhysicsBones.weight(root);
     if (blend <= 0) {
@@ -1254,7 +1340,7 @@ PhysicsBones.stepXPBD = function (main, dt) {
     }
 
     const gAcc = gravityUnits(main, par.gravity);
-    const decay = Math.exp(-DAMP_SCALE * par.damping * h);
+    const decay = Math.exp(-DAMP_SCALE * dampRate(par.damping) * h);
     const aPose = complianceFrom(par.stiffness, POSE_COMPLIANCE, unit);
 
     // A PIN OUTRANKS THE BEND LIMIT, and this is what stopped an arm reaching its pin.
@@ -1296,6 +1382,9 @@ PhysicsBones.stepXPBD = function (main, dt) {
     // The particles of this chain, in order. Index i is links[i].joint; the chain's own root is
     // the kinematic anchor everything hangs from.
     const P = [], PREV = [], IM = [];
+    // One multiplier per link per constraint, reset at the top of every substep.
+    const lamPose = new Float64Array(links.length);
+    const lamDist = new Float64Array(links.length);
     for (let i = 0; i < links.length; i++) {
       const j = links[i].joint, id = j.getID();
       let st = _state.get(id);
@@ -1368,17 +1457,36 @@ PhysicsBones.stepXPBD = function (main, dt) {
         st.p.addScaledVector(st.v, h);
       }
 
-      // THE POSE, softly. Carried on the simulated parent, so a disturbance travels down the
-      // chain as a wave instead of every joint answering on the same frame.
-      for (let i = 0; i < links.length; i++) {
-        _xAnim.copy(parentOf(i)).addScaledVector(shape[i].dir, shape[i].len);
-        solveAttach(P[i].p, _xAnim, IM[i], aPose, h);
-      }
+      // THE MULTIPLIERS, RESET PER SUBSTEP. That is the small-steps XPBD contract: alpha~ makes
+      // the constraint time-step independent, lambda makes it iteration independent, and lambda
+      // belongs to one substep's solve. `window._physXPBDLambda = false` puts the old
+      // accumulate-nothing behaviour back, for an A/B against this.
+      const useLam = window._physXPBDLambda !== false;
+      if (useLam) { lamPose.fill(0); lamDist.fill(0); }
 
-      // BONE LENGTH, hard, swept down the chain and back up. The return sweep is what carries a
-      // pull at the tip into the joints above it -- the same job FABRIK's backward pass does.
-      for (let i = 0; i < links.length; i++) solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len);
-      for (let i = links.length - 1; i >= 0; i--) solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len);
+      // ITERATIONS WITHIN THE SUBSTEP, sharing the substep's lambdas -- which is the only reason
+      // this is a QUALITY knob rather than a second stiffness knob. Each pass charges its
+      // correction against what the earlier ones applied, so more passes converge on the
+      // compliance's answer instead of stacking past it. Before lambda, this loop would have
+      // been a way to make the chain stiffer and less stable, which is what raising substeps
+      // used to do.
+      for (let it = 0; it < ITER; it++) {
+        // THE POSE, softly. Carried on the simulated parent, so a disturbance travels down the
+        // chain as a wave instead of every joint answering on the same frame.
+        for (let i = 0; i < links.length; i++) {
+          _xAnim.copy(parentOf(i)).addScaledVector(shape[i].dir, shape[i].len);
+          solveAttach(P[i].p, _xAnim, IM[i], aPose, h, useLam ? lamPose : null, i);
+        }
+
+        // BONE LENGTH, hard, swept down the chain and back up. The return sweep is what carries
+        // a pull at the tip into the joints above it -- the same job FABRIK's backward pass
+        // does. Both sweeps share one lambda per link, so the pair converges rather than
+        // doubling up.
+        for (let i = 0; i < links.length; i++)
+          solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len, useLam ? lamDist : null, i);
+        for (let i = links.length - 1; i >= 0; i--)
+          solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len, useLam ? lamDist : null, i);
+      }
 
       // THE PIN, as an attachment constraint, and LAST so it has the final word. Solved before
       // the length sweeps it was always overruled by them: the pin is rigid at weight 1, but the

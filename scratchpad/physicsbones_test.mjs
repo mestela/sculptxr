@@ -580,9 +580,101 @@ check('...substepped, with compliance divided by h squared',
 // One-sided was the first thing written and it made the pin useless: the constraint pulled the
 // wrist and the next line projected it back onto a parent that never learned anything had asked.
 check('...with a TWO-SIDED length constraint, so a pull at the tip travels up the chain',
-  /function solveDistance\(pPar, p, wPar, w, rest\)/.test(SRC)
-    && /pPar\.addScaledVector\(_xDir, \(wPar \/ wsum\) \* C\);/.test(SRC),
+  /function solveDistance\(pPar, p, wPar, w, rest, lam, li\)/.test(SRC)
+    && /pPar\.addScaledVector\(_xDir, -\(wPar \/ wsum\) \* dl\);/.test(SRC)
+    && /p\.addScaledVector\(_xDir, \(w \/ wsum\) \* dl\);/.test(SRC),
   'a goal at the tip cannot reach the joints above it, and the arm barely moves');
+
+// ── MASS IS THE AXIS STIFFNESS CANNOT REACH ──────────────────────────────────────────
+//
+// A spring's frequency is sqrt(k/m). With only k adjustable, every setting is a stiff spring and
+// the rest of the controls only choose whether it rings in a vacuum or in honey. matt: "it always
+// feels like a very stiff spring... its very black and white, either it oscillates rapidly, or
+// its totally overconstrained."
+//
+// Measured on his 5-bone puppet at damping 0.15: stiffness alone spans 2.0 / 3.1 / 4.4 / 6.6 /
+// 6.7 / 4.5 / 1.4 Hz across its whole range -- a floor of 2 Hz and not even monotonic. Mass
+// spans 7.2 Hz down to 0.6.
+check('mass is a parameter, and a multiplier rather than an absolute',
+  /mass: 1,/.test(SRC) && /mass:      take\('mass', 0\.01, 100\),/.test(SRC),
+  'the per-link masses are structural and that relationship has to survive');
+// The structural masses are what make a root lag and a tip whip -- scaling them together keeps
+// that while moving the whole chain's frequency. Measured: 10x turns [6,5,4,1,2,1] into
+// [60,50,40,10,20,10].
+check('...scaling the structural masses rather than replacing them',
+  /link\.mass = \(below\.get\(link\.joint\) \|\| 1\) \* mScale;/.test(SRC));
+// A frequency knob is multiplicative, so a linear slider would put every useful value in its
+// bottom tenth -- matt's Houdini point about exponential ranges.
+check('...on an EXPONENTIAL slider, 50 being 1x and each 25 a decade',
+  /Math\.pow\(10, \(n - 50\) \/ 25\)/.test(BONE));
+
+// ── SOLVER QUALITY IS EXPOSED, AND ONLY NOW SAFE TO ──────────────────────────────────
+//
+// Before lambda, raising substeps made the chain WORSE (residual 0 / 1.45 / 10.0 / 21.3 / 34.0
+// for 1 / 8 / 16 / 32 / 64), so exposing it would have handed over a knob that damages the sim.
+// With lambda, iterations are INVARIANT on this rig -- 3.7 Hz and 0.001 residual at 1, 2, 4, 8
+// and 16 -- which is the correct reading for a converged solve and the evidence that it is one.
+check('substeps and iterations are per chain, not one global for the scene',
+  /substeps: 8,/.test(SRC) && /iterations: 1 \}/.test(SRC)
+    && /const N = Math\.max\(1, Nover \|\| par\.substeps \|\| PhysicsBones\.SUBSTEPS\);/.test(SRC));
+check('...iterations share the substep lambdas, so they converge rather than stiffen',
+  /for \(let it = 0; it < ITER; it\+\+\) \{/.test(SRC)
+    && SRC.indexOf('if (useLam) { lamPose.fill(0); lamDist.fill(0); }') < SRC.indexOf('for (let it = 0; it < ITER'),
+  'resetting lambda inside the iteration loop would make each pass a fresh full correction again');
+check('...and both are on the panel',
+  /id="bone-phys-sub"/.test(BONE) && /id="bone-phys-iter"/.test(BONE) && /id="bone-phys-mass"/.test(BONE));
+
+// ── DAMPING REACHES WHAT ITS SLIDER CLAIMS ───────────────────────────────────────────
+//
+// Stiffness has mapped s/(1-s) from the start, so its top means "infinite". Damping was a plain
+// linear scale whose MAXIMUM removed only 15% of the velocity per frame -- enough to permit
+// about ten visible oscillations. Measured on matt's 5-bone puppet at stiffness 0.07: twelve
+// oscillations at maximum damping. matt: "if i set damping up to its max (99), i would expect to
+// see almost no overshoot/spring at all."
+//
+// Same curve as stiffness now. Measured after: 0 / 0.5 / 0.7 / 0.85 / 0.99 give 37 / 12 / 4 / 0
+// / 0 oscillations -- the old maximum is the new midpoint and the top of the slider is a dead
+// stop.
+check('damping uses the same pole-at-one curve as stiffness',
+  /return v \/ \(1 - v\);/.test(SRC) && /function dampRate\(d\)/.test(SRC),
+  'a linear damping scale cannot reach critical damping at any setting');
+check('...clamped below 1 so the rate stays finite',
+  /const v = Math\.max\(0, Math\.min\(0\.99, d \|\| 0\)\);/.test(SRC));
+check('...applied by BOTH solvers through the one helper',
+  (SRC.match(/dampRate\(par\.damping\)/g) || []).length === 2,
+  'the force solver and XPBD disagreeing about what damping means is worse than either curve');
+// The old `(v + a*h) * decay` is only frame-rate independent while lambda*h is small, and a
+// steeper damping curve walks straight out of that: measured 0.144 of spread across 24/60/120fps
+// where the tolerance is 0.05. v*d + (a/lambda)(1-d) is exact at any h.
+check('...and the force solver integrates damping EXACTLY, not approximately',
+  /st\.v\.multiplyScalar\(decay\)\.addScaledVector\(_acc, \(1 - decay\) \/ lamRate\);/.test(SRC),
+  'an approximate decay puts a frame-rate dependence in the sag as soon as damping is strong');
+check('...with the old linear scale reachable for an A/B',
+  /window\._physDampLinear/.test(SRC));
+
+// ── XPBD NEEDS ITS LAMBDA, or it is PBD wearing XPBD's clothes ───────────────────────
+//
+// Without an accumulated multiplier every call applies a FRESH full correction, so solving a
+// constraint twice corrects it twice and the ITERATION COUNT becomes a hidden stiffness
+// multiplier. Measured on matt's osc.sxr before the fix: static sag was correctly
+// substep-independent (13.9 / 14.4 / 14.5 / 14.6 for 1/2/4/8 substeps, so the compliance term
+// was always right) while residual motion after 7 seconds went 0 / 0 / 0 / 1.45 / 10.0 / 21.3 /
+// 34.0 for 1...64. A solver that gets WORSE with more iterations is not converging, and that is
+// the opposite of the resilience XPBD is chosen for.
+check('the pose constraint charges its correction against an accumulated lambda',
+  /const dl = \(-C - aT \* prev\) \/ \(w \+ aT\);/.test(SRC)
+    && /if \(lam\) lam\[li\] = prev \+ dl;/.test(SRC),
+  'without it, iteration count is a hidden stiffness knob and more substeps destabilise');
+// The length constraint is swept DOWN and back UP -- two iterations of one constraint in a
+// single substep -- so it needs the same accounting or the pair over-corrects.
+check('...and so does the length constraint, swept down and back up on ONE lambda',
+  /if \(lam\) \{ const prev = lam\[li\]; dl = -C - prev; lam\[li\] = prev \+ dl; \}/.test(SRC));
+// Lambda belongs to one substep's solve: alpha~ carries time-step independence, lambda carries
+// iteration independence (Macklin 2019, small steps).
+check('...reset once per SUBSTEP, not per frame',
+  /if \(useLam\) \{ lamPose\.fill\(0\); lamDist\.fill\(0\); \}/.test(SRC));
+check('...with the old behaviour still reachable for an A/B',
+  /window\._physXPBDLambda !== false/.test(SRC));
 check('...and the pin solved LAST, so a full-strength pin is not overruled by the bone length',
   SRC.indexOf('THE PIN, as an attachment constraint') > SRC.indexOf('BONE LENGTH, hard, swept down'),
   'the hand settles a constant distance short of the pin whatever the compliance');
@@ -639,7 +731,7 @@ check('...and the shift moves both ends of the step, injecting no velocity',
 check('...as do gravity, drag, damping and stiffness',
   /_xg\.set\(0, -gAcc, 0\);/.test(SRC)
     && /-par\.drag \* sp/.test(SRC)
-    && /const decay = Math\.exp\(-DAMP_SCALE \* par\.damping \* h\);/.test(SRC)
+    && /const decay = Math\.exp\(-DAMP_SCALE \* dampRate\(par\.damping\) \* h\);/.test(SRC)
     && /const aPose = complianceFrom\(par\.stiffness, POSE_COMPLIANCE, unit\);/.test(SRC));
 
 check('a soft chain falls under the constraint solver too', fell > 0.5,

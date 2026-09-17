@@ -87,6 +87,9 @@ function pinLabel(n) { return n ? `Clear Pins (${n})` : 'Clear Pins'; }
 // A joint's display name, for the places that have to SAY which joint. Module scope because both
 // the builder and syncBoneSection need it -- the sync rewrites the physics readout every pass, so
 // the two have to agree on the name or the row would change wording on its own.
+// 0.01x .. 100x, readable at both ends.
+function fmtMass(v) { return (v < 1 ? v.toFixed(2) : (v < 10 ? v.toFixed(1) : String(Math.round(v)))) + 'x'; }
+
 function jointLabel(j) { return (j && (j._permanentStaticLabel || ('joint ' + j.getID()))) || ''; }
 
 // WHAT THE PHYSICS SLIDERS ARE POINTED AT, in one place because TWO places need to say it and
@@ -407,6 +410,33 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-phys-drag" min="0" max="100" step="1" value="${Math.round(physP.drag * 100)}">
       <span class="${c.val}" id="bone-phys-drag-val">${Math.round(physP.drag * 100)}</span>
     </div>
+    ${/* MASS IS THE AXIS STIFFNESS CANNOT REACH: a spring's frequency is sqrt(k/m), and with only
+         k adjustable every setting was a stiff spring -- the other controls just chose whether it
+         rang in a vacuum or in honey. matt: "it always feels like a very stiff spring... its very
+         black and white." Measured on his puppet: stiffness alone spanned 2.0-6.7 Hz and not even
+         monotonically, while mass spans 7.2 Hz down to 0.6.
+         EXPONENTIAL, because a frequency knob is multiplicative and a linear one would put every
+         useful value in the bottom tenth. 50 is 1x, each 25 is a decade, so the ends are 0.01x
+         and 100x. */ ''}
+    <div class="${c.row}">
+      <span class="${c.lbl}">Mass</span>
+      <input type="range" id="bone-phys-mass" min="0" max="100" step="1"
+             value="${Math.round(50 + 25 * Math.log10(Math.max(0.01, physP.mass || 1)))}">
+      <span class="${c.val}" id="bone-phys-mass-val">${fmtMass(physP.mass || 1)}</span>
+    </div>
+    ${/* Solver quality, and only safe to expose now that lambda accumulates: before it, more of
+         either made the chain WORSE. Iterations changing nothing is the CORRECT reading -- it
+         means the solve has already converged. */ ''}
+    <div class="${c.row}">
+      <span class="${c.lbl}">Substeps</span>
+      <input type="range" id="bone-phys-sub" min="1" max="32" step="1" value="${physP.substeps || 8}">
+      <span class="${c.val}" id="bone-phys-sub-val">${physP.substeps || 8}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Iterations</span>
+      <input type="range" id="bone-phys-iter" min="1" max="16" step="1" value="${physP.iterations || 1}">
+      <span class="${c.val}" id="bone-phys-iter-val">${physP.iterations || 1}</span>
+    </div>
     <div class="${c.toggles}">
       ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
       ${flagButton(c, 'phys-collide', 'Self Collision', physP.collide)}
@@ -575,6 +605,33 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Drag</span>
       <input type="range" id="bone-phys-drag" min="0" max="100" step="1" value="${Math.round(physP.drag * 100)}">
       <span class="${c.val}" id="bone-phys-drag-val">${Math.round(physP.drag * 100)}</span>
+    </div>
+    ${/* MASS IS THE AXIS STIFFNESS CANNOT REACH: a spring's frequency is sqrt(k/m), and with only
+         k adjustable every setting was a stiff spring -- the other controls just chose whether it
+         rang in a vacuum or in honey. matt: "it always feels like a very stiff spring... its very
+         black and white." Measured on his puppet: stiffness alone spanned 2.0-6.7 Hz and not even
+         monotonically, while mass spans 7.2 Hz down to 0.6.
+         EXPONENTIAL, because a frequency knob is multiplicative and a linear one would put every
+         useful value in the bottom tenth. 50 is 1x, each 25 is a decade, so the ends are 0.01x
+         and 100x. */ ''}
+    <div class="${c.row}">
+      <span class="${c.lbl}">Mass</span>
+      <input type="range" id="bone-phys-mass" min="0" max="100" step="1"
+             value="${Math.round(50 + 25 * Math.log10(Math.max(0.01, physP.mass || 1)))}">
+      <span class="${c.val}" id="bone-phys-mass-val">${fmtMass(physP.mass || 1)}</span>
+    </div>
+    ${/* Solver quality, and only safe to expose now that lambda accumulates: before it, more of
+         either made the chain WORSE. Iterations changing nothing is the CORRECT reading -- it
+         means the solve has already converged. */ ''}
+    <div class="${c.row}">
+      <span class="${c.lbl}">Substeps</span>
+      <input type="range" id="bone-phys-sub" min="1" max="32" step="1" value="${physP.substeps || 8}">
+      <span class="${c.val}" id="bone-phys-sub-val">${physP.substeps || 8}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Iterations</span>
+      <input type="range" id="bone-phys-iter" min="1" max="16" step="1" value="${physP.iterations || 1}">
+      <span class="${c.val}" id="bone-phys-iter-val">${physP.iterations || 1}</span>
     </div>
     <div class="${c.toggles}">
       ${flagButton(c, 'phys-ground', 'Ground Collision', physP.ground)}
@@ -1166,7 +1223,10 @@ export function wireBoneSection(root, main, opts) {
       // here instead would write to whatever you had grabbed to shake the rig with.
       const t = PhysicsBones.panelTarget(main,
         (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
-      const v = parseInt(input.value, 10) / scale;
+      // `scale` is a divisor for a linear control, or a function for one that is not -- Mass is
+      // exponential, because a frequency knob is multiplicative.
+      const raw = parseInt(input.value, 10);
+      const v = typeof scale === 'function' ? scale(raw) : raw / scale;
       // NO JOINT MEANS THE DEFAULTS, not nothing. Setting the values you want and THEN flagging a
       // joint is a real way to work, and setRoot copies the defaults into whatever it flags -- so
       // this slider does the same job either way round. See PhysicsBones.setDefaults.
@@ -1180,6 +1240,9 @@ export function wireBoneSection(root, main, opts) {
   physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g');
   physParam('damp', 'damping', 100, (v) => String(Math.round(v * 100)));
   physParam('drag', 'drag', 100, (v) => String(Math.round(v * 100)));
+  physParam('mass', 'mass', (n) => Math.pow(10, (n - 50) / 25), fmtMass);
+  physParam('sub', 'substeps', 1, (v) => String(v));
+  physParam('iter', 'iterations', 1, (v) => String(v));
 
   // CAPSULE SOLIDITY. Live on drag like the physics sliders and for the same reason: it is a
   // look, judged by watching. Skeleton persists it and rebuilds the batches, so the change lands
