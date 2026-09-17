@@ -1,3 +1,23 @@
+# v3.42.11
+**Smooth gets a Keep Volume button, and the reason it needed one is measurable.** The report was
+that Smooth barely touches a dense mesh at 100% strength. Two things were true at once. A one-ring
+laplacian moves each vertex toward its immediate neighbours, so its reach is set by EDGE LENGTH
+rather than the radius you dialled in — subdivide and the same brush does quadratically less.
+Measured on a gaussian bump of fixed world width, one step at full strength, amplitude remaining:
+0.8672 at 16 verts across the span, 0.9979 at 128, 1.0000 at 1024. Passes now scale with the vertex
+count under the brush (quadratic in linear density is linear in vertex count, a number already in
+hand), bounded by a hard cap and a work budget.
+
+The second was the volume-preserving HC term, and it is not a damper — it is a **ceiling**. It
+converges to a fixed point that still has the shape in it: after five thousand passes on the same
+bump, plain laplacian leaves 0.0013 of it and HC leaves 0.8007, and beta goes unstable below about
+0.4 so it is not a dial. That is by design — the shrink HC removes and the lump you are trying to
+flatten are both low-frequency, and nothing in the operator can tell them apart. So the two
+complaints this tool has collected are irreconcilable: **Keep Volume** on means detail comes off and
+the form stays, which is what saves thin geometry from becoming thin tubes; off means the form goes
+too. It is a button now, on both the main panel and the wrist panel, defaulting on, and persisted
+per tool with the rest of the brush settings.
+
 # v3.42.7
 **A round of Adurna35's bug report, and one rule learned three times over.** Remesh had been
 quietly leaving the original mesh behind — hidden, present in the outliner, and duplicated by the

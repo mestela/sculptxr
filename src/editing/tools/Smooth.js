@@ -126,6 +126,58 @@ class Smooth extends SculptBase {
     //
     // One pass for Smooth, so nothing about it changes; Relax sets its own count.
     var passes = Math.max(1, this._passes | 0);
+
+    // A ONE-RING LAPLACIAN IS NOT A FIXED-SIZE BRUSH. It moves each vertex toward the average of
+    // its IMMEDIATE neighbours, so how far the surface travels per pass is set by EDGE LENGTH,
+    // not by the radius you dialled in. Subdivide and the same brush at the same strength does
+    // less and less, until on a dense mesh it does visibly nothing. adurna35: "Smooth tool doesn't
+    // affect higher poly meshes even at 100% strength... Now i have to remesh pretty low to see a
+    // genuine change."
+    //
+    // MEASURED, on a gaussian bump of fixed world width, one step at intensity 1.0, amplitude
+    // remaining (1.0 = untouched):
+    //
+    //   verts across the span   16      32      64     128     256     512    1024
+    //   plain laplacian      0.8672  0.9651  0.9913  0.9979  0.9995  0.9999  1.0000
+    //   with HC volume       0.9759  0.9982  0.9999  1.0000  1.0000  1.0000  1.0000
+    //
+    // The falloff is quadratic in linear density, and quadratic in linear density is LINEAR IN
+    // THE VERTEX COUNT UNDER THE BRUSH -- a count already in hand, since it is the array we were
+    // handed. So passes scale with it against a reference footprint, capped twice: a hard ceiling,
+    // and a work budget, because the cost is passes x verts and a headset has a frame budget.
+    //
+    // Plain laplacian, passes scaled this way, same measurement:
+    //   verts under brush        12      46     185     741    2965   11859
+    //   passes                    1       5      16      16      13       3
+    //   amplitude left       0.8672  0.8560  0.8837  0.9672  0.9931  0.9996
+    // -- parity with the low-poly feel up to a few hundred verts under the brush, degrading
+    // beyond it. Honest limit: passes cannot buy their way out of this at very high density.
+    //
+    // Tunable live, because the reference and the caps are feel, not maths:
+    //   window._smoothAutoPasses = false   the old fixed single pass
+    //   window._smoothPassRef              footprint that means "one pass" (default 10)
+    //   window._smoothPassCap              hard ceiling (default 16)
+    //   window._smoothPassBudget           passes x verts ceiling (default 40000)
+    if (!this._tangent && window._smoothAutoPasses !== false) {
+      var nv = iVertsInRadius.length;
+      var ref = window._smoothPassRef || 10;
+      var cap = window._smoothPassCap || 16;
+      var budget = window._smoothPassBudget || 40000;
+      var scaled = Math.max(1, Math.round(nv / ref));
+      var afford = Math.max(1, Math.floor(budget / Math.max(nv, 1)));
+      passes = Math.max(passes, Math.min(cap, scaled, afford));
+    }
+
+    // window._smoothTrace = true -- what the brush actually decided, since "it could be stronger"
+    // and "it is at the ceiling" look identical from inside a headset. Throttled: a stroke is 90
+    // of these a second.
+    if (window._smoothTrace && (!this._smTraceT || performance.now() - this._smTraceT > 250)) {
+      this._smTraceT = performance.now();
+      var _pv = this._preserveVolume;
+      console.log('[smooth] verts=' + iVertsInRadius.length + ' passes=' + passes
+        + ' intensity=' + intensity.toFixed(2) + ' strength=' + this._intensity.toFixed(2)
+        + ' preserveVolume=' + _pv);
+    }
     for (var pass = 0; pass < passes; ++pass) {
       if (this._tangent) this.smoothTangent(iVertsInRadius, intensity, picking);
       else this.smooth(iVertsInRadius, intensity, picking);
@@ -149,6 +201,28 @@ class Smooth extends SculptBase {
     var smoothVerts = new Float32Array(mem, 0, nbVerts * 3);
     this.laplacianSmooth(iVerts, smoothVerts);
 
+    // VOLUME PRESERVATION IS A CEILING, NOT A DAMPER, and that is the part worth knowing before
+    // touching it. HC does not merely smooth more slowly -- it converges to a fixed point that
+    // STILL HAS THE SHAPE IN IT. Measured on the same bump at 64 verts across, amplitude left
+    // after five thousand passes:
+    //
+    //   plain          0.0013     (smooths away completely, as you would expect)
+    //   HC beta 0.5    0.8007     (never removes it, however long you hold the brush)
+    //   HC beta 0.2       NaN     (the correction goes unstable below ~0.4 -- beta is not a dial)
+    //
+    // So the two complaints this operator has collected are genuinely opposed. matt wanted HC
+    // because plain laplacian eats thin geometry: "if i smooth on the fingers, they rapidly
+    // become super thin tubes." adurna35 wants shape gone: "i have to remesh pretty low to see a
+    // genuine change." Preserving volume is exactly the thing that refuses the second.
+    //
+    // BOTH ANSWERS ARE RIGHT, SO IT IS A BUTTON. matt, after the A/B on device: "now i see the
+    // difference. yes thats huge, and awesome, both have pros and cons." On means detail comes off
+    // and form stays; off means the form goes too, and thin geometry goes with it. Defaults ON,
+    // which is the shipped behaviour and the one whose failure mode is recoverable.
+    //
+    // Read straight off the tool, with no window override beside it: this session lost two rounds
+    // to a value that had two sources of truth, and a debug switch living next to a real control
+    // is exactly that shape. The panel writes this field and saveOption persists it.
     if (this._preserveVolume) {
       var disp = new Float32Array(mem, bytes, nbVerts * 3);
       var avgDisp = new Float32Array(mem, bytes * 2, nbVerts * 3);

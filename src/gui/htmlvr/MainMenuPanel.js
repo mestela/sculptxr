@@ -2888,10 +2888,14 @@ function buildSculptingHTML(main, part) {
     const hasCulling    = tool._culling    !== undefined;
     const hasTopoCheck  = tool._topoCheck  !== undefined;
     const hasTangent    = tool._tangent    !== undefined;
+    // Smooth only, and it scopes itself: no other tool defines the field. See Smooth.js for what
+    // the two answers actually do -- on, detail comes off and form stays; off, the form goes too,
+    // and thin geometry with it.
+    const hasPreserve   = tool._preserveVolume !== undefined;
 
     // Voxel uses its own mode grid (Add/Sub/Inflate/Deflate) instead of the generic
     // negative/clay/etc. toggles, so suppress those here.
-    if (!isVoxel && (hasNegative || hasClay || hasAccumulate || hasCulling || hasTopoCheck || hasTangent)) {
+    if (!isVoxel && (hasNegative || hasClay || hasAccumulate || hasCulling || hasTopoCheck || hasTangent || hasPreserve)) {
       const toggles = [];
       if (hasNegative) {
         // Masking: flip label/active so button means "Erase existing mask"
@@ -2905,6 +2909,8 @@ function buildSculptingHTML(main, part) {
       if (hasCulling)    toggles.push(`<button class="mm-choice${tool._culling    ? ' active' : ''}" id="mm-brush-culling" >Culling   </button>`);
       if (hasTopoCheck)  toggles.push(`<button class="mm-choice${tool._topoCheck  ? ' active' : ''}" id="mm-brush-topo"    >Topo Check</button>`);
       if (hasTangent)    toggles.push(`<button class="mm-choice${tool._tangent    ? ' active' : ''}" id="mm-brush-tangent" >Tangential</button>`);
+      if (hasPreserve)   toggles.push(`<button class="mm-choice${tool._preserveVolume ? ' active' : ''}" id="mm-brush-preserve"`
+        + ` title="On: smooths detail off and keeps the form (thin shapes survive). Off: smooths the form away too.">Keep Volume</button>`);
       const cols = toggles.length <= 2 ? 'cols-2' : 'cols-3';
       brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
     }
@@ -4832,6 +4838,15 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     el.querySelector('#mm-brush-tangent')?.addEventListener('click', (e) => {
       tool._tangent = !tool._tangent;
       e.currentTarget.classList.toggle('active', tool._tangent);
+    });
+    // Persisted, unlike the toggles above it: this one changes what the tool IS rather than how
+    // one stroke behaves, and having to rediscover it every session is most of the reason the
+    // behaviour read as a bug in the first place.
+    el.querySelector('#mm-brush-preserve')?.addEventListener('click', (e) => {
+      tool._preserveVolume = !tool._preserveVolume;
+      e.currentTarget.classList.toggle('active', tool._preserveVolume);
+      getOptionsURL.saveOption(`tool_${main.getSculptManager().getToolIndex()}_preserveVolume`, tool._preserveVolume);
+      main.render?.();
     });
 
     // ── Masking extras ────────────────────────────────────────────────────────

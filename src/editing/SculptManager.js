@@ -245,6 +245,7 @@ class SculptManager {
         if (saved[`tool_${i}_accumulate`] !== undefined) tools[i]._accumulate = saved[`tool_${i}_accumulate`];
         if (saved[`tool_${i}_culling`] !== undefined) tools[i]._culling = saved[`tool_${i}_culling`];
         if (saved[`tool_${i}_topoCheck`] !== undefined) tools[i]._topoCheck = saved[`tool_${i}_topoCheck`];
+        if (saved[`tool_${i}_preserveVolume`] !== undefined) tools[i]._preserveVolume = saved[`tool_${i}_preserveVolume`];
         if (saved[`tool_${i}_modulateRadius`] !== undefined) tools[i]._modulateRadius = saved[`tool_${i}_modulateRadius`];
         if (saved[`tool_${i}_modulateIntensity`] !== undefined) tools[i]._modulateIntensity = saved[`tool_${i}_modulateIntensity`];
         if (saved[`tool_${i}_minRadiusPct`] !== undefined) tools[i]._minRadiusPct = saved[`tool_${i}_minRadiusPct`];

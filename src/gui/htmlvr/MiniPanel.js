@@ -738,6 +738,18 @@ export class MiniPanel extends HTMLVRPanel {
         });
       }
       if (idx === Enums.Tools.SMOOTH) {
+        const preserveBtn = extras.querySelector('#mp-preserve');
+        if (preserveBtn) {
+          preserveBtn.addEventListener('click', () => {
+            const t = sm?.getCurrentTool?.();
+            if (t) {
+              t._preserveVolume = !t._preserveVolume;
+              getOptionsURL.saveOption(`tool_${sm.getToolIndex()}_preserveVolume`, t._preserveVolume);
+              main.render?.();
+            }
+            this.syncFromState();
+          });
+        }
         const sharpenBtn = extras.querySelector('#mp-sharpen');
         if (sharpenBtn) {
           sharpenBtn.addEventListener('click', () => {
@@ -950,6 +962,7 @@ export class MiniPanel extends HTMLVRPanel {
 
     } else if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
       extrasEl.querySelector('#mp-tangent')?.classList.toggle('active', !!tool._tangent);
+      extrasEl.querySelector('#mp-preserve')?.classList.toggle('active', !!tool._preserveVolume);
       if (idx === Enums.Tools.SMOOTH) {
         extrasEl.querySelector('#mp-sharpen')?.classList.toggle('active', !!tool._negative);
       }
@@ -1082,6 +1095,11 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-toggle-btn${tangent ? ' active' : ''}" id="mp-tangent">Tangent</button>
           ${idx === Enums.Tools.SMOOTH
             ? `<button class="mp-toggle-btn${sharpen ? ' active' : ''}" id="mp-sharpen">Sharpen</button>`
+            : ''}
+          ${/* The wrist panel gets it too, because it is a decision you make WHILE smoothing --
+               "this lump is not coming out" is noticed mid-stroke, not while setting up. */ ''}
+          ${idx === Enums.Tools.SMOOTH
+            ? `<button class="mp-toggle-btn${!!(t?._preserveVolume) ? ' active' : ''}" id="mp-preserve">Keep Vol</button>`
             : ''}
         </div>
       `;
