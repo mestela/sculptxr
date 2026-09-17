@@ -60,7 +60,9 @@ ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness',
   // glTF's packed metallicRoughnessTexture and its two factors.
   'uRoughMetalMap', 'uHasRoughMetal', 'uRoughFactor', 'uMetalFactor',
   // Tangent-space normal map. No tangent ATTRIBUTE goes with it -- see cotangentFrame.
-  'uNormalMap', 'uHasNormalMap', 'uNormalScale'];
+  'uNormalMap', 'uHasNormalMap', 'uNormalScale',
+  // Scene point lights. Positions arrive in VIEW space; see updateUniforms.
+  'uLightPos', 'uLightCol', 'uLightRange', 'uNbLights'];
 Array.prototype.push.apply(ShaderPBR.uniformNames, ShaderBase.uniformNames.commonUniforms);
 
 ShaderPBR.vertex = [
@@ -114,6 +116,14 @@ ShaderPBR.fragment = [
   'uniform sampler2D uNormalMap;',
   'uniform float uHasNormalMap;',
   'uniform float uNormalScale;',
+  // A FIXED-SIZE ARRAY with a runtime count, because GLSL ES 1.0 will not size an array from a
+  // uniform and will not loop to one either. Four is the budget: this shader runs per pixel on a
+  // standalone headset, and a fifth light is cheaper to refuse than to explain later.
+  'const int MAX_LIGHTS = 4;',
+  'uniform vec3 uLightPos[MAX_LIGHTS];',
+  'uniform vec3 uLightCol[MAX_LIGHTS];',
+  'uniform float uLightRange[MAX_LIGHTS];',
+  'uniform int uNbLights;',
   'uniform float uAlpha;',
   ShaderBase.strings.fragColorUniforms,
   ShaderBase.strings.fragColorFunction,
@@ -191,6 +201,45 @@ ShaderPBR.fragment = [
   '  vec3 specular = mix( vec3(0.04), linColor, metallic);',
   '',
   '  vec3 color = uExposure * computeIBL_UE4( normal, -normalize(vVertex), albedo, roughness, specular );',
+  '',
+  // THE SCENE'S LIGHTS, added on top of the environment rather than replacing it: the ambient
+  // still fills the shadow side, the lights give the form and the highlights.
+  //
+  // This is what the environment on its own cannot do. IBL lights from every direction at once
+  // and is smooth by construction -- a 9-coefficient irradiance and a roughness-blurred
+  // panorama -- so surface detail has nothing sharp to modulate. Measured while adding normal
+  // maps: forcing the surface shiny made a normal map's effect NINE TIMES larger, which is the
+  // same statement from the other side.
+  '  vec3 V = -normalize(vVertex);',
+  '  float NdV = max(dot(normal, V), 1e-4);',
+  '  for (int i = 0; i < MAX_LIGHTS; i++) {',
+  '    if (i >= uNbLights) break;',
+  '    vec3 toL = uLightPos[i] - vVertex;',
+  '    float dist2 = dot(toL, toL);',
+  '    vec3 L = toL * inversesqrt(max(dist2, 1e-12));',
+  // Falloff that a person placing a light can predict: full at the light, half at its range,
+  // smooth everywhere and never zero. Raw inverse-square is correct and unusable here -- scene
+  // units are arbitrary and large (this camel is ~180 across), so it would want intensities in
+  // the thousands and blow out the moment you nudged the light closer.
+  '    float r = max(uLightRange[i], 1e-4);',
+  '    float att = 1.0 / (1.0 + dist2 / (r * r));',
+  '    float NdL = max(dot(normal, L), 0.0);',
+  '    if (NdL <= 0.0) continue;',
+  '    vec3 H = normalize(L + V);',
+  '    float NdH = max(dot(normal, H), 0.0);',
+  '    float VdH = max(dot(V, H), 0.0);',
+  '    float a = roughness * roughness;',
+  '    float a2 = a * a;',
+  // GGX, the distribution computeIBL_UE4 already approximates, so a light's highlight and the
+  // environment's reflection describe ONE material rather than two that disagree.
+  '    float dd = NdH * NdH * (a2 - 1.0) + 1.0;',
+  '    float D = a2 / max(3.14159265 * dd * dd, 1e-6);',
+  '    float k = a * 0.5;',
+  '    float G = (NdL / (NdL * (1.0 - k) + k)) * (NdV / (NdV * (1.0 - k) + k));',
+  '    vec3 F = specular + (1.0 - specular) * pow(1.0 - VdH, 5.0);',
+  '    vec3 spec = (D * G * 0.25 / max(NdL * NdV, 1e-4)) * F;',
+  '    color += uExposure * uLightCol[i] * att * NdL * (albedo * 0.31830989 + spec);',
+  '  }',
   // FRESNEL-WEIGHTED ALPHA: a glancing surface reflects and a head-on one lets you through,
   // which is what makes a curved clear object read as curved rather than as a flat hole. The
   // 0.12 keeps a little of the surface visible face-on so it never disappears entirely -- it
@@ -203,6 +252,12 @@ ShaderPBR.fragment = [
   '  gl_FragColor = encodeFragColor(color, alpha);',
   '}'
 ].join('\n');
+
+// Matches MAX_LIGHTS in the fragment shader; the two must not drift apart.
+var MAX_LIGHTS = 4;
+var uLightPosTmp = new Float32Array(MAX_LIGHTS * 3);
+var uLightColTmp = new Float32Array(MAX_LIGHTS * 3);
+var uLightRangeTmp = new Float32Array(MAX_LIGHTS);
 
 ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   if (env.texture !== undefined) return env.texture;
@@ -242,6 +297,42 @@ ShaderPBR.updateUniforms = function (mesh, main) {
   var env = ShaderPBR.environments[ShaderPBR.idEnv];
   gl.uniform3fv(uniforms.uSPH, env.sph);
   if (env.size) gl.uniform2fv(uniforms.uEnvSize, env.size);
+
+  // THE SCENE'S LIGHTS, IN VIEW SPACE. vVertex is a view-space position, so the light has to
+  // meet it there; doing it on the CPU once per mesh beats handing the shader a matrix and a
+  // world position to multiply per pixel.
+  //
+  // A light is a locator, so its POSITION is its matrix's translation -- and that matrix is
+  // model space, which is the space the camera's view matrix expects. Whatever the light is
+  // parented to has already been folded in by the time it is read.
+  var lights = main.getLights ? main.getLights() : [];
+  var nb = Math.min(lights.length, MAX_LIGHTS);
+  for (var li = 0; li < nb; li++) {
+    var lm = lights[li].getModelSpaceMatrix ? lights[li].getModelSpaceMatrix() : lights[li].getMatrix();
+    var vm = main.getCamera().getView();
+    var px = lm[12], py = lm[13], pz = lm[14];
+    uLightPosTmp[li * 3]     = vm[0] * px + vm[4] * py + vm[8]  * pz + vm[12];
+    uLightPosTmp[li * 3 + 1] = vm[1] * px + vm[5] * py + vm[9]  * pz + vm[13];
+    uLightPosTmp[li * 3 + 2] = vm[2] * px + vm[6] * py + vm[10] * pz + vm[14];
+    var lc = lights[li]._lightColor || [1, 1, 1];
+    var inten = lights[li]._lightIntensity === undefined ? 1 : lights[li]._lightIntensity;
+    uLightColTmp[li * 3]     = lc[0] * inten;
+    uLightColTmp[li * 3 + 1] = lc[1] * inten;
+    uLightColTmp[li * 3 + 2] = lc[2] * inten;
+    uLightRangeTmp[li] = lights[li]._lightRange === undefined ? 50 : lights[li]._lightRange;
+  }
+  // The tail is zeroed rather than left stale: the loop is bounded by uNbLights, but a driver
+  // that unrolls it can still read past and a leftover position from a deleted light is a
+  // ghost nobody can find.
+  for (var lz = nb; lz < MAX_LIGHTS; lz++) {
+    uLightPosTmp[lz * 3] = uLightPosTmp[lz * 3 + 1] = uLightPosTmp[lz * 3 + 2] = 0;
+    uLightColTmp[lz * 3] = uLightColTmp[lz * 3 + 1] = uLightColTmp[lz * 3 + 2] = 0;
+    uLightRangeTmp[lz] = 1;
+  }
+  gl.uniform1i(uniforms.uNbLights, nb);
+  gl.uniform3fv(uniforms.uLightPos, uLightPosTmp);
+  gl.uniform3fv(uniforms.uLightCol, uLightColTmp);
+  gl.uniform1fv(uniforms.uLightRange, uLightRangeTmp);
 
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, ShaderPBR.getOrCreateEnvironment(gl, main, env));

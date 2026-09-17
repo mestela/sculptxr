@@ -3036,6 +3036,98 @@ class Scene {
     return mesh;
   }
 
+  // ── LIGHTS ARE OBJECTS ────────────────────────────────────────────────────────────
+  //
+  // Not a viewport setting: you add one and you put it where you want it. Which means it wants
+  // to be an ordinary scene object, and the cheapest way to be one here is to BE A LOCATOR --
+  // `_isNull` on top of `_isLight`, exactly as a rig joint carries `_isBone` AND `_isNull`
+  // ("transform-only locator: reuses the null constraint/eval paths", Skeleton.js).
+  //
+  // Carrying `_isNull` is what makes this small. Twenty-nine places already ask "is this a real
+  // piece of geometry" by checking that flag -- the exporter, the shadow caster list, skinning,
+  // weight cages, bone draw, the rendering-option sweeps, the phantom scan -- and every one of
+  // them gets a light right without being told about lights. What comes with it for free is the
+  // rest of the application: an outliner row, selection, the transform gizmo, parenting (so a
+  // light can hang off a bone), keyframes, and undo.
+  addLight() {
+    const mesh = this.buildLight();
+    this.addNewMesh(mesh);
+    this.decorateLight(mesh);
+    return mesh;
+  }
+
+  buildLight() {
+    var mesh = new Multimesh(Primitives.createSphere(this._gl, 0.5, 8, 8));
+    mesh.normalizeSize();
+    mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.05, 0.05, 0.05]);
+    mesh.setShaderType(Enums.Shader.FLAT);
+    mesh._typeName  = 'Light';
+    mesh._isLight   = true;
+    mesh._isNull    = true;    // see the note above: this is the flag that makes it harmless
+    mesh.isPickable = false;   // the sculpt brush skips it; still selectable by ray and outliner
+    mesh._lightColor     = [1.0, 0.98, 0.95];
+    mesh._lightIntensity = 1.0;
+    // RANGE FROM THE SCENE, not a constant. Units here are arbitrary and large -- the camel is
+    // about 180 across -- so a fixed range would light either nothing or everything depending on
+    // the model. Half the scene's diagonal puts the falloff somewhere useful on the first frame,
+    // which is the difference between "I added a light" and "I added a light and nothing
+    // happened".
+    mesh._lightRange = this._lightRangeForScene();
+    return mesh;
+  }
+
+  _lightRangeForScene() {
+    const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+    if (!real.length) return 50;
+    const box = this.computeBoundingBoxMeshes(real);
+    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return 50;
+    const d = vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+    return d > 1e-6 ? d * 0.5 : 50;
+  }
+
+  // The light's LOOK: a star of rays, in the light's own colour so a scene of several is
+  // readable at a glance. Depth-write off and frustumCulled off for the same reason the null's
+  // cruciform has them -- it is a handle, not geometry.
+  decorateLight(mesh) {
+    const tm = mesh.getThreeMesh();
+    if (!tm) return mesh;
+    tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    const pts = [];
+    const push = (x, y, z) => { pts.push(0, 0, 0, x, y, z); };
+    push(1, 0, 0); push(-1, 0, 0); push(0, 1, 0); push(0, -1, 0); push(0, 0, 1); push(0, 0, -1);
+    const d = 0.577;
+    push(d, d, d); push(-d, -d, -d); push(d, -d, d); push(-d, d, -d);
+    push(-d, d, d); push(d, -d, -d); push(d, d, -d); push(-d, -d, d);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+    const c = mesh._lightColor;
+    const rays = new THREE.LineSegments(geo,
+      new THREE.LineBasicMaterial({ color: new THREE.Color(c[0], c[1], c[2]), depthWrite: false }));
+    rays.name = 'light_rays';
+    rays.frustumCulled = false;
+    rays.scale.setScalar(4);
+    tm.add(rays);
+    return mesh;
+  }
+
+  // Repaint the handle after a colour change, so the gizmo keeps telling the truth.
+  refreshLightDecoration(mesh) {
+    const tm = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
+    const rays = tm && tm.getObjectByName && tm.getObjectByName('light_rays');
+    if (!rays || !mesh._lightColor) return;
+    rays.material.color.setRGB(mesh._lightColor[0], mesh._lightColor[1], mesh._lightColor[2]);
+  }
+
+  /** Every light in the scene, for the shader to read. */
+  getLights() {
+    const out = [];
+    const ms = this._meshes || [];
+    for (let i = 0; i < ms.length; i++) {
+      if (ms[i]._isLight && ms[i].isVisible && ms[i].isVisible()) out.push(ms[i]);
+    }
+    return out;
+  }
+
   // [Eye rig Phase 1] Look-at constraint pass — runs every frame before render. For
   // each mesh carrying `_lookAtTargetId`, aim its local -Z at the target's position
   // (keeping its own position + scale). Works in MODEL space so parented eyes (under

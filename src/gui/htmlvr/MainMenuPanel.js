@@ -2504,6 +2504,7 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
       <button class="mm-action-btn" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cyl</button>
       <button class="mm-action-btn" id="mm-add-null">Null</button>
+      <button class="mm-action-btn" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
       <button class="mm-action-btn" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
       <button class="mm-action-btn" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
     </div>
@@ -4489,6 +4490,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
   el.querySelector('#mm-add-null')?.addEventListener('click', () => {
     cancelPending(); main.addNull?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-add-light')?.addEventListener('click', () => {
+    cancelPending(); main.addLight?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-add-voxel')?.addEventListener('click', () => {
     cancelPending(); main.addVoxelObject?.(); main.render?.(); repaintFn(); // empty voxel space + Voxel tool

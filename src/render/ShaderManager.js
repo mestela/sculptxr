@@ -268,6 +268,16 @@ ShaderManager.updateUniforms = function(mesh, main) {
       }
     },
     uniform1f: function(loc, val) { unifs[loc].value = val; },
+    // An ARRAY of floats, which the mock had no entry for at all -- and a missing entry here is
+    // silent, exactly as the absent TEXTURE0 constant was. Copied rather than aliased: the
+    // caller reuses its scratch buffer every frame.
+    uniform1fv: function(loc, val) {
+      if (!unifs[loc]) return;
+      if (!Array.isArray(unifs[loc].value) || unifs[loc].value.length !== val.length) {
+        unifs[loc].value = new Array(val.length);
+      }
+      for (var i = 0; i < val.length; i++) unifs[loc].value[i] = val[i];
+    },
     uniform1i: function(loc, val) { 
       if (loc && loc.indexOf('uTexture') === 0) return; // Prevent overwriting THREE.Texture with 0
       unifs[loc].value = val; 
