@@ -1418,6 +1418,9 @@ class SculptGL extends Scene {
     if (lower.includes('.stl')) return 'stl';
     if (lower.includes('.ply')) return 'ply';
     if (lower.includes('.glb')) return 'glb';
+    // .gltf answered nothing while loadScene had a branch for it — the JSON flavour was
+    // unreachable rather than unsupported.
+    if (lower.includes('.gltf')) return 'gltf';
     
     return;
   }

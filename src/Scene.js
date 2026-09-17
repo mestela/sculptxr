@@ -4061,18 +4061,70 @@ class Scene {
     // picker is cancelled. Every route in — Open, Import, a browser save, a drop — arrives at this
     // one function, so one line covers them all.
     try { this._mainMenuPanel?.closeMenu?.(); } catch (_) {}
-    // A TYPE WE RECOGNISE BUT CANNOT READ MUST SAY SO. getFileType answers 'glb' because the app
-    // EXPORTS glb — but there is no importer for it (see src/files: ExportGLTF exists, no
-    // ImportGLTF), so the switch below fell through, newMeshes stayed undefined, and the load
-    // ended in silence. matt: "i tried loading a glb and obj back into sculptxr, both just
-    // silently return nothing, no error on the console." Not supported and broken look identical
-    // from the outside, and only one of them is worth reporting as a bug.
+    // GLB TAKES THE ASYNC ROUTE. Every other importer here is a synchronous parse of an array we
+    // already hold; GLTFLoader is not, because a glb may carry Draco or quantized meshes whose
+    // unpacking is the loader's job. So this branch finishes the load in a callback and returns
+    // nothing, rather than joining the switch below.
+    //
+    // (This used to be a refusal: the app EXPORTS glb, so getFileType answered 'glb' for a file
+    // nothing could open and the load ended in silence. matt: "i tried loading a glb and obj back
+    // into sculptxr, both just silently return nothing, no error on the console.")
     if (fileType === 'glb' || fileType === 'gltf') {
-      const msg = 'Cannot open ' + fileType.toUpperCase()
-        + ' — SculptXR exports glTF but does not import it yet. Use OBJ, PLY, STL or .sxr.';
-      console.warn('[load] ' + msg);
-      if (window.screenLog) window.screenLog(msg, 'yellow');
-      if (this._showToolToast) this._showToolToast('Cannot open ' + fileType.toUpperCase());
+      Import.importGLTF(fileData, this._gl, (meshes, stats) => {
+        if (!meshes || !meshes.length) {
+          const msg = 'Nothing to import from that ' + fileType.toUpperCase() + ' — no meshes in it.';
+          console.warn('[load] ' + msg);
+          if (window.screenLog) window.screenLog(msg, 'yellow');
+          return;
+        }
+        // NOMAD'S UNITS ARE NOT OURS, and the live link has always known it: every mesh that
+        // arrives over the wire is scaled by `_nomadScale` (50 by default) on its way in. A glb
+        // exported from the same Nomad scene is in those same units, so it needs the same
+        // conversion -- without it the character lands at a fiftieth of its size and everything
+        // measured in scene units (brush radius, bone width, the grid) is wrong against it.
+        // matt: "nomad link seems to bring things in at an appropriate scale, while the glb
+        // import is tiny."
+        //
+        // Keyed on the GENERATOR, not applied to everything: a glb from Blender or Maya is in
+        // metres and is nobody's business to rescale. One option (`nomadScale`) governs both
+        // routes, so tuning it cannot make the link and the importer disagree.
+        const nomad = /nomad/i.test(stats.generator || '');
+        const s = nomad ? (this._nomadScale || 1) : 1;
+        if (s !== 1) {
+          // Pre-multiplied, exactly as _applyNomadMatrix does it: scale THEN the node's own
+          // placement, so the conversion scales the positions as well as the geometry.
+          const S = mat4.create();
+          mat4.scale(S, S, [s, s, s]);
+          for (let i = 0; i < meshes.length; i++) {
+            const m = meshes[i].getMatrix();
+            mat4.multiply(m, S, m);
+          }
+        }
+        this.addImportedMeshes(meshes);
+        // SAID OUT LOUD, because the interesting part of this import is what it RECOVERED, and
+        // none of it is visible by looking: quads restored from a format with no quads, and
+        // seam vertices welded back into one surface. Both are silent when they go wrong —
+        // the model simply sculpts badly a week later.
+        const msg = 'Imported ' + stats.meshes + ' object(s), ' + stats.verts + ' verts'
+          + (s !== 1 ? ', x' + s + ' ' + (stats.generator || 'source') + ' units' : '')
+          + (stats.quads ? ', ' + stats.quads + ' quads recovered'
+              + (stats.ngon ? ' (FB_ngon declared)' : ' (fan-encoded)') : ' (all triangles)')
+          + (stats.merged ? ', welded ' + stats.merged + ' split verts' : '')
+          + (stats.uvs ? ', ' + stats.uvs + ' with UVs' : ', no UVs')
+          // Said because neither has anywhere to go yet and both change how the model looks:
+          // a transmissive material is the glass eye, and a texture is the thing the UVs are for.
+          + (stats.textured ? ', ' + stats.textured + ' textured (maps not imported yet)' : '')
+          + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '');
+        console.log('[load] ' + msg);
+        if (window.screenLog) window.screenLog(msg, 'lime');
+        if (this._showToolToast) this._showToolToast('Imported ' + stats.meshes + ' object(s)');
+        this.render();
+      }, (err) => {
+        const msg = 'Could not read that ' + fileType.toUpperCase() + ': ' + (err && err.message ? err.message : err);
+        console.error('[load] ' + msg);
+        if (window.screenLog) window.screenLog(msg, 'red');
+        if (this._showToolToast) this._showToolToast('Could not read ' + fileType.toUpperCase());
+      });
       return;
     }
 
