@@ -288,9 +288,12 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub('          const P_ON    = this.getPinchOn();           // skin-to-skin gap, metres',
         '          const P_ON    = 0.005;', 'pinch accessor');
   } else if (inj === 'numpadpush') {
-    const a = '          const target = Math.max(0.05, panelDist - gap);   // never inside the viewer\'s head';
-    if (!NUM.includes(a)) throw new Error('inject numpadpush: anchor moved (numpad distance)');
-    NUM = NUM.replace(a, '          const target = here - gap;');
+    // Repointed 2026-09-17: the distance-from-the-head rule this cut is gone. Same defect in its
+    // new form -- the numpad goes back to a fixed push along the panel's own +Z, which is "in
+    // front" only when the panel happens to face you.
+    const a = 'this.mesh.position.add(frontOfPanelOffset(';
+    if (!NUM.includes(a)) throw new Error('inject numpadpush: anchor moved (numpad clearance)');
+    NUM = NUM.replace(a, 'this.mesh.position.addScaledVector(new THREE.Vector3(0,0,1).applyQuaternion(panelQuat), 0.01); void ((');
   } else if (inj === 'partialreset') {
     sub('                  _p.mesh.rotation.set(wristPanelPitch(), _wYaw, 0);',
         '                  _p.mesh.rotation.y = _wYaw;', 'slot reset');
@@ -316,9 +319,12 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     if (!HVP.includes(a)) throw new Error('inject modaltie: anchor moved (modal bump)');
     HVP = HVP.replace(a, 'export const VR_MODAL_ORDER_BUMP = 0;');
   } else if (inj === 'kbmirror') {
-    const a = '    if (this.mesh && pMesh.scale) {';
-    if (!KBD.includes(a)) throw new Error('inject kbmirror: anchor moved (mirror sign)');
-    KBD = KBD.replace(a, '    if (false) {');
+    // Repointed 2026-09-17: the scale.y sign-copy this cut is gone, replaced by the shared
+    // matchPanelTransform. Same defect -- the overlay stops matching its source panel's mirror,
+    // so a pinned or hands-normalised panel produces a reversed keyboard.
+    const a = 'const panelQuat = matchPanelTransform(this.mesh, pMesh);';
+    if (!KBD.includes(a)) throw new Error('inject kbmirror: anchor moved (mirror rule)');
+    KBD = KBD.replace(a, 'const panelQuat = new THREE.Quaternion(); pMesh.getWorldQuaternion(panelQuat);');
   } else if (inj === 'optprop') {
     sub("    const o = getOptionsURL()[key];   // called — see the note in getPinchOn",
         '    const o = getOptionsURL[key];', 'option read');
@@ -957,8 +963,13 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     'two ways to hide the same dots drift apart');
 
   // ── the smooth modifier qualifies an action rather than being one ─────────
+  // REPOINTED 2026-09-17: the dispatch stopped re-deriving the mode and now reads the per-frame
+  // latch (Scene._updateSmoothModeLatch), so the condition is `_domPressed && this._smoothMode`.
+  // The INVARIANT is unchanged and is the thing asserted -- the stroke needs the dominant trigger
+  // as well as the off-hand one, or a lone left pinch starts smoothing on hands. The menu guard
+  // moved into the latch with the rest of the rule, and is per-hand there.
   check('the smooth override needs the dominant trigger as well as the offhand one',
-    /if \(session && session\.inputSources && _domPressed\s*\n\s*&& !this\._isPointingAtMenu && !this\._wasPointingAtMenu\) \{/.test(SRC),
+    /if \(_domPressed && this\._smoothMode\) \{/.test(SRC),
     'on hands the offhand pinch alone swapped the tool to Smooth and started smoothing');
   check('...with the dominant press read through the same accessor as every other press',
     /if \(src\.handedness === this\._dominantHand && this\._padOf\(src\)\?\.buttons\?\.\[0\]\?\.pressed\) \{/.test(SRC),
@@ -1701,24 +1712,26 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   check('...with no vertical term at all',
     !/yField/.test(KBD) && !/_kbTopGap/.test(KBD),
     'the field position used to move it, so it landed differently per input touched');
-  check('...stepping toward the viewer by a centimetre',
-    /const gap = window\._kbFrontGap \?\? 0\.01;/.test(KBD)
-      && /this\.mesh\.position\.addScaledVector\(toCam\.normalize\(\), gap\)/.test(KBD),
-    'in front means toward the head, and one centimetre is what was asked for');
+  // REPOINTED 2026-09-17: "toward the head by a centimetre" is not CLEARANCE from the panel --
+  // it yields gap x cos(angle), so it thinned to 1.5mm as the panel angled away. Concentric with
+  // the panel that was invisible; beside it, as the numpad sits, it was the whole bug. Both
+  // overlays use frontOfPanelOffset now, and panelmirror_test runs it across nine pitches.
+  check('...stepping off the panel by a centimetre, toward you',
+    /window\._kbFrontGap \?\? 0\.01/.test(KBD) && /frontOfPanelOffset\(/.test(KBD),
+    'one centimetre is what was asked for; along the NORMAL is what makes it a centimetre');
   check('...and the viewer position is actually asked for',
-    /const camPos = this\._viewerPosition\(\);/.test(KBD),
-    'a fallback that is always taken is not a fallback, it is the behaviour');
-  check('...falling back to the panel normal when there is no camera',
-    /else this\.mesh\.position\.addScaledVector\(toUser, gap\);/.test(KBD));
+    /this\._viewerPosition\(\)/.test(KBD),
+    'the viewer decides the SIGN of the normal -- a wrist panel\'s +Z can point away from you');
 
-  // The keyboard COPIES its parent's pose, so a fixed step toward the head puts it in front. The
-  // numpad deliberately sits BESIDE the field, and on an angled panel that sideways move carries
-  // it away from you — measured, it ended up farther from the head than the panel it floats over.
-  check('the numpad is brought to a DISTANCE from the head, not pushed by one',
-    /const target = Math\.max\(0\.05, panelDist - gap\);[\s\S]{0,160}?addScaledVector\(toCam\.normalize\(\), here - target\);/.test(NUM),
-    'a fixed push cannot beat an arbitrary sideways offset on an arbitrarily angled panel');
-  check('...clamped so it can never land inside the viewer',
-    /Math\.max\(0\.05, panelDist - gap\)/.test(NUM));
+  // REPOINTED 2026-09-17. The distance-from-the-head rule this asserted was itself a repair for a
+  // fixed push along the panel normal -- and it traded one fault for another: distance from the
+  // head is not clearance from the panel plane, so the gap ran 13.2 / 7.4 / 2.0 mm across pitch
+  // where it should have been constant. matt: "between making the panel face me, to facing the
+  // floor, the numpad is coplanar with the parent panel." The normal was right all along; only
+  // its SIGN needed the viewer, which is what the original push was missing.
+  check('the numpad stands off the panel PLANE, not off the head',
+    /frontOfPanelOffset\(/.test(NUM) && !/panelDist - gap/.test(NUM),
+    'distance from the head is not monotonic in clearance, which is what is actually wanted');
   check('...keeping the sideways placement that stops it covering the field',
     /addScaledVector\(right,  xFromFieldCentre \+ numW \/ 2 \+ GAP\)/.test(NUM),
     'a numpad on top of the number you are editing is worse than one that is hard to see');
@@ -1771,15 +1784,28 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // Measured: kbScale [1,-1,1] against mainScale [1,1,1]. Both carried -1 historically, so the
   // two mirrors cancelled; normalising the wrist panels left the keyboard mirrored alone.
   // Bind it to its guard: the assignment sitting inside an `if (false)` reads identically.
-  check('the overlay copies the source panel\u2019s mirror SIGN',
-    /if \(this\.mesh && pMesh\.scale\) \{\s*\n\s*const _sy = Math\.abs\(this\.mesh\.scale\.y\) \* \(pMesh\.scale\.y < 0 \? -1 : 1\);/.test(KBD),
-    'a keyboard that mirrors when its source does not comes up upside down');
-  check('...on all three overlays, not just the one that was reported',
-    /Math\.abs\(this\.mesh\.scale\.y\)/.test(NUM) && /Math\.abs\(this\.mesh\.scale\.y\)/.test(CNF),
-    'the numpad and confirm would flip the same way the moment they were opened');
-  check('...copying the sign rather than forcing a value',
-    /\? -1 : 1\);/.test(KBD),
-    'forcing +1 would break the controller path, where the source panel still mirrors');
+  // REPOINTED 2026-09-17 -- THESE RULES MOVED, AND SO DID THEIR HARNESS.
+  //
+  // This block asserted a scale.y mirror-sign copy on all three overlays. It was replaced, because
+  // it was wrong in a way nobody had hit yet: the guards tested scale.y, and a panel PLACED BY A
+  // DECOMPOSE carries its mirror on scale.x (three folds a negative determinant into sx). Pinning
+  // does exactly that, so a pinned panel's keyboard came up reversed left to right.
+  //
+  // It is one shared rule now -- matchPanelTransform in HTMLVRPanel -- and
+  // scratchpad/panelmirror_test.mjs owns it: that harness LIFTS AND RUNS the rule against every
+  // scale convention a panel arrives in, which is strictly more than these text matches checked.
+  // Restating it here would be two copies of one rule, which is what caused this in the first
+  // place. What stays is the AVP-specific half: the hands slot normalises a panel's scale, so that
+  // convention has to be one of the ones the shared rule handles.
+  check('the overlays share one placement rule rather than three copies',
+    /matchPanelTransform\(this\.mesh, pMesh\)/.test(KBD)
+      && /matchPanelTransform\(this\.mesh, animMesh\)/.test(NUM)
+      && /matchPanelTransform\(this\.mesh, panelMesh\)/.test(CNF),
+    'three private copies is how all three came to test the wrong axis together');
+  check('...with the hands-normalised convention still covered, in panelmirror_test',
+    /a hands-slot panel, normalised \(1,1,1\)/
+      .test(fs.readFileSync(path.join(REPO, 'scratchpad/panelmirror_test.mjs'), 'utf8')),
+    'the hands slot sets scale to +1; if that case is dropped there, it is covered nowhere');
 }
 
 // ── 4g. the Rz(180) compensation, conditional on the scale that causes it ────
@@ -1799,8 +1825,9 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     !/multiply\(new THREE\.Quaternion\(0, 0, 1, 0\)\)/.test(KBD + NUM + CNF),
     'one left behind is one panel that still flips');
   check('...and all three panels using the helper',
-    /panelWorldQuat\(pMesh\)/.test(KBD) && /panelWorldQuat\(animMesh\)/.test(NUM)
-      && /panelWorldQuat\(panelMesh\)/.test(CNF));
+    /matchPanelTransform\(this\.mesh, pMesh\)/.test(KBD)
+      && /matchPanelTransform\(this\.mesh, animMesh\)/.test(NUM)
+      && /matchPanelTransform\(this\.mesh, panelMesh\)/.test(CNF));
 }
 
 // ── 4h0. you cannot aim a tool with the tool you are aiming ──────────────────

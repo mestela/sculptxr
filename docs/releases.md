@@ -1,4 +1,4 @@
-# v3.44.7
+# v3.45.0
 **The VR keyboard was mirrored, and the axis was the whole story.** Open a pinned panel's Save
 dialog and the keyboard came up reversed left to right. Every guard in that path tested
 `scale.y < 0` -- but three's `Matrix4.decompose` folds a negative determinant into **sx** by
