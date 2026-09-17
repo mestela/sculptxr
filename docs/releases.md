@@ -1,4 +1,6 @@
-# v3.42.29
+# v3.43.0
+**A pass through Adurna35's bug report, worked one item at a time on device.**
+
 **The kaospad folds, and the fold bar is on the pad.** The four-slot blend pad takes a third of the
 blendshape panel by design, which is right while posing a face and pure cost otherwise. It now has a
 bar along its own top edge that folds it away, persisted. The first attempt put that chevron in the
@@ -36,7 +38,6 @@ packing rule scores (0,4,0) through `:has()` and `:not()` and there is a bare `.
 travel a press registers. There is no pressure to be sensitive to — analog pressure was built and
 deliberately disabled, because a short trigger throw makes you wiggle the start of every stroke.
 
-# v3.42.22
 **Crashes, found by widening the net rather than by waiting.** Symmetrize L→R then a Move stroke
 threw `symMap is not defined`: a `const` declared inside a `try` and read fifty lines later, after
 the `catch`. It only fired when the topological snap actually succeeded, because `snapped && symMap`
@@ -69,7 +70,6 @@ preview is hidden; selecting **Bone Draw** clears Hide All Decorations and turns
 neither Solid nor Wire is set, so the joints you place are visible; and the Quad Remesh option is
 **Mirror Halves**, which is what it does — it was never a duplicate of the Symmetry toggle.
 
-# v3.42.14
 **The stepping was the falloff, applied sixteen times.** Turning Keep Volume off revealed a ridge
 at the edge of every brush dab — introduced by the density compensation in v3.42.11, which raised
 the pass count from one to as many as sixteen. Each pass blended toward the smoothed position by
@@ -94,7 +94,6 @@ dyntopo mesh it is likely doing nothing. Both stay in the code; only the buttons
 hides while tangential is active, because the HC correction lives in `smooth()` and `smoothTangent()`
 never calls it.
 
-# v3.42.11
 **Smooth gets a Keep Volume button, and the reason it needed one is measurable.** The report was
 that Smooth barely touches a dense mesh at 100% strength. Two things were true at once. A one-ring
 laplacian moves each vertex toward its immediate neighbours, so its reach is set by EDGE LENGTH
@@ -114,7 +113,6 @@ the form stays, which is what saves thin geometry from becoming thin tubes; off 
 too. It is a button now, on both the main panel and the wrist panel, defaulting on, and persisted
 per tool with the rest of the brush settings.
 
-# v3.42.7
 **A round of Adurna35's bug report, and one rule learned three times over.** Remesh had been
 quietly leaving the original mesh behind — hidden, present in the outliner, and duplicated by the
 bake that followed — because the swap only ever called `setVisible(false)` on it. It also cost two

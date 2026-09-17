@@ -402,8 +402,12 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'syspinchdom') {
     sub('          if (!_otherOwnsIt) isPinching = true;', '          isPinching = true;', 'system pinch attribution');
   } else if (inj === 'offhandsmooth') {
-    sub('    if (session && session.inputSources && _domPressed\n        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {',
-        '    if (session && session.inputSources\n        && !this._isPointingAtMenu && !this._wasPointingAtMenu) {', 'both-trigger gate');
+    // Anchor repointed 2026-09-17: the dispatch stopped re-deriving the mode and now reads the
+    // per-frame latch, so the condition is `_domPressed && this._smoothMode`. Same defect being
+    // injected -- drop the dominant-trigger half, so the off-hand trigger ALONE arms Smooth and a
+    // lone left pinch starts smoothing on hands.
+    sub('    if (_domPressed && this._smoothMode) {',
+        '    if (this._smoothMode) {', 'both-trigger gate');
   } else if (inj === 'nocompositelog') {
     sub('      window._xrComposite = {', '      const _unused = {', 'compositor record');
   } else if (inj === 'foveateall') {
@@ -555,8 +559,11 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
     sub("(window._wristGripYaw ?? 90) * (source.handedness === 'left' ? 1 : -1)",
         '(window._wristGripYaw ?? 90)', 'yaw sign');
   } else if (inj === 'gazeshared') {
-    sub("          const _hand = source.targetRayMode === 'transient-pointer'\n            ? 'G'\n            : (source.handedness === 'left' ? 'L' : 'R');",
-        "          const _hand = source.handedness === 'left' ? 'L' : 'R';", 'gaze press key');
+    // Anchor repointed 2026-09-17: the transient-pointer branch moved up into `_handKey`, which
+    // is hoisted above the stroke-owns-input gate that reads it; `_hand` is now an alias. Inject
+    // the defect where the branch actually lives.
+    sub("          const _handKey = source.targetRayMode === 'transient-pointer'\n            ? 'G'\n            : (source.handedness === 'left' ? 'L' : 'R');",
+        "          const _handKey = source.handedness === 'left' ? 'L' : 'R';", 'gaze press key');
   } else if (inj === 'gazebehind') {
     sub('    mesh.renderOrder = VR_PANEL_RENDER_ORDER + 3;', '', 'render order');
   } else if (inj === 'stalemock') {
