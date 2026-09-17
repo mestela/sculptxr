@@ -428,5 +428,49 @@ check('a scrub re-seeds the simulation after the frame is solved',
     /window\._animArmed = true;/.test(REG));
 }
 
+// ── loop lives on the transport, not only in the options below it ───────────────────
+//
+// matt: "the transport controls in the animation panel (not the graph/dopesheet) needs a loop
+// button." Loop was already a setting; what was missing was reaching it from where you drive
+// playback. The risk in answering that with a second control is the two drifting apart, so what
+// is worth asserting is not that a button exists but that it is the SAME switch: one variable,
+// one save key, and one repaint that both controls are painted by.
+{
+  const ACP = read('src/gui/htmlvr/AnimationControlPanel.js');
+  check('the loop toggle sits with the transport controls',
+    /id="acp-loop-enabled"[\s\S]*?<div class="acp-transport">/.test(ACP),
+    'in the Record options it is where you configure playback, not where you drive it');
+  // A checkbox, not a button: loop is a MODE, and the row below is verbs. It also cannot BE a
+  // button there -- that row is a repeat(8, 1fr) grid, so a ninth drops to a second grid line an
+  // eighth of the panel wide, which is the shape of the bug matt photographed. Count them.
+  check('...as a toggle rather than a ninth transport button',
+    /<input type="checkbox" id="acp-loop-enabled"/.test(ACP)
+      && !/id="acp-loop"[^-]/.test(ACP)
+      && (ACP.match(/<div class="acp-transport">([\s\S]*?)<\/div>/) || [,''])[1]
+           .match(/<button /g).length === 8,
+    'a ninth button in that grid wraps to its own eighth-width line');
+  check('...and there is exactly ONE control for the setting',
+    (ACP.match(/id="acp-loop-enabled"/g) || []).length === 1
+      // Two writes: the one-time load of the saved option, and the control.
+      && (ACP.match(/window\._animLoopEnabled = /g) || []).length === 2,
+    'a second control for one setting is a duplicate row and a thing to keep in step');
+  check('...and persists through the option key it always used',
+    (ACP.match(/saveOption\?\.\('animLoopEnabled'/g) || []).length === 1);
+  // matt: "those onion skin options should be on indivisual rows, and folded into an 'onion
+  // skin' section, collapsed by defautlt." A section is just a title -- groupSectionTitles wraps
+  // every .acp-section-title and defaults to collapsed -- so the only way to get this wrong is
+  // to leave them where they were, packed onto a shared line under the numeric fields.
+  check('the onion options are their own section',
+    /<div class="acp-section-title">Onion Skin<\/div>/.test(ACP)
+      && /Onion Skin<\/div>[\s\S]{0,400}id="acp-onion"/.test(ACP));
+  check('...and take a line each rather than packing -- as does loop',
+    (ACP.match(/acp-check-row acp-check-own-row/g) || []).length === 3
+      && /\.acp-root\.acp-dense \.acp-stack > \.acp-check-own-row \{ flex: 1 1 100%; \}/.test(ACP),
+    'the dense layout packs check rows by default, which is what made them ragged');
+
+  check('...repainted from that state by _sync',
+    /loop\.checked = window\._animLoopEnabled !== false/.test(ACP));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

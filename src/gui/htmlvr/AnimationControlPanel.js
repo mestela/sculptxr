@@ -72,6 +72,10 @@ const CSS = `
    explicitly held at full width. */
 .acp-root.acp-dense .acp-stack > * { flex: 1 1 100%; min-width: 0; }
 .acp-root.acp-dense .acp-stack > .acp-check-row { flex: 0 1 auto; }
+/* ...unless the checkbox is part of a set. Packing reads as a tidy row when the labels are of a
+   length, and as a ragged edge when they are not -- which is what two onion options of very
+   different widths did. A group opts back out and takes a line each. */
+.acp-root.acp-dense .acp-stack > .acp-check-own-row { flex: 1 1 100%; }
 
 /* Numeric fields: label BESIDE the input, not above it. The stack was costing a 13px label
    line plus a gap for a value that is never more than three characters, so five of these ran
@@ -533,10 +537,26 @@ export function buildAnimationSectionHTML(main, style) {
             <input type="number" id="acp-loop-end" min="1" step="1" value="48">
           </div>
         </div>
-        <label class="acp-check-row" style="margin-top:16px">
+      </div>
+    </div>
+
+    <!-- 1b. Onion Skin -->
+    ${/* ITS OWN SECTION, COLLAPSED. These two rode along at the bottom of Frame Range, where the
+         dense layout packs check rows onto a shared line -- two labels of very different lengths
+         side by side under a row of numeric fields. matt: "the toggles above it are getting
+         ragged for onion skin and loop aware onion ... those onion skin options should be on
+         indivisual rows, and folded into an 'onion skin' section, collapsed by defautlt."
+
+         A .acp-section-title is all a section needs: groupSectionTitles wraps every one of them
+         and its default IS collapsed, so being folded away costs no extra wiring. The state is
+         sticky per section, so opening it once keeps it open for the session. */ ''}
+    <div class="acp-section">
+      <div class="acp-section-title">Onion Skin</div>
+      <div class="acp-stack">
+        <label class="acp-check-row acp-check-own-row">
           <input type="checkbox" id="acp-onion" checked> Onion skin (frames)
         </label>
-        <label class="acp-check-row">
+        <label class="acp-check-row acp-check-own-row">
           <input type="checkbox" id="acp-onion-loop"> Loop-aware onion
         </label>
       </div>
@@ -546,6 +566,24 @@ export function buildAnimationSectionHTML(main, style) {
     <div class="acp-section">
       <div class="acp-section-title">Transport</div>
       <div class="acp-stack">
+        ${/* LOOP BELONGS WITH THE TRANSPORT. It lived in the Record options, which is where you
+             go to CONFIGURE playback rather than where you go to drive it -- so while working you
+             either scrolled for it or did without. matt: "the transport controls in the animation
+             panel (not the graph/dopesheet) needs a loop button."
+
+             IT IS NOT A BUTTON, and it is not in the row below. That row is a repeat(8, 1fr)
+             grid, so a ninth button does not widen it, it drops to a second grid line one eighth
+             of the panel wide. matt: "don't make loop a buttn, make it a toggle like the onion
+             skin stuff." The row below is verbs -- things you press to make something happen --
+             and loop is a MODE that is simply on or off, which is what a checkbox says and a
+             momentary-looking button does not.
+
+             MOVED, NOT COPIED. Two controls for one setting is two things to keep in step and a
+             duplicate to stumble over; now that both would be the same kind of checkbox, keeping
+             the old one would just be the same row printed twice in one panel. */ ''}
+        <label class="acp-check-row acp-check-own-row">
+          <input type="checkbox" id="acp-loop-enabled" checked> Loop
+        </label>
         <div class="acp-transport">
           <button id="acp-to-start"   title="Jump to start">${faIcon('backward-step')}</button>
           <button id="acp-prev-frame" title="Previous frame">${faIcon('backward')}</button>
@@ -573,9 +611,6 @@ export function buildAnimationSectionHTML(main, style) {
         </label>
         <label class="acp-check-row">
           <input type="checkbox" id="acp-wait-trigger"> Start on click
-        </label>
-        <label class="acp-check-row">
-          <input type="checkbox" id="acp-loop-enabled" checked> Loop playback and recording
         </label>
         <button class="acp-btn-full" id="acp-reset-rig">Reset rig + pins</button>
         <div class="acp-stack" style="gap:4px">
@@ -1311,6 +1346,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     window.saveOption?.('animLoopEnabled', v);
     _sync();
   });
+
 
   el.querySelector('#acp-reset-rig')?.addEventListener('click', () => {
     IKSolver.resetRigAndPins(main);

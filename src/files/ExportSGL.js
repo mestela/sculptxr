@@ -1,4 +1,5 @@
 import ShaderBase from '../render/shaders/ShaderBase.js';
+import TextureIO from './TextureIO.js';
 import Skeleton from '../editing/Skeleton.js';
 
 var Export = {};
@@ -515,6 +516,15 @@ Export.exportSGL = function (meshes, main) {
     // Frame-by-frame (cel) animation: append an independent, footer-located block
     // after the mesh data. Old importers stop after the mesh data and ignore it.
     var parts = [data];
+    // Textures: the images and material scalars, appended footer block. FIRST of the three, for
+    // the same reason the comment below gives -- FrameGroup's reader only inspects the final 8
+    // bytes, so its block has to stay last, and SKEL's finder walks past whatever is after it.
+    try {
+      var texBuf = TextureIO.serialize(meshes);
+      if (texBuf && texBuf.byteLength) parts.push(texBuf);
+    } catch (e) {
+      console.error('[TextureIO] export append failed', e);
+    }
     // Scene hierarchy + bones: appended footer block. MUST come before the frame-group
     // block — FrameGroup's reader only inspects the final 8 bytes of the file, so anything
     // appended after it makes it silently skip its own data.

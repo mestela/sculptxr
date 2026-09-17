@@ -221,8 +221,13 @@ check('...and the slider writes that radius', /shadow\.radius = this\._softness;
 // ── 7. THE FLAGS SURVIVE A SAVE ───────────────────────────────────────────────────────────────
 // They ride in the SKEL footer block, which is versioned on its own — no change to the fragile
 // per-mesh binary layout of the SGL format itself.
+// AT LEAST 16, not exactly 16. The version this feature needed was 16, and the block keeps
+// growing for reasons that have nothing to do with shadows -- pinning the exact number makes
+// every later section's bump look like a shadow regression, which is what it did when v17 added
+// the physics parameters. What matters here is that the shadow flags are not readable by a build
+// older than the one that introduced them.
 check('the SKEL block version was bumped for the shadow flags',
-  /const SKEL_VERSION = 16;/.test(SKEL));
+  Number((SKEL.match(/const SKEL_VERSION = (\d+);/) || [, 0])[1]) >= 16);
 check('...the two bits are written, above every existing flag',
   /\| \(m\._isShadowCatcher \? 256 : 0\) \| \(m\._isShadowLight \? 512 : 0\),/.test(SKEL),
   'so an older build reads neither and gets the pre-feature scene rather than a broken one');

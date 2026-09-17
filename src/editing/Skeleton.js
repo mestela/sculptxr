@@ -4082,7 +4082,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 16;  // v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 17;  // v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -4284,6 +4284,24 @@ Skeleton.serialize = function (meshes, main) {
       it: p.inertia, mb: p.maxBend, co: p.collide ? 1 : 0 });
   });
 
+  // v17: MASS, SUBSTEPS AND ITERATIONS -- the three DEFAULTS has grown since v14, and the exact
+  // repeat of the bug v14 was written to fix. Every parameter added to PhysicsBones lands in
+  // `_physicsParams` and works perfectly until you save, and then comes back as a default: the
+  // note above says v11 dropped five for the same reason. These three are the ones that decide
+  // how a chain FEELS -- mass is the axis stiffness cannot reach, and the solver counts are what
+  // took it from ringing to controllable -- so a reload undoing them undoes the tuning session.
+  //
+  // Whoever adds the tenth parameter: add it HERE, in a new section, and check this list against
+  // PhysicsBones.DEFAULTS. Its own section for the usual reason -- a v14 reader stops before it
+  // and still gets everything it knows about, and a v14 file read here just leaves the defaults
+  // standing.
+  const phys3 = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isBone || !m._physicsRoot) return;
+    const p = m._physicsParams || {};
+    phys3.push({ i: i, ms: p.mass, sb: p.substeps, it: p.iterations });
+  });
+
   // v10: the joint's offset, where a face drag has moved its shape off it. Its own section
   // rather than three more floats on the v9 one, so a file written by a build that had scale and
   // not offset still reads.
@@ -4324,6 +4342,7 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + phys.length * 4;
   slots += 1 + phys2.length * 7;   // v14: i + drag, ground, groundY, inertia, maxBend, collide
   slots += 1 + rig.length * 7;     // v15: i + aim, saccades, amp, speed, smooth, mirror
+  slots += 1 + phys3.length * 4;   // v17: i + mass, substeps, iterations
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -4385,6 +4404,10 @@ Skeleton.serialize = function (meshes, main) {
     u[o++] = r.i; u[o++] = r.aim; u[o++] = r.sac;
     f[o++] = r.amp; f[o++] = r.spd; f[o++] = r.smo; u[o++] = r.mir;
   }
+
+  // Substeps and iterations are COUNTS, so they go through the u32 view; mass is a multiplier.
+  u[o++] = phys3.length;
+  for (const ph of phys3) { u[o++] = ph.i; f[o++] = ph.ms; u[o++] = ph.sb; u[o++] = ph.it; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -4731,6 +4754,20 @@ Skeleton.deserialize = function (buffer, meshes, main) {
           try { main.mirrorMesh(m.getID()); }
           catch (e) { console.warn('[Skeleton] mirror restore failed for mesh', mi, e); }
         }
+      }
+    }
+
+    // v17: merged onto whatever v11/v14 built, exactly as v14 merges onto v11.
+    if (ver >= 17) {
+      const pn3 = u[o++];
+      for (let i = 0; i < pn3; i++) {
+        const mi = u[o++];
+        const ms = f[o++], sb = u[o++], it3 = u[o++];
+        const m = meshes[mi];
+        if (!m) continue;
+        const cur = m._physicsParams || {};
+        cur.mass = ms; cur.substeps = sb; cur.iterations = it3;
+        m._physicsParams = cur;
       }
     }
 

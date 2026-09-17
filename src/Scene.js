@@ -34,6 +34,7 @@ import Background from './drawables/Background.js';
 import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
+import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
 import IKSolver from './editing/IKSolver.js';
@@ -4264,6 +4265,11 @@ class Scene {
       // hand-built parenting (rigs, nulls) and deliberately skips FrameGroup's own
       // children, so the two never reparent the same mesh.
       if (fileType === 'sgl') Skeleton.deserialize(fileData, added, this);
+
+      // Textures: the images and the material scalars. Last of the restores because it is the
+      // only one that finishes ASYNCHRONOUSLY -- decoding an image is -- so the maps land a
+      // frame or two after everything else is already standing.
+      if (fileType === 'sgl') TextureIO.deserialize(fileData, added, THREE);
 
       if (fileType === 'sgl' && this._frameGroup) {
         try { this._frameGroup.deserialize(fileData, added); }
