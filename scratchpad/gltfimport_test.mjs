@@ -412,7 +412,7 @@ check('...roughness from GREEN and metalness from BLUE, times their factors',
 check('...replacing the per-vertex values rather than multiplying them',
   /THE MAP REPLACES the per-vertex values/.test(PBR));
 check('...and any map, not just albedo, turns on the uv pipeline',
-  /hasTextureMap\(\) \{ return !!\(this\._albedoMap \|\| this\._roughMetalMap\); \}/.test(MESH)
+  /hasTextureMap\(\) \{ return !!\(this\._albedoMap \|\| this\._roughMetalMap/.test(MESH)
     && /return !!\(this\.hasTextureMap\(\) && this\.hasUV\(\)\);/.test(MESH));
 
 // THE ENVIRONMENT HAS BEEN UNBOUND SINCE THE THREE.JS PORT. The mocked gl that intercepts the
@@ -430,6 +430,33 @@ check('...and a missing constant falls back to unit 0 rather than NaN',
 check('the environment learns its own size when it loads',
   /if \(tex && tex\.image\) env\.size = \[tex\.image\.width, tex\.image\.height\];/.test(PBR),
   'no environment declares a size, so the guard in updateUniforms never fired and it sat at 0,0');
+
+// ── normal maps, without tangents ───────────────────────────────────────────────────
+check('the normal map is imported, linear and with its scale',
+  /const withN = prims\.map\(matOf\)\.find\(\(m\) => m && m\.normalMap\);/.test(SRC)
+    && /withN\.normalScale && withN\.normalScale\.x !== undefined \? withN\.normalScale\.x : 1/.test(SRC));
+
+// NO TANGENT ATTRIBUTE, and in a sculpting application that is the correct call rather than a
+// shortcut: a tangent is derived from positions and uvs, so it is STALE the moment a brush
+// moves a vertex. Caching one means recomputing it with the normals on every stroke, on every
+// level of the multires stack, or lighting that drifts off the surface it describes.
+check('tangents come from derivatives, not from a cached attribute',
+  /mat3 cotangentFrame\(vec3 N, vec3 p, vec2 uv\) \{/.test(PBR)
+    && /vec3 dp1 = dFdx\(p\);/.test(PBR),
+  'a tangent attribute goes stale under every brush stroke');
+check('...and nothing added a tangent buffer to the mesh pipeline',
+  !/setTangents|aTangent|getTangentBuffer/.test(MESH),
+  'the point of the derivative frame is that the buffer pipeline is untouched');
+// A degenerate uv triangle gives T = B = 0, and inversesqrt(0) is infinity -> a NaN normal.
+check('...guarded against a degenerate uv triangle',
+  /inversesqrt\(max\(max\(dot\(T, T\), dot\(B, B\)\), 1e-12\)\)/.test(PBR),
+  'without the floor a zero-area uv face paints NaN');
+check('...perturbing in VIEW space, where both the normal and vVertex already are',
+  /normal = normalize\(cotangentFrame\(normal, vVertex, vAlbedoUv\) \* mapN\);/.test(PBR));
+check('...and the scale applies to xy only, as glTF specifies',
+  /mapN\.xy \*= uNormalScale;/.test(PBR));
+check('a normal map also turns on the uv pipeline',
+  /this\._albedoMap \|\| this\._roughMetalMap \|\| this\._normalMap/.test(MESH));
 
 console.log(fails ? '\n' + fails + ' FAILURE(S)' : '\nall checks passed');
 process.exit(fails ? 1 : 0);

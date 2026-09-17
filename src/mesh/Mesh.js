@@ -2518,9 +2518,25 @@ class Mesh {
     }
   }
 
+  // THE NORMAL MAP, tangent space, +Y up (glTF's convention). Linear data like the metal/rough
+  // one. No tangent attribute goes with it -- see the cotangent frame in ShaderPBR for why a
+  // sculpting app is exactly the wrong place to cache tangents.
+  getNormalMap() { return this._normalMap || null; }
+  getNormalScale() { return this._normalScale === undefined ? 1 : this._normalScale; }
+
+  setNormalMap(tex, scale) {
+    this._normalMap = tex || null;
+    if (scale !== undefined) this._normalScale = scale;
+    if (this._renderData && this._renderData._threeMesh) {
+      this._renderData._threeMesh.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+      if (this.hasUV()) { this.updateDuplicateGeometry(); this.updateDrawArrays(); }
+      this.updateBuffers();
+    }
+  }
+
   // ANY map at all, which is what the uv pipeline and the per-mesh material both turn on for.
   // Asking about the albedo map specifically was right while it was the only one.
-  hasTextureMap() { return !!(this._albedoMap || this._roughMetalMap); }
+  hasTextureMap() { return !!(this._albedoMap || this._roughMetalMap || this._normalMap); }
 
   // HOW MUCH OF WHAT IS BEHIND THIS SURFACE COMES THROUGH IT. 0 is an ordinary opaque surface,
   // 1 is clear glass. Separate from opacity on purpose: opacity fades the whole shaded result

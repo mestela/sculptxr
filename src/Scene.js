@@ -4117,6 +4117,7 @@ class Scene {
           // a transmissive material is the glass eye, and a texture is the thing the UVs are for.
           + (stats.textured ? ', ' + stats.textured + ' with colour maps' : '')
           + (stats.roughMetalMapped ? ', ' + stats.roughMetalMapped + ' with metal/rough maps' : '')
+          + (stats.normalMapped ? ', ' + stats.normalMapped + ' with normal maps' : '')
           + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '');
         console.log('[load] ' + msg);
         if (window.screenLog) window.screenLog(msg, 'lime');
@@ -4187,6 +4188,9 @@ class Scene {
       // importer can only set it on the level it built. Same reason the label is copied here.
       if (innerMesh._albedoMap && mesh.setAlbedoMap) mesh.setAlbedoMap(innerMesh._albedoMap);
       if (innerMesh._transmission && mesh.setTransmission) mesh.setTransmission(innerMesh._transmission);
+      if (innerMesh._normalMap && mesh.setNormalMap) {
+        mesh.setNormalMap(innerMesh._normalMap, innerMesh._normalScale);
+      }
       if (innerMesh._roughMetalMap && mesh.setRoughMetalMap) {
         mesh.setRoughMetalMap(innerMesh._roughMetalMap, innerMesh._roughFactor, innerMesh._metalFactor);
       }

@@ -58,7 +58,9 @@ ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness',
   // fragment for what it does and what it deliberately does not.
   'uTransmission',
   // glTF's packed metallicRoughnessTexture and its two factors.
-  'uRoughMetalMap', 'uHasRoughMetal', 'uRoughFactor', 'uMetalFactor'];
+  'uRoughMetalMap', 'uHasRoughMetal', 'uRoughFactor', 'uMetalFactor',
+  // Tangent-space normal map. No tangent ATTRIBUTE goes with it -- see cotangentFrame.
+  'uNormalMap', 'uHasNormalMap', 'uNormalScale'];
 Array.prototype.push.apply(ShaderPBR.uniformNames, ShaderBase.uniformNames.commonUniforms);
 
 ShaderPBR.vertex = [
@@ -109,13 +111,50 @@ ShaderPBR.fragment = [
   'uniform float uHasRoughMetal;',
   'uniform float uRoughFactor;',
   'uniform float uMetalFactor;',
+  'uniform sampler2D uNormalMap;',
+  'uniform float uHasNormalMap;',
+  'uniform float uNormalScale;',
   'uniform float uAlpha;',
   ShaderBase.strings.fragColorUniforms,
   ShaderBase.strings.fragColorFunction,
   pbrGLSL,
   '',
+  // TANGENTS FROM DERIVATIVES, NOT FROM AN ATTRIBUTE, and in a sculpting application that is
+  // not a shortcut -- it is the correct call.
+  //
+  // A tangent attribute is derived from positions and uvs, so it is STALE the moment either
+  // changes. Here the geometry changes under every brush stroke: a cached tangent would have to
+  // be recomputed with the normals on every edit, on every level of the multires stack, or the
+  // lighting would quietly drift away from the surface it is meant to describe. The frame below
+  // is rebuilt per pixel from the derivatives of the position and uv that are ALREADY varying,
+  // so it cannot go stale and costs no buffer, no upload, and no invalidation rule.
+  //
+  // (Christian Schuler's cotangent frame. It reconstructs the same basis a per-vertex tangent
+  // would give, up to the handedness that dFdy's sign carries for us.)
+  'mat3 cotangentFrame(vec3 N, vec3 p, vec2 uv) {',
+  '  vec3 dp1 = dFdx(p);',
+  '  vec3 dp2 = dFdy(p);',
+  '  vec2 duv1 = dFdx(uv);',
+  '  vec2 duv2 = dFdy(uv);',
+  '  vec3 dp2perp = cross(dp2, N);',
+  '  vec3 dp1perp = cross(N, dp1);',
+  '  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;',
+  '  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;',
+  // The epsilon is load-bearing: a face with a degenerate uv triangle gives T = B = 0, and
+  // inversesqrt(0) is infinity, which would paint that pixel with a NaN normal.
+  '  float invmax = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-12));',
+  '  return mat3(T * invmax, B * invmax, N);',
+  '}',
+  '',
   'void main(void) {',
   '  vec3 normal = getNormal();',
+  // Both vVertex and the normal are in VIEW space (see the vertex shader), so the frame and the
+  // perturbed normal stay in the one space computeIBL_UE4 expects.
+  '  if (uHasNormalMap > 0.5) {',
+  '    vec3 mapN = texture2D(uNormalMap, vAlbedoUv).xyz * 2.0 - 1.0;',
+  '    mapN.xy *= uNormalScale;',
+  '    normal = normalize(cotangentFrame(normal, vVertex, vAlbedoUv) * mapN);',
+  '  }',
   '  float roughness = max( 0.0001, vRoughness );',
   '  float metallic = vMetallic;',
   // glTF packs ROUGHNESS IN GREEN and METALNESS IN BLUE of one texture, each scaled by its

@@ -324,6 +324,17 @@ function buildMesh(prims, gl, name, stats) {
     if (stats) stats.roughMetalMapped++;
   }
 
+  // The tangent-space normal map. Linear data again, and glTF's normalTexture carries a `scale`
+  // that GLTFLoader puts in material.normalScale as a Vector2 (x and y always match for glTF).
+  const withN = prims.map(matOf).find((m) => m && m.normalMap);
+  if (withN && mesh.setNormalMap) {
+    withN.normalMap.flipY = false;
+    withN.normalMap.needsUpdate = true;
+    mesh.setNormalMap(withN.normalMap,
+      withN.normalScale && withN.normalScale.x !== undefined ? withN.normalScale.x : 1);
+    if (stats) stats.normalMapped++;
+  }
+
   const withMap = prims.map(matOf).find((m) => m && m.map);
   if (withMap) {
     const tex = withMap.map;
@@ -384,7 +395,7 @@ Import.importGLTF = function (data, gl, onDone, onFail) {
     const used = json.extensionsUsed || [];
     const stats = { meshes: 0, verts: 0, quads: 0, merged: 0, uvs: 0,
                     transmissive: 0, textured: 0, perVertexMaterial: 0, vertexColours: 0,
-                    roughMetalMapped: 0,
+                    roughMetalMapped: 0, normalMapped: 0,
                     // Who wrote the file, so the caller can apply that source's unit
                     // conversion -- Nomad's units are not scene units. See Scene.loadScene.
                     generator: (json.asset && json.asset.generator) || '',

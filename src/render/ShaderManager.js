@@ -359,6 +359,12 @@ ShaderManager.updateUniforms = function(mesh, main) {
       unifs.uRoughFactor.value = mesh.getRoughFactor ? mesh.getRoughFactor() : 1;
       unifs.uMetalFactor.value = mesh.getMetalFactor ? mesh.getMetalFactor() : 1;
     }
+    if (unifs.uNormalMap) {
+      var nmap = mesh.getNormalMap ? mesh.getNormalMap() : null;
+      unifs.uNormalMap.value = nmap || ShaderManager._dummyTex;
+      unifs.uHasNormalMap.value = nmap ? 1 : 0;
+      unifs.uNormalScale.value = mesh.getNormalScale ? mesh.getNormalScale() : 1;
+    }
     if (unifs.uTransmission) {
       unifs.uTransmission.value = mesh.getTransmission ? mesh.getTransmission() : 0;
     }
