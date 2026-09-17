@@ -4111,6 +4111,8 @@ class Scene {
               + (stats.ngon ? ' (FB_ngon declared)' : ' (fan-encoded)') : ' (all triangles)')
           + (stats.merged ? ', welded ' + stats.merged + ' split verts' : '')
           + (stats.uvs ? ', ' + stats.uvs + ' with UVs' : ', no UVs')
+          + (stats.vertexColours ? ', ' + stats.vertexColours + ' with vertex colours' : '')
+          + (stats.perVertexMaterial ? ', ' + stats.perVertexMaterial + ' with per-vertex rough/metal' : '')
           // Said because neither has anywhere to go yet and both change how the model looks:
           // a transmissive material is the glass eye, and a texture is the thing the UVs are for.
           + (stats.textured ? ', ' + stats.textured + ' textured (maps not imported yet)' : '')
@@ -4180,6 +4182,9 @@ class Scene {
       if (innerMesh._permanentStaticLabel) {
         mesh._permanentStaticLabel = innerMesh._permanentStaticLabel;
       }
+      // The albedo map rides on the WRAPPER too: the renderer asks the Multimesh for it, and an
+      // importer can only set it on the level it built. Same reason the label is copied here.
+      if (innerMesh._albedoMap && mesh.setAlbedoMap) mesh.setAlbedoMap(innerMesh._albedoMap);
       if (innerMesh._permanentStaticId) {
         mesh._permanentStaticId = innerMesh._permanentStaticId;
       }

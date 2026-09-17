@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Utils from '../misc/Utils.js';
@@ -25,6 +26,10 @@ import Utils from '../misc/Utils.js';
 // FACTORS do have somewhere to go and are carried; the maps wait for the material work.
 
 var Import = {};
+
+// Named once: three renamed this between versions, and an undefined colour space silently
+// leaves the texture linear, which reads as a washed-out model rather than an error.
+const THREE_SRGB = THREE.SRGBColorSpace !== undefined ? THREE.SRGBColorSpace : undefined;
 
 // ---- 1. quads -------------------------------------------------------------------------
 //
@@ -140,6 +145,23 @@ function weld(pos, nbOld, used) {
   return { vertices: new Float32Array(out), map: map, rep: rep, merged: nbUsed - rep.length };
 }
 
+// A NORMALIZED INTEGER ATTRIBUTE IS NOT ITS RAW VALUE, and reading it as one is silent: glTF
+// stores COLOR_0 as normalized ushort by default, so a white vertex is 65535, and writing that
+// straight into a float colour clamps to 1. The whole model imports WHITE and nothing warns.
+// matt: "it loads correctly into other online glb viewers, but in here it loads unlit white."
+//
+// Divisors are the glTF spec's: unsigned by max, signed by max positive with a floor at -1.
+function denormalizer(attr) {
+  if (!attr.normalized) return (v) => v;
+  const a = attr.array;
+  if (a instanceof Uint8Array) return (v) => v / 255;
+  if (a instanceof Uint16Array) return (v) => v / 65535;
+  if (a instanceof Uint32Array) return (v) => v / 4294967295;
+  if (a instanceof Int8Array) return (v) => Math.max(v / 127, -1);
+  if (a instanceof Int16Array) return (v) => Math.max(v / 32767, -1);
+  return (v) => v;
+}
+
 // The distinct uv VALUES, plus the original-vertex -> pool-slot map. See the note at the call
 // site for why value and not index.
 function buildUVPool(uvAttr, nbOld) {
@@ -219,10 +241,10 @@ function buildMesh(prims, gl, name, stats) {
   // renderer keeps that.
   if (colAttr && colAttr.count === nbOld) {
     const cs = new Float32Array(nbNew * 3);
-    const src = colAttr.array, stride = colAttr.itemSize;
+    const src = colAttr.array, stride = colAttr.itemSize, dn = denormalizer(colAttr);
     for (let i = 0; i < nbNew; i++) {
       const o = w.rep[i] * stride;
-      cs[i * 3] = src[o]; cs[i * 3 + 1] = src[o + 1]; cs[i * 3 + 2] = src[o + 2];
+      cs[i * 3] = dn(src[o]); cs[i * 3 + 1] = dn(src[o + 1]); cs[i * 3 + 2] = dn(src[o + 2]);
     }
     mesh.setColors(cs);
   } else if (prims.some((o) => matOf(o) && matOf(o).color)) {
@@ -231,9 +253,25 @@ function buildMesh(prims, gl, name, stats) {
     mesh.setColors(cs);
   }
 
-  // Roughness / metalness, painted the same way. The third slot is the sculpt MASK and must
-  // start at 1 (see Mesh.initColorsAndMaterials) or the mesh imports fully masked.
-  if (prims.some((o) => { const m = matOf(o); return m && (m.roughness !== undefined || m.metalness !== undefined); })) {
+  // COLOR_1 IS THIS APP'S MATERIAL VECTOR, not a second colour set. Nomad writes a normalized
+  // ubyte VEC4 per vertex whose xyz are (roughness, metalness, mask) -- the same three values,
+  // in the same order, that Mesh.setMaterials takes, because Nomad and SculptXR come from the
+  // same SculptGL lineage. Checked against the material factors in the same file: gums 40/255 =
+  // 0.157 against roughness 0.157, teeth 21/255 = 0.082 against 0.082.
+  //
+  // Taken in preference to the material factor because it is PER VERTEX -- a sculpt painted with
+  // varying roughness keeps that variation, where flooding a factor would flatten it.
+  const mat1 = geo0.attributes.color_1 || geo0.attributes.COLOR_1;
+  if (mat1 && mat1.count === nbOld) {
+    const ms = new Float32Array(nbNew * 3);
+    const src = mat1.array, stride = mat1.itemSize, dn = denormalizer(mat1);
+    for (let i = 0; i < nbNew; i++) {
+      const o = w.rep[i] * stride;
+      ms[i * 3] = dn(src[o]); ms[i * 3 + 1] = dn(src[o + 1]); ms[i * 3 + 2] = dn(src[o + 2]);
+    }
+    mesh.setMaterials(ms);
+    if (stats) stats.perVertexMaterial++;
+  } else if (prims.some((o) => { const m = matOf(o); return m && (m.roughness !== undefined || m.metalness !== undefined); })) {
     const ms = new Float32Array(nbNew * 3);
     for (let i = 0; i < nbNew; i++) { ms[i * 3] = 0.25; ms[i * 3 + 1] = 0; ms[i * 3 + 2] = 1; }
     paintPerPrimitive(prims, perPrim, w, ms, (m) => m
@@ -256,6 +294,27 @@ function buildMesh(prims, gl, name, stats) {
 
   mesh._permanentStaticLabel = name || first.name || 'Mesh';
 
+  // THE BASE-COLOUR MAP. GLTFLoader has already decoded the image and built the THREE.Texture
+  // with the right wrapping and filtering, so this is a handover rather than a decode.
+  //
+  // ONE MAP PER OBJECT, and that is a real limit worth naming: glTF hangs a material off each
+  // PRIMITIVE, and the primitives of one mesh have just been merged into one object, so a body
+  // painted with three different images keeps only the first. Nomad writes one image per object
+  // (the camel's body has a single colour map across all three of its primitives), which is why
+  // this is a limit and not a bug today. Normal and metal/rough maps are not taken at all yet --
+  // there is no sampler for them.
+  const withMap = prims.map(matOf).find((m) => m && m.map);
+  if (withMap) {
+    const tex = withMap.map;
+    // glTF base colour is sRGB. Marked explicitly because the shader converts with the same
+    // function it uses for vertex colour, and a mislabelled texture would sit a gamma apart
+    // from the colours it multiplies.
+    if (THREE_SRGB) tex.colorSpace = THREE_SRGB;
+    tex.flipY = false;              // glTF UVs have their origin at the top left
+    tex.needsUpdate = true;
+    mesh.setAlbedoMap ? mesh.setAlbedoMap(tex) : (mesh._albedoMap = tex);
+  }
+
   if (stats) {
     stats.meshes++;
     stats.verts += nbNew;
@@ -263,6 +322,7 @@ function buildMesh(prims, gl, name, stats) {
     for (let p = 0; p < perPrim.length; p++)
       for (let i = 0; i < perPrim[p].length; i++) if (perPrim[p][i].length === 4) stats.quads++;
     if (uvAttr) stats.uvs++;
+    if (colAttr && colAttr.count === nbOld) stats.vertexColours++;
     const tm = prims.map(matOf).find((m) => m && m.transmission > 0);
     if (tm) stats.transmissive++;
     if (prims.map(matOf).some((m) => m && m.map)) stats.textured++;
@@ -303,7 +363,7 @@ Import.importGLTF = function (data, gl, onDone, onFail) {
     const json = (gltf.parser && gltf.parser.json) || {};
     const used = json.extensionsUsed || [];
     const stats = { meshes: 0, verts: 0, quads: 0, merged: 0, uvs: 0,
-                    transmissive: 0, textured: 0,
+                    transmissive: 0, textured: 0, perVertexMaterial: 0, vertexColours: 0,
                     // Who wrote the file, so the caller can apply that source's unit
                     // conversion -- Nomad's units are not scene units. See Scene.loadScene.
                     generator: (json.asset && json.asset.generator) || '',

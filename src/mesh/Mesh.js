@@ -491,7 +491,7 @@ class Mesh {
     if (!this._renderData._threeMesh) {
 
       
-      var material = ShaderManager.getMaterial(this.getShaderType());
+      var material = ShaderManager.getMaterialFor(this, this.getShaderType());
       if (!material) {
         material = new THREE.MeshStandardMaterial({
           color: 0xcccccc,
@@ -2496,9 +2496,35 @@ class Mesh {
     return this._renderData._useDrawArrays || RenderData.ONLY_DRAW_ARRAYS;
   }
 
+  // AN ALBEDO MAP, when the mesh came in with one. Kept on the mesh rather than the material
+  // because materials are SHARED per shader type (see ShaderManager.getMaterial) -- a texture on
+  // the shared one would put the last textured mesh's image on every mesh in the scene.
+  getAlbedoMap() { return this._albedoMap || null; }
+
+  setAlbedoMap(tex) {
+    this._albedoMap = tex || null;
+    // The UV pipeline is switched on by isUsingTexCoords, and everything downstream of it --
+    // the duplicated vertices, the uv buffer, the uv-indexed triangles -- is rebuilt from
+    // scratch, so this has to run the same refresh setShaderType does when UVs appear.
+    if (this._renderData && this._renderData._threeMesh) {
+      this._renderData._threeMesh.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+      if (this.hasUV()) { this.updateDuplicateGeometry(); this.updateDrawArrays(); }
+      this.updateBuffers();
+    }
+  }
+
+  // WHEN THE UV PIPELINE RUNS AT ALL. It used to be the two UV DISPLAY modes and nothing else,
+  // which is why an imported texture had nowhere to go: in ordinary PBR viewing the geometry
+  // carried no `uv` attribute and the index buffer used the unduplicated triangles, so the seam
+  // vertices the app had already built were never uploaded.
+  //
+  // A mesh with an albedo map needs exactly the same pipeline for the ordinary shader, so the
+  // question is no longer "which display mode" but "does this mesh have texture coordinates
+  // that something is going to sample".
   isUsingTexCoords() {
     var shaderType = this._renderData._shaderType;
-    return shaderType === Enums.Shader.UV || shaderType === Enums.Shader.PAINTUV;
+    if (shaderType === Enums.Shader.UV || shaderType === Enums.Shader.PAINTUV) return true;
+    return !!(this._albedoMap && this.hasUV());
   }
 
   isTransparent() {
@@ -2519,7 +2545,7 @@ class Mesh {
 
     this._renderData._shaderType = shaderName;
     if (this._renderData._threeMesh) {
-      this._renderData._threeMesh.material = ShaderManager.getMaterial(shaderName);
+      this._renderData._threeMesh.material = ShaderManager.getMaterialFor(this, shaderName);
     }
     if (hasUV) {
       this.updateDuplicateGeometry();

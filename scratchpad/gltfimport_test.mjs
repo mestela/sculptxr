@@ -25,6 +25,9 @@ import path from 'path';
 const REPO = new URL('..', import.meta.url).pathname;
 const SRC = fs.readFileSync(path.join(REPO, 'src/files/ImportGLTF.js'), 'utf8');
 const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+const MESH  = fs.readFileSync(path.join(REPO, 'src/mesh/Mesh.js'), 'utf8');
+const SHMGR = fs.readFileSync(path.join(REPO, 'src/render/ShaderManager.js'), 'utf8');
+const PBR   = fs.readFileSync(path.join(REPO, 'src/render/shaders/ShaderPBR.js'), 'utf8');
 
 const body = SRC.split('\n')
   .filter((l) => !/^import\s/.test(l))
@@ -34,6 +37,7 @@ const body = SRC.split('\n')
 // MeshStatic records rather than renders: every call the importer makes onto a mesh is part of
 // what it produces, so the recording IS the output under test.
 const prelude = `
+const THREE = { SRGBColorSpace: 'srgb' };
 const Utils = { TRI_INDEX: 4294967295 };
 const GLTFLoader = class {};
 class MeshStatic {
@@ -44,6 +48,7 @@ class MeshStatic {
   setMaterials(m) { this.calls.materials = m; }
   setMatrix(m) { this.calls.matrix = m; }
   initTexCoordsDataFromOBJData(uv, uvf) { this.calls.uv = uv; this.calls.uvf = uvf; }
+  setAlbedoMap(t) { this.calls.albedoMap = t; }
 }
 `;
 const tail = '\nexport { decodePolygons, weld, buildUVPool, emitFace, buildMesh };\n';
@@ -253,6 +258,45 @@ function check(name, cond, why) {
     'got ' + (mesh.calls.vertices.length / 3) + ' — a primitive must not import its siblings\' vertices');
 }
 
+// ── normalized attributes ───────────────────────────────────────────────────────────
+//
+// glTF stores COLOR_0 as normalized ushort by default, so a white vertex is 65535. Read raw and
+// written into a float colour that clamps at 1, the WHOLE MODEL imports white and nothing warns.
+// matt: "it loads correctly into other online glb viewers, but in here it loads unlit white."
+{
+  const geo = {
+    attributes: {
+      position: { count: 3, itemSize: 3, array: new Float32Array([0,0,0, 1,0,0, 0,1,0]) },
+      // 0.5-ish grey as a normalized ushort, and full white
+      color: { count: 3, itemSize: 4, normalized: true,
+               array: new Uint16Array([32768,32768,32768,65535, 65535,65535,65535,65535, 0,0,0,65535]) },
+      // Nomad's material vector: normalized ubyte (roughness, metalness, mask, -)
+      color_1: { count: 3, itemSize: 4, normalized: true,
+                 array: new Uint8Array([40,0,255,0, 40,0,255,0, 40,0,255,0]) },
+    },
+    index: { array: new Uint32Array([0,1,2]) },
+  };
+  const obj = { isMesh: true, name: 'C', geometry: geo, material: null,
+    matrixWorld: { elements: new Float32Array(16) }, updateMatrixWorld() {} };
+  const stats = { meshes:0, verts:0, quads:0, merged:0, uvs:0, transmissive:0, textured:0,
+                  perVertexMaterial:0, vertexColours:0, ngon:false };
+  const c = M.buildMesh([obj], null, 'C', stats).calls;
+  check('a normalized ushort colour is divided down, not clamped to white',
+    Math.abs(c.colors[0] - 0.5) < 0.01 && c.colors[3] === 1 && c.colors[6] === 0,
+    'got ' + c.colors[0] + ' — reading the raw 32768 makes every model white');
+  // COLOR_1 is not a second colour set: Nomad packs (roughness, metalness, mask) there, which is
+  // exactly Mesh.setMaterials' vector, both apps being SculptGL descendants. Verified against
+  // the same file's material factors: gums 40/255 = 0.157 against roughness 0.157.
+  check('COLOR_1 becomes the per-vertex material, denormalized',
+    Math.abs(c.materials[0] - 40/255) < 1e-6 && c.materials[1] === 0 && c.materials[2] === 1,
+    'got ' + Array.from(c.materials.slice(0,3)).join(','));
+  check('...and the mask slot lands at 1, not 0',
+    c.materials[2] === 1 && c.materials[5] === 1,
+    'a mask below 1 imports a model that silently refuses to sculpt in places');
+  check('...and it is preferred over the material factor, being per vertex',
+    /Taken in preference to the material factor because it is PER VERTEX/.test(SRC));
+}
+
 // ── units ───────────────────────────────────────────────────────────────────────────
 //
 // Nomad's units are not scene units: the live link has always scaled by `_nomadScale` on the
@@ -282,6 +326,45 @@ check('...and only for Nomad, since a Blender glb is in metres',
 check('the tool toast does not run on desktop',
   /if \(!this\._renderer\?\.xr\?\.isPresenting\) return;/.test(SCENE),
   'a VR floater with no updater on desktop is a permanent object at the origin');
+
+// ── the albedo map, and the uv pipeline it needs ────────────────────────────────────
+//
+// The UV machinery was all present and simply never switched on outside the two UV DISPLAY
+// modes: in ordinary PBR viewing the geometry carried no `uv` attribute and the index buffer
+// used the UNDUPLICATED triangles, so the seam vertices the app had already built never
+// reached the GPU. A textured mesh needs the same pipeline for the ordinary shader.
+check('a mesh with an albedo map runs the uv pipeline',
+  /return !!\(this\._albedoMap && this\.hasUV\(\)\);/.test(MESH),
+  'without this the geometry has no uv attribute and there is nothing to sample');
+check('...and switching it on rebuilds the duplicates and the buffers',
+  /if \(this\.hasUV\(\)\) \{ this\.updateDuplicateGeometry\(\); this\.updateDrawArrays\(\); \}/.test(MESH),
+  'the uv-indexed triangles address duplicated vertices that must exist first');
+
+// Materials are cached ONE PER SHADER TYPE and updateUniforms runs over every mesh BEFORE
+// renderer.render(), so a texture on the shared material would be the last mesh's texture on
+// every mesh in the scene.
+check('a textured mesh gets its own material',
+  /ShaderManager\.getMaterialFor = function\(mesh, shaderId\)/.test(SHMGR)
+    && /if \(!shared \|\| !mesh \|\| !mesh\.getAlbedoMap \|\| !mesh\.getAlbedoMap\(\)\) return shared;/.test(SHMGR),
+  'a shared material cannot carry a per-mesh texture');
+check('...and every material assignment goes through it',
+  !/= ShaderManager\.getMaterial\(this\.getShaderType\(\)\);/.test(MESH)
+    && !/material = ShaderManager\.getMaterial\(shaderName\);/.test(MESH),
+  'one site still handing out the shared material undoes the clone');
+check('...bound per mesh, since the legacy uniform path knows nothing about it',
+  /unifs\.uAlbedoMap\.value = amap \|\| ShaderManager\._dummyTex;/.test(SHMGR));
+
+// uTexture0 is the ENVIRONMENT in this shader and always has been.
+check('the PBR shader samples a SECOND texture, not the environment one',
+  /'uAlbedoMap', 'uHasAlbedo'/.test(PBR) && /uniform sampler2D uAlbedoMap;/.test(PBR));
+check('...multiplying the vertex colour rather than replacing it',
+  /if \(uHasAlbedo > 0\.5\) baseColor \*= texture2D\(uAlbedoMap, vAlbedoUv\)\.rgb;/.test(PBR),
+  'glTF means baseColorFactor x baseColorTexture, and Nomad puts flat colour in one and detail in the other');
+check('...through the same sRGB conversion the vertex colour uses',
+  /vec3 linColor = sRGBToLinear\(baseColor\);/.test(PBR),
+  'two conversions would let the map and the colour it multiplies drift a gamma apart');
+check('...and the texture is marked sRGB with glTF flipY',
+  /tex\.colorSpace = THREE_SRGB;/.test(SRC) && /tex\.flipY = false;/.test(SRC));
 
 console.log(fails ? '\n' + fails + ' FAILURE(S)' : '\nall checks passed');
 process.exit(fails ? 1 : 0);

@@ -49,7 +49,11 @@ ShaderPBR.exposure = opts.exposure === undefined ? ShaderPBR.environments[Shader
 ShaderPBR.uniforms = {};
 ShaderPBR.attributes = {};
 
-ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uExposure', 'uSPH', 'uEnvSize'];
+ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uExposure', 'uSPH', 'uEnvSize',
+  // The mesh's own base-colour map. uTexture0 is the ENVIRONMENT and always has been, so a
+  // second sampler is the only place an imported albedo image can go. Bound per mesh by
+  // ShaderManager.updateUniforms, onto a material that mesh owns -- see getMaterialFor.
+  'uAlbedoMap', 'uHasAlbedo'];
 Array.prototype.push.apply(ShaderPBR.uniformNames, ShaderBase.uniformNames.commonUniforms);
 
 ShaderPBR.vertex = [
@@ -57,6 +61,9 @@ ShaderPBR.vertex = [
   'attribute vec3 aNormal;',
   'attribute vec3 aColor;',
   'attribute vec3 aMaterial;',
+  // Rewritten to three's built-in `uv` by ShaderManager.processShader, and supplied by
+  // Mesh.updateTexCoordBuffer once isUsingTexCoords() is true for this mesh.
+  'attribute vec2 aTexCoord;',
   ShaderBase.strings.vertUniforms,
   'uniform float uRoughness;',
   'uniform float uMetallic;',
@@ -67,7 +74,9 @@ ShaderPBR.vertex = [
   'varying float vRoughness;',
   'varying float vMetallic;',
   'varying float vMasking;',
+  'varying vec2 vAlbedoUv;',
   'void main() {',
+  '  vAlbedoUv = aTexCoord;',
   '  vAlbedo = uAlbedo.x >= 0.0 ? uAlbedo : aColor;',
   '  vRoughness = uRoughness >= 0.0 ? uRoughness : aMaterial.x;',
   '  vMetallic = uMetallic >= 0.0 ? uMetallic : aMaterial.y;',
@@ -87,6 +96,9 @@ ShaderPBR.fragment = [
   'varying vec3 vAlbedo;',
   'varying float vRoughness;',
   'varying float vMetallic;',
+  'varying vec2 vAlbedoUv;',
+  'uniform sampler2D uAlbedoMap;',
+  'uniform float uHasAlbedo;',
   'uniform float uAlpha;',
   ShaderBase.strings.fragColorUniforms,
   ShaderBase.strings.fragColorFunction,
@@ -95,7 +107,15 @@ ShaderPBR.fragment = [
   'void main(void) {',
   '  vec3 normal = getNormal();',
   '  float roughness = max( 0.0001, vRoughness );',
-  '  vec3 linColor = sRGBToLinear(vAlbedo);',
+  // THE MAP MULTIPLIES THE VERTEX COLOUR, it does not replace it. That is what glTF means by
+  // baseColorFactor x baseColorTexture, and it is also what makes the two work together here:
+  // a Nomad export puts flat colour in the vertex attribute and detail in the image, and a
+  // model with only one of the two still comes out right.
+  // Sampled in sRGB and converted with the same function the vertex colour uses, so the two
+  // cannot drift apart.
+  '  vec3 baseColor = vAlbedo;',
+  '  if (uHasAlbedo > 0.5) baseColor *= texture2D(uAlbedoMap, vAlbedoUv).rgb;',
+  '  vec3 linColor = sRGBToLinear(baseColor);',
   '  vec3 albedo = linColor * (1.0 - vMetallic);',
   '  vec3 specular = mix( vec3(0.04), linColor, vMetallic);',
   '',

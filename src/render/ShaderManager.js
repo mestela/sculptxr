@@ -156,6 +156,37 @@ ShaderManager.getMaterial = function(shaderId) {
 };
 
 /**
+ * The material for THIS mesh: the shared one, unless the mesh carries something that cannot be
+ * shared.
+ *
+ * WHY A CLONE. getMaterial caches ONE material per shader type and every mesh of that type uses
+ * it -- which is fine while the per-mesh uniforms are recomputed into it before each draw, and
+ * fatal for a TEXTURE. updateUniforms runs in a loop over every mesh BEFORE renderer.render(),
+ * so with a shared material the last mesh to be visited wins and its image would appear on all
+ * of them. A mesh with its own map gets its own material, and nothing else changes.
+ */
+ShaderManager.getMaterialFor = function(mesh, shaderId) {
+  var shared = this.getMaterial(shaderId);
+  if (!shared || !mesh || !mesh.getAlbedoMap || !mesh.getAlbedoMap()) return shared;
+  // ONLY THE SHADER THAT SAMPLES IT. PBR is the one with uAlbedoMap; every other mode (UV,
+  // Matcap, Flat, Normal...) has no use for the map and every reason to keep the shared
+  // material, whose uniforms the legacy path sets up by shader id. Cloning them too broke UV
+  // display mode, which renders from uniforms that the clone had its own dead copy of.
+  if (shaderId !== Enums.Shader.PBR) return shared;
+  var per = mesh._albedoMaterials || (mesh._albedoMaterials = {});
+  if (!per[shaderId]) {
+    var m = shared.clone();
+    // clone() copies the uniforms object but shares the texture references inside it, which is
+    // what we want for the environment map -- only uAlbedoMap differs, and it is set per frame.
+    m.userData.sculptShaderId = shared.userData.sculptShaderId;
+    m.userData.sculptShaderDef = shared.userData.sculptShaderDef;
+    m.userData.sculptPerMesh = true;
+    per[shaderId] = m;
+  }
+  return per[shaderId];
+};
+
+/**
  * Updates uniforms just before Three.js renders the mesh.
  * This reads SculptXR's cached matrices (uMV, uMVP, uN, etc.) and textures.
  */
@@ -284,7 +315,20 @@ ShaderManager.updateUniforms = function(mesh, main) {
              unifs.uTexture0.value = shaderDef.texture0;
         }
     }
-    
+
+    // THE ALBEDO MAP, bound here rather than through the mocked gl above: it belongs to the MESH
+    // and the legacy updateUniforms has never known about it. Safe to write onto the material
+    // because a mesh with a map has its OWN material -- see getMaterialFor.
+    if (unifs.uAlbedoMap) {
+      var amap = mesh.getAlbedoMap ? mesh.getAlbedoMap() : null;
+      if (!ShaderManager._dummyTex) {
+        ShaderManager._dummyTex = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1, THREE.RGBAFormat);
+        ShaderManager._dummyTex.needsUpdate = true;
+      }
+      unifs.uAlbedoMap.value = amap || ShaderManager._dummyTex;
+      unifs.uHasAlbedo.value = amap ? 1 : 0;
+    }
+
     material.uniformsNeedUpdate = true;
   } finally {
     // Restore
