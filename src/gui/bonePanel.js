@@ -1216,31 +1216,97 @@ export function wireBoneSection(root, main, opts) {
   // The three parameters, live on drag: this is a LOOK, and the whole reason the sim runs
   // outside playback is so it can be judged by watching rather than by argument. No undo step
   // per drag — a slider that pushed one would bury the history.
-  const physParam = (id, key, scale, fmt) => {
+  // A VALUE YOU CAN TYPE INTO. matt: "our sliders should be clickable on the value so i can type
+  // in values if needed" -- a slider cannot reach a specific number, and on this rig the sweet
+  // spot is between two steps.
+  //
+  // It drives the SLIDER's own `input` event rather than writing the parameter itself, so every
+  // handler already wired to that slider keeps working with no knowledge of typing: one place to
+  // add it, and no second path that can disagree about clamping, formatting or what gets written.
+  //
+  // `toSlider` converts the number a person types back into the slider's units. Most of these
+  // sliders display their own raw value, so identity is the default; the two that do not --
+  // Gravity showing g, Mass showing a multiplier -- pass their own inverse.
+  const makeTypable = (input, val, toSlider, applyExact, fmt) => {
+    if (!input || !val) return;
+    val.style.cursor = 'text';
+    val.title = 'Click to type a value';
+    val.addEventListener('click', () => {
+      if (val.querySelector('input')) return;           // already editing
+      const shown = val.textContent;
+      const box = document.createElement('input');
+      box.type = 'text';
+      box.value = shown.replace(/[^0-9.\-]/g, '');
+      box.style.cssText = 'width:100%;box-sizing:border-box;font:inherit;color:inherit;'
+        + 'background:#1e1e2e;border:1px solid #89b4fa;border-radius:3px;text-align:inherit;padding:0 2px';
+      val.textContent = '';
+      val.appendChild(box);
+      box.focus(); box.select();
+      let done = false;
+      const finish = (keep) => {
+        if (done) return; done = true;
+        const n = parseFloat(box.value);
+        val.textContent = shown;
+        if (!keep || !isFinite(n)) return;
+        // THE TYPED NUMBER IS WRITTEN EXACTLY, and the slider only follows for show. Routing it
+        // through the slider's own event would round it to a step -- on the exponential Mass
+        // scale a step is 9.6%, so typing 35 landed on 36.3. Reaching a value the slider cannot
+        // is the entire reason to type one.
+        const lo = parseFloat(input.min), hi = parseFloat(input.max);
+        const sv = Math.max(lo, Math.min(hi, Math.round(toSlider(n))));
+        input.value = String(sv);
+        applyExact(n);
+      };
+      // Keys are stopped here or the panel's own shortcuts eat them mid-word.
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') finish(true);
+        else if (e.key === 'Escape') finish(false);
+        e.stopPropagation();
+      });
+      box.addEventListener('keyup', (e) => e.stopPropagation());
+      box.addEventListener('blur', () => finish(true));
+    });
+  };
+
+  const physParam = (id, key, scale, fmt, toSlider, toParam) => {
     const input = q('phys-' + id), val = q('phys-' + id + '-val');
-    input?.addEventListener('input', () => {
+    // ONE WRITE PATH for the slider and the typed value: the same clamping, the same target
+    // resolution, the same readout. Two paths would be two chances to disagree.
+    const write = (v) => {
       // The joint the sliders are AIMED at — see PhysicsBones.panelTarget. Reading the selection
       // here instead would write to whatever you had grabbed to shake the rig with.
       const t = PhysicsBones.panelTarget(main,
         (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m)));
-      // `scale` is a divisor for a linear control, or a function for one that is not -- Mass is
-      // exponential, because a frequency knob is multiplicative.
-      const raw = parseInt(input.value, 10);
-      const v = typeof scale === 'function' ? scale(raw) : raw / scale;
       // NO JOINT MEANS THE DEFAULTS, not nothing. Setting the values you want and THEN flagging a
       // joint is a real way to work, and setRoot copies the defaults into whatever it flags -- so
       // this slider does the same job either way round. See PhysicsBones.setDefaults.
       if (t) for (const j of withTwin(t)) PhysicsBones.setParams(j, { [key]: v });
       else PhysicsBones.setDefaults({ [key]: v });
-      if (val) val.textContent = fmt(v);
+      // Read BACK what was stored, so the readout shows the clamp rather than what was asked for.
+      const stored = t ? PhysicsBones.params(t)[key] : v;
+      if (val) val.textContent = fmt(stored === undefined ? v : stored);
       main.render?.();
+    };
+    // TWO CONVERSIONS, because the number on screen is not always the number in either place.
+    // Stiffness shows 7 for a parameter of 0.07 on a slider at 7; Gravity shows 1.75g for a
+    // parameter of 1.75 on a slider at 175. Assuming one conversion covered both wrote a
+    // stiffness of 7 -- clamped to 1, the rigid limit -- from a typed 7.
+    makeTypable(input, val, toSlider || ((n) => n), (n) =>
+      write((toParam || ((x) => (typeof scale === 'function' ? x : x / scale)))(n)), fmt);
+    input?.addEventListener('input', () => {
+      // `scale` is a divisor for a linear control, or a function for one that is not -- Mass is
+      // exponential, because a frequency knob is multiplicative.
+      const raw = parseInt(input.value, 10);
+      write(typeof scale === 'function' ? scale(raw) : raw / scale);
     });
   };
+  // The last argument is only needed where the number SHOWN is not the slider's own units.
   physParam('stiff', 'stiffness', 100, (v) => String(Math.round(v * 100)));
-  physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g');
+  physParam('grav', 'gravity', 100, (v) => v.toFixed(2) + 'g', (n) => n * 100, (n) => n);
   physParam('damp', 'damping', 100, (v) => String(Math.round(v * 100)));
   physParam('drag', 'drag', 100, (v) => String(Math.round(v * 100)));
-  physParam('mass', 'mass', (n) => Math.pow(10, (n - 50) / 25), fmtMass);
+  physParam('mass', 'mass', (n) => Math.pow(10, (n - 50) / 25), fmtMass,
+    (n) => 50 + 25 * Math.log10(Math.max(0.01, n)));
   physParam('sub', 'substeps', 1, (v) => String(v));
   physParam('iter', 'iterations', 1, (v) => String(v));
 

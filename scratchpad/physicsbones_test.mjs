@@ -585,6 +585,30 @@ check('...with a TWO-SIDED length constraint, so a pull at the tip travels up th
     && /p\.addScaledVector\(_xDir, \(w \/ wsum\) \* dl\);/.test(SRC),
   'a goal at the tip cannot reach the joints above it, and the arm barely moves');
 
+// ── A VALUE YOU CAN TYPE ─────────────────────────────────────────────────────────────
+//
+// A slider cannot reach a specific number, and on matt's puppet the sweet spot sits between two
+// steps. matt: "our sliders should be clickable on the value so i can type in values if needed."
+check('the readout is clickable and becomes a field',
+  /const makeTypable = \(input, val, toSlider, applyExact, fmt\) => \{/.test(BONE)
+    && /val\.addEventListener\('click'/.test(BONE));
+// Routing a typed number through the slider's own event would round it to a step -- on the
+// exponential Mass scale a step is 9.6%, so typing 35 landed on 36.3.
+check('...written EXACTLY, with the slider following only for show',
+  /THE TYPED NUMBER IS WRITTEN EXACTLY/.test(BONE) && /applyExact\(n\);/.test(BONE),
+  'typing exists to reach a value the slider cannot');
+// The number on screen is not the number in either place: Stiffness shows 7 for a parameter of
+// 0.07 on a slider at 7; Gravity shows 1.75g for a parameter of 1.75 on a slider at 175.
+// Assuming one conversion covered both wrote a stiffness of 7, clamped to the rigid limit.
+check('...with display->parameter and display->slider kept apart',
+  /TWO CONVERSIONS, because the number on screen is not always the number in either place/.test(BONE)
+    && /physParam\('grav', 'gravity', 100, \(v\) => v\.toFixed\(2\) \+ 'g', \(n\) => n \* 100, \(n\) => n\);/.test(BONE));
+// One write path for both, or they get two chances to disagree about clamping and readout.
+check('...sharing the slider\'s write path rather than adding a second one',
+  /ONE WRITE PATH for the slider and the typed value/.test(BONE));
+check('...and Escape abandons the edit',
+  /else if \(e\.key === 'Escape'\) finish\(false\);/.test(BONE));
+
 // ── MASS IS THE AXIS STIFFNESS CANNOT REACH ──────────────────────────────────────────
 //
 // A spring's frequency is sqrt(k/m). With only k adjustable, every setting is a stiff spring and
