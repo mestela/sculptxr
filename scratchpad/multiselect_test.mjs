@@ -67,7 +67,8 @@ const TREN = R('src/gui/tr/english.js');
     'if (!main.setOrUnsetMesh(mesh, ctrl)) return false;',
     'if (!main.setOrUnsetMesh(mesh, ctrl || main.multiSelectHeld?.())) return false;', i);
   else if (i === 'outliner') PANEL = cut(PANEL,
-    'main.setOrUnsetMesh?.(mesh, _multi);', 'main.setOrUnsetMesh?.(mesh, false);', i);
+    '      const range  = !!(e && e.shiftKey);',
+    '      const range  = false; const _ignored = !!(e && e.shiftKey);', i);
   else if (i === 'lockedits') SM = cut(SM,
     "if (_active && _active._selectLocked && !SELF_TARGETING_TOOLS.has(this._toolIndex)) {",
     'if (false) {', i);
@@ -140,7 +141,8 @@ check('...reading the flag Scene already computes every frame',
 for (const [what, src, pat] of [
   ['TransformVR', TVR, /setOrUnsetMesh\(mesh, ctrl \|\| main\.multiSelectHeld\?\.\(\)\)/],
   ['Transform (desktop)', TR, /setOrUnsetMesh\(_picked, ctrl \|\| main\.multiSelectHeld\?\.\(\)\)/],
-  ['the outliner row', PANEL, /main\.setOrUnsetMesh\?\.\(mesh, _multi\)/],
+  ['the outliner row', PANEL,
+    /const toggle = !!\(e && \(e\.ctrlKey \|\| e\.metaKey\)\) \|\| !!main\.multiSelectHeld\?\.\(\);/],
   ['the dopesheet name', TL, /this\._main\.setOrUnsetMesh\?\.\(mesh, _multi, true\)/],
 ]) {
   check(what + ' honours the modifier', pat.test(src),
@@ -148,8 +150,29 @@ for (const [what, src, pat] of [
 }
 
 // Desktop keyboard equivalents, where there is an event to read one from.
-check('the outliner also takes Ctrl / Cmd / Shift',
-  /e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey/.test(PANEL));
+//
+// CTRL AND SHIFT ARE DIFFERENT GESTURES and must not be collapsed back into one. They were the
+// same expression once -- both meaning "toggle" -- which is what made the list feel unlike every
+// other list on the machine. matt: "control+click should individually select and toggle,
+// shift+click should select a range."
+check('the outliner reads Ctrl / Cmd as toggle',
+  /const toggle = !!\(e && \(e\.ctrlKey \|\| e\.metaKey\)\)/.test(PANEL));
+check('...and Shift as a range, separately',
+  /const range  = !!\(e && e\.shiftKey\);/.test(PANEL)
+    && !/e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey/.test(PANEL),
+  'one expression covering all three is the bug this replaces');
+// The run has to come from the DOM: the list is a hierarchy with collapsed branches, so the
+// scene array is not the order on screen and "between these two" would span invisible rows.
+check('...taking the run from the rows as displayed',
+  /\[\.\.\.el\.querySelectorAll\('\[data-action="select"\]'\)\]\.map\(\(b\) => b\.dataset\.meshId\)/.test(PANEL),
+  'ordering a range by main.getMeshes() selects rows the user cannot see');
+check('...anchored, and falling back to a plain click when the anchor is gone',
+  /main\._outlinerAnchorId/.test(PANEL) && /if \(a < 0 \|\| b < 0\) return false;/.test(PANEL),
+  'Shift with a deleted anchor must select something, not nothing');
+// A range replaces the selection, so every toggle in the walk is a plain add.
+check('...clearing first so the additive walk cannot toggle a row off',
+  /main\.setOrUnsetMesh\?\.\(null\);\s*\n\s*for \(let i = a; ; i \+= step\)/.test(PANEL),
+  'setOrUnsetMesh(m, true) TOGGLES — over an uncleared selection a range would unselect');
 check('...and so does the dopesheet, captured on pointer down',
   /this\._lastModifierDown = !!\(e && \(e\.ctrlKey \|\| e\.metaKey \|\| e\.shiftKey\)\);/.test(TL),
   'the row handlers are reached through several paths and none of them carry the event');

@@ -1363,13 +1363,41 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
+  // BINDS THE WHOLE SELECTION, not just the active mesh. A character arrives as separate
+  // objects -- body, teeth, eyes, lashes -- and binding them one at a time means walking the
+  // outliner and pressing this button seven times, each one a full weight solve you then have
+  // to check. matt: "i should be able to shift-select many meshes at once and choose bind mesh."
+  //
+  // The active mesh is the fallback, not a special case: with one row selected the selection IS
+  // that row, and with none it is empty and getMesh() is all there is.
   q('bind')?.addEventListener('click', () => {
-    const res = Skinning.bind(main, main.getMesh?.());
-    say(res.ok
-      ? `Bones: bound ${res.name} — ${res.joints} joints, ${res.verts} verts, ${res.ms}ms`
-        + (res.cages ? `, from ${res.cages} baked capsule(s)` : ', from drawn capsules')
-        + (res.outside ? `, ${res.outside} verts outside every capsule` : '')
-      : `Bones: ${res.why}`, res.ok);
+    const sel = main.getSelectedMeshes?.() ?? [];
+    const targets = sel.length ? sel.slice() : [main.getMesh?.()].filter(Boolean);
+    if (!targets.length) { say('Bones: select a mesh first', false); return; }
+
+    const results = targets.map((m) => Skinning.bind(main, m));
+    const ok = results.filter((r) => r.ok);
+    const bad = results.filter((r) => !r.ok);
+
+    // One mesh keeps the detailed line it always had -- the vertex count and the outside count
+    // are what you read it for. Several would be a paragraph, so they collapse to totals, with
+    // the failures named because "5 of 7 bound" without saying which two is not an answer.
+    if (results.length === 1) {
+      const res = results[0];
+      say(res.ok
+        ? `Bones: bound ${res.name} — ${res.joints} joints, ${res.verts} verts, ${res.ms}ms`
+          + (res.cages ? `, from ${res.cages} baked capsule(s)` : ', from drawn capsules')
+          + (res.outside ? `, ${res.outside} verts outside every capsule` : '')
+        : `Bones: ${res.why}`, res.ok);
+    } else {
+      const verts   = ok.reduce((a, r) => a + (r.verts | 0), 0);
+      const ms      = ok.reduce((a, r) => a + (r.ms | 0), 0);
+      const outside = ok.reduce((a, r) => a + (r.outside | 0), 0);
+      say(`Bones: bound ${ok.length}/${results.length} — ${verts} verts, ${ms}ms`
+        + (outside ? `, ${outside} verts outside every capsule` : '')
+        + (bad.length ? ` — failed: ${bad.map((r) => r.name || '?').join(', ')} (${bad[0].why})` : ''),
+        ok.length > 0);
+    }
     rebuild(); // the button set itself changes once bound
     main.render?.();
   });

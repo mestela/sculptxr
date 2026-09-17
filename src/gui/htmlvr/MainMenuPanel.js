@@ -4203,6 +4203,42 @@ export function updateOutlinerVisIcons(main) {
   });
 }
 
+// SHIFT+CLICK: the run of rows from the anchor to the one just clicked, replacing the
+// selection — Finder/Explorer behaviour, which is what an outliner is measured against.
+//
+// THE ROW ORDER COMES FROM THE DOM, not from main.getMeshes(). The list is a HIERARCHY: children
+// sit under their parents and a collapsed branch is not on screen at all, so the scene array's
+// order is not the order the user sees, and "everything between these two" has to mean between
+// them AS DISPLAYED or it selects things that were never on the screen.
+//
+// Returns false when there is nothing to range over (no anchor yet, or the anchor has since been
+// deleted or collapsed out of view), so the caller can fall back to an ordinary click rather
+// than have Shift silently do nothing.
+function selectRange(el, main, clicked) {
+  const anchorId = main._outlinerAnchorId;
+  if (!anchorId) return false;
+  const ids = [...el.querySelectorAll('[data-action="select"]')].map((b) => b.dataset.meshId);
+  const a = ids.indexOf(anchorId);
+  const b = ids.indexOf(clicked?._permanentStaticId);
+  if (a < 0 || b < 0) return false;
+
+  const byId = new Map((main.getMeshes?.() ?? []).map((m) => [m._permanentStaticId, m]));
+  // Walked from the anchor TOWARDS the click so the clicked row is added last and therefore
+  // ends up as the active mesh — the one the transform fields and the rig buttons act on.
+  // Adding the run in list order instead would leave whichever end sorted last in charge,
+  // which is not the row the user just pointed at.
+  const step = a <= b ? 1 : -1;
+  main.setOrUnsetMesh?.(null);
+  for (let i = a; ; i += step) {
+    const m = byId.get(ids[i]);
+    // `true` is multi-select, which TOGGLES — safe only because the selection was just cleared,
+    // so nothing in the run can already be in it.
+    if (m) main.setOrUnsetMesh?.(m, true);
+    if (i === b) break;
+  }
+  return true;
+}
+
 export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
 
@@ -4393,11 +4429,27 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         beginRename(btn, mesh);
         return;
       }
-      // MULTI-SELECT: the secondary trigger in VR, Ctrl or Shift with a mouse. Same rule as
-      // the viewport tools — see Scene.multiSelectHeld. The outliner is where you reach when
-      // the thing you want is hard to point at, so it needs this at least as much as they do.
-      const _multi = !!(e && (e.ctrlKey || e.metaKey || e.shiftKey)) || !!main.multiSelectHeld?.();
-      main.setOrUnsetMesh?.(mesh, _multi); main.render?.(); repaintFn();
+      // MULTI-SELECT. Ctrl and Shift are NOT the same gesture, and treating them as one (which
+      // this did) is the thing that makes a list feel unlike every other list. Finder, Explorer,
+      // every DCC outliner: Ctrl/Cmd toggles one row, Shift takes the run from the anchor to
+      // here. matt: "control+click should individually select and toggle, shift+click should
+      // select a range."
+      //
+      // VR's secondary trigger stays a toggle — there is no keyboard out there to say range with,
+      // and a toggle is the one of the two that composes into any selection given enough clicks.
+      const range  = !!(e && e.shiftKey);
+      const toggle = !!(e && (e.ctrlKey || e.metaKey)) || !!main.multiSelectHeld?.();
+      if (range && selectRange(el, main, mesh)) {
+        // the anchor deliberately stays put, so a second Shift+click re-picks the run from the
+        // same end rather than walking it along
+      } else if (toggle) {
+        main.setOrUnsetMesh?.(mesh, true);
+        main._outlinerAnchorId = id;
+      } else {
+        main.setOrUnsetMesh?.(mesh, false);
+        main._outlinerAnchorId = id;
+      }
+      main.render?.(); repaintFn();
     });
   });
 

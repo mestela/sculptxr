@@ -997,29 +997,16 @@ class Gui {
     const scrolls = [];
     panelEl.querySelectorAll('.mm-outliner-list').forEach((el, i) => scrolls.push([i, el.scrollTop]));
     panelEl.innerHTML = buildSectionHTML_scene(main);
+    // HEIGHT FIRST, THEN SCROLL — and that order is the whole fix. A freshly built list is back
+    // at the stylesheet's height, which is shorter than a list the user has dragged taller;
+    // writing scrollTop into the short one CLAMPS it to that smaller scroll range, and growing
+    // the list afterwards does not give back what the clamp took. The list then sits a little
+    // higher up after every rebuild, which is precisely the drift matt reported as "it still
+    // jumps its scroll when i do any operations or change selection".
+    this._applyOutlinerHeight(panelEl);
     if (scrolls.length) {
       const lists = panelEl.querySelectorAll('.mm-outliner-list');
       for (const [i, top] of scrolls) if (lists[i]) lists[i].scrollTop = top;
-    }
-    // THE DRAGGED HEIGHT, RESTORED AND REMEMBERED. The list is `resize: vertical` on desktop (see
-    // the stylesheet), which the browser handles entirely on its own — all this does is put the
-    // saved number back on a freshly built list and write down where the drag ended.
-    //
-    // ON pointerup, NOT a ResizeObserver. The observer is the more obvious hook and it is the one
-    // I wrote first: its callbacks are delivered during the rendering steps, which a hidden tab
-    // does not run, so it is unverifiable from a headless session and silently dead in a
-    // background window. A drag ends with a pointer release, which is an ordinary event.
-    {
-      const list = panelEl.querySelector('.mm-outliner-list');
-      if (list) {
-        const saved = getOptionsURL().outlinerHeight;
-        if (saved > 0) list.style.height = saved + 'px';
-        // Debounced through saveOption, the same as a slider drag.
-        list.addEventListener('pointerup', () => {
-          const h = Math.round(list.getBoundingClientRect().height);
-          if (h > 0) getOptionsURL.saveOption?.('outlinerHeight', h, 300);
-        });
-      }
     }
     const rebuild = () => this._buildDesktopScene(panelEl);
     // Pass a no-op lightRepaintFn so wireSelect doesn't call rebuild() when
@@ -1028,6 +1015,28 @@ class Gui {
     wireSectionScene(panelEl, main, rebuild, null); // desktop sidebar: no VR panel → numpad uses the DOM overlay
 
     this._decorateDesktopSection(panelEl, 'scene');
+  }
+
+  // THE DRAGGED HEIGHT, RESTORED AND REMEMBERED. The list is `resize: vertical` on desktop (see
+  // the stylesheet), which the browser handles entirely on its own — all this does is put the
+  // saved number back on a freshly built list and write down where the drag ended.
+  //
+  // ON pointerup, NOT a ResizeObserver. The observer is the more obvious hook and it is the one
+  // I wrote first: its callbacks are delivered during the rendering steps, which a hidden tab
+  // does not run, so it is unverifiable from a headless session and silently dead in a
+  // background window. A drag ends with a pointer release, which is an ordinary event.
+  //
+  // CALLED BEFORE THE SCROLL IS PUT BACK, not after — see the note at the call site.
+  _applyOutlinerHeight(panelEl) {
+    const list = panelEl.querySelector('.mm-outliner-list');
+    if (!list) return;
+    const saved = getOptionsURL().outlinerHeight;
+    if (saved > 0) list.style.height = saved + 'px';
+    // Debounced through saveOption, the same as a slider drag.
+    list.addEventListener('pointerup', () => {
+      const h = Math.round(list.getBoundingClientRect().height);
+      if (h > 0) getOptionsURL.saveOption?.('outlinerHeight', h, 300);
+    });
   }
 
   _buildDesktopRendering(panelEl) {
@@ -1171,7 +1180,8 @@ class Gui {
       wire: (el, rb) => { spec.wire(el, rb); fixSliderDrag(el); },
       onRedock: (id) => this.redockSection(id),
       onMoved: () => this._savePinnedSections(),
-    }).mount(at?.x ?? (90 + n * 24), at?.y ?? (90 + n * 24));
+    }).mount(at?.x ?? (90 + n * 24), at?.y ?? (90 + n * 24),
+             (at?.w > 0 && at?.h > 0) ? { w: at.w, h: at.h } : null);
     this._floatPanels.set(sectionId, panel);
     this._refreshDesktopSection(sectionId);
     this._updatePinnedTabStates();
@@ -1199,7 +1209,9 @@ class Gui {
   _savePinnedSections() {
     const map = {};
     if (this._floatPanels) {
-      for (const [id, panel] of this._floatPanels) map[id] = panel.position;
+      // Position AND size: a workspace arrangement is where a panel is and how big it is, and
+      // restoring one without the other means re-dragging the same panel every session.
+      for (const [id, panel] of this._floatPanels) map[id] = { ...panel.position, ...(panel.size || {}) };
     }
     // Debounced: a drag ends with one save, but redocking three panels in a row should not
     // write three times in as many milliseconds.
@@ -1220,7 +1232,11 @@ class Gui {
       // button beyond reach.
       const x = Math.min(Math.max(0, at?.x ?? 90), Math.max(0, window.innerWidth - 60));
       const y = Math.min(Math.max(0, at?.y ?? 90), Math.max(0, window.innerHeight - 40));
-      this.floatSection(id, { x, y });
+      // Clamped to the window for the same reason the position is: a panel sized on a bigger
+      // screen must not restore taller than the one it is on today.
+      const w = at?.w > 0 ? Math.min(at.w, window.innerWidth) : 0;
+      const h = at?.h > 0 ? Math.min(at.h, window.innerHeight) : 0;
+      this.floatSection(id, { x, y, w, h });
     }
     // No tab marking here: createTab reads the same saved state and the tabs are born dimmed.
     // Marking after the restore was tried and does not work -- the strip is not in the document

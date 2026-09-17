@@ -1330,6 +1330,27 @@ check('...and it reads the live flag',
     'one shared phase object silently reports the last mesh\'s numbers as everyone\'s');
 }
 
+// ── BIND TAKES THE WHOLE SELECTION ───────────────────────────────────────────────────
+//
+// A character imported from a sculpting app arrives as separate objects, and binding them one
+// at a time is the same weight solve and the same eyeball-the-result seven times over.
+// matt: "i should be able to shift-select many meshes at once and choose bind mesh."
+check('Bind Mesh binds every selected mesh',
+  /const sel = main\.getSelectedMeshes\?\.\(\) \?\? \[\];/.test(SRC)
+    && /const results = targets\.map\(\(m\) => Skinning\.bind\(main, m\)\);/.test(SRC),
+  'binding only getMesh() makes a seven-piece character seven trips through this button');
+// The active mesh is the FALLBACK, not a parallel path: one selected row and the selection is
+// that row, so a second code path for "one mesh" would be a second thing to keep in step.
+check('...falling back to the active mesh when nothing is selected',
+  /const targets = sel\.length \? sel\.slice\(\) : \[main\.getMesh\?\.\(\)\]\.filter\(Boolean\);/.test(SRC));
+// One mesh keeps its detailed line — the vertex and outside counts are what it is read for.
+check('...keeping the detailed report for a single mesh',
+  /if \(results\.length === 1\) \{/.test(SRC) && /verts outside every capsule/.test(SRC));
+// "5 of 7 bound" without saying which two is not a report.
+check('...and naming the failures when several are bound at once',
+  /failed: \$\{bad\.map\(\(r\) => r\.name \|\| '\?'\)\.join\(', '\)\}/.test(SRC),
+  'a count alone leaves you clicking each mesh to find out which ones missed');
+
 check('no panel still carries its own solver toggle',
   !/q\('#mm-constraint-solver-xpbd'\)/.test(MAIN_SRC)
     && !/q\('#mm-phys-xpbd'\)\?\.addEventListener/.test(MAIN_SRC),
