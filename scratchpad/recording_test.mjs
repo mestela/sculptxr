@@ -406,5 +406,27 @@ check('a scrub re-seeds the simulation after the frame is solved',
   /PhysicsBones\.reset\(main\);\s*\n\s*window\._physicsNeedsInit = true;/.test(reg),
   'the particles are a solve behind and the chains snap back toward the previous pose');
 
+// ── RECORD STARTS ON THE FIRST PRESS ────────────────────────────────────────
+//
+// toggleRecord reads `_animArmed` as "a record session is active", so a flag that is true before
+// the user has armed anything makes the first press spend itself turning that session off.
+// adurna35: "sometimes animation record button needs to be pressed twice to start recording."
+// Invisible as well as wrong: the ACP button shows its armed look only for _animWaitingForGrab,
+// so at startup it looked off while being armed, and GuiTimeline's copy of the same test includes
+// _animArmed -- so the two record buttons disagreed about whether anything was armed.
+{
+  const VRA = fs.readFileSync(path.join(REPO, 'src/gui/vr/GuiVRAnimation.js'), 'utf8');
+  const REG = fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8');
+  check('nothing is armed until the user arms it',
+    /window\._animArmed = window\._animArmed !== undefined \? window\._animArmed : false;/.test(VRA),
+    'defaulting it true spends the first Record press disarming a session nobody started');
+  check('...and toggleRecord still counts armed as an active session',
+    /const active = this\.isRecording \|\| this\.isCountingIn \|\| window\._animWaitingForGrab\s*\n\s*\|\| window\._animArmed/.test(REG),
+    'that reading is correct once the flag starts false -- it is what makes Record a true toggle '
+      + 'mid-session, and it is why the DEFAULT is the thing that had to change');
+  check('...and arming is what a press does when nothing is active',
+    /window\._animArmed = true;/.test(REG));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

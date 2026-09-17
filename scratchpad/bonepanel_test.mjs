@@ -209,9 +209,9 @@ const flat = buildBoneSectionHTML(main, 'mm');
   const some = buildBoneSectionHTML(main, 'mm');
   globalThis.__cages = [];
   check('the cage button offers Bake when there are none',
-    /id="bone-cages">Bake Capsules</.test(none));
+    /id="bone-cages"[^>]*>Bake Weight Cages</.test(none));
   check('...and Delete when there are some',
-    /id="bone-cages">Delete Capsules</.test(some));
+    /id="bone-cages"[^>]*>Delete Weight Cages</.test(some));
   check('...as ONE button either way',
     (none.match(/id="bone-cages"/g) || []).length === 1
       && (some.match(/id="bone-cages"/g) || []).length === 1);

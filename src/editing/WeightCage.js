@@ -449,7 +449,7 @@ WeightCage.bake = function (main) {
       }
       Skeleton.updateVisuals(main); main.render?.();
     },
-    false, 'Bake Capsules');
+    false, 'Bake Weight Cages');
 
   // PAIR THEM NOW, while every capsule is still the shape the generator made. This is the one
   // moment the two sides are exact mirror images, so it is the only moment a correspondence can
@@ -661,7 +661,7 @@ WeightCage.deleteAll = function (main) {
       for (const o of owners) main.removeMeshSilent(o.cage);
       Skeleton.updateVisuals(main); main.render?.();
     },
-    false, 'Delete Capsules');
+    false, 'Delete Weight Cages');
   return cages.length;
 };
 

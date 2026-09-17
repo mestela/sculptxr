@@ -76,7 +76,7 @@ if (inject === 'unsigned') {
 } else if (inject === 'perbakeundo') {
   cut('  main.addMeshSilent(cage);', '  main.addNewMesh(cage);', inject);
 } else if (inject === 'noreparent') {
-  cut('        if (o.owner && main.setMeshParent) main.setMeshParent(o.cage.getID(), o.owner.getID(), { silent: true });\n      }\n      Skeleton.updateVisuals(main); main.render?.();\n    },\n    false, \'Bake Capsules\');', '      }\n    },\n    false, \'Bake Capsules\');', inject);
+  cut('        if (o.owner && main.setMeshParent) main.setMeshParent(o.cage.getID(), o.owner.getID(), { silent: true });\n      }\n      Skeleton.updateVisuals(main); main.render?.();\n    },\n    false, \'Bake Weight Cages\');', '      }\n    },\n    false, \'Bake Weight Cages\');', inject);
 } else if (inject === 'insideout') {
   cut('  const quad = (a, b, c, d) => faces.push(a, d, c, b);',
     '  const quad = (a, b, c, d) => faces.push(a, b, c, d);', inject);
@@ -331,7 +331,7 @@ check('one bone per vertex, weight 1', (() => {
     check('a baked rig stops drawing the parametric capsules',
       /const showCaps = Skeleton\.displayFlag\('capsules'\)\s*\n\s*&& !\(main\.getMeshes\(\) \|\| \[\]\)\.some\(\(m\) => m && m\._isWeightCage\);/.test(skel),
       'otherwise the mesh, the baked capsules AND the parametric ones are all on screen at once');
-    check('...decided per frame, so Delete Capsules brings them straight back',
+    check('...decided per frame, so Delete Weight Cages brings them straight back',
       /const showCaps = Skeleton\.displayFlag/.test(skel) && !/_hasWeightCages/.test(skel),
       'a latched flag would need clearing from every path that removes a cage');
   }
@@ -428,7 +428,7 @@ check('one bone per vertex, weight 1', (() => {
       /var target = this\._worldGroup \|\| this\._scene;\s*\n\s*if \(target\) target\.remove\(t\);/.test(SCENE));
   }
   check('the panel offers bake and delete as one state',
-    /hasCages \? 'Delete Capsules' : 'Bake Capsules'/.test(PANEL),
+    /hasCages \? 'Delete Weight Cages' : 'Bake Weight Cages'/.test(PANEL),
     'named for the thing the user already has a word for, not for our word');
   check('...and the bind says which source decided the weights',
     /res\.cages \? `, from \$\{res\.cages\} baked capsule\(s\)` : ', from drawn capsules'/.test(PANEL),
@@ -446,13 +446,13 @@ check('one bone per vertex, weight 1', (() => {
   check('...and parented silently too',
     /main\.setMeshParent\(cage\.getID\(\), owner\.getID\(\), \{ silent: true \}\)/.test(SRC));
   check('one state covers the whole bake',
-    /false, 'Bake Capsules'\);/.test(SRC));
+    /false, 'Bake Weight Cages'\);/.test(SRC));
   check('...restoring the parents on redo',
     /main\.addMeshSilent\(o\.cage\);\s*\n\s*if \(o\.owner && main\.setMeshParent\)/.test(SRC),
     'removeMeshSilent leaves _parentMesh set but does not re-attach the three-side mesh, so a '
     + 'cage put back without this sits under the world group and reads its local matrix as world');
   check('and deleting them is one step as well',
-    /false, 'Delete Capsules'\);/.test(SRC));
+    /false, 'Delete Weight Cages'\);/.test(SRC));
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');

@@ -1,3 +1,19 @@
+# v3.44.0
+**Record starts on the first press.** The internal "armed" flag defaulted to TRUE before anyone had
+armed anything, and `toggleRecord` reads that flag as "a record session is active" — so the first
+press was spent turning off a session that had never started, and the second one recorded.
+adurna35: "sometimes animation record button needs to be pressed twice to start recording." It was
+invisible as well as wrong: the animation panel shows its armed look only for
+`_animWaitingForGrab`, while the timeline's copy of the same test includes `_animArmed`, so the two
+record buttons disagreed with each other about whether anything was armed.
+
+**"Bake Capsules" becomes "Bake Weight Cages".** It bakes editable cage geometry you sculpt to shape
+the skin weights — nothing to do with the **Capsules** chip in View and Assist, which shows and hides
+the rig's drawn capsules. Sharing the word put a capsules-looking control right next to Make Skin,
+which is exactly where someone hunting for the display toggle looks: adurna35, "was looking for
+turning capsules on/off in the same area that I can make skin." The undo-history entries are renamed
+to match, so there is one vocabulary for it.
+
 # v3.43.0
 **A pass through Adurna35's bug report, worked one item at a time on device.**
 

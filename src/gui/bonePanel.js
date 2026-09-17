@@ -315,7 +315,17 @@ export function buildBoneAuthoringHTML(main, style) {
       <button class="${c.action}" id="bone-skin">Make Skin</button>
     </div>
     <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
+      ${/* "WEIGHT CAGES", NOT "CAPSULES". This button bakes editable cage GEOMETRY you sculpt to
+           shape the skin weights -- WeightCage, nothing to do with the Capsules chip in View and
+           Assist, which shows and hides the rig's drawn capsules. Sharing the word put a
+           capsules-looking control next to Make Skin, which is exactly where someone hunting for
+           the display toggle looks. adurna35: "was looking for turning capsules on/off in the
+           same area that I can make skin." The word that disambiguates is the one the code has
+           used all along. */ ''}
+      <button class="${c.action}" id="bone-cages" title="${hasCages
+        ? 'Delete the baked weight cages; binding returns to the drawn capsules'
+        : 'Bake editable cage geometry you can sculpt to shape the skin weights'}">${
+        hasCages ? 'Delete Weight Cages' : 'Bake Weight Cages'}</button>
       <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
     </div>
     ${bound ? `<div class="${c.btnRow}">
@@ -508,7 +518,17 @@ export function buildBoneAuthoringHTML(main, style) {
       <button class="${c.action}" id="bone-skin">Make Skin</button>
     </div>
     <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-cages">${hasCages ? 'Delete Capsules' : 'Bake Capsules'}</button>
+      ${/* "WEIGHT CAGES", NOT "CAPSULES". This button bakes editable cage GEOMETRY you sculpt to
+           shape the skin weights -- WeightCage, nothing to do with the Capsules chip in View and
+           Assist, which shows and hides the rig's drawn capsules. Sharing the word put a
+           capsules-looking control next to Make Skin, which is exactly where someone hunting for
+           the display toggle looks. adurna35: "was looking for turning capsules on/off in the
+           same area that I can make skin." The word that disambiguates is the one the code has
+           used all along. */ ''}
+      <button class="${c.action}" id="bone-cages" title="${hasCages
+        ? 'Delete the baked weight cages; binding returns to the drawn capsules'
+        : 'Bake editable cage geometry you can sculpt to shape the skin weights'}">${
+        hasCages ? 'Delete Weight Cages' : 'Bake Weight Cages'}</button>
     </div>
     ` : ''}
     <div class="${c.btnRow}">

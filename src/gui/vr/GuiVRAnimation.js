@@ -12,7 +12,17 @@ export default function getAnimationWidgets(main, Enums) {
   let y = 130;
 
   // Global Configuration Options
-  window._animArmed = window._animArmed !== undefined ? window._animArmed : true;
+  // ARMED MEANS THE USER ARMED IT, AND NOTHING HAS AT STARTUP. This defaulted to TRUE, which
+  // made the first press of Record a no-op: toggleRecord treats `_animArmed` as "a record session
+  // is active", so it took that press to turn OFF a session nobody had started, and the second
+  // press actually recorded. adurna35: "sometimes animation record button needs to be pressed
+  // twice to start recording."
+  //
+  // Invisible, too, which is why it read as the button being flaky rather than as a state: the
+  // ACP button only shows its `armed` look for `_animWaitingForGrab`, so at startup it looked off
+  // while being armed -- and GuiTimeline's copy of the same test DOES include `_animArmed`, so the
+  // two record buttons disagreed with each other about whether anything was armed.
+  window._animArmed = window._animArmed !== undefined ? window._animArmed : false;
   window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
   window._animActiveTool = window._animActiveTool || 'select';
   window._animMarqueeMode = window._animMarqueeMode || 'select_only';
