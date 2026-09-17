@@ -2885,13 +2885,28 @@ function buildSculptingHTML(main, part) {
     const hasNegative   = tool._negative   !== undefined;
     const hasClay       = tool._clay       !== undefined;
     const hasAccumulate = tool._accumulate !== undefined;
-    const hasCulling    = tool._culling    !== undefined;
+    // HIDDEN ON SMOOTH AND RELAX. Neither earns its place there, and matt, having read what they
+    // do: "i don't think either do anything particularly useful, hide them both for now."
+    //
+    // Tangential on Smooth means "become Relax" -- Relax is literally `class Relax extends Smooth`
+    // with `_tangent = true` -- so it was a second route to a tool that has its own button.
+    // Culling's VR path is unfinished: getFrontVertices bails out and returns every vertex when
+    // eyeDir is zero, and the patch that gives it a usable eyeDir lives only in makeStroke's
+    // STATIC-mesh branch, so on a dyntopo mesh it is likely doing nothing at all.
+    //
+    // The fields and the code stay; only these two buttons go. Culling remains on the nine other
+    // tools that define it, where the desktop path works and nobody has reported otherwise.
+    const isRelaxLike   = isSmooth || cur === Enums.Tools.RELAX;
+    const hasCulling    = tool._culling    !== undefined && !isRelaxLike;
     const hasTopoCheck  = tool._topoCheck  !== undefined;
-    const hasTangent    = tool._tangent    !== undefined;
+    const hasTangent    = tool._tangent    !== undefined && !isRelaxLike;
     // Smooth only, and it scopes itself: no other tool defines the field. See Smooth.js for what
     // the two answers actually do -- on, detail comes off and form stays; off, the form goes too,
     // and thin geometry with it.
-    const hasPreserve   = tool._preserveVolume !== undefined;
+    // `&& !tool._tangent`: the HC correction lives in smooth(), and smoothTangent() never calls
+    // it -- so on Relax (permanently tangential) the button would light up and change nothing.
+    // A control that does nothing is worse than an absent one.
+    const hasPreserve   = tool._preserveVolume !== undefined && !tool._tangent;
 
     // Voxel uses its own mode grid (Add/Sub/Inflate/Deflate) instead of the generic
     // negative/clay/etc. toggles, so suppress those here.
@@ -2926,14 +2941,22 @@ function buildSculptingHTML(main, part) {
     // The same global setting the wrist panel writes, deliberately: "which channel am I
     // editing" is a fact about the edit and not about the brush, and two panels disagreeing
     // about it would be worse than either answer.
+    //
+    // A COLLAPSED SECTION, NOT A DIM LABEL. These were here already -- under an `mm-lbl`, which is
+    // the style used for a slider's caption, with the buttons reading "Move" and "Rotate" as if
+    // they were tool names. matt read the panel and concluded they were not there at all, and
+    // said of the wrist panel's copy: "it took me a moment to realise this was related to motion
+    // paths." A heading you can see beats two words that could mean anything.
+    //
+    // Closed by default: it matters only while a path is on screen, which is a minority of the
+    // time this panel is open. wireGroups already services every collapsible in this element.
     if (isMove || isSmooth) {
       const ch = MotionPathEdit.channels();
-      brushHTML += `
-        <div class="mm-lbl" style="margin-top:6px">Motion Path</div>
+      brushHTML += collapsibleHTML('motion-paths', 'Motion Paths', `
         <div class="mm-choice-grid cols-2">
           <button class="mm-choice${ch.translate ? ' active' : ''}" id="mm-path-translate">Move</button>
           <button class="mm-choice${ch.rotate ? ' active' : ''}" id="mm-path-rotate">Rotate</button>
-        </div>`;
+        </div>`, false);
     }
 
     // ── Face-group paint controls ────────────────────────────────────
@@ -4835,10 +4858,10 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       tool._topoCheck = !tool._topoCheck;
       e.currentTarget.classList.toggle('active', tool._topoCheck);
     });
-    el.querySelector('#mm-brush-tangent')?.addEventListener('click', (e) => {
-      tool._tangent = !tool._tangent;
-      e.currentTarget.classList.toggle('active', tool._tangent);
-    });
+    // NO #mm-brush-tangent LISTENER. Smooth and Relax are the only tools that define `_tangent`
+    // and both now suppress the button, so it can never be rendered — a listener for an element
+    // nothing emits is the kind of thing that reads as a live feature in a grep six months from
+    // now. `_tangent` itself stays: it is how Relax works.
     // Persisted, unlike the toggles above it: this one changes what the tool IS rather than how
     // one stroke behaves, and having to rediscover it every session is most of the reason the
     // behaviour read as a bug in the first place.

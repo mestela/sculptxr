@@ -24,7 +24,7 @@ import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
 import { toolLabel }  from './toolLists.js';
-import { wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
+import { wireGroups, applyUISweep, tagReorgRoot, collapsibleHTML } from './uiTokens.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import {
@@ -69,13 +69,18 @@ function setParentHTML(main) {
         </div>`;
 }
 
-function pathChannelHTML() {
+// A NAMED, COLLAPSED SECTION. "Path Move" and "Path Rotate" sat loose among the tool's own
+// toggles, so they read as two more brush options -- matt: "it took me a moment to realise this
+// was related to motion paths." Under a heading the prefix is redundant, so the labels lose it.
+// Closed by default; wireGroups is already called on the extras element.
+// `extra` is folded in so everything path-related lands inside the one section.
+function pathChannelHTML(extra) {
   const ch = MotionPathEdit.channels();
-  return `
+  return collapsibleHTML('mp-motion-paths', 'Motion Paths', `
         <div class="mp-toggles">
-          <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-path-translate">Path Move</button>
-          <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-path-rotate">Path Rotate</button>
-        </div>`;
+          <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-path-translate">Move</button>
+          <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-path-rotate">Rotate</button>
+        </div>${extra || ''}`, false);
 }
 
 
@@ -729,14 +734,6 @@ export class MiniPanel extends HTMLVRPanel {
 
     // ── Smooth / Relax extras ──────────────────────────────────────────────
     if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
-      const tangentBtn = extras.querySelector('#mp-tangent');
-      if (tangentBtn) {
-        tangentBtn.addEventListener('click', () => {
-          const t = sm?.getCurrentTool?.();
-          if (t) { t._tangent = !t._tangent; main.render?.(); }
-          this.syncFromState();
-        });
-      }
       if (idx === Enums.Tools.SMOOTH) {
         const preserveBtn = extras.querySelector('#mp-preserve');
         if (preserveBtn) {
@@ -961,7 +958,6 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-culling')?.classList.toggle('active', !!tool._culling);
 
     } else if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
-      extrasEl.querySelector('#mp-tangent')?.classList.toggle('active', !!tool._tangent);
       extrasEl.querySelector('#mp-preserve')?.classList.toggle('active', !!tool._preserveVolume);
       if (idx === Enums.Tools.SMOOTH) {
         extrasEl.querySelector('#mp-sharpen')?.classList.toggle('active', !!tool._negative);
@@ -1076,10 +1072,10 @@ export class MiniPanel extends HTMLVRPanel {
       const on = MotionPathEdit.connected();
       return `
         <hr class="mp-divider">
-        ${pathChannelHTML()}
+        ${pathChannelHTML(`
         <div class="mp-toggles">
           <button class="mp-toggle-btn${on ? ' active' : ''}" id="mp-connected">Connectivity</button>
-        </div>
+        </div>`)}
       `;
     }
 
@@ -1091,14 +1087,17 @@ export class MiniPanel extends HTMLVRPanel {
       return `
         <hr class="mp-divider">
         ${idx === Enums.Tools.SMOOTH ? pathChannelHTML() : ''}
+        ${/* NO TANGENT BUTTON. It turned Smooth into Relax, which is its own tool with its own
+             button -- see the note in MainMenuPanel. Relax keeps _tangent = true internally.
+
+             Keep Volume is the decision you make WHILE smoothing: "this lump is not coming out"
+             is noticed mid-stroke, not while setting up. Smooth only, and not while tangential,
+             because the HC correction lives in smooth() and smoothTangent() never calls it. */ ''}
         <div class="mp-toggles">
-          <button class="mp-toggle-btn${tangent ? ' active' : ''}" id="mp-tangent">Tangent</button>
           ${idx === Enums.Tools.SMOOTH
             ? `<button class="mp-toggle-btn${sharpen ? ' active' : ''}" id="mp-sharpen">Sharpen</button>`
             : ''}
-          ${/* The wrist panel gets it too, because it is a decision you make WHILE smoothing --
-               "this lump is not coming out" is noticed mid-stroke, not while setting up. */ ''}
-          ${idx === Enums.Tools.SMOOTH
+          ${idx === Enums.Tools.SMOOTH && !tangent
             ? `<button class="mp-toggle-btn${!!(t?._preserveVolume) ? ' active' : ''}" id="mp-preserve">Keep Vol</button>`
             : ''}
         </div>

@@ -1083,8 +1083,18 @@ const qAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3])));
     /idx === Enums\.Tools\.MOVE \|\| idx === Enums\.Tools\.SMOOTH/.test(MINI)
       && /idx === Enums\.Tools\.SMOOTH \? pathChannelHTML\(\) : ''/.test(MINI),
     'Smooth edits the same curve, so it needs the same say over which channel it writes');
+  // REPOINTED 2026-09-17: the helper takes an argument now (Move folds its Connectivity button
+  // into the same collapsed Motion Paths section), so the empty-paren form no longer matches the
+  // Move call site. The invariant is unchanged and is what is asserted: ONE definition, called
+  // from BOTH tool branches, so the two cannot drift apart.
   check('...from ONE markup helper, so the two tools cannot drift apart',
-    (MINI.match(/pathChannelHTML\(\)/g) || []).length >= 3);
+    (MINI.match(/function pathChannelHTML\(/g) || []).length === 1
+      && (MINI.match(/[^n] pathChannelHTML\(|\{pathChannelHTML\(|\?\s*pathChannelHTML\(/g) || []).length >= 2,
+    'one definition and two call sites; a second copy of the markup is how the two drift');
+  check('...and it is the collapsed section matt asked for, not loose buttons',
+    /collapsibleHTML\('mp-motion-paths', 'Motion Paths'/.test(MINI)
+      && /collapsibleHTML\('motion-paths', 'Motion Paths'/.test(MAIN),
+    'loose "Path Move"/"Path Rotate" read as two more brush toggles');
   check('the main menu offers them too',
     /id="mm-path-translate"/.test(MAIN) && /id="mm-path-rotate"/.test(MAIN)
       && /if \(isMove \|\| isSmooth\)/.test(MAIN));

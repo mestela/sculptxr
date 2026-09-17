@@ -1,3 +1,28 @@
+# v3.42.14
+**The stepping was the falloff, applied sixteen times.** Turning Keep Volume off revealed a ridge
+at the edge of every brush dab — introduced by the density compensation in v3.42.11, which raised
+the pass count from one to as many as sixteen. Each pass blended toward the smoothed position by
+`intensity * alpha`, so a vertex received `1-(1-m)^k`, and at k=16 that turns a soft falloff into a
+disc with a rim: alpha 0.30 comes out at 0.9967, alpha 0.10 at 0.8147, and the whole transition is
+squeezed into the outer sliver. The passes now run at full strength and the falloff is applied
+**once**, sampled at each vertex's position before it moves, so the profile is exactly the falloff
+curve whatever the pass count. Masking stays per-pass on purpose — mask values are flat 0 or 1, so
+compounding them cannot build a gradient, and a masked vertex must not drift and snap back.
+
+**Motion Paths becomes a section you can see.** The path channel buttons existed on both panels and
+read as two more brush toggles — loose "Path Move" and "Path Rotate" on the wrist, and on the main
+panel a dim slider-caption reading "Motion Path" over buttons labelled "Move" and "Rotate". They are
+a collapsed **Motion Paths** group now, on Move and Smooth, on both panels, with Move's Connectivity
+toggle folded inside it since that is also a path control.
+
+**Tangential and Culling leave the Smooth panel.** Tangential turned Smooth into Relax, which has its
+own button — `class Relax extends Smooth` with `_tangent = true` — so it was a second route to an
+existing tool. Culling's VR path is unfinished: `getFrontVertices` returns every vertex when eyeDir
+is zero, and the patch that gives it a usable eyeDir lives only in the static-mesh branch, so on a
+dyntopo mesh it is likely doing nothing. Both stay in the code; only the buttons go. Keep Volume also
+hides while tangential is active, because the HC correction lives in `smooth()` and `smoothTangent()`
+never calls it.
+
 # v3.42.11
 **Smooth gets a Keep Volume button, and the reason it needed one is measurable.** The report was
 that Smooth barely touches a dense mesh at 100% strength. Two things were true at once. A one-ring

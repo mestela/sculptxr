@@ -178,9 +178,60 @@ class Smooth extends SculptBase {
         + ' intensity=' + intensity.toFixed(2) + ' strength=' + this._intensity.toFixed(2)
         + ' preserveVolume=' + _pv);
     }
-    for (var pass = 0; pass < passes; ++pass) {
-      if (this._tangent) this.smoothTangent(iVertsInRadius, intensity, picking);
-      else this.smooth(iVertsInRadius, intensity, picking);
+    if (this._tangent) {
+      for (var pass = 0; pass < passes; ++pass) {
+        this.smoothTangent(iVertsInRadius, intensity, picking);
+      }
+    } else {
+      // THE FALLOFF IS APPLIED ONCE, NOT ONCE PER PASS.
+      //
+      // Each pass blended toward the smoothed position by intensity*alpha, so over k passes a
+      // vertex received 1-(1-m)^k. That is fine at k=1 and ruinous at k=16, because it turns a
+      // soft falloff into a disc with a rim:
+      //
+      //   alpha      1.00    0.70    0.50    0.30    0.20    0.10    0.05
+      //   k=1      1.0000  0.7000  0.5000  0.3000  0.2000  0.1000  0.0500
+      //   k=16     1.0000  1.0000  1.0000  0.9967  0.9719  0.8147  0.5599
+      //
+      // Everything past alpha 0.3 is fully smoothed and the whole transition is squeezed into the
+      // outer sliver -- so each dab of the brush leaves a step where its edge fell. matt: "i see
+      // clear stepping where each 'stamp' of the brush has been." Invisible until now only
+      // because Keep Volume damped every pass; it is the density compensation that made k large.
+      //
+      // So: run the passes at FULL strength on the picked set, then blend original toward result
+      // once by intensity*alpha. The profile is then exactly the falloff curve, whatever k is.
+      // Masking stays per-pass (passing picking=null keeps the material term inside smooth()) --
+      // mask values are flat 0 or 1, so compounding them cannot build a gradient, and a masked
+      // vertex must not drift and snap back.
+      var mesh0 = this.getMesh();
+      var vAr0 = mesh0.getVertices();
+      var nv0 = iVertsInRadius.length;
+      // Instance scratch, not Utils.getMemory: smooth() uses that same shared arena internally,
+      // and this has to survive across all of its calls.
+      if (!this._rimOrig || this._rimOrig.length < nv0 * 3) {
+        this._rimOrig = new Float32Array(nv0 * 3);
+        this._rimW = new Float32Array(nv0);
+      }
+      var orig = this._rimOrig, wAr = this._rimW;
+      for (var q = 0; q < nv0; ++q) {
+        var oi = iVertsInRadius[q] * 3, q3 = q * 3;
+        var ox = vAr0[oi], oy = vAr0[oi + 1], oz = vAr0[oi + 2];
+        orig[q3] = ox; orig[q3 + 1] = oy; orig[q3 + 2] = oz;
+        // Sampled at the ORIGINAL position: the vertex is about to move, and the falloff is a
+        // function of where it was when the brush landed on it.
+        wAr[q] = intensity * (picking ? picking.getAlpha(ox, oy, oz) : 1);
+      }
+      for (var pass2 = 0; pass2 < passes; ++pass2) {
+        this.smooth(iVertsInRadius, 1.0, null);
+      }
+      for (var r = 0; r < nv0; ++r) {
+        var ri = iVertsInRadius[r] * 3, r3 = r * 3;
+        var a = wAr[r]; if (a >= 1) continue;
+        var ia = 1 - a;
+        vAr0[ri]     = orig[r3]     * ia + vAr0[ri]     * a;
+        vAr0[ri + 1] = orig[r3 + 1] * ia + vAr0[ri + 1] * a;
+        vAr0[ri + 2] = orig[r3 + 2] * ia + vAr0[ri + 2] * a;
+      }
     }
 
     var mesh = this.getMesh();
