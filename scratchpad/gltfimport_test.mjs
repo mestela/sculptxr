@@ -272,5 +272,16 @@ check('...applied as scale BEFORE the node placement, like _applyNomadMatrix',
 check('...and only for Nomad, since a Blender glb is in metres',
   /Keyed on the GENERATOR, not applied to everything/.test(SCENE));
 
+// ── the toast is a VR affordance ────────────────────────────────────────────────────
+//
+// _updateVrFloaters parks the toast above the right controller and hides it when its window
+// closes -- and it returns immediately when there is no XR camera. So on desktop _showToolToast
+// turned a world-space plane ON and nothing ever turned it off or placed it: it sat at the
+// world origin for the rest of the session, invisible only because models are usually big
+// enough to hide it.
+check('the tool toast does not run on desktop',
+  /if \(!this\._renderer\?\.xr\?\.isPresenting\) return;/.test(SCENE),
+  'a VR floater with no updater on desktop is a permanent object at the origin');
+
 console.log(fails ? '\n' + fails + ' FAILURE(S)' : '\nall checks passed');
 process.exit(fails ? 1 : 0);

@@ -12547,6 +12547,20 @@ class Scene {
   }
 
   _showToolToast(label) {
+    // VR ONLY, and the reason is structural rather than stylistic. This toast is a world-space
+    // plane that _updateVrFloaters parks above the right controller and hides again when its
+    // window closes -- and that updater returns immediately when there is no XR camera. So on
+    // desktop the line below turns the plane ON and NOTHING EVER TURNS IT OFF or puts it
+    // anywhere: it sits at the world origin, 11cm wide, for the rest of the session.
+    //
+    // Invisible in practice only because the models are usually big enough to hide it, which is
+    // exactly how it went unnoticed. matt, on a small imported character: "thats something i've
+    // occasionally noticed where parts of the vr menus are still visible on desktop, usually too
+    // small to see, but this character mesh is small enough that i can see the menu."
+    //
+    // Desktop already has somewhere to say things -- screenLog and the console -- so this is a
+    // no-op there rather than a second notification surface.
+    if (!this._renderer?.xr?.isPresenting) return;
     if (!this._toolToast) this._toolToast = this._makeVrTextPlane(384, 128, 0.11);
     const { ctx, canvas, tex } = this._toolToast;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
