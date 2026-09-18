@@ -188,8 +188,14 @@ ShaderManager.getMaterialFor = function(mesh, shaderId) {
   }
   // A TRANSMISSIVE SURFACE MUST NOT WRITE DEPTH. Every sculpt material writes depth, which is
   // right for a solid; a glass eye that writes it hides the iris sitting inside it and punches
-  // a hole in whatever else is behind. Three sorts the transparent pass back to front already,
-  // so dropping the depth write is the whole fix -- no render order to negotiate.
+  // a hole in whatever else is behind.
+  //
+  // "Three sorts the transparent pass back to front already, so dropping the depth write is the
+  // whole fix -- no render order to negotiate" is what used to be written here, and it is wrong
+  // twice over. See the renderOrder rule in updateUniforms: three sorts by the OBJECT ORIGIN,
+  // which for a nested eye is the same point as the thing inside it, and which for a skinned
+  // mesh does not move at all.
+  //
   // Written every time rather than only when transmissive: a mesh that keeps its own material
   // for another reason (it has a map) and whose transmission is later turned off would
   // otherwise keep the depth write switched off for good.
@@ -204,6 +210,35 @@ ShaderManager.getMaterialFor = function(mesh, shaderId) {
 ShaderManager.updateUniforms = function(mesh, main) {
   var threeMesh = mesh.getThreeMesh();
   if (!threeMesh || !threeMesh.material) return;
+
+  // GLASS DRAWS LAST, BECAUSE SORTING CANNOT DECIDE THIS ONE.
+  //
+  // matt: "lots of depth/transparency sorting issues with the eyes. they're nested spheres, an
+  // outer transparent sphere, an inner solid one... as soon as its skinned and i start to move
+  // the head around, the inner eye tends to go hidden."
+  //
+  // Three sorts the transparent pass by the z of each object's ORIGIN, and both of those
+  // assumptions fail here at once:
+  //
+  //   NESTED OBJECTS SHARE AN ORIGIN. Measured on his camel: eyeouter and eyeinner both sit at
+  //   [5.7, 5.6, 8.1] -- exactly equal z, so the comparison falls through to three's internal
+  //   object id, i.e. the order the meshes happened to be created in. His two eyes were authored
+  //   in opposite order, so one drew inner-then-outer (correct) and the other outer-then-inner
+  //   (the iris painted over the glass). No amount of depth sorting can separate two spheres
+  //   about the same centre; only an explicit order can.
+  //
+  //   AND A SKINNED MESH NEVER MOVES ITS ORIGIN. Skinning writes VERTICES; the object matrix
+  //   stays at bind. Measured across one head rotation: the eye's origin did not move by a
+  //   thousandth, while its geometry travelled from [3.9, -37.1, 52.9] to [32.9, -28.2, 11.3].
+  //   The sort key stops describing where the mesh is the moment the rig is posed, which is
+  //   exactly when matt sees it.
+  //
+  // So the transmissive surface is ordered explicitly, after every depth-writing mesh. It is
+  // the one that needs it: not writing depth, it is the only mesh whose result depends on WHEN
+  // it is drawn rather than on the depth test. 0.9 keeps it inside the documented band -- above
+  // the base mesh (0) and the group overlay (0.5), below the wireframe (1) and the ground grid
+  // (200). Depth TESTING still applies, so glass behind the head is still hidden by it.
+  threeMesh.renderOrder = (mesh.getTransmission && mesh.getTransmission() > 0) ? 0.9 : 0;
   
   var material = threeMesh.material;
   if (!material.isShaderMaterial) return;
