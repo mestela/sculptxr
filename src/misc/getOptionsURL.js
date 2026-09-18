@@ -411,6 +411,7 @@ var getOptionsURL = function () {
   // weighting and turned back off after, and persisted so it survives the reload that a long
   // weighting session tends to involve.
   options.skinOpacity = queryNumber(getVal('skinOpacity'), 0.05, 1.0, 1.0);
+  options.cageOpacity = queryNumber(getVal('cageOpacity'), 0.05, 1.0, 1.0);
 
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are

@@ -455,5 +455,97 @@ check('one bone per vertex, weight 1', (() => {
     /false, 'Delete Weight Cages'\);/.test(SRC));
 }
 
+// ── THE BAKE FOLLOWS THE SHAPE YOU TWEAKED ──────────────────────────────────────────
+//
+// matt: "the 'make capsule meshes' doesn't take into account the most recent tweak bones edits."
+//
+// It read a single radius straight off `_boneRadius` and ran it from the parent joint's ORIGIN
+// to the child's, so everything Tweak Joint exists to author was discarded: the per-joint radius
+// override, the width/height/depth scale that makes a joint an ellipsoid, and the offset a face
+// drag uses to move a joint's shape off the joint itself. An hour of shaping baked as a row of
+// plain uniform tubes.
+//
+// jointHalf is described in Skeleton as "one definition, used by the draw, the skin and the
+// handles, so they cannot disagree about how big a joint is" -- and this was the one place that
+// disagreed. That is the shape of the check: the bake must go through the same two accessors the
+// draw does, not through the raw fields.
+{
+  const WCS = fs.readFileSync(new URL('../src/editing/WeightCage.js', import.meta.url).pathname, 'utf8');
+
+  check('the bake measures each end with jointHalf, as the draw does',
+    /const hA = Skeleton\.jointHalf\(p, cr, _hA\);/.test(WCS)
+      && /const hB = Skeleton\.jointHalf\(j, cr, _hB\);/.test(WCS),
+    'reading _boneRadius directly discards the per-joint override and the ellipsoid scale');
+  check('...and spans the SHAPES via jointCentre, not the joint origins',
+    /Skeleton\.jointCentre\(p, _a\);/.test(WCS) && /Skeleton\.jointCentre\(j, _b\);/.test(WCS),
+    'a face drag moves a joint\'s shape off its joint; the drawn capsule already follows it');
+  check('...so the capsule TAPERS between two different ends',
+    /\{ hA: hA, hB: hB \}/.test(WCS)
+      && /function capsuleGeometry\(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, shape\)/.test(WCS),
+    'one radius for the whole bone cannot join a large joint to a small one');
+  check('...and no longer reads the raw radius as the shape',
+    !/const rLocal = r \//.test(WCS));
+
+  // THE ORDER IS FORCED, NOT A PREFERENCE. jointHalf's extents are world-axis aligned, so they
+  // can only be applied in the space they were measured in -- a rotated parent's local axes are
+  // not those axes, and a non-uniform scale cannot be carried through a rotation.
+  check('the shaping happens in MODEL space, and the result is mapped to the parent afterwards',
+    WCS.indexOf('{ hA: hA, hB: hB }') < WCS.indexOf('_v.set(geo.verts[vi]'),
+    'shaping in the parent frame would skew every rotated bone');
+
+  // Same rows and the same count as the plain capsule: the bind walks this topology and
+  // pairMirrors matches left to right on it.
+  check('the reshape does not change the topology',
+    /Applied as a reshape rather than woven into the rows above/.test(WCS));
+
+  // Measured in the browser on a 40-long bone, parent radius 12 scaled [2,1,0.5] and offset
+  // child radius 3 at +6x: old bake gave a uniform tube of -4.8..4.8 / -5..45 / -5..5; the new
+  // one gives -22.6..22.6 / -11.9..43 / -6..6, matching the drawn ends to the tessellation.
+  check('...and the bake gate matches the draw, so a cage exists where a capsule is drawn',
+    /const cr = j\._boneRadius \|\| 0;\s*\n\s*if \(!\(cr > 1e-9\)\) continue;/.test(WCS));
+}
+
+// ── A MIRRORED SKIN TURNS EVERY CAGE INSIDE OUT ─────────────────────────────────────
+//
+// matt: "i notice that one eye refuses to upate its weights. any reason there? scale by -1 or
+// something confusing it?" Exactly that.
+//
+// signedDistance decides inside from the winning triangle's NORMAL, which is a cross product of
+// two edges and therefore depends on WINDING. WeightCage.prepare carries each cage into the skin
+// mesh's local space, and when that skin is a mirrored instance the matrix has a negative
+// determinant -- every triangle arrives wound the other way, every normal points in instead of
+// out, and the sign inverts wholesale. His camel's eyeinner and eyeouter carry scale.x of
+// -12.657 and -12.747 where their twins are positive.
+//
+// Measured, on a capsule prepared into a mirrored space: a point at its CENTRE read +5.706
+// (outside) and a point well clear of it read -34.294 (inside). End to end on the camel, which
+// bone each eye binds to -- the two are mirror images so they must agree:
+//   with the fix     mirrored eye -> cage_bone_04, twin -> cage_bone_04   agree
+//   without          mirrored eye -> cage_bone_01, twin -> cage_bone_04   disagree
+// bone_01 is near the ROOT. The eye was listening to a bone at the other end of the animal,
+// which is why sculpting the cage beside it did nothing.
+{
+  const WCS = fs.readFileSync(new URL('../src/editing/WeightCage.js', import.meta.url).pathname, 'utf8');
+
+  check('a cage records the handedness of the space it was carried into',
+    /const flip = m\.determinant\(\) < 0 \? -1 : 1;/.test(WCS)
+      && /mesh: cage, flip: flip \}/.test(WCS),
+    'a negative determinant reverses winding, and the normal is what decides inside');
+  check('...and the distance is corrected by it',
+    /return bestSign \* \(c\.flip \|\| 1\) \* Math\.sqrt\(best\);/.test(WCS));
+
+  // The broadphase miss must stay +Infinity: -Infinity would rank as the deepest inside of
+  // anything rather than as "not near this cage", which is worse than the bug being fixed.
+  check('...but the broadphase skip is NOT flipped',
+    /\/\/ The handedness correction goes HERE and not on the Infinity above/.test(WCS)
+      && /if \(!isFinite\(best\)\) return Infinity;/.test(WCS),
+    '-Infinity would read as the deepest containment there is');
+
+  // Once per cage per bind, not once per vertex: the sign is a property of the transform.
+  check('...decided once per cage, not per vertex',
+    WCS.indexOf('const flip = m.determinant()') < WCS.indexOf('WeightCage.signedDistance'),
+    'this runs per vertex per cage; a determinant there would be paid a million times');
+}
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

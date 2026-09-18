@@ -1028,5 +1028,42 @@ check('...and the zone widening is the only thing left gated',
     'every caller but the loader is a person pinning a joint');
 }
 
+// ── A WEIGHT CAGE IS NOT RIG FURNITURE ──────────────────────────────────────────────
+//
+// The furniture exception says a mesh PARENTED to a rig node beats that node, because such a
+// mesh was "hung there on purpose and drawn out in the open" -- a hinge, a servo, a bracket --
+// and getting the joint underneath it is the mirror image of the buried-rig bug.
+//
+// A cage is parented to the joint it speaks for, so it matched exactly. And it is the one child
+// mesh that is NOT out in the open: it is the bone's own envelope, wrapped around the joint and
+// around the pin sitting on it, which is precisely the buried case the exception was carved
+// out of. So every pick landed on the cage.
+//
+// matt, using the cages as a proxy for the hero geo on the iPad: "the grab tool acted
+// strangely; it would always prefer to click-select the capsule meshes... even then, the
+// preselection highlight would always prefer to select the capsule meshes rather than the pin."
+// It also explains the wrong MENU: the Pin submenu only appears when a joint or pin is
+// preselected, so with the cage winning, a long press offered split/dissolve instead.
+{
+  const PK = fs.readFileSync(new URL('../src/math3d/Picking.js', import.meta.url).pathname, 'utf8');
+
+  check('a weight cage is excluded from the furniture exception',
+    /if \(mesh && mesh\._isWeightCage\) return false;/.test(PK),
+    'the parent link alone says furniture, and a cage has one');
+  // By WHAT IT IS, not by where it sits: a cage is always parented to a joint, so there is no
+  // arrangement of the rig that makes the parent test the right answer for one.
+  check('...ahead of the parent test, so the parent link never gets to speak for it',
+    PK.indexOf('mesh._isWeightCage) return false;')
+      < PK.indexOf('return !!(p && (p._isBone || p._isPinTarget));'));
+  // The manual override still wins, as it does for bone select.
+  check('...and the manual override still comes first',
+    PK.indexOf('window._rigBeatsChildMesh === true') < PK.indexOf('mesh._isWeightCage'));
+  // Ordinary furniture must keep working -- that rule was itself a fix.
+  check('...while an ordinary child mesh is still furniture',
+    /const p = mesh && mesh\._parentMesh;/.test(PK)
+      && /return !!\(p && \(p\._isBone \|\| p\._isPinTarget\)\);/.test(PK),
+    'matt: "i still can\'t select meshes that are children of bones"');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

@@ -39,6 +39,64 @@ WeightCage.OPACITY = 1;
 
 WeightCage.isCage = function (m) { return !!(m && m._isWeightCage); };
 
+// ---- cage opacity -----------------------------------------------------------------
+//
+// THE OTHER HALF OF THE X-RAY. Skinning.skinOpacity makes the SKIN see-through so you can find
+// the capsule inside it; this makes the CAPSULES see-through so you can watch the weights
+// change on the skin underneath while you sculpt one. matt: "i'd need to set their opacity all
+// at once, so i can verify that sculpting it is affecting the weights of the target geometry."
+//
+// All of them together, because a cage is never the thing you are looking at -- the character
+// is -- and setting twenty opacities one outliner row at a time is not a thing anyone will do.
+//
+// A PRIVATE MATERIAL PER CAGE, for the reason spelled out at Skinning.applySkinOpacity: every
+// matcap mesh shares one cached ShaderMaterial and the per-frame loop writes each mesh's alpha
+// into it in turn, so the alpha the GPU uses is whichever mesh was visited last. Without the
+// clone, dimming the cages dims the character with them -- which is the exact bug matt hit from
+// the other side ("xray is affecting both the skin mesh and the capsule meshes, thats stupid").
+WeightCage.opacity = function () {
+  const live = window._cageOpacity;
+  if (Number.isFinite(live) && live > 0) return live;
+  const saved = getOptionsURL().cageOpacity;
+  return Number.isFinite(saved) && saved > 0 ? saved : 1;
+};
+
+WeightCage.setOpacity = function (main, v) {
+  window._cageOpacity = Math.min(1, Math.max(0.05, v));
+  getOptionsURL.saveOption('cageOpacity', window._cageOpacity, 300);
+  return WeightCage.applyOpacity(main);
+};
+
+// Also called after a bake, so cages made while the slider is down come up see-through rather
+// than making the setting look like it stopped working.
+WeightCage.applyOpacity = function (main) {
+  const a = WeightCage.opacity();
+  const clear = a >= 0.99;
+  let n = 0;
+  for (const cage of WeightCage.cages(main)) {
+    cage.setOpacity(a);
+    const tm = cage.getThreeMesh && cage.getThreeMesh();
+    const mat = tm && tm.material;
+    if (mat) {
+      if (!mat.userData || !mat.userData._cagePrivate) {
+        const own = mat.clone();
+        own.userData = Object.assign({}, mat.userData, { _cagePrivate: true });
+        tm.material = own;
+      }
+      tm.material.transparent = true;
+      // A see-through cage that still WRITES depth hides the very skin it is supposed to let
+      // you see -- the same trap the x-ray skin has, from the other side.
+      tm.material.depthWrite = clear;
+      tm.material.needsUpdate = true;
+      // After the skin (0, or 2 while its own x-ray is on), so a dimmed cage blends OVER the
+      // character rather than the character painting over it.
+      tm.renderOrder = clear ? 0 : 3;
+    }
+    n++;
+  }
+  return n;
+};
+
 WeightCage.cages = function (main) {
   return (main.getMeshes() || []).filter(WeightCage.isCage);
 };
@@ -46,7 +104,14 @@ WeightCage.cages = function (main) {
 // A capsule as a triangle mesh: a tube of `radial` sides between the two ends, capped with
 // hemispheres. Deliberately low-poly -- it is a volume to be measured against and sculpted, not
 // rendered detail, and every triangle is one more the bind walks per vertex.
-function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs) {
+// `shape`, when given, is {hA:[x,y,z], hB:[x,y,z]} -- the half-extents of each END, in the space
+// A and B are given in. With it the capsule TAPERS and its ends are ellipsoids; without it, r is
+// one radius for the whole thing and it is the plain capsule this always made.
+//
+// Generate with r = 1 when passing a shape: the reshape below treats each vertex's offset from
+// the axis as a unit direction and scales it by the extents, so a unit capsule is the input it
+// expects.
+function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, shape) {
   const A = new THREE.Vector3(ax, ay, az);
   const B = new THREE.Vector3(bx, by, bz);
   const axis = new THREE.Vector3().subVectors(B, A);
@@ -118,6 +183,31 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs) {
       else faces.push(a, b, c, d);
     }
   }
+  // ── TAPER AND PER-AXIS EXTENTS ────────────────────────────────────────────────────
+  //
+  // Applied as a reshape rather than woven into the rows above, so the topology stays one
+  // description and cannot drift between the plain and the shaped case.
+  //
+  // Each vertex is pushed out from the point on the AXIS nearest to it. Clamping t to [0,1]
+  // is what makes the two caps ellipsoids of their own joint's extents: every cap vertex
+  // measures from the end centre, while the tube lerps between the two.
+  //
+  // THE EXTENTS ARE WORLD-AXIS ALIGNED, which is why this has to run in the space they were
+  // measured in -- see the note at the call site about building in model space and mapping the
+  // result into the parent's frame afterwards, rather than the other way round.
+  if (shape && shape.hA && shape.hB) {
+    const hA = shape.hA, hB = shape.hB;
+    const _c = new THREE.Vector3(), _o = new THREE.Vector3();
+    for (let i = 0; i < verts.length; i += 3) {
+      _o.set(verts[i] - A.x, verts[i + 1] - A.y, verts[i + 2] - A.z);
+      const t = Math.max(0, Math.min(1, _o.dot(axis) / len));
+      _c.copy(A).addScaledVector(axis, t * len);
+      _o.set(verts[i] - _c.x, verts[i + 1] - _c.y, verts[i + 2] - _c.z);
+      verts[i]     = _c.x + _o.x * (hA[0] + (hB[0] - hA[0]) * t);
+      verts[i + 1] = _c.y + _o.y * (hA[1] + (hB[1] - hA[1]) * t);
+      verts[i + 2] = _c.z + _o.z * (hA[2] + (hB[2] - hA[2]) * t);
+    }
+  }
   return { verts: new Float32Array(verts), faces: new Uint32Array(faces) };
 }
 
@@ -181,7 +271,24 @@ WeightCage.prepare = function (cage, skinInvModel, jointIndex) {
     if (_v.x < bb[0]) bb[0] = _v.x; if (_v.y < bb[1]) bb[1] = _v.y; if (_v.z < bb[2]) bb[2] = _v.z;
     if (_v.x > bb[3]) bb[3] = _v.x; if (_v.y > bb[4]) bb[4] = _v.y; if (_v.z > bb[5]) bb[5] = _v.z;
   }
-  return { joint: jointIndex, verts: out, faces: faces, bb: bb, mesh: cage };
+  // HANDEDNESS, because a MIRRORED SKIN TURNS EVERY CAGE INSIDE OUT.
+  //
+  // signedDistance decides inside from the winning triangle's NORMAL, and a normal is the cross
+  // product of two edges -- so it depends on winding. The matrix above carries the cage into the
+  // skin mesh's local space, and when that skin is a mirrored instance the matrix has a NEGATIVE
+  // determinant: every triangle comes through wound the other way and every normal points in
+  // instead of out. The sign then inverts wholesale.
+  //
+  // matt: "i notice that one eye refuses to upate its weights. any reason there? scale by -1 or
+  // something confusing it?" Exactly that. His camel's eyeinner and eyeouter carry scale.x of
+  // -12.657 and -12.747 where their twins are positive -- one eye of each pair is the mirror.
+  // Measured on a capsule prepared into a mirrored space: a point at its CENTRE read +5.706
+  // (outside) and a point well clear of it read -34.294 (inside).
+  //
+  // Recorded once per cage here rather than tested per vertex: this runs once per cage per bind
+  // and the sign is a property of the transform, not of the point.
+  const flip = m.determinant() < 0 ? -1 : 1;
+  return { joint: jointIndex, verts: out, faces: faces, bb: bb, mesh: cage, flip: flip };
 };
 
 const _cp = [0, 0, 0];
@@ -228,7 +335,9 @@ WeightCage.signedDistance = function (c, px, py, pz, slack) {
     }
   }
   if (!isFinite(best)) return Infinity;
-  return bestSign * Math.sqrt(best);
+  // The handedness correction goes HERE and not on the Infinity above: that is a broadphase
+  // miss, and -Infinity would read as the deepest inside of anything rather than as a skip.
+  return bestSign * (c.flip || 1) * Math.sqrt(best);
 };
 
 // ONE BONE PER VERTEX, ranked by signed distance: inside beats outside, deepest inside wins,
@@ -402,30 +511,52 @@ WeightCage.bake = function (main) {
   // makes a capsule shapeable; more is more to sculpt and more for the bind to walk.
   const RADIAL = 10, RINGS = 3, LENGTH_SEGS = 2;
   const made = [];
-  const _mJ = new THREE.Matrix4(), _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
-  const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+  const _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _v = new THREE.Vector3();
+  const _hA = [0, 0, 0], _hB = [0, 0, 0];
 
   for (const j of joints) {
     const p = j._parentMesh;
     if (!Skeleton.isJoint(p)) continue;            // a root has no bone above it
-    const r = j._boneRadius || 0;
-    if (r <= 0) continue;
+    // THE SAME GATE THE DRAW USES, so a cage exists exactly where a capsule is drawn.
+    const cr = j._boneRadius || 0;
+    if (!(cr > 1e-9)) continue;
 
-    // Built in the PARENT's frame, since that is what the cage is parented to -- so the cage's
-    // own transform starts as identity and stays legible when it is moved by hand later.
+    // ── BUILT FROM THE SHAPE YOU TWEAKED, NOT FROM THE RAW BONE ──────────────────────
+    //
+    // matt: "the 'make capsule meshes' doesn't take into account the most recent tweak bones
+    // edits." It took a single radius straight off `_boneRadius` and ran it from the parent's
+    // ORIGIN to the child's, so everything Tweak Joint exists to author was discarded: the
+    // per-joint radius override, the width/height/depth scale that makes a joint an ellipsoid,
+    // and the offset a face drag uses to move a joint's shape off the joint itself. A rig that
+    // had been shaped for an hour baked as a row of plain uniform tubes.
+    //
+    // These are the same two calls the capsule draw makes -- jointHalf is described in Skeleton
+    // as "one definition, used by the draw, the skin and the handles, so they cannot disagree
+    // about how big a joint is", and this was the one place that disagreed. jointCentre is the
+    // offset-aware position, which is why the drawn capsule already spans the shapes rather
+    // than the joints.
+    const hA = Skeleton.jointHalf(p, cr, _hA);
+    const hB = Skeleton.jointHalf(j, cr, _hB);
+    Skeleton.jointCentre(p, _a);
+    Skeleton.jointCentre(j, _b);
+
+    // IN MODEL SPACE FIRST, THEN INTO THE PARENT'S FRAME -- and that order is forced, not a
+    // preference. The extents above are WORLD-AXIS ALIGNED, so they can only be applied in the
+    // space they were measured in; a rotated parent's local axes are not those axes, and there
+    // is no way to carry a non-uniform scale through a rotation. So the capsule is shaped
+    // where the numbers mean something and the finished vertices are mapped afterwards.
+    const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 1,
+                                RADIAL, RINGS, LENGTH_SEGS, { hA: hA, hB: hB });
+    if (!geo) continue;
+    // Parented to the parent joint, so the cage's own transform starts as identity and stays
+    // legible when it is moved by hand later.
     _mP.fromArray(p.getModelSpaceMatrix());
     _mInv.copy(_mP).invert();
-    _a.set(0, 0, 0);                                // the parent joint IS the origin here
-    _mJ.fromArray(j.getModelSpaceMatrix());
-    _b.setFromMatrixPosition(_mJ).applyMatrix4(_mInv);
-    // The radius is a model-space length, so it needs the parent's scale taken out of it too.
-    const sc = _mP.elements[0] * _mP.elements[0] + _mP.elements[1] * _mP.elements[1]
-             + _mP.elements[2] * _mP.elements[2];
-    const rLocal = r / (Math.sqrt(sc) || 1);
-
-    const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, rLocal,
-                                RADIAL, RINGS, LENGTH_SEGS);
-    if (!geo) continue;
+    for (let vi = 0; vi < geo.verts.length; vi += 3) {
+      _v.set(geo.verts[vi], geo.verts[vi + 1], geo.verts[vi + 2]).applyMatrix4(_mInv);
+      geo.verts[vi] = _v.x; geo.verts[vi + 1] = _v.y; geo.verts[vi + 2] = _v.z;
+    }
 
     const cage = makeCage(main, geo, p, j, 'cage_');
     if (cage) made.push(cage);
@@ -456,6 +587,7 @@ WeightCage.bake = function (main) {
   // be established with confidence -- afterwards you are matching a sculpt against a capsule.
   const pairs = WeightCage.pairMirrors(main);
   main._cagePairTried = true;
+  WeightCage.applyOpacity(main);
   return { ok: true, cages: made.length, paired: pairs.paired, unpaired: pairs.unpaired };
 };
 
@@ -530,21 +662,59 @@ function mirrorTransform(srcCage, dstCage, plane) {
 // twin inside out. `worst` is the largest match distance -- at bake, against a symmetric rig,
 // it is essentially zero, and anything else means the two bones are not mirror images and the
 // pair should be left alone rather than scrambled.
+// A MIRROR MAP HAS TO BE A BIJECTION, and plain nearest-neighbour is not one.
+//
+// Two source vertices can pick the same target, which leaves a third with nobody -- and then
+// mirroring writes one vertex's position into a place another vertex also claims while a third
+// is never written at all. matt: "when i let go there's a short pause, and the mesh does its own
+// strange distortion. almost like its trying to mirror and flip the stroke, but its not doing it
+// very well." That is exactly what a non-bijective map looks like applied to a shape.
+//
+// IT SLIPS PAST A DISTANCE BAR, which is why one was not enough. Measured on his camel's
+// cage_bone_05: two vertices of seventy-two collided, and the miss was 0.522 against a bar of
+// 0.936 -- comfortably "close enough" by distance while being structurally broken. The cause is
+// that his bone sits 2.41 off the mirror plane, so the capsule is not symmetric about it and the
+// ring's angular phase does not line up; the poles are the two that cannot find a partner.
+//
+// CLOSEST FIRST, AND A LOSER DOES NOT MIRROR. Sources are served in order of how sure they are,
+// so the vertex genuinely nearest a target takes it. If a later source wanted that same target,
+// it is left UNMAPPED rather than sent to a substitute: two sources wanting one target means
+// neither has a clean partner, and picking some other free vertex for it is a guess that puts a
+// vertex somewhere nobody asked for. The apply loop already skips `map[i] < 0`, so an unmapped
+// vertex simply stays where it is.
+//
+// On matt's camel that is the two poles of each capsule and nothing else -- seventy of seventy
+// two mirror exactly and the two that cannot sit still, which is invisible next to the
+// distortion it replaces.
+//
+// `worst` counts only the vertices that DID pair, or the quality bar would be measuring the
+// distance to a partner that was deliberately not used.
 function mirrorMap(srcVerts, dstVerts, M) {
   const n = srcVerts.length / 3, m = dstVerts.length / 3;
   const map = new Int32Array(n).fill(-1);
   const _p = new THREE.Vector3();
-  let worst = 0;
+  // Every source's ranked distance to its nearest target, so the confident ones go first.
+  const best = new Int32Array(n).fill(-1);
+  const bestD = new Float64Array(n).fill(Infinity);
+  const mirrored = new Float64Array(n * 3);
   for (let i = 0; i < n; i++) {
     _p.set(srcVerts[i * 3], srcVerts[i * 3 + 1], srcVerts[i * 3 + 2]).applyMatrix4(M);
-    let best = -1, bestD = Infinity;
+    mirrored[i * 3] = _p.x; mirrored[i * 3 + 1] = _p.y; mirrored[i * 3 + 2] = _p.z;
     for (let j = 0; j < m; j++) {
       const dx = dstVerts[j * 3] - _p.x, dy = dstVerts[j * 3 + 1] - _p.y, dz = dstVerts[j * 3 + 2] - _p.z;
       const d = dx * dx + dy * dy + dz * dz;
-      if (d < bestD) { bestD = d; best = j; }
+      if (d < bestD[i]) { bestD[i] = d; best[i] = j; }
     }
-    map[i] = best;
-    if (bestD > worst) worst = bestD;
+  }
+  const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => bestD[a] - bestD[b]);
+  const taken = new Uint8Array(m);
+  let worst = 0;
+  for (const i of order) {
+    const pick = best[i];
+    if (pick < 0 || taken[pick]) continue;     // no partner, or someone nearer already has it
+    taken[pick] = 1;
+    map[i] = pick;
+    if (bestD[i] > worst) worst = bestD[i];
   }
   return { map: map, worst: Math.sqrt(worst) };
 }
@@ -564,6 +734,11 @@ WeightCage.pairMirrors = function (main) {
   const plane = Skeleton.rigMirrorPlane(main);
   const cages = WeightCage.cages(main);
   for (const c of cages) { c._cageMirror = null; }
+  // WHETHER THIS WAS A REAL ATTEMPT. With symmetry off there is no plane, so nothing below
+  // runs and every cage comes back unpaired -- which is not the same statement as "these shapes
+  // do not match", and the difference decides whether it is worth trying again. See the retry
+  // in mirrorEdit.
+  main._cagePairHadPlane = !!plane;
   if (!plane) return { paired: 0, unpaired: cages.length };
 
   const joints = Skeleton.joints(main);
@@ -602,7 +777,22 @@ WeightCage.mirrorEdit = function (main, cage) {
   // A scene loaded from a file has cages but no pairs -- the map is geometry, not a saved field.
   // Pairing once here recovers them: a rig saved with both sides mirrored still matches, and one
   // saved asymmetric fails the quality bar and is refused, which is the right answer either way.
-  if (!pair && !main._cagePairTried) {
+  //
+  // ...AND AGAIN IF THE LAST ATTEMPT HAD NO PLANE TO WORK WITH, which is the case the latch
+  // alone could not tell apart. bake() pairs as its last step, so baking while symmetry is OFF
+  // records "tried" against an attempt that never ran a line of matching -- and turning symmetry
+  // on afterwards could then never pair anything, for the rest of the session. That is matt's
+  // order of work exactly: "set radius on bones, tweak, bake capsules, move tool to sculpt
+  // them... even though sym mode is enabled, i can't sculpt the cages in symmetry."
+  //
+  // Reproduced and measured: bake with symmetry off gives paired 0 and latches; turning symmetry
+  // on and sculpting then answers "this capsule has no mirror twin" forever, and clearing the
+  // latch by hand makes the very same edit mirror.
+  //
+  // The original caution still holds where it applies -- a REAL attempt that failed the quality
+  // bar is not retried, because a map built after sculpting would match a shape you have already
+  // changed against one you have not. This only re-runs an attempt that never happened.
+  if (!pair && (!main._cagePairTried || !main._cagePairHadPlane)) {
     main._cagePairTried = true;
     WeightCage.pairMirrors(main);
     pair = cage._cageMirror;
@@ -612,8 +802,13 @@ WeightCage.mirrorEdit = function (main, cage) {
   // matching a shape you have already sculpted against one you have not.
   if (!pair) return { ok: false, why: 'this capsule has no mirror twin' };
 
-  const dstCage = pair.self ? cage
-    : WeightCage.cages(main).find((c) => c.getID() === pair.toId);
+  // A SELF PAIR IS THE IN-STROKE MIRROR'S JOB, not this one. Copying every vertex onto its
+  // partner is a copy when the destination is another cage and a SWAP when it is this one --
+  // see the note in SculptManager.getSymmetry. Declining here is what leaves exactly one of the
+  // two doing the work.
+  if (pair.self) return { ok: true, self: true, why: 'mirrored in-stroke; nothing to do here' };
+
+  const dstCage = WeightCage.cages(main).find((c) => c.getID() === pair.toId);
   if (!dstCage) return { ok: false, why: 'the twin capsule is gone' };
 
   const src = localVerts(cage);

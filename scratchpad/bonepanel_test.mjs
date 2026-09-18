@@ -116,7 +116,7 @@ const RigTopology = {
 };
 // The panel asks whether any weight cages exist so it can label one button Bake or Delete.
 // Stubbed to "none", which is the state every existing rig is in.
-const WeightCage = { cages: () => (globalThis.__cages || []) };
+const WeightCage = { cages: () => (globalThis.__cages || []), opacity: () => 1 };
 // The pin surface the Pins section reads. Mode constants matter to the markup (which chip reads
 // active), so they are the real values rather than placeholders; the commands are stubs because
 // what this file checks is that the panel OFFERS them, not what they do.
@@ -581,7 +581,18 @@ globalThis.__uiReorg = true;
 const reorgHTML = buildBoneAuthoringHTML(main, 'mm') + buildBonePoseHTML(main, 'mm');
 globalThis.__uiReorg = false;
 globalThis.__sel = [];
-const all = vr + boundHTML + display + animation + physHTML + reorgHTML;
+// ...AND WITH CAGES BAKED, for the same reason the bound and physics states are covered above:
+// the cage opacity slider and Select Cages only exist once there is something to dim or select,
+// so without this state they read as wired to nothing while genuinely dead ones would hide
+// among them.
+// Bound AND caged: the slider lives beside X-Ray, which is itself only shown once something is
+// bound, so both conditions have to hold at once for the row to exist.
+globalThis.__cages = [{ getID: () => 9 }];
+globalThis.__bound = true;
+const cageHTML = buildBoneAuthoringHTML(main, 'mm');
+globalThis.__bound = false;
+globalThis.__cages = [];
+const all = vr + boundHTML + display + animation + physHTML + reorgHTML + cageHTML;
 const missing = [...new Set(wired)].filter(id => !all.includes('id="bone-' + id + '"') && id !== 'rad-val');
 check('every wired id exists in the markup', missing.length === 0, missing.join(','));
 

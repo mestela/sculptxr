@@ -137,8 +137,26 @@ function rigNodeVisible(mesh) {
 // same trade the old rule made in the other direction, and this way round the thing that wins is
 // the thing you can see. `window._rigBeatsChildMesh = true` restores the old behaviour with no
 // rebuild.
+//
+// A WEIGHT CAGE IS NOT FURNITURE, and it has the parent link that would say it is.
+//
+// A cage is parented to the joint it speaks for, so it matched this exactly -- and a cage is the
+// one child mesh that is NOT "hung there on purpose and drawn out in the open". It is the bone's
+// own envelope, wrapped around the joint and the pin sitting on it, which is precisely the
+// buried-rig case the furniture exception was carved out of. So every pick landed on the cage:
+// the pin under your finger could not be reached, a tap took the cage instead, and a long press
+// resolved the cage to its parent joint and offered the JOINT menu -- split, dissolve -- rather
+// than the pin one.
+//
+// matt, using the cages as a fast proxy for the hero geo on the iPad: "the grab tool acted
+// strangely; it would always prefer to click-select the capsule meshes... even then, the
+// preselection highlight would always prefer to select the capsule meshes rather than the pin."
+//
+// Excluded by what it IS rather than by where it sits, because a cage is always parented to a
+// joint -- there is no arrangement of the rig that makes this the wrong answer.
 function isRigFurniture(mesh) {
   if (window._rigBeatsChildMesh === true) return false;
+  if (mesh && mesh._isWeightCage) return false;
   const p = mesh && mesh._parentMesh;
   return !!(p && (p._isBone || p._isPinTarget));
 }

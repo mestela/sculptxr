@@ -230,7 +230,27 @@ class SculptManager {
     // mesh and something no in-stroke mirror can reach. So in-stroke symmetry is switched off
     // for cages and the real thing is applied when the stroke ends, across the rig's own mirror
     // plane and onto the twin bone -- see WeightCage.mirrorEdit.
-    if (this._symmetry && WeightCage.isCage(this._main.getMesh?.())) return false;
+    // ...UNLESS ITS MIRROR IS ITSELF, which is the centreline case and the opposite situation.
+    //
+    // A cage on a spine or a neck pairs with ITSELF: there is no other mesh to reach, and the
+    // correct mirror really is the far side of this same capsule -- which is precisely what the
+    // ordinary in-stroke symmetry does. Switching it off there left the stroke-end mirror as the
+    // only path, and for a self pair that path cannot work: it copies every vertex onto its
+    // partner, and when the partner mapping is an involution, copying BOTH ways is a SWAP. Each
+    // release exchanged the two halves of the capsule instead of mirroring one onto the other.
+    //
+    // matt: "during the stroke it has no symmetry, then when i let go there's a short pause, and
+    // the mesh does its own strange distortion. almost like its trying to mirror and flip the
+    // stroke." It was flipping it -- measured, the shape oscillated by 4.4 units and repeated
+    // identically on every apply rather than settling.
+    //
+    // The stroke-end mirror keeps the job it was written for: a cage whose twin is a DIFFERENT
+    // cage, which no in-stroke mirror can reach. WeightCage.mirrorEdit now declines self pairs
+    // for the same reason, so exactly one of the two does the work.
+    const _cage = this._main.getMesh?.();
+    if (this._symmetry && WeightCage.isCage(_cage) && !(_cage._cageMirror && _cage._cageMirror.self)) {
+      return false;
+    }
     return this._symmetry;
   }
 

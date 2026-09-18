@@ -36,8 +36,20 @@ const check = (name, ok, got = '') => {
 };
 
 check('a transmissive surface is ordered explicitly, not left to the sort',
-  /threeMesh\.renderOrder = \(mesh\.getTransmission && mesh\.getTransmission\(\) > 0\) \? 0\.9 : 0;/.test(SM),
+  /const _glass = !!\(mesh\.getTransmission && mesh\.getTransmission\(\) > 0\);/.test(SM)
+    && /threeMesh\.renderOrder = 0\.9;/.test(SM),
   'two spheres about one centre tie on z, and the tie-break is creation order');
+
+// ...AND ONLY WHERE THIS LINE IS THE AUTHOR. The first version wrote `: 0` for every
+// non-transmissive mesh, which looks like a harmless default and is not: this runs for every
+// mesh every frame, so it silently undid any order another feature had set. It reset the x-ray
+// skin, which applySkinOpacity puts at 2 precisely so a see-through skin blends OVER the
+// capsules inside it -- measured: set the x-ray, and one frame later the order was back to 0.
+// That shipped in v3.49.0 and was caught building the cage-opacity slider.
+check('...and does not clobber an order another feature set',
+  /threeMesh\.userData\._glassOrder = true;/.test(SM)
+    && /\} else if \(threeMesh\.userData\._glassOrder\) \{/.test(SM),
+  'writing a default every frame is a write, not a default');
 
 // It is the one mesh whose result depends on WHEN it is drawn rather than on the depth test.
 check('...and it is still the one that does not write depth',
@@ -54,7 +66,7 @@ check('...written on the per-frame path, so turning transmission off puts it bac
 // overlay 0.5, wireframe 1, ground grid 200.
 check('...at an order inside the documented band',
   /renderOrder = 0\.5; \/\/ above the base mesh, below the wireframe \(1\)/.test(MESH)
-    && /\? 0\.9 : 0;/.test(SM),
+    && /threeMesh\.renderOrder = 0\.9;/.test(SM),
   'above the base mesh and the group overlay, below the wireframe and the grid');
 
 // The stale comment actively told the next person not to look here.

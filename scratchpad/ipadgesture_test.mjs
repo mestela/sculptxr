@@ -96,5 +96,84 @@ check('...and a zoom is told from a tap by the pinch delta, not just drift',
     /i\.setAttribute\('inputmode', 'none'\);\s*\n\s*if \(_coarse\)/.test(HTML));
 }
 
+// ── THE LONG PRESS MUST ASK WHAT IS UNDER ITSELF ────────────────────────────────────
+//
+// matt: "if i go into pins, then pos+rot, it often then swaps to the bone closest to where i
+// last clicked in the menu, rather than retaining the original selection."
+//
+// _resolvePinJoint reads the PRESELECTION highlight and falls back to the real selection only
+// when nothing is highlighted. A mouse keeps that honest by hovering; a finger never hovers, so
+// the highlight sat wherever a finger last went and the menu was built for that joint instead.
+// The commands themselves were always frozen at open -- the joint was simply the wrong one
+// before they were built.
+//
+// CLEARING ON A MISS IS THE HALF THAT MATTERS: with the stale highlight gone the fallback
+// reaches the actual selection, which is the case where someone picks a joint in the outliner
+// and pins it from the properties panel -- exactly what matt did.
+//
+// Measured: selection 254, stale highlight 250, resolved 250 (wrong). After a long press on
+// empty space the highlight clears and it resolves to 254. A long press ON joint 250 claims it.
+{
+  const SGL2 = fs.readFileSync(path.join(REPO, 'src/SculptGL.js'), 'utf8');
+
+  check('the long press picks at its OWN point before opening the menu',
+    /picking\.intersectionMouseMeshes\(this\.getMeshes\(\), px, py, false, true\)/.test(SGL2),
+    'includeRig, or it can never find a joint or a pin');
+  check('...and writes the result as the preselection, including a MISS',
+    /Skeleton\.setRigHighlight\(this, node\);/.test(SGL2)
+      && /let node = null;/.test(SGL2),
+    'clearing a stale highlight is what lets the real selection be used');
+  check('...only for rig nodes, so an ordinary mesh does not become the pin subject',
+    /if \(hit && \(hit\._isBone \|\| hit\._isPinTarget\)\) node = hit;/.test(SGL2));
+  check('...before the menu is opened, not after',
+    SGL2.indexOf('Skeleton.setRigHighlight(this, node);')
+      < SGL2.indexOf('const opened = this.openViewportMenu?.(at.x, at.y);'));
+  // A pick can throw on a half-built scene, and a menu that fails to open because the hover
+  // could not be resolved is worse than a menu built on a stale hover.
+  check('...and a failed pick does not stop the menu opening',
+    /\} catch \(_\) \{\}\n      const opened = this\.openViewportMenu/.test(SGL2));
+}
+
+// ── THE MENU BELONGS OVER THE VIEW, NOT UNDER THE PANEL ─────────────────────────────
+//
+// matt: "the r.click menu often draws offscreen, under the panel. it should either draw on top
+// of everything, or be aware of the right side edge, and avoid it." Both were wrong at once:
+//
+//   Z-ORDER -- it was 45, and the sidebar is 1050 with the topbar at 1100, so a menu near the
+//   right of the view was drawn UNDERNEATH them and simply vanished.
+//
+//   ROOM -- it flipped against `window.innerWidth`, and the window is wider than the 3D view by
+//   the whole sidebar. Measured: window 1024, viewport right edge 644. So a menu opened at 624
+//   had 400px of "room" that was entirely panel.
+//
+// Being over the panels is the weaker of the two fixes and is only the backstop: a menu drawn ON
+// the sidebar still hides whatever you were reading there, so the placement keeps it off.
+{
+  const VM = fs.readFileSync(path.join(REPO, 'src/gui/ViewportMenu.js'), 'utf8');
+
+  check('the menu sits above the sidebar and the topbar',
+    /position: fixed; z-index: 1250; display: none;/.test(VM),
+    'sidebar is 1050 and topbar 1100; 45 put it under both');
+  check('...and below the modal overlays, which should still cover it',
+    !/z-index: 9999/.test(VM));
+  check('...with the submenu just above its parent',
+    /#\$\{SUB_ID\} \{ z-index: 1251; \}/.test(VM));
+
+  check('placement measures the VIEWPORT, not the window',
+    /_bounds\(\) \{/.test(VM)
+      && /document\.getElementById\('viewport'\) \|\| document\.getElementById\('canvas'\)/.test(VM),
+    'the window includes the sidebar, which is exactly the space to stay out of');
+  check('...and both the root and the submenu use it',
+    (VM.match(/this\._bounds\(\)/g) || []).length === 2);
+  // Flip first (a menu pinned to the edge covers the joint you aimed at), then clamp -- because
+  // flipping past the NEAR edge is the same bug mirrored.
+  check('...flipped first, then clamped so a flip cannot push it off the other side',
+    /let left = \(x \+ r\.width > b\.right\) \? x - r\.width : x;/.test(VM)
+      && /left = Math\.max\(b\.left, Math\.min\(left, Math\.max\(b\.left, b\.right - r\.width\)\)\);/.test(VM));
+  // A menu bigger than the viewport cannot be clamped into it; the window is the lesser evil.
+  check('...and a menu too big for the viewport is not clamped into nonsense',
+    /Math\.max\(b\.left, b\.right - r\.width\)/.test(VM));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

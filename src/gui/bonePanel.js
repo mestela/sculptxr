@@ -273,6 +273,7 @@ export function buildBoneAuthoringHTML(main, style) {
   // and watch the rig do nothing.
   const physAim = physAimLabel(main, physTarget);
   const xray = Math.round(Skinning.skinOpacity() * 100);
+  const cageOp = Math.round(WeightCage.opacity() * 100);
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
   // THE WRIST PANEL IS A WRIST PANEL AGAIN. matt: "the bones minipanel is hardly a minipanel
@@ -351,6 +352,21 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-xray" min="5" max="100" step="1" value="${xray}">
       <span class="${c.val}" id="bone-xray-val">${xray}%</span>
     </div>
+    ${/* THE OTHER HALF OF THE X-RAY, and it only appears once there are cages to dim. X-Ray
+         fades the SKIN so you can find the capsule inside it; this fades the CAPSULES so you
+         can watch the weights change on the skin underneath while you sculpt one. matt: "i'd
+         need to set their opacity all at once, so i can verify that sculpting it is affecting
+         the weights of the target geometry." All of them together -- a cage is never the thing
+         you are looking at, and twenty outliner rows is not a thing anyone will do. */ ''}
+    ${hasCages ? `
+    <div class="${c.row}">
+      <span class="${c.lbl}">Cages</span>
+      <input type="range" id="bone-cage-op" min="5" max="100" step="1" value="${cageOp}">
+      <span class="${c.val}" id="bone-cage-op-val">${cageOp}%</span>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-select-cages" title="Select every weight cage, so they can be hidden, moved or deleted as a set">Select Cages</button>
+    </div>` : ''}
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
       <input type="range" id="bone-mush" min="0" max="60" step="1" value="${mush}">
@@ -661,6 +677,21 @@ export function buildBoneAuthoringHTML(main, style) {
       <input type="range" id="bone-xray" min="5" max="100" step="1" value="${xray}">
       <span class="${c.val}" id="bone-xray-val">${xray}%</span>
     </div>
+    ${/* THE OTHER HALF OF THE X-RAY, and it only appears once there are cages to dim. X-Ray
+         fades the SKIN so you can find the capsule inside it; this fades the CAPSULES so you
+         can watch the weights change on the skin underneath while you sculpt one. matt: "i'd
+         need to set their opacity all at once, so i can verify that sculpting it is affecting
+         the weights of the target geometry." All of them together -- a cage is never the thing
+         you are looking at, and twenty outliner rows is not a thing anyone will do. */ ''}
+    ${hasCages ? `
+    <div class="${c.row}">
+      <span class="${c.lbl}">Cages</span>
+      <input type="range" id="bone-cage-op" min="5" max="100" step="1" value="${cageOp}">
+      <span class="${c.val}" id="bone-cage-op-val">${cageOp}%</span>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-select-cages" title="Select every weight cage, so they can be hidden, moved or deleted as a set">Select Cages</button>
+    </div>` : ''}
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
       <input type="range" id="bone-mush" min="0" max="60" step="1" value="${mush}">
@@ -1421,6 +1452,32 @@ export function wireBoneSection(root, main, opts) {
     Skinning.setSkinOpacity(main, pct / 100);
     if (xrayVal) xrayVal.textContent = pct + '%';
     main.render?.();
+  });
+
+  // See-through CAGES, the mirror of the X-Ray above. Live on drag for the same reason: it is a
+  // look, and a look is judged by watching it move.
+  const cageOpInput = q('cage-op'), cageOpVal = q('cage-op-val');
+  cageOpInput?.addEventListener('input', () => {
+    const pct = parseInt(cageOpInput.value, 10);
+    WeightCage.setOpacity(main, pct / 100);
+    if (cageOpVal) cageOpVal.textContent = pct + '%';
+    main.render?.();
+  });
+
+  // SELECT THEM ALL AS A SET. matt: "there's no shortcut to select or change the vis properties
+  // of these capsule meshes." With the selection made, every tool that already works on a
+  // multi-selection -- hide, move, delete, the outliner -- reaches the cages without any of
+  // them being taught what a cage is.
+  q('select-cages')?.addEventListener('click', () => {
+    const cages = WeightCage.cages(main);
+    if (!cages.length) { say('no weight cages to select', false); return; }
+    // First replaces the selection, the rest add to it -- the same two-argument call the
+    // outliner's ctrl-click uses, so this lands in exactly the state a manual multi-select does.
+    cages.forEach((c, i) => main.setOrUnsetMesh(c, i > 0));
+    Skeleton.updateVisuals(main);
+    main.render?.();
+    refresh();
+    say('selected ' + cages.length + ' weight cage' + (cages.length === 1 ? '' : 's'));
   });
 
   // Delta mush strength, in smoothing iterations — the radius, in edges, that the smoothing

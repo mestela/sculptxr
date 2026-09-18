@@ -238,7 +238,21 @@ ShaderManager.updateUniforms = function(mesh, main) {
   // it is drawn rather than on the depth test. 0.9 keeps it inside the documented band -- above
   // the base mesh (0) and the group overlay (0.5), below the wireframe (1) and the ground grid
   // (200). Depth TESTING still applies, so glass behind the head is still hidden by it.
-  threeMesh.renderOrder = (mesh.getTransmission && mesh.getTransmission() > 0) ? 0.9 : 0;
+  // ONLY WHERE WE OWN IT. Writing `renderOrder = 0` for every non-transmissive mesh looks like
+  // a harmless default and is not: this runs for every mesh every frame, so it silently undid
+  // any order another feature had set. It clobbered the x-ray skin, which applySkinOpacity puts
+  // at 2 precisely so a see-through skin blends OVER the capsules inside it rather than the
+  // other way round -- measured: set the x-ray, and one frame later the order was back to 0.
+  // The flag records that this line is the author, so it can put it back and nothing else has
+  // to be consulted.
+  const _glass = !!(mesh.getTransmission && mesh.getTransmission() > 0);
+  if (_glass) {
+    threeMesh.renderOrder = 0.9;
+    threeMesh.userData._glassOrder = true;
+  } else if (threeMesh.userData._glassOrder) {
+    threeMesh.renderOrder = 0;            // transmission was turned off again
+    threeMesh.userData._glassOrder = false;
+  }
   
   var material = threeMesh.material;
   if (!material.isShaderMaterial) return;

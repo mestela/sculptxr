@@ -24,7 +24,11 @@ const SUB_ID = 'viewport-menu-sub';
 
 const CSS = `
 #${ID}, #${SUB_ID} {
-  position: fixed; z-index: 45; display: none;
+  /* ABOVE THE PANELS. It was 45, and the sidebar is 1050 with the topbar at 1100 -- so a menu
+     opened near the right of the viewport was drawn UNDERNEATH them and simply disappeared.
+     matt: "the r.click menu often draws offscreen, under the panel." Above all the chrome and
+     still far below the modal overlays and toasts, which sit at 999999 and should cover this. */
+  position: fixed; z-index: 1250; display: none;
   min-width: 168px; max-width: 260px; padding: 4px;
   background: rgba(30, 30, 46, 0.96);
   border: 1px solid rgba(205, 214, 244, 0.28); border-radius: 8px;
@@ -32,7 +36,7 @@ const CSS = `
   font: 500 13px/1 system-ui, sans-serif; color: #cdd6f4;
   user-select: none; -webkit-user-select: none;
 }
-#${SUB_ID} { z-index: 46; }
+#${SUB_ID} { z-index: 1251; }
 .vm-item {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px; border-radius: 5px; cursor: pointer; white-space: nowrap;
@@ -106,15 +110,43 @@ export default class ViewportMenu {
     if (this._el) this._el.querySelectorAll('.vm-item.open').forEach((r) => r.classList.remove('open'));
   }
 
+  // THE ROOM IS THE VIEWPORT, NOT THE WINDOW.
+  //
+  // The window is wider than the 3D view by the whole sidebar, so a menu opened near the right
+  // of the viewport had "room" by this measure and was then covered by the panel sitting in it.
+  // matt: "it should either draw on top of everything, or be aware of the right side edge, and
+  // avoid it." Both, as it turns out: the z-index above puts it over the panels, and this keeps
+  // it off them in the first place, which is the better of the two -- a menu ON the sidebar
+  // still hides whatever you were reading there.
+  //
+  // Falls back to the window when there is no viewport element, and when the menu is simply
+  // taller or wider than the viewport -- being clipped by the window is the lesser evil, and
+  // clamping to a box it cannot fit in would push it off the other edge instead.
+  _bounds() {
+    const host = document.getElementById('viewport') || document.getElementById('canvas');
+    const w = window.innerWidth, h = window.innerHeight;
+    if (!host) return { left: 0, top: 0, right: w, bottom: h };
+    const r = host.getBoundingClientRect();
+    return {
+      left: Math.max(0, r.left), top: Math.max(0, r.top),
+      right: Math.min(w, r.right), bottom: Math.min(h, r.bottom),
+    };
+  }
+
   _place(el, x, y) {
     el.style.display = 'block';
     el.style.left = '0px';
     el.style.top = '0px';
     const r = el.getBoundingClientRect();
+    const b = this._bounds();
     // Flipped rather than clamped when it would run off: a menu pinned to the edge covers the
     // thing you opened it on, which on a rig is the joint you were aiming at.
-    const left = (x + r.width > window.innerWidth) ? Math.max(0, x - r.width) : x;
-    const top = (y + r.height > window.innerHeight) ? Math.max(0, y - r.height) : y;
+    let left = (x + r.width > b.right) ? x - r.width : x;
+    let top = (y + r.height > b.bottom) ? y - r.height : y;
+    // ...and clamped after the flip, because flipping past the near edge is the same problem
+    // mirrored -- a press close to the left edge flips a wide menu off the screen entirely.
+    left = Math.max(b.left, Math.min(left, Math.max(b.left, b.right - r.width)));
+    top = Math.max(b.top, Math.min(top, Math.max(b.top, b.bottom - r.height)));
     el.style.left = Math.round(left) + 'px';
     el.style.top = Math.round(top) + 'px';
   }
@@ -129,10 +161,13 @@ export default class ViewportMenu {
     const pr = this._el.getBoundingClientRect();
     const rr = row.getBoundingClientRect();
     const sr = sub.getBoundingClientRect();
+    const b = this._bounds();
     let left = pr.right - 2;
-    if (left + sr.width > window.innerWidth) left = Math.max(0, pr.left - sr.width + 2);
+    if (left + sr.width > b.right) left = pr.left - sr.width + 2;
+    left = Math.max(b.left, Math.min(left, Math.max(b.left, b.right - sr.width)));
     let top = rr.top - 4;
-    if (top + sr.height > window.innerHeight) top = Math.max(0, window.innerHeight - sr.height);
+    if (top + sr.height > b.bottom) top = b.bottom - sr.height;
+    top = Math.max(b.top, Math.min(top, Math.max(b.top, b.bottom - sr.height)));
     sub.style.left = Math.round(left) + 'px';
     sub.style.top = Math.round(top) + 'px';
   }

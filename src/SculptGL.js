@@ -969,6 +969,31 @@ class SculptGL extends Scene {
       this._cancelDeferredSculpt?.();
       if (this._gestureActive) { this._gestureActive = false; this.onDeviceUp(); }
       this._action = Enums.Action.NOTHING;
+      // THE MENU MUST ASK WHAT IS UNDER *THIS* PRESS, not what the hover happens to say.
+      //
+      // _resolvePinJoint reads the PRESELECTION highlight and only falls back to the real
+      // selection when nothing is highlighted -- and on touch there is no hover to keep that
+      // honest. The highlight is left wherever a finger last went, so the menu was built for
+      // some other joint entirely, and the pin mode then landed on it. matt: "if i go into
+      // pins, then pos+rot, it often then swaps to the bone closest to where i last clicked in
+      // the menu, rather than retaining the original selection."
+      //
+      // Picking here and writing the highlight -- INCLUDING writing "nothing" on a miss, which
+      // is the half that matters: clearing a stale highlight is what lets the selection be used,
+      // and that is the case where someone has picked a joint in the outliner and pinned it from
+      // the panel. A mouse gets this for free from hovering; a finger has to be told.
+      try {
+        const rect = this._canvas.getBoundingClientRect();
+        const px = this._pixelRatio * (at.x - rect.left);
+        const py = this._pixelRatio * (at.y - rect.top);
+        const picking = this.getPicking && this.getPicking();
+        let node = null;
+        if (picking && picking.intersectionMouseMeshes(this.getMeshes(), px, py, false, true)) {
+          const hit = picking.getMesh();
+          if (hit && (hit._isBone || hit._isPinTarget)) node = hit;
+        }
+        Skeleton.setRigHighlight(this, node);
+      } catch (_) {}
       const opened = this.openViewportMenu?.(at.x, at.y);
       // A press that opened the menu must not also count as a tap on release -- otherwise
       // letting go fires the two-finger/double-tap sequence logic on the way out.

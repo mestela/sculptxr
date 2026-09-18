@@ -236,10 +236,13 @@ for (const [label, before, after] of [
   const CAGE = fs.readFileSync(path.join(REPO, 'src/editing/WeightCage.js'), 'utf8');
   const SKEL = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
   const sm = inject === 'localsym'
-    ? SM.replace("if (this._symmetry && WeightCage.isCage(this._main.getMesh?.())) return false;", '')
+    ? SM.replace(/if \(this\._symmetry && WeightCage\.isCage\(_cage\)[\s\S]*?\n    \}\n/, '')
     : SM;
-  check('in-stroke symmetry is off while a capsule is selected',
-    /if \(this\._symmetry && WeightCage\.isCage\(this\._main\.getMesh\?\.\(\)\)\) return false;/.test(sm),
+  // NARROWED, NOT REMOVED. The bicep reasoning holds for a cage whose mirror is the OTHER arm's
+  // cage, and is the opposite of true on the centreline, where the far side of this same
+  // capsule IS the right answer -- see the self-mirror block at the end of this file.
+  check('in-stroke symmetry is off for a capsule that mirrors onto a DIFFERENT one',
+    /WeightCage\.isCage\(_cage\) && !\(_cage\._cageMirror && _cage\._cageMirror\.self\)/.test(sm),
     'mirroring about the capsule\'s own centre pushes the BACK of a bicep out with the front');
   check('...but the toggle itself is still readable',
     /getSymmetryFlag\(\) \{\s+return this\._symmetry;/.test(sm),
@@ -509,6 +512,160 @@ for (const [label, before, after] of [
   check('...that shows the saved value when the panel is rebuilt',
     /xrayInput2\.value = String\(pct\)/.test(PANEL),
     'a slider that always reads 100% while the mesh is see-through is worse than none');
+}
+
+// ── SEEING THE CAGES, AND SEEING PAST THEM ──────────────────────────────────────────
+//
+// matt: "there's no shortcut to select or change the vis properties of these capsule meshes...
+// at a minimum i'd need to set their opacity all at once, so i can verify that sculpting it is
+// affecting the weights of the target geometry."
+//
+// The x-ray above fades the SKIN so you can find the capsule inside it. This is the other half:
+// fade the CAPSULES so you can watch the weights change on the skin underneath while sculpting
+// one. All of them together, because a cage is never the thing you are looking at.
+{
+  const WCS = fs.readFileSync(new URL('../src/editing/WeightCage.js', import.meta.url).pathname, 'utf8');
+  const BPS = fs.readFileSync(new URL('../src/gui/bonePanel.js', import.meta.url).pathname, 'utf8');
+  const OPT = fs.readFileSync(new URL('../src/misc/getOptionsURL.js', import.meta.url).pathname, 'utf8');
+
+  check('cage opacity is one control over all of them',
+    /WeightCage\.setOpacity = function \(main, v\)/.test(WCS)
+      && /for \(const cage of WeightCage\.cages\(main\)\)/.test(WCS));
+  check('...and is remembered',
+    /options\.cageOpacity = queryNumber/.test(OPT)
+      && /saveOption\('cageOpacity'/.test(WCS));
+
+  // THE SHARED-MATERIAL TRAP, from the other side. Every matcap mesh shares one cached
+  // ShaderMaterial and the per-frame loop writes each mesh's alpha into it in turn, so without
+  // a private clone dimming the cages dims the character with them -- which is exactly the bug
+  // matt hit the first time round: "xray is affecting both the skin mesh and the capsule
+  // meshes, thats stupid. it should be one or the other."
+  check('...through a PRIVATE material per cage, or it dims the character too',
+    /_cagePrivate/.test(WCS) && /mat\.clone\(\)/.test(WCS),
+    'the matcap material is shared; the last mesh written wins');
+  // A see-through cage that still writes depth hides the very skin it exists to reveal.
+  check('...with depth write off while see-through, and drawn after the skin',
+    /tm\.material\.depthWrite = clear;/.test(WCS)
+      && /tm\.renderOrder = clear \? 0 : 3;/.test(WCS));
+  // Cages baked while the slider is down must come up dimmed, or the setting looks broken.
+  check('...and applied after a bake as well as on the slider',
+    /WeightCage\.applyOpacity\(main\);/.test(WCS)
+      && WCS.indexOf('main._cagePairTried = true;') < WCS.lastIndexOf('WeightCage.applyOpacity(main);'));
+
+  check('there is a shortcut that selects every cage at once',
+    /id="bone-select-cages"/.test(BPS)
+      && /cages\.forEach\(\(c, i\) => main\.setOrUnsetMesh\(c, i > 0\)\);/.test(BPS),
+    'first replaces the selection, the rest add -- the same call a ctrl-click makes');
+  // Both controls are meaningless with nothing baked, and a dead slider is worse than no slider.
+  check('...and both controls appear only once cages exist',
+    /\$\{hasCages \? `[\s\S]*?id="bone-cage-op"[\s\S]*?id="bone-select-cages"[\s\S]*?` : ''\}/.test(BPS));
+
+  // REGRESSION, caught while building this: ShaderManager writes renderOrder every frame for
+  // every mesh, and writing 0 as a default silently undid any order another feature had set --
+  // it reset the x-ray skin from 2 back to 0 one frame after it was set, which is the layering
+  // that lets a see-through skin blend OVER the capsules inside it. Measured before the fix.
+  const SMS = fs.readFileSync(new URL('../src/render/ShaderManager.js', import.meta.url).pathname, 'utf8');
+  check('the per-frame renderOrder only touches meshes it owns',
+    /threeMesh\.userData\._glassOrder = true;/.test(SMS)
+      && /\} else if \(threeMesh\.userData\._glassOrder\) \{/.test(SMS),
+    'an unconditional default clobbers the x-ray skin every frame');
+}
+
+// ── PAIRING MUST NOT LATCH ON AN ATTEMPT THAT NEVER RAN ─────────────────────────────
+//
+// matt: "even though sym mode is enabled, i can't sculpt the cages in symmetry." His order of
+// work was: set radius, tweak, BAKE, then sculpt -- and bake pairs the cages as its last step.
+//
+// With symmetry off there is no mirror plane, so pairMirrors returns early and every cage comes
+// back unpaired -- while still setting `_cagePairTried`. Turning symmetry on afterwards could
+// then never pair anything for the rest of the session: mirrorEdit answered "this capsule has
+// no mirror twin" for ever. Measured, and clearing the latch by hand made the very same edit
+// mirror, which is what identified it.
+//
+// "We tried and they do not match" and "there was no plane to try against" are different
+// statements and the latch could not tell them apart. Recording whether a plane was present is
+// the whole fix -- and the original caution survives where it applies: a REAL attempt that
+// failed the quality bar is still not retried, because a map built after sculpting would match
+// a shape you have already changed against one you have not.
+{
+  const WCS = fs.readFileSync(new URL('../src/editing/WeightCage.js', import.meta.url).pathname, 'utf8');
+
+  check('pairing records whether it had a plane to work with',
+    /main\._cagePairHadPlane = !!plane;/.test(WCS),
+    'an early return with no plane is not evidence that the shapes disagree');
+  check('...and is retried when the last attempt had none',
+    /if \(!pair && \(!main\._cagePairTried \|\| !main\._cagePairHadPlane\)\)/.test(WCS));
+  // Set BEFORE the early return, or the flag describes the previous attempt.
+  check('...recorded before the no-plane early return',
+    WCS.indexOf('main._cagePairHadPlane = !!plane;')
+      < WCS.indexOf('if (!plane) return { paired: 0, unpaired: cages.length };'));
+
+  // Measured on matt's camel: bake with symmetry off gives paired 0 and hadPlane false; enabling
+  // symmetry and sculpting then pairs all 5 and mirrors. With a plane present, a cage whose pair
+  // failed is still refused and is NOT silently rebuilt.
+  // Asserted on the CODE, not on the prose describing it: a comment wraps where it likes, and a
+  // test that reads its own documentation passes for the wrong reason (which one in this suite
+  // already did today).
+  check('...while a genuine failure is still refused rather than rebuilt',
+    /return \{ ok: false, why: 'this capsule has no mirror twin' \};/.test(WCS)
+      // The refusal comes AFTER the retry, so the retry is the only second chance there is.
+      && WCS.indexOf('!main._cagePairTried || !main._cagePairHadPlane')
+         < WCS.indexOf("why: 'this capsule has no mirror twin'"));
+
+  // The in-stroke mirror stays off for cages -- that is the design, not the bug. An arm
+  // capsule's mirror is the OTHER ARM's capsule, a different mesh no in-stroke mirror reaches.
+  const SMS = fs.readFileSync(new URL('../src/editing/SculptManager.js', import.meta.url).pathname, 'utf8');
+  check('in-stroke symmetry is off for cross-paired cages, with the flag readable separately',
+    /WeightCage\.isCage\(_cage\) && !\(_cage\._cageMirror && _cage\._cageMirror\.self\)/.test(SMS)
+      && /getSymmetryFlag\(\) \{/.test(SMS),
+    'the stroke-end mirror has to know what the user asked for');
+}
+
+// ── A SELF MIRROR IS A SWAP, NOT A MIRROR ───────────────────────────────────────────
+//
+// matt: "during the stroke it has no symmetry, then when i let go there's a short pause, and
+// the mesh does its own strange distortion. almost like its trying to mirror and flip the
+// stroke." It was flipping it, exactly.
+//
+// A cage on a spine or a neck pairs with ITSELF. mirrorEdit copies every vertex onto its
+// partner, which is a COPY when the destination is another cage and a SWAP when it is this one:
+// with an involutive map, copying both ways exchanges the two halves. Measured on matt's camel
+// -- the shape moved 4.4 units and repeated identically on every apply instead of settling.
+//
+// The far side of the same capsule is what ORDINARY in-stroke symmetry does, so that is what
+// should do it. It was switched off for every cage on the strength of the arm case, where the
+// mirror is a different mesh no in-stroke mirror can reach -- true there, and the opposite of
+// true on the centreline. Now exactly one of the two paths acts on any given cage.
+{
+  const WCS = fs.readFileSync(new URL('../src/editing/WeightCage.js', import.meta.url).pathname, 'utf8');
+  const SMS = fs.readFileSync(new URL('../src/editing/SculptManager.js', import.meta.url).pathname, 'utf8');
+
+  check('in-stroke symmetry is allowed for a cage whose mirror is ITSELF',
+    /!\(_cage\._cageMirror && _cage\._cageMirror\.self\)/.test(SMS),
+    'the far side of the same capsule is exactly what ordinary symmetry does');
+  check('...and still refused for a cage that pairs with a DIFFERENT one',
+    /WeightCage\.isCage\(_cage\)/.test(SMS) && /return false;/.test(SMS),
+    'an arm capsule mirrors onto the other arm, which no in-stroke mirror reaches');
+  check('...and the stroke-end mirror declines self pairs, so only one path acts',
+    /if \(pair\.self\) return \{ ok: true, self: true, why: 'mirrored in-stroke; nothing to do here' \};/.test(WCS),
+    'both acting is the swap coming back');
+  // The cross-pair path must still find its destination now that `pair.self` returns early.
+  check('...while a cross pair still resolves its twin',
+    /const dstCage = WeightCage\.cages\(main\)\.find\(\(c\) => c\.getID\(\) === pair\.toId\);/.test(WCS));
+
+  // THE MAP MUST BE A BIJECTION. Nearest-neighbour is not one: two sources can pick the same
+  // target, leaving a third with nobody -- so mirroring writes one vertex where another also
+  // claims and never writes a third. It slips past a distance bar: measured on cage_bone_05,
+  // two of seventy-two collided with a miss of 0.522 against a bar of 0.936.
+  check('the mirror map serves the surest source first',
+    /const order = Array\.from\(\{ length: n \}, \(_, i\) => i\)\.sort\(\(a, b\) => bestD\[a\] - bestD\[b\]\);/.test(WCS));
+  check('...and a contested source is left UNMAPPED rather than sent to a substitute',
+    /if \(pick < 0 \|\| taken\[pick\]\) continue;/.test(WCS),
+    'a substitute puts a vertex somewhere nobody asked for; the apply loop skips map[i] < 0');
+  check('...with worst measured only over vertices that actually paired',
+    /if \(bestD\[i\] > worst\) worst = bestD\[i\];/.test(WCS)
+      && WCS.indexOf('taken[pick] = 1;') < WCS.indexOf('if (bestD[i] > worst) worst = bestD[i];'),
+    'counting a partner that was deliberately not used fails the bar for no reason');
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nall checks passed');
