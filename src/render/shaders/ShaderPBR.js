@@ -244,10 +244,31 @@ ShaderPBR.fragment = [
   // which is what makes a curved clear object read as curved rather than as a flat hole. The
   // 0.12 keeps a little of the surface visible face-on so it never disappears entirely -- it
   // is the one number here worth tuning by eye.
+  //
+  // ...AND THEN THE REFLECTION IS ADDED BACK, because alpha was erasing it.
+  //
+  // The environment reflection and the GGX highlights were always being computed for a
+  // transmissive surface -- roughness and `specular` are untouched by transmission, so the
+  // glossy value has always fed both. What went wrong is what happened afterwards: ordinary
+  // blending multiplies the WHOLE fragment by alpha, so at transmission 1 a head-on fragment
+  // was scaled to 0.12 and took its highlight down with it. The maths was right and then 88% of
+  // it was thrown away. matt: "transparent surfaces (like the outer eye) should read the glossy
+  // value, and reflect the environment, do specular highlights."
+  //
+  // A REFLECTION IS LIGHT ARRIVING, not a property of how solid the surface is -- glass gets
+  // MORE opaque where it catches a highlight, not less. So the luminance of what this surface
+  // is emitting raises alpha: the clear body keeps its fresnel value, a highlight approaches
+  // opaque, and the two coexist on one curved eye. Scaled by uTransmission so an opaque
+  // surface's shading is untouched.
+  //
+  // Rec.709 luma rather than a flat average: a blue-grey environment reflection and a warm
+  // highlight should raise alpha by what they actually look like, not by their channel sum.
   '  float alpha = uAlpha;',
   '  if (uTransmission > 0.0) {',
-  '    float fres = pow(1.0 - clamp(dot(normal, -normalize(vVertex)), 0.0, 1.0), 3.0);',
-  '    alpha = mix(alpha, alpha * clamp(fres + 0.12, 0.0, 1.0), uTransmission);',
+  '    float fres = pow(1.0 - clamp(dot(normal, V), 0.0, 1.0), 3.0);',
+  '    float clearAlpha = mix(alpha, alpha * clamp(fres + 0.12, 0.0, 1.0), uTransmission);',
+  '    float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));',
+  '    alpha = clamp(clearAlpha + lum * uTransmission, 0.0, 1.0);',
   '  }',
   '  gl_FragColor = encodeFragColor(color, alpha);',
   '}'

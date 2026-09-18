@@ -1,7 +1,7 @@
 import TR from './GuiTR.js';
 import { TAB_ICONS } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
-import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen } from './htmlvr/uiTokens.js';
+import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen, hoistGroupsToTop } from './htmlvr/uiTokens.js';
 
 // The tab the sidebar opens on when nothing has been remembered and nothing is pinned.
 const DESKTOP_DEFAULT_TAB = 'sculpting';
@@ -705,9 +705,32 @@ class Gui {
       ...(uiReorg()
         ? [{ id: 'view', label: 'View ▾', buildFn: buildMenuHTML_view,
              wireFn: (el, main, repaint) => {
-               wireSectionRendering(el, main, repaint, repaint, repaint);
+               // THE LIGHT REPAINT MUST BE A NO-OP HERE, as it is at every other mount of this
+               // section. `repaint` is `rebuild`, and rebuild does `dd.innerHTML = buildFn(...)`.
+               // wireSelect opens a dropdown by setting display and then calls the light repaint
+               // -- so the options list it just opened was thrown away and replaced by a fresh,
+               // closed one before anyone could reach an option. Every select in the View menu
+               // was unreachable, not only this one. matt: "view menu, camera, projection
+               // perspective/ortho doesn't work, it only works with the o hotkey, not good for
+               // folk without keyboards."
+               // wireSelect already updates the label and the active class itself, which is why
+               // a no-op loses nothing -- see the identical call in _buildDesktopCamera.
+               wireSectionRendering(el, main, repaint, () => {}, repaint);
                wireMenuBackground(el, main, repaint);
                wireMenuReference(el, main, repaint);
+               // SHADER AND RIG DISPLAY COME UP TO THE TOP LEVEL. matt: "move 'shader' and 'rig
+               // display' out of the 'rendering' section, they should be visible from the top
+               // level." Both are emitted inside buildSectionHTML_rendering, so wrapping that
+               // whole output in one 'Rendering' collapsible buries them a chevron deep.
+               //
+               // HOISTED HERE RATHER THAN SPLIT AT THE SOURCE, and that is deliberate.
+               // buildSectionHTML_rendering serves SEVEN mounts, and bonepanel_test asserts
+               // outright that "Rendering owns the rig display block" -- the note there says
+               // taking it out strands the rig flags, the capsule slider, Attach and Hide All
+               // with no home in the app at all. This is a layout preference of ONE menu, so it
+               // is fixed in that menu: the builder keeps its contract, the sidebar tab is
+               // untouched, and nothing else has to be re-tested.
+               hoistGroupsToTop(el, ['Shader', 'Rig Display']);
              } }]
         : [
           { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },

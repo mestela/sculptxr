@@ -381,7 +381,35 @@ check('transmission removes the diffuse, not the highlights',
   /vec3 albedo = linColor \* \(1\.0 - metallic\) \* \(1\.0 - uTransmission\);/.test(PBR),
   'scaling the final colour by opacity instead makes a clear shell read as milky');
 check('...with a fresnel-weighted alpha so a curved clear surface still reads as curved',
-  /float fres = pow\(1\.0 - clamp\(dot\(normal, -normalize\(vVertex\)\), 0\.0, 1\.0\), 3\.0\);/.test(PBR));
+  /float fres = pow\(1\.0 - clamp\(dot\(normal, V\), 0\.0, 1\.0\), 3\.0\);/.test(PBR));
+
+// AND THE ALPHA MUST NOT UNDO IT. The note above says fading the shaded result takes the
+// highlights with it -- and that is precisely what happened one step later, because ordinary
+// blending multiplies the WHOLE fragment by alpha. The reflection and the GGX highlights were
+// always computed for a transmissive surface (roughness and `specular` are untouched by
+// transmission, so the glossy value always fed both), and then at transmission 1 a head-on
+// fragment was scaled to 0.12 and 88% of the result was discarded. matt: "transparent surfaces
+// (like the outer eye) should read the glossy value, and reflect the environment, do specular
+// highlights."
+//
+// A reflection is light ARRIVING, not a measure of how solid the surface is: glass gets more
+// opaque where it catches a highlight. So luminance raises alpha, scaled by uTransmission so an
+// opaque surface is untouched.
+check('...and a reflection RAISES alpha rather than being faded out by it',
+  /float lum = dot\(color, vec3\(0\.2126, 0\.7152, 0\.0722\)\);/.test(PBR)
+    && /alpha = clamp\(clearAlpha \+ lum \* uTransmission, 0\.0, 1\.0\);/.test(PBR),
+  'multiplying the fragment by a low alpha erases the highlight it just computed');
+// Rec.709, not a channel average: a blue-grey environment reflection and a warm highlight should
+// raise alpha by what they look like.
+check('...weighted by luma, not by a flat channel average',
+  !/dot\(color, vec3\(0\.3333/.test(PBR));
+// The glossy value was never the missing piece -- worth asserting so it is not "fixed" again.
+check('...with roughness and specular untouched by transmission',
+  /vec3 specular = mix\( vec3\(0\.04\), linColor, metallic\);/.test(PBR)
+    // Line-scoped. `[^;]*` spanned the comment block above and matched the prose describing
+    // this very rule, which is a test that passes on its own documentation.
+    && !/roughness\s*[*=][^\n]*uTransmission/.test(PBR),
+  'transmission removes diffuse only; gloss feeds the IBL and the light loop as it always did');
 
 // Every sculpt material writes depth, which is right for a solid and fatal for a shell with
 // something inside it.

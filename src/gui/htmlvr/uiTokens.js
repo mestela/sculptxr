@@ -720,6 +720,42 @@ export function applyUISweep() {
 // it created, so running it again after a rebuild re-wraps the fresh markup and never nests.
 const _slug = (t) => t.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'section';
 
+// LIFT A NESTED SECTION OUT TO THE TOP LEVEL, after groupSectionTitles has built them.
+//
+// A section is a HEAD followed by its BODY, so a move is two nodes kept adjacent. Moving them to
+// the end of `root` is what makes them top level: nesting here is nothing but DOM containment
+// inside another section's body.
+//
+// For a menu that wants one of its builder's sub-sections promoted without the builder changing
+// shape for every other place it is used. See the View menu in Gui.js for why that matters.
+export function hoistGroupsToTop(root, titles) {
+  if (!root || !titles) return;
+  // REVERSED, because each section lands immediately after the one it came out of -- so hoisting
+  // in the given order puts the first one last. Walking backwards makes the final page order
+  // match the order the caller asked for, which is the only order it should have to think about.
+  for (const title of [...titles].reverse()) {
+    const head = [...root.querySelectorAll('.mm-group-head')]
+      .find((h) => h.textContent.trim() === title);
+    if (!head) continue;
+    const body = head.nextElementSibling;
+    // Already at the top level: nothing to do, and moving it would reorder the page for no gain.
+    const inner = head.closest('.mm-group-body');
+    if (!inner) continue;
+    // OUT OF ITS PARENT, NOT TO THE BOTTOM OF THE PAGE. Appending to `root` is the one-line
+    // version and it drops the section below everything else, which for "Shader" means the most
+    // reached-for control in the menu ends up last. Land it immediately after the section it
+    // came out of, so the page reads in the order someone already knows.
+    let outer = inner;
+    while (outer.parentElement && outer.parentElement !== root) outer = outer.parentElement;
+    let after = outer;
+    root.insertBefore(head, after.nextSibling);
+    after = head;
+    if (body && body.classList.contains('mm-group-body')) {
+      root.insertBefore(body, after.nextSibling);
+    }
+  }
+}
+
 export function groupSectionTitles(root, opts) {
   if (!root) return;
   // A SLIDER ROW IS TAGGED SO IT CAN KEEP THE WHOLE LINE.

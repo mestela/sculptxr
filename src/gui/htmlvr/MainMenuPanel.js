@@ -467,6 +467,20 @@ const CSS = `
   margin-bottom: 4px;
 }
 .mm-section-title:first-child { padding-top: 0; }
+/* A FIELD LABEL, NOT A SECTION. Same look as a section heading and none of its behaviour:
+   groupSectionTitles wraps every .mm-section-title into a collapsible, so a heading used merely
+   to name one control turns into a chevron you have to open to reach a single dropdown. That is
+   what the Camera page was -- five collapsibles over five controls. matt: "the view->camera
+   section itself can be simplified, no subsections, just put all those options in all those
+   subsections under 'camera'." */
+.mm-field-lbl {
+  font-size: 10px; color: #6c7086; text-transform: uppercase; letter-spacing: .06em;
+  padding: 6px 0 2px;
+}
+/* A control that does not apply right now, still in its place. pointer-events off rather than
+   the input's own disabled attribute, so the row keeps its height and nothing below it moves when
+   the projection changes -- which is the whole reason it is dimmed rather than hidden. */
+.mm-inert { opacity: 0.35; pointer-events: none; }
 
 /* ── DENSITY (ui reorg mockup) ───────────────────────────────────────────────
    ASK THE STRUCTURAL QUESTION, DO NOT GUESS AT IT. This rule was widened three times before
@@ -2832,7 +2846,12 @@ export function buildSectionHTML_camera(main) {
   const speed   = main._cameraSpeed ?? 0.3;
   return `
     <div id="mm-camera-root">
-      <div class="mm-section-title">Camera Reset</div>
+      ${/* NO SUB-HEADINGS HERE. Every .mm-section-title becomes its own collapsible, so this page
+           was five chevrons you had to open one at a time to reach five controls -- and the
+           Projection one was a heading over a single dropdown. matt: "no subsections, just put
+           all those options in all those subsections under 'camera'."
+           The names stay as field labels where the control needs one; the view buttons lose
+           theirs entirely, because Center/Front/Left/Top say what they are. */ ''}
       ${/* FOUR ONE-WORD BUTTONS, ONE ROW. They were two mm-btn-pairs, which is a hardcoded
            two-column grid, so four labels of five letters each took two lines of a 410px
            panel. They are also a single set -- four views of the same thing -- so splitting
@@ -2844,18 +2863,23 @@ export function buildSectionHTML_camera(main) {
         <button class="mm-action-btn" id="mm-cam-top">Top</button>
       </div>
 
-      <div class="mm-section-title">Projection</div>
+      <div class="mm-field-lbl">Projection</div>
       ${buildSelectHTML('mm-cam-proj', [
         { val: 0, label: 'Perspective' },
         { val: 1, label: 'Orthographic' },
       ], proj)}
-      <div class="mm-row" id="mm-fov-row"${proj!==0?' style="display:none"':''}>
+      ${/* FOV STAYS PUT, DIMMED. It used to be display:none under orthographic, so switching
+           projection moved everything below it and the slider vanished rather than explaining
+           itself -- matt: "the ortho/persp is confusing. just leave the fov slider visible at
+           all times, dim it when we're in ortho mode." Dimmed and inert says "this control
+           belongs to the other projection"; absent says nothing and shuffles the page. */ ''}
+      <div class="mm-row mm-fov-row${proj!==0?' mm-inert':''}" id="mm-fov-row">
         <span class="mm-lbl">FOV</span>
         <input type="range" id="mm-cam-fov" min="10" max="90" step="1" value="${fov}">
         <span class="mm-val" id="mm-cam-fov-val">${Math.round(fov)}°</span>
       </div>
 
-      <div class="mm-section-title">Camera Mode</div>
+      <div class="mm-field-lbl">Camera Mode</div>
       ${buildSelectHTML('mm-cam-mode', [
         { val: 0, label: 'Orbit' },
         { val: 1, label: 'Spherical' },
@@ -2868,7 +2892,7 @@ export function buildSectionHTML_camera(main) {
         <span class="mm-val" id="mm-cam-speed-val">${speed.toFixed(2)}</span>
       </div>
 
-      <div class="mm-section-title">Desktop Canvas (VR)</div>
+      <div class="mm-field-lbl">Desktop Canvas (VR)</div>
       ${buildSelectHTML('mm-spectator-mode', [
         { val: 0, label: 'Blank (VR active)' },
         { val: 1, label: 'Mirror (headset)' },
@@ -2876,7 +2900,7 @@ export function buildSectionHTML_camera(main) {
         { val: 3, label: 'Spectator (coupled)' },
       ], vmode)}
 
-      <div class="mm-section-title">Spectator FPS</div>
+      <div class="mm-field-lbl">Spectator FPS</div>
       ${buildSelectHTML('mm-spectator-fps', [
         { val: 0, label: 'Full rate' },
         { val: 1, label: '½ rate' },
@@ -4807,8 +4831,8 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   wireSelect(el, 'mm-cam-proj', (v) => {
     const n = parseInt(v, 10);
     camera?.setProjectionType?.(n);
-    const fovRow = el.querySelector('#mm-fov-row');
-    if (fovRow) fovRow.style.display = n === 0 ? '' : 'none';
+    // Dimmed, not hidden -- see the note in the builder.
+    el.querySelector('#mm-fov-row')?.classList.toggle('mm-inert', n !== 0);
     main.render?.();
   }, lightRepaintFn);
   wireSlider(el.querySelector('#mm-cam-fov'), el.querySelector('#mm-cam-fov-val'),

@@ -16,6 +16,12 @@ const RIGHT_CLICK_SLOP = 4;
 var MOUSE_LEFT = 1;
 var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
+// Long press: iPadOS's own threshold is about half a second, and matching it is the point --
+// this exists because it is the gesture people already try. The slop is generous because a
+// finger resting on glass drifts, and a press that cancels itself reads as the feature being
+// broken rather than as a drag.
+var LONGPRESS_MS = 500;
+var LONGPRESS_SLOP = 12;   // CSS px
 
 import ReferenceManager from './editing/ReferenceManager.js';
 import AudioTrack from './editing/AudioTrack.js';
@@ -925,6 +931,51 @@ class SculptGL extends Scene {
   // Finger pointers only — pen is handled separately in onPointer().
   ////////////////////////////
 
+  // ── LONG PRESS = THE MARKING MENU, ON TOUCH ────────────────────────────────────────
+  //
+  // matt: "as long as we can find a way to bring up what is shown in the r.click menu on
+  // desktop. a long press? i don't like it, but thats standard ipad behavior."
+  //
+  // Touch had NO route to that menu at all. The desktop shorthand is a right CLICK, and
+  // onDeviceDown deliberately refuses to arm it for pen or touch -- a second finger is dispatched
+  // as MOUSE_RIGHT to mean pan, so a pan that began and ended on one spot would open a menu. The
+  // other obvious gestures are taken: two-finger tap is undo, three-finger is redo.
+  //
+  // ONE FINGER ONLY, and that is what keeps it out of the way of drawing. The default setup is
+  // Pencil sculpts / finger navigates, so a finger press is already a navigation gesture and has
+  // nothing to interrupt. The pen path never calls this.
+  //
+  // It also refuses to fire mid-sculpt, for the case where Finger Sculpt has been turned on: a
+  // held finger is then laying down clay, and a menu appearing over it is not what was asked for.
+  _lpCancel() {
+    if (this._lpTimer) { clearTimeout(this._lpTimer); this._lpTimer = null; }
+    this._lpStart = null;
+  }
+
+  _lpSchedule(x, y) {
+    this._lpCancel();
+    this._lpStart = { x: x, y: y };
+    this._lpTimer = window.setTimeout(() => {
+      this._lpTimer = null;
+      if (!this._lpStart) return;
+      // Still exactly one finger, and not drawing with it.
+      if (this._fingerPointers.size !== 1) return;
+      if (this._action === Enums.Action.SCULPT_EDIT) return;
+      const at = this._lpStart;
+      this._lpStart = null;
+      // END THE CAMERA GESTURE FIRST. A fresh finger has already started an orbit (see
+      // _startGesture), and leaving it live means the menu opens while the view is still being
+      // dragged out from under it.
+      this._cancelDeferredSculpt?.();
+      if (this._gestureActive) { this._gestureActive = false; this.onDeviceUp(); }
+      this._action = Enums.Action.NOTHING;
+      const opened = this.openViewportMenu?.(at.x, at.y);
+      // A press that opened the menu must not also count as a tap on release -- otherwise
+      // letting go fires the two-finger/double-tap sequence logic on the way out.
+      if (opened) { this._peakFingerCount = 0; this._tapSeqStartTime = 0; }
+    }, LONGPRESS_MS);
+  }
+
   _onTouchDown(e) {
     // Stale-palm guard: a touch arriving while the PEN is actively sculpting would
     // add itself to _fingerPointers and block subsequent pen moves. Only reject when
@@ -941,12 +992,14 @@ class SculptGL extends Scene {
       // First finger of a new sequence — start the tap clock
       this._tapSeqStartTime  = performance.now();
       this._peakFingerCount  = 1;
+      this._lpSchedule(e.clientX, e.clientY);
     } else if (n > this._peakFingerCount) {
       // Finger count just increased — record center at this new peak
       this._peakFingerCount      = n;
       this._tapSeqPeakCenter     = this._fingerCenter();
       this._tapSeqPeakPinchDist  = this._fingerPinchDist();
     }
+    if (n > 1) this._lpCancel();   // a second finger means a camera gesture, not a long press
     const center = this._fingerCenter();
     const wasActive = this._gestureActive;
     if (wasActive) {
@@ -962,6 +1015,12 @@ class SculptGL extends Scene {
   _onTouchMove(e) {
     if (!this._fingerPointers.has(e.pointerId)) return;
     this._fingerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // Travelled: this is a drag, so it is not a long press. Checked before the gestureActive
+    // guard below, or a press that never started a gesture could never cancel itself.
+    if (this._lpStart) {
+      const dx = e.clientX - this._lpStart.x, dy = e.clientY - this._lpStart.y;
+      if (dx * dx + dy * dy > LONGPRESS_SLOP * LONGPRESS_SLOP) this._lpCancel();
+    }
     if (!this._gestureActive) return;
 
     const n = this._fingerPointers.size;
@@ -1034,6 +1093,8 @@ class SculptGL extends Scene {
 
   _onTouchUp(e) {
     if (!this._fingerPointers.has(e.pointerId)) return;
+    this._lpCancel();   // released before the timer: an ordinary tap
+
     // Snapshot before removing so double-tap check sees the right count
     const center = this._fingerCenter();
     const pinchDist = this._fingerPinchDist(); // capture BEFORE delete (needs ≥2 fingers)
