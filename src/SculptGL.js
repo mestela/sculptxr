@@ -954,6 +954,17 @@ class SculptGL extends Scene {
 
   _lpSchedule(x, y) {
     this._lpCancel();
+    // OFF SWITCH, for a device where a held press is an ordinary gesture rather than a
+    // deliberate one. Apple Vision Pro delivers a pinch as pointerType 'touch', and pinch-AND-
+    // HOLD is how you drag there -- so every drag would arm this, open the menu, and then cost
+    // a second press to dismiss because the dismissal consumes it. matt: "clicking is broken on
+    // avp. its nearly impossible to interact with any menu elements."
+    //
+    // A switch rather than a guess at the device: there is no honest way to detect a Vision Pro
+    // from here, and disabling the feature for every touch device to fix one would take the
+    // marking menu back off the iPad where it works. `window._longPressMenu = false` turns it
+    // off with no rebuild, which is also the A/B that says whether this is the cause at all.
+    if (window._longPressMenu === false) return;
     this._lpStart = { x: x, y: y };
     this._lpTimer = window.setTimeout(() => {
       this._lpTimer = null;
