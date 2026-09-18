@@ -992,5 +992,41 @@ check('...and the zone widening is the only thing left gated',
     /\['grab', 'Grab'\]/.test(PANEL) && /grab: 'grab'/.test(BDT) && /'grab'\) return 'grab'/.test(BDT));
 }
 
+// ── A NEW PIN REVEALS ITSELF ────────────────────────────────────────────────────────
+//
+// matt: "if a pin is created, we should force pin display if its turned off."
+//
+// Not merely invisible: rigNodeVisible above makes a rig node pickable ONLY while something
+// marking it is drawn, so with the pin layer off a new pin is unseeable AND ungrabbable, and
+// creating one looks like it silently failed.
+{
+  const SK = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
+
+  check('creating a pin turns the pin layer on',
+    /Skeleton\.revealPins = function \(main\)/.test(SK)
+      && /if \(!opts \|\| opts\.reveal !== false\) Skeleton\.revealPins\(main\);/.test(SK));
+  // displayFlag answers no for EVERY decoration while Hide All is on, so setting the pins flag
+  // underneath it changes a stored value and nothing on screen.
+  check('...and lifts Hide All, or the flag would change nothing visible',
+    /if \(Skeleton\.decorationsHidden\(\)\) \{ Skeleton\.setDecorationsHidden\(main, false\); changed = true; \}/.test(SK),
+    'forcing one without the other is a fix that does not fix anything');
+  // The panel's toggles read these flags; left alone they keep showing the old state.
+  check('...and rebuilds the bone panel so its toggles stop lying',
+    /if \(changed && main && main\._boneSectionRebuild\)/.test(SK));
+
+  // THE LOADER IS THE EXCEPTION, and it is the one that matters: forcing the flag while reading
+  // a file would overwrite the preference every time a rig with pins came back, so the setting
+  // could never be made to stick.
+  check('...but loading a file does NOT, or the preference could never stick',
+    /Skeleton\.makePin\(main, p\.joint, \{ reveal: false \}\)/.test(SK),
+    'deserialize is not a user creating a pin');
+  // Measured in the browser with the pin layer off AND Hide All on: a user-made pin turned both
+  // back on; the loader path left both untouched and still made its pin.
+  check('...and reveal is the DEFAULT, so a new call site gets the right behaviour',
+    /Skeleton\.makePin = function \(main, joint, opts\)/.test(SK)
+      && (SK.match(/reveal: false/g) || []).length === 1,
+    'every caller but the loader is a person pinning a joint');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

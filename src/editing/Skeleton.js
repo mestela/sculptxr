@@ -2105,8 +2105,13 @@ Skeleton.restoreLocal = function (snapshot) {
 // one during a pre-v3 migration, and IKSolver already imports Skeleton — putting it the other
 // way round would close a cycle. IKSolver.makePinObject delegates to this, so there is one
 // implementation rather than two that drift.
-Skeleton.makePin = function (main, joint) {
+Skeleton.makePin = function (main, joint, opts) {
   if (!main || !main.buildNull) return null;
+  // REVEALED BY DEFAULT, because almost every caller is a person pinning a joint. The exception
+  // is the loader: forcing the flag while reading a file would overwrite the user's saved
+  // preference every time a rig with pins came back, which is a setting that could never be
+  // made to stick. deserialize passes reveal:false.
+  if (!opts || opts.reveal !== false) Skeleton.revealPins(main);
   const pin = main.buildNull();
   pin._typeName = 'Pin';
   pin._isPinTarget = true;
@@ -4803,7 +4808,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         p.joint._boneIKPin = p.mode | (p.above ? 8 : 0);
       } else {
         // Pre-v3: only the mode survived, so a pin is made where the joint is standing.
-        const made = Skeleton.makePin(main, p.joint);
+        const made = Skeleton.makePin(main, p.joint, { reveal: false });
         if (made) {
           made._pinMode = p.mode;
           made._pinAboveGround = p.above;
@@ -4911,6 +4916,30 @@ Skeleton.decorationsHidden = function () {
   if (live != null) return !!live;
   const saved = getOptionsURL().boneHideDecor;
   return saved != null ? !!saved : false;
+};
+
+// A PIN YOU JUST MADE HAS TO BE ON SCREEN. matt: "if a pin is created, we should force pin
+// display if its turned off."
+//
+// It is not only that it is invisible. `rigNodeVisible` in Picking makes a rig node pickable
+// ONLY while something marking it is drawn -- "if all nodes are hidden, then they shouldn't be
+// grabbable" -- so with the pin layer off a new pin is both unseeable and ungrabbable, and
+// creating one looks like it silently failed.
+//
+// THE MASTER SWITCH GOES WITH IT, and that is a deliberate second step rather than an
+// oversight: `displayFlag` answers no for every decoration while Hide All is on, so turning the
+// pins flag on underneath it would change a stored value and nothing on screen. Forcing the one
+// without the other is a fix that does not fix anything.
+Skeleton.revealPins = function (main) {
+  let changed = false;
+  if (!Skeleton.displayFlagRaw('pins')) { Skeleton.setDisplayFlag('pins', true); changed = true; }
+  if (Skeleton.decorationsHidden()) { Skeleton.setDecorationsHidden(main, false); changed = true; }
+  // The panel's own toggles read these flags, so they have to be rebuilt or they go on showing
+  // the old state -- the button would lie about what pressing it does.
+  if (changed && main && main._boneSectionRebuild) {
+    try { main._boneSectionRebuild(); } catch (_) {}
+  }
+  return changed;
 };
 
 Skeleton.setDecorationsHidden = function (main, on) {
