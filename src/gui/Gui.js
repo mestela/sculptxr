@@ -1017,14 +1017,21 @@ class Gui {
     this._decorateDesktopSection(panelEl, 'scene');
   }
 
-  // THE DRAGGED HEIGHT, RESTORED AND REMEMBERED. The list is `resize: vertical` on desktop (see
-  // the stylesheet), which the browser handles entirely on its own — all this does is put the
-  // saved number back on a freshly built list and write down where the drag ended.
+  // THE DRAGGED HEIGHT, RESTORED AND REMEMBERED.
   //
-  // ON pointerup, NOT a ResizeObserver. The observer is the more obvious hook and it is the one
-  // I wrote first: its callbacks are delivered during the rendering steps, which a hidden tab
-  // does not run, so it is unverifiable from a headless session and silently dead in a
-  // background window. A drag ends with a pointer release, which is an ordinary event.
+  // This used to lean on CSS `resize: vertical` and only write down where the browser's own drag
+  // ended. That worked on desktop and did nothing at all on the iPad, because iOS Safari does
+  // not implement CSS resize — so the device with the least vertical space to spare was the one
+  // device where the list could not be made bigger. matt: "on ipad and desktop, the outliner
+  // should be resizable when docked in the side bar."
+  //
+  // So the drag is ours now, on pointer events, which are the same three lines on a mouse, a pen
+  // and a finger. `setPointerCapture` is what makes a drag survive the pointer leaving the
+  // 11px grip — without it the resize stops the moment you move faster than the layout.
+  //
+  // NOT a ResizeObserver, which is what an earlier version of this used to notice the browser's
+  // resize: its callbacks are delivered during the rendering steps, which a hidden tab does not
+  // run, so it is unverifiable from a headless session and silently dead in a background window.
   //
   // CALLED BEFORE THE SCROLL IS PUT BACK, not after — see the note at the call site.
   _applyOutlinerHeight(panelEl) {
@@ -1032,11 +1039,38 @@ class Gui {
     if (!list) return;
     const saved = getOptionsURL().outlinerHeight;
     if (saved > 0) list.style.height = saved + 'px';
-    // Debounced through saveOption, the same as a slider drag.
-    list.addEventListener('pointerup', () => {
-      const h = Math.round(list.getBoundingClientRect().height);
-      if (h > 0) getOptionsURL.saveOption?.('outlinerHeight', h, 300);
+
+    const grip = panelEl.querySelector('.mm-outliner-grip');
+    if (!grip) return;
+    let startY = 0, startH = 0;
+
+    grip.addEventListener('pointerdown', (e) => {
+      startY = e.clientY;
+      startH = list.getBoundingClientRect().height;
+      grip.setPointerCapture(e.pointerId);
+      // The press belongs to the drag: without this a touch scrolls the sidebar underneath.
+      e.preventDefault();
     });
+
+    grip.addEventListener('pointermove', (e) => {
+      if (!grip.hasPointerCapture(e.pointerId)) return;
+      // A floor, not a clamp at both ends: the ceiling is the point of the feature. 52px is the
+      // same minimum the stylesheet gives the list, so a drag cannot collapse it to nothing.
+      const h = Math.max(52, Math.round(startH + (e.clientY - startY)));
+      list.style.height = h + 'px';
+    });
+
+    const finish = (e) => {
+      if (!grip.hasPointerCapture(e.pointerId)) return;
+      grip.releasePointerCapture(e.pointerId);
+      const h = Math.round(list.getBoundingClientRect().height);
+      // Debounced through saveOption, the same as a slider drag.
+      if (h > 0) getOptionsURL.saveOption?.('outlinerHeight', h, 300);
+    };
+    grip.addEventListener('pointerup', finish);
+    // A cancelled pointer (an iPad system gesture taking over, say) still ends the drag, and the
+    // height it reached is still the one to remember.
+    grip.addEventListener('pointercancel', finish);
   }
 
   _buildDesktopRendering(panelEl) {

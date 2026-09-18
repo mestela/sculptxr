@@ -736,8 +736,11 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 // TAKE, capsules are large and easy to hit, and a held mesh short-circuits the pin path on its
 // first line. matt hit that twice, and `window._rigBoneSelect = false` fixed it on the spot.
 check('bone selection follows the TOOL, and is on in the bone tool',
-  /const idx = main && main\.getSculptManager/.test(SRC)
-    && /return idx === BONE_DRAW_TOOL;/.test(SRC),
+  /main\.getSculptManager/.test(SRC)
+    // The tool gate, however it is spelled. It used to be `return idx === BONE_DRAW_TOOL;`
+    // exactly; pinning that line made the grab-mode exception read as a regression, which it is
+    // not -- what matters is that a tool OTHER than the bone tool gets false.
+    && /getToolIndex\(\) !== BONE_DRAW_TOOL\) return false;/.test(SRC),
   'global bone select makes Grab swallow rig nodes and go dead');
 check('...with both manual overrides still winning',
   /if \(window\._rigBoneSelect === false\) return false;/.test(SRC)
@@ -830,7 +833,10 @@ check('...and the zone widening is the only thing left gated',
   const SC = fs.readFileSync(new URL('../src/Scene.js', import.meta.url).pathname, 'utf8');
 
   check('bone selection is on in the bone tool and off elsewhere',
-    /return idx === BONE_DRAW_TOOL;/.test(PK),
+    /getToolIndex\(\) !== BONE_DRAW_TOOL\) return false;/.test(PK)
+      // ...and off in that tool's own grab mode, which borrows Grab and so inherits the same
+      // problem. See the block at the end of this file.
+      && /_mode === 'grab' \? false : true/.test(PK),
     'Split needs it; Grab is broken by it — so it follows the tool rather than a global flag');
   check('...and the topology verbs are offered only where it is on',
     /const inBoneTool = this\._sculptManager\?\.getToolIndex\?\.\(\) === Enums\.Tools\.BONE_DRAW;/.test(SC)
@@ -937,6 +943,53 @@ check('...and the zone widening is the only thing left gated',
     CAM2.indexOf('this._far = Math.max(0.1, boxRadius + distToBoxCenter);')
       < CAM2.indexOf('this._near = Math.max(this._far / 2000'),
     'ordered the other way the floor reads the PREVIOUS frame\'s far plane');
+}
+
+// ── GRAB MODE IN THE BONE TOOL ──────────────────────────────────────────────────────
+//
+// matt: "my use case here is being able to test the physics, currently i have to keep jumping
+// between bone and grab because i can't manipulate pins in the bone tool." Every other mode in
+// BoneDrawTool picks through Skeleton.joints(), and a pin is a null carrying _isPinTarget rather
+// than a joint, so no mode could reach one.
+//
+// THE EXCEPTION BELOW IS THE WHOLE RISK. Bone select is ON in the bone tool and is actively
+// harmful in Grab -- a capsule is large and easy to hit, Grab's pick runs with includeRig and
+// will happily take it, and a held mesh short-circuits the pin path on its first line. Deciding
+// this on the tool index alone hands that bug straight back in the one mode whose entire purpose
+// is reaching for a pin. Measured in the browser: pressing mid-bone with bone select forced on
+// grabs the capsule; with the exception it falls through to the mesh, which is what Grab does.
+{
+  const rd = (f) => fs.readFileSync(new URL('../' + f, import.meta.url).pathname, 'utf8');
+  const PICK = SRC;   // Picking.js, already loaded at the top of this file
+  const BDT  = rd('src/editing/tools/BoneDrawTool.js');
+  const PANEL = rd('src/gui/bonePanel.js');
+
+  check('bone select is off in the bone tool\'s own grab mode',
+    /sm\.getCurrentTool\(\)\._mode === 'grab' \? false : true/.test(PICK),
+    'a pickable capsule is something Grab will take instead of the pin you aimed at');
+  check('...and still on for every other mode of that tool',
+    /if \(!sm \|\| sm\.getToolIndex\(\) !== BONE_DRAW_TOOL\) return false;/.test(PICK),
+    'Split needs it -- splitting a thing you cannot point at is a menu item acting on nothing');
+  check('...with the manual override still winning either way',
+    PICK.indexOf("window._rigBoneSelect === false") < PICK.indexOf("sm.getToolIndex() !== BONE_DRAW_TOOL"));
+
+  // Borrowed, not reimplemented: Grab's drag is ray-plane work with an orthographic case, a
+  // world-group space change and a depth reconstruction that each cost their own bug.
+  check('grab mode delegates to the REAL Grab tool',
+    /sm \? sm\.getTool\(Enums\.Tools\.GRAB\) : null/.test(BDT));
+  check('...on all three of start, update and end',
+    /if \(this\._mode === 'grab'\) return this\._grabTool\(\)\?\.start\(\.\.\.arguments\) \|\| false;/.test(BDT)
+      && /if \(this\._mode === 'grab'\) \{ this\._grabTool\(\)\?\.update\(\); return; \}/.test(BDT)
+      && /if \(this\._mode === 'grab'\) \{ this\._grabTool\(\)\?\.end\(\); return; \}/.test(BDT),
+    'the borrowed tool holds the mesh, the undo snapshot and the AutoKey marker');
+  // end() must NOT be gated on this tool's own _drag: grab mode never sets one.
+  check('...and end delegates BEFORE the _drag guard',
+    BDT.indexOf("if (this._mode === 'grab') { this._grabTool()?.end(); return; }")
+      < BDT.indexOf('const d = this._drag;\n    this._drag = null;'),
+    'grab mode sets no _drag of its own, so a guarded end would never release the grab');
+
+  check('the mode is reachable from the panel and from setModeKey',
+    /\['grab', 'Grab'\]/.test(PANEL) && /grab: 'grab'/.test(BDT) && /'grab'\) return 'grab'/.test(BDT));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

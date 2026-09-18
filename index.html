@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v3.46.1</title>
+    <title>SculptXR v3.46.2</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v3.46.1
+                                                              VERSION: v3.46.2
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -109,10 +109,41 @@
       input[type=number] { touch-action: none; }
     </style>
     <script>
-      // Stamp inputmode="numeric" on every number input as panels are dynamically created.
+      // SCRIBBLE IS INVITED BY THE FIELD, NOT BY THE PAGE.
+      //
+      // touch-action does not reach it: Scribble is a system input method, and iPadOS offers it
+      // whenever an Apple Pencil comes near something TEXT-EDITABLE. So a pencil drag that merely
+      // passed close to the transform fields started handwriting into them. matt: "ipad keeps
+      // scribbling lines when i drag with the pencil... it was because it was too close to the
+      // position input fields." Same cause the blendshape panel already works around by keeping
+      // its name field hidden until you tap "+".
+      //
+      // READONLY IS THE OPT-OUT. There is no web API to refuse Scribble, but a readonly field is
+      // not editable, so there is nothing for it to write into and it is never offered.
+      //
+      // IT COSTS NOTHING HERE, because on these devices the field was never the editor: tapping
+      // one opens the numpad overlay (VRNumpad.shouldUse() is true for exactly this kind of
+      // device), which writes input.value programmatically -- readonly does not block that -- and
+      // dispatches change. The same media query is used on purpose, so the two cannot disagree
+      // about which devices are numpad-driven.
+      //
+      // GATED, NOT BLANKET: on a desktop you type into these directly, and readonly there would
+      // take that away. `inputmode` below stays unconditional because it only ever affected
+      // virtual keyboards.
+      let _coarse = false;
+      try {
+        _coarse = !!(window.matchMedia
+          && window.matchMedia('(hover: none) and (pointer: coarse)').matches);
+      } catch (_) {}
+      const _patchOne = (i) => {
+        i.setAttribute('inputmode', 'none');
+        if (_coarse) i.setAttribute('readonly', '');
+      };
+      // Stamp inputmode (and, on a touch device, readonly) on every number input as panels are
+      // dynamically created.
       const _patchInput = (el) => {
-        if (el.matches?.('input[type=number]')) el.setAttribute('inputmode', 'none');
-        el.querySelectorAll?.('input[type=number]').forEach(i => i.setAttribute('inputmode', 'none'));
+        if (el.matches?.('input[type=number]')) _patchOne(el);
+        el.querySelectorAll?.('input[type=number]').forEach(_patchOne);
       };
       // Observe documentElement (<html>), not document.body: this script runs in <head>
       // before <body> exists, so document.body is null here and observe() would throw —

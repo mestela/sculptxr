@@ -87,7 +87,23 @@ class SculptGL extends Scene {
     this._pendingSculptTimer   = 0;    // setTimeout handle for the deferred start
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
 
-    this._eventProxy = {};
+    // THE SYNTHETIC EVENT THE TOUCH PATH DISPATCHES THROUGH THE MOUSE HANDLERS, and it says so.
+    //
+    // It used to be a bare `{}`, so `pointerType` was undefined -- and onDeviceDown gates the
+    // right-CLICK (the marking menu) on `pointerType !== 'pen' && !== 'touch'`, with a comment
+    // naming this exact case: "On iPad a second finger is dispatched as MOUSE_RIGHT to mean PAN,
+    // so a pan that happened to start and end on the same spot would fire this." The intent was
+    // right and the guard never fired, because an undefined pointerType is not 'touch'.
+    //
+    // matt, testing on the iPad: "if i use a 2 finger gesture to zoom the view, it pops up the
+    // r.click menu." Fingers do not lift simultaneously, so a two-finger zoom drops to one
+    // finger and then to none, and every one of those transitions dispatches MOUSE_RIGHT through
+    // here. Labelling the proxy fixes all of them at once rather than adding a tap test to each.
+    //
+    // Safe because this object is ONLY ever dispatched from the finger/gesture paths -- it is
+    // the one place MOUSE_RIGHT is synthesised (_startGesture), and a real mouse or pen carries
+    // its own event and never touches this.
+    this._eventProxy = { pointerType: 'touch' };
 
     // iPad multitouch routing flags — initialise from persisted opts
     const _ipadOpts = window.getOptionsURL?.() || {};

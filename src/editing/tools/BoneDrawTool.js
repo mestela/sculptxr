@@ -4,6 +4,7 @@ import SculptBase from './SculptBase.js';
 import Skeleton from '../Skeleton.js';
 import Skinning from '../Skinning.js';
 import IKSolver from '../IKSolver.js';
+import Enums from '../../misc/Enums.js';
 
 // Minimum gap between live weight re-solves while dragging a radius. Slow enough that a dense
 // mesh keeps its framerate, fast enough that the recolour still reads as continuous.
@@ -136,7 +137,7 @@ class BoneDrawTool extends SculptBase {
     this._chainName = 'bone';
     this._chainIndex = 0;
 
-    this._mode = 'draw';       // select | draw | tweak | pose | radius | joint | ik
+    this._mode = 'draw';       // select | draw | tweak | pose | radius | joint | ik | grab
     this._compensate = true;   // tweak: pin the dragged joint's children in world space
     this._hilite = null;       // preselected joint
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
@@ -172,6 +173,7 @@ class BoneDrawTool extends SculptBase {
     // whenever a joint is selected would bury the rig.
     if (this._mode === 'joint') return 'joint';
     if (this._mode === 'ik') return 'ik';
+    if (this._mode === 'grab') return 'grab';
     return this._compensate ? 'free' : 'fk';
   }
 
@@ -185,7 +187,8 @@ class BoneDrawTool extends SculptBase {
   }
 
   setModeKey(key) {
-    const named = { select: 'select', draw: 'draw', pose: 'pose', radius: 'radius', joint: 'joint', ik: 'ik' };
+    const named = { select: 'select', draw: 'draw', pose: 'pose', radius: 'radius', joint: 'joint', ik: 'ik',
+      grab: 'grab' };
     const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
@@ -665,8 +668,26 @@ class BoneDrawTool extends SculptBase {
     return Math.hypot(_s0.x - main._mouseX, _s0.y - main._mouseY) <= this._endTapPx();
   }
 
+  // GRAB IS THE REAL GRAB TOOL, BORROWED — not a reimplementation.
+  //
+  // matt: "my use case here is being able to test the physics, currently i have to keep jumping
+  // between bone and grab because i can't manipulate pins in the bone tool." And he is right that
+  // there was no way: every desktop pick in this file goes through `Skeleton.joints()`, and a pin
+  // is a null with `_isPinTarget`, not a joint -- so the bone tool could never see one.
+  //
+  // Copying Grab's drag maths here would be the wrong answer twice over: it is a hundred lines of
+  // ray-plane work with an orthographic case, a world-group space change and a depth
+  // reconstruction that each cost their own bug, and a copy would drift from the original the
+  // first time either was fixed. Delegating means this mode IS grab, including the IK solve on a
+  // joint, the pin path, undo and AutoKey.
+  _grabTool() {
+    const sm = this._main.getSculptManager && this._main.getSculptManager();
+    return sm ? sm.getTool(Enums.Tools.GRAB) : null;
+  }
+
   start() {
     if (this._main._xrSession) return false; // VR drives everything from updateXR
+    if (this._mode === 'grab') return this._grabTool()?.start(...arguments) || false;
     if (this._mode === 'draw') return this._startDraw();
     return this._startScreenDrag();
   }
@@ -917,6 +938,7 @@ class BoneDrawTool extends SculptBase {
 
   update() {
     if (this._main._xrSession) return;
+    if (this._mode === 'grab') { this._grabTool()?.update(); return; }
     const d = this._drag;
     if (!d) return;
     const main = this._main;
@@ -967,6 +989,9 @@ class BoneDrawTool extends SculptBase {
 
   end() {
     if (this._main._xrSession) return;
+    // Unconditional, not gated on a drag of our own: grab mode never sets `_drag`, and the
+    // borrowed tool is the one holding the mesh, the undo snapshot and the AutoKey marker.
+    if (this._mode === 'grab') { this._grabTool()?.end(); return; }
     const d = this._drag;
     this._drag = null;
     if (!d) return;

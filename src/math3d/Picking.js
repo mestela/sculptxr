@@ -72,12 +72,23 @@ var _segS = 0.0;   // parameter along the segment, 0 at the head and 1 at the ti
 // only for the bones tool, not for grab."
 //
 // So the switch is per-tool rather than global, and the manual override still wins either way.
+//
+// ...AND OFF IN THE BONE TOOL'S OWN GRAB MODE, which is the same exception wearing a different
+// hat. That mode borrows the real Grab tool, so it inherits Grab's generic includeRig pick --
+// and everything two paragraphs up applies unchanged: a pickable capsule is large, easy to hit
+// and something that pick will happily TAKE, and the held mesh then short-circuits the pin path.
+// Deciding this on the TOOL INDEX alone would have handed that bug straight back, in the one
+// mode whose entire purpose is reaching for a pin.
+//
+// matt: "my use case here is being able to test the physics, currently i have to keep jumping
+// between bone and grab because i can't manipulate pins in the bone tool." Jumping to the Grab
+// tool worked precisely because leaving the bone tool turned this off.
 const BONE_SELECT = (main) => {
   if (window._rigBoneSelect === false) return false;
   if (window._rigBoneSelect === true) return true;
-  const idx = main && main.getSculptManager && main.getSculptManager()
-    ? main.getSculptManager().getToolIndex() : -1;
-  return idx === BONE_DRAW_TOOL;
+  const sm = main && main.getSculptManager && main.getSculptManager();
+  if (!sm || sm.getToolIndex() !== BONE_DRAW_TOOL) return false;
+  return sm.getCurrentTool && sm.getCurrentTool()._mode === 'grab' ? false : true;
 };
 // Enums is not imported here and importing it for one number would drag the tool tables into
 // the pick loop's module. The index is stable and asserted in rigpick_test.

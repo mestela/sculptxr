@@ -904,9 +904,32 @@ const CSS = `
    rasteriser is never asked to draw a resize grabber it cannot paint.
    max-height goes with it: a cap the user is dragging against is a cap fighting them. */
 wa-tab-panel .mm-outliner-list {
-  resize: vertical;
+  /* NO CSS resize any more. That is a feature iOS Safari does not implement, so the
+     one place with the least room to spare was the one place it never worked -- and where it DID
+     work the grabber was a 7px corner. The grip below does the job on every device, so the
+     native one is left off rather than having two handles in the same corner. */
   max-height: none;
 }
+/* The drag target. Full width so a finger can find it, and only in the docked sidebar: the VR
+   panel keeps its fixed height (see the note above) and the rasteriser is never asked to paint
+   a handle it cannot use. */
+.mm-outliner-grip { display: none; }
+wa-tab-panel .mm-outliner-grip {
+  display: block;
+  height: 11px;
+  margin: -3px 0 5px;
+  cursor: ns-resize;
+  touch-action: none;          /* or the page scrolls instead of the drag running */
+  border-radius: 0 0 5px 5px;
+  /* Two hairlines, the same visual language as the float panel's corner grip. */
+  background:
+    linear-gradient(to bottom, transparent 0 3px, #6c7086 3px 4px, transparent 4px 6px,
+                    #6c7086 6px 7px, transparent 7px 100%);
+  background-size: 26px 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 
 .mm-outliner-row {
   display: flex;
@@ -2497,6 +2520,14 @@ export function buildSectionHTML_scene(main) {
     <div class="mm-outliner-wrap">
       <div class="mm-outliner-list">${meshRows}</div>
       <div class="mm-scrollbar-track mm-outliner-sbar"><div class="mm-scrollbar-thumb"></div></div>
+      ${/* A REAL HANDLE, because CSS `resize` is not available everywhere this panel docks.
+           iOS Safari does not implement it at all -- so on the iPad the list simply could not be
+           dragged, while the same build resized fine on desktop. matt: "on ipad and desktop, the
+           outliner should be resizable when docked in the side bar."
+           A full-width bar rather than the native corner gripper, which is a ~7px target you
+           have to hit exactly and is the wrong shape for a finger. Hidden in the VR panel by the
+           same scoping the old rule used -- see the stylesheet. */ ''}
+      <div class="mm-outliner-grip" title="Drag to resize the list"></div>
     </div>
     ${rigHTML}
     <div class="mm-add-row">

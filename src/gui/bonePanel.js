@@ -50,6 +50,17 @@ const MODES = [
   ['radius', 'Radius'],
   ['joint', 'Tweak Joint'],
   ['ik', 'IK'],
+  // GRAB, and it is the real Grab tool borrowed rather than a fifth way to drag a joint.
+  //
+  // matt: "my use case here is being able to test the physics, currently i have to keep jumping
+  // between bone and grab because i can't manipulate pins in the bone tool." Every other mode in
+  // this list picks through Skeleton.joints(), and a PIN is a null carrying _isPinTarget rather
+  // than a joint -- so no mode here could reach one, and testing a physics chain meant leaving
+  // the tool and coming back for every tug.
+  //
+  // LAST IN THE LIST for the opposite reason Select is first: it is the mode that moves the
+  // character rather than editing the rig, so it sits at the far end from the modes that build.
+  ['grab', 'Grab'],
 ];
 
 // Class dialects. `grid`/`toggle`/`action` are the three shapes the panel uses.
