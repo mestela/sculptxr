@@ -33,6 +33,7 @@ import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import RigPending   from '../../editing/RigPending.js';
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
+import GrabChannels from '../../editing/grabChannels.js';
 import PhysicsBones from '../../editing/PhysicsBones.js';
 import PanelTrace from '../../misc/PanelTrace.js';
 import { toolTextTint } from './toolTints.js';
@@ -3000,6 +3001,7 @@ function buildSculptingHTML(main, part) {
     const isMasking        = cur === Enums.Tools.MASKING;
     const isPaintGroup     = cur === Enums.Tools.PAINT_GROUP;
     const isMove           = cur === Enums.Tools.MOVE;
+    const isGrab           = cur === Enums.Tools.GRAB;
     const isSmooth         = cur === Enums.Tools.SMOOTH;
     const isVoxel          = cur === Enums.Tools.VOXEL;
     const isExtrudeOrInset = cur === Enums.Tools.EXTRUDE || cur === Enums.Tools.INSET;
@@ -3074,9 +3076,31 @@ function buildSculptingHTML(main, part) {
     if (isMove || isSmooth) {
       const ch = MotionPathEdit.channels();
       brushHTML += collapsibleHTML('motion-paths', 'Motion Paths', `
-        <div class="mm-choice-grid cols-2">
+        <div class="mm-choice-grid cols-3">
           <button class="mm-choice${ch.translate ? ' active' : ''}" id="mm-path-translate">Move</button>
           <button class="mm-choice${ch.rotate ? ' active' : ''}" id="mm-path-rotate">Rotate</button>
+          ${/* Connectivity has been MiniPanel-only since it shipped, so on desktop the option
+               governing whether a drag reaches the other curves inside the brush ran on whatever
+               the wrist panel was last set to, unseen. It belongs beside the two channels it
+               qualifies rather than in a section of its own. */ ''}
+          <button class="mm-choice${MotionPathEdit.connected() ? ' active' : ''}" id="mm-path-connected">Connect</button>
+        </div>`, false);
+    }
+
+    // ── Grab channels ────────────────────────────────────────────────
+    //
+    // The same pair the wrist panel has had, and for the same reason the motion-path one is
+    // here: on desktop Grab ran with whatever VR was last set to and no way to see it.
+    //
+    // THROUGH GrabChannels.setChannel, never the globals -- turning the last one off has to turn
+    // the other back on, because a grab that neither translates nor rotates is indistinguishable
+    // from a broken grab.
+    if (isGrab) {
+      const gch = GrabChannels.channels();
+      brushHTML += collapsibleHTML('grab-channels', 'Grab', `
+        <div class="mm-choice-grid cols-2">
+          <button class="mm-choice${gch.translate ? ' active' : ''}" id="mm-grab-translate">Translate</button>
+          <button class="mm-choice${gch.rotate ? ' active' : ''}" id="mm-grab-rotate">Rotate</button>
         </div>`, false);
     }
 
@@ -5036,6 +5060,33 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     };
     pathChannel('#mm-path-translate', '_pathTranslate', 'pathTranslate', (c) => c.translate);
     pathChannel('#mm-path-rotate', '_pathRotate', 'pathRotate', (c) => c.rotate);
+    // Connectivity is not one of `channels()`, so it reads its own accessor; same live-then-saved
+    // order as everything else here.
+    el.querySelector('#mm-path-connected')?.addEventListener('click', (e) => {
+      const next = !MotionPathEdit.connected();
+      window._pathConnected = next;
+      getOptionsURL.saveOption('pathConnected', next, 0);
+      e.currentTarget.classList.toggle('active', next);
+      lightRepaintFn();
+    });
+    // Grab's pair goes through setChannel, which is what keeps at least one of them on.
+    //
+    // BOTH BUTTONS GET REPAINTED, not just the one clicked. Turning off the last channel turns
+    // the OTHER one back on, so the click that changes a button you did not press is the normal
+    // case here, not an edge one -- and the desktop sections pass an empty lightRepaintFn, so
+    // nothing else is going to redraw them.
+    const paintGrab = (ch) => {
+      el.querySelector('#mm-grab-translate')?.classList.toggle('active', ch.translate);
+      el.querySelector('#mm-grab-rotate')?.classList.toggle('active', ch.rotate);
+    };
+    const grabChannel = (id, which) => {
+      el.querySelector(id)?.addEventListener('click', () => {
+        paintGrab(GrabChannels.setChannel(which, !GrabChannels.channels()[which]));
+        lightRepaintFn();
+      });
+    };
+    grabChannel('#mm-grab-translate', 'translate');
+    grabChannel('#mm-grab-rotate', 'rotate');
 
     el.querySelector('#mm-brush-clay')?.addEventListener('click', (e) => {
       tool._clay = !tool._clay;

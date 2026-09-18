@@ -7,6 +7,7 @@ import StMultiresolution from './StateMultiresolution.js';
 import StCustom from './StateCustom.js';
 import StVoxel from './StateVoxel.js';
 import Skinning from '../editing/Skinning.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 class StateManager {
 
@@ -76,8 +77,17 @@ class StateManager {
     this.pushState(new StVoxel(this._main, tool));
   }
 
+  // PERSISTED HERE, not at the two sliders that call this.
+  //
+  // The limit was already READ from `sculptxr_settings.maxUndo` in the constructor and never
+  // written back, so the setting looked like it worked and was gone on the next load. Saving in
+  // the setter means both callers -- the desktop slider and the VR one -- persist without either
+  // of them knowing about storage, and a third one added later gets it for nothing.
+  //
+  // Same store and key the constructor reads, through the same writer every other setting uses.
   setNewMaxStack(maxStack) {
     this.limit = maxStack;
+    try { getOptionsURL.saveOption('maxUndo', maxStack, 300); } catch (_) {}
     var undos = this._undos;
     var redos = this._redos;
     while (this._curUndoIndex >= maxStack) {
