@@ -2094,7 +2094,9 @@ function buildMenuHTML_settings(main) {
   const grabGain      = ui.grabGain        ?? opts.grabGain        ?? 1.0;
   // Nav throw (#19): how much of your release speed the scene keeps gliding with.
   const navThrow      = (window._navThrow != null ? +window._navThrow : null) ?? opts.navThrow ?? 1.0;
-  const pinchOn       = ui.pinchOn         ?? opts.pinchOn         ?? 0.022;
+  // FROM THE ONE ACCESSOR, because the default is per-runtime now: a literal here would show a
+  // Quest's threshold on a Vision Pro and the slider would lie about what is in force.
+  const pinchOn       = ui.pinchOn ?? opts.pinchOn ?? (main.getPinchOn ? main.getPinchOn() : 0.022);
   const hStylusLen    = ui.handStylusLength ?? opts.handStylusLength ?? 0.05;
   const hStylusOff    = ui.handStylusOffset ?? opts.handStylusOffset ?? 0.0;
   const hRayPitch     = Number.isFinite(window._handRayPitch) ? window._handRayPitch

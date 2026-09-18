@@ -227,11 +227,18 @@ var getOptionsURL = function () {
   // The range has to reach a Quest 2, whose pinch bottoms out at a gap of ~0.011 and whose
   // relaxed hand sits at 0.045+ — a slider that stopped at 0.015 could not express a working
   // threshold for that device at all. Default 0.022; see Scene.getPinchOn for the measurements.
-  options.pinchOn = queryNumber(getVal('pinchOn'), -0.010, 0.050, 0.022);
+  // NO DEFAULT HERE, and that is the whole point: a default makes this always-finite, so
+  // Scene.getPinchOn's `Number.isFinite(o) ? o : ...` always took THIS value and the per-runtime
+  // branch behind it was dead code. undefined means "the user has not chosen", which is what
+  // lets the runtime decide -- exactly as `foveation` above does.
+  options.pinchOn = queryNumber(getVal('pinchOn'), -0.010, 0.050, undefined);
   // XR compositor foveation, 0 (full resolution everywhere) to 1 (three's default maximum).
   // Left undefined unless asked for, so the per-runtime default in enterXR decides: off where
   // foveation is fixed rather than gaze-driven, three's default everywhere else.
   options.foveation = queryNumber(getVal('foveation'), 0, 1, undefined);
+  // XR framebuffer scale -- the direct fill-rate lever, and the one that matters on a headset
+  // whose eye buffers are large. Undefined means "leave it at 1.0"; see Scene's note.
+  options.fbscale = queryNumber(getVal('fbscale'), 0.3, 2, undefined);
   // Hand-tracking spike: a pinch has no shaft to extend, so the tip sits close to the fingers.
   // Separate from the controller values, which were tuned against a controller.
   options.handStylusLength = queryNumber(getVal('handStylusLength'), 0.0, 0.20, 0.05);

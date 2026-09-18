@@ -2171,10 +2171,31 @@ class Scene {
     // own gesture button still fired, which is why sculpting worked at all there — but every
     // consumer of OUR pinch signal was reading "not pinching" throughout.
     //
-    // 0.022 sits in open space on both devices: above the Quest 2's pinch by 4mm and below its
-    // relaxed hand by 23mm, and the Vision Pro (pinch -0.017, relaxed +0.040) clears it by 39mm
-    // and 18mm. One threshold, both runtimes, with the nearest miss 4mm away.
-    return Number.isFinite(o) ? o : 0.022;
+    // ONE NUMBER FOR BOTH RUNTIMES WAS THE MISTAKE, and the arithmetic above says why even as it
+    // argues for it: on a Quest 2 the nearest miss is 4mm, on a Vision Pro it is 18mm. Those are
+    // not the same signal, and 0.022 was chosen to clear the WORSE of the two -- so the device
+    // with the better hand tracking got a threshold set by the device with the poorer.
+    //
+    // On a Vision Pro that lands 0.022 in the middle of "fingers are near each other" rather
+    // than "fingers are closed". matt: "the finger indicators turn green when the finger/thumb
+    // get close, but previously thats never been a pinch, thats been 'a pinch is about to
+    // happen'. in beta, green is being treated as a pinch... it means my finger and thumb get
+    // about 3cm apart, it thinks i'm pinching, locking out interactions." And with no
+    // hysteresis on the pinch (see the note at the latch, which is right for a well separated
+    // signal) a threshold sitting on the boundary also has to be opened PAST to release, which
+    // is the other half of it: "menus get stuck, strokes get stuck".
+    //
+    // So the default is per RUNTIME, on the same discriminator and for the same reason foveation
+    // uses it: the browser is what the behaviour actually varies with, and a model string would
+    // need a new entry for every headset released. Measured gaps:
+    //   Quest 2       pinch 0.011..0.018, relaxed 0.045..0.072  ->  0.022, clearing pinch by 4mm
+    //   Vision Pro    pinch -0.017,       relaxed  0.040        ->  0.005, clearing pinch by 22mm
+    // matt confirmed 0.005 on the Vision Pro on the spot.
+    //
+    // The Quest value is left exactly as it was: it works there, its margin is narrow, and this
+    // is a fix for the device it was hurting rather than a retune of the one it suited.
+    if (Number.isFinite(o)) return o;
+    return this._isQuestStandalone ? 0.022 : 0.005;
   }
 
   // Grab gain: 1.0 is 1:1 with your hand. Settings slider (Navigation), window._grabGain for a
@@ -2544,7 +2565,26 @@ class Scene {
     // Explicitly set framebuffer scale to 1.0. This prevents Three.js from creating
     // a mismatched MSAA FBO on session start, which causes glBlitFramebufferCHROMIUM
     // errors on the first few frames and makes the compositor show the gray void.
-    this._renderer.xr.setFramebufferScaleFactor(1.0);
+    //
+    // ...AND IT IS THE FILL-RATE KNOB, so it is overridable for the same reason foveation is.
+    //
+    // Measured on matt's Vision Pro against prod: `draw` starts at 1.06ms and settles at a
+    // sustained 18.3-19.5ms, every sample, while the budget at 90Hz is 11.1ms. The frame gap
+    // then steps 11.1 -> 22.2 -> 44.4ms -- exact halvings, the compositor locking to 45 then 22
+    // and reprojecting the rest. matt: "its like every event is somehow delayed. i point at a
+    // menu, theres no laser pointer, i point away point back, now its there." Input is arriving
+    // on time; it is being SHOWN two reprojected frames later.
+    //
+    // A Vision Pro's eye buffers are far larger than a Quest's, so a scene that is comfortable
+    // on one can be fill-bound on the other with nothing else different. Scale is the direct
+    // lever on that, and halving it quarters the pixels. Whether this scene is fill-bound is a
+    // question only the device can answer, so the knob exists to ask it: `window._fbScale`, or
+    // `?fbscale=`, exactly as `window._foveation` / `?foveation=` does below.
+    const _fbs = Number.isFinite(window._fbScale)
+      ? window._fbScale
+      : (Number.isFinite(getOptionsURL()['fbscale']) ? getOptionsURL()['fbscale'] : 1.0);
+    this._renderer.xr.setFramebufferScaleFactor(Math.max(0.3, Math.min(2.0, _fbs)));
+    if (_fbs !== 1.0) console.log('[XR] framebuffer scale ' + _fbs);
     this._renderer.toneMapping = THREE.LinearToneMapping;
     this._renderer.toneMappingExposure = 1.0;
 

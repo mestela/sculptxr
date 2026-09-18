@@ -426,7 +426,8 @@ let MM    = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 
   } else if (inj === 'tipmidpoint') {
     sub('    if (!_jointRay && tp && ip) {', '    if (tp && ip) {', 'joint-ray origin gate');
   } else if (inj === 'contactpinch') {
-    sub('    return Number.isFinite(o) ? o : 0.022;', '    return Number.isFinite(o) ? o : 0.0;', 'pinch default');
+    sub('    return this._isQuestStandalone ? 0.022 : 0.005;',
+        '    return 0.022;', 'pinch default: one number for every runtime again');
   } else if (inj === 'offsetbox') {
     HVP = HVP.replace('  const w = el.clientWidth  || el.offsetWidth  || fallbackW;\n  const h = el.clientHeight || el.offsetHeight || fallbackH;',
                       '  const w = el.offsetWidth || fallbackW;\n  const h = el.offsetHeight || fallbackH;');
@@ -667,10 +668,29 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     'a constant in the loop cannot be tuned from inside a headset');
   // CONTACT WAS THE OLD DEFAULT, and it was wrong for a reason no amount of radius arithmetic
   // absorbs: a Quest 2 pinch reads a gap of 0.011-0.018 and never reaches contact at all, while
-  // its relaxed hand reads 0.045-0.072. 0.022 clears every measured population on every device.
-  check('...defaulting to a measured gap that all three devices clear',
-    /return Number\.isFinite\(o\) \? o : 0\.022;/.test(SRC),
-    'at contact a Quest 2 reads "not pinching" through a deliberate pinch');
+  // its relaxed hand reads 0.045-0.072.
+  //
+  // 0.022 CLEARED BOTH DEVICES AND SUITED ONLY ONE. The margins are not comparable -- 4mm on a
+  // Quest 2, 18mm on a Vision Pro -- so a single number set by the poorer tracker put the
+  // better one's threshold in the middle of "fingers are near each other". matt: "the finger
+  // indicators turn green when the finger/thumb get close... in beta, green is being treated as
+  // a pinch... menus get stuck, strokes get stuck." He confirmed 0.005 on the device.
+  check('...defaulting per RUNTIME, because the two populations are not the same signal',
+    /return this\._isQuestStandalone \? 0\.022 : 0\.005;/.test(SRC),
+    'one threshold means the better tracker is tuned by the worse one');
+  // The same discriminator foveation uses, and for the same stated reason: behaviour varies
+  // with the BROWSER, and a model string needs a new entry per headset.
+  check('...on the same discriminator foveation already keys off',
+    /_isQuestStandalone \? 0 : 1/.test(SRC));
+  // AND THE OPTION MUST NOT CARRY ONE. queryNumber's own default made getPinchOn's `o` always
+  // finite, so the per-runtime branch behind it would be dead code -- the bug this check exists
+  // to stop coming back.
+  check('...with the URL option carrying NO default, or the runtime never gets asked',
+    /options\.pinchOn = queryNumber\(getVal\('pinchOn'\), -0\.010, 0\.050, undefined\);/.test(OPT),
+    'a default here shadows the per-runtime one completely');
+  // The slider displays what is IN FORCE; a literal would show a Quest's number on a Vision Pro.
+  check('...and the settings slider reads the accessor rather than a second copy',
+    /ui\.pinchOn \?\? opts\.pinchOn \?\? \(main\.getPinchOn \? main\.getPinchOn\(\) : 0\.022\)/.test(MM));
   check('...with Number.isFinite, so a deliberate 0 is not treated as unset',
     /if \(Number\.isFinite\(window\._pinchOn\)\) return window\._pinchOn;/.test(SRC),
     'a truthiness test would silently ignore the default value itself');
@@ -679,7 +699,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
       && /<div class="mm-row mm-hands-only">/.test(MM),
     'a controller has a physical trigger and no pinch to calibrate');
   check('...over a range that spans the measured populations',
-    /options\.pinchOn = queryNumber\(getVal\('pinchOn'\), -0\.010, 0\.050, 0\.022\);/.test(OPT),
+    /options\.pinchOn = queryNumber\(getVal\('pinchOn'\), -0\.010, 0\.050,/.test(OPT),
     'a range stopping at 0.015 cannot express a working threshold for a Quest 2');
   check('...and the slider itself reaches that far',
     /<input type="range" id="mm-pinch-on" min="-10" max="50" step="1"/.test(MM),
