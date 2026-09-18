@@ -329,7 +329,18 @@ PhysicsBones.chain = function (main, root) {
   // The user's multiplier on top of the structural masses, so "heavier" moves the whole chain's
   // frequency without flattening the root-drags-more relationship the loop above builds.
   const mScale = Math.max(0.01, PhysicsBones.params(root).mass || 1);
-  for (const link of out) link.mass = (below.get(link.joint) || 1) * mScale;
+  for (const link of out) {
+    // STRUCTURAL MASS IS KEPT SEPARATELY, because the two divisors mean different things.
+    //
+    // `mass` is the physical one: it sets the frequency (sqrt(k/m)) and it is what the pose
+    // spring and the inverse masses divide by. The user's multiplier belongs in it.
+    //
+    // `structMass` is the root-drags-more gradient above and NOTHING ELSE. Drag divides by this
+    // one, so the drag CONTROL keeps its authority as the mass knob goes up -- see the note at
+    // the drag term. Both still carry the gradient; only one carries the multiplier.
+    link.structMass = below.get(link.joint) || 1;
+    link.mass = link.structMass * mScale;
+  }
   return out;
 };
 
@@ -940,7 +951,12 @@ PhysicsBones.step = function (main, dt) {
         if (par.drag > 0) {
           const sp = st.v.length();
           if (sp > 1e-9) {
-            _acc.addScaledVector(st.v, -par.drag * sp / (Math.max(unit, 1e-6) * (link.mass || 1)));
+            // Structural mass only, and clamped so the impulse cannot exceed the velocity --
+            // exactly as in stepXPBD, see the long notes there. The two solvers share these
+            // parameters, so a drag slider that means one thing in one and something else in the
+            // other is a setting you cannot carry between them.
+            const _dc = par.drag * sp / (Math.max(unit, 1e-6) * (link.structMass || 1));
+            _acc.addScaledVector(st.v, -Math.min(_dc, 1 / Math.max(h, 1e-6)));
           }
         }
         // THE EXACT SOLUTION OF v' = a - lambda*v OVER ONE STEP, not `(v + a*h) * decay`.
@@ -1260,20 +1276,63 @@ function solveAttach(p, target, w, alpha, h, lam, li) {
 // the fade -- 0.1 to 0.2 units a frame -- and ended 0.82 short of the pin. Sharing the correction
 // is what lets a goal at the tip travel up the chain, which is the same thing FABRIK's backward
 // sweep does and the reason a positional solver can do IK at all.
-// The same accounting for the length constraint. It is swept DOWN the chain and back UP, which
-// is two iterations of the same constraint in one substep -- so without a multiplier the second
-// sweep corrects an error the first one already removed, and the pair over-corrects. The
-// constraint stays rigid (alpha 0); lambda only stops it being applied twice over.
-function solveDistance(pPar, p, wPar, w, rest, lam, li) {
+// The bone length, and NO LAMBDA -- which is the correction to the correction.
+//
+// This used to accumulate a multiplier like solveAttach does, on the reasoning that the down and
+// up sweeps are two iterations of one constraint so the second "corrects an error the first one
+// already removed". That reasoning does not survive contact with the code: C is RECOMPUTED from
+// the current positions on every call, so once the down sweep has satisfied the length, C is
+// zero and the up sweep does nothing. There was never a double-correction to prevent.
+//
+// What the lambda did instead was UNDO the first sweep. It subtracted `prev` from a quantity
+// that is a position error, not a Lagrange multiplier: down sweep applies -C and stores it, up
+// sweep then computes -0 - (-C) = +C and pulls the joint straight back out. The links stopped
+// being rigid, and the chain stretched.
+//
+// WHAT IT DOES NOT DO IS STRETCH A BONE, and that is worth stating because it is the obvious
+// thing to go looking for and it is never there. The output stage turns particles into joint
+// ROTATIONS, so bone lengths are preserved by construction -- measured worst length error over a
+// 90-frame whip, at every mass: exactly 0, with the bug and without it. The damage is to the
+// POSE the solve converges to, not to the rigidity of the links.
+//
+// Measured on matt's camel_snap_anim.sxr, how far the chain extends after a hard drag of its
+// pinned parent, as a percentage of dead straight (169.2 units over five bones):
+//   mass      1     3.63    10     30     100
+//   with     81.6   94.2   100.0  100.0   85.4      100.0 = dead straight, fully extended
+//   without  79.6   83.5    86.8   87.8    88.9
+// With the lambda the chain reaches FULL EXTENSION at mass 10 and 30 -- matt: "the entire bone
+// chain snaps to an extreme position". Without it, extension rises gently and monotonically with
+// mass, which is what a heavier chain being whipped should do. Note the 100 -> 85.4 on the top
+// row: a response that is not even monotonic in mass is the signature of broken arithmetic
+// rather than of physics, and it is why no combination of drag and damping could tame it.
+//
+// WHY IT LOOKED MASS-DEPENDENT, since the split below is a ratio and mass cancels in it: the
+// pose spring's correction is -C/(1 + m*alpha~), so a heavier chain is held near its pose far
+// more weakly and arrives at this function with a much larger C. The undo is proportional to C,
+// so the same broken arithmetic is invisible at mass 1 and dominant by mass 10.
+//
+// alpha is 0 here on purpose -- a bone does not stretch -- and for a rigid constraint XPBD's
+// projection reduces to exactly what is left below: dlambda = -C/wsum, applied as w*dlambda per
+// end. The lambda term only ever carries the -alpha~*lambda feedback, which is zero when alpha
+// is. solveAttach keeps its lambda because its alpha is NOT zero; that one is real XPBD.
+//
+// TWO-SIDED: both ends move, split by inverse mass, and the chain's own root is the only
+// kinematic point (wp = 0 there).
+//
+// One-sided was the first thing I wrote and it made the pin useless: the constraint pulled the
+// wrist, and the very next line projected it straight back onto the sphere about a parent that
+// never learned the pin had asked for anything. Measured that way, the arm barely moved through
+// the fade -- 0.1 to 0.2 units a frame -- and ended 0.82 short of the pin. Sharing the correction
+// is what lets a goal at the tip travel up the chain, which is the same thing FABRIK's backward
+// sweep does and the reason a positional solver can do IK at all.
+function solveDistance(pPar, p, wPar, w, rest) {
   _xDir.subVectors(p, pPar);
   const d = _xDir.length();
   if (d < 1e-9) return;
   const wsum = wPar + w;
   if (wsum < 1e-12) return;
   _xDir.multiplyScalar(1 / d);
-  const C = d - rest;
-  let dl = -C;
-  if (lam) { const prev = lam[li]; dl = -C - prev; lam[li] = prev + dl; }
+  const dl = -(d - rest);
   pPar.addScaledVector(_xDir, -(wPar / wsum) * dl);
   p.addScaledVector(_xDir, (w / wsum) * dl);
 }
@@ -1384,7 +1443,6 @@ PhysicsBones.stepXPBD = function (main, dt) {
     const P = [], PREV = [], IM = [];
     // One multiplier per link per constraint, reset at the top of every substep.
     const lamPose = new Float64Array(links.length);
-    const lamDist = new Float64Array(links.length);
     for (let i = 0; i < links.length; i++) {
       const j = links[i].joint, id = j.getID();
       let st = _state.get(id);
@@ -1445,7 +1503,46 @@ PhysicsBones.stepXPBD = function (main, dt) {
         _xg.set(0, -gAcc, 0);
         if (par.drag > 0) {
           const sp = st.v.length();
-          if (sp > 1e-9) _xg.addScaledVector(st.v, -par.drag * sp / (Math.max(unit, 1e-6) * (links[i].mass || 1)));
+        // DRAG DIVIDES BY THE STRUCTURAL MASS ONLY, NOT BY THE USER'S MULTIPLIER.
+        //
+        // It used to divide by `link.mass`, which carries the multiplier -- so at mass 50 the
+        // drag slider was 50x weaker, and on a long chain weaker again by however much hangs
+        // below the link. The slider died exactly where it was needed. matt: "if the mass is
+        // higher than 1, if i drag the root midly quickly, the entire bone chain snaps to an
+        // extreme position... when the mass is high, no combination of drag, damp etc can stop
+        // the snap." Measured on a 5-link chain, worst tip travel in one frame against an
+        // anchor moving 6 units a frame: mass 1 gave 31.9, mass 50 gave 47.5 -- the whole chain
+        // length in a frame -- and turning drag to its maximum made it 50.9, WORSE than leaving
+        // it alone.
+        //
+        // a = F/m is the correct Newtonian reading and it is not the useful one here. Raising
+        // mass is meant to make the chain SLOWER, and the reason it could instead make it
+        // uncontrollable is that the two things that oppose the swing both vanish with mass at
+        // once: the pose spring's correction is -C/(1 + m*alpha~), which is deliberate and IS
+        // the frequency feature, and drag went with it. One of them has to survive, and drag is
+        // the one that is a control rather than a physical constant -- the same reading that
+        // gives stiffness its s/(1-s) curve and damping its pole at one.
+        //
+        // The root-drags-more gradient is untouched: structMass still carries it.
+          // ...AND THE DRAG IMPULSE CANNOT EXCEED THE VELOCITY IT OPPOSES.
+          //
+          // Drag is quadratic (a = -drag*|v|*v), integrated explicitly, so the change it makes in
+          // one step is drag*|v|*h/unit times the velocity. Once that factor passes 1 the term
+          // REVERSES the velocity instead of removing it, and a bigger drag setting then adds
+          // energy -- which is why turning drag up used to make the snap worse, and why the
+          // response was not even monotonic: measured at mass 50, worst tip travel in a frame ran
+          // 64.5 / 23.0 / 50.8 / 34.3 for drag 0.1 / 0.3 / 0.6 / 1.0. A damping control that gets
+          // WORSE when you turn it up is unusable however well it is scaled.
+          //
+          // Clamped at 1/h the term is strictly dissipative: it can bring the velocity to zero in
+          // one step and never past it. This is the cheap read of an implicit solve, and it is
+          // the same shape of fix as the lambda accumulation -- stop a correction overshooting
+          // what it was correcting.
+          const coefMax = 1 / Math.max(h, 1e-6);
+          if (sp > 1e-9) {
+            const coef = par.drag * sp / (Math.max(unit, 1e-6) * (links[i].structMass || 1));
+            _xg.addScaledVector(st.v, -Math.min(coef, coefMax));
+          }
         }
         // NO DAMPING HERE. The constraint pass ends by REPLACING the velocity with the motion it
         // allowed, so a decay applied to the prediction is thrown away again a few lines later
@@ -1462,7 +1559,7 @@ PhysicsBones.stepXPBD = function (main, dt) {
       // belongs to one substep's solve. `window._physXPBDLambda = false` puts the old
       // accumulate-nothing behaviour back, for an A/B against this.
       const useLam = window._physXPBDLambda !== false;
-      if (useLam) { lamPose.fill(0); lamDist.fill(0); }
+      if (useLam) lamPose.fill(0);
 
       // ITERATIONS WITHIN THE SUBSTEP, sharing the substep's lambdas -- which is the only reason
       // this is a QUALITY knob rather than a second stiffness knob. Each pass charges its
@@ -1483,9 +1580,9 @@ PhysicsBones.stepXPBD = function (main, dt) {
         // does. Both sweeps share one lambda per link, so the pair converges rather than
         // doubling up.
         for (let i = 0; i < links.length; i++)
-          solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len, useLam ? lamDist : null, i);
+          solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len);
         for (let i = links.length - 1; i >= 0; i--)
-          solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len, useLam ? lamDist : null, i);
+          solveDistance(parentOf(i), P[i].p, wOf(i), IM[i], shape[i].len);
       }
 
       // THE PIN, as an attachment constraint, and LAST so it has the final word. Solved before

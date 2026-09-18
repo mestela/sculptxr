@@ -580,7 +580,7 @@ check('...substepped, with compliance divided by h squared',
 // One-sided was the first thing written and it made the pin useless: the constraint pulled the
 // wrist and the next line projected it back onto a parent that never learned anything had asked.
 check('...with a TWO-SIDED length constraint, so a pull at the tip travels up the chain',
-  /function solveDistance\(pPar, p, wPar, w, rest, lam, li\)/.test(SRC)
+  /function solveDistance\(pPar, p, wPar, w, rest\)/.test(SRC)
     && /pPar\.addScaledVector\(_xDir, -\(wPar \/ wsum\) \* dl\);/.test(SRC)
     && /p\.addScaledVector\(_xDir, \(w \/ wsum\) \* dl\);/.test(SRC),
   'a goal at the tip cannot reach the joints above it, and the arm barely moves');
@@ -626,7 +626,39 @@ check('mass is a parameter, and a multiplier rather than an absolute',
 // that while moving the whole chain's frequency. Measured: 10x turns [6,5,4,1,2,1] into
 // [60,50,40,10,20,10].
 check('...scaling the structural masses rather than replacing them',
-  /link\.mass = \(below\.get\(link\.joint\) \|\| 1\) \* mScale;/.test(SRC));
+  /link\.structMass = below\.get\(link\.joint\) \|\| 1;/.test(SRC)
+    && /link\.mass = link\.structMass \* mScale;/.test(SRC));
+
+// TWO DIVISORS, AND DRAG TAKES THE ONE WITHOUT THE MULTIPLIER.
+//
+// matt: "if the mass is higher than 1, if i drag the root midly quickly, the entire bone chain
+// snaps to an extreme position... when the mass is high, no combination of drag, damp etc can
+// stop the snap." Drag used to divide by `link.mass`, which carries the user's multiplier, so at
+// mass 50 the drag slider was 50x weaker and at mass 100 it was 100x -- the one control that
+// opposes a swing evaporated at exactly the setting that needs it.
+//
+// a = F/m is the correct Newtonian reading and it is not the useful one. The pose spring already
+// weakens with mass (its correction is -C/(1 + m*alpha~)) and that is DELIBERATE -- it is the
+// frequency feature mass was added for. Both of them vanishing together is what leaves nothing
+// holding the chain. Drag is the one that is an authored control rather than a physical
+// constant, the same reading that gives stiffness its s/(1-s) curve and damping its pole at one.
+//
+// The root-drags-more gradient is untouched: structMass still carries it.
+check('drag divides by the STRUCTURAL mass, not the user multiplier',
+  /par\.drag \* sp \/ \(Math\.max\(unit, 1e-6\) \* \(links\[i\]\.structMass \|\| 1\)\)/.test(SRC),
+  'dividing by link.mass makes the drag slider die exactly where it is needed');
+check('...in BOTH solvers, which share the slider',
+  (SRC.match(/structMass \|\| 1\)\)/g) || []).length >= 2);
+
+// Drag is quadratic and integrated explicitly, so its one-step change is drag*|v|*h/unit times
+// the velocity. Past 1 that REVERSES the velocity instead of removing it, and a bigger drag
+// setting adds energy -- measured at mass 50, worst tip travel per frame ran 64.5 / 23.0 / 50.8
+// / 34.3 for drag 0.1 / 0.3 / 0.6 / 1.0. A damping control that gets worse when you turn it up
+// is unusable however well it is scaled.
+check('...and the drag impulse cannot exceed the velocity it opposes',
+  /const coefMax = 1 \/ Math\.max\(h, 1e-6\);/.test(SRC)
+    && /_xg\.addScaledVector\(st\.v, -Math\.min\(coef, coefMax\)\);/.test(SRC),
+  'unclamped, explicit quadratic drag injects energy at high coefficients');
 // A frequency knob is multiplicative, so a linear slider would put every useful value in its
 // bottom tenth -- matt's Houdini point about exponential ranges.
 check('...on an EXPONENTIAL slider, 50 being 1x and each 25 a decade',
@@ -689,14 +721,31 @@ check('the pose constraint charges its correction against an accumulated lambda'
   /const dl = \(-C - aT \* prev\) \/ \(w \+ aT\);/.test(SRC)
     && /if \(lam\) lam\[li\] = prev \+ dl;/.test(SRC),
   'without it, iteration count is a hidden stiffness knob and more substeps destabilise');
-// The length constraint is swept DOWN and back UP -- two iterations of one constraint in a
-// single substep -- so it needs the same accounting or the pair over-corrects.
-check('...and so does the length constraint, swept down and back up on ONE lambda',
-  /if \(lam\) \{ const prev = lam\[li\]; dl = -C - prev; lam\[li\] = prev \+ dl; \}/.test(SRC));
+// ...AND THE LENGTH CONSTRAINT MUST NOT HAVE ONE. This check used to assert the opposite, and
+// that is the point of rewriting it rather than deleting it: the assertion defended the bug.
+//
+// The reasoning it encoded was that the down and up sweeps are two iterations of one constraint,
+// so the second "corrects an error the first already removed". C is RECOMPUTED from current
+// positions on every call, so once the down sweep has satisfied the length, C is zero and the up
+// sweep does nothing -- there was never a double-correction. What the lambda did instead was
+// UNDO the down sweep: it subtracted a stored POSITION ERROR rather than a Lagrange multiplier,
+// so the up sweep computed -0 - (-C) = +C and pulled the joint back out.
+//
+// For a rigid constraint (alpha 0) XPBD's projection IS just dlambda = -C/wsum; the lambda term
+// only ever carries the -alpha~*lambda feedback, which is zero when alpha is. solveAttach keeps
+// its lambda because its alpha is not zero.
+//
+// Measured on matt's camel_snap_anim.sxr -- extension after a hard drag, as a percentage of dead
+// straight: with the lambda the chain hit 100% (fully extended) at mass 10 and 30 and then fell
+// back to 85.4 at mass 100; without it, 79.6 / 83.5 / 86.8 / 87.8 / 88.9 across mass 1..100.
+// A response that is not monotonic in mass is broken arithmetic, not physics.
+check('the RIGID length constraint carries no lambda, which is what made it rigid again',
+  !/lamDist/.test(SRC) && /const dl = -\(d - rest\);/.test(SRC),
+  'subtracting a stored position error makes the up sweep undo the down sweep');
 // Lambda belongs to one substep's solve: alpha~ carries time-step independence, lambda carries
 // iteration independence (Macklin 2019, small steps).
-check('...reset once per SUBSTEP, not per frame',
-  /if \(useLam\) \{ lamPose\.fill\(0\); lamDist\.fill\(0\); \}/.test(SRC));
+check('...and the pose lambda is reset once per SUBSTEP, not per frame',
+  /if \(useLam\) lamPose\.fill\(0\);/.test(SRC));
 check('...with the old behaviour still reachable for an A/B',
   /window\._physXPBDLambda !== false/.test(SRC));
 check('...and the pin solved LAST, so a full-strength pin is not overruled by the bone length',
@@ -754,7 +803,7 @@ check('...and the shift moves both ends of the step, injecting no velocity',
   'the carry becomes a velocity kick every frame');
 check('...as do gravity, drag, damping and stiffness',
   /_xg\.set\(0, -gAcc, 0\);/.test(SRC)
-    && /-par\.drag \* sp/.test(SRC)
+    && /par\.drag \* sp/.test(SRC)
     && /const decay = Math\.exp\(-DAMP_SCALE \* dampRate\(par\.damping\) \* h\);/.test(SRC)
     && /const aPose = complianceFrom\(par\.stiffness, POSE_COMPLIANCE, unit\);/.test(SRC));
 
