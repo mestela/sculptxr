@@ -64,6 +64,14 @@ const Skeleton = {
   isJoint: (m) => !!(m && m._isBone),
   jointPos: (j) => ({ x: j.m[12], y: j.m[13], z: j.m[14] }),
   childJoints: (main, j) => main.getMeshes().filter((m) => m._isBone && m._parentMesh === j),
+  // WHETHER A SIDE EFFECT MIRRORS. A joint drawn with symmetry on keeps its twin for life, so
+  // reading _boneMirror alone mirrors forever whatever the toggle says; this is the app's one
+  // answer to the question and split asks it before touching the other side. Same rule as the
+  // real Skeleton.mirrorEdits -- reading the scene's own flag, so the off case below is a real
+  // test of the gate and not of this stub.
+  mirrorEdits: (main) => !!(main && main.getSculptManager && main.getSculptManager()
+    && main.getSculptManager().getSymmetryFlag
+    && main.getSculptManager().getSymmetryFlag()),
   syncThree: () => {},
   updateVisuals: () => {},
   refreshOutliner: () => {},
@@ -124,6 +132,11 @@ function makeScene() {
     getStateManager: () => ({
       pushStateCustom: (undo, redo, squash, label) => undos.push({ undo, redo, label }),
     }),
+    // Symmetry ON unless a block says otherwise: that is the state a symmetric rig gets built
+    // in, and the state every mirror check below is about. getSymmetryFlag, not getSymmetry --
+    // the latter answers no while a weight cage is selected, which says nothing about whether
+    // rig edits should mirror.
+    getSculptManager: () => ({ getSymmetryFlag: () => main._symFlag !== false }),
     render: () => {},
   };
   main._undos = undos;
@@ -174,6 +187,34 @@ const chain = (main, meshes, n) => {
     !!mid && Math.abs(mid.m[12] - 1) < 1e-9 && Math.abs(clavR._parentMesh.m[12] + 1) < 1e-9,
     'each side is measured along its OWN bone: ' + (mid ? mid.m[12] : '?')
     + ' and ' + (clavR._parentMesh ? clavR._parentMesh.m[12] : '?'));
+}
+
+// ── ...AND ONLY WHILE SYMMETRY IS ON ─────────────────────────────────────────
+//
+// The twin outlives the toggle: a joint drawn symmetrically carries _boneMirror for the rest of
+// its life, so a split reading that field alone mirrors forever however the toggle is set. matt:
+// "really important to have that as an option whenever we have implied symmetrical behavior...
+// right now i don't think i can do that asymmetrically." The gate is the feature, so the OFF
+// case is worth a check of its own -- with the twin still present, which is the case that used
+// to mirror anyway.
+{
+  const { main, meshes } = makeScene();
+  main._symFlag = false;
+  const chest = main._mk('chest'); chest.m[13] = 5; meshes.push(chest);
+  const clavL = main._mk('clav_L'); clavL.m[12] = 2; clavL.m[13] = 5; clavL._parentMesh = chest; meshes.push(clavL);
+  const clavR = main._mk('clav_R'); clavR.m[12] = -2; clavR.m[13] = 5; clavR._parentMesh = chest; meshes.push(clavR);
+  clavL._boneMirror = clavR; clavR._boneMirror = clavL;
+
+  const n0 = meshes.length;
+  const mid = attempt(() => RT.split(main, clavL), null);
+
+  check('with symmetry off a split stays on the side it was asked for',
+    meshes.length === n0 + 1,
+    'added ' + (meshes.length - n0) + ' joint(s) — the twin still exists, so a split reading '
+    + '_boneMirror instead of asking mirrorEdits cannot be turned off at all');
+  check('...leaving the other side exactly as it was',
+    !!mid && clavR._parentMesh === chest && Math.abs(clavR.m[12] + 2) < 1e-9,
+    'the untouched side gained a parent or moved');
 }
 
 // A bone whose twin is not the same bone on the other side must NOT drag it along.

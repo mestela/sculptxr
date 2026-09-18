@@ -56,8 +56,6 @@ const Skeleton = {
   // The squircle exponent the Roundness slider edits — 2 is round. See Skeleton.jointRound.
   jointRound: (j) => ((j && typeof j._jointRound === 'number' && j._jointRound > 2) ? Math.min(j._jointRound, 12) : 2),
   setJointRound: (j, p) => { if (j) j._jointRound = p; },
-  mirrorEdits: (main) => !!(main && main.getSculptManager && main.getSculptManager()
-    && main.getSculptManager().getSymmetryFlag && main.getSculptManager().getSymmetryFlag()),
   // Whether a rig edit mirrors: the panel asks before offering a physics twin, so a stub without
   // it throws before a single check runs. Reads the mock's own symmetry flag, which is what makes
   // the "physics names both joints" check mean something either way.
