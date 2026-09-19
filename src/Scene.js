@@ -2204,7 +2204,12 @@ class Scene {
         this._scene.traverse(o => { if (o.isMesh || o.isLine || o.isPoints) o.visible = false; });
       }
       this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
-      this._renderer.render(this._scene, this._camera.getThreeCamera());
+      // Its own expression, NOT the _renderCam below: that is declared in the main render
+      // block further down, and this branch returns before reaching it. Referencing it here
+      // is a temporal dead zone throw on every frame, which is the same trap `_hand` set in
+      // this file once already -- and every static check passes right up until it runs.
+      this._renderer.render(this._scene, (this._renderer.xr?.isPresenting && this._isNodeRenderer)
+        ? this._renderer.xr.getCamera() : this._camera.getThreeCamera());
       this._renderer.setClearColor(0x000000, 0);
       return;
     }
@@ -2215,6 +2220,18 @@ class Scene {
     if (this._renderer && this._scene && this._camera.getThreeCamera()) {
       const isVR = this._renderer.xr && this._renderer.xr.isPresenting;
       
+      // WHICH CAMERA GOES TO render() DIFFERS BETWEEN THE TWO RENDERERS, and it is not
+      // optional. WebGLRenderer.render() quietly substitutes xr.getCamera() when presenting,
+      // so passing the flat desktop camera works. WebGPURenderer.render() does no such thing --
+      // it renders exactly the camera it is handed:
+      //     render( scene, camera ) { ... this._renderScene( scene, camera ); }
+      // so both eyes came out drawn from the desktop camera, with no per-eye offset and no
+      // viewports. matt: "in vr its totally misaligned to the left/right eyes, and of what i
+      // can see, very low fps."
+      const _renderCam = (isVR && this._isNodeRenderer)
+        ? this._renderer.xr.getCamera()
+        : this._camera.getThreeCamera();
+
       let currentTarget = null;
       if (!isVR) {
         // Force Three.js to forget its cached WebGL state. This prevents 'uniformMatrix4fv: location is not from the associated program'
@@ -2308,7 +2325,7 @@ class Scene {
       }
 
       // Three.js clears depth on its own, so we render over the top
-      this._renderer.render(this._scene, this._camera.getThreeCamera());
+      this._renderer.render(this._scene, _renderCam);
 
       if (!isVR) {
         // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
@@ -2430,6 +2447,7 @@ class Scene {
       this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
       await this._renderer.init();
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
+      this._isNodeRenderer = true;
       // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
       // because constructing one mid-session is the single real fault this renderer has.
       NodeMaterials.enable(WGPU);
