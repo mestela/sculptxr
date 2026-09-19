@@ -35,6 +35,16 @@ export default defineConfig({
     // FA Solid — is injected as a single base64 @font-face at startup by install.js (?inline),
     // which also covers Quest/GalaxyXR immersive mode (can't fetch url() fonts at paint time).
     assetsInlineLimit: 4096,
+    // THE TSL SPIKE IS A SECOND ENTRY, not part of the app. WebGPURenderer cannot render a
+    // ShaderMaterial, so the renderer question has to be answered somewhere the app is not --
+    // and it needs bundling like the app does, because `three/webgpu` is a bare import.
+    // Lands at dist/spike/tsl/ and costs the app nothing: it shares no module with it.
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        tslSpike: resolve(__dirname, 'spike/tsl/index.html'),
+      },
+    },
   },
   server: {
     host: '0.0.0.0', // Listen on all network interfaces

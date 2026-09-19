@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TSL spike</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0b0b10; color:#e6e6ef; font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #hud { position:fixed; top:8px; left:8px; z-index:10; background:#15151ccc; border:1px solid #2c2c3a;
+         border-radius:6px; padding:8px 10px; min-width:230px; }
+  #hud b { color:#9fd0ff; font-weight:600; }
+  #hud .r { display:flex; justify-content:space-between; gap:12px; }
+  button { font:inherit; background:#22223a; color:#e6e6ef; border:1px solid #3a3a55;
+           border-radius:5px; padding:5px 9px; cursor:pointer; margin-top:6px; }
+  #err { color:#ff9c9c; white-space:pre-wrap; max-width:340px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div class="r"><span>backend</span><b id="backend">…</b></div>
+  <div class="r"><span>frame ms</span><b id="ms">–</b></div>
+  <div class="r"><span>fps</span><b id="fps">–</b></div>
+  <div class="r"><span>draws</span><b id="draws">–</b></div>
+  <div class="r"><span>tris</span><b id="tris">–</b></div>
+  <div id="err"></div>
+  <button id="xr">Enter VR</button>
+  <button id="load">Heavier scene</button>
+</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
