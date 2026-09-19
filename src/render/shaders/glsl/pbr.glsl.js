@@ -5,7 +5,24 @@ const shader = `#define PI 3.1415926535897932384626433832795
 
 uniform sampler2D uTexture0;
 // uniform float uExposure; // Defined in ShaderBase
-uniform mat3 uIblTransform;
+// THE ENVIRONMENT'S ORIENTATION, DERIVED PER EYE.
+//
+// This was a uniform, \`uIblTransform\`, built on the CPU as the inverse rotation of
+// main.getCamera().getView() -- the DESKTOP camera. It turns a view-space direction back into
+// world space for the panorama and the SH lookup, so in VR, where each eye has its own view
+// matrix, the whole environment was oriented by a camera neither eye was using and the error
+// rotated with the head. It drives sphericalHarmonics() as well as the reflection, so the
+// AMBIENT swam too, which is why the symptom was not confined to highlights.
+//
+// three's \`viewMatrix\` is injected per eye, so deriving it here is correct for both. A view
+// matrix is rigid, so the inverse rotation is just the transpose -- written out by hand
+// because GLSL ES 1.0 has no transpose().
+mat3 iblTransform() {
+  mat3 v = mat3(viewMatrix);
+  return mat3(v[0][0], v[1][0], v[2][0],
+              v[0][1], v[1][1], v[2][1],
+              v[0][2], v[1][2], v[2][2]);
+}
 uniform vec3 uSPH[9];
 
 uniform vec2 uEnvSize;
@@ -62,12 +79,14 @@ vec3 getSpecularDominantDir(const in vec3 N, const in vec3 R,
   return mix(N, R, smoothness * (sqrt(smoothness) + realRoughness));
 }
 
+// TAKES THE MATRIX RATHER THAN REBUILDING IT. iblTransform() was called here AND in
+// computeIBL_UE4, so every fragment assembled the same mat3 twice.
 vec3 approximateSpecularIBL(const in vec3 specularColor, float rLinear,
-                            const in vec3 N, const in vec3 V) {
+                            const in vec3 N, const in vec3 V, const in mat3 iblM) {
   float NoV = clamp(dot(N, V), 0.0, 1.0);
   vec3 R = normalize((2.0 * NoV) * N - V);
   R = getSpecularDominantDir(N, R, rLinear);
-  vec3 prefilteredColor = texturePanoramaLod(uIblTransform * R, rLinear);
+  vec3 prefilteredColor = texturePanoramaLod(iblM * R, rLinear);
   return prefilteredColor * integrateBRDFApprox(specularColor, rLinear, NoV);
 }
 
@@ -86,8 +105,9 @@ vec3 sphericalHarmonics(const in vec3 N) {
 
 vec3 computeIBL_UE4(const in vec3 N, const in vec3 V, const in vec3 albedo,
                     const in float roughness, const in vec3 specular) {
-  vec3 color = albedo * sphericalHarmonics(uIblTransform * N);
-  color += approximateSpecularIBL(specular, roughness, N, V);
+  mat3 iblM = iblTransform();
+  vec3 color = albedo * sphericalHarmonics(iblM * N);
+  color += approximateSpecularIBL(specular, roughness, N, V, iblM);
   return color;
 }
 `;

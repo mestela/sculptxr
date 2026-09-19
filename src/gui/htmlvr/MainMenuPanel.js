@@ -1818,6 +1818,7 @@ function isAncestorOf(a, b) {
 }
 
 let _wfPickerOpen = false;
+let _litPickerOpen = false;   // the selected light's colour wheel
 // The paint wheel needs neither an open flag nor a revision: it is always there, so its markup
 // never changes and there is nothing for the rebuild cache to miss. Both existed briefly, for the
 // swatch-and-OK version this replaced.
@@ -2508,8 +2509,75 @@ export function buildSectionHTML_scene(main) {
   // Lock lives in the toolbar (padlock) and acts on the single selected mesh.
   const singleSel = selected.length === 1 ? selected[0] : null;
   const tbLocked  = singleSel ? !!main.isSelectLocked?.(singleSel.getID()) : false;
+
+  // THE SELECTED LIGHT'S OWN PROPERTIES. They have existed on the entity since lights were
+  // added and the shader reads all three every frame, but nothing has ever written them —
+  // every light in every scene has been warm-white at intensity 1 since the feature shipped.
+  // Only shown when exactly one light is selected: these are per-object, and a section that
+  // appears empty is worse than one that is not there.
+  const _lit = (singleSel && singleSel._isLight) ? singleSel : null;
+  const _litHex = '#' + [0, 1, 2].map((i) =>
+    Math.max(0, Math.min(255, Math.round(((_lit?._lightColor ?? [1, 1, 1])[i]) * 255)))
+      .toString(16).padStart(2, '0')).join('');
+  const lightHTML = !_lit ? '' : `
+    <div class="mm-section-title">Light</div>
+    ${/* TYPE FIRST, because it decides which of the rows below mean anything. Falloff is
+         distance attenuation, which a directional light does not have; Cone belongs to a spot
+         alone. Hidden rather than dimmed: a row that cannot do anything is noise, and the
+         section is short enough that nothing jumps far. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Type</span>
+      <div class="mm-choice-grid cols-3" style="flex:1">
+        <button class="mm-choice${(_lit._lightType || 0) === 0 ? ' active' : ''}" data-light-type="0">Point</button>
+        <button class="mm-choice${(_lit._lightType || 0) === 1 ? ' active' : ''}" data-light-type="1">Spot</button>
+        <button class="mm-choice${(_lit._lightType || 0) === 2 ? ' active' : ''}" data-light-type="2">Sun</button>
+      </div>
+      <span class="mm-val"></span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Intensity</span>
+      <input type="range" id="mm-light-int" min="0" max="2000" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
+      <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(2)}</span>
+    </div>
+    ${/* FALLOFF, not "range": it is the distance at which the light is half as bright, not a
+         hard cutoff -- the attenuation in ShaderPBR never reaches zero. Sized from the scene
+         diagonal when the light was made, so the useful span is relative to that. */ ''}
+    ${(_lit._lightType || 0) !== 2 ? `
+    <div class="mm-row">
+      <span class="mm-lbl">Falloff</span>
+      <input type="range" id="mm-light-range" min="1" max="${Math.max(50, Math.round((_lit._lightRange ?? 50) * 4))}" step="1" value="${Math.round(_lit._lightRange ?? 50)}">
+      <span class="mm-val" id="mm-light-range-val">${Math.round(_lit._lightRange ?? 50)}</span>
+    </div>` : ''}
+    ${(_lit._lightType || 0) === 1 ? `
+    <div class="mm-row">
+      <span class="mm-lbl">Cone</span>
+      <input type="range" id="mm-light-cone" min="5" max="89" step="1" value="${Math.round(_lit._lightConeDeg ?? 35)}">
+      <span class="mm-val" id="mm-light-cone-val">${Math.round(_lit._lightConeDeg ?? 35)}&deg;</span>
+    </div>` : ''}
+    ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
+         colour control in this app that survives being rasterised into a VR panel, and the
+         Scene section renders there too. Swatch opens it, OK closes it. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Colour</span>
+      <button id="mm-light-swatch" title="Light colour"
+        style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${_litHex};border:1px solid #45475a"></button>
+      <span class="mm-val"></span>
+    </div>
+    ${_litPickerOpen ? `
+    <div class="mm-row" style="justify-content:center">
+      ${buildColorWheelHTML({ prefix: 'mm-light-cw', size: 150 })}
+    </div>
+    <button class="mm-action-btn" id="mm-light-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
+`;
+
   return `
-    <!-- No 'Outliner' heading: the list is the first thing in the section and plainly is one. -->
+    ${/* HEADINGS EXIST SO THE SECTION CAN FOLD. This used to carry a note saying the outliner
+         needed no heading because it was obviously one — true, but it also meant
+         groupSectionTitles had nothing to grab and the whole tab was a single slab. matt:
+         "make the scene tab sections foldable, so be able to fold the outliner, the transform
+         properties, the constraints, the primitives." _decorateDesktopSection already runs
+         groupSectionTitles over every sidebar section, so a heading is all that is needed. */ ''}
+    <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
@@ -2532,7 +2600,9 @@ export function buildSectionHTML_scene(main) {
            same scoping the old rule used -- see the stylesheet. */ ''}
       <div class="mm-outliner-grip" title="Drag to resize the list"></div>
     </div>
-    ${rigHTML}
+    ${rigHTML ? `<div class="mm-section-title">Transform</div>${rigHTML}` : ''}
+    ${lightHTML}
+    <div class="mm-section-title">Primitives</div>
     <div class="mm-add-row">
       <button class="mm-action-btn" id="mm-add-cube">Cube</button>
       <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
@@ -2753,6 +2823,15 @@ export function buildSectionHTML_rendering(main) {
         ${buildSelectHTML('mm-env-select', envOpts, ShaderPBR?.idEnv ?? 0)}
         <!-- Reserves the value column a slider row has, so the control ends where a slider does. -->
         <span class="mm-val"></span>
+      </div>
+      ${/* HOW MUCH THE ENVIRONMENT CONTRIBUTES, separately from exposure. Exposure multiplies
+           the IBL and the lamps together so the ratio never moves; this scales only the IBL,
+           and at 0 the scene is lit by its own lights alone -- which is the only way to see
+           what a point light is actually doing. */ ''}
+      <div class="mm-row">
+        <span class="mm-lbl">Env Intensity</span>
+        <input type="range" id="mm-env-intensity" min="0" max="200" step="1" value="${Math.round((getOptionsURL().envIntensity ?? 1) * 100)}">
+        <span class="mm-val" id="mm-env-intensity-val">${Math.round((getOptionsURL().envIntensity ?? 1) * 100)}%</span>
       </div>` : ''}
       ${shaderType === Enums.Shader.MATCAP ? `<div class="mm-row">
         <span class="mm-lbl">Matcap</span>
@@ -4291,6 +4370,76 @@ function selectRange(el, main, clicked) {
 }
 
 export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
+  // THE SELECTED LIGHT'S PROPERTIES. Resolved per event rather than captured at wire time, so a
+  // stale handler cannot write to a light that is no longer selected. Both fields are read by
+  // ShaderPBR every frame, so there is nothing to invalidate -- just render.
+  {
+    const _litSel = () => {
+      const sel = main.getSelectedMeshes?.() ?? [];
+      return (sel.length === 1 && sel[0]?._isLight) ? sel[0] : null;
+    };
+    wireSlider(el.querySelector('#mm-light-int'), el.querySelector('#mm-light-int-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._lightIntensity = v / 100;
+      main.render?.();
+    }, (v) => (v / 100).toFixed(2), null);
+    wireSlider(el.querySelector('#mm-light-range'), el.querySelector('#mm-light-range-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._lightRange = v;
+      main.render?.();
+    }, (v) => String(v), null);
+    wireSlider(el.querySelector('#mm-light-cone'), el.querySelector('#mm-light-cone-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._lightConeDeg = v;
+      // The cone handle IS the angle, so it has to be rebuilt as the slider moves or it starts
+      // lying. Cheap enough to do per input event: ~60 line segments.
+      main.decorateLight?.(L);
+      main.render?.();
+    }, (v) => `${v}\u00B0`, null);
+    // A REBUILD, not a repaint: changing the type changes which rows exist.
+    el.querySelectorAll('[data-light-type]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const L = _litSel(); if (!L) return;
+        L._lightType = parseInt(btn.dataset.lightType, 10);
+        // The handle is type-specific -- asterisk, cone or parallel rays -- so it is rebuilt
+        // here rather than left showing the shape of the type you just left.
+        main.decorateLight?.(L);
+        main.render?.();
+        repaintFn?.();
+      });
+    });
+
+    const _toHex = (rgb) => '#' + [0, 1, 2].map((i) =>
+      Math.max(0, Math.min(255, Math.round(rgb[i] * 255))).toString(16).padStart(2, '0')).join('');
+    el.querySelector('#mm-light-swatch')?.addEventListener('click', () => {
+      _litPickerOpen = true; repaintFn?.();
+    });
+    el.querySelector('#mm-light-cw-ok')?.addEventListener('click', () => {
+      _litPickerOpen = false; repaintFn?.();
+    });
+    const _cwRoot = el.querySelector('#mm-light-cw');
+    if (_cwRoot) {
+      // Disposed first: this section rebuilds on every repaint, and an old wheel keeps
+      // document-level pointermove/pointerup listeners that would otherwise pile up.
+      el._litWheel?.dispose?.();
+      el._litWheel = new ColorWheel(_cwRoot, {
+        prefix: 'mm-light-cw', size: 150,
+        get: () => (_litSel()?._lightColor ?? [1, 1, 1]).slice(0, 3),
+        set: (rgb) => {
+          const L = _litSel(); if (!L) return;
+          L._lightColor = [rgb[0], rgb[1], rgb[2]];
+          // The ray gizmo is drawn in the light's own colour, so it has to be repainted or it
+          // starts lying. This is the first caller refreshLightDecoration has ever had.
+          main.refreshLightDecoration?.(L);
+          const sw = el.querySelector('#mm-light-swatch');
+          if (sw) sw.style.background = _toHex(rgb);
+          main.render?.();
+        },
+        render: () => main.render?.(),
+      });
+    }
+  }
+
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
 
   // Toolbar eye → hide/show the whole selection. ONE TARGET STATE FOR ALL OF THEM, taken from
@@ -4768,6 +4917,17 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     }
     lightRepaintFn();
   });
+
+  // LIVE VALUE WRITTEN DIRECTLY, PERSIST DEBOUNCED. saveOption only updates the runtime
+  // snapshot when its debounce fires, so relying on it alone would leave the viewport a third
+  // of a second behind the thumb — on the one slider whose whole purpose is watching the
+  // lighting change as you drag.
+  wireSlider(el.querySelector('#mm-env-intensity'), el.querySelector('#mm-env-intensity-val'), (v) => {
+    const f = v / 100;
+    getOptionsURL().envIntensity = f;
+    getOptionsURL.saveOption('envIntensity', f, 300);
+    main.render?.();
+  }, (v) => `${v}%`, sliderDirtyFn);
 
   wireSlider(el.querySelector('#mm-shadow-opacity'), el.querySelector('#mm-shadow-opacity-val'), (v) => {
     main.setShadowOpacity?.(v / 100);
@@ -5768,7 +5928,13 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
 
   // ...and the four platform-neutral sections, from the same builder the VR page uses, so a
   // control cannot exist on one page and be inoperable on the other.
-  wireSharedSettings(el, main, repaintFn);
+  // A NO-OP, NOT repaintFn. Its third argument is the slider DIRTY hook, called on every
+  // `input` event -- and on desktop repaintFn is the dropdown's rebuild, which does
+  // `dd.innerHTML = buildFn(...)`. That destroyed the <input> the pointer was captured on, so
+  // exposure, curvature and the two grid opacities stepped once and then refused to drag.
+  // matt: "settings -> exposure is steppy still." The VR mount still passes its paint, because
+  // the rasteriser genuinely has to be told the texture changed; the DOM redraws itself.
+  wireSharedSettings(el, main, () => {});
 
   const wireCheck = (id, optKey, windowKey) => {
     q(id)?.addEventListener('change', (e) => {

@@ -2968,6 +2968,12 @@ class Scene {
     mesh.isPickable = false;   // the sculpt brush skips it; still selectable by ray and outliner
     mesh._lightColor     = [1.0, 0.98, 0.95];
     mesh._lightIntensity = 1.0;
+    // 0 point, 1 spot, 2 directional. ONE ENTITY WITH A TYPE, not three classes: a light is
+    // already an ordinary scene object and the type is a property of it, so changing your mind
+    // keeps the placement, the parenting and the keys. Aim is the locator's local -Z, so the
+    // ordinary gizmo aims a spot with no special mode.
+    mesh._lightType   = 0;
+    mesh._lightConeDeg = 35;   // outer half-angle; the inner edge is derived in the shader upload
     // RANGE FROM THE SCENE, not a constant. Units here are arbitrary and large -- the camel is
     // about 180 across -- so a fixed range would light either nothing or everything depending on
     // the model. Half the scene's diagonal puts the falloff somewhere useful on the first frame,
@@ -2993,12 +2999,56 @@ class Scene {
     const tm = mesh.getThreeMesh();
     if (!tm) return mesh;
     tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+
+    // REBUILT, NOT ADDED TO. The handle is type-specific, so changing the type has to replace
+    // it; without this every switch left the previous one behind.
+    const old = tm.getObjectByName('light_rays');
+    if (old) { tm.remove(old); old.geometry.dispose(); old.material.dispose(); }
+
+    // THE HANDLE SAYS WHAT KIND OF LIGHT IT IS, and for the aimed types, WHERE IT POINTS.
+    // A point light has no direction, so a symmetric asterisk is the honest shape for it; a
+    // spot and a sun both have one, and a marker that does not show it makes you rotate the
+    // gizmo and guess. matt: "spotlights need a cone indicator to indicate direction and
+    // angle. sun needs 3 parallel lines with a thin arrow at one end."
+    //
+    // Everything is built down the local -Z, which is the aim (see the upload in ShaderPBR),
+    // in unit space -- the scale is applied once at the end.
+    const type = mesh._lightType || 0;
     const pts = [];
-    const push = (x, y, z) => { pts.push(0, 0, 0, x, y, z); };
-    push(1, 0, 0); push(-1, 0, 0); push(0, 1, 0); push(0, -1, 0); push(0, 0, 1); push(0, 0, -1);
-    const d = 0.577;
-    push(d, d, d); push(-d, -d, -d); push(d, -d, d); push(-d, d, -d);
-    push(-d, d, d); push(d, -d, -d); push(d, d, -d); push(-d, -d, d);
+    const seg = (ax, ay, az, bx, by, bz) => pts.push(ax, ay, az, bx, by, bz);
+    const ray = (x, y, z) => seg(0, 0, 0, x, y, z);
+
+    if (type === 1) {
+      // SPOT: a cone from the apex, its rim drawn at the OUTER angle so the circle is the
+      // angle you set. Four ribs rather than a dense fan -- enough to read as a cone from any
+      // side without becoming a solid object in the viewport.
+      const rad = Math.tan(Math.max(1, Math.min(89, mesh._lightConeDeg || 35)) * Math.PI / 180);
+      const L = 1.0;
+      for (let k = 0; k < 4; k++) {
+        const a = k * Math.PI / 2;
+        seg(0, 0, 0, Math.cos(a) * rad, Math.sin(a) * rad, -L);
+      }
+      const N = 24;
+      for (let k = 0; k < N; k++) {
+        const a0 = (k / N) * Math.PI * 2, a1 = ((k + 1) / N) * Math.PI * 2;
+        seg(Math.cos(a0) * rad, Math.sin(a0) * rad, -L,
+            Math.cos(a1) * rad, Math.sin(a1) * rad, -L);
+      }
+    } else if (type === 2) {
+      // SUN: three parallel rays with one arrowhead. Parallel IS the statement -- a sun has a
+      // direction and no position -- and the arrow says which way along them.
+      const off = [[-0.35, 0], [0, 0], [0.35, 0]];
+      for (const [ox, oy] of off) seg(ox, oy, 0.7, ox, oy, -0.7);
+      const h = 0.18;
+      seg(0, 0, -0.7, h, 0, -0.7 + h);
+      seg(0, 0, -0.7, -h, 0, -0.7 + h);
+      seg(0, 0, -0.7, 0, h, -0.7 + h);
+      seg(0, 0, -0.7, 0, -h, -0.7 + h);
+    } else {
+      // POINT: six axis rays. No direction to show, so nothing here should imply one.
+      ray(1, 0, 0); ray(-1, 0, 0); ray(0, 1, 0); ray(0, -1, 0); ray(0, 0, 1); ray(0, 0, -1);
+    }
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
     const c = mesh._lightColor;
@@ -3006,7 +3056,10 @@ class Scene {
       new THREE.LineBasicMaterial({ color: new THREE.Color(c[0], c[1], c[2]), depthWrite: false }));
     rays.name = 'light_rays';
     rays.frustumCulled = false;
-    rays.scale.setScalar(4);
+    // Sized off the scene like the light's own range is, rather than a constant: scene units
+    // here are arbitrary and large, so a fixed 4 was invisible in one scene and a nuisance in
+    // the next. A twentieth of the range puts it at marker size in whatever it lands in.
+    rays.scale.setScalar(Math.max(0.5, (mesh._lightRange || 50) * 0.05));
     tm.add(rays);
     return mesh;
   }
@@ -4734,9 +4787,40 @@ class Scene {
 
       this.addNewMesh(copy);
       this._inheritParent(copy, mesh);
+      // WHAT KIND OF THING IT IS, which copyData does not carry -- it copies geometry, and a
+      // locator's geometry is the least interesting thing about it. Duplicating a light used to
+      // hand you a small sphere: a real, sculptable, exportable mesh where a light should be.
+      // matt: "i can't use the outliner -> duplicate on lights, it makes a mesh."
+      //
+      // Rig nodes are absent on purpose. A joint duplicates its CHAIN through RigTopology
+      // before this is ever reached, so copying _isBone here would make a second, broken one.
+      this._copyEntityKind(copy, mesh);
     }
 
     this.setMesh(mesh);
+  }
+
+  // The flags and decoration that make a copy the same KIND of object as its source.
+  // Shared by duplicate and mirror, which had the same hole.
+  _copyEntityKind(copy, src) {
+    if (!src._isNull) return;            // only locators carry a kind that geometry cannot express
+    copy._isNull    = true;
+    copy.isPickable = src.isPickable;
+    copy._typeName  = src._typeName;
+    if (src._isLight) {
+      copy._isLight = true;
+      // Sliced, not shared: two lights pointing at one colour array means editing either edits
+      // both, which is the sort of thing you only notice a week later.
+      copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
+      copy._lightIntensity = src._lightIntensity;
+      copy._lightRange     = src._lightRange;
+      copy._lightType      = src._lightType;
+      copy._lightConeDeg   = src._lightConeDeg;
+      this.decorateLight(copy);
+    } else {
+      this.decorateNull(copy);
+    }
+    return copy;
   }
 
   // A TRUE mirror of the selection across the parent-local `axis` plane (0 = X, the axis
