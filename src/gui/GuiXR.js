@@ -5,7 +5,6 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 import TR from './GuiTR.js';
 import Tools from '../editing/tools/Tools.js';
 import Export from '../files/Export.js';
-import { saveAs } from 'file-saver';
 import Shader from '../render/ShaderLib.js';
 import Utils from '../misc/Utils.js';
 import { vec3 } from 'gl-matrix';
@@ -15,10 +14,7 @@ import { VERSION } from '../Version.js';
 import Tablet from '../misc/Tablet.js';
 
 // Direct access for property setters
-import MeshDynamic from '../mesh/dynamic/MeshDynamic.js';
-import Remesh from '../editing/Remesh.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
-import StateManager from '../states/StateManager.js';
 
 const TAB_HEIGHT = 68; // Increased from 52 (+30%)
 const CANVAS_SIZE = 1024;
