@@ -162,12 +162,47 @@ intent, not a measurement. Hook the function and call the path.
 
 ## Two math libraries
 
-64 files import `gl-matrix`; 53 import `three`. This is the most visible "curious mishmash of
-APIs" to a newcomer, and it is independent of every other item here.
+64 files import `gl-matrix`; 53 import `three`. The most visible "curious mishmash of APIs" to a
+newcomer — and, measured 2026-09-19, **not a call-site sweep. Do not start it as one.**
 
-Mechanical but not risk-free: the matrix memory layouts agree (both column-major), the quaternion
-and euler conventions do not. See also the two-matrices trap already recorded for the rig, where
-writing `_matrix` without `syncThree` leaves a stale three-side matrix.
+~1,925 calls: vec3 1026, mat4 611, quat 235, mat3 27, vec2 26.
+
+**The dependency is not in the call sites, it is in `TransformData`** — the core mesh transform
+state is *built out of* gl-matrix types:
+
+```js
+_center: vec3.create(),          _matrix: mat4.create(),
+_editMatrix: mat4.create(),      _lastComputedN: mat3.create(),   // and more
+```
+
+So every mesh getter — `getMatrix()`, `getCenter()`, `getN()`, `getSymmetryNormal()`,
+`getModelSpaceMatrix()` — hands back a gl-matrix array. **43 of the 56 files that use gl-matrix
+are coupled to that boundary.** Converting one of them in isolation does not remove a library;
+it adds a conversion at every call. Of the 13 that look "free", one is `TransformData` itself,
+and others (e.g. `Geometry.js`, 66 calls) export vector-taking helpers whose callers are the
+coupled files — so boundary conversions reappear there too.
+
+**There are already two representations of every transform**, kept in step by hand:
+
+```js
+Skeleton.syncThree = function (mesh) {
+  tm.matrix.fromArray(mesh.getMatrix());     // gl-matrix _matrix is the source of truth
+};
+```
+
+That duplication is the real target, and it is the documented two-matrices trap: writing
+`_matrix` without `syncThree` leaves a stale three-side matrix, and a world-preserving read then
+shrinks things.
+
+**So the actual job is: make the three.js side the single source of truth and delete the
+gl-matrix mirror from `TransformData`.** That is a rewrite of the transform core — which is also
+the per-vertex hot path, where gl-matrix currently operates allocation-free on `Float32Array`
+subarray views of the vertex buffer.
+
+**Verdict: same as the mock gl. Defer it to the renderer work rather than doing it as cleanup.**
+It has no functional payoff on its own, it is ~1,925 chances to invert an out-param
+(`vec3.sub(out, a, b)` is not `a.sub(b)`), and the renderer migration rewrites much of this code
+anyway. Doing it first means doing it twice.
 
 ---
 
