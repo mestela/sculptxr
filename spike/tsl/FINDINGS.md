@@ -44,7 +44,7 @@ Median frame time in session, one shared material, 72 Hz panel:
 Use the MEDIAN. Min catches spurious short frames (it reported 153 and 551 fps); mean is
 dragged by compile hitches.
 
-## 3. THE BLOCKER: undefined behaviour on material switching in XR
+## 3. RESOLVED: undefined behaviour on material switching in XR — avoid by pre-creating
 
 ```
 GL_INVALID_OPERATION: glDrawElements: It is undefined behaviour
@@ -62,7 +62,26 @@ Hundreds per frame until WebGL stops reporting. Isolated by running each materia
 So it is **not our TSL**, and it is **XR-only**. It is `WebGPURenderer`'s WebGL backend
 rebuilding pipelines/bind groups when the material type changes mid-session.
 
-**Why this is the blocker and not a curiosity:** the app's shader modes ARE that switch. Matcap
+### The fix: build every material before the session starts
+
+matt: "surely we define materials once up front, and thats it?" Correct, and measured. With all
+three materials constructed and warmed before Enter VR, and switching only ever REASSIGNING
+those same objects, a full cycle through three materials x six weights produces **no UBO errors
+at all**. So the fault is pipeline CREATION while immersive, not reassignment — which makes it
+a constraint rather than a blocker, and a cheap one.
+
+**What the app must do:** `ShaderManager` already caches one material per shader id, but
+LAZILY — the first switch to a mode constructs it. Under this renderer that construction would
+happen mid-session, which is the failing case. The app therefore needs to build and warm every
+shader type at startup. Small, well understood, and now known to be necessary rather than
+assumed to be covered.
+
+The cost of the switch is then one frame: measured 30.07, 27.94 and 22.02 ms in the window
+immediately after each change, back to 13.9 ms in the next. matt, in a headset: "i barely felt
+a hitch... a hitch on scene load, or swapping from matcap to pbr once every 5 mins at most,
+that seems perfectly fine."
+
+### Why it looked like a blocker first the app's shader modes ARE that switch. Matcap
 to PBR and back is a normal thing to do, and it is the mode matt says he uses most. Undefined
 behaviour also means every measurement after the first error is untrustworthy — including the
 one place matcap looked less than perfect.
@@ -84,21 +103,30 @@ own and the result was a hitch every time the head turned and new objects entere
 
 ---
 
-## Verdict
+## Verdict: GO, with one rule
 
-Performance and fidelity are answered: the port is affordable and our BRDF survives it.
-**The renderer is not yet trustworthy for us** — not because it is slow, but because the exact
-interaction the app relies on (switching shader modes in an immersive session) produces
-undefined behaviour in the only backend XR can use.
+All three questions came back positive.
 
-Before committing to a seventeen-shader port, one of:
+* It runs in XR on the GalaxyXR.
+* Our BRDF costs the same as three's, and everything in the working range is vsync-locked.
+* The one fault found is avoidable by building materials up front.
 
-1. Find the smallest reproduction of the UBO error and check it against three's issue tracker /
-   a newer release. The overlay-disappearing clue is the place to start.
-2. Confirm it is avoidable — e.g. if every material type is created up front and never switched,
-   or if shader modes become one uber-material with a branch, the bug may be unreachable.
-3. Wait for XR on the WebGPU backend proper, which removes this backend from the path entirely.
+**The rule: no material may be constructed during an immersive session.** Build and warm every
+shader type at startup.
 
-Until one of those lands, the renderer half of `docs/render_stack_audit.md` (the mock gl,
-gl-matrix, hand-rolled shadows) stays deferred — but now for a measured reason rather than an
-unknown one.
+### What the spike did NOT cover
+
+Do not read this as "the port is derisked", only that the shading half is:
+
+* **The other sixteen shaders.** Matcap, flat, contour, wireframe, selection, UV, normal, unlit,
+  fxaa, blur, merge, background. Volume rather than risk — but it is a lot of volume, and the
+  post-process ones (fxaa/blur/merge) are a different shape of problem from a surface shader.
+* **The HTML panels.** Untested under this renderer, and their rasterisation cost is a
+  PROD-BUILD-ONLY effect, so it cannot be judged from a dev server at all.
+* **Per-vertex material channels**, transmission, and the env pipeline (SH9 + panorama vs
+  PMREM). The BRDF ported; these are the parts around it.
+* **The mock gl comes out with all of this**, which is the prize beyond shadows and
+  post-processing.
+
+Next thing worth building, if this proceeds: the panels under `WebGPURenderer`, in a PROD
+build, in a headset. That is the remaining unknown with teeth.
