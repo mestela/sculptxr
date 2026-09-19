@@ -5821,7 +5821,13 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
 
   // ...and the four platform-neutral sections, from the same builder the VR page uses, so a
   // control cannot exist on one page and be inoperable on the other.
-  wireSharedSettings(el, main, repaintFn);
+  // A NO-OP, NOT repaintFn. Its third argument is the slider DIRTY hook, called on every
+  // `input` event -- and on desktop repaintFn is the dropdown's rebuild, which does
+  // `dd.innerHTML = buildFn(...)`. That destroyed the <input> the pointer was captured on, so
+  // exposure, curvature and the two grid opacities stepped once and then refused to drag.
+  // matt: "settings -> exposure is steppy still." The VR mount still passes its paint, because
+  // the rasteriser genuinely has to be told the texture changed; the DOM redraws itself.
+  wireSharedSettings(el, main, () => {});
 
   const wireCheck = (id, optKey, windowKey) => {
     q(id)?.addEventListener('change', (e) => {
