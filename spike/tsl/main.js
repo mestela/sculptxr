@@ -31,7 +31,13 @@ let readoutCtx = null, readoutTex = null, lastLog = 0;
 // that is the only way to see headroom through a vsync cap.
 const WEIGHTS = [[24, 64], [48, 64], [48, 96], [96, 128], [192, 128], [384, 160]];
 let weight = 0;
-let worst = 0, best = 1e9;
+let worst = 0, samples = [];
+// ONE MATERIAL, SHARED, because that is what the app does -- ShaderPBR is a single material
+// across every mesh. Giving each sphere its own was the first version and it measured the
+// wrong thing: 384 unique node materials, each compiling the first time it entered the
+// frustum, which is exactly the hitch-on-head-turn matt saw. Flip window.__perObject to
+// measure that deliberately; it is a real cost, just not one the app pays.
+let sharedMat = null;
 
 // THE NUMBERS HAVE TO BE IN THE HEADSET. The HTML HUD is a DOM overlay and immersive mode does
 // not composite it, so the first version of this page could only be read on the desktop -- for
@@ -142,11 +148,14 @@ function makeMaterial(hue) {
 function build(n, seg) {
   while (group.children.length) {
     const c = group.children.pop();
-    c.geometry.dispose(); c.material.dispose(); group.remove(c);
+    c.geometry.dispose();
+    if (c.material !== sharedMat) c.material.dispose();   // the shared one outlives the rebuild
+    group.remove(c);
   }
   const geo = new THREE.SphereGeometry(0.18, seg, seg / 2);
+  if (!sharedMat) sharedMat = makeMaterial(0.55);
   for (let i = 0; i < n; i++) {
-    const mesh = new THREE.Mesh(geo, makeMaterial(i / n));
+    const mesh = new THREE.Mesh(geo, window.__perObject ? makeMaterial(i / n) : sharedMat);
     const a = (i / n) * Math.PI * 2, r = 1.1 + (i % 3) * 0.45;
     mesh.position.set(Math.cos(a) * r, 1.0 + Math.sin(i * 1.7) * 0.5, Math.sin(a) * r);
     group.add(mesh);
@@ -178,10 +187,11 @@ function tick() {
   const now = performance.now();
   const dt = now - last;
   acc += dt; last = now; frames++;
-  // MIN AND MAX, not just the mean. A trigger press uploads geometry and compiles node
-  // materials, and that one frame drags the average somewhere it never actually sat -- the
-  // 53ms readings were rebuild hitches, not the cost of the scene. Min is the steady state.
-  if (dt < best) best = dt;
+  // THE MEDIAN, not the min and not the mean. Min was wrong: it catches spurious short frames
+  // and reported 153 and 551 fps, which are not real. Mean is dragged by the compile hitch on
+  // a rebuild. The median ignores both ends and is the number that matches what the headset
+  // actually feels like.
+  samples.push(dt);
   if (dt > worst) worst = dt;
   group.rotation.y += 0.002;
   renderer.render(scene, camera);
@@ -189,6 +199,8 @@ function tick() {
   // SAMPLED AFTER THE RENDER. info.autoReset clears the counters at the start of each render,
   // so reading first reports zeros -- which is a HUD that lies rather than one that is empty.
   if (frames >= 30) {
+    const sorted = samples.slice().sort((a, b) => a - b);
+    const med = sorted[sorted.length >> 1];
     const ms = acc / frames;
     hud('ms').textContent = ms.toFixed(2);
     hud('fps').textContent = (1000 / ms).toFixed(0);
@@ -198,7 +210,7 @@ function tick() {
 
     const xr = renderer.xr.isPresenting;
     drawReadout([
-      `${best.toFixed(2)} ms   ${(1000 / best).toFixed(0)} fps`,
+      `${med.toFixed(2)} ms   ${(1000 / med).toFixed(0)} fps`,
       `${info.drawCalls} draws`,
       `${(info.triangles / 1000).toFixed(0)}k tris   w${weight}`,
       xr ? 'XR  (trigger = next weight)' : 'desktop',
@@ -207,10 +219,11 @@ function tick() {
     // COPIED out of a headset -- see the diagnostics rule.
     if (now - lastLog > 1000) {
       lastLog = now;
-      console.log(`[tsl] steady=${best.toFixed(2)}ms (${(1000 / best).toFixed(0)}fps) `
+      console.log(`[tsl] med=${med.toFixed(2)}ms (${(1000 / med).toFixed(0)}fps) `
         + `mean=${ms.toFixed(2)} worst=${worst.toFixed(2)} `
-        + `draws=${info.drawCalls} tris=${info.triangles} w=${weight} xr=${xr}`);
-      worst = 0; best = 1e9;
+        + `draws=${info.drawCalls} tris=${info.triangles} w=${weight} `
+        + `mats=${window.__perObject ? 'per-object' : 'shared'} xr=${xr}`);
+      worst = 0; samples.length = 0;
     }
     frames = 0; acc = 0;
   }
