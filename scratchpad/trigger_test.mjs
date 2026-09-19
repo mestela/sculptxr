@@ -13,14 +13,19 @@ const grab = (name) => {
   return SRC.slice(i, j).replace(/^\s*/, '');
 };
 const body = grab('_triggerThreshold') + '\n' + grab('_isTriggerDown');
-const Klass = new Function('return class T { constructor(o){Object.assign(this,o);} ' + body + ' }')();
+// THE SETTING COMES FROM THE OPTIONS STORE NOW, not from GuiXR's _uiSettings cache, which was
+// deleted -- it was a startup snapshot of these same options. The stub is the store, so the
+// lifted function runs against the shape it really sees.
+// PER INSTANCE, not a shared module-level stub. The lifted function reads the store at CALL
+// time, so one shared object would let a later mk() silently change what an earlier instance
+// reports -- a trap for the next check added below rather than a bug today.
+const makeClass = (curve) => new Function('getOptionsURL',
+  'return class T { constructor(o){Object.assign(this,o);} ' + body + ' }'
+)(() => ({ triggerCurve: curve }));
 
 const controller = (value, pressed) => ({ _pad: { buttons: [{ value, pressed }] } });
-const mk = (curve, isHand) => new Klass({
-  _guiXR: { _uiSettings: { triggerCurve: curve } },
-  _padOf: (s) => s._pad,
-  _isHandSource: () => !!isHand,
-});
+const mk = (curve, isHand) =>
+  new (makeClass(curve))({ _padOf: (s) => s._pad, _isHandSource: () => !!isHand });
 
 // LIGHT sensitivity: slider 1.0 -> threshold 0.1. The setting matt's symptom needs.
 const light = mk(1.0, false);

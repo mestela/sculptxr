@@ -1554,9 +1554,6 @@ const DEV_TOGGLES = [
       // setMenuColorGrade is what changes the pixels without waiting for either.
       try {
         const d = MENU_GRADE_DEFAULTS;
-        const gx = window.app?._guiXR ?? window.app?.getGuiXR?.();
-        const ui = gx?._uiSettings;
-        if (ui) { ui.menuBrightness = d.brightness; ui.menuSaturation = d.saturation; ui.menuGamma = d.gamma; }
         getOptionsURL.saveOption('menuBrightness', d.brightness, 0);
         getOptionsURL.saveOption('menuSaturation', d.saturation, 0);
         getOptionsURL.saveOption('menuGamma', d.gamma, 0);
@@ -1839,13 +1836,11 @@ let _wfRev = 0;
 export function wireframeSectionRev() { return _wfRev; }
 
 function buildWireframeSectionHTML(main) {
-  const gx     = main._guiXR ?? main.getGuiXR?.();
-  const ui     = gx?._uiSettings ?? {};
   const opts   = getOptionsURL();
-  const bias   = ui.wireframeBias    ?? opts.wireframeBias    ?? 0.001;
-  const alpha  = ui.wireframeAlpha   ?? opts.wireframeAlpha   ?? 0.2;
-  const surf   = ui.wireframeSurface ?? opts.wireframeSurface ?? true;
-  const colour = ui.wireframeColor   ?? opts.wireframeColor   ?? '#000000';
+  const bias   = opts.wireframeBias    ?? 0.001;
+  const alpha  = opts.wireframeAlpha   ?? 0.2;
+  const surf   = opts.wireframeSurface ?? true;
+  const colour = opts.wireframeColor   ?? '#000000';
   const curType = main.getMesh?.()?.getWireframeType?.() ?? 1;
   const typeBtns = [{ id: 1, label: 'Smooth' }, { id: 0, label: 'Fast' }, { id: 2, label: 'Full' }]
     .map(t => `<button class="mm-choice${curType === t.id ? ' active' : ''}" data-wf-type="${t.id}">${t.label}</button>`)
@@ -1887,13 +1882,10 @@ function buildWireframeSectionHTML(main) {
 // swatch dimming and the toggle's active state follow whichever one is live.
 function wireWireframeSection(el, main, paint, dirty) {
   const q    = (sel) => el.querySelector(sel);
-  const gx   = main._guiXR ?? main.getGuiXR?.();
-  const ui   = gx?._uiSettings ?? {};
   const opts = getOptionsURL;
 
   wireSlider(q('#mm-wf-bias'), q('#mm-wf-bias-val'), (v) => {
     const f = v / 10000;
-    if (ui) ui.wireframeBias = f;
     const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
     if (wm?.material?.uniforms) wm.material.uniforms.uBias.value = f;
     opts.saveOption('wireframeBias', f, 500);
@@ -1901,7 +1893,6 @@ function wireWireframeSection(el, main, paint, dirty) {
 
   wireSlider(q('#mm-wf-alpha'), q('#mm-wf-alpha-val'), (v) => {
     const f = v / 100;
-    if (ui) ui.wireframeAlpha = f;
     const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
     if (wm?.material?.uniforms) wm.material.uniforms.uOpacity.value = f;
     opts.saveOption('wireframeAlpha', f, 500);
@@ -1941,15 +1932,13 @@ function wireWireframeSection(el, main, paint, dirty) {
     el._wfWheel?.dispose?.();
     const wheel = new ColorWheel(cwRoot, {
       prefix: 'mm-wf-cw', size: 150,
-      get: () => hex2rgb(ui.wireframeColor || opts().wireframeColor || '#000000'),
+      get: () => hex2rgb(opts().wireframeColor || '#000000'),
       set: (rgb) => {
         const hex = rgb2hex(rgb);
-        ui.wireframeColor = hex;
         opts.saveOption('wireframeColor', hex, 300);
         // TOUCHING THE WHEEL TURNS THE SURFACE TINT OFF. Otherwise you drag a colour and nothing
         // happens on screen, which is indistinguishable from the control being broken.
-        if ((ui.wireframeSurface ?? true) !== false) {
-          ui.wireframeSurface = false;
+        if ((opts().wireframeSurface ?? true) !== false) {
           opts.saveOption('wireframeSurface', false);
           const btn = q('#mm-wf-surface');
           if (btn) { btn.classList.remove('active'); btn.textContent = 'From surface: Off'; }
@@ -1968,8 +1957,7 @@ function wireWireframeSection(el, main, paint, dirty) {
   }
 
   q('#mm-wf-surface')?.addEventListener('click', () => {
-    const on = !(ui.wireframeSurface ?? true);
-    ui.wireframeSurface = on;
+    const on = !(opts().wireframeSurface ?? true);
     opts.saveOption('wireframeSurface', on);
     _wfRev++;                       // the button's own label says On/Off — see wireframeSectionRev
     repaintWires();
@@ -2086,26 +2074,24 @@ export function wireSharedSettings(el, main, paint) {
 }
 
 function buildMenuHTML_settings(main) {
-  const gx  = main._guiXR ?? main.getGuiXR?.();
-  const ui  = gx?._uiSettings ?? {};
   const opts = getOptionsURL();
 
-  const triggerCurve  = ui.triggerCurve    ?? opts.triggerCurve    ?? 0.5;
-  const stylusLength  = ui.stylusLength    ?? opts.stylusLength    ?? 0.10;
-  const grabGain      = ui.grabGain        ?? opts.grabGain        ?? 1.0;
+  const triggerCurve  = opts.triggerCurve    ?? 0.5;
+  const stylusLength  = opts.stylusLength    ?? 0.10;
+  const grabGain      = opts.grabGain        ?? 1.0;
   // Nav throw (#19): how much of your release speed the scene keeps gliding with.
   const navThrow      = (window._navThrow != null ? +window._navThrow : null) ?? opts.navThrow ?? 1.0;
   // FROM THE ONE ACCESSOR, because the default is per-runtime now: a literal here would show a
   // Quest's threshold on a Vision Pro and the slider would lie about what is in force.
-  const pinchOn       = ui.pinchOn ?? opts.pinchOn ?? (main.getPinchOn ? main.getPinchOn() : 0.022);
-  const hStylusLen    = ui.handStylusLength ?? opts.handStylusLength ?? 0.05;
-  const hStylusOff    = ui.handStylusOffset ?? opts.handStylusOffset ?? 0.0;
+  const pinchOn       = opts.pinchOn ?? (main.getPinchOn ? main.getPinchOn() : 0.022);
+  const hStylusLen    = opts.handStylusLength ?? 0.05;
+  const hStylusOff    = opts.handStylusOffset ?? 0.0;
   const hRayPitch     = Number.isFinite(window._handRayPitch) ? window._handRayPitch
-                      : (ui.handRayPitch ?? opts.handRayPitch ?? 20);
-  const stylusOffset  = ui.stylusOffset    ?? opts.stylusOffset    ?? 0.0;
-  const stylusTilt    = ui.stylusTilt      ?? opts.stylusTilt      ?? 0;
+                      : (opts.handRayPitch ?? 20);
+  const stylusOffset  = opts.stylusOffset    ?? 0.0;
+  const stylusTilt    = opts.stylusTilt      ?? 0;
   const gizmoSizeMul  = opts.gizmoSizeMul  ?? 1.0;
-  const offsetY       = ui.offsetY         ?? opts.offsetY         ?? -1.2;
+  const offsetY       = opts.offsetY         ?? -1.2;
   // Bias/Opacity/Colour/Type all live in buildWireframeSectionHTML now, shared with desktop.
   // MOVED OUT OF RENDERING: set once and left alone, which is what this menu is for. matt: "move
   // grid opacity, wf opacity, wf offset, tone mapping to the settings menu."
@@ -2123,10 +2109,10 @@ function buildMenuHTML_settings(main) {
     { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
     { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
   ].map(t => `<button class="mm-choice${curTM === t.id ? ' active' : ''}" data-tonemap="${t.id}">${t.label}</button>`).join('');
-  const menuBright    = ui.menuBrightness  ?? 0.65;
-  const menuSat       = ui.menuSaturation  ?? 0.50;
-  const menuGamma     = ui.menuGamma       ?? 0.0;
-  const debugMode     = ui.debugMode       ?? false;
+  const menuBright    = opts.menuBrightness  ?? 0.65;
+  const menuSat       = opts.menuSaturation  ?? 0.50;
+  const menuGamma     = opts.menuGamma       ?? 0.0;
+  const debugMode     = opts.debugMode       ?? false;
   const isLeft      = main._dominantHand === 'left';
   const isRaycast   = !main._vrUseVolumeIntersect;
   const isAmbi      = !!main._vrAmbidextrousCursors;
@@ -2692,11 +2678,9 @@ export function buildSectionHTML_rendering(main) {
   const isWire      = getOptionsURL().wireframe;
   const isSolid     = mesh?._renderData?._threeMesh?.material?.visible ?? true;
 
-  const gx       = main._guiXR ?? main.getGuiXR?.();
-  const uiS      = gx?._uiSettings ?? {};
   const opts     = getOptionsURL;
-  const wfBias   = uiS.wireframeBias  ?? opts.wireframeBias  ?? 0.001;
-  const wfAlpha  = uiS.wireframeAlpha ?? opts.wireframeAlpha ?? 0.2;
+  const wfBias   = opts().wireframeBias  ?? 0.001;
+  const wfAlpha  = opts().wireframeAlpha ?? 0.2;
 
   // ENVIRONMENTS AND MATCAPS ARE DROPDOWNS, NOT A BUTTON EACH.
   //
@@ -3793,8 +3777,6 @@ export class MainMenuPanel extends HTMLVRPanel {
   _wireSettings(main) {
     const el   = this._element;
     const q    = (id) => el.querySelector(id);
-    const gx   = main._guiXR ?? main.getGuiXR?.();
-    const ui   = gx?._uiSettings ?? {};
     const opts = getOptionsURL;
     const paint = () => this.markDirty();
 
@@ -3852,14 +3834,12 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Press point -- where in the trigger's travel a press registers. See _triggerThreshold.
     this._wireSlider(q('#mm-trigger'), q('#mm-trigger-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.triggerCurve = f;
       opts.saveOption('triggerCurve', f, 500);
     }, (v) => `${v}%`);
 
     // Grab speed — world movement per unit of hand movement while gripping.
     this._wireSlider(q('#mm-grab-gain'), q('#mm-grab-gain-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.grabGain = f;
       opts.saveOption('grabGain', f, 500);
     }, (v) => `${v}%`);
 
@@ -3875,7 +3855,6 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Pinch distance — millimetres of finger-to-thumb gap that still counts as a click.
     this._wireSlider(q('#mm-pinch-on'), q('#mm-pinch-on-val'), (v) => {
       const f = v / 1000;
-      if (ui) ui.pinchOn = f;
       opts.saveOption('pinchOn', f, 500);
     }, (v) => `${v}mm`);
 
@@ -3885,18 +3864,15 @@ export class MainMenuPanel extends HTMLVRPanel {
     // how the drawn spike and the radius sphere end up in different places.
     this._wireSlider(q('#mm-hand-len'), q('#mm-hand-len-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.handStylusLength = f;
       main.updateStylusLength?.(f);
       opts.saveOption('handStylusLength', f, 500);
     });
     this._wireSlider(q('#mm-hand-off'), q('#mm-hand-off-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.handStylusOffset = f;
       main.updateStylusOffset?.(f);
       opts.saveOption('handStylusOffset', f, 500);
     });
     this._wireSlider(q('#mm-hand-pitch'), q('#mm-hand-pitch-val'), (v) => {
-      if (ui) ui.handRayPitch = v;
       // The ray correction reads the window override first, so keep them in step — otherwise a
       // value set here would be ignored for as long as a console trial is still in effect.
       window._handRayPitch = v;
@@ -3906,18 +3882,15 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Stylus
     this._wireSlider(q('#mm-stylus-len'), q('#mm-stylus-len-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.stylusLength = f;
       main.updateStylusLength?.(f);
       opts.saveOption('stylusLength', f, 500);
     });
     this._wireSlider(q('#mm-stylus-off'), q('#mm-stylus-off-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.stylusOffset = f;
       main.updateStylusOffset?.(f);
       opts.saveOption('stylusOffset', f, 500);
     });
     this._wireSlider(q('#mm-stylus-tilt'), q('#mm-stylus-tilt-val'), (v) => {
-      if (ui) ui.stylusTilt = v;
       main.updateStylusTilt?.(v);
       opts.saveOption('stylusTilt', v, 500);
     }, (v) => `${v}°`);
@@ -3933,7 +3906,6 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Calibration
     this._wireSlider(q('#mm-head-height'), q('#mm-head-height-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.offsetY = f;
       main.updateVROffsets?.();
       opts.saveOption('offsetY', f, 500);
     }, (v) => (v / 100).toFixed(1));
@@ -3966,28 +3938,25 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Menu brightness/saturation
     this._wireSlider(q('#mm-menu-bright'), q('#mm-menu-bright-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.menuBrightness = f;
       opts.saveOption('menuBrightness', f, 500);
       setMenuColorGrade(f, ui?.menuSaturation ?? 0.5, ui?.menuGamma ?? 0.5);
     }, (v) => `${v}%`);
     this._wireSlider(q('#mm-menu-sat'), q('#mm-menu-sat-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.menuSaturation = f;
       opts.saveOption('menuSaturation', f, 500);
       setMenuColorGrade(ui?.menuBrightness ?? 0.5, f, ui?.menuGamma ?? 0.5);
     }, (v) => `${v}%`);
     this._wireSlider(q('#mm-menu-gamma'), q('#mm-menu-gamma-val'), (v) => {
       const f = v / 100;
-      if (ui) ui.menuGamma = f;
       opts.saveOption('menuGamma', f, 500);
       setMenuColorGrade(ui?.menuBrightness ?? 0.5, ui?.menuSaturation ?? 0.5, f);
     }, (v) => `${v}%`);
 
     // Debug
     q('#mm-debug-mode')?.addEventListener('click', () => {
-      if (ui) ui.debugMode = !ui.debugMode;
-      opts.saveOption('debugMode', ui.debugMode ?? false);
-      q('#mm-debug-mode')?.classList.toggle('active', ui.debugMode ?? false);
+      const dbg = !(opts().debugMode ?? false);
+      opts.saveOption('debugMode', dbg);
+      q('#mm-debug-mode')?.classList.toggle('active', dbg);
       paint();
     });
     q('#mm-perf-profile')?.addEventListener('click', () => window.debugProfile?.(120));
@@ -4830,8 +4799,6 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   });
 
   // Wireframe opacity and z-offset sliders
-  const gx  = main._guiXR ?? main.getGuiXR?.();
-  const ui  = gx?._uiSettings ?? {};
   const opts = getOptionsURL;
   // The WF Opacity/Offset sliders and their wiring moved to Settings, which already had the
   // same two under 'Wireframe'. See buildMenuHTML_settings.

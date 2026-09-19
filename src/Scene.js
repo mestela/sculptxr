@@ -2066,8 +2066,6 @@ class Scene {
   // The controller values are untouched — they were tuned against a controller and nothing about
   // adding a hand variant should move them.
   _handStylus(key, fallback) {
-    const v = this._guiXR?._uiSettings?.[key];
-    if (Number.isFinite(v)) return v;
     const o = getOptionsURL()[key];   // called — see the note in getPinchOn
     return Number.isFinite(o) ? o : fallback;
   }
@@ -2075,9 +2073,8 @@ class Scene {
   getStylusLength() {
     if (this._spikeFreeze) return this._spikeFreeze.length;   // frozen while its own slider is dragged
     if (this._handsOnlyMode()) return this._handStylus('handStylusLength', 0.05);
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusLength !== undefined) {
-      return this._guiXR._uiSettings.stylusLength;
-    }
+    const v = getOptionsURL().stylusLength;
+    if (Number.isFinite(v)) return v;
     return this._isQuestStandalone ? 0.15 : 0.10;
   }
 
@@ -2101,10 +2098,8 @@ class Scene {
   getStylusOffset() {
     if (this._spikeFreeze) return this._spikeFreeze.offset;   // frozen while its own slider is dragged
     if (this._handsOnlyMode()) return this._handStylus('handStylusOffset', 0.0);
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusOffset !== undefined) {
-      return this._guiXR._uiSettings.stylusOffset;
-    }
-    return 0.0;
+    const v = getOptionsURL().stylusOffset;
+    return Number.isFinite(v) ? v : 0.0;
   }
 
   updateStylusOffset(val) {
@@ -2125,8 +2120,6 @@ class Scene {
   // between finger surfaces, not between joint centres.
   getPinchOn() {
     if (Number.isFinite(window._pinchOn)) return window._pinchOn;
-    const v = this._guiXR?._uiSettings?.pinchOn;
-    if (Number.isFinite(v)) return v;
     // CALLED, not read as a property: the default export is a function and `getOptionsURL.x`
     // is a property on the function object — always undefined, so the saved value was never
     // read and the setting only appeared to work until the next reload.
@@ -2171,7 +2164,7 @@ class Scene {
   // quick trial without opening a menu.
   getGrabGain() {
     if (Number.isFinite(window._grabGain)) return window._grabGain;
-    const v = this._guiXR?._uiSettings?.grabGain;
+    const v = getOptionsURL().grabGain;
     return Number.isFinite(v) ? v : 1.0;
   }
 
@@ -2185,10 +2178,8 @@ class Scene {
     // rotation to the same ray from a setting the user dialled in for a physical controller. It
     // reads as 0 today only because the controller default happens to be 0.
     if (this._handsOnlyMode()) return 0.0;
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt !== undefined) {
-      return this._guiXR._uiSettings.stylusTilt;
-    }
-    return 0.0;
+    const v = getOptionsURL().stylusTilt;
+    return Number.isFinite(v) ? v : 0.0;
   }
 
   updateStylusTilt(val) {
@@ -5322,8 +5313,8 @@ class Scene {
     const sliderY = document.getElementById('offsetY');
     if (sliderY) {
       valY = parseFloat(sliderY.value);
-    } else if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.offsetY !== undefined) {
-      valY = this._guiXR._uiSettings.offsetY;
+    } else if (Number.isFinite(getOptionsURL().offsetY)) {
+      valY = getOptionsURL().offsetY;
     }
 
     const valZ = 0.4;
@@ -12170,9 +12161,9 @@ class Scene {
   // threshold on it either latches on for ever or fires on a relaxed hand. Sensitivity is a
   // setting about a physical trigger and has nothing to calibrate on a gesture.
   _triggerThreshold() {
-    const ui = this._guiXR && this._guiXR._uiSettings;
     // slider is 0.0 (Hard) to 1.0 (Light) -> threshold 0.9 (Hard) to 0.1 (Light)
-    return (ui && ui.triggerCurve !== undefined) ? 0.9 - (ui.triggerCurve * 0.8) : 0.5;
+    const tc = getOptionsURL().triggerCurve;
+    return Number.isFinite(tc) ? 0.9 - (tc * 0.8) : 0.5;
   }
 
   _isTriggerDown(source) {
