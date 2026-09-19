@@ -76,6 +76,14 @@ let worst = 0, samples = [];
 // frustum, which is exactly the hitch-on-head-turn matt saw. Flip window.__perObject to
 // measure that deliberately; it is a real cost, just not one the app pays.
 let sharedMat = null;
+// PRE-CREATED, ALL OF THEM, AT STARTUP. matt's question: "surely we define materials once up
+// front, and thats it?" -- which is exactly the app's pattern (ShaderManager caches one
+// material per shader id). If the UBO error is pipeline CREATION mid-session then this avoids
+// it and the blocker evaporates; if it is the REASSIGNMENT of a different material type onto
+// an existing mesh, it will not, and the app hits it on every shader-mode change.
+// ?lazy=1 restores the old behaviour so the two can be compared on the same device.
+const LAZY = new URLSearchParams(location.search).get('lazy') === '1';
+let matCache = null;
 
 // THE NUMBERS HAVE TO BE IN THE HEADSET. The HTML HUD is a DOM overlay and immersive mode does
 // not composite it, so the first version of this page could only be read on the desktop -- for
@@ -160,6 +168,21 @@ async function init() {
 
   // On the headset the only way in is the console over remote debugging, so the pieces worth
   // poking are reachable by name.
+  if (!LAZY) {
+    preCreateMaterials();
+    // WARMED: build one throwaway mesh per material and render it, so each pipeline is
+    // compiled on the desktop side of Enter VR rather than the first time it is switched to.
+    const warm = new THREE.Group();
+    for (const m of Object.values(matCache)) {
+      const w = new THREE.Mesh(new THREE.SphereGeometry(0.01, 4, 2), m);
+      w.position.set(0, -99, 0);
+      warm.add(w);
+    }
+    scene.add(warm);
+    renderer.render(scene, camera);
+    scene.remove(warm);
+    warm.children.forEach((c) => c.geometry.dispose());
+  }
   makeReadout();
   // Driveable from the console, so the UBO error can be bisected without a controller:
   // which material, which weight, and whether a SWITCH is needed to trigger it.
@@ -176,9 +199,21 @@ async function init() {
 // shader would cost once ported, and a stock material would answer a different one. This is a
 // stand-in for the per-vertex material channel work ShaderPBR does (COLOR_1 carries roughness
 // and metalness per vertex), expressed as nodes rather than as GLSL.
+// Every material type built once, before the session starts, so no pipeline is created while
+// immersive. Warmed by a render so compilation happens here rather than on first use.
+function preCreateMaterials() {
+  matCache = {};
+  for (const m of ['ourpbr', 'physical', 'matcap']) matCache[m] = buildMaterial(m, 0.55);
+}
+
 function makeMaterial(hue) {
-  if (MODES[mode] === 'ourpbr') return makeOurPBR();
-  if (MODES[mode] === 'matcap') {
+  if (!LAZY && matCache) return matCache[MODES[mode]];
+  return buildMaterial(MODES[mode], hue);
+}
+
+function buildMaterial(which, hue) {
+  if (which === 'ourpbr') return makeOurPBR();
+  if (which === 'matcap') {
     const mm = new THREE.MeshMatcapNodeMaterial();
     mm.color = new THREE.Color().setHSL(hue, 0.4, 0.7);
     return mm;
@@ -201,7 +236,9 @@ function build(n, seg) {
   while (group.children.length) {
     const c = group.children.pop();
     c.geometry.dispose();
-    if (c.material !== sharedMat) c.material.dispose();   // the shared one outlives the rebuild
+    // Nothing in the cache is ever disposed: they outlive every rebuild, which is the point.
+    const cached = matCache && Object.values(matCache).includes(c.material);
+    if (!cached && c.material !== sharedMat) c.material.dispose();
     group.remove(c);
   }
   const geo = new THREE.SphereGeometry(0.18, seg, seg / 2);
@@ -278,7 +315,7 @@ function tick() {
       console.log(`[tsl] med=${med.toFixed(2)}ms (${(1000 / med).toFixed(0)}fps) `
         + `mean=${ms.toFixed(2)} worst=${worst.toFixed(2)} `
         + `draws=${info.drawCalls} tris=${info.triangles} w=${weight} `
-        + `mat=${MODES[mode]} ${window.__perObject ? 'per-object' : 'shared'} xr=${xr}`);
+        + `mat=${MODES[mode]} ${LAZY ? 'lazy' : 'pre-created'} xr=${xr}`);
       worst = 0; samples.length = 0;
     }
     frames = 0; acc = 0;
