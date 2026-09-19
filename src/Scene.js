@@ -3156,12 +3156,16 @@ class Scene {
     const tm = mesh.getThreeMesh();
     if (!tm) return mesh;
     tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    // A SMALL ASTERISK, NOT A SUNBURST. This was fourteen rays -- six axes plus eight
+    // diagonals -- at scale 4, which read as an object in its own right rather than a marker
+    // for one, and sat in front of whatever you were trying to look at. matt: "the 3d icon is
+    // too large, too annoying, we can do something more simple."
+    //
+    // Six axis rays is still unmistakably a light and stops being scenery. The diagonals added
+    // density, not information: they never told you anything the axes did not.
     const pts = [];
     const push = (x, y, z) => { pts.push(0, 0, 0, x, y, z); };
     push(1, 0, 0); push(-1, 0, 0); push(0, 1, 0); push(0, -1, 0); push(0, 0, 1); push(0, 0, -1);
-    const d = 0.577;
-    push(d, d, d); push(-d, -d, -d); push(d, -d, d); push(-d, d, -d);
-    push(-d, d, d); push(d, -d, -d); push(d, d, -d); push(-d, -d, d);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
     const c = mesh._lightColor;
@@ -3169,7 +3173,10 @@ class Scene {
       new THREE.LineBasicMaterial({ color: new THREE.Color(c[0], c[1], c[2]), depthWrite: false }));
     rays.name = 'light_rays';
     rays.frustumCulled = false;
-    rays.scale.setScalar(4);
+    // Sized off the scene like the light's own range is, rather than a constant: scene units
+    // here are arbitrary and large, so a fixed 4 was invisible in one scene and a nuisance in
+    // the next. A twentieth of the range puts it at marker size in whatever it lands in.
+    rays.scale.setScalar(Math.max(0.5, (mesh._lightRange || 50) * 0.05));
     tm.add(rays);
     return mesh;
   }
@@ -4923,9 +4930,38 @@ class Scene {
 
       this.addNewMesh(copy);
       this._inheritParent(copy, mesh);
+      // WHAT KIND OF THING IT IS, which copyData does not carry -- it copies geometry, and a
+      // locator's geometry is the least interesting thing about it. Duplicating a light used to
+      // hand you a small sphere: a real, sculptable, exportable mesh where a light should be.
+      // matt: "i can't use the outliner -> duplicate on lights, it makes a mesh."
+      //
+      // Rig nodes are absent on purpose. A joint duplicates its CHAIN through RigTopology
+      // before this is ever reached, so copying _isBone here would make a second, broken one.
+      this._copyEntityKind(copy, mesh);
     }
 
     this.setMesh(mesh);
+  }
+
+  // The flags and decoration that make a copy the same KIND of object as its source.
+  // Shared by duplicate and mirror, which had the same hole.
+  _copyEntityKind(copy, src) {
+    if (!src._isNull) return;            // only locators carry a kind that geometry cannot express
+    copy._isNull    = true;
+    copy.isPickable = src.isPickable;
+    copy._typeName  = src._typeName;
+    if (src._isLight) {
+      copy._isLight = true;
+      // Sliced, not shared: two lights pointing at one colour array means editing either edits
+      // both, which is the sort of thing you only notice a week later.
+      copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
+      copy._lightIntensity = src._lightIntensity;
+      copy._lightRange     = src._lightRange;
+      this.decorateLight(copy);
+    } else {
+      this.decorateNull(copy);
+    }
+    return copy;
   }
 
   // A TRUE mirror of the selection across the parent-local `axis` plane (0 = X, the axis
