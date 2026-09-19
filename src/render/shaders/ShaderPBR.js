@@ -7,6 +7,20 @@ import * as THREE from 'three';
 var ShaderPBR = ShaderBase.getCopy();
 ShaderPBR.vertexName = ShaderPBR.fragmentName = 'ShadingPBR';
 
+// HOW MANY LAMPS A SCENE MAY HAVE. Declared once and interpolated into the GLSL below, because
+// this number lives in two places that must agree -- the array size in the shader and the
+// scratch arrays that fill it -- and a comment asking the next person to keep them in step is
+// not a mechanism.
+//
+// WHY THIS IS NOT FREE, and why it is 8 rather than 16. The fragment loop is bounded by
+// `uNbLights` with a break, so on a driver that keeps the branch an unused light costs nothing.
+// A driver that UNROLLS pays for all MAX_LIGHTS every pixel whatever the count says, and this
+// shader runs per pixel per eye on a standalone headset. Four was chosen as a headset budget;
+// eight covers key/fill/rim plus a few practicals, which is the scene matt is actually lighting.
+// Raise it further only with a measured GalaxyXR frame time, not on the argument that the loop
+// breaks early.
+var MAX_LIGHTS = 8;
+
 ShaderPBR.textures = {};
 
 var texPath = 'app/resources/environments/';
@@ -117,9 +131,8 @@ ShaderPBR.fragment = [
   'uniform float uHasNormalMap;',
   'uniform float uNormalScale;',
   // A FIXED-SIZE ARRAY with a runtime count, because GLSL ES 1.0 will not size an array from a
-  // uniform and will not loop to one either. Four is the budget: this shader runs per pixel on a
-  // standalone headset, and a fifth light is cheaper to refuse than to explain later.
-  'const int MAX_LIGHTS = 4;',
+  // uniform and will not loop to one either. The budget itself is set in JS -- see MAX_LIGHTS.
+  'const int MAX_LIGHTS = ' + MAX_LIGHTS + ';',
   'uniform vec3 uLightPos[MAX_LIGHTS];',
   'uniform vec3 uLightCol[MAX_LIGHTS];',
   'uniform float uLightRange[MAX_LIGHTS];',
@@ -274,8 +287,6 @@ ShaderPBR.fragment = [
   '}'
 ].join('\n');
 
-// Matches MAX_LIGHTS in the fragment shader; the two must not drift apart.
-var MAX_LIGHTS = 4;
 var uLightPosTmp = new Float32Array(MAX_LIGHTS * 3);
 var uLightColTmp = new Float32Array(MAX_LIGHTS * 3);
 var uLightRangeTmp = new Float32Array(MAX_LIGHTS);

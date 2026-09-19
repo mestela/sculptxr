@@ -61,12 +61,24 @@ check('only VISIBLE lights are collected, so hiding one turns it off',
 // GLSL ES 1.0 will not size an array from a uniform, nor loop to one, so the array is fixed and
 // the count is a separate uniform the loop breaks on.
 check('the shader takes a fixed array of lights with a runtime count',
-  /const int MAX_LIGHTS = 4;/.test(PBR)
+  /const int MAX_LIGHTS = ' \+ MAX_LIGHTS \+ ';/.test(PBR)
     && /uniform vec3 uLightPos\[MAX_LIGHTS\];/.test(PBR)
     && /if \(i >= uNbLights\) break;/.test(PBR));
-check('...and the CPU side agrees about the budget',
-  /var MAX_LIGHTS = 4;/.test(PBR),
+// THE RULE IS THAT THE TWO AGREE, NOT THAT THEY BOTH SAY FOUR. This used to pin the literal in
+// each place, which failed the moment the budget moved even though the budget moving is allowed
+// and the two sides still matched. The shader now interpolates the JS constant, so they cannot
+// disagree; what is worth asserting is that there is exactly ONE declaration to change.
+check('...and the CPU side agrees about the budget, by construction',
+  (PBR.match(/var MAX_LIGHTS = \d+;/g) || []).length === 1
+    && !/const int MAX_LIGHTS = \d+;/.test(PBR),
   'two different maxima is a light that silently never renders');
+check('...and the budget is a number the headset can afford',
+  (() => {
+    const m = /var MAX_LIGHTS = (\d+);/.exec(PBR);
+    return !!m && +m[1] >= 4 && +m[1] <= 16;
+  })(),
+  'the fragment loop may be UNROLLED by a driver, in which case every pixel pays for the whole '
+  + 'array whatever uNbLights says — raise this only against a measured headset frame time');
 // A leftover position from a deleted light is a ghost nobody can find.
 check('...with the unused tail zeroed rather than left stale',
   /for \(var lz = nb; lz < MAX_LIGHTS; lz\+\+\)/.test(PBR));
