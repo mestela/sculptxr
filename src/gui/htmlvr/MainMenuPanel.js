@@ -2522,8 +2522,37 @@ export function buildSectionHTML_scene(main) {
   // Lock lives in the toolbar (padlock) and acts on the single selected mesh.
   const singleSel = selected.length === 1 ? selected[0] : null;
   const tbLocked  = singleSel ? !!main.isSelectLocked?.(singleSel.getID()) : false;
+
+  // THE SELECTED LIGHT'S OWN PROPERTIES. They have existed on the entity since lights were
+  // added and the shader reads all three every frame, but nothing has ever written them —
+  // every light in every scene has been warm-white at intensity 1 since the feature shipped.
+  // Only shown when exactly one light is selected: these are per-object, and a section that
+  // appears empty is worse than one that is not there.
+  const _lit = (singleSel && singleSel._isLight) ? singleSel : null;
+  const lightHTML = !_lit ? '' : `
+    <div class="mm-section-title">Light</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Intensity</span>
+      <input type="range" id="mm-light-int" min="0" max="500" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
+      <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(2)}</span>
+    </div>
+    ${/* Range is in scene units and was sized from the scene diagonal when the light was made,
+         so the useful span is relative to that rather than to any fixed number. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Range</span>
+      <input type="range" id="mm-light-range" min="1" max="${Math.max(50, Math.round((_lit._lightRange ?? 50) * 4))}" step="1" value="${Math.round(_lit._lightRange ?? 50)}">
+      <span class="mm-val" id="mm-light-range-val">${Math.round(_lit._lightRange ?? 50)}</span>
+    </div>
+`;
+
   return `
-    <!-- No 'Outliner' heading: the list is the first thing in the section and plainly is one. -->
+    ${/* HEADINGS EXIST SO THE SECTION CAN FOLD. This used to carry a note saying the outliner
+         needed no heading because it was obviously one — true, but it also meant
+         groupSectionTitles had nothing to grab and the whole tab was a single slab. matt:
+         "make the scene tab sections foldable, so be able to fold the outliner, the transform
+         properties, the constraints, the primitives." _decorateDesktopSection already runs
+         groupSectionTitles over every sidebar section, so a heading is all that is needed. */ ''}
+    <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
@@ -2546,7 +2575,9 @@ export function buildSectionHTML_scene(main) {
            same scoping the old rule used -- see the stylesheet. */ ''}
       <div class="mm-outliner-grip" title="Drag to resize the list"></div>
     </div>
-    ${rigHTML}
+    ${rigHTML ? `<div class="mm-section-title">Transform</div>${rigHTML}` : ''}
+    ${lightHTML}
+    <div class="mm-section-title">Primitives</div>
     <div class="mm-add-row">
       <button class="mm-action-btn" id="mm-add-cube">Cube</button>
       <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
@@ -4331,6 +4362,26 @@ function selectRange(el, main, clicked) {
 }
 
 export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
+  // THE SELECTED LIGHT'S PROPERTIES. Resolved per event rather than captured at wire time, so a
+  // stale handler cannot write to a light that is no longer selected. Both fields are read by
+  // ShaderPBR every frame, so there is nothing to invalidate -- just render.
+  {
+    const _litSel = () => {
+      const sel = main.getSelectedMeshes?.() ?? [];
+      return (sel.length === 1 && sel[0]?._isLight) ? sel[0] : null;
+    };
+    wireSlider(el.querySelector('#mm-light-int'), el.querySelector('#mm-light-int-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._lightIntensity = v / 100;
+      main.render?.();
+    }, (v) => (v / 100).toFixed(2), null);
+    wireSlider(el.querySelector('#mm-light-range'), el.querySelector('#mm-light-range-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._lightRange = v;
+      main.render?.();
+    }, (v) => String(v), null);
+  }
+
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
 
   // Toolbar eye → hide/show the whole selection. ONE TARGET STATE FOR ALL OF THEM, taken from
