@@ -11,9 +11,7 @@ const scene = read('Scene.js');
 // VR panels now render the SAME section out of MainMenuPanel, which `htmlVR` below already
 // covers -- so the desktop assertions are not re-pointed, they are gone, because a second
 // assertion on the same file would only look like coverage.
-const legacyVR = read('gui/vr/GuiVRRendering.js');
 const htmlVR = read('gui/htmlvr/MainMenuPanel.js');
-const vrTools = read('gui/vr/GuiVRTools.js');
 const sculptGL = read('SculptGL.js');
 const meshSource = read('mesh/Mesh.js');
 const multimeshSource = read('mesh/multiresolution/Multimesh.js');
@@ -34,11 +32,11 @@ check('global setter persists the mode and keeps the live value numeric',
   /getOptionsURL\(\)\.shader = shader/.test(options));
 check('global setter excludes rig and reference display helpers',
   /mesh\._isBone \|\| mesh\._isNull \|\| mesh\._isReference/.test(options));
-check('the shared panel and the legacy VR panel use the global setter',
-  legacyVR.includes('getOptionsURL.setGlobalShader(main, id)') &&
+// src/gui/vr was deleted with the canvas widget system, so the legacy-panel halves of these
+// checks are gone rather than re-pointed. MainMenuPanel is now the only panel.
+check('the shared panel uses the global setter',
   htmlVR.includes('getOptionsURL.setGlobalShader(main, id)'));
-check('rendering panels display the global mode rather than selected mesh state',
-  legacyVR.includes('const shaderType = getOptionsURL().shader') &&
+check('the panel displays the global mode rather than selected mesh state',
   htmlVR.includes('const shaderType   = getOptionsURL().shader'));
 check('new, replacement and imported meshes receive the global mode',
   (scene.match(/setShaderType\(getOptionsURL\(\)\.shader\)/g) || []).length >= 2 &&
@@ -52,14 +50,10 @@ check('flat shading and wireframe have persistent global setters',
   options.includes("saveOption('wireframe', enabled)") &&
   options.includes('mesh.setFlatShading(enabled)') &&
   options.includes('mesh.setShowWireframe(enabled)'));
-check('the shared panel and the legacy VR panel use global display toggles',
-  legacyVR.includes('setGlobalFlatShading(main, target)') &&
-  legacyVR.includes('setGlobalWireframe(main, target)') &&
+check('the shared panel uses global display toggles',
   htmlVR.includes('setGlobalFlatShading(main, t)') &&
   htmlVR.includes('setGlobalWireframe(main, t)'));
-check('tool-panel and debug wireframe shortcuts also use the global setting',
-  vrTools.includes('setGlobalFlatShading(main, !getOptionsURL().flatshading)') &&
-  (vrTools.match(/setGlobalWireframe\(main, !getOptionsURL\(\)\.wireframe\)/g) || []).length >= 2 &&
+check('the debug wireframe shortcut also uses the global setting',
   sculptGL.includes('setGlobalWireframe(this, !getOptionsURL().wireframe)'));
 check('new and replacement meshes inherit global display toggles',
   (scene.match(/setFlatShading\?\.\(getOptionsURL\(\)\.flatshading\)/g) || []).length >= 2 &&

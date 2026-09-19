@@ -176,7 +176,7 @@ check('the pop becomes a lurch, and here is how big',
 // manage their own evaluation deliberately. A seek there would thrash the rig or the sim.
 {
   const GUI = ['src/gui/GuiTimeline.js', 'src/gui/GuiAnimation.js', 'src/gui/GuiXR.js',
-    'src/gui/vr/GuiVRAnimation.js', 'src/gui/htmlvr/AnimationControlPanel.js'];
+    'src/gui/htmlvr/AnimationControlPanel.js'];
   const offenders = [];
   for (const f of GUI) {
     const src = fs.readFileSync(path.join(REPO, f), 'utf8');

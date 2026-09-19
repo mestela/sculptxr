@@ -12,21 +12,6 @@ import { vec3 } from 'gl-matrix';
 import { VERSION } from '../Version.js';
 
 // Modular Imports - Relative with explicit extensions to bypass map issues
-import getToolsWidgets from './vr/GuiVRTools.js';
-import getSceneWidgets from './vr/GuiVRScene.js';
-import getRenderingWidgets from './vr/GuiVRRendering.js';
-import getFilesWidgets from './vr/GuiVRFiles.js';
-import getGalleryWidgets from './vr/GuiVRGallery.js';
-import getHistoryWidgets from './vr/GuiVRHistory.js';
-import getReferenceWidgets from './vr/GuiVRReference.js'; // Replaces Background
-import getCameraWidgets from './vr/GuiVRCamera.js';
-import getTabletWidgets from './vr/GuiVRTablet.js';
-import getSettingsWidgets from './vr/GuiVRSettings.js';
-import getLanguageWidgets from './vr/GuiVRLanguage.js';
-import getExtraUIWidgets from './vr/GuiVRExtraUI.js';
-import getAboutWidgets from './vr/GuiVRAbout.js';
-import getTopologyWidgets from './vr/GuiVRTopology.js';
-import getAnimationWidgets from './vr/GuiVRAnimation.js';
 import Tablet from '../misc/Tablet.js';
 
 // Direct access for property setters
@@ -102,24 +87,6 @@ export default class GuiXR {
       stylusTilt: opts.stylusTilt
     };
 
-    window.showVRGallery = () => {
-      const main = window.app;
-      if (main && main.getGui() && main.getGui()._ctrlFiles) {
-        main.getGui()._ctrlFiles.refreshBrowserSaves().then(() => {
-          const data = getGalleryWidgets(main);
-          main._guiXR.openOverlay('menu', {
-            x: 200,
-            y: 200,
-            w: data.width,
-            h: data.height,
-            widgets: data.widgets,
-            title: 'Browser Gallery'
-          });
-          main._guiXR._needsRedraw = true;
-          main._guiXR.draw();
-        });
-      }
-    };
 
     // Preload Dropper Icon
     this._dropperIcon = new Image();
@@ -158,38 +125,11 @@ export default class GuiXR {
     this._numberpadValue = ''; // Current string value in numberpad
 
 
-    this._widgetGenerators = {
-      'Files': getFilesWidgets,
-      'Scene': getSceneWidgets,
-      'History': getHistoryWidgets,
-      'Rendering': getRenderingWidgets,
-      'Topology': getTopologyWidgets,
-      'Animation': (main) => getAnimationWidgets(main, Enums),
-      'Tools': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
-      'Debug': (main) => this.getDebugWidgets(main),
-      'Reference': getReferenceWidgets,
-      'Settings': getCameraWidgets, // Wait, Camera Widgets ARE the settings? User said "hid the settings menu".
-      // Actually, GuiVRCamera.js exports getCameraWidgets but the tab was likely named 'Camera'.
-      // If I rename 'Camera' to 'Settings' in the UI, I should use getCameraWidgets?
-      // Or create a new getSettingsWidgets wrapping Camera + Input?
-      // GuiVRSettings.js exists but was unused?
-      // Let's use GuiVRSettings.js if it exists and works, or merge Camera into it.
-      // GuiVRSettings.js exported getSettingsWidgets.
-      // Let's use THAT for 'Settings'.
-      'Settings': (main) => {
-        // We might want to combine Camera + Input here?
-        // GuiVRSettings.js (content read earlier) had "Camera" header.
-        // Let's use GuiVRSettings.js.
-        // I need to import it first?
-        // It was NOT imported in GuiXR.js. I need to add import.
-        return getSettingsWidgets(main);
-      },
-      'Camera': getCameraWidgets,
-      'Tablet pressure': getTabletWidgets,
-      'Language': getLanguageWidgets,
-      'Extra UI': getExtraUIWidgets,
-      'About & Help': getAboutWidgets
-    };
+    // Widget generators lived here: one entry per src/gui/vr module, deleted with them.
+    // KEPT AS AN EMPTY TABLE rather than removed: two overlay paths still read it, both behind
+    // `if (gen)`, so an empty map makes them inert while an undefined one throws. They go with
+    // GuiXR itself.
+    this._widgetGenerators = {};
 
     this._tabWidgets = {}; // Cache (updated on draw)
 
@@ -889,165 +829,15 @@ export default class GuiXR {
     }
   }
 
+  // THE CANVAS WIDGET SYSTEM IS GONE. src/gui/vr/ -- 4966 lines of widget builders reachable
+  // only from here -- was deleted once _drawInternal stopped running for the retired canvas.
+  //
+  // This returns an empty array rather than being deleted outright because the legacy
+  // hit-test, scroll and overlay paths still call it, and they come out with GuiXR itself
+  // (step 3 in docs/render_stack_audit.md). An empty list is what they already received for
+  // popups, so it is a shape they handle.
   _getWidgets() {
-    const main = this._main;
-    const gens = this._widgetGenerators;
-
-    if (this._isMiniHUD) {
-      if (!this._tabWidgets['Tools'] && gens['Tools']) {
-        this._tabWidgets['Tools'] = gens['Tools'](main, true);
-      }
-      const rawWidgets = this._tabWidgets['Tools'] || [];
-
-      // Filter to only the core bare minimum controls for the Mini-HUD
-      // And we use the 'tool_select' widget to popup the MAIN menu tools panel!
-      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative', 'wireframe', 'picker', 'symmetry', 'mini_extrude_keep_together', 'mask_clear', 'mask_invert', 'hardness'];
-      const filtered = rawWidgets.filter(w => allowedIds.includes(w.id));
-
-      // Re-pack vertically and clamp width for the new 300x500 Mini-HUD canvas
-      const paddingX = 15;
-      const targetWidth = this._canvas.width - (paddingX * 2);
-
-      let currentY = 20; // Start near the top
-      let skipYIncrement = false;
-      filtered.forEach(w => {
-        w.w = targetWidth;     // Default width
-        w.x = paddingX;        // Default X
-        w.y = currentY;        // Default Y
-
-        if (w.id === 'picker') {
-          let spaceLeft = this._canvas.height - currentY - 10;
-          w.h = Math.min(spaceLeft, targetWidth); // make it square, but responsive to remaining space
-        } else if (w.type === 'slider') {
-          w.h = 40; // Compress sliders from default 60 to save height
-        }
-
-        if (w.id === 'mask_clear') {
-          w.w = targetWidth / 2 - 5;
-          skipYIncrement = true; // Don't move to next row yet
-        } else if (w.id === 'mask_invert') {
-          w.w = targetWidth / 2 - 5;
-          w.x = paddingX + targetWidth / 2 + 5;
-          skipYIncrement = false; // Restore row increment
-        }
-
-        let pad = (w.type === 'slider') ? 5 : 20; // tighter pad for sliders
-        
-        if (!skipYIncrement) {
-          currentY += w.h + pad;  // Widget height + padding
-        }
-      });
-
-      return filtered;
-    }
-
-    if (this._viewMode === 'SIDEBAR') {
-      let allWidgets = [];
-      let currentY = HEADER_HEIGHT - this._scrollOffset;
-
-      // Sub-Tabs Header
-      const activeSec = this._activeSection || 'Tools';
-      const tabMargin = 6; // Indent slightly so bevel doesn't overlap the blue panel border
-      const sections = SECTIONS;
-      const tabWidth = (CANVAS_SIZE - tabMargin * 2) / sections.length;
-      
-      sections.forEach((sec, idx) => {
-        allWidgets.push({
-          type: 'sub_tab',
-          label: sec,
-          x: tabMargin + idx * tabWidth,
-          y: HEADER_HEIGHT,
-          w: tabWidth,
-          h: 60,
-          id: 'sub_tab_' + sec,
-          isActive: sec === activeSec
-        });
-      });
-
-      currentY = HEADER_HEIGHT + 60 - this._scrollOffset; // Applied Scroll Offset to content
-
-      // Render only the active section's content
-      const secTitle = activeSec;
-      if (gens[secTitle]) {
-        this._tabWidgets[secTitle] = gens[secTitle](main);
-      }
-      const secWidgets = this._tabWidgets[secTitle];
-
-      const widgetsArray = secWidgets.widgets || secWidgets;
-
-      if (widgetsArray && Array.isArray(widgetsArray)) {
-        let minY = Infinity;
-        let maxY = -Infinity;
-        widgetsArray.forEach(w => {
-          if (w.y < minY) minY = w.y;
-          if (w.y + w.h > maxY) maxY = w.y + w.h;
-        });
-
-        if (minY === Infinity) minY = 0;
-        if (maxY === -Infinity) maxY = 0;
-
-        const sectionHeight = maxY - minY + 20;
-
-        widgetsArray.forEach(w => {
-          allWidgets.push({
-            ...w,
-            y: w.y - minY + currentY + 10 // Apply scroll offset if needed, but here we don't apply it to the sub-tabs!
-          });
-        });
-
-        currentY += sectionHeight;
-      }
-
-      this._maxScroll = Math.max(0, currentY + this._scrollOffset - CANVAS_SIZE);
-      return allWidgets;
-    }
-
-    // Regular View (Generic Scroll support)
-    // Generate Fresh Widgets
-    if (gens[this._viewMode]) {
-      this._tabWidgets[this._viewMode] = gens[this._viewMode](main);
-    }
-    let tabData = this._tabWidgets[this._viewMode];
-    let widgets = [];
-    if (tabData) {
-      if (Array.isArray(tabData)) widgets = tabData;
-      else if (tabData.widgets) widgets = tabData.widgets;
-    }
-    let maxY = 0;
-    widgets.forEach(w => {
-      if (w.y + w.h > maxY) maxY = w.y + w.h;
-    });
-    this._maxScroll = Math.max(0, maxY + HEADER_HEIGHT - CANVAS_SIZE);
-
-    const currentY = HEADER_HEIGHT - this._scrollOffset;
-
-    // Normalize generic view if needed, but usually they are absolute.
-    // Let's assume absolute for now but apply scroll.
-    let offsetWidgets = [];
-    try {
-      console.log('GuiXR _getWidgets | viewMode:', this._viewMode, '| widgets type:', typeof widgets, '| isArray:', Array.isArray(widgets));
-      offsetWidgets = widgets.map(w => ({
-        ...w,
-        y: w.y + currentY // Start at Header Bottom
-      }));
-    } catch (e) {
-      console.error('CRASH in _getWidgets mapping!', e);
-    }
-    // Inject Global Close Button
-    offsetWidgets.push({
-      type: 'button',
-      id: 'global_close',
-      label: 'X',
-      x: CANVAS_SIZE - 60,
-      y: 10,
-      w: 50,
-      h: 50,
-      onInteract: () => {
-         this.toggleVisibility();
-      }
-    });
-
-    return offsetWidgets;
+    return [];
   }
 
   getSections() {
@@ -3022,24 +2812,6 @@ export default class GuiXR {
     }
     else if (id === 'browser_save') {
       if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveToBrowserStorage();
-    }
-    else if (id === 'browser_load') {
-      const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
-      if (guiFiles) {
-        guiFiles.refreshBrowserSaves().then(() => {
-          const data = getGalleryWidgets(main);
-          this.openOverlay('menu', {
-            x: 200,
-            y: 200,
-            w: data.width,
-            h: data.height,
-            widgets: data.widgets,
-            title: 'Browser Gallery'
-          });
-          this._needsRedraw = true;
-          this.draw();
-        });
-      }
     }
     else if (id === 'export_obj') {
       if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsOBJ();
