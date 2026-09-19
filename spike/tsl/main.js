@@ -23,10 +23,39 @@ import { makeOurPBR } from './ourpbr.js';
 // we adopted three's instead, and matcap is where matt says he spends most of his time
 // ("i'd spend most of my time in matcap mode, and only drop into pbr/shadows occasionally"),
 // which makes it the mode that actually has to stay fast.
-const MODES = ['ourpbr', 'physical', 'matcap'];
+let MODES = ['ourpbr', 'physical', 'matcap'];
+// ?modes=physical,matcap RESTRICTS THE SET, which is the whole experiment for the UBO error:
+// a session that never instantiates our hand-written TSL material tells us whether the
+// "uniform buffer too small" flood is three's XR path or ours. Desktop cannot answer it --
+// switching all three at the heaviest weight there produces zero GL errors -- so it has to be
+// asked on the device, and asked without our material in the room.
+{
+  const want = new URLSearchParams(location.search).get('modes');
+  if (want) {
+    const pick = want.split(',').map((x) => x.trim()).filter((x) => MODES.includes(x));
+    if (pick.length) MODES = pick;
+  }
+}
 let mode = 0;
 
 const hud = (id) => document.getElementById(id);
+
+// THE FIRST ERROR, WITH ITS CONTEXT, rather than a flood you have to correlate by eye. WebGL
+// stops reporting after a few hundred, so the interesting one -- which material and weight was
+// live when it started -- is the one that scrolls away first.
+let firstGlError = null;
+for (const k of ['error', 'warn', 'log']) {
+  const orig = console[k].bind(console);
+  console[k] = (...a) => {
+    const line = a.map(String).join(' ');
+    if (!firstGlError && /GL_INVALID|uniform buffer/.test(line)) {
+      firstGlError = line;
+      orig(`[tsl] FIRST GL ERROR while mat=${MODES[mode]} w=${weight} `
+        + `xr=${renderer && renderer.xr.isPresenting} :: ${line}`);
+    }
+    orig(...a);
+  };
+}
 const fail = (e) => { hud('err').textContent = String(e && e.stack || e); console.error(e); };
 
 let renderer, scene, camera, group;
@@ -132,7 +161,14 @@ async function init() {
   // On the headset the only way in is the console over remote debugging, so the pieces worth
   // poking are reachable by name.
   makeReadout();
-  window.__tsl = { renderer, scene, camera, group, build, THREE };
+  // Driveable from the console, so the UBO error can be bisected without a controller:
+  // which material, which weight, and whether a SWITCH is needed to trigger it.
+  window.__tsl = {
+    renderer, scene, camera, group, build, THREE, MODES, WEIGHTS,
+    setMode: (i) => { mode = i; sharedMat = null; build(...WEIGHTS[weight]); },
+    setWeight: (i) => { weight = i; build(...WEIGHTS[weight]); },
+    state: () => ({ mode: MODES[mode], weight, tris: renderer.info.render.triangles }),
+  };
   renderer.setAnimationLoop(tick);
 }
 
@@ -232,7 +268,7 @@ function tick() {
       `${med.toFixed(2)} ms   ${(1000 / med).toFixed(0)} fps`,
       `${info.drawCalls} draws`,
       `${(info.triangles / 1000).toFixed(0)}k tris   w${weight}`,
-      MODES[mode],
+      MODES[mode] + (firstGlError ? '  [GL ERR]' : ''),
       xr ? 'XR  (trigger = next weight)' : 'desktop',
     ]);
     // Once a second to the console as well, because that is the one place a number can be
