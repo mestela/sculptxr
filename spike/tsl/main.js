@@ -25,8 +25,13 @@ let frames = 0, acc = 0, last = performance.now();
 let readoutCtx = null, readoutTex = null, lastLog = 0;
 // Spheres and segments. Roughly 200k / 420k / 1.3M triangles — a modest sculpt, a heavy one,
 // and past anything matt works at, so the curve is visible rather than a single point.
-const WEIGHTS = [[24, 64], [48, 64], [48, 96]];
+// VSYNC HIDES THE ANSWER. 13.9ms on a 72Hz GalaxyXR means "fast enough at this load", not
+// "cheap" -- the frame could be costing 4ms or 13ms and look identical. So the weights run well
+// past anything matt sculpts at: the number we actually want is where it STOPS holding 72, and
+// that is the only way to see headroom through a vsync cap.
+const WEIGHTS = [[24, 64], [48, 64], [48, 96], [96, 128], [192, 128], [384, 160]];
 let weight = 0;
+let worst = 0, best = 1e9;
 
 // THE NUMBERS HAVE TO BE IN THE HEADSET. The HTML HUD is a DOM overlay and immersive mode does
 // not composite it, so the first version of this page could only be read on the desktop -- for
@@ -171,7 +176,13 @@ async function enterXR() {
 // to be comparable against xrPerf() in the app.
 function tick() {
   const now = performance.now();
-  acc += now - last; last = now; frames++;
+  const dt = now - last;
+  acc += dt; last = now; frames++;
+  // MIN AND MAX, not just the mean. A trigger press uploads geometry and compiles node
+  // materials, and that one frame drags the average somewhere it never actually sat -- the
+  // 53ms readings were rebuild hitches, not the cost of the scene. Min is the steady state.
+  if (dt < best) best = dt;
+  if (dt > worst) worst = dt;
   group.rotation.y += 0.002;
   renderer.render(scene, camera);
 
@@ -187,17 +198,19 @@ function tick() {
 
     const xr = renderer.xr.isPresenting;
     drawReadout([
-      `${ms.toFixed(2)} ms   ${(1000 / ms).toFixed(0)} fps`,
+      `${best.toFixed(2)} ms   ${(1000 / best).toFixed(0)} fps`,
       `${info.drawCalls} draws`,
-      `${(info.triangles / 1000).toFixed(0)}k tris`,
+      `${(info.triangles / 1000).toFixed(0)}k tris   w${weight}`,
       xr ? 'XR  (trigger = next weight)' : 'desktop',
     ]);
     // Once a second to the console as well, because that is the one place a number can be
     // COPIED out of a headset -- see the diagnostics rule.
     if (now - lastLog > 1000) {
       lastLog = now;
-      console.log(`[tsl] ${ms.toFixed(2)}ms ${(1000 / ms).toFixed(0)}fps `
-        + `draws=${info.drawCalls} tris=${info.triangles} xr=${xr}`);
+      console.log(`[tsl] steady=${best.toFixed(2)}ms (${(1000 / best).toFixed(0)}fps) `
+        + `mean=${ms.toFixed(2)} worst=${worst.toFixed(2)} `
+        + `draws=${info.drawCalls} tris=${info.triangles} w=${weight} xr=${xr}`);
+      worst = 0; best = 1e9;
     }
     frames = 0; acc = 0;
   }
