@@ -307,12 +307,6 @@ class SculptGL extends Scene {
       console.log("Active Zoom:", this._camera._trans[2]);
     };
 
-    // Convenience for Console Debugging
-    Object.defineProperty(this, 'guiXR', {
-      get: function () { return this._guiXR; }
-    });
-    this.toggleMenu = () => { if (this._guiXR) this._guiXR.togglePreview(); };
-    this.nextTab = () => { if (this._guiXR) this._guiXR.nextTab(); };
 
     window.debugVRPose = () => {
         console.log("=== VR TRACKING DUMP ===");
@@ -2155,7 +2149,6 @@ class SculptGL extends Scene {
 
     this._lastMouseX = mouseX;
     this._lastMouseY = mouseY;
-    this.renderSelectOverRtt();
   }
 
   // WebXR Support
@@ -2223,24 +2216,6 @@ class SculptGL extends Scene {
         // needs the user to grant + flip the Safari experimental flag). Required for the
         // hand-puppetry driver (#28) and the existing pinch/fist gesture path.
         optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
-      });
-
-      // TRUSTED EVENT LISTENER for File I/O
-      session.addEventListener('select', (event) => {
-        // Robust GuiXR Lookup: Try 'this' (inherited), then fallback to 'window.app'
-        const gui = this._guiXR || (window.app && window.app._guiXR);
-
-        if (gui) {
-          gui.onClick();
-        } else {
-          console.error("VR Menu (GuiXR) Not Found.", this);
-          // Attempt force init if GL is ready (Last Resort)
-          if (this._gl && !this._guiXR) {
-            console.warn("Attempting emergency GuiXR init...");
-            this.initVRControllers();
-            if (this._guiXR) this._guiXR.onClick();
-          }
-        }
       });
 
       await this.enterXR(session);

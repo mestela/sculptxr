@@ -2206,10 +2206,6 @@ class SculptVoxel extends SculptBase {
             this._main.guiXR.refreshToolsWidget();
             this._main.guiXR._needsRedraw = true;
           }
-          if (this._main._guiMini) {
-            this._main._guiMini.refreshToolsWidget();
-            this._main._guiMini._needsRedraw = true;
-          }
         };
         
         redoOp();
@@ -2545,7 +2541,6 @@ class SculptVoxel extends SculptBase {
           remeshSrc.setVisible(true);
           if (remeshSrc.getThreeMesh()) remeshSrc.getThreeMesh().visible = true;
           main.setMesh(remeshSrc);
-          main.getGuiXR?.()?.refreshSceneWidget?.();
         };
         const redoRemesh = () => {
           remeshSrc.setVisible(false);
@@ -2553,7 +2548,6 @@ class SculptVoxel extends SculptBase {
           this._detachMesh(remeshSrc);
           this._attachMesh(baked);
           main.setMesh(baked);
-          main.getGuiXR?.()?.refreshSceneWidget?.();
         };
         main.getStateManager().pushStateCustom(undoRemesh, redoRemesh);
       }
@@ -2581,15 +2575,6 @@ class SculptVoxel extends SculptBase {
         this._main.getGui()._ctrlSculpt.setValue(Enums.Tools.BRUSH);
       }
       window._activeToolTab = 0;
-      const guiXR = this._main.getGuiXR();
-      if (guiXR) {
-        guiXR.refreshToolsWidget();
-        guiXR._needsRedraw = true;
-      }
-      if (this._main._guiMini) {
-        this._main._guiMini.refreshToolsWidget();
-        this._main._guiMini._needsRedraw = true;
-      }
 
       // 8. Select the New Mesh
       this._main.setMesh(multiMesh);

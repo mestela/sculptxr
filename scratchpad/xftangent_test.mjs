@@ -46,7 +46,6 @@ let XF = fs.readFileSync(path.join(REPO, 'src/editing/xfChannel.js'), 'utf8');
 let TL = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
 let HELP = fs.readFileSync(path.join(REPO, 'src/gui/TimelineHelper.js'), 'utf8');
 const REG_SRC = fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8');
-const VR = fs.readFileSync(path.join(REPO, 'src/gui/vr/GuiVRAnimation.js'), 'utf8');
 
 const inject = process.env.XF_INJECT || '';
 const cut = (src, a, b, n) => {
@@ -156,7 +155,7 @@ check('...and stops leaking into the other groups',
   M.xfTanGet(old, '2_right_dv_0') === undefined);
 
 // ── EVERY SITE, or the write and the read disagree ────────────────────────────────────
-for (const [name, src] of [['GuiTimeline', TL], ['TimelineHelper', HELP], ['GuiVRAnimation', VR]]) {
+for (const [name, src] of [['GuiTimeline', TL], ['TimelineHelper', HELP]]) {
   check(name + ' uses the grouped prefix',
     /xfTanPrefix\(\)/.test(src) && !/\? 'trans_' :/.test(src),
     'a file still writing the ungrouped key puts handles somewhere the reader will not look');

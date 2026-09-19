@@ -77,7 +77,6 @@ var addCtrlRadius = function (tool, fold, widget, main) {
   var ctrl = fold.addSlider(TR('sculptRadius'), tool._radius, function (val) {
     setOnChange.call(tool, '_radius', 1, val);
     main.getSculptManager().getSelection().setIsEditMode(true);
-    main.renderSelectOverRtt();
   }, 5, 500, 1);
   widget._ctrlRadius = ctrl;
   return ctrl;
@@ -235,7 +234,6 @@ GuiTools[Enums.Tools.PAINT] = {
     tool._pickColor = val;
     main.setCanvasCursor(val ? Utils.cursors.dropper : 'default');
     main._action = val ? Enums.Action.SCULPT_EDIT : Enums.Action.NOTHING;
-    main.renderSelectOverRtt();
   },
   init: function (tool, fold, main) {
     this._ctrls.push(addCtrlRadius(tool, fold, this, main));

@@ -40,7 +40,6 @@ let tl = read('src/gui/GuiTimeline.js');
 const acp = read('src/gui/htmlvr/AnimationControlPanel.js');
 const mainMenu = read('src/gui/htmlvr/MainMenuPanel.js');
 const desktopPanel = read('src/gui/GuiAnimation.js');
-const oldVrPanel = read('src/gui/vr/GuiVRAnimation.js');
 const scene = read('src/Scene.js');
 const skel = read('src/editing/Skeleton.js');
 const bonePanel = read('src/gui/bonePanel.js');
@@ -54,8 +53,6 @@ for (const [name, src] of [['Grab', grab], ['Transform', xf], ['TransformVR', vr
   check(name + ' starts recording through the shared interaction hook', /beginInteraction\?\.\(/.test(src));
   check(name + ' stops recording through the shared interaction hook', /endInteraction\?\.\(/.test(src));
 }
-check('the legacy VR Record button uses the shared toggle',
-  /anim_record[\s\S]{0,500}?toggleRecord\?\.\(\)/.test(oldVrPanel));
 check('the legacy desktop Record button uses the shared toggle',
   /record\(\)[\s\S]{0,120}?toggleRecord\?\.\(/.test(desktopPanel));
 check('loop mode gates transform recording wrap',
@@ -415,10 +412,26 @@ check('a scrub re-seeds the simulation after the frame is solved',
 // so at startup it looked off while being armed, and GuiTimeline's copy of the same test includes
 // _animArmed -- so the two record buttons disagreed about whether anything was armed.
 {
-  const VRA = fs.readFileSync(path.join(REPO, 'src/gui/vr/GuiVRAnimation.js'), 'utf8');
   const REG = fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8');
+  const ALL_SRC = (function walk(d) {
+    return fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const f = path.join(d, e.name);
+      return e.isDirectory() ? walk(f) : (e.name.endsWith('.js') ? [fs.readFileSync(f, 'utf8')] : []);
+    });
+  })(path.join(REPO, 'src')).join('\n');
+  // THE DEFAULT USED TO BE PINNED IN GuiVRAnimation, which was deleted with src/gui/vr. Losing
+  // it is not a regression -- the flag is now simply `undefined` at startup, and every read
+  // site (`|| window._animArmed`, `!window._animArmed`, `!!(window._animArmed && ...)`) treats
+  // undefined and false identically. What the old check was really protecting is that nothing
+  // starts the session ARMED, so that is what is asserted now, across the whole tree rather
+  // than in one file: the only truthy assignment is the arming action itself.
   check('nothing is armed until the user arms it',
-    /window\._animArmed = window\._animArmed !== undefined \? window\._animArmed : false;/.test(VRA),
+    (() => {
+      const writes = [...ALL_SRC.matchAll(/_animArmed\s*=\s*([^;]+);/g)].map(m => m[1].trim());
+      const truthy = writes.filter(w => !/^false$/.test(w));
+      return truthy.length === 1 && truthy[0] === 'true'
+        && /if \(!mesh\)[\s\S]{0,200}?window\._animArmed = true;/.test(REG);
+    })(),
     'defaulting it true spends the first Record press disarming a session nobody started');
   check('...and toggleRecord still counts armed as an active session',
     /const active = this\.isRecording \|\| this\.isCountingIn \|\| window\._animWaitingForGrab\s*\n\s*\|\| window\._animArmed/.test(REG),

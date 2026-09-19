@@ -235,7 +235,6 @@ class GuiSculpting {
       var sel = this._main.getSculptManager().getSelection();
       sel.setOffsetX(-rad * this._main.getPixelRatio());
       sel.setIsEditMode(true);
-      this._main.renderSelectOverRtt();
     }
   }
 
@@ -355,7 +354,6 @@ class GuiSculpting {
       event.pageY = this._lastPageY;
       main.setMousePosition(event);
       main.getPicking().intersectionMouseMeshes();
-      main.renderSelectOverRtt();
       break;
     case Enums.KeyAction.PICKER:
       var cur = GuiTools[this.getSelectedTool()];
@@ -386,7 +384,6 @@ class GuiSculpting {
       var dx = event.pageX - this._refX;
       var dy = event.pageY - this._refY;
       wid._ctrlRadius.setValue(Math.sqrt(dx * dx + dy * dy));
-      this._main.renderSelectOverRtt();
     }
 
     if (this._modalBrushIntensity && wid._ctrlIntensity) {

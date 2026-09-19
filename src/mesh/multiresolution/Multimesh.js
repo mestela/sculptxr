@@ -407,21 +407,16 @@ class Multimesh extends Mesh {
       // A FLAT COLOUR IS A MODE, NOT A REPLACEMENT — see wireframeSurface in getOptionsURL. Null
       // here means the shipped behaviour: take the colour from the surface and darken it.
       var flatCol = null;
-      if (window.app && window.app.getGuiXR()) {
-          var ui = window.app.getGuiXR()._uiSettings;
-          if (ui.wireframeAlpha !== undefined) rawAlpha = ui.wireframeAlpha;
-          if (ui.wireframeBias !== undefined) rawBias = ui.wireframeBias;
-      }
-      // THE SAVED OPTION IS THE FALLBACK, not the live one. Bias and opacity above read only the
-      // GuiXR settings because they have always had a slider that writes there; the colour is set
-      // from a menu that saves it either way, and a mesh drawn before GuiXR exists would otherwise
-      // come back with the wrong wire on a reload.
+      // THE SAVED OPTIONS ARE THE ONLY SOURCE NOW. These used to prefer GuiXR's `_uiSettings`,
+      // which was a startup SNAPSHOT of these very options that the panel kept in step with its
+      // own saveOption calls -- so the extra tier decided nothing except that a mesh drawn
+      // before GuiXR existed came back with the wrong wire on a reload. Removed with the cache.
       var wOpts = optionsObj;
-      var useSurface = (window.app?.getGuiXR?.()?._uiSettings?.wireframeSurface)
-                    ?? wOpts.wireframeSurface ?? true;
+      if (Number.isFinite(wOpts.wireframeAlpha)) rawAlpha = wOpts.wireframeAlpha;
+      if (Number.isFinite(wOpts.wireframeBias)) rawBias = wOpts.wireframeBias;
+      var useSurface = wOpts.wireframeSurface ?? true;
       if (useSurface === false) {
-        var hx = (window.app?.getGuiXR?.()?._uiSettings?.wireframeColor)
-              || wOpts.wireframeColor || '#000000';
+        var hx = wOpts.wireframeColor || '#000000';
         flatCol = [parseInt(hx.substr(1, 2), 16) / 255,
                    parseInt(hx.substr(3, 2), 16) / 255,
                    parseInt(hx.substr(5, 2), 16) / 255];

@@ -1,0 +1,322 @@
+# Render stack audit
+
+**Date:** 2026-09-19 · **Branch:** `refactor` · **three.js:** 0.183.2 · **Renderer:** `THREE.WebGLRenderer`
+
+Why this file exists: the migration has had several passes, and after each one it looked finished.
+A month later the hybrid resurfaces. matt: *"i half understood where we stand, thinking that we've
+removed all the old stuff, only to find a month later that we're running a fairly hacky hybrid."*
+
+So this is not a plan, it is a **measurement**, and every claim below says how it was checked.
+Re-run the checks before believing any of it — see [Re-running this audit](#re-running-this-audit).
+
+---
+
+## Verdict
+
+three.js does the rendering. The SculptGL WebGL engine is still in the building: partly wired,
+partly orphaned, and in exactly one place load-bearing.
+
+**Status 2026-09-19 (branch `refactor`): ~16,450 lines removed.** The GUI half is finished —
+the canvas UI, its widget system and its settings cache are gone, and the orphan sweep returns
+zero. What remains is the RENDERER half, and it is deliberately untouched: the mock gl, the
+raw-GL draw path and gl-matrix all belong to the TSL / node-material decision, because doing
+them as cleanup means doing them twice. See the verdicts in their own sections.
+
+| Layer | State | Evidence |
+|---|---|---|
+| Renderer | **Migrated** — `THREE.WebGLRenderer`, meshes are three Meshes | `Scene.js:2557` |
+| Surface shaders | **Hybrid, load-bearing** — see [The mock gl](#the-mock-gl) | `ShaderManager.js:268` |
+| Legacy multi-pass pipeline | **Dead code, live allocations** | `Scene.js:1981`, `Scene.js:2456` |
+| Drawables | **Split, sometimes inside one file** | 11 files in `src/drawables/` |
+| GuiXR | **Retired, not removed** — 7090 lines | `Scene.js:4821` |
+| Math | **Two libraries** — 64 files gl-matrix, 53 files three | import counts |
+| GLSL dialect | **All 17 shaders are ES 1.0** (`attribute`/`varying`/`gl_FragColor`) | 17/17 |
+
+---
+
+## The mock gl
+
+The single hackiest thing in the renderer, and it is load-bearing.
+
+The 17 custom shaders are compiled into `THREE.ShaderMaterial` by `ShaderManager` — fine. But the
+uniform *values* are still produced by the original SculptGL code calling `gl.uniform3fv(...)`.
+Those calls are captured by a **hand-written mock WebGL context** (`ShaderManager.js:268`) which
+intercepts them by name and writes into the three material's `uniforms`. Every frame, for every
+mesh, the old engine runs against a fake `gl`.
+
+```js
+mesh.getGL = function() { return mockGL; };       // ShaderManager.js:387
+shaderDef.updateUniforms.call(shaderDef, mesh, main);
+```
+
+**This has already cost real time.** The mock had no `TEXTURE0`, so the IBL environment binding
+produced NaN silently — roughness and metalness did nothing at all, and everything looked unlit,
+for months after the port. Suspect the mock first when something visual "never worked".
+
+**Do not tidy this in place.** It is precisely what a TSL / node-material migration deletes.
+Cleaning it up before that decision is work thrown away twice.
+
+---
+
+## Dead code with live allocations
+
+Two blocks in `Scene.js` are commented out and labelled `DISABLED FOR THREE.JS MIGRATION`:
+
+- `Scene.js:1981` — legacy post-processing (merge, FXAA)
+- `Scene.js:2456` — legacy passes (contour, opaque, transparent)
+
+**But the four render targets they consumed are still constructed and still resized.** Verified
+against the shipped bundle, where comments cannot survive:
+
+| Probe | Result |
+|---|---|
+| `new Rtt(...)` allocation | **LIVE** |
+| `_rttOpaque.render(` | gone |
+| `_rttOpaque.getFramebuffer(` | gone |
+| `_rttOpaque.onResize(` | **LIVE** |
+
+So `_rttContour`, `_rttMerge`, `_rttOpaque` (half-float) and `_rttTransparent` are allocated at
+canvas resolution and resized on every window resize, and nothing ever renders to them or reads
+them. Constructed at `Scene.js:607-610`, resized at `Scene.js:2930-2933`.
+
+**The raw-GL draw path is already dead.** `Shader.draw()` is reached only via
+`mesh.render()` / `renderWireframe()` / `renderFlatColor()`, and the only call site for
+`renderFlatColor` is `Scene.js:2466` — inside the commented block. The methods survive into the
+bundle only because a minifier cannot prove class methods unused. Do not mistake their presence
+in `dist/` for liveness; check the **call sites**, not the definitions. (This audit made exactly
+that mistake once: a probe for `renderFlatColor(` matched the method *definition*.)
+
+---
+
+## Drawables: both systems, sometimes in one file
+
+`src/drawables/` — 11 files. Some are migrated to three, some are raw GL, and at least one is
+both. `Selection.js` builds `THREE.BufferGeometry` / `LineBasicMaterial` *and* still constructs
+the legacy VBO wrappers from `render/Buffer.js` + `render/Attribute.js`:
+
+| File | legacy `new Buffer`/`new Attribute` |
+|---|---|
+| `Selection.js` | 2 |
+| `GazeTooltip.js` | 2 |
+| `Background.js` | 2 |
+| `VRLaser.js` | 1 |
+
+`Gnomon.js` is present in the bundle but no constructor for it was found in `Scene.js` — likely
+orphaned. Needs one check before removal.
+
+---
+
+## GuiXR: 7090 lines, retired but load-bearing
+
+`_legacyVrCanvasEnabled()` is permanently false:
+
+```js
+_legacyVrCanvasEnabled() { return window._brushPanelEnabled === false; }   // Scene.js:4821
+```
+
+Around eight live call sites still test it. **It cannot simply be deleted:** popups (`_guiPopup`,
+`Scene.js:641`) are still built on `GuiXR` and are explicitly "Tier 2 — not migrated". So 7090
+lines currently survive to serve one remaining feature.
+
+Order: migrate popups to the HTML panel system, *then* delete GuiXR and every
+`_legacyVrCanvasEnabled` branch.
+
+### CORRECTION (measured 2026-09-19): "retired" is not "dead"
+
+The section above repeated the source comment's claim that *"every legacy-canvas
+visibility/hit-test/poke path is dead."* That is true of **visibility, hit-test and poke**. It is
+**not** true of widget construction and draw, and the difference matters:
+
+```
+Scene.js:1381   this._guiXR.refreshToolsWidget()      // on every tool change
+GuiXR.js:569    refreshToolsWidget() { this._tabWidgets = {};
+                                       this._needsRedraw = true;   // defeats the early-out
+                                       this.draw(); }
+GuiXR.js:3331   if (!this._isPopupHUD) widgets = this._getWidgets();   // _guiXR is not a popup
+```
+
+Measured in the browser, not read: hooking `_getWidgets` and calling `refreshToolsWidget()` on
+the live `_guiXR` — whose `_isVisible` is `false` — counts **two calls**. The whole
+`src/gui/vr/` subtree executes on every tool change, builds the widget arrays for a menu nobody
+can see, and throws the result away.
+
+**So `src/gui/vr/` (4966 lines) is NOT deletable as dead code.** It is live, wasteful code. A
+sweep that trusted the comment would have deleted it and broken tool changes.
+
+It is also a (small) constant cost on every tool change, in VR and on desktop alike.
+
+**Re-scoped:** GuiXR is not one removal, it is three, and only the first is cheap.
+
+1. ~~Stop calling into it.~~ **DONE 2026-09-19, but not the way this said.** Deleting the
+   call sites was the wrong plan: there are ~250 references to `_guiXR`/`_guiMini` across the
+   tree, and `MainMenuPanel.js` — the live HTML panel — reads `_guiXR` in seven places. **The
+   retired UI is also the live settings store.**
+
+   Instead: one guard at the top of `GuiXR._drawInternal`, keyed on the app's own
+   `_legacyVrCanvasEnabled()`, returning early for anything that is not a popup. Measured
+   after: `_getWidgets` calls per tool change went 2 → 0, popups still draw. `src/gui/vr/` is
+   now runtime-unreachable, which is what step 2 needs — and the per-tool-change waste is gone
+   on every platform.
+2. ~~Migrate popups off GuiXR.~~ **NOT NEEDED — they were already migrated.** The file menu,
+   browser saves and numpads all run on the HTML system (`VrNumpad.js`, `VrConfirm.js`,
+   `VrKeyboard.js`). GuiXR's own overlay system has no openers left: both `openOverlay` calls
+   lived inside the widget code deleted in step 1b. Verified in the browser with all three
+   GuiXR instances hooked — zero calls, all overlays null.
+3. ~~Rehome `_uiSettings`.~~ **DONE 2026-09-19.** It was a write-through CACHE in front of
+   `getOptionsURL` — a constructor snapshot, with MainMenuPanel already pairing every write
+   with a `saveOption`. ~50 sites repointed at the store. Two settings (`grabGain`,
+   `triggerCurve`) had no options fallback and so silently reset on every reload; both persist
+   now. Confirmed on GalaxyXR and Vision Pro.
+4. ~~Delete GuiXR.js and VRMenu.js.~~ **DONE 2026-09-19. 7,523 lines**, plus ~150 call sites
+   in `Scene.js` and `SculptGL.js`. Confirmed on GalaxyXR and Vision Pro, controllers and hand
+   tracking, including panels, laser, stick scrolling, the X button and pinch clicks.
+
+   Also removed with it: the 105-line canvas raycast and its drag-capture lock; the
+   wrist-proximity **pinch suppression** (a 25cm sphere that killed the pinch so poking the
+   canvas MiniHUD did not sculpt — and which is what made the HTML wrist panel unclickable);
+   and `_legacyVrCanvasEnabled()` / `window._brushPanelEnabled`, which existed only to hold the
+   canvas UI down.
+
+   Kept because they are live: the miss-case laser reset in the ray path, `_isMiniHUDActive` as
+   a field, and `getGuiXR()` returning `null` — every caller was already optional-chained.
+
+---
+
+## Two math libraries
+
+64 files import `gl-matrix`; 53 import `three`. The most visible "curious mishmash of APIs" to a
+newcomer — and, measured 2026-09-19, **not a call-site sweep. Do not start it as one.**
+
+~1,925 calls: vec3 1026, mat4 611, quat 235, mat3 27, vec2 26.
+
+**The dependency is not in the call sites, it is in `TransformData`** — the core mesh transform
+state is *built out of* gl-matrix types:
+
+```js
+_center: vec3.create(),          _matrix: mat4.create(),
+_editMatrix: mat4.create(),      _lastComputedN: mat3.create(),   // and more
+```
+
+So every mesh getter — `getMatrix()`, `getCenter()`, `getN()`, `getSymmetryNormal()`,
+`getModelSpaceMatrix()` — hands back a gl-matrix array. **43 of the 56 files that use gl-matrix
+are coupled to that boundary.** Converting one of them in isolation does not remove a library;
+it adds a conversion at every call. Of the 13 that look "free", one is `TransformData` itself,
+and others (e.g. `Geometry.js`, 66 calls) export vector-taking helpers whose callers are the
+coupled files — so boundary conversions reappear there too.
+
+**There are already two representations of every transform**, kept in step by hand:
+
+```js
+Skeleton.syncThree = function (mesh) {
+  tm.matrix.fromArray(mesh.getMatrix());     // gl-matrix _matrix is the source of truth
+};
+```
+
+That duplication is the real target, and it is the documented two-matrices trap: writing
+`_matrix` without `syncThree` leaves a stale three-side matrix, and a world-preserving read then
+shrinks things.
+
+**So the actual job is: make the three.js side the single source of truth and delete the
+gl-matrix mirror from `TransformData`.** That is a rewrite of the transform core — which is also
+the per-vertex hot path, where gl-matrix currently operates allocation-free on `Float32Array`
+subarray views of the vertex buffer.
+
+**Verdict: same as the mock gl. Defer it to the renderer work rather than doing it as cleanup.**
+It has no functional payoff on its own, it is ~1,925 chances to invert an out-param
+(`vec3.sub(out, a, b)` is not `a.sub(b)`), and the renderer migration rewrites much of this code
+anyway. Doing it first means doing it twice.
+
+---
+
+## Tier 0 — done on `refactor`, 2026-09-19
+
+| Removed | Size | Verified by |
+|---|---|---|
+| Two `DISABLED FOR THREE.JS MIGRATION` comment blocks | 82 lines | build |
+| `_rttContour` / `_rttMerge` / `_rttOpaque` / `_rttTransparent` + `Rtt` import | 4 framebuffers | no readers remained after the blocks went |
+| `renderSelectOverRtt()` — an empty method — and its 6 callers | 7 sites | build + suite |
+| `src/drawables/Gnomon.js` — never imported | whole file | grep: every other `Gnomon` hit is a different implementation |
+
+`Rtt.js` itself **stays**: `GuiFiles.js` still uses it for UV paint baking and blur.
+
+Verified in the browser after the cuts: boots, renders, `render()` and a window resize both run
+clean, no console errors.
+
+### Orphan sweep
+
+14 modules, ~120 KB, referenced by nothing and absent from the bundle. Eight deleted as
+superseded — the largest being `mesh/MeshSafe.js` at 74 KB, which is a **fork of `Mesh.js`**
+declaring its own `class Mesh`. Six console-paste debug instruments moved to `scratchpad/debug/`
+rather than deleted: never bundled, so `src/` was the wrong home, but losing them costs a
+workflow.
+
+`global_shader_test` had been asserting against `gui/GuiRendering.js` — **green against a file
+that never ran.** Worth remembering when reading any harness: a passing check proves the source
+text says something, not that the code executes.
+
+#### The sweep's blind spot
+
+"Is it imported anywhere?" does not find a file imported **only by dead code**.
+`gui/vr/GuiVRRendering.js` is imported solely by `GuiXR.js`, the retired canvas UI, so it looks
+live and is not. The whole `src/gui/vr/` subtree is likely in the same position, which means
+**the GuiXR removal cascades well past its own 7090 lines.** To find this class, start from the
+known-dead root and walk its imports, rather than sweeping for unreferenced files.
+
+### Correction: Tier 0 was smaller than it looked
+
+The original list also had "the unreachable `render` / `renderWireframe` / `renderFlatColor`
+methods" and "the dead VBO wrappers in migrated drawables" as free deletions. **They are not
+free, and they are not separate items.** Tracing them showed one entangled system:
+
+```
+mesh.render() -> Shader.draw() -> ShaderBase raw GL -> render/Buffer.js + render/Attribute.js
+```
+
+with `Multimesh._renderLow` / `_renderWireframeLow` / its `render()` override and
+`MeshReference.render()` all chaining through `super.render(main)`, while touching
+`getRenderData()`, `_indexBuffer` and the selection level — state that live code also uses.
+`Selection.js` runs both systems inside one file.
+
+So the raw-GL draw path is dead *at the top* but has to come out as **one traced piece**, not by
+nibbling. It is also adjacent to the mock gl, which means it belongs with the renderer decision
+rather than with cleanup. Do not start it as a quick win.
+
+---
+
+## Recommended order
+
+1. **Tier 0 — free deletions.** The two commented blocks, the four unused RTTs, the dead VBO
+   wrappers in migrated drawables, the unreachable `render`/`renderWireframe`/`renderFlatColor`
+   methods, and `Gnomon.js` if the check confirms it is orphaned. Pure subtraction.
+2. **GuiXR.** Migrate popups first, then delete ~7090 lines.
+3. **The shader system and the mock gl** — *deferred by design*. This is the renderer decision
+   (TSL / node materials), not a cleanup. Doing it as cleanup means doing it twice.
+4. **gl-matrix → three math.** Independent; can happen any time; 64 files.
+
+---
+
+## Re-running this audit
+
+Comments do not survive the bundler, so the bundle is the source of truth for liveness. Build
+first, then probe:
+
+```bash
+npm run build
+js=$(ls -t dist/assets/index-*.js | head -1)
+node -e "
+const s=require('fs').readFileSync('$js','utf8');
+for (const t of ['_rttOpaque.render(', '_rttOpaque.onResize(', 'GuiXR'])
+  console.log((s.includes(t)?'LIVE  ':'gone  ')+t);
+"
+```
+
+Counting the split:
+
+```bash
+grep -rl "from 'gl-matrix'" src --include=*.js | wc -l   # 64 at time of writing
+grep -rl "from 'three'"     src --include=*.js | wc -l   # 53
+grep -rln 'attribute \|varying ' src/render/shaders/ | wc -l   # 17 of 17
+```
+
+**Check call sites, not definitions.** A class method survives minification whether or not
+anything calls it.

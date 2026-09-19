@@ -45,15 +45,12 @@ import HumanBase from './drawables/HumanBase.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
-import Rtt from './drawables/Rtt.js';
 import ShaderLib from './render/ShaderLib.js';
 import ShaderManager from './render/ShaderManager.js';
 import MeshStatic from './mesh/meshStatic/MeshStatic.js';
 import WebGLCaps from './render/WebGLCaps.js';
-import GuiXR from './gui/GuiXR.js';
 import Remesh from './editing/Remesh.js';
 import './editing/Geodesic.js'; // registers window._geoViz test harness; posing/rigging uses computeGeodesicField
-import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
@@ -228,10 +225,6 @@ class Scene {
     this._mesh = null; // the selected mesh
     this._debugPivotMesh = null; // Debug pink cube for VR pivot
 
-    this._rttContour = null; // rtt for contour
-    this._rttMerge = null; // rtt decode opaque + merge transparent
-    this._rttOpaque = null; // rtt half float
-    this._rttTransparent = null; // rtt rgbm
 
     // ui stuffs
     this._focusGui = false; // if the gui is being focused
@@ -374,8 +367,6 @@ class Scene {
     this._vrTwoHanded = { active: false, prevMid: vec3.create(), prevDist: 0.0, prevVec: vec3.create() };
 
     // VR Menu State
-    this._guiXR = null;
-    this._vrMenu = null;
     this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
     this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
@@ -604,10 +595,6 @@ class Scene {
     this._sculptManager = new SculptManager(this);
     this._background = new Background(this._gl, this);
 
-    this._rttContour = new Rtt(this._gl, Enums.Shader.CONTOUR, null);
-    this._rttMerge = new Rtt(this._gl, Enums.Shader.MERGE, null);
-    this._rttOpaque = new Rtt(this._gl, Enums.Shader.FXAA);
-    this._rttTransparent = new Rtt(this._gl, null, this._rttOpaque.getDepth(), true);
 
     this._grid = Primitives.createGrid(this._gl);
     this.initGrid();
@@ -627,37 +614,6 @@ class Scene {
     this.loadTextures();
     this._gui.initGui();
 
-    if (!this._guiXR) this._guiXR = new GuiXR(this);
-    this._guiXR.init(this._gl);
-
-    if (!this._guiMini) {
-      // Create a much taller, narrower canvas for the Mini-HUD (e.g. 300x500)
-      this._guiMini = new GuiXR(this, null, 300, 500);
-      this._guiMini._isMiniHUD = true;
-      this._guiMini._isVisible = true; // Always visible
-    }
-    this._guiMini.init(this._gl);
-
-    if (!this._guiPopup) {
-      this._guiPopup = new GuiXR(this, null, 660, 660);
-      this._guiPopup._isPopupHUD = true;
-      this._guiPopup._isVisible = true; // Managed by overlay presence
-    }
-    this._guiPopup.init(this._gl);
-
-    // Create VRMenus if they don't exist
-    if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
-    if (!this._vrMiniHUD) {
-      this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
-      // MiniHUD bounds relative to Left Grip
-      this._vrMiniHUD.setOffset(0.0, 0.05, -0.05);
-      this._vrMiniHUD.setRotation(-Math.PI / 2, Math.PI / 8, 0);
-    }
-    if (!this._vrPopup) {
-      this._vrPopup = new VRMenu(this._gl, this._guiPopup);
-      this._vrPopup.setOffset(0.0, 0.05, -0.05);
-      this._vrPopup.setRotation(-Math.PI / 2, Math.PI / 8, 0);
-    }
 
     // Global override for live tuning
     window.MINI_HUD_TRANSFORM = {
@@ -1075,7 +1031,7 @@ class Scene {
   }
 
   getGuiXR() {
-    return this._guiXR;
+    return null;   // the canvas GUI is gone; every caller was already optional-chained
   }
 
   getMeshes() {
@@ -1386,14 +1342,6 @@ class Scene {
           window._activeToolTab = 0;
         }
 
-        if (this._guiXR) {
-          this._guiXR.refreshToolsWidget();
-          this._guiXR._needsRedraw = true;
-        }
-        if (this._guiMini) {
-          this._guiMini.refreshToolsWidget();
-          this._guiMini._needsRedraw = true;
-        }
       }
     }
 
@@ -1410,14 +1358,6 @@ class Scene {
     this.getGui().updateMesh();
     this.render();
     return mesh;
-  }
-
-  renderSelectOverRtt() {
-    // Legacy RTT passes are disabled in Three.js migration.
-    // Setting _drawFullScene = false here was causing the main render loop
-    // to drop 100% of frames during mouse drag (camera tumbling), 
-    // resulting in massive perceived lag.
-    // this._drawFullScene = false; 
   }
 
   _requestRender() {
@@ -1585,9 +1525,6 @@ class Scene {
       // canvas-drawn GUI, panel-html is the DOM-backed one.
       this._mark('gui-canvas');
       if (!this._htmlPanelsHidden) {
-        if (this._guiXR) this._guiXR.update();
-        if (this._guiMini) this._guiMini.update();
-        if (this._guiPopup) this._guiPopup.update();
       }
       this._mark('panel-html');
 
@@ -1717,9 +1654,6 @@ class Scene {
             window._animationRegistry.update(m);
           }
           this._drawFullScene = true;
-          if (this._guiXR) {
-            this._guiXR._needsRedraw = true;
-          }
         }
       }
     }
@@ -1978,20 +1912,6 @@ class Scene {
         gl.disable(gl.DEPTH_TEST);
     }
 
-    // --- LEGACY POST-PROCESSING (DISABLED FOR THREE.JS MIGRATION) ---
-    /*
-    if (this._rttMerge) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttMerge.getFramebuffer());
-      this._rttMerge.render(this); // merge + decode
-    }
-
-    // render to screen (or target FBO)
-    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
-
-    if (this._rttOpaque) {
-      this._rttOpaque.render(this); // fxaa
-    }
-    */
     
     // (Legacy postRender moved to after Three.js render)
   }
@@ -2097,8 +2017,6 @@ class Scene {
   // The controller values are untouched — they were tuned against a controller and nothing about
   // adding a hand variant should move them.
   _handStylus(key, fallback) {
-    const v = this._guiXR?._uiSettings?.[key];
-    if (Number.isFinite(v)) return v;
     const o = getOptionsURL()[key];   // called — see the note in getPinchOn
     return Number.isFinite(o) ? o : fallback;
   }
@@ -2106,9 +2024,8 @@ class Scene {
   getStylusLength() {
     if (this._spikeFreeze) return this._spikeFreeze.length;   // frozen while its own slider is dragged
     if (this._handsOnlyMode()) return this._handStylus('handStylusLength', 0.05);
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusLength !== undefined) {
-      return this._guiXR._uiSettings.stylusLength;
-    }
+    const v = getOptionsURL().stylusLength;
+    if (Number.isFinite(v)) return v;
     return this._isQuestStandalone ? 0.15 : 0.10;
   }
 
@@ -2132,10 +2049,8 @@ class Scene {
   getStylusOffset() {
     if (this._spikeFreeze) return this._spikeFreeze.offset;   // frozen while its own slider is dragged
     if (this._handsOnlyMode()) return this._handStylus('handStylusOffset', 0.0);
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusOffset !== undefined) {
-      return this._guiXR._uiSettings.stylusOffset;
-    }
-    return 0.0;
+    const v = getOptionsURL().stylusOffset;
+    return Number.isFinite(v) ? v : 0.0;
   }
 
   updateStylusOffset(val) {
@@ -2156,8 +2071,6 @@ class Scene {
   // between finger surfaces, not between joint centres.
   getPinchOn() {
     if (Number.isFinite(window._pinchOn)) return window._pinchOn;
-    const v = this._guiXR?._uiSettings?.pinchOn;
-    if (Number.isFinite(v)) return v;
     // CALLED, not read as a property: the default export is a function and `getOptionsURL.x`
     // is a property on the function object — always undefined, so the saved value was never
     // read and the setting only appeared to work until the next reload.
@@ -2202,7 +2115,7 @@ class Scene {
   // quick trial without opening a menu.
   getGrabGain() {
     if (Number.isFinite(window._grabGain)) return window._grabGain;
-    const v = this._guiXR?._uiSettings?.grabGain;
+    const v = getOptionsURL().grabGain;
     return Number.isFinite(v) ? v : 1.0;
   }
 
@@ -2216,10 +2129,8 @@ class Scene {
     // rotation to the same ray from a setting the user dialled in for a physical controller. It
     // reads as 0 today only because the controller default happens to be 0.
     if (this._handsOnlyMode()) return 0.0;
-    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt !== undefined) {
-      return this._guiXR._uiSettings.stylusTilt;
-    }
-    return 0.0;
+    const v = getOptionsURL().stylusTilt;
+    return Number.isFinite(v) ? v : 0.0;
   }
 
   updateStylusTilt(val) {
@@ -2452,74 +2363,6 @@ class Scene {
       }
     }
 
-    /* 
-    // --- LEGACY WEBGL PASSES (DISABLED FOR THREE.JS MIGRATION) ---
-    ///////////////
-    // CONTOUR 1/2
-    ///////////////
-    gl.disable(gl.DEPTH_TEST);
-    var showContour = this._selectMeshes.length > 0 && this._showContour && ShaderLib[Enums.Shader.CONTOUR].color[3] > 0.0;
-    if (showContour && this._rttContour) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttContour.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      for (var s = 0, sel = this._selectMeshes, nbSel = sel.length; s < nbSel; ++s)
-        sel[s].renderFlatColor(this);
-    }
-    gl.enable(gl.DEPTH_TEST);
-
-    ///////////////
-    // OPAQUE PASS
-    ///////////////
-    if (this._rttOpaque) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttOpaque.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    }
-
-    // grid
-    // if (this._showGrid && this._grid) this._grid.render(this);
-
-    // VR Controllers are handled by Three.js Scene graph now. No custom WebGL rendering needed.
-
-    // var startTransparent = nbMeshes;
-    // if (this._meshPreview) this._meshPreview.render(this);
-
-    // background
-    // if (this._background) this._background.render();
-
-    ///////////////
-    // TRANSPARENT PASS
-    ///////////////
-    if (this._rttTransparent) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttTransparent.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT);
-    }
-
-    gl.enable(gl.BLEND);
-
-    // wireframe for dynamic mesh has duplicate edges
-    gl.depthFunc(gl.LESS);
-    for (i = 0; i < nbMeshes; ++i) {
-      if (meshes[i].getShowWireframe()) {
-         // meshes[i].renderWireframe(this); 
-      }
-    }
-    gl.depthFunc(gl.LEQUAL);
-
-    gl.depthMask(false);
-    gl.enable(gl.CULL_FACE);
-
-    gl.disable(gl.CULL_FACE);
-
-    ///////////////
-    // CONTOUR 2/2
-    ///////////////
-    if (showContour && this._rttContour) {
-      this._rttContour.render(this);
-    }
-
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
-    */
   }
 
   /** Pre compute matrices and sort meshes */
@@ -2927,10 +2770,6 @@ class Scene {
     this._camera.onResize(newWidth, newHeight);
     this._background.onResize(newWidth, newHeight);
 
-    this._rttContour.onResize(newWidth, newHeight);
-    this._rttMerge.onResize(newWidth, newHeight);
-    this._rttOpaque.onResize(newWidth, newHeight);
-    this._rttTransparent.onResize(newWidth, newHeight);
 
     this.render();
   }
@@ -3037,7 +2876,6 @@ class Scene {
       mesh._permanentStaticLabel = (mesh._typeName || 'Mesh') + ' ' + this._meshes.length;
     }
     this.attachMeshThree(mesh);
-    if (this._guiXR && this._guiXR.refreshSceneWidget) this._guiXR.refreshSceneWidget();
     return mesh;
   }
 
@@ -3047,7 +2885,6 @@ class Scene {
     this.removeMirror(mesh.getID());
     this.detachMeshThree(mesh);
     this._meshes.splice(idx, 1);
-    if (this._guiXR && this._guiXR.refreshSceneWidget) this._guiXR.refreshSceneWidget();
   }
 
   addNull() {
@@ -4047,14 +3884,6 @@ class Scene {
     }
     
     window._activeToolTab = 2;
-    if (this._guiXR) {
-      this._guiXR.refreshToolsWidget();
-      this._guiXR._needsRedraw = true;
-    }
-    if (this._guiMini) {
-      this._guiMini.refreshToolsWidget();
-      this._guiMini._needsRedraw = true;
-    }
     
     return voxelTool ? voxelTool._voxelMesh : null;
   }
@@ -4176,9 +4005,6 @@ class Scene {
     if (!skipUndoState) this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
 
-    if (this._guiXR && this._guiXR.refreshSceneWidget) {
-      this._guiXR.refreshSceneWidget();
-    }
 
     return mesh;
   }
@@ -4200,9 +4026,6 @@ class Scene {
     this._stateManager.pushStateAddRemove(newMesh, selMeshes);
     this.setMesh(newMesh);
 
-    if (this._guiXR && this._guiXR.refreshSceneWidget) {
-      this._guiXR.refreshSceneWidget();
-    }
 
     return newMesh;
   }
@@ -4725,9 +4548,6 @@ class Scene {
       Skeleton.updateVisuals(this);
     } catch (e) { console.error('rig teardown on clear failed:', e); }
 
-    if (this._guiXR && this._guiXR.refreshSceneWidget) {
-      this._guiXR.refreshSceneWidget();
-    }
   }
 
   // DELETE ONE JOINT AND EVERYTHING BELOW IT, as its own verb rather than through the selection.
@@ -4809,16 +4629,7 @@ class Scene {
       this.setMesh(this._meshes[0]);
     }
 
-    if (this._guiXR && this._guiXR.refreshSceneWidget) {
-      this._guiXR.refreshSceneWidget();
-    }
   }
-
-  // The legacy canvas VR UI (GuiXR main menu + wrist MiniHUD) is fully replaced by the
-  // HTML panel system. `_brushPanelEnabled` is permanently true, so this returns false and
-  // every legacy-canvas visibility/hit-test/poke path is dead. Flip `_brushPanelEnabled`
-  // to false at runtime only to resurrect the old canvas UI for debugging.
-  _legacyVrCanvasEnabled() { return window._brushPanelEnabled === false; }
 
   getIndexMesh(mesh, select) {
     var meshes = select ? this._selectMeshes : this._meshes;
@@ -5425,8 +5236,8 @@ class Scene {
     const sliderY = document.getElementById('offsetY');
     if (sliderY) {
       valY = parseFloat(sliderY.value);
-    } else if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.offsetY !== undefined) {
-      valY = this._guiXR._uiSettings.offsetY;
+    } else if (Number.isFinite(getOptionsURL().offsetY)) {
+      valY = getOptionsURL().offsetY;
     }
 
     const valZ = 0.4;
@@ -5989,9 +5800,6 @@ class Scene {
 
     if (Primitives) {
     // Init VR Menu System (Global)
-    if (!this._guiXR) this._guiXR = new GuiXR(this);
-    this._guiXR.init(this._gl);
-    if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
 
     // [HTMLVRPanel] Init HTML-based Brush/Tools panel
     {
@@ -6003,19 +5811,10 @@ class Scene {
         // MainMenuPanel for low-poly, and two overlapping answers to "where are the tools" is
         // what made the low-poly menu read as buggy.
         //
-        // `window._brushPanelEnabled` SURVIVES AND MUST: despite the name it has nothing to do
-        // with that panel. It gates the LEGACY CANVAS VR MENU (see _legacyVrCanvasEnabled) and
-        // is permanently true, which is the only thing keeping the old canvas UI dead.
-        // The no-op toggle below is kept for the same reason: a stray caller must not be able
-        // to resurface the canvas menu. (Popups — _guiPopup — are a separate system and
-        // unaffected; their HTML migration is Tier 2.)
-        window._brushPanelEnabled = true;
-        window.toggleBrushPanel = () => {
-          window._brushPanelEnabled = true;
-          this._swapHtmlPanels('mini');
-          console.log('[HTMLVRPanel] Legacy GuiXR menu is retired — HTML panels are always on.');
-          if (window.screenLog) window.screenLog('Menu: HTML (legacy retired)', 'cyan');
-        };
+        // `window._brushPanelEnabled` and its no-op toggle existed to keep the legacy canvas
+        // menu dead. The canvas menu is deleted, so the flag guards nothing; the toggle stays
+        // only so a stray caller does not throw.
+        window.toggleBrushPanel = () => this._swapHtmlPanels('mini');
       } catch (err) {
         console.error('[HTMLVRPanel] legacy-menu retirement failed:', err);
       }
@@ -6035,7 +5834,6 @@ class Scene {
         // corner button to the other one.
         this._miniPanel._element.addEventListener('mp-show-main-menu', () => {
           this._swapHtmlPanels('main');
-          if (this._guiPopup) this._guiPopup.closeOverlay();
         });
         this._miniPanel._element.addEventListener('mp-undo', (e) => this._doUndoRedo(!!e.detail?.redo));
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MiniPanel created', 'cyan');
@@ -6080,7 +5878,6 @@ class Scene {
         // The other half of the panel-to-panel swap (see mp-show-main-menu).
         this._mainMenuPanel._element.addEventListener('mm-show-mini', () => {
           this._swapHtmlPanels('mini');
-          if (this._guiPopup) this._guiPopup.closeOverlay();
         });
         this._mainMenuPanel._element.addEventListener('mm-undo', (e) => this._doUndoRedo(!!e.detail?.redo));
         this._mainMenuPanel._element.addEventListener('mm-browser-saves-open', () => {
@@ -6373,28 +6170,6 @@ class Scene {
       } catch (err) {
         console.error('[VrConfirm] init failed:', err);
       }
-    }
-
-    // Init VR Mini-HUD System
-    if (!this._guiMini) {
-      this._guiMini = new GuiXR(this);
-      this._guiMini._isMiniHUD = true;
-      this._guiMini._isVisible = true;
-    }
-    this._guiMini.init(this._gl);
-    if (!this._vrMiniHUD) this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
-
-    // Init VR Popup System
-    if (!this._guiPopup) {
-      this._guiPopup = new GuiXR(this, null, 660, 660);
-      this._guiPopup._isPopupHUD = true;
-      this._guiPopup._isVisible = true;
-    }
-    this._guiPopup.init(this._gl);
-    if (!this._vrPopup) {
-      this._vrPopup = new VRMenu(this._gl, this._guiPopup);
-      this._vrPopup.setOffset(0, 0, 0);
-      this._vrPopup.setRotation(0, 0, 0);
     }
 
 
@@ -9201,7 +8976,6 @@ class Scene {
   _gazeMenuPressed() {
     const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
     this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
-    if (this._guiPopup) this._guiPopup.closeOverlay();
     console.log('[gaze menu] ' + (mainVisible ? 'MainMenu -> MiniPanel' : 'MiniPanel -> MainMenu'));
   }
 
@@ -9253,28 +9027,6 @@ class Scene {
     // These are VR canvas menus parented near a controller — they must never show
     // on desktop/iPad (where they'd sit at the world origin). Gate on the XR session.
     const _xrOn = !!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting);
-    if (this._vrMenu && this._guiXR) {
-        // In HTML panel mode the old canvas VRMenu is always hidden; the
-        // MainMenuPanel on the wrist replaces it.
-        this._vrMenu.mesh.visible = _xrOn && (window._brushPanelEnabled !== false
-          ? false
-          : !!this._guiXR._isVisible);
-    }
-    if (this._vrPopup && this._guiPopup) {
-        this._vrPopup.mesh.visible = _xrOn && !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
-    }
-    if (this._vrMiniHUD && this._guiMini) {
-        // Legacy canvas MiniHUD is replaced by the HTML MiniPanel — force it hidden in the
-        // shipped config. (Previously gated on "no HTML panel currently visible", which left
-        // it showing at immersive entry before any HTML panel had painted.)
-        if (!this._legacyVrCanvasEnabled()) {
-          this._vrMiniHUD.mesh.visible = false;
-        } else {
-          const isLegacyMenuVisible = this._guiXR && this._guiXR._isVisible;
-          const isPopupVisible = this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay;
-          this._vrMiniHUD.mesh.visible = _xrOn && !this._htmlPanelsHidden && !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible;
-        }
-    }
 
     this._isPointingAtMenu = false;
     if (this._bpCursorDot) this._bpCursorDot.visible = false; // legacy; kept for safety
@@ -9523,9 +9275,6 @@ class Scene {
           uiAnchor.matrixWorldNeedsUpdate = true;
         }
         if (uiGrip) {
-            if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
-            if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== uiGrip) uiGrip.add(this._vrMiniHUD.mesh);
-            if (this._vrPopup && this._vrPopup.mesh.parent !== uiGrip) uiGrip.add(this._vrPopup.mesh);
 
             // [HTMLVRPanel] Attach MiniPanel to wrist (no pin button — always wrist-local).
             if (this._miniPanel && this._miniPanel.mesh && !this._miniPanel.pinned) {
@@ -9619,9 +9368,6 @@ class Scene {
               }
             }
         } else {
-            if (this._vrMenu && this._vrMenu.mesh.parent) this._vrMenu.mesh.removeFromParent();
-            if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent) this._vrMiniHUD.mesh.removeFromParent();
-            if (this._vrPopup && this._vrPopup.mesh.parent) this._vrPopup.mesh.removeFromParent();
         }
     } else {
         // A FRAME WITH NO INPUT SOURCES IS NOT A DISCONNECTION, and this used to treat it as
@@ -9902,14 +9648,8 @@ class Scene {
             // Canvas BlendshapeStackPanel (ARKit picker) — when the ray is on it.
             if ((this._vbsPanelPointed || this._wasVbsPanelPointed) && this._vrBlendPanel) {
               this._vrBlendPanel.onVRScroll(delta);
-            } else if (window._brushPanelEnabled !== false) {
-              // HTML panel mode — scroll the panel the ray was on last frame
-              if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
-            } else if (this._guiXR) {
-              // Legacy canvas menu
-              this._guiXR._scrollOffset += delta;
-              this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
-              this._guiXR._needsRedraw = true;
+            } else if (this._lastHtmlPanelHit) {
+              this._lastHtmlPanelHit.onVRScroll(delta);   // scroll the panel the ray was on
             }
           }
         }
@@ -9938,20 +9678,8 @@ class Scene {
 
             if ((this._vbsPanelPointed || this._wasVbsPanelPointed) && this._vrBlendPanel) {
               this._vrBlendPanel.onVRScroll(delta);
-            } else if (window._brushPanelEnabled !== false) {
-              if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
-            } else if (this._guiXR) {
-              if (this._guiXR._overlay === 'menu') {
-                this._guiXR._scrollOffsetOverlay += delta;
-                this._guiXR._scrollOffsetOverlay = Math.max(0, Math.min(this._guiXR._scrollOffsetOverlay, this._guiXR._maxScrollOverlay || 0));
-                if (this._guiXR._overlayData && (this._guiXR._overlayData.tabName === 'About & Help' || this._guiXR._overlayData.tabName === 'About')) {
-                  window._sculptAboutScroll = this._guiXR._scrollOffsetOverlay;
-                }
-              } else {
-                this._guiXR._scrollOffset += delta;
-                this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
-              }
-              this._guiXR._needsRedraw = true;
+            } else if (this._lastHtmlPanelHit) {
+              this._lastHtmlPanelHit.onVRScroll(delta);
             }
           } else if (isPressedY && this._sculptManager._toolIndex === Enums.Tools.TRANSFORM_VR) {
             // THE STICK RESIZES THE GIZMO WHILE TRANSFORM IS ACTIVE. Radius means nothing to a
@@ -10012,12 +9740,6 @@ class Scene {
                   newVal, 500);
 
                 // Update GuiXR and GuiMini Sliders if visible
-                if (this._guiXR) {
-                  this._guiXR.updateRadiusWidget(newVal);
-                }
-                if (this._guiMini) {
-                  this._guiMini.updateRadiusWidget(newVal);
-                }
 
                 // Force Render
                 this._main ? this._main.render() : this.render();
@@ -10051,12 +9773,6 @@ class Scene {
                 tools.setIntensity(newVal);
 
                 // Update UI Widgets if active
-                if (this._guiXR) {
-                  this._guiXR.updateWidget('intensity', newVal);
-                }
-                if (this._guiMini) {
-                  this._guiMini.updateWidget('intensity', newVal);
-                }
 
                 // Force Render
                 this._main ? this._main.render() : this.render();
@@ -10097,9 +9813,6 @@ class Scene {
                 if (isPaint) {
                   activeTool.swapColors();
                   const targetMain = this._main || window.main;
-                  if (targetMain && targetMain.getGui() && targetMain.getGui()._guiXR) {
-                    targetMain.getGui()._guiXR._needsRedraw = true;
-                  }
                 } else if (!bindsA) {
                   this._vrSubtractActive = !this._vrSubtractActive;
                 }
@@ -10136,38 +9849,18 @@ class Scene {
                 // Button Down: Activate INSTANTLY
                 tracker.time = now;
                 tracker.longPressActive = false;
-                if (window._brushPanelEnabled !== false) {
-                  // HTML panel mode: X toggles between MiniPanel and MainMenuPanel
-                  const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
-                  this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
-                  console.log(`[VR X Button] ${mainVisible ? 'MainMenu → MiniPanel' : 'MiniPanel → MainMenu'}`);
-                  if (window.screenLog) window.screenLog(`[X] ${mainVisible ? 'MiniPanel' : 'MainMenu'}`, 'cyan');
-                  if (this._guiPopup) this._guiPopup.closeOverlay();
-                } else if (this._guiXR) {
-                  // Legacy mode: toggle the big canvas menu
-                  this._guiXR.toggleVisibility();
-                  console.log(`[VR X Button] Toggled main menu visibility to ${this._guiXR._isVisible}`);
-                  if (this._guiPopup) {
-                    console.log('[VR X Button] Closing Mini-HUD tool overlay');
-                    this._guiPopup.closeOverlay();
-                  }
-                }
-              } else {
+                // HTML panel mode: X toggles between MiniPanel and MainMenuPanel
+                const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
+                this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
+                console.log(`[VR X Button] ${mainVisible ? 'MainMenu → MiniPanel' : 'MiniPanel → MainMenu'}`);
+                if (window.screenLog) window.screenLog(`[X] ${mainVisible ? 'MiniPanel' : 'MainMenu'}`, 'cyan');              } else {
                 // Button Up
                 if (tracker.longPressActive) {
                   // Momentary Release -> Revert swap in reverse
-                  if (window._brushPanelEnabled !== false) {
                     const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
-                    this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
-                    console.log(`[VR X Button] Reverted: ${mainVisible ? 'MiniPanel' : 'MainMenu'} shown`);
-                    if (this._guiPopup) this._guiPopup.closeOverlay();
-                  } else if (this._guiXR) {
-                    this._guiXR.toggleVisibility();
-                    console.log(`[VR X Button] Reverting main menu visibility to ${this._guiXR._isVisible}`);
-                    if (this._guiPopup) this._guiPopup.closeOverlay();
-                  }
-                }
-                // If quick tap, do nothing on release
+                  this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
+                  console.log(`[VR X Button] Reverted: ${mainVisible ? 'MiniPanel' : 'MainMenu'} shown`);
+                }                // If quick tap, do nothing on release
                 tracker.longPressActive = false;
               }
               tracker.pressed = btnX.pressed;
@@ -10315,53 +10008,20 @@ class Scene {
             }
           }
 
-          // THIS SUPPRESSION IS WHY THE WRIST PANEL COULD NOT BE CLICKED.
+          // NO PINCH SUPPRESSION NEAR THE WRIST ANY MORE.
           //
-          // It kills the pinch whenever the dominant index tip comes within 25cm of the
-          // non-dominant wrist. That was written for the legacy canvas MiniHUD, which you
-          // operated by POKING it — so a pinch near the wrist had to be ignored or you would
-          // sculpt while reaching for the menu. In HTML panel mode nothing ever turns it back
-          // on: the re-enable below is gated on _legacyVrCanvasEnabled(), so the pinch is simply
-          // dead inside that radius.
+          // A 25cm sphere around the non-dominant wrist used to kill the pinch, because the
+          // legacy canvas MiniHUD was operated by POKING it and a pinch while reaching for the
+          // menu would otherwise sculpt. It also made the HTML wrist panel unclickable: measured
+          // ray-to-panel distances of 0.16-0.24m are entirely inside that sphere, so a whole
+          // session of pinches produced no press edge while the fingertip dots went green
+          // throughout (they read the raw latch; the suppression zeroed the value after it).
+          // matt: "if i got my hand close to the menu, and did a slow pinch, the dots went
+          // green, but a click was never detected."
           //
-          // The wrist panel is now the ONLY menu on a hands-only runtime, and clicking it means
-          // putting your index finger right there. Measured: ray-to-panel distances of 0.16 to
-          // 0.24m, i.e. entirely inside the 25cm sphere, for a whole session of pinches that
-          // produced not one press edge — while the fingertip dots went green throughout,
-          // because they read the raw latch and this zeroes the value AFTER it.
-          //
-          // matt: "if i got my hand close to the menu, and did a slow pinch, the dots went green,
-          // but a click was never detected... if i did it as fast as possible, it seemed to
-          // work." A fast reach pinches while still outside the radius. That is the tell.
-          //
-          // So it only applies where it means something: legacy canvas mode with that HUD up.
-          const _legacyMiniHud = this._legacyVrCanvasEnabled() && this._guiMini && this._guiMini._isVisible;
-          if (!_legacyMiniHud) this._isMiniHUDActive = false;   // never leave it latched on
-          if (_legacyMiniHud && source.handedness === this._dominantHand && this._nonDomWristMatrix) {
-             const wristPos = { x: this._nonDomWristMatrix[12], y: this._nonDomWristMatrix[13], z: this._nonDomWristMatrix[14] };
-             const dist = vec3.distance([pI.x, pI.y, pI.z], [wristPos.x, wristPos.y, wristPos.z]);
-             
-             const wasMiniHUDActive = this._isMiniHUDActive;
-             this._isMiniHUDActive = (dist < 0.25);
-             
-             if (wasMiniHUDActive && !this._isMiniHUDActive && this._guiPopup) {
-               this._guiPopup.closeOverlay();
-             }
-
-             if (this._isMiniHUDActive) {
-                isPinching = false;
-                isFist = false;
-
-                // INDEX FINGER Z-DEPTH PUSH-TO-CLICK
-                // Legacy MiniHUD poke is dead in HTML panel mode — never emulate its click.
-                if (this._legacyVrCanvasEnabled() && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible) {
-                  const hit = this._vrMiniHUD.intersectPoint([pI.x, pI.y, pI.z]);
-                  if (hit && hit.distance <= 0.0) {
-                    isPinching = true; // Emulate Trigger pull!
-                  }
-                }
-             }
-          }
+          // Deleting the canvas MiniHUD removes the only reason it existed, so the radius is
+          // gone and the latch is simply never set. Kept as a field because other code reads it.
+          this._isMiniHUDActive = false;
         }
 
         // --- HAND PUPPETRY (#28 v1): drive ARKit jawOpen from the thumb↔finger gap. ---
@@ -10634,7 +10294,6 @@ class Scene {
         }
         
         if (origin && dir) {
-          // if (Math.random() < 0.02) console.log(`[Raycast] Origin/Dir Valid - Menu:${!!this._vrMenu} GuiXR:${!!this._guiXR} Vis:${this._guiXR ? this._guiXR._isVisible : false}`);
 
           // ── Unified HTML panel raycast: collect all hits, dispatch only to nearest ──
           // All panels share the same origin/dir — one raycaster suffices.
@@ -10700,11 +10359,11 @@ class Scene {
           // DECIDES ownership, and it decides it by whether a panel was under the ray then.
           const _strokeBusy = this._strokeOwnsInput() || this._vrPressOwner?.[_handKey] === 'scene';
           if (!_numpadOpen && !_strokeBusy) {
-            if (!_miniHudBlocked && this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+            if (!_miniHudBlocked && this._miniPanel?.mesh?.visible) {
               const h = _rc.intersectObject(this._miniPanel.mesh);
               if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
             }
-            if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+            if (this._toolPickerPanel?.mesh?.visible) {
               const h = _rc.intersectObject(this._toolPickerPanel.mesh);
               if (h.length > 0) _panelHits.push({ name: 'ToolPickerPanel', panel: this._toolPickerPanel, hit: h[0], pressKey: '_tpWasPressed' });
             }
@@ -10989,9 +10648,9 @@ class Scene {
           this._mark('xr-pose');
           // Phase 3: build full visible-panel list so non-hit panels also get leave calls
           const _allVisible = [];
-          if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false)
+          if (this._miniPanel?.mesh?.visible)
             _allVisible.push({ name: 'MiniPanel', panel: this._miniPanel, pressKey: '_mpWasPressed' });
-          if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false)
+          if (this._toolPickerPanel?.mesh?.visible)
             _allVisible.push({ name: 'ToolPickerPanel', panel: this._toolPickerPanel, pressKey: '_tpWasPressed' });
           if (this._mainMenuPanel?.mesh?.visible)
             _allVisible.push({ name: 'MainMenuPanel', panel: this._mainMenuPanel, pressKey: '_mmWasPressed' });
@@ -11436,124 +11095,18 @@ class Scene {
           this._mmSyncCounter = (this._mmSyncCounter || 0) + 1;
           if (this._mmSyncCounter % 30 === 0) this._mainMenuPanel?._rebuildContent?.();
 
-          let hit = null;
-          let targetGuiXR = null;
+          // THE LEGACY CANVAS RAYCAST STOOD HERE. Main menu, wrist MiniHUD and popup were all
+          // VRMenu quads intersected by hand, with a drag-capture lock so a slider did not jump
+          // when the ray slipped between them. All three are gone; the HTML panels claim the ray
+          // above. The only part with anything left to do is the miss case below, which clears
+          // this hand's laser distance. See docs/render_stack_audit.md.
 
-          // PHYSICAL MATRIX SYNC: The visual Three.js meshes won't have their `matrixWorld` updated
-          // until the renderer runs. But our `VRMenu.intersect` math requires the EXACT physical
-          // location of the controller *right now*.
-          // Extract the non-dominant controller's world matrix for the menu attachments.
-          let attachMatrix = (this._dominantHand === 'right') ? this._vrPoseLeft : this._vrPoseRight;
-          
-          if (attachMatrix) {
-              if (this._vrMenu) this._vrMenu.updateMatrices(null, attachMatrix);
-              if (this._vrPopup) this._vrPopup.updateMatrices(null, attachMatrix);
-              if (this._vrMiniHUD) this._vrMiniHUD.updateMatrices(null, attachMatrix);
-          }
-
-          // Check Main Menu First (legacy canvas only — dead in HTML panel mode)
-          if (this._legacyVrCanvasEnabled() && this._vrMenu && this._guiXR && this._guiXR._isVisible) {
-            hit = this._vrMenu.intersect(origin, dir);
-            if (hit) targetGuiXR = this._guiXR;
-          }
-
-          // Check Popup HUD (Highest priority when active, over Mini-HUD)
-          if (!hit && this._vrPopup && this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay) {
-            hit = this._vrPopup.intersect(origin, dir);
-            if (hit) targetGuiXR = this._guiPopup;
-          }
-
-          // If Missed Main Menu, Check Mini-HUD (legacy canvas only — dead in HTML panel mode)
-          if (!hit && this._legacyVrCanvasEnabled() && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible
-              && (!this._guiXR || !this._guiXR._isVisible)) {
-            hit = this._vrMiniHUD.intersect(origin, dir);
-            if (hit) targetGuiXR = this._guiMini;
-          }
-
-          let pressed = false;
-          let bottomedOut = false;
-          let depth = 0;
-          const _trigBtn = this._padOf(source)?.buttons?.[0];
-          if (_trigBtn) {
-            // FIRE EARLY: Trigger UI hits at 10% depression instead of waiting for a full physical click
-            depth = _trigBtn.value;
-            pressed = depth > 0.1 || _trigBtn.pressed;
-            bottomedOut = depth >= 0.99 || _trigBtn.pressed;
-          }
-
-          // DRAG CAPTURE LOCK
-          // If we are currently holding down the trigger on a specific GUI, we MUST lock all input to that GUI.
-          // This prevents the raycast from slipping off the MiniHUD and hitting the Main Menu behind it, which
-          // causes sliders to violently teleport because `targetGuiXR` suddenly changes mid-drag.
-          if (this._activePressedGui && pressed) {
-            targetGuiXR = this._activePressedGui;
-            
-            // Re-verify the hit actually belongs to the locked GUI mesh.
-            const lockedMenuObj = (targetGuiXR === this._guiXR) ? this._vrMenu : (targetGuiXR === this._guiMini ? this._vrMiniHUD : this._vrPopup);
-            if (!hit || (lockedMenuObj && hit.object !== lockedMenuObj && hit.object !== lockedMenuObj.mesh)) {
-                if (lockedMenuObj) {
-                    const planeHit = lockedMenuObj.intersect(origin, dir, { allowOutside: true });
-                    if (planeHit) hit = planeHit;
-                }
-            }
-          }
-
-          if (pressed && !this._globalGuiWasPressed) {
-            this._activePressedGui = hit ? targetGuiXR : null;
-          } else if (!pressed) {
-            if (this._activePressedGui) {
-              this._activePressedGui.onInteract(-1, -1, false);
-            }
-            this._activePressedGui = null;
-          }
-          this._globalGuiWasPressed = pressed;
-
-          // Dispatch Interaction
-          if (hit || (this._activePressedGui && pressed)) {
-            this._isPointingAtMenu = true;
-            
-            // FIX REVERTED: We are no longer using native Three.js raycasting. 
-            // The raw Math plane intersection generates pure WebGL UVs (0 at bottom, 1 at top).
-            // But HTML Canvas (and GuiXR) expects 0 at the top, 1 at the bottom.
-            // Therefore, we MUST invert the V coordinate manually!
-            const currU = hit ? hit.uv[0] : -1;
-            const currV = hit ? (1.0 - hit.uv[1]) : -1;
-            
-            if (hit) {
-              if (window.screenLog && Math.random() < 0.05) {
-                // window.screenLog(`[UI Hit] U:${currU.toFixed(2)} V:${currV.toFixed(2)}`, 'cyan');
-              }
-
-              targetGuiXR.setCursor(currU, currV);
-            }
-            
-            targetGuiXR._updateHover(); // Trigger UI loop (uses GuiXR's internal this._cursor)
-
-            if (this._activePressedGui) {
-              this._activePressedGui.onInteract(currU, currV, pressed, depth);
-              if (this._activePressedGui !== targetGuiXR) {
-                targetGuiXR.onInteract(currU, currV, false);
-              }
-            } else {
-              targetGuiXR.onInteract(currU, currV, pressed, depth);
-            }
-
-            // Calc Laser Distance (visual clamping)
-            if (this._vrLaser && hit) {
-              const legacyName = targetGuiXR === this._guiXR ? 'LegacyMenu' : targetGuiXR === this._guiMini ? 'LegacyMiniHUD' : 'LegacyPopup';
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = hit.distance; this._vrUIHitSourceLeft  = legacyName; this._panelRayLatch.left = { name: this._vrUIHitSourceLeft, t: performance.now() }; }
-              else                              { this._vrUIHitDistRight = hit.distance; this._vrUIHitSourceRight = legacyName; this._panelRayLatch.right = { name: this._vrUIHitSourceRight, t: performance.now() }; }
-            }
-
-          } else {
-            if (this._guiXR) this._guiXR.setCursor(-1, -1);
-            if (this._guiMini) this._guiMini.setCursor(-1, -1);
-            // Only reset if no panel also claimed this ray — a panel sets _isPointingAtMenu
-            // and pre-fills _vrUIHitDist to suppress the sculpt cursor.
-            if (!this._isPointingAtMenu) {
-              if (source.handedness === 'left') this._vrUIHitDistLeft = Infinity;
-              else this._vrUIHitDistRight = Infinity;
-            }
+          // A ray that hits no panel clears this hand's laser distance. Everything else that
+          // stood here belonged to the canvas GUIs. `_isPointingAtMenu` is set by the HTML
+          // panel raycast above, so this only fires on a genuine miss.
+          if (!this._isPointingAtMenu) {
+            if (source.handedness === 'left') this._vrUIHitDistLeft = Infinity;
+            else this._vrUIHitDistRight = Infinity;
           }
 
           // ── Debug: log which panel (if any) is setting the laser hit distance ──
@@ -11579,7 +11132,6 @@ class Scene {
           if (window.screenLog && Math.random() < 0.01) {
             // const hasRaySpace = !!source.targetRaySpace;
             // const hasGripSpace = !!source.gripSpace;
-            // const hasMenu = !!this._vrMenu;
             // window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
           }
         }
@@ -12273,9 +11825,9 @@ class Scene {
   // threshold on it either latches on for ever or fires on a relaxed hand. Sensitivity is a
   // setting about a physical trigger and has nothing to calibrate on a gesture.
   _triggerThreshold() {
-    const ui = this._guiXR && this._guiXR._uiSettings;
     // slider is 0.0 (Hard) to 1.0 (Light) -> threshold 0.9 (Hard) to 0.1 (Light)
-    return (ui && ui.triggerCurve !== undefined) ? 0.9 - (ui.triggerCurve * 0.8) : 0.5;
+    const tc = getOptionsURL().triggerCurve;
+    return Number.isFinite(tc) ? 0.9 - (tc * 0.8) : 0.5;
   }
 
   _isTriggerDown(source) {
@@ -13239,8 +12791,9 @@ class Scene {
 
     // 3. Picking (Engine Space Units)
     // Radius: Prioritize Active Tool (0-100+ range) -> Normalize to 0-1+
-    // Fallback to GuiXR._radius or default
-    let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
+    // Fallback default; the old GuiXR._radius slider is gone and the tool below overrides this
+    // in every real case anyway.
+    let sliderVal = 0.15;
     if (this._sculptManager) {
       // THE RADIUS THE STROKE USES MUST BE THE TOOL THE STROKE RUNS. This asked
       // getCurrentTool(), and the smooth override's tool swap happens ~450 lines BELOW here --
@@ -13975,7 +13528,6 @@ class Scene {
 
             // Use centralized method to add/update keyframe
             window._animationRegistry.addTransformKey(keyMesh, targetTime);
-            if (this._guiXR) this._guiXR._needsRedraw = true;
 
             const newData = {
               pos: [...pos],
@@ -14002,7 +13554,6 @@ class Scene {
                     window._animationRegistry.deleteTransformKey(keyMesh, targetTime);
                   }
                   window._animationRegistry.update(keyMesh, true);
-                  if (this._guiXR) this._guiXR._needsRedraw = true;
                 },
                 () => { // REDO
                   const tr = window._animationRegistry.tracks.get(meshId);
@@ -14021,7 +13572,6 @@ class Scene {
                     tr.scales.splice(idx*3, 0, ...newData.s);
                   }
                   window._animationRegistry.update(keyMesh, true);
-                  if (this._guiXR) this._guiXR._needsRedraw = true;
                 }
               );
             }
@@ -14060,7 +13610,6 @@ class Scene {
             }
             
             window._animationRegistry.addShapeKey(currentMesh, targetTime);
-            if (this._guiXR) this._guiXR._needsRedraw = true;
             
             if (this.getStateManager) {
               this.getStateManager().pushStateCustom(
@@ -14076,7 +13625,6 @@ class Scene {
                   } else {
                     window._animationRegistry.deleteShapeKey(currentMesh, targetTime);
                   }
-                  if (this._guiXR) this._guiXR._needsRedraw = true;
                 },
                 () => { // REDO
                   const tr = window._animationRegistry.tracks.get(meshId);
@@ -14090,7 +13638,6 @@ class Scene {
                     tr.shapeTimes.splice(idx, 0, targetTime);
                     tr.shapes.splice(idx, 0, copy);
                   }
-                  if (this._guiXR) this._guiXR._needsRedraw = true;
                 }
               );
             }
@@ -14450,7 +13997,7 @@ class Scene {
         // mode anyway (NO_SMOOTH_OVERRIDE, and Paint takes the colour override instead).
         // effectiveTool falls through to getCurrentTool whenever smooth mode is not held.
         const tool = this.effectiveTool?.() ?? (this._sculptManager ? this._sculptManager.getCurrentTool() : null);
-        let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
+        let sliderVal = 0.15;
         if (tool && tool._radius !== undefined) {
           sliderVal = tool._radius / 100.0;
         }
