@@ -63,7 +63,7 @@ ShaderPBR.exposure = opts.exposure === undefined ? ShaderPBR.environments[Shader
 ShaderPBR.uniforms = {};
 ShaderPBR.attributes = {};
 
-ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uExposure', 'uEnvIntensity', 'uSPH', 'uEnvSize',
+ShaderPBR.uniformNames = ['uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uExposure', 'uEnvIntensity', 'uSPH', 'uEnvSize',
   // The mesh's own base-colour map. uTexture0 is the ENVIRONMENT and always has been, so a
   // second sampler is the only place an imported albedo image can go. Bound per mesh by
   // ShaderManager.updateUniforms, onto a material that mesh owns -- see getMaterialFor.
@@ -231,7 +231,9 @@ ShaderPBR.fragment = [
   '  float NdV = max(dot(normal, V), 1e-4);',
   '  for (int i = 0; i < MAX_LIGHTS; i++) {',
   '    if (i >= uNbLights) break;',
-  '    vec3 toL = uLightPos[i] - vVertex;',
+  // viewMatrix is three's OWN uniform, injected per eye on a ShaderMaterial -- so it is not
+  // declared above, and must not be: redeclaring it fails to compile.
+  '    vec3 toL = (viewMatrix * vec4(uLightPos[i], 1.0)).xyz - vVertex;',
   '    float dist2 = dot(toL, toL);',
   '    vec3 L = toL * inversesqrt(max(dist2, 1e-12));',
   // Falloff that a person placing a light can predict: full at the light, half at its range,
@@ -309,21 +311,9 @@ ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   return env.texture;
 };
 
-var uIBLTmp = mat3.create();
 ShaderPBR.updateUniforms = function (mesh, main) {
   var gl = mesh.getGL();
   var uniforms = this.uniforms;
-
-  mat3.fromMat4(uIBLTmp, main.getCamera().getView());
-  // Normalize rotation matrix to remove scale (fixes SH lighting artifacts on scale)
-  // Each column is a basis vector, normalize them.
-  var m = uIBLTmp;
-  var len;
-  len = Math.hypot(m[0], m[1], m[2]); if (len > 0) { m[0] /= len; m[1] /= len; m[2] /= len; }
-  len = Math.hypot(m[3], m[4], m[5]); if (len > 0) { m[3] /= len; m[4] /= len; m[5] /= len; }
-  len = Math.hypot(m[6], m[7], m[8]); if (len > 0) { m[6] /= len; m[7] /= len; m[8] /= len; }
-
-  gl.uniformMatrix3fv(uniforms.uIblTransform, false, mat3.transpose(uIBLTmp, uIBLTmp));
 
   gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
   gl.uniform1f(uniforms.uRoughness, mesh.getRoughness());
@@ -337,22 +327,35 @@ ShaderPBR.updateUniforms = function (mesh, main) {
   gl.uniform3fv(uniforms.uSPH, env.sph);
   if (env.size) gl.uniform2fv(uniforms.uEnvSize, env.size);
 
-  // THE SCENE'S LIGHTS, IN VIEW SPACE. vVertex is a view-space position, so the light has to
-  // meet it there; doing it on the CPU once per mesh beats handing the shader a matrix and a
-  // world position to multiply per pixel.
+  // THE SCENE'S LIGHTS, IN WORLD SPACE. The shader moves them to view space with three's own
+  // `viewMatrix`, and that indirection is the entire point.
   //
-  // A light is a locator, so its POSITION is its matrix's translation -- and that matrix is
-  // model space, which is the space the camera's view matrix expects. Whatever the light is
-  // parented to has already been folded in by the time it is read.
+  // IT USED TO BE DONE HERE, on the CPU, with `main.getCamera().getView()` -- cheaper, and
+  // correct with exactly one camera. VR HAS TWO. ShaderManager rewrites `uMV` to three's
+  // `modelViewMatrix`, so vVertex lands in the real per-eye view space while the light landed
+  // in the desktop camera's, and the gap between them rotated with the head: lighting swam
+  // across surfaces as you looked around. matt: "i rotate my head, lighting shifts on
+  // surfaces... not just spec, diffuse too" -- and diffuse moving is the tell, because NdL
+  // depends on where the light IS, not on where you are looking from.
+  //
+  // Read off the three-side `matrixWorld`, not the app-side model matrix: meshes hang under
+  // _worldGroup (which carries a scale the app's own camera knows nothing about), so that is
+  // the space vVertex is actually in. Taking it from three keeps the two in step by
+  // construction instead of by agreement.
   var lights = main.getLights ? main.getLights() : [];
   var nb = Math.min(lights.length, MAX_LIGHTS);
   for (var li = 0; li < nb; li++) {
-    var lm = lights[li].getModelSpaceMatrix ? lights[li].getModelSpaceMatrix() : lights[li].getMatrix();
-    var vm = main.getCamera().getView();
-    var px = lm[12], py = lm[13], pz = lm[14];
-    uLightPosTmp[li * 3]     = vm[0] * px + vm[4] * py + vm[8]  * pz + vm[12];
-    uLightPosTmp[li * 3 + 1] = vm[1] * px + vm[5] * py + vm[9]  * pz + vm[13];
-    uLightPosTmp[li * 3 + 2] = vm[2] * px + vm[6] * py + vm[10] * pz + vm[14];
+    var ltm = lights[li].getThreeMesh && lights[li].getThreeMesh();
+    if (ltm) {
+      // Forced current: this runs before renderer.render(), so a light moved this frame would
+      // otherwise light from where it was last frame.
+      ltm.updateMatrixWorld(true);
+      var e = ltm.matrixWorld.elements;
+      uLightPosTmp[li * 3] = e[12]; uLightPosTmp[li * 3 + 1] = e[13]; uLightPosTmp[li * 3 + 2] = e[14];
+    } else {
+      var lm = lights[li].getModelSpaceMatrix ? lights[li].getModelSpaceMatrix() : lights[li].getMatrix();
+      uLightPosTmp[li * 3] = lm[12]; uLightPosTmp[li * 3 + 1] = lm[13]; uLightPosTmp[li * 3 + 2] = lm[14];
+    }
     var lc = lights[li]._lightColor || [1, 1, 1];
     var inten = lights[li]._lightIntensity === undefined ? 1 : lights[li]._lightIntensity;
     uLightColTmp[li * 3]     = lc[0] * inten;

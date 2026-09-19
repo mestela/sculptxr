@@ -22,6 +22,7 @@ const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 const PBR   = fs.readFileSync(path.join(REPO, 'src/render/shaders/ShaderPBR.js'), 'utf8');
 const SHMGR = fs.readFileSync(path.join(REPO, 'src/render/ShaderManager.js'), 'utf8');
 const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+const GLSL  = fs.readFileSync(path.join(REPO, 'src/render/shaders/glsl/pbr.glsl.js'), 'utf8');
 
 let fails = 0;
 function check(name, cond, why) {
@@ -83,12 +84,48 @@ check('...and the budget is a number the headset can afford',
 check('...with the unused tail zeroed rather than left stale',
   /for \(var lz = nb; lz < MAX_LIGHTS; lz\+\+\)/.test(PBR));
 
-// vVertex is a view-space position, so the light has to meet it there.
-check('light positions are converted to view space on the CPU',
-  /uLightPosTmp\[li \* 3\]     = vm\[0\] \* px \+ vm\[4\] \* py \+ vm\[8\]  \* pz \+ vm\[12\];/.test(PBR),
-  'a position needs the translation too — unlike a direction');
-check('...read from the model-space matrix, so parenting is already folded in',
-  /getModelSpaceMatrix \? lights\[li\]\.getModelSpaceMatrix\(\) : lights\[li\]\.getMatrix\(\)/.test(PBR));
+// THE LIGHT AND THE SURFACE MUST BE IN THE SAME SPACE, AND VR HAS TWO CAMERAS.
+//
+// This used to assert the opposite: that the position was converted to view space HERE, on the
+// CPU, with main.getCamera().getView(). That is cheaper and it is correct with one camera --
+// but ShaderManager rewrites `uMV` to three's `modelViewMatrix`, so vVertex is in the real
+// per-eye view space while the light was in the desktop camera's, and the gap rotated with the
+// head. matt: "i rotate my head, lighting shifts on surfaces... not just spec, diffuse too."
+// The check encoded the bug, so it is replaced rather than repaired.
+// Matched as CODE, not as prose: the comment explaining why this changed names getView() too,
+// and a bare substring test would keep failing on the explanation for its own fix.
+check('the light is uploaded in WORLD space, not pre-transformed by the desktop camera',
+  !/var vm = main\.getCamera\(\)\.getView\(\);/.test(PBR)
+    && /uLightPosTmp\[li \* 3\] = e\[12\]/.test(PBR),
+  'a CPU view-space transform can only be right for one of the two eyes');
+
+// THE SAME BUG LIVED TWICE. The environment's orientation was also the desktop camera's inverse
+// rotation, and it drives sphericalHarmonics() as well as the reflection -- so the AMBIENT swam
+// too, which is why the symptom was not confined to highlights and was in fact the larger half.
+check('the environment orientation is derived per eye, not uploaded from the desktop camera',
+  !/mat3\.fromMat4\(uIBLTmp, main\.getCamera\(\)\.getView\(\)\)/.test(PBR)
+    && !/uniform mat3 uIblTransform;/.test(GLSL)
+    && /mat3 iblTransform\(\) \{/.test(GLSL),
+  'one camera cannot orient an environment for two eyes');
+check('...and both lookups go through it',
+  /texturePanoramaLod\(iblTransform\(\) \* R, rLinear\)/.test(GLSL)
+    && /sphericalHarmonics\(iblTransform\(\) \* N\)/.test(GLSL),
+  'the SH one is the ambient — missing it would leave diffuse swimming');
+// GLSL ES 1.0 has no transpose(), so the inverse rotation is written out by hand.
+check('...transposing by hand rather than calling transpose()',
+  /return mat3\(v\[0\]\[0\], v\[1\]\[0\], v\[2\]\[0\],/.test(GLSL));
+check('...and the shader moves it with three\'s per-eye viewMatrix',
+  /vec3 toL = \(viewMatrix \* vec4\(uLightPos\[i\], 1\.0\)\)\.xyz - vVertex;/.test(PBR),
+  'this is the one matrix that differs between the eyes');
+check('...which must NOT be declared in the shader',
+  !/uniform mat4 viewMatrix/.test(PBR),
+  "three injects it on a ShaderMaterial; redeclaring it fails to compile");
+// _worldGroup carries a scale the app's own camera does not know about, so the three-side
+// matrixWorld is the only position that is in the same space vVertex ends up in.
+check('...read off the three-side matrixWorld, forced current',
+  /ltm\.updateMatrixWorld\(true\);/.test(PBR)
+    && /var e = ltm\.matrixWorld\.elements;/.test(PBR),
+  'this runs before renderer.render(), so a light moved this frame would otherwise lag one');
 
 // Added to the IBL, not replacing it: the ambient still fills the shadow side.
 check('lights add to the environment rather than replacing it',
