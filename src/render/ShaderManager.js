@@ -3,6 +3,7 @@ import ShaderLib from './ShaderLib.js';
 import ShaderBase from './shaders/ShaderBase.js';
 import Enums from '../misc/Enums.js';
 import { mat3, mat4 } from 'gl-matrix';
+import NodeMaterials from './nodes/NodeMaterials.js';
 
 var ShaderManager = {};
 
@@ -166,6 +167,11 @@ ShaderManager.getMaterial = function(shaderId) {
  * of them. A mesh with its own map gets its own material, and nothing else changes.
  */
 ShaderManager.getMaterialFor = function(mesh, shaderId) {
+  // THE ONE CHOKE POINT for a mesh's material -- every call site goes through here -- which is
+  // why the renderer split lives here and not in seven places. Node materials are pre-built
+  // and shared per shader id; none of the cloning below applies, because the per-mesh texture
+  // problem it solves is a legacy-uniform problem.
+  if (NodeMaterials.isActive()) return NodeMaterials.get(shaderId);
   var shared = this.getMaterial(shaderId);
   if (!shared || !mesh) return shared;
   var needsOwn = (mesh.hasTextureMap && mesh.hasTextureMap()) ||

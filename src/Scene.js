@@ -77,6 +77,7 @@ import MotionTrail from './editing/MotionTrail.js';
 import SceneShadow from './render/SceneShadow.js';
 import scanPhantoms from './misc/PhantomScan.js';
 import probeXRLighting from './misc/XRLightProbe.js';
+import NodeMaterials from './render/nodes/NodeMaterials.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -2423,6 +2424,9 @@ class Scene {
       this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
       await this._renderer.init();
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
+      // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
+      // because constructing one mid-session is the single real fault this renderer has.
+      NodeMaterials.enable(WGPU);
       console.log('[renderer] WebGPURenderer, backend='
         + (this._renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL (forced)'));
     } else {
