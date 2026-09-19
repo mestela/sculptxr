@@ -2537,7 +2537,7 @@ export function buildSectionHTML_scene(main) {
     <div class="mm-section-title">Light</div>
     <div class="mm-row">
       <span class="mm-lbl">Intensity</span>
-      <input type="range" id="mm-light-int" min="0" max="500" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
+      <input type="range" id="mm-light-int" min="0" max="2000" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
       <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(2)}</span>
     </div>
     ${/* FALLOFF, not "range": it is the distance at which the light is half as bright, not a
