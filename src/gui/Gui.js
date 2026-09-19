@@ -1044,6 +1044,11 @@ class Gui {
     // toggling a dropdown open — that would replace innerHTML and immediately
     // close the dropdown. wireSelect already updates label/active-class directly.
     wireSectionScene(panelEl, main, rebuild, null); // desktop sidebar: no VR panel → numpad uses the DOM overlay
+    // THE ONLY SIDEBAR SECTION THAT WAS MISSING THIS. Scene carries three sliders (the rig
+    // secondary-animation amp/speed/smooth), and without it they fall back to the native range
+    // behaviour: fine with a mouse, steppy under a finger, which is the whole reason
+    // fixSliderDrag exists. Every other _buildDesktop* already called it.
+    fixSliderDrag(panelEl);
 
     this._decorateDesktopSection(panelEl, 'scene');
   }
