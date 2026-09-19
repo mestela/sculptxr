@@ -715,7 +715,15 @@ class Gui {
                // folk without keyboards."
                // wireSelect already updates the label and the active class itself, which is why
                // a no-op loses nothing -- see the identical call in _buildDesktopCamera.
-               wireSectionRendering(el, main, repaint, () => {}, repaint);
+               // AND sliderDirtyFn MUST BE NULL, for a near-identical reason. It is called on
+               // every slider `input` event, and passing `repaint` here meant each one rebuilt
+               // the dropdown's innerHTML -- destroying the very <input> the pointer was
+               // captured on, so a drag died on its first move and only the opening click-step
+               // survived. matt: "i can't slide sliders... they don't accept/recognise drag
+               // events", and only in menus mounted this way. The desktop DOM renders itself;
+               // the dirty hook exists for the VR rasteriser, which has to be told.
+               wireSectionRendering(el, main, repaint, () => {});
+               fixSliderDrag(el);
                wireMenuBackground(el, main, repaint);
                wireMenuReference(el, main, repaint);
                // SHADER AND RIG DISPLAY COME UP TO THE TOP LEVEL. matt: "move 'shader' and 'rig
