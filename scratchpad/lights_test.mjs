@@ -137,6 +137,28 @@ check('...read off the three-side matrixWorld, forced current',
     && /var e = ltm\.matrixWorld\.elements;/.test(PBR),
   'this runs before renderer.render(), so a light moved this frame would otherwise lag one');
 
+// THE HANDLE SAYS WHICH KIND IT IS, and for the aimed types, WHERE IT POINTS. A marker that
+// does not show direction makes you rotate the gizmo and guess. matt: "spotlights need a cone
+// indicator to indicate direction and angle. sun needs 3 parallel lines with a thin arrow at
+// one end to indicate direction."
+check('the light handle is rebuilt, not added to, when the type changes',
+  /const old = tm\.getObjectByName\('light_rays'\);/.test(SCENE)
+    && /tm\.remove\(old\); old\.geometry\.dispose\(\); old\.material\.dispose\(\);/.test(SCENE),
+  'without this every switch leaves the previous shape behind');
+check('...a spot draws a cone at the angle you set',
+  /Math\.tan\(Math\.max\(1, Math\.min\(89, mesh\._lightConeDeg \|\| 35\)\) \* Math\.PI \/ 180\)/.test(SCENE),
+  'the rim IS the outer angle, or the handle is decoration rather than a readout');
+check('...a sun draws parallel rays with one arrowhead',
+  /const off = \[\[-0\.35, 0\], \[0, 0\], \[0\.35, 0\]\];/.test(SCENE)
+    && /seg\(0, 0, -0\.7, h, 0, -0\.7 \+ h\);/.test(SCENE),
+  'parallel is the statement — a sun has a direction and no position');
+check('...and a point draws nothing directional',
+  /ray\(1, 0, 0\); ray\(-1, 0, 0\);/.test(SCENE));
+// The cone handle IS the angle readout, so it has to follow the slider.
+check('the handle follows the type and cone controls',
+  (PANEL.match(/main\.decorateLight\?\.\(L\);/g) || []).length >= 2,
+  'a stale cone is a control that lies about what it set');
+
 // ── light TYPES: one entity, a type property ────────────────────────────────────────
 //
 // Not three classes. A light is already an ordinary scene object, so the type is a property of

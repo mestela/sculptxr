@@ -3162,16 +3162,56 @@ class Scene {
     const tm = mesh.getThreeMesh();
     if (!tm) return mesh;
     tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-    // A SMALL ASTERISK, NOT A SUNBURST. This was fourteen rays -- six axes plus eight
-    // diagonals -- at scale 4, which read as an object in its own right rather than a marker
-    // for one, and sat in front of whatever you were trying to look at. matt: "the 3d icon is
-    // too large, too annoying, we can do something more simple."
+
+    // REBUILT, NOT ADDED TO. The handle is type-specific, so changing the type has to replace
+    // it; without this every switch left the previous one behind.
+    const old = tm.getObjectByName('light_rays');
+    if (old) { tm.remove(old); old.geometry.dispose(); old.material.dispose(); }
+
+    // THE HANDLE SAYS WHAT KIND OF LIGHT IT IS, and for the aimed types, WHERE IT POINTS.
+    // A point light has no direction, so a symmetric asterisk is the honest shape for it; a
+    // spot and a sun both have one, and a marker that does not show it makes you rotate the
+    // gizmo and guess. matt: "spotlights need a cone indicator to indicate direction and
+    // angle. sun needs 3 parallel lines with a thin arrow at one end."
     //
-    // Six axis rays is still unmistakably a light and stops being scenery. The diagonals added
-    // density, not information: they never told you anything the axes did not.
+    // Everything is built down the local -Z, which is the aim (see the upload in ShaderPBR),
+    // in unit space -- the scale is applied once at the end.
+    const type = mesh._lightType || 0;
     const pts = [];
-    const push = (x, y, z) => { pts.push(0, 0, 0, x, y, z); };
-    push(1, 0, 0); push(-1, 0, 0); push(0, 1, 0); push(0, -1, 0); push(0, 0, 1); push(0, 0, -1);
+    const seg = (ax, ay, az, bx, by, bz) => pts.push(ax, ay, az, bx, by, bz);
+    const ray = (x, y, z) => seg(0, 0, 0, x, y, z);
+
+    if (type === 1) {
+      // SPOT: a cone from the apex, its rim drawn at the OUTER angle so the circle is the
+      // angle you set. Four ribs rather than a dense fan -- enough to read as a cone from any
+      // side without becoming a solid object in the viewport.
+      const rad = Math.tan(Math.max(1, Math.min(89, mesh._lightConeDeg || 35)) * Math.PI / 180);
+      const L = 1.0;
+      for (let k = 0; k < 4; k++) {
+        const a = k * Math.PI / 2;
+        seg(0, 0, 0, Math.cos(a) * rad, Math.sin(a) * rad, -L);
+      }
+      const N = 24;
+      for (let k = 0; k < N; k++) {
+        const a0 = (k / N) * Math.PI * 2, a1 = ((k + 1) / N) * Math.PI * 2;
+        seg(Math.cos(a0) * rad, Math.sin(a0) * rad, -L,
+            Math.cos(a1) * rad, Math.sin(a1) * rad, -L);
+      }
+    } else if (type === 2) {
+      // SUN: three parallel rays with one arrowhead. Parallel IS the statement -- a sun has a
+      // direction and no position -- and the arrow says which way along them.
+      const off = [[-0.35, 0], [0, 0], [0.35, 0]];
+      for (const [ox, oy] of off) seg(ox, oy, 0.7, ox, oy, -0.7);
+      const h = 0.18;
+      seg(0, 0, -0.7, h, 0, -0.7 + h);
+      seg(0, 0, -0.7, -h, 0, -0.7 + h);
+      seg(0, 0, -0.7, 0, h, -0.7 + h);
+      seg(0, 0, -0.7, 0, -h, -0.7 + h);
+    } else {
+      // POINT: six axis rays. No direction to show, so nothing here should imply one.
+      ray(1, 0, 0); ray(-1, 0, 0); ray(0, 1, 0); ray(0, -1, 0); ray(0, 0, 1); ray(0, 0, -1);
+    }
+
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
     const c = mesh._lightColor;

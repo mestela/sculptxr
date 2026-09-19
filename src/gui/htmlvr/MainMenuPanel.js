@@ -4422,6 +4422,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     wireSlider(el.querySelector('#mm-light-cone'), el.querySelector('#mm-light-cone-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._lightConeDeg = v;
+      // The cone handle IS the angle, so it has to be rebuilt as the slider moves or it starts
+      // lying. Cheap enough to do per input event: ~60 line segments.
+      main.decorateLight?.(L);
       main.render?.();
     }, (v) => `${v}\u00B0`, null);
     // A REBUILD, not a repaint: changing the type changes which rows exist.
@@ -4429,6 +4432,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       btn.addEventListener('click', () => {
         const L = _litSel(); if (!L) return;
         L._lightType = parseInt(btn.dataset.lightType, 10);
+        // The handle is type-specific -- asterisk, cone or parallel rays -- so it is rebuilt
+        // here rather than left showing the shape of the type you just left.
+        main.decorateLight?.(L);
         main.render?.();
         repaintFn?.();
       });
