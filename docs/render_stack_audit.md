@@ -141,9 +141,16 @@ It is also a (small) constant cost on every tool change, in VR and on desktop al
 
 **Re-scoped:** GuiXR is not one removal, it is three, and only the first is cheap.
 
-1. Stop calling into it. Delete the `refreshToolsWidget` / `refreshSceneWidget` / `_needsRedraw`
-   calls from `Scene.js` for `_guiXR` and `_guiMini`. Once nothing drives them, `src/gui/vr/`
-   becomes genuinely unreachable and deletable — and the per-tool-change work disappears.
+1. ~~Stop calling into it.~~ **DONE 2026-09-19, but not the way this said.** Deleting the
+   call sites was the wrong plan: there are ~250 references to `_guiXR`/`_guiMini` across the
+   tree, and `MainMenuPanel.js` — the live HTML panel — reads `_guiXR` in seven places. **The
+   retired UI is also the live settings store.**
+
+   Instead: one guard at the top of `GuiXR._drawInternal`, keyed on the app's own
+   `_legacyVrCanvasEnabled()`, returning early for anything that is not a popup. Measured
+   after: `_getWidgets` calls per tool change went 2 → 0, popups still draw. `src/gui/vr/` is
+   now runtime-unreachable, which is what step 2 needs — and the per-tool-change waste is gone
+   on every platform.
 2. Migrate popups (`_guiPopup`) off `GuiXR`.
 3. Delete `GuiXR.js`, keeping `_uiSettings` — `Scene.js:2078-2189` reads stylus length, offset
    and tilt out of it, which is live functionality and must land somewhere first.
