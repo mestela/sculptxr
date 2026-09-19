@@ -3223,6 +3223,25 @@ export default class GuiXR {
   }
 
   _drawInternal() {
+    // A RETIRED CANVAS HAS NOTHING TO DRAW, and until this guard existed it drew anyway.
+    //
+    // refreshToolsWidget() sets _needsRedraw and then calls draw() directly, which defeats the
+    // early-out below, and _guiXR is not a popup — so every tool change rebuilt the whole widget
+    // tree for a menu whose _isVisible is false, rasterised it, and threw it away. Measured by
+    // hooking _getWidgets: TWO calls per tool change, on desktop and in a headset alike.
+    //
+    // The condition is the app's own answer to "is the legacy canvas UI on", not a new flag, so
+    // there is one definition of retired rather than two. Popups are a different system and are
+    // very much alive, hence the first clause.
+    //
+    // This does NOT delete anything: it stops the retired paths running, which is what makes
+    // src/gui/vr genuinely unreachable and therefore safe to remove later. See
+    // docs/render_stack_audit.md.
+    if (!this._isPopupHUD && this._main && this._main._legacyVrCanvasEnabled
+        && !this._main._legacyVrCanvasEnabled()) {
+      this._needsRedraw = false;
+      return;
+    }
     this.syncWidgetValues();
     // OPTIMIZATION: Early exit if no redraw needed
     if (!this._needsRedraw) return;
