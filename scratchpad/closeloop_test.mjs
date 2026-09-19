@@ -175,8 +175,14 @@ check('the pop becomes a lurch, and here is how big',
 // sampling every frame, the physics bake stepping the range, and MotionTrail — and all of them
 // manage their own evaluation deliberately. A seek there would thrash the rig or the sim.
 {
-  const GUI = ['src/gui/GuiTimeline.js', 'src/gui/GuiAnimation.js', 'src/gui/GuiXR.js',
-    'src/gui/htmlvr/AnimationControlPanel.js'];
+  // DERIVED, NOT LISTED. This was a hardcoded set of four files, one of which (GuiXR.js) was
+  // deleted in the 2026-09-19 refactor and took the harness down with it. A list also misses
+  // any GUI file added later, which is exactly the case the rule exists for -- so walk src/gui.
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+    const f = path.join(d, e.name);
+    return e.isDirectory() ? walk(f) : (e.name.endsWith('.js') ? [f] : []);
+  });
+  const GUI = walk(path.join(REPO, 'src/gui')).map((f) => path.relative(REPO, f));
   const offenders = [];
   for (const f of GUI) {
     const src = fs.readFileSync(path.join(REPO, f), 'utf8');
