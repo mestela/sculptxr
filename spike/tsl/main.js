@@ -22,6 +22,46 @@ const fail = (e) => { hud('err').textContent = String(e && e.stack || e); consol
 
 let renderer, scene, camera, group;
 let frames = 0, acc = 0, last = performance.now();
+let readoutCtx = null, readoutTex = null, lastLog = 0;
+// Spheres and segments. Roughly 200k / 420k / 1.3M triangles — a modest sculpt, a heavy one,
+// and past anything matt works at, so the curve is visible rather than a single point.
+const WEIGHTS = [[24, 64], [48, 64], [48, 96]];
+let weight = 0;
+
+// THE NUMBERS HAVE TO BE IN THE HEADSET. The HTML HUD is a DOM overlay and immersive mode does
+// not composite it, so the first version of this page could only be read on the desktop -- for
+// a test whose whole purpose is the device. matt: "i couldn't see any numbers when i went into
+// vr." A canvas texture welded in front of the camera is the only readout that survives.
+function makeReadout() {
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 256;
+  readoutCtx = cv.getContext('2d');
+  readoutTex = new THREE.CanvasTexture(cv);
+  readoutTex.colorSpace = THREE.SRGBColorSpace;
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.4, 0.2),
+    // Basic, not a node material: this is instrumentation and must not be affected by the
+    // thing being measured.
+    new THREE.MeshBasicMaterial({ map: readoutTex, transparent: true, depthTest: false })
+  );
+  plane.position.set(0, -0.12, -0.6);   // below the eyeline, out of the way of the scene
+  plane.renderOrder = 999;
+  camera.add(plane);
+  // Children of a camera only render if the camera is in the graph.
+  scene.add(camera);
+}
+
+function drawReadout(lines) {
+  if (!readoutCtx) return;
+  const c = readoutCtx;
+  c.clearRect(0, 0, 512, 256);
+  c.fillStyle = 'rgba(10,10,18,0.82)';
+  c.fillRect(0, 0, 512, 256);
+  c.font = '600 30px ui-monospace, Menlo, monospace';
+  c.fillStyle = '#9fd0ff';
+  lines.forEach((t, i) => c.fillText(t, 18, 46 + i * 40));
+  readoutTex.needsUpdate = true;
+}
 
 async function init() {
   scene = new THREE.Scene();
@@ -63,10 +103,14 @@ async function init() {
   });
 
   hud('xr').onclick = enterXR;
-  hud('load').onclick = () => build(48, 96);   // ~1.3M tris
+  hud('load').onclick = () => {
+    weight = (weight + 1) % WEIGHTS.length;
+    build(...WEIGHTS[weight]);
+  };
 
   // On the headset the only way in is the console over remote debugging, so the pieces worth
   // poking are reachable by name.
+  makeReadout();
   window.__tsl = { renderer, scene, camera, group, build, THREE };
   renderer.setAnimationLoop(tick);
 }
@@ -110,6 +154,14 @@ async function enterXR() {
     const session = await navigator.xr.requestSession('immersive-vr', {
       optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
     });
+    // THE SCENE WEIGHT HAS TO BE CHANGEABLE FROM INSIDE. The Heavier button is DOM, so in
+    // immersive mode it is as unreachable as the HUD was -- and a spike you cannot vary on the
+    // device only measures whatever it happened to boot with. Trigger cycles the presets.
+    session.addEventListener('selectstart', () => {
+      weight = (weight + 1) % WEIGHTS.length;
+      const [n, seg] = WEIGHTS[weight];
+      build(n, seg);
+    });
     await renderer.xr.setSession(session);
     hud('err').textContent = '';
   } catch (e) { fail(e); }
@@ -132,6 +184,21 @@ function tick() {
     const info = renderer.info.render;
     hud('draws').textContent = info.drawCalls;
     hud('tris').textContent = info.triangles.toLocaleString();
+
+    const xr = renderer.xr.isPresenting;
+    drawReadout([
+      `${ms.toFixed(2)} ms   ${(1000 / ms).toFixed(0)} fps`,
+      `${info.drawCalls} draws`,
+      `${(info.triangles / 1000).toFixed(0)}k tris`,
+      xr ? 'XR  (trigger = next weight)' : 'desktop',
+    ]);
+    // Once a second to the console as well, because that is the one place a number can be
+    // COPIED out of a headset -- see the diagnostics rule.
+    if (now - lastLog > 1000) {
+      lastLog = now;
+      console.log(`[tsl] ${ms.toFixed(2)}ms ${(1000 / ms).toFixed(0)}fps `
+        + `draws=${info.drawCalls} tris=${info.triangles} xr=${xr}`);
+    }
     frames = 0; acc = 0;
   }
 }
