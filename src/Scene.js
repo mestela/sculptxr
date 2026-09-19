@@ -2193,10 +2193,29 @@ class Scene {
     //   window._vrMinimalTest = 0  → normal rendering (default)
     //   window._vrMinimalTest = 1  → hide meshes + cursors + menus + controllers
     //   window._vrMinimalTest = 2  → skip renderer.render() entirely (raw empty frames)
+    //   window._vrMinimalTest = 3  → render ONE node-material sphere and nothing else
+    //
+    // LEVEL 3 EXISTS TO SPLIT ONE QUESTION IN HALF. The TSL spike renders correct stereo on
+    // this device; the app, same renderer, does not -- "as if a single view is just being
+    // spread across the 2 displays". Every explanation for that has been eliminated against
+    // device output (see spike/tsl/FINDINGS.md), so the remaining move is to bisect rather
+    // than theorise again.
+    //
+    // This renders the spike's scene through the APP's renderer, canvas, pixel ratio and XR
+    // session. Correct stereo here means the renderer setup is sound and the fault is in what
+    // the app draws or the state it leaves behind. Broken stereo here means the fault is in
+    // the setup itself -- canvas, size, pixel ratio, or how the session was entered -- and the
+    // scene contents are irrelevant.
     if (window._vrMinimalTest && isVRPresenting) {
       const lvl = window._vrMinimalTest;
       if (lvl >= 2) {
         // Level 2: submit nothing at all — let the XR compositor decide what to show
+        return;
+      }
+      if (lvl === 3) {
+        this._renderer.setClearColor(0x101018, 1);
+        this._renderer.render(this._stereoTestScene, (this._renderer.xr?.isPresenting
+          && this._isNodeRenderer) ? this._renderer.xr.getCamera() : this._camera.getThreeCamera());
         return;
       }
       // Level 1: hide every scene object, render only clear colour
@@ -2451,6 +2470,19 @@ class Scene {
       // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
       // because constructing one mid-session is the single real fault this renderer has.
       NodeMaterials.enable(WGPU);
+      // The level-3 bisection scene, built HERE so its material exists before any session --
+      // the one hard rule this renderer has. Three spheres at different depths, because a
+      // stereo fault is easiest to see on something with parallax.
+      {
+        const sc = this._stereoTestScene = new WGPU.Scene();
+        const geo = new WGPU.SphereGeometry(0.15, 32, 16);
+        const mat = new WGPU.MeshNormalNodeMaterial();
+        for (const z of [-0.6, -1.2, -2.4]) {
+          const mesh = new WGPU.Mesh(geo, mat);
+          mesh.position.set(z * 0.15, 1.4, z);
+          sc.add(mesh);
+        }
+      }
       console.log('[renderer] WebGPURenderer, backend='
         + (this._renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL (forced)'));
     } else {
