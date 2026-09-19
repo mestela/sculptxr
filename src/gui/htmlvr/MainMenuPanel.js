@@ -2769,6 +2769,15 @@ export function buildSectionHTML_rendering(main) {
         ${buildSelectHTML('mm-env-select', envOpts, ShaderPBR?.idEnv ?? 0)}
         <!-- Reserves the value column a slider row has, so the control ends where a slider does. -->
         <span class="mm-val"></span>
+      </div>
+      ${/* HOW MUCH THE ENVIRONMENT CONTRIBUTES, separately from exposure. Exposure multiplies
+           the IBL and the lamps together so the ratio never moves; this scales only the IBL,
+           and at 0 the scene is lit by its own lights alone -- which is the only way to see
+           what a point light is actually doing. */ ''}
+      <div class="mm-row">
+        <span class="mm-lbl">Env Intensity</span>
+        <input type="range" id="mm-env-intensity" min="0" max="200" step="1" value="${Math.round((getOptionsURL().envIntensity ?? 1) * 100)}">
+        <span class="mm-val" id="mm-env-intensity-val">${Math.round((getOptionsURL().envIntensity ?? 1) * 100)}%</span>
       </div>` : ''}
       ${shaderType === Enums.Shader.MATCAP ? `<div class="mm-row">
         <span class="mm-lbl">Matcap</span>
@@ -4799,6 +4808,17 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     }
     lightRepaintFn();
   });
+
+  // LIVE VALUE WRITTEN DIRECTLY, PERSIST DEBOUNCED. saveOption only updates the runtime
+  // snapshot when its debounce fires, so relying on it alone would leave the viewport a third
+  // of a second behind the thumb — on the one slider whose whole purpose is watching the
+  // lighting change as you drag.
+  wireSlider(el.querySelector('#mm-env-intensity'), el.querySelector('#mm-env-intensity-val'), (v) => {
+    const f = v / 100;
+    getOptionsURL().envIntensity = f;
+    getOptionsURL.saveOption('envIntensity', f, 300);
+    main.render?.();
+  }, (v) => `${v}%`, sliderDirtyFn);
 
   wireSlider(el.querySelector('#mm-shadow-opacity'), el.querySelector('#mm-shadow-opacity-val'), (v) => {
     main.setShadowOpacity?.(v / 100);

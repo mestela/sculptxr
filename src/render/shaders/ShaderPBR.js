@@ -63,7 +63,7 @@ ShaderPBR.exposure = opts.exposure === undefined ? ShaderPBR.environments[Shader
 ShaderPBR.uniforms = {};
 ShaderPBR.attributes = {};
 
-ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uExposure', 'uSPH', 'uEnvSize',
+ShaderPBR.uniformNames = ['uIblTransform', 'uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uExposure', 'uEnvIntensity', 'uSPH', 'uEnvSize',
   // The mesh's own base-colour map. uTexture0 is the ENVIRONMENT and always has been, so a
   // second sampler is the only place an imported albedo image can go. Bound per mesh by
   // ShaderManager.updateUniforms, onto a material that mesh owns -- see getMaterialFor.
@@ -137,6 +137,10 @@ ShaderPBR.fragment = [
   'uniform vec3 uLightCol[MAX_LIGHTS];',
   'uniform float uLightRange[MAX_LIGHTS];',
   'uniform int uNbLights;',
+  // SEPARATE FROM uExposure, WHICH SCALES THE LIGHTS TOO. Turning the environment down is the
+  // only way to see what a point light is actually contributing, and exposure cannot do it --
+  // it multiplies the IBL and the lamps together, so the ratio never changes.
+  'uniform float uEnvIntensity;',
   'uniform float uAlpha;',
   ShaderBase.strings.fragColorUniforms,
   ShaderBase.strings.fragColorFunction,
@@ -213,7 +217,7 @@ ShaderPBR.fragment = [
   '  vec3 albedo = linColor * (1.0 - metallic) * (1.0 - uTransmission);',
   '  vec3 specular = mix( vec3(0.04), linColor, metallic);',
   '',
-  '  vec3 color = uExposure * computeIBL_UE4( normal, -normalize(vVertex), albedo, roughness, specular );',
+  '  vec3 color = uExposure * uEnvIntensity * computeIBL_UE4( normal, -normalize(vVertex), albedo, roughness, specular );',
   '',
   // THE SCENE'S LIGHTS, added on top of the environment rather than replacing it: the ambient
   // still fills the shadow side, the lights give the form and the highlights.
@@ -325,6 +329,9 @@ ShaderPBR.updateUniforms = function (mesh, main) {
   gl.uniform1f(uniforms.uRoughness, mesh.getRoughness());
   gl.uniform1f(uniforms.uMetallic, mesh.getMetallic());
   gl.uniform1f(uniforms.uExposure, ShaderPBR.exposure);
+  // Read live rather than cached: the slider writes the option and the next frame picks it up.
+  var _envI = getOptionsURL().envIntensity;
+  gl.uniform1f(uniforms.uEnvIntensity, Number.isFinite(_envI) ? _envI : 1.0);
 
   var env = ShaderPBR.environments[ShaderPBR.idEnv];
   gl.uniform3fv(uniforms.uSPH, env.sph);
