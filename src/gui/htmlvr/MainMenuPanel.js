@@ -2535,6 +2535,19 @@ export function buildSectionHTML_scene(main) {
       .toString(16).padStart(2, '0')).join('');
   const lightHTML = !_lit ? '' : `
     <div class="mm-section-title">Light</div>
+    ${/* TYPE FIRST, because it decides which of the rows below mean anything. Falloff is
+         distance attenuation, which a directional light does not have; Cone belongs to a spot
+         alone. Hidden rather than dimmed: a row that cannot do anything is noise, and the
+         section is short enough that nothing jumps far. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Type</span>
+      <div class="mm-choice-grid cols-3" style="flex:1">
+        <button class="mm-choice${(_lit._lightType || 0) === 0 ? ' active' : ''}" data-light-type="0">Point</button>
+        <button class="mm-choice${(_lit._lightType || 0) === 1 ? ' active' : ''}" data-light-type="1">Spot</button>
+        <button class="mm-choice${(_lit._lightType || 0) === 2 ? ' active' : ''}" data-light-type="2">Sun</button>
+      </div>
+      <span class="mm-val"></span>
+    </div>
     <div class="mm-row">
       <span class="mm-lbl">Intensity</span>
       <input type="range" id="mm-light-int" min="0" max="2000" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
@@ -2543,11 +2556,18 @@ export function buildSectionHTML_scene(main) {
     ${/* FALLOFF, not "range": it is the distance at which the light is half as bright, not a
          hard cutoff -- the attenuation in ShaderPBR never reaches zero. Sized from the scene
          diagonal when the light was made, so the useful span is relative to that. */ ''}
+    ${(_lit._lightType || 0) !== 2 ? `
     <div class="mm-row">
       <span class="mm-lbl">Falloff</span>
       <input type="range" id="mm-light-range" min="1" max="${Math.max(50, Math.round((_lit._lightRange ?? 50) * 4))}" step="1" value="${Math.round(_lit._lightRange ?? 50)}">
       <span class="mm-val" id="mm-light-range-val">${Math.round(_lit._lightRange ?? 50)}</span>
-    </div>
+    </div>` : ''}
+    ${(_lit._lightType || 0) === 1 ? `
+    <div class="mm-row">
+      <span class="mm-lbl">Cone</span>
+      <input type="range" id="mm-light-cone" min="5" max="89" step="1" value="${Math.round(_lit._lightConeDeg ?? 35)}">
+      <span class="mm-val" id="mm-light-cone-val">${Math.round(_lit._lightConeDeg ?? 35)}&deg;</span>
+    </div>` : ''}
     ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
          colour control in this app that survives being rasterised into a VR panel, and the
          Scene section renders there too. Swatch opens it, OK closes it. */ ''}
@@ -4399,6 +4419,20 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       L._lightRange = v;
       main.render?.();
     }, (v) => String(v), null);
+    wireSlider(el.querySelector('#mm-light-cone'), el.querySelector('#mm-light-cone-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._lightConeDeg = v;
+      main.render?.();
+    }, (v) => `${v}\u00B0`, null);
+    // A REBUILD, not a repaint: changing the type changes which rows exist.
+    el.querySelectorAll('[data-light-type]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const L = _litSel(); if (!L) return;
+        L._lightType = parseInt(btn.dataset.lightType, 10);
+        main.render?.();
+        repaintFn?.();
+      });
+    });
 
     const _toHex = (rgb) => '#' + [0, 1, 2].map((i) =>
       Math.max(0, Math.min(255, Math.round(rgb[i] * 255))).toString(16).padStart(2, '0')).join('');

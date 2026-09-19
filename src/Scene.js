@@ -3131,6 +3131,12 @@ class Scene {
     mesh.isPickable = false;   // the sculpt brush skips it; still selectable by ray and outliner
     mesh._lightColor     = [1.0, 0.98, 0.95];
     mesh._lightIntensity = 1.0;
+    // 0 point, 1 spot, 2 directional. ONE ENTITY WITH A TYPE, not three classes: a light is
+    // already an ordinary scene object and the type is a property of it, so changing your mind
+    // keeps the placement, the parenting and the keys. Aim is the locator's local -Z, so the
+    // ordinary gizmo aims a spot with no special mode.
+    mesh._lightType   = 0;
+    mesh._lightConeDeg = 35;   // outer half-angle; the inner edge is derived in the shader upload
     // RANGE FROM THE SCENE, not a constant. Units here are arbitrary and large -- the camel is
     // about 180 across -- so a fixed range would light either nothing or everything depending on
     // the model. Half the scene's diagonal puts the falloff somewhere useful on the first frame,
@@ -4957,6 +4963,8 @@ class Scene {
       copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
       copy._lightIntensity = src._lightIntensity;
       copy._lightRange     = src._lightRange;
+      copy._lightType      = src._lightType;
+      copy._lightConeDeg   = src._lightConeDeg;
       this.decorateLight(copy);
     } else {
       this.decorateNull(copy);

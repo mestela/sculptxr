@@ -76,7 +76,7 @@ ShaderPBR.uniformNames = ['uTexture0', 'uAlbedo', 'uRoughness', 'uMetallic', 'uE
   // Tangent-space normal map. No tangent ATTRIBUTE goes with it -- see cotangentFrame.
   'uNormalMap', 'uHasNormalMap', 'uNormalScale',
   // Scene point lights. Positions arrive in VIEW space; see updateUniforms.
-  'uLightPos', 'uLightCol', 'uLightRange', 'uNbLights'];
+  'uLightPos', 'uLightCol', 'uLightRange', 'uLightDir', 'uLightCone', 'uLightType', 'uNbLights'];
 Array.prototype.push.apply(ShaderPBR.uniformNames, ShaderBase.uniformNames.commonUniforms);
 
 ShaderPBR.vertex = [
@@ -136,6 +136,13 @@ ShaderPBR.fragment = [
   'uniform vec3 uLightPos[MAX_LIGHTS];',
   'uniform vec3 uLightCol[MAX_LIGHTS];',
   'uniform float uLightRange[MAX_LIGHTS];',
+  // TYPE, DIRECTION AND CONE. 0 = point, 1 = spot, 2 = directional. A point ignores the last
+  // two; a directional ignores position and distance entirely. Kept as three small arrays
+  // rather than packed cleverly into the spare lanes of the existing ones, because the next
+  // person reading the loop should not have to decode it.
+  'uniform vec3 uLightDir[MAX_LIGHTS];',
+  'uniform vec2 uLightCone[MAX_LIGHTS];',   // (cos outer, cos inner)
+  'uniform float uLightType[MAX_LIGHTS];',
   'uniform int uNbLights;',
   // SEPARATE FROM uExposure, WHICH SCALES THE LIGHTS TOO. Turning the environment down is the
   // only way to see what a point light is actually contributing, and exposure cannot do it --
@@ -233,15 +240,33 @@ ShaderPBR.fragment = [
   '    if (i >= uNbLights) break;',
   // viewMatrix is three's OWN uniform, injected per eye on a ShaderMaterial -- so it is not
   // declared above, and must not be: redeclaring it fails to compile.
-  '    vec3 toL = (viewMatrix * vec4(uLightPos[i], 1.0)).xyz - vVertex;',
-  '    float dist2 = dot(toL, toL);',
-  '    vec3 L = toL * inversesqrt(max(dist2, 1e-12));',
+  // The direction is rotated, not transformed: it is a direction, so the view translation
+  // must not touch it.
+  '    vec3 Ldir = normalize(mat3(viewMatrix) * uLightDir[i]);',
+  '    vec3 L;',
+  '    float att;',
+  '    if (uLightType[i] > 1.5) {',
+  // DIRECTIONAL: no position and no distance. The sun does not get closer.
+  '      L = -Ldir;',
+  '      att = 1.0;',
+  '    } else {',
+  '      vec3 toL = (viewMatrix * vec4(uLightPos[i], 1.0)).xyz - vVertex;',
+  '      float dist2 = dot(toL, toL);',
+  '      L = toL * inversesqrt(max(dist2, 1e-12));',
   // Falloff that a person placing a light can predict: full at the light, half at its range,
   // smooth everywhere and never zero. Raw inverse-square is correct and unusable here -- scene
   // units are arbitrary and large (this camel is ~180 across), so it would want intensities in
   // the thousands and blow out the moment you nudged the light closer.
-  '    float r = max(uLightRange[i], 1e-4);',
-  '    float att = 1.0 / (1.0 + dist2 / (r * r));',
+  '      float r = max(uLightRange[i], 1e-4);',
+  '      att = 1.0 / (1.0 + dist2 / (r * r));',
+  '      if (uLightType[i] > 0.5) {',
+  // SPOT: the same point light, multiplied by how far inside the cone the surface sits.
+  // smoothstep from the outer angle to the inner one gives the soft edge for free, and is 0
+  // outside and 1 in the hot centre.
+  '        float cd = dot(-L, Ldir);',
+  '        att *= smoothstep(uLightCone[i].x, uLightCone[i].y, cd);',
+  '      }',
+  '    }',
   '    float NdL = max(dot(normal, L), 0.0);',
   '    if (NdL <= 0.0) continue;',
   '    vec3 H = normalize(L + V);',
@@ -296,6 +321,9 @@ ShaderPBR.fragment = [
 var uLightPosTmp = new Float32Array(MAX_LIGHTS * 3);
 var uLightColTmp = new Float32Array(MAX_LIGHTS * 3);
 var uLightRangeTmp = new Float32Array(MAX_LIGHTS);
+var uLightDirTmp = new Float32Array(MAX_LIGHTS * 3);
+var uLightConeTmp = new Float32Array(MAX_LIGHTS * 2);
+var uLightTypeTmp = new Float32Array(MAX_LIGHTS);
 // ONCE PER FRAME, NOT ONCE PER MESH. updateUniforms runs in a loop over every mesh, and none of
 // the light data depends on which mesh is being drawn -- so a scene with 30 meshes and 4 lights
 // was doing 120 updateMatrixWorld calls a frame to compute the same four positions.
@@ -362,6 +390,12 @@ ShaderPBR.updateUniforms = function (mesh, main) {
       ltm.updateMatrixWorld(true);
       var e = ltm.matrixWorld.elements;
       uLightPosTmp[li * 3] = e[12]; uLightPosTmp[li * 3 + 1] = e[13]; uLightPosTmp[li * 3 + 2] = e[14];
+      // AIM IS THE LOCAL -Z, the same convention three's own spot and directional lights use,
+      // so rotating the locator with the ordinary gizmo aims the light. Normalised because the
+      // locator carries a scale.
+      var dx = -e[8], dy = -e[9], dz = -e[10];
+      var dl = Math.hypot(dx, dy, dz) || 1;
+      uLightDirTmp[li * 3] = dx / dl; uLightDirTmp[li * 3 + 1] = dy / dl; uLightDirTmp[li * 3 + 2] = dz / dl;
     } else {
       var lm = lights[li].getModelSpaceMatrix ? lights[li].getModelSpaceMatrix() : lights[li].getMatrix();
       uLightPosTmp[li * 3] = lm[12]; uLightPosTmp[li * 3 + 1] = lm[13]; uLightPosTmp[li * 3 + 2] = lm[14];
@@ -372,6 +406,14 @@ ShaderPBR.updateUniforms = function (mesh, main) {
     uLightColTmp[li * 3 + 1] = lc[1] * inten;
     uLightColTmp[li * 3 + 2] = lc[2] * inten;
     uLightRangeTmp[li] = lights[li]._lightRange === undefined ? 50 : lights[li]._lightRange;
+    uLightTypeTmp[li] = lights[li]._lightType || 0;
+    // COSINES, not degrees: the shader compares against dot products, and converting per pixel
+    // for a value that changes when a slider moves would be work done in the wrong place.
+    // Inner is a fixed fraction of outer -- a softness of its own is a control nobody has
+    // asked for yet, and the edge has to be soft or a spot looks like a stencil.
+    var _ca = (lights[li]._lightConeDeg === undefined ? 35 : lights[li]._lightConeDeg) * Math.PI / 180;
+    uLightConeTmp[li * 2] = Math.cos(_ca);
+    uLightConeTmp[li * 2 + 1] = Math.cos(_ca * 0.75);
   }
   // The tail is zeroed rather than left stale: the loop is bounded by uNbLights, but a driver
   // that unrolls it can still read past and a leftover position from a deleted light is a
@@ -380,6 +422,9 @@ ShaderPBR.updateUniforms = function (mesh, main) {
     uLightPosTmp[lz * 3] = uLightPosTmp[lz * 3 + 1] = uLightPosTmp[lz * 3 + 2] = 0;
     uLightColTmp[lz * 3] = uLightColTmp[lz * 3 + 1] = uLightColTmp[lz * 3 + 2] = 0;
     uLightRangeTmp[lz] = 1;
+    uLightTypeTmp[lz] = 0;
+    uLightConeTmp[lz * 2] = -1; uLightConeTmp[lz * 2 + 1] = -1;
+    uLightDirTmp[lz * 3] = 0; uLightDirTmp[lz * 3 + 1] = 0; uLightDirTmp[lz * 3 + 2] = -1;
   }
   }
   // The UPLOAD still happens for every mesh -- each one is a separate draw with its own
@@ -388,6 +433,9 @@ ShaderPBR.updateUniforms = function (mesh, main) {
   gl.uniform3fv(uniforms.uLightPos, uLightPosTmp);
   gl.uniform3fv(uniforms.uLightCol, uLightColTmp);
   gl.uniform1fv(uniforms.uLightRange, uLightRangeTmp);
+  gl.uniform3fv(uniforms.uLightDir, uLightDirTmp);
+  gl.uniform2fv(uniforms.uLightCone, uLightConeTmp);
+  gl.uniform1fv(uniforms.uLightType, uLightTypeTmp);
 
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, ShaderPBR.getOrCreateEnvironment(gl, main, env));

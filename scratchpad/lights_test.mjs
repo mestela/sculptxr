@@ -137,6 +137,46 @@ check('...read off the three-side matrixWorld, forced current',
     && /var e = ltm\.matrixWorld\.elements;/.test(PBR),
   'this runs before renderer.render(), so a light moved this frame would otherwise lag one');
 
+// ── light TYPES: one entity, a type property ────────────────────────────────────────
+//
+// Not three classes. A light is already an ordinary scene object, so the type is a property of
+// it and changing your mind keeps the placement, the parenting and the keys.
+check('a light has a type and a cone, defaulting to point',
+  /mesh\._lightType   = 0;/.test(SCENE) && /mesh\._lightConeDeg = 35;/.test(SCENE));
+check('...which duplicate carries across',
+  /copy\._lightType      = src\._lightType;/.test(SCENE)
+    && /copy\._lightConeDeg   = src\._lightConeDeg;/.test(SCENE));
+// Aim is the locator's own -Z, the convention three's spot and directional lights use, so the
+// ordinary transform gizmo aims a spot with no special mode.
+check('aim is the local -Z, normalised against the locator\'s scale',
+  /var dx = -e\[8\], dy = -e\[9\], dz = -e\[10\];/.test(PBR)
+    && /var dl = Math\.hypot\(dx, dy, dz\) \|\| 1;/.test(PBR));
+check('a directional light ignores position and distance',
+  /if \(uLightType\[i\] > 1\.5\) \{/.test(PBR) && /      L = -Ldir;/.test(PBR)
+    && /      att = 1\.0;/.test(PBR),
+  'a sun does not get brighter as you walk towards it');
+check('a spot multiplies the point falloff by a SOFT cone',
+  /float cd = dot\(-L, Ldir\);/.test(PBR)
+    && /att \*= smoothstep\(uLightCone\[i\]\.x, uLightCone\[i\]\.y, cd\);/.test(PBR),
+  'a hard edge reads as a stencil, not a lamp');
+// Degrees are a UI unit; the shader compares dot products.
+check('...with the cone stored as cosines, converted once on upload',
+  /uLightConeTmp\[li \* 2\] = Math\.cos\(_ca\);/.test(PBR)
+    && /uLightConeTmp\[li \* 2 \+ 1\] = Math\.cos\(_ca \* 0\.75\);/.test(PBR));
+// The direction is a DIRECTION: the view translation must not touch it.
+check('...and the direction is rotated into view space, not transformed',
+  /vec3 Ldir = normalize\(mat3\(viewMatrix\) \* uLightDir\[i\]\);/.test(PBR));
+// The mock gl swallows what it does not implement, which is how the IBL binding was dead for
+// months. Every array uniform the light block uploads needs an entry.
+check('the mocked gl implements every array uniform the lights upload',
+  /uniform3fv: function/.test(SHMGR) && /uniform2fv: function/.test(SHMGR)
+    && /uniform1fv: function/.test(SHMGR),
+  'a missing entry here is silent — see the TEXTURE0 story');
+// Rows that cannot do anything are hidden, not dimmed.
+check('the panel hides Falloff for a sun and shows Cone only for a spot',
+  /\$\{\(_lit\._lightType \|\| 0\) !== 2 \? `/.test(PANEL)
+    && /\$\{\(_lit\._lightType \|\| 0\) === 1 \? `/.test(PANEL));
+
 // Added to the IBL, not replacing it: the ambient still fills the shadow side.
 check('lights add to the environment rather than replacing it',
   /color \+= uExposure \* uLightCol\[i\] \* att \* NdL \* \(albedo \* 0\.31830989 \+ spec\);/.test(PBR));
@@ -146,7 +186,9 @@ check('...using GGX, the distribution the IBL already approximates',
 // Raw inverse-square is correct and unusable at this scale: it would want intensities in the
 // thousands and blow out the moment the light was nudged closer.
 check('...with a falloff a person placing a light can predict',
-  /float att = 1\.0 \/ \(1\.0 \+ dist2 \/ \(r \* r\)\);/.test(PBR),
+  // `att` is declared before the type branch now, so this is an assignment rather than a
+  // declaration -- the arithmetic is the thing being pinned, not the storage class.
+  /\batt = 1\.0 \/ \(1\.0 \+ dist2 \/ \(r \* r\)\);/.test(PBR),
   'full at the light, half at its range, smooth everywhere, never zero');
 
 // The mock gl swallows anything it does not implement — that is exactly how the environment map
