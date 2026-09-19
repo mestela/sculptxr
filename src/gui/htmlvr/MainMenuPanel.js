@@ -1821,6 +1821,7 @@ function isAncestorOf(a, b) {
 }
 
 let _wfPickerOpen = false;
+let _litPickerOpen = false;   // the selected light's colour wheel
 // The paint wheel needs neither an open flag nor a revision: it is always there, so its markup
 // never changes and there is nothing for the rebuild cache to miss. Both existed briefly, for the
 // swatch-and-OK version this replaced.
@@ -2529,6 +2530,9 @@ export function buildSectionHTML_scene(main) {
   // Only shown when exactly one light is selected: these are per-object, and a section that
   // appears empty is worse than one that is not there.
   const _lit = (singleSel && singleSel._isLight) ? singleSel : null;
+  const _litHex = '#' + [0, 1, 2].map((i) =>
+    Math.max(0, Math.min(255, Math.round(((_lit?._lightColor ?? [1, 1, 1])[i]) * 255)))
+      .toString(16).padStart(2, '0')).join('');
   const lightHTML = !_lit ? '' : `
     <div class="mm-section-title">Light</div>
     <div class="mm-row">
@@ -2536,13 +2540,28 @@ export function buildSectionHTML_scene(main) {
       <input type="range" id="mm-light-int" min="0" max="500" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
       <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(2)}</span>
     </div>
-    ${/* Range is in scene units and was sized from the scene diagonal when the light was made,
-         so the useful span is relative to that rather than to any fixed number. */ ''}
+    ${/* FALLOFF, not "range": it is the distance at which the light is half as bright, not a
+         hard cutoff -- the attenuation in ShaderPBR never reaches zero. Sized from the scene
+         diagonal when the light was made, so the useful span is relative to that. */ ''}
     <div class="mm-row">
-      <span class="mm-lbl">Range</span>
+      <span class="mm-lbl">Falloff</span>
       <input type="range" id="mm-light-range" min="1" max="${Math.max(50, Math.round((_lit._lightRange ?? 50) * 4))}" step="1" value="${Math.round(_lit._lightRange ?? 50)}">
       <span class="mm-val" id="mm-light-range-val">${Math.round(_lit._lightRange ?? 50)}</span>
     </div>
+    ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
+         colour control in this app that survives being rasterised into a VR panel, and the
+         Scene section renders there too. Swatch opens it, OK closes it. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Colour</span>
+      <button id="mm-light-swatch" title="Light colour"
+        style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${_litHex};border:1px solid #45475a"></button>
+      <span class="mm-val"></span>
+    </div>
+    ${_litPickerOpen ? `
+    <div class="mm-row" style="justify-content:center">
+      ${buildColorWheelHTML({ prefix: 'mm-light-cw', size: 150 })}
+    </div>
+    <button class="mm-action-btn" id="mm-light-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
 `;
 
   return `
@@ -4380,6 +4399,36 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       L._lightRange = v;
       main.render?.();
     }, (v) => String(v), null);
+
+    const _toHex = (rgb) => '#' + [0, 1, 2].map((i) =>
+      Math.max(0, Math.min(255, Math.round(rgb[i] * 255))).toString(16).padStart(2, '0')).join('');
+    el.querySelector('#mm-light-swatch')?.addEventListener('click', () => {
+      _litPickerOpen = true; repaintFn?.();
+    });
+    el.querySelector('#mm-light-cw-ok')?.addEventListener('click', () => {
+      _litPickerOpen = false; repaintFn?.();
+    });
+    const _cwRoot = el.querySelector('#mm-light-cw');
+    if (_cwRoot) {
+      // Disposed first: this section rebuilds on every repaint, and an old wheel keeps
+      // document-level pointermove/pointerup listeners that would otherwise pile up.
+      el._litWheel?.dispose?.();
+      el._litWheel = new ColorWheel(_cwRoot, {
+        prefix: 'mm-light-cw', size: 150,
+        get: () => (_litSel()?._lightColor ?? [1, 1, 1]).slice(0, 3),
+        set: (rgb) => {
+          const L = _litSel(); if (!L) return;
+          L._lightColor = [rgb[0], rgb[1], rgb[2]];
+          // The ray gizmo is drawn in the light's own colour, so it has to be repainted or it
+          // starts lying. This is the first caller refreshLightDecoration has ever had.
+          main.refreshLightDecoration?.(L);
+          const sw = el.querySelector('#mm-light-swatch');
+          if (sw) sw.style.background = _toHex(rgb);
+          main.render?.();
+        },
+        render: () => main.render?.(),
+      });
+    }
   }
 
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;

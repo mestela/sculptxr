@@ -803,7 +803,12 @@ export function groupSectionTitles(root, opts) {
     // onto nothing. Left exactly as they were.
     if (!body.children.length) { title.dataset.sectionWrapped = '1'; continue; }
 
-    const open = groupOpen(key, dflt);
+    // A TITLE MAY DEFAULT OPEN EVEN WHERE THE PAGE DEFAULTS CLOSED. `openTitles` names the ones
+    // that are the point of the page rather than an option on it -- the Scene tab's outliner is
+    // the thing you came to the tab for, and opening it by hand every session is a tax.
+    // Still only a DEFAULT: groupOpen's stored state wins once you have collapsed it yourself.
+    const _dfltHere = dflt || (o.openTitles ? o.openTitles.includes(text) : false);
+    const open = groupOpen(key, _dfltHere);
     if (!open) body.classList.add('collapsed');
 
     const head = document.createElement('button');

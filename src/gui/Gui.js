@@ -1210,7 +1210,7 @@ class Gui {
     // EVERY desktop section passes through here, which is why the group wiring lives here and
     // not in each builder: the sidebar renders the same shared markup the VR panels do, and it
     // was the one of the three roots with nothing listening.
-    if (uiReorg()) groupSectionTitles(panelEl, { defaultOpen: false });
+    if (uiReorg()) groupSectionTitles(panelEl, { defaultOpen: false, openTitles: ['Outliner'] });
     wireGroups(panelEl, () => {});
     panelEl.insertAdjacentHTML('afterbegin', sectionHeaderHTML(sectionId));
     panelEl.querySelector('#mm-section-pin-btn')
