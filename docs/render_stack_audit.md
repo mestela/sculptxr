@@ -151,9 +151,35 @@ It is also a (small) constant cost on every tool change, in VR and on desktop al
    after: `_getWidgets` calls per tool change went 2 → 0, popups still draw. `src/gui/vr/` is
    now runtime-unreachable, which is what step 2 needs — and the per-tool-change waste is gone
    on every platform.
-2. Migrate popups (`_guiPopup`) off `GuiXR`.
-3. Delete `GuiXR.js`, keeping `_uiSettings` — `Scene.js:2078-2189` reads stylus length, offset
-   and tilt out of it, which is live functionality and must land somewhere first.
+2. ~~Migrate popups off GuiXR.~~ **NOT NEEDED — they were already migrated.** The file menu,
+   browser saves and numpads all run on the HTML system (`VrNumpad.js`, `VrConfirm.js`,
+   `VrKeyboard.js`). GuiXR's own overlay system has no openers left: both `openOverlay` calls
+   lived inside the widget code deleted in step 1b. Verified in the browser with all three
+   GuiXR instances hooked — zero calls, all overlays null.
+3. ~~Rehome `_uiSettings`.~~ **DONE 2026-09-19.** It was a write-through CACHE in front of
+   `getOptionsURL` — a constructor snapshot, with MainMenuPanel already pairing every write
+   with a `saveOption`. ~50 sites repointed at the store. Two settings (`grabGain`,
+   `triggerCurve`) had no options fallback and so silently reset on every reload; both persist
+   now. Confirmed on GalaxyXR and Vision Pro.
+4. **Delete GuiXR.js and VRMenu.js.** Remaining, all provably dead but not yet removed:
+
+   | in `Scene.js` | count |
+   |---|---|
+   | `_isVisible` checks | 18 |
+   | `_needsRedraw` pokes | 14 |
+   | construction / `new VRMenu` | 12 |
+   | `closeOverlay()` (no-op) | 8 |
+   | `_legacyVrCanvasEnabled()` branches | 8 |
+   | scroll / `_maxScroll` | 7 |
+   | `updateWidget` / `updateRadiusWidget` | 4 |
+
+   Plus 56 `_vrMenu` / `_vrMiniHUD` / `_vrPopup` references and 9 in `SculptGL.js`
+   (`toggleMenu`, `nextTab`, the emergency-init `onClick`). `VRMenu.js` goes with them —
+   nothing else constructs it. `GuiXR.js` is ~7000 lines.
+
+   **This is the riskiest edit of the sequence**: ~150 changes inside the file that owns VR
+   hit-testing. Every path is dead, but it deserves its own run and its own headset pass rather
+   than being tacked onto a cleanup.
 
 **Lesson for the rest of this refactor:** a comment saying something is retired is a claim about
 intent, not a measurement. Hook the function and call the path.
