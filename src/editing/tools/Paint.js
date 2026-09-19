@@ -321,9 +321,6 @@ class Paint extends SculptBase {
         // Turn off UI pick color ONLY if it was activated by UI
         if (this._pickColor) {
           this._pickColor = false;
-          if (this._main.getGui() && this._main.getGui()._guiXR) {
-            this._main.getGui()._guiXR._needsRedraw = true;
-          }
         }
       }
       this._lastPickPressed = isSampling;

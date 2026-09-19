@@ -49,7 +49,6 @@ class GuiFiles {
         if (cached) save.value.galleryThumb = cached;
       }
 
-      if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
     }).catch(err => console.error("Failed to load browser saves:", err));
   }
 

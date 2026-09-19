@@ -91,7 +91,6 @@ class AnimationRegistry {
     // two-second (48 frame) default.
     window._animStatusText = 'Punch In Ready';
     this.lastCaptureTime = -1;
-    if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
   }
 
   // Deep-clones the timing and keyframe data of a track so it can be pushed as
@@ -196,7 +195,6 @@ class AnimationRegistry {
       // re-enables play for the "review a real take" case it wants.)
       window._animPlaying = false;
       window._animStatusText = '';
-      if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
       return false;
     }
     // Resolve the target robustly when the caller didn't hand us one. The timeline record
@@ -211,7 +209,6 @@ class AnimationRegistry {
     if (window._animWaitForTrigger && !window._animCountIn) {
       window._animWaitingForGrab = true;
       window._animStatusText = 'Grab an object to record';
-      if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
     } else {
       this.startRecording(mesh);
     }
@@ -404,14 +401,12 @@ class AnimationRegistry {
     if (window._animCountIn) {
       this.isCountingIn = true;
       window._animStatusText = '3...';
-      if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
       
       let count = 3;
       this.countInTimer = setInterval(() => {
         count--;
         if (count > 0) {
           window._animStatusText = `${count}...`;
-          if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
         } else {
           if (this.countInTimer) clearInterval(this.countInTimer);
           this.countInTimer = null;
@@ -439,7 +434,6 @@ class AnimationRegistry {
     }
 
     window._animStatusText = 'Recording';
-    if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
 
     if (existingTrack) {
       existingTrack.punchInTime = this.globalPlaybackTime || 0;
@@ -1313,7 +1307,6 @@ class AnimationRegistry {
       window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
       if (!window._animWaitingForGrab) window._animArmed = false;
       window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
-      if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
       return;
     }
 
@@ -1399,14 +1392,6 @@ class AnimationRegistry {
     if (!window._animWaitingForGrab) window._animArmed = false;
     
     window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
-    if (window.app && window.app._guiXR) {
-      if (typeof window.app._guiXR.refreshToolsWidget === 'function') {
-        window.app._guiXR.refreshToolsWidget();
-      }
-      window.app._guiXR._needsRedraw = true;
-      window.app._guiXR.draw();
-      window.app._guiXR.updateTexture();
-    }
     
     if (!isManualAbort && this.tracks.size > 0 && window._animLoopEnabled !== false) {
       this.globalPlaybackTime = 0;
@@ -3291,9 +3276,6 @@ class AnimationRegistry {
   }
 
   update(mesh, forceScrub = false) {
-    if (window._animWaitingForGrab && window.app && window.app._guiXR) {
-      window.app._guiXR._needsRedraw = true;
-    }
 
     if (!mesh || (!window._animPlaying && !forceScrub)) return;
 
