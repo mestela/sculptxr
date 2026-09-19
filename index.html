@@ -430,8 +430,12 @@
                 const SculptGL = module.default;
 
                 const app = new SculptGL();
-                app.start();
-                window.app = app; // For debugging
+                window.app = app; // For debugging — set BEFORE the await, so a failed start
+                                  // still leaves something to inspect in the console.
+                // AWAITED: start() is async now because WebGPURenderer's init is, and its
+                // render() throws if called first. Everything below here is DOM wiring that
+                // does not touch the app, so the wait costs nothing.
+                await app.start();
                 // console.log("SculptGL started successfully.");
             } catch (e) {
                 console.error("CRITICAL: Failed to load SculptGL module:", e);

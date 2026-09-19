@@ -179,6 +179,10 @@ var getOptionsURL = function () {
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
+  // ?renderer=webgpu switches to WebGPURenderer (WebGL backend) for the TSL migration. URL
+  // only, deliberately: this is not a preference to persist into someone's next session while
+  // the port is half done.
+  options.renderer = params.renderer === 'webgpu' ? 'webgpu' : 'webgl';
   options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 4); // [0-inf]
   options.shader = getEnum(Enums.Shader, getVal('shader'), Enums.Shader.PBR); // pbr/matcap/normal/uv
   options.filmic = queryBool(getVal('filmic'), false);

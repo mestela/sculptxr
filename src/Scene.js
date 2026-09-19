@@ -411,7 +411,7 @@ class Scene {
     this._vrSmoothOverride = false;
   }
 
-  start() {
+  async start() {
 
     // [Step 1] Hand Swap Helper
     window.setDominantHand = (hand) => {
@@ -453,7 +453,7 @@ class Scene {
       return msg;
     };
 
-    this.initWebGL();
+    await this.initWebGL();
     if (!this._gl)
       return;
 
@@ -2393,10 +2393,39 @@ class Scene {
     }
   }
 
-  initWebGL() {
+  // ASYNC because WebGPURenderer demands it: its render() THROWS if the backend has not been
+  // initialised, so there is no fire-and-forget version of this.
+  async initWebGL() {
     var canvas = document.getElementById('canvas');
-    
-    // Initialize Three.js Renderer
+
+    // ?renderer=webgpu — THE MIGRATION FLAG (roadmap #2). The port is all-or-nothing at the
+    // swap, because WebGPURenderer cannot render a THREE.ShaderMaterial and every one of our
+    // shaders is one. A flag lets the two renderers live side by side so master stays
+    // shippable and the new path can be tested on device shader by shader, instead of the app
+    // being broken for the length of the port.
+    //
+    // forceWebGL is not a choice: in three 0.183.2 the WebGPU backend THROWS on entering XR
+    // ("XR is currently not supported with a WebGPU backend"). The spike measured this path at
+    // 72fps to ~1M triangles on a GalaxyXR — see spike/tsl/FINDINGS.md.
+    // DYNAMICALLY IMPORTED, and that is not an optimisation. `three/webgpu` is a SEPARATE
+    // BUILD carrying its own copy of the core -- it exports Mesh, Scene and ShaderMaterial as
+    // well as WebGPURenderer, but NOT WebGLRenderer -- so there is no single copy of three
+    // that can provide both renderers. A flagged parallel path therefore means two copies of
+    // three in memory for the duration of the migration.
+    //
+    // Survivable, because three duck-types on `.isMesh` / `.isBufferGeometry` rather than
+    // instanceof, so objects built by one copy are recognised by the other. And loading it
+    // lazily means the default path never pays for it: no second copy, no bundle cost, nothing
+    // changed for anyone not passing the flag.
+    const useWebGPU = getOptionsURL().renderer === 'webgpu';
+    if (useWebGPU) {
+      const WGPU = await import('three/webgpu');
+      this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
+      await this._renderer.init();
+      this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
+      console.log('[renderer] WebGPURenderer, backend='
+        + (this._renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL (forced)'));
+    } else {
     this._renderer = new THREE.WebGLRenderer({
       canvas: canvas,
       antialias: false  // MSAA causes glBlitFramebufferCHROMIUM errors on WebXR session start,
@@ -2432,7 +2461,12 @@ class Scene {
     this._renderer.toneMappingExposure = 1.0;
 
     // Initialize underlying GL context for legacy code compatibility (temporarily)
-    this._gl = this._renderer.getContext();
+    }
+    // THE RAW CONTEXT SURVIVES EITHER WAY. 45 files reach for `_gl` -- WebGLCaps, Rtt, the
+    // Buffer/Attribute wrappers, every Mesh -- and under forceWebGL the WebGL backend still
+    // holds a real context at backend.gl. Keeping them fed is what makes a parallel path
+    // possible at all; they come out later, with the mock gl, not as a precondition.
+    this._gl = this._renderer.backend ? this._renderer.backend.gl : this._renderer.getContext();
     if (!this._gl) {
       (window._vrAlert || window.alert)('Values: WebGL context could not be retrieved.');
       return;
