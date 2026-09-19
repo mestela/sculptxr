@@ -115,6 +115,42 @@ lines currently survive to serve one remaining feature.
 Order: migrate popups to the HTML panel system, *then* delete GuiXR and every
 `_legacyVrCanvasEnabled` branch.
 
+### CORRECTION (measured 2026-09-19): "retired" is not "dead"
+
+The section above repeated the source comment's claim that *"every legacy-canvas
+visibility/hit-test/poke path is dead."* That is true of **visibility, hit-test and poke**. It is
+**not** true of widget construction and draw, and the difference matters:
+
+```
+Scene.js:1381   this._guiXR.refreshToolsWidget()      // on every tool change
+GuiXR.js:569    refreshToolsWidget() { this._tabWidgets = {};
+                                       this._needsRedraw = true;   // defeats the early-out
+                                       this.draw(); }
+GuiXR.js:3331   if (!this._isPopupHUD) widgets = this._getWidgets();   // _guiXR is not a popup
+```
+
+Measured in the browser, not read: hooking `_getWidgets` and calling `refreshToolsWidget()` on
+the live `_guiXR` — whose `_isVisible` is `false` — counts **two calls**. The whole
+`src/gui/vr/` subtree executes on every tool change, builds the widget arrays for a menu nobody
+can see, and throws the result away.
+
+**So `src/gui/vr/` (4966 lines) is NOT deletable as dead code.** It is live, wasteful code. A
+sweep that trusted the comment would have deleted it and broken tool changes.
+
+It is also a (small) constant cost on every tool change, in VR and on desktop alike.
+
+**Re-scoped:** GuiXR is not one removal, it is three, and only the first is cheap.
+
+1. Stop calling into it. Delete the `refreshToolsWidget` / `refreshSceneWidget` / `_needsRedraw`
+   calls from `Scene.js` for `_guiXR` and `_guiMini`. Once nothing drives them, `src/gui/vr/`
+   becomes genuinely unreachable and deletable — and the per-tool-change work disappears.
+2. Migrate popups (`_guiPopup`) off `GuiXR`.
+3. Delete `GuiXR.js`, keeping `_uiSettings` — `Scene.js:2078-2189` reads stylus length, offset
+   and tilt out of it, which is live functionality and must land somewhere first.
+
+**Lesson for the rest of this refactor:** a comment saying something is retired is a claim about
+intent, not a measurement. Hook the function and call the path.
+
 ---
 
 ## Two math libraries
