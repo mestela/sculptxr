@@ -142,6 +142,26 @@ writing `_matrix` without `syncThree` leaves a stale three-side matrix.
 Verified in the browser after the cuts: boots, renders, `render()` and a window resize both run
 clean, no console errors.
 
+### Orphan sweep
+
+14 modules, ~120 KB, referenced by nothing and absent from the bundle. Eight deleted as
+superseded — the largest being `mesh/MeshSafe.js` at 74 KB, which is a **fork of `Mesh.js`**
+declaring its own `class Mesh`. Six console-paste debug instruments moved to `scratchpad/debug/`
+rather than deleted: never bundled, so `src/` was the wrong home, but losing them costs a
+workflow.
+
+`global_shader_test` had been asserting against `gui/GuiRendering.js` — **green against a file
+that never ran.** Worth remembering when reading any harness: a passing check proves the source
+text says something, not that the code executes.
+
+#### The sweep's blind spot
+
+"Is it imported anywhere?" does not find a file imported **only by dead code**.
+`gui/vr/GuiVRRendering.js` is imported solely by `GuiXR.js`, the retired canvas UI, so it looks
+live and is not. The whole `src/gui/vr/` subtree is likely in the same position, which means
+**the GuiXR removal cascades well past its own 7090 lines.** To find this class, start from the
+known-dead root and walk its imports, rather than sweeping for unreferenced files.
+
 ### Correction: Tier 0 was smaller than it looked
 
 The original list also had "the unreachable `render` / `renderWireframe` / `renderFlatColor`
