@@ -5,7 +5,12 @@ const root = new URL('../src/', import.meta.url).pathname;
 const read = path => fs.readFileSync(root + path, 'utf8');
 const options = read('misc/getOptionsURL.js');
 const scene = read('Scene.js');
-const desktop = read('gui/GuiRendering.js');
+// NO SEPARATE DESKTOP RENDERING PANEL ANY MORE. This used to read gui/GuiRendering.js, which
+// was deleted in the 2026-09-19 orphan sweep: nothing imported it and it was absent from the
+// bundle, so these checks had been passing against a file that never ran. Desktop and the HTML
+// VR panels now render the SAME section out of MainMenuPanel, which `htmlVR` below already
+// covers -- so the desktop assertions are not re-pointed, they are gone, because a second
+// assertion on the same file would only look like coverage.
 const legacyVR = read('gui/vr/GuiVRRendering.js');
 const htmlVR = read('gui/htmlvr/MainMenuPanel.js');
 const vrTools = read('gui/vr/GuiVRTools.js');
@@ -29,12 +34,10 @@ check('global setter persists the mode and keeps the live value numeric',
   /getOptionsURL\(\)\.shader = shader/.test(options));
 check('global setter excludes rig and reference display helpers',
   /mesh\._isBone \|\| mesh\._isNull \|\| mesh\._isReference/.test(options));
-check('desktop and both VR rendering panels use the global setter',
-  desktop.includes('getOptionsURL.setGlobalShader(main, val)') &&
+check('the shared panel and the legacy VR panel use the global setter',
   legacyVR.includes('getOptionsURL.setGlobalShader(main, id)') &&
   htmlVR.includes('getOptionsURL.setGlobalShader(main, id)'));
 check('rendering panels display the global mode rather than selected mesh state',
-  desktop.includes('this._ctrlShaders.setValue(getOptionsURL().shader') &&
   legacyVR.includes('const shaderType = getOptionsURL().shader') &&
   htmlVR.includes('const shaderType   = getOptionsURL().shader'));
 check('new, replacement and imported meshes receive the global mode',
@@ -49,9 +52,7 @@ check('flat shading and wireframe have persistent global setters',
   options.includes("saveOption('wireframe', enabled)") &&
   options.includes('mesh.setFlatShading(enabled)') &&
   options.includes('mesh.setShowWireframe(enabled)'));
-check('desktop and both VR panels use global display toggles',
-  desktop.includes('setGlobalFlatShading(this._main, bool)') &&
-  desktop.includes('setGlobalWireframe(this._main, bool)') &&
+check('the shared panel and the legacy VR panel use global display toggles',
   legacyVR.includes('setGlobalFlatShading(main, target)') &&
   legacyVR.includes('setGlobalWireframe(main, target)') &&
   htmlVR.includes('setGlobalFlatShading(main, t)') &&
