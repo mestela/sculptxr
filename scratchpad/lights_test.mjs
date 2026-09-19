@@ -107,9 +107,19 @@ check('the environment orientation is derived per eye, not uploaded from the des
     && !/uniform mat3 uIblTransform;/.test(GLSL)
     && /mat3 iblTransform\(\) \{/.test(GLSL),
   'one camera cannot orient an environment for two eyes');
-check('...and both lookups go through it',
-  /texturePanoramaLod\(iblTransform\(\) \* R, rLinear\)/.test(GLSL)
-    && /sphericalHarmonics\(iblTransform\(\) \* N\)/.test(GLSL),
+// BUILT ONCE PER FRAGMENT, and both lookups share it. This used to pin `iblTransform() * R`
+// and `iblTransform() * N` literally, which failed the moment the matrix was hoisted into a
+// local -- a pure win that changed nothing about the rule. What matters is that the reflection
+// AND the SH ambient both use the per-eye transform, and that it is assembled once.
+check('...and both lookups go through it, from one matrix',
+  /mat3 iblM = iblTransform\(\);/.test(GLSL)
+    && /sphericalHarmonics\(iblM \* N\)/.test(GLSL)
+    && /texturePanoramaLod\(iblM \* R, rLinear\)/.test(GLSL)
+    // COMMENTS STRIPPED FIRST. Counting raw occurrences caught the prose explaining the hoist
+    // and reported three -- the second time today an assertion has been tripped by the comment
+    // describing its own subject. Match code, or strip the comments before you count.
+    && (GLSL.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n')
+          .match(/iblTransform\(\)/g) || []).length === 2,   // the definition and one call
   'the SH one is the ambient — missing it would leave diffuse swimming');
 // GLSL ES 1.0 has no transpose(), so the inverse rotation is written out by hand.
 check('...transposing by hand rather than calling transpose()',

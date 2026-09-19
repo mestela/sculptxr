@@ -296,6 +296,11 @@ ShaderPBR.fragment = [
 var uLightPosTmp = new Float32Array(MAX_LIGHTS * 3);
 var uLightColTmp = new Float32Array(MAX_LIGHTS * 3);
 var uLightRangeTmp = new Float32Array(MAX_LIGHTS);
+// ONCE PER FRAME, NOT ONCE PER MESH. updateUniforms runs in a loop over every mesh, and none of
+// the light data depends on which mesh is being drawn -- so a scene with 30 meshes and 4 lights
+// was doing 120 updateMatrixWorld calls a frame to compute the same four positions.
+var _lightFrame = -1;
+var _lightCount = 0;
 
 ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   if (env.texture !== undefined) return env.texture;
@@ -342,8 +347,13 @@ ShaderPBR.updateUniforms = function (mesh, main) {
   // _worldGroup (which carries a scale the app's own camera knows nothing about), so that is
   // the space vVertex is actually in. Taking it from three keeps the two in step by
   // construction instead of by agreement.
+  var _fr = main._renderer && main._renderer.info && main._renderer.info.render
+    ? main._renderer.info.render.frame : -1;
+  // -1 means we could not read a frame number; recompute rather than serve something stale.
+  if (_fr !== _lightFrame || _fr < 0) {
+  _lightFrame = _fr;
   var lights = main.getLights ? main.getLights() : [];
-  var nb = Math.min(lights.length, MAX_LIGHTS);
+  var nb = _lightCount = Math.min(lights.length, MAX_LIGHTS);
   for (var li = 0; li < nb; li++) {
     var ltm = lights[li].getThreeMesh && lights[li].getThreeMesh();
     if (ltm) {
@@ -371,7 +381,10 @@ ShaderPBR.updateUniforms = function (mesh, main) {
     uLightColTmp[lz * 3] = uLightColTmp[lz * 3 + 1] = uLightColTmp[lz * 3 + 2] = 0;
     uLightRangeTmp[lz] = 1;
   }
-  gl.uniform1i(uniforms.uNbLights, nb);
+  }
+  // The UPLOAD still happens for every mesh -- each one is a separate draw with its own
+  // uniforms. It is only the arithmetic above that is shared.
+  gl.uniform1i(uniforms.uNbLights, _lightCount);
   gl.uniform3fv(uniforms.uLightPos, uLightPosTmp);
   gl.uniform3fv(uniforms.uLightCol, uLightColTmp);
   gl.uniform1fv(uniforms.uLightRange, uLightRangeTmp);

@@ -438,8 +438,15 @@ class Picking {
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
       var isRig = !!(mesh._isBone || mesh._isPinTarget);
+      // A LIGHT IS A LOCATOR TOO, and wants the same deal a joint gets: invisible to the sculpt
+      // brush, point-picked rather than aimed at, and selectable on the same opt-in the
+      // selection paths already pass. Without this it carried isPickable=false and nothing let
+      // it back in, so it could only be reached from the outliner. matt: "i can't select lights
+      // in the viewport." NOT folded into isRig: that gates rigNodeVisible below, and a light
+      // must not vanish because the joint display flags are off.
+      var isLocator = isRig || !!mesh._isLight;
       if (!mesh.isVisible() || mesh._selectLocked) continue;
-      if (mesh.isPickable === false && !(includeRig && isRig)) continue;
+      if (mesh.isPickable === false && !(includeRig && isLocator)) continue;
       if (isRig && !rigNodeVisible(mesh)) continue;
 
       // RIG NODES ARE PICKED AS POINTS IN A CONE, not as geometry.
@@ -450,7 +457,7 @@ class Picking {
       // somewhere else entirely depending on zoom. Instead: distance from the node's centre to
       // the ray, against a radius that grows with depth, which is a fixed target in SCREEN
       // space at any distance. `window._rigPickCone` widens or narrows it.
-      if (isRig) {
+      if (isLocator) {
         // WORLD space, to match the ray. vNear/vFar are unprojected into world coords and the
         // mesh path transforms them INTO each mesh; getModelSpaceMatrix is worldGroup-relative,
         // so comparing a model-space point against a world-space ray silently misses entirely
@@ -666,8 +673,10 @@ class Picking {
 
       // VR rig nodes are selected entirely by controller proximity. Reaching for a joint or
       // pin is more predictable than aiming a ray at it, especially during two-hand posing.
-      if (includeRig && (mesh._isBone || mesh._isPinTarget)) {
-        if (!rigNodeVisible(mesh)) continue;
+      if (includeRig && (mesh._isBone || mesh._isPinTarget || mesh._isLight)) {
+        // Lights ride the same proximity pick as joints and pins -- see the note on isLocator
+        // in intersectionMouseMeshes -- but not the rig display flags, which are not about them.
+        if ((mesh._isBone || mesh._isPinTarget) && !rigNodeVisible(mesh)) continue;
         _TMP_RIG_P[0] = _TMP_MS[12]; _TMP_RIG_P[1] = _TMP_MS[13]; _TMP_RIG_P[2] = _TMP_MS[14];
         vec3.sub(_TMP_RIG_W, _TMP_RIG_P, origin);
         // Coordinates are in model space; convert to physical metres so world scale does not

@@ -79,12 +79,14 @@ vec3 getSpecularDominantDir(const in vec3 N, const in vec3 R,
   return mix(N, R, smoothness * (sqrt(smoothness) + realRoughness));
 }
 
+// TAKES THE MATRIX RATHER THAN REBUILDING IT. iblTransform() was called here AND in
+// computeIBL_UE4, so every fragment assembled the same mat3 twice.
 vec3 approximateSpecularIBL(const in vec3 specularColor, float rLinear,
-                            const in vec3 N, const in vec3 V) {
+                            const in vec3 N, const in vec3 V, const in mat3 iblM) {
   float NoV = clamp(dot(N, V), 0.0, 1.0);
   vec3 R = normalize((2.0 * NoV) * N - V);
   R = getSpecularDominantDir(N, R, rLinear);
-  vec3 prefilteredColor = texturePanoramaLod(iblTransform() * R, rLinear);
+  vec3 prefilteredColor = texturePanoramaLod(iblM * R, rLinear);
   return prefilteredColor * integrateBRDFApprox(specularColor, rLinear, NoV);
 }
 
@@ -103,8 +105,9 @@ vec3 sphericalHarmonics(const in vec3 N) {
 
 vec3 computeIBL_UE4(const in vec3 N, const in vec3 V, const in vec3 albedo,
                     const in float roughness, const in vec3 specular) {
-  vec3 color = albedo * sphericalHarmonics(iblTransform() * N);
-  color += approximateSpecularIBL(specular, roughness, N, V);
+  mat3 iblM = iblTransform();
+  vec3 color = albedo * sphericalHarmonics(iblM * N);
+  color += approximateSpecularIBL(specular, roughness, N, V, iblM);
   return color;
 }
 `;
