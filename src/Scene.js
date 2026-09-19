@@ -2221,7 +2221,13 @@ class Scene {
         // errors caused by legacy raw WebGL passes binding their own shaders just before Three.js renders.
         // CRITICAL FIX: We must save and restore the current Render Target, otherwise resetState() unbinds the WebXR baseLayer!
         currentTarget = this._renderer.getRenderTarget();
-        this._renderer.resetState();
+        // OPTIONAL-CHAINED FOR THE WEBGPU PATH. resetState() is a WebGLRenderer method and
+        // WebGPURenderer has no equivalent: it is how three is told to forget its cached GL
+        // state after the legacy raw-GL passes bind their own shaders behind its back. Under
+        // the node renderer those passes are what the port is removing, so a no-op here is the
+        // right shape -- and if state corruption does appear on that path, it is evidence
+        // about the raw-GL layer rather than a bug in this line.
+        this._renderer.resetState?.();
         this._renderer.setRenderTarget(currentTarget);
       }
       
@@ -2320,7 +2326,7 @@ class Scene {
         
         // Also reset Three.js state tracker so it knows we messed with WebGL underneath it
         const currentTargetPost = this._renderer.getRenderTarget();
-        this._renderer.resetState();
+        this._renderer.resetState?.();   // see the note above — absent on WebGPURenderer
         this._renderer.setRenderTarget(currentTargetPost);
 
         // Draw sculpting gizmo stuffs over Three.js render
@@ -5170,7 +5176,7 @@ class Scene {
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
 
-    this._renderer.resetState();
+    this._renderer.resetState?.();   // see _drawScene — absent on WebGPURenderer
 
     // Call setSession as early as possible — the XR compositor starts its timeout
     // the moment requestSession resolves. Every ms before setSession is called is
