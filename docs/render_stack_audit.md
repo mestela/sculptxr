@@ -16,6 +16,12 @@ Re-run the checks before believing any of it — see [Re-running this audit](#re
 three.js does the rendering. The SculptGL WebGL engine is still in the building: partly wired,
 partly orphaned, and in exactly one place load-bearing.
 
+**Status 2026-09-19 (branch `refactor`): ~16,450 lines removed.** The GUI half is finished —
+the canvas UI, its widget system and its settings cache are gone, and the orphan sweep returns
+zero. What remains is the RENDERER half, and it is deliberately untouched: the mock gl, the
+raw-GL draw path and gl-matrix all belong to the TSL / node-material decision, because doing
+them as cleanup means doing them twice. See the verdicts in their own sections.
+
 | Layer | State | Evidence |
 |---|---|---|
 | Renderer | **Migrated** — `THREE.WebGLRenderer`, meshes are three Meshes | `Scene.js:2557` |
@@ -161,28 +167,18 @@ It is also a (small) constant cost on every tool change, in VR and on desktop al
    with a `saveOption`. ~50 sites repointed at the store. Two settings (`grabGain`,
    `triggerCurve`) had no options fallback and so silently reset on every reload; both persist
    now. Confirmed on GalaxyXR and Vision Pro.
-4. **Delete GuiXR.js and VRMenu.js.** Remaining, all provably dead but not yet removed:
+4. ~~Delete GuiXR.js and VRMenu.js.~~ **DONE 2026-09-19. 7,523 lines**, plus ~150 call sites
+   in `Scene.js` and `SculptGL.js`. Confirmed on GalaxyXR and Vision Pro, controllers and hand
+   tracking, including panels, laser, stick scrolling, the X button and pinch clicks.
 
-   | in `Scene.js` | count |
-   |---|---|
-   | `_isVisible` checks | 18 |
-   | `_needsRedraw` pokes | 14 |
-   | construction / `new VRMenu` | 12 |
-   | `closeOverlay()` (no-op) | 8 |
-   | `_legacyVrCanvasEnabled()` branches | 8 |
-   | scroll / `_maxScroll` | 7 |
-   | `updateWidget` / `updateRadiusWidget` | 4 |
+   Also removed with it: the 105-line canvas raycast and its drag-capture lock; the
+   wrist-proximity **pinch suppression** (a 25cm sphere that killed the pinch so poking the
+   canvas MiniHUD did not sculpt — and which is what made the HTML wrist panel unclickable);
+   and `_legacyVrCanvasEnabled()` / `window._brushPanelEnabled`, which existed only to hold the
+   canvas UI down.
 
-   Plus 56 `_vrMenu` / `_vrMiniHUD` / `_vrPopup` references and 9 in `SculptGL.js`
-   (`toggleMenu`, `nextTab`, the emergency-init `onClick`). `VRMenu.js` goes with them —
-   nothing else constructs it. `GuiXR.js` is ~7000 lines.
-
-   **This is the riskiest edit of the sequence**: ~150 changes inside the file that owns VR
-   hit-testing. Every path is dead, but it deserves its own run and its own headset pass rather
-   than being tacked onto a cleanup.
-
-**Lesson for the rest of this refactor:** a comment saying something is retired is a claim about
-intent, not a measurement. Hook the function and call the path.
+   Kept because they are live: the miss-case laser reset in the ray path, `_isMiniHUDActive` as
+   a field, and `getGuiXR()` returning `null` — every caller was already optional-chained.
 
 ---
 
