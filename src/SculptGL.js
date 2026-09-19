@@ -2155,7 +2155,6 @@ class SculptGL extends Scene {
 
     this._lastMouseX = mouseX;
     this._lastMouseY = mouseY;
-    this.renderSelectOverRtt();
   }
 
   // WebXR Support

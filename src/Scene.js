@@ -45,7 +45,6 @@ import HumanBase from './drawables/HumanBase.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
-import Rtt from './drawables/Rtt.js';
 import ShaderLib from './render/ShaderLib.js';
 import ShaderManager from './render/ShaderManager.js';
 import MeshStatic from './mesh/meshStatic/MeshStatic.js';
@@ -228,10 +227,6 @@ class Scene {
     this._mesh = null; // the selected mesh
     this._debugPivotMesh = null; // Debug pink cube for VR pivot
 
-    this._rttContour = null; // rtt for contour
-    this._rttMerge = null; // rtt decode opaque + merge transparent
-    this._rttOpaque = null; // rtt half float
-    this._rttTransparent = null; // rtt rgbm
 
     // ui stuffs
     this._focusGui = false; // if the gui is being focused
@@ -604,10 +599,6 @@ class Scene {
     this._sculptManager = new SculptManager(this);
     this._background = new Background(this._gl, this);
 
-    this._rttContour = new Rtt(this._gl, Enums.Shader.CONTOUR, null);
-    this._rttMerge = new Rtt(this._gl, Enums.Shader.MERGE, null);
-    this._rttOpaque = new Rtt(this._gl, Enums.Shader.FXAA);
-    this._rttTransparent = new Rtt(this._gl, null, this._rttOpaque.getDepth(), true);
 
     this._grid = Primitives.createGrid(this._gl);
     this.initGrid();
@@ -1412,14 +1403,6 @@ class Scene {
     return mesh;
   }
 
-  renderSelectOverRtt() {
-    // Legacy RTT passes are disabled in Three.js migration.
-    // Setting _drawFullScene = false here was causing the main render loop
-    // to drop 100% of frames during mouse drag (camera tumbling), 
-    // resulting in massive perceived lag.
-    // this._drawFullScene = false; 
-  }
-
   _requestRender() {
     // Redundant now that Three.js runs internally via setAnimationLoop 
     // We keep the method signature for backwards compatibility across UI files
@@ -1978,20 +1961,6 @@ class Scene {
         gl.disable(gl.DEPTH_TEST);
     }
 
-    // --- LEGACY POST-PROCESSING (DISABLED FOR THREE.JS MIGRATION) ---
-    /*
-    if (this._rttMerge) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttMerge.getFramebuffer());
-      this._rttMerge.render(this); // merge + decode
-    }
-
-    // render to screen (or target FBO)
-    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
-
-    if (this._rttOpaque) {
-      this._rttOpaque.render(this); // fxaa
-    }
-    */
     
     // (Legacy postRender moved to after Three.js render)
   }
@@ -2452,74 +2421,6 @@ class Scene {
       }
     }
 
-    /* 
-    // --- LEGACY WEBGL PASSES (DISABLED FOR THREE.JS MIGRATION) ---
-    ///////////////
-    // CONTOUR 1/2
-    ///////////////
-    gl.disable(gl.DEPTH_TEST);
-    var showContour = this._selectMeshes.length > 0 && this._showContour && ShaderLib[Enums.Shader.CONTOUR].color[3] > 0.0;
-    if (showContour && this._rttContour) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttContour.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      for (var s = 0, sel = this._selectMeshes, nbSel = sel.length; s < nbSel; ++s)
-        sel[s].renderFlatColor(this);
-    }
-    gl.enable(gl.DEPTH_TEST);
-
-    ///////////////
-    // OPAQUE PASS
-    ///////////////
-    if (this._rttOpaque) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttOpaque.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    }
-
-    // grid
-    // if (this._showGrid && this._grid) this._grid.render(this);
-
-    // VR Controllers are handled by Three.js Scene graph now. No custom WebGL rendering needed.
-
-    // var startTransparent = nbMeshes;
-    // if (this._meshPreview) this._meshPreview.render(this);
-
-    // background
-    // if (this._background) this._background.render();
-
-    ///////////////
-    // TRANSPARENT PASS
-    ///////////////
-    if (this._rttTransparent) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttTransparent.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT);
-    }
-
-    gl.enable(gl.BLEND);
-
-    // wireframe for dynamic mesh has duplicate edges
-    gl.depthFunc(gl.LESS);
-    for (i = 0; i < nbMeshes; ++i) {
-      if (meshes[i].getShowWireframe()) {
-         // meshes[i].renderWireframe(this); 
-      }
-    }
-    gl.depthFunc(gl.LEQUAL);
-
-    gl.depthMask(false);
-    gl.enable(gl.CULL_FACE);
-
-    gl.disable(gl.CULL_FACE);
-
-    ///////////////
-    // CONTOUR 2/2
-    ///////////////
-    if (showContour && this._rttContour) {
-      this._rttContour.render(this);
-    }
-
-    gl.depthMask(true);
-    gl.disable(gl.BLEND);
-    */
   }
 
   /** Pre compute matrices and sort meshes */
@@ -2927,10 +2828,6 @@ class Scene {
     this._camera.onResize(newWidth, newHeight);
     this._background.onResize(newWidth, newHeight);
 
-    this._rttContour.onResize(newWidth, newHeight);
-    this._rttMerge.onResize(newWidth, newHeight);
-    this._rttOpaque.onResize(newWidth, newHeight);
-    this._rttTransparent.onResize(newWidth, newHeight);
 
     this.render();
   }
