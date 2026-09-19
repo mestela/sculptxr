@@ -16,6 +16,15 @@
 // PROD-build-only effect), and whether our exact BRDF ports cleanly. Those come after.
 import * as THREE from 'three/webgpu';
 import { Fn, positionLocal, normalLocal, uniform, vec3, float } from 'three/tsl';
+import { makeOurPBR } from './ourpbr.js';
+
+// THREE MATERIALS, because the question has three parts. "Our BRDF, ported" is the only one
+// that answers what the migration costs; the stock physical material is what we would get if
+// we adopted three's instead, and matcap is where matt says he spends most of his time
+// ("i'd spend most of my time in matcap mode, and only drop into pbr/shadows occasionally"),
+// which makes it the mode that actually has to stay fast.
+const MODES = ['ourpbr', 'physical', 'matcap'];
+let mode = 0;
 
 const hud = (id) => document.getElementById(id);
 const fail = (e) => { hud('err').textContent = String(e && e.stack || e); console.error(e); };
@@ -116,6 +125,7 @@ async function init() {
   hud('xr').onclick = enterXR;
   hud('load').onclick = () => {
     weight = (weight + 1) % WEIGHTS.length;
+    if (weight === 0) { mode = (mode + 1) % MODES.length; sharedMat = null; }
     build(...WEIGHTS[weight]);
   };
 
@@ -131,7 +141,13 @@ async function init() {
 // stand-in for the per-vertex material channel work ShaderPBR does (COLOR_1 carries roughness
 // and metalness per vertex), expressed as nodes rather than as GLSL.
 function makeMaterial(hue) {
-  const m = new THREE.MeshStandardNodeMaterial();
+  if (MODES[mode] === 'ourpbr') return makeOurPBR();
+  if (MODES[mode] === 'matcap') {
+    const mm = new THREE.MeshMatcapNodeMaterial();
+    mm.color = new THREE.Color().setHSL(hue, 0.4, 0.7);
+    return mm;
+  }
+  const m = new THREE.MeshPhysicalNodeMaterial();
   const tint = uniform(new THREE.Color().setHSL(hue, 0.5, 0.55));
   // Cheap procedural variation so the fragment stage is doing real work rather than
   // returning a constant, which would flatter the measurement.
@@ -173,6 +189,9 @@ async function enterXR() {
     // device only measures whatever it happened to boot with. Trigger cycles the presets.
     session.addEventListener('selectstart', () => {
       weight = (weight + 1) % WEIGHTS.length;
+      // Wrapping the weights advances the MATERIAL, so one controller can walk the whole
+      // matrix without a keyboard: six weights x three materials, in order.
+      if (weight === 0) { mode = (mode + 1) % MODES.length; sharedMat = null; }
       const [n, seg] = WEIGHTS[weight];
       build(n, seg);
     });
@@ -213,6 +232,7 @@ function tick() {
       `${med.toFixed(2)} ms   ${(1000 / med).toFixed(0)} fps`,
       `${info.drawCalls} draws`,
       `${(info.triangles / 1000).toFixed(0)}k tris   w${weight}`,
+      MODES[mode],
       xr ? 'XR  (trigger = next weight)' : 'desktop',
     ]);
     // Once a second to the console as well, because that is the one place a number can be
@@ -222,7 +242,7 @@ function tick() {
       console.log(`[tsl] med=${med.toFixed(2)}ms (${(1000 / med).toFixed(0)}fps) `
         + `mean=${ms.toFixed(2)} worst=${worst.toFixed(2)} `
         + `draws=${info.drawCalls} tris=${info.triangles} w=${weight} `
-        + `mats=${window.__perObject ? 'per-object' : 'shared'} xr=${xr}`);
+        + `mat=${MODES[mode]} ${window.__perObject ? 'per-object' : 'shared'} xr=${xr}`);
       worst = 0; samples.length = 0;
     }
     frames = 0; acc = 0;
