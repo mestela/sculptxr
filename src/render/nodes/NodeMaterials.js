@@ -328,28 +328,41 @@ NodeMaterials.convertBasic = function (src) {
     m.depthFunc = src.depthFunc;
     const col = uniform(new gpu.Color().copy(src.color));
     const opac = uniform(src.opacity);
-    // The map node exists whether or not there is a map yet: canvas-textured objects assign
-    // theirs on a later paint, and a node graph cannot grow a texture afterwards.
-    // ONE shared placeholder for every map-less material, not one each. The per-material
-    // version showed up immediately in xrPerf as `tex 59` against WebGL's `tex 14` -- 45
-    // empty textures whose only job was to give the node graph something to point at.
-    if (!NodeMaterials._emptyTex) NodeMaterials._emptyTex = new gpu.Texture();
-    const mapNode = texture(src.map || NodeMaterials._emptyTex);
-    const hasMap = uniform(src.map ? 1 : 0);
+    // A TEXTURE NODE ONLY WHEN THERE IS ACTUALLY A MAP.
+    //
+    // This used to build one unconditionally so the graph could grow a texture later -- and
+    // a texture sampled with the default UV REQUIRES a `uv` attribute on the geometry. The
+    // sculpt has position, normal, color and aMaterial, and NO uv. So every map-less object
+    // whose geometry lacks uv produced
+    //   THREE.AttributeNode: Vertex attribute "uv" not found on geometry.
+    // out of the node builder, and did not draw. matt hit it the moment he added a light:
+    // the recompile a new light forces is what made a latent bad graph actually build.
+    //
+    // The cost is that a map arriving LATER cannot be adopted. That is acceptable here --
+    // panels do not come through this path (NodeMaterials.panel handles them, on a
+    // PlaneGeometry that has uv) -- and the update below says so rather than failing quietly.
     let rgb = vec3(col);
     if (src.vertexColors) rgb = rgb.mul(vertexColor());
-    m.emissiveNode = rgb.mul(mix(vec3(1.0), mapNode.rgb, hasMap));
-    m.opacityNode = opac.mul(mix(float(1.0), mapNode.a, hasMap));
-    m.userData.sync = { col, opac, mapNode, hasMap, lastMap: src.map || null };
+    let mapNode = null;
+    if (src.map) {
+      mapNode = texture(src.map);
+      rgb = rgb.mul(mapNode.rgb);
+    }
+    m.emissiveNode = rgb;
+    m.opacityNode = mapNode ? opac.mul(mapNode.a) : opac;
+    m.userData.sync = { col, opac, mapNode, lastMap: src.map || null };
     basicCache.set(src, m);
   }
   const y = m.userData.sync;
   y.col.value.copy(src.color);
   y.opac.value = src.opacity;
   if (src.map !== y.lastMap) {
+    if (y.mapNode && src.map) { y.mapNode.value = src.map; }
+    else if (src.map && !y.mapNode) {
+      console.warn('[NodeMaterials] a converted material gained a map after conversion; it '
+        + 'will not show. Give it a map before first render, or use NodeMaterials.panel.');
+    }
     y.lastMap = src.map;
-    if (src.map) { y.mapNode.value = src.map; y.hasMap.value = 1; }
-    else y.hasMap.value = 0;
   }
   return m;
 };
