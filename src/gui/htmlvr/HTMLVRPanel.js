@@ -1624,6 +1624,23 @@ window._panelProbe = function () {
       imgKind: img ? (img.constructor && img.constructor.name) : null,
       imgSize: img ? `${img.width}x${img.height}` : null,
       mapVersion: mat && mat.map ? mat.map.version : null,
+      // WHERE IT ACTUALLY IS, not where its local transform says. The panel is submitted
+      // (4 draw calls) and an opaque depthTest:false material still shows nothing, so it is
+      // not hidden and not occluded -- it is somewhere the eye is not. A NaN anywhere in the
+      // parent chain makes geometry vanish silently while every flag stays healthy, which is
+      // exactly the shape of this bug.
+      world: (() => {
+        m.updateMatrixWorld(true);
+        const e = m.matrixWorld.elements;
+        const bad = e.some((v) => !Number.isFinite(v));
+        return {
+          pos: [+e[12].toFixed(3), +e[13].toFixed(3), +e[14].toFixed(3)],
+          nan: bad,
+          parent: m.parent ? (m.parent.name || m.parent.type) : null,
+          parentNaN: m.parent ? m.parent.matrixWorld.elements.some((v) => !Number.isFinite(v)) : null,
+          scaleW: [+m.matrixWorld.elements[0].toFixed(3), +m.matrixWorld.elements[5].toFixed(3)],
+        };
+      })(),
       opacity: mat && mat.opacity,
       renderOrder: m.renderOrder,
       pos: m.position.toArray().map(n => +n.toFixed(2)),
