@@ -2187,6 +2187,11 @@ class Scene {
     // never positioned, so they'd just sit (full size) at the world origin — the
     // blue xray sphere that flashed at startup before the sculpt rendered over it.
     // Keep them hidden on desktop.
+    // BEFORE ANY EARLY RETURN. This lived in the main render block, which every
+    // _vrMinimalTest level returns before -- so during the very test meant to produce an
+    // empty frame, nothing was being re-tagged and every late arrival reported as `unknown`.
+    if (this._uboTag) this._uboTag();
+
     const isVRPresenting = this._renderer && this._renderer.xr && this._renderer.xr.isPresenting;
     if (!isVRPresenting) {
       if (this._vrCursorLeft) this._vrCursorLeft.visible = false;
@@ -2256,6 +2261,19 @@ class Scene {
           o.visible = false;
         });
       }
+      // WHAT STILL DRAWS. The stack says _renderObjectDirect, i.e. a real object on the
+      // ordinary path -- so something survives the hide, and counting is the only way to know
+      // rather than assume. Once a second, because this is a headset and the console is the
+      // only way anything gets out.
+      {
+        const r = this._renderer.info && this._renderer.info.render;
+        const now = performance.now();
+        if (r && (!this._minLogT || now - this._minLogT > 1000)) {
+          this._minLogT = now;
+          console.log('[vrMinimalTest] level 1 drawCalls=' + r.drawCalls + ' tris=' + r.triangles
+            + ' hidden=' + (this._minimalHidden ? this._minimalHidden.length : 0));
+        }
+      }
       this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
       // Its own expression, NOT the _renderCam below: that is declared in the main render
       // block further down, and this branch returns before reaching it. Referencing it here
@@ -2283,7 +2301,6 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
-      if (this._uboTag) this._uboTag();   // see _traceUBO: late arrivals must be named too
 
       // ADOPT ANY CONTROLLER MODEL THAT HAS JUST LOADED.
       //
