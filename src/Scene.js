@@ -4486,8 +4486,24 @@ class Scene {
           L.target = t;
         }
         L.castShadow = true;
-        L.shadow.mapSize.set(1024, 1024);
-        L.shadow.bias = -0.0005;
+        L.shadow.mapSize.set(2048, 2048);
+        // BIAS: normalBias, not a constant depth bias.
+        //
+        // A negative constant bias pushes the whole shadow AWAY from the caster, which at
+        // this app's scale (a default sphere is 34 units across) detaches it at the contact
+        // point -- peter-panning. matt, resting a sphere on a box: "the sphere intersects, i
+        // get a leak in the shadow", the bright crescent exactly where the two touch.
+        //
+        // normalBias offsets the shadow lookup along the surface NORMAL instead, which is
+        // proportional to how glancing the light is: it removes acne on curved surfaces
+        // without moving the contact shadow. It is in WORLD units, so it has to suit a scene
+        // measured in tens of units rather than the 0.02-ish typical of a 1-unit scene.
+        //
+        // Both are overridable because the right value depends on the sculpt's scale, and
+        // that is a judgement to make while looking at it rather than one to guess here.
+        L.shadow.bias = Number.isFinite(window._shadowBias) ? window._shadowBias : 0;
+        L.shadow.normalBias = Number.isFinite(window._shadowNormalBias)
+          ? window._shadowNormalBias : 0.15;
         // ADDED TO THE SCENE ROOT, NOT PARENTED TO THE ENTITY.
         //
         // Parenting looked right -- the light inherits the entity's transform and the two
@@ -4509,6 +4525,12 @@ class Scene {
       L.quaternion.copy(this._lpTmp.q);
       L.scale.set(1, 1, 1);
       L.updateMatrixWorld(true);
+      // Re-read every frame so window._shadowBias / _shadowNormalBias can be dialled in a
+      // live session -- the values above are only applied when the light is first built.
+      L.shadow.bias = Number.isFinite(window._shadowBias) ? window._shadowBias : 0;
+      L.shadow.normalBias = Number.isFinite(window._shadowNormalBias)
+        ? window._shadowNormalBias : 0.15;
+
       const c = e._lightColor || [1, 1, 1];
       L.color.setRGB(c[0], c[1], c[2]);
       const slider = (e._lightIntensity === undefined ? 1 : e._lightIntensity);
