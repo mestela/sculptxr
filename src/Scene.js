@@ -4852,12 +4852,21 @@ class Scene {
       // answer and put every pool light back to castShadow=false, inside the session, where
       // the boundary can no longer correct it. Measured: window._xrShadows=1,
       // shadowMap.enabled true, and every light reporting castShadow false.
+      const wantCast = (e._castShadow !== false);
       if (!this._xrGraphFrozen) {
-        L.castShadow = (e._castShadow !== false);
+        L.castShadow = wantCast;
       }
+      // WHETHER THE MAP IS RENDERED IS *NOT* GRAPH STATE, so unlike castShadow it can be
+      // changed freely inside a session -- ShadowNode.updateBefore skips the whole shadow pass
+      // when `shadow.autoUpdate` and `shadow.needsUpdate` are both false. That is the lever
+      // that makes shadows affordable here: castShadow stays pinned for the whole session so
+      // the compiled graph never moves, while the COST follows what is actually in use.
+      L.shadow.autoUpdate = wantCast && this._renderer.shadowMap.enabled;
+      // A light that is pinned castShadow but should not cast would otherwise sample a stale
+      // map; drop its contribution to nothing instead.
+      L.shadow.intensity = wantCast ? (e._shadowIntensity === undefined ? 1 : e._shadowIntensity) : 0;
       L.shadow.bias = 0;
       L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
-      L.shadow.intensity = e._shadowIntensity === undefined ? 1 : e._shadowIntensity;
       L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
     }
 
@@ -4868,10 +4877,16 @@ class Scene {
     // nothing but a hitch.
     for (const type of [0, 1, 2]) {
       for (let i = used[type]; i < pool[type].length; i++) {
-        pool[type][i].intensity = 0;
+        const L = pool[type][i];
+        L.intensity = 0;
         // Same latch as above: intensity is just a number, but castShadow is part of the
         // compiled graph and must not move while a session owns it.
-        if (!this._xrGraphFrozen) pool[type][i].castShadow = false;
+        if (!this._xrGraphFrozen) L.castShadow = false;
+        // An UNUSED slot pinned castShadow for the session still renders its shadow map every
+        // frame unless this is off -- and a point light's map is a CUBE, six scene renders. A
+        // 4/2/1 pool all casting is ~27 shadow passes a frame for lights that emit nothing,
+        // which is the real reason shadows looked unaffordable in a session.
+        if (L.shadow) { L.shadow.autoUpdate = false; L.shadow.needsUpdate = false; L.shadow.intensity = 0; }
       }
     }
 
@@ -7095,7 +7110,12 @@ class Scene {
       // Freeze FIRST, then decide. The latch is what stops _syncThreeLights undoing this on
       // the frames between here and xr.isPresenting going true.
       this._xrGraphFrozen = true;
-      _setPoolShadows(!!window._xrShadows);
+      // THE FLAG IS A URL PARAM AS WELL AS A GLOBAL. window._xrShadows has to be set BEFORE
+      // the button is pressed, and forgetting that looks exactly like the bug it was meant to
+      // test -- it cost a headset session. ?xrshadows=1 cannot be mistimed.
+      const _wantXrShadows = !!window._xrShadows || /[?&]xrshadows=1/.test(window.location.search);
+      window._xrShadows = _wantXrShadows;
+      _setPoolShadows(_wantXrShadows);
       _rebuildAll('session start');
       session.addEventListener('end', () => {
         try {
