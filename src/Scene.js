@@ -6795,34 +6795,27 @@ class Scene {
     this._worldGroup.updateMatrixWorld(true);
     this._desktopCameraCache.worldGroupMatrix = this._worldGroup.matrixWorld.clone();
 
-    // WARM EVERY PIPELINE WHILE WE ARE STILL OUTSIDE THE SESSION. Building a material inside
-    // an immersive session is this renderer's one real fault, and the VR panels are the only
-    // materials never drawn on the desktop -- so theirs are always built in there, and they
-    // are the first thing lost. See NodeMaterials.warm. Must happen BEFORE xr.enabled, or the
-    // warm render takes the XR path and defeats itself.
+    // THE PRE-SESSION WARM IS OFF BY DEFAULT -- it was the cause, not the cure.
     if (this._isNodeRenderer) {
-      // ?nowarm=1 skips the pre-session warm entirely.
+      // NO PRE-SESSION WARM. ?warm=1 restores it for comparison.
       //
-      // The shader dumps say why this matters. On desktop the `render` block declares
-      //   mat4 cameraProjectionMatrix; mat4 cameraViewMatrix;
-      // while in XR the camera matrices are ARRAYS OF TWO in their own buffers, indexed by
-      // u_cameraIndex. Two different uniform layouts for the same material.
+      // PROVEN by dumping the generated shader on both sides. In XR the camera matrices are
+      // per-eye arrays in their own buffers:
+      //   layout( std140 ) uniform cameraIndex { uint u_cameraIndex; };
+      //   uniform NodeBuffer_8229 { mat4 buffer8229[2]; };
+      // Compiled outside a session they are single matrices inside a large shared block:
+      //   layout( std140 ) uniform render { mat4 cameraProjectionMatrix; mat4 cameraViewMatrix; ... };
       //
-      // The warm pass compiles every material BEFORE setSession -- so with the desktop
-      // layout -- and the session then binds per-eye buffers to shaders built for single
-      // matrices. That is a uniform buffer that is too small, which is the error, and it
-      // grows with the material: pbrbisect=2 has a tiny block and survives, the full
-      // Physical material with lights, env and a shadow sampler does not.
+      // Two incompatible layouts for one material. Warming ran BEFORE setSession, so every
+      // material was compiled with the desktop layout, and the session then bound per-eye
+      // buffers to shaders built for single matrices -- "uniform buffer that is too small",
+      // growing with the material, which is why a tiny one survived and the full Physical
+      // material did not.
       //
-      // Warming was added to avoid building pipelines inside a session. It may simply be the
-      // wrong trade here.
-      // SKIPS ONLY THE WARM. The first version of this returned early from enterXR, which
-      // also skipped everything AFTER setSession -- reference space, foveation, controller
-      // setup -- so nothing rendered at all and the test said nothing about warming. A
-      // switch that changes more than the one thing it names is worse than no switch.
-      if (window._noWarm || getOptionsURL().nowarm) {
-        console.log('[warm] skipped (nowarm)');
-      } else {
+      // Warming was added to avoid building pipelines inside a session, on the strength of
+      // the spike's UBO flood. That flood was most likely THIS, misread: the spike warmed on
+      // the desktop too. The warm was not protecting against the fault, it was causing it.
+      if (window._warmBeforeXR || getOptionsURL().warm) {
         const panelMats = [];
         try {
           for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);

@@ -182,7 +182,9 @@ var getOptionsURL = function () {
   // ?noenv=1 — skip scene.environment entirely on the node path. See Scene._syncThreeLights.
   options.noenv = getVal('noenv') === '1';
   // ?nowarm=1 — skip the pre-session pipeline warm. See Scene.enterXR.
-  options.nowarm = getVal('nowarm') === '1';
+  // ?warm=1 — restore the pre-session pipeline warm, which is OFF by default because it
+  // compiles the non-XR camera uniform layout. See Scene.enterXR.
+  options.warm = getVal('warm') === '1';
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
