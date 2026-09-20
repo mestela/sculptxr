@@ -4,7 +4,7 @@
 // pyramid -- a WebGL1-era format, chosen when float textures were not guaranteed. matt:
 // "can't we just move to a generic low res latlong exr?" Yes, and this is that move without
 // a download or a new asset pipeline: the existing PNG is decoded ONCE at load into a float
-// equirect, and three's PMREMGenerator prefilters it into scene.environment.
+// equirect, and three's PMREMGenerator prefilters it for the PBR material to sample.
 //
 // What that buys: hardware trilinear filtering instead of two fetches plus a manual lerp,
 // proper roughness prefiltering instead of five hand-packed levels, correct rough
@@ -130,12 +130,13 @@ function toEquirect(gpu, px, outW, outH) {
 }
 
 /**
- * Load `env` and install it as scene.environment, prefiltered.
+ * Load `env`, prefilter it, and hand the PMREM texture back through `onDone`.
+ * Deliberately does NOT touch scene.environment -- see the note at the assignment site.
  * Cached on the env record, so switching back and forth costs nothing.
  */
 export function installEnvironment(gpu, renderer, scene, env, onDone) {
   if (!env) return;
-  if (env._pmrem) { scene.environment = env._pmrem; if (onDone) onDone(env._pmrem); return; }
+  if (env._pmrem) { if (onDone) onDone(env._pmrem); return; }
 
   // AN .hdr EQUIRECT IF THE ENVIRONMENT HAS ONE. This is the path that should exist: an
   // ordinary equirect, RGBELoader, PMREM, done.
@@ -172,7 +173,6 @@ export function installEnvironment(gpu, renderer, scene, env, onDone) {
     pm.compileEquirectangularShader();
     const rt = pm.fromEquirectangular(eq);
     env._pmrem = rt.texture;
-    scene.environment = rt.texture;
     eq.dispose();
     pm.dispose();
     console.log('[EnvIBL] ' + env.name + ' prefiltered from ' + px.width + 'x' + px.height);
@@ -190,7 +190,10 @@ function installHDR(gpu, renderer, scene, env, onDone) {
       const pm = new gpu.PMREMGenerator(renderer);
       const rt = pm.fromEquirectangular(tex);
       env._pmrem = rt.texture;
-      scene.environment = rt.texture;
+      // NOT scene.environment -- the caller puts it on the one material that wants it. See
+      // the note in _syncThreeLights: a scene-wide environment injects an IBL lookup into
+      // every material, including the unlit UI ones, and that combination does not survive
+      // an XR session.
       tex.dispose();
       pm.dispose();
       console.log('[EnvIBL] ' + env.name + ' prefiltered from ' + env.hdr);

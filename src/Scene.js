@@ -4731,13 +4731,34 @@ class Scene {
       }
       return;
     }
+    // THE ENVIRONMENT GOES ON THE PBR MATERIAL, NOT ON THE SCENE.
+    //
+    // scene.environment is GLOBAL: three injects an IBL lookup into every material that
+    // supports one, including the unlit UI materials, which have no use for it. In an XR
+    // session that is fatal -- with it set, matt saw the sculpt and nothing else; setting
+    // window._noEnv live in the same session brought the menus, controllers and cursor
+    // straight back and only blacked out the sculpt. So the sculpt's own env lookup is
+    // fine, and it is the one forced on everything else that breaks.
+    //
+    // envMap on the single material that wants it keeps the UI materials compiling exactly
+    // as they do with no environment at all.
     const env = SPBR && SPBR.environments[SPBR.idEnv];
     if (env && this._nodeEnvId !== SPBR.idEnv) {
       this._nodeEnvId = SPBR.idEnv;
-      installEnvironment(this._THREE_GPU, this._renderer, this._scene, env);
+      installEnvironment(this._THREE_GPU, this._renderer, this._scene, env, (tex) => {
+        this._nodeEnvTex = tex;
+      });
     }
     const ei = getOptionsURL().envIntensity;
-    this._scene.environmentIntensity = Number.isFinite(ei) ? ei : 1.0;
+    const gain = Number.isFinite(ei) ? ei : 1.0;
+    // Never on the scene.
+    if (this._scene.environment) this._scene.environment = null;
+    const pbrMat = NodeMaterials.get(Enums.Shader.PBR);
+    if (pbrMat && this._nodeEnvTex && pbrMat.envMap !== this._nodeEnvTex) {
+      pbrMat.envMap = this._nodeEnvTex;
+      pbrMat.needsUpdate = true;
+    }
+    if (pbrMat) pbrMat.envMapIntensity = gain;
   }
 
   getLights() {
