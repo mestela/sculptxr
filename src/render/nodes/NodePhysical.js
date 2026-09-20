@@ -88,7 +88,32 @@ export function makePhysical(gpu, tsl) {
   // ShaderManager renames aVertex/aNormal/aColor/aTexCoord but not this, so it arrives under
   // its own name.
   const mtl = attribute('aMaterial', 'vec3');
-  m.roughnessNode = max(mtl.x, float(0.0001));
+  // ?geomrough=N -- CAP three's SCREEN-SPACE ROUGHNESS TERM.
+  //
+  // MeshStandardNodeMaterial.setupVariants does roughness = getRoughness({roughness}), and
+  // getRoughness is max(r, 0.0525) + getGeometryRoughness(), where the geometry term is
+  //     max(|dFdx(normalView)|, |dFdy(normalView)|)
+  // -- a per-PIXEL derivative. It is three's specular antialiasing: the smaller an object
+  // appears on screen, the faster its normal turns per pixel, the rougher it is made, and the
+  // more the specular lobe spreads. It feeds ROUGHNESS only, so it moves specular and never
+  // touches diffuse.
+  //
+  // That is exactly what matt reports in VR: grip-scale the world down and the highlights
+  // change, while the diffuse shading stays put. Grip scaling changes apparent screen size, so
+  // it drives this term directly -- and at a 0.6% world scale it stops being a subtle
+  // antialiasing nudge and starts setting the roughness.
+  //
+  // Since the material ADDS the term to whatever we hand it, handing it a value reduced by the
+  // excess cancels the excess exactly. ?geomrough=0 removes the term (crisper highlights, and
+  // specular shimmer returns on a minified sculpt); ?geomrough=0.05 keeps a little. No flag
+  // leaves three's behaviour untouched.
+  const _gr = /[?&]geomrough=([\d.]+)/.exec(window.location.search);
+  let _rough = max(mtl.x, float(0.0001));
+  if (_gr) {
+    const cap = parseFloat(_gr[1]);
+    _rough = max(_rough.sub(max(tsl.getGeometryRoughness().sub(float(cap)), float(0))), float(0.0001));
+  }
+  m.roughnessNode = _rough;
   m.metalnessNode = mtl.y;
 
   m.userData.isPhysicalPBR = true;
