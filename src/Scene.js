@@ -4928,6 +4928,21 @@ class Scene {
       // A light that is pinned castShadow but should not cast would otherwise sample a stale
       // map; drop its contribution to nothing instead.
       L.shadow.intensity = wantCast ? (e._shadowIntensity === undefined ? 1 : e._shadowIntensity) : 0;
+      // ON-DEMAND MEANS SOMETHING HAS TO ASK. The 'once' pulse used to be a single timer 1.5s
+      // after the boundary -- which fires BEFORE the user has made a light, so it pulsed
+      // nothing and the mode looked broken. Re-pulse whenever this light's own state changes:
+      // it appeared, it moved, it was retyped, the world was rescaled. That covers making and
+      // placing a light, which is when you look for its shadow. It does NOT yet cover editing
+      // the geometry that casts -- a sculpt stroke needs its own hook.
+      if (this._xrShadowOnce && wantCast) {
+        const p = L.position;
+        const key = type + ':' + p.x.toFixed(3) + ',' + p.y.toFixed(3) + ',' + p.z.toFixed(3)
+          + ':' + L.distance.toFixed(3) + ':' + wscale.toFixed(4);
+        if (L.userData._shadowKey !== key) {
+          L.userData._shadowKey = key;
+          L.shadow.needsUpdate = true;
+        }
+      }
       L.shadow.bias = 0;
       L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
       L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
