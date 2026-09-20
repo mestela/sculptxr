@@ -107,11 +107,15 @@ export function makePhysical(gpu, tsl) {
   // excess cancels the excess exactly. ?geomrough=0 removes the term (crisper highlights, and
   // specular shimmer returns on a minified sculpt); ?geomrough=0.05 keeps a little. No flag
   // leaves three's behaviour untouched.
-  const _gr = /[?&]geomrough=([\d.]+)/.exec(window.location.search);
+  // DEFAULT IS CAP 0 -- the term is removed. matt judged it in a headset: "yeah it looks good",
+  // grip-scaling no longer moves the highlights. The cost is three's specular antialiasing, so
+  // shimmer can come back on a heavily minified sculpt; ?geomrough=N reinstates that much of it
+  // and ?geomrough=off restores three's own behaviour untouched.
+  const _gr = /[?&]geomrough=([\w.]+)/.exec(window.location.search);
+  const _grCap = !_gr ? 0 : (_gr[1] === 'off' ? null : parseFloat(_gr[1]));
   let _rough = max(mtl.x, float(0.0001));
-  if (_gr) {
-    const cap = parseFloat(_gr[1]);
-    _rough = max(_rough.sub(max(tsl.getGeometryRoughness().sub(float(cap)), float(0))), float(0.0001));
+  if (_grCap !== null && Number.isFinite(_grCap)) {
+    _rough = max(_rough.sub(max(tsl.getGeometryRoughness().sub(float(_grCap)), float(0))), float(0.0001));
   }
   m.roughnessNode = _rough;
   m.metalnessNode = mtl.y;
