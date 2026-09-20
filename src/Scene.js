@@ -3946,8 +3946,19 @@ class Scene {
           presenting: !!(r.xr && r.xr.isPresenting),
           shadowMapEnabled: r.shadowMap.enabled,
           toneMappingExposure: r.toneMappingExposure,
+          // THE ENVIRONMENT LIVES ON THE PBR MATERIAL, NOT ON THE SCENE (commit 04f1632a), so
+          // reading scene.environment reported "false" while the sculpt was plainly lit by an
+          // IBL -- which sent this hunt off in the wrong direction more than once.
           environment: !!this._scene.environment,
           environmentIntensity: this._scene.environmentIntensity,
+          pbrEnvMap: (() => {
+            const m = NodeMaterials.get(Enums.Shader.PBR);
+            return m ? !!m.envMap : null;
+          })(),
+          pbrEnvIntensity: (() => {
+            const m = NodeMaterials.get(Enums.Shader.PBR);
+            return m ? m.envMapIntensity : null;
+          })(),
           xrEnv: !!window._xrEnv, xrShadows: !!window._xrShadows,
           lights: rows,
           // WORLD SCALE, because it turns out to explain a lot: it drives light falloff, and a
