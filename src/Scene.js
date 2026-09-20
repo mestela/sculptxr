@@ -2482,6 +2482,29 @@ class Scene {
               }
             }
             console.log('[bisectUBO]   no single child explains it — the parent itself draws badly');
+            // TWO VARIABLES LEFT ON THIS OBJECT: its geometry and its material. Swap each for
+            // something known-good and re-measure, so the answer is one of them rather than
+            // another round of guessing. The spike is a CONE -- CylinderGeometry with
+            // radiusTop 0 -- which is the kind of degenerate-at-the-tip shape worth suspecting
+            // before anything subtler.
+            const origGeo = o.geometry, origMat = o.material;
+            if (!this._bisectBoxGeo) this._bisectBoxGeo = new THREE.BoxGeometry(0.01, 0.01, 0.05);
+            o.geometry = this._bisectBoxGeo;
+            const geoErrs = await test(hi);
+            o.geometry = origGeo;
+            console.log('[bisectUBO]   with a plain box geometry -> ' + geoErrs + ' errors');
+
+            let matErrs = -1;
+            if (NodeMaterials._solid) {
+              o.material = NodeMaterials._solid;
+              matErrs = await test(hi);
+              o.material = origMat;
+              console.log('[bisectUBO]   with the known-good solid material -> ' + matErrs + ' errors');
+            }
+            console.log('[bisectUBO]   => '
+              + (geoErrs === 0 ? 'THE GEOMETRY'
+                : matErrs === 0 ? 'THE MATERIAL'
+                : 'NEITHER swap helped — it is the object or its place in the graph'));
           }
         }
         console.log('[bisectUBO] CULPRIT #' + (hi - 1) + ': ' + (o.name || o.type)
