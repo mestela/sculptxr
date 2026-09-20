@@ -25,7 +25,29 @@
 export function makePhysical(gpu, tsl) {
   const { attribute, vertexColor, float, max, pow, vec3, select } = tsl;
 
-  const m = new gpu.MeshPhysicalNodeMaterial({ vertexColors: true });
+  // THE SAME FLAGS THE LEGACY MATERIAL USES. DoubleSide in particular is not cosmetic here:
+  // sculpts are not all closed solids -- drawn planes and open surfaces are ordinary in this
+  // app -- and with FrontSide their back faces vanish, which reads as objects failing to
+  // depth-test against each other rather than as backface culling. matt, on a cube used as a
+  // ground plane: "it looks like its just doing a dumb transform check rather than a per
+  // pixel depth check".
+  //
+  // OPAQUE, unlike the legacy material, which sets transparent:true unconditionally "for
+  // SculptXR opacity handling". Transparent materials DO NOT CAST SHADOWS -- with it set, a
+  // light placed inside a closed sphere still lit the floor underneath, because the sphere
+  // was casting nothing. Opaque also puts the mesh in the front-to-back opaque pass, which is
+  // strictly better depth behaviour than the origin-sorted transparent one.
+  //
+  // The cost: a mesh with opacity < 1 will not fade until this is made per-mesh (the material
+  // is shared across meshes, so the flag cannot simply be toggled here). Worth it for shadows;
+  // worth revisiting when per-mesh material variants land with the texture maps.
+  const m = new gpu.MeshPhysicalNodeMaterial({
+    vertexColors: true,
+    side: gpu.DoubleSide,
+    transparent: false,
+    depthTest: true,
+    depthWrite: true,
+  });
 
   // THE PIECEWISE sRGB CURVE, not pow(c, 2.2). They agree in the midtones and diverge in the
   // darks, which is where a sculpt's shadow side lives -- the difference reads as "the port

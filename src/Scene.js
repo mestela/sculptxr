@@ -4427,13 +4427,23 @@ class Scene {
       }
       const c = e._lightColor || [1, 1, 1];
       L.color.setRGB(c[0], c[1], c[2]);
-      L.intensity = (e._lightIntensity === undefined ? 1 : e._lightIntensity) * this._lightIntensityScale();
+      const slider = (e._lightIntensity === undefined ? 1 : e._lightIntensity);
       if (L.isPointLight || L.isSpotLight) {
-        L.distance = e._lightRange === undefined ? 50 : e._lightRange;
-        // decay 2 is the physical inverse square. Our old falloff was deliberately not that,
-        // but with no scenes to relight the physical one is the better default and the
-        // intensity slider is the dial.
+        const range = e._lightRange === undefined ? 50 : e._lightRange;
+        L.distance = range;
+        // decay 2 is the physical inverse square: irradiance is intensity / d². A flat
+        // multiplier cannot work with that -- the first version used 40, which at a typical
+        // 40 units away is 40/1600 = 0.025, i.e. no visible light at all. matt: "if i add a
+        // light, i see no effect. i tried a point light, nothing, tried a spot light,
+        // nothing."
+        //
+        // Scaling by range² makes the slider mean something a person can predict: the
+        // brightness the light delivers AT ITS OWN RANGE, whatever the scene's scale.
         L.decay = 2;
+        L.intensity = slider * range * range;
+      } else {
+        // Directional light has no falloff, so the slider is the irradiance directly.
+        L.intensity = slider;
       }
       if (L.isSpotLight) {
         const deg = e._lightConeDeg === undefined ? 35 : e._lightConeDeg;
@@ -4471,10 +4481,6 @@ class Scene {
     // washed out there is no shading to see and no shadow to find.
     this._nodeAmbient.intensity = gain;
   }
-
-  // Our intensity slider is a 0..n multiplier; three's lights are physical. One place to
-  // rescale, so the two can be re-dialled together.
-  _lightIntensityScale() { return 40; }
 
   getLights() {
     const out = [];
