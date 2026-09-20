@@ -182,8 +182,10 @@ export function installEnvironment(gpu, renderer, scene, env, onDone) {
 
 /** The path this should be on: an ordinary equirect HDR, loaded and prefiltered. */
 function installHDR(gpu, renderer, scene, env, onDone) {
-  import('three/examples/jsm/loaders/RGBELoader.js').then(({ RGBELoader }) => {
-    new RGBELoader().load(env.hdr, (tex) => {
+  // HDRLoader, not RGBELoader: same Radiance decoder, and RGBELoader now logs a deprecation
+  // on every load.
+  import('three/examples/jsm/loaders/HDRLoader.js').then(({ HDRLoader }) => {
+    new HDRLoader().load(env.hdr, (tex) => {
       tex.mapping = gpu.EquirectangularReflectionMapping;
       const pm = new gpu.PMREMGenerator(renderer);
       const rt = pm.fromEquirectangular(tex);

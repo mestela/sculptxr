@@ -510,7 +510,15 @@ NodeMaterials.warm = function (renderer, camera, extraMaterials, scene) {
   if (scene) scene.traverse((o) => {
     const m = o.material;
     if (!m) return;
-    if (Array.isArray(m)) m.forEach(add); else add(m);
+    // NOT THE ONES THIS RENDERER CANNOT DRAW. A raw ShaderMaterial throws out of build(),
+    // and warming is the one place that throw is self-inflicted: the sweep deliberately
+    // renders every material it can find, so it walked straight into three's fat-line
+    // LineMaterial (Line2/LineSegments2, a ShaderMaterial subclass) and threw
+    // "THREE.NodeMaterial: Material LineMaterial is not compatible" from inside the warm
+    // pass itself -- visible in matt's log with NodeMaterials.js in the stack.
+    const bad = (x) => !x || (x.isShaderMaterial && !x.isNodeMaterial);
+    if (Array.isArray(m)) m.forEach((x) => { if (!bad(x)) add(x); });
+    else if (!bad(m)) add(m);
   });
   if (!mats.length) return 0;
 
