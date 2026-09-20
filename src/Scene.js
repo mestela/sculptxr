@@ -3849,6 +3849,20 @@ class Scene {
         console.log('[xrSetShadows] ' + (on ? 'on' : 'off') + ', rebuilt ' + n + ' materials');
         return true;
       };
+      // Pulse every in-use shadow map once. In ?xrshadows=once mode this is the only thing
+      // that renders them, so it is both the refresh button and the diagnostic trigger.
+      window.xrShadowRefresh = () => {
+        const pool = this._lightPool;
+        if (!pool) return 0;
+        let n = 0;
+        for (const t of [0, 1, 2]) {
+          for (const L of pool[t]) {
+            if (L.castShadow && L.intensity > 0 && L.shadow) { L.shadow.needsUpdate = true; n++; }
+          }
+        }
+        console.log('[xrShadowRefresh] pulsed ' + n + ' shadow map(s)');
+        return n;
+      };
       window.xrLightReport = () => {
         const r = this._renderer;
         const pool = this._lightPool;
@@ -3875,6 +3889,27 @@ class Scene {
           worldScale: this._worldGroup ? this._worldGroup.scale.x : null,
           worldScaleVsDefault: this._worldGroup
             ? +(this._worldGroup.scale.x / Scene.WORLD_SCALE_DEFAULT).toFixed(4) : null,
+          // NEAR/FAR AND WHAT SETS THEM. matt has reported three times that making a light
+          // brings on a "near clip is half a metre" feel. optimizeNearFar() is fed
+          // computeBoundingBoxScene(), which folds in EVERY mesh including light hosts and
+          // bones -- unlike the light calibration, which filters _isNull. A light's handle is
+          // sized off _lightRange, whose floor is 200 units, so one light can enlarge the
+          // scene box several-fold. Printing both boxes says whether that is what is happening
+          // instead of another round of guessing.
+          near: this._camera && this._camera._near,
+          far: this._camera && this._camera._far,
+          sceneDiag: (() => {
+            const b = this.computeBoundingBoxScene();
+            return Number.isFinite(b[0])
+              ? +Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]).toFixed(2) : null;
+          })(),
+          realMeshDiag: (() => {
+            const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+            if (!real.length) return null;
+            const b = this.computeBoundingBoxMeshes(real);
+            return Number.isFinite(b[0])
+              ? +Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]).toFixed(2) : null;
+          })(),
           graphFrozen: !!this._xrGraphFrozen,
           poolSize: this._lightPool
             ? this._lightPool[0].length + this._lightPool[1].length + this._lightPool[2].length
@@ -4861,7 +4896,14 @@ class Scene {
       // when `shadow.autoUpdate` and `shadow.needsUpdate` are both false. That is the lever
       // that makes shadows affordable here: castShadow stays pinned for the whole session so
       // the compiled graph never moves, while the COST follows what is actually in use.
-      L.shadow.autoUpdate = wantCast && this._renderer.shadowMap.enabled;
+      // ?xrshadows=once -- render each map ON DEMAND instead of every frame. Two reasons.
+      // PERF: a casting point light re-renders its whole cube map every frame even when
+      // nothing has moved, which is six full scene renders per light per frame. DIAGNOSIS: the
+      // shadow pass is a NESTED renderer.render inside the XR frame, which is the exact shape
+      // that broke this renderer before (the spectator canvas did the same and left the canvas
+      // target bound). If the frame is intact with one shadow pass and breaks when they run
+      // every frame, that is the answer. window.xrShadowRefresh() pulses an update.
+      L.shadow.autoUpdate = wantCast && this._renderer.shadowMap.enabled && !this._xrShadowOnce;
       // A light that is pinned castShadow but should not cast would otherwise sample a stale
       // map; drop its contribution to nothing instead.
       L.shadow.intensity = wantCast ? (e._shadowIntensity === undefined ? 1 : e._shadowIntensity) : 0;
@@ -4968,6 +5010,11 @@ class Scene {
     // on in a session to retest.
     const pbrMat = NodeMaterials.get(Enums.Shader.PBR);
     const _xrNow = !!(this._renderer.xr && this._renderer.xr.isPresenting);
+    // ?xrenv=1 as well as window._xrEnv, for the same reason as ?xrshadows: a console global
+    // has to be set before the button is pressed, and getting that wrong is indistinguishable
+    // from the workaround still being in place. The env being off in a session IS deliberate --
+    // it is a workaround, not a bug -- and this is how it gets retested.
+    if (/[?&]xrenv=1/.test(window.location.search)) window._xrEnv = 1;
     const wantEnv = this._nodeEnvTex && (!_xrNow || !!window._xrEnv);
     const nextEnv = wantEnv ? this._nodeEnvTex : null;
     if (pbrMat && pbrMat.envMap !== nextEnv) {
@@ -7113,10 +7160,16 @@ class Scene {
       // THE FLAG IS A URL PARAM AS WELL AS A GLOBAL. window._xrShadows has to be set BEFORE
       // the button is pressed, and forgetting that looks exactly like the bug it was meant to
       // test -- it cost a headset session. ?xrshadows=1 cannot be mistimed.
-      const _wantXrShadows = !!window._xrShadows || /[?&]xrshadows=1/.test(window.location.search);
+      const _shq = /[?&]xrshadows=(\w+)/.exec(window.location.search);
+      this._xrShadowOnce = !!(_shq && _shq[1] === 'once');
+      const _wantXrShadows = !!window._xrShadows || !!_shq;
       window._xrShadows = _wantXrShadows;
       _setPoolShadows(_wantXrShadows);
       _rebuildAll('session start');
+      if (_wantXrShadows && this._xrShadowOnce) {
+        // A little after the boundary, so the pool has been synced and the sculpt is present.
+        setTimeout(() => { try { window.xrShadowRefresh(); } catch (e) { /* never block VR */ } }, 1500);
+      }
       session.addEventListener('end', () => {
         try {
           this._xrGraphFrozen = false;
