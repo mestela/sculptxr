@@ -25,12 +25,17 @@
 export function makePhysical(gpu, tsl) {
   const { attribute, vertexColor, float, max, pow, vec3, select } = tsl;
 
-  // THE SAME FLAGS THE LEGACY MATERIAL USES. DoubleSide in particular is not cosmetic here:
-  // sculpts are not all closed solids -- drawn planes and open surfaces are ordinary in this
-  // app -- and with FrontSide their back faces vanish, which reads as objects failing to
-  // depth-test against each other rather than as backface culling. matt, on a cube used as a
-  // ground plane: "it looks like its just doing a dumb transform check rather than a per
-  // pixel depth check".
+  // FrontSide, NOT DoubleSide -- despite the legacy material using DoubleSide.
+  //
+  // DoubleSide on this renderer eats large curved patches out of a closed sculpt: matt, "very
+  // strange render artifacts; front and sides of the sphere are missing". Reproduced on
+  // desktop and isolated by toggling the one flag at runtime -- FrontSide is clean, DoubleSide
+  // is not. It is NOT shadow acne, which was the obvious reading of a dark blotchy surface:
+  // the artifact is identical with renderer.shadowMap.enabled turned off. Cause unknown; the
+  // back faces appear to win the depth test in patches.
+  //
+  // The cost is real and should not be lost: open surfaces (drawn planes) will show from one
+  // side only until this is understood. Tracked rather than papered over.
   //
   // OPAQUE, unlike the legacy material, which sets transparent:true unconditionally "for
   // SculptXR opacity handling". Transparent materials DO NOT CAST SHADOWS -- with it set, a
@@ -43,7 +48,7 @@ export function makePhysical(gpu, tsl) {
   // worth revisiting when per-mesh material variants land with the texture maps.
   const m = new gpu.MeshPhysicalNodeMaterial({
     vertexColors: true,
-    side: gpu.DoubleSide,
+    side: gpu.FrontSide,
     transparent: false,
     depthTest: true,
     depthWrite: true,
