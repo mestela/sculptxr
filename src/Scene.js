@@ -6816,22 +6816,19 @@ class Scene {
       //
       // Warming was added to avoid building pipelines inside a session. It may simply be the
       // wrong trade here.
+      // SKIPS ONLY THE WARM. The first version of this returned early from enterXR, which
+      // also skipped everything AFTER setSession -- reference space, foveation, controller
+      // setup -- so nothing rendered at all and the test said nothing about warming. A
+      // switch that changes more than the one thing it names is worse than no switch.
       if (window._noWarm || getOptionsURL().nowarm) {
         console.log('[warm] skipped (nowarm)');
-        this._renderer.xr.enabled = true;
-        this._renderer.xr.setReferenceSpaceType('local-floor');
-        this._renderer.resetState?.();
-        const _t0nw = performance.now();
-        await this._renderer.xr.setSession(session);
-        if (window.screenLog) window.screenLog('[XR] setSession (nowarm) +'
-          + Math.round(performance.now() - _t0nw) + 'ms', 'lime');
-        return;
+      } else {
+        const panelMats = [];
+        try {
+          for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);
+        } catch (e) { /* registry is a convenience; never block entering VR on it */ }
+        NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), panelMats, this._scene);
       }
-      const panelMats = [];
-      try {
-        for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);
-      } catch (e) { /* registry is a convenience; never block entering VR on it */ }
-      NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), panelMats, this._scene);
     }
 
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
