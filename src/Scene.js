@@ -4359,13 +4359,25 @@ class Scene {
     return mesh;
   }
 
+  // A FLOOR OF 200, because half the scene diagonal is not far enough in this app's units.
+  //
+  // matt: "the defautlt fallof should be at least 200 based on the scene units sculptxr
+  // uses". The default sphere is 34 units across, so half its diagonal is about 29 -- a
+  // light placed anywhere sensible to work by is already outside that, and with physical
+  // inverse-square falloff it contributes almost nothing by the time it reaches the sculpt.
+  // The old value predates three's lighting, when the falloff was our own
+  // 1/(1 + d²/r²) and never actually reached zero.
+  //
+  // Still scaled off the scene for anything larger than the floor, so a big import gets a
+  // light that reaches it.
   _lightRangeForScene() {
+    const MIN = 200;
     const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
-    if (!real.length) return 50;
+    if (!real.length) return MIN;
     const box = this.computeBoundingBoxMeshes(real);
-    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return 50;
+    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return MIN;
     const d = vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
-    return d > 1e-6 ? d * 0.5 : 50;
+    return Math.max(MIN, d > 1e-6 ? d * 2 : MIN);
   }
 
   // The light's LOOK: a star of rays, in the light's own colour so a scene of several is

@@ -44,11 +44,18 @@ check('...and it is offered next to the other primitives',
   /id="mm-add-light"/.test(PANEL) && /main\.addLight\?\.\(\)/.test(PANEL));
 
 // A light whose range is a constant either lights nothing or everything, since scene units here
-// are arbitrary and large. Half the scene diagonal is the difference between "I added a light"
-// and "I added a light and nothing happened".
+// are arbitrary and large. Scaling off the scene diagonal is the difference between "I added a
+// light" and "I added a light and nothing happened".
+//
+// THE RULE, NOT THE MULTIPLIER. This used to assert the literal `d * 0.5 : 50`, and broke the
+// moment the floor moved to 200 -- a number that had to move, because the falloff became
+// physical inverse-square when PBR went onto three's lighting and half the diagonal stopped
+// reaching anything. What must hold is that the range is DERIVED from the scene and has a
+// floor for an empty one; the constants are a judgement that will move again.
 check('a new light takes its range from the scene it lands in',
   /mesh\._lightRange = this\._lightRangeForScene\(\);/.test(SCENE)
-    && /return d > 1e-6 \? d \* 0\.5 : 50;/.test(SCENE));
+    && /_lightRangeForScene\(\) \{[\s\S]{0,900}?vec3\.dist\(/.test(SCENE)
+    && /_lightRangeForScene\(\) \{[\s\S]{0,1200}?return Math\.max\(MIN,/.test(SCENE));
 check('...and carries its own colour and intensity',
   /mesh\._lightColor     = \[1\.0, 0\.98, 0\.95\];/.test(SCENE)
     && /mesh\._lightIntensity = 1\.0;/.test(SCENE));
