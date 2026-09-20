@@ -95,6 +95,12 @@ ShaderPBR.environments = [{
   sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   exposure: 1.0,
   name: 'Lauter waterfall'
+}, {
+  // https://polyhaven.com/a/artist_workshop
+  hdr: texPath + 'artist_workshop_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Artist workshop'
 }];
 
 var opts = getOptionsURL();
