@@ -78,6 +78,7 @@ import SceneShadow from './render/SceneShadow.js';
 import scanPhantoms from './misc/PhantomScan.js';
 import probeXRLighting from './misc/XRLightProbe.js';
 import NodeMaterials from './render/nodes/NodeMaterials.js';
+import { stripGeometry } from './render/lineStrip.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -7213,20 +7214,24 @@ class Scene {
                 }
             }
 
-            const geoTop = new THREE.BufferGeometry().setFromPoints(pointsTop);
-            const geoBottomLeft = new THREE.BufferGeometry().setFromPoints(pointsBottomLeft);
-            const geoBottomRight = new THREE.BufferGeometry().setFromPoints(pointsBottomRight);
+            // SEGMENT PAIRS, NOT A STRIP -- see src/render/lineStrip.js. `top` was named by
+            // bisection as the first object whose draw starts the UBO flood under
+            // WebGPURenderer, and it is a non-indexed THREE.Line, which draws with drawArrays:
+            // the call every unexplained error in this hunt was on.
+            const geoTop = stripGeometry(pointsTop);
+            const geoBottomLeft = stripGeometry(pointsBottomLeft);
+            const geoBottomRight = stripGeometry(pointsBottomRight);
 
             // depthWrite OFF with depthTest off -- see the note on the cursor group below.
             const matTop = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
             const matBottomLeft = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
             const matBottomRight = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
 
-            const lineTop = new THREE.Line(geoTop, matTop);
+            const lineTop = new THREE.LineSegments(geoTop, matTop);
             lineTop.name = "top";
-            const lineBottomLeft = new THREE.Line(geoBottomLeft, matBottomLeft);
+            const lineBottomLeft = new THREE.LineSegments(geoBottomLeft, matBottomLeft);
             lineBottomLeft.name = "bottom_left";
-            const lineBottomRight = new THREE.Line(geoBottomRight, matBottomRight);
+            const lineBottomRight = new THREE.LineSegments(geoBottomRight, matBottomRight);
             lineBottomRight.name = "bottom_right";
 
             const ringLine = new THREE.Group();

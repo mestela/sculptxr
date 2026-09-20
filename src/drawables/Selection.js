@@ -2,6 +2,7 @@ import { mat3, mat4, vec3 } from 'gl-matrix';
 import Buffer from '../render/Buffer.js';
 import ShaderLib from '../render/ShaderLib.js';
 import NodeMaterials from '../render/nodes/NodeMaterials.js';
+import { stripGeometry } from '../render/lineStrip.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
 import MotionPathEdit from '../editing/MotionPathEdit.js';
@@ -218,9 +219,10 @@ class Selection {
         const a = (i / 64) * Math.PI * 2;
         pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0));
       }
-      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      // Segment pairs, not a strip: THREE.Line is the primitive WebGPURenderer fails on.
+      const lineGeo = stripGeometry(pts);
       const lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2, depthTest: false, depthWrite: false, transparent: true });
-      this._threeCircle = new THREE.Line(lineGeo, lineMat);
+      this._threeCircle = new THREE.LineSegments(lineGeo, lineMat);
       this._threeCircle.renderOrder = 10000;
 
       const dotGeo = new THREE.SphereGeometry(0.005, 8, 8);

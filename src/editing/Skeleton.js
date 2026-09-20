@@ -2473,7 +2473,11 @@ function ensureEntry(main, id) {
     // rewritten each frame; the dash pattern needs computeLineDistances() after every move.
     const linkGeo = new THREE.BufferGeometry();
     linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-    const link = new THREE.Line(linkGeo, new THREE.LineDashedMaterial({
+    // LineSegments, not Line: two points are one segment either way, so this is identical
+    // here -- and THREE.Line is the primitive WebGPURenderer fails on (see
+    // src/render/lineStrip.js). Changed now so a rig does not reintroduce the fault the
+    // moment one exists; there was no rig in the scene when it was hunted down.
+    const link = new THREE.LineSegments(linkGeo, new THREE.LineDashedMaterial({
       color: PIN_LINK_COLOR, transparent: true, opacity: 0.85, depthWrite: false, depthTest: false,
     }));
     link.renderOrder = 10000;
