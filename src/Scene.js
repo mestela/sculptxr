@@ -2435,6 +2435,15 @@ class Scene {
                     + ' mat=' + (m ? (m.type + (m.userData && m.userData.isNodePanel ? '(panel)' : '')) : 'none')
                     + ' order=' + (cur ? cur.renderOrder : '?')
                     + ' visible=' + (cur ? cur.visible : '?'));
+                  // AND THE STACK, when we cannot name the object. `cur` is null means the
+                  // draw happened before any tagged object drew -- so no amount of better
+                  // tagging will name it, and the only thing that can is three's own call
+                  // path. Four frames is enough to see which backend function issued it.
+                  if (!cur) {
+                    const st = (new Error().stack || '').split('\n').slice(1, 6)
+                      .map((l) => l.trim().replace(/^at\s+/, '')).join(' <- ');
+                    console.log('[traceUBO]   via ' + st);
+                  }
                 }
               }
             }
