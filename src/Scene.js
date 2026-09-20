@@ -2243,6 +2243,12 @@ class Scene {
             if (o.isMesh || o.isLine || o.isPoints) { this._minimalHidden.push([o, o.visible]); o.visible = false; }
           });
         }
+        // AND AGAIN, EVERY FRAME, for the cursors. _updateVRCursors runs BEFORE _drawScene and
+        // sets volume_sphere visible again, so a one-shot sweep never actually produced the
+        // empty frame this level promises -- the trace caught volume_sphere drawing at
+        // visible:true in the middle of "everything hidden". A minimal test that is not
+        // minimal is worse than none, because its quiet console means nothing.
+        for (const [o] of this._minimalHidden) o.visible = false;
       }
       this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
       // Its own expression, NOT the _renderCam below: that is declared in the main render

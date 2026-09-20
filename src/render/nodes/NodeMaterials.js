@@ -231,8 +231,13 @@ NodeMaterials.fresnelGlow = function (hex) {
   const { normalView, positionView, normalize, dot, abs, pow, float, vec3 } = tsl;
   const m = new gpu.MeshBasicNodeMaterial({
     transparent: true, depthTest: true, depthWrite: false, side: gpu.DoubleSide,
-    blending: gpu.CustomBlending, blendEquation: gpu.AddEquation,
-    blendSrc: gpu.OneFactor, blendDst: gpu.OneFactor,
+    // AdditiveBlending, not CustomBlending with explicit One/One factors. They are the same
+    // equation, but the explicit form was copied literally from the GLSL material and it is
+    // the less-travelled path through this backend -- and the trace has volume_sphere
+    // emitting 0x502 AND 0x506 (INVALID_FRAMEBUFFER_OPERATION) right after the port put a
+    // node material on it. Worth removing as a variable before anything else is read into
+    // that draw.
+    blending: gpu.AdditiveBlending,
   });
   const f = pow(float(1.0).sub(abs(dot(normalize(normalView), normalize(positionView)))), 3.0);
   // A UNIFORM, not a baked constant: _updateVRCursors recolours this every frame (blue, red
