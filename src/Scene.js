@@ -4647,7 +4647,25 @@ class Scene {
     // environment (see EnvIBL) and re-installed when the selection changes; the Env Intensity
     // slider is three's own environmentIntensity, which is what that control should always
     // have been driving.
+    // ?noenv=1 / window._noEnv — no scene.environment at all.
+    //
+    // The bisect put the regression in the environment commits, and the strongest suspect is
+    // simply HAVING one: a2c2c032 made an HDR environment the DEFAULT, so from that commit
+    // on scene.environment is set, PMREM runs, and every lit material compiles an IBL
+    // lookup. Before it, the default was a LogLUV atlas the node renderer cannot read, so
+    // scene.environment stayed null and none of that happened.
+    //
+    // Testing that by checking out old commits is slow and, as this evening proved, easy to
+    // confound. This tests it on the CURRENT build instead: one session with it, one
+    // without.
     const SPBR = ShaderLib[Enums.Shader.PBR];
+    if (window._noEnv || getOptionsURL().noenv) {
+      if (this._scene.environment) {
+        this._scene.environment = null;
+        console.log('[env] disabled (noenv)');
+      }
+      return;
+    }
     const env = SPBR && SPBR.environments[SPBR.idEnv];
     if (env && this._nodeEnvId !== SPBR.idEnv) {
       this._nodeEnvId = SPBR.idEnv;

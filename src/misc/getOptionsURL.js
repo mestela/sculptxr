@@ -179,6 +179,8 @@ var getOptionsURL = function () {
   // The default used to be 2, studio_small_01, back when every environment was a LogLUV
   // octahedral atlas.
   options.environment = queryInteger(getVal('environment'), 0, Infinity, 5); // [0-inf]
+  // ?noenv=1 — skip scene.environment entirely on the node path. See Scene._syncThreeLights.
+  options.noenv = getVal('noenv') === '1';
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
