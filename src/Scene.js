@@ -2331,27 +2331,11 @@ class Scene {
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
 
-      // ADOPT ANY CONTROLLER MODEL THAT HAS JUST LOADED.
-      //
-      // Traced on device: L_body, a GLTF controller model on a stock MeshStandardMaterial, is
-      // the FIRST failing draw of the session -- 0x502 and then 0x506
-      // (INVALID_FRAMEBUFFER_OPERATION) -- and stylus_spike and the panel follow it. The
-      // panels were never the problem; they were third in line behind a poisoned frame.
-      //
-      // The model is fetched when the controller connects, which is inside the session, so
-      // its pipeline is necessarily built there and nothing can warm it in advance. Giving it
-      // a material that already has a pipeline avoids the build entirely. Swept per frame
-      // because the load completes whenever it completes; the subtree is a few dozen nodes
-      // and the sweep stops as soon as there is nothing left to adopt.
-      if (this._isNodeRenderer && this._vrGrips) {
-        for (const g of this._vrGrips) {
-          if (g.userData._adopted) continue;
-          const n = NodeMaterials.adoptController(g);
-          if (n) { g.userData._adopted = true; console.log('[controller] adopted ' + n + ' materials'); }
-        }
-      }
-      // The warm pass runs once, at Enter VR, where it cannot be observed from a desktop.
-      // Exposed so it can at least be proven not to throw before it is depended on there.
+      // (The controller models used to be force-swapped to a flat material here. That was a
+      // guess made before the cause was known -- their GLTF materials are MeshStandardMaterial,
+      // which converts to MeshStandardNodeMaterial and measured ZERO errors on the ladder, so
+      // they were never the problem and the swap only cost their real appearance.)
+
       if (!window._showVrPanels) {
         window._showVrPanels = (which) => {
           window._vrPanelsOnDesktop = 1;
@@ -2420,6 +2404,451 @@ class Scene {
           this._scene.background = this._savedBg || null;
           this._scene.environment = this._savedEnv || null;
           console.log('[sceneBg] restored');
+        };
+      }
+
+      // window._bisectUBO() — which of the 198 objects starts the errors?
+      //
+      // An empty frame is silent: drawCalls=0 for seconds on end with no errors, while the
+      // full scene floods. So the fault is in the CONTENT, and with the frame now genuinely
+      // empty the list can be bisected instead of guessed at. 198 objects is ~8 rounds, and
+      // asking a person to do 8 rounds by hand in a headset is not reasonable, so it runs
+      // itself: reveal a prefix, wait for the errors to settle, read the counter, halve.
+      //
+      // Requires _traceUBO() and _vrMinimalTest = 1 first -- the counter comes from the
+      // tracer and the hidden list from level 1.
+      if (!window._bisectUBO) window._bisectUBO = async () => {
+        if (!this._minimalHidden || !this._minimalHidden.length) {
+          console.log('[bisectUBO] run window._traceUBO() then window._vrMinimalTest = 1 first');
+          return null;
+        }
+        if (window.__uboErrCount === undefined) { console.log('[bisectUBO] tracer is not on'); return null; }
+        const list = this._minimalHidden.map(([o]) => o);
+        // WALL TIME, not requestAnimationFrame. Inside an immersive session the frame loop is
+        // the XRSession's, and window.rAF is not it -- the first version of this ran all eight
+        // rounds in 43ms and measured nothing, because every await resolved without a frame
+        // ever being drawn. Sleeping real milliseconds is crude and it is correct.
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // Reveal the first k, let it settle, then count errors over a fixed window.
+        const test = async (k) => {
+          this._minimalReveal = k;
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          return window.__uboErrCount - before;
+        };
+        if (await test(0) > 0) {
+          console.log('[bisectUBO] errors with NOTHING revealed — not scene content after all');
+          this._minimalReveal = 0;
+          return null;
+        }
+        const allErrs = await test(list.length);
+        const allDc = this._renderer.info && this._renderer.info.render.drawCalls;
+        if (allErrs === 0) {
+          console.log('[bisectUBO] no errors with EVERYTHING revealed (drawCalls=' + allDc
+            + ') — if that count is 0, nothing was actually drawn and the run is void');
+          this._minimalReveal = 0;
+          return null;
+        }
+        let lo = 0, hi = list.length;          // lo is known-clean, hi is known-dirty
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          const errs = await test(mid);
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          console.log('[bisectUBO] first ' + mid + ' revealed -> ' + errs + ' errors, drawCalls=' + dc);
+          if (errs > 0) hi = mid; else lo = mid;
+        }
+        const o = list[hi - 1];
+        // A PARENT GETS THE BLAME FOR ITS CHILDREN. Revealing an object lets its whole
+        // subtree draw, so the bisection attributes to the ancestor -- stylus_spike has a
+        // child, stylus_spike_ghost, with an unusual GreaterDepth mode. Hide the descendants
+        // one at a time and see whether the parent is innocent.
+        const kids = [];
+        o.traverse((c) => { if (c !== o && (c.isMesh || c.isLine || c.isPoints || c.isSprite)) kids.push(c); });
+        {
+          // MEASURED TWICE, TAKING THE WORST. The first version gated the whole refinement on
+          // a single re-measure at the boundary -- and that re-measure came back 0 while the
+          // binary search had just seen errors there, so nothing ran and the round was
+          // wasted. The flood is not steady (the driver stops reporting after a few hundred,
+          // and the errors come in bursts), so one sample is not enough to call a state clean.
+          const probe = async () => Math.max(await test(hi), await test(hi));
+          const base = await probe();
+          console.log('[bisectUBO]   baseline at the boundary -> ' + base + ' errors');
+          {
+            for (const c of (kids || [])) {
+              const was = c.visible;
+              c.visible = false;
+              const errs = await probe();
+              c.visible = was;
+              console.log('[bisectUBO]   without child ' + (c.name || c.type) + ' -> ' + errs + ' errors');
+              if (errs === 0) {
+                console.log('[bisectUBO] REAL CULPRIT is the child: ' + (c.name || c.type)
+                  + ' mat=' + (c.material && c.material.type)
+                  + ' depthFunc=' + (c.material && c.material.depthFunc)
+                  + ' transparent=' + (c.material && c.material.transparent)
+                  + ' order=' + c.renderOrder);
+                this._minimalReveal = 0;
+                return c;
+              }
+            }
+            console.log('[bisectUBO]   no single child explains it — the parent itself draws badly');
+            // TWO VARIABLES LEFT ON THIS OBJECT: its geometry and its material. Swap each for
+            // something known-good and re-measure, so the answer is one of them rather than
+            // another round of guessing. The spike is a CONE -- CylinderGeometry with
+            // radiusTop 0 -- which is the kind of degenerate-at-the-tip shape worth suspecting
+            // before anything subtler.
+            const origGeo = o.geometry, origMat = o.material;
+            if (!this._bisectBoxGeo) this._bisectBoxGeo = new THREE.BoxGeometry(0.01, 0.01, 0.05);
+            o.geometry = this._bisectBoxGeo;
+            const geoErrs = await probe();
+            o.geometry = origGeo;
+            console.log('[bisectUBO]   with a plain box geometry -> ' + geoErrs + ' errors');
+
+            let matErrs = -1;
+            if (NodeMaterials._solid) {
+              o.material = NodeMaterials._solid;
+              matErrs = await probe();
+              o.material = origMat;
+              console.log('[bisectUBO]   with the known-good solid material -> ' + matErrs + ' errors');
+            }
+            console.log('[bisectUBO]   => '
+              + (geoErrs === 0 ? 'THE GEOMETRY'
+                : matErrs === 0 ? 'THE MATERIAL'
+                : 'NEITHER swap helped — it is the object or its place in the graph'));
+          }
+        }
+        console.log('[bisectUBO] CULPRIT #' + (hi - 1) + ': ' + (o.name || o.type)
+          + ' mat=' + (o.material && o.material.type)
+          + ' order=' + o.renderOrder
+          + ' geom=' + (o.geometry && o.geometry.type)
+          + ' indexed=' + !!(o.geometry && o.geometry.index)
+          + ' verts=' + (o.geometry && o.geometry.attributes.position
+            ? o.geometry.attributes.position.count : '?'));
+        this._minimalReveal = 0;
+        return o;
+      };
+
+      // window._traceUBO() — WHICH object's draw emits the error?
+      //
+      // Every theory I have formed about this has been wrong: the material class, the stock
+      // conversion, the texture, the transform, the framebuffer, pipeline warming, uniform
+      // padding, scene.background. The error message has been sitting there the whole time
+      // naming a specific draw call, so stop inferring and ask the driver directly.
+      //
+      // Wraps drawElements/drawArrays on the real context, calls getError() immediately after
+      // each, and reports the object that was being drawn (captured via onBeforeRender). That
+      // is the one fact nothing so far has established: WHAT is too small for WHAT. Expensive
+      // -- a synchronous getError per draw stalls the pipeline -- so it is opt-in and
+      // self-limiting.
+      if (!window._traceUBO) window._traceUBO = (maxReports) => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        if (!gl) { console.log('[traceUBO] no raw context'); return false; }
+        if (gl.__uboTraced) { console.log('[traceUBO] already on'); return true; }
+        gl.__uboTraced = true;
+        const limit = maxReports || 12;
+        let reports = 0;
+        window.__uboErrCount = 0;
+        const seen = new Set();
+        let cur = null;
+        // Tag every drawable so the wrapper knows what is on the GPU right now.
+        //
+        // RE-TAGGED EVERY FRAME, because tagging once names only what existed at the moment
+        // tracing started. The previous run reported `obj=unknown mat=none` and I read that
+        // as three drawing something anonymous -- but the backend has only four drawArrays
+        // call sites and the object-draw one receives the object, so an untagged object is a
+        // tagging failure, not an anonymous draw. Anything added after _traceUBO() ran was
+        // invisible to it.
+        const tag = (o) => {
+          if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          if (o.userData.__uboTagged) return;
+          o.userData.__uboTagged = true;
+          const prev = o.onBeforeRender;
+          o.onBeforeRender = function (...a) {
+            cur = o;
+            if (prev) prev.apply(this, a);
+          };
+        };
+        this._uboTag = () => this._scene.traverse(tag);
+        this._uboTag();
+        const wrap = (name) => {
+          const orig = gl[name].bind(gl);
+          gl[name] = function (...args) {
+            const r = orig(...args);
+            if (true) {
+              const e = gl.getError();
+              if (e !== 0) {
+                window.__uboErrCount++;
+                const key = (cur && (cur.name || cur.type)) + ':' + e;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  reports++;
+                  const m = cur && cur.material;
+                  console.log('[traceUBO] ' + name + ' err=0x' + e.toString(16)
+                    + ' obj=' + (cur ? (cur.name || cur.type) : 'unknown')
+                    + ' mat=' + (m ? (m.type + (m.userData && m.userData.isNodePanel ? '(panel)' : '')) : 'none')
+                    + ' order=' + (cur ? cur.renderOrder : '?')
+                    + ' visible=' + (cur ? cur.visible : '?'));
+                  // AND THE STACK, when we cannot name the object. `cur` is null means the
+                  // draw happened before any tagged object drew -- so no amount of better
+                  // tagging will name it, and the only thing that can is three's own call
+                  // path. Four frames is enough to see which backend function issued it.
+                  if (!cur) {
+                    const st = (new Error().stack || '').split('\n').slice(1, 6)
+                      .map((l) => l.trim().replace(/^at\s+/, '')).join(' <- ');
+                    console.log('[traceUBO]   via ' + st);
+                  }
+                }
+              }
+            }
+            return r;
+          };
+        };
+        wrap('drawElements');
+        wrap('drawArrays');
+        if (gl.drawElementsInstanced) wrap('drawElementsInstanced');
+        console.log('[traceUBO] on — errors will be reported with the object that caused them');
+        return true;
+      };
+
+      // window._panelVariant(n) — matt's method: start from what WORKS and add features.
+      //
+      // MeshNormalNodeMaterial drew on the panel even while a THREE.Line was poisoning the
+      // frame, so it is immune to whatever this is. Walking forward from it finds the feature
+      // that loses the immunity, which is a far better question than "what is wrong with the
+      // broken material" -- the one the last dozen rounds asked, and got wrong every time.
+      //
+      // Every variant is pre-built and warmed, so the whole ladder can be walked in ONE
+      // session: call it with 0..6 and watch when the panel vanishes and the errors start.
+      //   0 normal material (known good)   4 texture, opaque
+      //   1 flat colour, opaque            5 texture + transparent + alpha
+      //   2 + transparent                  6 the real panel material (adds the grade)
+      //   3 + opacityNode
+      // and, once the ladder showed the break is at 1 -- MeshBasicNodeMaterial itself, with
+      // no texture and no transparency -- the same flat colour on other base classes:
+      //   7 normal + colorNode   8 lambert   9 phong   10 standard   11 matcap
+      // A rung with ZERO errors that still draws is the base the panels should be built on.
+      if (!window._panelVariant) window._panelVariant = (n, meshOnly) => {
+        const vs = NodeMaterials._panelVariants;
+        if (!vs) { console.log('[panelVariant] variants not built'); return null; }
+        const i = Math.max(0, Math.min(vs.length - 1, n | 0));
+        const mat = vs[i];
+        let applied = 0;
+        for (const p of HTMLVRPanel._live) {
+          if (!p.mesh) continue;
+          if (!p.mesh.userData._origVariantMat) p.mesh.userData._origVariantMat = p.mesh.material;
+          if (meshOnly && p.mesh !== meshOnly) continue;
+          if (mat.userData && mat.userData.setMap && p._texture) mat.userData.setMap(p._texture);
+          p.mesh.material = mat;
+          // VISIBLE, which _panelMat did and this did not -- so the first ladder run swapped
+          // materials on eight hidden panels and measured the rest of the scene instead
+          // (drawCalls=47 on every rung, the whole scene, with no panel on screen at all).
+          p.mesh.visible = true;
+          applied++;
+        }
+        const errBefore = window.__uboErrCount;
+        console.log('[panelVariant] ' + i + ' applied to ' + applied
+          + ' panels — watch the panel and the error count'
+          + (errBefore === undefined ? ' (run _traceUBO() first to count errors)' : ''));
+        return i;
+      };
+      if (!window._panelVariantRestore) window._panelVariantRestore = () => {
+        for (const p of HTMLVRPanel._live) {
+          if (p.mesh && p.mesh.userData._origVariantMat) {
+            p.mesh.material = p.mesh.userData._origVariantMat;
+            p.mesh.userData._origVariantMat = null;
+          }
+        }
+      };
+      // And the same walk, automated: step every variant, count errors on each, print a table.
+      if (!window._panelLadder) window._panelLadder = async () => {
+        if (window.__uboErrCount === undefined) { console.log('[panelLadder] run _traceUBO() first'); return null; }
+        const vs = NodeMaterials._panelVariants || [];
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // AN EMPTY FRAME PLUS ONE PANEL. The first run measured the whole scene -- 47 draw
+        // calls and ~120 ambient errors on every rung -- which cannot show a panel-sized
+        // signal. Level 1 empties the frame; _minimalForceVisible holds the one panel under
+        // test through the per-frame sweep.
+        const target = [...HTMLVRPanel._live].find((p) => p.mesh && p._texture) || [...HTMLVRPanel._live][0];
+        if (!target || !target.mesh) { console.log('[panelLadder] no panel to test'); return null; }
+        const restoreLevel = window._vrMinimalTest;
+        window._vrMinimalTest = 1;
+        this._minimalForceVisible = target.mesh;
+        await sleep(600);
+        const idle = await (async () => {
+          const b = window.__uboErrCount; await sleep(400); return window.__uboErrCount - b;
+        })();
+        console.log('[panelLadder] empty frame + no panel material change -> ' + idle
+          + ' errors, drawCalls=' + (this._renderer.info && this._renderer.info.render.drawCalls)
+          + ' (panel: ' + target.constructor.name + ')');
+        const rows = [];
+        for (let i = 0; i < vs.length; i++) {
+          window._panelVariant(i, target.mesh);
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          const errs = window.__uboErrCount - before;
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          rows.push({ variant: i, errors: errs, drawCalls: dc });
+          console.log('[panelLadder] variant ' + i + ' -> ' + errs + ' errors, drawCalls=' + dc);
+        }
+        console.log('[panelLadder] ' + JSON.stringify(rows));
+        this._minimalForceVisible = null;
+        window._vrMinimalTest = restoreLevel || 0;
+        window._panelVariantRestore();
+        return rows;
+      };
+
+      // window._panelMat('normal'|'restore') — the sharpest cut left.
+      //
+      // With 91 objects hidden and the panel alone in the frame, still nothing. So no other
+      // draw is poisoning it: the panel's own draw fails. And the failing set now looks like
+      // a material CLASS rather than a texture:
+      //   MeshBasicNodeMaterial + canvas map   (panels)      invisible
+      //   MeshBasicNodeMaterial, flat magenta, no map        invisible  (_panelSolid)
+      //   MeshBasicNodeMaterial + matcap image (matcap mat)  invisible  (_meshMat matcap)
+      //   MeshNormalNodeMaterial                             DRAWS
+      //   GLTF controller materials                          DRAW
+      // The awkward exception is that our PBR material is ALSO a MeshBasicNodeMaterial and it
+      // draws -- so if the normal material makes the panel appear, the split is real and the
+      // PBR one differs by having a colorNode that replaces the whole basic pipeline.
+      if (!window._panelMat) {
+        window._panelMat = (which) => {
+          const mat = String(which) === 'restore' ? null : NodeMaterials.get(2); // NORMAL
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh) continue;
+            if (mat) {
+              if (!p.mesh.userData._origMat2) p.mesh.userData._origMat2 = p.mesh.material;
+              p.mesh.material = mat;
+              p.mesh.visible = true;
+              n++;
+            } else if (p.mesh.userData._origMat2) {
+              p.mesh.material = p.mesh.userData._origMat2;
+              p.mesh.userData._origMat2 = null;
+            }
+          }
+          console.log('[panelMat] ' + which + ' -> ' + n);
+          return n;
+        };
+      }
+
+      // window._soloPanels() — hide EVERYTHING except the panels. _unsolo() restores.
+      //
+      // Where the evidence now stands, all of it from inside one session: the sculpt is not
+      // the cause (_hideMeshes left the menus gone), and the matcap material -- the very same
+      // object that draws correctly in a matcap session -- DISAPPEARS when assigned here. So
+      // a pbr session comes up in a state where some materials cannot draw at all, and the
+      // panels are in that set while MeshNormalNodeMaterial and the controllers are not.
+      //
+      // Two possibilities left, and they need opposite fixes:
+      //   panels appear alone -> some OTHER draw in the frame poisons them, and the fix is to
+      //                          find which (the UBO error is that draw failing).
+      //   still nothing       -> the panel pipeline itself cannot be built in this session,
+      //                          and warming it on the desktop did not produce the variant XR
+      //                          asks for.
+      if (!window._soloPanels) {
+        window._soloPanels = () => {
+          const panelMeshes = new Set();
+          for (const p of HTMLVRPanel._live) if (p.mesh) panelMeshes.add(p.mesh);
+          this._soloSaved = [];
+          this._scene.traverse((o) => {
+            if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+            let isPanel = false;
+            for (let q = o; q; q = q.parent) if (panelMeshes.has(q)) { isPanel = true; break; }
+            if (isPanel) return;
+            this._soloSaved.push([o, o.visible]);
+            o.visible = false;
+          });
+          // ...and make one panel visible, so there is something to look for.
+          const first = [...panelMeshes][0];
+          if (first) first.visible = true;
+          console.log('[soloPanels] hid ' + this._soloSaved.length + ' — is a panel there now?');
+          return this._soloSaved.length;
+        };
+        window._unsolo = () => {
+          for (const [o, v] of (this._soloSaved || [])) o.visible = v;
+          this._soloSaved = [];
+          console.log('[soloPanels] restored');
+        };
+      }
+
+      // window._meshMat('matcap'|'pbr'|'normal') — swap ONLY the sculpt's material, live.
+      // window._hideMeshes() / _showMeshes()      — take the sculpt out of the frame entirely.
+      //
+      // matt's premise, and the only fact that has held up all the way through: it works in
+      // matcap and fails in pbr. Everything else has been my theorising. So change exactly
+      // that one thing inside ONE session -- same panels, same session, same framebuffer, same
+      // controllers -- and watch the menus and the UBO errors.
+      //   menus return on 'matcap'  -> the sculpt's MATERIAL takes the frame down, and the
+      //                                panels are collateral. The UBO error is the mechanism.
+      //   menus stay gone           -> the mesh material is not the variable either, and what
+      //                                differs between the two sessions is something else the
+      //                                shader id switches on.
+      // Every material here was built at startup and warmed, so nothing is constructed inside
+      // the session -- which is the one thing this renderer must not do.
+      if (!window._meshMat) {
+        window._meshMat = (name) => {
+          const ids = { pbr: 0, flat: 1, normal: 2, matcap: 5 };
+          const id = ids[String(name).toLowerCase()];
+          if (id === undefined) { console.log('[meshMat] use pbr|flat|normal|matcap'); return 0; }
+          const mat = NodeMaterials.get(id);
+          if (!mat) { console.log('[meshMat] no material for ' + name); return 0; }
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.material = mat; n++; }
+          }
+          console.log('[meshMat] ' + name + ' -> ' + n + ' meshes');
+          return n;
+        };
+        window._hideMeshes = () => {
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.visible = false; n++; }
+          }
+          console.log('[hideMeshes] hid ' + n + ' — menus back?');
+          return n;
+        };
+        window._showMeshes = () => {
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) tm.visible = true;
+          }
+        };
+      }
+
+      // window._panelSolid() — is the panel invisible because its TEXTURE never arrived?
+      //
+      // A quad drawn with a texture that failed to upload is fully transparent, which looks
+      // exactly like a quad that was never drawn -- and _panelDrawDelta already proved it IS
+      // drawn. Swapping in a flat magenta material (pre-built at startup, so nothing is
+      // constructed inside the session) tells the two apart:
+      //   magenta rectangle appears -> the geometry and the framebuffer are fine, the TEXTURE
+      //                                is the problem
+      //   still nothing             -> the draw lands somewhere the compositor never shows
+      if (!window._panelSolid) {
+        window._panelSolid = () => {
+          const solid = NodeMaterials._solid;
+          if (!solid) { console.log('[panelSolid] no solid material'); return 0; }
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh || !p.mesh.visible) continue;
+            if (!p.mesh.userData._origMat) p.mesh.userData._origMat = p.mesh.material;
+            p.mesh.material = solid;
+            n++;
+          }
+          console.log('[panelSolid] swapped ' + n + ' — look where the menu should be');
+          return n;
+        };
+        window._panelRestoreMat = () => {
+          for (const p of HTMLVRPanel._live) {
+            if (p.mesh && p.mesh.userData._origMat) {
+              p.mesh.material = p.mesh.userData._origMat;
+              p.mesh.userData._origMat = null;
+            }
+          }
+          console.log('[panelSolid] restored');
         };
       }
 
@@ -3050,10 +3479,21 @@ class Scene {
       if (this._isNodeRenderer && this._scene) {
         this._scene.traverse((o) => {
           const m = o.material;
-          if (!m) return;
-          const raw = Array.isArray(m) ? m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)
-                                       : (m.isShaderMaterial && !m.isNodeMaterial);
-          if (raw) o.visible = false;
+          if (!m || Array.isArray(m)) {
+            if (Array.isArray(m) && m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)) o.visible = false;
+            return;
+          }
+          // CONVERTED, NOT HIDDEN. A stock MeshBasicMaterial becomes a MeshBasicNodeMaterial,
+          // the one class this backend cannot draw in a session, and one of them anywhere in
+          // the scene poisons the frame. Converting here catches every object, including the
+          // ones nobody has thought to port.
+          if (m.isMeshBasicMaterial && !m.isNodeMaterial) {
+            const conv = NodeMaterials.convertBasic(m);
+            if (conv) { o.userData._stockMat = m; o.material = conv; return; }
+          }
+          // Anything still on a raw ShaderMaterial cannot be drawn at all, so it is hidden
+          // rather than allowed to throw once per object per frame.
+          if (m.isShaderMaterial && !m.isNodeMaterial) o.visible = false;
         });
       }
 
@@ -7190,9 +7630,6 @@ class Scene {
             }
             if (model) grip.add(model);
             this._scene.add(grip);
-            // The model arrives asynchronously, inside the session, so it is swept each frame
-            // until it has been adopted -- see the controller sweep in _drawScene.
-            (this._vrGrips || (this._vrGrips = [])).push(grip);
 
             // Controller ray — 30 cm white tube, solid for first 15 cm then fades to transparent (Virtual Desktop style)
             const lineGeometry = new THREE.CylinderGeometry(0.001, 0.001, 0.30, 8, 1, true);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import NodeMaterials from './nodes/NodeMaterials.js';
 
 class VoxelDensityOverlay {
   constructor() {
@@ -22,6 +23,11 @@ class VoxelDensityOverlay {
   }
 
   createShaderMaterial() {
+    // The node build when the flagged renderer is on: WebGPURenderer cannot draw a
+    // ShaderMaterial at all, so on that path this overlay was hidden by the sweep and the
+    // voxel resolution preview simply did not appear. Same checker, same constants.
+    const node = NodeMaterials.voxelDensity();
+    if (node) return node;
     return new THREE.ShaderMaterial({
       vertexShader: `
         varying vec3 vWorldPos;

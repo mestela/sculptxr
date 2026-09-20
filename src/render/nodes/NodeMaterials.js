@@ -40,25 +40,6 @@ NodeMaterials.enable = function (mod, tslMod) {
   // It separates two invisibles that look identical: a quad drawn with a texture that never
   // uploaded is transparent, and a quad that is not drawn is also nothing. Swap this in and
   // a magenta rectangle either appears where the menu should be, or does not.
-  // THE CONTROLLER MODELS' MATERIAL, built here because theirs cannot be.
-  //
-  // XRControllerModelFactory fetches the GLTF when the controller connects, i.e. inside the
-  // session, so its MeshStandardMaterials are first drawn there -- and the trace shows that
-  // draw (L_body) is the first thing to fail, taking the rest of the frame with it. Nothing
-  // can warm a material that does not exist yet, so the model is given one that already
-  // has a pipeline instead.
-  //
-  // Shaded off the view normal so the model still reads as a three-dimensional object rather
-  // than a silhouette; the real GLTF materials are a nicety and this is the flagged path.
-  NodeMaterials._controller = (() => {
-    const { normalView, vec3, float, dot } = tslMod;
-    const m = new mod.MeshLambertNodeMaterial();
-    const nl = dot(normalView.normalize(), vec3(0.0, 0.0, 1.0)).abs();
-    m.colorNode = vec3(0, 0, 0);
-    m.emissiveNode = vec3(0.32, 0.34, 0.38).mul(float(0.45).add(nl.mul(0.55)));
-    return m;
-  })();
-
   NodeMaterials._solid = (() => {
     const m = new mod.MeshLambertNodeMaterial({
       side: mod.DoubleSide, transparent: false, depthTest: false, depthWrite: false,
@@ -163,19 +144,27 @@ function build(shaderId) {
 // and the legacy path is untouched.
 
 /**
- * Give a freshly-loaded controller model a pipeline that already exists.
- * Returns how many materials were replaced.
+ * The voxel resolution preview: a world-space checker, triplanar-blended by the normal.
+ * A transcription of VoxelDensityOverlay's GLSL, including `uniforms.uScale` so the one
+ * call site that writes it keeps working unchanged.
  */
-NodeMaterials.adoptController = function (root) {
-  if (!gpu || !root || !NodeMaterials._controller) return 0;
-  let n = 0;
-  root.traverse((o) => {
-    if (!o.material) return;
-    if (o.material === NodeMaterials._controller) return;
-    o.material = NodeMaterials._controller;
-    n++;
-  });
-  return n;
+NodeMaterials.voxelDensity = function () {
+  if (!gpu) return null;
+  const { uniform, vec3, float, positionWorld, normalWorld, fract, step, abs, mod } = tsl;
+  const m = unlit();
+  const uScale = uniform(1.0);
+  const checkX = step(0.5, fract(positionWorld.y.mul(uScale)));
+  const checkY = step(0.5, fract(positionWorld.x.mul(uScale)));
+  const checkZ = step(0.5, fract(positionWorld.z.mul(uScale)));
+  const gridX = mod(checkY.add(checkZ), 2.0);
+  const gridY = mod(checkX.add(checkZ), 2.0);
+  const gridZ = mod(checkX.add(checkY), 2.0);
+  const na = abs(normalWorld).toVar();
+  const n = na.div(na.x.add(na.y).add(na.z));
+  const c = gridX.mul(n.x).add(gridY.mul(n.y)).add(gridZ.mul(n.z));
+  m.emissiveNode = vec3(c.mul(0.3).add(0.6));
+  m.uniforms = { uScale };
+  return m;
 };
 
 /**
@@ -298,6 +287,55 @@ NodeMaterials.buildPanelVariants = function () {
 
   NodeMaterials._panelVariants = list;
   return list;
+};
+
+/**
+ * CONVERT A STOCK MeshBasicMaterial INTO ONE THIS RENDERER CAN DRAW.
+ *
+ * three turns every MeshBasicMaterial into a MeshBasicNodeMaterial, which is the one class
+ * this backend cannot draw in an XR session -- so a single unconverted one anywhere in the
+ * scene poisons the whole frame, and that is what cost a day. Porting them one site at a
+ * time only fixes the sites someone has found; this fixes the ones nobody has.
+ *
+ * Cached per source material, so a given material converts once and its pipeline lasts.
+ * Colour, opacity and the map are followed EVERY frame through uniforms, so code that writes
+ * `material.color.set(...)` or assigns `.map` later keeps working -- that write-path problem
+ * has already bitten this port twice.
+ */
+const basicCache = new Map();
+NodeMaterials.convertBasic = function (src) {
+  if (!gpu || !src || !src.isMeshBasicMaterial || src.isNodeMaterial) return null;
+  let m = basicCache.get(src);
+  if (!m) {
+    const { texture, uniform, vec3, vertexColor, float, mix } = tsl;
+    m = unlit({
+      transparent: src.transparent, opacity: src.opacity, side: src.side,
+      depthTest: src.depthTest, depthWrite: src.depthWrite, blending: src.blending,
+      vertexColors: src.vertexColors, alphaTest: src.alphaTest, toneMapped: src.toneMapped,
+    });
+    m.depthFunc = src.depthFunc;
+    const col = uniform(new gpu.Color().copy(src.color));
+    const opac = uniform(src.opacity);
+    // The map node exists whether or not there is a map yet: canvas-textured objects assign
+    // theirs on a later paint, and a node graph cannot grow a texture afterwards.
+    const mapNode = texture(src.map || new gpu.Texture());
+    const hasMap = uniform(src.map ? 1 : 0);
+    let rgb = vec3(col);
+    if (src.vertexColors) rgb = rgb.mul(vertexColor());
+    m.emissiveNode = rgb.mul(mix(vec3(1.0), mapNode.rgb, hasMap));
+    m.opacityNode = opac.mul(mix(float(1.0), mapNode.a, hasMap));
+    m.userData.sync = { col, opac, mapNode, hasMap, lastMap: src.map || null };
+    basicCache.set(src, m);
+  }
+  const y = m.userData.sync;
+  y.col.value.copy(src.color);
+  y.opac.value = src.opacity;
+  if (src.map !== y.lastMap) {
+    y.lastMap = src.map;
+    if (src.map) { y.mapNode.value = src.map; y.hasMap.value = 1; }
+    else y.hasMap.value = 0;
+  }
+  return m;
 };
 
 /** The controller ray: a white tube that fades out along its length. */
@@ -440,7 +478,6 @@ NodeMaterials.warm = function (renderer, camera, extraMaterials, scene) {
   const add = (m) => { if (m && !seen.has(m)) { seen.add(m); mats.push(m); } };
   for (const id in cache) add(cache[id]);
   add(NodeMaterials._solid);
-  add(NodeMaterials._controller);
   for (const v of (NodeMaterials._panelVariants || [])) add(v);
   if (extraMaterials) for (const m of extraMaterials) add(m);
   // EVERY MATERIAL ALREADY IN THE SCENE, not just ours.
