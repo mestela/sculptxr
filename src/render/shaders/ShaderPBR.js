@@ -83,6 +83,18 @@ ShaderPBR.environments = [{
   sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   exposure: 1.0,
   name: 'Ferndale studio 07'
+}, {
+  // https://polyhaven.com/a/canary_wharf
+  hdr: texPath + 'canary_wharf_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Canary Wharf'
+}, {
+  // https://polyhaven.com/a/lauter_waterfall
+  hdr: texPath + 'lauter_waterfall_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Lauter waterfall'
 }];
 
 var opts = getOptionsURL();

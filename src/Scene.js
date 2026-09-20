@@ -3743,6 +3743,30 @@ class Scene {
     // Buffer/Attribute wrappers, every Mesh -- and under forceWebGL the WebGL backend still
     // holds a real context at backend.gl. Keeping them fed is what makes a parallel path
     // possible at all; they come out later, with the mock gl, not as a precondition.
+    // THE SELECTED ENVIRONMENT MUST BE ONE THIS RENDERER CAN LOAD.
+    //
+    // The two paths read different assets and neither can read the other's: legacy samples
+    // the LogLUV octahedral atlas (`path`), the node renderer takes an equirect `hdr`
+    // through RGBELoader. The default option is a single number shared by both, so moving it
+    // to an HDR environment silently left the legacy renderer -- still the default renderer,
+    // and what prod ships -- with no environment at all. Clamp to the first one that works
+    // rather than leave a mode quietly unlit.
+    {
+      const SPBR = ShaderLib[Enums.Shader.PBR];
+      const wantHdr = !!this._isNodeRenderer;
+      const usable = (e) => (wantHdr ? !!e.hdr : !!e.path);
+      if (SPBR && SPBR.environments[SPBR.idEnv] && !usable(SPBR.environments[SPBR.idEnv])) {
+        const i = SPBR.environments.findIndex(usable);
+        if (i >= 0) {
+          console.log('[env] "' + SPBR.environments[SPBR.idEnv].name + '" has no '
+            + (wantHdr ? 'hdr' : 'atlas') + ' asset for this renderer — using "'
+            + SPBR.environments[i].name + '"');
+          SPBR.idEnv = i;
+          SPBR.exposure = SPBR.environments[i].exposure;
+        }
+      }
+    }
+
     this._gl = this._renderer.backend ? this._renderer.backend.gl : this._renderer.getContext();
     if (!this._gl) {
       (window._vrAlert || window.alert)('Values: WebGL context could not be retrieved.');

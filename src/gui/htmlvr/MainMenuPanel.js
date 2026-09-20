@@ -2762,7 +2762,20 @@ export function buildSectionHTML_rendering(main) {
   // spectator modes — a trigger button and a hidden list of buttons, no <select> element — which
   // is what makes it work in the headset, where a native dropdown has no way to open. matt: "you
   // seemed to work out how to do dropown menus that work on both vr and desktop earlier."
-  const envOpts = (ShaderPBR?.environments ?? []).map((env, i) => ({ val: i, label: env.name }));
+  // ONLY THE ENVIRONMENTS THIS RENDERER CAN ACTUALLY LOAD.
+  //
+  // The two paths read different assets and neither can read the other's: the legacy
+  // renderer samples the LogLUV octahedral atlas (`path`) and has no HDR decoder, while the
+  // node renderer takes an equirect `hdr` through RGBELoader and PMREM and cannot decode the
+  // atlas. Listing all of them would offer four choices that do nothing, silently, depending
+  // on which renderer you happen to be running.
+  //
+  // Filtered AFTER the map so `val` stays the real index into ShaderPBR.environments --
+  // everything downstream, including the saved option, is that index.
+  const _isNode = !!(main && main._isNodeRenderer);
+  const envOpts = (ShaderPBR?.environments ?? [])
+    .map((env, i) => ({ val: i, label: env.name, _ok: _isNode ? !!env.hdr : !!env.path }))
+    .filter((o) => o._ok);
   // IMPORT IS AN OPTION, NOT A BUTTON BESIDE THE LIST. Choosing a matcap and adding one are the
   // same decision — "which matcap" — so they belong in the same control; a button next to the
   // dropdown was a second thing to look at for a case that comes up once in a while. matt: "make
