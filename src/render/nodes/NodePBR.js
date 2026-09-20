@@ -35,6 +35,10 @@ export function makePBR(gpu, tsl) {
   const uExposure     = uniform(1.0);
   const uEnvIntensity = uniform(1.0);
   const uNbLights     = uniform(0, 'int');
+  // BISECTION, not instrumentation: window._pbrDebug picks which term survives, so one look
+  // says which third of this shader is wrong instead of five rounds of tracing.
+  //   0 full   1 SH diffuse only   2 panorama specular only   3 lights only   4 albedo only
+  const uDebug        = uniform(0, 'int');
   const uEnvSize      = uniform(new gpu.Vector2(1, 1));
   const uSPH        = uniformArray(new Array(9).fill(0).map(() => new gpu.Vector3()));
   const uLightPos   = uniformArray(new Array(MAX_LIGHTS).fill(0).map(() => new gpu.Vector3()));
@@ -54,6 +58,9 @@ export function makePBR(gpu, tsl) {
     // known before the load resolves; until then the panorama samples garbage.
     uEnvSize.value.set(t.image.width, t.image.height);
     if (!env0.size) env0.size = [t.image.width, t.image.height];
+    console.log('[NodePBR] environment loaded ' + env0.path + ' ' + t.image.width + 'x' + t.image.height);
+  }, undefined, (e) => {
+    console.error('[NodePBR] environment FAILED to load: ' + env0.path, e);
   });
   envTex.colorSpace = gpu.NoColorSpace;
   envTex.generateMipmaps = false;
@@ -71,7 +78,12 @@ export function makePBR(gpu, tsl) {
   const decodeLUV = Fn(([logLuv]) => {
     const Le = logLuv.z.mul(255.0).add(logLuv.w);
     const y = exp2(Le.sub(127.0).div(2.0));
-    const z = y.div(logLuv.y);
+    // GUARDED, because the divisor is a texel. An environment that has not finished loading
+    // -- or failed to -- is all zeros, so this divides by zero, and the NaN does not stay
+    // local: it propagates through the IBL into the final colour and the whole mesh goes
+    // black. That is what the first PBR device test showed, and a black mesh is a terrible
+    // error message for "the panorama isn't there yet".
+    const z = y.div(max(logLuv.y, float(1e-8)));
     const x = logLuv.x.mul(z);
     return LUVInverse.mul(vec3(x, y, z)).max(vec3(0.0));
   });
@@ -169,14 +181,21 @@ export function makePBR(gpu, tsl) {
     const iblM = iblTransform();
     const R0 = normalize(N.mul(NdV.mul(2.0)).sub(V));
     const R = getSpecularDominantDir(N, R0, roughness);
-    const ibl = albedo.mul(sphericalHarmonics(iblM.mul(N)))
-      .add(texturePanoramaLod(iblM.mul(R), roughness)
-        .mul(integrateBRDFApprox(specular, roughness, clamp(dot(N, V), 0.0, 1.0))));
+    const shTerm = albedo.mul(sphericalHarmonics(iblM.mul(N)));
+    const panoTerm = texturePanoramaLod(iblM.mul(R), roughness)
+      .mul(integrateBRDFApprox(specular, roughness, clamp(dot(N, V), 0.0, 1.0)));
+
+    const ibl = vec3(0.0).toVar();
+    If(uDebug.equal(0), () => { ibl.assign(shTerm.add(panoTerm)); })
+      .ElseIf(uDebug.equal(1), () => { ibl.assign(shTerm); })
+      .ElseIf(uDebug.equal(2), () => { ibl.assign(panoTerm); })
+      .ElseIf(uDebug.equal(4), () => { ibl.assign(albedo); });
 
     const color = ibl.mul(uExposure).mul(uEnvIntensity).toVar();
 
     Loop({ start: 0, end: MAX_LIGHTS, type: 'int', condition: '<' }, ({ i }) => {
       If(i.greaterThanEqual(uNbLights), () => { Break(); });
+      If(uDebug.greaterThan(0).and(uDebug.notEqual(3)), () => { Break(); });
 
       // Rotated, not transformed: it is a direction, so the view translation must not touch it.
       const Ldir = normalize(mat3(cameraViewMatrix).mul(uLightDir.element(i)));
@@ -226,6 +245,7 @@ export function makePBR(gpu, tsl) {
 
   /** Per frame: exposure, environment, and the shared light state. */
   m.userData.updateFrame = function (main) {
+    uDebug.value = window._pbrDebug | 0;
     uExposure.value = ShaderPBR.exposure;
     const ei = getOptionsURL().envIntensity;
     uEnvIntensity.value = Number.isFinite(ei) ? ei : 1.0;
