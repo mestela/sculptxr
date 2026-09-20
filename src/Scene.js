@@ -3931,6 +3931,15 @@ class Scene {
             return Number.isFinite(b[0])
               ? +Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]).toFixed(2) : null;
           })(),
+          // DID ?xrlayers=0 ACTUALLY TAKE? _supportsLayers is private and set once in the
+          // XRManager constructor; if forcing it false does not stick, the session is still on
+          // XRProjectionLayer and its render target still holds compositor-owned external
+          // textures -- which is what the mailbox/shared-image errors are about.
+          xrSupportsLayers: this._renderer.xr ? this._renderer.xr._supportsLayers : null,
+          xrSessionUsesLayers: this._renderer.xr ? this._renderer.xr._sessionUsesLayers : null,
+          xrTargetExternalTextures: this._renderer.xr && this._renderer.xr._xrRenderTarget
+            ? this._renderer.xr._xrRenderTarget._hasExternalTextures : null,
+          xrMultiview: this._renderer.xr ? this._renderer.xr._useMultiview : null,
           graphFrozen: !!this._xrGraphFrozen,
           poolSize: this._lightPool
             ? this._lightPool[0].length + this._lightPool[1].length + this._lightPool[2].length
