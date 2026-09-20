@@ -3812,6 +3812,27 @@ class Scene {
       this._renderer.setPixelRatio(window.devicePixelRatio);
       this._renderer.setSize(window.innerWidth, window.innerHeight);
       this._renderer.xr.enabled = true;
+      // ?xrlayers=0 -- PUT THE SESSION BACK ON THE CLASSIC XRWebGLLayer FRAMEBUFFER.
+      //
+      // With XRProjectionLayer (three's default when the browser supports it) the XR render
+      // target's colour/depth are EXTERNAL textures handed over by the compositor each frame,
+      // and `_setFramebuffer` re-attaches them with framebufferTexture2D. That is fine as long
+      // as nothing else ever binds a different target mid-frame -- but a shadow map does
+      // exactly that, and restoring the XR target afterwards re-attaches images whose handles
+      // are no longer valid. matt's session, with one shadow pulse and no shadow drawn:
+      //     GL_INVALID_OPERATION: invalid mailbox name
+      //     GL_INVALID_OPERATION: texture is not a shared image
+      //     GL_INVALID_OPERATION: glFramebufferTexture2D: No Texture is bound to the target
+      // "mailbox" and "shared image" are Chrome's names for exactly those compositor images.
+      //
+      // On the XRWebGLLayer path `_hasExternalTextures` stays false and restoring the XR target
+      // is a single bindFramebuffer of a framebuffer we own, which a shadow pass cannot spoil.
+      // _supportsLayers is private and computed once, but it is an ordinary property.
+      // The trade is multiview and layer-based foveation; neither is in use on this path.
+      if (/[?&]xrlayers=0/.test(window.location.search)) {
+        this._renderer.xr._supportsLayers = false;
+        console.log('[xr] XRProjectionLayer disabled — classic XRWebGLLayer framebuffer');
+      }
       const _fbsGpu = Number.isFinite(window._fbScale)
         ? window._fbScale
         : (Number.isFinite(getOptionsURL()['fbscale']) ? getOptionsURL()['fbscale'] : 1.0);
