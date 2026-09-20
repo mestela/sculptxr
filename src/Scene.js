@@ -2290,6 +2290,29 @@ class Scene {
           this._drawFullScene = true; this.render?.();
         };
       }
+      // window._drawInfo() — is the panel draw being ISSUED or issued-and-discarded?
+      //
+      // The panel is visible, in-scene, repainting, and absent from the headset. Those two
+      // cases need opposite fixes and look identical from the outside, so count the draws:
+      // if pbr issues one fewer draw call than matcap, the renderer is rejecting the object
+      // before it reaches the GPU (a pipeline/material problem); if the counts match, it is
+      // being drawn into something the compositor never shows (a framebuffer problem).
+      if (!window._drawInfo) window._drawInfo = () => {
+        const r = this._renderer && this._renderer.info && this._renderer.info.render;
+        let vis = 0, panels = 0;
+        try {
+          for (const p of HTMLVRPanel._live) { if (p.mesh) { panels++; if (p.mesh.visible) vis++; } }
+        } catch (e) { /* registry is a convenience */ }
+        const out = {
+          drawCalls: r && r.drawCalls, triangles: r && r.triangles, frame: r && r.frame,
+          panelsVisible: vis, panelsTotal: panels,
+          xr: !!(this._renderer.xr && this._renderer.xr.isPresenting),
+          shader: this._meshes && this._meshes[0] && this._meshes[0].getShaderType
+            ? this._meshes[0].getShaderType() : null,
+        };
+        console.log('[drawInfo] ' + JSON.stringify(out));
+        return out;
+      };
       if (this._isNodeRenderer && !window._warmNow) window._warmNow = () => {
         const pm = [];
         for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) pm.push(p.mesh.material);
