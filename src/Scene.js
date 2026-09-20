@@ -2594,6 +2594,42 @@ class Scene {
         return o;
       };
 
+      // window._dumpShader([name]) — THE GENERATED SHADER, not a guess about it.
+      //
+      // matt: "these errors seem too vague, does three offer any better methods for
+      // debugging than this?" It does, and I should have reached for it far sooner:
+      // renderer.debug.getShaderAsync(scene, camera, object) returns the raw generated
+      // vertex and fragment source for one object, uniform block declarations included.
+      //
+      // "GL_INVALID_OPERATION: uniform buffer that is too small" is a claim about a block
+      // whose contents we have been inferring all evening. This prints it. Run it in a
+      // session with a light placed, on the sculpt, and the block that overflows is
+      // readable rather than deduced.
+      if (!window._dumpShader) window._dumpShader = async (name) => {
+        const cam = (this._renderer.xr && this._renderer.xr.isPresenting)
+          ? this._renderer.xr.getCamera() : this._camera.getThreeCamera();
+        let target = null;
+        if (!name) {
+          // THE SCULPT BY DEFAULT. The first visible mesh in the graph is the ground grid,
+          // whose shader is 1179 characters and says nothing about the problem.
+          const first = (this.getMeshes ? this.getMeshes() : [])
+            .find((m) => !m._isLight && m.getThreeMesh && m.getThreeMesh());
+          target = first && first.getThreeMesh();
+        }
+        if (!target) this._scene.traverse((o) => {
+          if (target || !o.isMesh || !o.visible) return;
+          if (!name || (o.name || '').toLowerCase().includes(String(name).toLowerCase())) target = o;
+        });
+        if (!target) { console.log('[dumpShader] no visible mesh matching ' + name); return null; }
+        const src = await this._renderer.debug.getShaderAsync(this._scene, cam, target);
+        console.log('[dumpShader] ' + (target.name || target.type)
+          + ' mat=' + (target.material && target.material.type));
+        console.log('--- VERTEX ---\n' + (src.vertexShader || '').slice(0, 4000));
+        console.log('--- FRAGMENT ---\n' + (src.fragmentShader || '').slice(0, 8000));
+        window.__lastShader = src;
+        return src;
+      };
+
       // window._traceUBO() — WHICH object's draw emits the error?
       //
       // Every theory I have formed about this has been wrong: the material class, the stock
@@ -3037,6 +3073,35 @@ class Scene {
             ? o.geometry.attributes.position.count : '?'));
         this._minimalReveal = 0;
         return o;
+      };
+
+      // window._dumpShader([name]) — THE GENERATED SHADER, not a guess about it.
+      //
+      // matt: "these errors seem too vague, does three offer any better methods for
+      // debugging than this?" It does, and I should have reached for it far sooner:
+      // renderer.debug.getShaderAsync(scene, camera, object) returns the raw generated
+      // vertex and fragment source for one object, uniform block declarations included.
+      //
+      // "GL_INVALID_OPERATION: uniform buffer that is too small" is a claim about a block
+      // whose contents we have been inferring all evening. This prints it. Run it in a
+      // session with a light placed, on the sculpt, and the block that overflows is
+      // readable rather than deduced.
+      if (!window._dumpShader) window._dumpShader = async (name) => {
+        const cam = (this._renderer.xr && this._renderer.xr.isPresenting)
+          ? this._renderer.xr.getCamera() : this._camera.getThreeCamera();
+        let target = null;
+        this._scene.traverse((o) => {
+          if (target || !o.isMesh || !o.visible) return;
+          if (!name || (o.name || '').toLowerCase().includes(String(name).toLowerCase())) target = o;
+        });
+        if (!target) { console.log('[dumpShader] no visible mesh matching ' + name); return null; }
+        const src = await this._renderer.debug.getShaderAsync(this._scene, cam, target);
+        console.log('[dumpShader] ' + (target.name || target.type)
+          + ' mat=' + (target.material && target.material.type));
+        console.log('--- VERTEX ---\n' + (src.vertexShader || '').slice(0, 4000));
+        console.log('--- FRAGMENT ---\n' + (src.fragmentShader || '').slice(0, 8000));
+        window.__lastShader = src;
+        return src;
       };
 
       // window._traceUBO() — WHICH object's draw emits the error?

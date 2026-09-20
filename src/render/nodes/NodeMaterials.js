@@ -121,7 +121,13 @@ function build(shaderId) {
       console.log('[NodeMaterials] pbrbisect=1 — PBR is the placeholder material');
       return ph;
     }
-    if (b === 2) console.log('[NodeMaterials] pbrbisect=2 — PBR built with no uniform arrays');
+    //   1  stock placeholder (MeshNormalNodeMaterial), no PBR material at all
+    //   2  our BRDF with NO uniform arrays -- deliberately flat albedo, no lighting. This is
+    //      a uniform-buffer test, NOT a working renderer, and reads as "unlit" because it is.
+    //   3  our BRDF in full: GGX, SH9, the panorama, the light loop. The pre-Physical path,
+    //      and the one to reach for when asking "did the lit material break VR".
+    if (b === 2) console.log('[NodeMaterials] pbrbisect=2 — flat albedo, no lighting (UBO test)');
+    if (b === 3) console.log('[NodeMaterials] pbrbisect=3 — the full hand-written BRDF');
     if (b) return makePBR(gpu, tsl, { noArrays: b === 2 });
     // The hand-ported BRDF is still reachable with ?pbrbisect=, but the default is now
     // three's lit pipeline -- see NodePhysical.js for why.
