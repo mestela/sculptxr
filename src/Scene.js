@@ -2214,8 +2214,7 @@ class Scene {
       }
       if (lvl === 3) {
         this._renderer.setClearColor(0x101018, 1);
-        this._renderer.render(this._stereoTestScene, (this._renderer.xr?.isPresenting
-          && this._isNodeRenderer) ? this._renderer.xr.getCamera() : this._camera.getThreeCamera());
+        this._renderer.render(this._stereoTestScene, this._camera.getThreeCamera());
         return;
       }
       // Level 1: hide every scene object, render only clear colour
@@ -2227,8 +2226,7 @@ class Scene {
       // block further down, and this branch returns before reaching it. Referencing it here
       // is a temporal dead zone throw on every frame, which is the same trap `_hand` set in
       // this file once already -- and every static check passes right up until it runs.
-      this._renderer.render(this._scene, (this._renderer.xr?.isPresenting && this._isNodeRenderer)
-        ? this._renderer.xr.getCamera() : this._camera.getThreeCamera());
+      this._renderer.render(this._scene, this._camera.getThreeCamera());
       this._renderer.setClearColor(0x000000, 0);
       return;
     }
@@ -2238,18 +2236,35 @@ class Scene {
     // Instead of looping through custom meshes, we tell Three.js to render the scene
     if (this._renderer && this._scene && this._camera.getThreeCamera()) {
       const isVR = this._renderer.xr && this._renderer.xr.isPresenting;
+
+      // RAW ShaderMaterials CANNOT BE DRAWN BY THIS RENDERER AT ALL -- its library registers
+      // only the built-in material types, so each one throws `THREE.NodeMaterial: Material
+      // "ShaderMaterial" is not compatible.` out of build(), every object, every frame. Five
+      // sites still make them directly (the volume cube/sphere, the selection box, the voxel
+      // density overlay, the line material) rather than going through ShaderManager, which is
+      // already routed to NodeMaterials. Hiding them keeps the flagged path legible while
+      // they are ported; without it the console flood makes every other signal unreadable and
+      // the throw-per-draw dominates the frame.
+      // The matcap's stabilisation uniform, refreshed from the head-centre view before the
+      // draw -- see NodeMaterials.updateFrame.
+      if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+
+      if (this._isNodeRenderer && this._scene) {
+        this._scene.traverse((o) => {
+          const m = o.material;
+          if (!m) return;
+          const raw = Array.isArray(m) ? m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)
+                                       : (m.isShaderMaterial && !m.isNodeMaterial);
+          if (raw) o.visible = false;
+        });
+      }
       
-      // WHICH CAMERA GOES TO render() DIFFERS BETWEEN THE TWO RENDERERS, and it is not
-      // optional. WebGLRenderer.render() quietly substitutes xr.getCamera() when presenting,
-      // so passing the flat desktop camera works. WebGPURenderer.render() does no such thing --
-      // it renders exactly the camera it is handed:
-      //     render( scene, camera ) { ... this._renderScene( scene, camera ); }
-      // so both eyes came out drawn from the desktop camera, with no per-eye offset and no
-      // viewports. matt: "in vr its totally misaligned to the left/right eyes, and of what i
-      // can see, very low fps."
-      const _renderCam = (isVR && this._isNodeRenderer)
-        ? this._renderer.xr.getCamera()
-        : this._camera.getThreeCamera();
+      // THE FLAT CAMERA, for both renderers. WebGPURenderer substitutes xr.getCamera() itself
+      // exactly as WebGLRenderer does -- the earlier note here claimed otherwise and was
+      // wrong; what it had actually found was this renderer running with xr.enabled unset.
+      // Substituting by hand is worse than unnecessary: updateCamera() sits behind the same
+      // flag, so a hand-passed ArrayCamera arrives without the frame's view matrices.
+      const _renderCam = this._camera.getThreeCamera();
 
       let currentTarget = null;
       if (!isVR) {
@@ -2396,7 +2411,17 @@ class Scene {
             const eyeCam = xrArrayCam.cameras?.[0] ?? xrArrayCam;
             this._spectatorLeftEyeProj.copy(eyeCam.projectionMatrix);
           }
-          this._renderSpectatorCanvas();
+          // NOT UNDER THE NODE RENDERER. This is a SECOND full renderer.render() inside the
+          // XR frame: it flips xr.enabled off, draws the scene mono to the same canvas, and
+          // restores the flag in a finally. WebGLRenderer tolerates that -- the canvas and the
+          // XR baseLayer are different framebuffers and it rebinds on the next frame.
+          // WebGPURenderer does not: it comes back with the canvas target still bound at the
+          // wrong size, which is what "GL_INVALID_FRAMEBUFFER_OPERATION: Framebuffer is
+          // incomplete: Attachments are not all the same size" is reporting, once per frame.
+          // It also doubles the scene cost inside an XR frame, which is most of "very slow".
+          // Porting the spectator view is its own job; until then the flagged path goes
+          // without it rather than corrupting every frame it draws.
+          if (!this._isNodeRenderer) this._renderSpectatorCanvas();
           // ─────────────────────────────────────────────────────────────────────
 
           // --- CRITICAL ISOLATION FOR WEBXR ---
@@ -2462,14 +2487,37 @@ class Scene {
     // changed for anyone not passing the flag.
     const useWebGPU = getOptionsURL().renderer === 'webgpu';
     if (useWebGPU) {
-      const WGPU = await import('three/webgpu');
+      const [WGPU, TSL] = await Promise.all([import('three/webgpu'), import('three/tsl')]);
       this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
       await this._renderer.init();
+      // THE SAME SETUP THE WebGLRenderer GETS, because this renderer is not self-configuring
+      // and the omission is silent. `xr.enabled` in particular is not a convenience flag: it
+      // is what gates the per-eye path, in three.webgpu.js:
+      //     if ( xr.enabled === true && xr.isPresenting === true ) {
+      //       if ( xr.cameraAutoUpdate === true ) xr.updateCamera( camera );
+      //       camera = xr.getCamera();
+      //     }
+      // With it false a session still starts, setSession still resolves and frames still
+      // present -- so everything looks alive -- but render() takes the ordinary mono path and
+      // paints ONE view across the whole XR framebuffer. matt: "as if a single view is just
+      // being spread across the 2 displays". Handing render() the ArrayCamera by hand does not
+      // rescue it either, because updateCamera() is behind the same gate, so the sub-cameras
+      // are never given the frame's view matrices: "each camera sharing a view in the centre
+      // of their displays". Two symptoms, one missing line.
+      this._renderer.setPixelRatio(window.devicePixelRatio);
+      this._renderer.setSize(window.innerWidth, window.innerHeight);
+      this._renderer.xr.enabled = true;
+      const _fbsGpu = Number.isFinite(window._fbScale)
+        ? window._fbScale
+        : (Number.isFinite(getOptionsURL()['fbscale']) ? getOptionsURL()['fbscale'] : 1.0);
+      this._renderer.xr.setFramebufferScaleFactor(Math.max(0.3, Math.min(2.0, _fbsGpu)));
+      this._renderer.toneMapping = WGPU.LinearToneMapping;
+      this._renderer.toneMappingExposure = 1.0;
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
       this._isNodeRenderer = true;
       // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
       // because constructing one mid-session is the single real fault this renderer has.
-      NodeMaterials.enable(WGPU);
+      NodeMaterials.enable(WGPU, TSL);
       // The level-3 bisection scene, built HERE so its material exists before any session --
       // the one hard rule this renderer has. Three spheres at different depths, because a
       // stereo fault is easiest to see on something with parallax.

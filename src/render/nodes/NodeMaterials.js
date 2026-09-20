@@ -19,6 +19,8 @@ import ShaderMatcap from '../shaders/ShaderMatcap.js';
 const NodeMaterials = {};
 
 let gpu = null;              // the `three/webgpu` module — a SEPARATE build from the core three
+let tsl = null;              // the `three/tsl` module — node expression helpers
+let rotCorrectionUniform = null;  // mat3, head-centre, shared by every matcap mesh
 let cache = null;            // shaderId -> material, built up front
 const matcapTextures = [];   // index -> Texture, shared by every mesh using that matcap
 
@@ -28,8 +30,9 @@ NodeMaterials.isActive = () => !!gpu;
  * Called once, right after the WebGPU renderer is initialised and before anything renders.
  * `mod` is the dynamically imported `three/webgpu`.
  */
-NodeMaterials.enable = function (mod) {
+NodeMaterials.enable = function (mod, tslMod) {
   gpu = mod;
+  tsl = tslMod;
   cache = {};
   // Every mode gets a material now, including the ones still unported — a placeholder draws
   // something and keeps the scene legible, where a missing material draws black and looks
@@ -60,16 +63,26 @@ function matcapTexture(index) {
 
 function build(shaderId) {
   if (shaderId === Enums.Shader.MATCAP) {
-    // three's own matcap node material IS this shader: view-space normal to a UV on a sphere
-    // image. Vertex colours on, because ours multiplies the lookup by the per-vertex colour
-    // and a sculpt's paint lives there.
-    const m = new gpu.MeshMatcapNodeMaterial({ vertexColors: true });
-    m.matcap = matcapTexture(0);
+    // NOT MeshMatcapNodeMaterial. The stock node takes its UV from the raw per-eye view
+    // normal, and in a headset that is a bug you can see: the two eyes look the matcap up at
+    // different UVs, the highlight lands in a different place in each, and the disparity
+    // fuses as depth -- frequently inverted against the geometry. matt saw it immediately.
+    //
+    // The legacy shader never had that, because it rotates the normal by uRotCorrection
+    // first: a stabilised basis built ONCE PER FRAME from the head-centre view, so both eyes
+    // share one lookup. Porting that uniform is the whole difference, and the maths is
+    // ShaderMatcap.computeRotCorrection so there is exactly one copy of it.
+    //
+    // Built from MeshBasicNodeMaterial rather than the matcap node because the legacy shader
+    // is unlit -- texture * vertex colour -- so basic is the faithful base, not a shortcut.
+    const { uniform, texture, normalView, vec2, mat3, vertexColor } = tsl;
+    if (!rotCorrectionUniform) rotCorrectionUniform = uniform(new gpu.Matrix3());
+    const m = new gpu.MeshBasicNodeMaterial({ vertexColors: true });
+    const n = mat3(rotCorrectionUniform).mul(normalView).normalize();
+    // normal.xy * 0.5 + 0.5, exactly as the GLSL does it.
+    const uvNode = vec2(n.x, n.y).mul(0.5).add(0.5);
+    m.colorNode = texture(matcapTexture(0), uvNode).rgb.mul(vertexColor());
     m.userData.sculptShaderId = shaderId;
-    // NOT YET FAITHFUL: the legacy shader also applies uRotCorrection, which stabilises the
-    // lookup against head roll and pitch so the highlight does not swim when you tilt your
-    // head in VR. Stock matcap uses the raw view normal. Worth an A/B before deciding whether
-    // to port it -- it matters most in a headset, which is where this mode is used most.
     return m;
   }
 
@@ -81,5 +94,17 @@ function build(shaderId) {
   p.userData.placeholder = true;
   return p;
 }
+
+/**
+ * Per frame, before rendering. Refreshes the one uniform the matcap needs from the
+ * HEAD-CENTRE view -- deliberately not per eye, which is the entire point of it.
+ */
+NodeMaterials.updateFrame = function (main) {
+  if (!rotCorrectionUniform || !main) return;
+  const cam = main.getCamera && main.getCamera();
+  if (!cam) return;
+  const c = ShaderMatcap.computeRotCorrection(cam.getView());
+  rotCorrectionUniform.value.fromArray(c);
+};
 
 export default NodeMaterials;
