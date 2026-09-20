@@ -2297,6 +2297,32 @@ class Scene {
       // if pbr issues one fewer draw call than matcap, the renderer is rejecting the object
       // before it reaches the GPU (a pipeline/material problem); if the counts match, it is
       // being drawn into something the compositor never shows (a framebuffer problem).
+      // window._panelDrawDelta() — how many draw calls does the visible panel ACTUALLY cost?
+      //
+      // Comparing total draws between two sessions was confounded: a controller model failed
+      // to load in one of them (XRControllerModelFactory, 'assetUrl' of null), and a
+      // controller model is several meshes and a few thousand triangles -- easily the whole
+      // 27-vs-19 gap. So measure the panel against ITSELF inside one session: read the count,
+      // hide it, read again, restore. A delta of 0 means the renderer never draws it even
+      // though it is visible; a non-zero delta means it IS drawn and the pixels go nowhere.
+      if (!window._panelDrawDelta) window._panelDrawDelta = async () => {
+        const info = () => this._renderer.info.render.drawCalls;
+        const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+        const shown = [];
+        for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.visible) shown.push(p.mesh);
+        if (!shown.length) { console.log('[panelDrawDelta] no visible panel'); return null; }
+        await frame(); await frame();
+        const withPanel = info();
+        for (const m of shown) m.visible = false;
+        await frame(); await frame();
+        const without = info();
+        for (const m of shown) m.visible = true;
+        await frame();
+        const out = { withPanel, without, delta: withPanel - without, panels: shown.length };
+        console.log('[panelDrawDelta] ' + JSON.stringify(out));
+        return out;
+      };
+
       if (!window._drawInfo) window._drawInfo = () => {
         const r = this._renderer && this._renderer.info && this._renderer.info.render;
         let vis = 0, panels = 0;
