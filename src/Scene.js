@@ -4455,9 +4455,27 @@ class Scene {
         L.castShadow = true;
         L.shadow.mapSize.set(1024, 1024);
         L.shadow.bias = -0.0005;
-        host.add(L);
+        // ADDED TO THE SCENE ROOT, NOT PARENTED TO THE ENTITY.
+        //
+        // Parenting looked right -- the light inherits the entity's transform and the two
+        // cannot drift -- but it also inherits its SCALE, and the light gizmo is scaled:
+        // measured 2.024 on a freshly added light. A scale in a light's world matrix
+        // corrupts the shadow camera's projection, and that is why shadows have been set up
+        // correctly and still never appeared. Position and orientation are copied each frame
+        // instead, which is drift-free too because it happens before every draw.
+        this._scene.add(L);
         host.userData._threeLight = L;
       }
+      host.updateMatrixWorld(true);
+      if (!this._lpTmp) {
+        const T = this._THREE_GPU || THREE;
+        this._lpTmp = { p: new T.Vector3(), q: new T.Quaternion(), s: new T.Vector3() };
+      }
+      host.matrixWorld.decompose(this._lpTmp.p, this._lpTmp.q, this._lpTmp.s);
+      L.position.copy(this._lpTmp.p);
+      L.quaternion.copy(this._lpTmp.q);
+      L.scale.set(1, 1, 1);
+      L.updateMatrixWorld(true);
       const c = e._lightColor || [1, 1, 1];
       L.color.setRGB(c[0], c[1], c[2]);
       const slider = (e._lightIntensity === undefined ? 1 : e._lightIntensity);
