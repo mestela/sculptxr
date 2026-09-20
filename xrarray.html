@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<!--
+  THE XR LIT-MATERIAL FAILURE, ON THE DESKTOP.
+
+  Everything the WebGL backend does differently in an XR session is gated on ONE thing:
+
+      renderObject.camera.isArrayCamera && camera.cameras.length > 0 && !isMultiViewCamera
+
+  Nothing in that path asks whether a session is running. So a hand-made ArrayCamera with two
+  sub-cameras should reproduce the session layout -- cameraIndex + per-eye NodeBuffer arrays --
+  with no headset in the room.
+
+    ?array=0   one ordinary camera (the known-good baseline)
+    ?array=1   two sub-cameras, side by side   (default)
+    ?lights=0  no light in the scene at all
+
+  Boxes, left to right:
+    blue   MeshLambertNodeMaterial, lights = false            (draws in a session)
+    orange MeshLambertNodeMaterial, lights = true             (does NOT draw in a session)
+    green  unlit, but its colour READS cameraPosition, which lives in the shared `render`
+           group. In an AR session this one DRAWS BUT COMES OUT BLACK -- the `render` block's
+           contents are wrong, quite apart from any lighting.
+
+  The instrument is the binding table at the bottom. The WebGL backend assigns each uniform
+  block a binding POINT with a counter that runs over one render object's bind groups
+  (createBindings), and bakes that number into each program at link time (_setupBindings) --
+  but SHARED groups (`render`, `frame`, `cameraIndex`, the per-eye NodeBuffers) are ONE object
+  reused by every render object, with ONE `.index` slot between them. Two objects whose bind
+  groups differ in composition therefore hand the same shared group two different binding
+  points, and the program linked first keeps reading the one it was baked with.
+-->
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XR array-camera repro</title>
+<style>
+ body{margin:0;background:#111;color:#ddd;font:12px/1.45 monospace}
+ #log{position:fixed;top:0;left:0;right:0;padding:6px 8px;white-space:pre;pointer-events:none;text-shadow:0 0 3px #000}
+ .bad{color:#ff5555}.good{color:#55ff88}
+</style>
+</head>
+<body>
+<div id="log"></div>
+<script type="module">
+import * as THREE from 'three/webgpu';
+import * as TSL from 'three/tsl';
+import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
+import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
+import { applyXRBackendPatches } from './src/render/nodes/ThreeXRPatches.js';
+
+const logEl = document.getElementById('log');
+const log = (s, cls) => { logEl.innerHTML += (cls ? '<span class="' + cls + '">' + s + '</span>' : s) + '\n'; };
+const q = new URLSearchParams(location.search);
+const useArray = q.get('array') !== '0';
+
+const renderer = new THREE.WebGPURenderer({ forceWebGL: true, antialias: q.get('aa') !== '0' });
+renderer.setPixelRatio(1);
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+
+// ── the camera under test ────────────────────────────────────────────────────────────────
+const W = window.innerWidth, H = window.innerHeight;
+const mono = new THREE.PerspectiveCamera(70, W / H, 0.01, 20);
+mono.position.z = 1;
+
+const eyeL = new THREE.PerspectiveCamera(70, (W / 2) / H, 0.01, 20);
+const eyeR = new THREE.PerspectiveCamera(70, (W / 2) / H, 0.01, 20);
+eyeL.viewport = new THREE.Vector4(0, 0, W / 2, H);
+eyeR.viewport = new THREE.Vector4(W / 2, 0, W / 2, H);
+const stereo = new THREE.ArrayCamera([eyeL, eyeR]);
+stereo.position.z = 1;
+
+// The session sets each eye's world matrix itself; do the same, with a plausible IPD.
+// ?head=X -- THE DECISIVE PROBE FOR "WHICH CAMERA LIGHTS THE SCENE".
+//
+// three's `lightViewPosition` is a renderGroup uniform -- ONE value per render call, for both
+// eyes -- and it is the light's world position put through `camera.matrixWorldInverse`. Under
+// an ArrayCamera that `camera` is the ARRAY camera, i.e. the head, while `positionView` for the
+// surface goes through the per-eye `cameraViewMatrix[cameraIndex]`. If that is what happens,
+// the light vector is a head-space light minus an eye-space surface.
+//
+// So: shift the HEAD sideways by X while leaving both EYE matrices exactly where they were.
+// Nothing about either eye's view has changed, so a correct renderer must produce two pixel
+// identical images. If the shading moves, the lighting is being computed from the head.
+function updateEyes() {
+  const headOffset = parseFloat(q.get('head') || '0');
+  stereo.position.x = headOffset;
+  stereo.updateMatrixWorld();
+  // Eye world matrices are built from the head MINUS that offset, so they stay put.
+  stereo.matrixWorld.elements[12] -= headOffset;
+  // ?ipd=0 puts BOTH sub-cameras in exactly the same place. Two identical cameras must produce
+  // two identical images, so with ipd=0 any difference between the viewports is the renderer's
+  // and nothing to do with parallax. That is the decisive form of the stereo-lighting test.
+  const halfIpd = q.has('ipd') ? parseFloat(q.get('ipd')) / 2 : 0.032;
+  for (const [eye, dx] of [[eyeL, -halfIpd], [eyeR, halfIpd]]) {
+    eye.matrixWorld.copy(stereo.matrixWorld);
+    eye.matrixWorld.elements[12] += dx;
+    eye.matrixWorldInverse.copy(eye.matrixWorld).invert();
+    eye.projectionMatrix.copy(stereo.projectionMatrix);
+    eye.projectionMatrixInverse.copy(stereo.projectionMatrixInverse);
+  }
+  // Put the head back where ?head= asked for it; only the ArrayCamera's own transform moves.
+  stereo.matrixWorld.elements[12] += headOffset;
+  stereo.matrixWorldInverse.copy(stereo.matrixWorld).invert();
+}
+
+const camera = useArray ? stereo : mono;
+
+// ?xr=1 -- the same three boxes in a REAL session, so the desktop finding can be confirmed on
+// device. In a session three substitutes its own ArrayCamera, so the hand-made one is unused.
+if (q.get('xr') === '1') {
+  renderer.xr.enabled = true;
+  navigator.xr?.isSessionSupported('immersive-ar').then((ok) => {
+    document.body.appendChild(ok ? ARButton.createButton(renderer) : VRButton.createButton(renderer));
+  });
+}
+
+// ── the three boxes ──────────────────────────────────────────────────────────────────────
+const geo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+
+const matUnlit = new THREE.MeshLambertNodeMaterial({ color: 0x3388ff });
+matUnlit.lights = false;
+const matLit = new THREE.MeshLambertNodeMaterial({ color: 0xff8833 });
+matLit.lights = true;
+const matRenderGroup = new THREE.MeshLambertNodeMaterial({ color: 0x33ff66 });
+matRenderGroup.lights = false;
+// ?campos=1 turns the green box into a READOUT of cameraPosition instead of a mere reader:
+//   blue channel  = z, which is 1.0 for a camera at z=1 -> a black box means the uniform is zero
+//   red channel   = x * 8, so the LEFT eye clamps to 0 and the RIGHT eye reads ~0.26
+// i.e. correct per-eye camera positions show as two boxes of visibly different colour.
+matRenderGroup.colorNode = q.get('campos') === '1'
+  ? TSL.cameraPosition.mul(TSL.vec3(8, 8, 1))
+  : TSL.vec3(0.2, 1.0, 0.4).add(TSL.cameraPosition.mul(0.0001));
+
+const a = new THREE.Mesh(geo, matUnlit);       a.position.set(-0.3, 0, -0.5); scene.add(a);
+const b = new THREE.Mesh(geo, matLit);         b.position.set( 0.0, 0, -0.5); scene.add(b);
+const c = new THREE.Mesh(geo, matRenderGroup); c.position.set( 0.3, 0, -0.5); scene.add(c);
+const NAMES = new Map([[a, 'unlit'], [b, 'LIT'], [c, 'rendergroup']]);
+
+// ── ?shadow=1 -- DOES A SHADOW MAP SURVIVE AN ArrayCamera? ───────────────────────────────
+// Shadows are still disabled inside a session in the app as a workaround, on the grounds that
+// a shadow map is an extra render target. That is testable here: a floor, a caster, a spot
+// light that casts, under the session's camera layout, with no headset.
+//   ?shadow=1&array=1  vs  ?shadow=1&array=0
+if (q.get('shadow') === '1') {
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(4, 4),
+    new THREE.MeshLambertNodeMaterial({ color: 0x888888 }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(0, -0.35, -0.6);
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const caster = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 16),
+    new THREE.MeshLambertNodeMaterial({ color: 0xffffff }));
+  caster.position.set(0, -0.05, -0.6);
+  caster.castShadow = true;
+  scene.add(caster);
+
+  const spot = new THREE.SpotLight(0xffffff, 6, 10, 0.7, 0.3, 2);
+  spot.position.set(0.4, 0.9, -0.3);
+  spot.target.position.set(0, -0.35, -0.6);
+  spot.castShadow = true;
+  scene.add(spot); scene.add(spot.target);
+  log('shadow test: floor + caster + casting spot');
+}
+
+// ── ?spec=1 -- IS THE LIGHTING THE SAME IN BOTH EYES? ────────────────────────────────────
+//
+// matt, in a session: "the specular is far too different, it's misplaced... the diffuse
+// terminator on the sphere is shifted at least 5 degrees, more than it should be for stereo."
+//
+// three's node lighting pre-transforms a light's position into VIEW space on the CPU and
+// uploads it as ONE `render`-group uniform -- one value, per render, for two eyes. The camera
+// matrices got a per-eye array; the light position did not. So it can only be right for one
+// eye, and the error is the full head-to-light offset rather than the 64mm of parallax.
+//
+// A sphere with a tight specular lobe is the instrument: under ?array=1 the two eye viewports
+// are drawn side by side on ONE desktop canvas, so the highlight's position in each can simply
+// be compared. A Lambert cube cannot show this; a sphere with a close light can.
+if (q.get('spec') === '1' || q.get('spec') === '2') {
+  // ?spec=2 -- PURE DIFFUSE, which is the decisive case. A specular highlight is genuinely
+  // view-dependent, so it is ALLOWED to move differently in each eye, and at a small world
+  // scale (grip-scaled down, model narrower than the 64mm IPD) it moves a lot. Diffuse is not:
+  // N.L does not contain the view vector at all, so the terminator's position ON THE SPHERE is
+  // identical for both eyes and its shift on screen must equal the silhouette's parallax
+  // exactly. A ratio far from 1.0 here is a real per-eye lighting fault; a ratio near 1.0 says
+  // the lighting is correct and what looks wrong is the stereo geometry.
+  const diffuseOnly = q.get('spec') === '2';
+  const lit = diffuseOnly
+    ? new THREE.MeshLambertNodeMaterial({ color: 0x999999 })
+    : new THREE.MeshPhongNodeMaterial({ color: 0x777777, shininess: 80 });
+  if (!diffuseOnly) lit.specular = new THREE.Color(0xffffff);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.22, 64, 48), lit);
+  ball.position.set(0, 0, -0.75);
+  scene.add(ball);
+  const near = new THREE.PointLight(0xffffff, 3, 6, 2);
+  near.position.set(0.35, 0.35, -0.35);
+  scene.add(near);
+  // A PURE-PARALLAX RULER. This marker is UNLIT and sits at the same depth as the sphere, so
+  // the shift of its image between the two viewports is exactly what 64mm of eye separation
+  // buys. If the specular highlight moves by the same amount, the lighting is right and what
+  // you are seeing is ordinary stereo. If it moves by much more, it is not.
+  const markMat = new THREE.MeshLambertNodeMaterial({ color: 0x000000 });
+  markMat.lights = false;
+  markMat.colorNode = TSL.vec3(0, 0, 0);
+  markMat.emissiveNode = TSL.vec3(1, 1, 1);
+  const mark = new THREE.Mesh(new THREE.SphereGeometry(0.03, 24, 16), markMat);
+  mark.position.set(0, 0.42, -0.75);          // same depth, its own horizontal band
+  scene.add(mark);
+
+  // ?small=N -- THE GRIP-SCALED WORLD, reproduced. Everything in the test is scaled about the
+  // camera by 1/N, so the picture on screen is unchanged but the model is N times smaller in
+  // WORLD units. That matters because the head-to-eye offset is a fixed 32mm and does not
+  // shrink with it: at matt's measured world scale the sculpt is only centimetres across, and
+  // any lighting error expressed in head-to-eye offsets becomes enormous relative to it.
+  const N = parseFloat(q.get('small') || '1');
+  if (N > 1) {
+    const sc = 1 / N;
+    const grp = new THREE.Group();
+    grp.scale.setScalar(sc);
+    grp.position.set(0, 0, 1 * (1 - sc));      // scale about the camera at z = 1
+    for (const o of [ball, near, mark]) { scene.remove(o); grp.add(o); }
+    scene.add(grp);
+    log('scene scaled about the camera by 1/' + N + ' (world scale test)');
+  }
+
+  // Hide the cubes so nothing else is in the way.
+  a.visible = b.visible = c.visible = false;
+  log('specular stereo test: compare the highlight position between the two viewports');
+}
+
+const nLights = q.get('lights') === '0' ? 0 : 1;
+if (nLights) {
+  const L = new THREE.PointLight(0xffffff, 2, 10, 2);
+  L.position.set(0.3, 0.4, 0.0);
+  scene.add(L);
+}
+
+log('camera: ' + (useArray ? 'ArrayCamera, 2 sub-cameras (the session layout)' : 'PerspectiveCamera (baseline)')
+  + '   lights: ' + nLights);
+log('blue = lights:false | orange = lights:true | green = unlit, reads cameraPosition');
+
+// THE FIX ITSELF LIVES IN src/render/nodes/ThreeXRPatches.js -- this page imports the real
+// module rather than carrying a copy, so what is tested here is what the app runs.
+// ?fix=1 installs it, no flag leaves the fault in place.
+
+// ── instrument: what binding point does each program think it has, and what is bound? ────
+const backend = renderer.backend;
+const gl = () => backend.gl;
+const useFix = q.get('fix') === '1';
+window._xrpatchTrace = q.get('trace') === '1';   // log every binding-point allocation
+await renderer.init();   // backend.gl does not exist until this resolves
+if (useFix) { applyXRBackendPatches(renderer, THREE, TSL); log('ThreeXRPatches INSTALLED'); }
+
+const setups = [];                  // every _setupBindings call, in order
+const creates = [];
+const probeRows = [];
+const origSetup = backend._setupBindings.bind(backend);
+backend._setupBindings = (bindings, programGPU) => {
+  setups.push({ programGPU, rows: bindings.flatMap((g) => g.bindings.map((bd) => ({
+    group: g.name, name: bd.name, index: backend.get(bd).index }))) });
+  return origSetup(bindings, programGPU);
+};
+
+const origCreate = backend.createBindings.bind(backend);
+backend.createBindings = (bindGroup, bindings, ...rest) => {
+  const r = origCreate(bindGroup, bindings, ...rest);
+  // UNIFORM BUFFERS ONLY. A sampled texture carries an `index` too and it is a TEXTURE UNIT on
+  // a separate counter -- listing both in one column reads as a binding-point collision that is
+  // not there, which cost an hour.
+  creates.push({ group: bindGroup.name,
+    arrayComposition: bindings.map((g) => g.name).join(','),
+    indices: bindGroup.bindings
+      .filter((bd) => bd.isUniformsGroup || bd.isUniformBuffer)
+      .map((bd) => bd.name + '=' + backend.get(bd).index).join(' ')
+      + bindGroup.bindings.filter((bd) => bd.isSampledTexture)
+        .map((bd) => '  [tex unit ' + backend.get(bd).index + ': ' + bd.name + ']').join('') });
+  return r;
+};
+
+// On the flagged frame, for each object actually drawn: compare the binding point BAKED into
+// its program against the buffer the backend has bound at that point right now.
+let probeFrame = -1;
+const findings = [];
+const origDraw = backend.draw.bind(backend);
+backend.draw = (renderObject, info) => {
+  if (probeFrame === 0) {
+    try { inspect(renderObject); } catch (e) { findings.push('inspect failed: ' + e.message); }
+  }
+  return origDraw(renderObject, info);
+};
+
+function inspect(renderObject) {
+  const g = gl();
+  const name = NAMES.get(renderObject.object) || (renderObject.object.type + '#' + renderObject.object.id);
+  const { programGPU } = backend.get(renderObject.pipeline);
+  const bindings = renderObject.getBindings();
+
+  // name -> what the backend currently believes
+  const want = new Map();
+  for (const group of bindings) {
+    for (const bd of group.bindings) {
+      const d = backend.get(bd);
+      want.set(bd.name, { index: d.index, buffer: d.bufferGPU, shared: group.bindings[0].groupNode?.shared === true });
+    }
+  }
+
+  // The backend binds buffers immediately before the draw; do the same read it would see.
+  backend._bindUniforms(bindings);
+
+  const rows = [];
+  const n = g.getProgramParameter(programGPU, g.ACTIVE_UNIFORM_BLOCKS);
+  for (let i = 0; i < n; i++) {
+    const blockName = g.getActiveUniformBlockName(programGPU, i);
+    const baked = g.getActiveUniformBlockParameter(programGPU, i, g.UNIFORM_BLOCK_BINDING);
+    const boundBuf = g.getIndexedParameter(g.UNIFORM_BUFFER_BINDING, baked);
+    const w = want.get(blockName);
+    const ok = w && w.buffer === boundBuf;
+    rows.push({ blockName, baked, wantIndex: w ? w.index : '(not in bindings)',
+      shared: w ? w.shared : '?', ok });
+    if (!ok) findings.push(name + ': block `' + blockName + '` is baked to binding point ' + baked
+      + ' but its buffer is bound at ' + (w ? w.index : '?') + ' -> it reads whatever else is at ' + baked);
+  }
+  probeRows.push({ name, rows });
+}
+
+// ── THE SESSION-START REBUILD, which the app has and this page did not ───────────────────
+//
+// A node material's shader is built when it is first DRAWN. These three are drawn on the
+// desktop before the button is pressed, so they carry the DESKTOP camera layout -- one
+// cameraProjectionMatrix in the `render` block -- into the session, instead of the session's
+// cameraIndex + mat4[2] per-eye arrays. Symptom is wrong per-eye cameras: the two views do not
+// fuse, and anything the CPU pre-transforms by "the camera" (a light's view-space position)
+// uses a camera that is neither eye. SculptXR rebuilds every material at the session boundary
+// for exactly this reason; this page has to do the same or it is testing the wrong thing.
+renderer.xr.addEventListener('sessionstart', () => {
+  for (const m of [matUnlit, matLit, matRenderGroup]) m.needsUpdate = true;
+});
+renderer.xr.addEventListener('sessionend', () => {
+  for (const m of [matUnlit, matLit, matRenderGroup]) m.needsUpdate = true;
+});
+
+// ── loop ─────────────────────────────────────────────────────────────────────────────────
+let frame = 0;
+const tick = () => {
+  a.rotation.y += 0.01; b.rotation.y += 0.01; c.rotation.y += 0.01;
+  if (useArray && !renderer.xr.isPresenting) updateEyes();
+  // ?rebuild=1 fires the same material rebuild the session boundary does, mid-flight, so the
+  // "box 1 turned red" case can be chased on the desktop instead of in a headset.
+  if (frame === 90 && q.get('rebuild') === '1') {
+    for (const m of [matUnlit, matLit, matRenderGroup]) m.needsUpdate = true;
+    log('materials rebuilt (simulating the session boundary)');
+  }
+  if (frame === 60 || (frame === 150 && q.get('rebuild') === '1')) probeFrame = 0;
+  renderer.render(scene, renderer.xr.isPresenting ? mono : camera);
+  if (frame === 60 || (frame === 150 && q.get('rebuild') === '1')) { probeFrame = -1; try { dump(); if (q.get('spec')) measureHighlight();
+    if (q.get('shader') === '1') dumpShader(); } catch (e) { log('DUMP FAILED: ' + e.message, 'bad'); } }
+  frame++;
+};
+
+// TWO CLOCKS ON PURPOSE. setAnimationLoop is the only one a session can use, but rAF does not
+// fire at all while the browser pane is hidden -- so a headless check would sit at frame 0 for
+// ever and the probe would never run. The interval drives it outside a session instead.
+renderer.setAnimationLoop(tick);
+setInterval(() => { if (!renderer.xr.isPresenting) tick(); }, 16);
+
+// Objective version of "the highlight is in a different place in each eye": read the frame back
+// and report the brightest pixel in each viewport, as a fraction of that viewport's width. The
+// sphere's own parallax moves its CENTRE by a known small amount; if the highlight moves by far
+// more, the lighting is not being evaluated per eye.
+function measureHighlight() {
+  const g = gl();
+  const w = renderer.domElement.width, h = renderer.domElement.height;
+  const px = new Uint8Array(w * h * 4);
+  g.bindFramebuffer(g.FRAMEBUFFER, null);
+  g.readPixels(0, 0, w, h, g.RGBA, g.UNSIGNED_BYTE, px);
+  const half = w >> 1;
+  const stat = (x0, x1, y0, y1) => {
+    let best = -1, bx = 0, by = 0, sum = 0, sx = 0, n = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const l = px[(y * w + x) * 4];          // red channel; the sphere is grey
+        if (l > best) { best = l; bx = x; by = y; }
+        if (l > 8) { sum += l; sx += l * x; n++; }   // lit-pixel centroid
+      }
+    }
+    return { peak: best, peakX: (bx - x0) / (x1 - x0), centroidX: n ? (sx / sum - x0) / (x1 - x0) : null };
+  };
+  // readPixels is bottom-up: the marker sits high in the frame, so it is in the TOP band.
+  const band = Math.floor(h * 0.62);
+  const L = stat(0, half, 0, band), R = stat(half, w, 0, band);                 // the lit sphere
+  const ML = stat(0, half, band, h), MR = stat(half, w, band, h);               // the ruler
+  // CENTROIDS, NOT PEAKS. The marker is saturated white over many pixels, so `the brightest
+  // pixel` is whichever one the scan reaches first -- it moved between identical runs. An
+  // intensity-weighted centroid is stable and is a real feature position.
+  const spec = Math.abs(L.centroidX - R.centroidX);
+  const par = Math.abs(ML.centroidX - MR.centroidX);
+  log('');
+  log('── horizontal shift between the two viewports, as a fraction of viewport width ──');
+  log('  unlit marker (pure parallax): ' + par.toFixed(4));
+  log('  lit feature (' + (q.get('spec') === '2' ? 'diffuse terminator' : 'specular highlight') + '): ' + spec.toFixed(4));
+  log('  ratio lit-feature/parallax:   ' + (par > 1e-6 ? (spec / par).toFixed(2) : 'n/a'),
+    par > 1e-6 && spec / par > 2 ? 'bad' : 'good');
+  return { L, R, ML, MR, spec, par };
+}
+
+// GROUND TRUTH: the generated GLSL. Everything above is inference; this is what runs.
+async function dumpShader() {
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  const target = scene.children.find((o) => o.isMesh && o.material && o.material.lights === true)
+    || scene.getObjectByProperty('isMesh', true);
+  const sh = await renderer.debug.getShaderAsync(scene, cam, target);
+  console.log('=== LIT FRAGMENT SHADER ===\n' + sh.fragmentShader);
+  console.log('=== LIT VERTEX SHADER ===\n' + sh.vertexShader);
+  const lines = sh.fragmentShader.split('\n')
+    .filter((l) => /light|Light|cameraView|buffer\d|cameraIndex|positionView/.test(l));
+  log('');
+  log('── lines of the lit fragment shader that mention light / camera / view ──');
+  for (const l of lines.slice(0, 60)) log('  ' + l.trim());
+  window._shader = sh;
+}
+
+function dump() {
+  log('');
+  log('── createBindings (bind-group composition per render object) ──');
+  for (const c of creates) log('  [' + c.arrayComposition + ']  ' + c.group + ': ' + c.indices);
+  log('');
+  log('── per object: uniform block -> binding point baked into the program vs bound now ──');
+  for (const p of probeRows) {
+    log('  ' + p.name);
+    for (const r of p.rows) {
+      log('      ' + (r.ok ? 'ok  ' : 'BAD ') + r.blockName.padEnd(18)
+        + ' baked=' + r.baked + '  backend index=' + r.wantIndex + (r.shared ? '  [shared]' : ''),
+        r.ok ? 'good' : 'bad');
+    }
+  }
+  log('');
+  if (findings.length) { for (const f of findings) log('  ! ' + f, 'bad'); }
+  else log('  no binding-point mismatch found', 'good');
+  window._probe = { creates, probeRows, findings, setups };
+}
+
+window.addEventListener('error', (e) => log('ERR ' + e.message, 'bad'));
+</script>
+</body>
+</html>

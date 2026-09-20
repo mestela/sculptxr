@@ -80,6 +80,7 @@ import probeXRLighting from './misc/XRLightProbe.js';
 import NodeMaterials from './render/nodes/NodeMaterials.js';
 import { stripGeometry } from './render/lineStrip.js';
 import { installEnvironment } from './render/nodes/EnvIBL.js';
+import { applyXRBackendPatches } from './render/nodes/ThreeXRPatches.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -154,6 +155,12 @@ function _wristReach(gripWorld, headWorld) {
 }
 
 class Scene {
+
+  // THE WORLD GROUP'S RESTING SCALE. Model space -> three-world. The VR two-grip gesture drives
+  // _worldGroup.scale away from this, and light falloff is calibrated relative to it -- see the
+  // wscale note in _syncThreeLights.
+  static WORLD_SCALE_DEFAULT = 0.701;
+
 
   constructor() {
     this._gl = null; // webgl context
@@ -3779,6 +3786,15 @@ class Scene {
       const [WGPU, TSL] = await Promise.all([import('three/webgpu'), import('three/tsl')]);
       this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
       await this._renderer.init();
+      // TWO three 0.183.2 BUGS THAT ONLY BITE UNDER AN ArrayCamera, i.e. in a session: uniform
+      // block binding points that collide between render objects, and a `cameraPosition` that
+      // is always zero and throws while building. Between them they are the whole of "a lit
+      // material does not draw in XR". Read ThreeXRPatches.js; reproduce with xrarray.html.
+      // MUST be before any material compiles -- binding points are baked in at link time.
+      // ?xrpatch=0 turns them off, to A/B against the fault.
+      if (!/[?&]xrpatch=0/.test(window.location.search)) {
+        applyXRBackendPatches(this._renderer, WGPU, TSL);
+      }
       // THE SAME SETUP THE WebGLRenderer GETS, because this renderer is not self-configuring
       // and the omission is silent. `xr.enabled` in particular is not a convenience flag: it
       // is what gates the per-eye path, in three.webgpu.js:
@@ -3809,6 +3825,67 @@ class Scene {
       this._renderer.shadowMap.type = WGPU.PCFSoftShadowMap;
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
       this._isNodeRenderer = true;
+      // ONE LINE THAT ANSWERS "why are there no shadows / why is the lighting binary".
+      // Console, not a screen overlay, because that is what can be read off the headset over
+      // remote debugging. window.xrLightReport() -- safe to call any time, in or out of VR.
+      // A TOGGLE, because the boundary read of window._xrShadows depends on setting the flag
+      // before you press Enter VR, and getting that wrong looks identical to the bug it was
+      // meant to test. This re-applies castShadow across the pool and rebuilds, so shadows can
+      // be turned on and off DURING a session. It is a debug instrument: the rebuild is the
+      // very recompile the fixed pool exists to avoid, so expect a hitch and do not ship a UI
+      // control onto it.
+      window.xrSetShadows = (on) => {
+        window._xrShadows = !!on;
+        const pool = this._lightPool;
+        if (!pool) { console.warn('[xrSetShadows] no light pool yet'); return false; }
+        for (const t of [0, 1, 2]) for (const L of pool[t]) L.castShadow = !!on;
+        this._renderer.shadowMap.enabled = !!on;
+        let n = 0;
+        this._scene.traverse((o) => {
+          const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+          for (const m of mats) if (m && m.isMaterial) { m.needsUpdate = true; n++; }
+        });
+        for (const m of (NodeMaterials.all ? NodeMaterials.all() : [])) if (m) { m.needsUpdate = true; n++; }
+        console.log('[xrSetShadows] ' + (on ? 'on' : 'off') + ', rebuilt ' + n + ' materials');
+        return true;
+      };
+      window.xrLightReport = () => {
+        const r = this._renderer;
+        const pool = this._lightPool;
+        const rows = [];
+        for (const type of [0, 1, 2]) {
+          for (const L of (pool ? pool[type] : [])) {
+            if (!L.intensity && !L.castShadow) continue;
+            rows.push({ type: L.type, intensity: +L.intensity.toFixed(3), castShadow: L.castShadow,
+              shadowIntensity: L.shadow ? L.shadow.intensity : null,
+              distance: L.distance, decay: L.decay });
+          }
+        }
+        const out = {
+          presenting: !!(r.xr && r.xr.isPresenting),
+          shadowMapEnabled: r.shadowMap.enabled,
+          toneMappingExposure: r.toneMappingExposure,
+          environment: !!this._scene.environment,
+          environmentIntensity: this._scene.environmentIntensity,
+          xrEnv: !!window._xrEnv, xrShadows: !!window._xrShadows,
+          lights: rows,
+          // WORLD SCALE, because it turns out to explain a lot: it drives light falloff, and a
+          // heavily grip-scaled world makes the model narrower than the 64mm IPD, at which
+          // point correct stereo looks broken.
+          worldScale: this._worldGroup ? this._worldGroup.scale.x : null,
+          worldScaleVsDefault: this._worldGroup
+            ? +(this._worldGroup.scale.x / Scene.WORLD_SCALE_DEFAULT).toFixed(4) : null,
+          graphFrozen: !!this._xrGraphFrozen,
+          poolSize: this._lightPool
+            ? this._lightPool[0].length + this._lightPool[1].length + this._lightPool[2].length
+            : 0,
+          poolCasting: this._lightPool
+            ? [0, 1, 2].reduce((n, t) => n + this._lightPool[t].filter((L) => L.castShadow).length, 0)
+            : 0
+        };
+        console.log('[xrLightReport]', JSON.stringify(out));
+        return out;
+      };
       // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
       // because constructing one mid-session is the single real fault this renderer has.
       NodeMaterials.enable(WGPU, TSL);
@@ -3910,7 +3987,7 @@ class Scene {
     this._worldGroup = new THREE.Group();
     this._worldGroup.position.set(0, 0, 0);
     this._worldGroup.quaternion.set(0, 0, 0, 1);
-    this._worldGroup.scale.set(0.701, 0.701, 0.701);
+    this._worldGroup.scale.set(Scene.WORLD_SCALE_DEFAULT, Scene.WORLD_SCALE_DEFAULT, Scene.WORLD_SCALE_DEFAULT);
     this._scene.add(this._worldGroup);
     // Exposed for Mesh.getModelSpaceMatrix() — picking composes the parent chain
     // relative to this group (meshes live under it).
@@ -4448,6 +4525,12 @@ class Scene {
     // which is the difference between "I added a light" and "I added a light and nothing
     // happened".
     mesh._lightRange = this._lightRangeForScene();
+    // The distance the slider is calibrated against — see the intensity note in
+    // _syncThreeLights. Deliberately NOT derived from _lightRange: that carries a floor of
+    // 200 because it is a falloff CUTOFF and wants to reach past the model, and using it as
+    // a brightness reference is what made slider 1 read as white. This is the scene's own
+    // half-diagonal — roughly where you stand to work on it.
+    mesh._lightRefDist = this._lightRefDistForScene();
     return mesh;
   }
 
@@ -4472,18 +4555,41 @@ class Scene {
     return Math.max(MIN, d > 1e-6 ? d * 2 : MIN);
   }
 
+  /** Half the scene's diagonal: the distance a light's brightness is calibrated against. */
+  _lightRefDistForScene() {
+    const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+    if (!real.length) return 20;
+    const box = this.computeBoundingBoxMeshes(real);
+    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return 20;
+    const d = vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+    return Math.max(5, d * 0.5);
+  }
+
   // The light's LOOK: a star of rays, in the light's own colour so a scene of several is
   // readable at a glance. Depth-write off and frustumCulled off for the same reason the null's
   // cruciform has them -- it is a handle, not geometry.
   decorateLight(mesh) {
     const tm = mesh.getThreeMesh();
     if (!tm) return mesh;
-    tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    // SHARED MATERIALS, MADE ONCE. Every material in this app is compiled the first time it
+    // is drawn, and one compiled inside an XR session comes out with the desktop camera
+    // layout -- which is what matt saw as "the light gizmo doubled up in my eyes" and, on a
+    // type switch, as the whole render splitting into wrong left/right eyes. Adding a light
+    // used to mint two fresh materials, and changing its type minted another.
+    //
+    // So neither is per-light any more: the host is one invisible material, and the handle
+    // is one line material reading VERTEX COLOURS, which is how the per-light colour
+    // survives being shared. Geometry is still rebuilt per type; geometry is not compiled.
+    if (!Scene._lightHostMat) {
+      Scene._lightHostMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false });
+    }
+    tm.material = Scene._lightHostMat;
 
     // REBUILT, NOT ADDED TO. The handle is type-specific, so changing the type has to replace
     // it; without this every switch left the previous one behind.
     const old = tm.getObjectByName('light_rays');
-    if (old) { tm.remove(old); old.geometry.dispose(); old.material.dispose(); }
+    if (old) { tm.remove(old); old.geometry.dispose(); }   // material is shared, never disposed
 
     // THE HANDLE SAYS WHAT KIND OF LIGHT IT IS, and for the aimed types, WHERE IT POINTS.
     // A point light has no direction, so a symmetric asterisk is the honest shape for it; a
@@ -4532,8 +4638,10 @@ class Scene {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
     const c = mesh._lightColor;
-    const rays = new THREE.LineSegments(geo,
-      new THREE.LineBasicMaterial({ color: new THREE.Color(c[0], c[1], c[2]), depthWrite: false }));
+    const col = new Float32Array(pts.length);
+    for (let i = 0; i < col.length; i += 3) { col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2]; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const rays = new THREE.LineSegments(geo, Scene._lightRayMat);
     rays.name = 'light_rays';
     rays.frustumCulled = false;
     // Sized off the scene like the light's own range is, rather than a constant: scene units
@@ -4549,7 +4657,14 @@ class Scene {
     const tm = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
     const rays = tm && tm.getObjectByName && tm.getObjectByName('light_rays');
     if (!rays || !mesh._lightColor) return;
-    rays.material.color.setRGB(mesh._lightColor[0], mesh._lightColor[1], mesh._lightColor[2]);
+    // Into the attribute, not the material: the material is shared by every light.
+    const a = rays.geometry.getAttribute('color');
+    if (!a) return;
+    const c = mesh._lightColor;
+    for (let i = 0; i < a.array.length; i += 3) {
+      a.array[i] = c[0]; a.array[i + 1] = c[1]; a.array[i + 2] = c[2];
+    }
+    a.needsUpdate = true;
   }
 
   /** Every light in the scene, for the shader to read. */
@@ -4567,114 +4682,151 @@ class Scene {
   // Type is ours: 0 point, 1 spot, 2 directional. A spot needs a target object; it is a child
   // at (0,0,-1), so "aim" is the light's own local -Z -- the same convention the gizmo and
   // the old uLightDir upload used.
+  // A FIXED POOL OF LIGHTS, CREATED BEFORE ANY SESSION.
+  //
+  // matt's reproduction: in VR, adding a light makes the sculpt vanish and the new light's
+  // gizmo render with broken stereo, while everything else stays correct; deleting it brings
+  // the sculpt back; matcap is unaffected. Lights created BEFORE entering VR work fine.
+  //
+  // The trigger is the RECOMPILE. A node material's lighting graph is baked from the lights
+  // present, so adding one rebuilds the shader -- inside the session -- and a material built
+  // in there is what breaks. Matcap escapes it because it has no lights in its graph.
+  //
+  // So the graph must never change. The pool is built once, on the desktop, with a fixed
+  // count of each type; user lights are mapped onto slots and unused slots sit at intensity
+  // zero. Adding, deleting or retyping a light then moves numbers around in a shader that
+  // was compiled once, before the session, and never rebuilt.
+  //
+  // The cost is honest: the shader always evaluates POOL lights, used or not. That is a real
+  // per-fragment cost, and it is the price of a lighting rig that can be edited in VR at all.
+  _ensureLightPool() {
+    if (this._lightPool) return this._lightPool;
+    const T = this._THREE_GPU || THREE;
+    // SIZES ARE A KNOB, because the pool itself is now a suspect. matt: light added, PBR
+    // sphere does not draw in VR at all, while matcap does -- and the pool is the thing that
+    // changed. Seven lights is seven light structs in the bindings of every lit material, on
+    // top of the per-eye camera array an XR session adds, so a limit is a real possibility.
+    //
+    // ?pool=P,S,D sets the counts. The ladder to walk is 0,0,0 (no lights in the graph at
+    // all -- if the sphere comes back black, the pool is the cause), then 1,0,0, then up.
+    const _pq = /[?&]pool=(\d+),(\d+),(\d+)/.exec(window.location.search);
+    const POOL = _pq
+      ? { point: +_pq[1], spot: +_pq[2], dir: +_pq[3] }
+      : { point: 4, spot: 2, dir: 1 };
+    const mk = (L) => {
+      L.intensity = 0;
+      L.castShadow = false;
+      if (L.isSpotLight || L.isDirectionalLight) {
+        const t = new T.Object3D();
+        t.position.set(0, 0, -1);
+        L.add(t);
+        L.target = t;
+      }
+      this._scene.add(L);
+      return L;
+    };
+    this._lightPool = {
+      0: Array.from({ length: POOL.point }, () => mk(new T.PointLight(0xffffff, 0))),
+      1: Array.from({ length: POOL.spot }, () => mk(new T.SpotLight(0xffffff, 0))),
+      2: Array.from({ length: POOL.dir }, () => mk(new T.DirectionalLight(0xffffff, 0))),
+    };
+    // AND THE GIZMO MATERIALS ARE WARMED HERE TOO, for the same reason the pool exists: a
+    // material compiles when it is first DRAWN, and if that first draw happens inside an XR
+    // session it comes out wrong. Creating them is not enough -- they have to be drawn on
+    // the desktop. Two degenerate objects do it: the host material writes no colour at all,
+    // and a zero-length line segment covers no pixels, so nothing appears.
+    if (!Scene._lightHostMat) {
+      Scene._lightHostMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false });
+    }
+    if (!this._lightMatWarm) {
+      const g = new T.BufferGeometry();
+      g.setAttribute('position', new T.BufferAttribute(new Float32Array(6), 3));
+      g.setAttribute('color', new T.BufferAttribute(new Float32Array(6), 3));
+      const w = new T.Group();
+      w.add(new T.LineSegments(g, Scene._lightRayMat));
+      // A REAL BoxGeometry, not a bare position buffer. The host material converts to the
+      // unlit Lambert base, whose graph still reads `normal`, so a geometry carrying only
+      // positions fails to build with "Vertex attribute normal not found" -- the same class
+      // of error the missing `uv` caused. Scaled to nothing, and it writes no colour anyway.
+      const hostWarm = new T.Mesh(new T.BoxGeometry(1, 1, 1), Scene._lightHostMat);
+      hostWarm.scale.setScalar(1e-6);
+      w.add(hostWarm);
+      w.traverse((o) => { o.frustumCulled = false; });
+      this._scene.add(w);
+      this._lightMatWarm = w;
+    }
+    console.log('[lights] pool built: ' + POOL.point + ' point, ' + POOL.spot + ' spot, '
+      + POOL.dir + ' directional');
+    return this._lightPool;
+  }
+
   _syncThreeLights() {
     const THREE_ = this._THREE_GPU || THREE;
+    const pool = this._ensureLightPool();
     const lights = this.getLights ? this.getLights() : [];
-    const seen = new Set();
+    const used = { 0: 0, 1: 0, 2: 0 };
+    if (!this._lpTmp) {
+      this._lpTmp = { p: new THREE_.Vector3(), q: new THREE_.Quaternion(), s: new THREE_.Vector3() };
+    }
+
     for (const e of lights) {
       const host = e.getThreeMesh && e.getThreeMesh();
       if (!host) continue;
-      const type = e._lightType || 0;
-      let L = host.userData._threeLight;
-      // A type change needs a different class, so the old one goes.
-      if (L && L.userData._lightType !== type) { host.remove(L); L = null; }
-      if (!L) {
-        L = type > 1.5 ? new THREE_.DirectionalLight(0xffffff, 1)
-          : type > 0.5 ? new THREE_.SpotLight(0xffffff, 1)
-            : new THREE_.PointLight(0xffffff, 1);
-        L.userData._lightType = type;
-        if (L.isSpotLight || L.isDirectionalLight) {
-          const t = new THREE_.Object3D();
-          t.position.set(0, 0, -1);
-          L.add(t);
-          L.target = t;
-        }
-        L.shadow.mapSize.set(2048, 2048);
-        // BIAS: normalBias, not a constant depth bias.
-        //
-        // A negative constant bias pushes the whole shadow AWAY from the caster, which at
-        // this app's scale (a default sphere is 34 units across) detaches it at the contact
-        // point -- peter-panning. matt, resting a sphere on a box: "the sphere intersects, i
-        // get a leak in the shadow", the bright crescent exactly where the two touch.
-        //
-        // normalBias offsets the shadow lookup along the surface NORMAL instead, which is
-        // proportional to how glancing the light is: it removes acne on curved surfaces
-        // without moving the contact shadow. It is in WORLD units, so it has to suit a scene
-        // measured in tens of units rather than the 0.02-ish typical of a 1-unit scene.
-        //
-        // Both are overridable because the right value depends on the sculpt's scale, and
-        // that is a judgement to make while looking at it rather than one to guess here.
-        L.shadow.blurSamples = 16;
-        // ADDED TO THE SCENE ROOT, NOT PARENTED TO THE ENTITY.
-        //
-        // Parenting looked right -- the light inherits the entity's transform and the two
-        // cannot drift -- but it also inherits its SCALE, and the light gizmo is scaled:
-        // measured 2.024 on a freshly added light. A scale in a light's world matrix
-        // corrupts the shadow camera's projection, and that is why shadows have been set up
-        // correctly and still never appeared. Position and orientation are copied each frame
-        // instead, which is drift-free too because it happens before every draw.
-        this._scene.add(L);
-        host.userData._threeLight = L;
-      }
+      const type = Math.max(0, Math.min(2, e._lightType || 0));
+      const slots = pool[type];
+      if (used[type] >= slots.length) continue;     // more lights than the pool holds
+      const L = slots[used[type]++];
+
+      // Position and orientation copied, never parented: the entity's mesh carries a scale
+      // (measured 2.024) and a scale in a light's world matrix corrupts its shadow camera.
       host.updateMatrixWorld(true);
-      if (!this._lpTmp) {
-        const T = this._THREE_GPU || THREE;
-        this._lpTmp = { p: new T.Vector3(), q: new T.Quaternion(), s: new T.Vector3() };
-      }
       host.matrixWorld.decompose(this._lpTmp.p, this._lpTmp.q, this._lpTmp.s);
       L.position.copy(this._lpTmp.p);
       L.quaternion.copy(this._lpTmp.q);
       L.scale.set(1, 1, 1);
       L.updateMatrixWorld(true);
-      // SHADOW SETTINGS, PER LIGHT, read every frame so the sliders are live. matt: "if its
-      // just shadow bias, expose it as a propery on the light, it will need tweaking based
-      // on scene scale and whatnot" -- which is right, and true of all three of these.
-      //
-      //   _shadowIntensity  shadow.intensity, 0..1 -- how dark the shadow is. Three's own
-      //                     per-light property, so it costs nothing.
-      //   _shadowRadius     shadow.radius -- a UNIFORM blur. It does NOT harden at the
-      //                     contact point and soften with distance: that is PCSS, and three
-      //                     ships no PCSS (checked: no percentageCloser, no
-      //                     contactHardening, no PCSS anywhere in the build). Getting it
-      //                     would mean writing a shadow filter in TSL.
-      //   _shadowNormalBias offsets the lookup along the surface normal, which clears acne
-      //                     without detaching the contact shadow the way a constant depth
-      //                     bias does.
-      // castShadow OFF IN XR, not merely renderer.shadowMap.enabled.
-      //
-      // Turning the renderer flag off stops the shadow PASS but leaves the material's
-      // compiled lighting graph alone: a light with castShadow true still contributes shadow
-      // sampling nodes to every lit material. So the first attempt at this -- flipping
-      // shadowMap.enabled for the session -- changed nothing in the headset, because the
-      // materials were still built to sample a map that was no longer being drawn.
-      const _xr = !!(this._renderer.xr && this._renderer.xr.isPresenting);
-      L.castShadow = (e._castShadow !== false) && (!_xr || !!window._xrShadows);
-      L.shadow.bias = 0;
-      L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
-      L.shadow.intensity = e._shadowIntensity === undefined ? 1 : e._shadowIntensity;
-      // 0..100, not 0..10 -- matt: "a max softenss of 10 is too sharp". radius is in shadow
-      // map texels, so what it is worth depends on map resolution; at 2k over a scene this
-      // size, 10 was barely a penumbra.
-      L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
 
       const c = e._lightColor || [1, 1, 1];
       L.color.setRGB(c[0], c[1], c[2]);
       const slider = (e._lightIntensity === undefined ? 1 : e._lightIntensity);
+      // THE WORLD SCALE, because falloff is evaluated where the light ACTUALLY IS.
+      //
+      // Pool lights are added to the root scene and positioned from the host's WORLD matrix,
+      // so they sit in three-world space -- which is model space times _worldGroup.scale
+      // (0.701 by default, and the VR two-grip gesture drives it over a wide range). But
+      // `distance` and the intensity reference below are both in MODEL units, so irradiance
+      // came out as (ref/d_model)^2 / s^2: the same light, the same slider, a different
+      // exposure for every world scale. matt found it from the symptom -- "it's vr scale
+      // dependent, if I grip-scale the world smaller the shading looks correct".
+      //
+      // Converting both to world units makes irradiance at a given MODEL distance invariant:
+      //   intensity/(d_world)^2 = slider*(ref*s)^2 / (s*d_model)^2 = slider*(ref/d_model)^2
+      //
+      // NORMALISED AGAINST THE DEFAULT SCALE, not used raw. The existing calibration was tuned
+      // by eye at s = 0.701, so a raw conversion would be correct in principle and about 2x
+      // darker than everything matt has already judged. Dividing by the default makes the
+      // multiplier 1.0 there -- the look at rest is unchanged, and only the DEPENDENCE on
+      // world scale goes away.
+      const wscale = ((this._worldGroup && this._worldGroup.scale.x) || 1) / Scene.WORLD_SCALE_DEFAULT;
       if (L.isPointLight || L.isSpotLight) {
         const range = e._lightRange === undefined ? 50 : e._lightRange;
-        L.distance = range;
-        // decay 2 is the physical inverse square: irradiance is intensity / d². A flat
-        // multiplier cannot work with that -- the first version used 40, which at a typical
-        // 40 units away is 40/1600 = 0.025, i.e. no visible light at all. matt: "if i add a
-        // light, i see no effect. i tried a point light, nothing, tried a spot light,
-        // nothing."
-        //
-        // Scaling by range² makes the slider mean something a person can predict: the
-        // brightness the light delivers AT ITS OWN RANGE, whatever the scene's scale.
+        L.distance = range * wscale;
         L.decay = 2;
-        L.intensity = slider * range * range;
+        // SCALED BY THE WORKING DISTANCE, NOT BY THE RANGE.
+        //
+        // With decay 2 the irradiance is intensity/d², so the multiplier has to be d² for
+        // slider 1 to mean "about right". It used to be range², and range defaults to twice
+        // the scene diagonal with a floor of 200 -- so 40000 against an actual light-to-
+        // subject distance nearer 17. That is ~5000x over, and matt saw exactly what that
+        // looks like: white, with a sliver of slider at the bottom that is a flat clipped
+        // grey rather than a shaded sphere.
+        //
+        // The reference is half the scene diagonal, fixed when the light is made, so moving
+        // the light afterwards still falls off physically.
+        const ref = (e._lightRefDist === undefined ? this._lightRefDistForScene() : e._lightRefDist) * wscale;
+        L.intensity = slider * ref * ref;
       } else {
-        // Directional light has no falloff, so the slider is the irradiance directly.
         L.intensity = slider;
       }
       if (L.isSpotLight) {
@@ -4682,14 +4834,46 @@ class Scene {
         L.angle = Math.max(0.01, Math.min(1.55, deg * Math.PI / 180));
         L.penumbra = 0.25;
       }
-      seen.add(L);
+
+      // Shadows stay off inside a session: a shadow map is an extra render target and that
+      // is its own unresolved problem. castShadow also has to go false rather than just
+      // renderer.shadowMap.enabled, because it is castShadow that puts shadow sampling into
+      // the compiled graph -- and the graph is exactly what must not change.
+      //
+      // AND IT IS ONLY EVER WRITTEN OUTSIDE A SESSION. castShadow is itself part of the
+      // graph, so flipping it on a frame inside VR is the same recompile the pool exists to
+      // avoid. The session boundary sets it (see _setPoolShadows in enterXR), and in here it
+      // is left alone while presenting.
+      // THE GUARD IS A LATCH, NOT isPresenting.
+      //
+      // `xr.isPresenting` only becomes true once the session's frame loop has started, and
+      // setSession resolves BEFORE that -- so there are frames after the boundary has set
+      // castShadow where isPresenting still reads false. This loop then ran with the old
+      // answer and put every pool light back to castShadow=false, inside the session, where
+      // the boundary can no longer correct it. Measured: window._xrShadows=1,
+      // shadowMap.enabled true, and every light reporting castShadow false.
+      if (!this._xrGraphFrozen) {
+        L.castShadow = (e._castShadow !== false);
+      }
+      L.shadow.bias = 0;
+      L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
+      L.shadow.intensity = e._shadowIntensity === undefined ? 1 : e._shadowIntensity;
+      L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
     }
-    // Lights whose entity was deleted or hidden: getLights() already filters on visibility,
-    // so anything not seen this frame is switched off rather than removed -- removing it
-    // would drop the shadow map and pay to rebuild it the moment the light came back.
-    if (!this._threeLightPool) this._threeLightPool = new Set();
-    for (const L of this._threeLightPool) if (!seen.has(L)) L.visible = false;
-    for (const L of seen) { L.visible = true; this._threeLightPool.add(L); }
+
+    // UNUSED SLOTS GO DARK, they do not leave the scene. Removing one would change the
+    // lighting graph, which is the whole thing this pool exists to prevent.
+    // An unused slot also stops casting, so the renderer is not drawing shadow maps for
+    // seven lights that emit nothing -- but only outside a session, where a recompile costs
+    // nothing but a hitch.
+    for (const type of [0, 1, 2]) {
+      for (let i = used[type]; i < pool[type].length; i++) {
+        pool[type][i].intensity = 0;
+        // Same latch as above: intensity is just a number, but castShadow is part of the
+        // compiled graph and must not move while a session owns it.
+        if (!this._xrGraphFrozen) pool[type][i].castShadow = false;
+      }
+    }
 
     // NO HIDDEN AMBIENT. There used to be an AmbientLight here, coloured by the
     // environment's SH average and scaled by the Env Intensity slider, as a stand-in until
@@ -6899,10 +7083,26 @@ class Scene {
       for (const m of NodeMaterials.all ? NodeMaterials.all() : []) mark(m);
       console.log('[xr] rebuilt ' + n + ' materials (' + why + ')');
     };
+    // Shadow casting is decided HERE, at the boundary, and not touched again until the next
+    // one -- for the same reason the light pool is fixed: castShadow changes the compiled
+    // graph, and a recompile inside a session is what breaks it.
+    const _setPoolShadows = (on) => {
+      const pool = this._lightPool;
+      if (!pool) return;
+      for (const t of [0, 1, 2]) for (const L of pool[t]) L.castShadow = on;
+    };
     if (this._isNodeRenderer) {
+      // Freeze FIRST, then decide. The latch is what stops _syncThreeLights undoing this on
+      // the frames between here and xr.isPresenting going true.
+      this._xrGraphFrozen = true;
+      _setPoolShadows(!!window._xrShadows);
       _rebuildAll('session start');
       session.addEventListener('end', () => {
-        try { _rebuildAll('session end'); } catch (e) { /* never block leaving VR */ }
+        try {
+          this._xrGraphFrozen = false;
+          _setPoolShadows(true);
+          _rebuildAll('session end');
+        } catch (e) { /* never block leaving VR */ }
       });
     }
 
