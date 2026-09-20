@@ -7046,7 +7046,11 @@ class Scene {
                 }
             `;
 
-            const volMat = new THREE.ShaderMaterial({
+            // The node build first: this is the VR volume cursor -- the "radius sphere" -- and
+            // it is the raw ShaderMaterial matt saw drawn black under ?renderer=webgpu, with
+            // "THREE.NodeMaterial: Material ShaderMaterial is not compatible" beside it. Same
+            // fresnel as the desktop one in Selection.js, so the same ported material.
+            const volMat = NodeMaterials.fresnelGlow(0x4488ff) || new THREE.ShaderMaterial({
                 uniforms: { color: { value: new THREE.Color(0x4488ff) } },
                 vertexShader: fresnelVertexShader,
                 fragmentShader: fresnelFragmentShader,
