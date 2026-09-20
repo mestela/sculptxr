@@ -2626,6 +2626,10 @@ class Scene {
       //   1 flat colour, opaque            5 texture + transparent + alpha
       //   2 + transparent                  6 the real panel material (adds the grade)
       //   3 + opacityNode
+      // and, once the ladder showed the break is at 1 -- MeshBasicNodeMaterial itself, with
+      // no texture and no transparency -- the same flat colour on other base classes:
+      //   7 normal + colorNode   8 lambert   9 phong   10 standard   11 matcap
+      // A rung with ZERO errors that still draws is the base the panels should be built on.
       if (!window._panelVariant) window._panelVariant = (n, meshOnly) => {
         const vs = NodeMaterials._panelVariants;
         if (!vs) { console.log('[panelVariant] variants not built'); return null; }

@@ -257,6 +257,38 @@ NodeMaterials.buildPanelVariants = function () {
 
   list.push(NodeMaterials.panel({ depthWrite: true, depthTest: true }));
 
+  // ── 7..11: THE SAME FLAT COLOUR ON A DIFFERENT BASE CLASS ──────────────────
+  // The ladder localised it: variant 0 (MeshNormalNodeMaterial) draws with ZERO errors, and
+  // variant 1 -- the simplest possible MeshBasicNodeMaterial, flat colour, opaque, no texture
+  // and no transparency -- produces 50. So it is not the texture, the alpha or the grade:
+  // MeshBasicNodeMaterial itself is what this backend cannot draw in XR.
+  //
+  // Which retroactively explains every "culprit" found by bisection. stylus_spike was a stock
+  // MeshBasicMaterial, and three converts that to MeshBasicNodeMaterial; volume_sphere and
+  // the panels are the same class; and each time I "ported" one I moved it onto the broken
+  // class and it stayed broken.
+  //
+  // So the question is which base class CAN carry a flat colour here. These are the
+  // candidates, unlit-ish or cheap, each given the same flat colour by whatever route its
+  // class provides.
+  mk(() => { const m = new gpu.MeshNormalNodeMaterial(); m.colorNode = vec3(0.9, 0.4, 0.1); return m; });
+  mk(() => {
+    const m = new gpu.MeshLambertNodeMaterial();
+    m.colorNode = vec3(0.0); m.emissiveNode = vec3(0.2, 0.8, 0.4); return m;
+  });
+  mk(() => {
+    const m = new gpu.MeshPhongNodeMaterial();
+    m.colorNode = vec3(0.0); m.emissiveNode = vec3(0.2, 0.8, 0.4); return m;
+  });
+  mk(() => {
+    const m = new gpu.MeshStandardNodeMaterial();
+    m.colorNode = vec3(0.0); m.emissiveNode = vec3(0.2, 0.8, 0.4); return m;
+  });
+  mk(() => {
+    const m = new gpu.MeshMatcapNodeMaterial();
+    m.colorNode = vec3(0.2, 0.8, 0.4); return m;
+  });
+
   NodeMaterials._panelVariants = list;
   return list;
 };
