@@ -2066,6 +2066,19 @@ class Scene {
   updateStylusOffset(val) {
     // Negative to shift forward, Positive to shift backward.
     this._eachSpike((spike) => { spike.position.z = -val; });
+    // THE RAY PIVOTS WHERE THE SPIKE DOES. The visual ray used to sit at the controller
+    // origin while the spike sat at -offset, both tilted by the same angle about their own
+    // origins -- two PARALLEL lines separated by offset * sin(tilt). At 9 degrees and a 30mm
+    // offset that is 4.7mm, and low, which is exactly what matt saw once the laser became
+    // visible again: "the laser pointer and the spike are misaligned by maybe 5mm".
+    //
+    // -offset is also where _controllerRay puts the PICKING ray's origin, so this makes the
+    // drawn ray agree with the one that actually does the picking, rather than merely with
+    // the spike.
+    for (const ctrl of [this._vrControllerLeft, this._vrControllerRight]) {
+      const rayRoot = ctrl && ctrl.getObjectByName('pointer_ray_root');
+      if (rayRoot) rayRoot.position.z = -val;
+    }
   }
 
   // PINCH DISTANCE — the skin-to-skin gap at which the fingers count as closed.
@@ -7265,6 +7278,10 @@ class Scene {
             spikeMesh.position.z = -defOffset;
             spikeMesh.rotation.x = defTilt * Math.PI / 180.0;
             rayRoot.rotation.x = defTilt * Math.PI / 180.0;
+            // Same pivot as the spike and as _controllerRay's picking origin -- see
+            // updateStylusOffset. Without this the two are parallel but offset by
+            // offset * sin(tilt).
+            rayRoot.position.z = -defOffset;
 
             // Keep the 'connected' listener purely for diagnostic logging, 
             // AND robust static mapping!
@@ -15140,7 +15157,11 @@ class Scene {
                     // uiHitDist is from ray origin (which is offset by getStylusOffset()
                     // from the controller base where the tube starts), so add the offset back.
                     const _stylusOff = this.getStylusOffset?.() ?? 0;
-                    pointerLine.scale.z = (uiHitDist + _stylusOff) / 0.30;
+                    // uiHitDist is measured from the PICKING ray's origin, which is at
+                    // -stylusOffset -- and the ray root now starts there too, so the
+                    // `+ _stylusOff` that used to compensate for it starting at the
+                    // controller origin would now overshoot by exactly that much.
+                    pointerLine.scale.z = uiHitDist / 0.30;
                 }
             }
 
