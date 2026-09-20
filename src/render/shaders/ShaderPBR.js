@@ -69,7 +69,12 @@ ShaderPBR.environments = [{
   // `sph` is a neutral grey rather than this environment's real coefficients. It feeds the
   // LEGACY renderer's ambient only, and computing real SH needs the panorama on the CPU.
   // Flat grey is honest there; the node path ignores sph entirely and uses the PMREM.
-  hdr: texPath + 'ferndale_studio_07_1k.hdr',
+  // 512x256, not the 1k download. PMREM's base is 256px, so a 1k source is thrown away
+  // before it is ever sampled -- and this is 378KB against 1.5MB, which is the difference
+  // between a noticeable and an unnoticeable load on a headset over LAN. Downsampled from
+  // the Poly Haven 1k with ffmpeg, float throughout (lanczos, gbrpf32le), so nothing was
+  // clamped on the way.
+  hdr: texPath + 'ferndale_studio_07_512.hdr',
   sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   exposure: 1.0,
   name: 'Ferndale studio 07'
