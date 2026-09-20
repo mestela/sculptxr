@@ -308,7 +308,15 @@ NodeMaterials.buildPanelVariants = function () {
  */
 const basicCache = new Map();
 NodeMaterials.convertBasic = function (src) {
-  if (!gpu || !src || !src.isMeshBasicMaterial || src.isNodeMaterial) return null;
+  // ALSO STOCK MeshStandardMaterial, which in this app means one thing: the GLTF controller
+  // models. Nothing else uses it -- imported meshes become SculptXR meshes on our own
+  // shader. They used to be lit by two default lights that lit nothing else (every legacy
+  // shader ignores three's lights), and removing those left the controllers black.
+  //
+  // Unlit is the right answer rather than relighting them: they are UI furniture, and a
+  // controller that dims when the user turns their key light down is a bug, not a feature.
+  if (!gpu || !src || src.isNodeMaterial) return null;
+  if (!src.isMeshBasicMaterial && !src.isMeshStandardMaterial) return null;
   let m = basicCache.get(src);
   if (!m) {
     const { texture, uniform, vec3, vertexColor, float, mix } = tsl;

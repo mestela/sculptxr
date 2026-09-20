@@ -79,6 +79,7 @@ import scanPhantoms from './misc/PhantomScan.js';
 import probeXRLighting from './misc/XRLightProbe.js';
 import NodeMaterials from './render/nodes/NodeMaterials.js';
 import { stripGeometry } from './render/lineStrip.js';
+import { installEnvironment } from './render/nodes/EnvIBL.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -3511,7 +3512,7 @@ class Scene {
           // the one class this backend cannot draw in a session, and one of them anywhere in
           // the scene poisons the frame. Converting here catches every object, including the
           // ones nobody has thought to port.
-          if (m.isMeshBasicMaterial && !m.isNodeMaterial) {
+          if ((m.isMeshBasicMaterial || m.isMeshStandardMaterial) && !m.isNodeMaterial) {
             const conv = NodeMaterials.convertBasic(m);
             if (conv) { o.userData._stockMat = m; o.material = conv; return; }
           }
@@ -4483,6 +4484,19 @@ class Scene {
       this._nodeAmbient.dispose && this._nodeAmbient.dispose();
       this._nodeAmbient = null;
     }
+
+    // THE ENVIRONMENT, as a prefiltered IBL rather than a fake ambient. Built once per
+    // environment (see EnvIBL) and re-installed when the selection changes; the Env Intensity
+    // slider is three's own environmentIntensity, which is what that control should always
+    // have been driving.
+    const SPBR = ShaderLib[Enums.Shader.PBR];
+    const env = SPBR && SPBR.environments[SPBR.idEnv];
+    if (env && this._nodeEnvId !== SPBR.idEnv) {
+      this._nodeEnvId = SPBR.idEnv;
+      installEnvironment(this._THREE_GPU, this._renderer, this._scene, env);
+    }
+    const ei = getOptionsURL().envIntensity;
+    this._scene.environmentIntensity = Number.isFinite(ei) ? ei : 1.0;
   }
 
   getLights() {
