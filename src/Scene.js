@@ -2270,6 +2270,12 @@ class Scene {
         for (let i = 0; i < rv && i < this._minimalHidden.length; i++) {
           this._minimalHidden[i][0].visible = this._minimalHidden[i][1];
         }
+        // ONE OBJECT HELD VISIBLE THROUGH THE HIDE, for the panel ladder: an empty frame plus
+        // exactly the thing under test. Set after the sweep, because the sweep runs every
+        // frame and would otherwise hide it again.
+        if (this._minimalForceVisible) {
+          for (let o = this._minimalForceVisible; o && o !== this._scene; o = o.parent) o.visible = true;
+        }
       }
       // WHAT STILL DRAWS. The stack says _renderObjectDirect, i.e. a real object on the
       // ordinary path -- so something survives the hide, and counting is the only way to know
@@ -2620,7 +2626,7 @@ class Scene {
       //   1 flat colour, opaque            5 texture + transparent + alpha
       //   2 + transparent                  6 the real panel material (adds the grade)
       //   3 + opacityNode
-      if (!window._panelVariant) window._panelVariant = (n) => {
+      if (!window._panelVariant) window._panelVariant = (n, meshOnly) => {
         const vs = NodeMaterials._panelVariants;
         if (!vs) { console.log('[panelVariant] variants not built'); return null; }
         const i = Math.max(0, Math.min(vs.length - 1, n | 0));
@@ -2629,8 +2635,13 @@ class Scene {
         for (const p of HTMLVRPanel._live) {
           if (!p.mesh) continue;
           if (!p.mesh.userData._origVariantMat) p.mesh.userData._origVariantMat = p.mesh.material;
+          if (meshOnly && p.mesh !== meshOnly) continue;
           if (mat.userData && mat.userData.setMap && p._texture) mat.userData.setMap(p._texture);
           p.mesh.material = mat;
+          // VISIBLE, which _panelMat did and this did not -- so the first ladder run swapped
+          // materials on eight hidden panels and measured the rest of the scene instead
+          // (drawCalls=47 on every rung, the whole scene, with no panel on screen at all).
+          p.mesh.visible = true;
           applied++;
         }
         const errBefore = window.__uboErrCount;
@@ -2652,9 +2663,25 @@ class Scene {
         if (window.__uboErrCount === undefined) { console.log('[panelLadder] run _traceUBO() first'); return null; }
         const vs = NodeMaterials._panelVariants || [];
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // AN EMPTY FRAME PLUS ONE PANEL. The first run measured the whole scene -- 47 draw
+        // calls and ~120 ambient errors on every rung -- which cannot show a panel-sized
+        // signal. Level 1 empties the frame; _minimalForceVisible holds the one panel under
+        // test through the per-frame sweep.
+        const target = [...HTMLVRPanel._live].find((p) => p.mesh && p._texture) || [...HTMLVRPanel._live][0];
+        if (!target || !target.mesh) { console.log('[panelLadder] no panel to test'); return null; }
+        const restoreLevel = window._vrMinimalTest;
+        window._vrMinimalTest = 1;
+        this._minimalForceVisible = target.mesh;
+        await sleep(600);
+        const idle = await (async () => {
+          const b = window.__uboErrCount; await sleep(400); return window.__uboErrCount - b;
+        })();
+        console.log('[panelLadder] empty frame + no panel material change -> ' + idle
+          + ' errors, drawCalls=' + (this._renderer.info && this._renderer.info.render.drawCalls)
+          + ' (panel: ' + target.constructor.name + ')');
         const rows = [];
         for (let i = 0; i < vs.length; i++) {
-          window._panelVariant(i);
+          window._panelVariant(i, target.mesh);
           await sleep(250);
           const before = window.__uboErrCount;
           await sleep(400);
@@ -2664,6 +2691,9 @@ class Scene {
           console.log('[panelLadder] variant ' + i + ' -> ' + errs + ' errors, drawCalls=' + dc);
         }
         console.log('[panelLadder] ' + JSON.stringify(rows));
+        this._minimalForceVisible = null;
+        window._vrMinimalTest = restoreLevel || 0;
+        window._panelVariantRestore();
         return rows;
       };
 
