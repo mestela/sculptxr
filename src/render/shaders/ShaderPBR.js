@@ -344,37 +344,18 @@ ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   return env.texture;
 };
 
-ShaderPBR.updateUniforms = function (mesh, main) {
-  var gl = mesh.getGL();
-  var uniforms = this.uniforms;
-
-  gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
-  gl.uniform1f(uniforms.uRoughness, mesh.getRoughness());
-  gl.uniform1f(uniforms.uMetallic, mesh.getMetallic());
-  gl.uniform1f(uniforms.uExposure, ShaderPBR.exposure);
-  // Read live rather than cached: the slider writes the option and the next frame picks it up.
-  var _envI = getOptionsURL().envIntensity;
-  gl.uniform1f(uniforms.uEnvIntensity, Number.isFinite(_envI) ? _envI : 1.0);
-
-  var env = ShaderPBR.environments[ShaderPBR.idEnv];
-  gl.uniform3fv(uniforms.uSPH, env.sph);
-  if (env.size) gl.uniform2fv(uniforms.uEnvSize, env.size);
-
-  // THE SCENE'S LIGHTS, IN WORLD SPACE. The shader moves them to view space with three's own
-  // `viewMatrix`, and that indirection is the entire point.
-  //
-  // IT USED TO BE DONE HERE, on the CPU, with `main.getCamera().getView()` -- cheaper, and
-  // correct with exactly one camera. VR HAS TWO. ShaderManager rewrites `uMV` to three's
-  // `modelViewMatrix`, so vVertex lands in the real per-eye view space while the light landed
-  // in the desktop camera's, and the gap between them rotated with the head: lighting swam
-  // across surfaces as you looked around. matt: "i rotate my head, lighting shifts on
-  // surfaces... not just spec, diffuse too" -- and diffuse moving is the tell, because NdL
-  // depends on where the light IS, not on where you are looking from.
-  //
-  // Read off the three-side `matrixWorld`, not the app-side model matrix: meshes hang under
-  // _worldGroup (which carries a scale the app's own camera knows nothing about), so that is
-  // the space vVertex is actually in. Taking it from three keeps the two in step by
-  // construction instead of by agreement.
+/**
+ * THE SCENE'S LIGHTS, IN WORLD SPACE, computed at most once a frame and shared.
+ *
+ * Extracted so the node/TSL path feeds from the SAME arithmetic as the GLSL path rather than
+ * a second transcription of it. Two copies of this would drift the first time a light gained
+ * a property -- which is a thing that has already happened repeatedly to the physics-bone
+ * save path -- and the failure would be "lighting differs between renderers", which is
+ * miserable to chase.
+ *
+ * Returns the scratch arrays themselves, not copies: callers upload and must not retain them.
+ */
+ShaderPBR.getLightState = function (main) {
   var _fr = main._renderer && main._renderer.info && main._renderer.info.render
     ? main._renderer.info.render.frame : -1;
   // -1 means we could not read a frame number; recompute rather than serve something stale.
@@ -427,6 +408,45 @@ ShaderPBR.updateUniforms = function (mesh, main) {
     uLightDirTmp[lz * 3] = 0; uLightDirTmp[lz * 3 + 1] = 0; uLightDirTmp[lz * 3 + 2] = -1;
   }
   }
+  return {
+    count: _lightCount,
+    pos: uLightPosTmp, col: uLightColTmp, range: uLightRangeTmp,
+    dir: uLightDirTmp, cone: uLightConeTmp, type: uLightTypeTmp,
+  };
+};
+
+ShaderPBR.updateUniforms = function (mesh, main) {
+  var gl = mesh.getGL();
+  var uniforms = this.uniforms;
+
+  gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
+  gl.uniform1f(uniforms.uRoughness, mesh.getRoughness());
+  gl.uniform1f(uniforms.uMetallic, mesh.getMetallic());
+  gl.uniform1f(uniforms.uExposure, ShaderPBR.exposure);
+  // Read live rather than cached: the slider writes the option and the next frame picks it up.
+  var _envI = getOptionsURL().envIntensity;
+  gl.uniform1f(uniforms.uEnvIntensity, Number.isFinite(_envI) ? _envI : 1.0);
+
+  var env = ShaderPBR.environments[ShaderPBR.idEnv];
+  gl.uniform3fv(uniforms.uSPH, env.sph);
+  if (env.size) gl.uniform2fv(uniforms.uEnvSize, env.size);
+
+  // THE SCENE'S LIGHTS, IN WORLD SPACE. The shader moves them to view space with three's own
+  // `viewMatrix`, and that indirection is the entire point.
+  //
+  // IT USED TO BE DONE HERE, on the CPU, with `main.getCamera().getView()` -- cheaper, and
+  // correct with exactly one camera. VR HAS TWO. ShaderManager rewrites `uMV` to three's
+  // `modelViewMatrix`, so vVertex lands in the real per-eye view space while the light landed
+  // in the desktop camera's, and the gap between them rotated with the head: lighting swam
+  // across surfaces as you looked around. matt: "i rotate my head, lighting shifts on
+  // surfaces... not just spec, diffuse too" -- and diffuse moving is the tell, because NdL
+  // depends on where the light IS, not on where you are looking from.
+  //
+  // Read off the three-side `matrixWorld`, not the app-side model matrix: meshes hang under
+  // _worldGroup (which carries a scale the app's own camera knows nothing about), so that is
+  // the space vVertex is actually in. Taking it from three keeps the two in step by
+  // construction instead of by agreement.
+  ShaderPBR.getLightState(main);
   // The UPLOAD still happens for every mesh -- each one is a separate draw with its own
   // uniforms. It is only the arithmetic above that is shared.
   gl.uniform1i(uniforms.uNbLights, _lightCount);

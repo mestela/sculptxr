@@ -15,6 +15,7 @@
 // caches one material per shader id, but LAZILY, so the first switch to a mode builds one.
 import Enums from '../../misc/Enums.js';
 import ShaderMatcap from '../shaders/ShaderMatcap.js';
+import { makePBR } from './NodePBR.js';
 
 const NodeMaterials = {};
 
@@ -86,6 +87,8 @@ function build(shaderId) {
     return m;
   }
 
+  if (shaderId === Enums.Shader.PBR) return makePBR(gpu, tsl);
+
   // EVERYTHING ELSE IS STILL A PLACEHOLDER, deliberately visible rather than silently black:
   // normals read as shaded geometry, so the scene stays navigable and it is obvious at a
   // glance which modes are ported and which are not.
@@ -105,6 +108,12 @@ NodeMaterials.updateFrame = function (main) {
   if (!cam) return;
   const c = ShaderMatcap.computeRotCorrection(cam.getView());
   rotCorrectionUniform.value.fromArray(c);
+  // Each material that needs per-frame state says so by hanging updateFrame on userData,
+  // rather than this file knowing what every shader wants.
+  for (const id in cache) {
+    const f = cache[id] && cache[id].userData && cache[id].userData.updateFrame;
+    if (f) f(main);
+  }
 };
 
 export default NodeMaterials;
