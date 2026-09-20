@@ -2462,13 +2462,20 @@ class Scene {
         // one at a time and see whether the parent is innocent.
         const kids = [];
         o.traverse((c) => { if (c !== o && (c.isMesh || c.isLine || c.isPoints || c.isSprite)) kids.push(c); });
-        if (kids.length) {
-          const base = await test(hi);        // culprit revealed, errors expected
-          if (base > 0) {
-            for (const c of kids) {
+        {
+          // MEASURED TWICE, TAKING THE WORST. The first version gated the whole refinement on
+          // a single re-measure at the boundary -- and that re-measure came back 0 while the
+          // binary search had just seen errors there, so nothing ran and the round was
+          // wasted. The flood is not steady (the driver stops reporting after a few hundred,
+          // and the errors come in bursts), so one sample is not enough to call a state clean.
+          const probe = async () => Math.max(await test(hi), await test(hi));
+          const base = await probe();
+          console.log('[bisectUBO]   baseline at the boundary -> ' + base + ' errors');
+          {
+            for (const c of (kids || [])) {
               const was = c.visible;
               c.visible = false;
-              const errs = await test(hi);
+              const errs = await probe();
               c.visible = was;
               console.log('[bisectUBO]   without child ' + (c.name || c.type) + ' -> ' + errs + ' errors');
               if (errs === 0) {
@@ -2490,14 +2497,14 @@ class Scene {
             const origGeo = o.geometry, origMat = o.material;
             if (!this._bisectBoxGeo) this._bisectBoxGeo = new THREE.BoxGeometry(0.01, 0.01, 0.05);
             o.geometry = this._bisectBoxGeo;
-            const geoErrs = await test(hi);
+            const geoErrs = await probe();
             o.geometry = origGeo;
             console.log('[bisectUBO]   with a plain box geometry -> ' + geoErrs + ' errors');
 
             let matErrs = -1;
             if (NodeMaterials._solid) {
               o.material = NodeMaterials._solid;
-              matErrs = await test(hi);
+              matErrs = await probe();
               o.material = origMat;
               console.log('[bisectUBO]   with the known-good solid material -> ' + matErrs + ' errors');
             }
