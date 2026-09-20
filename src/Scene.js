@@ -3872,6 +3872,39 @@ class Scene {
       };
       // Pulse every in-use shadow map once. In ?xrshadows=once mode this is the only thing
       // that renders them, so it is both the refresh button and the diagnostic trigger.
+      // WHICH GL CALL FAILS, AND WHO MADE IT. The mailbox / shared-image errors arrive with no
+      // stack, so they say nothing about which code path produced them. These five entry points
+      // are rare enough to wrap without costing a frame, and each one drains the error queue
+      // first so the error it reports is genuinely its own.
+      // window.xrGlTrace() on, window.xrGlTrace(false) off.
+      window.xrGlTrace = (on = true) => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        if (!gl) { console.warn('[xrGlTrace] no gl'); return false; }
+        gl._xrTraceOrig = gl._xrTraceOrig || {};
+        const names = ['framebufferTexture2D', 'framebufferTextureLayer',
+          'framebufferRenderbuffer', 'bindFramebuffer', 'checkFramebufferStatus'];
+        for (const n of names) {
+          if (!gl[n]) continue;
+          if (on) {
+            gl._xrTraceOrig[n] = gl._xrTraceOrig[n] || gl[n];
+            const orig = gl._xrTraceOrig[n];
+            gl[n] = function () {
+              while (gl.getError() !== gl.NO_ERROR) { /* drain: report only our own */ }
+              const out = orig.apply(gl, arguments);
+              const err = gl.getError();
+              if (err !== gl.NO_ERROR) {
+                console.warn('[xrGlTrace] ' + n + ' -> 0x' + err.toString(16),
+                  Array.prototype.slice.call(arguments), new Error('call site').stack);
+              }
+              return out;
+            };
+          } else if (gl._xrTraceOrig[n]) {
+            gl[n] = gl._xrTraceOrig[n];
+          }
+        }
+        console.log('[xrGlTrace] ' + (on ? 'ON — expect a slower frame' : 'off'));
+        return true;
+      };
       window.xrShadowRefresh = () => {
         const pool = this._lightPool;
         if (!pool) return 0;
@@ -3940,6 +3973,12 @@ class Scene {
           xrTargetExternalTextures: this._renderer.xr && this._renderer.xr._xrRenderTarget
             ? this._renderer.xr._xrRenderTarget._hasExternalTextures : null,
           xrMultiview: this._renderer.xr ? this._renderer.xr._useMultiview : null,
+          // DID THE SHADOW PASS EVEN RUN? On the desktop a casting point light adds 6 draw
+          // calls and ~6x the triangles (its cube map's six faces). If these look the same in
+          // a session with shadows on as with them off, the pass is not running at all --
+          // which is a different problem from the pass running and its output being lost.
+          triangles: this._renderer.info.render.triangles,
+          drawCalls: this._renderer.info.render.drawCalls,
           graphFrozen: !!this._xrGraphFrozen,
           poolSize: this._lightPool
             ? this._lightPool[0].length + this._lightPool[1].length + this._lightPool[2].length
