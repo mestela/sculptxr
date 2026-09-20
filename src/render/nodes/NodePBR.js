@@ -23,6 +23,13 @@ import getOptionsURL from '../../misc/getOptionsURL.js';
 
 const MAX_LIGHTS = 8;
 
+/** See NodeMaterials' unlit(): the same rule, kept local so this file has no back-import. */
+function unlit(gpu, tsl, opts = {}) {
+  const m = new gpu.MeshLambertNodeMaterial(opts);
+  m.colorNode = tsl.vec3(0, 0, 0);
+  return m;
+}
+
 export function makePBR(gpu, tsl, opts = {}) {
   // NO ARRAYS AT ALL (?pbrbisect=2): flat albedo times the scalar uniforms, no SH, no
   // panorama, no light loop. It looks wrong on purpose. The only question it answers is
@@ -261,8 +268,14 @@ export function makePBR(gpu, tsl, opts = {}) {
     return albedo.mul(uExposure).mul(uEnvIntensity);
   });
 
-  const m = new gpu.MeshBasicNodeMaterial({ vertexColors: true });
-  m.colorNode = noArrays ? shadeFlat() : shade();
+  // LAMBERT WITH THE DIFFUSE BLACK AND EVERYTHING ON emissiveNode, not
+  // MeshBasicNodeMaterial. Measured on device: MeshBasicNodeMaterial is the one node material
+  // class this backend cannot draw in an XR session -- the panel ladder put a flat opaque
+  // colour on each class in turn, in an otherwise empty frame, and only that class produced
+  // errors. Emissive is added unlit, so the shading maths below is unchanged and the output
+  // is identical.
+  const m = unlit(gpu, tsl, { vertexColors: true });
+  m.emissiveNode = noArrays ? shadeFlat() : shade();
 
   /** Per frame: exposure, environment, and the shared light state. */
   m.userData.updateFrame = function (main) {

@@ -51,17 +51,22 @@ NodeMaterials.enable = function (mod, tslMod) {
   // Shaded off the view normal so the model still reads as a three-dimensional object rather
   // than a silhouette; the real GLTF materials are a nicety and this is the flagged path.
   NodeMaterials._controller = (() => {
-    const { normalView, vec3, float, dot, vec4 } = tslMod;
-    const m = new mod.MeshBasicNodeMaterial();
+    const { normalView, vec3, float, dot } = tslMod;
+    const m = new mod.MeshLambertNodeMaterial();
     const nl = dot(normalView.normalize(), vec3(0.0, 0.0, 1.0)).abs();
-    m.colorNode = vec3(0.32, 0.34, 0.38).mul(float(0.45).add(nl.mul(0.55)));
+    m.colorNode = vec3(0, 0, 0);
+    m.emissiveNode = vec3(0.32, 0.34, 0.38).mul(float(0.45).add(nl.mul(0.55)));
     return m;
   })();
 
-  NodeMaterials._solid = new mod.MeshBasicNodeMaterial({
-    color: new mod.Color(0xff00ff), side: mod.DoubleSide,
-    transparent: false, depthTest: false, depthWrite: false,
-  });
+  NodeMaterials._solid = (() => {
+    const m = new mod.MeshLambertNodeMaterial({
+      side: mod.DoubleSide, transparent: false, depthTest: false, depthWrite: false,
+    });
+    m.colorNode = tslMod.vec3(0, 0, 0);
+    m.emissiveNode = tslMod.vec3(1, 0, 1);
+    return m;
+  })();
   // Every mode gets a material now, including the ones still unported — a placeholder draws
   // something and keeps the scene legible, where a missing material draws black and looks
   // like a crash.
@@ -103,15 +108,17 @@ function build(shaderId) {
     // share one lookup. Porting that uniform is the whole difference, and the maths is
     // ShaderMatcap.computeRotCorrection so there is exactly one copy of it.
     //
-    // Built from MeshBasicNodeMaterial rather than the matcap node because the legacy shader
-    // is unlit -- texture * vertex colour -- so basic is the faithful base, not a shortcut.
+    // Built as an unlit material rather than the matcap node because the legacy shader is
+    // unlit -- texture * vertex colour -- so that is the faithful shape, not a shortcut.
+    // (See unlit(): the base is Lambert-with-black-diffuse, because MeshBasicNodeMaterial is
+    // the class this backend cannot draw in XR.)
     const { uniform, texture, normalView, vec2, mat3, vertexColor } = tsl;
     if (!rotCorrectionUniform) rotCorrectionUniform = uniform(new gpu.Matrix3());
-    const m = new gpu.MeshBasicNodeMaterial({ vertexColors: true });
+    const m = unlit({ vertexColors: true });
     const n = mat3(rotCorrectionUniform).mul(normalView).normalize();
     // normal.xy * 0.5 + 0.5, exactly as the GLSL does it.
     const uvNode = vec2(n.x, n.y).mul(0.5).add(0.5);
-    m.colorNode = texture(matcapTexture(0), uvNode).rgb.mul(vertexColor());
+    m.emissiveNode = texture(matcapTexture(0), uvNode).rgb.mul(vertexColor());
     m.userData.sculptShaderId = shaderId;
     return m;
   }
@@ -188,7 +195,7 @@ NodeMaterials.adoptController = function (root) {
 NodeMaterials.basic = function (hex, opts = {}) {
   if (!gpu) return null;
   const { uniform, vec3 } = tsl;
-  const m = new gpu.MeshBasicNodeMaterial({
+  const m = unlit({
     transparent: !!opts.transparent,
     opacity: opts.opacity === undefined ? 1 : opts.opacity,
     depthTest: opts.depthTest !== false,
@@ -196,7 +203,7 @@ NodeMaterials.basic = function (hex, opts = {}) {
     side: opts.side || gpu.FrontSide,
   });
   const col = uniform(new gpu.Color(hex));
-  m.colorNode = vec3(col);
+  m.emissiveNode = vec3(col);
   if (opts.opacity !== undefined && opts.opacity !== 1) m.opacityNode = tsl.float(opts.opacity);
   // Legacy call sites set material.color.set(...); keep that working against the same object.
   m.color = col.value;
@@ -297,15 +304,43 @@ NodeMaterials.buildPanelVariants = function () {
 NodeMaterials.laser = function () {
   if (!gpu) return null;
   const { uv, float, vec3 } = tsl;
-  const m = new gpu.MeshBasicNodeMaterial({
+  const m = unlit({
     transparent: true, depthTest: true, depthWrite: false,
     blending: gpu.NormalBlending, side: gpu.DoubleSide,
   });
   const fade = float(1.0).sub(uv().y.sub(0.5).mul(2.0).clamp(0.0, 1.0));
-  m.colorNode = vec3(1.0, 1.0, 1.0);
+  m.emissiveNode = vec3(1.0, 1.0, 1.0);
   m.opacityNode = fade.mul(0.85);
   return m;
 };
+
+
+// ── THE UNLIT BASE, AND WHY IT IS NOT MeshBasicNodeMaterial ──────────────────
+//
+// Measured on device with the panel ladder -- one panel, an otherwise empty frame, three draw
+// calls, only the material changing between rungs:
+//
+//   MeshBasicNodeMaterial, flat colour, opaque, no texture   44-104 errors
+//   MeshNormalNodeMaterial                                        0
+//   MeshLambertNodeMaterial  + emissive                           0
+//   MeshPhongNodeMaterial    + emissive                           0
+//   MeshStandardNodeMaterial + emissive                           0
+//   MeshMatcapNodeMaterial                                        0
+//
+// MeshBasicNodeMaterial is the one class this backend cannot draw in an XR session, and it is
+// the class three converts every stock MeshBasicMaterial into. That is the whole bug, and it
+// is why every earlier "fix" failed: the panels, the volume cursor, the stylus spike and the
+// laser were all moved BETWEEN two names for the same broken class.
+//
+// MeshNormalNodeMaterial scores zero but ignores colorNode (verified on desktop: it draws
+// normals whatever colour you give it), so the replacement is Lambert with the diffuse
+// forced to black and the real output on emissiveNode -- emissive is added unlit, so the
+// result is exactly the colour asked for, with no lighting response.
+function unlit(opts = {}) {
+  const m = new gpu.MeshLambertNodeMaterial(opts);
+  m.colorNode = tsl.vec3(0, 0, 0);   // no diffuse response; everything rides on emissiveNode
+  return m;
+}
 
 /**
  * A VR PANEL: a canvas texture, with the brightness/saturation/gamma grade.
@@ -329,7 +364,7 @@ NodeMaterials.panel = function (opts = {}) {
   const mapNode = texture(placeholder);
   const bright = uniform(1.0), sat = uniform(1.0), gamma = uniform(1.0);
 
-  const m = new gpu.MeshBasicNodeMaterial({
+  const m = unlit({
     side: gpu.DoubleSide,
     transparent: true,
     depthWrite: opts.depthWrite !== false,
@@ -338,7 +373,7 @@ NodeMaterials.panel = function (opts = {}) {
   const rgb = mapNode.rgb.mul(bright).toVar();
   const lum = dot(rgb, vec3(0.299, 0.587, 0.114));
   const satd = vec3(lum).add(rgb.sub(vec3(lum)).mul(sat)).clamp(0.0, 1.0);
-  m.colorNode = satd.pow(vec3(gamma));
+  m.emissiveNode = satd.pow(vec3(gamma));
   m.opacityNode = mapNode.a;
   // The texture arrives later, on the panel's first paint. Swapping the NODE's value keeps
   // one pipeline for the life of the panel, which is the same rule the legacy path follows
@@ -353,7 +388,7 @@ NodeMaterials.panel = function (opts = {}) {
 NodeMaterials.fresnelGlow = function (hex) {
   if (!gpu) return null;
   const { normalView, positionView, normalize, dot, abs, pow, float, vec3 } = tsl;
-  const m = new gpu.MeshBasicNodeMaterial({
+  const m = unlit({
     transparent: true, depthTest: true, depthWrite: false, side: gpu.DoubleSide,
     // AdditiveBlending, not CustomBlending with explicit One/One factors. They are the same
     // equation, but the explicit form was copied literally from the GLSL material and it is
@@ -369,7 +404,7 @@ NodeMaterials.fresnelGlow = function (hex) {
   // Baking the colour in threw "Cannot read properties of undefined (reading 'color')" out of
   // the cursor update, hundreds of times a second.
   const col = tsl.uniform(new gpu.Color(hex));
-  m.colorNode = col.mul(f);
+  m.emissiveNode = col.mul(f);
   m.opacityNode = f;
   // The legacy call sites write through material.uniforms.color.value, and a uniform node
   // holds its Color at exactly that path -- so the shim is the real object, not a copy, and
