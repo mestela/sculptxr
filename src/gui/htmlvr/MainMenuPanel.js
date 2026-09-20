@@ -2558,12 +2558,16 @@ export function buildSectionHTML_scene(main) {
          the look being aimed for -- there is no value that is right for a 34-unit sculpt and
          a 3-unit one at the same time.
 
-         Bias is normalBias: it offsets the shadow lookup along the surface normal, so it
-         clears acne without detaching the contact shadow. A constant depth bias does detach
-         it, which is the leak matt found resting a sphere on a box.
+         Bias is normalBias, and it RUNS NEGATIVE: -1 to 1. Positive pushes the lookup out
+         along the surface normal, which clears acne; negative pulls it in, which closes a
+         contact gap at the risk of acne elsewhere. matt: "sh bias at 0 still has a light
+         leak. it might need to support negative values too". Zero is not a floor here,
+         it is the middle of the useful range.
 
          Softness is shadow.radius, and it is a UNIFORM blur -- see the note in
-         _syncThreeLights about why it does not harden at the contact point. */ ''}
+         _syncThreeLights about why it does not harden at the contact point. Worth knowing
+         while chasing a leak: a wide radius blurs the penumbra across the contact point too,
+         so a gap that persists at bias 0 may be softness rather than bias. */ ''}
     <div class="mm-row">
       <span class="mm-lbl">Shadow</span>
       <button class="mm-choice${(_lit._castShadow !== false) ? ' active' : ''}" id="mm-light-shadow">${(_lit._castShadow !== false) ? 'On' : 'Off'}</button>
@@ -2582,7 +2586,7 @@ export function buildSectionHTML_scene(main) {
     </div>
     <div class="mm-row">
       <span class="mm-lbl">Sh. bias</span>
-      <input type="range" id="mm-light-shbias" min="0" max="200" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
+      <input type="range" id="mm-light-shbias" min="-100" max="100" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
       <span class="mm-val" id="mm-light-shbias-val">${(_lit._shadowNormalBias ?? 0.15).toFixed(2)}</span>
     </div>` : ''}
     ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
