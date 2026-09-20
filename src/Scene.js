@@ -2329,6 +2329,52 @@ class Scene {
         };
       }
 
+      // window._meshMat('matcap'|'pbr'|'normal') — swap ONLY the sculpt's material, live.
+      // window._hideMeshes() / _showMeshes()      — take the sculpt out of the frame entirely.
+      //
+      // matt's premise, and the only fact that has held up all the way through: it works in
+      // matcap and fails in pbr. Everything else has been my theorising. So change exactly
+      // that one thing inside ONE session -- same panels, same session, same framebuffer, same
+      // controllers -- and watch the menus and the UBO errors.
+      //   menus return on 'matcap'  -> the sculpt's MATERIAL takes the frame down, and the
+      //                                panels are collateral. The UBO error is the mechanism.
+      //   menus stay gone           -> the mesh material is not the variable either, and what
+      //                                differs between the two sessions is something else the
+      //                                shader id switches on.
+      // Every material here was built at startup and warmed, so nothing is constructed inside
+      // the session -- which is the one thing this renderer must not do.
+      if (!window._meshMat) {
+        window._meshMat = (name) => {
+          const ids = { pbr: 0, flat: 1, normal: 2, matcap: 5 };
+          const id = ids[String(name).toLowerCase()];
+          if (id === undefined) { console.log('[meshMat] use pbr|flat|normal|matcap'); return 0; }
+          const mat = NodeMaterials.get(id);
+          if (!mat) { console.log('[meshMat] no material for ' + name); return 0; }
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.material = mat; n++; }
+          }
+          console.log('[meshMat] ' + name + ' -> ' + n + ' meshes');
+          return n;
+        };
+        window._hideMeshes = () => {
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.visible = false; n++; }
+          }
+          console.log('[hideMeshes] hid ' + n + ' — menus back?');
+          return n;
+        };
+        window._showMeshes = () => {
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) tm.visible = true;
+          }
+        };
+      }
+
       // window._panelSolid() — is the panel invisible because its TEXTURE never arrived?
       //
       // A quad drawn with a texture that failed to upload is fully transparent, which looks
