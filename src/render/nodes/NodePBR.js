@@ -44,9 +44,17 @@ export function makePBR(gpu, tsl) {
   const uLightPos   = uniformArray(new Array(MAX_LIGHTS).fill(0).map(() => new gpu.Vector3()));
   const uLightCol   = uniformArray(new Array(MAX_LIGHTS).fill(0).map(() => new gpu.Vector3()));
   const uLightDir   = uniformArray(new Array(MAX_LIGHTS).fill(0).map(() => new gpu.Vector3(0, 0, -1)));
-  const uLightCone  = uniformArray(new Array(MAX_LIGHTS).fill(0).map(() => new gpu.Vector2(-1, -1)));
-  const uLightRange = uniformArray(new Array(MAX_LIGHTS).fill(1));
-  const uLightType  = uniformArray(new Array(MAX_LIGHTS).fill(0));
+  // ONE vec4 PER LIGHT: (range, type, coneOuter, coneInner).
+  //
+  // This was three separate arrays -- two of them arrays of plain NUMBERS. A uniform array of
+  // scalars is the least-travelled path in three's std140 padding (every element pads to 16
+  // bytes, so a float array is 4x its apparent size), and "GL_INVALID_OPERATION: it is
+  // undefined behaviour to use a uniform buffer that is too small" showed up in XR on the PBR
+  // material and on no other. Packing into vector types keeps every array on the well-trodden
+  // path and makes the block smaller besides. SUSPECTED CAUSE, not a proven one: the error
+  // only appears in an immersive session, which is the one place that cannot be checked from
+  // the desktop.
+  const uLightParams = uniformArray(new Array(MAX_LIGHTS).fill(0).map(() => new gpu.Vector4(1, 0, -1, -1)));
 
   // The environment panorama: an 8-bit PNG carrying HDR as LogLUV, with the mip pyramid
   // packed into the one image by hand. So NO colour-space conversion (these are encoded
@@ -198,11 +206,12 @@ export function makePBR(gpu, tsl) {
       If(uDebug.greaterThan(0).and(uDebug.notEqual(3)), () => { Break(); });
 
       // Rotated, not transformed: it is a direction, so the view translation must not touch it.
+      const prm = uLightParams.element(i);
       const Ldir = normalize(mat3(cameraViewMatrix).mul(uLightDir.element(i)));
       const L = vec3(0.0).toVar();
       const att = float(1.0).toVar();
 
-      If(uLightType.element(i).greaterThan(1.5), () => {
+      If(prm.y.greaterThan(1.5), () => {
         // DIRECTIONAL: no position and no distance. The sun does not get closer.
         L.assign(Ldir.negate());
         att.assign(1.0);
@@ -210,12 +219,12 @@ export function makePBR(gpu, tsl) {
         const toL = cameraViewMatrix.mul(vec4(uLightPos.element(i), 1.0)).xyz.sub(positionView);
         const dist2 = dot(toL, toL);
         L.assign(toL.mul(inversesqrt(max(dist2, float(1e-12)))));
-        const r = max(uLightRange.element(i), float(1e-4));
+        const r = max(prm.x, float(1e-4));
         att.assign(float(1.0).div(float(1.0).add(dist2.div(r.mul(r)))));
-        If(uLightType.element(i).greaterThan(0.5), () => {
+        If(prm.y.greaterThan(0.5), () => {
           // SPOT: the same point light, scaled by how far inside the cone the surface sits.
           const cd = dot(L.negate(), Ldir);
-          att.mulAssign(smoothstep(uLightCone.element(i).x, uLightCone.element(i).y, cd));
+          att.mulAssign(smoothstep(prm.z, prm.w, cd));
         });
       });
 
@@ -265,9 +274,7 @@ export function makePBR(gpu, tsl) {
       uLightPos.array[i].set(L.pos[i * 3], L.pos[i * 3 + 1], L.pos[i * 3 + 2]);
       uLightCol.array[i].set(L.col[i * 3], L.col[i * 3 + 1], L.col[i * 3 + 2]);
       uLightDir.array[i].set(L.dir[i * 3], L.dir[i * 3 + 1], L.dir[i * 3 + 2]);
-      uLightCone.array[i].set(L.cone[i * 2], L.cone[i * 2 + 1]);
-      uLightRange.array[i] = L.range[i];
-      uLightType.array[i] = L.type[i];
+      uLightParams.array[i].set(L.range[i], L.type[i], L.cone[i * 2], L.cone[i * 2 + 1]);
     }
   };
 

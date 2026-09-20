@@ -1,6 +1,7 @@
 import { mat3, mat4, vec3 } from 'gl-matrix';
 import Buffer from '../render/Buffer.js';
 import ShaderLib from '../render/ShaderLib.js';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
 import MotionPathEdit from '../editing/MotionPathEdit.js';
@@ -234,7 +235,9 @@ class Selection {
     if (!this._threeVoxelSphere) {
       const vsGeo = new THREE.SphereGeometry(1, 24, 16);
       // Fresnel "xray" material — same look as the VR volume cursor (additive rim glow).
-      const vsMat = new THREE.ShaderMaterial({
+      // The node build first: WebGPURenderer cannot draw a ShaderMaterial, so on the flagged
+      // path this cursor was hidden entirely.
+      const vsMat = NodeMaterials.fresnelGlow(0x4488ff) || new THREE.ShaderMaterial({
         uniforms: { color: { value: new THREE.Color(0x4488ff) } },
         vertexShader: `
           varying vec3 vNormal;

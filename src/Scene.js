@@ -6504,7 +6504,9 @@ class Scene {
             const lineGeometry = new THREE.CylinderGeometry(0.001, 0.001, 0.30, 8, 1, true);
             lineGeometry.rotateX(-Math.PI / 2);
             lineGeometry.translate(0, 0, -0.15); // base at z=0, tip at z=-0.30
-            const lineMaterial = new THREE.ShaderMaterial({
+            // Node material first: WebGPURenderer cannot draw a ShaderMaterial, so on the
+            // flagged path the aim laser was hidden -- in every shader mode.
+            const lineMaterial = NodeMaterials.laser() || new THREE.ShaderMaterial({
                 vertexShader: `varying float vFade; void main() { vFade = 1.0 - clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
                 fragmentShader: `varying float vFade; void main() { gl_FragColor = vec4(1.0, 1.0, 1.0, vFade * 0.85); }`,
                 transparent: true, depthTest: true, depthWrite: false,
@@ -7720,7 +7722,7 @@ class Scene {
       const g = new THREE.CylinderGeometry(0.001, 0.001, 1, 8, 1, true);
       g.rotateX(-Math.PI / 2);   // cylinder Y-axis → -Z
       g.translate(0, 0, -0.5);   // base at z=0, tip at z=-1
-      const m = new THREE.ShaderMaterial({
+      const m = NodeMaterials.laser() || new THREE.ShaderMaterial({
         vertexShader: `varying float vFade; void main() { vFade = 1.0 - clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
         fragmentShader: `varying float vFade; void main() { gl_FragColor = vec4(1.0, 1.0, 1.0, vFade * 0.85); }`,
         transparent: true, depthTest: true, depthWrite: false,

@@ -98,6 +98,45 @@ function build(shaderId) {
   return p;
 }
 
+// ── SMALL UNLIT MATERIALS THE UI IS MADE OF ──────────────────────────────────
+// These are raw ShaderMaterials in the legacy path, which this renderer cannot draw, so the
+// flagged path was hiding them -- and hiding them is why matt saw "no laser pointing when
+// aiming at menus, [no] radius sphere" in BOTH matcap and pbr. They are a handful of lines
+// each, so they port rather than wait.
+//
+// Each returns null when the node renderer is not active, so a call site reads
+//   NodeMaterials.laser() || new THREE.ShaderMaterial({ ... })
+// and the legacy path is untouched.
+
+/** The controller ray: a white tube that fades out along its length. */
+NodeMaterials.laser = function () {
+  if (!gpu) return null;
+  const { uv, float, vec3 } = tsl;
+  const m = new gpu.MeshBasicNodeMaterial({
+    transparent: true, depthTest: true, depthWrite: false,
+    blending: gpu.NormalBlending, side: gpu.DoubleSide,
+  });
+  const fade = float(1.0).sub(uv().y.sub(0.5).mul(2.0).clamp(0.0, 1.0));
+  m.colorNode = vec3(1.0, 1.0, 1.0);
+  m.opacityNode = fade.mul(0.85);
+  return m;
+};
+
+/** The voxel brush's volume cursor: an additive rim glow. */
+NodeMaterials.fresnelGlow = function (hex) {
+  if (!gpu) return null;
+  const { normalView, positionView, normalize, dot, abs, pow, float, vec3 } = tsl;
+  const m = new gpu.MeshBasicNodeMaterial({
+    transparent: true, depthTest: true, depthWrite: false, side: gpu.DoubleSide,
+    blending: gpu.CustomBlending, blendEquation: gpu.AddEquation,
+    blendSrc: gpu.OneFactor, blendDst: gpu.OneFactor,
+  });
+  const f = pow(float(1.0).sub(abs(dot(normalize(normalView), normalize(positionView)))), 3.0);
+  m.colorNode = vec3(new gpu.Color(hex)).mul(f);
+  m.opacityNode = f;
+  return m;
+};
+
 /**
  * Per frame, before rendering. Refreshes the one uniform the matcap needs from the
  * HEAD-CENTRE view -- deliberately not per eye, which is the entire point of it.
