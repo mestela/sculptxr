@@ -2772,15 +2772,6 @@ class Scene {
         return r;
       };
 
-      if (this._isNodeRenderer && this._scene) {
-        this._scene.traverse((o) => {
-          const m = o.material;
-          if (!m) return;
-          const raw = Array.isArray(m) ? m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)
-                                       : (m.isShaderMaterial && !m.isNodeMaterial);
-          if (raw) o.visible = false;
-        });
-      }
       
       // THE FLAT CAMERA, for both renderers. WebGPURenderer substitutes xr.getCamera() itself
       // exactly as WebGLRenderer does -- the earlier note here claimed otherwise and was
@@ -2879,6 +2870,26 @@ class Scene {
       if (isVR && this._sculptManager) {
         const _gT = this._sculptManager.getTool?.(Enums.Tools.TRANSFORM)?._gizmo?._group;
         if (_gT && _gT.visible) _gT.visible = false;
+      }
+
+      // THE RAW-ShaderMaterial SWEEP, HERE AND NOT EARLIER.
+      //
+      // It used to run near the top of this block, which is before MotionTrail.update() and
+      // SkinPreview.update() -- and those CREATE objects: LineSegments2 on three's
+      // LineMaterial, which is a ShaderMaterial subclass this renderer cannot draw. Anything
+      // they added during the frame was therefore never swept, and went straight into the
+      // render as "THREE.NodeMaterial: Material LineMaterial is not compatible".
+      //
+      // Immediately before the draw is the only placement that can see everything the frame
+      // built.
+      if (this._isNodeRenderer && this._scene) {
+        this._scene.traverse((o) => {
+          const m = o.material;
+          if (!m) return;
+          const raw = Array.isArray(m) ? m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)
+                                       : (m.isShaderMaterial && !m.isNodeMaterial);
+          if (raw) o.visible = false;
+        });
       }
 
       // Three.js clears depth on its own, so we render over the top
