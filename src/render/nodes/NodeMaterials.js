@@ -16,6 +16,7 @@
 import Enums from '../../misc/Enums.js';
 import ShaderMatcap from '../shaders/ShaderMatcap.js';
 import { makePBR } from './NodePBR.js';
+import { makePhysical } from './NodePhysical.js';
 
 const NodeMaterials = {};
 
@@ -121,7 +122,10 @@ function build(shaderId) {
       return ph;
     }
     if (b === 2) console.log('[NodeMaterials] pbrbisect=2 — PBR built with no uniform arrays');
-    return makePBR(gpu, tsl, { noArrays: b === 2 });
+    if (b) return makePBR(gpu, tsl, { noArrays: b === 2 });
+    // The hand-ported BRDF is still reachable with ?pbrbisect=, but the default is now
+    // three's lit pipeline -- see NodePhysical.js for why.
+    return makePhysical(gpu, tsl);
   }
 
   // EVERYTHING ELSE IS STILL A PLACEHOLDER, deliberately visible rather than silently black:

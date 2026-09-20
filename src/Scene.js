@@ -2343,6 +2343,17 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+      if (this._isNodeRenderer) this._syncThreeLights();
+      // CAST AND RECEIVE, set on the meshes rather than globally: three reads these per
+      // object, and a light entity's own gizmo geometry casting a shadow of itself into the
+      // scene is not something anyone wants to see.
+      if (this._isNodeRenderer) {
+        for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+          const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+          if (!tm || mesh._isLight) continue;
+          if (!tm.castShadow) { tm.castShadow = true; tm.receiveShadow = true; }
+        }
+      }
 
       // (The controller models used to be force-swapped to a flat material here. That was a
       // guess made before the cause was known -- their GLTF materials are MeshStandardMaterial,
@@ -3665,6 +3676,11 @@ class Scene {
       this._renderer.xr.setFramebufferScaleFactor(Math.max(0.3, Math.min(2.0, _fbsGpu)));
       this._renderer.toneMapping = WGPU.LinearToneMapping;
       this._renderer.toneMappingExposure = 1.0;
+      // SHADOWS. Real lights are mirrored onto our light entities (see _syncThreeLights), so
+      // there is finally something that owns a shadow map. Soft by default: PCF is the cheap
+      // one, and a hard edge on a sculpt reads as an artefact rather than a shadow.
+      this._renderer.shadowMap.enabled = true;
+      this._renderer.shadowMap.type = WGPU.PCFSoftShadowMap;
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
       this._isNodeRenderer = true;
       // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
@@ -4367,6 +4383,99 @@ class Scene {
   }
 
   /** Every light in the scene, for the shader to read. */
+  // REAL three.js LIGHTS, MIRRORED ONTO OUR LIGHT ENTITIES.
+  //
+  // Our lights have always been scene entities whose state we uploaded as uniform arrays and
+  // summed in our own BRDF. three knew nothing about them -- which is exactly why there were
+  // no shadows: a shadow map belongs to a Light object, and there were none.
+  //
+  // Each entity gets a real light PARENTED TO ITS OWN MESH, so it inherits that mesh's world
+  // transform rather than having one copied onto it every frame. The two cannot drift, which
+  // is the failure mode the uniform-array path had in VR (light positions derived from the
+  // desktop camera while the geometry used the per-eye one).
+  //
+  // Type is ours: 0 point, 1 spot, 2 directional. A spot needs a target object; it is a child
+  // at (0,0,-1), so "aim" is the light's own local -Z -- the same convention the gizmo and
+  // the old uLightDir upload used.
+  _syncThreeLights() {
+    const THREE_ = this._THREE_GPU || THREE;
+    const lights = this.getLights ? this.getLights() : [];
+    const seen = new Set();
+    for (const e of lights) {
+      const host = e.getThreeMesh && e.getThreeMesh();
+      if (!host) continue;
+      const type = e._lightType || 0;
+      let L = host.userData._threeLight;
+      // A type change needs a different class, so the old one goes.
+      if (L && L.userData._lightType !== type) { host.remove(L); L = null; }
+      if (!L) {
+        L = type > 1.5 ? new THREE_.DirectionalLight(0xffffff, 1)
+          : type > 0.5 ? new THREE_.SpotLight(0xffffff, 1)
+            : new THREE_.PointLight(0xffffff, 1);
+        L.userData._lightType = type;
+        if (L.isSpotLight || L.isDirectionalLight) {
+          const t = new THREE_.Object3D();
+          t.position.set(0, 0, -1);
+          L.add(t);
+          L.target = t;
+        }
+        L.castShadow = true;
+        L.shadow.mapSize.set(1024, 1024);
+        L.shadow.bias = -0.0005;
+        host.add(L);
+        host.userData._threeLight = L;
+      }
+      const c = e._lightColor || [1, 1, 1];
+      L.color.setRGB(c[0], c[1], c[2]);
+      L.intensity = (e._lightIntensity === undefined ? 1 : e._lightIntensity) * this._lightIntensityScale();
+      if (L.isPointLight || L.isSpotLight) {
+        L.distance = e._lightRange === undefined ? 50 : e._lightRange;
+        // decay 2 is the physical inverse square. Our old falloff was deliberately not that,
+        // but with no scenes to relight the physical one is the better default and the
+        // intensity slider is the dial.
+        L.decay = 2;
+      }
+      if (L.isSpotLight) {
+        const deg = e._lightConeDeg === undefined ? 35 : e._lightConeDeg;
+        L.angle = Math.max(0.01, Math.min(1.55, deg * Math.PI / 180));
+        L.penumbra = 0.25;
+      }
+      seen.add(L);
+    }
+    // Lights whose entity was deleted or hidden: getLights() already filters on visibility,
+    // so anything not seen this frame is switched off rather than removed -- removing it
+    // would drop the shadow map and pay to rebuild it the moment the light came back.
+    if (!this._threeLightPool) this._threeLightPool = new Set();
+    for (const L of this._threeLightPool) if (!seen.has(L)) L.visible = false;
+    for (const L of seen) { L.visible = true; this._threeLightPool.add(L); }
+
+    // AMBIENT, from the environment's DC term. A stand-in until the equirect+PMREM swap gives
+    // scene.environment a real IBL: uSPH[0] is the average of the panorama, so this is the
+    // flat part of what the old SH ambient contributed, scaled by the same Env Intensity
+    // slider. Cheap, and it stops an unlit shadow side reading as pure black.
+    // Via ShaderLib, which is how this file reaches shader definitions -- there is no direct
+    // ShaderPBR import here and adding one for a colour lookup is not worth a second path.
+    const SPBR = ShaderLib[Enums.Shader.PBR];
+    const env = SPBR && SPBR.environments[SPBR.idEnv];
+    const ei = getOptionsURL().envIntensity;
+    const gain = Number.isFinite(ei) ? ei : 1.0;
+    if (!this._nodeAmbient) {
+      this._nodeAmbient = new THREE_.AmbientLight(0xffffff, 1);
+      this._scene.add(this._nodeAmbient);
+    }
+    if (env && env.sph) this._nodeAmbient.color.setRGB(env.sph[0], env.sph[1], env.sph[2]);
+    // NO PI. uSPH[0] is already an irradiance -- the average of the panorama -- and
+    // AmbientLight multiplies colour by intensity straight into the diffuse term. The extra
+    // factor of pi put a white sculpt at ~1.7 and clipped it to flat white, which reads as
+    // "the material is broken" rather than "the ambient is too strong": with everything
+    // washed out there is no shading to see and no shadow to find.
+    this._nodeAmbient.intensity = gain;
+  }
+
+  // Our intensity slider is a 0..n multiplier; three's lights are physical. One place to
+  // rescale, so the two can be re-dialled together.
+  _lightIntensityScale() { return 40; }
+
   getLights() {
     const out = [];
     const ms = this._meshes || [];
