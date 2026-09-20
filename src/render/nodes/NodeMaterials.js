@@ -40,6 +40,24 @@ NodeMaterials.enable = function (mod, tslMod) {
   // It separates two invisibles that look identical: a quad drawn with a texture that never
   // uploaded is transparent, and a quad that is not drawn is also nothing. Swap this in and
   // a magenta rectangle either appears where the menu should be, or does not.
+  // THE CONTROLLER MODELS' MATERIAL, built here because theirs cannot be.
+  //
+  // XRControllerModelFactory fetches the GLTF when the controller connects, i.e. inside the
+  // session, so its MeshStandardMaterials are first drawn there -- and the trace shows that
+  // draw (L_body) is the first thing to fail, taking the rest of the frame with it. Nothing
+  // can warm a material that does not exist yet, so the model is given one that already
+  // has a pipeline instead.
+  //
+  // Shaded off the view normal so the model still reads as a three-dimensional object rather
+  // than a silhouette; the real GLTF materials are a nicety and this is the flagged path.
+  NodeMaterials._controller = (() => {
+    const { normalView, vec3, float, dot, vec4 } = tslMod;
+    const m = new mod.MeshBasicNodeMaterial();
+    const nl = dot(normalView.normalize(), vec3(0.0, 0.0, 1.0)).abs();
+    m.colorNode = vec3(0.32, 0.34, 0.38).mul(float(0.45).add(nl.mul(0.55)));
+    return m;
+  })();
+
   NodeMaterials._solid = new mod.MeshBasicNodeMaterial({
     color: new mod.Color(0xff00ff), side: mod.DoubleSide,
     transparent: false, depthTest: false, depthWrite: false,
@@ -135,6 +153,22 @@ function build(shaderId) {
 //   NodeMaterials.laser() || new THREE.ShaderMaterial({ ... })
 // and the legacy path is untouched.
 
+/**
+ * Give a freshly-loaded controller model a pipeline that already exists.
+ * Returns how many materials were replaced.
+ */
+NodeMaterials.adoptController = function (root) {
+  if (!gpu || !root || !NodeMaterials._controller) return 0;
+  let n = 0;
+  root.traverse((o) => {
+    if (!o.material) return;
+    if (o.material === NodeMaterials._controller) return;
+    o.material = NodeMaterials._controller;
+    n++;
+  });
+  return n;
+};
+
 /** The controller ray: a white tube that fades out along its length. */
 NodeMaterials.laser = function () {
   if (!gpu) return null;
@@ -226,12 +260,31 @@ NodeMaterials.fresnelGlow = function (hex) {
  *
  * Cheap and idempotent: a 2-triangle quad per material, off-screen, once.
  */
-NodeMaterials.warm = function (renderer, camera, extraMaterials) {
+NodeMaterials.warm = function (renderer, camera, extraMaterials, scene) {
   if (!gpu || !renderer) return 0;
   const mats = [];
-  for (const id in cache) if (cache[id]) mats.push(cache[id]);
-  if (NodeMaterials._solid) mats.push(NodeMaterials._solid);
-  if (extraMaterials) for (const m of extraMaterials) if (m) mats.push(m);
+  const seen = new Set();
+  const add = (m) => { if (m && !seen.has(m)) { seen.add(m); mats.push(m); } };
+  for (const id in cache) add(cache[id]);
+  add(NodeMaterials._solid);
+  add(NodeMaterials._controller);
+  if (extraMaterials) for (const m of extraMaterials) add(m);
+  // EVERY MATERIAL ALREADY IN THE SCENE, not just ours.
+  //
+  // Traced on device: the first failing draw in a session is L_body -- a GLTF CONTROLLER
+  // MODEL on a stock MeshStandardMaterial -- and it emits 0x506
+  // (INVALID_FRAMEBUFFER_OPERATION) as well as the UBO error. stylus_spike follows, then the
+  // panel. So the panels were third in line and collateral all along.
+  //
+  // The rule this renderer enforces is not "do not CREATE a material in a session", it is
+  // "do not first DRAW one in a session" -- that is when the pipeline is built. Anything
+  // VR-only is therefore drawn for the first time inside the session, which is every object
+  // this trace named. Warming the node cache alone was too narrow.
+  if (scene) scene.traverse((o) => {
+    const m = o.material;
+    if (!m) return;
+    if (Array.isArray(m)) m.forEach(add); else add(m);
+  });
   if (!mats.length) return 0;
 
   const sc = new gpu.Scene();

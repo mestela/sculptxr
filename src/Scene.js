@@ -2256,6 +2256,26 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+
+      // ADOPT ANY CONTROLLER MODEL THAT HAS JUST LOADED.
+      //
+      // Traced on device: L_body, a GLTF controller model on a stock MeshStandardMaterial, is
+      // the FIRST failing draw of the session -- 0x502 and then 0x506
+      // (INVALID_FRAMEBUFFER_OPERATION) -- and stylus_spike and the panel follow it. The
+      // panels were never the problem; they were third in line behind a poisoned frame.
+      //
+      // The model is fetched when the controller connects, which is inside the session, so
+      // its pipeline is necessarily built there and nothing can warm it in advance. Giving it
+      // a material that already has a pipeline avoids the build entirely. Swept per frame
+      // because the load completes whenever it completes; the subtree is a few dozen nodes
+      // and the sweep stops as soon as there is nothing left to adopt.
+      if (this._isNodeRenderer && this._vrGrips) {
+        for (const g of this._vrGrips) {
+          if (g.userData._adopted) continue;
+          const n = NodeMaterials.adoptController(g);
+          if (n) { g.userData._adopted = true; console.log('[controller] adopted ' + n + ' materials'); }
+        }
+      }
       // The warm pass runs once, at Enter VR, where it cannot be observed from a desktop.
       // Exposed so it can at least be proven not to throw before it is depended on there.
       if (!window._showVrPanels) {
@@ -5643,7 +5663,7 @@ class Scene {
       try {
         for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);
       } catch (e) { /* registry is a convenience; never block entering VR on it */ }
-      NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), panelMats);
+      NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), panelMats, this._scene);
     }
 
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
@@ -6854,6 +6874,9 @@ class Scene {
             }
             if (model) grip.add(model);
             this._scene.add(grip);
+            // The model arrives asynchronously, inside the session, so it is swept each frame
+            // until it has been adopted -- see the controller sweep in _drawScene.
+            (this._vrGrips || (this._vrGrips = [])).push(grip);
 
             // Controller ray — 30 cm white tube, solid for first 15 cm then fades to transparent (Virtual Desktop style)
             const lineGeometry = new THREE.CylinderGeometry(0.001, 0.001, 0.30, 8, 1, true);
