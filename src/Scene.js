@@ -2329,6 +2329,46 @@ class Scene {
         };
       }
 
+      // window._soloPanels() — hide EVERYTHING except the panels. _unsolo() restores.
+      //
+      // Where the evidence now stands, all of it from inside one session: the sculpt is not
+      // the cause (_hideMeshes left the menus gone), and the matcap material -- the very same
+      // object that draws correctly in a matcap session -- DISAPPEARS when assigned here. So
+      // a pbr session comes up in a state where some materials cannot draw at all, and the
+      // panels are in that set while MeshNormalNodeMaterial and the controllers are not.
+      //
+      // Two possibilities left, and they need opposite fixes:
+      //   panels appear alone -> some OTHER draw in the frame poisons them, and the fix is to
+      //                          find which (the UBO error is that draw failing).
+      //   still nothing       -> the panel pipeline itself cannot be built in this session,
+      //                          and warming it on the desktop did not produce the variant XR
+      //                          asks for.
+      if (!window._soloPanels) {
+        window._soloPanels = () => {
+          const panelMeshes = new Set();
+          for (const p of HTMLVRPanel._live) if (p.mesh) panelMeshes.add(p.mesh);
+          this._soloSaved = [];
+          this._scene.traverse((o) => {
+            if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+            let isPanel = false;
+            for (let q = o; q; q = q.parent) if (panelMeshes.has(q)) { isPanel = true; break; }
+            if (isPanel) return;
+            this._soloSaved.push([o, o.visible]);
+            o.visible = false;
+          });
+          // ...and make one panel visible, so there is something to look for.
+          const first = [...panelMeshes][0];
+          if (first) first.visible = true;
+          console.log('[soloPanels] hid ' + this._soloSaved.length + ' — is a panel there now?');
+          return this._soloSaved.length;
+        };
+        window._unsolo = () => {
+          for (const [o, v] of (this._soloSaved || [])) o.visible = v;
+          this._soloSaved = [];
+          console.log('[soloPanels] restored');
+        };
+      }
+
       // window._meshMat('matcap'|'pbr'|'normal') — swap ONLY the sculpt's material, live.
       // window._hideMeshes() / _showMeshes()      — take the sculpt out of the frame entirely.
       //
