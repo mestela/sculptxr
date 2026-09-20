@@ -2418,13 +2418,17 @@ class Scene {
         }
         if (window.__uboErrCount === undefined) { console.log('[bisectUBO] tracer is not on'); return null; }
         const list = this._minimalHidden.map(([o]) => o);
-        const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
-        // Reveal the first k, leave the rest hidden, and count errors over a few frames.
+        // WALL TIME, not requestAnimationFrame. Inside an immersive session the frame loop is
+        // the XRSession's, and window.rAF is not it -- the first version of this ran all eight
+        // rounds in 43ms and measured nothing, because every await resolved without a frame
+        // ever being drawn. Sleeping real milliseconds is crude and it is correct.
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // Reveal the first k, let it settle, then count errors over a fixed window.
         const test = async (k) => {
           this._minimalReveal = k;
-          for (let i = 0; i < 8; i++) await frame();
+          await sleep(250);
           const before = window.__uboErrCount;
-          for (let i = 0; i < 12; i++) await frame();
+          await sleep(400);
           return window.__uboErrCount - before;
         };
         if (await test(0) > 0) {
@@ -2432,8 +2436,11 @@ class Scene {
           this._minimalReveal = 0;
           return null;
         }
-        if (await test(list.length) === 0) {
-          console.log('[bisectUBO] no errors with EVERYTHING revealed — cannot reproduce right now');
+        const allErrs = await test(list.length);
+        const allDc = this._renderer.info && this._renderer.info.render.drawCalls;
+        if (allErrs === 0) {
+          console.log('[bisectUBO] no errors with EVERYTHING revealed (drawCalls=' + allDc
+            + ') — if that count is 0, nothing was actually drawn and the run is void');
           this._minimalReveal = 0;
           return null;
         }
@@ -2441,7 +2448,8 @@ class Scene {
         while (hi - lo > 1) {
           const mid = (lo + hi) >> 1;
           const errs = await test(mid);
-          console.log('[bisectUBO] first ' + mid + ' revealed -> ' + errs + ' errors');
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          console.log('[bisectUBO] first ' + mid + ' revealed -> ' + errs + ' errors, drawCalls=' + dc);
           if (errs > 0) hi = mid; else lo = mid;
         }
         const o = list[hi - 1];
