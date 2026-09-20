@@ -149,6 +149,48 @@ NodeMaterials.laser = function () {
   return m;
 };
 
+/**
+ * A VR PANEL: a canvas texture, with the brightness/saturation/gamma grade.
+ *
+ * WHY THIS EXISTS AT ALL, rather than letting the stock MeshBasicMaterial convert. Measured
+ * on device, inside one session, with 91 other objects hidden: a panel carrying the stock
+ * conversion does not draw, and the same panel carrying MeshNormalNodeMaterial does. So does
+ * our matcap material in a matcap session -- but that same matcap material assigned inside a
+ * pbr session vanishes too. The common factor is the STOCK basic pipeline, which is what
+ * "GL_INVALID_OPERATION: ... uniform buffer that is too small" is describing; a node material
+ * with its own colorNode replaces that pipeline instead of extending it, and those all draw.
+ *
+ * It also gets the colour grade back. The legacy grade rides on onBeforeCompile, which
+ * WebGPURenderer ignores entirely, so panels on the flagged path were ungraded regardless.
+ * Here it is three uniforms, updated through userData.grade.
+ */
+NodeMaterials.panel = function (opts = {}) {
+  if (!gpu) return null;
+  const { texture, uniform, vec3, float, dot } = tsl;
+  const placeholder = new gpu.Texture();
+  const mapNode = texture(placeholder);
+  const bright = uniform(1.0), sat = uniform(1.0), gamma = uniform(1.0);
+
+  const m = new gpu.MeshBasicNodeMaterial({
+    side: gpu.DoubleSide,
+    transparent: true,
+    depthWrite: opts.depthWrite !== false,
+    depthTest: opts.depthTest !== false,
+  });
+  const rgb = mapNode.rgb.mul(bright).toVar();
+  const lum = dot(rgb, vec3(0.299, 0.587, 0.114));
+  const satd = vec3(lum).add(rgb.sub(vec3(lum)).mul(sat)).clamp(0.0, 1.0);
+  m.colorNode = satd.pow(vec3(gamma));
+  m.opacityNode = mapNode.a;
+  // The texture arrives later, on the panel's first paint. Swapping the NODE's value keeps
+  // one pipeline for the life of the panel, which is the same rule the legacy path follows
+  // ("Only the FIRST texture changes the material").
+  m.userData.setMap = (t) => { if (t) mapNode.value = t; };
+  m.userData.grade = { bright, sat, gamma };
+  m.userData.isNodePanel = true;
+  return m;
+};
+
 /** The voxel brush's volume cursor: an additive rim glow. */
 NodeMaterials.fresnelGlow = function (hex) {
   if (!gpu) return null;

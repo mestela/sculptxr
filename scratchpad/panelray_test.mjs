@@ -263,8 +263,13 @@ check('it is inside the section it costs',
     !/this\.mesh\.material\.map = null;/.test(HP1)
       || !/this\._texture = null;\s*\n\s*this\.mesh\.material\.map = null;/.test(HP1),
     'that pair is the recompile');
+  // The window is 900, not 700, because the node-material path added a branch inside this
+  // block (setMap on a TextureNode when the panel carries one, material.map otherwise). The
+  // RULE being asserted is unchanged -- the first texture is the one assignment allowed to
+  // dirty the material -- and widening the span is the honest way to keep asserting it, where
+  // shortening the source to fit a number would be the harness driving the code.
   check('...while the FIRST texture still may, since it genuinely changes the shader',
-    /if \(!this\._texture\) \{[\s\S]{0,700}?this\.mesh\.material\.needsUpdate = true;/.test(HP1),
+    /if \(!this\._texture\) \{[\s\S]{0,900}?this\.mesh\.material\.needsUpdate = true;/.test(HP1),
     'no map to a map is a different program; every later frame is the same one');
 
   // Still never adopted -- but the CHECK is no longer run on every paint. It is a GPU->CPU

@@ -18,6 +18,7 @@
 
 import * as THREE from 'three';
 import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintScoped, requestPaintForced, markAllPanelsDirty, notePanelDirty } from './install.js';
+import NodeMaterials from '../../render/nodes/NodeMaterials.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 
 // ── Menu color grade (brightness / saturation) ──────────────────────────────
@@ -63,6 +64,15 @@ let _grade = (() => { const o = getOptionsURL(); return _gradeFactors(o.menuBrig
 // texture sample) and register it so setMenuColorGrade can update it. Used by HTMLVRPanel's own
 // material and by registerGradeMaterial() for external canvas panels (timeline / blendshapes).
 function _installGrade(mat) {
+  // A node panel carries its grade as uniforms, not as a shader patch: onBeforeCompile is
+  // never called by WebGPURenderer.
+  if (mat.userData && mat.userData.grade) {
+    mat.userData.grade.bright.value = _grade.bright;
+    mat.userData.grade.sat.value = _grade.sat;
+    mat.userData.grade.gamma.value = _grade.gamma;
+    _gradeMats.add(mat);
+    return mat;
+  }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uPanelBright = { value: _grade.bright };
     shader.uniforms.uPanelSat    = { value: _grade.sat };
@@ -95,6 +105,12 @@ let _gradeRecompileTimer = null;
 export function setMenuColorGrade(b01, s01, g01) {
   _grade = _gradeFactors(b01, s01, g01);
   for (const m of _gradeMats) {
+    if (m.userData && m.userData.grade) {
+      m.userData.grade.bright.value = _grade.bright;
+      m.userData.grade.sat.value = _grade.sat;
+      m.userData.grade.gamma.value = _grade.gamma;
+      continue;
+    }
     const sh = m.userData.gradeShader;
     if (sh) {
       sh.uniforms.uPanelBright.value = _grade.bright;
@@ -496,12 +512,16 @@ export class HTMLVRPanel {
     // sensibly be occluded by. So for modals only, depth comes off and renderOrder — which is
     // already set to the modal band — becomes the whole of the layering.
     const _modal = !!this._isModalOverlay;
-    const _mat = new THREE.MeshBasicMaterial({
-      side: THREE.DoubleSide,
-      transparent: true,
-      depthWrite: !_modal,  // write depth so the laser and scene geometry are properly
-      depthTest: !_modal,   // z-sorted against the panel — no draw-order tricks
-    });
+    // The node material first: the stock MeshBasicMaterial conversion does not draw under
+    // WebGPURenderer (see NodeMaterials.panel for the measurement), and it also loses the
+    // colour grade, which rides on onBeforeCompile.
+    const _mat = NodeMaterials.panel({ depthWrite: !_modal, depthTest: !_modal })
+      || new THREE.MeshBasicMaterial({
+        side: THREE.DoubleSide,
+        transparent: true,
+        depthWrite: !_modal,  // write depth so the laser and scene geometry are properly
+        depthTest: !_modal,   // z-sorted against the panel — no draw-order tricks
+      });
     _installGrade(_mat); // brightness/saturation/gamma grade from the Settings sliders
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this._meshWidth, meshH), _mat);
     // UI DRAWS AFTER THE WORLD. Depth testing still decides what is in front -- the flags above
@@ -660,7 +680,8 @@ export class HTMLVRPanel {
         // show a thin repeat strip at the panel edges.
         this._texture.wrapS         = THREE.ClampToEdgeWrapping;
         this._texture.wrapT         = THREE.ClampToEdgeWrapping;
-        this.mesh.material.map      = this._texture;
+        if (this.mesh.material.userData?.setMap) this.mesh.material.userData.setMap(this._texture);
+        else this.mesh.material.map = this._texture;
         this.mesh.material.needsUpdate = true;
       } else {
         this._texture.image      = bitmap;
@@ -1619,6 +1640,10 @@ window._panelProbe = function () {
       visibleChain: vis,
       inScene, depth,
       matType: mat && mat.type,
+      // A node panel binds its texture to a NODE, not to material.map, so hasMap alone would
+      // read false on a perfectly healthy one.
+      nodePanel: !!(mat && mat.userData && mat.userData.isNodePanel),
+      nodeMapSet: !!(mat && mat.userData && mat.userData.isNodePanel && p._texture),
       isNodeMat: !!(mat && mat.isNodeMaterial),
       hasMap: !!(mat && mat.map),
       imgKind: img ? (img.constructor && img.constructor.name) : null,
