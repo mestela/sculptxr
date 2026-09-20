@@ -393,6 +393,18 @@ NodeMaterials.laser = function () {
 function unlit(opts = {}) {
   const m = new gpu.MeshLambertNodeMaterial(opts);
   m.colorNode = tsl.vec3(0, 0, 0);   // no diffuse response; everything rides on emissiveNode
+  // ACTUALLY UNLIT. MeshLambertNodeMaterial sets NodeMaterial's `lights` flag true, so every
+  // one of these compiled a full lighting graph -- and once a light in the scene had
+  // castShadow, that graph included shadow sampling. In an XR session that combination takes
+  // the frame down: menus and controller models vanish and the UBO flood returns.
+  //
+  // Turning castShadow off in-session did not help, because the materials are compiled
+  // during the warm pass BEFORE the session, while castShadow is still true, and nothing
+  // rebuilds them afterwards. The real error was calling this helper "unlit" while building
+  // it on a lit material: panels, lasers and cursors have no business responding to the
+  // user's lighting rig at all. With the flag off there is no lighting graph to contain a
+  // shadow node in the first place.
+  m.lights = false;
   return m;
 }
 

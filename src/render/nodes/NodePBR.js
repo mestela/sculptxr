@@ -27,6 +27,7 @@ const MAX_LIGHTS = 8;
 function unlit(gpu, tsl, opts = {}) {
   const m = new gpu.MeshLambertNodeMaterial(opts);
   m.colorNode = tsl.vec3(0, 0, 0);
+  m.lights = false;   // see NodeMaterials' unlit(): a lit graph is what breaks XR
   return m;
 }
 
