@@ -2218,6 +2218,7 @@ class Scene {
     if (!window._vrMinimalTest && this._minimalHidden) {
       for (const [o, v] of this._minimalHidden) o.visible = v;
       this._minimalHidden = null;
+      this._minimalSeen = null;
       console.log('[vrMinimalTest] restored');
     }
     if (window._vrMinimalTest && isVRPresenting) {
@@ -2243,12 +2244,17 @@ class Scene {
             if (o.isMesh || o.isLine || o.isPoints) { this._minimalHidden.push([o, o.visible]); o.visible = false; }
           });
         }
-        // AND AGAIN, EVERY FRAME, for the cursors. _updateVRCursors runs BEFORE _drawScene and
-        // sets volume_sphere visible again, so a one-shot sweep never actually produced the
-        // empty frame this level promises -- the trace caught volume_sphere drawing at
-        // visible:true in the middle of "everything hidden". A minimal test that is not
+        // AND A FULL TRAVERSE EVERY FRAME, not a replay of the saved list. Two things escape
+        // a one-shot sweep: the cursors, which _updateVRCursors re-shows before every
+        // _drawScene, and anything ADDED to the scene after the sweep ran -- which is what
+        // the last trace's `obj=unknown` almost certainly was. A minimal test that is not
         // minimal is worse than none, because its quiet console means nothing.
-        for (const [o] of this._minimalHidden) o.visible = false;
+        this._scene.traverse(o => {
+          if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          if (!this._minimalSeen) this._minimalSeen = new Set();
+          if (!this._minimalSeen.has(o)) { this._minimalSeen.add(o); this._minimalHidden.push([o, o.visible]); }
+          o.visible = false;
+        });
       }
       this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
       // Its own expression, NOT the _renderCam below: that is declared in the main render
@@ -2277,6 +2283,7 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+      if (this._uboTag) this._uboTag();   // see _traceUBO: late arrivals must be named too
 
       // ADOPT ANY CONTROLLER MODEL THAT HAS JUST LOADED.
       //
@@ -2392,14 +2399,25 @@ class Scene {
         const seen = new Set();
         let cur = null;
         // Tag every drawable so the wrapper knows what is on the GPU right now.
-        this._scene.traverse((o) => {
+        //
+        // RE-TAGGED EVERY FRAME, because tagging once names only what existed at the moment
+        // tracing started. The previous run reported `obj=unknown mat=none` and I read that
+        // as three drawing something anonymous -- but the backend has only four drawArrays
+        // call sites and the object-draw one receives the object, so an untagged object is a
+        // tagging failure, not an anonymous draw. Anything added after _traceUBO() ran was
+        // invisible to it.
+        const tag = (o) => {
           if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          if (o.userData.__uboTagged) return;
+          o.userData.__uboTagged = true;
           const prev = o.onBeforeRender;
           o.onBeforeRender = function (...a) {
             cur = o;
             if (prev) prev.apply(this, a);
           };
-        });
+        };
+        this._uboTag = () => this._scene.traverse(tag);
+        this._uboTag();
         const wrap = (name) => {
           const orig = gl[name].bind(gl);
           gl[name] = function (...args) {
