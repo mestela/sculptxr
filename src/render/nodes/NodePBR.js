@@ -23,7 +23,13 @@ import getOptionsURL from '../../misc/getOptionsURL.js';
 
 const MAX_LIGHTS = 8;
 
-export function makePBR(gpu, tsl) {
+export function makePBR(gpu, tsl, opts = {}) {
+  // NO ARRAYS AT ALL (?pbrbisect=2): flat albedo times the scalar uniforms, no SH, no
+  // panorama, no light loop. It looks wrong on purpose. The only question it answers is
+  // whether this material's UNIFORM ARRAYS are what takes the menus down in an immersive
+  // session -- packing the scalars into a vec4 did not, so the next cut has to remove them
+  // rather than rearrange them.
+  const noArrays = !!opts.noArrays;
   const {
     Fn, uniform, uniformArray, attribute, Loop, If, Break, vec2, vec3, vec4, float, mat3,
     positionView, normalView, normalize, dot, max, min, clamp, pow, mix, smoothstep, abs,
@@ -249,8 +255,14 @@ export function makePBR(gpu, tsl) {
     return color;
   });
 
+  const shadeFlat = Fn(() => {
+    const mtl = attribute('aMaterial', 'vec3');
+    const albedo = sRGBToLinear(vertexColor()).mul(float(1.0).sub(mtl.y));
+    return albedo.mul(uExposure).mul(uEnvIntensity);
+  });
+
   const m = new gpu.MeshBasicNodeMaterial({ vertexColors: true });
-  m.colorNode = shade();
+  m.colorNode = noArrays ? shadeFlat() : shade();
 
   /** Per frame: exposure, environment, and the shared light state. */
   m.userData.updateFrame = function (main) {
@@ -260,7 +272,7 @@ export function makePBR(gpu, tsl) {
     const ei = getOptionsURL().envIntensity;
     uEnvIntensity.value = Number.isFinite(ei) ? ei : 1.0;
 
-    const env = ShaderPBR.environments[ShaderPBR.idEnv];
+    const env = noArrays ? null : ShaderPBR.environments[ShaderPBR.idEnv];
     if (env) {
       for (let i = 0; i < 9; i++) {
         uSPH.array[i].set(env.sph[i * 3], env.sph[i * 3 + 1], env.sph[i * 3 + 2]);
@@ -268,6 +280,7 @@ export function makePBR(gpu, tsl) {
       if (env.size) uEnvSize.value.set(env.size[0], env.size[1]);
     }
 
+    if (noArrays) return;
     const L = ShaderPBR.getLightState(main);
     uNbLights.value = L.count;
     for (let i = 0; i < MAX_LIGHTS; i++) {

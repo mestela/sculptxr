@@ -87,7 +87,25 @@ function build(shaderId) {
     return m;
   }
 
-  if (shaderId === Enums.Shader.PBR) return makePBR(gpu, tsl);
+  if (shaderId === Enums.Shader.PBR) {
+    // ?pbrbisect= — the control experiment for "menus vanish in pbr and nowhere else".
+    //   1  PBR mode gets the PLACEHOLDER material, so no PBR material exists at all. Menus
+    //      back => this material is the cause. Menus still gone => it is innocent and the
+    //      fault is elsewhere in what shader=pbr turns on, which is a different search.
+    //   2  the PBR material with NO uniform arrays. Menus back => the arrays.
+    // Read straight off the URL rather than through getOptionsURL, which only knows the
+    // options it declares.
+    const b = parseInt(new URLSearchParams(location.search).get('pbrbisect') || '0', 10);
+    if (b === 1) {
+      const ph = new gpu.MeshNormalNodeMaterial();
+      ph.userData.sculptShaderId = shaderId;
+      ph.userData.placeholder = true;
+      console.log('[NodeMaterials] pbrbisect=1 — PBR is the placeholder material');
+      return ph;
+    }
+    if (b === 2) console.log('[NodeMaterials] pbrbisect=2 — PBR built with no uniform arrays');
+    return makePBR(gpu, tsl, { noArrays: b === 2 });
+  }
 
   // EVERYTHING ELSE IS STILL A PLACEHOLDER, deliberately visible rather than silently black:
   // normals read as shaded geometry, so the scene stays navigable and it is obvious at a
