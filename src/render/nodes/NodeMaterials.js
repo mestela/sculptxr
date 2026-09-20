@@ -169,6 +169,39 @@ NodeMaterials.adoptController = function (root) {
   return n;
 };
 
+/**
+ * A FLAT UNLIT MATERIAL, as a node material rather than a stock MeshBasicMaterial.
+ *
+ * Bisection named `stylus_spike` -- `new THREE.MeshBasicMaterial({ color: 0x4d4d4d })` on an
+ * indexed CylinderGeometry -- as the object that starts the drawElements flood, once the line
+ * strips were gone. Nothing is unusual about it; it is as plain as a material gets. What it
+ * has in common with the other failures is that it is a STOCK material left for the renderer
+ * to convert, while everything that draws (our matcap, our PBR, MeshNormalNodeMaterial) carries
+ * its own colorNode.
+ *
+ * That hypothesis was raised and dropped earlier, when giving the panels a colorNode did not
+ * fix them -- but at that point the frame was already being poisoned by a THREE.Line, so the
+ * test could not have succeeded. It deserves its second hearing.
+ */
+NodeMaterials.basic = function (hex, opts = {}) {
+  if (!gpu) return null;
+  const { uniform, vec3 } = tsl;
+  const m = new gpu.MeshBasicNodeMaterial({
+    transparent: !!opts.transparent,
+    opacity: opts.opacity === undefined ? 1 : opts.opacity,
+    depthTest: opts.depthTest !== false,
+    depthWrite: opts.depthWrite !== false,
+    side: opts.side || gpu.FrontSide,
+  });
+  const col = uniform(new gpu.Color(hex));
+  m.colorNode = vec3(col);
+  if (opts.opacity !== undefined && opts.opacity !== 1) m.opacityNode = tsl.float(opts.opacity);
+  // Legacy call sites set material.color.set(...); keep that working against the same object.
+  m.color = col.value;
+  m.uniforms = { color: col };
+  return m;
+};
+
 /** The controller ray: a white tube that fades out along its length. */
 NodeMaterials.laser = function () {
   if (!gpu) return null;

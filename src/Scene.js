@@ -7059,7 +7059,10 @@ class Scene {
             spikeGeo.rotateX(-Math.PI / 2);
             spikeGeo.translate(0, 0, -0.05); // Base at 0, Tip at -0.10
             
-            const spikeMat = new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
+            // Node material first: bisection named this exact object as the one that starts
+            // the drawElements flood under ?renderer=webgpu. See NodeMaterials.basic.
+            const spikeMat = NodeMaterials.basic(0x4d4d4d)
+              || new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
             const spikeMesh = new THREE.Mesh(spikeGeo, spikeMat);
             spikeMesh.name = 'stylus_spike';
             controller.add(spikeMesh);
@@ -7085,10 +7088,15 @@ class Scene {
             const spikeGhostGeo = new THREE.CylinderGeometry(0, 0.004, 0.035, 16);
             spikeGhostGeo.rotateX(-Math.PI / 2);
             spikeGhostGeo.translate(0, 0, -0.0825); // top ~1/3, z −0.065 .. −0.10 (tip)
-            const spikeGhostMat = new THREE.MeshBasicMaterial({
+            const spikeGhostMat = NodeMaterials.basic(0x00e5ff, {
+                transparent: true, opacity: 0.6, depthTest: true, depthWrite: false,
+            }) || new THREE.MeshBasicMaterial({
                 color: 0x00e5ff, transparent: true, opacity: 0.6,
                 depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false,
             });
+            // GreaterDepth is the "show me where something is nearer" trick that makes the
+            // ghost read as occluded; it survives the node material, so it is set either way.
+            spikeGhostMat.depthFunc = THREE.GreaterDepth;
             const spikeGhost = new THREE.Mesh(spikeGhostGeo, spikeGhostMat);
             spikeGhost.name = 'stylus_spike_ghost';
             spikeGhost.renderOrder = 9999;
