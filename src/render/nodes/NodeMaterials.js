@@ -35,6 +35,15 @@ NodeMaterials.enable = function (mod, tslMod) {
   gpu = mod;
   tsl = tslMod;
   cache = {};
+  // A FLAT OPAQUE MATERIAL WITH NO TEXTURE, built up front so it can be swapped onto a panel
+  // inside a session without constructing anything there (the one fault this renderer has).
+  // It separates two invisibles that look identical: a quad drawn with a texture that never
+  // uploaded is transparent, and a quad that is not drawn is also nothing. Swap this in and
+  // a magenta rectangle either appears where the menu should be, or does not.
+  NodeMaterials._solid = new mod.MeshBasicNodeMaterial({
+    color: new mod.Color(0xff00ff), side: mod.DoubleSide,
+    transparent: false, depthTest: false, depthWrite: false,
+  });
   // Every mode gets a material now, including the ones still unported — a placeholder draws
   // something and keeps the scene legible, where a missing material draws black and looks
   // like a crash.
@@ -179,6 +188,7 @@ NodeMaterials.warm = function (renderer, camera, extraMaterials) {
   if (!gpu || !renderer) return 0;
   const mats = [];
   for (const id in cache) if (cache[id]) mats.push(cache[id]);
+  if (NodeMaterials._solid) mats.push(NodeMaterials._solid);
   if (extraMaterials) for (const m of extraMaterials) if (m) mats.push(m);
   if (!mats.length) return 0;
 

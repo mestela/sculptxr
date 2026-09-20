@@ -2329,6 +2329,40 @@ class Scene {
         };
       }
 
+      // window._panelSolid() — is the panel invisible because its TEXTURE never arrived?
+      //
+      // A quad drawn with a texture that failed to upload is fully transparent, which looks
+      // exactly like a quad that was never drawn -- and _panelDrawDelta already proved it IS
+      // drawn. Swapping in a flat magenta material (pre-built at startup, so nothing is
+      // constructed inside the session) tells the two apart:
+      //   magenta rectangle appears -> the geometry and the framebuffer are fine, the TEXTURE
+      //                                is the problem
+      //   still nothing             -> the draw lands somewhere the compositor never shows
+      if (!window._panelSolid) {
+        window._panelSolid = () => {
+          const solid = NodeMaterials._solid;
+          if (!solid) { console.log('[panelSolid] no solid material'); return 0; }
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh || !p.mesh.visible) continue;
+            if (!p.mesh.userData._origMat) p.mesh.userData._origMat = p.mesh.material;
+            p.mesh.material = solid;
+            n++;
+          }
+          console.log('[panelSolid] swapped ' + n + ' — look where the menu should be');
+          return n;
+        };
+        window._panelRestoreMat = () => {
+          for (const p of HTMLVRPanel._live) {
+            if (p.mesh && p.mesh.userData._origMat) {
+              p.mesh.material = p.mesh.userData._origMat;
+              p.mesh.userData._origMat = null;
+            }
+          }
+          console.log('[panelSolid] restored');
+        };
+      }
+
       // window._panelDrawDelta() — how many draw calls does the visible panel ACTUALLY cost?
       //
       // Comparing total draws between two sessions was confounded: a controller model failed
