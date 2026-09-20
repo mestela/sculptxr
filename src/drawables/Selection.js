@@ -203,8 +203,15 @@ class Selection {
     }
 
     if (!this._threeCircle) {
-      // LineLoop gives a true 1-px-wide circle outline, matching the original GL line look.
-      // RingGeometry creates a filled disk that appears too thick at large radii.
+      // A true 1-px-wide circle outline, matching the original GL line look. RingGeometry
+      // creates a filled disk that appears too thick at large radii.
+      //
+      // Line, NOT LineLoop: WebGPURenderer does not support LineLoop at all -- it logs
+      // "Objects of type THREE.LineLoop are not supported" once per frame and draws nothing,
+      // so the brush cursor silently vanishes on the flagged path. The loop below runs to
+      // i <= 64, so the first point is already repeated at the end and the ring closes
+      // itself; LineLoop's implicit closing segment was drawing on top of a segment that
+      // existed anyway. Identical output on both renderers.
       const pts = [];
       for (let i = 0; i <= 64; i++) {
         const a = (i / 64) * Math.PI * 2;
@@ -212,7 +219,7 @@ class Selection {
       }
       const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
       const lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2, depthTest: false, depthWrite: false, transparent: true });
-      this._threeCircle = new THREE.LineLoop(lineGeo, lineMat);
+      this._threeCircle = new THREE.Line(lineGeo, lineMat);
       this._threeCircle.renderOrder = 10000;
 
       const dotGeo = new THREE.SphereGeometry(0.005, 8, 8);
