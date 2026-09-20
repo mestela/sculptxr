@@ -160,12 +160,46 @@ if (q.get('shadow') === '1') {
   caster.castShadow = true;
   scene.add(caster);
 
-  const spot = new THREE.SpotLight(0xffffff, 6, 10, 0.7, 0.3, 2);
-  spot.position.set(0.4, 0.9, -0.3);
-  spot.target.position.set(0, -0.35, -0.6);
-  spot.castShadow = true;
-  scene.add(spot); scene.add(spot.target);
-  log('shadow test: floor + caster + casting spot');
+  // ?shadowlight=point|spot -- THE ONE DIFFERENCE BETWEEN THIS RIG AND THE APP. A spot's shadow
+  // map is an ordinary 2D depth texture; a POINT light's is a CubeRenderTarget with a
+  // CubeDepthTexture, attached a face at a time with framebufferTexture2D(TEXTURE_CUBE_MAP_*).
+  // That is a much narrower path on the WebGL fallback backend, and the app's default light is
+  // a point light -- so "shadows work in the rig, not in the app" may be exactly this.
+  const wantPoint = (q.get('shadowlight') || 'spot') === 'point';
+  let sl;
+  if (wantPoint) {
+    sl = new THREE.PointLight(0xffffff, 3, 10, 2);
+    sl.position.set(0.4, 0.9, -0.3);
+    scene.add(sl);
+  } else {
+    sl = new THREE.SpotLight(0xffffff, 6, 10, 0.7, 0.3, 2);
+    sl.position.set(0.4, 0.9, -0.3);
+    sl.target.position.set(0, -0.35, -0.6);
+    scene.add(sl); scene.add(sl.target);
+  }
+  sl.castShadow = true;
+  log('shadow test: floor + caster + casting ' + (wantPoint ? 'POINT' : 'spot') + ' light');
+  // window.shadowDelta() -- mean luminance with the light casting vs not. A working shadow
+  // darkens the frame; zero delta means the map is rendered and then sampled to no effect.
+  window.shadowDelta = async () => {
+    const g = gl();
+    const w = renderer.domElement.width, h = renderer.domElement.height;
+    const px = new Uint8Array(w * h * 4);
+    const mean = async () => {
+      for (let i = 0; i < 6; i++) { tick(); await new Promise((r) => setTimeout(r, 16)); }
+      g.bindFramebuffer(g.FRAMEBUFFER, null);
+      g.readPixels(0, 0, w, h, g.RGBA, g.UNSIGNED_BYTE, px);
+      let sum = 0, n = 0;
+      for (let i = 0; i < w * h; i++) { const v = px[i * 4]; if (v > 20) { sum += v; n++; } }
+      return n ? sum / n : 0;
+    };
+    // shadow.INTENSITY, not castShadow. castShadow is graph state: flipping it without a
+    // material rebuild leaves the shadow compiled into the shader, so the "off" sample still
+    // contains the shadow and the difference comes out as zero. intensity is a plain uniform.
+    sl.shadow.intensity = 0; const off = await mean();
+    sl.shadow.intensity = 1; const on = await mean();
+    return { type: sl.type, off: +off.toFixed(2), on: +on.toFixed(2), darkening: +(off - on).toFixed(2) };
+  };
 }
 
 // ── ?spec=1 -- IS THE LIGHTING THE SAME IN BOTH EYES? ────────────────────────────────────
