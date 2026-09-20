@@ -1834,7 +1834,15 @@ class Scene {
       // VR panels are 3D meshes; desktop uses DOM overlays, so their meshes must never
       // render on desktop. Some (MiniPanel, radial) aren't _startHidden, so they'd show at
       // the world origin. Hide them whenever we're not presenting (no effect in VR).
-      if (!this._renderer?.xr?.isPresenting) {
+      // window._vrPanelsOnDesktop = 1 KEEPS THEM ON OUTSIDE A SESSION.
+      //
+      // The panels exist in the scene on the desktop -- matt: "i've frequently zoomed into the
+      // centre of the world on desktop and found tiny vr menus visible there" -- they are just
+      // force-hidden here. That makes them the one VR-only symptom that CAN be reproduced on a
+      // desktop, which matters because "menus do not draw under WebGPURenderer" has now cost
+      // several headset trips. window._showVrPanels() sets this and parks one in front of the
+      // camera; _hideVrPanels() puts it back.
+      if (!this._renderer?.xr?.isPresenting && !window._vrPanelsOnDesktop) {
         const _vrPanels = [this._miniPanel, this._mainMenuPanel,
           this._toolPickerPanel, this._vrRadial, this._vrRadialMenu, this._vrConfirm,
           this._vrNumpad, this._vrKeyboard];
@@ -2250,6 +2258,38 @@ class Scene {
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
       // The warm pass runs once, at Enter VR, where it cannot be observed from a desktop.
       // Exposed so it can at least be proven not to throw before it is depended on there.
+      if (!window._showVrPanels) {
+        window._showVrPanels = (which) => {
+          window._vrPanelsOnDesktop = 1;
+          const cam = this._camera.getThreeCamera();
+          cam.updateMatrixWorld(true);
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh) continue;
+            const want = !which || p.constructor.name.toLowerCase().includes(String(which).toLowerCase());
+            p.mesh.visible = want;
+            if (want) {
+              // Parked half a metre in front of the camera, facing it, at a size the desktop
+              // frustum can actually see -- their VR placement is wrist-relative and ends up
+              // as a speck at the origin.
+              p.mesh.position.set(0, 0, -0.5).applyMatrix4(cam.matrixWorld);
+              p.mesh.quaternion.copy(cam.quaternion);
+              p.mesh.scale.set(1, -1, 1);
+              p.markDirty?.();
+              n++;
+            }
+          }
+          this._drawFullScene = true;
+          this.render?.();
+          console.log('[showVrPanels] showing ' + n);
+          return n;
+        };
+        window._hideVrPanels = () => {
+          window._vrPanelsOnDesktop = 0;
+          for (const p of HTMLVRPanel._live) if (p.mesh) p.mesh.visible = false;
+          this._drawFullScene = true; this.render?.();
+        };
+      }
       if (this._isNodeRenderer && !window._warmNow) window._warmNow = () => {
         const pm = [];
         for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) pm.push(p.mesh.material);
