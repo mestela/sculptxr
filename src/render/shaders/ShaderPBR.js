@@ -69,12 +69,17 @@ ShaderPBR.environments = [{
   // `sph` is a neutral grey rather than this environment's real coefficients. It feeds the
   // LEGACY renderer's ambient only, and computing real SH needs the panorama on the CPU.
   // Flat grey is honest there; the node path ignores sph entirely and uses the PMREM.
-  // 512x256, not the 1k download. PMREM's base is 256px, so a 1k source is thrown away
-  // before it is ever sampled -- and this is 378KB against 1.5MB, which is the difference
-  // between a noticeable and an unnoticeable load on a headset over LAN. Downsampled from
-  // the Poly Haven 1k with ffmpeg, float throughout (lanczos, gbrpf32le), so nothing was
-  // clamped on the way.
-  hdr: texPath + 'ferndale_studio_07_512.hdr',
+  // 1k, NOT the 512 downsample. PMREM's base is 256px PER CUBE FACE, not 256 total -- four
+  // faces around the horizon is roughly 1024px of azimuth, so a 1024x512 equirect is what
+  // fills it. three sizes the chain from the source: 1024 wide gives cubeSize 256 (a
+  // 768x1024 cubeUV), 512 wide gives cubeSize 128, and matt saw the difference immediately:
+  // "its quite blurry compared to the original hdrs".
+  //
+  // The old LogLUV atlas looked sharp because its level 0 was the full-resolution panorama
+  // sampled directly, with prefiltering only at higher roughness. Matching that needs the
+  // resolution, not a cleverer filter. 2k would give cubeSize 512 if mirror-sharp
+  // reflections are ever wanted; 1k is the point where a sculpt stops looking soft.
+  hdr: texPath + 'ferndale_studio_07_1k.hdr',
   sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   exposure: 1.0,
   name: 'Ferndale studio 07'

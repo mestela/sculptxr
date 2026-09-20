@@ -175,7 +175,10 @@ var getOptionsURL = function () {
   options.wireframe = queryBool(getVal('wireframe'), false);
   options.curvature = queryNumber(getVal('curvature'), 0, 5, 0); // [0-5]
   options.exposure = queryNumber(getVal('exposure'), 0, 5); // [0-5]
-  options.environment = queryInteger(getVal('environment'), 0, Infinity, 2); // [0-inf]
+  // 5 = Ferndale studio 07, the first equirect HDR environment (ShaderPBR.environments).
+  // The default used to be 2, studio_small_01, back when every environment was a LogLUV
+  // octahedral atlas.
+  options.environment = queryInteger(getVal('environment'), 0, Infinity, 5); // [0-inf]
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
