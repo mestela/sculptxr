@@ -28,6 +28,18 @@ const matcapTextures = [];   // index -> Texture, shared by every mesh using tha
 
 NodeMaterials.isActive = () => !!gpu;
 
+/** Every material this module owns — the shader cache, the UI materials and the converted
+ *  stock ones. Used to invalidate compiled shaders at an XR session boundary, where the
+ *  camera uniform layout changes. */
+NodeMaterials.all = function () {
+  const out = [];
+  for (const id in cache) if (cache[id]) out.push(cache[id]);
+  for (const m of basicCache.values()) out.push(m);
+  for (const v of (NodeMaterials._panelVariants || [])) out.push(v);
+  if (NodeMaterials._solid) out.push(NodeMaterials._solid);
+  return out;
+};
+
 /**
  * Called once, right after the WebGPU renderer is initialised and before anything renders.
  * `mod` is the dynamically imported `three/webgpu`.

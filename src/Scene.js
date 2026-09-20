@@ -6835,6 +6835,38 @@ class Scene {
     // time the compositor spends showing the default gray void environment.
     const t0 = performance.now();
     await this._renderer.xr.setSession(session);
+
+    // REBUILD EVERY MATERIAL AT THE SESSION BOUNDARY.
+    //
+    // A node material's shader is compiled the first time it is DRAWN, and everything in
+    // this app is drawn on the desktop long before anyone enters VR. So every material
+    // already carries the non-XR camera layout -- single cameraProjectionMatrix and
+    // cameraViewMatrix inside the shared `render` block -- while the session binds per-eye
+    // arrays selected by u_cameraIndex. Removing the pre-session warm only stopped ADDING
+    // to that set; it could never fix the materials the desktop had already compiled, which
+    // is why the symptoms kept reshuffling: whichever materials happened to be drawn first
+    // were the ones that broke.
+    //
+    // needsUpdate discards the compiled state, so each one is rebuilt on its next draw --
+    // inside the session, with the layout the session actually uses. Done on the way out
+    // too, for the same reason in reverse.
+    const _rebuildAll = (why) => {
+      let n = 0;
+      const mark = (m) => { if (m && m.isMaterial) { m.needsUpdate = true; n++; } };
+      this._scene.traverse((o) => {
+        if (!o.material) return;
+        if (Array.isArray(o.material)) o.material.forEach(mark); else mark(o.material);
+      });
+      for (const m of NodeMaterials.all ? NodeMaterials.all() : []) mark(m);
+      console.log('[xr] rebuilt ' + n + ' materials (' + why + ')');
+    };
+    if (this._isNodeRenderer) {
+      _rebuildAll('session start');
+      session.addEventListener('end', () => {
+        try { _rebuildAll('session end'); } catch (e) { /* never block leaving VR */ }
+      });
+    }
+
     const t1 = performance.now();
     if (window.screenLog) window.screenLog(`[XR] setSession Resolved (+${Math.round(t1 - window._xrSessionStartT)}ms total, setSession took ${Math.round(t1-t0)}ms)`, "lime");
 
