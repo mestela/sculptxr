@@ -318,7 +318,11 @@ NodeMaterials.convertBasic = function (src) {
     const opac = uniform(src.opacity);
     // The map node exists whether or not there is a map yet: canvas-textured objects assign
     // theirs on a later paint, and a node graph cannot grow a texture afterwards.
-    const mapNode = texture(src.map || new gpu.Texture());
+    // ONE shared placeholder for every map-less material, not one each. The per-material
+    // version showed up immediately in xrPerf as `tex 59` against WebGL's `tex 14` -- 45
+    // empty textures whose only job was to give the node graph something to point at.
+    if (!NodeMaterials._emptyTex) NodeMaterials._emptyTex = new gpu.Texture();
+    const mapNode = texture(src.map || NodeMaterials._emptyTex);
     const hasMap = uniform(src.map ? 1 : 0);
     let rgb = vec3(col);
     if (src.vertexColors) rgb = rgb.mul(vertexColor());
