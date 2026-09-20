@@ -4540,7 +4540,10 @@ class Scene {
       L.shadow.bias = 0;
       L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
       L.shadow.intensity = e._shadowIntensity === undefined ? 1 : e._shadowIntensity;
-      L.shadow.radius = e._shadowRadius === undefined ? 2 : e._shadowRadius;
+      // 0..100, not 0..10 -- matt: "a max softenss of 10 is too sharp". radius is in shadow
+      // map texels, so what it is worth depends on map resolution; at 2k over a scene this
+      // size, 10 was barely a penumbra.
+      L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
 
       const c = e._lightColor || [1, 1, 1];
       L.color.setRGB(c[0], c[1], c[2]);

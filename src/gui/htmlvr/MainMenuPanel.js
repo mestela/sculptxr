@@ -2581,8 +2581,8 @@ export function buildSectionHTML_scene(main) {
     </div>
     <div class="mm-row">
       <span class="mm-lbl">Sh. softness</span>
-      <input type="range" id="mm-light-shsoft" min="0" max="100" step="1" value="${Math.round((_lit._shadowRadius ?? 2) * 10)}">
-      <span class="mm-val" id="mm-light-shsoft-val">${(_lit._shadowRadius ?? 2).toFixed(1)}</span>
+      <input type="range" id="mm-light-shsoft" min="0" max="100" step="1" value="${Math.round(_lit._shadowRadius ?? 4)}">
+      <span class="mm-val" id="mm-light-shsoft-val">${Math.round(_lit._shadowRadius ?? 4)}</span>
     </div>
     <div class="mm-row">
       <span class="mm-lbl">Sh. bias</span>
@@ -4449,9 +4449,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     }, (v) => v + '%', null);
     wireSlider(el.querySelector('#mm-light-shsoft'), el.querySelector('#mm-light-shsoft-val'), (v) => {
       const L = _litSel(); if (!L) return;
-      L._shadowRadius = v / 10;
+      L._shadowRadius = v;
       main.render?.();
-    }, (v) => (v / 10).toFixed(1), null);
+    }, (v) => String(v), null);
     wireSlider(el.querySelector('#mm-light-shbias'), el.querySelector('#mm-light-shbias-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._shadowNormalBias = v / 100;
