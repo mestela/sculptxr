@@ -334,6 +334,12 @@ export function panelPixelSize(el, fallbackW, fallbackH) {
 }
 
 export class HTMLVRPanel {
+  // EVERY LIVE PANEL, so a probe can ask them questions from the console. The panels do not
+  // draw at all under ?renderer=webgpu and there is no desktop preview of them, so the only
+  // way to find out why is to ask on the device -- and per the diagnostics rule that answer
+  // has to land in the console, where it can be copied out of a headset.
+  static _live = new Set();
+
   /**
    * @param {HTMLElement} element   Root DOM element to render.  Not yet in document —
    *                                this constructor appends it to the shared host canvas.
@@ -542,6 +548,7 @@ export class HTMLVRPanel {
     if (this._startHidden) this.mesh.visible = false;
 
     scene.add(this.mesh);
+    HTMLVRPanel._live.add(this);
 
     // Trigger first paint
     this.markDirty();
@@ -1585,3 +1592,44 @@ export class HTMLVRPanel {
     }
   }
 }
+
+// ── PANEL PROBE ───────────────────────────────────────────────────────────────
+// window._panelProbe() — why is nothing drawing?
+//
+// Reports the facts that distinguish the candidates, rather than one of them at a time:
+//   visible/parent    — is something hiding it (including a sweep of our own)
+//   matType/hasMap    — did the material survive conversion, and is a texture bound
+//   imgKind/imgSize   — did the rasteriser ever produce pixels (ImageBitmap vs nothing)
+//   inScene           — is the mesh still attached to the rendered graph
+//   drawCalls         — did the renderer draw ANYTHING near this count
+// A panel with pixels, visible, in-scene and still not on screen is a renderer problem;
+// one with no image is a rasteriser problem. Those need different fixes.
+window._panelProbe = function () {
+  const out = [];
+  for (const p of HTMLVRPanel._live) {
+    const m = p.mesh;
+    if (!m) { out.push({ name: p.constructor.name, mesh: null }); continue; }
+    let vis = m.visible, o = m.parent, inScene = false, depth = 0;
+    while (o) { if (!o.visible) vis = false; if (o.isScene) inScene = true; o = o.parent; depth++; }
+    const mat = m.material;
+    const img = mat && mat.map && mat.map.image;
+    out.push({
+      name: p.constructor.name,
+      selfVisible: m.visible,
+      visibleChain: vis,
+      inScene, depth,
+      matType: mat && mat.type,
+      isNodeMat: !!(mat && mat.isNodeMaterial),
+      hasMap: !!(mat && mat.map),
+      imgKind: img ? (img.constructor && img.constructor.name) : null,
+      imgSize: img ? `${img.width}x${img.height}` : null,
+      mapVersion: mat && mat.map ? mat.map.version : null,
+      opacity: mat && mat.opacity,
+      renderOrder: m.renderOrder,
+      pos: m.position.toArray().map(n => +n.toFixed(2)),
+      scale: m.scale.toArray().map(n => +n.toFixed(2)),
+    });
+  }
+  console.log('[panelProbe] ' + JSON.stringify(out, null, 1));
+  return out.length;
+};
