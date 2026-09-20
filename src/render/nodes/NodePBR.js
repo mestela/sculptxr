@@ -245,6 +245,7 @@ export function makePBR(gpu, tsl) {
 
   /** Per frame: exposure, environment, and the shared light state. */
   m.userData.updateFrame = function (main) {
+    m.userData.frames = (m.userData.frames || 0) + 1;
     uDebug.value = window._pbrDebug | 0;
     uExposure.value = ShaderPBR.exposure;
     const ei = getOptionsURL().envIntensity;
@@ -271,6 +272,28 @@ export function makePBR(gpu, tsl) {
   };
 
   m.userData.envTex = envTex;
+  // window._pbrProbe() — is this material being fed at all?
+  //
+  // Every _pbrDebug value looked identical on device, which means either the uniform is not
+  // reaching the shader or the mesh is not using this material. Those need opposite fixes, so
+  // the probe reports which: `frames` counts updateFrame calls, the uniforms show what the
+  // shader is actually reading, and meshMat says what the sculpt is drawn with.
+  window._pbrProbe = function () {
+    const sph0 = uSPH.array[0];
+    const out = {
+      frames: m.userData.frames || 0,
+      debug: uDebug.value,
+      nbLights: uNbLights.value,
+      exposure: uExposure.value,
+      envIntensity: uEnvIntensity.value,
+      sph0: [+sph0.x.toFixed(4), +sph0.y.toFixed(4), +sph0.z.toFixed(4)],
+      envSize: [uEnvSize.value.x, uEnvSize.value.y],
+      envImage: envTex.image ? `${envTex.image.width}x${envTex.image.height}` : null,
+      lightPos0: uLightPos.array[0].toArray(),
+    };
+    console.log('[pbrProbe] ' + JSON.stringify(out));
+    return out;
+  };
   return m;
 }
 

@@ -2248,6 +2248,27 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+      // WHAT THE SCULPT IS ACTUALLY DRAWN WITH. A material that is never fed and a material
+      // that is never used look identical from the outside (a black mesh), so the probe has
+      // to answer both halves.
+      if (!window._meshMatProbe) window._meshMatProbe = () => {
+        const r = [];
+        (this.getMeshes ? this.getMeshes() : []).forEach((mesh) => {
+          const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+          const mt = tm && tm.material;
+          r.push({
+            shaderId: mesh.getShaderType ? mesh.getShaderType() : null,
+            matType: mt && mt.type,
+            isNode: !!(mt && mt.isNodeMaterial),
+            hasColorNode: !!(mt && mt.colorNode),
+            visible: tm && tm.visible,
+            hasColorAttr: !!(tm && tm.geometry && tm.geometry.getAttribute('color')),
+            hasMaterialAttr: !!(tm && tm.geometry && tm.geometry.getAttribute('aMaterial')),
+          });
+        });
+        console.log('[meshMatProbe] ' + JSON.stringify(r));
+        return r;
+      };
 
       if (this._isNodeRenderer && this._scene) {
         this._scene.traverse((o) => {
