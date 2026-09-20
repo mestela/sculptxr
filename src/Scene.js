@@ -3766,11 +3766,19 @@ class Scene {
     // relative to this group (meshes live under it).
     window._sxrWorldGroup = this._worldGroup;
     
-    // Add basic lighting since we are using MeshStandardMaterial
-    this._scene.add(new THREE.AmbientLight(0x404040, 2.0)); // soft white light
-    var dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    dirLight.position.set(1, 1, 1);
-    this._scene.add(dirLight);
+    // NO DEFAULT LIGHTS. There were two here -- an AmbientLight and a DirectionalLight, added
+    // long ago "since we are using MeshStandardMaterial" -- and until today they lit nothing:
+    // every shader on the legacy path is custom and ignores three's lights entirely, so they
+    // were inert decoration.
+    //
+    // Moving PBR onto MeshPhysicalNodeMaterial woke them up. They became the brightness floor
+    // of every render, with no entity, no outliner row, and no way to select, move or switch
+    // them off. matt: "is there a default light i can't see or edit? if so, remove it."
+    //
+    // KNOWN CONSEQUENCE: the GLTF controller models are MeshStandardMaterial and were being
+    // lit by these. They will render dark under ?renderer=webgpu until they are given their
+    // own lighting or an unlit material -- they are UI furniture, not scene content, so they
+    // should not depend on the user's lighting rig either way.
 
     // Localized Geometry Base Grid (100 units wide, 25 divisions for massive 4-meter visual blocks)
     this._groundGrid = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
@@ -4459,27 +4467,22 @@ class Scene {
     for (const L of this._threeLightPool) if (!seen.has(L)) L.visible = false;
     for (const L of seen) { L.visible = true; this._threeLightPool.add(L); }
 
-    // AMBIENT, from the environment's DC term. A stand-in until the equirect+PMREM swap gives
-    // scene.environment a real IBL: uSPH[0] is the average of the panorama, so this is the
-    // flat part of what the old SH ambient contributed, scaled by the same Env Intensity
-    // slider. Cheap, and it stops an unlit shadow side reading as pure black.
-    // Via ShaderLib, which is how this file reaches shader definitions -- there is no direct
-    // ShaderPBR import here and adding one for a colour lookup is not worth a second path.
-    const SPBR = ShaderLib[Enums.Shader.PBR];
-    const env = SPBR && SPBR.environments[SPBR.idEnv];
-    const ei = getOptionsURL().envIntensity;
-    const gain = Number.isFinite(ei) ? ei : 1.0;
-    if (!this._nodeAmbient) {
-      this._nodeAmbient = new THREE_.AmbientLight(0xffffff, 1);
-      this._scene.add(this._nodeAmbient);
+    // NO HIDDEN AMBIENT. There used to be an AmbientLight here, coloured by the
+    // environment's SH average and scaled by the Env Intensity slider, as a stand-in until
+    // scene.environment carries a real IBL. matt: "is there a default light i can't see or
+    // edit? if so, remove it." He is right -- it was the only light in the scene that had no
+    // entity, could not be selected, moved or switched off, and quietly set the floor
+    // brightness of every render.
+    //
+    // The consequence is deliberate and should not be smoothed over: with no lights placed,
+    // PBR now renders black, and the Env Intensity slider does nothing on this path until the
+    // equirect + PMREM swap gives scene.environment something to hold. That is the honest
+    // state of an unlit scene, and it makes the missing piece visible rather than disguised.
+    if (this._nodeAmbient) {
+      this._scene.remove(this._nodeAmbient);
+      this._nodeAmbient.dispose && this._nodeAmbient.dispose();
+      this._nodeAmbient = null;
     }
-    if (env && env.sph) this._nodeAmbient.color.setRGB(env.sph[0], env.sph[1], env.sph[2]);
-    // NO PI. uSPH[0] is already an irradiance -- the average of the panorama -- and
-    // AmbientLight multiplies colour by intensity straight into the diffuse term. The extra
-    // factor of pi put a white sculpt at ~1.7 and clipped it to flat white, which reads as
-    // "the material is broken" rather than "the ambient is too strong": with everything
-    // washed out there is no shading to see and no shadow to find.
-    this._nodeAmbient.intensity = gain;
   }
 
   getLights() {
