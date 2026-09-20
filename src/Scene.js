@@ -2260,6 +2260,13 @@ class Scene {
           if (!this._minimalSeen.has(o)) { this._minimalSeen.add(o); this._minimalHidden.push([o, o.visible]); }
           o.visible = false;
         });
+        // _bisectUBO reveals a PREFIX of the list; everything else stays hidden. Restoring the
+        // object's original visibility, not forcing true, so revealing something that was
+        // already hidden in normal use does not change what the frame draws.
+        const rv = this._minimalReveal | 0;
+        for (let i = 0; i < rv && i < this._minimalHidden.length; i++) {
+          this._minimalHidden[i][0].visible = this._minimalHidden[i][1];
+        }
       }
       // WHAT STILL DRAWS. The stack says _renderObjectDirect, i.e. a real object on the
       // ordinary path -- so something survives the hide, and counting is the only way to know
@@ -2394,6 +2401,61 @@ class Scene {
         };
       }
 
+      // window._bisectUBO() — which of the 198 objects starts the errors?
+      //
+      // An empty frame is silent: drawCalls=0 for seconds on end with no errors, while the
+      // full scene floods. So the fault is in the CONTENT, and with the frame now genuinely
+      // empty the list can be bisected instead of guessed at. 198 objects is ~8 rounds, and
+      // asking a person to do 8 rounds by hand in a headset is not reasonable, so it runs
+      // itself: reveal a prefix, wait for the errors to settle, read the counter, halve.
+      //
+      // Requires _traceUBO() and _vrMinimalTest = 1 first -- the counter comes from the
+      // tracer and the hidden list from level 1.
+      if (!window._bisectUBO) window._bisectUBO = async () => {
+        if (!this._minimalHidden || !this._minimalHidden.length) {
+          console.log('[bisectUBO] run window._traceUBO() then window._vrMinimalTest = 1 first');
+          return null;
+        }
+        if (window.__uboErrCount === undefined) { console.log('[bisectUBO] tracer is not on'); return null; }
+        const list = this._minimalHidden.map(([o]) => o);
+        const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+        // Reveal the first k, leave the rest hidden, and count errors over a few frames.
+        const test = async (k) => {
+          this._minimalReveal = k;
+          for (let i = 0; i < 8; i++) await frame();
+          const before = window.__uboErrCount;
+          for (let i = 0; i < 12; i++) await frame();
+          return window.__uboErrCount - before;
+        };
+        if (await test(0) > 0) {
+          console.log('[bisectUBO] errors with NOTHING revealed — not scene content after all');
+          this._minimalReveal = 0;
+          return null;
+        }
+        if (await test(list.length) === 0) {
+          console.log('[bisectUBO] no errors with EVERYTHING revealed — cannot reproduce right now');
+          this._minimalReveal = 0;
+          return null;
+        }
+        let lo = 0, hi = list.length;          // lo is known-clean, hi is known-dirty
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          const errs = await test(mid);
+          console.log('[bisectUBO] first ' + mid + ' revealed -> ' + errs + ' errors');
+          if (errs > 0) hi = mid; else lo = mid;
+        }
+        const o = list[hi - 1];
+        console.log('[bisectUBO] CULPRIT #' + (hi - 1) + ': ' + (o.name || o.type)
+          + ' mat=' + (o.material && o.material.type)
+          + ' order=' + o.renderOrder
+          + ' geom=' + (o.geometry && o.geometry.type)
+          + ' indexed=' + !!(o.geometry && o.geometry.index)
+          + ' verts=' + (o.geometry && o.geometry.attributes.position
+            ? o.geometry.attributes.position.count : '?'));
+        this._minimalReveal = 0;
+        return o;
+      };
+
       // window._traceUBO() — WHICH object's draw emits the error?
       //
       // Every theory I have formed about this has been wrong: the material class, the stock
@@ -2413,6 +2475,7 @@ class Scene {
         gl.__uboTraced = true;
         const limit = maxReports || 12;
         let reports = 0;
+        window.__uboErrCount = 0;
         const seen = new Set();
         let cur = null;
         // Tag every drawable so the wrapper knows what is on the GPU right now.
@@ -2439,9 +2502,10 @@ class Scene {
           const orig = gl[name].bind(gl);
           gl[name] = function (...args) {
             const r = orig(...args);
-            if (reports < limit) {
+            if (true) {
               const e = gl.getError();
               if (e !== 0) {
+                window.__uboErrCount++;
                 const key = (cur && (cur.name || cur.type)) + ':' + e;
                 if (!seen.has(key)) {
                   seen.add(key);
