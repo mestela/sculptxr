@@ -2329,6 +2329,66 @@ class Scene {
         };
       }
 
+      // window._traceUBO() — WHICH object's draw emits the error?
+      //
+      // Every theory I have formed about this has been wrong: the material class, the stock
+      // conversion, the texture, the transform, the framebuffer, pipeline warming, uniform
+      // padding, scene.background. The error message has been sitting there the whole time
+      // naming a specific draw call, so stop inferring and ask the driver directly.
+      //
+      // Wraps drawElements/drawArrays on the real context, calls getError() immediately after
+      // each, and reports the object that was being drawn (captured via onBeforeRender). That
+      // is the one fact nothing so far has established: WHAT is too small for WHAT. Expensive
+      // -- a synchronous getError per draw stalls the pipeline -- so it is opt-in and
+      // self-limiting.
+      if (!window._traceUBO) window._traceUBO = (maxReports) => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        if (!gl) { console.log('[traceUBO] no raw context'); return false; }
+        if (gl.__uboTraced) { console.log('[traceUBO] already on'); return true; }
+        gl.__uboTraced = true;
+        const limit = maxReports || 12;
+        let reports = 0;
+        const seen = new Set();
+        let cur = null;
+        // Tag every drawable so the wrapper knows what is on the GPU right now.
+        this._scene.traverse((o) => {
+          if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          const prev = o.onBeforeRender;
+          o.onBeforeRender = function (...a) {
+            cur = o;
+            if (prev) prev.apply(this, a);
+          };
+        });
+        const wrap = (name) => {
+          const orig = gl[name].bind(gl);
+          gl[name] = function (...args) {
+            const r = orig(...args);
+            if (reports < limit) {
+              const e = gl.getError();
+              if (e !== 0) {
+                const key = (cur && (cur.name || cur.type)) + ':' + e;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  reports++;
+                  const m = cur && cur.material;
+                  console.log('[traceUBO] ' + name + ' err=0x' + e.toString(16)
+                    + ' obj=' + (cur ? (cur.name || cur.type) : 'unknown')
+                    + ' mat=' + (m ? (m.type + (m.userData && m.userData.isNodePanel ? '(panel)' : '')) : 'none')
+                    + ' order=' + (cur ? cur.renderOrder : '?')
+                    + ' visible=' + (cur ? cur.visible : '?'));
+                }
+              }
+            }
+            return r;
+          };
+        };
+        wrap('drawElements');
+        wrap('drawArrays');
+        if (gl.drawElementsInstanced) wrap('drawElementsInstanced');
+        console.log('[traceUBO] on — errors will be reported with the object that caused them');
+        return true;
+      };
+
       // window._panelMat('normal'|'restore') — the sharpest cut left.
       //
       // With 91 objects hidden and the panel alone in the frame, still nothing. So no other
