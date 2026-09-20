@@ -4835,6 +4835,19 @@ class Scene {
       this._lpTmp = { p: new THREE_.Vector3(), q: new THREE_.Quaternion(), s: new THREE_.Vector3() };
     }
 
+    // THE SCENE'S RADIUS IN WORLD UNITS, for the shadow cameras below. Note this is the RAW
+    // worldGroup scale, not the wscale used for falloff -- that one is normalised against the
+    // default so the exposure does not move, whereas a shadow camera wants true world metres.
+    const _sAbs = (this._worldGroup && this._worldGroup.scale.x) || 1;
+    const _realMeshes = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+    let _rWorld = 1;
+    if (_realMeshes.length) {
+      const b = this.computeBoundingBoxMeshes(_realMeshes);
+      if (Number.isFinite(b[0])) {
+        _rWorld = Math.max(1e-4, 0.5 * Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) * _sAbs);
+      }
+    }
+
     for (const e of lights) {
       const host = e.getThreeMesh && e.getThreeMesh();
       if (!host) continue;
@@ -4952,8 +4965,36 @@ class Scene {
           L.shadow.needsUpdate = true;
         }
       }
+      // THE SHADOW CAMERA'S NEAR PLANE IS 0.5 METRES BY DEFAULT, AND THAT IS WHY THERE WERE NO
+      // SHADOWS. three builds a point light's shadow as PerspectiveCamera(90, 1, 0.5, 500) and
+      // a spot's as PerspectiveCamera(50, 1, 0.5, 500). Those are sane defaults for a
+      // room-sized scene in metres. They are nonsense here: the sculpt is grip-scaled, and
+      // matt's session reported worldScale 0.0041 with the whole view inside far = 1.19m -- so
+      // the ENTIRE model sat inside the shadow camera's near plane and the map came back empty.
+      // It also explains "the near clip feels like at least 50cm", reported three times: 0.5 is
+      // exactly that number.
+      //
+      // So size the shadow frustum off the geometry's own world-space radius, which follows the
+      // grip scale like everything else should. Near is small but not zero -- depth precision is
+      // governed by the far/near RATIO, so this keeps it near 100:1 rather than the default's
+      // 1000:1 over a range nothing occupies.
+      const _sc = L.shadow.camera;
+      if (_sc) {
+        const near = Math.max(1e-4, _rWorld * 0.01);
+        const far = Math.max(near + 1e-3, (L.distance > 0 ? L.distance : _rWorld * 4));
+        if (_sc.isOrthographicCamera) {
+          const ext = _rWorld * 1.2;
+          _sc.left = -ext; _sc.right = ext; _sc.top = ext; _sc.bottom = -ext;
+        }
+        if (_sc.near !== near || _sc.far !== far) { _sc.near = near; _sc.far = far; }
+        _sc.updateProjectionMatrix();
+      }
       L.shadow.bias = 0;
-      L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
+      // normalBias IS IN WORLD UNITS, so it has to follow the grip scale for the same reason
+      // the falloff does. 0.15 was tuned at the default scale, where the model's world radius is
+      // tens of units; at matt's measured 0.6% scale the model is centimetres across and an
+      // unscaled 0.15 would shove every shadow clean off the surface.
+      L.shadow.normalBias = (e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias) * wscale;
       L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
     }
 
