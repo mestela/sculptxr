@@ -1447,13 +1447,26 @@ class Scene {
     const geoGrew = p.geo ? (geo - p.geo) : 0;
     p.objs = objs; p.geo = geo;
 
-    console.log('[xrPerf] ' + p.n + ' frames/s | our work ' + (p.work / p.n).toFixed(2) +
+    // DRAW CALLS ARE NAMED DIFFERENTLY ON THE TWO RENDERERS -- `calls` on WebGLRenderer,
+    // `drawCalls` on WebGPURenderer -- so a straight read reports 0 on the flagged path and
+    // the comparison silently becomes "one of these draws nothing". Triangles are here for
+    // the same reason: a perf comparison is only a comparison if both sides are carrying the
+    // same load, and that has to be shown, not assumed.
+    const _r = info ? info.render : null;
+    // drawCalls FIRST. Both fields exist on WebGPURenderer, but they are not the same thing:
+    // measured live, drawCalls was 4 while `calls` read 2640 -- `calls` is not the per-frame
+    // count there. Preferring it would have put a meaningless number next to WebGL's real one
+    // and made the whole comparison junk. WebGLRenderer has no drawCalls, so it falls through.
+    const _calls = _r ? (_r.drawCalls !== undefined ? _r.drawCalls : _r.calls) : 0;
+    const _tris = _r ? (_r.triangles || 0) : 0;
+    console.log('[xrPerf] ' + (this._isNodeRenderer ? 'WebGPU(WebGL) ' : 'WebGL ')
+      + p.n + ' frames/s | our work ' + (p.work / p.n).toFixed(2) +
       'ms avg, ' + p.worst.toFixed(1) + 'ms worst | frame gap ' + med.toFixed(1) +
       'ms median, ' + p95.toFixed(1) + 'ms p95 | ' + p.late + ' late' +
       ' | scene ' + objs + (grew ? ' (' + (grew > 0 ? '+' : '') + grew + ')' : '') +
       ', geom ' + geo + (geoGrew ? ' (' + (geoGrew > 0 ? '+' : '') + geoGrew + ')' : '') +
       ', tex ' + (info ? info.memory.textures : 0) +
-      ', calls ' + (info ? info.render.calls : 0) +
+      ', calls ' + _calls + ', tris ' + _tris +
       ' | panel paints ' + (window._panelPaints | 0) +
       ' | skeleton refreshes ' + ((window._skelVisCalls | 0) / Math.max(1, p.n)).toFixed(1) + '/frame');
     window._panelPaints = 0;
