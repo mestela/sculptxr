@@ -56,7 +56,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
+import { HTMLVRPanel, registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -2248,6 +2248,13 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+      // The warm pass runs once, at Enter VR, where it cannot be observed from a desktop.
+      // Exposed so it can at least be proven not to throw before it is depended on there.
+      if (this._isNodeRenderer && !window._warmNow) window._warmNow = () => {
+        const pm = [];
+        for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) pm.push(p.mesh.material);
+        return NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), pm);
+      };
       // WHAT THE SCULPT IS ACTUALLY DRAWN WITH. A material that is never fed and a material
       // that is never used look identical from the outside (a black mesh), so the probe has
       // to answer both halves.
@@ -5290,6 +5297,19 @@ class Scene {
     // that happens when VR starts (worldGroup gets set to vrScale=0.008 + xrWorldOffset).
     this._worldGroup.updateMatrixWorld(true);
     this._desktopCameraCache.worldGroupMatrix = this._worldGroup.matrixWorld.clone();
+
+    // WARM EVERY PIPELINE WHILE WE ARE STILL OUTSIDE THE SESSION. Building a material inside
+    // an immersive session is this renderer's one real fault, and the VR panels are the only
+    // materials never drawn on the desktop -- so theirs are always built in there, and they
+    // are the first thing lost. See NodeMaterials.warm. Must happen BEFORE xr.enabled, or the
+    // warm render takes the XR path and defeats itself.
+    if (this._isNodeRenderer) {
+      const panelMats = [];
+      try {
+        for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);
+      } catch (e) { /* registry is a convenience; never block entering VR on it */ }
+      NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), panelMats);
+    }
 
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
     this._renderer.xr.enabled = true;

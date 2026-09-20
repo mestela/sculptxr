@@ -156,6 +156,57 @@ NodeMaterials.fresnelGlow = function (hex) {
 };
 
 /**
+ * WARM EVERY PIPELINE BEFORE THE SESSION STARTS.
+ *
+ * This renderer's one real fault, measured in the spike: building a material DURING an
+ * immersive session floods
+ *   GL_INVALID_OPERATION: ... uniform buffer that is too small
+ * until WebGL stops reporting, and whatever was mid-draw is lost. Pre-CREATING avoids it only
+ * if the pipeline is also COMPILED, and a pipeline is compiled the first time the material is
+ * actually drawn -- which is why the spike rendered a throwaway mesh per material before
+ * Enter VR rather than just constructing them.
+ *
+ * THE PANELS ARE THE ONES THAT MATTER, and the reason this was missed. Every other material
+ * is drawn on the desktop long before anyone enters VR, so it warms itself. The VR panels are
+ * never drawn outside a session, so their pipelines are always built INSIDE one -- they are
+ * the first thing to hit the fault and the first thing to disappear. matt: menus present in
+ * matcap, gone in pbr, and gone with the PBR material removed entirely, which is what finally
+ * ruled the material out and pointed here.
+ *
+ * Cheap and idempotent: a 2-triangle quad per material, off-screen, once.
+ */
+NodeMaterials.warm = function (renderer, camera, extraMaterials) {
+  if (!gpu || !renderer) return 0;
+  const mats = [];
+  for (const id in cache) if (cache[id]) mats.push(cache[id]);
+  if (extraMaterials) for (const m of extraMaterials) if (m) mats.push(m);
+  if (!mats.length) return 0;
+
+  const sc = new gpu.Scene();
+  const geo = new gpu.PlaneGeometry(0.001, 0.001);
+  // A colour attribute, because several of these read vertexColor() and a material warmed
+  // without one compiles a DIFFERENT pipeline to the one the sculpt will ask for.
+  const n = geo.attributes.position.count;
+  geo.setAttribute('color', new gpu.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
+  geo.setAttribute('aMaterial', new gpu.BufferAttribute(new Float32Array(n * 3), 3));
+  for (const m of mats) {
+    const mesh = new gpu.Mesh(geo, m);
+    mesh.position.set(0, 0, -0.05);
+    mesh.frustumCulled = false;
+    sc.add(mesh);
+  }
+  try {
+    renderer.render(sc, camera);
+  } catch (e) {
+    console.warn('[NodeMaterials] warm failed', e);
+  }
+  sc.clear();
+  geo.dispose();
+  console.log('[NodeMaterials] warmed ' + mats.length + ' pipelines');
+  return mats.length;
+};
+
+/**
  * Per frame, before rendering. Refreshes the one uniform the matcap needs from the
  * HEAD-CENTRE view -- deliberately not per eye, which is the entire point of it.
  */
