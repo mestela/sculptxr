@@ -2607,6 +2607,66 @@ class Scene {
         return true;
       };
 
+      // window._panelVariant(n) — matt's method: start from what WORKS and add features.
+      //
+      // MeshNormalNodeMaterial drew on the panel even while a THREE.Line was poisoning the
+      // frame, so it is immune to whatever this is. Walking forward from it finds the feature
+      // that loses the immunity, which is a far better question than "what is wrong with the
+      // broken material" -- the one the last dozen rounds asked, and got wrong every time.
+      //
+      // Every variant is pre-built and warmed, so the whole ladder can be walked in ONE
+      // session: call it with 0..6 and watch when the panel vanishes and the errors start.
+      //   0 normal material (known good)   4 texture, opaque
+      //   1 flat colour, opaque            5 texture + transparent + alpha
+      //   2 + transparent                  6 the real panel material (adds the grade)
+      //   3 + opacityNode
+      if (!window._panelVariant) window._panelVariant = (n) => {
+        const vs = NodeMaterials._panelVariants;
+        if (!vs) { console.log('[panelVariant] variants not built'); return null; }
+        const i = Math.max(0, Math.min(vs.length - 1, n | 0));
+        const mat = vs[i];
+        let applied = 0;
+        for (const p of HTMLVRPanel._live) {
+          if (!p.mesh) continue;
+          if (!p.mesh.userData._origVariantMat) p.mesh.userData._origVariantMat = p.mesh.material;
+          if (mat.userData && mat.userData.setMap && p._texture) mat.userData.setMap(p._texture);
+          p.mesh.material = mat;
+          applied++;
+        }
+        const errBefore = window.__uboErrCount;
+        console.log('[panelVariant] ' + i + ' applied to ' + applied
+          + ' panels — watch the panel and the error count'
+          + (errBefore === undefined ? ' (run _traceUBO() first to count errors)' : ''));
+        return i;
+      };
+      if (!window._panelVariantRestore) window._panelVariantRestore = () => {
+        for (const p of HTMLVRPanel._live) {
+          if (p.mesh && p.mesh.userData._origVariantMat) {
+            p.mesh.material = p.mesh.userData._origVariantMat;
+            p.mesh.userData._origVariantMat = null;
+          }
+        }
+      };
+      // And the same walk, automated: step every variant, count errors on each, print a table.
+      if (!window._panelLadder) window._panelLadder = async () => {
+        if (window.__uboErrCount === undefined) { console.log('[panelLadder] run _traceUBO() first'); return null; }
+        const vs = NodeMaterials._panelVariants || [];
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const rows = [];
+        for (let i = 0; i < vs.length; i++) {
+          window._panelVariant(i);
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          const errs = window.__uboErrCount - before;
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          rows.push({ variant: i, errors: errs, drawCalls: dc });
+          console.log('[panelLadder] variant ' + i + ' -> ' + errs + ' errors, drawCalls=' + dc);
+        }
+        console.log('[panelLadder] ' + JSON.stringify(rows));
+        return rows;
+      };
+
       // window._panelMat('normal'|'restore') — the sharpest cut left.
       //
       // With 91 objects hidden and the panel alone in the frame, still nothing. So no other

@@ -68,6 +68,8 @@ NodeMaterials.enable = function (mod, tslMod) {
   for (const id of Object.values(Enums.Shader)) {
     if (typeof id === 'number') cache[id] = build(id);
   }
+  // Built here so they exist before any session and are covered by the warm pass.
+  NodeMaterials.buildPanelVariants();
   return cache;
 };
 
@@ -202,6 +204,63 @@ NodeMaterials.basic = function (hex, opts = {}) {
   return m;
 };
 
+/**
+ * PANEL MATERIAL VARIANTS, from known-good to the real thing, one feature at a time.
+ *
+ * matt's method, and the right one: MeshNormalNodeMaterial drew on the panel even while the
+ * frame was being poisoned by a THREE.Line, so it is immune to whatever this is. Start from
+ * that and add features until the immunity breaks -- rather than starting from the broken
+ * material and guessing at causes, which is what the last dozen rounds were.
+ *
+ * ALL BUILT AT STARTUP AND WARMED, so stepping through them costs one session rather than one
+ * per variant -- and so nothing is constructed inside a session, which this renderer punishes.
+ *
+ *   0 MeshNormalNodeMaterial          the known-good baseline
+ *   1 flat colour, opaque             the simplest possible node material
+ *   2 flat colour, transparent        + the transparent flag and its blending
+ *   3 flat colour, transparent, alpha + an opacityNode
+ *   4 texture, opaque                 + sampling the panel's canvas
+ *   5 texture, transparent, alpha     + both together
+ *   6 the real panel material         + the brightness/saturation/gamma grade
+ */
+NodeMaterials.buildPanelVariants = function () {
+  if (!gpu || NodeMaterials._panelVariants) return NodeMaterials._panelVariants;
+  const { texture, vec3, float } = tsl;
+  const list = [];
+  const mk = (fn) => { const m = fn(); list.push(m); return m; };
+
+  mk(() => new gpu.MeshNormalNodeMaterial());
+
+  mk(() => { const m = new gpu.MeshBasicNodeMaterial(); m.colorNode = vec3(0.2, 0.8, 0.4); return m; });
+
+  mk(() => {
+    const m = new gpu.MeshBasicNodeMaterial({ transparent: true });
+    m.colorNode = vec3(0.2, 0.8, 0.4); return m;
+  });
+
+  mk(() => {
+    const m = new gpu.MeshBasicNodeMaterial({ transparent: true });
+    m.colorNode = vec3(0.2, 0.8, 0.4); m.opacityNode = float(0.85); return m;
+  });
+
+  for (const withAlpha of [false, true]) {
+    mk(() => {
+      const m = new gpu.MeshBasicNodeMaterial({ transparent: withAlpha });
+      const t = new gpu.Texture();
+      const node = texture(t);
+      m.colorNode = node.rgb;
+      if (withAlpha) m.opacityNode = node.a;
+      m.userData.setMap = (x) => { if (x) node.value = x; };
+      return m;
+    });
+  }
+
+  list.push(NodeMaterials.panel({ depthWrite: true, depthTest: true }));
+
+  NodeMaterials._panelVariants = list;
+  return list;
+};
+
 /** The controller ray: a white tube that fades out along its length. */
 NodeMaterials.laser = function () {
   if (!gpu) return null;
@@ -315,6 +374,7 @@ NodeMaterials.warm = function (renderer, camera, extraMaterials, scene) {
   for (const id in cache) add(cache[id]);
   add(NodeMaterials._solid);
   add(NodeMaterials._controller);
+  for (const v of (NodeMaterials._panelVariants || [])) add(v);
   if (extraMaterials) for (const m of extraMaterials) add(m);
   // EVERY MATERIAL ALREADY IN THE SCENE, not just ours.
   //
