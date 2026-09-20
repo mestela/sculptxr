@@ -2243,13 +2243,15 @@ class Scene {
       // and left the whole scene invisible -- a debug switch you cannot switch back is a
       // session lost, and it cost matt one.
       if (this._scene) {
-        if (!this._minimalHidden) {
-          this._minimalHidden = [];
-          this._scene.traverse(o => {
-            if (o.isMesh || o.isLine || o.isPoints) { this._minimalHidden.push([o, o.visible]); o.visible = false; }
-          });
-        }
-        // AND A FULL TRAVERSE EVERY FRAME, not a replay of the saved list. Two things escape
+        // ONE RECORDING PATH. There used to be a first-frame block here as well as the
+        // per-frame traverse below, and between them every object was recorded TWICE: once
+        // with its real visibility, then again -- by the traverse, moments later -- reading
+        // the false the first block had just written. _bisectUBO applies the list in order,
+        // so the false copy always won and revealing all 194 entries drew exactly one object.
+        // That is the "no errors with EVERYTHING revealed" result, and it was measuring an
+        // empty frame.
+        if (!this._minimalHidden) { this._minimalHidden = []; this._minimalSeen = new Set(); }
+        // A FULL TRAVERSE EVERY FRAME, not a replay of the saved list. Two things escape
         // a one-shot sweep: the cursors, which _updateVRCursors re-shows before every
         // _drawScene, and anything ADDED to the scene after the sweep ran -- which is what
         // the last trace's `obj=unknown` almost certainly was. A minimal test that is not
