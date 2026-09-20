@@ -58,12 +58,35 @@ import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles,
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
+
+
   injectAnimCSS,
   buildAnimationSectionHTML,
   wireAnimationSection,
   syncAnimationSection,
   refreshBlendshapesDOM,
 } from './AnimationControlPanel.js';
+
+// LIGHT INTENSITY IS A LOG SLIDER, because a linear one is unusable.
+//
+// Scene._syncThreeLights sets the three.js intensity to slider x ref^2, where ref is half the
+// scene diagonal -- about 29 units for the default sphere, so ref^2 is about 870. Slider 1
+// therefore means "irradiance 1 at 29 units away". In VR you place a light far nearer than
+// that, and irradiance goes as 1/d^2: at 10 units, slider 1 is already 8x over and every
+// surface facing the light clips to flat white. Measured in a session: slider ~2 -> three.js
+// intensity 1762, and matt could not drag below ~0.23, which still clips.
+//
+// So the whole useful span lived in the bottom ~1% of a 0..20 linear track. The mapping is now
+// logarithmic over 0.001..20, which puts 1.0 near the middle and makes the low end reachable.
+// The stored value is unchanged -- this is the track's shape only, not the light's meaning.
+const LIGHT_INT_MIN = 0.001;
+const LIGHT_INT_MAX = 20;
+const lightIntFromSlider = (v) => (v <= 0 ? 0
+  : LIGHT_INT_MIN * Math.pow(LIGHT_INT_MAX / LIGHT_INT_MIN, v / 1000));
+const lightIntToSlider = (x) => (!x || x <= 0 ? 0
+  : Math.round(1000 * Math.log(Math.max(LIGHT_INT_MIN, x) / LIGHT_INT_MIN)
+      / Math.log(LIGHT_INT_MAX / LIGHT_INT_MIN)));
+
 
 // ONE HEADER, both platforms. The row carries the section's name and its float/pin button, and
 // it is the same markup and the same CSS in the VR panel and in the desktop sidebar -- so a
@@ -2536,8 +2559,8 @@ export function buildSectionHTML_scene(main) {
     </div>
     <div class="mm-row">
       <span class="mm-lbl">Intensity</span>
-      <input type="range" id="mm-light-int" min="0" max="2000" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
-      <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(2)}</span>
+      <input type="range" id="mm-light-int" min="0" max="1000" step="1" value="${lightIntToSlider(_lit._lightIntensity ?? 1)}">
+      <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(3)}</span>
     </div>
     ${/* FALLOFF, not "range": it is the distance at which the light is half as bright, not a
          hard cutoff -- the attenuation in ShaderPBR never reaches zero. Sized from the scene
@@ -4428,9 +4451,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     };
     wireSlider(el.querySelector('#mm-light-int'), el.querySelector('#mm-light-int-val'), (v) => {
       const L = _litSel(); if (!L) return;
-      L._lightIntensity = v / 100;
+      L._lightIntensity = lightIntFromSlider(v);
       main.render?.();
-    }, (v) => (v / 100).toFixed(2), null);
+    }, (v) => lightIntFromSlider(v).toFixed(3), null);
     wireSlider(el.querySelector('#mm-light-range'), el.querySelector('#mm-light-range-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._lightRange = v;
@@ -4439,7 +4462,12 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     el.querySelector('#mm-light-shadow')?.addEventListener('click', () => {
       const L = _litSel(); if (!L) return;
       L._castShadow = (L._castShadow === false);
-      lightRepaintFn?.();
+      // repaintFn, not lightRepaintFn: this is wireSectionScene, which has no such parameter.
+      // `lightRepaintFn?.()` looks safe and is not -- optional CALL does not protect an
+      // undefined IDENTIFIER, so the shadow toggle threw a ReferenceError out of the VR
+      // dispatch every time it was pressed. The toggle changes the button's MARKUP, so it
+      // needs the full repaint anyway.
+      repaintFn?.();
       main.render?.();
     });
     wireSlider(el.querySelector('#mm-light-shopacity'), el.querySelector('#mm-light-shopacity-val'), (v) => {
