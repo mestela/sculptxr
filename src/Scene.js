@@ -2214,6 +2214,12 @@ class Scene {
     // the app draws or the state it leaves behind. Broken stereo here means the fault is in
     // the setup itself -- canvas, size, pixel ratio, or how the session was entered -- and the
     // scene contents are irrelevant.
+    // Undo whatever a previous level hid, the moment the flag goes back to 0.
+    if (!window._vrMinimalTest && this._minimalHidden) {
+      for (const [o, v] of this._minimalHidden) o.visible = v;
+      this._minimalHidden = null;
+      console.log('[vrMinimalTest] restored');
+    }
     if (window._vrMinimalTest && isVRPresenting) {
       const lvl = window._vrMinimalTest;
       if (lvl >= 2) {
@@ -2225,9 +2231,18 @@ class Scene {
         this._renderer.render(this._stereoTestScene, this._camera.getThreeCamera());
         return;
       }
-      // Level 1: hide every scene object, render only clear colour
+      // Level 1: hide every scene object, render only clear colour.
+      // SAVED, so the flag is reversible. The first version set visible=false and never
+      // recorded what it had changed, so window._vrMinimalTest = 0 restored the render path
+      // and left the whole scene invisible -- a debug switch you cannot switch back is a
+      // session lost, and it cost matt one.
       if (this._scene) {
-        this._scene.traverse(o => { if (o.isMesh || o.isLine || o.isPoints) o.visible = false; });
+        if (!this._minimalHidden) {
+          this._minimalHidden = [];
+          this._scene.traverse(o => {
+            if (o.isMesh || o.isLine || o.isPoints) { this._minimalHidden.push([o, o.visible]); o.visible = false; }
+          });
+        }
       }
       this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
       // Its own expression, NOT the _renderCam below: that is declared in the main render
