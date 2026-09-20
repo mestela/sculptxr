@@ -2297,6 +2297,38 @@ class Scene {
       // if pbr issues one fewer draw call than matcap, the renderer is rejecting the object
       // before it reaches the GPU (a pipeline/material problem); if the counts match, it is
       // being drawn into something the compositor never shows (a framebuffer problem).
+      // THE SCENE BACKGROUND / ENVIRONMENT, which are three's own and not our env quad.
+      //
+      // _panelDrawDelta says the panel IS drawn (delta 4) and the pixels go nowhere, and the
+      // GL error is on glDrawArrays -- the panel draws INDEXED geometry, so that error belongs
+      // to a fullscreen quad. three draws scene.background as exactly that, and
+      // scene.environment makes it run PMREM into a chain of differently-sized render
+      // targets, which is what "Attachments are not all the same size" describes.
+      //
+      // Runnable from inside the session so it costs no restart: _killSceneBg() nulls both and
+      // the next frame shows whether the menus come back. _restoreSceneBg() puts them back.
+      if (!window._sceneBgProbe) {
+        window._sceneBgProbe = () => {
+          const b = this._scene.background, e = this._scene.environment;
+          const d = (x) => !x ? null : (x.isTexture ? ('Texture ' + (x.image ? x.image.width + 'x' + x.image.height : '?')) : (x.isColor ? 'Color' : x.type || typeof x));
+          const out = { background: d(b), environment: d(e) };
+          console.log('[sceneBg] ' + JSON.stringify(out));
+          return out;
+        };
+        window._killSceneBg = () => {
+          this._savedBg = this._scene.background;
+          this._savedEnv = this._scene.environment;
+          this._scene.background = null;
+          this._scene.environment = null;
+          console.log('[sceneBg] cleared — look at the menus now');
+        };
+        window._restoreSceneBg = () => {
+          this._scene.background = this._savedBg || null;
+          this._scene.environment = this._savedEnv || null;
+          console.log('[sceneBg] restored');
+        };
+      }
+
       // window._panelDrawDelta() — how many draw calls does the visible panel ACTUALLY cost?
       //
       // Comparing total draws between two sessions was confounded: a controller model failed
