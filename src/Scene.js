@@ -1931,8 +1931,22 @@ class Scene {
       }
     }
 
-    // Only alter global GL state if not in WebXR
-    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+    // Only alter global GL state if not in WebXR -- and never on the node path.
+    //
+    // This raw disable is a leftover of the legacy GL pipeline, which drew its own overlays
+    // after three and wanted depth off. WebGLRenderer recovered from it because the app
+    // called resetState() afterwards, which invalidates three's state cache. The node
+    // backend has no resetState and CACHES state (setDepthTest only touches the context when
+    // its cached value changes), so this disable sticks for the whole frame: three believes
+    // DEPTH_TEST is on -- its cache literally holds `2929: true` -- while the context has it
+    // off, and every mesh is then drawn with no depth test.
+    //
+    // Measured: DEPTH_TEST read false at the moment each sculpt mesh was drawn, with a
+    // 24-bit depth buffer and depthMask true, so two opaque meshes resolved by submission
+    // order instead. matt: "2 objects aren't proper depth tested against each other" -- a
+    // 28-unit cube inside a 34-unit sphere was drawn in front of it.
+    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)
+        && !this._isNodeRenderer) {
         gl.disable(gl.DEPTH_TEST);
     }
 
@@ -3525,7 +3539,26 @@ class Scene {
       // Three.js clears depth on its own, so we render over the top
       this._renderer.render(this._scene, _renderCam);
 
-      if (!isVR) {
+      // THE LEGACY RAW-GL TAIL DOES NOT RUN ON THE NODE PATH.
+      //
+      // Everything below reaches past three and drives the context directly -- unbinding the
+      // VAO, rebinding the framebuffer, toggling DEPTH_TEST, then the sculpt manager's own
+      // raw passes for the gizmo and cursors. WebGLRenderer coped because resetState() told
+      // it its state cache was stale afterwards. WebGPURenderer has no resetState, so the
+      // optional chaining below silently skips it -- and its backend CACHES state
+      // (setDepthTest only calls gl.enable when its cached value changes), so after a raw
+      // pass leaves DEPTH_TEST off, three believes it is still on and never re-enables it.
+      //
+      // The result is a frame drawn with no depth test at all: measured, gl.DEPTH_TEST came
+      // back false with a 24-bit depth buffer present and depthMask true, and two opaque
+      // meshes then resolved by submission order. matt: "2 objects aren't proper depth tested
+      // against each other" -- the cube is 28 units inside a 34-unit sphere and was drawn in
+      // front of it.
+      //
+      // Known cost: the desktop gizmo and legacy cursor overlays are raw-GL passes and will
+      // not draw under ?renderer=webgpu until they are ported. A missing gizmo is visible and
+      // fixable; a silently broken depth buffer is neither.
+      if (!isVR && !this._isNodeRenderer) {
         // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
         // Three.js leaves the sculpt mesh's VAO bound after rendering. 
         // The legacy raw WebGL passes (Gizmo, Cursors) that run during postRender() do NOT use VAOs.
