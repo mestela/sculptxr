@@ -2329,6 +2329,40 @@ class Scene {
         };
       }
 
+      // window._panelMat('normal'|'restore') — the sharpest cut left.
+      //
+      // With 91 objects hidden and the panel alone in the frame, still nothing. So no other
+      // draw is poisoning it: the panel's own draw fails. And the failing set now looks like
+      // a material CLASS rather than a texture:
+      //   MeshBasicNodeMaterial + canvas map   (panels)      invisible
+      //   MeshBasicNodeMaterial, flat magenta, no map        invisible  (_panelSolid)
+      //   MeshBasicNodeMaterial + matcap image (matcap mat)  invisible  (_meshMat matcap)
+      //   MeshNormalNodeMaterial                             DRAWS
+      //   GLTF controller materials                          DRAW
+      // The awkward exception is that our PBR material is ALSO a MeshBasicNodeMaterial and it
+      // draws -- so if the normal material makes the panel appear, the split is real and the
+      // PBR one differs by having a colorNode that replaces the whole basic pipeline.
+      if (!window._panelMat) {
+        window._panelMat = (which) => {
+          const mat = String(which) === 'restore' ? null : NodeMaterials.get(2); // NORMAL
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh) continue;
+            if (mat) {
+              if (!p.mesh.userData._origMat2) p.mesh.userData._origMat2 = p.mesh.material;
+              p.mesh.material = mat;
+              p.mesh.visible = true;
+              n++;
+            } else if (p.mesh.userData._origMat2) {
+              p.mesh.material = p.mesh.userData._origMat2;
+              p.mesh.userData._origMat2 = null;
+            }
+          }
+          console.log('[panelMat] ' + which + ' -> ' + n);
+          return n;
+        };
+      }
+
       // window._soloPanels() — hide EVERYTHING except the panels. _unsolo() restores.
       //
       // Where the evidence now stands, all of it from inside one session: the sculpt is not
