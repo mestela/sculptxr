@@ -511,6 +511,16 @@ class Mesh {
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
+      // SHADOW FLAGS AT BIRTH, because they are GRAPH STATE under the node renderer.
+      // AnalyticLightNode.setup reads `builder.object.receiveShadow` when the material is
+      // BUILT, and RenderObject folds it into the cache key -- so a mesh whose receiveShadow
+      // is false compiles a graph with no shadow sampling at all, and flipping it later forces
+      // a recompile. Inside an XR session that recompile is the one thing the fixed light pool
+      // exists to prevent, and it is how a box added mid-session ended up unable to receive a
+      // shadow while the pass itself ran perfectly. Setting them here means they are never
+      // false and nothing ever has to change them.
+      this._renderData._threeMesh.castShadow = true;
+      this._renderData._threeMesh.receiveShadow = true;
       
 
 

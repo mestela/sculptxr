@@ -2400,7 +2400,20 @@ class Scene {
         for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
           const tm = mesh.getThreeMesh && mesh.getThreeMesh();
           if (!tm || mesh._isLight) continue;
-          if (!tm.castShadow) { tm.castShadow = true; tm.receiveShadow = true; }
+          // Both flags, checked independently. The old form was
+          //     if (!tm.castShadow) { tm.castShadow = true; tm.receiveShadow = true; }
+          // which silently does nothing to receiveShadow for any mesh whose castShadow was
+          // already set by something else -- SceneShadow.js does exactly that for the AR
+          // catcher work -- leaving it unable to receive a shadow for good.
+          //
+          // And NOT while a session owns the graph: receiveShadow is in the render object's
+          // cache key, so flipping it mid-session recompiles that object in the wrong camera
+          // layout. Meshes get both flags at birth now (Mesh.js), so this is only a sweep for
+          // anything predating that.
+          if (!this._xrGraphFrozen && (!tm.castShadow || !tm.receiveShadow)) {
+            tm.castShadow = true;
+            tm.receiveShadow = true;
+          }
         }
       }
 
@@ -3977,6 +3990,11 @@ class Scene {
           // calls and ~6x the triangles (its cube map's six faces). If these look the same in
           // a session with shadows on as with them off, the pass is not running at all --
           // which is a different problem from the pass running and its output being lost.
+          meshesReceivingShadow: (this.getMeshes ? this.getMeshes() : []).filter((m) => {
+            const tm = m.getThreeMesh && m.getThreeMesh();
+            return tm && !m._isLight && tm.receiveShadow;
+          }).length,
+          meshesTotal: (this.getMeshes ? this.getMeshes() : []).filter((m) => !m._isLight).length,
           triangles: this._renderer.info.render.triangles,
           drawCalls: this._renderer.info.render.drawCalls,
           graphFrozen: !!this._xrGraphFrozen,
@@ -7279,6 +7297,15 @@ class Scene {
       for (const t of [0, 1, 2]) for (const L of pool[t]) L.castShadow = on;
     };
     if (this._isNodeRenderer) {
+      // EVERY MESH GETS ITS SHADOW FLAGS BEFORE THE GRAPH IS FROZEN, not after. receiveShadow
+      // is compiled in, so a mesh entering the session without it can never receive a shadow
+      // no matter what the lights do.
+      for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+        const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+        if (!tm || mesh._isLight) continue;
+        tm.castShadow = true;
+        tm.receiveShadow = true;
+      }
       // Freeze FIRST, then decide. The latch is what stops _syncThreeLights undoing this on
       // the frames between here and xr.isPresenting going true.
       this._xrGraphFrozen = true;
