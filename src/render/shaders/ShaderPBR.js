@@ -54,6 +54,25 @@ ShaderPBR.environments = [{
   sph: [0.560145, 0.554695, 0.513523, -0.213105, -0.155190, -0.063568, 0.135182, 0.114211, 0.069349, 0.172852, 0.151820, 0.105477, 0.065753, 0.064050, 0.052622, 0.096352, 0.086557, 0.063826, 0.021830, 0.016560, 0.008804, 0.186193, 0.163720, 0.119627, 0.025363, 0.022278, 0.014461],
   exposure: 0.5,
   name: 'Winter river'
+}, {
+  // THE FIRST EQUIRECT HDR, and the shape every environment should take from here.
+  // https://polyhaven.com/a/ferndale_studio_07
+  //
+  // No `path`: there is no LogLUV octahedral PNG for this one and there will not be. The
+  // node renderer loads `hdr` through RGBELoader and prefilters it with PMREM (see
+  // EnvIBL.js), which is strictly better than the packed atlas -- real roughness
+  // prefiltering and hardware filtering instead of five hand-packed levels and a manual
+  // lerp. .hdr rather than .exr on purpose: RGBE is 32 bits/pixel with a shared exponent
+  // against EXR's 48+, and the extra precision is invisible once PMREM has blurred it --
+  // 1.5MB against 5MB for the same result.
+  //
+  // `sph` is a neutral grey rather than this environment's real coefficients. It feeds the
+  // LEGACY renderer's ambient only, and computing real SH needs the panorama on the CPU.
+  // Flat grey is honest there; the node path ignores sph entirely and uses the PMREM.
+  hdr: texPath + 'ferndale_studio_07_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Ferndale studio 07'
 }];
 
 var opts = getOptionsURL();
@@ -332,6 +351,11 @@ var _lightCount = 0;
 
 ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   if (env.texture !== undefined) return env.texture;
+  // An equirect-only environment has no packed atlas for this renderer to sample. Rather
+  // than let TextureLoader fetch `undefined`, return null and let the caller bind nothing --
+  // the legacy path then shows the SH ambient alone, which is the most it can do with an
+  // asset it cannot read.
+  if (!env.path) { env.texture = null; return null; }
 
   env.texture = new THREE.TextureLoader().load(env.path, function (tex) {
     // uEnvSize IS THE PANORAMA'S DIMENSIONS, and the specular lookup needs them to pick a mip
