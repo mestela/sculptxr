@@ -4485,7 +4485,6 @@ class Scene {
           L.add(t);
           L.target = t;
         }
-        L.castShadow = true;
         L.shadow.mapSize.set(2048, 2048);
         // BIAS: normalBias, not a constant depth bias.
         //
@@ -4501,9 +4500,7 @@ class Scene {
         //
         // Both are overridable because the right value depends on the sculpt's scale, and
         // that is a judgement to make while looking at it rather than one to guess here.
-        L.shadow.bias = Number.isFinite(window._shadowBias) ? window._shadowBias : 0;
-        L.shadow.normalBias = Number.isFinite(window._shadowNormalBias)
-          ? window._shadowNormalBias : 0.15;
+        L.shadow.blurSamples = 16;
         // ADDED TO THE SCENE ROOT, NOT PARENTED TO THE ENTITY.
         //
         // Parenting looked right -- the light inherits the entity's transform and the two
@@ -4525,11 +4522,25 @@ class Scene {
       L.quaternion.copy(this._lpTmp.q);
       L.scale.set(1, 1, 1);
       L.updateMatrixWorld(true);
-      // Re-read every frame so window._shadowBias / _shadowNormalBias can be dialled in a
-      // live session -- the values above are only applied when the light is first built.
-      L.shadow.bias = Number.isFinite(window._shadowBias) ? window._shadowBias : 0;
-      L.shadow.normalBias = Number.isFinite(window._shadowNormalBias)
-        ? window._shadowNormalBias : 0.15;
+      // SHADOW SETTINGS, PER LIGHT, read every frame so the sliders are live. matt: "if its
+      // just shadow bias, expose it as a propery on the light, it will need tweaking based
+      // on scene scale and whatnot" -- which is right, and true of all three of these.
+      //
+      //   _shadowIntensity  shadow.intensity, 0..1 -- how dark the shadow is. Three's own
+      //                     per-light property, so it costs nothing.
+      //   _shadowRadius     shadow.radius -- a UNIFORM blur. It does NOT harden at the
+      //                     contact point and soften with distance: that is PCSS, and three
+      //                     ships no PCSS (checked: no percentageCloser, no
+      //                     contactHardening, no PCSS anywhere in the build). Getting it
+      //                     would mean writing a shadow filter in TSL.
+      //   _shadowNormalBias offsets the lookup along the surface normal, which clears acne
+      //                     without detaching the contact shadow the way a constant depth
+      //                     bias does.
+      L.castShadow = e._castShadow !== false;
+      L.shadow.bias = 0;
+      L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
+      L.shadow.intensity = e._shadowIntensity === undefined ? 1 : e._shadowIntensity;
+      L.shadow.radius = e._shadowRadius === undefined ? 2 : e._shadowRadius;
 
       const c = e._lightColor || [1, 1, 1];
       L.color.setRGB(c[0], c[1], c[2]);

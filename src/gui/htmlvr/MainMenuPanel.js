@@ -2554,6 +2554,37 @@ export function buildSectionHTML_scene(main) {
       <input type="range" id="mm-light-cone" min="5" max="89" step="1" value="${Math.round(_lit._lightConeDeg ?? 35)}">
       <span class="mm-val" id="mm-light-cone-val">${Math.round(_lit._lightConeDeg ?? 35)}&deg;</span>
     </div>` : ''}
+    ${/* SHADOWS, per light, because every one of these depends on the scene's scale and on
+         the look being aimed for -- there is no value that is right for a 34-unit sculpt and
+         a 3-unit one at the same time.
+
+         Bias is normalBias: it offsets the shadow lookup along the surface normal, so it
+         clears acne without detaching the contact shadow. A constant depth bias does detach
+         it, which is the leak matt found resting a sphere on a box.
+
+         Softness is shadow.radius, and it is a UNIFORM blur -- see the note in
+         _syncThreeLights about why it does not harden at the contact point. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Shadow</span>
+      <button class="mm-choice${(_lit._castShadow !== false) ? ' active' : ''}" id="mm-light-shadow">${(_lit._castShadow !== false) ? 'On' : 'Off'}</button>
+      <span class="mm-val"></span>
+    </div>
+    ${(_lit._castShadow !== false) ? `
+    <div class="mm-row">
+      <span class="mm-lbl">Sh. opacity</span>
+      <input type="range" id="mm-light-shopacity" min="0" max="100" step="1" value="${Math.round((_lit._shadowIntensity ?? 1) * 100)}">
+      <span class="mm-val" id="mm-light-shopacity-val">${Math.round((_lit._shadowIntensity ?? 1) * 100)}%</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Sh. softness</span>
+      <input type="range" id="mm-light-shsoft" min="0" max="100" step="1" value="${Math.round((_lit._shadowRadius ?? 2) * 10)}">
+      <span class="mm-val" id="mm-light-shsoft-val">${(_lit._shadowRadius ?? 2).toFixed(1)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Sh. bias</span>
+      <input type="range" id="mm-light-shbias" min="0" max="200" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
+      <span class="mm-val" id="mm-light-shbias-val">${(_lit._shadowNormalBias ?? 0.15).toFixed(2)}</span>
+    </div>` : ''}
     ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
          colour control in this app that survives being rasterised into a VR panel, and the
          Scene section renders there too. Swatch opens it, OK closes it. */ ''}
@@ -4401,6 +4432,27 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       L._lightRange = v;
       main.render?.();
     }, (v) => String(v), null);
+    el.querySelector('#mm-light-shadow')?.addEventListener('click', () => {
+      const L = _litSel(); if (!L) return;
+      L._castShadow = (L._castShadow === false);
+      lightRepaintFn?.();
+      main.render?.();
+    });
+    wireSlider(el.querySelector('#mm-light-shopacity'), el.querySelector('#mm-light-shopacity-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowIntensity = v / 100;
+      main.render?.();
+    }, (v) => v + '%', null);
+    wireSlider(el.querySelector('#mm-light-shsoft'), el.querySelector('#mm-light-shsoft-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowRadius = v / 10;
+      main.render?.();
+    }, (v) => (v / 10).toFixed(1), null);
+    wireSlider(el.querySelector('#mm-light-shbias'), el.querySelector('#mm-light-shbias-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowNormalBias = v / 100;
+      main.render?.();
+    }, (v) => (v / 100).toFixed(2), null);
     wireSlider(el.querySelector('#mm-light-cone'), el.querySelector('#mm-light-cone-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._lightConeDeg = v;
