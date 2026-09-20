@@ -235,8 +235,17 @@ NodeMaterials.fresnelGlow = function (hex) {
     blendSrc: gpu.OneFactor, blendDst: gpu.OneFactor,
   });
   const f = pow(float(1.0).sub(abs(dot(normalize(normalView), normalize(positionView)))), 3.0);
-  m.colorNode = vec3(new gpu.Color(hex)).mul(f);
+  // A UNIFORM, not a baked constant: _updateVRCursors recolours this every frame (blue, red
+  // for negative, the paint colour while painting) through `material.uniforms.color.value`.
+  // Baking the colour in threw "Cannot read properties of undefined (reading 'color')" out of
+  // the cursor update, hundreds of times a second.
+  const col = tsl.uniform(new gpu.Color(hex));
+  m.colorNode = col.mul(f);
   m.opacityNode = f;
+  // The legacy call sites write through material.uniforms.color.value, and a uniform node
+  // holds its Color at exactly that path -- so the shim is the real object, not a copy, and
+  // there is no second place for the colour to live.
+  m.uniforms = { color: col };
   return m;
 };
 
