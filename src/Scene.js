@@ -4753,10 +4753,28 @@ class Scene {
     const gain = Number.isFinite(ei) ? ei : 1.0;
     // Never on the scene.
     if (this._scene.environment) this._scene.environment = null;
+    // NO ENVIRONMENT INSIDE AN XR SESSION -- a known, unexplained limitation, not a fix.
+    //
+    // With the PMREM in use, an immersive session draws the sculpt and nothing else: no
+    // menus, no controllers, no cursor, and the UBO flood. Removing it live (window._noEnv)
+    // brings them all back. Moving it off scene.environment and onto the PBR material's own
+    // envMap changed nothing, which rules out the obvious explanation -- that a scene-wide
+    // environment was injecting an IBL lookup into the unlit UI materials. The failing
+    // materials are the ones WITHOUT it; the one that samples it is the only thing that
+    // draws. Something about that texture being bound at all breaks the rest of the frame,
+    // and I have not found what.
+    //
+    // So VR gets lights and no IBL, desktop keeps the environment, and this is written down
+    // rather than left as a mystery for whoever looks next. window._xrEnv = 1 turns it back
+    // on in a session to retest.
     const pbrMat = NodeMaterials.get(Enums.Shader.PBR);
-    if (pbrMat && this._nodeEnvTex && pbrMat.envMap !== this._nodeEnvTex) {
-      pbrMat.envMap = this._nodeEnvTex;
+    const _xrNow = !!(this._renderer.xr && this._renderer.xr.isPresenting);
+    const wantEnv = this._nodeEnvTex && (!_xrNow || !!window._xrEnv);
+    const nextEnv = wantEnv ? this._nodeEnvTex : null;
+    if (pbrMat && pbrMat.envMap !== nextEnv) {
+      pbrMat.envMap = nextEnv;
       pbrMat.needsUpdate = true;
+      console.log('[env] ' + (nextEnv ? 'on' : 'off (XR)'));
     }
     if (pbrMat) pbrMat.envMapIntensity = gain;
   }
