@@ -2456,6 +2456,34 @@ class Scene {
           if (errs > 0) hi = mid; else lo = mid;
         }
         const o = list[hi - 1];
+        // A PARENT GETS THE BLAME FOR ITS CHILDREN. Revealing an object lets its whole
+        // subtree draw, so the bisection attributes to the ancestor -- stylus_spike has a
+        // child, stylus_spike_ghost, with an unusual GreaterDepth mode. Hide the descendants
+        // one at a time and see whether the parent is innocent.
+        const kids = [];
+        o.traverse((c) => { if (c !== o && (c.isMesh || c.isLine || c.isPoints || c.isSprite)) kids.push(c); });
+        if (kids.length) {
+          const base = await test(hi);        // culprit revealed, errors expected
+          if (base > 0) {
+            for (const c of kids) {
+              const was = c.visible;
+              c.visible = false;
+              const errs = await test(hi);
+              c.visible = was;
+              console.log('[bisectUBO]   without child ' + (c.name || c.type) + ' -> ' + errs + ' errors');
+              if (errs === 0) {
+                console.log('[bisectUBO] REAL CULPRIT is the child: ' + (c.name || c.type)
+                  + ' mat=' + (c.material && c.material.type)
+                  + ' depthFunc=' + (c.material && c.material.depthFunc)
+                  + ' transparent=' + (c.material && c.material.transparent)
+                  + ' order=' + c.renderOrder);
+                this._minimalReveal = 0;
+                return c;
+              }
+            }
+            console.log('[bisectUBO]   no single child explains it — the parent itself draws badly');
+          }
+        }
         console.log('[bisectUBO] CULPRIT #' + (hi - 1) + ': ' + (o.name || o.type)
           + ' mat=' + (o.material && o.material.type)
           + ' order=' + o.renderOrder
