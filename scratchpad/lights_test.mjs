@@ -150,8 +150,10 @@ check('...read off the three-side matrixWorld, forced current',
 // one end to indicate direction."
 check('the light handle is rebuilt, not added to, when the type changes',
   /const old = tm\.getObjectByName\('light_rays'\);/.test(SCENE)
-    && /tm\.remove\(old\); old\.geometry\.dispose\(\); old\.material\.dispose\(\);/.test(SCENE),
-  'without this every switch leaves the previous shape behind');
+    && /tm\.remove\(old\); old\.geometry\.dispose\(\);/.test(SCENE)
+    && !/old\.material\.dispose\(\)/.test(SCENE),
+  'without this every switch leaves the previous shape behind — and the material is shared '
+  + 'across every light now, so disposing it would take the others with it');
 check('...a spot draws a cone at the angle you set',
   /Math\.tan\(Math\.max\(1, Math\.min\(89, mesh\._lightConeDeg \|\| 35\)\) \* Math\.PI \/ 180\)/.test(SCENE),
   'the rim IS the outer angle, or the handle is decoration rather than a readout');

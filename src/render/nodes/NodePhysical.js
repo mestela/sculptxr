@@ -46,7 +46,29 @@ export function makePhysical(gpu, tsl) {
   // The cost: a mesh with opacity < 1 will not fade until this is made per-mesh (the material
   // is shared across meshes, so the flag cannot simply be toggled here). Worth it for shadows;
   // worth revisiting when per-mesh material variants land with the texture maps.
-  const m = new gpu.MeshPhysicalNodeMaterial({
+  // PHYSICAL OR STANDARD, because Physical is a suspect.
+  //
+  // matt: in an AR session, with even ONE light in the graph, this material does not draw at
+  // all -- passthrough where the sculpt should be -- while matcap is fine and pool=0,0,0
+  // brings it straight back. So it is not a light COUNT limit; it is that the lit path is
+  // taken at all. MeshPhysicalNodeMaterial's lit path is much larger than Standard's: it
+  // carries clearcoat, sheen, iridescence and transmission, and transmission in particular
+  // wants a backbuffer render, which is exactly the sort of thing a session breaks on.
+  //
+  // We use none of them yet -- only colour, roughness and metalness, all of which Standard
+  // has. ?pbrmat=standard swaps the base class so that can be tested in one reload.
+  // ?pbrmat=lambert is the CLEANEST A/B IN THE WHOLE PORT: the app's unlit base is already a
+  // MeshLambertNodeMaterial with lights = false, and that DOES draw in a session. So this is
+  // the identical class with lights = true and one light — the single variable, nothing else
+  // moved. If it draws, three's lighting works in XR and the fault is in Standard/Physical's
+  // graph. If it does not, the fault is three's lighting node under the XR camera layout,
+  // and that is an upstream bug with a repro small enough to file.
+  const _mat = /[?&]pbrmat=(\w+)/.exec(window.location.search);
+  const Base = !_mat ? gpu.MeshPhysicalNodeMaterial
+    : _mat[1] === 'standard' ? gpu.MeshStandardNodeMaterial
+    : _mat[1] === 'lambert' ? gpu.MeshLambertNodeMaterial
+    : gpu.MeshPhysicalNodeMaterial;
+  const m = new Base({
     vertexColors: true,
     side: gpu.FrontSide,
     transparent: false,
