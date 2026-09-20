@@ -181,6 +181,8 @@ var getOptionsURL = function () {
   options.environment = queryInteger(getVal('environment'), 0, Infinity, 5); // [0-inf]
   // ?noenv=1 — skip scene.environment entirely on the node path. See Scene._syncThreeLights.
   options.noenv = getVal('noenv') === '1';
+  // ?nowarm=1 — skip the pre-session pipeline warm. See Scene.enterXR.
+  options.nowarm = getVal('nowarm') === '1';
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]

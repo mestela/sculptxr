@@ -6801,6 +6801,32 @@ class Scene {
     // are the first thing lost. See NodeMaterials.warm. Must happen BEFORE xr.enabled, or the
     // warm render takes the XR path and defeats itself.
     if (this._isNodeRenderer) {
+      // ?nowarm=1 skips the pre-session warm entirely.
+      //
+      // The shader dumps say why this matters. On desktop the `render` block declares
+      //   mat4 cameraProjectionMatrix; mat4 cameraViewMatrix;
+      // while in XR the camera matrices are ARRAYS OF TWO in their own buffers, indexed by
+      // u_cameraIndex. Two different uniform layouts for the same material.
+      //
+      // The warm pass compiles every material BEFORE setSession -- so with the desktop
+      // layout -- and the session then binds per-eye buffers to shaders built for single
+      // matrices. That is a uniform buffer that is too small, which is the error, and it
+      // grows with the material: pbrbisect=2 has a tiny block and survives, the full
+      // Physical material with lights, env and a shadow sampler does not.
+      //
+      // Warming was added to avoid building pipelines inside a session. It may simply be the
+      // wrong trade here.
+      if (window._noWarm || getOptionsURL().nowarm) {
+        console.log('[warm] skipped (nowarm)');
+        this._renderer.xr.enabled = true;
+        this._renderer.xr.setReferenceSpaceType('local-floor');
+        this._renderer.resetState?.();
+        const _t0nw = performance.now();
+        await this._renderer.xr.setSession(session);
+        if (window.screenLog) window.screenLog('[XR] setSession (nowarm) +'
+          + Math.round(performance.now() - _t0nw) + 'ms', 'lime');
+        return;
+      }
       const panelMats = [];
       try {
         for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);
