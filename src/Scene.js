@@ -2358,6 +2358,29 @@ class Scene {
       // The matcap's stabilisation uniform, refreshed from the head-centre view before the
       // draw -- see NodeMaterials.updateFrame.
       if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+      // SHADOW MAPS ARE OFF INSIDE AN XR SESSION, for now.
+      //
+      // A shadow map is an extra render target, and an extra render target inside an XR
+      // frame is the exact thing that has broken this renderer twice already (the spectator
+      // canvas did it, and it is what "GL_INVALID_FRAMEBUFFER_OPERATION: Framebuffer is
+      // incomplete: Attachments are not all the same size" reports -- a 2048x2048 shadow map
+      // against the XR framebuffer). With shadows on, menus and controller models vanish and
+      // the UBO flood returns: matt, first headset run after the shadow work, "menus and
+      // controllers are missing again".
+      //
+      // This was the known risk before any of it was written -- "verify shadow-map passes
+      // under WebGPURenderer IN XR, extra render targets are the risk item, check it early"
+      // -- and it was not checked early. Desktop shadows are unaffected and stay on.
+      //
+      // window._xrShadows = 1 turns them back on in a session, to confirm the cause and to
+      // retest once the framebuffer interaction is understood.
+      if (this._isNodeRenderer) {
+        const want = isVR ? !!window._xrShadows : true;
+        if (this._renderer.shadowMap.enabled !== want) {
+          this._renderer.shadowMap.enabled = want;
+          console.log('[shadows] ' + (want ? 'on' : 'off (XR)'));
+        }
+      }
       if (this._isNodeRenderer) this._syncThreeLights();
       // CAST AND RECEIVE, set on the meshes rather than globally: three reads these per
       // object, and a light entity's own gizmo geometry casting a shadow of itself into the
