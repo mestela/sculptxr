@@ -2381,7 +2381,11 @@ class Scene {
           console.log('[shadows] ' + (want ? 'on' : 'off (XR)'));
         }
       }
-      if (this._isNodeRenderer) this._syncThreeLights();
+      // window._noThreeLights = 1 stops mirroring real three lights entirely, so a session
+      // can be run with no Light objects in the scene at all. Between this and ?pbrbisect=,
+      // the whole "PBR moved onto three's lighting" change can be bisected in ONE session
+      // rather than one trip per question.
+      if (this._isNodeRenderer && !window._noThreeLights) this._syncThreeLights();
       // CAST AND RECEIVE, set on the meshes rather than globally: three reads these per
       // object, and a light entity's own gizmo geometry casting a shadow of itself into the
       // scene is not something anyone wants to see.
@@ -4571,7 +4575,15 @@ class Scene {
       //   _shadowNormalBias offsets the lookup along the surface normal, which clears acne
       //                     without detaching the contact shadow the way a constant depth
       //                     bias does.
-      L.castShadow = e._castShadow !== false;
+      // castShadow OFF IN XR, not merely renderer.shadowMap.enabled.
+      //
+      // Turning the renderer flag off stops the shadow PASS but leaves the material's
+      // compiled lighting graph alone: a light with castShadow true still contributes shadow
+      // sampling nodes to every lit material. So the first attempt at this -- flipping
+      // shadowMap.enabled for the session -- changed nothing in the headset, because the
+      // materials were still built to sample a map that was no longer being drawn.
+      const _xr = !!(this._renderer.xr && this._renderer.xr.isPresenting);
+      L.castShadow = (e._castShadow !== false) && (!_xr || !!window._xrShadows);
       L.shadow.bias = 0;
       L.shadow.normalBias = e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias;
       L.shadow.intensity = e._shadowIntensity === undefined ? 1 : e._shadowIntensity;
