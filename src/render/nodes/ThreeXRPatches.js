@@ -310,11 +310,11 @@ export function applyXRBackendPatches(renderer, WGPU, TSL) {
   if (renderer.backend && renderer.backend.gl) installStableBindingPoints(renderer.backend);
   installCameraPositionUpdate(WGPU, TSL);
   // ?perEyeLight=0 leaves three's head-space light vector in place, to A/B against the fault.
-  if (!/[?&]perEyeLight=0/.test(window.location.search)) {
+  {
     installPerEyeLightVector(WGPU, TSL, renderer);
   }
   // ?xrnested=0 leaves the nested render unguarded, to A/B against the fault.
-  if (!/[?&]xrnested=0/.test(window.location.search)) {
+  {
     installNestedRenderGuard(renderer);
   }
 }

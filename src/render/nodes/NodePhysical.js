@@ -49,29 +49,11 @@ export function makePhysical(gpu, tsl, mesh) {
   // The cost: a mesh with opacity < 1 will not fade until this is made per-mesh (the material
   // is shared across meshes, so the flag cannot simply be toggled here). Worth it for shadows;
   // worth revisiting when per-mesh material variants land with the texture maps.
-  // PHYSICAL OR STANDARD, because Physical is a suspect.
-  //
-  // matt: in an AR session, with even ONE light in the graph, this material does not draw at
-  // all -- passthrough where the sculpt should be -- while matcap is fine and pool=0,0,0
-  // brings it straight back. So it is not a light COUNT limit; it is that the lit path is
-  // taken at all. MeshPhysicalNodeMaterial's lit path is much larger than Standard's: it
-  // carries clearcoat, sheen, iridescence and transmission, and transmission in particular
-  // wants a backbuffer render, which is exactly the sort of thing a session breaks on.
-  //
-  // We use none of them yet -- only colour, roughness and metalness, all of which Standard
-  // has. ?pbrmat=standard swaps the base class so that can be tested in one reload.
-  // ?pbrmat=lambert is the CLEANEST A/B IN THE WHOLE PORT: the app's unlit base is already a
-  // MeshLambertNodeMaterial with lights = false, and that DOES draw in a session. So this is
-  // the identical class with lights = true and one light — the single variable, nothing else
-  // moved. If it draws, three's lighting works in XR and the fault is in Standard/Physical's
-  // graph. If it does not, the fault is three's lighting node under the XR camera layout,
-  // and that is an upstream bug with a repro small enough to file.
-  const _mat = /[?&]pbrmat=(\w+)/.exec(window.location.search);
-  const Base = !_mat ? gpu.MeshPhysicalNodeMaterial
-    : _mat[1] === 'standard' ? gpu.MeshStandardNodeMaterial
-    : _mat[1] === 'lambert' ? gpu.MeshLambertNodeMaterial
-    : gpu.MeshPhysicalNodeMaterial;
-  const m = new Base({
+  // PHYSICAL, settled. `?pbrmat=standard|lambert` used to swap the base class to find out
+  // whether the lit path itself was what an AR session could not draw. It was not -- the fault
+  // was three's, in the XR camera layout, and it is patched in ThreeXRPatches. The switch is
+  // gone with the question.
+  const m = new gpu.MeshPhysicalNodeMaterial({
     vertexColors: true,
     side: gpu.FrontSide,
     transparent: false,
@@ -91,35 +73,19 @@ export function makePhysical(gpu, tsl, mesh) {
   // ShaderManager renames aVertex/aNormal/aColor/aTexCoord but not this, so it arrives under
   // its own name.
   const mtl = attribute('aMaterial', 'vec3');
-  // ?geomrough=N -- CAP three's SCREEN-SPACE ROUGHNESS TERM.
+  // THREE'S SCREEN-SPACE ROUGHNESS TERM IS REMOVED, not capped.
   //
-  // MeshStandardNodeMaterial.setupVariants does roughness = getRoughness({roughness}), and
-  // getRoughness is max(r, 0.0525) + getGeometryRoughness(), where the geometry term is
-  //     max(|dFdx(normalView)|, |dFdy(normalView)|)
-  // -- a per-PIXEL derivative. It is three's specular antialiasing: the smaller an object
-  // appears on screen, the faster its normal turns per pixel, the rougher it is made, and the
-  // more the specular lobe spreads. It feeds ROUGHNESS only, so it moves specular and never
-  // touches diffuse.
+  // MeshStandardNodeMaterial adds max(|dFdx(normalView)|, |dFdy(normalView)|) to roughness as
+  // specular antialiasing -- a per-PIXEL derivative, so the smaller an object appears the
+  // rougher it is made. In VR the grip scale changes apparent size directly, so grip-scaling the
+  // world moved the highlights while the diffuse stayed put. Subtracting the term cancels it
+  // exactly. matt judged it in a headset: "yeah it looks good."
   //
-  // That is exactly what matt reports in VR: grip-scale the world down and the highlights
-  // change, while the diffuse shading stays put. Grip scaling changes apparent screen size, so
-  // it drives this term directly -- and at a 0.6% world scale it stops being a subtle
-  // antialiasing nudge and starts setting the roughness.
-  //
-  // Since the material ADDS the term to whatever we hand it, handing it a value reduced by the
-  // excess cancels the excess exactly. ?geomrough=0 removes the term (crisper highlights, and
-  // specular shimmer returns on a minified sculpt); ?geomrough=0.05 keeps a little. No flag
-  // leaves three's behaviour untouched.
-  // DEFAULT IS CAP 0 -- the term is removed. matt judged it in a headset: "yeah it looks good",
-  // grip-scaling no longer moves the highlights. The cost is three's specular antialiasing, so
-  // shimmer can come back on a heavily minified sculpt; ?geomrough=N reinstates that much of it
-  // and ?geomrough=off restores three's own behaviour untouched.
-  const _gr = /[?&]geomrough=([\w.]+)/.exec(window.location.search);
-  const _grCap = !_gr ? 0 : (_gr[1] === 'off' ? null : parseFloat(_gr[1]));
-  let _rough = max(mtl.x, float(0.0001));
-  if (_grCap !== null && Number.isFinite(_grCap)) {
-    _rough = max(_rough.sub(max(tsl.getGeometryRoughness().sub(float(_grCap)), float(0))), float(0.0001));
-  }
+  // The cost is three's specular antialiasing, so shimmer can return on a heavily minified
+  // sculpt. `?geomrough=` used to dial it back; the default was chosen and approved, so the dial
+  // is gone.
+  const _rough = max(
+    max(mtl.x, float(0.0001)).sub(max(tsl.getGeometryRoughness(), float(0))), float(0.0001));
   m.roughnessNode = _rough;
   m.metalnessNode = mtl.y;
 
@@ -187,14 +153,11 @@ export function makePhysical(gpu, tsl, mesh) {
     // rather than a hand-fitted pow(); roughness is pinned low because glass is sharp and the
     // vertex roughness channel has no meaning on an imported coat.
     //
-    // ?glass=transmission restores three's lobe for comparison in one reload.
+    // `?glass=transmission` restored three's lobe for comparison; matt judged the coat and it
+    // stays, so the comparison is gone.
     const tr = mesh.getTransmission ? mesh.getTransmission() : 0;
     if (tr > 0) {
-      const _g = /[?&]glass=(\w+)/.exec(window.location.search);
-      if (_g && _g[1] === 'transmission') {
-        m.transmission = tr;
-        m.transparent = true;
-      } else {
+      {
         m.userData.isGlassCoat = true;
         m.colorNode = vec3(0, 0, 0);
         m.roughnessNode = float(0.02);

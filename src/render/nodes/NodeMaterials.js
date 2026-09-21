@@ -996,19 +996,8 @@ NodeMaterials.updateFrame = function (main) {
   // always was, and a session inherits the frozen camera's constant exactly as the legacy
   // shader did.
   //
-  // ?matcapstab=head restores the head-tracked frame for an A/B; it is the one that reads as
-  // the lighting sliding around the model.
-  const r = main._renderer;
-  const _stab = (/[?&]matcapstab=(\w+)/.exec(window.location.search) || [])[1];
-
-  if (_stab === 'head' && r && r.xr && r.xr.isPresenting && r.xr.getCamera) {
-    const head = r.xr.getCamera();
-    if (head && head.matrixWorldInverse) {
-      rotCorrectionUniform.value.setFromMatrix4(head.matrixWorldInverse);
-      return NodeMaterials._updateFrameRest(main);
-    }
-  }
-
+  // `?matcapstab=head` restored the head-tracked frame for an A/B. It is the one that reads as
+  // the lighting sliding around the model, which is the fault this was fixed FROM, so it is gone.
   const view = cam.getView();
   const corr = ShaderMatcap.computeRotCorrection(view);
   const v = _MAT3_VIEW.setFromMatrix4(_MAT4_VIEW.fromArray(view));

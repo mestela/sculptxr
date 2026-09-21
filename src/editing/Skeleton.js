@@ -788,29 +788,12 @@ function flushBatches(main) {
     }
   }
 
-  // THE XRAY PASS IS A FILL-RATE BILL, AND THIS IS THE SWITCH THAT PROVES IT.
-  //
-  // Every bone, joint and capsule is drawn TWICE: once solid, and once as a ghost -- transparent
-  // at 0.35, depthWrite off, depthFunc GreaterDepth, at renderOrder 9995 so it lands over
-  // everything. That second pass is blended, unculled by depth, and covers whatever the rig
-  // covers on screen.
-  //
-  // It costs nothing on a desktop and is brutal on a tiled mobile GPU. Measured on a GalaxyXR:
-  // deleting the rig took the frame from 12fps to 73, gl-render from 60-74ms to 2.34ms -- for
-  // 30 draw calls and 4,232 triangles. That is ~2ms per added draw; the same 30-odd draws cost
-  // 0.07ms on the desktop. Geometry that small cannot cost that much unless the cost is per
-  // PIXEL, which is what a full-screen blended overlay is.
-  //
-  // window._rigGhosts = false (or ?rigghosts=0) drops the ghost half. If the frame comes back,
-  // the xray pass is the bill and the fix is to make it cheaper -- not to chase draw counts.
-  if (Skeleton._rigGhostsFlag === undefined) {
-    Skeleton._rigGhostsFlag = !/[?&]rigghosts=0/.test(window.location.search);
-  }
-  const wantGhosts = window._rigGhosts !== undefined
-    ? !!window._rigGhosts : Skeleton._rigGhostsFlag;
-
+  // `?rigghosts=0` dropped the xray half of every batch, to test whether that blended overlay
+  // was what made a rig cost 60ms a frame on a GalaxyXR. It was not -- the bill was a per-frame
+  // console.error and a material rebuilt every frame (see the colorWrite note in NodeMaterials).
+  // The switch is gone with the theory.
   for (const [key, b] of all) {
-    const slots = (b.ghost && !wantGhosts) ? [] : (bySlot.get(key) || []);
+    const slots = bySlot.get(key) || [];
     const n = slots.length;
 
     if (b.line) { flushLineBatch(b, slots, n); continue; }

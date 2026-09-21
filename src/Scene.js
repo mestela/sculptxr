@@ -5016,12 +5016,10 @@ class Scene {
     // changed. Seven lights is seven light structs in the bindings of every lit material, on
     // top of the per-eye camera array an XR session adds, so a limit is a real possibility.
     //
-    // ?pool=P,S,D sets the counts. The ladder to walk is 0,0,0 (no lights in the graph at
-    // all -- if the sphere comes back black, the pool is the cause), then 1,0,0, then up.
-    const _pq = /[?&]pool=(\d+),(\d+),(\d+)/.exec(window.location.search);
-    const POOL = _pq
-      ? { point: +_pq[1], spot: +_pq[2], dir: +_pq[3] }
-      : { point: 4, spot: 2, dir: 1 };
+    // `?pool=P,S,D` set these counts, for the ladder that found out whether having lights in the
+    // graph AT ALL was what an AR session could not draw. It was not; the fault was three's XR
+    // camera layout. The counts are settled and the switch is gone.
+    const POOL = { point: 4, spot: 2, dir: 1 };
     const mk = (L) => {
       L.intensity = 0;
       L.castShadow = false;
