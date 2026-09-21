@@ -255,12 +255,20 @@ function installNestedRenderGuard(renderer) {
 
   const orig = renderer.render.bind(renderer);
   let depth = 0;
+  // COUNTERS, because this guard cannot be tested on the desktop at all -- isPresenting is
+  // false there, so it never engages. One session with these in the report says whether it is
+  // firing, instead of another round of inference.
+  const stats = { outer: 0, nested: 0, guarded: 0, maxDepth: 0 };
+  renderer._xrNestedStats = stats;
 
   renderer.render = function (scene, camera) {
     const xr = renderer.xr;
     const nested = depth > 0 && xr && xr.enabled === true && xr.isPresenting === true;
 
     depth++;
+    if (depth > stats.maxDepth) stats.maxDepth = depth;
+    if (depth === 1) stats.outer++; else stats.nested++;
+    if (nested) stats.guarded++;
     let savedFBT, savedORT;
     if (nested) {
       xr.enabled = false;

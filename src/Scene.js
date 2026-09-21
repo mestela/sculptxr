@@ -4006,6 +4006,13 @@ class Scene {
             return tm && !m._isLight && tm.receiveShadow;
           }).length,
           meshesTotal: (this.getMeshes ? this.getMeshes() : []).filter((m) => !m._isLight).length,
+          // Is the nested-render guard actually firing? outer counts top-level renders, nested
+          // counts renders that began inside another one (the shadow pass), guarded counts the
+          // ones the guard shielded. nested > 0 with guarded === 0 means the guard is missing
+          // them; nested === 0 means the shadow pass is not going through renderer.render at
+          // all and the guard is looking in the wrong place.
+          nestedRender: this._renderer._xrNestedStats
+            ? Object.assign({}, this._renderer._xrNestedStats) : null,
           triangles: this._renderer.info.render.triangles,
           drawCalls: this._renderer.info.render.drawCalls,
           graphFrozen: !!this._xrGraphFrozen,
