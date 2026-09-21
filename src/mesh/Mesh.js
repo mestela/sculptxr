@@ -7,6 +7,7 @@ import RenderData from './RenderData.js';
 import MeshSymmetry from './MeshSymmetry.js';
 import * as THREE from 'three';
 import ShaderManager from '../render/ShaderManager.js';
+import { guardedError } from '../misc/LogGuard.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
 // Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
@@ -1993,37 +1994,12 @@ class Mesh {
       }
     }
     
-    // REPORTED ONCE, NOT ONCE PER MESH PER FRAME.
-    //
-    // This runs for every mesh every frame, and when a matrix does go NaN it logged an error
-    // carrying two typed arrays each time. On a 40-joint rig at 60fps that is 2400 console
-    // errors a second: measured, 436,819 messages dropped from the buffer in one session, and
-    // the frame went from 0.28ms to 18ms with the rig present -- all of it CPU, none of it
-    // drawing (hiding every rig object changed nothing; taking the joints out of the mesh list
-    // removed the whole cost).
-    //
-    // It is far worse in a headset than on the desktop, which is exactly how matt saw it -- "on
-    // the gxr, crazy slow", desktop fine, and slow in every draw mode because the cost never had
-    // anything to do with what was being drawn. A console.error is cheap-ish into a closed
-    // devtools and very expensive over Chrome remote debugging, which is how the GXR is read.
-    //
-    // The detection stays: a NaN matrix is a real fault and worth knowing about. Only the
-    // reporting is bounded -- first occurrence in full, then a count on a timer.
+    // REPORTED ONCE, NOT ONCE PER MESH PER FRAME -- see misc/LogGuard.js for why that
+    // distinction is a performance fix and not tidiness.
     for (var k = 0; k < 6; k++) {
       if (isNaN(worldb[k])) {
-        Mesh._nanBoundCount = (Mesh._nanBoundCount || 0) + 1;
-        const now = Date.now();
-        if (!Mesh._nanBoundLast || now - Mesh._nanBoundLast > 5000) {
-          const first = !Mesh._nanBoundLast;
-          Mesh._nanBoundLast = now;
-          if (first) {
-            console.error('computeWorldBound produced NaN. LocalBounds:', Array.from(localb),
-              'Matrix:', Array.from(mat), '(further reports throttled to one per 5s)');
-            if (window.screenLog) window.screenLog('NaN WorldBound', 'red');
-          } else {
-            console.error('computeWorldBound NaN x' + Mesh._nanBoundCount + ' so far');
-          }
-        }
+        guardedError('computeWorldBound produced NaN', 5000,
+          'LocalBounds:', Array.from(localb), 'Matrix:', Array.from(mat));
         break;
       }
     }

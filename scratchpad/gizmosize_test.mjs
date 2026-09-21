@@ -42,7 +42,11 @@ check('the new size is persisted', /saveOption\('gizmoSizeMul'/.test(BRANCH));
 
 // Geometric, not linear. A multiplier spans 0.25x to 2x — eight-fold — so a fixed ABSOLUTE
 // step is coarse at the small end and sluggish at the large one.
-check('the step is geometric', /const step = 1\.0 \+ ([\d.]+) \* speedModifier;/.test(BRANCH)
+// The MULTIPLICATIVE form is the invariant, not the expression that produces the number. This
+// used to pin `1.0 + N * speedModifier`, so removing the off-hand speed modifier -- the correct
+// change, matt: "do no speed scaling with offhand trigger" -- read as a regression here while
+// the step stayed just as geometric as before.
+check('the step is geometric', /const step = 1\.0 \+ [\d.]/.test(BRANCH)
   && /cur \* step : cur \/ step/.test(BRANCH),
   'a linear step does not read the same at both ends of a multiplier');
 check('up is bigger', /valY < -T_PRESS \? cur \* step/.test(BRANCH),
@@ -65,7 +69,7 @@ if (stickClamp && optClamp && sliderRange) {
     slider[0] === stick[0] && slider[1] === stick[1], `slider ${slider} vs stick ${stick}`);
 
   // The step maths, run with the constant read out of the shipped source.
-  const pct = parseFloat(/const step = 1\.0 \+ ([\d.]+) \* speedModifier;/.exec(BRANCH)[1]);
+  const pct = parseFloat(/const step = 1\.0 \+ ([\d.]+)/.exec(BRANCH)[1]);
   const tick = (cur, up, speed = 1.0) => {
     const step = 1.0 + pct * speed;
     return Math.max(stick[0], Math.min(stick[1], up ? cur * step : cur / step));
@@ -91,9 +95,14 @@ if (stickClamp && optClamp && sliderRange) {
   check('full travel is between half a second and three seconds',
     n * 0.030 > 0.5 && n * 0.030 < 3.0, `${n} ticks = ${(n * 0.030).toFixed(2)}s`);
 
-  // The slow modifier must actually be finer, or holding the trigger does nothing.
-  check('the slow modifier takes smaller steps',
-    (tick(1.0, true, 0.1) - 1.0) < (tick(1.0, true, 1.0) - 1.0) * 0.5);
+  // THE OFF-HAND TRIGGER NO LONGER CHANGES THE SPEED, and that is the assertion now. It used
+  // to hold a 0.1x slow modifier, which had to go: that trigger is SMOOTH MODE, so holding it
+  // already changes WHICH tool the stick tunes, and changing the rate as well meant one gesture
+  // doing two things. matt: "do no speed scaling with offhand trigger".
+  check('the off-hand trigger does not scale the stick speed',
+    !/speedModifier/.test(sceneCode)
+      && !/isSecondaryTriggerPressed \? 15 : 30/.test(sceneCode),
+    'a second meaning on the smooth-mode trigger is how the rate got lost per tool');
 }
 
 // The grab tolerance is slop added AROUND the handle geometry. The geometry rides the gizmo's

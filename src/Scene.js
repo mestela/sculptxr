@@ -1,4 +1,5 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
+import { guardedError } from './misc/LogGuard.js';
 import * as THREE from 'three';
 const XF_SETTLE_MS = 250;
 import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
@@ -3585,6 +3586,11 @@ class Scene {
       // Skeleton visuals are rebuilt from the joints' live model-space matrices rather
       // than parented to them, so posing, gizmo drags, undo and animation playback all
       // keep the bones correct without any of those paths knowing bones exist.
+      // SECTIONED FOR xrPerf(). `draw` used to cover this whole block, which made it useless
+      // for the one question worth asking in a headset -- is the frame going on drawing, or on
+      // CPU work that has nothing to do with drawing. On a 40-joint rig the answer was the
+      // latter, and `draw` could not say so.
+      this._mark('rig-visuals');
       Skeleton.updateVisuals(this);
 
       // The motion trail, when it is switched on. It fingerprints the keys and the pins and
@@ -3649,6 +3655,7 @@ class Scene {
       //
       // Immediately before the draw is the only placement that can see everything the frame
       // built.
+      this._mark('mat-sweep');
       if (this._isNodeRenderer && this._scene) {
         this._scene.traverse((o) => {
           const m = o.material;
@@ -3675,7 +3682,9 @@ class Scene {
       }
 
       // Three.js clears depth on its own, so we render over the top
+      this._mark('gl-render');
       this._renderer.render(this._scene, _renderCam);
+      this._mark(null);
 
       // THE LEGACY RAW-GL TAIL DOES NOT RUN ON THE NODE PATH.
       //
@@ -4620,8 +4629,7 @@ class Scene {
     var dz = box[5] - box[2];
     var rad = 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (isNaN(rad)) {
-        console.error("🛑 computeRadiusFromBoundingBox produced NaN! Box:", box);
-        if (window.screenLog) window.screenLog("NaN Radius From BB", "red");
+        guardedError('computeRadiusFromBoundingBox produced NaN', 5000, 'Box:', Array.from(box));
     }
     return rad;
   }
@@ -4642,9 +4650,8 @@ class Scene {
     // DEBUG: NaN Bounding Box Detector
     for(var j=0; j<6; j++) {
        if(isNaN(bound[j])) {
-           console.error("🛑 computeBoundingBoxMeshes produced NaN array! Meshes count:", meshes.length);
-           console.error("- Corrupted Bounds:", bound);
-           if (window.screenLog) window.screenLog("NaN BoundingBoxMeshes", "red");
+           guardedError('computeBoundingBoxMeshes produced NaN', 5000,
+             'meshes:', meshes.length, 'bounds:', Array.from(bound));
            break;
        }
     }
@@ -12400,15 +12407,26 @@ class Scene {
           const isPressedY = Math.abs(valY) > T_PRESS;
           const isPressedX = Math.abs(valX) > T_PRESS;
 
-          // Check Secondary Hand Trigger for slow-modifier
           const nonDomSource = this._dominantHand === 'left' ? right : left;
-          const isSecondaryTriggerPressed = this._vrSecondaryTriggerPressed;
-          const speedModifier = isSecondaryTriggerPressed ? 0.1 : 1.0;
+
+          // ONE SPEED, AND THE OFF-HAND TRIGGER NO LONGER CHANGES IT.
+          //
+          // It used to be 5% per 30ms normally and 0.5% per 15ms with the off-hand trigger held
+          // -- 167%/s against 33%/s, and matt's verdict on both: "too fast in regular mode, and
+          // too slow when the offhand trigger is pressed". STICK_STEP is the geometric middle of
+          // those two rates (sqrt(167 x 33) = 74%/s, which is 2.24% on the 30ms tick), so the
+          // one remaining speed is the one that was missing.
+          //
+          // The modifier had to go regardless of feel: the off-hand trigger is SMOOTH MODE now,
+          // so holding it already changes which tool the stick is tuning. Having it also change
+          // how fast meant the gesture did two things at once, and the slow-down was landing on
+          // whichever tool you had just switched to.
+          const STICK_STEP = 0.0224;
+          const STICK_RATE = 30;
 
           // Timer for Repeat/Debounce
           const now = performance.now();
-          // Dynamic target rate: 30ms normally, 15ms (10x precision visually via speedModifier 0.1) when holding trigger
-          const targetRateY = isSecondaryTriggerPressed ? 15 : 30;
+          const targetRateY = STICK_RATE;
 
           if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY) {
             const isSlowMod = this._padOf(nonDomSource)?.buttons?.[0]?.pressed ?? false;
@@ -12436,7 +12454,9 @@ class Scene {
               // Geometric, not linear: this is a multiplier over an 8x span, so a fixed
               // PERCENTAGE per tick reads the same to the hand at either end. 5% matches the
               // step radius uses.
-              const step = 1.0 + 0.05 * speedModifier;
+              // The gizmo keeps its own 5%: it spans 8x and matt has not complained about it.
+              // It loses the off-hand slow-down with everything else.
+              const step = 1.0 + 0.05;
               const cur = window._gizmoSizeMul != null
                 ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
               const next = valY < -T_PRESS ? cur * step : cur / step; // UP -> bigger
@@ -12458,8 +12478,8 @@ class Scene {
               const smoothTool = this._smoothMode?.tool || null;
               const tools = smoothTool || this._sculptManager.getCurrentTool();
               const maxRadius = 250.0;
-              if (valY < -T_PRESS) change = maxRadius * 0.05 * speedModifier; // UP -> +5% of max
-              if (valY > T_PRESS) change = -maxRadius * 0.05 * speedModifier; // DOWN -> -5% of max
+              if (valY < -T_PRESS) change = maxRadius * STICK_STEP;  // UP -> bigger
+              if (valY > T_PRESS) change = -maxRadius * STICK_STEP;  // DOWN -> smaller
 
               if (change !== 0 && tools) {
                 const oldVal = tools._radius;
@@ -12493,7 +12513,7 @@ class Scene {
           // INTENSITY CONTROL (X-Axis)
           if (!state.lastIntensityTime) state.lastIntensityTime = 0;
 
-          const targetRateX = isSecondaryTriggerPressed ? 15 : 30;
+          const targetRateX = STICK_RATE;
 
           if (isPressedX) {
             if (now - state.lastIntensityTime > targetRateX) {
@@ -12502,8 +12522,8 @@ class Scene {
               let intChange = 0.0;
               const tools = this._smoothMode?.tool || this._sculptManager.getCurrentTool();
 
-              if (valX < -T_PRESS) intChange = -0.05 * speedModifier; // Left -> -5%
-              if (valX > T_PRESS) intChange = 0.05 * speedModifier;   // Right -> +5%
+              if (valX < -T_PRESS) intChange = -STICK_STEP; // Left -> weaker
+              if (valX > T_PRESS) intChange = STICK_STEP;   // Right -> stronger
 
               if (intChange !== 0 && tools) {
                 const oldVal = tools._intensity;
