@@ -709,7 +709,40 @@ NodeMaterials.updateFrame = function (main) {
   if (!rotCorrectionUniform || !main) return;
   const cam = main.getCamera && main.getCamera();
   if (!cam) return;
-  const c = ShaderMatcap.computeRotCorrection(cam.getView());
+  // THE CORRECTION MUST COME FROM THE CAMERA THAT PRODUCED `normalView`, and in a session that
+  // is not the legacy one. Camera.updateView refuses to touch the three camera while
+  // xr.isPresenting -- "WE ARE IN VR. DO NOT TOUCH THE THREE.JS CAMERA!" -- so `cam.getView()`
+  // stays the desktop ORBIT view for the whole session and knows nothing about your head.
+  // Feeding that to the stabiliser while the shader's normal comes from the real per-eye XR
+  // camera means head rotation is never cancelled: the matcap slides around the model as you
+  // look about. matt: "the matcap swims if i turn my head in little circles. it didn't do that
+  // in the previous matcap."
+  //
+  // And it didn't, because the legacy shader took its normal through uN -- built from that SAME
+  // desktop camera -- so both halves sat in one head-independent frame and cancelled exactly.
+  // The port kept one half and replaced the other.
+  //
+  // xr.getCamera() is the ArrayCamera whose own world matrix is the HEAD CENTRE, which is the
+  // frame this wants: per-eye would put a different lookup in each eye, which is the stereo
+  // fault this uniform exists to prevent. Eyes are parallel, so cancelling head rotation from
+  // the centre cancels it in both.
+  //
+  // ?matcapstab=legacy restores the old reading for an A/B.
+  let view = null;
+  const _legacyStab = /[?&]matcapstab=legacy/.test(window.location.search);
+  const r = main._renderer;
+  if (!_legacyStab && r && r.xr && r.xr.isPresenting && r.xr.getCamera) {
+    const head = r.xr.getCamera();
+    if (head && head.matrixWorldInverse) view = head.matrixWorldInverse.elements;
+  }
+  if (!view) {
+    // Desktop: the three camera and the legacy one are the same view by construction (measured
+    // identical), so this is the same answer by a shorter route -- and the right one if the
+    // legacy camera is ever diverted for picking.
+    const t3 = !_legacyStab && cam.getThreeCamera && cam.getThreeCamera();
+    view = (t3 && t3.matrixWorldInverse) ? t3.matrixWorldInverse.elements : cam.getView();
+  }
+  const c = ShaderMatcap.computeRotCorrection(view);
   rotCorrectionUniform.value.fromArray(c);
   // Each material that needs per-frame state says so by hanging updateFrame on userData,
   // rather than this file knowing what every shader wants.
