@@ -595,7 +595,7 @@ function makeBatch(main, geo, ghost, key) {
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
-  return { mesh: m, cap: 1 };
+  return { mesh: m, cap: 1, ghost: !!ghost };
 }
 
 // Grown in powers of two: InstancedMesh cannot be resized, so a rig that gains a joint would
@@ -635,7 +635,7 @@ function makeLineBatch(main, geo, ghost) {  // named by its caller — see batch
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
-  return { mesh: m, cap: 0, line: true, src: geo };
+  return { mesh: m, cap: 0, line: true, src: geo, ghost: !!ghost };
 }
 
 function lineBatchSlot(main, key, geoFn, ghost) {
@@ -756,8 +756,29 @@ function flushBatches(main) {
     }
   }
 
+  // THE XRAY PASS IS A FILL-RATE BILL, AND THIS IS THE SWITCH THAT PROVES IT.
+  //
+  // Every bone, joint and capsule is drawn TWICE: once solid, and once as a ghost -- transparent
+  // at 0.35, depthWrite off, depthFunc GreaterDepth, at renderOrder 9995 so it lands over
+  // everything. That second pass is blended, unculled by depth, and covers whatever the rig
+  // covers on screen.
+  //
+  // It costs nothing on a desktop and is brutal on a tiled mobile GPU. Measured on a GalaxyXR:
+  // deleting the rig took the frame from 12fps to 73, gl-render from 60-74ms to 2.34ms -- for
+  // 30 draw calls and 4,232 triangles. That is ~2ms per added draw; the same 30-odd draws cost
+  // 0.07ms on the desktop. Geometry that small cannot cost that much unless the cost is per
+  // PIXEL, which is what a full-screen blended overlay is.
+  //
+  // window._rigGhosts = false (or ?rigghosts=0) drops the ghost half. If the frame comes back,
+  // the xray pass is the bill and the fix is to make it cheaper -- not to chase draw counts.
+  if (Skeleton._rigGhostsFlag === undefined) {
+    Skeleton._rigGhostsFlag = !/[?&]rigghosts=0/.test(window.location.search);
+  }
+  const wantGhosts = window._rigGhosts !== undefined
+    ? !!window._rigGhosts : Skeleton._rigGhostsFlag;
+
   for (const [key, b] of all) {
-    const slots = bySlot.get(key) || [];
+    const slots = (b.ghost && !wantGhosts) ? [] : (bySlot.get(key) || []);
     const n = slots.length;
 
     if (b.line) { flushLineBatch(b, slots, n); continue; }
