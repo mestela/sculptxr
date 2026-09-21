@@ -5161,7 +5161,14 @@ class Scene {
       // answer and put every pool light back to castShadow=false, inside the session, where
       // the boundary can no longer correct it. Measured: window._xrShadows=1,
       // shadowMap.enabled true, and every light reporting castShadow false.
-      const wantCast = (e._castShadow !== false);
+      // POINT LIGHTS DO NOT CAST. Their shadow map is a cube rendered along fixed WORLD axes
+      // and sampled by a world-space direction, so a world rotation invalidates its contents
+      // and forces a re-render mid-gesture -- the shimmer matt chased for two sessions. Spot
+      // and sun rotate WITH the world once the shadow camera's up follows it, so their maps are
+      // invariant and never need re-rendering for a rigid grip. A point light is also six
+      // renders against one. Enforced here as well as hidden in the UI, so a scene saved with a
+      // casting point light does not bring the problem back.
+      const wantCast = (e._castShadow !== false) && (e._lightType || 0) !== 0;
       if (!this._xrGraphFrozen) {
         L.castShadow = wantCast;
       }
@@ -5190,7 +5197,9 @@ class Scene {
       if (wantCast && !this._xrShadowAlways) {
         const he = host.matrix.elements;
         const key = _shadowSceneKey + (L.isPointLight ? _worldRotKey : '')
-          + '#' + type + ',' + L.distance.toFixed(4)
+          // A DirectionalLight has no `distance` at all, so this cannot assume a number --
+          // it threw the moment a sun was allowed to cast.
+          + '#' + type + ',' + (L.distance === undefined ? 0 : L.distance).toFixed(4)
           + ',' + he[12].toFixed(3) + ',' + he[13].toFixed(3) + ',' + he[14].toFixed(3)
           + ',' + he[0].toFixed(3) + ',' + he[5].toFixed(3) + ',' + he[10].toFixed(3)
           + ',' + he[1].toFixed(3) + ',' + he[2].toFixed(3) + ',' + he[6].toFixed(3)

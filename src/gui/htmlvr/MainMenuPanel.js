@@ -2609,12 +2609,20 @@ export function buildSectionHTML_scene(main) {
          _syncThreeLights about why it does not harden at the contact point. Worth knowing
          while chasing a leak: a wide radius blurs the penumbra across the contact point too,
          so a gap that persists at bias 0 may be softness rather than bias. */ ''}
+    ${/* NOT OFFERED ON A POINT LIGHT. A point light's shadow map is a CUBE rendered along
+         fixed WORLD axes and sampled by a world-space direction, so rotating the world
+         invalidates its contents and the map has to be re-rendered mid-gesture -- which is
+         visible as shimmer. A spot or a sun rotates WITH the world once the shadow camera's up
+         follows it, so their maps are invariant under any rigid grip and never need that.
+         A point light is also six renders against one. matt: "i think we just don't allow
+         point lights to cast shadows." */ ''}
+    ${(_lit._lightType || 0) !== 0 ? `
     <div class="mm-row">
       <span class="mm-lbl">Shadow</span>
       <button class="mm-choice${(_lit._castShadow !== false) ? ' active' : ''}" id="mm-light-shadow">${(_lit._castShadow !== false) ? 'On' : 'Off'}</button>
       <span class="mm-val"></span>
-    </div>
-    ${(_lit._castShadow !== false) ? `
+    </div>` : ''}
+    ${((_lit._lightType || 0) !== 0 && _lit._castShadow !== false) ? `
     <div class="mm-row">
       <span class="mm-lbl">Sh. opacity</span>
       <input type="range" id="mm-light-shopacity" min="0" max="100" step="1" value="${Math.round((_lit._shadowIntensity ?? 1) * 100)}">
