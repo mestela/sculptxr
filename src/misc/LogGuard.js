@@ -61,9 +61,57 @@ export function logSpamReport() {
 
 export function logSpamReset() { state.clear(); }
 
+/**
+ * WHAT THE FRAME IS ACTUALLY DRAWING. `drawReport(scene)` -- or `drawReport()` once Scene has
+ * registered itself -- lists every VISIBLE drawable grouped by parent, with instance counts and
+ * triangles, worst first.
+ *
+ * It exists because xrPerf can say `gl-render 60ms` and nothing more, and on a GalaxyXR that 60ms
+ * came with 99 draw calls and 28,449 triangles -- so neither geometry nor draw count explains it
+ * (measured on the desktop: fifty extra draws, shared or unique materials, cost 0.07ms). The next
+ * question is always "which objects", and answering it by hand in a headset is not practical.
+ */
+export function drawReport(scene) {
+  const sc = scene || (typeof window !== 'undefined' && window.sculptgl_instance
+    && window.sculptgl_instance._scene);
+  if (!sc) { console.log('[draw] no scene'); return []; }
+  const rows = [];
+  let hidden = 0;
+  sc.traverse((o) => {
+    if (!(o.isMesh || o.isLine || o.isPoints)) return;
+    let p = o, vis = true;
+    while (p) { if (!p.visible) { vis = false; break; } p = p.parent; }
+    const g = o.geometry;
+    if (!g) return;
+    if (!vis) { hidden++; return; }
+    const idx = g.index ? g.index.count
+      : (g.getAttribute && g.getAttribute('position') ? g.getAttribute('position').count : 0);
+    const n = o.isInstancedMesh ? (o.count || 0) : 1;
+    if (n === 0) return;
+    const chain = [];
+    let q = o.parent;
+    while (q && chain.length < 2) { chain.push(q.name || q.type); q = q.parent; }
+    rows.push({ name: o.name || o.type, under: chain.join('<'), inst: n,
+      tris: Math.round(idx / 3 * n), mat: o.material && o.material.type,
+      transparent: !!(o.material && o.material.transparent), order: o.renderOrder });
+  });
+  rows.sort((a, b) => b.tris - a.tris);
+  const byParent = {};
+  for (const r of rows) byParent[r.under] = (byParent[r.under] || 0) + 1;
+  console.log('[draw] ' + rows.length + ' visible drawables (' + hidden + ' hidden), '
+    + rows.reduce((a, b) => a + b.tris, 0) + ' tris');
+  console.log('[draw] by parent: ' + JSON.stringify(byParent));
+  for (const r of rows.slice(0, 12)) {
+    console.log('  ' + r.tris + ' tris  x' + r.inst + '  ' + r.name + ' under ' + r.under
+      + '  ' + r.mat + (r.transparent ? ' transparent' : '') + ' order=' + r.order);
+  }
+  return rows;
+}
+
 if (typeof window !== 'undefined') {
   window.logSpamReport = logSpamReport;
   window.logSpamReset = logSpamReset;
+  window.drawReport = drawReport;
 }
 
-export default { guardedError, logSpamReport, logSpamReset };
+export default { guardedError, logSpamReport, logSpamReset, drawReport };
