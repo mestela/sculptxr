@@ -2577,6 +2577,24 @@ export function buildSectionHTML_scene(main) {
       <input type="range" id="mm-light-cone" min="5" max="89" step="1" value="${Math.round(_lit._lightConeDeg ?? 35)}">
       <span class="mm-val" id="mm-light-cone-val">${Math.round(_lit._lightConeDeg ?? 35)}&deg;</span>
     </div>` : ''}
+    ${/* COLOUR SITS ABOVE THE SHADOW BLOCK, deliberately. matt: "ensure the colour swatch
+         stays near the top, it shouldn't be pushed after shadows, as then it looks like it's
+         a control for shadow tint." The shadow rows are a variable-length group -- they only
+         exist when casting is on -- so anything after them reads as belonging to them. */ ''}
+    ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
+         colour control in this app that survives being rasterised into a VR panel, and the
+         Scene section renders there too. Swatch opens it, OK closes it. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Colour</span>
+      <button id="mm-light-swatch" title="Light colour"
+        style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${_litHex};border:1px solid #45475a"></button>
+      <span class="mm-val"></span>
+    </div>
+    ${_litPickerOpen ? `
+    <div class="mm-row" style="justify-content:center">
+      ${buildColorWheelHTML({ prefix: 'mm-light-cw', size: 150 })}
+    </div>
+    <button class="mm-action-btn" id="mm-light-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
     ${/* SHADOWS, per light, because every one of these depends on the scene's scale and on
          the look being aimed for -- there is no value that is right for a 34-unit sculpt and
          a 3-unit one at the same time.
@@ -2612,20 +2630,6 @@ export function buildSectionHTML_scene(main) {
       <input type="range" id="mm-light-shbias" min="-100" max="100" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
       <span class="mm-val" id="mm-light-shbias-val">${(_lit._shadowNormalBias ?? 0.15).toFixed(2)}</span>
     </div>` : ''}
-    ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
-         colour control in this app that survives being rasterised into a VR panel, and the
-         Scene section renders there too. Swatch opens it, OK closes it. */ ''}
-    <div class="mm-row">
-      <span class="mm-lbl">Colour</span>
-      <button id="mm-light-swatch" title="Light colour"
-        style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${_litHex};border:1px solid #45475a"></button>
-      <span class="mm-val"></span>
-    </div>
-    ${_litPickerOpen ? `
-    <div class="mm-row" style="justify-content:center">
-      ${buildColorWheelHTML({ prefix: 'mm-light-cw', size: 150 })}
-    </div>
-    <button class="mm-action-btn" id="mm-light-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
 `;
 
   return `

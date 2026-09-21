@@ -302,6 +302,73 @@ function installNestedRenderGuard(renderer) {
 }
 
 /**
+ * BUG F -- THE SHADOW FRUSTUM IS THE USER'S FALLOFF SLIDER, AND IT SHOULD NOT BE.
+ *
+ * Both shadow paths derive the shadow camera's far plane from `light.distance`:
+ *
+ *     SpotLightShadow.updateMatrices:   const far = light.distance || camera.far;
+ *     PointShadowNode.renderShadow:     const far = light.distance || camera.far;
+ *
+ * `light.distance` is the Falloff control. So the depth range the shadow map has to resolve
+ * is whatever reach the user dialled in, for a model that is usually a tiny fraction of it.
+ * matt, once shadows finally appeared: "it's too tuned to falloff, I have to find the sweet
+ * spot; falloff too large and the shadow disappears, same with it being too small... falloff
+ * shouldn't be affecting this at all." His probe: near 2.53, far 162, and FIVE pixels out of
+ * 4096 carrying any depth at all -- the sculpt was a sliver of a 162-unit range.
+ *
+ * Note the `||`: a distance of ZERO means three leaves `camera.far` alone. So the fix is to
+ * hand it a fitted far for the duration of the shadow render and put the user's value back
+ * immediately, which keeps Falloff driving the LIGHTING and nothing else. The fitted frustum
+ * is set per light in Scene._syncThreeLights as `light.userData._shadowFit`.
+ */
+function installShadowFrustumFit(WGPU, renderer) {
+  const lib = renderer.library;
+  if (!lib || !lib.getLightNodeClass) return false;
+  const PointLightNodeClass = lib.getLightNodeClass(WGPU.PointLight);
+  if (!PointLightNodeClass) return false;
+
+  let PointShadowNodeProto;
+  try {
+    const node = new PointLightNodeClass(new WGPU.PointLight());
+    PointShadowNodeProto = Object.getPrototypeOf(node.setupShadowNode());
+  } catch (e) {
+    console.warn('[xrpatch] could not reach PointShadowNode: ' + e.message);
+    return false;
+  }
+  const ShadowNodeProto = Object.getPrototypeOf(PointShadowNodeProto);
+
+  const wrap = (proto, label) => {
+    if (!proto || !Object.prototype.hasOwnProperty.call(proto, 'renderShadow')) return;
+    if (proto.renderShadow._xrFit) return;
+    const orig = proto.renderShadow;
+    const patched = function (frame) {
+      const light = this.light;
+      const fit = light && light.userData && light.userData._shadowFit;
+      const saved = light ? light.distance : undefined;
+      if (fit) {
+        // A distance of 0 is what makes three keep OUR camera.far, but the point path reads
+        // `light.distance || camera.far` and then pins it, so hand it the fitted far directly.
+        light.distance = fit.far;
+        const cam = this.shadow && this.shadow.camera;
+        if (cam) { cam.near = fit.near; cam.far = fit.far; cam.updateProjectionMatrix(); }
+      }
+      try {
+        return orig.call(this, frame);
+      } finally {
+        if (fit) light.distance = saved;
+      }
+    };
+    patched._xrFit = true;
+    patched._label = label;
+    proto.renderShadow = patched;
+  };
+
+  wrap(PointShadowNodeProto, 'point');
+  wrap(ShadowNodeProto, 'base');
+  return true;
+}
+
+/**
  * Both patches. Call once, straight after `renderer.init()` and before anything is drawn --
  * bug A rewrites binding points that get baked into programs at link time, so it has to be in
  * place before the first material compiles.
@@ -316,6 +383,10 @@ export function applyXRBackendPatches(renderer, WGPU, TSL) {
   // ?xrnested=0 leaves the nested render unguarded, to A/B against the fault.
   if (!/[?&]xrnested=0/.test(window.location.search)) {
     installNestedRenderGuard(renderer);
+  }
+  // ?shadowfit=0 gives the shadow frustum back to the Falloff slider, to A/B against it.
+  if (!/[?&]shadowfit=0/.test(window.location.search)) {
+    installShadowFrustumFit(WGPU, renderer);
   }
 }
 
