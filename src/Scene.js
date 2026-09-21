@@ -5200,9 +5200,16 @@ class Scene {
         // The 64:1 floor still carries a light INSIDE the model, where there is no safe near.
         const _dToScene = Math.hypot(
           L.position.x - _cWorld.x, L.position.y - _cWorld.y, L.position.z - _cWorld.z);
-        const _reach = _rWorld * 1.5;
+        // THE MARGIN IS TIGHT ON PURPOSE. A 1.5x radius margin sounds safe and is not: it
+        // drives the near plane to nearly zero whenever the light is within ~1.5 radii of the
+        // surface, the 64:1 floor then takes over, and the model ends up squeezed against the
+        // far plane. matt's session with 1.5x: near 2.32, far 148.7, the sculpt sitting at
+        // depth 0.985-1.0 and no visible shadow. 1.05 is enough to clear the bounding sphere
+        // without throwing the range away, and 16:1 is a much saner floor than 64:1 for a
+        // 24-bit depth buffer.
+        const _reach = _rWorld * 1.05;
         const far = Math.max(1e-3, _dToScene + _reach);
-        const near = Math.min(Math.max(_dToScene - _reach, far / 64, 1e-5), far * 0.5);
+        const near = Math.min(Math.max(_dToScene - _reach, far / 16, 1e-5), far * 0.5);
         L.userData._shadowFit = { near, far };
         // The LIGHT still has to reach the model for any of this to be visible -- that part is
         // genuinely the Falloff's job, and it is worth saying once when it cannot.
