@@ -4111,7 +4111,10 @@ class Scene {
             const m = NodeMaterials.get(Enums.Shader.PBR);
             return m ? m.envMapIntensity : null;
           })(),
-          xrEnv: !!window._xrEnv, xrShadows: !!window._xrShadows,
+          // EFFECTIVE, not truthy. Both are opt-OUT now, so an unset flag means ON -- and
+          // `!!undefined` reported "off" for the default state, which is the instrument
+          // agreeing with the bug rather than with the code.
+          xrEnv: window._xrEnv !== false, xrShadows: window._xrShadows !== false,
           lights: rows,
           // WORLD SCALE, because it turns out to explain a lot: it drives light falloff, and a
           // heavily grip-scaled world makes the model narrower than the 64mm IPD, at which
@@ -7737,11 +7740,22 @@ class Scene {
       this._xrGraphFrozen = true;
       // THE FLAG IS A URL PARAM AS WELL AS A GLOBAL. window._xrShadows has to be set BEFORE
       // the button is pressed, and forgetting that looks exactly like the bug it was meant to
-      // test -- it cost a headset session. ?xrshadows=1 cannot be mistimed.
+      // test -- it cost a headset session. ?xrshadows=0 cannot be mistimed.
+      //
+      // THIS IS THE AUTHORITATIVE READ, and it is why making shadows the default did not take.
+      // The boundary read here ran `!!window._xrShadows || !!_shq` -- opt-IN -- and then WROTE
+      // the answer back to window._xrShadows. With no flag that stored an explicit `false`, so
+      // the per-frame test I had changed to `!== false` saw a real false from then on and
+      // turned shadows off anyway. Two places decided the same thing and the older one won.
+      // matt: "if i take off the xrshadow=1 flag, i don't get shadows."
+      //
+      // Opt-OUT now, and it agrees with the per-frame read by construction: both ask only
+      // whether the flag has been explicitly set to false.
       const _shq = /[?&]xrshadows=(\w+)/.exec(window.location.search);
       this._xrShadowOnce = !!(_shq && _shq[1] === 'once');
       this._xrShadowAlways = !!(_shq && _shq[1] === 'always');
-      const _wantXrShadows = !!window._xrShadows || !!_shq;
+      if (_shq && _shq[1] === '0') window._xrShadows = false;
+      const _wantXrShadows = window._xrShadows !== false;
       window._xrShadows = _wantXrShadows;
       _setPoolShadows(_wantXrShadows);
       _rebuildAll('session start');
