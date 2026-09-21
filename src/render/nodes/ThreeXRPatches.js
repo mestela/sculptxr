@@ -261,11 +261,31 @@ function installNestedRenderGuard(renderer) {
     const nested = depth > 0 && xr && xr.enabled === true && xr.isPresenting === true;
 
     depth++;
-    if (nested) xr.enabled = false;
+    let savedFBT, savedORT;
+    if (nested) {
+      xr.enabled = false;
+      // AND SHIELD THE OUTER FRAME'S COMPOSITE BUFFER. _getFrameBufferTarget() sizes ONE
+      // SHARED intermediate target from getOutputRenderTarget(); with xr.enabled off that
+      // reads the canvas rather than the XR target, so the inner pass would resize the outer
+      // frame's buffer under it. The outer composite then draws a mismatched framebuffer:
+      //     GL_INVALID_FRAMEBUFFER_OPERATION: glDrawArrays: Framebuffer is incomplete:
+      //     Attachments are not all the same size.
+      // Give the nested pass its own target (cached, so this does not allocate per frame) and
+      // hand the outer one back untouched.
+      savedFBT = renderer._frameBufferTarget;
+      savedORT = renderer._outputRenderTarget;
+      renderer._frameBufferTarget = renderer._xrNestedFBT || null;
+      renderer._outputRenderTarget = null;
+    }
     try {
       return orig(scene, camera);
     } finally {
-      if (nested) xr.enabled = true;
+      if (nested) {
+        renderer._xrNestedFBT = renderer._frameBufferTarget;
+        renderer._frameBufferTarget = savedFBT;
+        renderer._outputRenderTarget = savedORT;
+        xr.enabled = true;
+      }
       depth--;
     }
   };
