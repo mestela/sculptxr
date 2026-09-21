@@ -80,7 +80,11 @@ import {
 // logarithmic over 0.001..20, which puts 1.0 near the middle and makes the low end reachable.
 // The stored value is unchanged -- this is the track's shape only, not the light's meaning.
 const LIGHT_INT_MIN = 0.001;
-const LIGHT_INT_MAX = 20;
+// 100, not 20. The ceiling only ever needed to be low while the track was LINEAR -- every unit
+// of range there was range stolen from the bottom, which is where the useful settings live. A
+// log track does not have that trade: 0.001..100 still puts 1.0 at 60% of the way along and
+// keeps the same resolution near zero. matt (#78) wanted "much wider"; this is 5x.
+const LIGHT_INT_MAX = 100;
 const lightIntFromSlider = (v) => (v <= 0 ? 0
   : LIGHT_INT_MIN * Math.pow(LIGHT_INT_MAX / LIGHT_INT_MIN, v / 1000));
 const lightIntToSlider = (x) => (!x || x <= 0 ? 0

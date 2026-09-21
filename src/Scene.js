@@ -4913,7 +4913,14 @@ class Scene {
     // Sized off the scene like the light's own range is, rather than a constant: scene units
     // here are arbitrary and large, so a fixed 4 was invisible in one scene and a nuisance in
     // the next. A twentieth of the range puts it at marker size in whatever it lands in.
-    rays.scale.setScalar(Math.max(0.5, (mesh._lightRange || 50) * 0.05));
+    // A MARKER, NOT A DIAGRAM. A twentieth of the range was chosen so the icon stayed
+    // visible whatever scene it landed in, but range now has a floor of 200, so the default
+    // light arrives as a ten-unit star over a sculpt a few units across. matt: "the ray-star
+    // gizmo is annoying at size; want something simpler/smaller." Scaled off the SCENE rather
+    // than the light's falloff -- the falloff is a lighting decision and has no business
+    // setting how big an icon is -- and capped, so a big import does not bring a big star.
+    const _r = this._lightRefDistForScene ? this._lightRefDistForScene() : 20;
+    rays.scale.setScalar(Math.max(0.35, Math.min(_r * 0.08, 3)));
     tm.add(rays);
     return mesh;
   }
@@ -7259,12 +7266,28 @@ class Scene {
       // Sliced, not shared: two lights pointing at one colour array means editing either edits
       // both, which is the sort of thing you only notice a week later.
       copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
+      // _isNull IS THE IMPORTANT ONE. Twenty-nine places ask "is this real geometry" by
+      // checking it -- the exporter, the shadow caster list, skinning, the rendering sweeps --
+      // so a copy without it is half locator and half mesh, and every one of those treats it
+      // as a sphere. It is also what the .sxr writer keys on, so the duplicate would not have
+      // saved as a light either.
+      copy._isNull         = true;
+      copy.isPickable      = src.isPickable;
+      copy._typeName       = src._typeName || 'Light';
       copy._lightIntensity = src._lightIntensity;
-      copy._shadowNear = src._shadowNear;
-      copy._shadowMapSize = src._shadowMapSize;
       copy._lightRange     = src._lightRange;
       copy._lightType      = src._lightType;
       copy._lightConeDeg   = src._lightConeDeg;
+      copy._lightRefDist   = src._lightRefDist;
+      // The shadow group, all of it. These are hand-tuned values and a duplicate that drops
+      // them is a duplicate you have to re-tune -- the same complaint the .sxr writer was
+      // fixed for one commit ago.
+      copy._castShadow        = src._castShadow;
+      copy._shadowNear        = src._shadowNear;
+      copy._shadowMapSize     = src._shadowMapSize;
+      copy._shadowNormalBias  = src._shadowNormalBias;
+      copy._shadowIntensity   = src._shadowIntensity;
+      copy._shadowRadius      = src._shadowRadius;
       this.decorateLight(copy);
     } else {
       this.decorateNull(copy);
