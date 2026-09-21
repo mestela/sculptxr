@@ -4091,7 +4091,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 17;  // v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 18;  // v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -4134,7 +4134,13 @@ Skeleton.serialize = function (meshes, main) {
     // ordinary solid and no light at all. matt: "it doesn't seem to be restoring properly, and I
     // had to make another shadowcaster light."
     const shadow = !!(m._isShadowCatcher || m._isShadowLight);
-    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow) return;
+    // A LIGHT EARNS A ROW TOO, for exactly the reason the shadow flags above do. A light is
+    // typically unparented, unlocked, visible and not a bone, so it fell through this guard and
+    // got no entry at all -- and with no entry there is nothing for the v18 light section to
+    // refer to, so every light's settings were dropped on save however carefully v18 wrote
+    // them. matt: "lights aren't being saved/loaded properly to sxr".
+    const light = !!m._isLight;
+    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow && !light) return;
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
@@ -4311,6 +4317,35 @@ Skeleton.serialize = function (meshes, main) {
     phys3.push({ i: i, ms: p.mass, sb: p.substeps, it: p.iterations });
   });
 
+  // v18: THE LIGHT PARAMETERS. A light is a locator (`_isLight` + `_isNull`), so the mesh
+  // itself already round-trips through the ordinary path -- but every property that makes it a
+  // LIGHT lived only in memory, and a saved scene came back with a plain sphere where the light
+  // had been. Exactly the shape of the bug v11/v14/v17 kept repeating for PhysicsBones: the
+  // feature works perfectly until you save.
+  //
+  // Whoever adds the next light property: add it HERE. The shadow group in particular has grown
+  // three times in one session (near, bias, softness), and each one is a tuning decision the
+  // user will not enjoy making twice.
+  const lights = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isLight) return;
+    const c = m._lightColor || [1, 1, 1];
+    lights.push({
+      i: i,
+      t: m._lightType || 0,
+      r: c[0], g: c[1], b: c[2],
+      inten: m._lightIntensity === undefined ? 1 : m._lightIntensity,
+      range: m._lightRange === undefined ? 50 : m._lightRange,
+      cone: m._lightConeDeg === undefined ? 35 : m._lightConeDeg,
+      cast: (m._castShadow !== false) ? 1 : 0,
+      shNear: m._shadowNear === undefined ? 0.01 : m._shadowNear,
+      shBias: m._shadowNormalBias === undefined ? 0.15 : m._shadowNormalBias,
+      shInt: m._shadowIntensity === undefined ? 1 : m._shadowIntensity,
+      shRad: m._shadowRadius === undefined ? 4 : m._shadowRadius,
+      ref: m._lightRefDist === undefined ? 0 : m._lightRefDist,
+    });
+  });
+
   // v10: the joint's offset, where a face drag has moved its shape off it. Its own section
   // rather than three more floats on the v9 one, so a file written by a build that had scale and
   // not offset still reads.
@@ -4352,6 +4387,7 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + phys2.length * 7;   // v14: i + drag, ground, groundY, inertia, maxBend, collide
   slots += 1 + rig.length * 7;     // v15: i + aim, saccades, amp, speed, smooth, mirror
   slots += 1 + phys3.length * 4;   // v17: i + mass, substeps, iterations
+  slots += 1 + lights.length * 13; // v18: i + type, rgb, intensity, range, cone, cast, 4 shadow, ref
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -4417,6 +4453,15 @@ Skeleton.serialize = function (meshes, main) {
   // Substeps and iterations are COUNTS, so they go through the u32 view; mass is a multiplier.
   u[o++] = phys3.length;
   for (const ph of phys3) { u[o++] = ph.i; f[o++] = ph.ms; u[o++] = ph.sb; u[o++] = ph.it; }
+
+  u[o++] = lights.length;
+  for (const li of lights) {
+    u[o++] = li.i; u[o++] = li.t;
+    f[o++] = li.r; f[o++] = li.g; f[o++] = li.b;
+    f[o++] = li.inten; f[o++] = li.range; f[o++] = li.cone;
+    u[o++] = li.cast;
+    f[o++] = li.shNear; f[o++] = li.shBias; f[o++] = li.shInt; f[o++] = li.shRad;
+  }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -4777,6 +4822,39 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const cur = m._physicsParams || {};
         cur.mass = ms; cur.substeps = sb; cur.iterations = it3;
         m._physicsParams = cur;
+      }
+    }
+
+    // v18: the light parameters. The flags go on first because decorateLight builds the gizmo
+    // from them, and _lightRefDist is deliberately NOT restored -- it is the brightness
+    // reference latched from the scene when the light was made, and a scene that has grown or
+    // shrunk since wants the current one. _syncThreeLights recomputes it when it is missing.
+    if (ver >= 18) {
+      const ln = u[o++];
+      for (let i = 0; i < ln; i++) {
+        const mi = u[o++], t = u[o++];
+        const r = f[o++], g = f[o++], b = f[o++];
+        const inten = f[o++], range = f[o++], cone = f[o++];
+        const cast = u[o++];
+        const shNear = f[o++], shBias = f[o++], shInt = f[o++], shRad = f[o++];
+        const m = meshes[mi];
+        if (!m) continue;
+        m._isLight = true;
+        m._isNull = true;
+        m._typeName = m._typeName || 'Light';
+        m._lightType = t;
+        m._lightColor = [r, g, b];
+        m._lightIntensity = inten;
+        m._lightRange = range;
+        m._lightConeDeg = cone;
+        m._castShadow = !!cast;
+        m._shadowNear = shNear;
+        m._shadowNormalBias = shBias;
+        m._shadowIntensity = shInt;
+        m._shadowRadius = shRad;
+        try { main.decorateLight && main.decorateLight(m); } catch (e) {
+          console.error('[Skeleton] decorateLight on load failed', e);
+        }
       }
     }
 
