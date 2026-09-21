@@ -169,9 +169,13 @@ ShaderManager.getMaterial = function(shaderId) {
 ShaderManager.getMaterialFor = function(mesh, shaderId) {
   // THE ONE CHOKE POINT for a mesh's material -- every call site goes through here -- which is
   // why the renderer split lives here and not in seven places. Node materials are pre-built
-  // and shared per shader id; none of the cloning below applies, because the per-mesh texture
-  // problem it solves is a legacy-uniform problem.
-  if (NodeMaterials.isActive()) return NodeMaterials.get(shaderId);
+  // and shared per shader id, and getFor hands back that shared one unless this mesh carries
+  // maps or transmission, in which case it gets a variant with them wired in.
+  //
+  // This used to return the shared material unconditionally, on the reading that the per-mesh
+  // texture problem below was "a legacy-uniform problem". It is not: a texture belongs to one
+  // mesh under any renderer, and sharing meant an imported glb arrived untextured.
+  if (NodeMaterials.isActive()) return NodeMaterials.getFor(mesh, shaderId);
   var shared = this.getMaterial(shaderId);
   if (!shared || !mesh) return shared;
   var needsOwn = (mesh.hasTextureMap && mesh.hasTextureMap()) ||

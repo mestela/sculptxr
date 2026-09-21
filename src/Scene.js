@@ -5510,7 +5510,11 @@ class Scene {
     // So VR gets lights and no IBL, desktop keeps the environment, and this is written down
     // rather than left as a mystery for whoever looks next. window._xrEnv = 1 turns it back
     // on in a session to retest.
-    const pbrMat = NodeMaterials.get(Enums.Shader.PBR);
+    // EVERY PBR material, not just the shared one. A textured mesh gets its own variant
+    // (NodeMaterials.getFor), and since the IBL lives on the material rather than on
+    // scene.environment, a variant left out of this is lit by nothing at all.
+    const pbrMats = NodeMaterials.allPBR ? NodeMaterials.allPBR() : [];
+    const pbrMat = pbrMats[0] || NodeMaterials.get(Enums.Shader.PBR);
     const _xrNow = !!(this._renderer.xr && this._renderer.xr.isPresenting);
     // ?xrenv=1 as well as window._xrEnv, for the same reason as ?xrshadows: a console global
     // has to be set before the button is pressed, and getting that wrong is indistinguishable
@@ -5519,12 +5523,15 @@ class Scene {
     if (/[?&]xrenv=1/.test(window.location.search)) window._xrEnv = 1;
     const wantEnv = this._nodeEnvTex && (!_xrNow || !!window._xrEnv);
     const nextEnv = wantEnv ? this._nodeEnvTex : null;
-    if (pbrMat && pbrMat.envMap !== nextEnv) {
-      pbrMat.envMap = nextEnv;
-      pbrMat.needsUpdate = true;
-      console.log('[env] ' + (nextEnv ? 'on' : 'off (XR)'));
+    for (let i = 0; i < pbrMats.length; i++) {
+      const pm = pbrMats[i];
+      if (pm.envMap !== nextEnv) {
+        pm.envMap = nextEnv;
+        pm.needsUpdate = true;
+        if (pm === pbrMat) console.log('[env] ' + (nextEnv ? 'on' : 'off (XR)'));
+      }
+      pm.envMapIntensity = gain;
     }
-    if (pbrMat) pbrMat.envMapIntensity = gain;
   }
 
   getLights() {

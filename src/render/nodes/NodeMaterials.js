@@ -24,6 +24,7 @@ let gpu = null;              // the `three/webgpu` module — a SEPARATE build f
 let tsl = null;              // the `three/tsl` module — node expression helpers
 let rotCorrectionUniform = null;  // mat3, head-centre, shared by every matcap mesh
 let cache = null;            // shaderId -> material, built up front
+let mapped = null;           // texture-set key -> per-mesh PBR material (see getFor)
 const matcapTextures = [];   // index -> Texture, shared by every mesh using that matcap
 
 NodeMaterials.isActive = () => !!gpu;
@@ -34,9 +35,26 @@ NodeMaterials.isActive = () => !!gpu;
 NodeMaterials.all = function () {
   const out = [];
   for (const id in cache) if (cache[id]) out.push(cache[id]);
+  // The per-mesh textured variants count as ours: they need the same session-boundary rebuild
+  // and the same warm pass as everything else, and leaving them out is how one material comes
+  // back compiled for the wrong camera.
+  if (mapped) for (const m of mapped.values()) if (m) out.push(m);
   for (const m of basicCache.values()) out.push(m);
   for (const v of (NodeMaterials._panelVariants || [])) out.push(v);
   if (NodeMaterials._solid) out.push(NodeMaterials._solid);
+  return out;
+};
+
+/** EVERY material on the PBR lit path — the shared one and every per-mesh textured variant.
+ *  scene.environment is deliberately not used here (see Scene._syncThreeLights), so the IBL
+ *  lives on each material's own envMap. That made "the PBR material" a single object, and the
+ *  first textured import proved it is not: a variant built without the envMap renders BLACK in
+ *  a scene lit only by the environment, which reads as "the texture broke the material". */
+NodeMaterials.allPBR = function () {
+  const out = [];
+  const base = cache && cache[Enums.Shader.PBR];
+  if (base) out.push(base);
+  if (mapped) for (const m of mapped.values()) if (m) out.push(m);
   return out;
 };
 
@@ -76,6 +94,68 @@ NodeMaterials.get = function (shaderId) {
   if (!cache) return null;
   return cache[shaderId] || cache[Enums.Shader.MATCAP] || null;
 };
+
+// ── A MESH WITH ITS OWN TEXTURES GETS ITS OWN MATERIAL ──────────────────────────────────
+//
+// Everything else shares: one material per shader id, built up front, handed to every mesh.
+// A texture map cannot work that way -- it belongs to one mesh, and a shared material would
+// wear the last import's image on everything. The legacy path already reached this conclusion
+// and clones per mesh in ShaderManager.getMaterialFor; the node branch returned the shared
+// material unconditionally, which is why an imported glb came in untextured.
+//
+// ONLY PBR, exactly as the legacy rule has it: no other mode samples a map, and every other
+// mode has reason to keep the shared material. And only when there is something to carry --
+// a map or transmission -- so an ordinary sculpt is untouched and still shares.
+//
+// THE HAZARD, written down rather than discovered later: this builds a material on demand, and
+// a material first compiled INSIDE an XR session comes out with the wrong camera layout. In
+// practice an import happens on the desktop, and the variant is built the first time the mesh
+// is drawn, which is then. A glb imported while in a session is the case to watch.
+NodeMaterials.getFor = function (mesh, shaderId) {
+  if (!cache) return null;
+  if (!mesh || shaderId !== Enums.Shader.PBR) return NodeMaterials.get(shaderId);
+  const wantsOwn = (mesh.hasTextureMap && mesh.hasTextureMap())
+    || (mesh.getTransmission && mesh.getTransmission() > 0)
+    || (mesh.getOpacity && mesh.getOpacity() < 1);
+  if (!wantsOwn) return NodeMaterials.get(shaderId);
+
+  // Keyed on the maps themselves, not just on the mesh: swapping a texture has to rebuild,
+  // and two meshes sharing one set of maps can share one material.
+  const key = [
+    mesh.getAlbedoMap && mesh.getAlbedoMap() ? mesh.getAlbedoMap().uuid : '-',
+    mesh.getRoughMetalMap && mesh.getRoughMetalMap() ? mesh.getRoughMetalMap().uuid : '-',
+    mesh.getNormalMap && mesh.getNormalMap() ? mesh.getNormalMap().uuid : '-',
+    mesh.getTransmission ? mesh.getTransmission() : 0,
+    mesh.getRoughFactor ? mesh.getRoughFactor() : 1,
+    mesh.getMetalFactor ? mesh.getMetalFactor() : 1,
+    mesh.getNormalScale ? mesh.getNormalScale() : 1,
+    // The MESH's identity, not its opacity value -- keying on the number would build a new
+    // material on every step of a slider drag, which is the one thing this renderer cannot
+    // do safely inside a session. A translucent mesh simply gets a material of its own, and
+    // the opacity on it is then a plain property that can move.
+    (mesh.getOpacity && mesh.getOpacity() < 1) ? 'o' + (mesh.getID ? mesh.getID() : '?') : '-',
+  ].join('|');
+
+  mapped = mapped || new Map();
+  const hit = mapped.get(key);
+  // OPACITY IS NOT IN THE KEY (see above), so a cache hit carries whatever value it was built
+  // with. Re-apply it, or a mesh taken to 1.0 and back comes back at its OLD opacity -- the
+  // slider moves and nothing on screen changes.
+  if (hit) { applyOpacity(hit, mesh); return hit; }
+  const m = makePhysical(gpu, tsl, mesh);
+  // Inherit the IBL immediately. _syncThreeLights will keep it in step from the next frame,
+  // but the variant is handed straight to the mesh and would draw one unlit frame without it.
+  const base = cache[Enums.Shader.PBR];
+  if (base) { m.envMap = base.envMap || null; m.envMapIntensity = base.envMapIntensity; }
+  mapped.set(key, m);
+  return m;
+};
+
+function applyOpacity(mat, mesh) {
+  const op = mesh.getOpacity ? mesh.getOpacity() : 1;
+  mat.opacity = op;
+  mat.transparent = op < 1 || mat.transmission > 0;
+}
 
 /** The matcap image for a given index, loaded once and shared. */
 function matcapTexture(index) {

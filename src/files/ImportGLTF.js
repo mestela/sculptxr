@@ -335,6 +335,13 @@ function buildMesh(prims, gl, name, stats) {
     if (stats) stats.normalMapped++;
   }
 
+  // PLAIN ALPHA, which is not transmission and was not read at all. glTF's alphaMode BLEND
+  // reaches GLTFLoader as transparent:true plus an opacity from baseColorFactor's fourth
+  // component, and nothing here looked at either -- so an imported glb came in solid however
+  // it was authored. matt: "transparency isn't working".
+  const withAlpha = prims.map(matOf).find((m) => m && m.transparent && m.opacity < 1);
+  if (withAlpha && mesh.setOpacity) mesh.setOpacity(withAlpha.opacity);
+
   const withMap = prims.map(matOf).find((m) => m && m.map);
   if (withMap) {
     const tex = withMap.map;

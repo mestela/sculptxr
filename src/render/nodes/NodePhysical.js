@@ -22,7 +22,10 @@
 // Per-vertex channels stay ours: COLOR_0 is the paint, and aMaterial carries roughness in x
 // and metalness in y, which is what a Nomad import writes and what the sculpt tools edit.
 
-export function makePhysical(gpu, tsl) {
+// `mesh` is optional. Without it this builds the SHARED sculpt material, which is what almost
+// every mesh uses. With it, it builds a variant carrying that mesh's own texture maps -- see
+// the note above the map block below for why those cannot be shared.
+export function makePhysical(gpu, tsl, mesh) {
   const { attribute, vertexColor, float, max, pow, vec3, select } = tsl;
 
   // FrontSide, NOT DoubleSide -- despite the legacy material using DoubleSide.
@@ -119,6 +122,71 @@ export function makePhysical(gpu, tsl) {
   }
   m.roughnessNode = _rough;
   m.metalnessNode = mtl.y;
+
+  // ── PER-MESH TEXTURE MAPS ──────────────────────────────────────────────────────────────
+  //
+  // A MAP CANNOT BE SHARED, which is the whole reason this function takes a mesh at all. The
+  // node materials are one per shader id and handed to every mesh; a texture is per mesh, so
+  // the last import would wear its image on everything. ShaderManager.getMaterialFor already
+  // solved this for the legacy path by cloning per mesh, and the node branch short-circuited
+  // past it -- which is why an imported glb arrived untextured. matt: "textures aren't
+  // imported, transparency isn't working. they should be translated into our new tsl
+  // materials on import."
+  //
+  // Semantics follow the legacy ShaderPBR exactly, because they follow glTF:
+  //   albedo      multiplied onto the vertex colour
+  //   roughMetal  roughness from G, metalness from B, each scaled by its factor
+  //   normal      tangent space, xy scaled by normalScale
+  // TextureIO already sets the colour spaces (albedo sRGB, data maps linear), so sampling
+  // returns linear values that sit directly alongside the linearised vertex colour.
+  if (mesh) {
+    const { texture, uv, normalMap } = tsl;
+    const uvNode = uv();
+
+    const albedo = mesh.getAlbedoMap && mesh.getAlbedoMap();
+    if (albedo) m.colorNode = m.colorNode.mul(texture(albedo, uvNode).rgb);
+
+    const rm = mesh.getRoughMetalMap && mesh.getRoughMetalMap();
+    if (rm) {
+      const rmTex = texture(rm, uvNode);
+      const rFac = mesh.getRoughFactor ? mesh.getRoughFactor() : 1;
+      const mFac = mesh.getMetalFactor ? mesh.getMetalFactor() : 1;
+      m.roughnessNode = max(rmTex.g.mul(float(rFac)), float(0.0001));
+      m.metalnessNode = rmTex.b.mul(float(mFac));
+    }
+
+    const nrm = mesh.getNormalMap && mesh.getNormalMap();
+    if (nrm) {
+      const sc = mesh.getNormalScale ? mesh.getNormalScale() : 1;
+      m.normalNode = normalMap(texture(nrm, uvNode), tsl.vec2(sc, sc));
+    }
+
+    // Transmission is a MATERIAL property rather than a node: MeshPhysicalNodeMaterial only
+    // compiles the transmission lobe when it is non-zero, so setting it is what turns it on.
+    // It also needs transparency, which the shared material deliberately refuses -- an opaque
+    // material casts shadows and sorts front-to-back. A transmissive mesh gives that up, which
+    // is the correct trade for glass and the wrong one for everything else: another reason
+    // these are per-mesh.
+    const tr = mesh.getTransmission ? mesh.getTransmission() : 0;
+    if (tr > 0) {
+      m.transmission = tr;
+      m.transparent = true;
+    }
+
+    // OPACITY, for the same reason and with the same trade. The shared material is opaque
+    // deliberately -- opaque casts shadows and sorts front-to-back -- so a mesh that wants to
+    // fade has to leave it. matt: "transparency isn't working" on an imported glb; the glTF
+    // alpha was never read on import, and even once read there was no material that could show
+    // it. Mesh.setOpacity moves the number on an existing variant and only re-queries when the
+    // mesh crosses 1.0, so a slider drag does not build a material per frame.
+    const op = mesh.getOpacity ? mesh.getOpacity() : 1;
+    if (op < 1) {
+      m.opacity = op;
+      m.transparent = true;
+    }
+
+    m.userData.sculptMeshId = mesh.getID ? mesh.getID() : null;
+  }
 
   m.userData.isPhysicalPBR = true;
   return m;

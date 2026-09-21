@@ -2270,6 +2270,19 @@ class Mesh {
 
   setOpacity(alpha) {
     this._renderData._alpha = alpha;
+    // The node path keeps opacity on the MATERIAL (the legacy path has a uniform of its own),
+    // and the shared sculpt material is opaque on purpose. So a mesh crossing 1.0 has to
+    // re-query -- it is gaining or losing a material of its own -- while a drag inside the
+    // translucent range only moves the number, which keeps a slider from building a material
+    // per frame.
+    const tm = this._renderData && this._renderData._threeMesh;
+    const mat = tm && tm.material;
+    if (!mat || !mat.userData || !mat.userData.isPhysicalPBR) return;
+    if ((alpha < 1) !== !!mat.transparent) {
+      tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+    } else if (alpha < 1) {
+      mat.opacity = alpha;
+    }
   }
 
   setTexture0(tex) {
