@@ -2629,6 +2629,16 @@ export function buildSectionHTML_scene(main) {
       <span class="mm-lbl">Sh. bias</span>
       <input type="range" id="mm-light-shbias" min="-100" max="100" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
       <span class="mm-val" id="mm-light-shbias-val">${(_lit._shadowNormalBias ?? 0.15).toFixed(2)}</span>
+    </div>
+    ${/* SHADOW NEAR, as a PERCENTAGE OF THE FAR PLANE, because that ratio IS the precision.
+         The far plane cannot be offered here: three re-pins it to light.distance, so it is
+         the Falloff slider whether we like it or not. Raising near tightens the depth range
+         onto the model and is the practical way to find a usable shadow without fighting
+         Falloff. 0 = auto, which fits the range to the scene. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Sh Near</span>
+      <input type="range" id="mm-light-shnear" min="0" max="500" step="1" value="${Math.round((_lit._shadowNear ?? 0) * 1000)}">
+      <span class="mm-val" id="mm-light-shnear-val">${(_lit._shadowNear ?? 0) > 0 ? ((_lit._shadowNear) * 100).toFixed(1) + '%' : 'auto'}</span>
     </div>` : ''}
 `;
 
@@ -4479,6 +4489,11 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       L._shadowIntensity = v / 100;
       main.render?.();
     }, (v) => v + '%', null);
+    wireSlider(el.querySelector('#mm-light-shnear'), el.querySelector('#mm-light-shnear-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowNear = v / 1000;            // 0 = auto, else a fraction of the far plane
+      main.render?.();
+    }, (v) => (v > 0 ? (v / 10).toFixed(1) + '%' : 'auto'), null);
     wireSlider(el.querySelector('#mm-light-shsoft'), el.querySelector('#mm-light-shsoft-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._shadowRadius = v;

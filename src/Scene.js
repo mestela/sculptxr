@@ -4012,6 +4012,7 @@ class Scene {
             shadowCamFar: +L.shadow.camera.far.toFixed(4),
             ratio: +(L.shadow.camera.far / L.shadow.camera.near).toFixed(1),
             lightDistance: L.distance,
+            nearFraction: +(L.shadow.camera.near / L.shadow.camera.far).toFixed(4),
             frustumValid: L.shadow.camera.near < L.shadow.camera.far,
             faces
           };
@@ -5201,9 +5202,19 @@ class Scene {
         // plane, so near < far holds however the light is placed. The 64:1 floor keeps the
         // usable depth range wide for a light sitting inside the model, which is where a new
         // one is created and where there is no safe near plane at all.
-        const near = Math.min(
-          Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5),
-          _far * 0.5);
+        //
+        // MANUAL OVERRIDE, as a FRACTION of the far plane. The far plane is not ours -- three
+        // re-pins it to light.distance, i.e. the Falloff slider -- so the only knob that can be
+        // handed over safely is near, and expressing it as a fraction is what makes it useful:
+        // shadow map precision is governed by far/near, so this slider IS the precision
+        // control. 0 means auto (the fit below). matt asked for this to get something usable
+        // while the frustum stays married to Falloff.
+        const _nearFrac = e._shadowNear === undefined ? 0 : e._shadowNear;
+        const near = _nearFrac > 0
+          ? Math.min(Math.max(_far * _nearFrac, 1e-5), _far * 0.9)
+          : Math.min(
+            Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5),
+            _far * 0.5);
         const far = _far;
         // If the Falloff cannot reach past the model, the far plane cuts through it and the
         // far side simply cannot cast. Say so once rather than leaving it to be discovered.
@@ -7082,6 +7093,7 @@ class Scene {
       // both, which is the sort of thing you only notice a week later.
       copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
       copy._lightIntensity = src._lightIntensity;
+      copy._shadowNear = src._shadowNear;
       copy._lightRange     = src._lightRange;
       copy._lightType      = src._lightType;
       copy._lightConeDeg   = src._lightConeDeg;

@@ -364,15 +364,29 @@ class GuiFiles {
         // 4. Render into a square off-screen RenderTarget — never touches the main canvas
         const wasXREnabled = renderer.xr.enabled;
         renderer.xr.enabled = false;
-        const rt = new THREE.WebGLRenderTarget(THUMB, THUMB);
+        // The node renderer has no WebGLRenderTarget; use its own RenderTarget class on that
+        // path rather than relying on the two three builds duck-typing.
+        const _GPU = this._main._THREE_GPU;
+        const rt = (this._main._isNodeRenderer && _GPU)
+          ? new _GPU.RenderTarget(THUMB, THUMB)
+          : new THREE.WebGLRenderTarget(THUMB, THUMB);
         renderer.setRenderTarget(rt);
         renderer.render(this._main._scene, snapCam);
         renderer.setRenderTarget(null);
         renderer.xr.enabled = wasXREnabled;
 
         // 5. Read pixels back (WebGL origin is bottom-left, flip Y)
-        const pixels = new Uint8Array(THUMB * THUMB * 4);
-        renderer.readRenderTargetPixels(rt, 0, 0, THUMB, THUMB, pixels);
+        //
+        // WebGPURenderer HAS NO readRenderTargetPixels -- only the async form -- so a browser
+        // save threw "renderer.readRenderTargetPixels is not a function" on the flagged path
+        // and lost the thumbnail. saveToBrowserStorage is already async, so awaiting is free.
+        let pixels;
+        if (typeof renderer.readRenderTargetPixelsAsync === 'function') {
+          pixels = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, THUMB, THUMB);
+        } else {
+          pixels = new Uint8Array(THUMB * THUMB * 4);
+          renderer.readRenderTargetPixels(rt, 0, 0, THUMB, THUMB, pixels);
+        }
         rt.dispose();
 
         const flipped = new Uint8ClampedArray(THUMB * THUMB * 4);
