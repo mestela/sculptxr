@@ -219,6 +219,59 @@ function installPerEyeLightVector(WGPU, TSL, renderer) {
 }
 
 /**
+ * BUG D -- A NESTED RENDER INSIDE AN XR FRAME IS HIJACKED BY THE XR CAMERA.
+ *
+ * matt, from the headset, and he had the shape of it before I did: "is the shadow pass somehow
+ * messing up the other render passes?" Yes. Renderer.render() begins with
+ *
+ *     if ( xr.enabled === true && xr.isPresenting === true ) {
+ *         if ( xr.cameraAutoUpdate === true ) xr.updateCamera( camera );
+ *         camera = xr.getCamera();
+ *     }
+ *
+ * and ShadowNode.updateShadow renders the shadow map with a NESTED renderer.render( scene,
+ * shadow.camera ) from inside the XR frame. Two things follow, both fatal:
+ *
+ *   1. xr.updateCamera( shadow.camera ) copies the SHADOW camera's near/far onto both eye
+ *      cameras and pushes them to the compositor via session.updateRenderState({ depthNear,
+ *      depthFar }). The whole view's clipping becomes whatever the shadow frustum wanted --
+ *      which is why matt saw the near plane move as soon as a light existed, why it tracked
+ *      world scale (the shadow near is derived from it), and why turning shadows off restored
+ *      everything.
+ *   2. `camera = xr.getCamera()` then REPLACES the shadow camera with the XR array camera, so
+ *      the shadow map is rendered from the user's eyes instead of from the light. Hence a map
+ *      that contains the wrong view, and no shadow.
+ *
+ * It also explains the GL_INVALID_OPERATION mailbox / shared-image flood: the nested render
+ * re-binds and restores the XR render target, whose textures are compositor-owned.
+ *
+ * Fix: a nested render inside an XR frame is by definition an offscreen pass -- a shadow map,
+ * a probe -- and must never be given the session's camera or framebuffer. Count the depth and
+ * turn xr.enabled off for the inner one. The outer frame is untouched.
+ */
+function installNestedRenderGuard(renderer) {
+  if (renderer._xrNestedGuard) return;
+  renderer._xrNestedGuard = true;
+
+  const orig = renderer.render.bind(renderer);
+  let depth = 0;
+
+  renderer.render = function (scene, camera) {
+    const xr = renderer.xr;
+    const nested = depth > 0 && xr && xr.enabled === true && xr.isPresenting === true;
+
+    depth++;
+    if (nested) xr.enabled = false;
+    try {
+      return orig(scene, camera);
+    } finally {
+      if (nested) xr.enabled = true;
+      depth--;
+    }
+  };
+}
+
+/**
  * Both patches. Call once, straight after `renderer.init()` and before anything is drawn --
  * bug A rewrites binding points that get baked into programs at link time, so it has to be in
  * place before the first material compiles.
@@ -229,6 +282,10 @@ export function applyXRBackendPatches(renderer, WGPU, TSL) {
   // ?perEyeLight=0 leaves three's head-space light vector in place, to A/B against the fault.
   if (!/[?&]perEyeLight=0/.test(window.location.search)) {
     installPerEyeLightVector(WGPU, TSL, renderer);
+  }
+  // ?xrnested=0 leaves the nested render unguarded, to A/B against the fault.
+  if (!/[?&]xrnested=0/.test(window.location.search)) {
+    installNestedRenderGuard(renderer);
   }
 }
 
