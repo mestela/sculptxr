@@ -491,7 +491,23 @@ NodeMaterials.convertBasic = function (src) {
       mapNode = texture(src.map);
       rgb = rgb.mul(mapNode.rgb);
     }
-    m.emissiveNode = rgb;
+    // DIFFUSE, NOT EMISSIVE, AND THAT IS WHAT CARRIES PER-INSTANCE COLOUR.
+    //
+    // three applies an InstancedMesh's `instanceColor` to the DIFFUSE colour -- its InstanceNode
+    // multiplies it in there and nowhere else. This stand-in rode on emissiveNode with the
+    // diffuse pinned black, so every instance of a batch came out the material's one base
+    // colour. matt, on the rig: "the bones in solid mode were all white, they should be the
+    // same hue as the wireframe". The wireframe is a merged LineSegments with real per-vertex
+    // colours, which is why that half was right and this half was not.
+    //
+    // Safe because `lights = false`: with no lighting graph the diffuse passes straight to the
+    // output, so this is the same picture by a different route. Measured on a plain mesh across
+    // three colours, emissive and diffuse give byte-identical pixels.
+    //
+    // Only here, not in unlit() itself -- panels, lasers and the solid placeholder build on
+    // that helper and set emissiveNode themselves, and moving the carrier under them would
+    // double up.
+    m.colorNode = rgb;
     m.opacityNode = mapNode ? opac.mul(mapNode.a) : opac;
     m.userData.sync = { col, opac, mapNode, lastMap: src.map || null };
     // SEED THE STAND-IN'S OWN `.color`/`.opacity`, because from here on THEY are what the
