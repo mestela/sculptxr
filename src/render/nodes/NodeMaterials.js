@@ -212,10 +212,27 @@ function build(shaderId) {
     // unlit -- texture * vertex colour -- so that is the faithful shape, not a shortcut.
     // (See unlit(): the base is Lambert-with-black-diffuse, because MeshBasicNodeMaterial is
     // the class this backend cannot draw in XR.)
-    const { uniform, texture, normalView, vec2, mat3, vertexColor } = tsl;
+    const { uniform, texture, normalWorld, vec2, mat3, vertexColor } = tsl;
     if (!rotCorrectionUniform) rotCorrectionUniform = uniform(new gpu.Matrix3());
     const m = unlit({ vertexColors: true });
-    const n = mat3(rotCorrectionUniform).mul(normalView).normalize();
+    // THE NORMAL GOES TO HEAD-CENTRE VIEW SPACE, and it starts from the WORLD normal to get
+    // there. `normalView` is the PER-EYE view normal, which is the whole problem: the eyes are
+    // canted, so each eye looks the matcap up at a slightly different UV and the disparity
+    // fuses as depth. Taking the world normal and rotating it by the head-centre view rotation
+    // gives one lookup that both eyes share, by construction rather than by correction.
+    //
+    // This replaces ShaderMatcap.computeRotCorrection on this path. That builds a BILLBOARD
+    // AIM -- it points the matcap at the viewer's POSITION, assuming the model is at the origin
+    // -- and in a room-scale session it is not: the model sits near the floor origin and your
+    // head is 1.6m above it, so the aim comes out at (0, 0.99, 0.12), essentially straight up.
+    // matt: "it's facing up at the sky rather than towards me". Worse, near that pole
+    // `Right = cross(worldUp, Back)` degenerates, so turning your head swings the basis around
+    // the vertical axis: "the matcap is spinning on its north pole/south pole axis".
+    //
+    // A rotation into head-centre view space has no such degenerate case and no assumption
+    // about where the model is. On the desktop the head-centre camera IS the camera, so this
+    // is the ordinary matcap.
+    const n = mat3(rotCorrectionUniform).mul(normalWorld).normalize();
     // normal.xy * 0.5 + 0.5, exactly as the GLSL does it.
     const uvNode = vec2(n.x, n.y).mul(0.5).add(0.5);
     m.emissiveNode = texture(matcapTexture(0), uvNode).rgb.mul(vertexColor());
@@ -709,41 +726,38 @@ NodeMaterials.updateFrame = function (main) {
   if (!rotCorrectionUniform || !main) return;
   const cam = main.getCamera && main.getCamera();
   if (!cam) return;
-  // THE CORRECTION MUST COME FROM THE CAMERA THAT PRODUCED `normalView`, and in a session that
-  // is not the legacy one. Camera.updateView refuses to touch the three camera while
-  // xr.isPresenting -- "WE ARE IN VR. DO NOT TOUCH THE THREE.JS CAMERA!" -- so `cam.getView()`
-  // stays the desktop ORBIT view for the whole session and knows nothing about your head.
-  // Feeding that to the stabiliser while the shader's normal comes from the real per-eye XR
-  // camera means head rotation is never cancelled: the matcap slides around the model as you
-  // look about. matt: "the matcap swims if i turn my head in little circles. it didn't do that
-  // in the previous matcap."
+  // THE UNIFORM IS THE HEAD-CENTRE VIEW ROTATION -- world -> head-view -- and nothing else.
   //
-  // And it didn't, because the legacy shader took its normal through uN -- built from that SAME
-  // desktop camera -- so both halves sat in one head-independent frame and cancelled exactly.
-  // The port kept one half and replaced the other.
+  // Camera.updateView refuses to touch the three camera while a session runs ("WE ARE IN VR.
+  // DO NOT TOUCH THE THREE.JS CAMERA!"), so main.getCamera().getView() stays the DESKTOP ORBIT
+  // view for the whole session and knows nothing about your head. The legacy shader got away
+  // with feeding that to the stabiliser because it took its normal through uN, built from the
+  // same frozen camera: both halves sat in one head-independent frame and cancelled exactly,
+  // and the matcap simply did not respond to your head. The port kept the frozen correction and
+  // took its normal from the live per-eye XR camera, so nothing cancelled and the matcap slid
+  // over the model as you looked about. matt: "the matcap swims if i turn my head in little
+  // circles."
   //
-  // xr.getCamera() is the ArrayCamera whose own world matrix is the HEAD CENTRE, which is the
-  // frame this wants: per-eye would put a different lookup in each eye, which is the stereo
-  // fault this uniform exists to prevent. Eyes are parallel, so cancelling head rotation from
-  // the centre cancels it in both.
+  // xr.getCamera() is the ArrayCamera whose own world matrix is the head centre, which is the
+  // frame both eyes must share.
   //
-  // ?matcapstab=legacy restores the old reading for an A/B.
-  let view = null;
-  const _legacyStab = /[?&]matcapstab=legacy/.test(window.location.search);
+  // ?matcapstab=legacy restores the old billboard-aim correction for an A/B.
   const r = main._renderer;
-  if (!_legacyStab && r && r.xr && r.xr.isPresenting && r.xr.getCamera) {
-    const head = r.xr.getCamera();
-    if (head && head.matrixWorldInverse) view = head.matrixWorldInverse.elements;
+  const _legacyStab = /[?&]matcapstab=legacy/.test(window.location.search);
+  if (_legacyStab) {
+    rotCorrectionUniform.value.fromArray(ShaderMatcap.computeRotCorrection(cam.getView()));
+  } else {
+    let view = null;
+    if (r && r.xr && r.xr.isPresenting && r.xr.getCamera) {
+      const head = r.xr.getCamera();
+      if (head && head.matrixWorldInverse) view = head.matrixWorldInverse;
+    }
+    if (!view) {
+      const t3 = cam.getThreeCamera && cam.getThreeCamera();
+      view = t3 && t3.matrixWorldInverse;
+    }
+    if (view) rotCorrectionUniform.value.setFromMatrix4(view);
   }
-  if (!view) {
-    // Desktop: the three camera and the legacy one are the same view by construction (measured
-    // identical), so this is the same answer by a shorter route -- and the right one if the
-    // legacy camera is ever diverted for picking.
-    const t3 = !_legacyStab && cam.getThreeCamera && cam.getThreeCamera();
-    view = (t3 && t3.matrixWorldInverse) ? t3.matrixWorldInverse.elements : cam.getView();
-  }
-  const c = ShaderMatcap.computeRotCorrection(view);
-  rotCorrectionUniform.value.fromArray(c);
   // Each material that needs per-frame state says so by hanging updateFrame on userData,
   // rather than this file knowing what every shader wants.
   for (const id in cache) {
