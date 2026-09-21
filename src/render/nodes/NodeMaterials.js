@@ -218,23 +218,22 @@ function build(shaderId) {
     const { uniform, texture, normalWorld, vec2, mat3, vertexColor } = tsl;
     if (!rotCorrectionUniform) rotCorrectionUniform = uniform(new gpu.Matrix3());
     const m = unlit({ vertexColors: true });
-    // THE NORMAL GOES TO HEAD-CENTRE VIEW SPACE, and it starts from the WORLD normal to get
-    // there. `normalView` is the PER-EYE view normal, which is the whole problem: the eyes are
-    // canted, so each eye looks the matcap up at a slightly different UV and the disparity
-    // fuses as depth. Taking the world normal and rotating it by the head-centre view rotation
-    // gives one lookup that both eyes share, by construction rather than by correction.
+    // THE WORLD NORMAL, NOT `normalView`. This one line is the whole port bug.
     //
-    // This replaces ShaderMatcap.computeRotCorrection on this path. That builds a BILLBOARD
-    // AIM -- it points the matcap at the viewer's POSITION, assuming the model is at the origin
-    // -- and in a room-scale session it is not: the model sits near the floor origin and your
-    // head is 1.6m above it, so the aim comes out at (0, 0.99, 0.12), essentially straight up.
-    // matt: "it's facing up at the sky rather than towards me". Worse, near that pole
-    // `Right = cross(worldUp, Back)` degenerates, so turning your head swings the basis around
-    // the vertical axis: "the matcap is spinning on its north pole/south pole axis".
+    // The legacy shader takes its normal through uN, the normal matrix of uMV built from the
+    // LEGACY camera -- and that camera is frozen for the whole session (Camera.updateView:
+    // "WE ARE IN VR. DO NOT TOUCH THE THREE.JS CAMERA!"). A frozen camera makes uN a fixed
+    // rotation, so the legacy VR matcap is really a WORLD-SPACE lookup: it does not move when
+    // you move, and both eyes read the same texel because nothing in it is per-eye.
     //
-    // A rotation into head-centre view space has no such degenerate case and no assumption
-    // about where the model is. On the desktop the head-centre camera IS the camera, so this
-    // is the ordinary matcap.
+    // `normalView` is live and per-eye, and gave one symptom for each of those. Live: the
+    // lookup follows your head, so "if i turn my head left, the matcap turns right" and "it
+    // swims if i turn my head in little circles". Per-eye: the eyes are canted, so each looks
+    // the texture up at a slightly different UV and the disparity fuses as false depth, which
+    // is what the correction uniform was reintroduced to fix in the first place.
+    //
+    // A world normal has neither property, and the correction below then does the same job it
+    // does on the desktop. See the note in updateFrame for why the head is not consulted at all.
     const n = mat3(rotCorrectionUniform).mul(normalWorld).normalize();
     // normal.xy * 0.5 + 0.5, exactly as the GLSL does it.
     const uvNode = vec2(n.x, n.y).mul(0.5).add(0.5);
@@ -752,49 +751,46 @@ NodeMaterials.updateFrame = function (main) {
   // orbit camera has no roll to remove, so this is exactly the camera rotation and nothing
   // changes -- asserted below by comparing the two.
   //
-  // DESKTOP IS LEFT EXACTLY ALONE. There the billboard aim works -- and it is not equivalent
-  // to the head frame below, measured: the two disagree by up to 0.87 once the view is rotated,
-  // because SculptGL's camera looks at the model CENTRE rather than the origin, so "aim at the
-  // camera's position" and "the camera's own back axis" are different vectors. Desktop has
-  // never been the complaint, so it keeps the correction it has always had; only a session,
-  // where that aim degenerates, gets the new one.
+  // THE CORRECTION IS THE LEGACY ONE, IN A SESSION TOO, AND THE HEAD IS NOT CONSULTED.
   //
-  // The node now multiplies the WORLD normal, so the desktop matrix has to carry the world ->
-  // view step that `normalView` used to do for it: corrMat * mat3(view) applied to a world
-  // normal is corrMat applied to a view normal, exactly as before.
+  // The whole port error was one line, and it was the NORMAL, not this matrix. The legacy
+  // shader's normal comes through uN -- the normal matrix of uMV, built from the LEGACY camera
+  // -- and Camera.updateView refuses to touch that camera while a session runs ("WE ARE IN VR.
+  // DO NOT TOUCH THE THREE.JS CAMERA!"). A frozen camera makes uN a fixed rotation, so the
+  // legacy VR matcap is a WORLD-SPACE normal lookup: it does not move when you move, and both
+  // eyes read the same texel because there is nothing per-eye in it. matt: "legacy stays locked
+  // as expected."
   //
-  // ?matcapstab=view keeps the roll (the previous build), =legacy forces the desktop billboard
-  // in a session too, which is the A/B against "legacy stays locked".
+  // The port replaced that with `normalView`, which is live AND per-eye. Live is why it swam;
+  // per-eye is the stereo fault the uniform was reintroduced to fix. Everything I then did to
+  // this matrix -- live head rotation, then a roll-free head frame -- was compensating for the
+  // wrong normal, and each one only moved the motion around. Feeding the head in at all makes
+  // the lookup view-relative, and a view-relative matcap in a headset is exactly "turn my head
+  // left, the matcap turns right".
+  //
+  // So: the node multiplies the WORLD normal (that is the fix), and this stays the legacy
+  // correction with the world -> view step folded in, because corr * mat3(view) on a world
+  // normal is corr on a view normal -- the same product, so the desktop is bit-for-bit what it
+  // always was, and a session inherits the frozen camera's constant exactly as the legacy
+  // shader did.
+  //
+  // ?matcapstab=head restores the head-tracked frame for an A/B; it is the one that reads as
+  // the lighting sliding around the model.
   const r = main._renderer;
   const _stab = (/[?&]matcapstab=(\w+)/.exec(window.location.search) || [])[1];
-  const _inXR = !!(r && r.xr && r.xr.isPresenting);
 
-  if (!_inXR || _stab === 'legacy') {
-    const view = cam.getView();
-    const corr = ShaderMatcap.computeRotCorrection(view);
-    const v = _MAT3_VIEW.setFromMatrix4(_MAT4_VIEW.fromArray(view));
-    rotCorrectionUniform.value.fromArray(corr).multiply(v);
-    return NodeMaterials._updateFrameRest(main);
-  }
-
-  const head = r.xr.getCamera && r.xr.getCamera();
-  const view = head && head.matrixWorldInverse;
-  if (view) {
-    if (_stab === 'view') {
-      rotCorrectionUniform.value.setFromMatrix4(view);
-    } else {
-      const e = view.elements;
-      // world -> view is what the view matrix holds, so its ROWS are the camera's world axes.
-      const bx = e[2], by = e[6], bz = e[10];         // camera back, in world
-      let rx = bz, ry = 0, rz = -bx;                  // cross(worldUp, back) -- horizontal
-      const rl = Math.hypot(rx, rz);
-      if (rl < 1e-3) { rx = e[0]; ry = e[4]; rz = e[8]; }   // looking straight up or down
-      else { rx /= rl; rz /= rl; }
-      const ux = by * rz - bz * ry, uy = bz * rx - bx * rz, uz = bx * ry - by * rx;
-      // world -> stable: the rows are right/up/back, i.e. the transpose of that basis.
-      rotCorrectionUniform.value.set(rx, ry, rz, ux, uy, uz, bx, by, bz);
+  if (_stab === 'head' && r && r.xr && r.xr.isPresenting && r.xr.getCamera) {
+    const head = r.xr.getCamera();
+    if (head && head.matrixWorldInverse) {
+      rotCorrectionUniform.value.setFromMatrix4(head.matrixWorldInverse);
+      return NodeMaterials._updateFrameRest(main);
     }
   }
+
+  const view = cam.getView();
+  const corr = ShaderMatcap.computeRotCorrection(view);
+  const v = _MAT3_VIEW.setFromMatrix4(_MAT4_VIEW.fromArray(view));
+  rotCorrectionUniform.value.fromArray(corr).multiply(v);
   return NodeMaterials._updateFrameRest(main);
 };
 
