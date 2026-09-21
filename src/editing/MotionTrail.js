@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 // Fat lines, for the gnomons only. THREE.Line draws hardware 1px lines, which cannot be
 // antialiased and step between whole pixels as the camera moves; LineSegments2 triangulates a
@@ -643,6 +644,7 @@ const _fatVp = new THREE.Vector4();
 const REF_VIEWPORT_W = 1400;
 
 function makeFat(main, px, opacity, order) {
+  if (NodeMaterials.isActive && NodeMaterials.isActive()) return makeThin(main, order);
   const g = Skeleton.overlayGroup(main);
   const seg = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
     linewidth: px,               // SCREEN pixels, because worldUnits is off
@@ -682,6 +684,44 @@ function makeFat(main, px, opacity, order) {
   return seg;
 }
 
+// ── THE NODE RENDERER GETS A THIN LINE, FOR NOW ─────────────────────────────────────────
+//
+// LineMaterial is a ShaderMaterial and this backend cannot compile one, so Scene's sweep hides
+// every fat line outright -- the trails were switched off, not failing to draw. three's node
+// replacement (lines/webgpu/LineSegments2 + Line2NodeMaterial) drew a clean ring once in
+// isolation and could never be made to do it again inside the app: seven approaches measured
+// dead, including building the line complete before it is ever rendered, and a linewidth of 25
+// with the blend and depth test taken out of the picture. See the note in NodeMaterials and the
+// two reverts in the history.
+//
+// So this is the thing that PROVABLY works on this path: a plain LineSegments on a
+// LineBasicMaterial, which the sweep leaves alone -- exactly what the rig wireframe
+// (rigbatch:wire) has been drawing with all along, per-vertex colours and all.
+//
+// The cost is honest and matt knows it: a hardware line is 1px, it will not antialias and it
+// steps between whole pixels. It is a short-term floor so the trails EXIST in a headset, not the
+// finished look; matt, choosing it: "lets try thin lines then, see if thats good enough to work
+// in the short term on gxr/avp".
+function makeThin(main, order) {
+  const g = Skeleton.overlayGroup(main);
+  const seg = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+    vertexColors: true,
+    // Same pass reasoning as the fat line: `transparent` buys the late pass, NoBlending declines
+    // the blend, and depth is off because the overlay is a readout.
+    transparent: true,
+    blending: THREE.NoBlending,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false,
+  }));
+  seg.frustumCulled = false;
+  seg.isPickable = false;
+  seg.renderOrder = order;
+  seg.userData.thinLine = true;
+  g.add(seg);
+  return seg;
+}
+
 function makeGnomons(main) {
   return makeFat(main, GNOMON_PX, 0.95, GNOMON_ORDER);
 }
@@ -710,6 +750,7 @@ function writePairsScaled(src, out, n, k) {
   }
 }
 
+// Returns the object to keep, so a future rebuild path can swap it without touching callers.
 function pushFat(main, obj, state, pos, col, segs) {
   // EVERY fat line needs the viewport, not just the triads. LineMaterial clones its uniforms
   // per material, so a resolution set on one does nothing for the others — and a line whose
@@ -718,6 +759,24 @@ function pushFat(main, obj, state, pos, col, segs) {
   // the only fat line, and the trail inherited the gap when it was converted.
   syncResolution(main, obj.material);
   const g = obj.geometry;
+  // THE THIN LINE TAKES THE SAME PAIRS, unpacked. `pos` and `col` already hold two vertices per
+  // segment, which is exactly what LineSegments wants -- so this is a copy, not a conversion.
+  // Attributes are replaced only when the length moves and written in place otherwise, which is
+  // the shape flushLineBatch uses for the rig wireframe and is known to work on this renderer.
+  if (obj.userData && obj.userData.thinLine) {
+    let pa = g.getAttribute('position');
+    if (!pa || pa.array.length !== pos.length) {
+      pa = new THREE.BufferAttribute(new Float32Array(pos.length), 3);
+      g.setAttribute('position', pa);
+      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col.length), 3));
+    }
+    pa.array.set(pos);
+    g.getAttribute('color').array.set(col);
+    pa.needsUpdate = true;
+    g.getAttribute('color').needsUpdate = true;
+    g.setDrawRange(0, segs * 2);
+    return obj;
+  }
   if (state.fresh) {
     g.setPositions(pos);
     g.setColors(col);
@@ -731,6 +790,7 @@ function pushFat(main, obj, state, pos, col, segs) {
     }
   }
   g.instanceCount = segs;
+  return obj;
 }
 
 // A screen-space width needs to know what the screen is. Read every FRAME rather than pushed from
@@ -965,7 +1025,7 @@ MotionTrail.drawGnomons = function (main) {
   // the rebuild rule cannot differ between them again.
   v.gnomonState = v.gnomonState || {};
   v.gnomonState.fresh = v.gnomonFresh;
-  pushFat(main, v.gnomons, v.gnomonState, pos, col, verts / 2);
+  v.gnomons = pushFat(main, v.gnomons, v.gnomonState, pos, col, verts / 2);
   v.gnomonFresh = v.gnomonState.fresh;
   v.gnomons.visible = true;
 
@@ -1364,6 +1424,13 @@ MotionTrail.recolor = function (main) {
     if (g.attributes.instanceColorStart) {
       g.attributes.instanceColorStart.needsUpdate = true;
       g.attributes.instanceColorEnd.needsUpdate = true;
+    } else if (line.userData && line.userData.thinLine && g.attributes.color) {
+      // THE THIN LINE KEEPS ITS COLOUR IN AN ORDINARY ATTRIBUTE, and this is the only place the
+      // colour is authored -- writeLine deliberately leaves the buffer alone, so a thin line
+      // whose colours are never copied across draws BLACK on a black background and reads as not
+      // drawing at all. Measured: 254 vertices, drawRange 254, every colour 0,0,0.
+      g.attributes.color.array.set(st.col);
+      g.attributes.color.needsUpdate = true;
     }
   });
 };
@@ -1740,7 +1807,7 @@ MotionTrail.writeLine = function (main, i, pts) {
     flat[k * 3] = pts[k].x; flat[k * 3 + 1] = pts[k].y; flat[k * 3 + 2] = pts[k].z;
   }
   writePairs(flat, st.pos, pts.length);
-  pushFat(main, line, st, st.pos, st.col, segs);
+  v.lines[i] = pushFat(main, line, st, st.pos, st.col, segs);
 };
 
 export default MotionTrail;
