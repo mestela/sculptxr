@@ -54,6 +54,48 @@ const ROT_XYZ = GIZMO_TYPE.ROT_X | GIZMO_TYPE.ROT_Y | GIZMO_TYPE.ROT_Z;
 const PLANE_XYZ = GIZMO_TYPE.PLANE_X | GIZMO_TYPE.PLANE_Y | GIZMO_TYPE.PLANE_Z;
 const SCALE_XYZW = GIZMO_TYPE.SCALE_X | GIZMO_TYPE.SCALE_Y | GIZMO_TYPE.SCALE_Z | GIZMO_TYPE.SCALE_W;
 
+// ONE MATERIAL FOR THE WHOLE GIZMO, with the colour in the GEOMETRY.
+//
+// Every handle used to carry its own MeshBasicMaterial because each is a different colour. On
+// the legacy renderer that was free: WebGLRenderer keys its program cache on the shader's
+// STRUCTURE, so fifteen materials differing only in a colour uniform share one compiled program.
+// The node renderer has no equivalent -- each material builds its own node graph and its own
+// pipeline -- so the gizmo alone accounted for 28 of the 45 converted materials in a scene, and
+// all of them compile on the frame it first appears.
+//
+// The geometry already carries a `color` attribute (Primitives writes one), so the fix is to use
+// it: one shared material with vertexColors, and the per-handle colour written into the buffer.
+// Two variants, because the plane quads need DoubleSide and a material cannot be both.
+let _gizmoMatS = null, _gizmoMatD = null;
+function gizmoMaterial(doubleSided) {
+  const mk = (side) => new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    // The centre sphere used to be 0.85 and everything else 0.8; one number now, because a
+    // second material for five hundredths of alpha is the trade this whole change is undoing.
+    opacity: 0.8,
+    depthTest: false,
+    depthWrite: false,
+    side,
+  });
+  if (doubleSided) return (_gizmoMatD = _gizmoMatD || mk(THREE.DoubleSide));
+  return (_gizmoMatS = _gizmoMatS || mk(THREE.FrontSide));
+}
+
+// Fill a handle's colour buffer. Cached against the last value: this is called for every part
+// every frame, and re-uploading fifteen buffers a frame to write the same numbers is exactly the
+// sort of cost this change exists to remove.
+function setGizmoColor(mesh, r, g, b) {
+  if (!mesh) return;
+  const last = mesh.userData._tint;
+  if (last && last[0] === r && last[1] === g && last[2] === b) return;
+  const attr = mesh.geometry && mesh.geometry.getAttribute('color');
+  if (!attr) return;
+  for (let i = 0; i < attr.count; i++) attr.setXYZ(i, r, g, b);
+  attr.needsUpdate = true;
+  mesh.userData._tint = [r, g, b];
+}
+
 const createGizmoPart = function (type, nbAxis = -1) {
   return {
     _finalMatrix: mat4.create(),
@@ -457,9 +499,11 @@ class GizmoVR {
       const elt = components[i];
       if (elt._drawGeo) {
         const tm = elt._drawGeo.getThreeMesh();
-        if (tm && tm.material) {
+        if (tm) {
+          // Into the GEOMETRY, not the material -- the material is shared by every handle now.
+          // setGizmoColor caches, so a handle whose colour has not changed costs a comparison.
           const color = elt._isSelected ? COLOR_SELECT : elt._color;
-          tm.material.color.setRGB(color[0], color[1], color[2]);
+          setGizmoColor(tm, color[0], color[1], color[2]);
         }
       }
     }
@@ -1223,13 +1267,8 @@ class GizmoVR {
 
     const threeMesh = tra._drawGeo.getThreeMesh();
     if (threeMesh) {
-      threeMesh.material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(color[0], color[1], color[2]),
-        transparent: true,
-        opacity: 0.8,
-        depthTest: false,
-        depthWrite: false
-      });
+      threeMesh.material = gizmoMaterial(false);
+      setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       mat4.copy(threeMesh.matrix.elements, tra._baseMatrix);
       threeMesh.renderOrder = 100;
@@ -1250,14 +1289,8 @@ class GizmoVR {
 
     const threeMesh = pla._drawGeo.getThreeMesh();
     if (threeMesh) {
-      threeMesh.material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(color[0], color[1], color[2]),
-        transparent: true,
-        opacity: 0.8,
-        depthTest: false,
-        depthWrite: false,
-        side: THREE.DoubleSide
-      });
+      threeMesh.material = gizmoMaterial(true);
+      setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       threeMesh.renderOrder = 100;
       if (this._group) this._group.add(threeMesh);
@@ -1315,13 +1348,8 @@ class GizmoVR {
 
     const threeMesh = rot._drawGeo.getThreeMesh();
     if (threeMesh) {
-      threeMesh.material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(color[0], color[1], color[2]),
-        transparent: true,
-        opacity: 0.8,
-        depthTest: false,
-        depthWrite: false
-      });
+      threeMesh.material = gizmoMaterial(false);
+      setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       mat4.copy(threeMesh.matrix.elements, rot._baseMatrix);
       threeMesh.renderOrder = 100;
@@ -1348,13 +1376,8 @@ class GizmoVR {
 
     const threeMesh = sca._drawGeo.getThreeMesh();
     if (threeMesh) {
-      threeMesh.material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(color[0], color[1], color[2]),
-        transparent: true,
-        opacity: 0.8,
-        depthTest: false,
-        depthWrite: false
-      });
+      threeMesh.material = gizmoMaterial(false);
+      setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       mat4.copy(threeMesh.matrix.elements, sca._baseMatrix);
       threeMesh.renderOrder = 100;
@@ -1375,13 +1398,8 @@ class GizmoVR {
     part._drawGeo.setShaderType(Enums.Shader.FLAT);
     const threeMesh = part._drawGeo.getThreeMesh();
     if (threeMesh) {
-      threeMesh.material = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(color[0], color[1], color[2]),
-        transparent: true,
-        opacity: 0.85,
-        depthTest: false,
-        depthWrite: false
-      });
+      threeMesh.material = gizmoMaterial(false);
+      setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       threeMesh.renderOrder = 101;
       threeMesh.visible = visible;

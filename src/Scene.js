@@ -3663,6 +3663,19 @@ class Scene {
             if (Array.isArray(m) && m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)) o.visible = false;
             return;
           }
+          // A HIDDEN OBJECT DOES NOT NEED A NODE MATERIAL, because it never draws.
+          //
+          // Converting one costs a node graph and, the first time it IS drawn, a pipeline -- and
+          // the rig creates six pin meshes per joint whether or not that joint is pinned. On a
+          // six-joint rig that is 36 of the 83 converted materials, all of them invisible; on a
+          // full-body rig it is most of what the first draw pays for.
+          //
+          // Safe because this sweep runs every frame and runs AFTER Skeleton.updateVisuals, so it
+          // always sees the current visibility: an object that becomes visible is converted on
+          // the same frame it turns on, before the render. That ordering is the whole reason this
+          // is a deferral and not a hole -- a stock MeshBasicMaterial reaching the renderer would
+          // become MeshBasicNodeMaterial, which is undrawable in XR and poisons the frame.
+          if (o.visible === false && !o.userData._stockMat) return;
           // ALREADY CONVERTED: push its `.color`/`.opacity` into the uniforms that actually
           // draw it. Writes to those properties are how the rest of the app changes a colour,
           // and on the stand-in they reach nothing on their own. See NodeMaterials.syncConverted.
