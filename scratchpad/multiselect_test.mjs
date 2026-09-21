@@ -449,9 +449,13 @@ check('...and so does the gizmo',
   for (const [what, near] of [['duplicate', 'copy.copyData(mesh);'],
                               ['instance', 'inst.shareData(mesh);'],
                               ['mirror', 'this._reflectMatrix(copy.getMatrix(), axis);']]) {
+    // A WIDE WINDOW ON PURPOSE. This is a proximity heuristic, not a property -- it only asks
+    // "is _inheritParent somewhere in this routine" -- and a 400-character window measures
+    // comment length as much as code. Adding a paragraph explaining WHY the copy is flagged
+    // before it is added pushed duplicate's call out of range and failed a test about parenting.
     const i = SCENE.indexOf(near);
     check('...and ' + what + ' uses it',
-      i > 0 && /_inheritParent\(/.test(SCENE.slice(Math.max(0, i - 400), i + 400)),
+      i > 0 && /_inheritParent\(/.test(SCENE.slice(Math.max(0, i - 1500), i + 1500)),
       'every route that copies a mesh carries the same local matrix and the same hazard');
   }
 }

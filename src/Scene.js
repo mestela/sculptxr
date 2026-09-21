@@ -7239,19 +7239,31 @@ class Scene {
       var copy = new MeshStatic(mesh.getGL());
       copy.copyData(mesh);
 
-      this.addNewMesh(copy);
-      this._inheritParent(copy, mesh);
       // WHAT KIND OF THING IT IS, which copyData does not carry -- it copies geometry, and a
       // locator's geometry is the least interesting thing about it. Duplicating a light used to
       // hand you a small sphere: a real, sculptable, exportable mesh where a light should be.
       // matt: "i can't use the outliner -> duplicate on lights, it makes a mesh."
       //
+      // BEFORE addNewMesh, not after. The outliner builds its row from what the mesh IS at the
+      // moment it is added, and a copy flagged afterwards has already been filed as ordinary
+      // geometry -- so the duplicate appeared in the scene and never in the outliner. matt:
+      // "duplicating the light works in the 3d scene, but didn't make a new entry in the
+      // outliner." addLight has always flagged first (buildLight sets _isLight before
+      // addNewMesh), which is why it never had this problem. decorateLight needs only the
+      // mesh's own three object, which is created on demand, so nothing here wants the scene.
+      //
       // Rig nodes are absent on purpose. A joint duplicates its CHAIN through RigTopology
       // before this is ever reached, so copying _isBone here would make a second, broken one.
       this._copyEntityKind(copy, mesh);
+
+      this.addNewMesh(copy);
+      this._inheritParent(copy, mesh);
     }
 
     this.setMesh(mesh);
+    // And rebuild the list regardless: the kind decides which SECTION a row belongs to, so
+    // anything cached from before the copy existed is stale either way.
+    Skeleton.refreshOutliner?.(this);
   }
 
   // The flags and decoration that make a copy the same KIND of object as its source.
