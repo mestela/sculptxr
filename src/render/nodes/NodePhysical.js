@@ -161,16 +161,52 @@ export function makePhysical(gpu, tsl, mesh) {
       m.normalNode = normalMap(texture(nrm, uvNode), tsl.vec2(sc, sc));
     }
 
-    // Transmission is a MATERIAL property rather than a node: MeshPhysicalNodeMaterial only
-    // compiles the transmission lobe when it is non-zero, so setting it is what turns it on.
-    // It also needs transparency, which the shared material deliberately refuses -- an opaque
-    // material casts shadows and sorts front-to-back. A transmissive mesh gives that up, which
-    // is the correct trade for glass and the wrong one for everything else: another reason
-    // these are per-mesh.
+    // ── GLASS: A SPECULAR COAT, NOT THREE'S TRANSMISSION LOBE ────────────────────────────
+    //
+    // matt, on the camel's outer eye: "it should just be essentially transparent, no attempts
+    // at refraction, and reflect sharp specular with fresnel falloff."
+    //
+    // Setting material.transmission gives the opposite. three's lobe is a REFRACTION model: it
+    // copies the opaque pass into a backbuffer and looks the background up through the surface
+    // with an IOR bend, which costs a full-screen copy per eye in a session and spends all of
+    // it on an effect we are explicitly not asking for. It also only sees what was in the
+    // opaque pass, so the iris -- itself drawn later -- is simply missing from what shows
+    // through.
+    //
+    // The legacy ShaderPBR reached the right answer already and the reasoning is worth
+    // repeating: a reflection is LIGHT ARRIVING, not a measure of how solid the surface is, so
+    // glass gets brighter where it catches a highlight rather than more opaque. Ordinary alpha
+    // blending fights that -- it multiplies the WHOLE fragment by alpha, so a clear surface
+    // throws away the highlight it just computed, and the legacy shader had to add the
+    // reflection's luminance back into alpha to undo its own blend.
+    //
+    // ADDITIVE BLENDING says the same thing in the blend instead of in the alpha, and then
+    // none of that arithmetic is needed. With the diffuse taken to black the material emits
+    // only its specular -- direct highlights and the IBL reflection -- and adds that to
+    // whatever is behind it. The fresnel falloff is the BRDF's own F term, so it is physical
+    // rather than a hand-fitted pow(); roughness is pinned low because glass is sharp and the
+    // vertex roughness channel has no meaning on an imported coat.
+    //
+    // ?glass=transmission restores three's lobe for comparison in one reload.
     const tr = mesh.getTransmission ? mesh.getTransmission() : 0;
     if (tr > 0) {
-      m.transmission = tr;
-      m.transparent = true;
+      const _g = /[?&]glass=(\w+)/.exec(window.location.search);
+      if (_g && _g[1] === 'transmission') {
+        m.transmission = tr;
+        m.transparent = true;
+      } else {
+        m.userData.isGlassCoat = true;
+        m.colorNode = vec3(0, 0, 0);
+        m.roughnessNode = float(0.02);
+        m.metalnessNode = float(0);
+        m.transparent = true;
+        m.blending = gpu.AdditiveBlending;
+      }
+      // A TRANSMISSIVE SURFACE MUST NOT WRITE DEPTH -- the nested-eye rule ShaderManager has
+      // carried for the legacy path. The node branch returns before that line ever runs, so
+      // the glass eye was writing depth and hiding the iris inside it. (ShaderManager still
+      // owns the matching renderOrder = 0.9; that part does reach both renderers.)
+      m.depthWrite = false;
     }
 
     // OPACITY, for the same reason and with the same trade. The shared material is opaque

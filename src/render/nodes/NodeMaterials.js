@@ -154,7 +154,10 @@ NodeMaterials.getFor = function (mesh, shaderId) {
 function applyOpacity(mat, mesh) {
   const op = mesh.getOpacity ? mesh.getOpacity() : 1;
   mat.opacity = op;
-  mat.transparent = op < 1 || mat.transmission > 0;
+  // The glass coat is transparent for a reason of its own (additive blending, transmission
+  // left at 0), so it cannot be derived from transmission > 0 -- doing that put the coat back
+  // in the OPAQUE pass, where its blending is ignored and it painted black over the scene.
+  mat.transparent = op < 1 || mat.transmission > 0 || !!mat.userData.isGlassCoat;
 }
 
 /** The matcap image for a given index, loaded once and shared. */
