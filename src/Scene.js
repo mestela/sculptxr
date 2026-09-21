@@ -3857,6 +3857,10 @@ class Scene {
       // one, and a hard edge on a sculpt reads as an artefact rather than a shadow.
       this._renderer.shadowMap.enabled = true;
       this._renderer.shadowMap.type = WGPU.PCFSoftShadowMap;
+      // The shadow-update mode is read here as well as at the session boundary, so ?xrshadows=
+      // means the same thing on the desktop as it does in a session.
+      const _shq0 = /[?&]xrshadows=(\w+)/.exec(window.location.search);
+      this._xrShadowAlways = !!(_shq0 && _shq0[1] === 'always');
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
       this._isNodeRenderer = true;
       // ONE LINE THAT ANSWERS "why are there no shadows / why is the lighting binary".
@@ -5037,6 +5041,35 @@ class Scene {
       }
     }
 
+    // WHAT THE SHADOW MAPS DEPEND ON, AS ONE KEY. Built once per sync, compared per light.
+    //
+    // The point is which SPACE it is measured in. A single-hand grip translates and rotates
+    // _worldGroup, and the lights live under it too -- so the light and the geometry move
+    // TOGETHER and nothing about the shadow has actually changed. Keying on WORLD positions
+    // said otherwise and re-rendered the map every frame of the gesture, and re-rasterising a
+    // moving light's map makes its texel grid crawl across the geometry: matt, in a session,
+    // "if i move my head the shadows stay static, but they shimmer if i use the world grip
+    // handle like they're being recalculated". They were.
+    //
+    // LOCAL matrices are the relative ones, since everything here is a child of _worldGroup,
+    // so a rigid world move leaves this key untouched. World SCALE is included because the
+    // frustum and normalBias are in world units and genuinely do change with it.
+    //
+    // position.version is three's own BufferAttribute counter and is what catches a sculpt
+    // stroke -- vertex count and matrix both stay put when you only move existing vertices.
+    let _shadowSceneKey = 's' + _sAbs.toFixed(5);
+    for (const m of (this.getMeshes ? this.getMeshes() : [])) {
+      if (m._isLight) continue;
+      const tm = m.getThreeMesh && m.getThreeMesh();
+      if (!tm || !tm.visible) continue;
+      const pa = tm.geometry && tm.geometry.attributes && tm.geometry.attributes.position;
+      const me = tm.matrix.elements;
+      _shadowSceneKey += '|' + tm.id + ',' + (pa ? pa.version + ',' + pa.count : '-')
+        + ',' + me[12].toFixed(2) + ',' + me[13].toFixed(2) + ',' + me[14].toFixed(2)
+        + ',' + me[0].toFixed(3) + ',' + me[5].toFixed(3) + ',' + me[10].toFixed(3)
+        + ',' + me[1].toFixed(3) + ',' + me[2].toFixed(3) + ',' + me[6].toFixed(3);
+    }
+
     for (const e of lights) {
       const host = e.getThreeMesh && e.getThreeMesh();
       if (!host) continue;
@@ -5135,20 +5168,24 @@ class Scene {
       // that broke this renderer before (the spectator canvas did the same and left the canvas
       // target bound). If the frame is intact with one shadow pass and breaks when they run
       // every frame, that is the answer. window.xrShadowRefresh() pulses an update.
-      L.shadow.autoUpdate = wantCast && this._renderer.shadowMap.enabled && !this._xrShadowOnce;
+      // ON DEMAND BY DEFAULT NOW, not every frame. ?xrshadows=always restores per-frame
+      // rendering if the change detection below ever misses something; window.xrShadowRefresh()
+      // forces a one-off.
+      L.shadow.autoUpdate = wantCast && this._renderer.shadowMap.enabled && this._xrShadowAlways;
       // A light that is pinned castShadow but should not cast would otherwise sample a stale
       // map; drop its contribution to nothing instead.
       L.shadow.intensity = wantCast ? (e._shadowIntensity === undefined ? 1 : e._shadowIntensity) : 0;
-      // ON-DEMAND MEANS SOMETHING HAS TO ASK. The 'once' pulse used to be a single timer 1.5s
-      // after the boundary -- which fires BEFORE the user has made a light, so it pulsed
-      // nothing and the mode looked broken. Re-pulse whenever this light's own state changes:
-      // it appeared, it moved, it was retyped, the world was rescaled. That covers making and
-      // placing a light, which is when you look for its shadow. It does NOT yet cover editing
-      // the geometry that casts -- a sculpt stroke needs its own hook.
-      if (this._xrShadowOnce && wantCast) {
-        const p = L.position;
-        const key = type + ':' + p.x.toFixed(3) + ',' + p.y.toFixed(3) + ',' + p.z.toFixed(3)
-          + ':' + L.distance.toFixed(3) + ':' + wscale.toFixed(4);
+      // ON-DEMAND MEANS SOMETHING HAS TO ASK. The light's own contribution to the key is its
+      // LOCAL matrix -- the host's transform under _worldGroup -- for the same reason as the
+      // scene key: that is the part a world grip does not change.
+      if (wantCast && !this._xrShadowAlways) {
+        const he = host.matrix.elements;
+        const key = _shadowSceneKey + '#' + type + ',' + L.distance.toFixed(4)
+          + ',' + he[12].toFixed(3) + ',' + he[13].toFixed(3) + ',' + he[14].toFixed(3)
+          + ',' + he[0].toFixed(3) + ',' + he[5].toFixed(3) + ',' + he[10].toFixed(3)
+          + ',' + he[1].toFixed(3) + ',' + he[2].toFixed(3) + ',' + he[6].toFixed(3)
+          + ',' + (e._lightConeDeg === undefined ? 35 : e._lightConeDeg)
+          + ',' + (e._shadowNear === undefined ? 0 : e._shadowNear);
         if (L.userData._shadowKey !== key) {
           L.userData._shadowKey = key;
           L.shadow.needsUpdate = true;
@@ -7500,6 +7537,7 @@ class Scene {
       // test -- it cost a headset session. ?xrshadows=1 cannot be mistimed.
       const _shq = /[?&]xrshadows=(\w+)/.exec(window.location.search);
       this._xrShadowOnce = !!(_shq && _shq[1] === 'once');
+      this._xrShadowAlways = !!(_shq && _shq[1] === 'always');
       const _wantXrShadows = !!window._xrShadows || !!_shq;
       window._xrShadows = _wantXrShadows;
       _setPoolShadows(_wantXrShadows);
