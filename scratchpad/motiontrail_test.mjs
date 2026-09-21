@@ -1452,7 +1452,13 @@ function setup(times) {
   // The trail is a LINE, not a cloud of sprites — the original rule, restated for the fat-line
   // implementation that replaced THREE.Line. LineSegments2 is still a line; what the rule
   // forbids is drawing the path as points.
-  check('the viewport trail is a line', /new LineSegments2\(/.test(code));
+  // The CLASS is now chosen per renderer -- the node path needs three's webgpu twin of
+  // LineSegments2, because the stock one pairs with LineMaterial (a ShaderMaterial this backend
+  // cannot compile) and draws nothing. So this pins the rule, not the constructor name: a
+  // LineSegments2 of some flavour is imported and the trail is built from it.
+  check('the viewport trail is a line',
+    /LineSegments2/.test(code) && /new (Seg|LineSegments2)\(/.test(code),
+    'the path must not be drawn as a point cloud');
 
   // THIS CHECK USED TO BAN THREE.Points OUTRIGHT, and it was right to at the time: the default
   // PointsMaterial draws WORLD-SIZED camera-facing squares, and at scene scale those became a

@@ -1,10 +1,17 @@
 import * as THREE from 'three';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 // Fat lines, for the gnomons only. THREE.Line draws hardware 1px lines, which cannot be
 // antialiased and step between whole pixels as the camera moves; LineSegments2 triangulates a
 // screen-space width instead. Used here and not (yet) for the trail itself, so the approach can
 // be judged on the small thing before the curve is committed to it.
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+// THE NODE RENDERER HAS ITS OWN FAT-LINE CLASS, and it is not optional. LineSegments2 pairs with
+// LineMaterial, a ShaderMaterial subclass this backend cannot compile -- so Scene's sweep hid
+// these outright and the trails stopped appearing. Swapping the MATERIAL alone is not enough
+// either: measured, the stock LineSegments2 carrying a Line2NodeMaterial draws nothing at all.
+// three ships a node twin of the class under lines/webgpu, and that pair does draw.
+import { LineSegments2 as LineSegments2Node } from 'three/examples/jsm/lines/webgpu/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import Skeleton from './Skeleton.js';
@@ -644,7 +651,14 @@ const REF_VIEWPORT_W = 1400;
 
 function makeFat(main, px, opacity, order) {
   const g = Skeleton.overlayGroup(main);
-  const seg = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
+  // THE NODE RENDERER CANNOT DRAW A ShaderMaterial, and LineMaterial is one -- so on that path
+  // Scene's sweep hid these outright and the trails simply stopped appearing. matt: "motion
+  // trails? they seem to no longer draw." Line2NodeMaterial is three's node equivalent for the
+  // same geometry. See NodeMaterials.fatLine.
+  const nodeMat = (NodeMaterials.isActive && NodeMaterials.isActive())
+    ? NodeMaterials.fatLine({ linewidth: px }) : null;
+  const Seg = nodeMat ? LineSegments2Node : LineSegments2;
+  const seg = new Seg(new LineSegmentsGeometry(), nodeMat || new LineMaterial({
     linewidth: px,               // SCREEN pixels, because worldUnits is off
     worldUnits: false,
     vertexColors: true,

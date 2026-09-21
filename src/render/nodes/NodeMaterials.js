@@ -285,6 +285,34 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   return m;
 };
 
+/**
+ * A FAT LINE THE NODE RENDERER CAN ACTUALLY DRAW.
+ *
+ * MotionTrail draws through LineSegments2 on three's LineMaterial, which is a ShaderMaterial
+ * subclass -- and Scene's sweep HIDES anything still on a raw ShaderMaterial, because this
+ * backend cannot compile one at all. So the trails were not failing to draw, they were being
+ * switched off: `if (m.isShaderMaterial && !m.isNodeMaterial) o.visible = false`.
+ *
+ * Line2NodeMaterial is three's own node equivalent and takes the same geometry, so this is a
+ * swap rather than a port. It also derives its own viewport internally, so the resolution
+ * plumbing the legacy material needs is simply absent here -- syncResolution tolerates that.
+ */
+NodeMaterials.fatLine = function (opts = {}) {
+  if (!gpu || !gpu.Line2NodeMaterial) return null;
+  const m = new gpu.Line2NodeMaterial({
+    linewidth: opts.linewidth, worldUnits: false,
+    vertexColors: opts.vertexColors !== false,
+    ...(opts.color !== undefined ? { color: opts.color } : {}),
+    ...(opts.dashed ? { dashed: true } : {}),
+    // `transparent` buys the PASS, NoBlending declines the blend -- see makeFat for why the
+    // overlay needs the transparent pass and not the blending.
+    transparent: true, blending: gpu.NoBlending,
+    depthWrite: false, depthTest: false, toneMapped: false,
+  });
+  m.userData.fatLine = true;
+  return m;
+};
+
 /** The matcap image for a given index, loaded once and shared. */
 function matcapTexture(index) {
   const entry = ShaderMatcap.matcaps[index] || ShaderMatcap.matcaps[0];
