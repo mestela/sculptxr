@@ -1843,12 +1843,22 @@ window.rigUnit = function (main) {
 //
 // NOT `visible = false`: that skips the object's whole subtree in three, so anything parented to
 // a joint would be invisible too.
+// ONE SHARED MATERIAL, NOT ONE PER CALL. This runs from updateVisuals for every affected mesh
+// every frame, and the recognise-my-own-work guard below is the only thing that stopped it
+// allocating. A guard is a good idea and a poor guarantee: when it failed -- the node renderer's
+// stand-in did not carry colorWrite, so the test never matched again -- this allocated a material
+// per mesh per frame, and on that renderer a fresh material means a fresh render object and a
+// fresh node graph. Sharing one instance makes the failure mode cheap instead of catastrophic.
+let _noDrawMat = null;
 function noDrawMaterial(tm) {
   if (!tm) return;
   tm.visible = true;
   const m = tm.material;
   if (m && m.colorWrite === false && m.depthWrite === false) return;   // already ours
-  tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  if (!_noDrawMat) {
+    _noDrawMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  }
+  tm.material = _noDrawMat;
 }
 
 Skeleton.syncThree = function (mesh) {

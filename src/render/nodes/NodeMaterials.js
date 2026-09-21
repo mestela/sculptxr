@@ -467,6 +467,23 @@ NodeMaterials.convertBasic = function (src) {
       transparent: src.transparent, opacity: src.opacity, side: src.side,
       depthTest: src.depthTest, depthWrite: src.depthWrite, blending: src.blending,
       vertexColors: src.vertexColors, alphaTest: src.alphaTest, toneMapped: src.toneMapped,
+      // colorWrite CARRIES, and leaving it out was a performance bug, not a cosmetic one.
+      //
+      // Skeleton's noDrawMaterial marks a mesh "present but not drawn" with
+      // { colorWrite: false, depthWrite: false }, and recognises its own work next frame by
+      // testing those two flags. The stand-in did not copy colorWrite, so on this renderer the
+      // test never matched again: updateVisuals built a NEW MeshBasicMaterial for every such
+      // mesh every frame, the sweep saw an unseen source material and built a NEW node material
+      // for it, and three -- whose render objects are keyed on the material -- rebuilt the
+      // render object and its whole node graph. Measured: 40 rig objects, 17 frames, 17
+      // distinct materials each, and `_nodes.getForRender` at 8.6ms of a 10.9ms frame.
+      //
+      // On the legacy renderer the same code was free, because nothing replaced the material
+      // it had just written and the guard matched on the second frame. That is the whole of
+      // matt's "this was essentially free pre-tsl, whats happened?"
+      //
+      // It was also drawing meshes that had asked not to be drawn.
+      colorWrite: src.colorWrite,
     });
     m.depthFunc = src.depthFunc;
     const col = uniform(new gpu.Color().copy(src.color));
