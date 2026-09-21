@@ -269,30 +269,32 @@ function installNestedRenderGuard(renderer) {
     if (depth > stats.maxDepth) stats.maxDepth = depth;
     if (depth === 1) stats.outer++; else stats.nested++;
     if (nested) stats.guarded++;
-    let savedFBT, savedORT;
+
+    // SURGICAL, NOT BLUNT. The first version of this guard cleared xr.enabled for the inner
+    // render, which does stop the hijack -- matt confirmed the clipping and the mailbox errors
+    // both went away -- but it also changes what the renderer thinks its drawing buffer and
+    // output target are, and the shadow map came back EMPTY in a session while being correct
+    // on the desktop (xrShadowProbe: 255 on every face, for a point AND a spot light).
+    //
+    // So disable only the two things that actually cause the hijack, and leave the rest of the
+    // XR path exactly as it is:
+    //   - cameraAutoUpdate off, so xr.updateCamera() cannot copy the shadow camera's near/far
+    //     onto the eye cameras and the compositor;
+    //   - getCamera() returns the camera this render was actually given, so the shadow map is
+    //     rendered from the light rather than from the head.
+    let savedAuto, savedGetCamera;
     if (nested) {
-      xr.enabled = false;
-      // AND SHIELD THE OUTER FRAME'S COMPOSITE BUFFER. _getFrameBufferTarget() sizes ONE
-      // SHARED intermediate target from getOutputRenderTarget(); with xr.enabled off that
-      // reads the canvas rather than the XR target, so the inner pass would resize the outer
-      // frame's buffer under it. The outer composite then draws a mismatched framebuffer:
-      //     GL_INVALID_FRAMEBUFFER_OPERATION: glDrawArrays: Framebuffer is incomplete:
-      //     Attachments are not all the same size.
-      // Give the nested pass its own target (cached, so this does not allocate per frame) and
-      // hand the outer one back untouched.
-      savedFBT = renderer._frameBufferTarget;
-      savedORT = renderer._outputRenderTarget;
-      renderer._frameBufferTarget = renderer._xrNestedFBT || null;
-      renderer._outputRenderTarget = null;
+      savedAuto = xr.cameraAutoUpdate;
+      savedGetCamera = xr.getCamera;
+      xr.cameraAutoUpdate = false;
+      xr.getCamera = () => camera;
     }
     try {
       return orig(scene, camera);
     } finally {
       if (nested) {
-        renderer._xrNestedFBT = renderer._frameBufferTarget;
-        renderer._frameBufferTarget = savedFBT;
-        renderer._outputRenderTarget = savedORT;
-        xr.enabled = true;
+        xr.cameraAutoUpdate = savedAuto;
+        xr.getCamera = savedGetCamera;
       }
       depth--;
     }
