@@ -3918,6 +3918,113 @@ class Scene {
         console.log('[xrGlTrace] ' + (on ? 'ON — expect a slower frame' : 'off'));
         return true;
       };
+      // WHAT IS ACTUALLY IN THE SHADOW MAP. This is the measurement that cracked the desktop
+      // half: turn the depth comparison OFF, sample the cube as an ordinary samplerCube onto a
+      // small RGBA8 target and read it back. A face of all 255 is cleared-far, i.e. nothing was
+      // rendered into it -- or rendered so close to the far plane that 8 bits cannot separate
+      // it, which is what a bad near/far ratio looks like. A face with a spread of values has
+      // a real occluder in it.
+      //
+      // Raw GL, so three's state cache is briefly out of step; a frame may flicker. Read-only
+      // otherwise, and the texture parameters are put back.
+      window.xrShadowProbe = () => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        const pool = this._lightPool;
+        if (!gl || !pool) { console.warn('[xrShadowProbe] no gl or no pool'); return null; }
+        let L = null;
+        for (const t of [0, 1, 2]) for (const li of pool[t]) if (li.intensity > 0 && li.castShadow) L = L || li;
+        if (!L || !L.shadow || !L.shadow.map) { console.warn('[xrShadowProbe] no casting light with a map'); return null; }
+        const texData = this._renderer.backend.get(L.shadow.map.depthTexture);
+        const texGPU = texData && texData.textureGPU;
+        if (!texGPU) { console.warn('[xrShadowProbe] no GPU texture'); return null; }
+        const isCube = !!L.shadow.map.depthTexture.isCubeTexture;
+
+        const prev = {
+          fb: gl.getParameter(gl.FRAMEBUFFER_BINDING), prog: gl.getParameter(gl.CURRENT_PROGRAM),
+          vao: gl.getParameter(gl.VERTEX_ARRAY_BINDING), active: gl.getParameter(gl.ACTIVE_TEXTURE),
+          vp: gl.getParameter(gl.VIEWPORT), depthTest: gl.getParameter(gl.DEPTH_TEST)
+        };
+        const VS = '#version 300 es\nvoid main(){ vec2 p = vec2(float((gl_VertexID<<1)&2), float(gl_VertexID&2)); gl_Position = vec4(p*2.0-1.0,0.0,1.0); }';
+        const FS = '#version 300 es\nprecision highp float; precision highp samplerCube; precision highp sampler2D;\n'
+          + 'uniform samplerCube uCube; uniform sampler2D uTex2D; uniform vec2 uRes; uniform int uFace; uniform int uIsCube;\n'
+          + 'out vec4 o;\nvoid main(){ vec2 t=(gl_FragCoord.xy/uRes)*2.0-1.0; float v;\n'
+          + ' if(uIsCube==1){ vec3 d;\n'
+          + '  if(uFace==0) d=vec3( 1.0,-t.y,-t.x); else if(uFace==1) d=vec3(-1.0,-t.y, t.x);\n'
+          + '  else if(uFace==2) d=vec3( t.x, 1.0, t.y); else if(uFace==3) d=vec3( t.x,-1.0,-t.y);\n'
+          + '  else if(uFace==4) d=vec3( t.x,-t.y, 1.0); else d=vec3(-t.x,-t.y,-1.0);\n'
+          + '  v=texture(uCube,d).r; } else { v=texture(uTex2D,(t*0.5)+0.5).r; }\n'
+          + ' o=vec4(v,v,v,1.0); }';
+        const mk = (type, src) => {
+          const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh);
+          if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+          return sh;
+        };
+        let out = null;
+        try {
+          const prog = gl.createProgram();
+          gl.attachShader(prog, mk(gl.VERTEX_SHADER, VS));
+          gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FS));
+          gl.linkProgram(prog);
+          if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+          const N = 64;
+          const colTex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, colTex);
+          gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, N, N);
+          const fbo = gl.createFramebuffer();
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colTex, 0);
+          const target = isCube ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(target, texGPU);
+          gl.texParameteri(target, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+          gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.useProgram(prog); gl.bindVertexArray(null); gl.disable(gl.DEPTH_TEST);
+          gl.viewport(0, 0, N, N);
+          // BOTH samplers must be pointed somewhere, and NOT at the same unit: a samplerCube
+          // and a sampler2D bound to one texture unit is invalid and the draw is silently
+          // dropped, which reads back as a cleared target and looks exactly like an empty
+          // shadow map. That cost one false result.
+          gl.uniform1i(gl.getUniformLocation(prog, 'uCube'), isCube ? 0 : 1);
+          gl.uniform1i(gl.getUniformLocation(prog, 'uTex2D'), isCube ? 1 : 0);
+          gl.uniform1i(gl.getUniformLocation(prog, 'uIsCube'), isCube ? 1 : 0);
+          gl.uniform2f(gl.getUniformLocation(prog, 'uRes'), N, N);
+          const px = new Uint8Array(N * N * 4);
+          const faces = [];
+          for (let f = 0; f < (isCube ? 6 : 1); f++) {
+            gl.uniform1i(gl.getUniformLocation(prog, 'uFace'), f);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+            gl.readPixels(0, 0, N, N, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            let mn = 255, mx = 0, sum = 0, below = 0;
+            for (let i = 0; i < N * N; i++) {
+              const v = px[i * 4];
+              if (v < mn) mn = v; if (v > mx) mx = v; sum += v; if (v < 250) below++;
+            }
+            faces.push({ face: f, min: mn, max: mx, mean: +(sum / (N * N)).toFixed(1), pxBelow250: below });
+          }
+          gl.texParameteri(target, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+          gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.deleteFramebuffer(fbo); gl.deleteTexture(colTex); gl.deleteProgram(prog);
+          out = {
+            lightType: L.type, isCube,
+            shadowCamNear: +L.shadow.camera.near.toFixed(5),
+            shadowCamFar: +L.shadow.camera.far.toFixed(4),
+            ratio: +(L.shadow.camera.far / L.shadow.camera.near).toFixed(1),
+            lightDistance: L.distance, faces
+          };
+        } catch (e) {
+          console.warn('[xrShadowProbe] failed: ' + e.message);
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, prev.fb);
+        gl.useProgram(prev.prog); gl.bindVertexArray(prev.vao);
+        gl.activeTexture(prev.active);
+        gl.viewport(prev.vp[0], prev.vp[1], prev.vp[2], prev.vp[3]);
+        if (prev.depthTest) gl.enable(gl.DEPTH_TEST);
+        this._renderer.backend.state && this._renderer.backend.state.reset && this._renderer.backend.state.reset();
+        console.log('[xrShadowProbe]', JSON.stringify(out));
+        return out;
+      };
       window.xrShadowRefresh = () => {
         const pool = this._lightPool;
         if (!pool) return 0;
