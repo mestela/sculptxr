@@ -320,3 +320,43 @@ export function applyXRBackendPatches(renderer, WGPU, TSL) {
 }
 
 export default { applyXRBackendPatches };
+
+/**
+ * A HIGHER-TAP PCF FILTER, because five samples read as dither.
+ *
+ * three's PCFShadowFilter takes exactly FIVE samples on a Vogel disk, rotated per pixel by
+ * interleaved gradient noise. Five samples is too few to hide the rotation, so the penumbra
+ * comes out as a structured screen-space pattern rather than a gradient, and it gets worse the
+ * wider the radius -- matt: "there's clear dithering patterns on the softness".
+ *
+ * `LightShadow.filterNode` is a supported per-shadow override (ShadowNode: `shadow.filterNode ||
+ * this.getShadowFilterFn(...)`), so this needs no patching of three at all: same Vogel disk,
+ * same IGN rotation, just enough taps that the pattern averages out. 16 is the knee -- 5 is
+ * visibly dithered, 16 reads smooth, and beyond that costs samples for very little.
+ *
+ * The alternative is VSM, which blurs the moments with a real separable Gaussian and has no
+ * dither at all, but it leaks light through thin geometry and adds two blur passes per update.
+ * Worth trying if 16 taps is still not smooth enough; this is the cheaper move first.
+ */
+export function makePCFFilter(TSL, taps = 16) {
+  const { Fn, texture, reference, screenCoordinate, vogelDiskSample,
+    interleavedGradientNoise, vec2, float } = TSL;
+
+  return Fn(({ depthTexture, shadowCoord, shadow, depthLayer }) => {
+    const compare = (uv) => {
+      let d = texture(depthTexture, uv);
+      if (depthTexture.isArrayTexture) d = d.depth(depthLayer);
+      return d.compare(shadowCoord.z);
+    };
+    const mapSize = reference('mapSize', 'vec2', shadow);
+    const radius = reference('radius', 'float', shadow);
+    const radiusScaled = radius.mul(vec2(1).div(mapSize).x);
+    const phi = interleavedGradientNoise(screenCoordinate.xy).mul(6.28318530718);
+
+    let sum = compare(shadowCoord.xy.add(vogelDiskSample(0, taps, phi).mul(radiusScaled)));
+    for (let i = 1; i < taps; i++) {
+      sum = sum.add(compare(shadowCoord.xy.add(vogelDiskSample(i, taps, phi).mul(radiusScaled))));
+    }
+    return sum.mul(float(1 / taps));
+  });
+}

@@ -80,7 +80,7 @@ import probeXRLighting from './misc/XRLightProbe.js';
 import NodeMaterials from './render/nodes/NodeMaterials.js';
 import { stripGeometry } from './render/lineStrip.js';
 import { installEnvironment } from './render/nodes/EnvIBL.js';
-import { applyXRBackendPatches } from './render/nodes/ThreeXRPatches.js';
+import { applyXRBackendPatches, makePCFFilter } from './render/nodes/ThreeXRPatches.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -3870,6 +3870,9 @@ class Scene {
       // means the same thing on the desktop as it does in a session.
       const _shq0 = /[?&]xrshadows=(\w+)/.exec(window.location.search);
       this._xrShadowAlways = !!(_shq0 && _shq0[1] === 'always');
+      const _tapq = /[?&]shadowtaps=(\d+)/.exec(window.location.search);
+      this._shadowTaps = _tapq ? parseInt(_tapq[1], 10) : 16;
+      this._TSL_GPU = TSL;     // the custom shadow filter is built from TSL, not from WGPU
       this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
       this._isNodeRenderer = true;
       // ONE LINE THAT ANSWERS "why are there no shadows / why is the lighting binary".
@@ -5339,6 +5342,19 @@ class Scene {
       // resolution, with 512 as the reference the numbers were chosen at.
       const _rad = e._shadowRadius === undefined ? 4 : e._shadowRadius;
       L.shadow.radius = _rad * (_mapWant / 512);
+      // AND ENOUGH TAPS THAT THE SOFTNESS IS A GRADIENT RATHER THAN A PATTERN. three's own PCF
+      // filter takes five samples on a rotated Vogel disk, which is too few to hide the
+      // rotation: the penumbra comes out as screen-space dither, worse the wider the radius.
+      // filterNode is a supported per-shadow override, so this is not a patch. ?shadowtaps=N
+      // to compare, 0 to fall back to three's five.
+      if (this._shadowTaps !== 0 && !L.shadow.filterNode) {
+        try {
+          L.shadow.filterNode = makePCFFilter(this._TSL_GPU, this._shadowTaps || 16);
+        } catch (err) {
+          console.warn('[shadows] custom PCF filter unavailable, using three\'s 5-tap', err);
+          this._shadowTaps = 0;
+        }
+      }
       // ...AND IT IS REFRESHED HERE, after near/far and the projection are settled: a spot's
       // shadow.matrix is derived from its projection, so refreshing it earlier would build the
       // lookup from the previous frame's frustum.
