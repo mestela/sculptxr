@@ -478,23 +478,35 @@ class GizmoVR {
     // why the centre sphere and the plane quads felt right and the arrow tips and rings did
     // not. matt: "the highlight selection is misaligned."
     //
-    // Composing the group's own world matrix in by hand rather than parenting these into the
-    // scene graph: they are invisible CPU-only geometry, and fifteen more objects in the scene
-    // is fifteen more for every per-frame traversal to walk and for the material sweep to
-    // convert.
+    // THE PICK MESHES ARE PARENTED INTO THE GROUP, invisible, and three keeps their
+    // matrixWorld for them. This started as a hand-composed `group.matrixWorld * matrix` on the
+    // reasoning that fifteen invisible CPU-only meshes were fifteen more objects for every
+    // per-frame traversal to walk -- and that hand-composed version was WRONG in a way no
+    // measurement of mine could see, because every measurement I took happened to be with the
+    // debug overlay switched on, and switching it on is exactly what parents them. matt found
+    // it in one line: "it ONLY works if i add ?gizmopick=1".
+    //
+    // The lesson is worth more than the fix: an instrument that changes the thing it measures
+    // confirms itself. The overlay now changes only `visible` and the material, so what you see
+    // is what picks either way.
+    //
+    // matrixWorldNeedsUpdate every frame because matrixAutoUpdate is off and `matrix` is
+    // written here -- the same contract the drawn handles use a few lines above.
     if (this._showPickOnInit) { this._showPickOnInit = false; this.showPickGeometry(true); }
     if (this._desktop) {
-      this._group.updateMatrixWorld(true);
-      const gw = this._group.matrixWorld;
       for (let i = 0; i < components.length; ++i) {
         const pg = components[i]._pickGeo;
         const pm = pg && pg.getThreeMesh && pg.getThreeMesh();
         if (!pm) continue;
+        if (pm.parent !== this._group) {
+          pm.visible = !!this._showPick;
+          this._group.add(pm);
+        }
         pm.matrixAutoUpdate = false;
         pm.matrix.fromArray(components[i]._finalMatrix);
-        pm.matrixWorld.multiplyMatrices(gw, pm.matrix);
-        pm.matrixWorldNeedsUpdate = false;
+        pm.matrixWorldNeedsUpdate = true;
       }
+      this._group.updateMatrixWorld(true);
     }
   }
 
@@ -1132,11 +1144,10 @@ class GizmoVR {
   // wireframe, so the zone and the handle it belongs to are on screen together at every angle
   // and zoom.
   //
-  // It parents them rather than drawing a copy: sharing the group is what makes the overlay
-  // trustworthy, since it then inherits exactly the transform chain the DRAWN handles use. If
-  // the wireframe sits on its handle, the pick geometry is in the right place and a
-  // misalignment is somewhere else; if it floats off, this is the bug and you can see its
-  // shape.
+  // IT CHANGES NOTHING BUT `visible` AND THE MATERIAL. It used to parent the meshes into the
+  // group as well, which made the overlay lie: parenting is what fixes their matrixWorld, so
+  // turning the instrument on repaired the very fault it was meant to reveal, and every
+  // measurement taken through it agreed with the drawing. They are parented always now.
   showPickGeometry(on) {
     const THREE_ANY = THREE;
     const comps = [
@@ -1158,16 +1169,13 @@ class GizmoVR {
             transparent: true, opacity: 0.35, depthTest: false, depthWrite: false,
           });
         }
+        if (!pm.userData._pickRealMat) pm.userData._pickRealMat = pm.material;
         pm.material = pm.userData._pickDebugMat;
         pm.renderOrder = 102;
         pm.visible = true;
-        // matrixAutoUpdate stays off and the matrix keeps being written by update(); adding it
-        // to the group means three composes matrixWorld from the same chain, which is the
-        // whole point of the check.
-        if (pm.parent !== this._group) this._group.add(pm);
       } else {
+        if (pm.userData._pickRealMat) pm.material = pm.userData._pickRealMat;
         pm.visible = false;
-        if (pm.parent === this._group) this._group.remove(pm);
       }
     }
     return this._showPick;
