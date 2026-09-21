@@ -1315,6 +1315,22 @@ function makeDots(main, sizePx) {
   pts.frustumCulled = false;
   pts.isPickable = false;
   pts.renderOrder = DOT_ORDER;
+  // A PIXEL IS NOT A CONSTANT ANGULAR SIZE, and the dots never learned what the lines did.
+  // `sizeAttenuation: false` means these are sized in SCREEN pixels, and a GalaxyXR eye buffer is
+  // several times wider than the desktop canvas the 4 and 6 above were chosen against -- so the
+  // same number of pixels covers a fraction of the field of view and the dots all but vanish.
+  // matt, with the trails otherwise working on the GXR: "they're barely visible."
+  //
+  // Same rule the fat lines already use: a fraction of the viewport, anchored to the width these
+  // numbers were tuned at, and NEVER SCALED DOWN -- desktop already looks the way matt signed off
+  // on, so below the reference width this is exactly the old behaviour.
+  // window._trailDotScale is the knob if the multiplier itself needs taste applied.
+  pts.onBeforeRender = function () {
+    const r = viewportSize(main);
+    const w = (r.w > 1) ? r.w : REF_VIEWPORT_W;
+    const k = Math.max(1, w / REF_VIEWPORT_W) * tune('_trailDotScale', 1);
+    this.material.size = sizePx * k;
+  };
   g.add(pts);
   return pts;
 }
@@ -1425,7 +1441,15 @@ MotionTrail.recolor = function (main) {
       if (hp) {
         v.hoverDot.geometry.setFromPoints([hp]);
         setColors(v.hoverDot, new Float32Array(HOVER_COL));
-        v.hoverDot.material.size = (v.slots[hover].key ? KEY_DOT_PX : DOT_PX) * HOVER_GROW;
+        // The hover dot's own size is written here rather than by its onBeforeRender, so it
+        // carries the same viewport scale explicitly or it shrinks back on a headset.
+        {
+          const _r = viewportSize(main);
+          const _k = Math.max(1, ((_r.w > 1) ? _r.w : REF_VIEWPORT_W) / REF_VIEWPORT_W)
+            * tune('_trailDotScale', 1);
+          v.hoverDot.material.size =
+            (v.slots[hover].key ? KEY_DOT_PX : DOT_PX) * HOVER_GROW * _k;
+        }
       }
       v.hoverDot.visible = !!hp;
     }
