@@ -4011,7 +4011,9 @@ class Scene {
             shadowCamNear: +L.shadow.camera.near.toFixed(5),
             shadowCamFar: +L.shadow.camera.far.toFixed(4),
             ratio: +(L.shadow.camera.far / L.shadow.camera.near).toFixed(1),
-            lightDistance: L.distance, faces
+            lightDistance: L.distance,
+            frustumValid: L.shadow.camera.near < L.shadow.camera.far,
+            faces
           };
         } catch (e) {
           console.warn('[xrShadowProbe] failed: ' + e.message);
@@ -5183,16 +5185,34 @@ class Scene {
         //
         // far is not really ours: PointShadowNode re-pins camera.far to light.distance on
         // every face, so the ratio is near vs the light's falloff range.
+        // THE FAR PLANE IS NOT OURS AND MUST BE TREATED AS FIXED. LightShadow.updateMatrices
+        // re-pins camera.far to light.distance on every update, so whatever we write is
+        // overwritten -- and light.distance is the user's Falloff slider.
+        //
+        // Clamping near against a far WE computed, rather than the one three forces back, is
+        // how this produced an INVERTED frustum in matt's session: near 0.948, far 0.516,
+        // because the light sat further from the sculpt than the Falloff reached. Nothing can
+        // be inside near > far, so the map rendered empty and every sweep of bias, opacity,
+        // falloff and world scale did nothing -- there was no frustum to be inside.
         const _far = Math.max(1e-3, (L.distance > 0 ? L.distance : _rWorld * 4));
         const _dToScene = Math.hypot(
           L.position.x - _cWorld.x, L.position.y - _cWorld.y, L.position.z - _cWorld.z);
-        // Start the frustum just in front of the nearest thing that can cast. The RATIO cap is
-        // the important part: a light sitting inside the model (which is where a new one is
-        // created) has no safe near plane, so the cap is what carries those cases. 64:1 keeps
-        // the usable depth range wide; the falloff range is usually far larger than the model,
-        // and every bit of far/near spent on empty space is precision taken from the sculpt.
-        const near = Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5);
-        const far = Math.max(near + 1e-3, _far);
+        // Start just in front of the nearest thing that can cast, but NEVER past half the far
+        // plane, so near < far holds however the light is placed. The 64:1 floor keeps the
+        // usable depth range wide for a light sitting inside the model, which is where a new
+        // one is created and where there is no safe near plane at all.
+        const near = Math.min(
+          Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5),
+          _far * 0.5);
+        const far = _far;
+        // If the Falloff cannot reach past the model, the far plane cuts through it and the
+        // far side simply cannot cast. Say so once rather than leaving it to be discovered.
+        if (_dToScene + _rWorld > _far && !this._warnedShadowReach) {
+          this._warnedShadowReach = true;
+          console.warn('[shadows] Falloff (' + _far.toFixed(3) + ') is shorter than the light\'s'
+            + ' distance to the model (' + (_dToScene + _rWorld).toFixed(3) + ') — the shadow'
+            + ' frustum cuts through the sculpt. Raise Falloff.');
+        }
         if (_sc.isOrthographicCamera) {
           const ext = _rWorld * 1.2;
           _sc.left = -ext; _sc.right = ext; _sc.top = ext; _sc.bottom = -ext;
