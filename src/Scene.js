@@ -11785,7 +11785,28 @@ class Scene {
     this._panelRayLatch = { left: null, right: null };
 
     const session = frame.session;
-    const sources = session.inputSources;
+    // HANDS CAN BE SWITCHED OFF, and this is the one place worth doing it.
+    //
+    // matt, testing with a keyboard in the headset: "when testing and i drop the controls to
+    // type, its annoying that it starts to track my hands, interprets my typing hands as a fist,
+    // and starts moving the world all over the place." A runtime that offers hand tracking
+    // alongside controllers hands us BOTH, and typing looks enough like a grip gesture to drive
+    // the world grip.
+    //
+    // Filtered out of `sources` rather than gated at the eleven places _isHandSource is asked,
+    // because everything downstream -- grips, pinches, tools, panels, the laser -- reads this one
+    // array. A source that is not in it cannot drive anything, and nothing else has to know.
+    //
+    // Settings > Input > Hand tracking, or window._handTracking = false from the console. ON by
+    // default: this is a "put it down for a minute" switch, not a change of stance on hands.
+    // The saved preference becomes the live flag once, so a console override still wins after.
+    if (window._handTracking === undefined) {
+      window._handTracking = getOptionsURL().handTracking !== false;
+    }
+    const _srcAll = session.inputSources;
+    const sources = (window._handTracking === false)
+      ? Array.prototype.filter.call(_srcAll, (s) => !this._isHandSource(s))
+      : _srcAll;
     window._vrInputSources = sources;
 
     // BEFORE THE UI MOUNT READS uiGrip.matrixWorld, NOT DURING THE INPUT LOOP.

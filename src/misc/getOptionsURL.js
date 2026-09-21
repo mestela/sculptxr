@@ -153,6 +153,11 @@ var getOptionsURL = function () {
   options.nomadHost = getVal('nomadHost', ''); // last Nomad Link address, so a refresh reconnects in one tap
   options.nomadLiveSend = queryBool(getVal('nomadLiveSend'), false);
   options.sculptLocked = queryBool(getVal('sculptLocked'), false); // "do nothing" mode
+  // HAND TRACKING, on by default. Off ignores hand input sources entirely -- see the filter in
+  // Scene's per-frame input handler. Persisted because the reason to switch it off is a working
+  // session at a desk with a keyboard, and having to find the toggle again every time is most of
+  // the annoyance it exists to remove.
+  options.handTracking = queryBool(getVal('handTracking'), true);
   // Nomad units -> SculptXR units. Half of Utils.SCALE: a whole Nomad scene is
   // roughly one unit, and normalising it to a full 100 arrives too big to work on.
   options.nomadScale = queryNumber(getVal('nomadScale'), 0.01, 10000, 50);

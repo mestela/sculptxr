@@ -2189,6 +2189,13 @@ function buildMenuHTML_settings(main) {
   return `
     <button class="mm-action-btn" id="mm-show-ctrl-guide">Show Controller Guide</button>
     <div class="mm-section-title">Input</div>
+    ${/* A "put it down for a minute" switch, not a change of stance on hands. A runtime that
+         offers hand tracking alongside controllers hands us BOTH, and typing on a real keyboard
+         looks enough like a grip gesture to drive the world grip. matt: "when testing and i drop
+         the controls to type, its annoying that it starts to track my hands, interprets my typing
+         hands as a fist, and starts moving the world all over the place." */ ''}
+    <button class="mm-toggle${window._handTracking === false ? '' : ' active'}" id="mm-hand-track"
+      title="Off ignores hand input sources entirely, so resting or typing hands cannot grab the world. Controllers are unaffected.">Hand tracking</button>
     <button class="mm-toggle${isLeft    ? ' active' : ''}" id="mm-left-hand">Left Hand Mode</button>
     <button class="mm-toggle${isRaycast ? ' active' : ''}" id="mm-raycast">Aim Picking (Raycast)</button>
     <button class="mm-toggle${isAmbi    ? ' active' : ''}" id="mm-ambi">Ambidextrous Cursors</button>
@@ -5274,6 +5281,16 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
   el.querySelector('#mm-quadremesh')?.addEventListener('click', () => { topo?.remeshQuads?.(); });
 
   el.querySelector('#mm-validate')?.addEventListener('click',  () => { topo?.validateMesh?.(); });
+  el.querySelector('#mm-hand-track')?.addEventListener('click', () => {
+    const on = window._handTracking === false;      // currently OFF -> turn it back on
+    window._handTracking = on;
+    el.querySelector('#mm-hand-track')?.classList.toggle('active', on);
+    // Persisted, because the reason to switch it off is a working session at a desk with a
+    // keyboard, and having to find it again every time is most of the annoyance.
+    getOptionsURL.saveOption('handTracking', on, 0);
+    if (window.screenLog) window.screenLog('Hand tracking ' + (on ? 'ON' : 'OFF'), 'cyan');
+  });
+
   el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {
     el.querySelector('#mm-auto-heal')?.classList.toggle('active');
     lightRepaintFn();
