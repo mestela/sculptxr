@@ -611,7 +611,7 @@ function makeBatch(main, geo, ghost, key) {
   // sharpness, shading) written as a node graph; the legacy path keeps the injections.
   let capMat = null;
   if ((isShaftKey(key) || isEnd) && NodeMaterials.isActive && NodeMaterials.isActive()) {
-    capMat = NodeMaterials.rigCapsule({ shaft: isShaftKey(key), ghost });
+    capMat = NodeMaterials.rigCapsule({ shaft: isShaftKey(key), ghost, key });
   }
   if (!capMat) {
     if (isShaftKey(key)) taperMaterialInstanced(mat);

@@ -27,6 +27,9 @@ let _MAT3_VIEW = null;           // scratch, desktop matcap correction
 let _MAT4_VIEW = null;
 let cache = null;            // shaderId -> material, built up front
 let mapped = null;           // texture-set key -> per-mesh PBR material (see getFor)
+// The OVERLAY materials -- rig capsules and trail dots. Keyed and pre-built for the same reason
+// everything else in this file is: see buildOverlayVariants.
+let overlay = null;          // key -> material
 const matcapTextures = [];   // index -> Texture, shared by every mesh using that matcap
 
 NodeMaterials.isActive = () => !!gpu;
@@ -42,6 +45,7 @@ NodeMaterials.all = function () {
   // back compiled for the wrong camera.
   if (mapped) for (const m of mapped.values()) if (m) out.push(m);
   for (const m of basicCache.values()) out.push(m);
+  if (overlay) for (const m of overlay.values()) if (m) out.push(m);
   for (const v of (NodeMaterials._panelVariants || [])) out.push(v);
   if (NodeMaterials._solid) out.push(NodeMaterials._solid);
   return out;
@@ -90,7 +94,46 @@ NodeMaterials.enable = function (mod, tslMod) {
   }
   // Built here so they exist before any session and are covered by the warm pass.
   NodeMaterials.buildPanelVariants();
+  NodeMaterials.buildOverlayVariants();
   return cache;
+};
+
+/**
+ * THE OVERLAY MATERIALS, BUILT UP FRONT LIKE EVERYTHING ELSE IN THIS FILE.
+ *
+ * The rule at the top of this module is that every material is pre-created before anything
+ * renders, because constructing one DURING a session floods the log with "uniform buffer that is
+ * too small" and nothing measured afterwards is trustworthy. The rig capsules and the trail dots
+ * were added later and broke that rule: they were built the first time a bone or a trail
+ * appeared, which is mid-session, and each one compiles a shader on the frame it is born.
+ *
+ * matt, on a GalaxyXR: "the first time i draw a bone on gxr there's a definite stutter." Eight
+ * capsule materials compiled inside one frame is what that is.
+ *
+ * Built here, they are in NodeMaterials.all(), which means the warm pass compiles them before the
+ * session starts and the session-boundary rebuild keeps them right.
+ *
+ * The keys mirror Skeleton's batch keys and MotionTrail's three dot sizes. Duplicating those
+ * constants is the cost of not importing either module into this one -- both already import IT,
+ * and the cycle is not worth the tidiness. A key that drifts costs a lazily-built material and
+ * the stutter back, not a fault, so it fails soft.
+ */
+NodeMaterials.buildOverlayVariants = function () {
+  if (!gpu) return 0;
+  let n = 0;
+  for (const shaft of [true, false]) {
+    for (const ghost of [false, true]) {
+      for (const hi of [false, true]) {
+        const key = (shaft ? 'capShaft' : 'capEnd') + (ghost ? 'G' : '') + (hi ? 'Hi' : '');
+        if (NodeMaterials.rigCapsule({ shaft, ghost, key })) n++;
+      }
+    }
+  }
+  // DOT_PX, KEY_DOT_PX and DOT_PX * HOVER_GROW, from MotionTrail.
+  for (const size of [4, 6, 4 * 1.9]) {
+    if (NodeMaterials.dots({ size })) n++;
+  }
+  return n;
 };
 
 NodeMaterials.get = function (shaderId) {
@@ -224,6 +267,13 @@ function rigShade(tsl, q, normalObj) {
  */
 NodeMaterials.rigCapsule = function (opts = {}) {
   if (!gpu) return null;
+  // KEYED AND CACHED, so the set can be built BEFORE a session rather than on the frame a bone
+  // first appears -- see buildOverlayVariants. The Hi variants cannot share with their plain
+  // twins: tuneCapsuleBatches sets a different opacity on each every pass.
+  overlay = overlay || new Map();
+  const ck = 'cap:' + (opts.key || ((opts.shaft ? 'shaft' : 'end') + (opts.ghost ? 'G' : '')));
+  const hit = overlay.get(ck);
+  if (hit) return hit;
   const { attribute, positionGeometry, vec3, vec4, float, mix, pow, abs, max, select,
     uniform } = tsl;
   const shaft = !!opts.shaft;
@@ -282,6 +332,7 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   m.colorNode = col.mul(gain);
   m.userData.shadeMix = shadeMix;
   m.userData.rigCapsule = true;
+  overlay.set(ck, m);
   return m;
 };
 
@@ -303,6 +354,10 @@ NodeMaterials.rigCapsule = function (opts = {}) {
  */
 NodeMaterials.dots = function (opts = {}) {
   if (!gpu || !gpu.PointsNodeMaterial) return null;
+  overlay = overlay || new Map();
+  const ck = 'dot:' + opts.size;
+  const hit = overlay.get(ck);
+  if (hit) return hit;
   const { pointUV, vec2, float } = tsl;
   const m = new gpu.PointsNodeMaterial({
     size: opts.size,
@@ -316,6 +371,7 @@ NodeMaterials.dots = function (opts = {}) {
   });
   m.opacityNode = pointUV.sub(vec2(0.5, 0.5)).length().lessThan(0.5).select(float(1), float(0));
   m.userData.trailDots = true;
+  overlay.set(ck, m);
   return m;
 };
 
