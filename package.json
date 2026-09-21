@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.0.1",
+    "spectorjs": "^0.9.33",
     "vite": "^5.0.10"
   },
   "repository": {
