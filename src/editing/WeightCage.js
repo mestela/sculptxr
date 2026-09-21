@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { mat4 } from 'gl-matrix';
 import Skeleton from './Skeleton.js';
 import Geometry from '../math3d/Geometry.js';
@@ -78,16 +79,26 @@ WeightCage.applyOpacity = function (main) {
     const tm = cage.getThreeMesh && cage.getThreeMesh();
     const mat = tm && tm.material;
     if (mat) {
-      if (!mat.userData || !mat.userData._cagePrivate) {
-        const own = mat.clone();
-        own.userData = Object.assign({}, mat.userData, { _cagePrivate: true });
-        tm.material = own;
+      // NO CLONE ON THE NODE PATH -- a cloned PBR material comes back BLACK, exactly as the
+      // x-ray skin did. Material.clone() does not carry `envMap`, the IBL lives on the material
+      // here rather than on scene.environment, and a clone is outside NodeMaterials.allPBR() so
+      // the per-frame env sync never finds it to repair. setOpacity above already routed this
+      // cage to its own env-synced variant, so there is nothing left to clone.
+      if (NodeMaterials.isActive && NodeMaterials.isActive()) {
+        tm.material.transparent = true;
+        tm.material.depthWrite = clear;
+      } else {
+        if (!mat.userData || !mat.userData._cagePrivate) {
+          const own = mat.clone();
+          own.userData = Object.assign({}, mat.userData, { _cagePrivate: true });
+          tm.material = own;
+        }
+        tm.material.transparent = true;
+        // A see-through cage that still WRITES depth hides the very skin it is supposed to let
+        // you see -- the same trap the x-ray skin has, from the other side.
+        tm.material.depthWrite = clear;
+        tm.material.needsUpdate = true;
       }
-      tm.material.transparent = true;
-      // A see-through cage that still WRITES depth hides the very skin it is supposed to let
-      // you see -- the same trap the x-ray skin has, from the other side.
-      tm.material.depthWrite = clear;
-      tm.material.needsUpdate = true;
       // After the skin (0, or 2 while its own x-ray is on), so a dimmed cage blends OVER the
       // character rather than the character painting over it.
       tm.renderOrder = clear ? 0 : 3;

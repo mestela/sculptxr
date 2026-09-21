@@ -3,6 +3,7 @@ import Skeleton from './Skeleton.js';
 import WeightCage from './WeightCage.js';
 import { adjacencyFromFaces } from './Geodesic.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 
 // [Rigging POC#2 — phase 2a] Bind + linear blend skinning.
 //
@@ -371,14 +372,35 @@ Skinning.applySkinOpacity = function (main) {
     const tm = mesh.getThreeMesh?.();
     const mat = tm && tm.material;
     if (mat) {
-      if (!mat.userData || !mat.userData._skinPrivate) {
-        const own = mat.clone();
-        own.userData = Object.assign({}, mat.userData, { _skinPrivate: true });
-        tm.material = own;
+      // NO CLONE ON THE NODE PATH, and the reason is that a clone comes back BLACK.
+      //
+      // Material.clone() does not carry `envMap`, and on this renderer the IBL lives on each
+      // material's own envMap rather than on scene.environment (see Scene._syncThreeLights).
+      // A cloned PBR material is therefore lit by nothing at all, and it is outside
+      // NodeMaterials.allPBR() so the per-frame env sync never finds it to repair. Measured:
+      // the shared material renders 183,187,191 and its clone 3,3,3, identical in every
+      // respect but that one flag. matt: "if i make a skin from the skeleton, the surface
+      // renders black. if i unbind it returns to normal shading" -- unbinding puts the shared
+      // material back.
+      //
+      // setOpacity above has already done the work: a mesh below 1.0 gets its OWN variant from
+      // NodeMaterials.getFor, which inherits the envMap and is kept in step by that same sync.
+      // So there is nothing to clone -- only the depth rules to set on what it returned.
+      if (NodeMaterials.isActive && NodeMaterials.isActive()) {
+        const own = tm.material;
+        own.transparent = true;
+        own.depthWrite = clear;
+      } else {
+        if (!mat.userData || !mat.userData._skinPrivate) {
+          const own = mat.clone();
+          own.userData = Object.assign({}, mat.userData, { _skinPrivate: true });
+          tm.material = own;
+        }
+        tm.material.transparent = true;
+        tm.material.depthWrite = clear;
+        tm.material.needsUpdate = true;
       }
-      tm.material.transparent = true;
-      tm.material.depthWrite = clear;
-      tm.material.needsUpdate = true;
+      // The x-ray skin blends OVER the capsules inside it; order 2 is what makes that true.
       tm.renderOrder = clear ? 0 : 2;
     }
     n++;
