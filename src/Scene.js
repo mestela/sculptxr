@@ -5079,6 +5079,20 @@ class Scene {
         + ',' + me[1].toFixed(3) + ',' + me[2].toFixed(3) + ',' + me[6].toFixed(3);
     }
 
+    // THE ONE-FRAME LAG. host.updateMatrixWorld(true) refreshes the host and its children, but
+    // it composes against its PARENT's matrixWorld -- and _worldGroup has not been updated yet
+    // this frame, because the renderer does that inside render(), after this runs. So every
+    // light was positioned from the world transform of the PREVIOUS frame, and the shadow
+    // trailed the sculpt by exactly one frame during a fast grip. matt: "why does it feel like
+    // the shadow is on a tight spring rather than being directly parented to the worldspace...
+    // i can see the shadow is lagging by a frame."
+    //
+    // Updating the group first costs one matrix compose; the renderer's own pass right
+    // afterwards then finds nothing to do. (The deeper fix matt is pointing at -- parent the
+    // pool lights instead of copying their transforms every frame -- is a real one, but the
+    // copy exists to keep the host's scale out of the light's matrix, so it is not a one-liner.)
+    if (this._worldGroup) this._worldGroup.updateMatrixWorld();
+
     for (const e of lights) {
       const host = e.getThreeMesh && e.getThreeMesh();
       if (!host) continue;
@@ -5335,9 +5349,19 @@ class Scene {
           // grip rotate the entire world upside down, and the shadow not flicker, and stay
           // valid." With up rotated by the world, the camera is rigid with the geometry, the
           // map is genuinely invariant, and no re-render is needed for any rigid grip.
-          if (this._worldGroup) {
-            L.shadow.camera.up.set(0, 1, 0).applyQuaternion(this._worldGroup.quaternion);
-          }
+          // UP COMES FROM THE LIGHT'S OWN BASIS, not from world up.
+          //
+          // The aim is the light's local -Z (the target Object3D sits at (0,0,-1) as its
+          // child), so the light's local +Y is perpendicular to the aim BY CONSTRUCTION and
+          // can never be parallel to it. World up can: a spot rotated -90 on X points straight
+          // down, lookAt then has no defined roll, and the camera spins about its own axis --
+          // the map's orientation flips frame to frame and the shadow glitches while the world
+          // moves. matt hit this immediately by setting the default light rotation to -90 on X:
+          // "i'm guessing there's an N and up issue, probably both of those are pointing the
+          // same way or are aligned with a world axis, and its spinning around its local axis".
+          // Exactly that. Taking up from the light also keeps the rotation-invariance the world
+          // up version was for, since the light is under _worldGroup and turns with it.
+          L.shadow.camera.up.set(0, 1, 0).applyQuaternion(L.quaternion);
           L.shadow.updateMatrices(L);
         }
       }
