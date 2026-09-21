@@ -1463,25 +1463,28 @@ export function buildMenuHTML_files(main) {
         title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
       <span></span>
     </div>
+    ${/* BROWSER IS THE FIRST COLUMN because it is the one used most; disk is the occasional
+          trip out of the app. The left column is where the eye lands, so it belongs to the
+          everyday command in every one of these rows. */ ''}
     <div class="mm-choice-grid cols-2">
-      <button class="mm-action-btn mm-left" id="mm-open-scene" title="Open a scene from disk">Open from disk</button>
       <button class="mm-action-btn mm-left" id="mm-browser-saves" title="Open a scene saved in this browser">Open from browser</button>
+      <button class="mm-action-btn mm-left" id="mm-open-scene" title="Open a scene from disk">Open from disk</button>
     </div>
     <div class="mm-choice-grid cols-2">
-      <button class="mm-action-btn mm-left" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">Save to disk</button>
       <button class="mm-action-btn mm-left" id="mm-browser-save-quick" title="Save as a new browser save">Save to browser</button>
+      <button class="mm-action-btn mm-left" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">Save to disk</button>
     </div>
     ${/* The quick save names the file it lands on, because it is the one command that acts
           without asking anything. Incremental does NOT name its target: it is always "the next
           one", the number is derived rather than chosen, and putting it on the button invited
           reading it as a thing to check rather than a thing to press. */ ''}
     <div class="mm-choice-grid cols-2">
-      <button class="mm-action-btn mm-left" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
-        title="${curSave ? 'Save straight back over ' + curSave : 'Nothing open yet — use Save to browser'}"
-        >${curSave ? 'Save quick "' + curSave + '" to browser' : 'Save quick — nothing open'}</button>
       <button class="mm-action-btn mm-left" id="mm-browser-save-incr"
         title="Save a NEW browser save at the next free version of ${curSave || 'scene'}"
         >Save incremental to browser</button>
+      <button class="mm-action-btn mm-left" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
+        title="${curSave ? 'Save straight back over ' + curSave : 'Nothing open yet — use Save to browser'}"
+        >${curSave ? 'Save quick "' + curSave + '"' : 'Save quick — nothing open'}</button>
     </div>
 
     <div class="mm-section-title">Import</div>
