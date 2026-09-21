@@ -1904,6 +1904,33 @@ class BoneDrawTool extends SculptBase {
   // ---- VR -----------------------------------------------------------------------
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
+
+    // ── GRAB MODE IS THE REAL GRAB TOOL IN VR TOO (#70) ────────────────────────────────
+    //
+    // matt: bone-tool Grab "works on desktop and does nothing in a headset". It was never
+    // half-wired -- it was not wired at all on this side. `start()` delegates to the Grab tool
+    // and then returns false outright in a session because VR drives everything from here, and
+    // here had branches for draw, ik, select, pose, joint, radius and tweak, and none for grab.
+    //
+    // Delegating rather than reimplementing, for the reason the desktop path already gives:
+    // this mode IS grab, including the IK solve on a joint, the pin path, undo and AutoKey.
+    // Grab.updateXR makes no assumption about being the current tool -- it reads
+    // options.controllers and its own state -- so handing it the frame is all it needs.
+    //
+    // The pick side was already right: BONE_SELECT in Picking.js turns bone-capsule selection
+    // off specifically in this mode, because a pickable capsule is large and easy to hit and
+    // the held mesh then short-circuits the pin path -- in the one mode whose whole purpose is
+    // reaching for a pin.
+    //
+    // A is NOT read here first. Grab owns it (IKSolver.pinOnA pins the bone you point at), and
+    // reading it in both places would consume the edge twice. `_wasAPressed` is still tracked
+    // so that leaving grab mode with A held does not fire a stale edge in draw or ik.
+    if (this._mode === 'grab') {
+      this._wasAPressed = this._readButton(options, 4);
+      Skeleton.hidePlane(main);
+      return this._grabTool()?.updateXR(picking, isPressed, origin, dir, options);
+    }
+
     const tip = (options && options.tipOrigin) || origin;
     if (!tip) {
       // An early return here skips the A handling entirely, so a caller passing no tip would
