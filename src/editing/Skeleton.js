@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 import RigPending from './RigPending.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -513,7 +514,29 @@ function livePin(joint) {
 
 // InstancedMesh does not manage custom attributes, so they are attached to its geometry and
 // resized alongside the matrix buffer whenever the batch grows.
+// THE NODE PATH NEEDS THE INSTANCE TRANSFORM AS DATA.
+//
+// The GLSL these batches used to carry read `instanceMatrix` directly -- it is a built-in
+// attribute in a WebGL program. TSL has no equivalent that a material can reach without binding
+// to one particular InstancedMesh, and these batches are REPLACED on every capacity doubling, so
+// a bound reference would go stale. The orientation, scale and colour are all sitting in the slot
+// at flush time, so they ride along as ordinary instanced attributes instead.
+//
+// Added for both renderers rather than behind a flag: three floats a slot is nothing next to a
+// second code path, and the legacy shaders simply ignore attributes they do not declare.
+function ensureRigInstanceAttrs(mesh, cap) {
+  const g = mesh.geometry;
+  const q = g.getAttribute('aQ');
+  if (q && q.count === cap) return;
+  const quats = new Float32Array(cap * 4);
+  for (let i = 0; i < cap; i++) quats[i * 4 + 3] = 1;      // identity, not a zero quaternion
+  g.setAttribute('aQ', new THREE.InstancedBufferAttribute(quats, 4));
+  g.setAttribute('aS', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3));
+  g.setAttribute('aC', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3));
+}
+
 function ensureTaperAttrs(mesh, cap) {
+  ensureRigInstanceAttrs(mesh, cap);
   const g = mesh.geometry;
   const a = g.getAttribute('aHA');
   if (a && a.count === cap) return;
@@ -528,6 +551,7 @@ function ensureTaperAttrs(mesh, cap) {
 
 // The end spheres carry ONE exponent — a cap belongs to a single joint.
 function ensureSharpAttr(mesh, cap) {
+  ensureRigInstanceAttrs(mesh, cap);
   const g = mesh.geometry;
   const a = g.getAttribute('aP');
   if (a && a.count === cap) return;
@@ -581,12 +605,20 @@ function makeBatch(main, geo, ghost, key) {
         opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
     : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const isEnd = (typeof key === 'string' && key.startsWith('capEnd'));
-  if (isShaftKey(key)) taperMaterialInstanced(mat);
-  else if (isEnd) sharpMaterialInstanced(mat);
-  if (isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'))) {
-    shadeMaterial(mat, isShaftKey(key));
+  // THE CAPSULES CARRY THEIR SHAPE AND SHADING IN A SHADER, and on the node renderer that cannot
+  // be an onBeforeCompile -- WebGPURenderer ignores those, which is why the shafts drew as raw
+  // untapered white cylinders there. NodeMaterials.rigCapsule is the same three effects (taper,
+  // sharpness, shading) written as a node graph; the legacy path keeps the injections.
+  let capMat = null;
+  if ((isShaftKey(key) || isEnd) && NodeMaterials.isActive && NodeMaterials.isActive()) {
+    capMat = NodeMaterials.rigCapsule({ shaft: isShaftKey(key), ghost });
   }
-  const m = new THREE.InstancedMesh(geo, mat, 1);
+  if (!capMat) {
+    if (isShaftKey(key)) taperMaterialInstanced(mat);
+    else if (isEnd) sharpMaterialInstanced(mat);
+    if (isShaftKey(key) || isEnd) shadeMaterial(mat, isShaftKey(key));
+  }
+  const m = new THREE.InstancedMesh(geo, capMat || mat, 1);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   if (isShaftKey(key)) ensureTaperAttrs(m, 1);
   else if (isEnd) ensureSharpAttr(m, 1);
@@ -806,6 +838,11 @@ function flushBatches(main) {
     const pb = ha ? m.geometry.getAttribute('aPB') : null;
     const pe = (typeof key === 'string' && key.startsWith('capEnd'))
       ? m.geometry.getAttribute('aP') : null;
+    // The instance transform as data, for the node path -- see ensureRigInstanceAttrs.
+    const isCap = ha || pe;
+    const aq = isCap ? m.geometry.getAttribute('aQ') : null;
+    const as = aq ? m.geometry.getAttribute('aS') : null;
+    const ac = aq ? m.geometry.getAttribute('aC') : null;
     // A HIDDEN SLOT IS SKIPPED, NOT SCALED TO ZERO.
     //
     // This used to write every slot and set `count = n`, hiding one by composing it at zero
@@ -834,11 +871,18 @@ function flushBatches(main) {
         if (pa) { pa.setX(i, s._pa || 2); pb.setX(i, s._pb || 2); }
       }
       if (pe) pe.setX(i, s._p || 2);
+      if (aq) {
+        aq.setXYZW(i, s.quaternion.x, s.quaternion.y, s.quaternion.z, s.quaternion.w);
+        as.setXYZ(i, s.scale.x, s.scale.y, s.scale.z);
+        const c = s.material.color;
+        ac.setXYZ(i, c.r, c.g, c.b);
+      }
       i++;
     }
     if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
     if (pa) { pa.needsUpdate = true; pb.needsUpdate = true; }
     if (pe) pe.needsUpdate = true;
+    if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; }
     m.count = i;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;

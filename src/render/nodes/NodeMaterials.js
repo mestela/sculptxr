@@ -186,6 +186,105 @@ NodeMaterials.syncConverted = function (m) {
   return true;
 };
 
+// ── THE RIG CAPSULES, AS NODE MATERIALS ─────────────────────────────────────────────────
+//
+// Skeleton builds these batches with three onBeforeCompile injections -- taperMaterialInstanced
+// (the shaft's per-instance p-norm taper), sharpMaterialInstanced (the cap's exponent) and
+// shadeMaterial (the unlit shading term). WebGPURenderer IGNORES onBeforeCompile entirely, so on
+// this renderer the shafts drew as raw untapered cylinders in flat white and nothing was shaded.
+// matt: "the capsule also wasn't shaded with colours, and the link tubes between them weren't
+// visible" -- the tubes ARE there, they are just the wrong shape and the wrong colour.
+//
+// The GLSL read `instanceMatrix` for the orientation and scale, which TSL cannot reach from a
+// material that must survive its InstancedMesh being replaced on every capacity doubling. So the
+// orientation, scale and colour ride as instanced attributes instead (aQ/aS/aC, written in
+// flushBatches) and everything here is expressed in terms of those.
+//
+// COLOUR COMES FROM aC, NOT instanceColor. The shading term straddles 1.0 so the lit side
+// BRIGHTENS, and a plain multiply pushes channels past 1 one at a time -- an orange bone's red
+// saturates first and the colour walks toward white, which is the "very pastel" look the legacy
+// shader was fixed for. Capping the gain where the brightest channel would clip preserves the
+// hue, and that cap needs the colour itself, which instanceColor does not hand us.
+function qrot(tsl, q, v) {
+  const t = q.xyz.cross(v).mul(2.0);
+  return v.add(t.mul(q.w)).add(q.xyz.cross(t));
+}
+
+function rigShade(tsl, q, normalObj) {
+  const { vec3, vec4, float, modelWorldMatrix } = tsl;
+  const world = modelWorldMatrix.mul(vec4(qrot(tsl, q, normalObj), 0.0)).xyz.normalize();
+  // One key from above and slightly front-left, with a floor rather than a black side: this says
+  // WHICH WAY A SURFACE FACES, it is not lighting a scene. Centred on 1.0 so the lit side gains.
+  return float(0.60).add(float(0.80).mul(world.dot(vec3(0.35, 1.0, 0.45).normalize()).clamp(0, 1)));
+}
+
+/**
+ * `shaft` builds the tapered link tube between two joints; otherwise the end cap.
+ * `ghost` is the xray pass: GreaterDepth, no depth write, low opacity.
+ */
+NodeMaterials.rigCapsule = function (opts = {}) {
+  if (!gpu) return null;
+  const { attribute, positionGeometry, vec3, vec4, float, mix, pow, abs, max, select,
+    uniform } = tsl;
+  const shaft = !!opts.shaft;
+
+  const m = unlit({
+    side: gpu.DoubleSide,
+    transparent: true,
+    opacity: opts.ghost ? 0.35 : 1.0,
+    depthTest: true,
+    depthWrite: !opts.ghost,
+    ...(opts.ghost ? { depthFunc: gpu.GreaterDepth } : {}),
+  });
+
+  const q = attribute('aQ', 'vec4');
+  const sc = attribute('aS', 'vec3');
+  const col = attribute('aC', 'vec3');
+  const pos = positionGeometry;
+
+  // A p-norm of 2 IS the ellipsoid the direction already lies on, so dividing by the norm only
+  // does anything above 2 -- and pow() three times is not free on a rig full of round joints.
+  const pnorm = (v, p) => pow(
+    pow(abs(v.x), p).add(pow(abs(v.y), p)).add(pow(abs(v.z), p)), float(1.0).div(p));
+
+  let posNode;
+  let normalObj;
+  if (shaft) {
+    // The cylinder spans y = -0.5 .. 0.5, and -0.5 is the end the bone STARTS at.
+    const t = pos.y.add(0.5);
+    const h = mix(attribute('aHA', 'vec3'), attribute('aHB', 'vec3'), t);
+    const p = mix(attribute('aPA', 'float'), attribute('aPB', 'float'), t);
+    const radial = vec3(pos.x, 0.0, pos.z);
+    const w = qrot(tsl, q, radial);
+    const shaped = select(p.greaterThan(2.001), w.div(max(pnorm(w, p), float(1e-6))), w);
+    // ...and back into object space, where the instance matrix will pick it up.
+    const b = qrot(tsl, vec4(q.xyz.negate(), q.w), shaped.mul(h));
+    posNode = vec3(b.x, pos.y, b.z);
+    normalObj = radial.normalize();
+  } else {
+    const p = attribute('aP', 'float');
+    posNode = select(p.greaterThan(2.001), pos.div(max(pnorm(pos, p), float(1e-6))), pos);
+    // AN ELLIPSOID'S NORMAL IS NOT ITS POSITION: a cap is a unit sphere scaled by the joint's
+    // three half-extents, and a normal transforms by the INVERSE of that scale. Skipping the
+    // divide lit a squashed joint as though it were round.
+    normalObj = pos.div(max(sc, vec3(1e-6, 1e-6, 1e-6))).normalize();
+  }
+  m.positionNode = posNode;
+
+  // THE SHADED TOGGLE, driven by tuneCapsuleBatches through userData.shadeMix exactly as the
+  // legacy material's uniform was. Blended rather than compiled in or out: switching it must not
+  // rebuild a program mid-session, and the flat look has to stay available.
+  const shadeMix = uniform(1);
+  const shade = mix(float(1.0), rigShade(tsl, q, normalObj), shadeMix);
+  const brightest = max(max(col.r, col.g), col.b);
+  const gain = select(brightest.greaterThan(1e-4),
+    max(shade, float(0)).min(float(1.0).div(brightest)), shade);
+  m.colorNode = col.mul(gain);
+  m.userData.shadeMix = shadeMix;
+  m.userData.rigCapsule = true;
+  return m;
+};
+
 /** The matcap image for a given index, loaded once and shared. */
 function matcapTexture(index) {
   const entry = ShaderMatcap.matcaps[index] || ShaderMatcap.matcaps[0];
