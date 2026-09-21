@@ -3,9 +3,6 @@ import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 import RigPending from './RigPending.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
-// The node renderer's twin -- see NodeMaterials.fatLine. The stock class pairs with
-// LineMaterial, a ShaderMaterial this backend cannot compile, so Scene's sweep hides it.
-import { LineSegments2 as LineSegments2Node } from 'three/examples/jsm/lines/webgpu/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { mat4, vec3 } from 'gl-matrix';
@@ -2817,14 +2814,7 @@ function pendingLink(main) {
     // whole pixels and all but disappears against a busy sculpt. This is the only thing on
     // screen saying the gesture is live, so it gets a width you cannot miss. Same
     // LineSegments2 machinery the motion trails use.
-    // Same renderer split as the motion trails: this pair is a ShaderMaterial on the legacy
-    // path and Scene's sweep hides it on the node one, so the gesture had nothing on screen.
-    const _pendNode = (NodeMaterials.isActive && NodeMaterials.isActive())
-      ? NodeMaterials.fatLine({ linewidth: 5, vertexColors: false, color: PENDING_COLOR,
-        dashed: true })
-      : null;
-    const _PendSeg = _pendNode ? LineSegments2Node : LineSegments2;
-    _pendLine = new _PendSeg(new LineSegmentsGeometry(), _pendNode || new LineMaterial({
+    _pendLine = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
       color: PENDING_COLOR,
       linewidth: 5,          // SCREEN pixels, since worldUnits is off
       worldUnits: false,
