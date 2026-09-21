@@ -5256,7 +5256,14 @@ class Scene {
         // shadow map precision is governed by far/near, so this slider IS the precision
         // control. 0 means auto (the fit below). matt asked for this to get something usable
         // while the frustum stays married to Falloff.
-        const _nearFrac = e._shadowNear === undefined ? 0 : e._shadowNear;
+        // DEFAULT IS 1% OF THE FAR PLANE, not the geometry fit. matt: "if i set the near clip
+        // for shadow to anything basically non-zero, it seems to fit fine... can we just try a
+        // default of 1%". The auto fit takes `_dToScene - _rWorld * 1.5`, which overshoots past
+        // the caster whenever the light is close to the model and clips it out of the frustum
+        // entirely -- the cliff at the top of the slider. A fixed fraction of far cannot do
+        // that: it is always a 100:1 range ending at the far plane, wherever the light is.
+        // 0 still means the geometry fit, for anyone who wants it.
+        const _nearFrac = e._shadowNear === undefined ? 0.01 : e._shadowNear;
         const near = _nearFrac > 0
           ? Math.min(Math.max(_far * _nearFrac, 1e-5), _far * 0.9)
           : Math.min(

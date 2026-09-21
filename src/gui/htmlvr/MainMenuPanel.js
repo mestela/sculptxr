@@ -2637,8 +2637,8 @@ export function buildSectionHTML_scene(main) {
          Falloff. 0 = auto, which fits the range to the scene. */ ''}
     <div class="mm-row">
       <span class="mm-lbl">Sh Near</span>
-      <input type="range" id="mm-light-shnear" min="0" max="500" step="1" value="${Math.round((_lit._shadowNear ?? 0) * 1000)}">
-      <span class="mm-val" id="mm-light-shnear-val">${(_lit._shadowNear ?? 0) > 0 ? ((_lit._shadowNear) * 100).toFixed(1) + '%' : 'auto'}</span>
+      <input type="range" id="mm-light-shnear" min="0" max="500" step="1" value="${Math.round((_lit._shadowNear ?? 0.01) * 1000)}">
+      <span class="mm-val" id="mm-light-shnear-val">${(_lit._shadowNear ?? 0.01) > 0 ? ((_lit._shadowNear ?? 0.01) * 100).toFixed(1) + '%' : 'auto'}</span>
     </div>` : ''}
 `;
 
