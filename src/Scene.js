@@ -4909,10 +4909,14 @@ class Scene {
     const _sAbs = (this._worldGroup && this._worldGroup.scale.x) || 1;
     const _realMeshes = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
     let _rWorld = 1;
+    const _cWorld = { x: 0, y: 0, z: 0 };
     if (_realMeshes.length) {
       const b = this.computeBoundingBoxMeshes(_realMeshes);
       if (Number.isFinite(b[0])) {
         _rWorld = Math.max(1e-4, 0.5 * Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) * _sAbs);
+        _cWorld.x = (b[0] + b[3]) * 0.5 * _sAbs;
+        _cWorld.y = (b[1] + b[4]) * 0.5 * _sAbs;
+        _cWorld.z = (b[2] + b[5]) * 0.5 * _sAbs;
       }
     }
 
@@ -5048,8 +5052,33 @@ class Scene {
       // 1000:1 over a range nothing occupies.
       const _sc = L.shadow.camera;
       if (_sc) {
-        const near = Math.max(1e-4, _rWorld * 0.01);
-        const far = Math.max(near + 1e-3, (L.distance > 0 ? L.distance : _rWorld * 4));
+        // NEAR IS SET FROM THE LIGHT'S ACTUAL DISTANCE TO THE SCENE, not from a fraction of
+        // its size, because a shadow map's usable precision is governed by the far/near RATIO.
+        //
+        // This was measured, not reasoned: reading the cube depth map back (compare mode off,
+        // sampled as a plain samplerCube) with near 1 / far 1500 gave 255 on every face and
+        // 254 on the one containing the occluder. The sphere WAS in the map -- one 8-bit step
+        // below the cleared background, because a perspective depth at 1500:1 crushes
+        // everything past the near plane into the last fraction of a percent. Nothing can be
+        // separated from nothing, so the comparison never reported an occluder. Tightening to
+        // near 280 / far 460 on the same scene made the shadow appear immediately.
+        //
+        // An earlier version of this code set near = _rWorld * 0.01, which fixed three's
+        // much-too-large 0.5m default and replaced it with a much-too-small one -- a ~300:1
+        // ratio that is exactly this failure.
+        //
+        // far is not really ours: PointShadowNode re-pins camera.far to light.distance on
+        // every face, so the ratio is near vs the light's falloff range.
+        const _far = Math.max(1e-3, (L.distance > 0 ? L.distance : _rWorld * 4));
+        const _dToScene = Math.hypot(
+          L.position.x - _cWorld.x, L.position.y - _cWorld.y, L.position.z - _cWorld.z);
+        // Start the frustum just in front of the nearest thing that can cast. The RATIO cap is
+        // the important part: a light sitting inside the model (which is where a new one is
+        // created) has no safe near plane, so the cap is what carries those cases. 64:1 keeps
+        // the usable depth range wide; the falloff range is usually far larger than the model,
+        // and every bit of far/near spent on empty space is precision taken from the sculpt.
+        const near = Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5);
+        const far = Math.max(near + 1e-3, _far);
         if (_sc.isOrthographicCamera) {
           const ext = _rWorld * 1.2;
           _sc.left = -ext; _sc.right = ext; _sc.top = ext; _sc.bottom = -ext;
