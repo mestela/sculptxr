@@ -207,6 +207,9 @@ class GizmoVR {
     this._startLocal = [];
     this._camPlaneNormal = [0.0, 0.0, 1.0];
 
+    window.gizmoShowPick = (on = true) => this.showPickGeometry(on);
+    if (/[?&]gizmopick=1/.test(window.location.search)) this._showPickOnInit = true;
+
     // Initialize geometry
     this._lastScale = 1.0;
     this._resize(1.0);
@@ -479,6 +482,7 @@ class GizmoVR {
     // scene graph: they are invisible CPU-only geometry, and fifteen more objects in the scene
     // is fifteen more for every per-frame traversal to walk and for the material sweep to
     // convert.
+    if (this._showPickOnInit) { this._showPickOnInit = false; this.showPickGeometry(true); }
     if (this._desktop) {
       this._group.updateMatrixWorld(true);
       const gw = this._group.matrixWorld;
@@ -1119,6 +1123,56 @@ class GizmoVR {
     this._isEditing = false;
   }
 
+  // ── SEE THE HITZONES ──────────────────────────────────────────────────────────────────
+  //
+  // `?gizmopick=1`, or window.gizmoShowPick(true) at any time. The pick geometry is invisible
+  // CPU-only geometry that nobody can look at, so a pick that disagrees with the drawing can
+  // only be argued about from numbers -- and a number taken at one camera angle proves nothing
+  // about the others. This parents each pick mesh into the gizmo group in translucent
+  // wireframe, so the zone and the handle it belongs to are on screen together at every angle
+  // and zoom.
+  //
+  // It parents them rather than drawing a copy: sharing the group is what makes the overlay
+  // trustworthy, since it then inherits exactly the transform chain the DRAWN handles use. If
+  // the wireframe sits on its handle, the pick geometry is in the right place and a
+  // misalignment is somewhere else; if it floats off, this is the bug and you can see its
+  // shape.
+  showPickGeometry(on) {
+    const THREE_ANY = THREE;
+    const comps = [
+      this._transX, this._transY, this._transZ,
+      this._planeX, this._planeY, this._planeZ,
+      this._rotX, this._rotY, this._rotZ,
+      this._scaleX, this._scaleY, this._scaleZ, this._scaleW,
+      this._transW, this._rotBall,
+    ];
+    this._showPick = !!on;
+    for (let i = 0; i < comps.length; ++i) {
+      const pg = comps[i] && comps[i]._pickGeo;
+      const pm = pg && pg.getThreeMesh && pg.getThreeMesh();
+      if (!pm) continue;
+      if (on) {
+        if (!pm.userData._pickDebugMat) {
+          pm.userData._pickDebugMat = new THREE_ANY.MeshBasicMaterial({
+            color: new THREE_ANY.Color(1, 1, 1), wireframe: true,
+            transparent: true, opacity: 0.35, depthTest: false, depthWrite: false,
+          });
+        }
+        pm.material = pm.userData._pickDebugMat;
+        pm.renderOrder = 102;
+        pm.visible = true;
+        // matrixAutoUpdate stays off and the matrix keeps being written by update(); adding it
+        // to the group means three composes matrixWorld from the same chain, which is the
+        // whole point of the check.
+        if (pm.parent !== this._group) this._group.add(pm);
+      } else {
+        pm.visible = false;
+        if (pm.parent === this._group) this._group.remove(pm);
+      }
+    }
+    return this._showPick;
+  }
+
 
   // --- Geometry Creation Helpers ---
 
@@ -1218,10 +1272,20 @@ class GizmoVR {
 
     vec3.copy(rot._color, color);
 
+    // THE RING IS THE ONE HANDLE WITH NO PICK TOLERANCE, and it was the odd one out: the
+    // arrows are picked with THICKNESS_PICK (5x) and the scale cubes with CUBE_SIDE_PICK, while
+    // this built its pick torus at the DRAWN thickness because VR's tube cast supplies the
+    // tolerance itself (intersectPhysical takes a ray radius). The desktop picker has no such
+    // parameter -- it is an exact triangle test -- so on a monitor the ring's hitzone was
+    // literally the 2%-thick torus you can see, a couple of pixels wide, and a cursor one pixel
+    // off it fell straight through to the trackball that backs the whole interior.
+    //
+    // So the tolerance goes in the geometry for the desktop and VR keeps the thin torus it was
+    // tuned against.
     rot._pickGeo = Primitives.createTorus(
       this._gl,
       radius * scale,
-      THICKNESS * mthick * scale, // Revert to standard thickness (Tube Cast handles tolerance)
+      (this._desktop ? THICKNESS_PICK : THICKNESS * mthick) * scale,
       rad,
       6,
       64
@@ -1326,9 +1390,26 @@ class GizmoVR {
 
   _initRotate(scale) {
     const axis = vec3.create();
-    this._createCircle(this._rotX, Math.PI, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, ROT_RADIUS, 1.0, scale);
-    this._createCircle(this._rotY, Math.PI, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, ROT_RADIUS, 1.0, scale);
-    this._createCircle(this._rotZ, Math.PI, vec3.set(axis, 0.0, 0.0, 1.0), COLOR_Z, ROT_RADIUS, 1.0, scale);
+    // FULL CIRCLES ON THE DESKTOP, HALF ARCS IN VR.
+    //
+    // Each ring is a torus with an ARC angle, and at PI it is half a ring. In VR that is fine:
+    // you walk round it, and a fixed arc is a fixed target you can point at twice the same way.
+    // On a monitor the missing half sits wherever the base matrix happens to put it, so from
+    // most angles the part of the ring you are aiming at is not there -- measured, only 14 of
+    // 40 points sampled from the ring's OWN vertices could be hit, and in a screen-space pick
+    // map the rings almost never won. What answered instead was the trackball, since that is
+    // what the tiered pick falls through to: aim at the X ring, get a free rotation. matt:
+    // "the hitzones are still really misaligned".
+    //
+    // Gizmo.js kept half arcs and spun them to face the camera every frame
+    // (_updateArcRotation). That does not port: it builds its tori on a different convention,
+    // and driving these with its quaternions mis-orients them (the Y ring disappears). A whole
+    // ring needs no camera-facing rule at all -- every point you can see is real geometry --
+    // and it is less code, not more.
+    const arc = this._desktop ? Math.PI * 2 : Math.PI;
+    this._createCircle(this._rotX, arc, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotY, arc, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotZ, arc, vec3.set(axis, 0.0, 0.0, 1.0), COLOR_Z, ROT_RADIUS, 1.0, scale);
     // this._createCircle( Math.PI * 2, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_GREY, ROT_RADIUS, 1.0, scale);
   }
 
