@@ -23,6 +23,8 @@ const NodeMaterials = {};
 let gpu = null;              // the `three/webgpu` module — a SEPARATE build from the core three
 let tsl = null;              // the `three/tsl` module — node expression helpers
 let rotCorrectionUniform = null;  // mat3, head-centre, shared by every matcap mesh
+let _MAT3_VIEW = null;           // scratch, desktop matcap correction
+let _MAT4_VIEW = null;
 let cache = null;            // shaderId -> material, built up front
 let mapped = null;           // texture-set key -> per-mesh PBR material (see getFor)
 const matcapTextures = [];   // index -> Texture, shared by every mesh using that matcap
@@ -65,6 +67,7 @@ NodeMaterials.allPBR = function () {
 NodeMaterials.enable = function (mod, tslMod) {
   gpu = mod;
   tsl = tslMod;
+  if (!_MAT3_VIEW) { _MAT3_VIEW = new mod.Matrix3(); _MAT4_VIEW = new mod.Matrix4(); }
   cache = {};
   // A FLAT OPAQUE MATERIAL WITH NO TEXTURE, built up front so it can be swapped onto a panel
   // inside a session without constructing anything there (the one fault this renderer has).
@@ -726,40 +729,78 @@ NodeMaterials.updateFrame = function (main) {
   if (!rotCorrectionUniform || !main) return;
   const cam = main.getCamera && main.getCamera();
   if (!cam) return;
-  // THE UNIFORM IS THE HEAD-CENTRE VIEW ROTATION -- world -> head-view -- and nothing else.
+  // THE UNIFORM IS WORLD -> A HEAD FRAME WITH THE ROLL TAKEN OUT.
   //
   // Camera.updateView refuses to touch the three camera while a session runs ("WE ARE IN VR.
   // DO NOT TOUCH THE THREE.JS CAMERA!"), so main.getCamera().getView() stays the DESKTOP ORBIT
   // view for the whole session and knows nothing about your head. The legacy shader got away
   // with feeding that to the stabiliser because it took its normal through uN, built from the
   // same frozen camera: both halves sat in one head-independent frame and cancelled exactly,
-  // and the matcap simply did not respond to your head. The port kept the frozen correction and
-  // took its normal from the live per-eye XR camera, so nothing cancelled and the matcap slid
-  // over the model as you looked about. matt: "the matcap swims if i turn my head in little
-  // circles."
+  // and the matcap did not respond to your head at all -- matt, on the A/B, "legacy stays
+  // locked as expected". The port kept the frozen correction and took its normal from the live
+  // per-eye XR camera, so nothing cancelled and it swam.
   //
-  // xr.getCamera() is the ArrayCamera whose own world matrix is the head centre, which is the
-  // frame both eyes must share.
+  // ROLL IS WHAT WAS LEFT. Handing the whole head rotation through fixed the aim and kept the
+  // motion: matt, "its facing the right way, but its still rocking and rolling". A head is
+  // never level for long, and a matcap that rolls with it reads as the lighting sliding around
+  // the model rather than the model turning. computeRotCorrection said as much in its own
+  // comment -- "follows the viewer (yaw) but doesn't roll/pitch with the head" -- it just tried
+  // to get there from the camera's POSITION, which is what put the aim at the sky.
   //
-  // ?matcapstab=legacy restores the old billboard-aim correction for an A/B.
+  // So: keep the head's own back vector (yaw AND pitch, both of which mean something), and
+  // rebuild the other two axes against world up so the frame cannot roll. On the desktop the
+  // orbit camera has no roll to remove, so this is exactly the camera rotation and nothing
+  // changes -- asserted below by comparing the two.
+  //
+  // DESKTOP IS LEFT EXACTLY ALONE. There the billboard aim works -- and it is not equivalent
+  // to the head frame below, measured: the two disagree by up to 0.87 once the view is rotated,
+  // because SculptGL's camera looks at the model CENTRE rather than the origin, so "aim at the
+  // camera's position" and "the camera's own back axis" are different vectors. Desktop has
+  // never been the complaint, so it keeps the correction it has always had; only a session,
+  // where that aim degenerates, gets the new one.
+  //
+  // The node now multiplies the WORLD normal, so the desktop matrix has to carry the world ->
+  // view step that `normalView` used to do for it: corrMat * mat3(view) applied to a world
+  // normal is corrMat applied to a view normal, exactly as before.
+  //
+  // ?matcapstab=view keeps the roll (the previous build), =legacy forces the desktop billboard
+  // in a session too, which is the A/B against "legacy stays locked".
   const r = main._renderer;
-  const _legacyStab = /[?&]matcapstab=legacy/.test(window.location.search);
-  if (_legacyStab) {
-    rotCorrectionUniform.value.fromArray(ShaderMatcap.computeRotCorrection(cam.getView()));
-  } else {
-    let view = null;
-    if (r && r.xr && r.xr.isPresenting && r.xr.getCamera) {
-      const head = r.xr.getCamera();
-      if (head && head.matrixWorldInverse) view = head.matrixWorldInverse;
-    }
-    if (!view) {
-      const t3 = cam.getThreeCamera && cam.getThreeCamera();
-      view = t3 && t3.matrixWorldInverse;
-    }
-    if (view) rotCorrectionUniform.value.setFromMatrix4(view);
+  const _stab = (/[?&]matcapstab=(\w+)/.exec(window.location.search) || [])[1];
+  const _inXR = !!(r && r.xr && r.xr.isPresenting);
+
+  if (!_inXR || _stab === 'legacy') {
+    const view = cam.getView();
+    const corr = ShaderMatcap.computeRotCorrection(view);
+    const v = _MAT3_VIEW.setFromMatrix4(_MAT4_VIEW.fromArray(view));
+    rotCorrectionUniform.value.fromArray(corr).multiply(v);
+    return NodeMaterials._updateFrameRest(main);
   }
-  // Each material that needs per-frame state says so by hanging updateFrame on userData,
-  // rather than this file knowing what every shader wants.
+
+  const head = r.xr.getCamera && r.xr.getCamera();
+  const view = head && head.matrixWorldInverse;
+  if (view) {
+    if (_stab === 'view') {
+      rotCorrectionUniform.value.setFromMatrix4(view);
+    } else {
+      const e = view.elements;
+      // world -> view is what the view matrix holds, so its ROWS are the camera's world axes.
+      const bx = e[2], by = e[6], bz = e[10];         // camera back, in world
+      let rx = bz, ry = 0, rz = -bx;                  // cross(worldUp, back) -- horizontal
+      const rl = Math.hypot(rx, rz);
+      if (rl < 1e-3) { rx = e[0]; ry = e[4]; rz = e[8]; }   // looking straight up or down
+      else { rx /= rl; rz /= rl; }
+      const ux = by * rz - bz * ry, uy = bz * rx - bx * rz, uz = bx * ry - by * rx;
+      // world -> stable: the rows are right/up/back, i.e. the transpose of that basis.
+      rotCorrectionUniform.value.set(rx, ry, rz, ux, uy, uz, bx, by, bz);
+    }
+  }
+  return NodeMaterials._updateFrameRest(main);
+};
+
+/** Each material that needs per-frame state says so by hanging updateFrame on userData,
+ *  rather than this file knowing what every shader wants. */
+NodeMaterials._updateFrameRest = function (main) {
   for (const id in cache) {
     const f = cache[id] && cache[id].userData && cache[id].userData.updateFrame;
     if (f) f(main);
