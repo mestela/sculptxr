@@ -1453,20 +1453,36 @@ export function buildMenuHTML_files(main) {
           reads as a verb phrase. Left-justified for the same reason: a column of verbs is
           scanned down its first word. */ ''}
     <div class="mm-section-title">Scene</div>
-    <button class="mm-action-btn mm-left${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
-      title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
-    <button class="mm-action-btn mm-left" id="mm-open-scene" title="Open a scene from disk">Open from disk</button>
-    <button class="mm-action-btn mm-left" id="mm-browser-saves" title="Open a scene saved in this browser">Open from browser</button>
+    ${/* PAIRED BY WHAT THEY DO, not packed to fill the width. Open sits with Open and Save
+          with Save, so the column reads as three pairs and the eye picks the row first and
+          the side second. New keeps a row to itself because it is the one destructive command
+          here and should not sit a few pixels from Open; half width so it still reads as one
+          item rather than a banner. */ ''}
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
+        title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
+      <span></span>
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-open-scene" title="Open a scene from disk">Open from disk</button>
+      <button class="mm-action-btn mm-left" id="mm-browser-saves" title="Open a scene saved in this browser">Open from browser</button>
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">Save to disk</button>
+      <button class="mm-action-btn mm-left" id="mm-browser-save-quick" title="Save as a new browser save">Save to browser</button>
+    </div>
     ${/* The quick save names the file it lands on, because it is the one command that acts
-          without asking anything. Disabled until there is something to land on. */ ''}
-    <button class="mm-action-btn mm-left" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
-      title="${curSave ? 'Save straight back over ' + curSave : 'Nothing open yet — use Save to browser'}"
-      >${curSave ? 'Save quick "' + curSave + '"' : 'Save quick — nothing open'}</button>
-    <button class="mm-action-btn mm-left" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">Save to disk</button>
-    <button class="mm-action-btn mm-left" id="mm-browser-save-quick" title="Save as a new browser save">Save to browser</button>
-    <button class="mm-action-btn mm-left" id="mm-browser-save-incr"
-      title="Save a NEW browser save at the next free version of ${curSave || 'scene'}"
-      >Save incremental "${guiFiles?.nextIncrementalName?.() ?? 'scene_v01'}"</button>
+          without asking anything. Incremental does NOT name its target: it is always "the next
+          one", the number is derived rather than chosen, and putting it on the button invited
+          reading it as a thing to check rather than a thing to press. */ ''}
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
+        title="${curSave ? 'Save straight back over ' + curSave : 'Nothing open yet — use Save to browser'}"
+        >${curSave ? 'Save quick "' + curSave + '" to browser' : 'Save quick — nothing open'}</button>
+      <button class="mm-action-btn mm-left" id="mm-browser-save-incr"
+        title="Save a NEW browser save at the next free version of ${curSave || 'scene'}"
+        >Save incremental to browser</button>
+    </div>
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj"
