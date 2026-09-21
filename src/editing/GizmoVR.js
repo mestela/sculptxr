@@ -1,4 +1,4 @@
-import { vec3, mat4, quat } from 'gl-matrix';
+import { vec2, vec3, mat4, quat } from 'gl-matrix';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
@@ -23,6 +23,12 @@ const ROT_RADIUS = 1.5;
 const SCALE_RADIUS = ROT_RADIUS * 1.3;
 const CUBE_SIDE = 0.35;
 const CUBE_SIDE_PICK = CUBE_SIDE * 1.2;
+
+// SCREEN-CONSTANT SIZE, the desktop rule. In VR the gizmo holds a constant PHYSICAL size
+// because you reach for it with your hand; on a monitor you reach for it with a cursor, so
+// what has to stay constant is how big it is on screen as you dolly. Same number Gizmo.js
+// used, so the desktop gizmo comes out the size it always was.
+const GIZMO_SIZE_SCREEN = 160.0;
 
 // Bitmasks for Gizmo parts
 export const GIZMO_TYPE = {
@@ -182,6 +188,24 @@ class GizmoVR {
 
     this._pickables = [];
     this._selected = null;
+
+    // ── DESKTOP DRAG STATE ────────────────────────────────────────────────────────────
+    // Set by the desktop Transform tool. Everything guarded by `_desktop` below is the
+    // mouse half of this gizmo; VR never touches it.
+    this._desktop = false;
+    this._isEditing = false;
+    this._lastDistToEye = 0.0;
+    this._editLineOrigin = [0.0, 0.0, 0.0];
+    this._editLineDirection = [0.0, 0.0, 0.0];
+    this._editOffset = [0.0, 0.0, 0.0];
+    this._editTrans = mat4.create();
+    this._editTransInv = mat4.create();
+    this._editLocal = [];
+    this._editLocalInv = [];
+    this._editScaleRot = [];
+    this._editScaleRotInv = [];
+    this._startLocal = [];
+    this._camPlaneNormal = [0.0, 0.0, 1.0];
 
     // Initialize geometry
     this._lastScale = 1.0;
@@ -383,7 +407,22 @@ class GizmoVR {
     if (this._refWorldScale === undefined || this._refWorldScale <= 0.0001) {
       this._refWorldScale = worldScale;
     }
-    if (worldScale > 0.0001) {
+    // DESKTOP: screen-constant instead, and measured from the camera rather than from the
+    // world scale. `_lastDistToEye` is frozen while a drag is running so the gizmo does not
+    // resize under the cursor mid-edit -- the handle you grabbed has to stay where you
+    // grabbed it. (Gizmo.js's rule, carried over with it.)
+    if (this._desktop && camera && camera.computePosition) {
+      const eye = camera.computePosition();
+      const d = vec3.dist(eye, center);
+      this._lastDistToEye = this._isEditing ? (this._lastDistToEye || d) : d;
+      // DIVIDED BY THE BAKE. VR sizes the gizmo by BAKING `scaleFactor` into the geometry and
+      // then uses the matrix only to hold that physical size against world zoom. The screen
+      // rule wants the matrix to carry the whole size, so the bake has to come back out --
+      // left in, the two multiply and the gizmo fills the viewport.
+      const k = ((this._lastDistToEye * GIZMO_SIZE_SCREEN) / camera.getConstantScreen())
+        / (this._lastScale || 1);
+      mat4.scale(baseMat, baseMat, [k, k, k]);
+    } else if (worldScale > 0.0001) {
       // User size multiplier (persistent, settings slider) on top of the constant physical size.
       const mul = window._gizmoSizeMul != null ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
       const k = (this._refWorldScale / worldScale) * mul;
@@ -550,6 +589,504 @@ class GizmoVR {
   render(camera) {
     // Three.js handles rendering via the scene graph.
   }
+
+  // ══ THE DESKTOP HALF ══════════════════════════════════════════════════════════════════
+  //
+  // Lifted from Gizmo.js, which was a fork of this file: same GIZMO_TYPE bits, same part
+  // objects (`_finalMatrix`, `_nbAxis`, `_lastInter`, `_pickGeo`), so the maths carries over
+  // unchanged. What differs between the two is only where the ray comes from and how the
+  // gizmo is sized -- a controller pose and a constant physical size in VR, a mouse ray and a
+  // constant SCREEN size here. Those are genuinely different inputs, not duplicated logic,
+  // which is why one gizmo can serve both and two of them never needed to exist.
+  //
+  // #84. The desktop gizmo also happened to be broken on the node renderer -- it draws
+  // through the legacy raw-GL tail, which does not run there, and came out as a speck at the
+  // centre of the mesh. So this is a repair as much as a merge.
+
+  setActivatedType(type) {
+    this._activatedType = type;
+  }
+
+  _computeCenterGizmo(center = [0.0, 0.0, 0.0]) {
+    let meshes = this._main.getTransformableMeshes();
+    if (meshes.length === 0 && this._main.getMesh() && !this._main.getMesh()._selectLocked) {
+      meshes = [this._main.getMesh()];
+    }
+    const acc = [0.0, 0.0, 0.0];
+    const icenter = [0.0, 0.0, 0.0];
+    for (let i = 0; i < meshes.length; ++i) {
+      const mesh = meshes[i];
+      vec3.transformMat4(icenter, mesh.getCenter(), mesh.getEditMatrix());
+      const mm = mesh.getModelSpaceMatrix ? mesh.getModelSpaceMatrix() : mesh.getMatrix();
+      vec3.transformMat4(icenter, icenter, mm);
+      vec3.add(acc, acc, icenter);
+    }
+    if (meshes.length > 0) vec3.scale(center, acc, 1.0 / meshes.length);
+    return center;
+  }
+
+  // The 2D rubber-band line Gizmo.js drew during a drag is NOT carried over. It is a legacy
+  // raw-GL Primitives.createLine2D on the tail pass that does not run on the node renderer,
+  // and THREE.Line is unsupported on this backend, so there is nothing to draw it with. It
+  // was a drag affordance, not information -- the object moves under the cursor either way.
+  _updateLineHelper() {}
+
+  _saveEditMatrices() {
+    const meshes = this._main.getTransformableMeshes();
+    const center = this._computeCenterGizmo();
+    mat4.translate(this._editTrans, mat4.identity(this._editTrans), center);
+    mat4.invert(this._editTransInv, this._editTrans);
+
+    for (let i = 0; i < meshes.length; ++i) {
+      this._editLocal[i] = mat4.create();
+      this._editScaleRot[i] = mat4.create();
+      this._editLocalInv[i] = mat4.create();
+      this._editScaleRotInv[i] = mat4.create();
+      // Snapshot the LOCAL matrix at drag start; live writes are startLocal * editMatrix.
+      this._startLocal[i] = mat4.clone(meshes[i].getMatrix());
+      // The MODEL matrix is the edit frame, so the conjugation below yields a mesh-LOCAL
+      // delta and a parented child commits correctly. Reduces to getMatrix() when unparented.
+      meshes[i].getModelSpaceMatrix(this._editLocal[i]);
+      mat4.copy(this._editScaleRot[i], this._editLocal[i]);
+      this._editScaleRot[i][12] = this._editScaleRot[i][13] = this._editScaleRot[i][14] = 0.0;
+      mat4.invert(this._editLocalInv[i], this._editLocal[i]);
+      mat4.invert(this._editScaleRotInv[i], this._editScaleRot[i]);
+    }
+    this._startLocal.length = meshes.length;
+  }
+
+  _scaleRotateEditMatrix(edit, i) {
+    mat4.mul(edit, this._editTrans, edit);
+    mat4.mul(edit, edit, this._editTransInv);
+    mat4.mul(edit, this._editLocalInv[i], edit);
+    mat4.mul(edit, edit, this._editLocal[i]);
+  }
+
+  _applyEditLive() {
+    const meshes = this._main.getTransformableMeshes();
+    const tmp = mat4.create();
+    for (let i = 0; i < meshes.length; ++i) {
+      if (!this._startLocal[i]) continue;
+      const em = meshes[i].getEditMatrix();
+      mat4.mul(tmp, this._startLocal[i], em);
+      meshes[i].setMatrix(tmp);
+      mat4.identity(em);
+    }
+  }
+
+  // ── drag starts ──────────────────────────────────────────────────────────────────────
+
+  _startRotateEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const projCenter = [0.0, 0.0, 0.0];
+    this._computeCenterGizmo(projCenter);
+    vec3.copy(projCenter, camera.project(projCenter));
+
+    const dir = this._editLineDirection;
+    const sign = this._selected._nbAxis === 0 ? -1.0 : 1.0;
+    const lastInter = this._selected._lastInter;
+    vec3.set(dir, -sign * lastInter[2], -sign * lastInter[1], sign * lastInter[0]);
+    vec3.transformMat4(dir, dir, this._selected._finalMatrix);
+    vec3.copy(dir, camera.project(dir));
+    vec2.normalize(dir, vec2.sub(dir, dir, projCenter));
+    vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
+  }
+
+  _startTranslateEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const origin = this._editLineOrigin;
+    const dir = this._editLineDirection;
+
+    this._computeCenterGizmo(origin);
+    const nbAxis = this._selected._nbAxis;
+    if (nbAxis !== -1) vec3.set(dir, 0.0, 0.0, 0.0)[nbAxis] = 1.0;
+    vec3.add(dir, origin, dir);
+
+    vec3.copy(origin, camera.project(origin));
+    vec3.copy(dir, camera.project(dir));
+    vec2.normalize(dir, vec2.sub(dir, dir, origin));
+
+    this._editOffset[0] = main._mouseX - origin[0];
+    this._editOffset[1] = main._mouseY - origin[1];
+  }
+
+  _startPlaneEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const origin = this._editLineOrigin;
+    this._computeCenterGizmo(origin);
+    vec3.copy(origin, camera.project(origin));
+    this._editOffset[0] = main._mouseX - origin[0];
+    this._editOffset[1] = main._mouseY - origin[1];
+    vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
+  }
+
+  _startScaleEdit() {
+    this._startTranslateEdit();
+  }
+
+  // Centre handle: free translate in the camera plane. The plane normal is captured ONCE at
+  // drag start -- recomputing it per frame would let the object chase an orbiting camera.
+  _startCameraPlaneEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const origin = this._editLineOrigin;
+    this._computeCenterGizmo(origin);
+    vec3.copy(origin, camera.project(origin));
+    this._editOffset[0] = main._mouseX - origin[0];
+    this._editOffset[1] = main._mouseY - origin[1];
+    vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
+
+    const c = this._computeCenterGizmo([0, 0, 0]);
+    const cs = camera.project(c);
+    const n0 = camera.unproject(cs[0], cs[1], 0.0);
+    const n1 = camera.unproject(cs[0], cs[1], 0.5);
+    this._camPlaneNormal = vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], n1, n0));
+  }
+
+  _startTrackballEdit() {
+    this._trackStartVec = this._arcballVec(this._main._mouseX, this._main._mouseY);
+    this._trackBasis = this._cameraBasis();
+  }
+
+  // ── drag updates ─────────────────────────────────────────────────────────────────────
+
+  _updateRotateEdit() {
+    const main = this._main;
+    const origin = this._editLineOrigin;
+    const dir = this._editLineDirection;
+
+    const vec = [main._mouseX, main._mouseY, 0.0];
+    vec2.sub(vec, vec, origin);
+    const dist = vec2.dot(vec, dir);
+
+    let angle = (7 * dist) / Math.min(main.getCanvasWidth(), main.getCanvasHeight());
+    angle %= Math.PI * 2;
+    const nbAxis = this._selected._nbAxis;
+
+    const meshes = main.getTransformableMeshes();
+    for (let i = 0; i < meshes.length; ++i) {
+      const mrot = meshes[i].getEditMatrix();
+      mat4.identity(mrot);
+      if (nbAxis === 0) mat4.rotateX(mrot, mrot, -angle);
+      else if (nbAxis === 1) mat4.rotateY(mrot, mrot, -angle);
+      else if (nbAxis === 2) mat4.rotateZ(mrot, mrot, -angle);
+      this._scaleRotateEditMatrix(mrot, i);
+    }
+  }
+
+  _updateTranslateEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const origin = this._editLineOrigin;
+    const dir = this._editLineDirection;
+
+    const vec = [main._mouseX, main._mouseY, 0.0];
+    vec2.sub(vec, vec, origin);
+    vec2.sub(vec, vec, this._editOffset);
+    vec2.scaleAndAdd(vec, origin, dir, vec2.dot(vec, dir));
+
+    const near = camera.unproject(vec[0], vec[1], 0.0);
+    const far = camera.unproject(vec[0], vec[1], 0.1);
+    vec3.transformMat4(near, near, this._editTransInv);
+    vec3.transformMat4(far, far, this._editTransInv);
+
+    vec3.normalize(vec, vec3.sub(vec, far, near));
+
+    const inter = [0.0, 0.0, 0.0];
+    inter[this._selected._nbAxis] = 1.0;
+    const a01 = -vec3.dot(vec, inter);
+    const b0 = vec3.dot(near, vec);
+    const det = Math.abs(1.0 - a01 * a01);
+    const b1 = -vec3.dot(near, inter);
+    inter[this._selected._nbAxis] = (a01 * b0 - b1) / det;
+
+    this._updateMatrixTranslate(inter);
+  }
+
+  _updatePlaneEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const vec = [main._mouseX, main._mouseY, 0.0];
+    vec2.sub(vec, vec, this._editOffset);
+
+    const near = camera.unproject(vec[0], vec[1], 0.0);
+    const far = camera.unproject(vec[0], vec[1], 0.1);
+    vec3.transformMat4(near, near, this._editTransInv);
+    vec3.transformMat4(far, far, this._editTransInv);
+
+    const inter = [0.0, 0.0, 0.0];
+    inter[this._selected._nbAxis] = 1.0;
+    const dist1 = vec3.dot(near, inter);
+    const dist2 = vec3.dot(far, inter);
+    if (dist1 === dist2) return false;
+
+    const val = -dist1 / (dist2 - dist1);
+    inter[0] = near[0] + (far[0] - near[0]) * val;
+    inter[1] = near[1] + (far[1] - near[1]) * val;
+    inter[2] = near[2] + (far[2] - near[2]) * val;
+    this._updateMatrixTranslate(inter);
+  }
+
+  _updateCameraPlaneEdit() {
+    const main = this._main;
+    const camera = main.getCamera();
+    const vec = [main._mouseX, main._mouseY, 0.0];
+    vec2.sub(vec, vec, this._editOffset);
+
+    const near = camera.unproject(vec[0], vec[1], 0.0);
+    const far = camera.unproject(vec[0], vec[1], 0.1);
+    vec3.transformMat4(near, near, this._editTransInv);
+    vec3.transformMat4(far, far, this._editTransInv);
+
+    const N = this._camPlaneNormal;
+    const dist1 = vec3.dot(near, N);
+    const dist2 = vec3.dot(far, N);
+    if (dist1 === dist2) return false;
+    const val = -dist1 / (dist2 - dist1);
+    this._updateMatrixTranslate([
+      near[0] + (far[0] - near[0]) * val,
+      near[1] + (far[1] - near[1]) * val,
+      near[2] + (far[2] - near[2]) * val,
+    ]);
+  }
+
+  _updateScaleEdit() {
+    const main = this._main;
+    const origin = this._editLineOrigin;
+    const dir = this._editLineDirection;
+    const nbAxis = this._selected._nbAxis;
+
+    const vec = [main._mouseX, main._mouseY, 0.0];
+    if (nbAxis !== -1) {
+      vec2.sub(vec, vec, origin);
+      vec2.scaleAndAdd(vec, origin, dir, vec2.dot(vec, dir));
+    }
+
+    const distOffset = vec3.len(this._editOffset);
+    const inter = [1.0, 1.0, 1.0];
+    const scaleMult = Math.max(-0.99, (vec2.dist(origin, vec) - distOffset) / distOffset);
+    if (nbAxis === -1) { inter[0] += scaleMult; inter[1] += scaleMult; inter[2] += scaleMult; }
+    else inter[nbAxis] += scaleMult;
+
+    const meshes = main.getTransformableMeshes();
+    for (let i = 0; i < meshes.length; ++i) {
+      const edim = meshes[i].getEditMatrix();
+      mat4.identity(edim);
+      mat4.scale(edim, edim, inter);
+      this._scaleRotateEditMatrix(edim, i);
+    }
+  }
+
+  _updateMatrixTranslate(inter) {
+    const tmp = [0, 0, 0];
+    const meshes = this._main.getTransformableMeshes();
+    for (let i = 0; i < meshes.length; ++i) {
+      vec3.transformMat4(tmp, inter, this._editScaleRotInv[i]);
+      // The gizmo rides _worldGroup, which carries a scale; the mesh matrix does not.
+      let S = 1.0;
+      if (this._main._worldGroup) S = this._main._worldGroup.scale.x;
+      vec3.scale(tmp, tmp, 1.0 / S);
+      const edim = meshes[i].getEditMatrix();
+      mat4.identity(edim);
+      mat4.translate(edim, edim, tmp);
+    }
+  }
+
+  // ── trackball ────────────────────────────────────────────────────────────────────────
+  //
+  // The sphere's on-screen radius comes from the X ring rather than Gizmo.js's `_rotW`: this
+  // gizmo builds no `_rotW` geometry (its free-rotate handle is the interior `_rotBall`), so
+  // reading `_rotW._finalMatrix` here would measure an identity matrix and give every click
+  // a radius of nothing.
+  _gizmoScreenRadius() {
+    const camera = this._main.getCamera();
+    const c = this._computeCenterGizmo([0, 0, 0]);
+    const cs = camera.project(c);
+    // ROT_RADIUS IS A PRE-BAKE NUMBER. This gizmo bakes `_lastScale` into the ring geometry
+    // and leaves the matrix carrying only the sizing factor, so the ring's real radius in the
+    // part's own frame is ROT_RADIUS * _lastScale. Using the bare constant (what Gizmo.js did,
+    // correctly, because its geometry was unit-sized) measured the sphere at 8 screen pixels:
+    // the trackball zone then never armed and the arcball mapped every drag to a wild angle.
+    const edge = vec3.transformMat4([0, 0, 0],
+      [ROT_RADIUS * (this._lastScale || 1), 0.0, 0.0], this._rotX._finalMatrix);
+    const es = camera.project(edge);
+    const dx = es[0] - cs[0], dy = es[1] - cs[1];
+    return { cx: cs[0], cy: cs[1], r: Math.max(1e-3, Math.sqrt(dx * dx + dy * dy)) };
+  }
+
+  // THE TRACKBALL IS THE WHOLE INTERIOR. This is only ever consulted after the tiered pick
+  // has returned nothing, and that pick gives the centre sphere and the planes their own
+  // priority tiers -- so if it missed them there is nothing left in the middle to protect.
+  // What a centre exclusion costs is the gesture every other app has: press inside the gizmo
+  // on empty space and swing. matt: "usually click and drag within the transform gizmo in
+  // empty space is treated as a trackball rotation".
+  _inTrackballZone(mx, my) {
+    const s = this._gizmoScreenRadius();
+    const dx = mx - s.cx, dy = my - s.cy;
+    return (dx * dx + dy * dy) <= s.r * s.r;
+  }
+
+  // Camera right / up / toward-viewer in world space, via unproject. Screen y grows down,
+  // so screen-up is cy - 10.
+  _cameraBasis() {
+    const camera = this._main.getCamera();
+    const c = this._computeCenterGizmo([0, 0, 0]);
+    const cs = camera.project(c);
+    const o = camera.unproject(cs[0], cs[1], 0.0);
+    const oR = camera.unproject(cs[0] + 10, cs[1], 0.0);
+    const oU = camera.unproject(cs[0], cs[1] - 10, 0.0);
+    const oF = camera.unproject(cs[0], cs[1], 0.5);
+    return {
+      right: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], oR, o)),
+      up: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], oU, o)),
+      viewer: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], o, oF)),
+    };
+  }
+
+  _arcballVec(mx, my) {
+    const s = this._gizmoScreenRadius();
+    let x = (mx - s.cx) / s.r;
+    let y = (my - s.cy) / s.r;
+    const d2 = x * x + y * y;
+    let z;
+    if (d2 <= 1.0) {
+      z = Math.sqrt(1.0 - d2);
+    } else {
+      const inv = 1.0 / Math.sqrt(d2);
+      x *= inv; y *= inv; z = 0.0;
+    }
+    return [x, -y, z];
+  }
+
+  _updateTrackballEdit() {
+    const meshes = this._main.getTransformableMeshes();
+    const v0 = this._trackStartVec;
+    const v1 = this._arcballVec(this._main._mouseX, this._main._mouseY);
+
+    const axisCam = vec3.cross([0, 0, 0], v0, v1);
+    const lenAxis = vec3.length(axisCam);
+    const dot = Math.max(-1.0, Math.min(1.0, vec3.dot(v0, v1)));
+    const angle = Math.atan2(lenAxis, dot);
+
+    if (lenAxis < 1e-6 || angle < 1e-6) {
+      for (let k = 0; k < meshes.length; ++k) mat4.identity(meshes[k].getEditMatrix());
+      return;
+    }
+    vec3.scale(axisCam, axisCam, 1.0 / lenAxis);
+
+    const b = this._trackBasis;
+    const axisW = [
+      b.right[0] * axisCam[0] + b.up[0] * axisCam[1] + b.viewer[0] * axisCam[2],
+      b.right[1] * axisCam[0] + b.up[1] * axisCam[1] + b.viewer[1] * axisCam[2],
+      b.right[2] * axisCam[0] + b.up[2] * axisCam[1] + b.viewer[2] * axisCam[2],
+    ];
+    vec3.normalize(axisW, axisW);
+
+    for (let i = 0; i < meshes.length; ++i) {
+      const mrot = meshes[i].getEditMatrix();
+      mat4.identity(mrot);
+      mat4.rotate(mrot, mrot, angle, axisW);
+      this._scaleRotateEditMatrix(mrot, i);
+    }
+  }
+
+  // ── mouse entry points, called by the desktop Transform tool ─────────────────────────
+
+  onMouseOver() {
+    if (this._isEditing) {
+      const type = this._selected._type;
+      if (type & ROT_XYZ) this._updateRotateEdit();
+      else if (type & TRANS_XYZ) this._updateTranslateEdit();
+      else if (type & PLANE_XYZ) this._updatePlaneEdit();
+      else if (type & SCALE_XYZW) this._updateScaleEdit();
+      else if (type & GIZMO_TYPE.TRANS_W) this._updateCameraPlaneEdit();
+      else if (type & GIZMO_TYPE.ROT_W) this._updateTrackballEdit();
+
+      this._applyEditLive();
+      this._main.render();
+      return true;
+    }
+
+    const main = this._main;
+    const picking = main.getPicking();
+    const mx = main._mouseX;
+    const my = main._mouseY;
+
+    if (this._selected) this._selected._isSelected = false;
+    const sel = this._pickGizmoTiered(mx, my);
+    if (!sel) {
+      if ((this._activatedType & GIZMO_TYPE.ROT_W) && this._inTrackballZone(mx, my)) {
+        this._selected = this._rotBall;
+        this._rotBall._isSelected = true;
+        return true;
+      }
+      this._selected = null;
+      return false;
+    }
+
+    this._selected = sel;
+    this._selected._isSelected = true;
+    vec3.copy(this._selected._lastInter, picking.getIntersectionPoint());
+    return true;
+  }
+
+  // Priority-tiered pick. The handles draw as a depth-off overlay, so a raw nearest-hit ray
+  // test lets the fat arrow bases (which meet at the centre) and the rotation tori win over
+  // the small centre sphere and the thin plane quads you are visually on. Test tier by tier
+  // and take the nearest hit in the FIRST tier that hits anything -- that matches what you
+  // see, which is the only thing a depth-off overlay can be judged against.
+  _pickGizmoTiered(mx, my) {
+    const picking = this._main.getPicking();
+    const t = this._activatedType;
+    const tiers = [
+      [this._transW],
+      [this._planeX, this._planeY, this._planeZ],
+      [this._transX, this._transY, this._transZ,
+       this._scaleX, this._scaleY, this._scaleZ, this._scaleW],
+      [this._rotX, this._rotY, this._rotZ],
+    ];
+    for (let ti = 0; ti < tiers.length; ++ti) {
+      const geos = [];
+      for (let j = 0; j < tiers[ti].length; ++j) {
+        const part = tiers[ti][j];
+        if (part && (t & part._type) && part._pickGeo) geos.push(part._pickGeo);
+      }
+      if (geos.length === 0) continue;
+      // twoSided ONLY for the plane tier: a thin quad goes edge-on at some views and a
+      // one-sided test culls it. The rings must stay one-sided, or a click well outside the
+      // gizmo grazing a ring's hidden back arc grabs that axis with no visible highlight.
+      picking.intersectionMouseMeshes(geos, mx, my, ti === 1);
+      const geo = picking.getMesh();
+      if (geo) return geo._gizmo;
+    }
+    return null;
+  }
+
+  onMouseDown() {
+    const sel = this._selected;
+    if (!sel) return false;
+
+    this._isEditing = true;
+    const type = sel._type;
+    this._saveEditMatrices();
+
+    if (type & ROT_XYZ) this._startRotateEdit();
+    else if (type & TRANS_XYZ) this._startTranslateEdit();
+    else if (type & PLANE_XYZ) this._startPlaneEdit();
+    else if (type & SCALE_XYZW) this._startScaleEdit();
+    else if (type & GIZMO_TYPE.TRANS_W) this._startCameraPlaneEdit();
+    else if (type & GIZMO_TYPE.ROT_W) this._startTrackballEdit();
+
+    return true;
+  }
+
+  onMouseUp() {
+    this._isEditing = false;
+  }
+
 
   // --- Geometry Creation Helpers ---
 

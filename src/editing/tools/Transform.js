@@ -1,5 +1,6 @@
 import { vec3, mat4 } from 'gl-matrix';
 import Gizmo from '../Gizmo.js';
+import GizmoVR from '../GizmoVR.js';
 import SculptBase from './SculptBase.js';
 
 class Transform extends SculptBase {
@@ -7,7 +8,22 @@ class Transform extends SculptBase {
   constructor(main) {
     super(main);
 
-    this._gizmo = new Gizmo(main);
+    // ONE GIZMO (#84). GizmoVR is the gizmo TransformVR uses, and it now carries the desktop
+    // half too -- screen-constant sizing, the tiered mouse pick and the drag maths, all lifted
+    // from Gizmo.js, which was a fork of it in the first place.
+    //
+    // It is also the only one that WORKS on the node renderer. Gizmo.js draws through the
+    // legacy raw-GL tail, which does not run there, and on the tsl branch the desktop gizmo
+    // comes out as a speck at the centre of the mesh. So the node path takes the new one by
+    // default; ?gizmo=old forces the fork back for an A/B, and ?gizmo=vr takes it on the
+    // legacy renderer too.
+    const _g = /[?&]gizmo=(\w+)/.exec(window.location.search);
+    const _pick = _g ? _g[1] : null;
+    const _useVR = _pick === 'vr' ? true
+      : _pick === 'old' ? false
+      : !!(main._isNodeRenderer || (main.getScene && main.getScene() && main.getScene()._isNodeRenderer));
+    this._gizmo = _useVR ? new GizmoVR(main) : new Gizmo(main);
+    if (_useVR) this._gizmo._desktop = true;
 
     window.debugGizmoDesktop = () => {
       const g = this._gizmo;
@@ -182,10 +198,21 @@ class Transform extends SculptBase {
     }
 
     super.postRender(this._main.getSculptManager().getSelection());
-    this._gizmo.render();
+    // GizmoVR draws through the scene graph, so "render" is an update of its matrices and
+    // colours; Gizmo.js's render() is the legacy raw pass. Both are called the same way from
+    // here, which is the point of the merge.
+    if (this._gizmo._desktop) {
+      this._gizmo._group.visible = !!this.getMesh();
+      this._gizmo.update(this._main.getCamera());
+    } else {
+      this._gizmo.render();
+    }
   }
 
   addSculptToScene(scene) {
+    // GizmoVR added itself to _worldGroup in its constructor -- it is scene-graph native and
+    // has nothing to push onto the legacy draw list.
+    if (this._gizmo._desktop) return;
     if (this.getMesh())
       this._gizmo.addGizmoToScene(scene);
   }

@@ -3617,6 +3617,22 @@ class Scene {
         if (_gT && _gT.visible) _gT.visible = false;
       }
 
+      // THE DESKTOP TRANSFORM GIZMO IS DRIVEN FROM HERE ON THE NODE PATH (#84).
+      //
+      // Transform.postRender() is where it used to be updated, and postRender is part of the
+      // legacy raw-GL tail below -- which does not run on this renderer. So nothing advanced
+      // the gizmo's matrices: measured, zero calls per frame, every handle left at the scale
+      // it was built with. That is the whole of "the desktop gizmo is a tiny speck at the
+      // centre of the mesh", and it was never a sizing bug.
+      if (!isVR && this._sculptManager) {
+        const _dt = this._sculptManager.getCurrentTool?.();
+        const _dg = _dt && _dt._gizmo;
+        if (_dg && _dg._desktop && _dg._group) {
+          _dg._group.visible = !!(_dt.getMesh && _dt.getMesh());
+          if (_dg._group.visible) _dg.update(this.getCamera());
+        }
+      }
+
       // THE RAW-ShaderMaterial SWEEP, HERE AND NOT EARLIER.
       //
       // It used to run near the top of this block, which is before MotionTrail.update() and
