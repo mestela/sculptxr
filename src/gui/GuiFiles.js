@@ -449,9 +449,50 @@ class GuiFiles {
     return (rec && rec.value && rec.value.name) || '';
   }
 
+  // ── NAMES THAT DO NOT COLLIDE ────────────────────────────────────────────────────────
+  //
+  // matt: "many times i don't change the name, so its just 'scene', which is confusing."
+  // The keyboard pops up prefilled, the prefill gets accepted, and the library fills with
+  // saves all called the same thing -- so the prefill itself has to be the name that is
+  // actually free. `scene` taken becomes `scene_v01`, and an existing `_vNN` counts UP from
+  // itself rather than gaining a second suffix, so `scene_v03` becomes `scene_v04` and never
+  // `scene_v03_v01`.
+  //
+  // Compared case-insensitively: two saves differing only in case are the same confusion this
+  // is here to remove.
+  uniqueSaveName(base) {
+    const want = ((base || '').trim()) || 'scene';
+    const taken = new Set((this._browserSaves || [])
+      .map((sv) => ((sv.value && sv.value.name) || '').trim().toLowerCase())
+      .filter(Boolean));
+    if (!taken.has(want.toLowerCase())) return want;
+
+    const m = /^(.*?)[_-]v(\d+)$/i.exec(want);
+    const stem = m ? m[1] : want;
+    const from = m ? (parseInt(m[2], 10) + 1) : 1;
+    for (let n = from; n < 1000; n++) {
+      const cand = stem + '_v' + String(n).padStart(2, '0');
+      if (!taken.has(cand.toLowerCase())) return cand;
+    }
+    return want + '_' + Date.now();
+  }
+
+  // The name Save Incremental would land on: the current file, moved to its next free version.
+  // With nothing open it behaves like a first save.
+  nextIncrementalName() {
+    return this.uniqueSaveName(this.currentSaveName() || 'scene');
+  }
+
   // Is there a file to save back over? The menu asks so it can offer Save or fall back to Save As.
   currentSaveName() {
     return this._currentSaveKey ? (this._nameOfSave(this._currentSaveKey) || 'current file') : '';
+  }
+
+  // The same thing, but safe to use AS a name: 'current file' is a label for a button, not
+  // something anyone wants a .sxr called.
+  currentSaveNameForFile() {
+    const n = this._currentSaveKey ? this._nameOfSave(this._currentSaveKey) : '';
+    return (n || '').trim() || 'scene';
   }
 
   loadFromBrowserStorage() {

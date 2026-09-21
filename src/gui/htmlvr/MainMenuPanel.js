@@ -528,6 +528,11 @@ const CSS = `
    (no backticks in here, and no double-dash: this is inside a template literal and it is also
    serialised as XML by the rasteriser. panelxml_test checks both.) */
 .mm-dense,
+/* A COLUMN OF COMMANDS IS SCANNED DOWN ITS FIRST WORD, so the Scene section left-justifies
+   rather than centring. Buttons that are FORMATS (glb/obj/ply/stl) stay centred -- they are
+   read as a set, not a list. */
+.mm-action-btn.mm-left { justify-content: flex-start; text-align: left; }
+
 .mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn)${AUTHORED_ROWS} {
   display: flex;
   flex-wrap: wrap;
@@ -1438,21 +1443,30 @@ export function buildMenuHTML_files(main) {
           repeated verb is also the reason these buttons each claim a full row -- trimming the
           labels is what lets the density rules pack them at all. The format list moves to the
           tooltip, where it is available and not in the way. */ ''}
-    <div class="mm-section-title">Open</div>
-    <button class="mm-action-btn" id="mm-open-scene" title="Open a scene from disk">Scene…</button>
-    <button class="mm-action-btn" id="mm-browser-saves" title="Open a scene saved in this browser">Browser saves…</button>
-    <button class="mm-action-btn${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
-      title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New…'}</button>
-
-    <div class="mm-section-title">Save</div>
-    ${/* The button names the FILE it would land on rather than saying Save again, which is the
-          thing the original comment here was protecting: with Save you want to be certain what
-          it is about to overwrite. Under a heading that already says Save, the filename alone
-          says it better than "Save (filename)" did. */ ''}
-    <button class="mm-action-btn" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
-      title="${curSave ? 'Save back over ' + curSave : 'Nothing open yet — use As…'}">${curSave || 'Nothing open yet'}</button>
-    <button class="mm-action-btn" id="mm-browser-save-quick" title="Save as a new browser save">As…</button>
-    <button class="mm-action-btn" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">To disk (.sxr)</button>
+    ${/* ONE SECTION, NOT TWO, AND THE VERB IS BACK ON THE BUTTON.
+          The previous pass took the repeated-verb rule too far: heading Save over buttons
+          reading the filename, "As…" and "To disk (.sxr)" left you reading the heading to
+          parse the button. matt: "earlier during the big UI rewrite i insisted on simplifying
+          the button names in this dialog. i think i went too far."
+          Export keeps the short-label treatment because glb/obj/ply/stl are formats, not
+          commands -- the distinction the first pass missed. These are commands, and a command
+          reads as a verb phrase. Left-justified for the same reason: a column of verbs is
+          scanned down its first word. */ ''}
+    <div class="mm-section-title">Scene</div>
+    <button class="mm-action-btn mm-left${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
+      title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
+    <button class="mm-action-btn mm-left" id="mm-open-scene" title="Open a scene from disk">Open from disk</button>
+    <button class="mm-action-btn mm-left" id="mm-browser-saves" title="Open a scene saved in this browser">Open from browser</button>
+    ${/* The quick save names the file it lands on, because it is the one command that acts
+          without asking anything. Disabled until there is something to land on. */ ''}
+    <button class="mm-action-btn mm-left" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
+      title="${curSave ? 'Save straight back over ' + curSave : 'Nothing open yet — use Save to browser'}"
+      >${curSave ? 'Save quick "' + curSave + '"' : 'Save quick — nothing open'}</button>
+    <button class="mm-action-btn mm-left" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">Save to disk</button>
+    <button class="mm-action-btn mm-left" id="mm-browser-save-quick" title="Save as a new browser save">Save to browser</button>
+    <button class="mm-action-btn mm-left" id="mm-browser-save-incr"
+      title="Save a NEW browser save at the next free version of ${curSave || 'scene'}"
+      >Save incremental "${guiFiles?.nextIncrementalName?.() ?? 'scene_v01'}"</button>
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj"
@@ -5626,7 +5640,10 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn)
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
 
   q('#mm-browser-save')?.addEventListener('click', () => {
-    warnVoxelThenSave(main, () => promptSaveName('Save scene as', 'scene', (n) => {
+    // Same free-name prefill as the Files menu: this is the browser-saves panel's own Save
+    // button, and it was the other place a library filled up with identical names.
+    warnVoxelThenSave(main, () => promptSaveName('Save scene as',
+      guiFiles?.uniqueSaveName?.('scene') ?? 'scene', (n) => {
       guiFiles?.saveToBrowserStorage?.(n);
       setTimeout(() => {
         guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
@@ -5774,8 +5791,17 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   });
   // The same browser save the Browser Saves panel offers, reachable without going into it --
   // saving is the thing you do most often and it was two clicks deep.
+  // THE PREFILL IS THE FREE NAME, not a constant. The keyboard pops up with it already in
+  // place and it gets accepted as-is most of the time, so offering a name that is already
+  // taken is what fills a library with saves all called the same thing.
   q('#mm-browser-save-quick')?.addEventListener('click', () => {
-    promptSaveName('Save As', 'sculpt', (n) => guiFiles?.saveToBrowserStorage?.(n));
+    promptSaveName('Save to browser', guiFiles?.uniqueSaveName?.('scene') ?? 'scene',
+      (n) => guiFiles?.saveToBrowserStorage?.(n));
+  });
+  // Incremental asks nothing: the whole point is the next version without a conversation.
+  q('#mm-browser-save-incr')?.addEventListener('click', () => {
+    const n = guiFiles?.nextIncrementalName?.();
+    if (n) guiFiles.saveToBrowserStorage(n);
   });
   // No prompt: Save is the command you press without being asked anything.
   q('#mm-browser-save-over')?.addEventListener('click', () => {
@@ -5791,11 +5817,15 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   q('#mm-export-all')?.addEventListener('change', (e) => {
     if (guiFiles) guiFiles._exportAll = e.target.checked;
   });
-  q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save .sxr as', 'sculpt', n => guiFiles?.saveFileAsSGL?.(n))));
-  q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', 'sculpt', n => guiFiles?.saveFileAsGLB?.(n)));
-  q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', 'sculpt', n => guiFiles?.saveFileAsOBJ?.(n)));
-  q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', 'sculpt', n => guiFiles?.saveFileAsPLY?.(n)));
-  q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', 'sculpt', n => guiFiles?.saveFileAsSTL?.(n)));
+  // EVERY name prompt starts from the scene you are actually in, not the word "sculpt". A file
+  // on disk cannot be checked for collisions from here, but taking the open scene's name means
+  // an export sits next to its source instead of being the fourth sculpt.obj in Downloads.
+  const fileName = () => guiFiles?.currentSaveNameForFile?.() ?? 'scene';
+  q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save to disk (.sxr)', fileName(), n => guiFiles?.saveFileAsSGL?.(n))));
+  q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', fileName(), n => guiFiles?.saveFileAsGLB?.(n)));
+  q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', fileName(), n => guiFiles?.saveFileAsOBJ?.(n)));
+  q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', fileName(), n => guiFiles?.saveFileAsPLY?.(n)));
+  q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', fileName(), n => guiFiles?.saveFileAsSTL?.(n)));
   q('#mm-export-objseq')?.addEventListener('click', () => promptSaveName('OBJ sequence name', 'anim', n => guiFiles?.saveObjSequence?.(n)));
 
   q('#mm-obj-zbrush')?.addEventListener('change', (e) => {
