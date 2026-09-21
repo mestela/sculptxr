@@ -3634,6 +3634,10 @@ class Scene {
             if (Array.isArray(m) && m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)) o.visible = false;
             return;
           }
+          // ALREADY CONVERTED: push its `.color`/`.opacity` into the uniforms that actually
+          // draw it. Writes to those properties are how the rest of the app changes a colour,
+          // and on the stand-in they reach nothing on their own. See NodeMaterials.syncConverted.
+          if (m.userData && m.userData.sync) { NodeMaterials.syncConverted(m); return; }
           // CONVERTED, NOT HIDDEN. A stock MeshBasicMaterial becomes a MeshBasicNodeMaterial,
           // the one class this backend cannot draw in a session, and one of them anywhere in
           // the scene poisons the frame. Converting here catches every object, including the

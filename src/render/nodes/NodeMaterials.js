@@ -160,6 +160,29 @@ function applyOpacity(mat, mesh) {
   mat.transparent = op < 1 || mat.transmission > 0 || !!mat.userData.isGlassCoat;
 }
 
+// ── A CONVERTED MATERIAL'S `.color` AND `.opacity` HAVE TO KEEP WORKING ─────────────────
+//
+// The sweep in Scene swaps a stock MeshBasicMaterial for the stand-in above and then the
+// object carries the stand-in. Code all over this app changes a colour by writing
+// `obj.material.color.setRGB(...)` or `obj.material.opacity = x` -- and on the stand-in both
+// of those land on properties nothing reads: `colorNode` is black and what you see is the
+// `emissiveNode`/`opacityNode` uniforms.
+//
+// It fails SILENTLY and it fails LATE: the write succeeds, the property holds the new value,
+// and only the picture disagrees. VR gizmo preselect is where matt found it -- the handles
+// never light up on hover (#85) -- but the write is unremarkable and the same line appears in
+// the bone and skin code, so the fix belongs here and not at any one call site.
+//
+// The stand-in's own properties are the source of truth once it has been seeded, so this is a
+// compare-and-copy per converted object per frame: 34 of them in a desktop scene.
+NodeMaterials.syncConverted = function (m) {
+  const y = m && m.userData && m.userData.sync;
+  if (!y) return false;
+  if (!y.col.value.equals(m.color)) y.col.value.copy(m.color);
+  if (y.opac.value !== m.opacity) y.opac.value = m.opacity;
+  return true;
+};
+
 /** The matcap image for a given index, loaded once and shared. */
 function matcapTexture(index) {
   const entry = ShaderMatcap.matcaps[index] || ShaderMatcap.matcaps[0];
@@ -452,11 +475,17 @@ NodeMaterials.convertBasic = function (src) {
     m.emissiveNode = rgb;
     m.opacityNode = mapNode ? opac.mul(mapNode.a) : opac;
     m.userData.sync = { col, opac, mapNode, lastMap: src.map || null };
+    // SEED THE STAND-IN'S OWN `.color`/`.opacity`, because from here on THEY are what the
+    // rest of the app writes to -- see syncConverted.
+    m.color.copy(src.color);
+    m.opacity = src.opacity;
     basicCache.set(src, m);
   }
   const y = m.userData.sync;
   y.col.value.copy(src.color);
   y.opac.value = src.opacity;
+  m.color.copy(src.color);
+  m.opacity = src.opacity;
   if (src.map !== y.lastMap) {
     if (y.mapNode && src.map) { y.mapNode.value = src.map; }
     else if (src.map && !y.mapNode) {
