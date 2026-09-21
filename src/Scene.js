@@ -5057,6 +5057,15 @@ class Scene {
     //
     // position.version is three's own BufferAttribute counter and is what catches a sculpt
     // stroke -- vertex count and matrix both stay put when you only move existing vertices.
+    // World ROTATION goes in the key for one reason only: a point light's shadow cube has
+    // WORLD-AXIS-ALIGNED faces, so turning the world turns the geometry relative to those axes
+    // and the cube's contents really do go stale. A spot or directional light rotates WITH the
+    // world -- its camera is placed and aimed from objects that are also under _worldGroup --
+    // so its map stays valid and it is left out of this.
+    const _wq = this._worldGroup ? this._worldGroup.quaternion : null;
+    const _worldRotKey = _wq
+      ? 'r' + _wq.x.toFixed(3) + ',' + _wq.y.toFixed(3) + ',' + _wq.z.toFixed(3) + ',' + _wq.w.toFixed(3)
+      : 'r0';
     let _shadowSceneKey = 's' + _sAbs.toFixed(5);
     for (const m of (this.getMeshes ? this.getMeshes() : [])) {
       if (m._isLight) continue;
@@ -5180,7 +5189,8 @@ class Scene {
       // scene key: that is the part a world grip does not change.
       if (wantCast && !this._xrShadowAlways) {
         const he = host.matrix.elements;
-        const key = _shadowSceneKey + '#' + type + ',' + L.distance.toFixed(4)
+        const key = _shadowSceneKey + (L.isPointLight ? _worldRotKey : '')
+          + '#' + type + ',' + L.distance.toFixed(4)
           + ',' + he[12].toFixed(3) + ',' + he[13].toFixed(3) + ',' + he[14].toFixed(3)
           + ',' + he[0].toFixed(3) + ',' + he[5].toFixed(3) + ',' + he[10].toFixed(3)
           + ',' + he[1].toFixed(3) + ',' + he[2].toFixed(3) + ',' + he[6].toFixed(3)
@@ -5275,6 +5285,31 @@ class Scene {
       // unscaled 0.15 would shove every shadow clean off the surface.
       L.shadow.normalBias = (e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias) * wscale;
       L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
+      // ...AND IT IS REFRESHED HERE, after near/far and the projection are settled: a spot's
+      // shadow.matrix is derived from its projection, so refreshing it earlier would build the
+      // lookup from the previous frame's frustum.
+      // THE MAP'S CONTENTS AND THE WORLD->LIGHT TRANSFORM ARE TWO DIFFERENT THINGS.
+      //
+      // Suppressing the re-render on a rigid world move is right -- the geometry has not moved
+      // relative to the light, so the depth in the map is still true. But `shadow.matrix` is
+      // the transform the RECEIVER uses to look that depth up, and three only recomputes it
+      // while rendering the map. Leave it alone and it stays pinned to where the light used to
+      // be in world space, so the shadow sits still in the room while the sculpt slides
+      // through it. matt: "the shadows feel stuck in worldspace relative to the 'real' world in
+      // AR, while the single hand grip slides the objects through the shadow." Head movement
+      // never touches _worldGroup, which is why that case always looked right.
+      //
+      // So refresh the lookup transform every frame -- it is matrix maths, not a render -- and
+      // keep the expensive part on the change key.
+      if (wantCast && L.shadow) {
+        if (L.isPointLight) {
+          // A point light's shadow matrix is just the translation to light space; the cube
+          // lookup direction supplies the rest.
+          L.shadow.matrix.makeTranslation(-L.position.x, -L.position.y, -L.position.z);
+        } else {
+          L.shadow.updateMatrices(L);
+        }
+      }
     }
 
     // UNUSED SLOTS GO DARK, they do not leave the scene. Removing one would change the
