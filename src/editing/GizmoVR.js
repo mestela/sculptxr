@@ -494,6 +494,15 @@ class GizmoVR {
     // written here -- the same contract the drawn handles use a few lines above.
     if (this._showPickOnInit) { this._showPickOnInit = false; this.showPickGeometry(true); }
     if (this._desktop) {
+      // A GIZMO OVER NOTHING IS AN OFFER TO DRAG SOMETHING THAT IS NOT THERE, and a locked
+      // mesh is exactly that: getTransformableMeshes filters it out, so `getMesh()` is the
+      // wrong question. Decided here rather than in the caller because this is the one place
+      // that runs every frame -- SculptManager.syncTransformGizmoVisibility still answers it on
+      // a selection or tool change, which this cannot see.
+      const _movable = this._main.getTransformableMeshes().length > 0
+        || !!(this._main.getMesh() && !this._main.getMesh()._selectLocked);
+      if (this._group) this._group.visible = _movable;
+      if (!_movable) return;
       for (let i = 0; i < components.length; ++i) {
         const pg = components[i]._pickGeo;
         const pm = pg && pg.getThreeMesh && pg.getThreeMesh();

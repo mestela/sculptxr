@@ -48,7 +48,7 @@ let PANEL = R('src/gui/htmlvr/MainMenuPanel.js');
 let TL = R('src/gui/GuiTimeline.js');
 let GVR = R('src/editing/GizmoVR.js');
 let SM = R('src/editing/SculptManager.js');
-let GZ = R('src/editing/Gizmo.js');
+
 let SEL = R('src/editing/tools/SelectTool.js');
 const ENUMS = R('src/misc/Enums.js');
 const TOOLS = R('src/editing/tools/Tools.js');
@@ -216,8 +216,8 @@ check('the transform tools already act on the whole selection',
 // read the same accessor or the indices go one out -- which is why this counts them rather than
 // finding one.
 check('...and so does the gizmo',
-  (R('src/editing/Gizmo.js').match(/this\._main\.getTransformableMeshes\(\)/g) || []).length >= 5
-    && !/this\._main\.getSelectedMeshes\(\)/.test(R('src/editing/Gizmo.js')),
+  (GVR.match(/this\._main\.getTransformableMeshes\(\)/g) || []).length >= 5
+    && !/this\._main\.getSelectedMeshes\(\)/.test(GVR),
   'one site left on the unfiltered selection puts every parallel index out by one');
 
 
@@ -400,8 +400,8 @@ check('...and so does the gizmo',
     'a lock that stopped Grab would break the very workflow the lock exists for');
 
   check('the gizmo will not show with nothing it could move',
-    /const _movable = this\._main\.getTransformableMeshes\(\)\.length > 0/.test(GZ)
-      && /if \(this\._group\) this\._group\.visible = _movable;/.test(GZ),
+    /const _movable = this\._main\.getTransformableMeshes\(\)\.length > 0/.test(GVR)
+      && /if \(this\._group\) this\._group\.visible = _movable;/.test(GVR),
     'a gizmo at the world origin over nothing is an offer to drag something that is not there');
   check('...and a selection change re-answers that, since postRender cannot',
     /syncTransformGizmoVisibility\(toolId = this\._toolIndex\) \{/.test(SM)

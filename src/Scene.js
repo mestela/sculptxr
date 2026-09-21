@@ -2381,8 +2381,15 @@ class Scene {
       //
       // window._xrShadows = 1 turns them back on in a session, to confirm the cause and to
       // retest once the framebuffer interaction is understood.
+      //
+      // DEFAULT ON IN A SESSION as of 2026-09-21. The workaround above outlived its evidence:
+      // shadows have been exercised in a headset across the whole lights/shadows body of work
+      // and the menus-and-controllers failure has not come back. Leaving a workaround switched
+      // on by default is how it stops being retested at all, and matt has to remember a flag to
+      // see the feature he asked for. `?xrshadows=0`, or window._xrShadows = false, restores it.
       if (this._isNodeRenderer) {
-        const want = isVR ? !!window._xrShadows : true;
+        if (/[?&]xrshadows=0/.test(window.location.search)) window._xrShadows = false;
+        const want = isVR ? (window._xrShadows !== false) : true;
         if (this._renderer.shadowMap.enabled !== want) {
           this._renderer.shadowMap.enabled = want;
           console.log('[shadows] ' + (want ? 'on' : 'off (XR)'));
@@ -3627,10 +3634,9 @@ class Scene {
       if (!isVR && this._sculptManager) {
         const _dt = this._sculptManager.getCurrentTool?.();
         const _dg = _dt && _dt._gizmo;
-        if (_dg && _dg._desktop && _dg._group) {
-          _dg._group.visible = !!(_dt.getMesh && _dt.getMesh());
-          if (_dg._group.visible) _dg.update(this.getCamera());
-        }
+        // Unconditional: the gizmo decides its own visibility inside update(), and gating the
+        // call on it means that once hidden it can never run again to un-hide itself.
+        if (_dg && _dg._desktop && _dg._group) _dg.update(this.getCamera());
       }
 
       // THE RAW-ShaderMaterial SWEEP, HERE AND NOT EARLIER.
@@ -5540,8 +5546,12 @@ class Scene {
     // has to be set before the button is pressed, and getting that wrong is indistinguishable
     // from the workaround still being in place. The env being off in a session IS deliberate --
     // it is a workaround, not a bug -- and this is how it gets retested.
-    if (/[?&]xrenv=1/.test(window.location.search)) window._xrEnv = 1;
-    const wantEnv = this._nodeEnvTex && (!_xrNow || !!window._xrEnv);
+    // DEFAULT ON IN A SESSION as of 2026-09-21, for the reason above: a workaround that is on
+    // by default is a workaround nobody retests, and the IBL is most of what makes the PBR
+    // material look like anything. `?xrenv=0`, or window._xrEnv = false, restores it.
+    if (/[?&]xrenv=1/.test(window.location.search)) window._xrEnv = true;
+    if (/[?&]xrenv=0/.test(window.location.search)) window._xrEnv = false;
+    const wantEnv = this._nodeEnvTex && (!_xrNow || window._xrEnv !== false);
     const nextEnv = wantEnv ? this._nodeEnvTex : null;
     for (let i = 0; i < pbrMats.length; i++) {
       const pm = pbrMats[i];
