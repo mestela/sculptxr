@@ -785,9 +785,25 @@ function flushBatches(main) {
     const pb = ha ? m.geometry.getAttribute('aPB') : null;
     const pe = (typeof key === 'string' && key.startsWith('capEnd'))
       ? m.geometry.getAttribute('aP') : null;
-    for (let i = 0; i < n; i++) {
-      const s = slots[i];
-      _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
+    // A HIDDEN SLOT IS SKIPPED, NOT SCALED TO ZERO.
+    //
+    // This used to write every slot and set `count = n`, hiding one by composing it at zero
+    // scale. A zero-scale instance still goes through the vertex shader, and the capsule end is
+    // a 4368-triangle sphere: with capsules turned OFF, a 40-joint rig was still submitting
+    // 80 x 4368 x 2 = 700k degenerate triangles every frame, which was 76% of everything the
+    // rig drew. It is why the display flags made no difference to the frame time -- matt, on a
+    // GalaxyXR, "tried the various draw modes, so only solid, only wire, only joints, its slow
+    // for all", and measured on the desktop: all flags off changed neither the triangle count
+    // nor the milliseconds.
+    //
+    // Compacting is safe because nothing indexes back into a batch by instance: `bySlot` is
+    // rebuilt from scratch each flush, the batches are unpickable, and a highlight moves a slot
+    // to a different batch key rather than addressing its slot in this one.
+    let i = 0;
+    for (let k = 0; k < n; k++) {
+      const s = slots[k];
+      if (!s.visible) continue;
+      _mSlot.compose(s.position, s.quaternion, s.scale);
       m.setMatrixAt(i, _mSlot);
       if (m.setColorAt) m.setColorAt(i, s.material.color);
       if (ha && s._ha) {
@@ -797,11 +813,12 @@ function flushBatches(main) {
         if (pa) { pa.setX(i, s._pa || 2); pb.setX(i, s._pb || 2); }
       }
       if (pe) pe.setX(i, s._p || 2);
+      i++;
     }
     if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
     if (pa) { pa.needsUpdate = true; pb.needsUpdate = true; }
     if (pe) pe.needsUpdate = true;
-    m.count = n;
+    m.count = i;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
