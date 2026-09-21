@@ -460,6 +460,38 @@ class GizmoVR {
         }
       }
     }
+
+    // ── THE DESKTOP PICK HAS TO LIVE IN THE SAME WORLD THE HANDLES ARE DRAWN IN ────────
+    //
+    // Two matrices, and only one of them was being written. `_finalMatrix` goes to the pick
+    // geometry's gl-matrix side, which is what the VR ray test reads (intersectionRayMeshesVR
+    // -> getModelSpaceMatrix), and that is why VR was never wrong. The DESKTOP picker takes a
+    // world-space ray and transforms it by inverse(threeMesh.matrixWorld) -- the three side --
+    // and these pick meshes have no parent, so their matrixWorld carried no _worldGroup at all.
+    //
+    // The handles are drawn under _worldGroup (0.701), so every pick zone sat 1/0.701 = 1.43x
+    // further from the centre than the handle you could see. Measured: the X arrow drawn at
+    // 8.27 and picked at 11.8. The error is proportional to distance from the centre, which is
+    // why the centre sphere and the plane quads felt right and the arrow tips and rings did
+    // not. matt: "the highlight selection is misaligned."
+    //
+    // Composing the group's own world matrix in by hand rather than parenting these into the
+    // scene graph: they are invisible CPU-only geometry, and fifteen more objects in the scene
+    // is fifteen more for every per-frame traversal to walk and for the material sweep to
+    // convert.
+    if (this._desktop) {
+      this._group.updateMatrixWorld(true);
+      const gw = this._group.matrixWorld;
+      for (let i = 0; i < components.length; ++i) {
+        const pg = components[i]._pickGeo;
+        const pm = pg && pg.getThreeMesh && pg.getThreeMesh();
+        if (!pm) continue;
+        pm.matrixAutoUpdate = false;
+        pm.matrix.fromArray(components[i]._finalMatrix);
+        pm.matrixWorld.multiplyMatrices(gw, pm.matrix);
+        pm.matrixWorldNeedsUpdate = false;
+      }
+    }
   }
 
   intersect(origin, direction) {
