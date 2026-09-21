@@ -2666,6 +2666,19 @@ export function buildSectionHTML_scene(main) {
       <input type="range" id="mm-light-shsoft" min="0" max="100" step="1" value="${Math.round(_lit._shadowRadius ?? 4)}">
       <span class="mm-val" id="mm-light-shsoft-val">${Math.round(_lit._shadowRadius ?? 4)}</span>
     </div>
+    ${/* RESOLUTION. A bigger map is sharper and costs a bigger render; 512 is three's default
+          and what the other shadow numbers here were chosen against. The softness slider is
+          scaled by this in _syncThreeLights, so changing resolution sharpens the EDGE without
+          also undoing whatever softness was dialled in. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Sh Res</span>
+      <span class="mm-val"></span>
+    </div>
+    <div class="mm-choice-grid cols-4">
+      ${[256, 512, 1024, 2048].map((n) => `
+      <button class="mm-choice${(_lit._shadowMapSize ?? 512) === n ? ' active' : ''}"
+        data-shadow-res="${n}">${n}</button>`).join('')}
+    </div>
     <div class="mm-row">
       <span class="mm-lbl">Sh. bias</span>
       <input type="range" id="mm-light-shbias" min="-100" max="100" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
@@ -4535,6 +4548,14 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       L._shadowNear = v / 1000;            // 0 = auto, else a fraction of the far plane
       main.render?.();
     }, (v) => (v > 0 ? (v / 10).toFixed(1) + '%' : 'auto'), null);
+    el.querySelectorAll('[data-shadow-res]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const L = _litSel(); if (!L) return;
+        L._shadowMapSize = parseInt(b.getAttribute('data-shadow-res'), 10);
+        repaintFn?.();          // the active state is markup, so this is a rebuild not a repaint
+        main.render?.();
+      });
+    });
     wireSlider(el.querySelector('#mm-light-shsoft'), el.querySelector('#mm-light-shsoft-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._shadowRadius = v;

@@ -3856,7 +3856,16 @@ class Scene {
       // there is finally something that owns a shadow map. Soft by default: PCF is the cheap
       // one, and a hard edge on a sculpt reads as an artefact rather than a shadow.
       this._renderer.shadowMap.enabled = true;
-      this._renderer.shadowMap.type = WGPU.PCFSoftShadowMap;
+      // PCF, NOT PCF_SOFT, BECAUSE SOFT IGNORES THE RADIUS.
+      //
+      // Both are in three's node path and only one of them reads shadow.radius:
+      //   PCFShadowFilter      radiusScaled = radius * texelSize.x, 5-tap Vogel disk
+      //   PCFSoftShadowFilter  a fixed texel kernel with bilinear weights, radius unused
+      // So with PCF_SOFT the Softness slider was wired to a value nothing read. matt: "blur
+      // doesn't work at all". SceneShadow.js already picks PCFShadowMap for exactly this
+      // reason and its harness guards the choice with a `pcfsoft` injection; this path simply
+      // disagreed with it.
+      this._renderer.shadowMap.type = WGPU.PCFShadowMap;
       // The shadow-update mode is read here as well as at the session boundary, so ?xrshadows=
       // means the same thing on the desktop as it does in a session.
       const _shq0 = /[?&]xrshadows=(\w+)/.exec(window.location.search);
@@ -5314,7 +5323,22 @@ class Scene {
       // tens of units; at matt's measured 0.6% scale the model is centimetres across and an
       // unscaled 0.15 would shove every shadow clean off the surface.
       L.shadow.normalBias = (e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias) * wscale;
-      L.shadow.radius = e._shadowRadius === undefined ? 4 : e._shadowRadius;
+      // RESOLUTION. mapSize reaches the shader as a uniform (reference('mapSize','vec2')), not
+      // as compiled-in state, so unlike castShadow this one can change live -- the map is
+      // re-allocated by shadowMap.setSize() on the next render. Pulse the map when it moves,
+      // or the new size holds a stale render.
+      const _mapWant = e._shadowMapSize === undefined ? 512 : e._shadowMapSize;
+      if (L.shadow.mapSize.width !== _mapWant) {
+        L.shadow.mapSize.width = L.shadow.mapSize.height = _mapWant;
+        if (L.shadow.map) { L.shadow.map.dispose(); L.shadow.map = null; }
+        L.shadow.needsUpdate = true;
+      }
+      // SOFTNESS IS IN TEXELS, so the same radius blurs LESS on a bigger map -- raising the
+      // resolution would quietly sharpen every shadow in the scene and look like the slider
+      // had moved. Scale by the map size so the setting means the same thing at any
+      // resolution, with 512 as the reference the numbers were chosen at.
+      const _rad = e._shadowRadius === undefined ? 4 : e._shadowRadius;
+      L.shadow.radius = _rad * (_mapWant / 512);
       // ...AND IT IS REFRESHED HERE, after near/far and the projection are settled: a spot's
       // shadow.matrix is derived from its projection, so refreshing it earlier would build the
       // lookup from the previous frame's frustum.
@@ -7221,6 +7245,7 @@ class Scene {
       copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
       copy._lightIntensity = src._lightIntensity;
       copy._shadowNear = src._shadowNear;
+      copy._shadowMapSize = src._shadowMapSize;
       copy._lightRange     = src._lightRange;
       copy._lightType      = src._lightType;
       copy._lightConeDeg   = src._lightConeDeg;

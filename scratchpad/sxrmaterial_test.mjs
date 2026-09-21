@@ -83,9 +83,18 @@ const SCENE = read('src/Scene.js');
     'without _isLight/_isNull the mesh reloads as ordinary geometry');
   check('...and the gizmo is rebuilt, since it is not serialized',
     /main\.decorateLight && main\.decorateLight\(m\)/.test(SKEL));
-  check('...with the light section sized in the slot count',
-    /slots \+= 1 \+ lights\.length \* 13;/.test(SKEL),
-    'a wrong slot count corrupts every block written after it');
+  // DERIVED, NOT PINNED. Asserting `* 13` means adding a field -- the correct change -- fails
+  // here, which is the same literal-pinning trap that made v18 itself look like a regression.
+  // The invariant is that the slot count EQUALS what the writer actually writes, so count it.
+  {
+    const body = (SKEL.match(/u\[o\+\+\] = lights\.length;([\s\S]*?)\n  \}/) || [])[1] || '';
+    const written = (body.match(/[ufi32]+\[o\+\+\]/g) || []).length;
+    const declared = Number((SKEL.match(/slots \+= 1 \+ lights\.length \* (\d+);/) || [, 0])[1]);
+    check('...with the light section sized to exactly what it writes',
+      written > 0 && written === declared,
+      'writes ' + written + ' per light, reserves ' + declared
+        + ' — a wrong slot count corrupts every block written after it');
+  }
 
   check('...with the section sized in the slot count',
     /slots \+= 1 \+ phys3\.length \* 4;/.test(SKEL),

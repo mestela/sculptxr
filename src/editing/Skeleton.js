@@ -4342,6 +4342,7 @@ Skeleton.serialize = function (meshes, main) {
       shBias: m._shadowNormalBias === undefined ? 0.15 : m._shadowNormalBias,
       shInt: m._shadowIntensity === undefined ? 1 : m._shadowIntensity,
       shRad: m._shadowRadius === undefined ? 4 : m._shadowRadius,
+      shRes: m._shadowMapSize === undefined ? 512 : m._shadowMapSize,
       ref: m._lightRefDist === undefined ? 0 : m._lightRefDist,
     });
   });
@@ -4387,7 +4388,7 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + phys2.length * 7;   // v14: i + drag, ground, groundY, inertia, maxBend, collide
   slots += 1 + rig.length * 7;     // v15: i + aim, saccades, amp, speed, smooth, mirror
   slots += 1 + phys3.length * 4;   // v17: i + mass, substeps, iterations
-  slots += 1 + lights.length * 13; // v18: i + type, rgb, intensity, range, cone, cast, 4 shadow, ref
+  slots += 1 + lights.length * 14; // v18: i + type, rgb, intensity, range, cone, cast, 4 shadow, res
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -4461,6 +4462,7 @@ Skeleton.serialize = function (meshes, main) {
     f[o++] = li.inten; f[o++] = li.range; f[o++] = li.cone;
     u[o++] = li.cast;
     f[o++] = li.shNear; f[o++] = li.shBias; f[o++] = li.shInt; f[o++] = li.shRad;
+    u[o++] = li.shRes;
   }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
@@ -4837,6 +4839,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const inten = f[o++], range = f[o++], cone = f[o++];
         const cast = u[o++];
         const shNear = f[o++], shBias = f[o++], shInt = f[o++], shRad = f[o++];
+        const shRes = u[o++];
         const m = meshes[mi];
         if (!m) continue;
         m._isLight = true;
@@ -4852,6 +4855,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         m._shadowNormalBias = shBias;
         m._shadowIntensity = shInt;
         m._shadowRadius = shRad;
+        m._shadowMapSize = shRes || 512;
         try { main.decorateLight && main.decorateLight(m); } catch (e) {
           console.error('[Skeleton] decorateLight on load failed', e);
         }
