@@ -1271,9 +1271,31 @@ window.gnomonDiag = function () {
   return d;
 };
 
+// See the call site: a replaced attribute is invisible to the node renderer, so the buffer is
+// grown only when the point count changes and written in place otherwise.
+function setPointsInPlace(g, pts) {
+  const need = pts.length * 3;
+  let pa = g.getAttribute('position');
+  if (!pa || pa.array.length !== need) {
+    pa = new THREE.BufferAttribute(new Float32Array(need), 3);
+    g.setAttribute('position', pa);
+  }
+  const P = pa.array;
+  for (let i = 0; i < pts.length; i++) {
+    P[i * 3] = pts[i].x; P[i * 3 + 1] = pts[i].y; P[i * 3 + 2] = pts[i].z;
+  }
+  pa.needsUpdate = true;
+  g.setDrawRange(0, pts.length);
+  return pa;
+}
+
 function makeDots(main, sizePx) {
   const g = Skeleton.overlayGroup(main);
-  const pts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
+  // The node renderer cannot draw the cutout below -- alphaTest is what breaks it, for the stock
+  // material and the node one alike. See NodeMaterials.dots for the shape that does work.
+  const nodeDots = (NodeMaterials.isActive && NodeMaterials.isActive())
+    ? NodeMaterials.dots({ size: sizePx }) : null;
+  const pts = new THREE.Points(new THREE.BufferGeometry(), nodeDots || new THREE.PointsMaterial({
     size: sizePx,
     sizeAttenuation: false,   // SCREEN pixels — this is the whole difference from the old wall
     map: dotTexture(),
@@ -1633,8 +1655,14 @@ MotionTrail.drawDots = function (main, weights) {
     }
   }
 
-  v.dots.geometry.setFromPoints(plain);
-  v.keyDots.geometry.setFromPoints(keys);
+  // WRITTEN IN PLACE, NOT REPLACED. setFromPoints builds a NEW position attribute every call,
+  // and the node renderer does not pick a replaced attribute up -- it resolved the geometry once
+  // and goes on drawing what it resolved. That is the same trap the fat lines fell into, and it
+  // is why the key dots could be present, visible and correctly coloured and still not appear.
+  // The attribute is reallocated only when the COUNT moves, exactly as flushLineBatch does for
+  // the rig wireframe, which is the pattern known to work on this path.
+  setPointsInPlace(v.dots.geometry, plain);
+  setPointsInPlace(v.keyDots.geometry, keys);
   v.dots.visible = plain.length > 0;
   v.keyDots.visible = keys.length > 0;
 

@@ -285,6 +285,40 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   return m;
 };
 
+/**
+ * THE TRAIL'S KEY DOTS. MotionTrail draws them as THREE.Points on a stock PointsMaterial with a
+ * round sprite `map` and `alphaTest: 0.5` -- a cutout rather than a blend, so the dot keeps its
+ * shape without a blended pass.
+ *
+ * ALPHATEST IS WHAT FAILS HERE, and it fails for the stock material AND the node one: measured
+ * side by side in the viewport, points with map+alphaTest draw nothing at all while the same
+ * points without them draw fine. So the round shape has to come from somewhere that is not a
+ * discard.
+ *
+ * `pointUV` is the sprite's own coordinate, so the mask is a distance from its centre and needs
+ * no texture at all. It rides on opacityNode, which means the pass has to BLEND -- the one thing
+ * the legacy material went out of its way to avoid (see makeDots). The dots are a few pixels
+ * across, so the blend is cheap; if it ever shows as judder in a headset, the fallback is
+ * NoBlending and square dots, which also draw.
+ */
+NodeMaterials.dots = function (opts = {}) {
+  if (!gpu || !gpu.PointsNodeMaterial) return null;
+  const { pointUV, vec2, float } = tsl;
+  const m = new gpu.PointsNodeMaterial({
+    size: opts.size,
+    sizeAttenuation: false,   // SCREEN pixels, which is what keeps these from becoming a wall
+    vertexColors: true,
+    transparent: true,
+    blending: gpu.NormalBlending,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false,
+  });
+  m.opacityNode = pointUV.sub(vec2(0.5, 0.5)).length().lessThan(0.5).select(float(1), float(0));
+  m.userData.trailDots = true;
+  return m;
+};
+
 /** The matcap image for a given index, loaded once and shared. */
 function matcapTexture(index) {
   const entry = ShaderMatcap.matcaps[index] || ShaderMatcap.matcaps[0];
