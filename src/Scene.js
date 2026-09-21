@@ -5314,6 +5314,21 @@ class Scene {
           // lookup direction supplies the rest.
           L.shadow.matrix.makeTranslation(-L.position.x, -L.position.y, -L.position.z);
         } else {
+          // THE SHADOW CAMERA'S UP VECTOR MUST FOLLOW THE WORLD, or the map is not invariant
+          // under a world rotation and re-rendering is the only thing that hides it.
+          //
+          // SpotLightShadow.updateMatrices does camera.lookAt(target), and lookAt uses the
+          // camera's `up` -- which is world (0,1,0) by default. Position and target both live
+          // under _worldGroup and so rotate with it, but `up` does not, so the camera ROLLS
+          // about the light axis relative to the geometry and the map's edges slide. matt:
+          // "the core shadow felt like it was drifting slightly, but what i assume are the
+          // edges of the shadowmap feel like they're misaligning... i should be able to single
+          // grip rotate the entire world upside down, and the shadow not flicker, and stay
+          // valid." With up rotated by the world, the camera is rigid with the geometry, the
+          // map is genuinely invariant, and no re-render is needed for any rigid grip.
+          if (this._worldGroup) {
+            L.shadow.camera.up.set(0, 1, 0).applyQuaternion(this._worldGroup.quaternion);
+          }
           L.shadow.updateMatrices(L);
         }
       }
