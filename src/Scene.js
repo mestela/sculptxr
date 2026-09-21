@@ -5185,38 +5185,33 @@ class Scene {
         //
         // far is not really ours: PointShadowNode re-pins camera.far to light.distance on
         // every face, so the ratio is near vs the light's falloff range.
-        // THE SHADOW FRUSTUM FITS THE GEOMETRY, NOT THE FALLOFF SLIDER.
+        // THE FAR PLANE IS NOT OURS AND MUST BE TREATED AS FIXED. LightShadow.updateMatrices
+        // re-pins camera.far to light.distance on every update, so whatever we write is
+        // overwritten -- and light.distance is the user's Falloff slider.
         //
-        // Both of three's shadow paths take the far plane from `light.distance`, which is the
-        // user's Falloff. That makes the depth range the map must resolve equal to whatever
-        // reach was dialled in, for a model that is usually a tiny fraction of it. matt, once
-        // shadows appeared: "it's too tuned to falloff... falloff shouldn't be affecting this
-        // at all." His probe read near 2.53 / far 162 with FIVE pixels out of 4096 holding any
-        // depth. ThreeXRPatches.installShadowFrustumFit hands the shadow render this fitted
-        // frustum instead and restores light.distance straight after, so Falloff goes back to
-        // driving the lighting alone.
-        //
-        // Fit: just in front of the nearest thing that can cast, to just past the furthest.
-        // The 64:1 floor still carries a light INSIDE the model, where there is no safe near.
+        // Clamping near against a far WE computed, rather than the one three forces back, is
+        // how this produced an INVERTED frustum in matt's session: near 0.948, far 0.516,
+        // because the light sat further from the sculpt than the Falloff reached. Nothing can
+        // be inside near > far, so the map rendered empty and every sweep of bias, opacity,
+        // falloff and world scale did nothing -- there was no frustum to be inside.
+        const _far = Math.max(1e-3, (L.distance > 0 ? L.distance : _rWorld * 4));
         const _dToScene = Math.hypot(
           L.position.x - _cWorld.x, L.position.y - _cWorld.y, L.position.z - _cWorld.z);
-        // THE MARGIN IS TIGHT ON PURPOSE. A 1.5x radius margin sounds safe and is not: it
-        // drives the near plane to nearly zero whenever the light is within ~1.5 radii of the
-        // surface, the 64:1 floor then takes over, and the model ends up squeezed against the
-        // far plane. matt's session with 1.5x: near 2.32, far 148.7, the sculpt sitting at
-        // depth 0.985-1.0 and no visible shadow. 1.05 is enough to clear the bounding sphere
-        // without throwing the range away, and 16:1 is a much saner floor than 64:1 for a
-        // 24-bit depth buffer.
-        const _reach = _rWorld * 1.05;
-        const far = Math.max(1e-3, _dToScene + _reach);
-        const near = Math.min(Math.max(_dToScene - _reach, far / 16, 1e-5), far * 0.5);
-        L.userData._shadowFit = { near, far };
-        // The LIGHT still has to reach the model for any of this to be visible -- that part is
-        // genuinely the Falloff's job, and it is worth saying once when it cannot.
-        if (_dToScene - _rWorld > (L.distance > 0 ? L.distance : Infinity) && !this._warnedShadowReach) {
+        // Start just in front of the nearest thing that can cast, but NEVER past half the far
+        // plane, so near < far holds however the light is placed. The 64:1 floor keeps the
+        // usable depth range wide for a light sitting inside the model, which is where a new
+        // one is created and where there is no safe near plane at all.
+        const near = Math.min(
+          Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5),
+          _far * 0.5);
+        const far = _far;
+        // If the Falloff cannot reach past the model, the far plane cuts through it and the
+        // far side simply cannot cast. Say so once rather than leaving it to be discovered.
+        if (_dToScene + _rWorld > _far && !this._warnedShadowReach) {
           this._warnedShadowReach = true;
-          console.warn('[shadows] Falloff (' + L.distance.toFixed(3) + ') does not reach the model'
-            + ' (' + (_dToScene - _rWorld).toFixed(3) + ' away) — the light itself cannot light it.');
+          console.warn('[shadows] Falloff (' + _far.toFixed(3) + ') is shorter than the light\'s'
+            + ' distance to the model (' + (_dToScene + _rWorld).toFixed(3) + ') — the shadow'
+            + ' frustum cuts through the sculpt. Raise Falloff.');
         }
         if (_sc.isOrthographicCamera) {
           const ext = _rWorld * 1.2;
