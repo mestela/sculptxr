@@ -42,6 +42,7 @@ import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import ShaderBusy from './gui/ShaderBusy.js';
+import { renderPassToCanvas, exportRenderPass, autoRange } from './render/RenderPassExport.js';
 import BootOverlay from './gui/BootOverlay.js';
 import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
@@ -9058,6 +9059,14 @@ class Scene {
     // of the camera so you can inspect layout without entering VR.
     // Usage: showPanel('mini'|'brush'|'picker'|'main')  /  showPanel() hides all.
     if (!window.showPanel) {
+      // RENDER PASSES (#2a). exportPass('depth'|'normal') saves a PNG; renderPass() hands back a
+      // data URL instead, which is what makes the thing testable without a download dialog.
+      window.exportPass = (mode = 'normal', size = 1024) => exportRenderPass(this, mode, size);
+      window.renderPass = async (mode = 'normal', size = 256) => {
+        const fitted = mode === 'depth' ? await autoRange(this, size) : null;
+        const c = await renderPassToCanvas(this, mode, size, fitted);
+        return c ? c.toDataURL('image/png') : null;
+      };
       window.showPanel = (name) => {
         const panels = {
           mini:   this._miniPanel,
