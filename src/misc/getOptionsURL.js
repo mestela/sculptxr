@@ -189,7 +189,19 @@ var getOptionsURL = function () {
   // ?nowarm=1 — skip the pre-session pipeline warm. See Scene.enterXR.
   // ?warm=1 — restore the pre-session pipeline warm, which is OFF by default because it
   // compiles the non-XR camera uniform layout. See Scene.enterXR.
-  options.warm = getVal('warm') === '1';
+  // ?warm=0 goes back to compiling pipelines whenever something is first drawn. On by default:
+  // matt, after a session that stuttered five separate times, "i want a long startup when the app
+  // launches, compiling shaders etc there, and no stuttering ... after that point".
+  options.warm = queryBool(getVal('warm'), true);
+  // The rig's instanced batches are warmed on their OWN geometry before the session, because a
+  // pipeline is keyed on geometry as well as material and a plain-plane warm compiles the wrong
+  // one. Default ON; `?rigwarm=0` is the bisection switch if it ever misbehaves.
+  options.rigwarm = queryBool(getVal('rigwarm'), true);
+  // ?xrprewarm=1 trusts the launch-time warm to have compiled the SESSION's camera layout too,
+  // and so skips both the session-boundary material rebuild and the warm that follows it. Off by
+  // default: if the hand-made ArrayCamera does not match the real one, every lit material enters
+  // the session with the wrong layout, which is the worst-known failure in this port.
+  options.xrprewarm = getVal('xrprewarm') === '1';
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]

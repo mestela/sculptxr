@@ -281,8 +281,13 @@ check('VR timeline uploads only after a throttled canvas redraw',
     && /revision !== this\._vrTimelineUploadedRevision/.test(scene));
 check('graph redraws publish their VR texture revision',
   /if \(this\._mode === 'graph'\) \{[\s\S]{0,500}?_drawRevision[\s\S]{0,80}?return;/.test(tl));
+// THIS PINNED THE TYPO. It required `_refreshContent()` -- a method that has never existed on any
+// panel -- and passed for as long as the bug was there, reporting that the Files menu rebuilds
+// while every press of it threw. A name is not an invariant; what matters is that the callback
+// invalidates the cache key and calls the panel's REAL rebuild. panelmethods_test checks that the
+// method named here is one the class actually defines.
 check('VR clear-scene confirmation rebuilds the Files menu',
-  /const rebuildFiles = \(\) => \{[\s\S]{0,120}?_lastContentKey = ''[\s\S]{0,80}?_refreshContent\(\)/.test(mainMenu)
+  /const rebuildFiles = \(\) => \{[\s\S]{0,400}?_lastContentKey = ''[\s\S]{0,80}?_rebuildContent\(\)/.test(mainMenu)
     && /main\._clearSceneConfirm = false;[\s\S]{0,60}?rebuildFn\(\);/.test(mainMenu));
 
 

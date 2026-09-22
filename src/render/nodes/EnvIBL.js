@@ -134,6 +134,70 @@ function toEquirect(gpu, px, outW, outH) {
  * Deliberately does NOT touch scene.environment -- see the note at the assignment site.
  * Cached on the env record, so switching back and forth costs nothing.
  */
+/**
+ * A FLAT GREY ENVIRONMENT, READY ON THE FIRST FRAME. NOT WIRED UP -- IT DOES NOT WORK.
+ *
+ * Kept, and kept documented, so the next attempt starts from what was already ruled out.
+ *
+ * The problem it was for is real: nothing in this app is lit by lights -- every sculpt shader is
+ * custom and three's lights only cast -- so the IBL IS the lighting, and until the real .hdr has
+ * loaded and been prefiltered the sculpt renders BLACK. matt: "a lag when the app starts of the
+ * default sphere being black, then a second or so later the env light appears to affect it."
+ *
+ * The problem with the fix: once the material has sampled THIS texture, swapping in the real
+ * prefiltered one leaves it black for good. envMap is set, envMapIntensity is 1, the texture is
+ * the right one, and nothing draws. Measured as a same-session A/B on the desktop -- without it
+ * the sphere lights on the third rendered frame; with it, still black seven frames later and it
+ * never recovered.
+ *
+ * Ruled out: the double PMREMGenerator. Keeping this one alive instead of disposing it changes
+ * nothing. So it is something about having sampled a different prefiltered texture first, and
+ * the cause is not yet known.
+ *
+ *
+ * Nothing in this app is lit by lights -- every sculpt shader is custom and three's lights only
+ * cast. The IBL IS the lighting. So between the first frame and the moment the real .hdr has
+ * loaded and been prefiltered, the PBR material has no envMap and the sculpt renders BLACK.
+ * matt: "a lag when the app starts of the default sphere being black, then a second or so later
+ * the env light appears to affect it."
+ *
+ * This is the stand-in for that second: an 8x4 mid-grey equirect put through the SAME
+ * PMREMGenerator the real one uses, so what the material receives is the same kind of texture
+ * and nothing downstream can tell the difference. Prefiltering eight texels is immediate.
+ *
+ * Deliberately flat and neutral rather than an approximation of the real environment: it is
+ * visibly a loading state that then gains direction, which reads as loading. A guess at the
+ * final lighting that then shifts reads as a bug.
+ */
+export function neutralEnvironment(gpu, renderer) {
+  if (neutralEnvironment._tex) return neutralEnvironment._tex;
+  try {
+    const w = 8, h = 4;
+    const data = new Float32Array(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      data[i * 4] = 0.45; data[i * 4 + 1] = 0.45; data[i * 4 + 2] = 0.47; data[i * 4 + 3] = 1;
+    }
+    const eq = new gpu.DataTexture(data, w, h, gpu.RGBAFormat, gpu.FloatType);
+    eq.mapping = gpu.EquirectangularReflectionMapping;
+    eq.needsUpdate = true;
+    const pm = new gpu.PMREMGenerator(renderer);
+    pm.compileEquirectangularShader();
+    const rt = pm.fromEquirectangular(eq);
+    eq.dispose();
+    // NOT pm.dispose(). Disposing this generator is what made the real environment render
+    // BLACK a moment later -- permanently, not for a second -- so the placeholder cost more
+    // than the gap it filled. Kept alive, it is one small render target for the session.
+    neutralEnvironment._pm = pm;
+    neutralEnvironment._tex = rt.texture;
+  } catch (e) {
+    // A placeholder is never worth failing startup over; without it the first second is black,
+    // which is exactly where this began.
+    console.warn('[EnvIBL] neutral environment unavailable', e);
+    neutralEnvironment._tex = null;
+  }
+  return neutralEnvironment._tex;
+}
+
 export function installEnvironment(gpu, renderer, scene, env, onDone) {
   if (!env) return;
   if (env._pmrem) { if (onDone) onDone(env._pmrem); return; }
@@ -203,3 +267,4 @@ function installHDR(gpu, renderer, scene, env, onDone) {
 }
 
 export default installEnvironment;
+export { installEnvironment as _installEnvironment };

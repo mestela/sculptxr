@@ -2208,6 +2208,10 @@ class SculptGL extends Scene {
         }
       }
 
+      // THE VOID STARTS HERE, at the button press -- not in enterXR, which only runs once the
+      // runtime has already handed a session back. Timed from this point so the grey lobby can be
+      // itemised rather than guessed at; Scene prints the breakdown on the first frame.
+      window._xrMarks = [['press', performance.now()]];
       const session = session0 || await navigator.xr.requestSession(mode, {
         // NOTE: do NOT add 'layers' here. Requesting the XRLayers feature causes
         // Three.js to use XRProjectionLayer instead of XRWebGLLayer, which triggers
@@ -2218,6 +2222,7 @@ class SculptGL extends Scene {
         optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
       });
 
+      if (window._xrMarks) window._xrMarks.push(['requestSession', performance.now()]);
       await this.enterXR(session);
       this._currentXRMode = mode;
       // console.log(`Started XR Session: ${mode}`);

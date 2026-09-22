@@ -610,28 +610,68 @@ function makeBatch(main, geo, ghost, key) {
   // untapered white cylinders there. NodeMaterials.rigCapsule is the same three effects (taper,
   // sharpness, shading) written as a node graph; the legacy path keeps the injections.
   let capMat = null;
-  if ((isShaftKey(key) || isEnd) && NodeMaterials.isActive && NodeMaterials.isActive()) {
-    capMat = NodeMaterials.rigCapsule({ shaft: isShaftKey(key), ghost, key });
+  if (NodeMaterials.isActive && NodeMaterials.isActive()) {
+    capMat = (isShaftKey(key) || isEnd)
+      ? NodeMaterials.rigCapsule({ shaft: isShaftKey(key), ghost, key })
+      // The plain batches take a PRE-BUILT node material too, rather than being converted from
+      // the stock one above on the frame the rig appears -- see NodeMaterials.rigBatch for the
+      // 117ms-per-material measurement that makes that distinction worth having.
+      : NodeMaterials.rigBatch({ ghost, key });
   }
   if (!capMat) {
     if (isShaftKey(key)) taperMaterialInstanced(mat);
     else if (isEnd) sharpMaterialInstanced(mat);
     if (isShaftKey(key) || isEnd) shadeMaterial(mat, isShaftKey(key));
   }
-  const m = new THREE.InstancedMesh(geo, capMat || mat, 1);
+  const m = new THREE.InstancedMesh(geo, capMat || mat, BATCH_CAP0);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  if (isShaftKey(key)) ensureTaperAttrs(m, 1);
-  else if (isEnd) ensureSharpAttr(m, 1);
+  if (isShaftKey(key)) ensureTaperAttrs(m, BATCH_CAP0);
+  else if (isEnd) ensureSharpAttr(m, BATCH_CAP0);
+  ensureInstanceColor(m, BATCH_CAP0);
   m.count = 0;
   m.renderOrder = ghost ? GHOST_ORDER : 0;
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
-  return { mesh: m, cap: 1, ghost: !!ghost };
+  return { mesh: m, cap: BATCH_CAP0, ghost: !!ghost };
 }
 
-// Grown in powers of two: InstancedMesh cannot be resized, so a rig that gains a joint would
-// otherwise rebuild its buffers on every add.
+// THE PER-INSTANCE COLOUR BUFFER, ALLOCATED UP FRONT AND NOT ON FIRST USE.
+//
+// three's setColorAt creates `instanceColor` lazily, the first time a batch is flushed. That was
+// fine while the batches started at capacity 1 and doubled, because the rebuild that followed
+// replaced the mesh -- and a replacement mesh gets a new RenderObject, which picks the attribute
+// up. Raising the starting capacity so a rig never rebuilds removed those rebuilds, and with
+// them the thing that was quietly repairing this: the pipeline compiled on the first frame, when
+// instanceColor was still null, is now the pipeline that draws forever, and every bone comes out
+// the material's flat base colour. matt: "random bone colours have dropped."
+//
+// The same shape as the gizmo pick overlay: a fix that was only ever working as a side effect of
+// something else, and that disappeared the moment that something else was optimised away.
+function ensureInstanceColor(m, cap) {
+  const c = m.instanceColor;
+  if (c && c.count === cap) return;
+  const a = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
+  a.setUsage(THREE.DynamicDrawUsage);
+  m.instanceColor = a;
+}
+
+// HOW BIG A BATCH STARTS, AND HOW FAST IT GROWS. InstancedMesh cannot be resized, so growing
+// one means building a replacement -- and on the node renderer a replacement mesh is a new
+// RenderObject, which is a new node graph AND a new compiled pipeline. Measured with
+// boneTrace(): a capacity doubling rebuilds all fourteen batches at once, costing 14 pipelines
+// and 14 node graphs in a single frame, and the frame it lands in ran 50-95ms on a desktop.
+//
+// Starting at 1 and doubling put that frame at joint 1, 2, 4, 8, 16, 32 -- which is exactly the
+// shape matt reported: "still stutters when drawing out bone chains", never gone, just rarer as
+// the chain grows. On the old WebGL renderer it was free, because that renderer keys its program
+// cache on shader STRUCTURE and simply reallocated the buffers.
+//
+// So: start at a capacity a whole rig fits inside, and grow in big steps when it does not. The
+// memory is nothing -- about 116 bytes an instance across the matrix, colour, quaternion and
+// scale attributes, so 32 instances in fourteen batches is roughly 50KB -- and it buys silence.
+const BATCH_CAP0 = 32;
+const BATCH_GROW = 4;
 function batchFor(main, key, geoFn, ghost) {
   const all = main._skelBatch || (main._skelBatch = new Map());
   let b = all.get(key);
@@ -660,7 +700,14 @@ function makeLineBatch(main, geo, ghost) {  // named by its caller — see batch
     opacity: ghost ? 0.35 : 0.9,
     ...(ghost ? { depthTest: true, depthFunc: THREE.GreaterDepth } : {}),
   });
-  const m = new THREE.LineSegments(new THREE.BufferGeometry(), mat);
+  // SEEDED WITH ONE DEGENERATE SEGMENT rather than an empty geometry. An empty buffer draws
+  // nothing, and a batch that never draws never compiles its pipeline -- which put that compile
+  // inside the session, on the first bone. flushLineBatch replaces both attributes on its first
+  // pass, so this costs two zeroed vertices and nothing else. See Skeleton.prewarmBatches.
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  lg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const m = new THREE.LineSegments(lg, mat);
   // The wireframe stays on top -- it is a line overlay and being drawn over is the whole point --
   // but its GHOST is an xray like any other and goes with them. See GHOST_ORDER.
   m.renderOrder = ghost ? GHOST_ORDER : 9999;
@@ -799,13 +846,14 @@ function flushBatches(main) {
     if (b.line) { flushLineBatch(b, slots, n); continue; }
     if (n > b.cap) {
       // Rebuild at the next power of two, carrying the material and geometry across.
-      let cap = b.cap || 1;
-      while (cap < n) cap *= 2;
+      let cap = b.cap || BATCH_CAP0;
+      while (cap < n) cap *= BATCH_GROW;
       const old = b.mesh;
       const m = new THREE.InstancedMesh(old.geometry, old.material, cap);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       if (isShaftKey(key)) ensureTaperAttrs(m, cap);
       else if (typeof key === 'string' && key.startsWith('capEnd')) ensureSharpAttr(m, cap);
+      ensureInstanceColor(m, cap);
       m.renderOrder = old.renderOrder;
       m.isPickable = false;
       m.frustumCulled = false;
@@ -882,11 +930,22 @@ function flushLineBatch(b, slots, n) {
   const need = n * verts * 3;
   const g = b.mesh.geometry;
   let pa = g.getAttribute('position');
-  if (!pa || pa.array.length !== need) {
-    // Rebuilt only when the joint count moves — the buffer is written in place otherwise.
-    pa = new THREE.BufferAttribute(new Float32Array(need), 3);
+  // GROWN LIKE THE INSTANCED BATCHES, AND FOR THE SAME REASON.
+  //
+  // This used to reallocate on every change in joint count -- `array.length !== need`, exact fit
+  // -- and on the node renderer a replacement buffer is a new render object, so every size gave
+  // the wire batch a fresh pipeline. matt's compile report caught it four times over in one
+  // session: rigbatch:wire-ghost at BufferGeometry(0v), (2v), (24v) and (480v).
+  //
+  // So it only grows, in the same multiples the instanced batches use, and the draw range below
+  // already decides what is actually drawn. A capacity buffer costs a few kilobytes; a pipeline
+  // costs 30-40ms on a headset.
+  if (!pa || pa.array.length < need) {
+    let cap = Math.max(pa ? pa.array.length : 0, verts * 3 * BATCH_CAP0);
+    while (cap < need) cap *= BATCH_GROW;
+    pa = new THREE.BufferAttribute(new Float32Array(cap), 3);
     g.setAttribute('position', pa);
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(need), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cap), 3));
   }
   const P = pa.array;
   const C = g.getAttribute('color').array;
@@ -916,7 +975,10 @@ function clearBatches(main) {
   for (const b of all.values()) {
     if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
     b.mesh.dispose();
-    b.mesh.material.dispose();
+    // NOT the pre-built node materials: those are CACHED and shared, so disposing one here would
+    // take it away from every future rig as well as this one. They belong to NodeMaterials and
+    // live as long as the renderer does.
+    if (!b.mesh.material.userData.nodeShared) b.mesh.material.dispose();
   }
   main._skelBatch = null;
 }
@@ -2440,6 +2502,9 @@ Skeleton.jointPos = function (joint, out) {
 // wrap a whole topology edit in one step (see RigTopology). Two entries for one split would
 // leave the middle press showing a rig nobody built.
 Skeleton.createJoint = function (main, pos, parent, name, opts) {
+  // boneTrace: the CPU half of a new joint, which no frame timing contains -- this runs on the
+  // input event, the frame it costs comes later. See Scene._boneTraceFrame.
+  const _btAt = window._boneTrace ? performance.now() : 0;
   // No normalizeSize() here — it writes a scale into the matrix, and the matrix is set
   // outright below. The primitive's own 0.5 radius is folded into the scale instead.
   const mesh = new Multimesh(Primitives.createSphere(main._gl, 0.5, 8, 8));
@@ -2464,9 +2529,15 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
 
   // The locator itself never draws — the flat bone/joint visuals represent it. colorWrite
   // off keeps CPU picking working (it uses geometry, not the material).
+  //
+  // THE SHARED no-draw material, via noDrawMaterial below, and NOT a fresh one here. This line
+  // used to allocate its own MeshBasicMaterial per joint, and noDrawMaterial's "already ours"
+  // guard -- colorWrite false and depthWrite false -- then recognised it and left it alone. So
+  // every joint kept a stock material of its own, the node sweep converted each one separately
+  // (convertBasic caches per SOURCE material), and drawing a chain paid a node graph and a
+  // pipeline per joint. matt: "i still get stutters when drawing out bone chains."
   const tm = mesh.getThreeMesh();
   if (tm) {
-    tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     // matrixAutoUpdate is cleared by Mesh.js's per-frame sync, which has NOT run yet for a
     // mesh created this frame. Leaving it at Three's default (true) makes updateMatrixWorld
     // recompose tm.matrix from the untouched position/quaternion/scale and discard the
@@ -2506,6 +2577,9 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
   }
 
   if (name) mesh._permanentStaticLabel = name;
+  if (_btAt && window.app && window.app._boneTraceJoint) {
+    window.app._boneTraceJoint(performance.now() - _btAt, Skeleton.joints(main).length);
+  }
   return mesh;
 };
 
@@ -2526,6 +2600,61 @@ function skelGroup(main) {
 // can import neither (IKSolver imports Skeleton, and closing that cycle leaves the whole rig
 // undefined at load — see the findings doc).
 Skeleton.overlayGroup = skelGroup;
+
+
+/**
+ * EVERY BATCH A RIG WILL EVER NEED, BUILT BEFORE THERE IS A RIG.
+ *
+ * A pipeline is keyed on the material AND the geometry it is drawn with -- attribute layout,
+ * instancing, the lot. NodeMaterials.warm draws each material once on a plain PlaneGeometry
+ * Mesh, which compiles a pipeline the rig then never asks for: these batches are InstancedMesh
+ * carrying aQ/aS/aC and friends, so the first bone drawn in a session compiled the real ones
+ * from scratch. Measured by matt on a GalaxyXR with boneTrace():
+ *
+ *   joint 1: frame +0  1520.0ms  built pipelines+29 vs+28 fs+7 graphs+30 | gl-render 1467.8
+ *
+ * A second and a half, inside the session, on the first bone. Creating the batches here and
+ * handing the real meshes to the warm pass moves that cost to where the user is already
+ * waiting -- and they are the SAME meshes, so what gets compiled is what gets drawn.
+ *
+ * Idempotent: batchFor returns an existing batch, so calling this after a rig exists is free.
+ * Each batch sits at count 0 and draws nothing until a joint fills it.
+ *
+ * THE TABLE IS THE ONE ensureEntry USES. Listing these keys twice is how the warm pass would
+ * quietly drift out of date -- a key added to a rig and not here is a pipeline compiled in the
+ * session again, which is invisible until someone runs boneTrace on a headset. rigbatch_test
+ * checks the two lists against each other.
+ */
+const PREWARM_BATCHES = [
+  ['capEnd', capsuleEndGeometry, false], ['capEndHi', capsuleEndGeometry, false],
+  ['capEndG', capsuleEndGeometry, true], ['capEndGHi', capsuleEndGeometry, true],
+  ['capShaft', capsuleShaftGeometry, false], ['capShaftHi', capsuleShaftGeometry, false],
+  ['capShaftG', capsuleShaftGeometry, true], ['capShaftGHi', capsuleShaftGeometry, true],
+  ['bone', boneGeometry, false], ['bone-phys', bonePhysGeometry, false],
+  ['bone-ghost', boneGeometry, true], ['bone-phys-ghost', bonePhysGeometry, true],
+  ['joint', jointGeometry, false], ['joint-phys', jointPhysGeometry, false],
+  ['joint-ghost', jointGeometry, true], ['joint-phys-ghost', jointPhysGeometry, true],
+];
+const PREWARM_LINE_BATCHES = [
+  ['wire', boneEdgeGeometry, false], ['wire-phys', bonePhysEdgeGeometry, false],
+  ['wire-ghost', boneEdgeGeometry, true], ['wire-phys-ghost', bonePhysEdgeGeometry, true],
+];
+
+Skeleton.prewarmBatches = function (main) {
+  if (!main) return [];
+  const out = [];
+  for (const [key, geoFn, ghost] of PREWARM_BATCHES) {
+    const b = batchFor(main, key, geoFn, ghost);
+    if (b && b.mesh) out.push(b.mesh);
+  }
+  for (const [key, geoFn, ghost] of PREWARM_LINE_BATCHES) {
+    const all = main._skelBatch || (main._skelBatch = new Map());
+    if (!all.has(key)) lineBatchSlot(main, key, geoFn, ghost);
+    const b = all.get(key);
+    if (b && b.mesh) out.push(b.mesh);
+  }
+  return out;
+};
 
 function ensureEntry(main, id) {
   const g = skelGroup(main);

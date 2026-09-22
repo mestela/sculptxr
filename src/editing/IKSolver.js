@@ -1821,6 +1821,27 @@ window.xrPerf = function (on) {
   return window._xrPerf;
 };
 
+// The event-triggered one. xrPerf averages; a bone-draw stutter is a single frame and an
+// average cannot see it. boneTrace(n) captures the next n joints one at a time -- what the
+// creation itself cost, then each of the following frames with its section timings and what
+// the renderer BUILT during it (pipelines, shader programs, node graphs, GPU uploads).
+// matt: "still stutters. we need diagnostics."
+window.boneTrace = function (n) {
+  if (n === 0 || n === false) return window.boneTraceOff();
+  const count = (typeof n === 'number' && n > 0) ? n : 6;
+  window._boneTrace = { left: count, depth: 3, pend: null, base: null, conv: [] };
+  if (window.app) window.app._xrPerf = null;
+  console.log('[boneTrace] armed for the next ' + count + ' joints — ' + VERSION +
+    '. Draw a chain; one block per joint. boneTrace(0) or boneTraceOff() to stop.');
+  return true;
+};
+
+window.boneTraceOff = function () {
+  window._boneTrace = null;
+  console.log('[boneTrace] off');
+  return false;
+};
+
 window.ikPerf = function (on) {
   window._ikPerf = on !== false;
   IKSolver.perf.at = 0;

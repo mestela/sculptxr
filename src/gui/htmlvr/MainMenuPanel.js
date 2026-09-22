@@ -3953,9 +3953,13 @@ export class MainMenuPanel extends HTMLVRPanel {
     const paint = () => this.markDirty();
 
     if (menu === 'files') {
+      // _rebuildContent, not _refreshContent -- there has never been a method by that name, so
+      // every Save/Load press in the Files menu threw out of the VR dispatch. It did not look
+      // like a broken button: the throw happens inside handleXRInput, so the frame's remaining
+      // input work is skipped too, which reads as the whole panel hiccuping.
       const rebuildFiles = () => {
         this._lastContentKey = '';
-        this._refreshContent();
+        this._rebuildContent();
       };
       wireMenuFiles(el, main, rebuildFiles, () => {
         const guiFiles = main.getGui?.()._ctrlFiles ?? null;
@@ -3966,7 +3970,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         const guiFiles = main.getGui?.()._ctrlFiles ?? null;
         await guiFiles?.prepareBrowserSavePage?.();
         this._lastContentKey = '';
-        this._refreshContent();
+        this._rebuildContent();
       }, paint);
       q('#mm-back-to-files')?.addEventListener('click', () => this._setMenu('files'));
 

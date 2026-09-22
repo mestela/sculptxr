@@ -301,6 +301,152 @@ function installNestedRenderGuard(renderer) {
   };
 }
 
+
+/**
+ * NOT A BUG -- A DEVICE CHOICE. THE PROJECTION-LAYER COMPOSITOR PATH.
+ *
+ * three's WebGPU XRManager picks its XR layer type from a CAPABILITY check:
+ *
+ *     this._supportsLayers = this._supportsGlBinding
+ *       && 'createProjectionLayer' in XRWebGLBinding.prototype;
+ *
+ * and nothing on that branch consults `session.enabledFeatures`. So NOT asking for the 'layers'
+ * optional feature -- which is what fixed this on the legacy renderer, and is still correctly
+ * commented in SculptGL's requestSession -- does not move it here. GalaxyXR's browser has
+ * createProjectionLayer, so three builds an XRProjectionLayer either way, and its compositor
+ * takes several seconds to come up: the grey "liminal space" void before the scene appears.
+ * matt: "maybe 1 in 10" and getting worse.
+ *
+ * (`_sessionUsesLayers`, which DOES read enabledFeatures, only decides whether extra quad and
+ * cylinder layers go native. It has no say in the projection layer itself.)
+ *
+ * So the choice is forced here instead: clearing the flag takes three's own XRWebGLLayer
+ * fallback, which is the path the app ran on for its whole life before the port.
+ *
+ * WHAT IT COSTS: multiview lives inside the projection-layer branch, so this gives it up --
+ * two passes rather than one where the device supports OVR_multiview2. That is a frame-rate
+ * question; a five-second void on one launch in ten is a "did it crash" question. `?xrlayers=1`
+ * restores three's choice so the two can be compared on the same build.
+ */
+function installXRLayerChoice(renderer) {
+  const xr = renderer && renderer.xr;
+  if (!xr) return;
+  // NOT ON SAFARI / VISION PRO.
+  //
+  // This forces three's XRWebGLLayer fallback because the projection-layer compositor is slow to
+  // come up on a GalaxyXR. It is a Chrome-on-Adreno problem, and the fallback is the less-used
+  // path in three -- matt, after this landed: "webgpu doesn't seem to work on avp at all; when i
+  // go into vr mode there, i just get black."
+  //
+  // That is not proven to be this patch, and I cannot test an AVP. But a black session on the one
+  // runtime whose layer handling differs most, right after changing which layer gets built, is
+  // not a coincidence worth defending. `?xrlayers=1` still forces three's own choice everywhere;
+  // `?xrlayers=0` forces the fallback even here, which is how to test whether this is the cause.
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  const isSafari = /Safari/.test(ua) && !/Chrome|Chromium|OculusBrowser/.test(ua);
+  const forced = /[?&]xrlayers=0/.test((typeof window !== 'undefined' && window.location.search) || '');
+  if (isSafari && !forced) {
+    console.log('[xrpatch] XR layer path: left to three (Safari/visionOS) — ?xrlayers=0 to force '
+      + 'the XRWebGLLayer fallback here too');
+    return;
+  }
+  if ('_supportsLayers' in xr) {
+    const was = xr._supportsLayers;
+    xr._supportsLayers = false;
+    console.log('[xrpatch] XR layer path: XRWebGLLayer (three wanted '
+      + (was ? 'XRProjectionLayer' : 'XRWebGLLayer') + '); ?xrlayers=1 to compare');
+  } else {
+    // three renamed or removed it. Say so rather than failing silently: the symptom is a slow
+    // launch, which nobody would trace back to a patch that quietly stopped applying.
+    console.warn('[xrpatch] XRManager has no _supportsLayers; the projection-layer delay is '
+      + 'back in play. Check three\'s XRManager against this patch.');
+  }
+}
+
+/**
+ * WHAT IS COMPILING, NAMED, AT THE MOMENT IT COMPILES.
+ *
+ * Every attempt at the launch stutters so far has been inference from counters: the pipeline
+ * cache grew by fourteen, so it must be the batches; it grew on the first bone, so it must be
+ * the locator. That got two of them and missed the rest, and matt has now watched "Compiling
+ * shaders" appear five separate times in one session with no way to tell what for. "surely when
+ * the warning pops up in vr, log to the console what is being compiled."
+ *
+ * three builds a pipeline inside Pipelines.getForRender, and the renderObject it is handed knows
+ * everything worth knowing: the object, its material, its geometry, and the camera whose shape
+ * decides the shader. So this wraps that one method, notices when the caches actually GREW, and
+ * prints the thing that caused it with how long it took.
+ *
+ * The camera matters most of all here. A line that says ArrayCamera[2] is a session-shaped
+ * pipeline being built inside the session; PerspectiveCamera is the desktop shape. If the
+ * launch-time stereo warm is working, nothing should print ArrayCamera after the session starts.
+ *
+ * On by default -- it costs four Map.size reads per render object per frame and answers the only
+ * question anyone has been asking for three rounds. window._pipeTrace = false to silence it,
+ * compileReport() for the tally.
+ */
+function installPipelineTrace(renderer) {
+  const pl = renderer && renderer._pipelines;
+  if (!pl || typeof pl.getForRender !== 'function' || pl.__traced) return;
+  pl.__traced = true;
+
+  const tally = new Map();
+  const size = (m) => (m && typeof m.size === 'number' ? m.size : 0);
+  const counts = () => [size(pl.caches), size(pl.programs && pl.programs.vertex),
+    size(pl.programs && pl.programs.fragment)];
+
+  const describe = (ro) => {
+    const o = ro.object || {};
+    const m = ro.material || {};
+    const g = ro.geometry || {};
+    const c = ro.camera || {};
+    const cam = c.isArrayCamera ? ('ArrayCamera[' + ((c.cameras && c.cameras.length) || 0) + ']')
+      : (c.type || 'camera');
+    const pos = g.attributes && g.attributes.position;
+    const geo = (g.type || 'geometry') + (pos ? '(' + pos.count + 'v)' : '')
+      + (o.isInstancedMesh ? ' x' + o.count : '');
+    const name = o.name || m.name || o.type || 'object';
+    // MATERIAL ID AND VERSION, because the same description appearing twice is the question the
+    // first version of this could not answer. A new id is a different material object; the same
+    // id at a higher version is the SAME material recompiled after a needsUpdate -- which is what
+    // the session boundary does to all of them at once.
+    const tag = '#' + (m.id !== undefined ? m.id : '?') + 'v' + (m.version || 0);
+    return (m.type || 'material') + tag + ' on ' + name + ', ' + geo + ', ' + cam;
+  };
+
+  const orig = pl.getForRender.bind(pl);
+  pl.getForRender = function (renderObject, promises) {
+    if (window._pipeTrace === false) return orig(renderObject, promises);
+    const before = counts();
+    const t0 = performance.now();
+    const out = orig(renderObject, promises);
+    const after = counts();
+    if (after[0] === before[0] && after[1] === before[1] && after[2] === before[2]) return out;
+    const ms = performance.now() - t0;
+    const what = describe(renderObject);
+    tally.set(what, (tally.get(what) || 0) + 1);
+    const built = [];
+    if (after[0] > before[0]) built.push('pipeline');
+    if (after[1] > before[1]) built.push('vertex');
+    if (after[2] > before[2]) built.push('fragment');
+    // Guarded rather than raw: a burst of these is exactly when the frame can least afford the
+    // console, and the tally below keeps what the log drops.
+    console.log('[compile] ' + built.join('+') + ' ' + ms.toFixed(0) + 'ms — ' + what);
+    return out;
+  };
+
+  window.compileReport = function () {
+    const rows = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    console.log('[compile] ' + rows.length + ' distinct, '
+      + rows.reduce((n, r) => n + r[1], 0) + ' total');
+    for (const [what, n] of rows) console.log('[compile]   x' + n + '  ' + what);
+    return rows.length;
+  };
+  window.compileReportReset = function () { tally.clear(); return 0; };
+  console.log('[xrpatch] compile trace on — every pipeline build names itself; compileReport() '
+    + 'for the tally, window._pipeTrace = false to silence');
+}
+
 /**
  * Both patches. Call once, straight after `renderer.init()` and before anything is drawn --
  * bug A rewrites binding points that get baked into programs at link time, so it has to be in
@@ -316,6 +462,14 @@ export function applyXRBackendPatches(renderer, WGPU, TSL) {
   // ?xrnested=0 leaves the nested render unguarded, to A/B against the fault.
   {
     installNestedRenderGuard(renderer);
+  }
+  // Names every pipeline as it is built. See installPipelineTrace.
+  installPipelineTrace(renderer);
+  // ?xrlayers=1 leaves three to pick the projection layer, to A/B against the slow launch.
+  // Read from the URL the same way ?xrpatch=0 is, and for the same reason: this runs during
+  // renderer init, and a window flag set afterwards would be read too late to matter.
+  if (!/[?&]xrlayers=1/.test((typeof window !== 'undefined' && window.location.search) || '')) {
+    installXRLayerChoice(renderer);
   }
 }
 

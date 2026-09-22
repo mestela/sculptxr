@@ -35,6 +35,7 @@ import Background from './drawables/Background.js';
 import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
+import ShaderBusy from './gui/ShaderBusy.js';
 import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
@@ -262,17 +263,32 @@ class Scene {
     this._isCalibratingSpectator = false; // "Move Me" Mode
     this._spectatorMode = Enums.SpectatorMode.DECOUPLED;
 
-    // Desktop canvas mode while VR is active.
-    // 0=blank  1=mirror  2=desktop free camera
-    // PC VR: default to spectator (rotation-coupled) — stable desktop view that
-    // tracks which face of the sculpt the VR user is working on.
-    // Standalone (mobile): blank to conserve the mobile GPU.
-    this._spectatorViewMode = this._isQuestStandalone ? 0 : 3;
+    // BLANK EVERYWHERE, AND NOT DECIDED FROM THE USER AGENT.
+    //
+    // 0=blank  1=mirror  2=desktop free camera  3=spectator (rotation-coupled)
+    //
+    // This used to be `_isQuestStandalone ? 0 : 3`, i.e. /OculusBrowser/ -- so a GalaxyXR took
+    // the PC VR branch and rendered the WHOLE SCENE a second time, with a desktop
+    // PerspectiveCamera, EVERY frame, to a canvas nobody can see, while the headset was already
+    // drawing the same scene per eye.
+    //
+    // The frame cost is the obvious half. The other half is why it took a compile trace to find:
+    // a pipeline is keyed per render object and the camera shape is in that key, so every object
+    // needs a SECOND pipeline for the desktop camera, compiled the moment the spectator pass
+    // first reaches it -- scattered through the session, one object at a time. That is the whole
+    // PerspectiveCamera half of matt's report, taken inside a session.
+    //
+    // The first fix broadened the sniff to /Android/. matt's GalaxyXR reports
+    //   Mozilla/5.0 (X11; Linux x86_64) ... Chrome/153
+    // so that missed it too, and there is no honest way to ask a user agent whether a headset is
+    // plugged into a monitor. So it does not ask: blank by default everywhere, and a PC VR user
+    // who wants a desktop view calls setSpectatorMode(3). A spectator view is a nicety; paying
+    // for it on a standalone headset is not.
+    this._spectatorViewMode = 0;
 
-    // How many VR frames to skip between spectator renders.
+    // How many VR frames to skip between spectator renders, once one is turned on.
     // 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th.
-    // PC VR: full rate (desktop GPU has headroom). Standalone: every 4th.
-    this._spectatorFrameSkip = this._isQuestStandalone ? 3 : 0;
+    this._spectatorFrameSkip = 3;
 
     // STATIONARY Mode variables
     this._desktopOffset = vec3.create();
@@ -321,6 +337,9 @@ class Scene {
     // Initial World Offset (Camera pulled back 55cm, Lifted 1.2m)
     // Fix: Y=0 put it on the floor. Y=1.2 should be chest/head height.
     this._xrWorldOffset = new XRRigidTransform({ x: 0, y: 1.2, z: -0.55 });
+
+    console.log('[Spectator] blank (mode 0) — setSpectatorMode(1..3) for a desktop view. '
+      + 'A spectator render costs a second full scene pass AND a second pipeline per object.');
 
     // Desktop spectator view control — usable from the browser console:
     //   window.setSpectatorMode(0)  → blank canvas (default)
@@ -1400,7 +1419,7 @@ class Scene {
   }
 
   _mark(label) {
-    if (!window._xrPerf) return;
+    if (!window._xrPerf && !window._boneTrace) return;
     const p = this._xrPerfState();
     const now = performance.now();
     if (p._markAt && p._markLabel) {
@@ -1414,6 +1433,104 @@ class Scene {
     }
     p._markAt = label ? now : 0;
     p._markLabel = label;
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // boneTrace() -- WHAT THE FRAME AFTER A NEW JOINT ACTUALLY PAYS FOR.
+  //
+  // xrPerf() averages, and an average is the wrong shape for this: the stutter is ONE frame,
+  // the one where a joint first appears, and it is gone by the time a per-second line is
+  // printed. This arms a recorder instead. Each time a joint is created it captures that
+  // creation's own CPU cost and then the next few frames in full -- section timings, and the
+  // renderer's internal caches before and after the draw.
+  //
+  // Those caches are the point. Guessing at "a compile" from a frame time is how the last two
+  // attempts at this went; three counts the real thing and will say so:
+  //   pipelines  renderer._pipelines.caches      -- render pipelines built
+  //   vs / fs    renderer._pipelines.programs    -- shader programs compiled, per stage
+  //   graphs     renderer._nodes.nodeBuilderCache -- TSL node graphs built
+  //   geo / tex  renderer.info.memory            -- GPU uploads
+  // A frame that builds nothing and is still slow is a different bug from one that builds five
+  // pipelines, and until now there was no way to tell those apart from the console.
+  _boneTraceSnap() {
+    const r = this._renderer;
+    if (!r) return null;
+    const pl = r._pipelines, nd = r._nodes, pr = pl && pl.programs;
+    const size = (x) => (x && typeof x.size === 'number' ? x.size : 0);
+    return {
+      pipelines: size(pl && pl.caches),
+      vs: size(pr && pr.vertex),
+      fs: size(pr && pr.fragment),
+      graphs: size(nd && nd.nodeBuilderCache),
+      geo: (r.info && r.info.memory) ? r.info.memory.geometries : 0,
+      tex: (r.info && r.info.memory) ? r.info.memory.textures : 0,
+      draws: (r.info && r.info.render) ? r.info.render.drawCalls : 0,
+    };
+  }
+
+  // Called by Skeleton.createJoint with its own cost, which is the half of the bill that does
+  // not appear in any frame timing.
+  _boneTraceJoint(createMs, nJoints) {
+    const t = window._boneTrace;
+    if (!t || t.left <= 0) return;
+    // A capture still open means the frames it was waiting for never came -- the tab was in the
+    // background, or the joints arrived faster than the renderer. Print what it has rather than
+    // dropping it: a capture with no frames in it is itself the finding.
+    if (t.pend) this._boneTracePrint(t.pend);
+    t.left--;
+    t.pend = { createMs: createMs, joints: nJoints, frames: [], conv: [] };
+  }
+
+  // Every material the sweep converts while a capture is open, named well enough to act on --
+  // and flagged NEW or reused, which is the whole question. convertBasic caches per source
+  // material, so it is called for every object every frame and mostly hands back something it
+  // already had; only a NEW line costs a node graph and a pipeline. Logging the call rather
+  // than the build reads as "a conversion per joint" even when nothing was built.
+  _boneTraceConv(o, m, conv) {
+    const t = window._boneTrace;
+    if (!t || !t.pend || t.pend.conv.length >= 12) return;
+    const fresh = conv && !conv.userData.__btSeen;
+    if (conv) conv.userData.__btSeen = true;
+    if (!fresh) return;
+    const path = [];
+    for (let p = o; p && path.length < 4; p = p.parent) path.unshift(p.name || p.type);
+    t.pend.conv.push('NEW ' + m.type + ' -> ' + conv.type + ' on ' + path.join('/'));
+  }
+
+  _boneTraceFrame(workMs) {
+    const t = window._boneTrace;
+    if (!t) return;
+    const p = t.pend;
+    if (!p) { t.base = this._boneTraceSnap(); return; }
+    const now = this._boneTraceSnap();
+    const b = t.base || now;
+    const d = {};
+    for (const k in now) if (now[k] !== b[k]) d[k] = '+' + (now[k] - b[k]);
+    const sec = this._xrPerf && this._xrPerf.frame;
+    const where = [];
+    if (sec) {
+      for (const k in sec) if (sec[k] > 0.4) where.push(k + ' ' + sec[k].toFixed(1));
+      where.sort((x, y) => parseFloat(y.split(' ')[1]) - parseFloat(x.split(' ')[1]));
+    }
+    p.frames.push({ ms: workMs, built: d, where: where.slice(0, 5) });
+    t.base = now;
+    if (p.frames.length < (t.depth || 3)) return;
+    this._boneTracePrint(p);
+    t.pend = null;
+    if (t.left <= 0) console.log('[boneTrace] done — boneTrace() again for more');
+  }
+
+  _boneTracePrint(p) {
+    console.log('[boneTrace] joint ' + p.joints + ': createJoint ' + p.createMs.toFixed(1) + 'ms');
+    if (!p.frames.length) console.log('[boneTrace]   (no frames rendered before the next joint)');
+    for (let i = 0; i < p.frames.length; i++) {
+      const f = p.frames[i];
+      const built = Object.keys(f.built).length
+        ? '  built ' + Object.keys(f.built).map(k => k + f.built[k]).join(' ') : '';
+      console.log('[boneTrace]   frame +' + i + '  ' + f.ms.toFixed(1) + 'ms' + built
+        + (f.where.length ? '  | ' + f.where.join(', ') : ''));
+    }
+    for (const c of p.conv) console.log('[boneTrace]   ' + c);
   }
 
   _xrPerfSample(time, workMs) {
@@ -1505,6 +1622,12 @@ class Scene {
   applyRender(arg, xrFrame = null) {
     var targetFBO = (arg && typeof arg === 'object') ? arg : null;
     this._preventRender = false;
+    // boneTrace starts its clock HERE rather than in the XR frame callback, because this is the
+    // one entry both paths share -- the desktop is where an instrument gets debugged, the headset
+    // is where the answer is. It is stopped in _drawScene, several calls down, so the start time
+    // goes on `this` and not in a local: the first version of this put it in a local and read it
+    // from the other function, which never ran at all and read as "no frames rendered".
+    this._btAt = window._boneTrace ? performance.now() : 0;
     this._mark('matrices');
     this.updateMatricesAndSort();
     // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.
@@ -1523,6 +1646,39 @@ class Scene {
         const elapsed = window._xrSessionStartT ? Math.round(performance.now() - window._xrSessionStartT) : '?';
         if (window.screenLog) window.screenLog(`[XR] First frame rendered (+${elapsed}ms from session start)`, "cyan");
         console.log(`[XR Timing] First frame at +${elapsed}ms`);
+        // THE VOID, ITEMISED. Everything between the button press and this line is grey lobby,
+        // and "it is still long" is not something anyone can act on. Each step is printed with
+        // what it cost, so the next round argues about a number instead of a guess.
+        try {
+          if (window._xrMarks) {
+            window._xrMarks.push(['first frame', performance.now()]);
+            const m = window._xrMarks;
+            const total = Math.round(m[m.length - 1][1] - m[0][1]);
+            const parts = [];
+            for (let i = 1; i < m.length; i++) parts.push(m[i][0] + ' ' + Math.round(m[i][1] - m[i - 1][1]));
+            console.log('[XR Timing] grey void ' + total + 'ms = ' + parts.join(', ') + ' (ms)');
+            window._xrMarks = null;
+          }
+        } catch (e) { /* a probe never costs a frame */ }
+        // The session warm is armed here and runs on the NEXT frame -- see below. This block is
+        // still inside the first frame's work, before anything has been submitted, so warming
+        // here would land inside the grey void it is meant to stay out of.
+        if (this._warmPendingXR) this._warmPendingXR = 'next-frame';
+        // THE AUTHORITATIVE LAYER READING, TAKEN HERE AND NOT AT setSession.
+        //
+        // updateRenderState is asynchronous -- it applies at the start of the next frame -- so
+        // the probe that runs the moment setSession resolves reads renderState.baseLayer as
+        // null whatever three chose, and reports "projectionLayer" every time. It said exactly
+        // that in matt's log on a build where the patch had already logged that it forced
+        // XRWebGLLayer. A diagnostic that cannot be wrong about the thing it measures is worse
+        // than none: this one is read on a frame that has actually been composited.
+        try {
+          const _s = this._renderer.xr.getSession && this._renderer.xr.getSession();
+          const _bl = _s && _s.renderState && _s.renderState.baseLayer;
+          const _layer = _bl ? 'baseLayer (XRWebGLLayer)' : 'projectionLayer';
+          if (window._xrComposite) window._xrComposite.layer = _layer;
+          console.log('[XR] layer in use: ' + _layer);
+        } catch (e) { /* a probe never costs a frame */ }
         // initVRControllers is deferred via Promise.resolve() below so this frame
         // is submitted to the compositor before we block for 200+ms.
       }
@@ -2388,6 +2544,20 @@ class Scene {
       // and the menus-and-controllers failure has not come back. Leaving a workaround switched
       // on by default is how it stops being retested at all, and matt has to remember a flag to
       // see the feature he asked for. `?xrshadows=0`, or window._xrShadows = false, restores it.
+      // THE SESSION WARM, ON THE SECOND FRAME. By now one frame has been composited, so the
+      // headset is showing the scene rather than the void, and xr.getCamera() carries its two
+      // views -- warming at setSession compiles an ArrayCamera[0] set that nothing ever draws
+      // with, and warming during the first frame just lengthens the void.
+      //
+      // It makes that one frame long. That is the deliberate trade: one hitch just after the
+      // scene appears, instead of a compile every time something new is first drawn.
+      if (this._warmPendingXR === 'next-frame') {
+        this._warmPendingXR = false;
+        const _xc = this._renderer.xr.getCamera && this._renderer.xr.getCamera();
+        if (_xc && _xc.cameras && _xc.cameras.length > 0) this._startRevealWarm();
+        else console.warn('[warm] session skipped — the XR camera still has no views');
+      }
+      this._stepRevealWarm();
       if (this._isNodeRenderer) {
         if (/[?&]xrshadows=0/.test(window.location.search)) window._xrShadows = false;
         const want = isVR ? (window._xrShadows !== false) : true;
@@ -3498,6 +3668,12 @@ class Scene {
         console.log('[drawInfo] ' + JSON.stringify(out));
         return out;
       };
+      // The rig half of the warm, callable on its own -- this is what runs at session start, and
+      // being able to fire it from the console is what makes it an A/B rather than a reload.
+      if (this._isNodeRenderer && !window.rigWarm) window.rigWarm = () => {
+        this._warmedStartup = false;
+        return this.warmEverything('startup');
+      };
       if (this._isNodeRenderer && !window._warmNow) window._warmNow = () => {
         const pm = [];
         for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) pm.push(p.mesh.material);
@@ -3686,7 +3862,10 @@ class Scene {
           // ones nobody has thought to port.
           if ((m.isMeshBasicMaterial || m.isMeshStandardMaterial) && !m.isNodeMaterial) {
             const conv = NodeMaterials.convertBasic(m);
-            if (conv) { o.userData._stockMat = m; o.material = conv; return; }
+            if (conv) {
+              if (window._boneTrace) this._boneTraceConv(o, m, conv);
+              o.userData._stockMat = m; o.material = conv; return;
+            }
           }
           // Anything still on a raw ShaderMaterial cannot be drawn at all, so it is hidden
           // rather than allowed to throw once per object per frame.
@@ -3694,10 +3873,34 @@ class Scene {
         });
       }
 
+      // THE "COMPILING SHADERS" PLATE, placed before the draw that might show it. Only on the
+      // node renderer: the legacy path compiles on a program cache keyed by shader structure and
+      // does not stall like this. See gui/ShaderBusy.js for what it can and cannot cover.
+      if (this._isNodeRenderer) {
+        // THE STARTUP WARM, kicked off from the frame loop rather than from init: it needs the
+        // VR panels to exist, and they are built asynchronously a second or so in. One frame of
+        // the app having drawn itself is the simplest signal that everything is up.
+        // AFTER THE LIGHT POOL, not just after the panels. The pipeline key is
+        // _nodes.getCacheKey(scene, lightsNode) -- so anything warmed before the pool exists is
+        // keyed to a scene with different lights and gets compiled again the moment the pool
+        // lands. That is the x2 on every rig batch in matt's report: the same material, the same
+        // version, the same camera, two pipelines, one on each side of `[lights] pool built`.
+        if (!this._warmedStartup && this._mainMenuPanel && this._lightPool && this._framesDrawn > 2) {
+          this.warmEverything('startup');
+        }
+        this._framesDrawn = (this._framesDrawn || 0) + 1;
+        ShaderBusy.attach(this._scene);
+        ShaderBusy.tick(this._renderer, _renderCam);
+      }
+
       // Three.js clears depth on its own, so we render over the top
       this._mark('gl-render');
       this._renderer.render(this._scene, _renderCam);
       this._mark(null);
+      if (this._btAt) {
+        this._boneTraceFrame(performance.now() - this._btAt);
+        if (this._xrPerf) this._xrPerf.frame = null;
+      }
 
       // THE LEGACY RAW-GL TAIL DOES NOT RUN ON THE NODE PATH.
       //
@@ -5535,6 +5738,19 @@ class Scene {
     const env = SPBR && SPBR.environments[SPBR.idEnv];
     if (env && this._nodeEnvId !== SPBR.idEnv) {
       this._nodeEnvId = SPBR.idEnv;
+      // NO PLACEHOLDER ENVIRONMENT, AND THE GAP IS REAL AND STILL OPEN.
+      //
+      // Until this resolves the PBR material has no envMap, and in this app that means no light
+      // source at all -- every sculpt shader is custom and three's lights only cast. So the
+      // sculpt is black for as long as the .hdr takes to fetch and prefilter: about 70ms on a
+      // desktop, a second or so on a headset.
+      //
+      // Filling it with a flat grey PMREM was tried and does not work: once the material has
+      // sampled that texture, swapping in the real one leaves it black PERMANENTLY, with envMap
+      // set, envMapIntensity 1 and the right texture bound. Measured as a same-session A/B --
+      // without it the sphere lights on the third frame, with it it was still black seven frames
+      // later and never recovered. Keeping the PMREMGenerator alive rather than disposing it
+      // changed nothing. See EnvIBL.neutralEnvironment, which is kept and unwired.
       installEnvironment(this._THREE_GPU, this._renderer, this._scene, env, (tex) => {
         this._nodeEnvTex = tex;
       });
@@ -7594,6 +7810,10 @@ class Scene {
     window._lastLogTime = performance.now();
     // console.log("[Telemetry] WebXR Session entered");
     window._xrSessionStartT = performance.now();
+    window._xrMark = (what) => {
+      if (window._xrMarks) window._xrMarks.push([what, performance.now()]);
+    };
+    window._xrMark('enterXR');
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
@@ -7690,13 +7910,9 @@ class Scene {
       // Warming was added to avoid building pipelines inside a session, on the strength of
       // the spike's UBO flood. That flood was most likely THIS, misread: the spike warmed on
       // the desktop too. The warm was not protecting against the fault, it was causing it.
-      if (window._warmBeforeXR || getOptionsURL().warm) {
-        const panelMats = [];
-        try {
-          for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) panelMats.push(p.mesh.material);
-        } catch (e) { /* registry is a convenience; never block entering VR on it */ }
-        NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), panelMats, this._scene);
-      }
+      // THE SESSION WARM DOES NOT HAPPEN HERE. It used to, and it was worthless: this runs
+      // BEFORE setSession, and _rebuildAll('session start') a few lines down then discards every
+      // shader it just built. It now runs immediately after that rebuild instead.
     }
 
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
@@ -7709,7 +7925,9 @@ class Scene {
     // the moment requestSession resolves. Every ms before setSession is called is
     // time the compositor spends showing the default gray void environment.
     const t0 = performance.now();
+    window._xrMark && window._xrMark('pre-session work');
     await this._renderer.xr.setSession(session);
+    window._xrMark && window._xrMark('setSession');
 
     // REBUILD EVERY MATERIAL AT THE SESSION BOUNDARY.
     //
@@ -7776,7 +7994,29 @@ class Scene {
       const _wantXrShadows = window._xrShadows !== false;
       window._xrShadows = _wantXrShadows;
       _setPoolShadows(_wantXrShadows);
+      // SKIPPED UNDER ?xrprewarm=1, which is the whole point of that flag: this is what throws the
+    // launch-time pipelines away. See the note at the warm above.
+    if (getOptionsURL().xrprewarm) {
+      console.log('[xr] material rebuild SKIPPED (?xrprewarm=1) — relying on the launch-time '
+        + 'stereo warm. If lit materials do not draw, this flag is why.');
+    } else {
       _rebuildAll('session start');
+      window._xrMark && window._xrMark('material rebuild');
+      // AND REBUILD THEM IN ONE PLACE, RATHER THAN OVER THE NEXT MINUTE -- BUT NOT HERE.
+      //
+      // The rebuild above discards every compiled shader, and what refills that cache is
+      // whatever happens to be drawn next, one object at a time, whenever it first appears.
+      // That is matt's "compiling shaders warning popping up regularly".
+      //
+      // Warming it back immediately looks right and is not: while a session is presenting, three
+      // substitutes xr.getCamera() for whatever camera is passed to render(), and at this point
+      // no XRFrame has arrived, so that camera is an ArrayCamera with ZERO sub-cameras. The
+      // pipeline key hashes cameras.length, so a warm here compiles a whole third set --
+      // `ArrayCamera[0]` in matt's report -- for a shape nothing will ever draw with again.
+      //
+      // So it waits for the first frame that has real views. See _warmOnFirstXRFrame.
+      this._warmPendingXR = !getOptionsURL().xrprewarm;
+    }
       if (_wantXrShadows && this._xrShadowOnce) {
         // A little after the boundary, so the pool has been synced and the sculpt is present.
         setTimeout(() => { try { window.xrShadowRefresh(); } catch (e) { /* never block VR */ } }, 1500);
@@ -15012,6 +15252,102 @@ class Scene {
   // VISIBLE PANELS ONLY. A hidden one re-syncs when it is shown (see _swapHtmlPanels), so
   // syncing it here would be work whose result is thrown away — and torn-off panels are exactly
   // the case that needs this, since they stay visible while you work in another panel.
+  /**
+   * THE SESSION WARM, A FEW OBJECTS PER FRAME, INSIDE THE NORMAL RENDER.
+   *
+   * The blocking version was moved out of the void and onto the second frame, and matt still got
+   * a void -- with the timing line reporting the whole button-press-to-first-frame path at 659ms.
+   * That is the tell: the void he sees is NOT in the measured window. One frame is submitted,
+   * then the warm stalls the next one for seconds, and a compositor starved of frames goes back
+   * to the lobby. Moving a multi-second stall one frame later does not help; it has to stop
+   * being a stall.
+   *
+   * So there is no warm render any more. Each frame, the next few normally-hidden objects are
+   * revealed for that frame's ORDINARY draw -- an instanced batch at count 0 and a hidden panel
+   * both compile nothing, so showing them is what compiles them. A handful of pipelines per
+   * frame, no extra pass, and frames keep flowing the whole way through.
+   *
+   * They are revealed at instance count 1 with a zeroed matrix, which collapses to a point: it
+   * is submitted, and it is not visible.
+   */
+  _startRevealWarm() {
+    if (getOptionsURL().warm === false) return 0;
+    const list = [];
+    try { list.push(...Skeleton.prewarmBatches(this)); } catch (e) { /* no rig, no batches */ }
+    try {
+      for (const p of HTMLVRPanel._live) if (p.mesh && !p.mesh.visible) list.push(p.mesh);
+    } catch (e) { /* the registry is a convenience */ }
+    this._revealWarm = list.filter(Boolean);
+    console.log('[warm] revealing ' + this._revealWarm.length
+      + ' normally-hidden objects, a few a frame, inside the ordinary render');
+    return this._revealWarm.length;
+  }
+
+  // PER FRAME. Restores on the NEXT call rather than after the draw, because the compile happens
+  // during the draw -- putting them back first would mean nothing was ever submitted.
+  _stepRevealWarm() {
+    if (this._revealRestore) {
+      for (const r of this._revealRestore) {
+        r.m.visible = r.visible;
+        if (r.m.isInstancedMesh) r.m.count = r.count;
+      }
+      this._revealRestore = null;
+    }
+    const list = this._revealWarm;
+    if (!list || !list.length) return;
+    const batch = list.splice(0, 3);
+    const restore = [];
+    for (const m of batch) {
+      restore.push({ m, visible: m.visible, count: m.count });
+      m.visible = true;
+      if (m.isInstancedMesh && !m.count) m.count = 1;
+    }
+    this._revealRestore = restore;
+    if (!list.length) {
+      this._revealWarm = null;
+      console.log('[warm] reveal pass done');
+    }
+  }
+
+  /**
+   * COMPILE EVERYTHING, BY DRAWING THE REAL SCENE.
+   *
+   * matt, after a session that stuttered on entering immersive mode, on opening a menu, on
+   * picking the bone tool, mid-chain and again at the end: "i want a long startup when the app
+   * launches, compiling shaders etc there, and no stuttering ... after that point."
+   *
+   * Four attempts at this warmed materials on stand-in quads in a throwaway scene, and the
+   * compile trace showed why none of them helped: three keys a pipeline on the SCENE and its
+   * LIGHTS as well as the material and the geometry, so a pipeline built in a lightless scratch
+   * scene on a 4-vertex plane is not one anything will ever ask for. See NodeMaterials.warmScene.
+   *
+   * This draws the real scene instead, with everything that would otherwise be skipped turned on
+   * for the frame: the rig's instanced batches (count 0 draws nothing, so nothing compiles) and
+   * any panel currently hidden. One extra render, and what it compiles is what gets used.
+   *
+   * `?warm=0` turns it off.
+   */
+  warmEverything(when) {
+    if (!this._isNodeRenderer) return 0;
+    if (getOptionsURL().warm === false) return 0;
+    if (when === 'startup') {
+      if (this._warmedStartup) return 0;
+      this._warmedStartup = true;
+    }
+    const hidden = [];
+    try {
+      for (const p of HTMLVRPanel._live) if (p.mesh) hidden.push(p.mesh);
+    } catch (e) { /* the registry is a convenience; never block a launch on it */ }
+    let rig = [];
+    try { rig = Skeleton.prewarmBatches(this); } catch (e) { console.warn('[warm] no rig batches', e); }
+    const cam = this._camera.getThreeCamera();
+    const t0 = performance.now();
+    const n = NodeMaterials.warmScene(this._renderer, this._scene, cam, rig.concat(hidden));
+    console.log('[warm] ' + when + ': drew the scene with ' + n + ' normally-hidden objects in '
+      + Math.round(performance.now() - t0) + 'ms');
+    return n;
+  }
+
   syncToolPanels() {
     const shown = (p) => !!p && (!p.mesh || p.mesh.visible);
     const sync = (p) => { if (shown(p)) { try { p.syncFromState?.(); } catch (_) {} } };

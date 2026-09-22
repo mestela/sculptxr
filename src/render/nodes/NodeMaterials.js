@@ -99,6 +99,49 @@ NodeMaterials.enable = function (mod, tslMod) {
 };
 
 /**
+ * THE RIG'S PLAIN INSTANCED BATCHES -- bone bodies, joint markers and their physics and ghost
+ * variants. No taper, no sharpness, no shading: just an unlit surface whose colour comes from
+ * the batch's per-instance colour.
+ *
+ * Built HERE rather than being converted from a stock MeshBasicMaterial by Scene's sweep, and
+ * that is the whole point. A converted material is created on the frame the rig first appears,
+ * and compiling a node material is expensive: measured on the desktop, the first frame after a
+ * six-joint rig is drawn takes 1,653ms, of which 1,640ms is inside renderer.render -- about
+ * 117ms per new material. matt on a GalaxyXR: "the first time i draw a bone there's a definite
+ * stutter." Pre-built, they are in NodeMaterials.all() and the warm pass compiles them before
+ * the session starts.
+ *
+ * The colour rides on instanceColor, which three multiplies into the DIFFUSE -- so colorNode is
+ * white and the batch's setColorAt does the rest. Same arrangement convertBasic ends up with;
+ * this just gets there before the frame that needs it.
+ */
+NodeMaterials.rigBatch = function (opts = {}) {
+  if (!gpu) return null;
+  overlay = overlay || new Map();
+  // KEYED ON `ghost` ALONE, not on the batch key: bone, joint and their physics variants differ
+  // only in GEOMETRY, and nothing mutates these materials per batch the way tuneCapsuleBatches
+  // does to the capsules'. Two materials rather than eight, and two compiles in the warm pass.
+  const ck = 'batch:' + (opts.ghost ? 'ghost' : 'solid');
+  const hit = overlay.get(ck);
+  if (hit) return hit;
+  const { vec3 } = tsl;
+  const ghost = !!opts.ghost;
+  const m = unlit({
+    side: gpu.DoubleSide,
+    transparent: ghost,
+    opacity: ghost ? 0.35 : 1.0,        // GHOST_OPACITY in Skeleton
+    depthTest: true,
+    depthWrite: !ghost,
+    ...(ghost ? { depthFunc: gpu.GreaterDepth } : {}),
+  });
+  m.colorNode = vec3(1, 1, 1);
+  m.userData.rigBatch = true;
+  m.userData.nodeShared = true;
+  overlay.set(ck, m);
+  return m;
+};
+
+/**
  * THE OVERLAY MATERIALS, BUILT UP FRONT LIKE EVERYTHING ELSE IN THIS FILE.
  *
  * The rule at the top of this module is that every material is pre-created before anything
@@ -129,6 +172,9 @@ NodeMaterials.buildOverlayVariants = function () {
       }
     }
   }
+  // The plain instanced batches. Eight of them -- bone and joint, each with a ghost and a
+  // physics variant -- but only two materials, because they differ only in geometry.
+  for (const ghost of [false, true]) if (NodeMaterials.rigBatch({ ghost })) n++;
   // DOT_PX, KEY_DOT_PX and DOT_PX * HOVER_GROW, from MotionTrail.
   for (const size of [4, 6, 4 * 1.9]) {
     if (NodeMaterials.dots({ size })) n++;
@@ -332,6 +378,7 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   m.colorNode = col.mul(gain);
   m.userData.shadeMix = shadeMix;
   m.userData.rigCapsule = true;
+  m.userData.nodeShared = true;
   overlay.set(ck, m);
   return m;
 };
@@ -371,6 +418,7 @@ NodeMaterials.dots = function (opts = {}) {
   });
   m.opacityNode = pointUV.sub(vec2(0.5, 0.5)).length().lessThan(0.5).select(float(1), float(0));
   m.userData.trailDots = true;
+  m.userData.nodeShared = true;
   overlay.set(ck, m);
   return m;
 };
@@ -883,40 +931,251 @@ NodeMaterials.fresnelGlow = function (hex) {
  *
  * Cheap and idempotent: a 2-triangle quad per material, off-screen, once.
  */
-NodeMaterials.warm = function (renderer, camera, extraMaterials, scene) {
-  if (!gpu || !renderer) return 0;
+/**
+ * THE SAME WARM, SPREAD OVER FRAMES INSTEAD OF BLOCKING ONE.
+ *
+ * NodeMaterials.warm draws everything in a single render, which is fine on a desktop and is not
+ * fine at the start of an XR session. Measured by matt on a GalaxyXR:
+ *
+ *   [NodeMaterials] warmed 29 pipelines (+20 rig batches, on their own geometry)   2164.7ms
+ *   [Violation] 'requestAnimationFrame' handler took 2153ms
+ *   [XR] First frame rendered (+4399ms from session start)
+ *
+ * Two seconds of that is one rAF handler, which is two seconds of the grey void before the scene
+ * appears -- matt: "was in the gray void for about 3 seconds". The work is the same work either
+ * way, and it has to happen INSIDE the session (session start rebuilds every material, so
+ * anything compiled on the desktop is thrown away). What can change is whether it lands in one
+ * frame or forty.
+ *
+ * So: enqueue at session start, and spend a few milliseconds a frame on it from then on. The
+ * session comes up immediately, the first seconds are choppy rather than absent, and ShaderBusy
+ * has something true to say while they are.
+ *
+ * A budget cannot split one compile -- a single pipeline is tens of milliseconds on this device
+ * -- so in practice this is "one per frame, sometimes two". That is the point: one 45ms frame is
+ * a stutter, forty-nine of them at once is a hang.
+ */
+let warmQueue = null;
+
+/**
+ * WARM BY DRAWING THE REAL SCENE, BECAUSE NOTHING ELSE COMPILES THE RIGHT PIPELINE.
+ *
+ * THE FINDING THAT MAKES EVERY EARLIER WARM IN THIS FILE A PLACEBO. three keys a render
+ * pipeline on RenderObject.getCacheKey(), and getDynamicCacheKey() starts:
+ *
+ *     cacheKey = this._nodes.getCacheKey( this.scene, this.lightsNode );
+ *
+ * -- THE SCENE AND ITS LIGHTS. Every warm here rendered into a throwaway gpu.Scene with no
+ * lights in it, so every pipeline it built was keyed to that scene and could never be the one
+ * the real scene asks for. The stand-in PlaneGeometry made it worse again: the key is per
+ * render object, so a material warmed on a 4-vertex quad compiles a pipeline for the quad.
+ *
+ * Measured on matt's GalaxyXR with the compile trace: 29 + 15 pipelines built on
+ * `PlaneGeometry(4v)` during a session, none of which anything ever drew, at 30-40ms each.
+ * That is about a second and a half of the grey void spent compiling nothing.
+ *
+ * So the warm draws THE ACTUAL SCENE, once, with the actual camera and the actual lights. The
+ * only thing it changes is visibility: an instanced batch at count 0 draws nothing and compiles
+ * nothing, and a hidden panel likewise, so those are turned on for the one frame and put back.
+ * Nothing is reparented and no stand-in geometry exists, which also makes this much less code
+ * than the thing it replaces.
+ */
+NodeMaterials.warmScene = function (renderer, scene, camera, meshes) {
+  if (!gpu || !renderer || !scene || !camera) return 0;
+  const restore = [];
+  for (const m of (meshes || [])) {
+    if (!m) continue;
+    restore.push({ m, visible: m.visible, count: m.count });
+    m.visible = true;
+    if (m.isInstancedMesh && !m.count) m.count = 1;
+  }
+  let n = 0;
+  try { renderer.render(scene, camera); n = restore.length; }
+  catch (e) { console.warn('[NodeMaterials] warmScene failed', e); }
+  for (const r of restore) {
+    r.m.visible = r.visible;
+    if (r.m.isInstancedMesh) r.m.count = r.count;
+  }
+  return n;
+};
+
+/**
+ * A STAND-IN FOR THE SESSION'S CAMERA, SO THE SESSION'S PIPELINES CAN BE BUILT ON THE DESKTOP.
+ *
+ * Everything this renderer compiles is shaped by the camera it is first drawn with: a plain
+ * PerspectiveCamera gives a single cameraProjectionMatrix in the shared `render` block, while a
+ * session binds per-eye arrays selected by u_cameraIndex. Two different shaders, and a material
+ * holds one at a time -- which is the whole reason Scene rebuilds every material at the session
+ * boundary, and therefore the reason warming at launch has not been able to spare the session
+ * anything.
+ *
+ * Everything the backend does differently in a session is gated on
+ *     renderObject.camera.isArrayCamera && camera.cameras.length > 0 && !isMultiViewCamera
+ * and nothing on that path asks whether a session is running -- which is what xrarray.html at
+ * the repo root demonstrates. So a hand-made two-eye ArrayCamera compiles the session's shape,
+ * on the desktop, at load, where matt wants the cost: "i want a long startup when the app
+ * launches ... and no stuttering or compile shader warnings after that point."
+ */
+NodeMaterials.stereoWarmCamera = function () {
+  if (!gpu) return null;
+  if (NodeMaterials._stereoCam) return NodeMaterials._stereoCam;
+  const W = 64, H = 64;
+  const eyeL = new gpu.PerspectiveCamera(70, (W / 2) / H, 0.01, 20);
+  const eyeR = new gpu.PerspectiveCamera(70, (W / 2) / H, 0.01, 20);
+  eyeL.viewport = new gpu.Vector4(0, 0, W / 2, H);
+  eyeR.viewport = new gpu.Vector4(W / 2, 0, W / 2, H);
+  // A plausible IPD, and each eye's world matrix set outright, because that is what a session
+  // does -- three does not derive the eyes from the head.
+  eyeL.position.set(-0.032, 0, 1); eyeR.position.set(0.032, 0, 1);
+  eyeL.updateMatrixWorld(true); eyeR.updateMatrixWorld(true);
+  const cam = new gpu.ArrayCamera([eyeL, eyeR]);
+  cam.position.z = 1;
+  cam.updateMatrixWorld(true);
+  NodeMaterials._stereoCam = cam;
+  return cam;
+};
+
+NodeMaterials.warmEnqueue = function (materials, meshes) {
+  if (!gpu) return 0;
+  const mats = [];
+  const seen = new Set();
+  for (const m of (materials || [])) if (m && !seen.has(m)) { seen.add(m); mats.push(m); }
+  const geo = new gpu.PlaneGeometry(0.001, 0.001);
+  // The same colour and material attributes the one-shot warm gives its stand-in quad: a
+  // material warmed without them compiles a different pipeline to the one that gets asked for.
+  const n = geo.attributes.position.count;
+  geo.setAttribute('color', new gpu.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
+  geo.setAttribute('aMaterial', new gpu.BufferAttribute(new Float32Array(n * 3), 3));
+  // DRAINED FROM THE END, which decides the ORDER things become cheap in. prewarmBatches hands
+  // these over as capsules, then bone and joint bodies, then wire -- so popping gives wire,
+  // joint, bone, capsules, which is the order a first bone actually needs them. The variants
+  // nobody has touched yet (preselect highlights, physics shapes) come last, by the time the
+  // user is still deciding where to put the second joint.
+  warmQueue = {
+    mats,
+    meshes: (meshes || []).filter(Boolean).slice(),
+    geo,
+    scene: new gpu.Scene(),
+    total: mats.length + (meshes ? meshes.length : 0),
+    done: 0,
+    at: 0,
+  };
+  return warmQueue.total;
+};
+
+/** True while there is warming left to do — for ShaderBusy and for the console. */
+NodeMaterials.warmPending = function () {
+  return warmQueue ? (warmQueue.mats.length + warmQueue.meshes.length) : 0;
+};
+
+/**
+ * Spend up to `budgetMs` on the queue. Called once a frame, before the real render.
+ * Returns how many items are left.
+ */
+NodeMaterials.warmStep = function (renderer, camera, budgetMs) {
+  const q = warmQueue;
+  if (!q || !renderer || !camera) return 0;
+  const budget = budgetMs > 0 ? budgetMs : 6;
+  const t0 = performance.now();
+  if (!q.at) q.at = t0;
+
+  // BOTH CAMERA SHAPES. The mono one for the desktop, and a hand-made two-eye ArrayCamera for
+  // the shape a session uses -- see NodeMaterials.stereoWarmCamera. Warming only the first is
+  // why launch-time warming has never spared the session anything.
+  const cams = [camera];
+  const stereo = q.stereo === false ? null : NodeMaterials.stereoWarmCamera();
+  if (stereo) cams.push(stereo);
+  const draw = (sc) => {
+    for (const c of cams) {
+      try { renderer.render(sc, c); } catch (e) { /* one item is not worth a frame */ }
+    }
+  };
+
+  do {
+    const sc = q.scene;
+    let drew = false;
+    if (q.mats.length) {
+      const mesh = new gpu.Mesh(q.geo, q.mats.pop());
+      mesh.position.set(0, 0, -0.05);
+      mesh.frustumCulled = false;
+      sc.add(mesh);
+      draw(sc);
+      sc.clear();
+      drew = true;
+    } else if (q.meshes.length) {
+      // A REAL BATCH, BORROWED AND PUT BACK INSIDE THIS STEP. Its pipeline is keyed on its own
+      // geometry and instancing, which a stand-in quad cannot reproduce; and an instanced batch
+      // at count 0 draws nothing, so it is nudged to 1 with its instance matrix still zeroed.
+      const m = q.meshes.pop();
+      const parent = m.parent, count = m.count;
+      if (m.isInstancedMesh && !m.count) m.count = 1;
+      sc.add(m);
+      draw(sc);
+      if (m.isInstancedMesh) m.count = count;
+      if (parent) parent.add(m); else sc.remove(m);
+      sc.clear();
+      drew = true;
+    }
+    if (!drew) break;
+    q.done++;
+  } while (performance.now() - t0 < budget);
+
+  const left = q.mats.length + q.meshes.length;
+  if (!left) {
+    console.log('[NodeMaterials] warmed ' + q.total + ' pipelines over '
+      + Math.round(performance.now() - q.at) + 'ms, spread across frames');
+    q.geo.dispose();
+    warmQueue = null;
+  }
+  return left;
+};
+
+/**
+ * EVERY MATERIAL WORTH WARMING: ours, the caller's, and everything already in the scene.
+ *
+ * Split out of warm() so the queued path warms exactly the same set. They used to build their
+ * own lists, and the queue's was empty -- which is how "warm the rig" quietly also warmed 29 UI
+ * materials in one blocking render, and how the queue then warmed none of them.
+ */
+NodeMaterials.collectWarmable = function (extraMaterials, scene) {
   const mats = [];
   const seen = new Set();
   const add = (m) => { if (m && !seen.has(m)) { seen.add(m); mats.push(m); } };
   for (const id in cache) add(cache[id]);
+  if (mapped) for (const m of mapped.values()) add(m);
+  for (const m of basicCache.values()) add(m);
+  if (overlay) for (const m of overlay.values()) add(m);
   add(NodeMaterials._solid);
   for (const v of (NodeMaterials._panelVariants || [])) add(v);
   if (extraMaterials) for (const m of extraMaterials) add(m);
-  // EVERY MATERIAL ALREADY IN THE SCENE, not just ours.
-  //
-  // Traced on device: the first failing draw in a session is L_body -- a GLTF CONTROLLER
-  // MODEL on a stock MeshStandardMaterial -- and it emits 0x506
-  // (INVALID_FRAMEBUFFER_OPERATION) as well as the UBO error. stylus_spike follows, then the
-  // panel. So the panels were third in line and collateral all along.
-  //
-  // The rule this renderer enforces is not "do not CREATE a material in a session", it is
-  // "do not first DRAW one in a session" -- that is when the pipeline is built. Anything
-  // VR-only is therefore drawn for the first time inside the session, which is every object
-  // this trace named. Warming the node cache alone was too narrow.
+  // EVERY MATERIAL ALREADY IN THE SCENE, not just ours -- see the note in warm().
   if (scene) scene.traverse((o) => {
     const m = o.material;
     if (!m) return;
-    // NOT THE ONES THIS RENDERER CANNOT DRAW. A raw ShaderMaterial throws out of build(),
-    // and warming is the one place that throw is self-inflicted: the sweep deliberately
-    // renders every material it can find, so it walked straight into three's fat-line
-    // LineMaterial (Line2/LineSegments2, a ShaderMaterial subclass) and threw
-    // "THREE.NodeMaterial: Material LineMaterial is not compatible" from inside the warm
-    // pass itself -- visible in matt's log with NodeMaterials.js in the stack.
     const bad = (x) => !x || (x.isShaderMaterial && !x.isNodeMaterial);
     if (Array.isArray(m)) m.forEach((x) => { if (!bad(x)) add(x); });
     else if (!bad(m)) add(m);
   });
-  if (!mats.length) return 0;
+  return mats;
+};
+
+NodeMaterials.warm = function (renderer, camera, extraMaterials, scene, extraMeshes) {
+  if (!gpu || !renderer) return 0;
+  const mats = NodeMaterials.collectWarmable(extraMaterials, scene);
+  const seen = new Set(mats);
+  const add = () => {};
+  // The scene sweep, the raw-ShaderMaterial exclusion and the reasoning for both now live in
+  // collectWarmable above:
+  //
+  // Traced on device: the first failing draw in a session is L_body -- a GLTF CONTROLLER MODEL
+  // on a stock MeshStandardMaterial -- and it emits 0x506 (INVALID_FRAMEBUFFER_OPERATION) as
+  // well as the UBO error. stylus_spike follows, then the panel. So the panels were third in
+  // line and collateral all along. The rule this renderer enforces is not "do not CREATE a
+  // material in a session", it is "do not first DRAW one in a session" -- that is when the
+  // pipeline is built.
+  void seen; void add;
+  const nExtra = extraMeshes ? extraMeshes.length : 0;
+  if (!mats.length && !nExtra) return 0;
 
   const sc = new gpu.Scene();
   const geo = new gpu.PlaneGeometry(0.001, 0.001);
@@ -931,14 +1190,43 @@ NodeMaterials.warm = function (renderer, camera, extraMaterials, scene) {
     mesh.frustumCulled = false;
     sc.add(mesh);
   }
+  // THE REAL MESHES, FOR THE ONES A PLANE CANNOT STAND IN FOR.
+  //
+  // A pipeline is keyed on the geometry as well as the material -- attribute layout and
+  // instancing included -- so warming an InstancedMesh's material on a PlaneGeometry compiles a
+  // pipeline nothing will ever ask for. The rig's batches are exactly that case, and they were
+  // still compiling 29 pipelines inside the session on the first bone. These are the actual
+  // objects, borrowed from the scene graph and put back below, so what is compiled here is what
+  // is drawn later.
+  //
+  // An instanced batch sits at count 0 until a joint fills it, and a count of 0 draws nothing
+  // and compiles nothing, so each is nudged to 1 for this pass. The instance matrix is still all
+  // zeroes, which collapses it to a point -- it is submitted, and it is not visible.
+  const borrowed = [];
+  if (extraMeshes) {
+    for (const m of extraMeshes) {
+      if (!m) continue;
+      borrowed.push({ mesh: m, parent: m.parent, count: m.count });
+      if (m.isInstancedMesh && !m.count) m.count = 1;
+      sc.add(m);
+    }
+  }
   try {
     renderer.render(sc, camera);
   } catch (e) {
     console.warn('[NodeMaterials] warm failed', e);
   }
+  // PUT THEM BACK BEFORE sc.clear(), which would otherwise leave them parentless and gone from
+  // the scene -- a rig that never draws is a worse bug than the one this is fixing.
+  for (const b of borrowed) {
+    if (b.mesh.isInstancedMesh) b.mesh.count = b.count;
+    if (b.parent) b.parent.add(b.mesh);
+    else sc.remove(b.mesh);
+  }
   sc.clear();
   geo.dispose();
-  console.log('[NodeMaterials] warmed ' + mats.length + ' pipelines');
+  console.log('[NodeMaterials] warmed ' + mats.length + ' pipelines'
+    + (borrowed.length ? ' (+' + borrowed.length + ' rig batches, on their own geometry)' : ''));
   return mats.length;
 };
 

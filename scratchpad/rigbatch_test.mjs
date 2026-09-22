@@ -187,9 +187,20 @@ check('the wireframe is a merged line batch',
 check('...with per-vertex colour, since a merged buffer has one material',
   /vertexColors: true, transparent: true, depthWrite: false/.test(SRC),
   'the joints tint differently and they now share a material');
-check('...and the buffer is only rebuilt when the joint count moves',
-  /if \(!pa \|\| pa\.array\.length !== need\)/.test(SRC),
-  'reallocating every frame would cost more than the draw calls did');
+// NOT REBUILT ON EVERY CHANGE, AND NEVER SHRUNK. The original rule here was "only when the
+// joint count moves" -- an exact-fit buffer, reallocated whenever n changed. That is once per
+// size rather than once per frame, which was the point at the time, but on the node renderer a
+// replacement buffer is a new render object and therefore a new compiled pipeline: matt's
+// compile report caught rigbatch:wire-ghost at 0v, 2v, 24v and 480v in a single session, at
+// 30-40ms each. So the invariant is now the same one the instanced batches hold -- grow only,
+// geometrically, and let the draw range decide what is drawn.
+check('...and the wire buffer only ever grows, in the same steps the batches use',
+  /if \(!pa \|\| pa\.array\.length < need\)/.test(SRC)
+    && /while \(cap < need\) cap \*= BATCH_GROW;/.test(SRC),
+  'an exact-fit buffer is a new pipeline every time the joint count changes');
+check('...and the draw range still decides what is drawn',
+  /g\.setDrawRange\(0, n \* verts\);/.test(SRC),
+  'a capacity buffer without a draw range draws the slack as garbage triangles');
 check('...a hidden joint collapses rather than being removed',
   /_mSlot\.compose\(s\.position, s\.quaternion, s\.visible \? s\.scale : _sZero\)[\s\S]{0,400}?P\[o\] = _vLine\.x/.test(SRC),
   'the merged buffer is positional too');
@@ -235,9 +246,44 @@ check('an invisible slot is scaled to zero, not dropped',
   'shortening the count to hide one instance renumbers the rest');
 
 // ── growth ────────────────────────────────────────────────────────────────────
-check('the buffers grow in powers of two',
-  /while \(cap < n\) cap \*= 2;/.test(SRC),
-  'InstancedMesh cannot be resized, so a rig gaining a joint would rebuild every add');
+// GEOMETRIC GROWTH FROM A CAPACITY A RIG FITS IN. This used to pin `cap *= 2` literally, from
+// when a batch started at 1 and doubled. That is the wrong invariant twice over: the factor is
+// a tuning number, and the STARTING capacity is the one that matters. On the node renderer a
+// replacement InstancedMesh is a new RenderObject, so every rebuild compiles fourteen pipelines
+// in one frame -- starting at 1 put that frame at joints 1, 2, 4, 8, 16 and 32, which is the
+// stutter matt kept reporting while drawing chains. What must hold is that the growth is
+// multiplicative (so it terminates and rebuilds get rarer) and that a whole ordinary rig fits
+// without a single rebuild.
+const cap0 = /const BATCH_CAP0 = (\d+);/.exec(SRC);
+const grow = /const BATCH_GROW = (\d+);/.exec(SRC);
+check('the batches start big enough for an ordinary rig',
+  !!cap0 && parseInt(cap0[1], 10) >= 24,
+  'a small starting capacity rebuilds every batch, and every pipeline, mid-chain');
+check('...and grow multiplicatively when one does not fit',
+  !!grow && parseInt(grow[1], 10) >= 2 && /while \(cap < n\) cap \*= BATCH_GROW;/.test(SRC),
+  'an additive step rebuilds every batch a fixed number of joints apart, forever');
+check('...from the same constant the batch was created with',
+  /new THREE\.InstancedMesh\(geo, capMat \|\| mat, BATCH_CAP0\)/.test(SRC)
+    && /return \{ mesh: m, cap: BATCH_CAP0, ghost/.test(SRC),
+  'a literal here and a constant there is how the first rebuild lands on joint one');
+// ── the warm list must not drift from the real one ────────────────────────────
+// A pipeline is keyed on geometry as well as material, so the rig's batches are warmed on their
+// own meshes before a session; a batch missing from that table is a pipeline compiled INSIDE the
+// session, on the first bone, which is invisible from anywhere but a headset running boneTrace.
+// Listing the keys twice is the risk this covers.
+const warmKeys = new Set();
+for (const m of SRC.matchAll(/\['([\w-]+)',\s*\w+Geometry,\s*(?:true|false)\]/g)) warmKeys.add(m[1]);
+const liveKeys = new Set();
+for (const m of SRC.matchAll(/(?:batchSlot|physVariant|lineBatchSlot|physLineVariant)\(main,[\s\S]{0,60}?'([\w-]+)'/g)) {
+  liveKeys.add(m[1]);
+}
+// batchSlot's optional keyHi is a second batch on the same line, and needs warming too.
+for (const m of SRC.matchAll(/batchSlot\(main, '[\w-]+', \w+, (?:true|false), '([\w-]+)'\)/g)) liveKeys.add(m[1]);
+check('the prewarm table is not empty', warmKeys.size >= 12, `${warmKeys.size} keys`);
+const missing = [...liveKeys].filter((k) => !warmKeys.has(k));
+check('every batch a rig creates is in the prewarm table', missing.length === 0,
+  'not warmed: ' + missing.join(', '));
+
 check('...and the old instance mesh is disposed when it is replaced',
   /old\.dispose\(\);/.test(SRC));
 
