@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { resolve } from 'path';
 import { existsSync, readFileSync } from 'fs';
+import devRelay from './tools/dev-relay-plugin.mjs';
 
 // HTTP=1 npm run dev  → serve plain HTTP (no self-signed cert). Use this for the
 // `adb reverse` → GalaxyXR workflow: the headset hits http://localhost:8080, and
@@ -40,7 +41,10 @@ export default defineConfig({
     }
   },
   plugins: [
-    ...(useHttp || haveCert ? [] : [basicSsl()])
+    ...(useHttp || haveCert ? [] : [basicSsl()]),
+    // Console + eval for devices with no debugging protocol (iPad, Vision Pro). `apply: 'serve'`
+    // inside the plugin keeps it out of every build. See tools/dev-relay-plugin.mjs.
+    devRelay()
   ],
   worker: {
     format: 'es'
