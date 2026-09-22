@@ -3919,7 +3919,8 @@ class Scene {
 
       // Three.js clears depth on its own, so we render over the top
       this._mark('gl-render');
-      this._renderer.render(this._scene, _renderCam);
+      if (this._directPipeline) this._directPipeline.render(this._scene, _renderCam);
+      else this._renderer.render(this._scene, _renderCam);
       this._mark(null);
       if (this._btAt) {
         this._boneTraceFrame(performance.now() - this._btAt);
@@ -4080,6 +4081,42 @@ class Scene {
     if (useWebGPU) {
       const [WGPU, TSL] = await Promise.all([import('three/webgpu'), import('three/tsl')]);
       this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
+      // VISION PRO RENDERS THROUGH DirectRenderPipeline, EVERYTHING ELSE DOES NOT.
+      //
+      // three renders the scene to an intermediate target and blits it to the XR layer whenever
+      // the output needs tone mapping OR a colour-space conversion -- `useToneMapping ||
+      // useColorSpace`, and an sRGB output against a linear working space trips the second on
+      // its own, so turning tone mapping off changes nothing. visionOS mishandles that blit:
+      // stereo comes out warped, each object visible in only one eye depending on where it sits.
+      // Reproduced with EIGHTY LINES OF RAW WebGL2 and no library at all -- tokeru.com/xrblit --
+      // so it is a platform bug, not three's and not ours.
+      //
+      // DirectRenderPipeline (r186+) applies the output node INSIDE the material and draws
+      // straight into the layer, so there is no blit to mishandle and colour management still
+      // works. Verified on a Vision Pro and on a GalaxyXR.
+      //
+      // GATED, because three warns it "changes blending and is not compatible with materials
+      // that sample the framebuffer" -- and in this app every mesh and every VR panel is
+      // transparent with renderOrder as the only layering lever. The GalaxyXR works today; it
+      // does not get to inherit that risk for a bug it does not have.
+      //
+      // KEYED ON CAPABILITY AND BROWSER, NOT A MODEL STRING: visionOS Safari is the only WebKit
+      // that exposes navigator.xr at all -- desktop Safari has none -- so this is specific
+      // without naming a device that will be renamed.
+      this._directPipeline = null;
+      {
+        const ua = navigator.userAgent;
+        const isVisionOS = /Macintosh/.test(ua) && !/Chrome|Chromium/i.test(ua) && ('xr' in navigator);
+        const forced = /[?&]direct=1/.test(window.location.search);
+        const banned = /[?&]direct=0/.test(window.location.search);
+        const want = (isVisionOS || forced) && !banned;
+        if (want && typeof WGPU.DirectRenderPipeline === 'function') {
+          this._directPipeline = new WGPU.DirectRenderPipeline(this._renderer);
+        }
+        console.log('[renderer] DirectRenderPipeline '
+          + (this._directPipeline ? 'ON' : 'off')
+          + ' (visionOS=' + isVisionOS + (forced ? ', forced' : '') + (banned ? ', ?direct=0' : '') + ')');
+      }
       await this._renderer.init();
       // TWO three 0.183.2 BUGS THAT ONLY BITE UNDER AN ArrayCamera, i.e. in a session: uniform
       // block binding points that collide between render objects, and a `cameraPosition` that
