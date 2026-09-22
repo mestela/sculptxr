@@ -56,6 +56,10 @@ if (/[?&]linear=1/.test(location.search)) {
 renderer.setPixelRatio(1);
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
+// Exposed so the relay can interrogate three's render-target chain live. The harness exists to
+// be questioned; hiding the renderer behind module scope cost a round trip already.
+window.renderer = renderer;
+window.THREE = THREE;
 document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer));
 
@@ -91,8 +95,28 @@ function fixSize() {
   console.log('[xrmin] resized ' + w + 'x' + h);
 }
 
-{ const gl2 = renderer.backend.gl; const oa = gl2.drawArrays.bind(gl2);
-  gl2.drawArrays = function (m, f, c) { if (c === 3) { const v = gl2.getParameter(gl2.VIEWPORT); if (v[2] > 9000) window.__sawComposite = true; } return oa.apply(gl2, arguments); }; }
+{ const gl2 = renderer.backend.gl;
+  // WHICH FRAMEBUFFER DOES EACH PASS WRITE TO. If the scene goes to one target and the
+  // composite to another, the first is the intermediate -- and its size is the open question.
+  const ids = new WeakMap(); let next = 1;
+  const fbId = (f) => (f === null ? 0 : (ids.has(f) ? ids.get(f) : (ids.set(f, next), next++)));
+  // ONLY WHILE PRESENTING, and counted separately. The first version capped at 300 draws and
+  // the pre-session desktop frames ate every one of them, so the table reported the Safari
+  // window (1015x1014) as though it were the headset. A sample that fills up before the thing
+  // you care about starts is worse than no sample.
+  const note = (c) => { try {
+    if (!renderer.xr.isPresenting) return;
+    const v = gl2.getParameter(gl2.VIEWPORT);
+    const f = gl2.getParameter(gl2.FRAMEBUFFER_BINDING);
+    const key = 'fb' + fbId(f) + ' vp=' + v[0] + ',' + v[2] + 'x' + v[3] + (c === 3 ? ' [3vtx]' : '');
+    (window.__passes = window.__passes || {})[key] = (window.__passes[key] || 0) + 1;
+    if (c === 3 && v[2] > 9000) window.__sawComposite = true;
+  } catch (e) {} };
+  const oa = gl2.drawArrays.bind(gl2), oe = gl2.drawElements.bind(gl2);
+  let n = 0;
+  gl2.drawArrays = function (m, f, c) { if (n < 400) { n++; note(c); } return oa.apply(gl2, arguments); };
+  gl2.drawElements = function (m, c) { if (n < 400) { n++; note(c); } return oe.apply(gl2, arguments); };
+  window.__resetPasses = () => { window.__passes = {}; window.__sawComposite = false; n = 0; return 'reset'; }; }
 let n = 0;
 renderer.setAnimationLoop(() => {
   fixSize();

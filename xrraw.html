@@ -53,6 +53,15 @@ if (!gl) { hud.textContent = 'no webgl2'; throw new Error('no webgl2'); }
 // difference between three's shader and this one.
 const SHARED = /[?&]shared=1/.test(location.search);
 const INTERLEAVE = /[?&]interleave=1/.test(location.search);
+// ?blit=1 RENDERS TO AN INTERMEDIATE AND COPIES, which is the one thing three does here that
+// this page does not. three draws the scene into a half-float linear target and then blits it
+// to the XR layer with a fullscreen triangle applying sRGB. Skipping that pass (?linear=1 on
+// xrmin.html) makes three CORRECT on a Vision Pro, so the copy is the suspect -- and everything
+// measurable about it is right: both surfaces 10174x4081, resolution uniform correct, 1:1.
+// ?blit=1 half-float intermediate (three's shape) | ?blit=2 plain RGBA8, to find out whether
+// the fault is the FORMAT or the copy itself.
+const BLIT = /[?&]blit=[12]/.test(location.search);
+const BLIT8 = /[?&]blit=2/.test(location.search);
 const VS = `#version 300 es
 ${USE_UBO ? `${SHARED ? '' : 'layout(std140) '}uniform Camera { mat4 proj[2]; mat4 view[2]; };
 layout(std140) uniform Idx { uvec4 idx; };` : `uniform mat4 uProj; uniform mat4 uView;`}
@@ -120,6 +129,57 @@ function setModel(x, y, z, s, rot) {
   gl.uniformMatrix4fv(uModel, false, model);
 }
 
+// The intermediate target and the copy program, built lazily once the layer size is known.
+let fbo = null, fboTex = null, fboDepth = null, fboW = 0, fboH = 0, blitProg = null, blitVao = null;
+function ensureBlit(w, h) {
+  if (!blitProg) {
+    const bvs = `#version 300 es
+void main() {
+  // A fullscreen triangle from gl_VertexID, the same trick three uses -- no attributes.
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+    const bfs = `#version 300 es
+precision highp float; uniform sampler2D uTex; uniform vec2 uRes; out vec4 o;
+vec3 toSRGB(vec3 c){ return mix(c*12.92, pow(c,vec3(0.41666))*1.055-0.055, step(0.0031308,c)); }
+void main() { o = vec4(toSRGB(texture(uTex, gl_FragCoord.xy / uRes).rgb), 1.0); }`;
+    blitProg = gl.createProgram();
+    gl.attachShader(blitProg, sh(gl.VERTEX_SHADER, bvs));
+    gl.attachShader(blitProg, sh(gl.FRAGMENT_SHADER, bfs));
+    gl.linkProgram(blitProg);
+    if (!gl.getProgramParameter(blitProg, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(blitProg));
+    blitVao = gl.createVertexArray();
+  }
+  if (fboW === w && fboH === h) return;
+  fboW = w; fboH = h;
+  if (fbo) { gl.deleteFramebuffer(fbo); gl.deleteTexture(fboTex); gl.deleteRenderbuffer(fboDepth); }
+  // HALF FLOAT IS NOT COLOUR-RENDERABLE WITHOUT THE EXTENSION. RGBA16F needs
+  // EXT_color_buffer_float (or _half_float) enabled before it can back a framebuffer; without
+  // it the FBO comes back INCOMPLETE_ATTACHMENT (36054) and the headset just shows black --
+  // which reads as "the blit is broken" when it actually means "the test is broken".
+  const canFloat = !BLIT8 && !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'));
+  fboTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, fboTex);
+  if (canFloat) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+  else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  fboDepth = gl.createRenderbuffer();
+  gl.bindRenderbuffer(gl.RENDERBUFFER, fboDepth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+  fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fboTex, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, fboDepth);
+  const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  console.log('[xrraw] intermediate ' + w + 'x' + h + ' ' + (canFloat ? 'RGBA16F' : 'RGBA8 (no float ext)')
+    + ' status=' + (st === gl.FRAMEBUFFER_COMPLETE ? 'complete' : st));
+  window.__blitInfo = { size: w + 'x' + h, format: canFloat ? 'RGBA16F' : 'RGBA8', complete: st === gl.FRAMEBUFFER_COMPLETE };
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
 let session = null, refSpace = null, frames = 0;
 document.getElementById('b').onclick = async () => {
   try {
@@ -150,7 +210,8 @@ function draw(t, frame) {
   const pose = frame.getViewerPose(refSpace);
   if (!pose) return;
   const layer = session.renderState.baseLayer;
-  gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+  if (BLIT) ensureBlit(layer.framebufferWidth, layer.framebufferHeight);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, BLIT ? fbo : layer.framebuffer);
   gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
   gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(prog); gl.bindVertexArray(vao);
@@ -204,8 +265,20 @@ function draw(t, frame) {
     });
   }
 
+  if (BLIT) {
+    // THE COPY, matching three's: fullscreen triangle, full viewport, sample by gl_FragCoord.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.viewport(0, 0, layer.framebufferWidth, layer.framebufferHeight);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.useProgram(blitProg); gl.bindVertexArray(blitVao);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fboTex);
+    gl.uniform1i(gl.getUniformLocation(blitProg, 'uTex'), 0);
+    gl.uniform2f(gl.getUniformLocation(blitProg, 'uRes'), layer.framebufferWidth, layer.framebufferHeight);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
   if ((frames++ % 60) === 0) {
-    window.__xrraw = { mode: (USE_UBO ? 'UBO' : 'plain') + (SHARED ? '+shared' : '+std140') + (INTERLEAVE ? '+object-major' : '+eye-major'),
+    window.__xrraw = { mode: (USE_UBO ? 'UBO' : 'plain') + (SHARED ? '+shared' : '+std140') + (INTERLEAVE ? '+object-major' : '+eye-major') + (BLIT ? (BLIT8 ? '+BLIT8' : '+BLIT16F') : '+direct'),
       views: pose.views.length, fb: layer.framebufferWidth + 'x' + layer.framebufferHeight,
       vp: pose.views.map((v) => { const p = layer.getViewport(v); return p.x + ',' + p.width; }) };
     hud.textContent = JSON.stringify(window.__xrraw, null, 1);
