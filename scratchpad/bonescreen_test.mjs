@@ -136,6 +136,16 @@ const Skeleton = {
   hidePreview(main) { if (main) main._preview = null; },
   updatePlane(main, plane, hot) { main._planeVis = plane ? { hot: !!hot } : null; },
   hidePlane(main) { if (main) main._planeVis = null; },
+  // The axis gnomon draws from the PARENT joint and is only up while a bone is being dragged,
+  // so from this harness's point of view it is furniture that must not throw. Recorded rather
+  // than ignored: _gnomonVis is what a later check would assert against.
+  snapAxisInfo(from, to) {
+    const d = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const len = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    return len < 1e-9 ? null : { axis: null, len: len, dot: 0, guarded: 0 };
+  },
+  updateAxisGnomon(main, from, len) { main._gnomonVis = { len: len }; },
+  hideAxisGnomon(main) { if (main) main._gnomonVis = null; },
 };
 
 const Skinning = { resolveWeightsAll: () => 0, restoreColorsAll() {}, isBound: () => false };

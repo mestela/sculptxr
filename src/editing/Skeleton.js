@@ -3744,6 +3744,33 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
   }
 
+  // THE AXIS GNOMON RIDES HERE, and not in the tool.
+  //
+  // It first hung off BoneDrawTool.postRender, which does not run on the node renderer at all --
+  // the same trap the desktop gizmo fell into -- and off a `_drag` that only exists on the
+  // desktop, so in a headset there was nothing to hang it on either. matt: "if theres an axis
+  // snap guide, i cant't see it."
+  //
+  // showPreview is the one place BOTH paths already come through, and it is handed exactly what
+  // the gnomon needs: the parent and the RESOLVED candidate. Reading the resolved point is also
+  // what makes the lit arm honest -- once a snap has fired the direction IS the winning axis, so
+  // the overlay cannot disagree with the bone it is drawn next to.
+  if (fromPos && Skeleton.displayFlag('snapAxis')) {
+    const plane = Skeleton.symmetryPlane(main);
+    const onPlane = (p) => !!plane && Math.abs(Skeleton.planeDistance(p, plane)) <= 1e-4;
+    const guard = (plane && Skeleton.displayFlag('snapPlane')
+      && onPlane(toPos) && onPlane(fromPos)) ? plane.normal : null;
+    const info = Skeleton.snapAxisInfo(fromPos, toPos, guard);
+    if (info) {
+      info.guardNormal = guard;
+      Skeleton.updateAxisGnomon(main, fromPos, info.len, info);
+    } else {
+      Skeleton.hideAxisGnomon(main);
+    }
+  } else {
+    Skeleton.hideAxisGnomon(main);
+  }
+
   if (!fromPos) { pv.bone.solid.visible = pv.bone.ghost.visible = false; return; }
   _dir.subVectors(toPos, fromPos);
   const len = _dir.length();
@@ -3757,6 +3784,7 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
 };
 
 Skeleton.hidePreview = function (main) {
+  Skeleton.hideAxisGnomon(main);
   const pv = main._skelPreview;
   if (!pv) return;
   for (const o of [pv.bone.solid, pv.bone.ghost, pv.dot.solid, pv.dot.ghost]) o.visible = false;
@@ -4015,20 +4043,115 @@ const AXES = [
 // axis, rather than quietly correcting bones you meant to angle.
 const AXIS_COS = Math.cos(5 * Math.PI / 180);
 
-Skeleton.snapAxis = function (from, to, out, excludeNormal) {
+/**
+ * WHICH AXIS THE SNAP WOULD CHOOSE, and how long the bone is -- without moving anything.
+ *
+ * Split out of snapAxis so the DECISION lives in one place. The gnomon has to light the axis
+ * that is about to win, and working that out a second time in the overlay is how the two would
+ * come to disagree -- the picture saying one thing while the joint lands somewhere else, which
+ * is worse than no picture.
+ *
+ * Returns null when nothing is in range. `guarded` is the count of axes that were in range but
+ * refused because they are too close to the plane normal: the gnomon strikes those through, so
+ * a snap that silently does not fire can be seen not firing.
+ */
+Skeleton.snapAxisInfo = function (from, to, excludeNormal) {
   _dir.subVectors(to, from);
   const len = _dir.length();
-  if (len < 1e-9) return to;
+  if (len < 1e-9) return null;
   _dir.divideScalar(len);
 
-  let best = null, bestDot = AXIS_COS;
+  let best = null, bestDot = AXIS_COS, guarded = 0;
   for (const a of AXES) {
-    if (excludeNormal && Math.abs(a.dot(excludeNormal)) > 0.9) continue;
     const d = _dir.dot(a);
+    if (excludeNormal && Math.abs(a.dot(excludeNormal)) > 0.9) {
+      if (d > AXIS_COS) guarded++;
+      continue;
+    }
     if (d > bestDot) { bestDot = d; best = a; }
   }
-  if (!best) return to;
-  return out.copy(from).addScaledVector(best, len);
+  return { axis: best, len: len, dot: bestDot, guarded: guarded };
+};
+
+Skeleton.snapAxis = function (from, to, out, excludeNormal) {
+  const info = Skeleton.snapAxisInfo(from, to, excludeNormal);
+  if (!info || !info.axis) return to;
+  return out.copy(from).addScaledVector(info.axis, info.len);
+};
+
+// ---- the axis-snap gnomon ------------------------------------------------------------------
+//
+// SIX ARMS FROM THE PARENT JOINT, NOT A CROSS ON THE CURSOR.
+//
+// matt: "the axis snap for bone creation is handy, but hard to undrestand in context. can we
+// overlay a dim worldspace x/y/z cross that follows the cursor". It follows the PARENT instead,
+// and that difference is the point: snapAxis measures the direction from the parent and keeps
+// the bone's length, so the snap radiates from the joint being extended. A cross on the cursor
+// would draw the one thing that is not true about it, which is a fair guess at why the feature
+// reads as mysterious today.
+//
+// Each arm is the length of the bone being dragged, so the lit one shows exactly where the joint
+// will land rather than merely which way.
+//
+// THREE STATES, and the third is the one that earns this overlay. An axis too close to the
+// symmetry plane's normal is refused (see _resolve in BoneDrawTool: a bone with both ends on the
+// centreline must not snap to the normal and leave the plane), and today that refusal is silent.
+// Struck through, it can be seen refusing.
+const GNOMON_DIM = 0.22;
+const GNOMON_LIT = 1.0;
+const GNOMON_GUARD = 0.10;    // refused: present, clearly not participating
+const GNOMON_ORDER = 9998;    // over the rig and the snap plane, under the pin link at 10000
+const _gnDir = new THREE.Vector3();
+const _gnCol = new THREE.Color();
+
+Skeleton.updateAxisGnomon = function (main, from, len, info) {
+  if (!from || !(len > 1e-9)) { Skeleton.hideAxisGnomon(main); return; }
+  const g = skelGroup(main);
+  if (!main._skelGnomon) {
+    const geo = new THREE.BufferGeometry();
+    // FIXED SIZE, ALLOCATED ONCE. Six segments is twelve vertices whatever the rig does, so
+    // this buffer is never replaced -- which on the node renderer is the difference between one
+    // pipeline and a new one every time it changes. See the wire batch for the version of this
+    // lesson that cost real headset time.
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+    const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9,
+      // Always visible: it is a drawing aid, and one buried inside the sculpt cannot aid
+      // anything. renderOrder rather than depth, as everything else in this overlay does.
+      depthTest: false, depthWrite: false,
+    }));
+    m.renderOrder = GNOMON_ORDER;
+    m.isPickable = false;
+    m.frustumCulled = false;
+    m.name = 'axis_gnomon';
+    g.add(m);
+    main._skelGnomon = m;
+  }
+  const mesh = main._skelGnomon;
+  const pos = mesh.geometry.getAttribute('position');
+  const col = mesh.geometry.getAttribute('color');
+  const active = info && info.axis;
+  const guardN = info && info.guardNormal;
+  for (let i = 0; i < AXES.length; i++) {
+    const a = AXES[i];
+    _gnDir.copy(a).multiplyScalar(len);
+    pos.setXYZ(i * 2, from.x, from.y, from.z);
+    pos.setXYZ(i * 2 + 1, from.x + _gnDir.x, from.y + _gnDir.y, from.z + _gnDir.z);
+    // Axis colour by which component is non-zero, so the arms read as X/Y/Z at a glance and
+    // both halves of an axis match -- the sign is read from the direction, not the hue.
+    _gnCol.setRGB(Math.abs(a.x), Math.abs(a.y), Math.abs(a.z));
+    const refused = guardN && Math.abs(a.dot(guardN)) > 0.9;
+    const k = refused ? GNOMON_GUARD : (active && a.equals(active) ? GNOMON_LIT : GNOMON_DIM);
+    for (let e = 0; e < 2; e++) col.setXYZ(i * 2 + e, _gnCol.r * k, _gnCol.g * k, _gnCol.b * k);
+  }
+  pos.needsUpdate = true;
+  col.needsUpdate = true;
+  mesh.visible = true;
+};
+
+Skeleton.hideAxisGnomon = function (main) {
+  if (main._skelGnomon) main._skelGnomon.visible = false;
 };
 
 Skeleton.mirrorPoint = function (p, plane, out) {

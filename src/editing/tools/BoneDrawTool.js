@@ -741,6 +741,11 @@ class BoneDrawTool extends SculptBase {
     Skeleton.updatePlane(main, plane, !!this._hot, this._drag ? this._drag.pos : null);
   }
 
+  // The axis gnomon is NOT driven from here. It lives in Skeleton.showPreview, which both the
+  // desktop and VR paths already call with the parent and the resolved candidate -- see the note
+  // there. Driving it from this tool meant postRender (which the node renderer never calls) and
+  // a `_drag` that does not exist in a headset.
+
   // Model-space centre of the sculpt — the depth a joint gets when there is no plane and no
   // parent to take one from. Its own bounding sphere, carried into model space the same way
   // sceneUnit does it.
