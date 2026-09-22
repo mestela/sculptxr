@@ -15271,8 +15271,10 @@ class Scene {
       for (const p of HTMLVRPanel._live) if (p.mesh && !p.mesh.visible) list.push(p.mesh);
     } catch (e) { /* the registry is a convenience */ }
     this._revealWarm = list.filter(Boolean);
+    this._revealAt = performance.now();
+    this._revealFrames = 0;
     console.log('[warm] revealing ' + this._revealWarm.length
-      + ' normally-hidden objects, a few a frame, inside the ordinary render');
+      + ' normally-hidden objects, ONE a frame, inside the ordinary render');
     return this._revealWarm.length;
   }
 
@@ -15288,7 +15290,14 @@ class Scene {
     }
     const list = this._revealWarm;
     if (!list || !list.length) return;
-    const batch = list.splice(0, 3);
+    // ONE PER FRAME, NOT THREE.
+    //
+    // Three was chosen when a compile was assumed to be cheap. Measured on matt's GalaxyXR, one
+    // is 40-120ms and the sculpt's own is 331ms -- so three of them made a 150-350ms frame, and
+    // a compositor fed frames that slowly shows the lobby whatever is being submitted. The total
+    // work is the same either way; what changes is whether it arrives as one hitch or three
+    // stacked into a frame the runtime gives up on. matt: "just got the gray void again".
+    const batch = list.splice(0, 1);
     const restore = [];
     for (const m of batch) {
       restore.push({ m, visible: m.visible, count: m.count });
@@ -15298,8 +15307,11 @@ class Scene {
     this._revealRestore = restore;
     if (!list.length) {
       this._revealWarm = null;
-      console.log('[warm] reveal pass done');
+      const ms = this._revealAt ? Math.round(performance.now() - this._revealAt) : 0;
+      console.log('[warm] reveal pass done in ' + ms + 'ms across ' + (this._revealFrames || 0)
+        + ' frames');
     }
+    this._revealFrames = (this._revealFrames || 0) + 1;
   }
 
   /**

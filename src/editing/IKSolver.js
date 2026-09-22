@@ -1839,6 +1839,82 @@ window.boneTrace = function (n) {
 // The snap overlays: what each snap decided, and what the gnomon and the flatness disc are
 // actually doing about it. matt, three rounds in: "no, still no plane/disc snap. add
 // diagnostics." One line a quarter second while a bone is being previewed.
+// LIMB PLANES: HOW FAR EACH CHAIN IS FROM BENDING ON ONE AXIS.
+//
+// The convention is X bends and Z runs down the bone, so a chain is clean when its limb plane's
+// normal IS the joint's local X. `bend` is the angle between them: 0 is clean, 90 means rotateX
+// twists the limb instead of bending it.
+//
+// `straight` is how far from straight the run is. A limb drawn dead straight has no bend plane
+// worth the name and its normal is rounding noise -- riggers put a few degrees of bend in on
+// purpose, so a run near 0 is a rig to fix rather than a measurement to trust.
+//
+// WHAT IT MEASURES DEPENDS ON THE SELECTION, because a limb is a run the rigger names and not
+// something a walk over the hierarchy can infer. matt: "wouldn't i need to choose the 3 joints,
+// or at least have them named so you understand where the planes start and end?"
+//
+//   three joints selected   exactly that run, in hierarchy order, whatever their shape --
+//                           which is the only way to measure an elbow that carries a twist
+//                           joint as a second child
+//   some joints selected    the run at each selected joint that has one
+//   nothing selected        every run in the rig, worst first
+//
+// Every line names all three joints, so a report on an unnamed rig is still readable by id.
+//
+// Read-only. Nothing here moves a joint.
+window.rigPlanes = function () {
+  const main = window.app;
+  if (!main) return 0;
+  const L = Skeleton.jointLabel;
+  const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+  const rows = [];
+
+  if (sel.length === 3) {
+    // HIERARCHY ORDER, NOT CLICK ORDER. The middle joint is the one that is a child of one of
+    // the others and a parent of the third -- asking the user to click them in order would be a
+    // rule to remember, and getting it wrong would silently measure the wrong angle.
+    const isAncestor = (a, b) => { for (let p = b; p; p = p._parentMesh) if (p === a) return true; return false; };
+    const mid = sel.find((m) => sel.some((o) => o !== m && isAncestor(o, m))
+                             && sel.some((o) => o !== m && isAncestor(m, o)));
+    if (!mid) {
+      console.log('[planes] those three joints are not one run — one must be an ancestor of the '
+        + 'middle and the middle an ancestor of the third: '
+        + sel.map(L).join(', '));
+      return 0;
+    }
+    const up = sel.find((o) => o !== mid && isAncestor(o, mid));
+    const down = sel.find((o) => o !== mid && isAncestor(mid, o));
+    const lp = Skeleton.limbPlaneOf(up, mid, down);
+    if (lp) rows.push(lp);
+  } else {
+    const pool = sel.length ? sel : Skeleton.joints(main);
+    for (const j of pool) {
+      const lp = Skeleton.limbPlaneAt(main, j);
+      if (lp) rows.push(lp);
+    }
+    if (sel.length && !rows.length) {
+      console.log('[planes] no run at the selected joint(s) — a run needs a parent and exactly '
+        + 'one child. Select the three joints outright to measure across a branch.');
+      return 0;
+    }
+  }
+
+  if (!rows.length) {
+    console.log('[planes] no three-joint runs found');
+    return 0;
+  }
+  rows.sort((a, b) => (b.bendDeg || 0) - (a.bendDeg || 0));
+  console.log('[planes] ' + rows.length + ' limb plane(s), worst bend first. '
+    + 'bend 0 = rotateX bends it cleanly; straight near 0 = no bend drawn in, so no plane.');
+  for (const r of rows) {
+    const b = r.bendDeg === null ? '   --' : r.bendDeg.toFixed(1).padStart(5);
+    console.log('[planes]   bend ' + b + ' deg   straight ' + r.straightDeg.toFixed(1).padStart(5)
+      + ' deg   ' + r.joints.map(L).join(' > ')
+      + (r.straightDeg < 2 ? '   (drawn straight — give it a bend)' : ''));
+  }
+  return rows.length;
+};
+
 window.snapTrace = function (on) {
   window._snapTrace = on !== false;
   console.log('[snap] ' + (window._snapTrace ? 'ON' : 'off') + ' — ' + VERSION +

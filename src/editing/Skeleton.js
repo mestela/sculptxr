@@ -4249,6 +4249,117 @@ Skeleton.hideAxisGnomon = function (main) {
   if (main._skelGnomon) main._skelGnomon.visible = false;
 };
 
+// ---- limb planes: is this chain built so that one axis bends it? -----------------------------
+//
+// THE RIGGER'S QUESTION, ASKED OF A CHAIN THAT ALREADY EXISTS. matt: "riggers like to place the
+// joints of an arm or a leg so that the preferred angle of rotation is clean, along a plane
+// defined by the shoulder, elbow, wrist ... the idea being that when done, the user should be
+// able to just use xrot=45, and the rotation should be intuitive."
+//
+// Three joints always lie in SOME plane, so "is it planar" is not the question for a two-bone
+// limb -- the question is whether that plane is square to the axis you would rotate about. The
+// convention, matt's call and the one KineFX already uses here: X IS THE BEND AXIS, Z RUNS DOWN
+// THE BONE. So a limb bends cleanly under rotateX exactly when its plane's normal IS the joint's
+// local X, and the angle between them is the whole diagnosis.
+//
+// READ-ONLY, DELIBERATELY. Nothing here moves a joint or rewrites a rest frame; `_ikRest` is a
+// LOCAL matrix and a bad write to it does not fail until the next solve, so the measuring comes
+// first and on its own.
+//
+// FOR CHAINS LONGER THAN THREE JOINTS -- a spine, a finger with four -- the plane is a best fit
+// and the off-plane spread is real information. For exactly three it is zero by construction,
+// and reporting it is still worth it: a zero there tells you the number means what it says.
+const _lpA = new THREE.Vector3(), _lpB = new THREE.Vector3(), _lpC = new THREE.Vector3();
+const _lpN = new THREE.Vector3(), _lpU = new THREE.Vector3(), _lpV = new THREE.Vector3();
+const _lpX = new THREE.Vector3();
+
+/** The joint's own local X in MODEL space -- the axis rotateX turns about. */
+Skeleton.jointBendAxis = function (joint, out) {
+  const m = joint.getModelSpaceMatrix();
+  out = out || new THREE.Vector3();
+  // Column 0, renormalised: a joint carries a scale, and a scaled axis would read as a different
+  // direction to every dot product below.
+  out.set(m[0], m[1], m[2]);
+  const l = out.length();
+  return l > 1e-9 ? out.divideScalar(l) : out.set(1, 0, 0);
+};
+
+/**
+ * Measure the limb plane at `joint` -- the MIDDLE joint of the run, the elbow or the knee.
+ *
+ * Returns null when there is nothing to measure: no parent, or no single child to continue the
+ * run. Otherwise { normal, origin, bendDeg, spread, straightDeg, joints }.
+ *   bendDeg     angle between the limb plane's normal and the joint's local X. 0 is clean.
+ *   spread      worst off-plane distance as a fraction of the mean bone length. 0 for three.
+ *   straightDeg how far from straight the run is. A limb drawn with no bend has no plane worth
+ *               speaking of, and this is what says so rather than returning a confident normal
+ *               derived from numerical noise.
+ */
+/** What to call a joint in a report: its name if it has one, its id if not. */
+Skeleton.jointLabel = function (j) {
+  if (!j) return '?';
+  return j._permanentStaticLabel || ('#' + (j.getID ? j.getID() : '?'));
+};
+
+/**
+ * THE PLANE THROUGH THREE NAMED JOINTS, whatever their hierarchy.
+ *
+ * limbPlaneAt finds runs on its own, which is the wrong shape for the question matt actually
+ * asks of a rig: "wouldn't i need to choose the 3 joints, or at least have them named so you
+ * understand where the planes start and end?" A shoulder/elbow/wrist is a run the RIGGER names,
+ * and an elbow with a second child -- a twist joint, a helper -- would be skipped entirely by a
+ * rule that insists on exactly one child.
+ *
+ * So the measuring is here and takes the three outright; limbPlaneAt is the convenience that
+ * finds them for you.
+ */
+Skeleton.limbPlaneOf = function (a, b, c) {
+  if (!a || !b || !c) return null;
+  Skeleton.jointPos(a, _lpA);
+  Skeleton.jointPos(b, _lpB);
+  Skeleton.jointPos(c, _lpC);
+  return Skeleton._limbPlaneCore(b, [a, b, c]);
+};
+
+Skeleton.limbPlaneAt = function (main, joint) {
+  if (!joint || !joint._parentMesh || !Skeleton.isJoint(joint._parentMesh)) return null;
+  const kids = Skeleton.childJoints(main, joint);
+  if (kids.length !== 1) return null;
+  Skeleton.jointPos(joint._parentMesh, _lpA);
+  Skeleton.jointPos(joint, _lpB);
+  Skeleton.jointPos(kids[0], _lpC);
+  return Skeleton._limbPlaneCore(joint, [joint._parentMesh, joint, kids[0]]);
+};
+
+// The measurement itself, on _lpA/_lpB/_lpC already filled. `joint` supplies the bend axis.
+Skeleton._limbPlaneCore = function (joint, jointsUsed) {
+  _lpU.subVectors(_lpA, _lpB);
+  _lpV.subVectors(_lpC, _lpB);
+  const lu = _lpU.length(), lv = _lpV.length();
+  if (lu < 1e-9 || lv < 1e-9) return null;
+  _lpU.divideScalar(lu); _lpV.divideScalar(lv);
+  // HOW STRAIGHT IS IT. The cross product of two nearly-opposite directions is nearly zero and
+  // its direction is then whatever the rounding says -- so this is reported rather than hidden.
+  // matt, on whether that case matters: "more often people, especially riggers, draw a slight
+  // bend in the knee/elbow to indicate that preferred bend direction. if people don't do that,
+  // they're doing it wrong." So a straight limb is a rig to fix, and this is what names it.
+  const straightDeg = 180 - THREE.MathUtils.radToDeg(Math.acos(
+    THREE.MathUtils.clamp(_lpU.dot(_lpV), -1, 1)));
+  _lpN.crossVectors(_lpU, _lpV);
+  const nl = _lpN.length();
+  if (nl < 1e-6) return { normal: null, origin: _lpB.clone(), bendDeg: null, spread: 0,
+                          straightDeg: straightDeg, joints: jointsUsed };
+  _lpN.divideScalar(nl);
+  Skeleton.jointBendAxis(joint, _lpX);
+  // Unsigned: a plane's normal and its opposite describe the same plane, so 170 degrees off is
+  // 10 degrees off with the axis pointing the other way -- which is a naming question, not a
+  // rigging fault.
+  const bendDeg = THREE.MathUtils.radToDeg(Math.acos(
+    THREE.MathUtils.clamp(Math.abs(_lpN.dot(_lpX)), -1, 1)));
+  return { normal: _lpN.clone(), origin: _lpB.clone(), bendDeg: bendDeg, spread: 0,
+           straightDeg: straightDeg, joints: jointsUsed };
+};
+
 // ---- the flatness disc -----------------------------------------------------------------------
 //
 // THE SAME IDIOM AS THE SYMMETRY PLANE, because it is the same kind of statement: "your joint is
