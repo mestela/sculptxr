@@ -185,7 +185,15 @@ document.getElementById('b').onclick = async () => {
   try {
     session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
     await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    // ?idv=1 asks for ignoreDepthValues at LAYER CREATION. visionOS already reports it true
+    // without being asked (measured 2026-09-15), but requesting it can change how the layer is
+    // allocated -- including whether it gets a depth attachment -- which is a different path in
+    // the UA. Suggested by a colleague of matt's as a possible workaround for the blit fault.
+    const IDV = /[?&]idv=1/.test(location.search);
+    const layerInit = IDV ? { ignoreDepthValues: true } : {};
+    const xrLayer = new XRWebGLLayer(session, gl, layerInit);
+    window.__layerInfo = { requestedIgnoreDepth: IDV, reportedIgnoreDepth: xrLayer.ignoreDepthValues };
+    session.updateRenderState({ baseLayer: xrLayer });
     refSpace = await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
     session.requestAnimationFrame(onFrame);
     document.getElementById('b').textContent = 'IN SESSION';
@@ -278,9 +286,10 @@ function draw(t, frame) {
   }
 
   if ((frames++ % 60) === 0) {
-    window.__xrraw = { mode: (USE_UBO ? 'UBO' : 'plain') + (SHARED ? '+shared' : '+std140') + (INTERLEAVE ? '+object-major' : '+eye-major') + (BLIT ? (BLIT8 ? '+BLIT8' : '+BLIT16F') : '+direct'),
+    window.__xrraw = { mode: (USE_UBO ? 'UBO' : 'plain') + (SHARED ? '+shared' : '+std140') + (INTERLEAVE ? '+object-major' : '+eye-major') + (BLIT ? (BLIT8 ? '+BLIT8' : '+BLIT16F') : '+direct') + (/[?&]idv=1/.test(location.search) ? '+idv' : ''),
       views: pose.views.length, fb: layer.framebufferWidth + 'x' + layer.framebufferHeight,
-      vp: pose.views.map((v) => { const p = layer.getViewport(v); return p.x + ',' + p.width; }) };
+      vp: pose.views.map((v) => { const p = layer.getViewport(v); return p.x + ',' + p.width; }),
+      layerInfo: window.__layerInfo };
     hud.textContent = JSON.stringify(window.__xrraw, null, 1);
   }
 }
