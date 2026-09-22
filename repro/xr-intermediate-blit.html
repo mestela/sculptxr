@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebXR: intermediate framebuffer + blit distorts stereo on visionOS</title>
+<style>
+  body { margin:0; background:#111; color:#ddd; font:14px/1.6 ui-monospace,Menlo,monospace; padding:24px; max-width:760px; }
+  h1 { font-size:17px; margin:0 0 12px; color:#fff; }
+  h2 { font-size:14px; margin:22px 0 6px; color:#9cf; }
+  p, li { margin:6px 0; }
+  code { background:#222; padding:1px 5px; border-radius:3px; }
+  button { display:block; width:100%; margin:10px 0; padding:16px; font:15px ui-monospace,monospace; cursor:pointer; }
+  #status { margin-top:18px; padding:10px; background:#181818; white-space:pre; font-size:12px; }
+  .bad { color:#f88; } .good { color:#8f8; }
+</style>
+</head>
+<body>
+<h1>WebXR: rendering via an intermediate framebuffer distorts stereo on visionOS</h1>
+
+<p>Two buttons below run the <em>same</em> scene with the <em>same</em> matrices and the
+<em>same</em> per-eye viewports. The only difference is where the frame is drawn:</p>
+
+<ul>
+  <li><b class="good">A — direct:</b> draws into <code>XRWebGLLayer.framebuffer</code>. <b>Correct.</b></li>
+  <li><b class="bad">B — intermediate:</b> draws into a texture-backed framebuffer of identical
+      size, then copies it to <code>XRWebGLLayer.framebuffer</code> with a fullscreen triangle.
+      <b>Distorted.</b> (You might need to look up to find the cubes.)</li>
+</ul>
+
+<h2>Expected</h2>
+<p>Both render identically: a row of seven cubes plus one nearer cube, in correct stereo.
+They sit at 1.6m, so depending on the reference space granted you may need to look up.</p>
+
+<h2>Actual, on visionOS</h2>
+<p>B is badly distorted — legible near the centre of view and degrading rapidly toward the
+edges, with objects appearing in only one eye depending on their position. A is correct.</p>
+
+<h2>Notes</h2>
+<ul>
+  <li>No library. Hand-written GLSL, raw WebGL2, raw WebXR.</li>
+  <li>Both framebuffers are the same size and report <code>FRAMEBUFFER_COMPLETE</code>.</li>
+  <li>Not format-dependent: reproduces with <code>RGBA8</code> and with <code>RGBA16F</code>.</li>
+  <li>Correct on Android Chrome (Samsung Galaxy XR) for both A and B.</li>
+  <li>An intermediate-plus-copy is what three.js does whenever the output needs a colour
+      transform, which is how this was found — but three.js is not required to reproduce it.</li>
+</ul>
+
+<button id="a">A — ENTER VR, draw direct to layer (expect correct)</button>
+<button id="b">B — ENTER VR, draw via intermediate + blit (expect distorted)</button>
+<div id="status">not started</div>
+
+<script>
+const status = document.getElementById('status');
+const canvas = document.createElement('canvas');
+const gl = canvas.getContext('webgl2', { xrCompatible: true, antialias: false, alpha: true });
+if (!gl) status.textContent = 'WebGL2 unavailable';
+
+function sh(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function prog(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+  gl.bindAttribLocation(p, 0, 'aPos'); gl.bindAttribLocation(p, 1, 'aNrm'); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const scene = prog(`#version 300 es
+uniform mat4 uProj, uView, uModel; in vec3 aPos; in vec3 aNrm; out vec3 vN;
+void main(){ vN = aNrm; gl_Position = uProj * uView * uModel * vec4(aPos,1.0); }`,
+`#version 300 es
+precision highp float; in vec3 vN; out vec4 o;
+void main(){ o = vec4(normalize(vN)*0.5+0.5, 1.0); }`);
+const uProj = gl.getUniformLocation(scene,'uProj'), uView = gl.getUniformLocation(scene,'uView'),
+      uModel = gl.getUniformLocation(scene,'uModel');
+
+// The copy: a fullscreen triangle from gl_VertexID, sampling by gl_FragCoord.
+const blit = prog(`#version 300 es
+void main(){ vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p*2.0-1.0, 0.0, 1.0); }`,
+`#version 300 es
+precision highp float; uniform sampler2D uTex; uniform vec2 uRes; out vec4 o;
+void main(){ o = texture(uTex, gl_FragCoord.xy / uRes); }`);
+const uTex = gl.getUniformLocation(blit,'uTex'), uRes = gl.getUniformLocation(blit,'uRes');
+
+const P=[],N=[];
+const face=(o,u,v,n)=>{const a=o,b=[o[0]+u[0],o[1]+u[1],o[2]+u[2]],
+  c=[o[0]+u[0]+v[0],o[1]+u[1]+v[1],o[2]+u[2]+v[2]],d=[o[0]+v[0],o[1]+v[1],o[2]+v[2]];
+  for(const t of [a,b,c,a,c,d]){P.push(...t);N.push(...n);}};
+face([-1,-1,1],[2,0,0],[0,2,0],[0,0,1]);   face([1,-1,-1],[-2,0,0],[0,2,0],[0,0,-1]);
+face([-1,-1,-1],[0,0,2],[0,2,0],[-1,0,0]); face([1,-1,1],[0,0,-2],[0,2,0],[1,0,0]);
+face([-1,1,1],[2,0,0],[0,0,-2],[0,1,0]);   face([-1,-1,-1],[2,0,0],[0,0,2],[0,-1,0]);
+const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+for (const [loc, arr] of [[0,P],[1,N]]) {
+  const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
+}
+const COUNT=P.length/3;
+const blitVao = gl.createVertexArray();
+
+let fbo=null, tex=null, depth=null, fw=0, fh=0;
+function ensure(w,h) {
+  if (fw===w && fh===h) return;
+  fw=w; fh=h;
+  if (fbo) { gl.deleteFramebuffer(fbo); gl.deleteTexture(tex); gl.deleteRenderbuffer(depth); }
+  tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA8,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  depth=gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER,depth);
+  gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT24,w,h);
+  fbo=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);
+  window.__fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE ? 'complete' : 'INCOMPLETE';
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+
+const model=new Float32Array(16);
+function setModel(x,y,z,s,r){ const c=Math.cos(r),si=Math.sin(r);
+  model.set([c*s,0,-si*s,0, 0,s,0,0, si*s,0,c*s,0, x,y,z,1]); gl.uniformMatrix4fv(uModel,false,model); }
+
+let session=null, refSpace=null, useBlit=false;
+async function enter(blitMode) {
+  useBlit = blitMode;
+  try {
+    session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures:['local-floor'] });
+    await gl.makeXRCompatible();
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    refSpace = await session.requestReferenceSpace('local-floor').catch(()=>session.requestReferenceSpace('local'));
+    session.addEventListener('end', ()=>{ session=null; });
+    session.requestAnimationFrame(frame);
+  } catch (e) { status.textContent = 'requestSession failed: ' + e; }
+}
+document.getElementById('a').onclick = ()=>enter(false);
+document.getElementById('b').onclick = ()=>enter(true);
+
+let n=0;
+function frame(t, xrFrame) {
+  if (!session) return;
+  session.requestAnimationFrame(frame);
+  const pose = xrFrame.getViewerPose(refSpace); if (!pose) return;
+  const layer = session.renderState.baseLayer;
+  if (useBlit) ensure(layer.framebufferWidth, layer.framebufferHeight);
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER, useBlit ? fbo : layer.framebuffer);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+  gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(scene); gl.bindVertexArray(vao);
+
+  const time=t*0.001;
+  for (const view of pose.views) {
+    const vp = layer.getViewport(view);
+    gl.viewport(vp.x, vp.y, vp.width, vp.height);
+    gl.uniformMatrix4fv(uProj,false,view.projectionMatrix);
+    gl.uniformMatrix4fv(uView,false,view.transform.inverse.matrix);
+    for (let i=-3;i<=3;i++){ setModel(i*0.42,1.6,-1.2,0.11,time+i); gl.drawArrays(gl.TRIANGLES,0,COUNT); }
+    setModel(0,1.6,-0.6,0.15,-time); gl.drawArrays(gl.TRIANGLES,0,COUNT);
+  }
+
+  if (useBlit) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.viewport(0,0,layer.framebufferWidth,layer.framebufferHeight);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.useProgram(blit); gl.bindVertexArray(blitVao);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(uTex,0); gl.uniform2f(uRes, layer.framebufferWidth, layer.framebufferHeight);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+  }
+
+  if ((n++ % 60)===0) {
+    status.textContent = 'mode: ' + (useBlit ? 'B — intermediate + blit' : 'A — direct to layer')
+      + '\nframebuffer: ' + layer.framebufferWidth + 'x' + layer.framebufferHeight
+      + '\nviews: ' + pose.views.length
+      + '\nviewports: ' + pose.views.map(v=>{const p=layer.getViewport(v);return p.x+','+p.width;}).join('  ')
+      + (useBlit ? '\nintermediate: ' + fw + 'x' + fh + ' RGBA8 ' + window.__fbStatus : '');
+  }
+}
+</script>
+</body></html>
