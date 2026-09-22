@@ -4049,6 +4049,21 @@ export class MainMenuPanel extends HTMLVRPanel {
       q('#mm-raycast')?.classList.toggle('active', !main._vrUseVolumeIntersect);
       paint();
     });
+    // WIRED HERE BECAUSE THE BUTTON LIVES HERE. This listener used to be registered in
+    // wireSectionTopology, which is handed the topology section's element -- the query found
+    // nothing, `?.` swallowed it, and the toggle was inert for every press ever made on it.
+    // matt: "is the setting for 'hand tracking' in settings meant to be a toggle? I cant turn
+    // it off." Confirmed on device: no `handTracking` key had ever reached the saved settings.
+    q('#mm-hand-track')?.addEventListener('click', () => {
+      const on = window._handTracking === false;      // currently OFF -> turn it back on
+      window._handTracking = on;
+      q('#mm-hand-track')?.classList.toggle('active', on);
+      // Persisted, because the reason to switch it off is a working session at a desk with a
+      // keyboard, and having to find it again every time is most of the annoyance.
+      opts.saveOption('handTracking', on, 0);
+      if (window.screenLog) window.screenLog('Hand tracking ' + (on ? 'ON' : 'OFF'), 'cyan');
+      paint();
+    });
     // A SETTING, NOT AN ENV VAR. This lived only on `window`, which meant a console -- and there
     // is no console in a headset. matt: "its a pain changing things like this with an envar in
     // the console on the gxr." PhysicsBones.setSolver persists it through the same option store
@@ -5285,16 +5300,6 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
   el.querySelector('#mm-quadremesh')?.addEventListener('click', () => { topo?.remeshQuads?.(); });
 
   el.querySelector('#mm-validate')?.addEventListener('click',  () => { topo?.validateMesh?.(); });
-  el.querySelector('#mm-hand-track')?.addEventListener('click', () => {
-    const on = window._handTracking === false;      // currently OFF -> turn it back on
-    window._handTracking = on;
-    el.querySelector('#mm-hand-track')?.classList.toggle('active', on);
-    // Persisted, because the reason to switch it off is a working session at a desk with a
-    // keyboard, and having to find it again every time is most of the annoyance.
-    getOptionsURL.saveOption('handTracking', on, 0);
-    if (window.screenLog) window.screenLog('Hand tracking ' + (on ? 'ON' : 'OFF'), 'cyan');
-  });
-
   el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {
     el.querySelector('#mm-auto-heal')?.classList.toggle('active');
     lightRepaintFn();

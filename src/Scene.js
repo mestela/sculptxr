@@ -11803,8 +11803,16 @@ class Scene {
     const S = this._srcObjs;
     if (!S) return;
     const wantHand = this._handsOnlyMode();
+    // THE FALLBACK IS THE LEAK. Filtering `sources` cannot reach these objects: three poses
+    // xr.getController(i) from session.inputSources itself, and the spike and the laser hang
+    // off that object. With hands off but no controller mapped for this side, the `|| S.hand[h]`
+    // below picked the hand anyway, three kept posing it, and the spike went on tracking the
+    // fingers. matt: "the controller spikes still follow my fingers". Picking nothing leaves it
+    // to the hide loop underneath, which is already the one place that hides what we did not pick.
+    const noHands = window._handTracking === false;
     for (const h of ['left', 'right']) {
-      const pick = (wantHand ? (S.hand[h] || S.ctl[h]) : (S.ctl[h] || S.hand[h])) || null;
+      const pick = (wantHand ? (S.hand[h] || S.ctl[h])
+                             : (S.ctl[h] || (noHands ? null : S.hand[h]))) || null;
       // AND THE ONE NOT CHOSEN IS HIDDEN, because it is not an abstraction — it is a three
       // object with a spike and a pointer ray hanging off it, and the runtime keeps giving it a
       // pose. Both were drawing: the hand's spike carries the hand length and sits within a few
@@ -11830,6 +11838,10 @@ class Scene {
   }
 
   _handsOnlyMode() {
+    // HANDS SWITCHED OFF IS NOT A MODE HANDS CAN WIN. Asked in ten places -- stylus length and
+    // offset, the wrist panel placement, the UI prime -- and every one of them should read the
+    // switch, so it is answered once here rather than at each call.
+    if (window._handTracking === false) return false;
     const srcs = this._xrSession?.inputSources;
     if (!srcs || !srcs.length) return false;
     const now = performance.now();
