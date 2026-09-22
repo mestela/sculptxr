@@ -491,12 +491,74 @@ function installPipelineTrace(renderer) {
 }
 
 /**
+ * SAFARI REPORTS THE XR FRAMEBUFFER AS 1x1 UNTIL THE FIRST requestAnimationFrame.
+ *
+ * three sizes the whole session from inside setSession, which is async and runs before any
+ * frame callback:
+ *
+ *     renderer._setXRLayerSize( glBaseLayer.framebufferWidth, glBaseLayer.framebufferHeight );
+ *     this._xrRenderTarget = new XRRenderTarget( glBaseLayer.framebufferWidth, ... );
+ *
+ * WebKit refuses to answer that early and says so, once per query:
+ *
+ *     accurate framebufferWidth is unavailable until requestAnimationFrame processing;
+ *     returning 1
+ *
+ * So the session renders into a ONE PIXEL target for its entire life. Every log line looks
+ * healthy -- pipelines compile, cameras are ArrayCamera[2], steady state reports normally --
+ * and the headset shows black. matt, on Vision Pro: "i just saw black, nothing else."
+ *
+ * Chromium answers the query immediately, which is why the GalaxyXR never showed this and why
+ * it looked like a Vision Pro problem rather than a three one. three never re-reads the values:
+ * _setXRLayerSize is called at setSession and at session end, and nowhere in between.
+ *
+ * Cheap enough to check every frame -- two property reads and a compare -- and a no-op the
+ * moment they agree, which on a Chromium runtime is the first time it is ever called.
+ */
+export function fixXRLayerSize(renderer) {
+  const xr = renderer && renderer.xr;
+  const rt = xr && xr._xrRenderTarget;
+  if (!rt) return false;
+  // EITHER LAYER. Safari/visionOS takes the XRProjectionLayer branch, which sizes from
+  // textureWidth/textureHeight and never sets _glBaseLayer; Chromium takes the XRWebGLLayer
+  // branch and never sets _glProjLayer. Both read their size at setSession, so both are wrong
+  // on a runtime that refuses to answer that early.
+  const pl = xr._glProjLayer, bl = xr._glBaseLayer;
+  const w = pl ? pl.textureWidth : (bl ? bl.framebufferWidth : 0);
+  const h = pl ? pl.textureHeight : (bl ? bl.framebufferHeight : 0);
+  // 1x1 IS THE SENTINEL, not a size to adopt: believing it is how we got here.
+  if (!(w > 1 && h > 1)) return false;
+  const wasW = rt.width, wasH = rt.height;      // CAPTURED BEFORE THE RESIZE, because reading
+  if (wasW === w && wasH === h) return false;   // them afterwards reports the new size as the old
+  renderer._setXRLayerSize(w, h);
+  rt.setSize(w, h);
+  console.log('[xrpatch] XR ' + (pl ? 'projection layer' : 'framebuffer') + ' was '
+    + wasW + 'x' + wasH + ' at setSession; resized to ' + w + 'x' + h
+    + ' once rAF could answer');
+  return true;
+}
+
+/**
  * Both patches. Call once, straight after `renderer.init()` and before anything is drawn --
  * bug A rewrites binding points that get baked into programs at link time, so it has to be in
  * place before the first material compiles.
  */
 export function applyXRBackendPatches(renderer, WGPU, TSL) {
-  if (renderer.backend && renderer.backend.gl) installStableBindingPoints(renderer.backend);
+  // A BISECTION SWITCH, TO BE DELETED THE MOMENT IT IS ANSWERED. Every patch in this file was
+  // written against the GalaxyXR and none has ever been checked on Safari, where the uniform
+  // binding budget is half the size (max 32 against 72). matt on Vision Pro, once the 1x1
+  // framebuffer was fixed: "its rendering, but its really warped and distorted" -- and the
+  // legacy renderer on the same headset is correct, so it is something on this path.
+  //   ?xrbind=0   skip the binding-point rewrite
+  //   ?xrbind=0    skip the binding-point rewrite alone
+  //   ?xrpatch=0   skip ALL of them, which answers "is this file involved at all" in one trip
+  const _q = window.location.search;
+  const _skipAll = /[?&]xrpatch=0/.test(_q);
+  const _skipBind = _skipAll || /[?&]xrbind=0/.test(_q);
+  if (_skipAll) console.log('[xrpatch] ALL XR backend patches SKIPPED (?xrpatch=0) — trace only');
+  else if (_skipBind) console.log('[xrpatch] binding-point rewrite SKIPPED (?xrbind=0)');
+  if (!_skipBind && renderer.backend && renderer.backend.gl) installStableBindingPoints(renderer.backend);
+  if (_skipAll) { installPipelineTrace(renderer); return; }
   installCameraPositionUpdate(WGPU, TSL);
   // ?perEyeLight=0 leaves three's head-space light vector in place, to A/B against the fault.
   {

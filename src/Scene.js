@@ -43,6 +43,7 @@ import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import ShaderBusy from './gui/ShaderBusy.js';
 import { renderPassToCanvas, exportRenderPass, autoRange } from './render/RenderPassExport.js';
+import { fixXRLayerSize } from './render/nodes/ThreeXRPatches.js';
 import BootOverlay from './gui/BootOverlay.js';
 import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
@@ -1648,6 +1649,10 @@ class Scene {
       const frame = this._renderer.xr.getFrame();
       if (!frame) return;
       const refSpace = this._renderer.xr.getReferenceSpace();
+
+      // BEFORE ANYTHING IS DRAWN THIS FRAME. See fixXRLayerSize: on Safari the session is sized
+      // 1x1 at setSession and stays that way, so every frame lands in one pixel.
+      if (this._isNodeRenderer) fixXRLayerSize(this._renderer);
 
       if (!window._firstXRFrameLogged) {
         window._firstXRFrameLogged = true;
