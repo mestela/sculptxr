@@ -3964,6 +3964,13 @@ class Scene {
         gl.enable(gl.DEPTH_TEST);
         if (this._sculptManager) this._sculptManager.postRender();
       }
+
+      // THE OTHER HALF OF THE ABOVE. The node renderer skips the raw-GL postRender wholesale,
+      // which took the brush radius circle with it -- it is three.js geometry and never needed
+      // GL at all. See SculptManager.postRenderNode.
+      if (!isVR && this._isNodeRenderer && this._sculptManager) {
+        this._sculptManager.postRenderNode();
+      }
       
       if (isVR) {
           if (!window._xrFrameCount) window._xrFrameCount = 0;

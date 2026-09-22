@@ -2104,6 +2104,29 @@ class SculptManager {
     
   }
 
+  /**
+   * THE TOOL'S OWN postRender, for the node renderer.
+   *
+   * The raw-GL postRender() below is skipped wholesale under ?renderer=webgpu -- see the guard
+   * in Scene. That was a deliberate trade when the port landed ("a missing gizmo is visible and
+   * fixable; a silently broken depth buffer is neither"), and #84 paid off the gizmo half. This
+   * is the other half: the brush radius circle vanished with it. matt: "the radius circle
+   * indicator is missing" -- spotted on the iPad, but it was gone everywhere on the flagged path.
+   *
+   * DELEGATES RATHER THAN DRAWING. Calling Selection.render() directly restores the circle but
+   * overrides the tools that deliberately refuse one: GeodesicPoseTool's postRender is empty,
+   * and BoneDrawTool's syncs its plane instead. Going through the tool honours both, and gets
+   * syncPlane running again on this path as a bonus.
+   *
+   * Safe because every tool postRender is now scene-graph work: Transform's gizmo went
+   * three-native with #84, and SculptVoxel's only raw pass is gated behind _xrSession, which
+   * cannot be true here.
+   */
+  postRenderNode() {
+    const tool = this.getCurrentTool();
+    if (tool && tool.postRender) tool.postRender(this._selection);
+  }
+
   postRender() {
     const tool = this.getCurrentTool();
 
