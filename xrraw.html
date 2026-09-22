@@ -44,8 +44,17 @@ document.body.appendChild(canvas);
 const gl = canvas.getContext('webgl2', { xrCompatible: true, antialias: false, alpha: true });
 if (!gl) { hud.textContent = 'no webgl2'; throw new Error('no webgl2'); }
 
+// ?shared=1 DROPS the std140 qualifier from the matrix-array block, which is what three's
+// generated shader does: it emits `layout(std140)` for cameraIndex and object, but plain
+// `uniform NodeBuffer_10702 { mat4 buffer10702[2]; }` for the per-eye matrix arrays. The
+// default block layout in GLSL ES 3.00 is `shared`, where the DRIVER picks offsets -- and a
+// shared-layout block indexed DYNAMICALLY is a very different thing to compile. Everything
+// else about three's path measured correct on a Vision Pro, so this is the last structural
+// difference between three's shader and this one.
+const SHARED = /[?&]shared=1/.test(location.search);
+const INTERLEAVE = /[?&]interleave=1/.test(location.search);
 const VS = `#version 300 es
-${USE_UBO ? `layout(std140) uniform Camera { mat4 proj[2]; mat4 view[2]; };
+${USE_UBO ? `${SHARED ? '' : 'layout(std140) '}uniform Camera { mat4 proj[2]; mat4 view[2]; };
 layout(std140) uniform Idx { uvec4 idx; };` : `uniform mat4 uProj; uniform mat4 uView;`}
 uniform mat4 uModel;
 in vec3 aPos; in vec3 aNrm; out vec3 vN;
@@ -159,7 +168,7 @@ function draw(t, frame) {
   }
 
   const time = t * 0.001;
-  pose.views.forEach((view, eye) => {
+  const setEye = (view, eye) => {
     const vp = layer.getViewport(view);
     gl.viewport(vp.x, vp.y, vp.width, vp.height);
     if (USE_UBO) {
@@ -170,12 +179,33 @@ function draw(t, frame) {
       gl.uniformMatrix4fv(uProj, false, view.projectionMatrix);
       gl.uniformMatrix4fv(uView, false, view.transform.inverse.matrix);
     }
-    for (let i = -3; i <= 3; i++) { setModel(i * 0.42, 1.6, -1.2, 0.11, time + i); gl.drawArrays(gl.TRIANGLES, 0, COUNT); }
-    setModel(0, 1.6, -0.6, 0.15, -time); gl.drawArrays(gl.TRIANGLES, 0, COUNT);
-  });
+  };
+  const objects = [];
+  for (let i = -3; i <= 3; i++) objects.push([i * 0.42, 1.6, -1.2, 0.11, time + i]);
+  objects.push([0, 1.6, -0.6, 0.15, -time]);
+
+  if (INTERLEAVE) {
+    // OBJECT-MAJOR, WHICH IS WHAT THREE DOES. Its WebGL backend loops the sub-cameras INSIDE
+    // each render object's draw, so the eye index UBO is rewritten and the viewport switched
+    // before EVERY draw -- dozens of times a frame, not twice. A uniform buffer rewritten
+    // between draws in one frame is exactly the case a driver can fail to honour per-draw, and
+    // if it does not, every draw uses whichever index was written last.
+    for (const o of objects) {
+      pose.views.forEach((view, eye) => {
+        setEye(view, eye);
+        setModel(o[0], o[1], o[2], o[3], o[4]);
+        gl.drawArrays(gl.TRIANGLES, 0, COUNT);
+      });
+    }
+  } else {
+    pose.views.forEach((view, eye) => {
+      setEye(view, eye);
+      for (const o of objects) { setModel(o[0], o[1], o[2], o[3], o[4]); gl.drawArrays(gl.TRIANGLES, 0, COUNT); }
+    });
+  }
 
   if ((frames++ % 60) === 0) {
-    window.__xrraw = { mode: USE_UBO ? 'UBO (node-renderer shape)' : 'plain uniforms (legacy shape)',
+    window.__xrraw = { mode: (USE_UBO ? 'UBO' : 'plain') + (SHARED ? '+shared' : '+std140') + (INTERLEAVE ? '+object-major' : '+eye-major'),
       views: pose.views.length, fb: layer.framebufferWidth + 'x' + layer.framebufferHeight,
       vp: pose.views.map((v) => { const p = layer.getViewport(v); return p.x + ',' + p.width; }) };
     hud.textContent = JSON.stringify(window.__xrraw, null, 1);
@@ -183,5 +213,5 @@ function draw(t, frame) {
 }
 window.__xrraw = { mode: USE_UBO ? 'UBO' : 'plain', views: 0 };
 hud.textContent = 'raw WebGL2 — ' + (USE_UBO ? 'UBO mode (?ubo=0 for plain uniforms)' : 'plain-uniform mode');
-console.log('[xrraw] ready, ' + (USE_UBO ? 'UBO' : 'plain') + ' mode');
+console.log('[xrraw] ready, ' + (USE_UBO ? 'UBO' : 'plain') + (SHARED ? ' + shared layout' : ' + std140'));
 </script></body></html>

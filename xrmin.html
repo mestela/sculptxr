@@ -42,6 +42,17 @@ installDevRelay();   // so the harness can be questioned without anyone wearing 
 const hud = document.getElementById('hud');
 const renderer = new THREE.WebGPURenderer({ antialias: false, forceWebGL: true });
 await renderer.init();
+// ?linear=1 REMOVES THE OUTPUT COMPOSITE PASS. three renders the scene to an intermediate
+// texture and then blits it to the XR framebuffer with a fullscreen triangle that applies
+// sRGB -- `fragColor = sRGBTransferOETF( texture( scene, gl_FragCoord / resolution ) )`. That
+// pass is the ONLY structural thing three does here that the raw WebGL2 page (which renders
+// correctly on a Vision Pro) does not. With a linear output space and no tone mapping there is
+// nothing to convert, so three should draw straight into the layer.
+if (/[?&]linear=1/.test(location.search)) {
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  console.log('[xrmin] linear output, no tone mapping — composite pass should be skipped');
+}
 renderer.setPixelRatio(1);
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
@@ -80,6 +91,8 @@ function fixSize() {
   console.log('[xrmin] resized ' + w + 'x' + h);
 }
 
+{ const gl2 = renderer.backend.gl; const oa = gl2.drawArrays.bind(gl2);
+  gl2.drawArrays = function (m, f, c) { if (c === 3) { const v = gl2.getParameter(gl2.VIEWPORT); if (v[2] > 9000) window.__sawComposite = true; } return oa.apply(gl2, arguments); }; }
 let n = 0;
 renderer.setAnimationLoop(() => {
   fixSize();
@@ -93,6 +106,8 @@ renderer.setAnimationLoop(() => {
       presenting: xr.isPresenting,
       rt: rt ? rt.width + 'x' + rt.height : null,
       layer: xr._glProjLayer ? 'XRProjectionLayer' : (xr._glBaseLayer ? 'XRWebGLLayer' : '?'),
+      composite: window.__sawComposite ? 'YES (fullscreen blit ran)' : 'no (direct to layer)',
+      colorSpace: renderer.outputColorSpace + '/tone' + renderer.toneMapping,
       cams: c && c.cameras ? c.cameras.length : 0,
       vp: c && c.cameras ? c.cameras.map((k) => k.viewport.x + ',' + k.viewport.z) : null,
       posX: c && c.cameras ? c.cameras.map((k) => +k.position.x.toFixed(3)) : null
