@@ -4095,10 +4095,19 @@ class Scene {
       // straight into the layer, so there is no blit to mishandle and colour management still
       // works. Verified on a Vision Pro and on a GalaxyXR.
       //
-      // GATED, because three warns it "changes blending and is not compatible with materials
-      // that sample the framebuffer" -- and in this app every mesh and every VR panel is
-      // transparent with renderOrder as the only layering lever. The GalaxyXR works today; it
-      // does not get to inherit that risk for a bug it does not have.
+      // GATED, AND THE GATE IS LOAD-BEARING -- NOT A PRECAUTION.
+      //
+      // MEASURED 2026-09-23: forcing this on with ?direct=1 BREAKS THE GALAXYXR OUTRIGHT. Black
+      // in VR, empty in AR, no controllers and no default mesh. ?direct=0 restores it. So this
+      // is not "safe everywhere, enabled where needed" -- it is actively fatal on the device
+      // that works today, and must never be the default.
+      //
+      // AND THE MINIMAL HARNESS DOES NOT PREDICT THAT. xrmin186.html?direct=1 -- seven opaque
+      // cubes, one material -- renders correctly on the same GalaxyXR. The app does not. Which
+      // is three's caveat coming true: DirectRenderPipeline "changes blending and is not
+      // compatible with materials that sample the framebuffer", and in this app every mesh and
+      // every VR panel is transparent with renderOrder as the only layering lever. A harness
+      // that passes proves the pipeline runs, not that a real scene survives it.
       //
       // KEYED ON CAPABILITY AND BROWSER, NOT A MODEL STRING: visionOS Safari is the only WebKit
       // that exposes navigator.xr at all -- desktop Safari has none -- so this is specific
