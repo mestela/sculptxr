@@ -9,13 +9,18 @@
   h2 { font-size:14px; margin:22px 0 6px; color:#9cf; }
   p, li { margin:6px 0; }
   code { background:#222; padding:1px 5px; border-radius:3px; }
-  button { display:block; width:100%; margin:10px 0; padding:16px; font:15px ui-monospace,monospace; cursor:pointer; }
+  button { display:block; width:100%; margin:10px 0; padding:18px; font-weight:bold; font:15px ui-monospace,monospace; cursor:pointer; }
   #status { margin-top:18px; padding:10px; background:#181818; white-space:pre; font-size:12px; }
   .bad { color:#f88; } .good { color:#8f8; }
 </style>
 </head>
 <body>
 <h1>WebXR: rendering via an intermediate framebuffer distorts stereo on visionOS</h1>
+
+<button id="a">A — ENTER VR, draw direct to layer (expect correct)</button>
+<button id="b">B — ENTER VR, draw via intermediate + blit (expect distorted)</button>
+<div id="status">not started</div>
+
 
 <p>Two buttons below run the <em>same</em> scene with the <em>same</em> matrices and the
 <em>same</em> per-eye viewports. The only difference is where the frame is drawn:</p>
@@ -35,6 +40,18 @@ They sit at 1.6m, so depending on the reference space granted you may need to lo
 <p>B is badly distorted — legible near the centre of view and degrading rapidly toward the
 edges, with objects appearing in only one eye depending on their position. A is correct.</p>
 
+<h2>Workaround for three.js</h2>
+<p>three.js renders to an intermediate and blits whenever the output needs tone mapping or a
+colour-space conversion — i.e. almost always — so its default XR path hits this. In r186+,
+<code>DirectRenderPipeline</code> applies the output transform inside the material instead,
+rendering straight into the layer:</p>
+<p><code>const p = new THREE.DirectRenderPipeline(renderer); p.render(scene, camera);</code></p>
+<p>Verified correct on Vision Pro and on Android Chrome, with colour management intact. Note
+three's own caveat: it changes blending and is incompatible with materials that sample the
+framebuffer. Setting <code>toneMapping = NoToneMapping</code> alone is <em>not</em> enough — the
+trigger is <code>useToneMapping || useColorSpace</code>, so an sRGB output still allocates the
+intermediate on its own.</p>
+
 <h2>Notes</h2>
 <ul>
   <li>No library. Hand-written GLSL, raw WebGL2, raw WebXR.</li>
@@ -45,9 +62,6 @@ edges, with objects appearing in only one eye depending on their position. A is 
       transform, which is how this was found — but three.js is not required to reproduce it.</li>
 </ul>
 
-<button id="a">A — ENTER VR, draw direct to layer (expect correct)</button>
-<button id="b">B — ENTER VR, draw via intermediate + blit (expect distorted)</button>
-<div id="status">not started</div>
 
 <script>
 const status = document.getElementById('status');
