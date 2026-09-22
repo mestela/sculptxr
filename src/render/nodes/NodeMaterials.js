@@ -932,30 +932,18 @@ NodeMaterials.fresnelGlow = function (hex) {
  * Cheap and idempotent: a 2-triangle quad per material, off-screen, once.
  */
 /**
- * THE SAME WARM, SPREAD OVER FRAMES INSTEAD OF BLOCKING ONE.
+ * THE QUEUED WARM AND THE HAND-MADE STEREO CAMERA BOTH LIVED HERE, AND BOTH ARE GONE.
  *
- * NodeMaterials.warm draws everything in a single render, which is fine on a desktop and is not
- * fine at the start of an XR session. Measured by matt on a GalaxyXR:
+ * The queue spread a warm render over frames; the stereo camera was a two-eye ArrayCamera meant
+ * to compile the session's shader shape ahead of time on the desktop. Both rested on the same
+ * wrong premise as NodeMaterials.warm below -- that a pipeline can be built anywhere and reused.
+ * It cannot: the key is per RENDER OBJECT and includes the scene and its lights, so nothing
+ * compiled in a scratch scene is ever asked for again.
  *
- *   [NodeMaterials] warmed 29 pipelines (+20 rig batches, on their own geometry)   2164.7ms
- *   [Violation] 'requestAnimationFrame' handler took 2153ms
- *   [XR] First frame rendered (+4399ms from session start)
- *
- * Two seconds of that is one rAF handler, which is two seconds of the grey void before the scene
- * appears -- matt: "was in the gray void for about 3 seconds". The work is the same work either
- * way, and it has to happen INSIDE the session (session start rebuilds every material, so
- * anything compiled on the desktop is thrown away). What can change is whether it lands in one
- * frame or forty.
- *
- * So: enqueue at session start, and spend a few milliseconds a frame on it from then on. The
- * session comes up immediately, the first seconds are choppy rather than absent, and ShaderBusy
- * has something true to say while they are.
- *
- * A budget cannot split one compile -- a single pipeline is tens of milliseconds on this device
- * -- so in practice this is "one per frame, sometimes two". That is the point: one 45ms frame is
- * a stutter, forty-nine of them at once is a hang.
+ * What replaced them is in Scene: three normally-hidden objects are revealed per frame inside
+ * the ORDINARY draw, which compiles exactly what the ordinary draw will want. See
+ * Scene._stepRevealWarm and NodeMaterials.warmScene.
  */
-let warmQueue = null;
 
 /**
  * WARM BY DRAWING THE REAL SCENE, BECAUSE NOTHING ELSE COMPILES THE RIGHT PIPELINE.
@@ -999,136 +987,9 @@ NodeMaterials.warmScene = function (renderer, scene, camera, meshes) {
   return n;
 };
 
-/**
- * A STAND-IN FOR THE SESSION'S CAMERA, SO THE SESSION'S PIPELINES CAN BE BUILT ON THE DESKTOP.
- *
- * Everything this renderer compiles is shaped by the camera it is first drawn with: a plain
- * PerspectiveCamera gives a single cameraProjectionMatrix in the shared `render` block, while a
- * session binds per-eye arrays selected by u_cameraIndex. Two different shaders, and a material
- * holds one at a time -- which is the whole reason Scene rebuilds every material at the session
- * boundary, and therefore the reason warming at launch has not been able to spare the session
- * anything.
- *
- * Everything the backend does differently in a session is gated on
- *     renderObject.camera.isArrayCamera && camera.cameras.length > 0 && !isMultiViewCamera
- * and nothing on that path asks whether a session is running -- which is what xrarray.html at
- * the repo root demonstrates. So a hand-made two-eye ArrayCamera compiles the session's shape,
- * on the desktop, at load, where matt wants the cost: "i want a long startup when the app
- * launches ... and no stuttering or compile shader warnings after that point."
- */
-NodeMaterials.stereoWarmCamera = function () {
-  if (!gpu) return null;
-  if (NodeMaterials._stereoCam) return NodeMaterials._stereoCam;
-  const W = 64, H = 64;
-  const eyeL = new gpu.PerspectiveCamera(70, (W / 2) / H, 0.01, 20);
-  const eyeR = new gpu.PerspectiveCamera(70, (W / 2) / H, 0.01, 20);
-  eyeL.viewport = new gpu.Vector4(0, 0, W / 2, H);
-  eyeR.viewport = new gpu.Vector4(W / 2, 0, W / 2, H);
-  // A plausible IPD, and each eye's world matrix set outright, because that is what a session
-  // does -- three does not derive the eyes from the head.
-  eyeL.position.set(-0.032, 0, 1); eyeR.position.set(0.032, 0, 1);
-  eyeL.updateMatrixWorld(true); eyeR.updateMatrixWorld(true);
-  const cam = new gpu.ArrayCamera([eyeL, eyeR]);
-  cam.position.z = 1;
-  cam.updateMatrixWorld(true);
-  NodeMaterials._stereoCam = cam;
-  return cam;
-};
 
-NodeMaterials.warmEnqueue = function (materials, meshes) {
-  if (!gpu) return 0;
-  const mats = [];
-  const seen = new Set();
-  for (const m of (materials || [])) if (m && !seen.has(m)) { seen.add(m); mats.push(m); }
-  const geo = new gpu.PlaneGeometry(0.001, 0.001);
-  // The same colour and material attributes the one-shot warm gives its stand-in quad: a
-  // material warmed without them compiles a different pipeline to the one that gets asked for.
-  const n = geo.attributes.position.count;
-  geo.setAttribute('color', new gpu.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
-  geo.setAttribute('aMaterial', new gpu.BufferAttribute(new Float32Array(n * 3), 3));
-  // DRAINED FROM THE END, which decides the ORDER things become cheap in. prewarmBatches hands
-  // these over as capsules, then bone and joint bodies, then wire -- so popping gives wire,
-  // joint, bone, capsules, which is the order a first bone actually needs them. The variants
-  // nobody has touched yet (preselect highlights, physics shapes) come last, by the time the
-  // user is still deciding where to put the second joint.
-  warmQueue = {
-    mats,
-    meshes: (meshes || []).filter(Boolean).slice(),
-    geo,
-    scene: new gpu.Scene(),
-    total: mats.length + (meshes ? meshes.length : 0),
-    done: 0,
-    at: 0,
-  };
-  return warmQueue.total;
-};
 
-/** True while there is warming left to do — for ShaderBusy and for the console. */
-NodeMaterials.warmPending = function () {
-  return warmQueue ? (warmQueue.mats.length + warmQueue.meshes.length) : 0;
-};
 
-/**
- * Spend up to `budgetMs` on the queue. Called once a frame, before the real render.
- * Returns how many items are left.
- */
-NodeMaterials.warmStep = function (renderer, camera, budgetMs) {
-  const q = warmQueue;
-  if (!q || !renderer || !camera) return 0;
-  const budget = budgetMs > 0 ? budgetMs : 6;
-  const t0 = performance.now();
-  if (!q.at) q.at = t0;
-
-  // BOTH CAMERA SHAPES. The mono one for the desktop, and a hand-made two-eye ArrayCamera for
-  // the shape a session uses -- see NodeMaterials.stereoWarmCamera. Warming only the first is
-  // why launch-time warming has never spared the session anything.
-  const cams = [camera];
-  const stereo = q.stereo === false ? null : NodeMaterials.stereoWarmCamera();
-  if (stereo) cams.push(stereo);
-  const draw = (sc) => {
-    for (const c of cams) {
-      try { renderer.render(sc, c); } catch (e) { /* one item is not worth a frame */ }
-    }
-  };
-
-  do {
-    const sc = q.scene;
-    let drew = false;
-    if (q.mats.length) {
-      const mesh = new gpu.Mesh(q.geo, q.mats.pop());
-      mesh.position.set(0, 0, -0.05);
-      mesh.frustumCulled = false;
-      sc.add(mesh);
-      draw(sc);
-      sc.clear();
-      drew = true;
-    } else if (q.meshes.length) {
-      // A REAL BATCH, BORROWED AND PUT BACK INSIDE THIS STEP. Its pipeline is keyed on its own
-      // geometry and instancing, which a stand-in quad cannot reproduce; and an instanced batch
-      // at count 0 draws nothing, so it is nudged to 1 with its instance matrix still zeroed.
-      const m = q.meshes.pop();
-      const parent = m.parent, count = m.count;
-      if (m.isInstancedMesh && !m.count) m.count = 1;
-      sc.add(m);
-      draw(sc);
-      if (m.isInstancedMesh) m.count = count;
-      if (parent) parent.add(m); else sc.remove(m);
-      sc.clear();
-      drew = true;
-    }
-    if (!drew) break;
-    q.done++;
-  } while (performance.now() - t0 < budget);
-
-  const left = q.mats.length + q.meshes.length;
-  if (!left) {
-    console.log('[NodeMaterials] warmed ' + q.total + ' pipelines over '
-      + Math.round(performance.now() - q.at) + 'ms, spread across frames');
-    q.geo.dispose();
-    warmQueue = null;
-  }
-  return left;
-};
 
 /**
  * EVERY MATERIAL WORTH WARMING: ours, the caller's, and everything already in the scene.

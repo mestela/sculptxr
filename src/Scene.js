@@ -7994,12 +7994,6 @@ class Scene {
       const _wantXrShadows = window._xrShadows !== false;
       window._xrShadows = _wantXrShadows;
       _setPoolShadows(_wantXrShadows);
-      // SKIPPED UNDER ?xrprewarm=1, which is the whole point of that flag: this is what throws the
-    // launch-time pipelines away. See the note at the warm above.
-    if (getOptionsURL().xrprewarm) {
-      console.log('[xr] material rebuild SKIPPED (?xrprewarm=1) — relying on the launch-time '
-        + 'stereo warm. If lit materials do not draw, this flag is why.');
-    } else {
       _rebuildAll('session start');
       window._xrMark && window._xrMark('material rebuild');
       // AND REBUILD THEM IN ONE PLACE, RATHER THAN OVER THE NEXT MINUTE -- BUT NOT HERE.
@@ -8014,9 +8008,8 @@ class Scene {
       // pipeline key hashes cameras.length, so a warm here compiles a whole third set --
       // `ArrayCamera[0]` in matt's report -- for a shape nothing will ever draw with again.
       //
-      // So it waits for the first frame that has real views. See _warmOnFirstXRFrame.
-      this._warmPendingXR = !getOptionsURL().xrprewarm;
-    }
+      // So it waits for the first frame that has real views, which is where the reveal warm runs.
+      this._warmPendingXR = true;
       if (_wantXrShadows && this._xrShadowOnce) {
         // A little after the boundary, so the pool has been synced and the sculpt is present.
         setTimeout(() => { try { window.xrShadowRefresh(); } catch (e) { /* never block VR */ } }, 1500);
