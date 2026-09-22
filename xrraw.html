@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<!--
+  WEBXR STEREO WITH NO LIBRARY AT ALL, to decide who owns the Vision Pro distortion.
+
+  The 2x2 so far: GalaxyXR passes on both renderers, Vision Pro passes on the legacy renderer
+  and FAILS on the node one. That is an INTERACTION, not a culprit -- it fits "Safari mishandles
+  something the node path exercises" and "three does something fragile that only Safari refuses"
+  equally well. And it cannot be separated by adding hardware, because Safari's ONLY WebXR
+  implementation is visionOS: browser and device are perfectly confounded.
+
+  So go under three instead. This page is raw WebGL2 and raw WebXR: hand-written GLSL, one
+  XRWebGLLayer, two viewports, two projections. If it distorts on a Vision Pro, the fault is
+  below three and the report is WebKit's. If it is correct, three is relying on something Safari
+  will not tolerate, and the report -- or better, the patch -- goes to three.
+
+  THE A/B IS THE POINT, and it is the structural difference between the two renderers:
+
+    (default)  per-eye matrices live in a UNIFORM BUFFER OBJECT as arrays, indexed in the
+               shader by a second UBO holding the eye index. This is three's node-renderer
+               shape: cameraProjectionMatrix.element(cameraIndex).
+    ?ubo=0     the same matrices as PLAIN uniforms, set per eye with uniformMatrix4fv. This is
+               the legacy shape, which is known to work on a Vision Pro.
+
+  Same geometry, same draw order, same everything else. If default fails and ?ubo=0 passes on
+  the Vision Pro, that is a very specific finding about UBO handling, with a reproduction of
+  eighty lines and no library in it.
+
+  The relay import is console/eval only and touches no GL; strip it for a public repro.
+-->
+<html lang="en"><head><meta charset="utf-8"><title>XR raw WebGL2</title>
+<style>body{margin:0;background:#111;color:#ddd;font:13px ui-monospace,monospace}
+#hud{position:fixed;left:8px;top:8px;white-space:pre;z-index:10}
+#b{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);padding:14px 28px;font:14px monospace;z-index:20}</style>
+</head><body>
+<div id="hud">starting…</div><button id="b">ENTER VR</button>
+<script type="module">
+import { installDevRelay } from './src/misc/devRelay.js';
+installDevRelay();
+
+const USE_UBO = !/[?&]ubo=0/.test(location.search);
+const hud = document.getElementById('hud');
+const canvas = document.createElement('canvas');
+document.body.appendChild(canvas);
+const gl = canvas.getContext('webgl2', { xrCompatible: true, antialias: false, alpha: true });
+if (!gl) { hud.textContent = 'no webgl2'; throw new Error('no webgl2'); }
+
+const VS = `#version 300 es
+${USE_UBO ? `layout(std140) uniform Camera { mat4 proj[2]; mat4 view[2]; };
+layout(std140) uniform Idx { uvec4 idx; };` : `uniform mat4 uProj; uniform mat4 uView;`}
+uniform mat4 uModel;
+in vec3 aPos; in vec3 aNrm; out vec3 vN;
+void main() {
+  vN = aNrm;
+${USE_UBO ? `  uint i = idx.x;
+  gl_Position = proj[i] * view[i] * uModel * vec4(aPos, 1.0);`
+           : `  gl_Position = uProj * uView * uModel * vec4(aPos, 1.0);`}
+}`;
+const FS = `#version 300 es
+precision highp float; in vec3 vN; out vec4 o;
+void main() { o = vec4(normalize(vN) * 0.5 + 0.5, 1.0); }`;
+
+function sh(type, src) {
+  const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+gl.bindAttribLocation(prog, 0, 'aPos'); gl.bindAttribLocation(prog, 1, 'aNrm');
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const uModel = gl.getUniformLocation(prog, 'uModel');
+let uProj = null, uView = null, camUBO = null, idxUBO = null;
+if (USE_UBO) {
+  gl.uniformBlockBinding(prog, gl.getUniformBlockIndex(prog, 'Camera'), 0);
+  gl.uniformBlockBinding(prog, gl.getUniformBlockIndex(prog, 'Idx'), 1);
+  camUBO = gl.createBuffer(); gl.bindBuffer(gl.UNIFORM_BUFFER, camUBO);
+  gl.bufferData(gl.UNIFORM_BUFFER, 256, gl.DYNAMIC_DRAW);      // mat4 proj[2] + mat4 view[2]
+  gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, camUBO);
+  idxUBO = gl.createBuffer(); gl.bindBuffer(gl.UNIFORM_BUFFER, idxUBO);
+  gl.bufferData(gl.UNIFORM_BUFFER, 16, gl.DYNAMIC_DRAW);       // uvec4, std140-padded
+  gl.bindBufferBase(gl.UNIFORM_BUFFER, 1, idxUBO);
+} else {
+  uProj = gl.getUniformLocation(prog, 'uProj'); uView = gl.getUniformLocation(prog, 'uView');
+}
+
+// A unit cube: 6 faces, 2 triangles each, with a face normal so orientation is readable.
+const P = [], N = [];
+const face = (o, u, v, n) => {
+  const a = o, b = [o[0]+u[0],o[1]+u[1],o[2]+u[2]], c = [o[0]+u[0]+v[0],o[1]+u[1]+v[1],o[2]+u[2]+v[2]], d = [o[0]+v[0],o[1]+v[1],o[2]+v[2]];
+  for (const t of [a,b,c, a,c,d]) { P.push(...t); N.push(...n); }
+};
+face([-1,-1, 1],[2,0,0],[0,2,0],[0,0,1]);   face([ 1,-1,-1],[-2,0,0],[0,2,0],[0,0,-1]);
+face([-1,-1,-1],[0,0,2],[0,2,0],[-1,0,0]);  face([ 1,-1, 1],[0,0,-2],[0,2,0],[1,0,0]);
+face([-1, 1, 1],[2,0,0],[0,0,-2],[0,1,0]);  face([-1,-1,-1],[2,0,0],[0,0,2],[0,-1,0]);
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(P), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+const nb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, nb);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(N), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+const COUNT = P.length / 3;
+
+const model = new Float32Array(16);
+function setModel(x, y, z, s, rot) {
+  const c = Math.cos(rot), si = Math.sin(rot);
+  model.set([ c*s,0,-si*s,0,  0,s,0,0,  si*s,0,c*s,0,  x,y,z,1 ]);
+  gl.uniformMatrix4fv(uModel, false, model);
+}
+
+let session = null, refSpace = null, frames = 0;
+document.getElementById('b').onclick = async () => {
+  try {
+    session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+    await gl.makeXRCompatible();
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    refSpace = await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
+    session.requestAnimationFrame(onFrame);
+    document.getElementById('b').textContent = 'IN SESSION';
+  } catch (e) { document.getElementById('b').textContent = 'FAILED: ' + e.name; console.log('[xrraw] ' + e); }
+};
+
+const camData = new Float32Array(64);        // proj[2] then view[2] -- FOUR mat4s, 64 floats
+const idxData = new Uint32Array(4);
+let died = false;
+function onFrame(t, frame) {
+  session.requestAnimationFrame(onFrame);
+  if (died) return;
+  try { draw(t, frame); } catch (e) {
+    // ONCE, NOT EVERY FRAME. The first version of this threw sixty times a second and the
+    // headset just showed black, which reads as "the test failed" rather than "the test is
+    // broken" -- exactly the confusion worth avoiding in a page meant to assign blame.
+    died = true; console.log('[xrraw] FRAME THREW: ' + (e && e.message ? e.message : e));
+    hud.textContent = 'FRAME THREW: ' + (e && e.message ? e.message : e);
+  }
+}
+function draw(t, frame) {
+  const pose = frame.getViewerPose(refSpace);
+  if (!pose) return;
+  const layer = session.renderState.baseLayer;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+  gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(prog); gl.bindVertexArray(vao);
+
+  if (USE_UBO) {
+    // BOTH EYES UPLOADED ONCE, then indexed per draw -- three's shape exactly.
+    for (let i = 0; i < pose.views.length && i < 2; i++) {
+      camData.set(pose.views[i].projectionMatrix, i * 16);
+    }
+    for (let i = 0; i < pose.views.length && i < 2; i++) {
+      camData.set(pose.views[i].transform.inverse.matrix, 32 + i * 16);
+    }
+    gl.bindBuffer(gl.UNIFORM_BUFFER, camUBO);
+    gl.bufferSubData(gl.UNIFORM_BUFFER, 0, camData);
+  }
+
+  const time = t * 0.001;
+  pose.views.forEach((view, eye) => {
+    const vp = layer.getViewport(view);
+    gl.viewport(vp.x, vp.y, vp.width, vp.height);
+    if (USE_UBO) {
+      idxData[0] = eye;
+      gl.bindBuffer(gl.UNIFORM_BUFFER, idxUBO);
+      gl.bufferSubData(gl.UNIFORM_BUFFER, 0, idxData);
+    } else {
+      gl.uniformMatrix4fv(uProj, false, view.projectionMatrix);
+      gl.uniformMatrix4fv(uView, false, view.transform.inverse.matrix);
+    }
+    for (let i = -3; i <= 3; i++) { setModel(i * 0.42, 1.6, -1.2, 0.11, time + i); gl.drawArrays(gl.TRIANGLES, 0, COUNT); }
+    setModel(0, 1.6, -0.6, 0.15, -time); gl.drawArrays(gl.TRIANGLES, 0, COUNT);
+  });
+
+  if ((frames++ % 60) === 0) {
+    window.__xrraw = { mode: USE_UBO ? 'UBO (node-renderer shape)' : 'plain uniforms (legacy shape)',
+      views: pose.views.length, fb: layer.framebufferWidth + 'x' + layer.framebufferHeight,
+      vp: pose.views.map((v) => { const p = layer.getViewport(v); return p.x + ',' + p.width; }) };
+    hud.textContent = JSON.stringify(window.__xrraw, null, 1);
+  }
+}
+window.__xrraw = { mode: USE_UBO ? 'UBO' : 'plain', views: 0 };
+hud.textContent = 'raw WebGL2 — ' + (USE_UBO ? 'UBO mode (?ubo=0 for plain uniforms)' : 'plain-uniform mode');
+console.log('[xrraw] ready, ' + (USE_UBO ? 'UBO' : 'plain') + ' mode');
+</script></body></html>
