@@ -396,7 +396,8 @@ function installPipelineTrace(renderer) {
   const counts = () => [size(pl.caches), size(pl.programs && pl.programs.vertex),
     size(pl.programs && pl.programs.fragment)];
 
-  const describe = (ro) => {
+  const describe = (renderObject) => {
+    const ro = renderObject;
     const o = ro.object || {};
     const m = ro.material || {};
     const g = ro.geometry || {};
@@ -407,6 +408,22 @@ function installPipelineTrace(renderer) {
     const geo = (g.type || 'geometry') + (pos ? '(' + pos.count + 'v)' : '')
       + (o.isInstancedMesh ? ' x' + o.count : '');
     const name = o.name || m.name || o.type || 'object';
+    // THE RENDER OBJECT'S OWN IDENTITY, which is what the duplicates question comes down to.
+    //
+    // A pipeline is released the moment its usedTimes hits 0, so the same description compiling
+    // four times means the render object was dropped and remade three times. `ro` is its uuid
+    // (a new one = a new render object) and `key` is its cache key, which is what three compares
+    // to decide whether to dispose and rebuild. Same uuid twice means one object recompiling;
+    // different uuids mean the object itself is being churned.
+    if (window._pipeTraceKeys) {
+      let ro = '?', key = '?';
+      try {
+        ro = (renderObject.id !== undefined ? 'ro' + renderObject.id : '?');
+        key = String(renderObject.getCacheKey ? renderObject.getCacheKey() : '?');
+      } catch (e) { /* a probe never breaks a draw */ }
+      return (m.type || 'material') + tag + ' on ' + name + ', ' + geo + ', ' + cam
+        + '  [' + ro + ' key ' + key + ' objuuid ' + String(o.uuid).slice(0, 6) + ']';
+    }
     // MATERIAL ID AND VERSION, because the same description appearing twice is the question the
     // first version of this could not answer. A new id is a different material object; the same
     // id at a higher version is the SAME material recompiled after a needsUpdate -- which is what
@@ -416,8 +433,15 @@ function installPipelineTrace(renderer) {
   };
 
   const orig = pl.getForRender.bind(pl);
+  window._pipeBuilt = 0;
+  window._pipeBuiltMs = 0;
   pl.getForRender = function (renderObject, promises) {
-    if (window._pipeTrace === false) return orig(renderObject, promises);
+    // THE COUNT IS ALWAYS KEPT; ONLY THE LOG IS OPTIONAL. window._pipeTrace used to bypass the
+    // whole wrapper, which meant silencing the console also silenced every tally built on it.
+    // A BUILD COUNTER, NOT A CACHE SIZE. pl.caches.size goes DOWN as well as up -- three runs
+    // usedTimes--/_releasePipeline, and a session transition disposes the desktop render objects
+    // -- so anything watching the size for growth is watching a high-water mark and reports zero
+    // while the app is busily rebuilding. That is what the first steady-state metric did.
     const before = counts();
     const t0 = performance.now();
     const out = orig(renderObject, promises);
@@ -427,6 +451,9 @@ function installPipelineTrace(renderer) {
     const what = describe(renderObject);
     tally.set(what, (tally.get(what) || 0) + 1);
     times.push(ms);
+    window._pipeBuilt++;
+    window._pipeBuiltMs += ms;
+    if (window._pipeTrace === false) return out;
     const built = [];
     if (after[0] > before[0]) built.push('pipeline');
     if (after[1] > before[1]) built.push('vertex');

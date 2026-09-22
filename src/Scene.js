@@ -2,6 +2,12 @@ import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import { guardedError } from './misc/LogGuard.js';
 import * as THREE from 'three';
 const XF_SETTLE_MS = 250;
+// TIME TO STEADY STATE -- see _tickSteadyState. Quiet for this long means the app has stopped
+// building pipelines; a frame this long is a hitch the user felt; and the ceiling makes a
+// session that never settles report anyway rather than staying silent.
+const SS_QUIET_MS = 1000;
+const SS_HITCH_MS = 40;
+const SS_CEILING_MS = 30000;
 import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
 
 // The ghost's opacity where the sculpt is in front of the grid. ABSOLUTE, not a fraction of the
@@ -1644,6 +1650,12 @@ class Scene {
 
       if (!window._firstXRFrameLogged) {
         window._firstXRFrameLogged = true;
+        // THE SECOND VOID STARTS HERE, and nothing could see it. The itemised timing below stops
+        // at this line, so a session that enters in 43ms and then compiles for 2.2 seconds --
+        // one frame of it 392ms, long enough for the compositor to take the session away and
+        // show the lobby -- logged an untroubled "grey void 353ms" and said no more. matt saw a
+        // grey void on a run whose entry metric was identical to a run where he saw none.
+        this._armSteadyState();
         const elapsed = window._xrSessionStartT ? Math.round(performance.now() - window._xrSessionStartT) : '?';
         if (window.screenLog) window.screenLog(`[XR] First frame rendered (+${elapsed}ms from session start)`, "cyan");
         console.log(`[XR Timing] First frame at +${elapsed}ms`);
@@ -3896,6 +3908,7 @@ class Scene {
         this._framesDrawn = (this._framesDrawn || 0) + 1;
         ShaderBusy.attach(this._scene);
         ShaderBusy.tick(this._renderer, _renderCam);
+        this._tickSteadyState();
       }
 
       // Three.js clears depth on its own, so we render over the top
@@ -8303,6 +8316,7 @@ class Scene {
   }
 
   onXREnd() {
+    this._ss = null;
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
@@ -15309,6 +15323,48 @@ class Scene {
    * how many a given object needs is three's business and some share while others build two. But
    * the OBJECTS are all knowable up front, and they are the units the work is actually done in.
    */
+  // TIME TO STEADY STATE: first frame until the app stops building pipelines.
+  //
+  // ONE Map.size READ A FRAME, not four per render object, so this is independent of
+  // window._pipeTrace and survives the trace being silenced -- the entry metric's blind spot is
+  // not worth a second instrument that can itself be switched off. Counting only; nothing is
+  // revealed, drawn or hidden, because an instrument that changes the frame it measures is how
+  // five warm passes each measured better than the last while the whole direction was wrong.
+  //
+  // SETTLED MEANS "NOTHING NEW FOR A WHOLE SECOND". Compiles arrive in bursts a frame or two
+  // apart, so a shorter quiet period would call steady state in the middle of one.
+  _armSteadyState() {
+    const now = performance.now();
+    // installPipelineTrace owns the counter; without it there is nothing to measure.
+    if (typeof window._pipeBuilt !== 'number') return;
+    this._ss = { t0: now, lastGrowth: now, lastTick: now, base: window._pipeBuilt,
+                 msBase: window._pipeBuiltMs || 0, added: 0, worst: 0, hitches: 0 };
+  }
+
+  _tickSteadyState() {
+    const ss = this._ss;
+    if (!ss) return;
+    const now = performance.now();
+    const frameMs = now - ss.lastTick;
+    ss.lastTick = now;
+    if (frameMs > ss.worst) ss.worst = frameMs;
+    if (frameMs >= SS_HITCH_MS) ss.hitches++;
+    const n = window._pipeBuilt;
+    if (n > ss.base) { ss.added += n - ss.base; ss.base = n; ss.lastGrowth = now; }
+    // A CEILING, so a session that never settles still reports something. Borrowed from
+    // BootOverlay, which learned the same lesson: a metric that only fires on success is silent
+    // in exactly the case worth hearing about.
+    const expired = now - ss.t0 >= SS_CEILING_MS;
+    if (now - ss.lastGrowth < SS_QUIET_MS && !expired) return;
+    this._ss = null;
+    const spent = Math.round((window._pipeBuiltMs || 0) - ss.msBase);
+    console.log('[XR Timing] steady state at +' + Math.round(ss.lastGrowth - ss.t0)
+      + 'ms from first frame — ' + ss.added + ' pipelines built in ' + spent
+      + 'ms, worst frame ' + Math.round(ss.worst) + 'ms, ' + ss.hitches
+      + ' frames over ' + SS_HITCH_MS + 'ms'
+      + (expired ? ' — CEILING HIT, still building' : ''));
+  }
+
   _warmableObjects() {
     const out = [];
     const seen = new Set();
