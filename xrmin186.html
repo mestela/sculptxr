@@ -25,7 +25,7 @@
   distortion grows away from centre.
 -->
 <html lang="en">
-<head><meta charset="utf-8"><title>XR minimal 186</title>
+<head><meta charset="utf-8"><title>XR minimal 186 + DirectRenderPipeline</title>
 <style>
   body { margin:0; background:#111; color:#ddd; font:13px ui-monospace,Menlo,monospace; }
   #hud { position:fixed; left:8px; top:8px; white-space:pre; line-height:1.5; z-index:10; }
@@ -40,14 +40,12 @@ import { installDevRelay } from './src/misc/devRelay.js';
 installDevRelay();   // so the harness can be questioned without anyone wearing the headset
 
 const hud = document.getElementById('hud');
-function mkVRButton() {
+function mkVRButton(label) {
   const b = document.createElement('button');
-  b.textContent = 'ENTER VR (186)';
+  b.textContent = label;
   b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);padding:14px 28px;font:14px monospace;z-index:20';
   b.onclick = async () => {
     try {
-      // ?webgl=1 forces the XRWebGLLayer path by withholding 'layers' -- which is what SculptXR
-      // does deliberately, and the difference the first 186 run accidentally introduced.
       const feats = ['local-floor', 'bounded-floor', 'hand-tracking'];
       if (!/[?&]webgl=1/.test(location.search)) feats.push('layers');
       const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: feats });
@@ -59,11 +57,40 @@ function mkVRButton() {
 }
 const renderer = new THREE.WebGPURenderer({ antialias: false, forceWebGL: true });
 await renderer.init();
+// ?linear=1 REMOVES THE OUTPUT COMPOSITE PASS. three renders the scene to an intermediate
+// texture and then blits it to the XR framebuffer with a fullscreen triangle that applies
+// sRGB -- `fragColor = sRGBTransferOETF( texture( scene, gl_FragCoord / resolution ) )`. That
+// pass is the ONLY structural thing three does here that the raw WebGL2 page (which renders
+// correctly on a Vision Pro) does not. With a linear output space and no tone mapping there is
+// nothing to convert, so three should draw straight into the layer.
+if (/[?&]linear=1/.test(location.search)) {
+  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  console.log('[xrmin] linear output, no tone mapping — composite pass should be skipped');
+}
 renderer.setPixelRatio(1);
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
+// ?direct=1 uses DirectRenderPipeline (three r186+). It applies the output node -- tone mapping
+// and the working-to-output colour transform -- inside the material, so no intermediate target
+// and no fullscreen blit, which is the pass visionOS mishandles. three's own caveat: it changes
+// blending and is incompatible with materials that sample the framebuffer (transmissive).
+const DIRECT = /[?&]direct=1/.test(location.search);
+let directPipeline = null;
+if (DIRECT) {
+  if (typeof THREE.DirectRenderPipeline !== 'function') {
+    console.log('[xrmin186] DirectRenderPipeline NOT PRESENT in this build');
+  } else {
+    directPipeline = new THREE.DirectRenderPipeline(renderer);
+    console.log('[xrmin186] DirectRenderPipeline active');
+  }
+}
+// Exposed so the relay can interrogate three's render-target chain live. The harness exists to
+// be questioned; hiding the renderer behind module scope cost a round trip already.
+window.renderer = renderer;
+window.THREE = THREE;
 document.body.appendChild(renderer.domElement);
-mkVRButton();
+mkVRButton('ENTER VR (186' + (DIRECT ? ' + DirectRenderPipeline' : '') + ')');
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 50);
@@ -97,19 +124,44 @@ function fixSize() {
   console.log('[xrmin186] resized ' + w + 'x' + h);
 }
 
+{ const gl2 = renderer.backend.gl;
+  // WHICH FRAMEBUFFER DOES EACH PASS WRITE TO. If the scene goes to one target and the
+  // composite to another, the first is the intermediate -- and its size is the open question.
+  const ids = new WeakMap(); let next = 1;
+  const fbId = (f) => (f === null ? 0 : (ids.has(f) ? ids.get(f) : (ids.set(f, next), next++)));
+  // ONLY WHILE PRESENTING, and counted separately. The first version capped at 300 draws and
+  // the pre-session desktop frames ate every one of them, so the table reported the Safari
+  // window (1015x1014) as though it were the headset. A sample that fills up before the thing
+  // you care about starts is worse than no sample.
+  const note = (c) => { try {
+    if (!renderer.xr.isPresenting) return;
+    const v = gl2.getParameter(gl2.VIEWPORT);
+    const f = gl2.getParameter(gl2.FRAMEBUFFER_BINDING);
+    const key = 'fb' + fbId(f) + ' vp=' + v[0] + ',' + v[2] + 'x' + v[3] + (c === 3 ? ' [3vtx]' : '');
+    (window.__passes = window.__passes || {})[key] = (window.__passes[key] || 0) + 1;
+    if (c === 3 && v[2] > 9000) window.__sawComposite = true;
+  } catch (e) {} };
+  const oa = gl2.drawArrays.bind(gl2), oe = gl2.drawElements.bind(gl2);
+  let n = 0;
+  gl2.drawArrays = function (m, f, c) { if (n < 400) { n++; note(c); } return oa.apply(gl2, arguments); };
+  gl2.drawElements = function (m, c) { if (n < 400) { n++; note(c); } return oe.apply(gl2, arguments); };
+  window.__resetPasses = () => { window.__passes = {}; window.__sawComposite = false; n = 0; return 'reset'; }; }
 let n = 0;
 renderer.setAnimationLoop(() => {
   fixSize();
   const t = performance.now() * 0.001;
   cubes.forEach((c, i) => { c.rotation.y = t + i; c.rotation.x = t * 0.5; });
   centre.rotation.y = -t;
-  renderer.render(scene, camera);
+  if (directPipeline) directPipeline.render(scene, camera); else renderer.render(scene, camera);
   if ((n++ % 60) === 0) {
     const xr = renderer.xr, c = xr.getCamera(), rt = xr._xrRenderTarget;
     window.__xrmin = {
       presenting: xr.isPresenting,
       rt: rt ? rt.width + 'x' + rt.height : null,
       layer: xr._glProjLayer ? 'XRProjectionLayer' : (xr._glBaseLayer ? 'XRWebGLLayer' : '?'),
+      composite: window.__sawComposite ? 'YES (fullscreen blit ran)' : 'no (direct to layer)',
+      pipeline: directPipeline ? 'DirectRenderPipeline' : 'default',
+      colorSpace: renderer.outputColorSpace + '/tone' + renderer.toneMapping,
       cams: c && c.cameras ? c.cameras.length : 0,
       vp: c && c.cameras ? c.cameras.map((k) => k.viewport.x + ',' + k.viewport.z) : null,
       posX: c && c.cameras ? c.cameras.map((k) => +k.position.x.toFixed(3)) : null
@@ -119,6 +171,6 @@ renderer.setAnimationLoop(() => {
       + '\n' + JSON.stringify(window.__xrmin, null, 1);
   }
 });
-console.log('[xrmin186] ready, three ' + THREE.REVISION);
+console.log('[xrmin186] ready, three ' + THREE.REVISION + (directPipeline ? ' + DirectRenderPipeline' : ''));
 </script>
 </body></html>
