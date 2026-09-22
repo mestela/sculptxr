@@ -408,6 +408,11 @@ function installPipelineTrace(renderer) {
     const geo = (g.type || 'geometry') + (pos ? '(' + pos.count + 'v)' : '')
       + (o.isInstancedMesh ? ' x' + o.count : '');
     const name = o.name || m.name || o.type || 'object';
+    // MATERIAL ID AND VERSION, because the same description appearing twice is the question the
+    // first version of this could not answer. A new id is a different material object; the same
+    // id at a higher version is the SAME material recompiled after a needsUpdate -- which is what
+    // the session boundary does to all of them at once.
+    const tag = '#' + (m.id !== undefined ? m.id : '?') + 'v' + (m.version || 0);
     // THE RENDER OBJECT'S OWN IDENTITY, which is what the duplicates question comes down to.
     //
     // A pipeline is released the moment its usedTimes hits 0, so the same description compiling
@@ -424,11 +429,6 @@ function installPipelineTrace(renderer) {
       return (m.type || 'material') + tag + ' on ' + name + ', ' + geo + ', ' + cam
         + '  [' + ro + ' key ' + key + ' objuuid ' + String(o.uuid).slice(0, 6) + ']';
     }
-    // MATERIAL ID AND VERSION, because the same description appearing twice is the question the
-    // first version of this could not answer. A new id is a different material object; the same
-    // id at a higher version is the SAME material recompiled after a needsUpdate -- which is what
-    // the session boundary does to all of them at once.
-    const tag = '#' + (m.id !== undefined ? m.id : '?') + 'v' + (m.version || 0);
     return (m.type || 'material') + tag + ' on ' + name + ', ' + geo + ', ' + cam;
   };
 

@@ -629,6 +629,10 @@ function makeBatch(main, geo, ghost, key) {
   else if (isEnd) ensureSharpAttr(m, BATCH_CAP0);
   ensureInstanceColor(m, BATCH_CAP0);
   m.count = 0;
+  // BORN HIDDEN, AND VISIBLE ONLY WHILE IT HAS INSTANCES -- see flushBatches. frustumCulled is
+  // false below, so a zero-instance batch still reaches the render list and still builds a
+  // pipeline to draw nothing at all.
+  m.visible = false;
   m.renderOrder = ghost ? GHOST_ORDER : 0;
   m.isPickable = false;
   m.frustumCulled = false;
@@ -700,14 +704,17 @@ function makeLineBatch(main, geo, ghost) {  // named by its caller — see batch
     opacity: ghost ? 0.35 : 0.9,
     ...(ghost ? { depthTest: true, depthFunc: THREE.GreaterDepth } : {}),
   });
-  // SEEDED WITH ONE DEGENERATE SEGMENT rather than an empty geometry. An empty buffer draws
-  // nothing, and a batch that never draws never compiles its pipeline -- which put that compile
-  // inside the session, on the first bone. flushLineBatch replaces both attributes on its first
-  // pass, so this costs two zeroed vertices and nothing else. See Skeleton.prewarmBatches.
+  // THE DEGENERATE SEGMENT STAYS, BUT THE BATCH NO LONGER DRAWS IT. Seeding one segment so the
+  // pipeline compiled at boot rather than on the first bone worked on the desktop, where it is
+  // paid once. It cannot work for XR: a session needs ArrayCamera[2] pipelines and a desktop
+  // boot only ever builds PerspectiveCamera ones, so the whole set was re-paid on EVERY entry --
+  // inside the startup window, which is the one place the runtime will not tolerate it.
+  // flushLineBatch already sets visible from the segment count; this just starts it off false.
   const lg = new THREE.BufferGeometry();
   lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
   lg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(6), 3));
   const m = new THREE.LineSegments(lg, mat);
+  m.visible = false;
   // The wireframe stays on top -- it is a line overlay and being drawn over is the whole point --
   // but its GHOST is an xray like any other and goes with them. See GHOST_ORDER.
   m.renderOrder = ghost ? GHOST_ORDER : 9999;
@@ -915,6 +922,7 @@ function flushBatches(main) {
     if (pe) pe.needsUpdate = true;
     if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; }
     m.count = i;
+    m.visible = i > 0;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
   }
