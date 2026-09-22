@@ -44,9 +44,26 @@ export default function devRelay(dir = '.devrelay') {
           try { appendFileSync(resFile, (await read(req)).trim() + '\n'); } catch (e) {}
           res.statusCode = 204; return res.end();
         }
-        if (!existsSync(cmdFile)) { res.statusCode = 204; return res.end(); }
-        res.setHeader('content-type', 'application/json');
-        res.end(readFileSync(cmdFile, 'utf8'));
+        // LONG-POLL, NOT A HEARTBEAT. The first version asked every 1.2s whether anything was
+        // pending, which is a network request per second on a device someone is wearing --
+        // matt, on the Vision Pro: "you keep rending it once a second". The request is now held
+        // open until there is something to say, so an idle device makes no traffic at all.
+        const since = (req.url.split('since=')[1] || '').split('&')[0];
+        const started = Date.now();
+        const check = () => {
+          if (existsSync(cmdFile)) {
+            const body = readFileSync(cmdFile, 'utf8');
+            let id = null;
+            try { id = JSON.parse(body).id; } catch (e) { /* half-written file; wait */ }
+            if (id && id !== decodeURIComponent(since)) {
+              res.setHeader('content-type', 'application/json');
+              return res.end(body);
+            }
+          }
+          if (Date.now() - started > 25000) { res.statusCode = 204; return res.end(); }
+          setTimeout(check, 250);
+        };
+        check();
       });
     }
   };
