@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<!--
+  THE SMALLEST POSSIBLE SESSION, to answer one question: is the Vision Pro distortion ours?
+
+  matt, once the 1x1 framebuffer was fixed: "its rendering, but its really warped and distorted
+  ... if i hold the menu in front of me, it is only visible in my right eye ... if i move it away
+  from the center, it rapidly distorts towards the edges".
+
+  Everything measurable inside SculptXR on that headset is CORRECT -- framebuffer matches the
+  render target, per-eye viewports are the right halves with balanced draw counts, the cameras
+  carry a 65mm separation and opposite shear, multiview is off, every uniform block has a big
+  enough buffer, and no two shared blocks collide on a binding point. The same code renders
+  correctly on a GalaxyXR. So the next question is not "which of our patches" but "is any of our
+  code involved at all".
+
+  This page is three and nothing else: a WebGPURenderer on the WebGL backend (forceWebGL is not
+  a choice -- the WebGPU backend throws on entering XR), one node material, seven cubes, and the
+  stock VRButton. No ThreeXRPatches, no NodeMaterials, no Scene.
+
+    distorted here  -> three + Safari. Our app is a bystander and the fix is upstream or a patch.
+    correct here    -> the fault is in our scene, and it can be bisected toward.
+
+  The cubes are a ROW, not one object, because "only visible in my right eye" is a statement
+  about position: a row spanning left to right shows at a glance which eye sees what and how the
+  distortion grows away from centre.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>XR minimal 186</title>
+<style>
+  body { margin:0; background:#111; color:#ddd; font:13px ui-monospace,Menlo,monospace; }
+  #hud { position:fixed; left:8px; top:8px; white-space:pre; line-height:1.5; z-index:10; }
+</style></head>
+<body>
+<div id="hud">starting…</div>
+<script type="module">
+import * as THREE from '/vendor186/three.webgpu.js';
+
+import { installDevRelay } from './src/misc/devRelay.js';
+
+installDevRelay();   // so the harness can be questioned without anyone wearing the headset
+
+const hud = document.getElementById('hud');
+function mkVRButton() {
+  const b = document.createElement('button');
+  b.textContent = 'ENTER VR (186)';
+  b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);padding:14px 28px;font:14px monospace;z-index:20';
+  b.onclick = async () => {
+    try {
+      // ?webgl=1 forces the XRWebGLLayer path by withholding 'layers' -- which is what SculptXR
+      // does deliberately, and the difference the first 186 run accidentally introduced.
+      const feats = ['local-floor', 'bounded-floor', 'hand-tracking'];
+      if (!/[?&]webgl=1/.test(location.search)) feats.push('layers');
+      const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: feats });
+      await renderer.xr.setSession(s);
+      b.textContent = 'IN SESSION';
+    } catch (e) { b.textContent = 'FAILED: ' + e.name; }
+  };
+  document.body.appendChild(b);
+}
+const renderer = new THREE.WebGPURenderer({ antialias: false, forceWebGL: true });
+await renderer.init();
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+mkVRButton();
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.05, 50);
+camera.position.set(0, 1.6, 0);
+
+// A ROW SPANNING THE VIEW, plus one dead ahead. MeshNormalNodeMaterial needs no lights and
+// colours every face differently, so a wrong projection is obvious rather than a guess.
+const mat = new THREE.MeshNormalNodeMaterial();
+const cubes = [];
+for (let i = -3; i <= 3; i++) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), mat);
+  m.position.set(i * 0.42, 1.6, -1.2);
+  scene.add(m); cubes.push(m);
+}
+const centre = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), mat);
+centre.position.set(0, 1.6, -0.6);
+scene.add(centre);
+
+// SAFARI REPORTS THE XR FRAMEBUFFER AS 1x1 UNTIL THE FIRST rAF, and three sizes the whole
+// session from that value inside setSession. Without this the harness is simply BLACK on a
+// Vision Pro and tells us nothing about distortion, which is the thing being tested. Same fix
+// as ThreeXRPatches.fixXRLayerSize, inlined so this page stays free of our code.
+function fixSize() {
+  const xr = renderer.xr, rt = xr._xrRenderTarget;
+  if (!rt) return;
+  const pl = xr._glProjLayer, bl = xr._glBaseLayer;
+  const w = pl ? pl.textureWidth : (bl ? bl.framebufferWidth : 0);
+  const h = pl ? pl.textureHeight : (bl ? bl.framebufferHeight : 0);
+  if (!(w > 1 && h > 1) || (rt.width === w && rt.height === h)) return;
+  renderer._setXRLayerSize(w, h); rt.setSize(w, h);
+  console.log('[xrmin186] resized ' + w + 'x' + h);
+}
+
+let n = 0;
+renderer.setAnimationLoop(() => {
+  fixSize();
+  const t = performance.now() * 0.001;
+  cubes.forEach((c, i) => { c.rotation.y = t + i; c.rotation.x = t * 0.5; });
+  centre.rotation.y = -t;
+  renderer.render(scene, camera);
+  if ((n++ % 60) === 0) {
+    const xr = renderer.xr, c = xr.getCamera(), rt = xr._xrRenderTarget;
+    window.__xrmin = {
+      presenting: xr.isPresenting,
+      rt: rt ? rt.width + 'x' + rt.height : null,
+      layer: xr._glProjLayer ? 'XRProjectionLayer' : (xr._glBaseLayer ? 'XRWebGLLayer' : '?'),
+      cams: c && c.cameras ? c.cameras.length : 0,
+      vp: c && c.cameras ? c.cameras.map((k) => k.viewport.x + ',' + k.viewport.z) : null,
+      posX: c && c.cameras ? c.cameras.map((k) => +k.position.x.toFixed(3)) : null
+    };
+    hud.textContent = 'three ' + THREE.REVISION + '  backend='
+      + (renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL')
+      + '\n' + JSON.stringify(window.__xrmin, null, 1);
+  }
+});
+console.log('[xrmin186] ready, three ' + THREE.REVISION);
+</script>
+</body></html>

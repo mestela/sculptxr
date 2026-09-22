@@ -48,3 +48,4 @@ docs/autoremesher_wasm/wasm_build/test_ar.*
 scratchpad/_*_gen.mjs
 .certs/
 .devrelay/
+vendor186/
