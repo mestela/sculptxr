@@ -391,6 +391,7 @@ function installPipelineTrace(renderer) {
   pl.__traced = true;
 
   const tally = new Map();
+  const times = [];
   const size = (m) => (m && typeof m.size === 'number' ? m.size : 0);
   const counts = () => [size(pl.caches), size(pl.programs && pl.programs.vertex),
     size(pl.programs && pl.programs.fragment)];
@@ -425,6 +426,7 @@ function installPipelineTrace(renderer) {
     const ms = performance.now() - t0;
     const what = describe(renderObject);
     tally.set(what, (tally.get(what) || 0) + 1);
+    times.push(ms);
     const built = [];
     if (after[0] > before[0]) built.push('pipeline');
     if (after[1] > before[1]) built.push('vertex');
@@ -437,12 +439,26 @@ function installPipelineTrace(renderer) {
 
   window.compileReport = function () {
     const rows = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    // TOTAL AND MEDIAN MILLISECONDS, not just counts.
+    //
+    // matt: "i'm also curious why its so intermittent? ... maybe 4 times it'll start
+    // immediately, the 5th it will be slow. but there's no pattern to it."
+    //
+    // A count alone cannot tell the two apart, and the difference between them is the whole
+    // question. If a slow launch builds the SAME number of pipelines but each takes ten times
+    // as long, the work is identical and the driver's own program cache was cold -- which is
+    // outside this app entirely and would explain the lack of pattern. If a slow launch builds
+    // MORE, something here is making extra work and it is ours to find. One line settles it.
+    const ms = times.slice().sort((a, b) => a - b);
+    const sum = Math.round(ms.reduce((a, b) => a + b, 0));
+    const med = ms.length ? ms[ms.length >> 1].toFixed(1) : '0';
     console.log('[compile] ' + rows.length + ' distinct, '
-      + rows.reduce((n, r) => n + r[1], 0) + ' total');
+      + rows.reduce((n, r) => n + r[1], 0) + ' total, ' + sum + 'ms spent, median '
+      + med + 'ms each');
     for (const [what, n] of rows) console.log('[compile]   x' + n + '  ' + what);
     return rows.length;
   };
-  window.compileReportReset = function () { tally.clear(); return 0; };
+  window.compileReportReset = function () { tally.clear(); times.length = 0; return 0; };
   console.log('[xrpatch] compile trace on — every pipeline build names itself; compileReport() '
     + 'for the tally, window._pipeTrace = false to silence');
 }

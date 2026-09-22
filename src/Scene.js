@@ -36,6 +36,7 @@ import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import ShaderBusy from './gui/ShaderBusy.js';
+import BootOverlay from './gui/BootOverlay.js';
 import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
@@ -1663,7 +1664,7 @@ class Scene {
         // The session warm is armed here and runs on the NEXT frame -- see below. This block is
         // still inside the first frame's work, before anything has been submitted, so warming
         // here would land inside the grey void it is meant to stay out of.
-        if (this._warmPendingXR) this._warmPendingXR = 'next-frame';
+        // (the session warm is gone -- see _startRevealWarm)
         // THE AUTHORITATIVE LAYER READING, TAKEN HERE AND NOT AT setSession.
         //
         // updateRenderState is asynchronous -- it applies at the start of the next frame -- so
@@ -2551,12 +2552,7 @@ class Scene {
       //
       // It makes that one frame long. That is the deliberate trade: one hitch just after the
       // scene appears, instead of a compile every time something new is first drawn.
-      if (this._warmPendingXR === 'next-frame') {
-        this._warmPendingXR = false;
-        const _xc = this._renderer.xr.getCamera && this._renderer.xr.getCamera();
-        if (_xc && _xc.cameras && _xc.cameras.length > 0) this._startRevealWarm();
-        else console.warn('[warm] session skipped — the XR camera still has no views');
-      }
+      // (no session warm; the first draw of each object compiles it, once)
       this._stepRevealWarm();
       if (this._isNodeRenderer) {
         if (/[?&]xrshadows=0/.test(window.location.search)) window._xrShadows = false;
@@ -3670,10 +3666,7 @@ class Scene {
       };
       // The rig half of the warm, callable on its own -- this is what runs at session start, and
       // being able to fire it from the console is what makes it an A/B rather than a reload.
-      if (this._isNodeRenderer && !window.rigWarm) window.rigWarm = () => {
-        this._warmedStartup = false;
-        return this.warmEverything('startup');
-      };
+
       if (this._isNodeRenderer && !window._warmNow) window._warmNow = () => {
         const pm = [];
         for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) pm.push(p.mesh.material);
@@ -3885,9 +3878,21 @@ class Scene {
         // keyed to a scene with different lights and gets compiled again the moment the pool
         // lands. That is the x2 on every rig batch in matt's report: the same material, the same
         // version, the same camera, two pipelines, one on each side of `[lights] pool built`.
-        if (!this._warmedStartup && this._mainMenuPanel && this._lightPool && this._framesDrawn > 2) {
-          this.warmEverything('startup');
+        // THE COVER GOES UP ON THE FIRST FRAME, before anything has been shown -- matt would
+        // rather wait on a loading screen than watch the scene stutter through its own warm-up.
+        // Only outside a session: in one, the compositor owns what the user sees.
+        if (!this._renderer.xr.isPresenting && getOptionsURL().warm !== false) BootOverlay.show();
+        // NO WARM PASS. See warmEverything, kept only as the note that explains its own removal.
+        // The cover is lifted once the app has drawn a few frames and nothing new has been built
+        // for a while -- which is the same condition as before, minus the warm it used to wait
+        // for. Objects go on appearing through the boot (the env's PMREM, the panels' first
+        // paint) and each compiles when first drawn, so a count is a manifest nobody maintains.
+        if (this._framesDrawn === 3) BootOverlay.setTotal(this._warmableObjects().length);
+        if (this._framesDrawn > 3) {
+          BootOverlay.setProgress(this._renderer._pipelines
+            ? this._renderer._pipelines.caches.size : 0);
         }
+        BootOverlay.tick(this._renderer, this._framesDrawn > 3);
         this._framesDrawn = (this._framesDrawn || 0) + 1;
         ShaderBusy.attach(this._scene);
         ShaderBusy.tick(this._renderer, _renderCam);
@@ -7994,8 +7999,17 @@ class Scene {
       const _wantXrShadows = window._xrShadows !== false;
       window._xrShadows = _wantXrShadows;
       _setPoolShadows(_wantXrShadows);
-      _rebuildAll('session start');
-      window._xrMark && window._xrMark('material rebuild');
+      // THE REBUILD IS SKIPPED ON THIS BRANCH -- see the note above it.
+      //
+      // It discards every compiled shader because the desktop compiled them with the wrong
+      // camera layout. The launch warm now compiles the PER-EYE layout too, against the real
+      // scene, so there should be nothing left to invalidate. That is the experiment this branch
+      // is for: if lit materials draw and the menus appear, this rebuild has been redundant
+      // since the binding-point patch landed and entering VR can be nearly free.
+      //
+      // If they do NOT draw, the rebuild is doing something the stereo warm does not cover, and
+      // this branch dies rather than becoming a flag.
+      window._xrMark && window._xrMark('material rebuild (skipped)');
       // AND REBUILD THEM IN ONE PLACE, RATHER THAN OVER THE NEXT MINUTE -- BUT NOT HERE.
       //
       // The rebuild above discards every compiled shader, and what refills that cache is
@@ -8009,7 +8023,10 @@ class Scene {
       // `ArrayCamera[0]` in matt's report -- for a shape nothing will ever draw with again.
       //
       // So it waits for the first frame that has real views, which is where the reveal warm runs.
-      this._warmPendingXR = true;
+      // Nothing to warm in-session if the launch warm covered it. Left armed so the reveal pass
+      // still runs and the compile trace can say whether it found anything to do -- if it
+      // reports nothing, that IS the result this branch is testing for.
+
       if (_wantXrShadows && this._xrShadowOnce) {
         // A little after the boundary, so the pool has been synced and the sculpt is present.
         setTimeout(() => { try { window.xrShadowRefresh(); } catch (e) { /* never block VR */ } }, 1500);
@@ -15246,23 +15263,59 @@ class Scene {
   // syncing it here would be work whose result is thrown away — and torn-off panels are exactly
   // the case that needs this, since they stay visible while you work in another panel.
   /**
-   * THE SESSION WARM, A FEW OBJECTS PER FRAME, INSIDE THE NORMAL RENDER.
+   * THERE IS NO WARM PASS ANY MORE, AND THAT IS THE FIX.
    *
-   * The blocking version was moved out of the void and onto the second frame, and matt still got
-   * a void -- with the timing line reporting the whole button-press-to-first-frame path at 659ms.
-   * That is the tell: the void he sees is NOT in the measured window. One frame is submitted,
-   * then the warm stalls the next one for seconds, and a compositor starved of frames goes back
-   * to the lobby. Moving a multi-second stall one frame later does not help; it has to stop
-   * being a stall.
+   * Five rounds of this: a blocking warm at session start, a queued one, a stereo-camera one on
+   * a branch, then revealing three hidden objects per frame inside the ordinary draw, then one.
+   * Each was measured and each was an improvement on the last. Measuring against NOT DOING IT
+   * AT ALL is what settled it, on matt's GalaxyXR:
    *
-   * So there is no warm render any more. Each frame, the next few normally-hidden objects are
-   * revealed for that frame's ORDINARY draw -- an instanced batch at count 0 and a hidden panel
-   * both compile nothing, so showing them is what compiles them. A handful of pipelines per
-   * frame, no extra pass, and frames keep flowing the whole way through.
+   *   warm on    99 distinct, 183 total, 6952ms, median 31.1ms
+   *   ?warm=0    64 distinct, 116 total, 2518ms, median 12.2ms
    *
-   * They are revealed at instance count 1 with a zeroed matrix, which collapses to a point: it
-   * is submitted, and it is not visible.
+   * The warm was costing four and a half seconds and sixty-seven extra compiles. In Pipelines:
+   *
+   *     pipeline.usedTimes --;
+   *     if ( pipeline.usedTimes === 0 ) this._releasePipeline( pipeline );
+   *
+   * and RenderObject.dispose() runs when a render object is dropped. So revealing an object,
+   * drawing it and hiding it again built a pipeline and then deleted it, programs and all -- and
+   * the real draw later paid full price. Every warm here was a compile thrown away.
+   *
+   * The lesson worth keeping is not about warming. It is that five consecutive measurements can
+   * all show improvement while the whole mechanism is a net loss, because none of them was
+   * against the baseline of doing nothing.
    */
+  _startRevealWarm() { return 0; }
+
+  _stepRevealWarm() { /* see _startRevealWarm */ }
+
+  /**
+   * EVERY DRAWABLE OBJECT, hidden ones included -- the denominator matt asked for.
+   *
+   * "surely there's a way to tell in advance how many shaders need to be compiled." Not shaders:
+   * how many a given object needs is three's business and some share while others build two. But
+   * the OBJECTS are all knowable up front, and they are the units the work is actually done in.
+   */
+  _warmableObjects() {
+    const out = [];
+    const seen = new Set();
+    const add = (o) => { if (o && !seen.has(o)) { seen.add(o); out.push(o); } };
+    try { for (const b of Skeleton.prewarmBatches(this)) add(b); } catch (e) { /* no rig yet */ }
+    try { for (const p of HTMLVRPanel._live) if (p.mesh) add(p.mesh); } catch (e) { /* courtesy */ }
+    if (this._scene) {
+      this._scene.traverse((o) => {
+        if (!o.material) return;
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        // Nothing this renderer cannot draw: a raw ShaderMaterial throws out of build(), and
+        // warming is the one place that throw would be self-inflicted.
+        if (!m || (m.isShaderMaterial && !m.isNodeMaterial)) return;
+        add(o);
+      });
+    }
+    return out;
+  }
+
   _startRevealWarm() {
     if (getOptionsURL().warm === false) return 0;
     const list = [];
@@ -15314,44 +15367,9 @@ class Scene {
     this._revealFrames = (this._revealFrames || 0) + 1;
   }
 
-  /**
-   * COMPILE EVERYTHING, BY DRAWING THE REAL SCENE.
-   *
-   * matt, after a session that stuttered on entering immersive mode, on opening a menu, on
-   * picking the bone tool, mid-chain and again at the end: "i want a long startup when the app
-   * launches, compiling shaders etc there, and no stuttering ... after that point."
-   *
-   * Four attempts at this warmed materials on stand-in quads in a throwaway scene, and the
-   * compile trace showed why none of them helped: three keys a pipeline on the SCENE and its
-   * LIGHTS as well as the material and the geometry, so a pipeline built in a lightless scratch
-   * scene on a 4-vertex plane is not one anything will ever ask for. See NodeMaterials.warmScene.
-   *
-   * This draws the real scene instead, with everything that would otherwise be skipped turned on
-   * for the frame: the rig's instanced batches (count 0 draws nothing, so nothing compiles) and
-   * any panel currently hidden. One extra render, and what it compiles is what gets used.
-   *
-   * `?warm=0` turns it off.
-   */
-  warmEverything(when) {
-    if (!this._isNodeRenderer) return 0;
-    if (getOptionsURL().warm === false) return 0;
-    if (when === 'startup') {
-      if (this._warmedStartup) return 0;
-      this._warmedStartup = true;
-    }
-    const hidden = [];
-    try {
-      for (const p of HTMLVRPanel._live) if (p.mesh) hidden.push(p.mesh);
-    } catch (e) { /* the registry is a convenience; never block a launch on it */ }
-    let rig = [];
-    try { rig = Skeleton.prewarmBatches(this); } catch (e) { console.warn('[warm] no rig batches', e); }
-    const cam = this._camera.getThreeCamera();
-    const t0 = performance.now();
-    const n = NodeMaterials.warmScene(this._renderer, this._scene, cam, rig.concat(hidden));
-    console.log('[warm] ' + when + ': drew the scene with ' + n + ' normally-hidden objects in '
-      + Math.round(performance.now() - t0) + 'ms');
-    return n;
-  }
+  /** Kept as a name the console and old notes reach for; see _startRevealWarm for why the
+   *  warm is gone. `?warm=0` used to turn it off and now turns off only the boot cover. */
+  warmEverything() { return 0; }
 
   syncToolPanels() {
     const shown = (p) => !!p && (!p.mesh || p.mesh.visible);

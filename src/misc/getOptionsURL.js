@@ -213,7 +213,20 @@ var getOptionsURL = function () {
   // ?renderer=webgpu switches to WebGPURenderer (WebGL backend) for the TSL migration. URL
   // only, deliberately: this is not a preference to persist into someone's next session while
   // the port is half done.
-  options.renderer = params.renderer === 'webgpu' ? 'webgpu' : 'webgl';
+  // SAY SO WHEN IT IS NOT A VALUE WE KNOW.
+  //
+  // `?renderer=webgpu?xrlayers=1` -- two question marks -- makes the value the whole string
+  // "webgpu?xrlayers=1", which is not 'webgpu', so this quietly hands back the legacy renderer.
+  // matt hit exactly that and spotted it only from the old environment list and black
+  // controllers: "i don't trust that its using the new code path." A silent fallback to a
+  // different renderer is the worst possible answer to a typo.
+  const _rq = params.renderer;
+  if (_rq !== undefined && _rq !== 'webgpu' && _rq !== 'webgl') {
+    console.warn('[options] ?renderer=' + JSON.stringify(_rq) + ' is not a renderer — falling '
+      + 'back to legacy WebGL. Separate flags with & rather than ?, e.g. '
+      + '?renderer=webgpu&xrlayers=1');
+  }
+  options.renderer = _rq === 'webgpu' ? 'webgpu' : 'webgl';
   options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 4); // [0-inf]
   options.shader = getEnum(Enums.Shader, getVal('shader'), Enums.Shader.PBR); // pbr/matcap/normal/uv
   options.filmic = queryBool(getVal('filmic'), false);

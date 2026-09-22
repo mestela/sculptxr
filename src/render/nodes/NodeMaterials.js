@@ -968,6 +968,60 @@ NodeMaterials.fresnelGlow = function (hex) {
  * Nothing is reparented and no stand-in geometry exists, which also makes this much less code
  * than the thing it replaces.
  */
+/**
+ * A TWO-EYE CAMERA, SO THE SESSION'S PIPELINES CAN BE BUILT BEFORE THE SESSION.
+ *
+ * A pipeline's key includes the camera's shape -- getDynamicCacheKey hashes cameras.length when
+ * the camera isArrayCamera -- so a desktop render compiles the single-camera shape and a session
+ * asks for a different one. That is the whole reason entering VR costs anything at all.
+ *
+ * Everything the backend does differently in a session is gated on
+ *     renderObject.camera.isArrayCamera && camera.cameras.length > 0 && !isMultiViewCamera
+ * and nothing on that path asks whether a session is running -- which is what xrarray.html at the
+ * repo root demonstrates. So a hand-made ArrayCamera with two sub-cameras compiles the session's
+ * shape, on the desktop, before the button is pressed.
+ *
+ * This existed once before and was deleted, correctly: it was being used to warm a THROWAWAY
+ * scene, and a pipeline keyed to a lightless scratch scene is never asked for again whatever
+ * camera built it. The camera was never the broken part. Pointed at the real scene, it is the
+ * missing half.
+ */
+NodeMaterials.stereoWarmCamera = function (from) {
+  if (!gpu) return null;
+  if (NodeMaterials._stereoCam) return NodeMaterials._stereoCam;
+  const src = from && from.isPerspectiveCamera ? from : null;
+  const mk = () => {
+    const c = new gpu.PerspectiveCamera(src ? src.fov : 70, src ? src.aspect : 1,
+      src ? src.near : 0.01, src ? src.far : 1000);
+    // A viewport each, because three takes the per-eye path from the sub-cameras' viewports.
+    c.viewport = new gpu.Vector4(0, 0, 64, 64);
+    return c;
+  };
+  const eyeL = mk(), eyeR = mk();
+  eyeR.viewport.x = 64;
+  const cam = new gpu.ArrayCamera([eyeL, eyeR]);
+  // MATCHED TO THE DESKTOP CAMERA, so the warm sees roughly what the session will: same place,
+  // same frustum. It only has to be close -- the key does not include where the camera IS -- but
+  // an object behind the camera is culled and never compiles at all, which would be a silent
+  // hole in exactly the objects this is for.
+  if (src) {
+    src.updateMatrixWorld();
+    cam.matrixWorld.copy(src.matrixWorld);
+    cam.matrixWorldInverse.copy(src.matrixWorldInverse);
+    cam.projectionMatrix.copy(src.projectionMatrix);
+    for (const e of [eyeL, eyeR]) {
+      e.matrixWorld.copy(src.matrixWorld);
+      e.matrixWorldInverse.copy(src.matrixWorldInverse);
+      e.projectionMatrix.copy(src.projectionMatrix);
+      e.projectionMatrixInverse.copy(src.projectionMatrixInverse);
+      e.matrixAutoUpdate = false;
+    }
+    cam.matrixAutoUpdate = false;
+  }
+  NodeMaterials._stereoCam = cam;
+  return cam;
+};
+
 NodeMaterials.warmScene = function (renderer, scene, camera, meshes) {
   if (!gpu || !renderer || !scene || !camera) return 0;
   const restore = [];
