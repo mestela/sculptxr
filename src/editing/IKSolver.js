@@ -1836,6 +1836,17 @@ window.boneTrace = function (n) {
   return true;
 };
 
+// The snap overlays: what each snap decided, and what the gnomon and the flatness disc are
+// actually doing about it. matt, three rounds in: "no, still no plane/disc snap. add
+// diagnostics." One line a quarter second while a bone is being previewed.
+window.snapTrace = function (on) {
+  window._snapTrace = on !== false;
+  console.log('[snap] ' + (window._snapTrace ? 'ON' : 'off') + ' — ' + VERSION +
+    (window._snapTrace ? '. Draw a bone; one line a quarter second while the preview is up. '
+      + 'If nothing prints at all, showPreview is not being reached.' : ''));
+  return window._snapTrace;
+};
+
 window.boneTraceOff = function () {
   window._boneTrace = null;
   console.log('[boneTrace] off');

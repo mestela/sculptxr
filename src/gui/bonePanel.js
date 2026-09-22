@@ -203,6 +203,7 @@ export function buildBoneAuthoringHTML(main, style) {
   const f     = (k) => Skeleton.displayFlag(k);
   const snap  = f('snapPlane');
   const axis  = f('snapAxis');
+  const flat  = f('snapFlat');
   const bound = Skinning.isBound(main.getMesh?.());
   const hasCages = WeightCage.cages(main).length > 0;
   const anyBound = Skinning.anyBound(main);
@@ -500,6 +501,7 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
+      ${flagButton(c, 'flat', 'Snap Flat', flat)}
       ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
     </div>`;
 
@@ -567,6 +569,7 @@ export function buildBoneAuthoringHTML(main, style) {
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
+      ${flagButton(c, 'flat', 'Snap Flat', flat)}
       ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
     </div>
     ${full ? `
@@ -961,6 +964,7 @@ export function wireBoneSection(root, main, opts) {
   };
   flag('snap', 'snapPlane');
   flag('axis', 'snapAxis');
+  flag('flat', 'snapFlat');
   flag('len', 'lengths');
   flag('names', 'names');
   flag('caps', 'capsules');
@@ -1820,6 +1824,7 @@ export function syncBoneSection(root, main) {
   const setFlag = (id, val) => q(id)?.classList.toggle('active', val);
   setFlag('snap', Skeleton.displayFlagRaw('snapPlane'));
   setFlag('axis', Skeleton.displayFlagRaw('snapAxis'));
+  setFlag('flat', Skeleton.displayFlagRaw('snapFlat'));
   // Not a display flag — the sculpt manager's own `_symmetry`, which the main menu and the wrist
   // panel also write. Synced here so a toggle in either of those is reflected the next time this
   // panel repaints, rather than the three going out of step with each other.

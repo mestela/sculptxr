@@ -308,6 +308,7 @@ class BoneDrawTool extends SculptBase {
 
   _snapEnabled() { return Skeleton.displayFlag('snapPlane'); }
   _axisEnabled() { return Skeleton.displayFlag('snapAxis'); }
+  _flatEnabled() { return Skeleton.displayFlag('snapFlat'); }
 
   _onPlane(p, plane) {
     return !!plane && Math.abs(Skeleton.planeDistance(p, plane)) <= 1e-4;
@@ -322,13 +323,34 @@ class BoneDrawTool extends SculptBase {
     if (this._inSnapBand(at, plane)) {
       at = Skeleton.projectToPlane(at, plane, out);
     }
-    if (parent && this._axisEnabled()) {
+    if (parent && (this._axisEnabled() || this._flatEnabled())) {
       const from = Skeleton.jointPos(parent, _from);
       // Only guard the normal when BOTH ends sit on the plane; otherwise the bone is a
       // side bone and every axis is fair game (an eye pointing down Z, say).
       const guard = (this._onPlane(at, plane) && this._onPlane(from, plane))
         ? plane.normal : null;
-      at = Skeleton.snapAxis(from, at, out, guard);
+      // AXIS FIRST, FLATNESS SECOND, and only if the axis did not fire. A direction nearly ALONG
+      // an axis is also nearly perpendicular to the other two, so letting flatness go first
+      // would have it win on almost every axis-snapped bone -- the looser, less specific intent
+      // overriding the tighter one.
+      let snapped = null;
+      if (this._axisEnabled()) {
+        const ai = Skeleton.snapAxisInfo(from, at, guard);
+        if (ai && ai.axis) snapped = Skeleton.snapAxis(from, at, out, guard);
+      }
+      if (!snapped && this._flatEnabled()) {
+        const fi = Skeleton.snapFlatInfo(from, at);
+        // `inBand`, because snapFlatInfo now ANSWERS for the nearest plane whether or not it is
+        // close enough -- the disc needs the nearest one to draw dim, the snap needs it to be in
+        // band. Reading the object without checking the flag would flatten every bone in the rig.
+        //
+        // The guarded normal is not a legal PLANE either: flattening into it is exactly the move
+        // that would take a centreline bone off the centreline, which is what the guard is for.
+        if (fi && fi.inBand && !(guard && Math.abs(fi.normal.dot(guard)) > 0.9)) {
+          snapped = Skeleton.snapFlat(from, at, out, fi.normal);
+        }
+      }
+      if (snapped) at = snapped;
     }
     return at;
   }

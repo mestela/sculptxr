@@ -142,7 +142,16 @@ var getOptionsURL = function () {
   options._rawSaved = localParams; // Expose for dynamic lookups (per-tool)
 
   var getVal = function (key, def) {
-    if (params[key] !== undefined) return params[key];
+    // LOWERCASED ON THE URL SIDE ONLY. readUrlParameters stores every key lowercased, so a
+    // camelCase option -- boneSnapAxis, boneSnapFlat, envIntensity, most of this file -- could
+    // never be set from a URL at all: the lookup used the camelCase spelling and the table held
+    // the lowercase one, so it silently fell through to localStorage or the default. Options
+    // whose names happen to be all lowercase have always worked, which is why this survived.
+    //
+    // localParams keeps its exact spelling: that table is written by saveOption with the key as
+    // given, so lowercasing it here would break every stored setting.
+    var urlKey = key.toLowerCase();
+    if (params[urlKey] !== undefined) return params[urlKey];
     if (localParams[key] !== undefined) return localParams[key];
     return def;
   };
@@ -197,11 +206,7 @@ var getOptionsURL = function () {
   // pipeline is keyed on geometry as well as material and a plain-plane warm compiles the wrong
   // one. Default ON; `?rigwarm=0` is the bisection switch if it ever misbehaves.
   options.rigwarm = queryBool(getVal('rigwarm'), true);
-  // ?xrprewarm=1 trusts the launch-time warm to have compiled the SESSION's camera layout too,
-  // and so skips both the session-boundary material rebuild and the warm that follows it. Off by
-  // default: if the hand-made ArrayCamera does not match the real one, every lit material enters
-  // the session with the wrong layout, which is the worst-known failure in this port.
-  options.xrprewarm = getVal('xrprewarm') === '1';
+
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
@@ -304,6 +309,9 @@ var getOptionsURL = function () {
   // live in editing/Skeleton.js (Skeleton.DISPLAY_FLAGS); these defaults must match it.
   options.boneSnapPlane = queryBool(getVal('boneSnapPlane'), true);
   options.boneSnapAxis = queryBool(getVal('boneSnapAxis'), true);
+  // Flatten a bone into a world plane when it is already within five degrees of one -- the dual
+  // of the axis snap. On by default; see the note beside snapFlat in Skeleton.DISPLAY_FLAGS.
+  options.boneSnapFlat = queryBool(getVal('boneSnapFlat'), true);
   options.boneShowLengths = queryBool(getVal('boneShowLengths'), false);
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);

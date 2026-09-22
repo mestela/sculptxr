@@ -146,6 +146,18 @@ const Skeleton = {
   },
   updateAxisGnomon(main, from, len) { main._gnomonVis = { len: len }; },
   hideAxisGnomon(main) { if (main) main._gnomonVis = null; },
+  // The flatness snap, likewise: it defaults ON, so every preview reaches it and the mock has to
+  // answer. Reports the nearest plane and whether it is in band, the same shape the real one has.
+  snapFlatInfo(from, to) {
+    const d = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const len = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (len < 1e-9) return null;
+    return { normal: { x: 0, y: 1, z: 0, dot: () => 0, toArray: () => [0, 1, 0] },
+             len: len, sin: Math.abs(d.y) / len, inBand: Math.abs(d.y) / len < 0.0872 };
+  },
+  snapFlat: (from, to) => to,
+  updateFlatDisc(main, from, len, normal, inBand) { main._flatDiscVis = { len: len, inBand: !!inBand }; },
+  hideFlatDisc(main) { if (main) main._flatDiscVis = null; },
 };
 
 const Skinning = { resolveWeightsAll: () => 0, restoreColorsAll() {}, isBound: () => false };

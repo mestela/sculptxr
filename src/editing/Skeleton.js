@@ -3771,6 +3771,26 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
     Skeleton.hideAxisGnomon(main);
   }
 
+  // THE FLATNESS DISC, on the same resolved reading as the gnomon. Shown only when a plane has
+  // actually been chosen, unlike the gnomon: the gnomon's job is to show the six candidates and
+  // which one is winning, and there are only ever three planes, drawn on top of each other at
+  // the same origin. Three rings is a smudge, not a diagram -- so this draws the one in force.
+  if (fromPos && Skeleton.displayFlag('snapFlat')) {
+    const fi = Skeleton.snapFlatInfo(fromPos, toPos);
+    if (fi) Skeleton.updateFlatDisc(main, fromPos, fi.len, fi.normal, fi.inBand);
+    else Skeleton.hideFlatDisc(main);
+  } else {
+    Skeleton.hideFlatDisc(main);
+  }
+
+  // snapTrace(): one line a quarter second saying what every snap decided and what each overlay
+  // is actually doing about it. Four rounds of "still no disc" went by on inference -- the button
+  // exists, the maths is right, the desktop shows it -- so this reports the whole chain instead:
+  // the flags, the two decisions, and the live state of both overlays INCLUDING whether anything
+  // above them in the scene graph is hidden. That last part is the one thing none of the earlier
+  // guesses could see.
+  if (window._snapTrace) Skeleton._snapTraceTick(main, fromPos, toPos);
+
   if (!fromPos) { pv.bone.solid.visible = pv.bone.ghost.visible = false; return; }
   _dir.subVectors(toPos, fromPos);
   const len = _dir.length();
@@ -3785,6 +3805,7 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
 
 Skeleton.hidePreview = function (main) {
   Skeleton.hideAxisGnomon(main);
+  Skeleton.hideFlatDisc(main);
   const pv = main._skelPreview;
   if (!pv) return;
   for (const o of [pv.bone.solid, pv.bone.ghost, pv.dot.solid, pv.dot.ghost]) o.visible = false;
@@ -4079,6 +4100,80 @@ Skeleton.snapAxis = function (from, to, out, excludeNormal) {
   return out.copy(from).addScaledVector(info.axis, info.len);
 };
 
+/**
+ * FLATNESS SNAP: THE DUAL OF THE AXIS SNAP.
+ *
+ * Axis snap constrains the direction TO an axis. This constrains it to be PERPENDICULAR to one,
+ * which is to say it flattens the bone into the plane through the parent with that axis as its
+ * normal. matt's case: "i want to place the toe joint flat relative to the ankle on the ground,
+ * but not at a pure straight-along-z angle." The ankle-to-toe direction is nearly perpendicular
+ * to world Y, so it gets flattened to exactly perpendicular -- the toe lands at the ankle's
+ * height, free in X and Z, with no constraint on which way it points.
+ *
+ * Same anchor, same length preservation and the same AXES list as snapAxis; only the test is
+ * inverted. Being within FLAT_SIN of perpendicular is being within the same 5 degrees of the
+ * plane, so the two bands read the same to the hand.
+ *
+ * ORDER, and it matters: the caller tries the axis first. A direction that is nearly ALONG an
+ * axis is also nearly perpendicular to the other two, so flatness would fire on almost every
+ * axis-snapped bone and quietly take precedence over the tighter, more specific intent.
+ */
+const FLAT_SIN = Math.sin(5 * Math.PI / 180);
+
+Skeleton.snapFlatInfo = function (from, to) {
+  _dir.subVectors(to, from);
+  const len = _dir.length();
+  if (len < 1e-9) return null;
+  _dir.divideScalar(len);
+  // ALWAYS ANSWERS WITH THE NEAREST PLANE, and says separately whether it is in band.
+  //
+  // It used to return null outside the band, so the disc only appeared once the snap was already
+  // firing -- which is the very complaint this whole feature answers. matt: "still no disk snap",
+  // with the toggle on, because he was not within five degrees of level at the time. The gnomon
+  // gets this right by drawing all six arms and lighting the winner; the disc now does the same,
+  // drawn dim at the nearest plane and brightened when it will actually take.
+  //
+  // HORIZONTAL WINS WHEN IT QUALIFIES, rather than whichever plane happens to need the smallest
+  // correction. A bone heading mostly down Z with a few degrees of rise is within the band of
+  // BOTH the X plane and the Y plane, and picking the nearer one picks X -- which holds the
+  // slight rise and flattens the sideways drift instead. That is a legal reading and it is not
+  // the one anyone means: matt's case is "place the toe joint flat relative to the ankle on the
+  // ground", the control is called Snap Flat, and flat means level.
+  //
+  // So Y first, then the smaller of X and Z. The other two still matter -- a bone flattened into
+  // the YZ plane is how you keep a limb off the centreline without pinning its height.
+  const up = AXES[2];                         // +Y
+  const upAbs = Math.abs(_dir.dot(up));
+  if (upAbs < FLAT_SIN) return { normal: up, len: len, sin: upAbs, inBand: true };
+  let best = null, bestAbs = Infinity;
+  // Only the positive axes: a plane and its opposite-facing twin are the same plane, and
+  // offering six would make the winner arbitrary between two identical answers.
+  for (const i of [0, 4]) {                   // +X, +Z
+    const a = AXES[i];
+    const d = Math.abs(_dir.dot(a));
+    if (d < bestAbs) { bestAbs = d; best = a; }
+  }
+  // Y is still the one to OFFER when nothing is in band and it is the closest of the three --
+  // the reading is "level is where this would take you", which is what the control promises.
+  if (upAbs < bestAbs) { best = up; bestAbs = upAbs; }
+  return { normal: best, len: len, sin: bestAbs, inBand: bestAbs < FLAT_SIN };
+};
+
+/** Flatten the bone into the plane through `from` whose normal is `normal`, keeping its LENGTH.
+ *  `out` must not alias `to`. */
+Skeleton.snapFlat = function (from, to, out, normal) {
+  _dir.subVectors(to, from);
+  const len = _dir.length();
+  if (len < 1e-9) return to;
+  _dir.addScaledVector(normal, -_dir.dot(normal));
+  const flat = _dir.length();
+  // A direction that is ENTIRELY along the normal has no projection to normalise, so there is no
+  // flattened direction to choose and the bone is left alone. Unreachable through the band above
+  // -- perpendicular is the opposite of parallel -- but this is also called from load paths.
+  if (flat < 1e-9) return to;
+  return out.copy(from).addScaledVector(_dir.divideScalar(flat), len);
+};
+
 // ---- the axis-snap gnomon ------------------------------------------------------------------
 //
 // SIX ARMS FROM THE PARENT JOINT, NOT A CROSS ON THE CURSOR.
@@ -4152,6 +4247,100 @@ Skeleton.updateAxisGnomon = function (main, from, len, info) {
 
 Skeleton.hideAxisGnomon = function (main) {
   if (main._skelGnomon) main._skelGnomon.visible = false;
+};
+
+// ---- the flatness disc -----------------------------------------------------------------------
+//
+// THE SAME IDIOM AS THE SYMMETRY PLANE, because it is the same kind of statement: "your joint is
+// being held in this plane". matt, on how to show it: "maybe the disk snap we use for the
+// symmetry plane?" -- so a ring at the parent, normal to the snapped axis, sized to the bone.
+//
+// A RING AND NOT A FILLED DISC. The symmetry plane is a fixed piece of furniture you line things
+// up against, and its faint fill helps read it across the whole sculpt. This one is local,
+// transient, and sits exactly where you are working -- a fill there would grey out the bone it
+// is describing at the moment you most want to see it.
+const FLAT_DISC_SEGS = 48;
+const _fdQ = new THREE.Quaternion();
+
+Skeleton.updateFlatDisc = function (main, from, len, normal, inBand) {
+  if (!from || !normal || !(len > 1e-9)) { Skeleton.hideFlatDisc(main); return; }
+  const g = skelGroup(main);
+  if (!main._skelFlatDisc) {
+    const pts = [];
+    for (let i = 0; i < FLAT_DISC_SEGS; i++) {
+      const a0 = (i / FLAT_DISC_SEGS) * Math.PI * 2, a1 = ((i + 1) / FLAT_DISC_SEGS) * Math.PI * 2;
+      pts.push(Math.cos(a0), Math.sin(a0), 0, Math.cos(a1), Math.sin(a1), 0);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+    const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      color: PLANE_COLOR, transparent: true, opacity: 0.45,
+      depthTest: false, depthWrite: false,
+    }));
+    // A UNIT RING SCALED PER FRAME, so the geometry is built once and never touched again --
+    // the same reason the gnomon's twelve vertices are fixed.
+    m.renderOrder = GNOMON_ORDER;
+    m.isPickable = false;
+    m.frustumCulled = false;
+    m.name = 'flat_disc';
+    g.add(m);
+    main._skelFlatDisc = m;
+  }
+  const d = main._skelFlatDisc;
+  // Dim while it is merely the nearest plane, bright once it will actually take -- the same two
+  // readings the gnomon gives an axis, so the two overlays are read the same way.
+  d.material.opacity = inBand ? 0.55 : 0.16;
+  _fdQ.setFromUnitVectors(_zAxis, normal);
+  d.position.copy(from);
+  d.quaternion.copy(_fdQ);
+  d.scale.setScalar(len);
+  d.updateMatrix();
+  d.matrixWorldNeedsUpdate = true;
+  d.visible = true;
+};
+
+Skeleton.hideFlatDisc = function (main) {
+  if (main._skelFlatDisc) main._skelFlatDisc.visible = false;
+};
+
+// Everything hiding an object, walked upward: three skips a whole subtree for one `visible`
+// false anywhere above, which is the failure mode a check on the object itself cannot see.
+function hiddenBy(o) {
+  for (let p = o; p; p = p.parent) if (p.visible === false) return p.name || p.type;
+  return null;
+}
+
+Skeleton._snapTraceTick = function (main, fromPos, toPos) {
+  const now = performance.now();
+  if (Skeleton._snapTraceAt && now - Skeleton._snapTraceAt < 250) return;
+  Skeleton._snapTraceAt = now;
+  const f = (k) => (Skeleton.displayFlag(k) ? k : '-');
+  const bits = ['[snap] flags ' + [f('snapPlane'), f('snapAxis'), f('snapFlat')].join('/')];
+  if (!fromPos) {
+    bits.push('NO PARENT — nothing to snap from, so no overlay is drawn');
+    console.log(bits.join(' | '));
+    return;
+  }
+  const ai = Skeleton.snapAxisInfo(fromPos, toPos, null);
+  bits.push('len ' + (ai ? ai.len.toFixed(3) : '?'));
+  bits.push('axis ' + (ai && ai.axis ? ai.axis.toArray().join(',') + ' dot ' + ai.dot.toFixed(3)
+    : 'none'));
+  const fi = Skeleton.snapFlatInfo(fromPos, toPos);
+  bits.push('flat ' + (fi ? fi.normal.toArray().join(',') + ' sin ' + fi.sin.toFixed(3)
+    + (fi.inBand ? ' IN BAND' : ' out of band') : 'none'));
+  const say = (label, o) => {
+    if (!o) return label + ' NOT BUILT';
+    const h = hiddenBy(o);
+    return label + ' ' + (o.visible ? 'visible' : 'hidden')
+      + (h && h !== (o.name || o.type) ? ' (hidden by ' + h + ')' : '')
+      + ' scale ' + o.scale.x.toFixed(3)
+      + (o.material && o.material.opacity !== undefined
+        ? ' op ' + o.material.opacity.toFixed(2) : '')
+      + ' order ' + o.renderOrder;
+  };
+  bits.push(say('gnomon', main._skelGnomon));
+  bits.push(say('disc', main._skelFlatDisc));
+  console.log(bits.join(' | '));
 };
 
 Skeleton.mirrorPoint = function (p, plane, out) {
@@ -5251,6 +5440,17 @@ Skeleton.deserialize = function (buffer, meshes, main) {
 const DISPLAY_FLAGS = {
   snapPlane: ['_boneSnapPlane', 'boneSnapPlane', true],
   snapAxis: ['_boneSnapAxis', 'boneSnapAxis', true],
+  // ON by default, and I argued the other way first. The case against: axis snap corrects a bone
+  // you were clearly aiming at an axis, while this corrects a bone aimed ANYWHERE in a plane,
+  // which is most bones at some point in a drag -- it could read as the tool second-guessing
+  // every placement.
+  //
+  // The case that won: matt asked for this feature, and a feature shipped off by default behind
+  // a toggle he has no reason to visit is a feature that does not exist. Snap Axis defaults on,
+  // so that whole row of buttons had never needed pressing -- three rounds went by on "still no
+  // disc" with snapTrace eventually reporting `flags snapPlane/snapAxis/-`, off the entire time.
+  // If it does turn out to be officious in use, this is one word.
+  snapFlat: ['_boneSnapFlat', 'boneSnapFlat', true],
   lengths: ['_boneShowLengths', 'boneShowLengths', false],
   // The joint's NAME, drawn where the length is drawn — off by default for the same reason:
   // it is a label per bone, and a rig full of them is unreadable while you are working.
