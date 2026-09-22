@@ -27,6 +27,10 @@ const TEXT = 'Compiling shaders...';
 // How long the plate stays up after the last pipeline appeared. Long enough that a burst
 // arriving a frame or two apart reads as one event rather than a flicker.
 const LINGER_MS = 700;
+// A FRAME THIS LONG IS A HITCH WORTH EXPLAINING. At 72-90Hz a frame is 11-14ms, so this is
+// roughly three dropped frames -- the point where the app visibly catches rather than merely
+// does some work. Below it the plate would be explaining something nobody felt.
+const HITCH_MS = 40;
 // Distance in front of the head, and how far below the centre of vision. Low enough not to sit
 // over what the user is doing, close enough to be legible on a low-res panel.
 const DIST = 0.9;
@@ -35,6 +39,7 @@ const DROP = 0.28;
 let sprite = null;
 let until = 0;
 let lastCount = -1;
+let lastTick = 0;
 
 /** Everything three counts as a built pipeline, or -1 when the renderer will not say. */
 function pipelineCount(renderer) {
@@ -93,9 +98,21 @@ ShaderBusy.tick = function (renderer, camera) {
   if (n < 0) return false;
   // The first tick establishes the baseline. Treating startup's whole cache as growth would show
   // the plate on the first frame of every session, which is exactly the cry-wolf this must not do.
-  if (lastCount < 0) { lastCount = n; return false; }
   const now = performance.now();
-  if (n > lastCount) until = now + LINGER_MS;
+  const frameMs = lastTick ? now - lastTick : 0;
+  lastTick = now;
+  if (lastCount < 0) { lastCount = n; return false; }
+  // COST, NOT COUNT -- the distinction this got wrong. Raising the plate on any growth in the
+  // pipeline cache meant a 2ms build got the same 700ms notice as a 331ms one. Measured on the
+  // GalaxyXR once Chrome's own on-disk program cache was warm: 84 builds, 686ms total, MEDIAN
+  // 3.3ms. So the plate fired up to eighty-four times to explain work that never stuttered.
+  // matt: "no stutters, but frequent 'compiling shaders' warnings."
+  //
+  // The frame that just elapsed is the measurement, because the compile happens INSIDE
+  // renderer.render and is already over by the time anything can be drawn about it -- the same
+  // one-frame lag the header note already describes. A cheap compile cannot make a long frame,
+  // so this says what the plate always meant: something took long enough for you to notice.
+  if (n > lastCount && frameMs >= HITCH_MS) until = now + LINGER_MS;
   lastCount = n;
 
   const on = now < until;
