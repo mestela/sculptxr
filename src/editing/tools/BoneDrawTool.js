@@ -5,6 +5,8 @@ import Skeleton from '../Skeleton.js';
 import Skinning from '../Skinning.js';
 import IKSolver from '../IKSolver.js';
 import Enums from '../../misc/Enums.js';
+import Utils from '../../misc/Utils.js';
+import Geometry from '../../math3d/Geometry.js';
 
 // Minimum gap between live weight re-solves while dragging a radius. Slow enough that a dense
 // mesh keeps its framerate, fast enough that the recolour still reads as continuous.
@@ -115,6 +117,13 @@ const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
 const _snapTo = new THREE.Vector3();
 const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2();
+// The volume probe's own scratch: a model-space ray, a mesh-space copy of it, and the
+// matrices either way.
+const _vO = new THREE.Vector3(), _vD = new THREE.Vector3();
+const _vP = new THREE.Vector3(), _vMesh = new THREE.Matrix4(), _vInv = new THREE.Matrix4();
+const _vNear = [0, 0, 0], _vDir = [0, 0, 0], _vHit = [0, 0, 0];
+const _vA = [0, 0, 0], _vB = [0, 0, 0], _vC = [0, 0, 0];
+const _vT = [];
 
 // Distance in px from (px,py) to the segment a-b. The bone pick is a segment pick, not a
 // joint pick — a capsule is grabbed anywhere along its shaft, which is where you look when
@@ -133,6 +142,7 @@ class BoneDrawTool extends SculptBase {
     this._continuous = false;
 
     this._chainParent = null;       // joint the next click parents to (null = new root)
+    this._volAnchor = null;         // last depth read off the mesh, for the silhouette fallback
     this._chainParentMirror = null; // its mirrored twin, when symmetry is on
     this._chainName = 'bone';
     this._chainIndex = 0;
@@ -498,10 +508,12 @@ class BoneDrawTool extends SculptBase {
 
   // ---- desktop / iPad ------------------------------------------------------------
   //
-  // DRAW places the joint at the picked surface point. It cannot do better — there is no
-  // depth channel on a flat screen, which is exactly the limitation this feature is built to
-  // escape — so treat it as a way to rough a chain in and nudge it afterwards, not as the
-  // real workflow.
+  // DRAW places the joint at the MIDPOINT OF THE VOLUME under the cursor -- see
+  // _volumeSpanT. A flat screen has no depth channel, but the mesh does: it knows how thick
+  // it is under the pointer, and halfway through is where a bone goes. That is a real answer
+  // rather than an invented one, and it is why fitting a rig to an existing sculpt works
+  // here. Off the mesh there is nothing to measure and it falls back to the camera-facing
+  // plane below.
   //
   // The other modes DO have a 2D answer, because none of them is placing a new joint in the
   // volume: they are moving, rotating or sizing something that already has a position. The
@@ -739,7 +751,10 @@ class BoneDrawTool extends SculptBase {
     if (!parent && !this._onHilitedJoint()
         && this._hasSculpt() && !this._surfacePoint(_surf, true)) return false;
     const anchor = this._drawAnchor(_jp2);
-    if (!anchor || !this._planePoint(anchor, _hit)) return false;
+    // A press starts a fresh reading of the volume: the depth carried over from the last
+    // joint's drag has nothing to say about where this one goes.
+    this._volAnchor = null;
+    if (!anchor || !this._drawTip(anchor, _hit)) return false;
     this._drag = { kind: 'draw', pos: _hit.clone(), anchor: anchor.clone() };
     this._drawFeedback(this._drag.pos);
     return true;
@@ -798,7 +813,8 @@ class BoneDrawTool extends SculptBase {
     return out.divideScalar(js.length);
   }
 
-  // Depth for the camera-facing plane the tip rides in:
+  // Depth for the camera-facing plane the tip rides in WHEN THERE IS NO VOLUME UNDER THE
+  // CURSOR -- the fallback, not the usual case; _drawTip prefers the mesh's own midpoint.
   //   mid-chain   the joint you are continuing from
   //   new chain   the middle of the sculpt
   //
@@ -819,11 +835,120 @@ class BoneDrawTool extends SculptBase {
     return this._modelCentre(out);
   }
 
+  // ── THE MIDPOINT OF THE VOLUME UNDER THE CURSOR ────────────────────────────────────────
+  //
+  // matt: "when fitting a skeleton to an existing mesh, it really should select the midpoint
+  // under the mesh ... if its just 2 hits, go to the midpoint."
+  //
+  // This is the one depth a flat screen CAN supply honestly. The camera-facing plane above
+  // invents a depth and hopes; the mesh actually knows how thick it is under the cursor, and
+  // halfway through it is where a bone goes. Pointing at an arm puts the joint inside the arm
+  // rather than on its skin or at the body's mid-depth.
+  //
+  // ALL hits, not the nearest: the nearest one is the surface, which is the wrong answer and
+  // the reason the root used to be taken from the model centre instead. twoSided, because the
+  // far wall of a closed mesh is a BACK face and skipping it leaves every span open.
+  //
+  // THE NEAREST SPAN WINS when the ray crosses several. It is the one you can see, so it is
+  // the one you meant -- pointing at a hand crossing a torso gives the hand. The alternative,
+  // the thickest span, quietly prefers the body from every angle where a limb overlaps it,
+  // which is most of them. Anything behind the nearest span is reached by orbiting, which is
+  // the same answer a screen gives for every other occlusion.
+  _volumeSpanT(o, d) {
+    const meshes = this._main.getMeshes() || [];
+    _vT.length = 0;
+    for (const mesh of meshes) {
+      if (!mesh || Skeleton.isJoint(mesh) || mesh._isNull) continue;
+      if (mesh.isVisible && mesh.isVisible() === false) continue;
+      if (!mesh.getModelSpaceMatrix || !mesh.intersectRay) continue;
+      // Model -> mesh local, so the octree and the triangles are asked in their own space.
+      _vMesh.fromArray(mesh.getModelSpaceMatrix());
+      _vInv.copy(_vMesh).invert();
+      _vP.copy(o).applyMatrix4(_vInv);
+      _vNear[0] = _vP.x; _vNear[1] = _vP.y; _vNear[2] = _vP.z;
+      _vP.copy(o).add(d).applyMatrix4(_vInv);
+      _vDir[0] = _vP.x - _vNear[0]; _vDir[1] = _vP.y - _vNear[1]; _vDir[2] = _vP.z - _vNear[2];
+      const dl = Math.hypot(_vDir[0], _vDir[1], _vDir[2]);
+      if (!(dl > 1e-12)) continue;
+      _vDir[0] /= dl; _vDir[1] /= dl; _vDir[2] /= dl;
+
+      const faces = mesh.intersectRay(_vNear, _vDir);
+      if (!faces || !faces.length) continue;
+      const vAr = mesh.getVertices();
+      const fAr = mesh.getFaces();
+      for (let i = 0; i < faces.length; i++) {
+        const f = faces[i] * 4;
+        const i1 = fAr[f] * 3, i2 = fAr[f + 1] * 3, i3 = fAr[f + 2] * 3;
+        _vA[0] = vAr[i1]; _vA[1] = vAr[i1 + 1]; _vA[2] = vAr[i1 + 2];
+        _vB[0] = vAr[i2]; _vB[1] = vAr[i2 + 1]; _vB[2] = vAr[i2 + 2];
+        _vC[0] = vAr[i3]; _vC[1] = vAr[i3 + 1]; _vC[2] = vAr[i3 + 2];
+        let hd = Geometry.intersectionRayTriangle(_vNear, _vDir, _vA, _vB, _vC, _vHit, true);
+        if (hd >= 0.0) this._pushT(o, d, _vHit);
+        // A QUAD IS TWO TRIANGLES AND BOTH CAN BE HIT. Picking takes the second only when the
+        // first misses, because it wants the nearest hit and one of them has it. A span needs
+        // every crossing, so both halves are tested every time -- a ray entering through one
+        // half of a quad and leaving through the other half of another is ordinary.
+        const q = fAr[f + 3];
+        if (q !== Utils.TRI_INDEX) {
+          const i4 = q * 3;
+          _vB[0] = vAr[i4]; _vB[1] = vAr[i4 + 1]; _vB[2] = vAr[i4 + 2];
+          hd = Geometry.intersectionRayTriangle(_vNear, _vDir, _vA, _vC, _vB, _vHit, true);
+          if (hd >= 0.0) this._pushT(o, d, _vHit);
+        }
+      }
+    }
+    if (_vT.length < 2) return null;
+    _vT.sort((a, b) => a - b);
+    // Coincident crossings -- a shared edge hit by both its triangles, or two meshes skinned
+    // to the same shell -- would otherwise read as a zero-thickness span and put the joint on
+    // the surface, which is the exact failure this replaces.
+    const eps = this._volumeEps();
+    let a = _vT[0];
+    for (let i = 1; i < _vT.length; i++) {
+      if (_vT[i] - a > eps) return (a + _vT[i]) * 0.5;
+      a = _vT[i];
+    }
+    return null;
+  }
+
+  // A crossing, as a distance along the model-space ray.
+  _pushT(o, d, hitLocal) {
+    _vP.set(hitLocal[0], hitLocal[1], hitLocal[2]).applyMatrix4(_vMesh).sub(o);
+    _vT.push(_vP.dot(d));
+  }
+
+  // How far apart two crossings must be to bound a real span. A fraction of the scene unit,
+  // so it means the same thing on a thumbnail and on a building.
+  _volumeEps() { return 1e-3 * (Skeleton.sceneUnit(this._main) || 1); }
+
+  // The midpoint itself, in model space. Null when the cursor is off the mesh.
+  _volumeCentre(out) {
+    if (this._main._xrSession) return false;   // VR has a real depth; it does not need this
+    if (!this._hasSculpt()) return false;
+    if (!this._screenRay(_vO, _vD)) return false;
+    const t = this._volumeSpanT(_vO, _vD);
+    if (t === null) return false;
+    out.copy(_vD).multiplyScalar(t).add(_vO);
+    return true;
+  }
+
+  // The tip, resolved: the volume under the cursor if there is one, otherwise the plane this
+  // tool has always used.
+  //
+  // `_volAnchor` is what stops the depth JUMPING at the silhouette. Once a volume has been
+  // found, the fallback plane runs through the last point that came out of it rather than
+  // through the chain's anchor -- so dragging a joint out past the edge of the arm continues
+  // at the arm's depth instead of snapping back to the parent's or the model centre's.
+  _drawTip(anchor, out) {
+    if (this._volumeCentre(out)) { (this._volAnchor || (this._volAnchor = new THREE.Vector3())).copy(out); return true; }
+    return this._planePoint(this._volAnchor || anchor, out);
+  }
+
   // Where the tip is right now: the cursor ray, met by the camera-facing plane at that depth.
   _drawPoint(out) {
     const anchor = this._drawAnchor(_jp2);
     if (!anchor) return null;
-    return this._planePoint(anchor, out) ? out : null;
+    return this._drawTip(anchor, out) ? out : null;
   }
 
   // The plane snap band, in SCREEN px. It used to be 5% of a scene unit — a hand-width,
@@ -971,9 +1096,9 @@ class BoneDrawTool extends SculptBase {
     const main = this._main;
 
     if (d.kind === 'draw') {
-      // The anchor is fixed for the whole drag, so the tip rides one plane and follows the
-      // cursor everywhere — off the silhouette included.
-      if (this._planePoint(d.anchor, _hit)) d.pos.copy(_hit);
+      // The anchor is fixed for the whole drag, so the tip follows the cursor everywhere —
+      // off the silhouette included, where it falls back to a plane (see _drawTip).
+      if (this._drawTip(d.anchor, _hit)) d.pos.copy(_hit);
       this._drawFeedback(d.pos);
       return;
     }
