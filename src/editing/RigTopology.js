@@ -476,3 +476,117 @@ RigTopology.cancelDeferred = function (main, pending) {
   restore(main, pending.before);
   return true;
 };
+
+// ── SYMMETRIZE ───────────────────────────────────────────────────────────────
+//
+// matt: "if a user has drawn half a skeleton for whatever reason, it should make a full
+// skeleton. or if they've somehow modified one side and its broken, the symmetry buttons should
+// essentially delete the bad side and mirror over the good side."
+//
+// So this is deliberately DESTRUCTIVE on the target side rather than a reconciliation. Trying to
+// match up what is already there -- pairing by name, or by nearest position, and patching the
+// differences -- is exactly the guesswork that leaves a rig half-fixed and no longer trustworthy.
+// Throwing the side away and rebuilding it from the good one gives a result you can state in one
+// sentence, which is what makes it usable on a rig you have broken and want back.
+//
+// THE CENTRELINE IS NOT A SIDE. A joint on the plane is its own twin -- spine, neck, head -- so
+// it is neither copied nor deleted, and the first joint of each mirrored chain hangs off it
+// exactly as Bone Draw does when it draws the first joint of a limb.
+//
+// Positions reflect and sizes copy, via copyJoint, which is the same rule the joint-shape work
+// settled and the same call Duplicate uses.
+
+// Which side of the plane, as -1 / 0 / +1. Zero is the centreline, using the same band
+// jointIsCentreline does, so "on the plane" means one thing across the rig.
+function sideOfJoint(main, j, plane, eps) {
+  const d = Skeleton.planeDistance(Skeleton.jointPos(j, new THREE.Vector3()), plane);
+  return Math.abs(d) <= eps ? 0 : (d > 0 ? 1 : -1);
+}
+
+// `dir` matches the mesh buttons and Bone Draw's own naming: 0 is L->R, and L is the POSITIVE
+// side of the plane (BoneDrawTool: `sd > 0 ? '_L' : '_R'`).
+RigTopology.canSymmetrize = function (main, dir) {
+  if (!main) return false;
+  const plane = Skeleton.rigMirrorPlane(main) || Skeleton.symmetryPlane(main);
+  if (!plane) return false;
+  const eps = Skeleton.sceneUnit(main) * 0.02;
+  const src = dir === 1 ? -1 : 1;
+  // Something to copy FROM. With nothing on the source side this would delete the other half
+  // and build nothing, which is a destructive no-op and never what anyone meant.
+  return (Skeleton.joints(main) || []).some((j) => sideOfJoint(main, j, plane, eps) === src);
+};
+
+RigTopology.symmetrize = function (main, dir) {
+  if (!RigTopology.canSymmetrize(main, dir)) {
+    console.log('[rig] symmetrize refused: no symmetry plane, or nothing on the source side');
+    return null;
+  }
+  const plane = Skeleton.rigMirrorPlane(main) || Skeleton.symmetryPlane(main);
+  const eps = Skeleton.sceneUnit(main) * 0.02;
+  const srcSide = dir === 1 ? -1 : 1;
+  const joints = Skeleton.joints(main) || [];
+  const side = new Map();
+  for (const j of joints) side.set(j, sideOfJoint(main, j, plane, eps));
+
+  // WHAT GOES. Every joint on the target side, and everything hanging off it -- a subtree rooted
+  // on the bad side belongs to the bad side however its descendants are placed.
+  const doomed = new Set();
+  for (const j of joints) {
+    if (side.get(j) !== -srcSide || doomed.has(j)) continue;
+    for (const d of subtree(main, j)) doomed.add(d);
+  }
+
+  // WHAT COMES BACK, parents first -- `copyJoint` needs its parent's copy to already exist, and
+  // a breadth-first walk from the roots is what guarantees that.
+  const order = [];
+  {
+    const seen = new Set();
+    const walk = joints.filter((j) => !Skeleton.isJoint(j._parentMesh));
+    while (walk.length) {
+      const j = walk.shift();
+      if (seen.has(j)) continue;
+      seen.add(j);
+      if (side.get(j) === srcSide && !doomed.has(j)) order.push(j);
+      for (const k of Skeleton.childJoints(main, j)) if (Skeleton.isJoint(k)) walk.push(k);
+    }
+  }
+
+  const twins = new Map();
+  const made = [];
+  const _mp = new THREE.Vector3();
+  for (const s of order) {
+    const p = s._parentMesh;
+    // The twin of the parent when the parent is also being mirrored; otherwise the parent
+    // ITSELF, which is the centreline case -- a limb's first joint hangs off the shared spine
+    // joint, the same rule Bone Draw uses for the first mirrored joint of a chain.
+    const parent = (p && twins.has(p)) ? twins.get(p) : (Skeleton.isJoint(p) ? p : null);
+    Skeleton.mirrorPoint(Skeleton.jointPos(s, _mp), plane, _mp);
+    const t = copyJoint(main, s, { x: _mp.x, y: _mp.y, z: _mp.z }, parent,
+      flipSide(s._permanentStaticLabel), plane);
+    twins.set(s, t);
+    made.push(t);
+    // Re-pair both ways. The source's old twin is on its way out, and a `_boneMirror` left
+    // pointing at a removed joint is what breaks pose mirroring and capsule pairing later.
+    s._boneMirror = t;
+    t._boneMirror = s;
+  }
+
+  // ONE UNDO STEP COVERING BOTH HALVES: the joints that went and the joints that arrived.
+  // `restore` does the adding and removing from these presence flags, so the deletion is not
+  // performed separately -- applying `after` IS the deletion, and it is the same path redo takes.
+  const goneList = Array.from(doomed);
+  const goneBefore = snapshot(main, goneList);
+  const goneAfter = goneBefore.map((e) => Object.assign({}, e, { present: false }));
+  const madeBefore = made.map((c) => ({
+    mesh: c, parent: c._parentMesh || null, matrix: mat4.clone(c.getMatrix()),
+    rest: c._ikRest ? mat4.clone(c._ikRest) : null, present: false,
+  }));
+  const before = goneBefore.concat(madeBefore);
+  const after = snapshot(main, made).concat(goneAfter);
+
+  restore(main, after);
+  commit(main, before, after, dir === 1 ? 'Symmetrize Rig R->L' : 'Symmetrize Rig L->R');
+  console.log('[rig] symmetrize ' + (dir === 1 ? 'R->L' : 'L->R')
+    + ': ' + made.length + ' joint(s) mirrored, ' + goneList.length + ' removed');
+  return { made: made.length, removed: goneList.length };
+};

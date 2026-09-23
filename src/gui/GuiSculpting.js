@@ -3,6 +3,7 @@ import Enums from '../misc/Enums.js';
 import Tools from '../editing/tools/Tools.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import GuiSculptingTools from './GuiSculptingTools.js';
+import RigTopology from '../editing/RigTopology.js';
 
 var GuiTools = GuiSculptingTools.tools;
 
@@ -107,7 +108,24 @@ class GuiSculpting {
     this._main.render();
   }
 
+  // THE SYMMETRY BUTTONS MEAN THE RIG WHEN THE RIG IS WHAT YOU ARE EDITING. matt: "we have
+  // symmetry L->R and R->L buttons, but they don't do anything in bones mode."
+  //
+  // They did nothing rather than something wrong: both reach for `getMesh().symmetrize`, and in
+  // the bone tool `getMesh()` is a JOINT, which has no such method -- so the click was swallowed.
+  // Routed on the ACTIVE TOOL rather than on what happens to be selected, because that is the
+  // question the button is really asking: the same control, applied to whatever you are working
+  // on. Everywhere else it still symmetrizes the mesh, untouched.
+  _rigSym(dir) {
+    const sm = this._sculptManager;
+    if (!sm || sm.getToolIndex() !== Enums.Tools.BONE_DRAW) return false;
+    RigTopology.symmetrize(this._main, dir);
+    this._main.render();
+    return true;
+  }
+
   onSymLR() {
+    if (this._rigSym(0)) return;
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
@@ -126,6 +144,7 @@ class GuiSculpting {
   }
 
   onSymRL() {
+    if (this._rigSym(1)) return;
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
