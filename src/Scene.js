@@ -5883,9 +5883,31 @@ class Scene {
     for (let i = 0; i < pbrMats.length; i++) {
       const pm = pbrMats[i];
       if (pm.envMap !== nextEnv) {
+        // CHANGING envMap NEEDS dispose(). NOTHING ELSE WORKS.
+        //
+        // `needsUpdate`, bumping `version`, `envMap.needsUpdate` -- none of them rebuild a node
+        // material or rebind its textures. Only dispose() drops the cached build, and the next
+        // render makes a new one.
+        //
+        // Two separate things both need it, and both were measured live rather than reasoned:
+        //
+        //   null -> texture changes the SHAPE of the graph. NodeMaterial.setupEnvironment only
+        //   emits an IBL branch when envMap is set AT BUILD TIME, and a built graph does not grow
+        //   a branch it was compiled without. The PMREM takes ~70ms to prefilter, so the PBR
+        //   material is ALWAYS built before the environment exists -- it got no IBL branch and
+        //   never regained one, which is why envMapIntensity swinging 0 -> 12 moved no pixels.
+        //
+        //   texture -> texture SHOULD have been free: setupEnvironment reads the map through
+        //   materialReference('envMap','texture'), which is a live reference, and that is what I
+        //   assumed. It is wrong. With the new PMREM assigned and pm.envMap === the new texture
+        //   by uuid, the render did not change at all -- the binding is cached with the build.
+        //
+        // So: dispose on ANY change. That is a shader rebuild per environment swap, which is a
+        // deliberate, occasional user action, and the alternative is a picker that does nothing.
         pm.envMap = nextEnv;
         pm.needsUpdate = true;
-        if (pm === pbrMat) console.log('[env] ' + (nextEnv ? 'on' : 'off (XR)'));
+        pm.dispose();
+        if (pm === pbrMat) console.log('[env] ' + (nextEnv ? 'on (rebuilt)' : 'off (XR)'));
       }
       pm.envMapIntensity = gain;
     }
