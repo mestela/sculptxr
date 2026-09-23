@@ -3912,8 +3912,21 @@ class Scene {
         }
         BootOverlay.tick(this._renderer, this._framesDrawn > 3);
         this._framesDrawn = (this._framesDrawn || 0) + 1;
-        ShaderBusy.attach(this._scene);
-        ShaderBusy.tick(this._renderer, _renderCam);
+        // NOT IN A SESSION. matt: "turn off the popups in immersive that say 'compiling
+        // material', its annoying and i think has served its purpose."
+        //
+        // It did serve it: the plate is how we learned the notices were firing on COUNT rather
+        // than cost -- 84 builds at a 3.3ms median, each buying a 700ms notice -- which led to
+        // the 40ms hitch threshold, and from there to the empty-rig fix that took entry from
+        // 30-odd pipelines to 2. With entry compiling almost nothing there is little left to
+        // explain, and a head-locked plate in a headset is worse than the pause it describes.
+        //
+        // Kept on the desktop, where it costs a sprite nobody is wearing and still answers
+        // "why did that stutter". BootOverlay covers the boot case separately.
+        if (!this._renderer.xr.isPresenting) {
+          ShaderBusy.attach(this._scene);
+          ShaderBusy.tick(this._renderer, _renderCam);
+        }
         this._tickSteadyState();
       }
 
