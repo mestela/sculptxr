@@ -544,35 +544,19 @@ export function fixXRLayerSize(renderer) {
  * place before the first material compiles.
  */
 export function applyXRBackendPatches(renderer, WGPU, TSL) {
-  // A BISECTION SWITCH, TO BE DELETED THE MOMENT IT IS ANSWERED. Every patch in this file was
-  // written against the GalaxyXR and none has ever been checked on Safari, where the uniform
-  // binding budget is half the size (max 32 against 72). matt on Vision Pro, once the 1x1
-  // framebuffer was fixed: "its rendering, but its really warped and distorted" -- and the
-  // legacy renderer on the same headset is correct, so it is something on this path.
-  //   ?xrbind=0   skip the binding-point rewrite
-  //   ?xrbind=0    skip the binding-point rewrite alone
-  //   ?xrpatch=0   skip ALL of them, which answers "is this file involved at all" in one trip
-  const _q = window.location.search;
-  const _skipAll = /[?&]xrpatch=0/.test(_q);
-  const _skipBind = _skipAll || /[?&]xrbind=0/.test(_q);
-  if (_skipAll) console.log('[xrpatch] ALL XR backend patches SKIPPED (?xrpatch=0) — trace only');
-  else if (_skipBind) console.log('[xrpatch] binding-point rewrite SKIPPED (?xrbind=0)');
-  if (!_skipBind && renderer.backend && renderer.backend.gl) installStableBindingPoints(renderer.backend);
-  if (_skipAll) { installPipelineTrace(renderer); return; }
+  // ?xrbind=0 and ?xrpatch=0 lived here, to answer whether this file was behind the Vision
+  // Pro's distortion. It was not -- the cause was three rendering to an intermediate and
+  // blitting to the XR layer, which visionOS mishandles (see the DirectRenderPipeline note in
+  // Scene.js, and tokeru.com/xrblit). Question answered, so the switches are gone.
+  if (renderer.backend && renderer.backend.gl) installStableBindingPoints(renderer.backend);
   installCameraPositionUpdate(WGPU, TSL);
-  // ?perEyeLight=0 leaves three's head-space light vector in place, to A/B against the fault.
-  {
-    installPerEyeLightVector(WGPU, TSL, renderer);
-  }
-  // ?xrnested=0 leaves the nested render unguarded, to A/B against the fault.
-  {
-    installNestedRenderGuard(renderer);
-  }
+  installPerEyeLightVector(WGPU, TSL, renderer);
+  installNestedRenderGuard(renderer);
   // Names every pipeline as it is built. See installPipelineTrace.
   installPipelineTrace(renderer);
   // ?xrlayers=1 leaves three to pick the projection layer, to A/B against the slow launch.
-  // Read from the URL the same way ?xrpatch=0 is, and for the same reason: this runs during
-  // renderer init, and a window flag set afterwards would be read too late to matter.
+  // Read from the URL rather than a window flag: this runs during renderer init, and a flag
+  // set afterwards would be read too late to matter.
   if (!/[?&]xrlayers=1/.test((typeof window !== 'undefined' && window.location.search) || '')) {
     installXRLayerChoice(renderer);
   }

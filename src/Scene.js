@@ -4125,19 +4125,19 @@ class Scene {
       // KEYED ON CAPABILITY AND BROWSER, NOT A MODEL STRING: visionOS Safari is the only WebKit
       // that exposes navigator.xr at all -- desktop Safari has none -- so this is specific
       // without naming a device that will be renamed.
+      //
+      // ?direct=1 / ?direct=0 forced it either way while that was being established. The
+      // question is answered -- it is fatal on the GalaxyXR and required on visionOS -- so the
+      // switches are gone and the capability test is the whole of the decision.
       this._directPipeline = null;
       {
         const ua = navigator.userAgent;
         const isVisionOS = /Macintosh/.test(ua) && !/Chrome|Chromium/i.test(ua) && ('xr' in navigator);
-        const forced = /[?&]direct=1/.test(window.location.search);
-        const banned = /[?&]direct=0/.test(window.location.search);
-        const want = (isVisionOS || forced) && !banned;
-        if (want && typeof WGPU.DirectRenderPipeline === 'function') {
+        if (isVisionOS && typeof WGPU.DirectRenderPipeline === 'function') {
           this._directPipeline = new WGPU.DirectRenderPipeline(this._renderer);
         }
         console.log('[renderer] DirectRenderPipeline '
-          + (this._directPipeline ? 'ON' : 'off')
-          + ' (visionOS=' + isVisionOS + (forced ? ', forced' : '') + (banned ? ', ?direct=0' : '') + ')');
+          + (this._directPipeline ? 'ON' : 'off') + ' (visionOS=' + isVisionOS + ')');
       }
       await this._renderer.init();
       // TWO three 0.183.2 BUGS THAT ONLY BITE UNDER AN ArrayCamera, i.e. in a session: uniform
@@ -4145,10 +4145,7 @@ class Scene {
       // is always zero and throws while building. Between them they are the whole of "a lit
       // material does not draw in XR". Read ThreeXRPatches.js; reproduce with xrarray.html.
       // MUST be before any material compiles -- binding points are baked in at link time.
-      // ?xrpatch=0 turns them off, to A/B against the fault.
-      if (!/[?&]xrpatch=0/.test(window.location.search)) {
-        applyXRBackendPatches(this._renderer, WGPU, TSL);
-      }
+      applyXRBackendPatches(this._renderer, WGPU, TSL);
       // THE SAME SETUP THE WebGLRenderer GETS, because this renderer is not self-configuring
       // and the omission is silent. `xr.enabled` in particular is not a convenience flag: it
       // is what gates the per-eye path, in three.webgpu.js:
