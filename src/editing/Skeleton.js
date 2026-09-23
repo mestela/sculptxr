@@ -533,6 +533,14 @@ function ensureRigInstanceAttrs(mesh, cap) {
   g.setAttribute('aQ', new THREE.InstancedBufferAttribute(quats, 4));
   g.setAttribute('aS', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3));
   g.setAttribute('aC', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3));
+  // AND THE TRANSLATION. Rotation and scale alone were enough while the capsule's positionNode
+  // was expected to hand three an object-space point for the instance matrix to place -- which is
+  // what the legacy GLSL does, writing `transformed` at begin_vertex, before project_vertex. The
+  // node path runs the other way round: NodeMaterial applies instancing to positionLocal and THEN
+  // overwrites it with positionNode, so an object-space result is thrown away and every capsule
+  // lands on the origin. The capsule composes the whole transform itself now, and that needs all
+  // three parts of the slot's compose(), not two.
+  g.setAttribute('aT', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
 }
 
 function ensureTaperAttrs(mesh, cap) {
@@ -880,6 +888,7 @@ function flushBatches(main) {
     const isCap = ha || pe;
     const aq = isCap ? m.geometry.getAttribute('aQ') : null;
     const as = aq ? m.geometry.getAttribute('aS') : null;
+    const at = aq ? m.geometry.getAttribute('aT') : null;
     const ac = aq ? m.geometry.getAttribute('aC') : null;
     // A HIDDEN SLOT IS SKIPPED, NOT SCALED TO ZERO.
     //
@@ -912,6 +921,7 @@ function flushBatches(main) {
       if (aq) {
         aq.setXYZW(i, s.quaternion.x, s.quaternion.y, s.quaternion.z, s.quaternion.w);
         as.setXYZ(i, s.scale.x, s.scale.y, s.scale.z);
+        at.setXYZ(i, s.position.x, s.position.y, s.position.z);
         const c = s.material.color;
         ac.setXYZ(i, c.r, c.g, c.b);
       }
@@ -920,7 +930,7 @@ function flushBatches(main) {
     if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
     if (pa) { pa.needsUpdate = true; pb.needsUpdate = true; }
     if (pe) pe.needsUpdate = true;
-    if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; }
+    if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; at.needsUpdate = true; }
     m.count = i;
     m.visible = i > 0;
     m.instanceMatrix.needsUpdate = true;

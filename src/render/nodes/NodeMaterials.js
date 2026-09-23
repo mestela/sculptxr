@@ -353,7 +353,7 @@ NodeMaterials.rigCapsule = function (opts = {}) {
     const radial = vec3(pos.x, 0.0, pos.z);
     const w = qrot(tsl, q, radial);
     const shaped = select(p.greaterThan(2.001), w.div(max(pnorm(w, p), float(1e-6))), w);
-    // ...and back into object space, where the instance matrix will pick it up.
+    // ...and back into object space, ready to be placed by the instance transform below.
     const b = qrot(tsl, vec4(q.xyz.negate(), q.w), shaped.mul(h));
     posNode = vec3(b.x, pos.y, b.z);
     normalObj = radial.normalize();
@@ -365,7 +365,22 @@ NodeMaterials.rigCapsule = function (opts = {}) {
     // divide lit a squashed joint as though it were round.
     normalObj = pos.div(max(sc, vec3(1e-6, 1e-6, 1e-6))).normalize();
   }
-  m.positionNode = posNode;
+  // THREE APPLIES INSTANCING BEFORE positionNode, NOT AFTER.
+  //
+  // NodeMaterial.setupPosition runs `instancedMesh( object )`, which sets
+  // positionLocal = instanceMatrix * positionLocal, and THEN `positionLocal.assign( positionNode )`
+  // -- so anything positionNode returns replaces the placed point rather than being placed. An
+  // object-space result therefore draws every capsule on top of the origin. (The legacy GLSL runs
+  // the other way round: it writes `transformed` at begin_vertex, ahead of project_vertex, which
+  // is why the same maths is correct there and wrong here.)
+  //
+  // rigBatch has no positionNode, which is why the plain bone and joint batches place correctly
+  // and only the capsules collapse -- the signature to recognise if this returns.
+  //
+  // So the capsule places itself, with the same compose() Skeleton wrote the slot with:
+  // T + R * (S * p), from aT/aQ/aS. Not instanceMatrix, which a shared material cannot reach --
+  // see ensureRigInstanceAttrs for why the transform travels as attributes at all.
+  m.positionNode = attribute('aT', 'vec3').add(qrot(tsl, q, posNode.mul(sc)));
 
   // THE SHADED TOGGLE, driven by tuneCapsuleBatches through userData.shadeMix exactly as the
   // legacy material's uniform was. Blended rather than compiled in or out: switching it must not
