@@ -479,6 +479,78 @@ function build(shaderId) {
     return m;
   }
 
+  if (shaderId === Enums.Shader.FLAT) {
+    // FLAT: a geometric face normal, a fixed headlight, vertex colour, masking attenuation.
+    // The legacy fragment is four lines and this is the same four:
+    //
+    //   n = normalize(cross(dFdx(vVertex), dFdy(vVertex)))   face normal, not the vertex one
+    //   diffuse = max(0, dot(n, (0,0,1))) * 0.5 + 0.5        headlight, half ambient
+    //   color = vColor * diffuse * (0.3 + 0.7 * vMasking)
+    //
+    // DERIVATIVES, NOT `normalGeometry`. The point of flat shading here is that each triangle
+    // gets ONE normal regardless of what the vertex normals say -- that is what makes it read
+    // as facets. A per-vertex normal would smooth it back out and quietly stop being flat.
+    //
+    // aMaterial is read directly because everything drawn in this mode is an app Mesh, which
+    // always has the attribute (Mesh.js sets it) -- including the grid and the helper meshes
+    // that call setShaderType(FLAT). A geometry without it would resolve the attribute as
+    // `float` and break the .z, so that assumption is worth keeping true.
+    const { attribute, dFdx, dFdy, positionView, vertexColor, vec3 } = tsl;
+    const m = unlit({ vertexColors: true });
+    const faceN = dFdx(positionView).cross(dFdy(positionView)).normalize();
+    const diffuse = faceN.dot(vec3(0, 0, 1)).max(0).mul(0.5).add(0.5);
+    const masking = attribute('aMaterial', 'vec3').z;
+    m.emissiveNode = vertexColor().mul(diffuse).mul(masking.mul(0.7).add(0.3));
+    m.userData.sculptShaderId = shaderId;
+    return m;
+  }
+
+  if (shaderId === Enums.Shader.NORMAL) {
+    // NORMAL: the surface normal as colour, n * 0.5 + 0.5, exactly as the legacy fragment.
+    //
+    // THE WORLD NORMAL WITH THE MATCAP'S CORRECTION, NOT `normalView` -- for the reason written
+    // at length in the MATCAP branch above. The legacy shader takes its normal through uN, and
+    // in a session the legacy camera is frozen, so that is really a world-space lookup: both
+    // eyes get the same colour for the same surface. `normalView` is live AND per-eye, so each
+    // eye would tint a surface differently and the disparity fuses as false depth -- the exact
+    // bug that sent the matcap back to world space. A normals view is a debug display and a
+    // debug display that lies about depth is worse than useless.
+    const { uniform, mat3, normalWorld } = tsl;
+    if (!rotCorrectionUniform) rotCorrectionUniform = uniform(new gpu.Matrix3());
+    const m = unlit({});
+    const n = mat3(rotCorrectionUniform).mul(normalWorld).normalize();
+    m.emissiveNode = n.mul(0.5).add(0.5);
+    m.userData.sculptShaderId = shaderId;
+    return m;
+  }
+
+  if (shaderId === Enums.Shader.UV) {
+    // UV: the coordinates themselves as colour -- u to red, v to green, blue black.
+    //
+    // DELIBERATELY NOT THE LEGACY BEHAVIOUR. The old shader sampled uTexture0, the mesh's own
+    // albedo, which makes this a per-MESH material: a node texture points at one texture
+    // object, so a shared material would wear the last import's image on everything, and the
+    // honest version needs a variant per textured mesh -- the one thing that turns a display
+    // mode into many pipelines. matt's call: show the coordinates instead. It is what the mode
+    // is named after, it is what every DCC means by a UV view, and it stays ONE shared
+    // material for every mesh in the scene.
+    //
+    // NO UVs IS THE NORMAL CASE HERE, not an edge case -- a sculpt carries position, normal,
+    // colour and aMaterial and no uv at all. An unbound attribute reads as zero, so those
+    // meshes come out black on their own, which is exactly the wanted answer and needs no
+    // branch to produce.
+    // uv() RATHER THAN attribute('uv'). The raw attribute node built without complaint and
+    // drew nothing: an attribute is vertex-stage, and reading one from a fragment node needs a
+    // varying that three only arranges through its own uv node. No error, no pixels -- the
+    // worst shape of failure, and the reason this comment exists.
+    const { uv, vec3 } = tsl;
+    const m = unlit({});
+    const uvNode = uv();
+    m.emissiveNode = vec3(uvNode.x, uvNode.y, 0);
+    m.userData.sculptShaderId = shaderId;
+    return m;
+  }
+
   if (shaderId === Enums.Shader.PBR) {
     // ?pbrbisect= — the control experiment for "menus vanish in pbr and nowhere else".
     //   1  PBR mode gets the PLACEHOLDER material, so no PBR material exists at all. Menus
