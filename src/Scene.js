@@ -15599,6 +15599,35 @@ class Scene {
   // the gesture mean whatever it meant before.
   openViewportMenu(clientX, clientY) {
     if (!this._viewportMenu) return false;
+    // WHERE THE CURSOR IS RESOLVES THE AMBIGUITY. matt: "the cursor location should be enough
+    // of a clue ... same applies for the t-junction from the spine to the shoulders, or
+    // branching structures of a hand."
+    //
+    // At a FORK a joint has no single bone below it, so resolving Split from the joint gives
+    // nothing and the command comes up disabled -- and at the ROOT of a rig it is worse, since
+    // a root has no bone above it either, so right-clicking the hips offered a Split that could
+    // never run. Which of the three bones you meant is a question only the pointer can answer,
+    // and it is already pointing at one.
+    //
+    // The ordinary hover cannot answer it. `_rigHoverBone` comes out of the shared rig pick,
+    // where a joint MARKER wins over a segment whenever the cursor is near one -- which is
+    // exactly where a fork is. So this asks a different question with a bone-only pick:
+    // `_pickBoneScreen` measures the cursor against every drawn segment and ignores joints
+    // entirely, which is the question "which bone is under the pointer" and nothing else.
+    //
+    // Only when the hover found nothing, so pointing squarely at a bone still wins. Written to
+    // `_rigHoverBone` rather than to a latch because on desktop it IS its own latch: the menu is
+    // a DOM overlay, so no pointer move reaches the canvas while it is open, and the next move
+    // over the viewport refreshes it. The lit bone becomes the one that will split, which is the
+    // answer to "what does this do" being visible before it is done.
+    if (!this._rigHoverBone) {
+      const tool = this._sculptManager && this._sculptManager.getCurrentTool
+        && this._sculptManager.getCurrentTool();
+      if (tool && tool._pickBoneScreen) {
+        this._rigHoverBone = tool._pickBoneScreen() || null;
+        if (this._rigHoverBone) Skeleton.updateVisuals(this);
+      }
+    }
     // FROZEN THE SAME WAY THE RING FREEZES. _resolveRadialCommands latches the preselected joint
     // into the closures it returns, so what the menu acts on is what was under the pointer when
     // it opened — not whatever the pointer has drifted onto by the time a row is clicked.
