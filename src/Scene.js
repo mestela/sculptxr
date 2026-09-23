@@ -15142,7 +15142,31 @@ class Scene {
     // Split takes the BONE — the segment you are pointing at, which is a different answer from
     // the joint at its nearer end. Dissolve takes the JOINT. Falling back to nameRoot keeps
     // Split usable from a selection when no bone is under the tip.
-    const splitTarget = this._rigHoverBone || nameRoot;
+    //
+    // A JOINT LIGHTS THE BONE BELOW IT. SPLIT CUTS THE BONE ABOVE ITS TARGET. Those are
+    // opposite hands, and the mismatch is visible to anyone using it: select bone_01_L, it
+    // turns cyan, right-click -> Split bone, and the bone that splits is bone_02 -> bone_01_L,
+    // the one ABOVE the cyan one. matt, 2026-09-23, with screenshots: "this is not intuitive."
+    //
+    // Both conventions are deliberate and both stay -- see the note in Skeleton's bone tint,
+    // which says so outright: a joint at the TOP of a chain owns no bone above it and would be
+    // unable to paint itself, so the highlight looks down; an EDIT names a bone by the joint it
+    // ends at, so a bone has exactly one owner. What was wrong is only that Split read a joint
+    // with the edit hand when the thing the user had just LIT was chosen with the other.
+    //
+    // So a joint resolves to the bone that is lit: its sole child. The two cases with no single
+    // lit bone keep the old answer, because it is the only unambiguous one left and refusing
+    // would remove a verb outright:
+    //   leaf   nothing is lit below; the bone above is the only bone it touches.
+    //   fork   EVERY child bone is lit, so there is no "the" bone below -- and splitting an
+    //          arbitrary one of three fingers is exactly the guess this avoids.
+    // Pointing straight at a segment is unaffected and is still the precise way to say which.
+    const litBelow = (j) => {
+      if (!j) return null;
+      const kids = Skeleton.childJoints(this, j).filter((k) => Skeleton.isJoint(k));
+      return kids.length === 1 ? kids[0] : null;
+    };
+    const splitTarget = this._rigHoverBone || litBelow(nameRoot) || nameRoot;
     const dissolveTarget = nameRoot;
     // TOPOLOGY VERBS BELONG TO THE BONE TOOL. They need bone selection to know which bone you
     // mean, and bone selection is only on in that tool — see BONE_SELECT in Picking for why it
@@ -15238,9 +15262,19 @@ class Scene {
       // "if i preselect any other bone and split, it keeps trying to split the first bone."
       //
       // The whole point of a context menu is that it acts on what you opened it on.
+      // WHICH BONE DID IT PICK, AND WHERE FROM. matt, 2026-09-23, with screenshots: the bone he
+      // had selected was not the bone that split. The resolution above has three possible
+      // sources -- the hovered SEGMENT, a hovered joint, or the selection -- and which one fired
+      // is not recoverable from the result, so it says so. A bone is named by its CHILD end, so
+      // the bone that will be cut is `parent -> target`.
       { label: 'Split bone', icon: 'fa-scissors',
         enabled: inBoneTool && RigTopology.canSplit(this, splitTarget),
-        run: () => { RigTopology.split(this, splitTarget); } },
+        run: () => {
+          const nm = (j) => (j && (j._permanentStaticLabel || j.getID?.())) || String(j);
+          console.log('[rig] split ' + nm(splitTarget && splitTarget._parentMesh) + ' -> ' + nm(splitTarget)
+            + ' (from ' + (this._rigHoverBone ? 'the bone under the cursor' : 'the bone lit below the joint') + ')');
+          RigTopology.split(this, splitTarget);
+        } },
       // Dissolve acts on the JOINT, which nameRoot already froze at open for the same reason.
       { label: 'Dissolve', icon: 'fa-compress',
         enabled: inBoneTool && RigTopology.canDissolve(this, dissolveTarget),
