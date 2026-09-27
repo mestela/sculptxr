@@ -1,4 +1,89 @@
+# v3.58.0
+- **A pin you can see preselected is a pin the trigger can take.** Grab's preselection was always right and the press did nothing, which is the clue: hover runs on its own stateless path, so the fault was never the pick.
+- `Grab.start()` is the **desktop** acquire -- it picks against `_mouseX/_mouseY`, which are only written from a DOM pointer event. Inside a headset there is none, so it picked against wherever the desktop cursor was left before the session.
+- Scene ran it anyway. `_allowAir` makes `canSculpt` true on **every** VR trigger press whether the ray hit anything or not, and the stroke lifecycle runs ~475 lines before updateXR is dispatched in the same per-source pass -- so a stale-cursor pick claimed `_grabbedMesh` first, and the pin gesture returns on its first line when a mesh is held. One XR guard in `start()`.
+- Latent until the pin's desktop cone stopped being gated behind bone-select and became the drawn gnomon's radius: a pick that used to miss started landing on a pin on most presses, which is why it read as "often" rather than "never".
+
+Beta only; production is still v3.52.1.
+
+# v3.57.0
+- **Split acts on the bone you can see is selected.** Two deliberate conventions in opposite hands: the highlight looks **down** (a joint lights the bone below it, keyed on the parent's id) while an edit looks **up** (`split(j)` cuts `parent(j) -> j`). Both stay -- a joint at the top of a chain owns no bone above it and could not paint itself, while an edit needs each bone to have exactly one owner. Split was simply reading the edit hand for what the other hand had lit.
+- **The cursor says which bone**, at a fork and at the root.
+- **The hover came back:** the menu's bone pick must not outlive the menu.
+- **Symmetrize L->R / R->L work on the rig**, not just the mesh. They did nothing rather than something wrong -- both handlers reach for `getMesh().symmetrize`, and in the bone tool `getMesh()` is a **joint**, which has no such method, so the click was swallowed. Routed on the active tool instead of on whatever happens to be selected. Deliberately destructive: throw the bad side away and rebuild it from the good one, which is a result you can state in one sentence. The centreline is not a side -- a joint on the plane is its own twin.
+
+# v3.56.0
+- **A slider is not a text field**, so keyboard shortcuts stop dying the moment you touch one.
+- **Bones land in the middle of the mesh under the cursor**, not on its skin -- the volume-midpoint depth, which removed most of the reason to want the VR snapping on the desktop.
+- The spent bisection flags are deleted. A flag that has answered its question is state the user has to remember and retype, so it goes the moment it is answered.
+
+# v3.55.0
+- **A node material's environment map needs `dispose()`.** `needsUpdate` and bumping `version` do not rebuild a node graph, so the IBL was set correctly -- right texture, right uuid, right mapping -- and completely dead. The test is to swing env intensity 0 to 12 and look. Applies to any property that adds or removes shader code, not just this one.
+
+# v3.54.0
+- **Flat, normal and UV display modes on the node path.**
+- No "compiling shaders" plate in immersive -- it was a desktop affordance showing up in a headset.
+- **Capsules place themselves.** three applies instancing **before** `positionNode`, so a custom `positionNode` overwrites the instance placement and every instanced capsule collapses to the origin; the node has to compose translate + rotate * (scale * p) itself from the attributes. The signature is that only the batches whose material has a `positionNode` collapse.
+
+# v3.53.2
+- **Shadows work in an XR session**, after a long hunt. Six distinct faults, the load-bearing ones being: the shadow pass was hijacked by the XR camera, the outer frame's composite buffer needed shielding from the nested pass, the shadow camera's near plane was 0.5m with the whole sculpt inside it, and the frustum came out inverted (near 0.948, far 0.516). Point lights cannot be made rotation-invariant and no longer cast; sun and spot do. Softness actually blurs now (16 taps -- five was the dithering), and resolution is a control.
+- **The Vision Pro rendered the whole app into one pixel**, then rendered it warped. The first is ours and is fixed by re-reading the XR framebuffer on frame one. The second is **Apple's**: an intermediate-plus-blit breaks stereo on visionOS, proven with raw WebGL2 and published as a standalone repro at tokeru.com/xrblit. `DirectRenderPipeline` fixes it, and the gate is load-bearing -- the same flag breaks the GalaxyXR.
+- **Matcap in VR is a world-space lookup.** The port bug was the **normal**, not the correction matrix: three's `normalView` is live and per-eye, which reads as swim and false depth.
+- **Depth and normal passes export as PNGs.**
+- **Rig performance:** do not draw an empty rig (30 pipelines on entry down to 2), the stand-in material had dropped `colorWrite` so the rig rebuilt itself every frame, and a cloned node material comes out black.
+- **The warm passes are deleted.** Measured against nothing, they were a net loss -- the lever is fewer distinct pipelines, not precompiling the ones you have.
+- Lights survive a .sxr round trip; duplicate carries the whole light; one Scene section instead of separate Open and Save.
+
+# v3.53.1
+- **The renderer port: `?renderer=webgpu` runs the whole app on WebGPURenderer with hand-written TSL materials.** A spike first -- viable and fast, blocked on one renderer bug, verdict GO with one rule -- then the port itself: matcap, ShaderPBR, the aim laser, the volume cursor, the stylus spike, the voxel overlay and the brush radius circle.
+- **`MeshBasicNodeMaterial` is undrawable in XR, and one such object poisons the whole frame.** Found by building a ladder up from an empty frame plus one visible panel, after a long run of bisection instruments. three converts every stock `MeshBasicMaterial` into it, so the conversion had to move wholesale. `THREE.Line` and `LineLoop` are unsupported too.
+- **PBR on three's lit pipeline** -- `MeshPhysicalNodeMaterial` with real lights and shadows -- plus IBL via PMREM and four equirect HDR environments, Ferndale studio by default.
+- Every light the user cannot see or edit is gone.
+- Light intensity is a log slider, and the shadow toggle no longer throws.
+- **Three XR renderer bugs in three 0.183.2, all of which reproduce on the desktop.** Written down as such, because a bug you can only see in a headset costs a headset trip to test.
+
+# v3.53.0
+- **~16,450 lines of legacy removed.** GuiXR, VRMenu and the whole canvas widget system in `src/gui/vr` (16 files, ~5,200 lines) are gone, along with 8 orphaned modules, the dead legacy WebGL passes, the unused render targets, the orphaned Gnomon and the `_uiSettings` cache.
+- The method matters as much as the deletion: **"retired" is not "dead"** -- hook the thing and call the live path before believing it. The orphan sweep cannot see files imported only by dead code, and `dist` proves call sites, not method definitions.
+- **Lights are a system now.** Spot and directional as one entity with a type property, handles that show type and direction, shadows as per-light properties (on/off, opacity, softness, bias), MAX_LIGHTS to 8, an Env Intensity slider, lights selectable in the viewport, and a Scene tab with foldable sections and the selected light's properties in it.
+- **VR lighting swam with head rotation** -- two cameras, one camera's matrices.
+- Sliders that could not be dragged, in the View menu, the Scene sections and Settings: all three were missing `fixSliderDrag`.
+
+Production stops here: v3.52.1 is the last version deployed to production. Everything from v3.53.0
+on is beta only.
+
+# v3.52.1
+- **Grab channels** -- translate and rotate independently, so a grabbed joint can be turned without also being moved. A hand cannot move without turning, so there was previously no way to simply turn a bone.
+- **Connect on motion paths.**
+- The **undo limit persists**.
+
+# v3.52.0
+- **The hand pinch threshold is per runtime, because the two hand trackers are not one signal.** Quest wants 0.022 and everything else wants 0.005; one number tuned for the worse tracker ruined the better one. An option default was silently shadowing the per-runtime default.
+
+# v3.51.0
+- **A kill switch for the long-press menu**, for the device that has no other gesture to open it with.
+
+# v3.50.0
+- **Weight cages: sculpt a capsule and the skin weights follow, live.** Four traps behind it: a mirrored skin **inverts** `signedDistance` (which affects the ordinary bind too, not just cages), a cage is **not** rig furniture, a self-mirror is a **swap** rather than a copy, and the pairing latched on an attempt that never ran.
+- Sculpt in symmetry on a cage, and pick past it.
+
+# v3.49.0
+- **Long press opens the marking menu**, and a reflection stops erasing itself.
+- **A new pin reveals itself** rather than arriving invisible.
+
+# v3.48.0
+- **A nested glass eye cannot be depth-sorted, so order it explicitly.** three sorts by `renderOrder` only *within* a pass, and in this app every mesh and every VR panel is transparent, so all layering is manual.
+
+# v3.47.0
+- **The rigid bone-length constraint had a lambda, and it was undoing itself.** A rigid constraint must not carry one. Two things worth keeping from the hunt: a result that is non-monotonic in mass is broken arithmetic, not a tuning problem, and "stretch" was the wrong metric -- the output of this solver is rotational.
+
 # v3.46.0
+- **glTF/glb import**, with the three things a sculpting app needs that glTF does not carry: quads decoded from FB_ngon (tested by STRUCTURE, because Nomad writes it without declaring it), seams welded so a brush does not move one side of a crack, and primitives merged back into objects.
+- **Materials arrive with it** -- albedo, metal/rough and normal maps -- and `COLOR_1` turns out to be this app's own per-vertex material vector, both being SculptGL descendants.
+- **The IBL environment had been unbound since the Three.js port.** The mocked gl had no TEXTURE0 constant, so the unit resolved to NaN and roughness and metalness had no visible effect at all: 0.02 and 1.0 rendered identically.
+- **Lights are objects you add and place**, going through the ordinary add path so they get an outliner row, selection, the gizmo, parenting, keyframes and undo for free.
+- **Posing got faster twice:** a hidden mesh is no longer skinned (58.8ms to 19.0ms on the camel), and anything rigid can be parented instead of bound, worth 1.52x.
+
 **glTF comes in, and materials arrive with it.** SculptXR has exported glb since long before it
 could read one, so `getFileType` answered 'glb' for a file nothing could open and the load ended
 in silence. There is an importer now, and the work in it is not the parsing -- GLTFLoader does
@@ -60,6 +145,10 @@ glass rather than an opaque shell; and the VR tool toast is no longer a permanen
 parked at the world origin on desktop.
 
 # v3.45.0
+- **The VR keyboard was mirrored, and the axis was the whole story.** Every guard tested `scale.y < 0`, but three's `decompose` folds a negative determinant into **sx** -- so a panel placed by decomposing a matrix, which is what pinning does, arrives as `(-1, 1, 1)` and nothing fired.
+- One `matchPanelTransform` now, instead of the keyboard, the numpad and the confirm dialog each carrying their own copy of "undo the half turn, then match the mirror sign".
+- **"In front of a panel" means along its normal**, not toward the head. The numpad set an absolute distance from your head, which is not the same thing and is not even monotonic in it: 13mm of clearance at one pitch, 2mm at another.
+
 **The VR keyboard was mirrored, and the axis was the whole story.** Open a pinned panel's Save
 dialog and the keyboard came up reversed left to right. Every guard in that path tested
 `scale.y < 0` -- but three's `Matrix4.decompose` folds a negative determinant into **sx** by
@@ -99,6 +188,9 @@ or confirm dialog and it closes with it, from a per-frame check that covers ever
 one button.
 
 # v3.44.0
+- **Record starts on the first press.** The internal armed flag defaulted to TRUE before anyone had armed anything, so the first press was spent turning off a session that had never started. The two record buttons also disagreed with each other about whether anything was armed.
+- **"Bake Capsules" becomes "Bake Weight Cages"** -- it has nothing to do with the Capsules display chip, and sharing the word put a capsules-looking control right where someone hunting for the display toggle looks.
+
 **Record starts on the first press.** The internal "armed" flag defaulted to TRUE before anyone had
 armed anything, and `toggleRecord` reads that flag as "a record session is active" — so the first
 press was spent turning off a session that had never started, and the second one recorded.
@@ -115,6 +207,16 @@ turning capsules on/off in the same area that I can make skin." The undo-history
 to match, so there is one vocabulary for it.
 
 # v3.43.0
+- **A pass through Adurna35's bug report, worked one item at a time on device.**
+- **The kaospad folds**, from a bar on the pad itself -- the one object both hosts share, so one implementation serves the VR strip and the desktop canvas alike.
+- **Letting go of a world grab stops moving the scene.** One number was answering two questions; the glide's SPEED still comes from the strongest sample, but the DECISION now asks whether the motion was sustained across the window. There is a Throw slider too -- inertia had no setting of any kind before.
+- **The stepping was the falloff, applied sixteen times.** Density compensation raised the pass count to as many as sixteen, and each pass re-applied the falloff, so alpha 0.30 came out at 0.9967 -- a soft falloff turned into a disc with a rim. Applied once now, sampled before the vertex moves.
+- **Smooth gets a Keep Volume button, and the HC term is a ceiling rather than a damper.** After five thousand passes, plain laplacian leaves 0.0013 of a bump and HC leaves 0.8007. The two complaints this tool collects are irreconcilable, so it is a button.
+- **A stroke owns the controller.** A trigger closed anywhere that is not a panel owns itself until release, with no rays cast at all while it does -- a rule that holds without a per-tool list, which is what the old guard needed.
+- **Smooth mode is the off-hand trigger**, latched once a frame and read everywhere, including by the stroke's picking radius four hundred lines away that had been sizing every smooth with the clay brush's footprint.
+- **Eight live ReferenceErrors fixed, and `undef_test` now sweeps all of `src/`** instead of a hand-written list of eleven rig files -- the list was the weakness, since `Move.js` was not on it.
+- **Also:** Trigger sensitivity becomes Press point, the number pad can type a negative, Motion Paths is a real section, symmetry is disabled on voxels rather than failing silently, and Remesh stops leaving the original mesh hidden in the scene.
+
 **A pass through Adurna35's bug report, worked one item at a time on device.**
 
 **The kaospad folds, and the fold bar is on the pad.** The four-slot blend pad takes a third of the
@@ -270,6 +372,12 @@ button held open with `visibility:hidden` — so any field accepting a negative 
 by going through zero on the thumbstick. The entry code had been written for it all along.
 
 # v3.42.0
+- **A bone is not a thing, and the rig finally agrees.** No bone object exists anywhere -- the pick returns a joint, the radius lives on a joint, Split takes a joint. What was wrong was WHICH joint, in three places at once. One resolver now: the joint under your hand, or the ROOT of the bone under it, so any of the five bones off a wrist selects the wrist, exactly as Maya does.
+- **Colours you can read a selection by.** Selection moves to Maya's highlight green and the per-chain palette gets out of its way: both state hues reserved, eight hues left, nearest one 0.116 away where the closest used to be 0.028.
+- **Pins reach both panels.** The last marking-menu-only commands land on the main and wrist panels, which is every surface including a hands-only runtime. Two of them were unreachable on iPad by any route.
+- **Chain editing, and three ways to finish one** -- an off-hand pinch, a tap on the joint you are hanging from, or right-click. Ending a chain used to be the A button, and a hand has no A button.
+- **Fixes:** a solve is no longer mistaken for an authored pose, every bone operation respects the symmetry toggle, paint colour is a colour wheel (a native picker never survived the VR rasteriser), and the VR keyboard appears in front of the panel that summoned it.
+
 **A bone is not a thing, and the rig finally agrees.** Maya's own documentation is blunt about it
 — *"bones do not have nodes... bones are only visual cues that illustrate the relationships
 between joints"* — and this app already agreed under the hood: no bone object exists anywhere,
