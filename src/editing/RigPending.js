@@ -60,6 +60,12 @@ RigPending.cancel = function (main) {
   if (!main || !main._rigPendingMode) return false;
   main._rigPendingMode = null;
   main._rigPendingSubject = null;
+  // REFRESH HERE, not left to every caller. `take`/`complete` already did their own call after
+  // this one returns, which just makes this a harmless second repaint for them — but a bare
+  // `RigPending.cancel(main)` from anywhere else (the A button, an add-primitive shortcut that
+  // silently drops a stale pick) used to leave an armed-looking button lit over a mode that had
+  // in fact been cancelled, because nothing told either panel to look again.
+  refreshOutliners(main);
   return true;
 };
 
@@ -145,13 +151,28 @@ RigPending.pickTarget = function (main) {
 // channel the pin cycle announces itself on.
 function say(msg) {
   if (window.screenLog) window.screenLog(msg, 'cyan');
-  if (window._rigPendTrace) console.log('[rigPend] ' + msg);
 }
 
 function refreshOutliners(main) {
   const gui = main && main.getGui && main.getGui();
   if (gui && gui._desktopSceneEl && gui._buildDesktopScene) gui._buildDesktopScene(gui._desktopSceneEl);
-  main._mainMenuPanel?.markDirty?.();
+  // REBUILD, NOT REPAINT. markDirty() re-rasterises whatever HTML is already sitting in the
+  // panel; it does not regenerate that HTML, so a button whose LABEL needs to change ("Set
+  // parent..." -> "Click PARENT (list or 3D)...") kept its old text however many times this ran.
+  // The rebuild's own cache key has nothing about rig-pending state in it either, so a plain
+  // _rebuildContent() would see an unchanged key and skip -- the empty string forces it through
+  // regardless, the same escape hatch every other caller of a forced rebuild in this file uses.
+  //
+  // matt: "the console is keeping track and if i continue through blindly it works, but the
+  // panel/button state isn't updating." The gesture was always completing correctly on the VR
+  // side; only the one thing telling you so, the button, never repainted with new words on it.
+  const panel = main._mainMenuPanel;
+  if (panel && typeof panel._rebuildContent === 'function') {
+    panel._lastContentKey = '';
+    panel._rebuildContent();
+  } else {
+    panel?.markDirty?.();
+  }
 }
 
 // Finish against `target`. Disarms EITHER WAY, including on a miss: a click that found nothing
@@ -202,14 +223,11 @@ RigPending.complete = function (main, target) {
 // CONSUMED, which is what the caller uses to suppress the sculpt, the camera and the selection
 // change that the same click would otherwise cause.
 RigPending.fireFromPointer = function (main) {
-  if (window._rigPendTrace) {
-    console.log('[rigPend] click seen by the gate — armed: '
-      + (RigPending.armed(main) || 'no') + ', step: ' + (RigPending.step(main) || '-'));
-  }
   if (!RigPending.armed(main)) return false;
+  const target = RigPending.pickTarget(main);
   // Repaint even on a miss: `complete` disarms either way, and a button still lit over a
   // mode that is no longer armed is worse than either outcome.
-  if (!RigPending.take(main, RigPending.pickTarget(main))) refreshOutliners(main);
+  if (!RigPending.take(main, target)) refreshOutliners(main);
   return true;
 };
 
@@ -224,14 +242,3 @@ RigPending.fireFromRay = function (main, picked) {
 
 export default RigPending;
 
-// State, and a trace of every click the gate sees — armed or not. The question it answers is
-// the one that cannot be settled by reading: does the click reach this at all? If a click on a
-// pin moves it and nothing prints here, the pointer never got this far and the gate is not the
-// thing to fix. If it prints "armed: no", the button did not arm.
-window.rigPend = function (on) {
-  window._rigPendTrace = on !== false;
-  console.log('[rigPend] trace ' + (window._rigPendTrace ? 'ON' : 'off')
-    + '. Every click prints, whether armed or not. Silence on a click means the pointer never '
-    + 'reached the gate.');
-  return window._rigPendTrace;
-};

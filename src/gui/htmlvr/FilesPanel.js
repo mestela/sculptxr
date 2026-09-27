@@ -55,7 +55,8 @@ export function openBrowserSavesDOMOverlay(main) {
   const build = async () => {
     await guiFiles?.prepareBrowserSavePage?.();
     body.innerHTML = buildMenuHTML_browserSaves(main);
-    wireMenuBrowserSaves(body, main, build);
+    // This one IS a dialog, so Cancel and a double-click have something to close.
+    wireMenuBrowserSaves(body, main, build, build, () => backdrop.remove());
   };
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   if (guiFiles) { guiFiles.refreshBrowserSaves().then(build); } else { build(); }

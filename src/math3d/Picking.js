@@ -539,6 +539,19 @@ class Picking {
         if (_scr > 0) {
           var _pp = this.project(_TMP_RIG_P);
           cone = Math.sqrt(vec3.sqrDist(_TMP_RIG_P, this.unproject(_pp[0] + _scr, _pp[1], _pp[2])));
+          // A PIN REACHES FURTHER THAN A BONE HERE TOO. The fallback cone three lines down has
+          // always known this -- 0.028 against 0.018, a pin gets ~55% more -- but the TOOL
+          // RADIUS branch just above did not: Grab's own brush radius sized a pin's cone exactly
+          // as tight as a bone's, with no allowance at all. matt: "select the primary grab tool
+          // ... hover on a pin, can see it preselect highlight, click it, it often moves." Traced
+          // live: the click landed inside 1px of the pin's own projected centre and still missed
+          // -- off=5.752 against a Grab-radius cone of 5.300, a ~9% shortfall invisible to the
+          // eye. The marker-size safety net below did not save it either: this pin's own gnomon
+          // (_pickRadius 2.31) is smaller than the tool's cone, so "never smaller than the
+          // marker" had nothing to add. Same ratio as the fallback, applied here for the same
+          // reason: whichever cone supplied it, a pin is still a smaller, more deliberate target
+          // than a bone segment and has always been given more room for it.
+          if (mesh._isPinTarget) cone *= (window._rigPickConePin || 0.028) / (window._rigPickCone || 0.018);
         }
         if (!(cone > 0)) {
           // No tool radius to read (a tool without one, or before one is set). Fall back to the
@@ -558,7 +571,18 @@ class Picking {
         // much the bigger of the two. Pointing at an arm of the triad then landed outside the
         // pin's own zone and the bone beneath it won every time. `_pickRadius` is published by
         // the code that draws the marker, so the zone is whatever is actually on screen.
-        if (BONE_SELECT(this._main) && mesh._pickRadius > cone) cone = mesh._pickRadius;
+        //
+        // NOT GATED BY BONE_SELECT. `_pickRadius` is set ONLY on a pin (Skeleton.js, one
+        // setter, `pinObj._pickRadius`) -- a joint never has it, so this line was always a
+        // no-op for the bone-segment case BONE_SELECT exists to gate, and gating it anyway
+        // meant a pin's own marker-sized zone only applied INSIDE the Bone tool. Everywhere
+        // else -- Select, Grab, Transform -- a pin's click zone silently shrank to the small
+        // generic default and a click on the visible gnomon could miss it and take the mesh
+        // behind it instead. matt: "if i use the viewport select mode, i can see a preselect
+        // highlight on a pin ... but when i click on a pin, the set parent states never
+        // update." Hover uses this same function and can catch the pin as the cursor sweeps
+        // near it; one exact click is far less forgiving of a cone smaller than what is drawn.
+        if (mesh._pickRadius > cone) cone = mesh._pickRadius;
         if (window._pickTrace) {
           console.log('[pick]', mesh._permanentStaticLabel || mesh.getID(),
             mesh._isPinTarget ? 'PIN' : 'BONE',
@@ -723,8 +747,12 @@ class Picking {
         // and set beats a constant nobody can, which is the whole lesson of the last few
         // rounds. Falls back to the fixed reach when there is no sphere to read.
         const base = this._main?._vrBrushPhysicalRadius || (window._rigPickProximityVR || 0.11);
-        const reach = BONE_SELECT(this._main)
-          ? Math.max(base, (mesh._pickRadius || 0) * vrScale) : base;
+        // NOT GATED BY BONE_SELECT, for the same reason as the desktop cone above: `_pickRadius`
+        // is a PIN-ONLY property (Skeleton.js's one setter puts it on `pinObj`), so gating this
+        // widening behind a bone-tool flag never touched a bone -- it only ever shrank a pin's
+        // own reach back to the generic default the moment BONE_SELECT was off, in every tool
+        // but Bone Draw.
+        const reach = Math.max(base, (mesh._pickRadius || 0) * vrScale);
         if (physicalDistance > reach) continue;
         // MEASURED AGAINST ITS OWN REACH, exactly as the desktop score is measured against its
         // own cone — and for a reason that only appeared when bones became pick surface.

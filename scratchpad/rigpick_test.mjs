@@ -643,19 +643,32 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 // bigger than the zone that answers for it, and aiming at an arm of the triad landed outside
 // the pin entirely: "the wrist never preselect highlighted", with the bone underneath winning.
 // So the zone takes whichever is larger. The thing you can see is the thing you can click.
+//
+// NOT GATED BY BONE_SELECT, and this is the correction, not the original fix. `_pickRadius` is
+// set on exactly one kind of object -- a pin, one setter in Skeleton.js -- so gating this line
+// behind a bone-tool-only flag never touched the bone case BONE_SELECT exists for; it only ever
+// shrank a PIN's own widening back to the small generic default the moment BONE_SELECT was
+// false, i.e. in every tool except Bone Draw. matt hit exactly this a second time, elsewhere:
+// "if i use the viewport select mode, i can see a preselect highlight on a pin ... but when i
+// click on a pin, the set parent states never update" -- Select is not the Bone tool, so
+// BONE_SELECT was false, so the pin's marker-sized zone was never applied there.
 {
-  const m = /if \(BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/.test(SRC);
+  const m = /if \(mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/.test(SRC);
   check('the desktop cone is widened to the drawn marker', m,
     'a marker bigger than its own pick zone is a target you cannot hit');
+  check('...unconditionally, not only inside the Bone tool',
+    !/BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone/.test(SRC),
+    '_pickRadius is a pin-only property, so gating this on the bone-tool switch only ever hid it from every OTHER tool');
   check('...and the VR reach likewise',
-    /Math\.max\(base, \(mesh\._pickRadius \|\| 0\) \* vrScale\)/.test(SRC),
-    'a gnomon 30cm across has arms further out than an 11cm reach');
+    /Math\.max\(base, \(mesh\._pickRadius \|\| 0\) \* vrScale\)/.test(SRC)
+      && !/BONE_SELECT\(this\._main\)\s*\n?\s*\?\s*Math\.max\(base, \(mesh\._pickRadius/.test(SRC),
+    'a gnomon 30cm across has arms further out than an 11cm reach, in every tool, not only Bone Draw');
 
   // Evaluated: the widening has to be a MAXIMUM, never a replacement, or a pin viewed from far
   // away would lose the screen-space zone that makes it hittable at a distance.
   const widen = new Function('cone', 'r',
-    'const BONE_SELECT = () => true; const mesh = { _pickRadius: r }; '
-    + (SRC.match(/if \(BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/) || [''])[0]
+    'const mesh = { _pickRadius: r }; '
+    + (SRC.match(/if \(mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/) || [''])[0]
     + ' return cone;');
   check('a marker larger than the cone widens it', widen(0.2, 3.8) === 3.8);
   check('a marker smaller than the cone leaves it alone', widen(2.0, 0.5) === 2.0,
@@ -755,11 +768,16 @@ check('...with the escape hatch still one flag away',
 check('...gating the segments on both paths',
   (SRC.match(/BONE_SELECT\(this\._main\) \? segmentHead\(mesh\) : null/g) || []).length === 2,
   'desktop and VR, or the switch only half works');
-check('...the zone widening', /BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone/.test(SRC));
-check('...and the zone widening is the only thing left gated',
-  /BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone/.test(SRC)
+// THE ZONE WIDENING IS NOT GATED, and that is deliberate: it went the other way once, and gating
+// a PIN-only widening on a BONE-tool switch just hid a pin's own marker-sized zone in every tool
+// but Bone Draw -- see the fuller note by the widening tests above. segmentHead is the only thing
+// left under this switch's control now.
+check('...the zone widening is not gated (a pin-only property, not a bone one)',
+  !/BONE_SELECT\(this\._main\) && mesh\._pickRadius > cone/.test(SRC));
+check('...and segmentHead is the only thing left gated',
+  /BONE_SELECT\(this\._main\) \? segmentHead\(mesh\) : null/.test(SRC)
     && !/BONE_SELECT\(this\._main\) \? offAxis/.test(SRC),
-  'the blended scores are gone entirely now, so there is nothing left to gate there');
+  'the blended scores are gone entirely now, so segmentHead is what remains to gate');
 {
   const SK = fs.readFileSync(new URL('../src/editing/Skeleton.js', import.meta.url).pathname, 'utf8');
   // The dots are a flag again rather than a consequence of this switch — see the section
@@ -899,8 +917,13 @@ check('...and the zone widening is the only thing left gated',
   // the tip had drifted onto — usually nothing, which fell back to nameRoot and split the same
   // joint every time. matt: "if i preselect any other bone and split, it keeps trying to split
   // the first bone."
+  // matt found a second bug in the same neighbourhood after this check was written: selecting
+  // a joint highlights the bone BELOW it, but a bare fallback to `nameRoot` named the joint
+  // itself -- the bone ABOVE it -- so Split cut the wrong bone whenever nothing was hovered.
+  // `litBelow` resolves the joint to the bone that is actually lit before falling back further;
+  // see "split the bone you can see is selected, not the one above it".
   check('Split takes the hovered BONE, captured at menu open',
-    /const splitTarget = this\._rigHoverBone \|\| nameRoot;/.test(SC)
+    /const splitTarget = this\._rigHoverBone \|\| litBelow\(nameRoot\) \|\| nameRoot;/.test(SC)
       && /RigTopology\.split\(this, splitTarget\)/.test(SC));
   check('...and its run closure never re-reads the live hover',
     !/RigTopology\.split\(this, this\._rigHoverBone/.test(SC),

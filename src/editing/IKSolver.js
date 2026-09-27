@@ -287,6 +287,29 @@ IKSolver.setPin = function (joint, mode, main) {
     joint._boneIKPinObj = pin;
   }
   joint._boneIKPinPrev = pin;
+
+  // A RESURRECTED PIN KEEPS ITS KEYS, NOT ITS OLD NAME.
+  //
+  // The remembering above is what stops a pin's animation keys being orphaned by a toggle, and it
+  // brings the SAME object back -- including the label it was born with, built from whatever the
+  // joint was called at the time. Rename the bones while the pins are off and the names are stale
+  // the moment they come back. matt: "make skeleton, make skin, make pins. delete pins, name
+  // bones, make pins. at that last stage the arms and legs had 'arm' and 'leg' prefixes, but the
+  // pins were still called bone02_L_pin."
+  //
+  // Skeleton.nameChain renames a joint's pin along with it, so a rename with the pins PRESENT was
+  // always right; this is the path where there was nothing there to rename.
+  //
+  // Only a name this code generated is rewritten. `pin_` is the prefix makePin and nameChain both
+  // use, so anything else is a name somebody typed, and silently overwriting that would be worse
+  // than the stale one.
+  const jointName = joint._permanentStaticLabel;
+  const pinName = pin._permanentStaticLabel;
+  if (jointName && typeof pinName === 'string' && /^pin_/.test(pinName)
+      && pinName !== 'pin_' + jointName) {
+    pin._permanentStaticLabel = 'pin_' + jointName;
+    pin.uiName = pin._permanentStaticLabel;
+  }
   // Cycling 3DOF -> 6DOF must NOT re-place the pin: if the joint has drifted off an
   // unreachable pin, moving it to the joint would shift the pin at the very moment the user
   // asked for a stronger hold.

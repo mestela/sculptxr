@@ -13,6 +13,31 @@ import RigPlacing from './RigPlacing.js';
 import Skeleton from './Skeleton.js';
 import WeightCage from './WeightCage.js';
 
+// A COPY OF SculptBase._readButton, not a call into it — that method reads `this._main` off a
+// tool instance, and there is deliberately no tool instance to ask while an assignment is armed
+// (the branch that reads this switches every tool off). Same two-level fallback: the options
+// object first, then the raw session, because the options a caller passed can be a thinner one
+// than the session actually has (see SculptBase's own note on this).
+function readFaceButtonA(main, options) {
+  const hand = (options && options.handedness) || main._dominantHand;
+  const ctrls = options && options.controllers;
+  if (ctrls) {
+    for (let i = 0; i < ctrls.length; i++) {
+      const c = ctrls[i];
+      if (c.handedness === hand && c.buttons && c.buttons[4]) return !!c.buttons[4].pressed;
+    }
+  }
+  const session = main._xrSession;
+  if (session && session.inputSources) {
+    for (const src of session.inputSources) {
+      if (src.handedness === hand && src.gamepad && src.gamepad.buttons && src.gamepad.buttons[4]) {
+        return !!src.gamepad.buttons[4].pressed;
+      }
+    }
+  }
+  return false;
+}
+
 // Tools that change the vertex count (or the mesh object), which a per-vertex skin weight
 // map cannot survive. Voxel is included because it replaces the surface wholesale.
 const TOPOLOGY_TOOLS = new Set([
@@ -390,6 +415,7 @@ class SculptManager {
     // tool that also acts on those clicks moves the very thing being named — which is what
     // made the selection appear to come and go halfway through.
     //
+
     // Gated HERE, beside the sculpt lock, for the reason written above it: start() is the one
     // place every input route passes through, and nothing has begun yet so there is nothing to
     // undo. The click itself is consumed earlier, in onDeviceDown; this is the backstop for
@@ -603,6 +629,19 @@ class SculptManager {
         Skeleton.hoverRigFromRay(this._main, picking, tip, dir,
           RigPending.targets(this._main));
       }
+      // A CANCELS. matt: "i can't escape out of parentin[g]... pressing the 'set parent'
+      // button again midway through the operation should cancel it and reset the button
+      // state, as should the A button." The button already does (RigPending.toggle re-arming
+      // the same mode calls cancel) — this is the other half, the one the tool would normally
+      // own but never gets to here because the branch above switches every tool off while
+      // armed. Read the same way BoneDrawTool reads it (SculptBase._readButton), but standalone:
+      // there is no tool instance to borrow the method from while one is deliberately not running.
+      const aPressed = readFaceButtonA(this._main, options);
+      if (aPressed && !this._rigPendAWas) {
+        RigPending.cancel(this._main);
+        this._main.render?.();
+      }
+      this._rigPendAWas = aPressed;
       if (isPressed && !this._rigPendPressed) {
         this._rigPendPressed = true;
         const main = this._main;

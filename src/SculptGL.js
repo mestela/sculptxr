@@ -2004,6 +2004,7 @@ class SculptGL extends Scene {
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;
 
+
     // AN ARMED RIG ASSIGNMENT takes the click first, and takes it whole. "Set parent" and
     // "Aim at" are armed from the outliner and used to be finishable only from an outliner
     // ROW; this is the other half, so the target can be the thing you are looking at. Pointing

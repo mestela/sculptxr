@@ -2,9 +2,6 @@ import * as THREE from 'three';
 import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 import RigPending from './RigPending.js';
-import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
-import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { mat4, vec3 } from 'gl-matrix';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Primitives from '../drawables/Primitives.js';
@@ -2939,22 +2936,25 @@ function pendingLink(main) {
 
   const subject = RigPending.subject(main);
   const target = RigPending.candidate(main);
+  // matt: "the dashed line we used to have to indicate what the parenting operation was going
   if (!_pendLine) {
-    // A FAT line, not a native one: THREE's `Line` is a 1px hardware line that steps between
-    // whole pixels and all but disappears against a busy sculpt. This is the only thing on
-    // screen saying the gesture is live, so it gets a width you cannot miss. Same
-    // LineSegments2 machinery the motion trails use.
-    _pendLine = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
+    // LineSegments + LineDashedMaterial, matching the pin leaders. The original used
+    // LineSegments2 + LineMaterial for a fat 5px dashed line, but LineMaterial is a
+    // ShaderMaterial and the node renderer's sweep hides every ShaderMaterial it finds —
+    // so the line was invisible on the TSL/WebGPU path the headset runs. LineDashedMaterial
+    // is NOT a ShaderMaterial, so the sweep leaves it alone. It draws as a 1px native line
+    // instead of a fat one; a thin line that exists beats a fat one that doesn't.
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    _pendLine = new THREE.LineSegments(geo, new THREE.LineDashedMaterial({
       color: PENDING_COLOR,
-      linewidth: 5,          // SCREEN pixels, since worldUnits is off
-      worldUnits: false,
-      dashed: true,
-      transparent: false,
+      transparent: true,
+      opacity: 0.9,
       depthWrite: false,
-      depthTest: false,      // it is a readout, and being hidden inside the mesh is useless
-      toneMapped: false,     // or a saturated yellow rolls off to pastel under any tone map
+      depthTest: false,
+      toneMapped: false,
     }));
-    _pendLine.renderOrder = 10001;   // over the pin leaders, which is the one thing it can hide
+    _pendLine.renderOrder = 10001;
     _pendLine.isPickable = false;
     _pendLine.raycast = () => {};
     _pendLine.frustumCulled = false;
@@ -2966,21 +2966,13 @@ function pendingLink(main) {
   const a = subject.getModelSpaceMatrix && subject.getModelSpaceMatrix();
   const b = target.getModelSpaceMatrix && target.getModelSpaceMatrix();
   if (!a || !b) { _pendLine.visible = false; return; }
-  // A screen-space width has to know what the screen is, and LineMaterial clones its uniforms
-  // per material — a resolution left at the default 1x1 divides the width by one instead of by
-  // a thousand, which is not a subtle error.
-  const cam = main.getCamera && main.getCamera();
-  const rw = (cam && cam._width) || 1, rh = (cam && cam._height) || 1;
-  if (_pendLine.material.resolution.x !== rw || _pendLine.material.resolution.y !== rh) {
-    _pendLine.material.resolution.set(rw, rh);
-  }
-  _pendLine.geometry.setPositions([a[12], a[13], a[14], b[12], b[13], b[14]]);
-  // Dash size from the span, so the line reads as dashed whether it crosses a finger or a
-  // whole character — a fixed dash is solid at one scale and a row of dots at the other.
+  const pos = _pendLine.geometry.attributes.position;
+  pos.array[0] = a[12]; pos.array[1] = a[13]; pos.array[2] = a[14];
+  pos.array[3] = b[12]; pos.array[4] = b[13]; pos.array[5] = b[14];
+  pos.needsUpdate = true;
   const span = Math.hypot(b[12] - a[12], b[13] - a[13], b[14] - a[14]);
   _pendLine.material.dashSize = span * 0.06;
   _pendLine.material.gapSize = span * 0.04;
-  _pendLine.material.needsUpdate = true;
   _pendLine.computeLineDistances();
   _pendLine.visible = true;
 }

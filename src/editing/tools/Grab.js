@@ -364,6 +364,34 @@ class Grab extends SculptBase {
 
   start(ctrl) {
     var main    = this._main;
+
+    // NOT IN XR. This is the DESKTOP acquisition path: it picks with
+    // `intersectionMouseMeshes` against `_mouseX/_mouseY`, which are only ever written from a
+    // DOM pointer event (SculptGL's onPointerMove). Inside a headset there is no pointer event,
+    // so those coordinates are wherever the desktop cursor was left before the session started
+    // — a pick against a position that has nothing to do with where anyone is pointing.
+    //
+    // Scene calls it anyway, and `_allowAir` is why: canSculpt is
+    // `isTriggerPressed && (picked || ... || allowAir || ...)` and Grab sets _allowAir = true, so
+    // EVERY VR trigger press satisfies it whether the ray hit anything or not. Scene then runs
+    // the stroke lifecycle — start() here — ~475 lines BEFORE it dispatches updateXR in the same
+    // per-source pass. So a stale-cursor pick got to claim `_grabbedMesh` first, and
+    // `_updateXRPinGrabs` returns on its FIRST line when a mesh is held: the pin gesture was
+    // never even asked. Preselection is a separate path with no state (hoverRigFromRays) and
+    // stayed perfect throughout, which is why this reads as "I can see it highlighted and the
+    // trigger does nothing".
+    //
+    // It surfaced when the pin's desktop pick zone stopped being gated behind BONE_SELECT and
+    // became the drawn gnomon's radius (see Picking, `_pickRadius > cone`). That is right for the
+    // pick it was written for, but it also widened THIS pick — a stale-cursor pick that used to
+    // miss now lands on a pin on most presses. Hence "it often moves" rather than "it never
+    // does": it worked only on the presses where the stale pick happened to miss everything.
+    //
+    // Returning false is the whole fix, because VR acquisition already lives entirely in
+    // updateXR — off the digital triggers in `controllers[]`, as the note on the release at the
+    // top of updateXR spells out. There is nothing here for a headset to want.
+    if (main._xrSession) return false;
+
     var picking = main.getPicking();
     const mx = main._mouseX, my = main._mouseY;
     // Grab is a SELECTION-style tool — an immediate transform with no gizmo — so it opts into
@@ -385,6 +413,8 @@ class Grab extends SculptBase {
     }
     var mesh = picking.getMesh();
     if (!mesh || mesh._isVoxel) return false;
+
+
     // Desktop Ctrl-click still multi-selects here — that is a keyboard modifier and does not
     // collide with the second hand. Only the VR trigger is excluded.
     if (!main.setOrUnsetMesh(mesh, ctrl)) return false;

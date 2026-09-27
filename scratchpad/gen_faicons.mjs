@@ -16,6 +16,9 @@ const NAMES = [
   // tab + chip icons (resolved from their codepoints)
   'thumbtack','arrow-left','sitemap','photo-film','draw-polygon','toolbox','sliders',
   'film','layer-group','bezier-curve',
+  // The outliner toolbar's own add-primitive button, opening a menu of Cube/Sphere/etc. rather
+  // than a whole "Primitives" section at the bottom of a panel with a fixed, unscrollable height.
+  'plus',
 ];
 const out = {};
 for (const n of NAMES) {

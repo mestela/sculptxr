@@ -16212,8 +16212,31 @@ class Scene {
       this._vrMenuTriggerLatch = false;
     }
 
-    // Only block if we are NOT already busy
-    if ((this._isPointingAtMenu || this._wasPointingAtMenu || this._vrMenuTriggerLatch) && !isSculpting && !isToolActive) {
+    // Only block if we are NOT already busy -- AND NOT WHILE A RIG ASSIGNMENT IS ARMED.
+    //
+    // matt: "i can SEE it turning yellow, the system knows its the closest thing to select, but
+    // set parent doesn't recognise it." The canSculpt fix (a few hundred lines up) was real but
+    // was not this: it stopped Scene's OWN stroke lifecycle from starting Grab while armed, but
+    // this guard runs BEFORE that split even happens, and it forces isPressed FALSE for the
+    // WHOLE rest of the frame -- updateXR included -- whenever the ray was pointing at a menu a
+    // moment ago and the trigger has not been seen fully released since.
+    //
+    // Pressing "Set Parent" IS pointing at a menu and pulling the trigger to press it -- exactly
+    // what sets `_vrMenuTriggerLatch`, and it only clears once the trigger reads back down to
+    // 0.05. Aim at a pin and press again without a clean, complete release in between (the
+    // ordinary way anyone would use this) and the latch is still up: `isPressed` is forced false
+    // for that press too. Hover still lights the pin yellow, because the guarded call below still
+    // reaches updateXR's armed branch and that branch calls Skeleton.hoverRigFromRay regardless
+    // of isPressed -- hover comes along for free, which is exactly why the highlight worked while
+    // the press never did.
+    //
+    // The guard exists to stop a menu click from ALSO starting a SCULPT STROKE through the
+    // viewport -- accidentally deforming geometry is the risk it is written against. Naming a rig
+    // target is not that: updateXR's armed branch touches nothing but a highlight and, on the
+    // press edge, RigPending's own one-press-one-step gesture. So it is exempted here the same
+    // way an already-busy tool already is.
+    if ((this._isPointingAtMenu || this._wasPointingAtMenu || this._vrMenuTriggerLatch)
+        && !isSculpting && !isToolActive && !this._rigPendingMode) {
       // DEBUG: STICKY BRUSH DIAGNOSIS
       if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
         window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${trigger.pressed} Val=${trigger.value.toFixed(2)}`, trigger.pressed ? "lime" : "red");
@@ -16684,7 +16707,29 @@ class Scene {
     // FIX: If tool reports it is "active" (like Grab holding a mesh), we MUST NOT end the stroke.
     // (currentTool and isToolActive defined above at Menu Block)
 
-    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive || this._vrSecondaryTriggerPressed);
+    // NEVER WHILE A RIG ASSIGNMENT IS ARMED. Found from the diagnostic matt asked for on the
+    // third round of this bug -- window.rigPend(true) caught SculptManager.start()'s own
+    // backstop firing on a VR trigger press that never went anywhere near updateXR's
+    // RigPending-aware branch (the one that actually names the child/parent and updates the
+    // panel). This function has its OWN, separate stroke-lifecycle logic -- canSculpt, _vrSculpting,
+    // start()/end() -- that dispatches to the tool before updateXR ever runs later in this same
+    // per-frame call, and it had no idea RigPending existed. The backstop refused the resulting
+    // start() call, correctly, so nothing moved on THAT particular attempt -- but _vrSculpting and
+    // _action still latched into "a stroke is running" for as long as the trigger stayed down,
+    // which is consistent with matt's OTHER report that it "often" moves: whichever of the two
+    // separate dispatch paths reaches the tool first, on a given press, decides the outcome, and
+    // only one of them has ever known to check the rig-pending flag.
+    //
+    // `this._rigPendingMode` directly, not a call into the rig-pending module -- Scene
+    // deliberately does not import it (see the note on the debug panel, a few thousand lines
+    // down); it reads the same flag that module's own armed() reads.
+    //
+    // Read AS FALSE here rather than skipped: with canSculpt false, this frame takes the "else"
+    // branch below (harmless -- nothing was sculpting) and updateXR still runs, unconditionally,
+    // later in this same function -- which is where the correct, existing RigPending handling
+    // already lives and can now actually be reached.
+    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive || this._vrSecondaryTriggerPressed)
+      && !this._rigPendingMode;
 
     // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
     //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");
@@ -16707,30 +16752,11 @@ class Scene {
     }
 
     // A TOOL STILL HOLDING SOMETHING GETS end() EVEN IF NO STROKE WAS EVER OPEN.
-    //
-    // Grab ACQUIRES from the digital triggers inside `controllers[]`, but the stroke lifecycle
-    // that ends it keys off `isTriggerPressed`. Those disagree, so a grab taken on a frame that
-    // was not a stroke has no stroke to end — and `_grabbedMesh` sticks for ever. Because
-    // `_updateXRPinGrabs` returns on its FIRST line when a mesh is held, the pin path then dies
-    // for that hand: preselection still lights up, nothing is grabbable.
-    //
-    // Fixing it inside the tool did not work, and the reason is the point: updateXR is only
-    // dispatched while canSculpt is true, so the tool never gets a frame with the trigger up in
-    // which to notice. The release has to live where it is reached unconditionally, which is
-    // here. matt: "i'm sure this is why i asked you to revert all the bone select code" — and he
-    // was right that the two are connected. Re-enabling BONE_SELECT made Grab's rig-aware pick
-    // return bone capsules, which are big and easy to hit, so the generic path started
-    // swallowing rig nodes far more often. That turned a latent leak into a constant one.
-    if (!canSculpt && !this._vrSculpting) {
-      const _t = this._sculptManager?.getCurrentTool?.();
-      if (_t && _t._grabbedMesh) {
-        if (window._grabTrace) {
-          console.log('[press] orphan release: tool was holding #' + _t._grabbedMesh.getID()
-            + ' with no stroke open — acquired outside the stroke lifecycle');
-        }
-        try { _t.end(); } catch (e) { console.error('[grab] orphan end() failed', e); }
-      }
-    }
+    // Grab owns its own release now (line ~750 in Grab.js: "no trigger down on ANY controller
+    // → end()"), and updateXR is dispatched unconditionally, so the tool always sees the
+    // release frame. The per-source orphan check that used to live here fired on the
+    // non-dominant source's iteration (canSculpt=false because THAT hand's trigger is up),
+    // killing a grab the dominant hand legitimately held.
 
     if (this._lastCanSculpt !== canSculpt || (this._vrSculpting && !canSculpt)) {
       if (window.screenLog) {

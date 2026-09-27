@@ -54,7 +54,7 @@ import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
 import { faIcon, setFaIcon } from './faIcons.js';
-import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen, resetUIDefaults } from './uiTokens.js';
+import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen, resetUIDefaults, hoistGroupsToTop } from './uiTokens.js';
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
@@ -887,6 +887,18 @@ const CSS = `
 .mm-select-opt:hover, .mm-select-opt.hover { background: #313244; color: #cdd6f4; }
 .mm-select-opt.active { color: #89b4fa; background: rgba(137,180,250,0.08); }
 
+/* The add-object popup: same list styling as a select's options, closed with a border on all
+   four sides (a select's list only needs three -- it sits directly under its own trigger, which
+   supplies the top edge; this one floats between the toolbar and the outliner, with no trigger
+   immediately above it to borrow an edge from). */
+.mm-add-menu {
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  background: #1e1e2e;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
 /* Outliner item (scene tab) */
 /* Bordered object list — tall enough for ~8 rows, then FLOWS (grows) rather than
    making its own scroll container. A nested scrollable fought the panel's own scroll
@@ -920,7 +932,7 @@ const CSS = `
      One fixed height, always: it scrolls when there is more and shows empty space when there is
      less, and nothing below it ever moves. It also takes the panel's own height out of the
      equation, which is what the resize machinery in HTMLVRPanel spends its time chasing. */
-  height: ${Math.round(MM_BODY_H * 0.44)}px;
+  height: ${Math.round(MM_BODY_H * 0.30)}px;
   min-height: 52px;
   /* ...AND A CEILING, because the other end became the problem. A rig has dozens of joints,
      and at content height the list grew to the full panel and pushed everything below it out
@@ -931,7 +943,15 @@ const CSS = `
      the transform fields and the parenting buttons are the reason you open this panel with a rig
      selected, and reaching them meant scrolling the whole skeleton first. matt: "the outliner
      takes up too much vertical space still in that menu, its hard to scroll past it to get to
-     the transform matrix controls and set parent buttons. make it 1/3 less rows." */
+     the transform matrix controls and set parent buttons. make it 1/3 less rows."
+     0.44 -> 0.30, alongside the row shrink above: matt, VR against desktop side by side --
+     "this shows all the UI, i feel we can fit this into VR ... maybe we'll lose a few lines from
+     the outliner tree view assuming we'll make that text a little smaller." He is trading rows
+     for reach again, but the row shrink means the trade is close to free: at the OLD 30px row
+     height, 0.44 showed about 6.7 rows; at the NEW 8px/22px row, 0.30 shows about 6.2 -- nearly
+     the same list, in roughly two thirds the panel height, with room left for Transform, Set
+     Parent and Primitives to stop being cropped off the bottom of a panel that cannot scroll as
+     a whole (it is a fixed-size mesh -- see MM_BODY_H). */
   max-height: ${Math.round(MM_BODY_H * 0.44)}px;
   overflow-y: auto;
   overscroll-behavior: contain;   /* stop a flick inside the list from scrolling the panel too */
@@ -1168,6 +1188,12 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   grid-template-columns: 1fr 1fr 1fr;
   gap: 5px;
   margin-bottom: 6px;
+}
+/* FOUR COLUMNS FOR THE ACTION ROW, which is its own class because the PAGINATION row below still
+   wants three (Previous, the page number, Next). Adding Cancel to a three-column grid wrapped Open
+   onto a second line at the left -- the exact corner it was being moved away from. */
+.mm-storage-toolbar.mm-storage-actions {
+  grid-template-columns: repeat(4, 1fr);
 }
 .mm-storage-page {
   display: flex;
@@ -2716,6 +2742,22 @@ export function buildSectionHTML_scene(main) {
          groupSectionTitles over every sidebar section, so a heading is all that is needed. */ ''}
     <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
+      ${/* ADD, NOT A "PRIMITIVES" SECTION AT THE BOTTOM OF THE PANEL. matt, comparing the fixed-
+           height VR panel against the freely-scrolling desktop one: "still feels like the text
+           in the outliner could be a little smaller, so then we can fit the primitives section
+           at the bottom. or actually, lets put a + button at the top in the toolbar, and that
+           can show a combobox menu for the primitives, that's a better use of space." A row of
+           seven buttons was one screenful of a panel that cannot scroll as a whole (a fixed-size
+           VR mesh -- see MM_BODY_H); one icon that opens onto the same seven, closed unless it
+           is needed, buys that space back outright rather than fighting over it a font-size at a
+           time.
+           REUSES .mm-select-opts/.mm-select-opt, the existing VR-safe dropdown styling (built
+           once for exactly this: a list that opens as a plain block, no native <select>, so it
+           survives the panel rasteriser) -- not wireSelect() itself, because that persists the
+           chosen option's label on the trigger, which is right for "which shader" and wrong for
+           an action you fire once and forget: the trigger stays a plain "+", never a primitive's
+           name. */ ''}
+      <button class="mm-tool-btn" id="mm-add-primitive" title="Add an object">${faIcon('plus')}</button>
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
       <button class="mm-tool-btn" id="mm-mirror-sel" title="Mirror selected across X — new copies, position AND rotation reflected"${hasSel ? '' : ' disabled'}>${faIcon('right-left')}</button>
@@ -2724,6 +2766,22 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}>${faIcon('pen')}</button>
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}>${faIcon('trash')}</button>
       <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}>${faIcon(tbLocked ? 'lock' : 'lock-open')}</button>
+    </div>
+    ${/* SIBLING OF THE TOOLBAR, NOT ABSOLUTELY POSITIONED. A floating popup risks the same trap
+         the earlier note about this panel keeps recording -- content is rasterised by
+         serialising the DOM into an SVG, and CSS positioning that has not actually been tried
+         through that path is not something to trust on the strength of "it should work". A
+         plain block, toggled the way wireSelect's own option list already is, needs nothing new
+         from the rasteriser: it pushes the outliner down while it is open and out of the way the
+         moment something is picked or picked from. */ ''}
+    <div class="mm-add-menu" id="mm-add-menu" style="display:none">
+      <button class="mm-select-opt" id="mm-add-cube">Cube</button>
+      <button class="mm-select-opt" id="mm-add-sphere">Sphere</button>
+      <button class="mm-select-opt" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cylinder</button>
+      <button class="mm-select-opt" id="mm-add-null">Null</button>
+      <button class="mm-select-opt" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
+      <button class="mm-select-opt" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
+      <button class="mm-select-opt" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
     </div>
     <div class="mm-outliner-wrap">
       <div class="mm-outliner-list">${meshRows}</div>
@@ -2739,16 +2797,6 @@ export function buildSectionHTML_scene(main) {
     </div>
     ${rigHTML ? `<div class="mm-section-title">Transform</div>${rigHTML}` : ''}
     ${lightHTML}
-    <div class="mm-section-title">Primitives</div>
-    <div class="mm-add-row">
-      <button class="mm-action-btn" id="mm-add-cube">Cube</button>
-      <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
-      <button class="mm-action-btn" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cyl</button>
-      <button class="mm-action-btn" id="mm-add-null">Null</button>
-      <button class="mm-action-btn" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
-      <button class="mm-action-btn" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
-      <button class="mm-action-btn" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
-    </div>
   `;
 }
 
@@ -3982,6 +4030,27 @@ export class MainMenuPanel extends HTMLVRPanel {
       const fullRepaint = () => { this._lastContentKey = ''; this._rebuildContent(); };
       wireSectionRendering(el, main, fullRepaint, paint, paint);
       wireMenuBackground(el, main, paint);
+      // SHADER AND RIG DISPLAY COME UP TO THE TOP LEVEL, the same hoist Gui.js applies to this
+      // same menu on desktop -- buildMenuHTML_view wraps buildSectionHTML_rendering's whole
+      // output in one 'Rendering' collapsible, which buries both a chevron deep. I fixed the
+      // WRONG mount the first time: this panel also renders 'rendering' as a Tools-tab SECTION
+      // (_activeSection === 'rendering'), and I hoisted there -- but that path has no outer
+      // 'Rendering' wrapper to begin with (sectionHeaderHTML is a title bar, not a collapsible),
+      // so the call was a no-op and the actual View menu, which the report named outright, was
+      // never touched. matt: "in vr those menus are still sub-sections of 'rendering'." Moved
+      // to where desktop's own fix already lives, on the identical menu.
+      //
+      // SCOPED TO #mm-content, NOT `el`. `el` here is `this._element`, the WHOLE panel --
+      // header, tab strip and all -- because every other lookup in this function only ever
+      // reads through it (`q = el.querySelector`), which does not care how far up the tree `el`
+      // sits. hoistGroupsToTop does care: it walks a hoisted section up to whichever ancestor is
+      // a direct child of the root it is given, then reinserts it as a sibling AT THAT ROOT. Pass
+      // the whole panel and the walk stops several levels above the scrollable content, so
+      // "Shader" and "Rig Display" landed as siblings of the content div itself -- outside the
+      // area that is actually shown, which is a subtler failure than not hoisting at all: they
+      // were not nested and not visible. Desktop's own call does not have this trap because its
+      // `el` (`dd`) IS the dropdown's content container already, nothing more.
+      hoistGroupsToTop(q('#mm-content'), ['Shader', 'Rig Display']);
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
       q('#mm-ref-show')?.addEventListener('click', () => {
@@ -4864,6 +4933,24 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // Any scene-add action cancels an in-progress pick to avoid a stale subject.
   const cancelPending = () => RigPending.cancel(main);
 
+  // OPEN/CLOSE, not a persisted selection: unlike wireSelect's trigger, the + button's own label
+  // never changes -- there is no "current primitive", only the next one you are about to add.
+  //
+  // NOT repaintFn() -- that is the FULL rebuild every other handler in this function calls
+  // (fullRepaint / rebuild at the two call sites), and a full rebuild replaces #mm-content's
+  // innerHTML wholesale from the same source markup that hardcodes `display:none` on this menu.
+  // Call it right after opening the menu and the rebuild undoes the open before anyone can read
+  // it, let alone click an option -- the exact trap the View menu's own select dropdowns hit for
+  // the same reason (see the wireFn note in Gui.js). Desktop needs nothing more: a plain style
+  // change on real DOM is already on screen. VR is a rasterised texture and needs telling to
+  // redraw, which is what markDirty (not a rebuild) is for.
+  const addMenu = el.querySelector('#mm-add-menu');
+  el.querySelector('#mm-add-primitive')?.addEventListener('click', () => {
+    if (!addMenu) return;
+    addMenu.style.display = addMenu.style.display === 'none' ? '' : 'none';
+    vrPanel?.markDirty?.();
+  });
+
   // When an SR frame group is the active context, a newly-added primitive is adopted
   // as the frame at the playhead (fills a blank "New" slot) instead of a stray object.
   const addPrimitive = (make) => {
@@ -5691,10 +5778,18 @@ export function buildMenuHTML_browserSaves(main) {
       <div class="mm-storage-list" id="mm-storage-grid">${thumbs}</div>
       <div class="mm-scrollbar-track mm-storage-sbar"><div class="mm-scrollbar-thumb"></div></div>
     </div>
-    <div class="mm-storage-toolbar">
-      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Open</button>
-      <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
+    ${/* CANCEL LEFT, OPEN RIGHT. matt: "the browser saves dialog has its buttons in the wrong
+         order. open should be the lower right, generally the confirm/yes/action button is lower
+         right, cancel is lower left." That is the convention on every platform this runs on, and
+         the row read Open / Import / Delete -- the primary action furthest from where the eye
+         ends up and hard against the destructive one.
+         Delete stays in the middle rather than next to Open: the two buttons you must never
+         confuse are the one that loads and the one that erases, so they do not share an edge. */ ''}
+    <div class="mm-storage-toolbar mm-storage-actions">
+      <button class="mm-action-btn" id="mm-storage-cancel">Cancel</button>
       <button class="mm-action-btn danger" id="mm-storage-delete" ${disabled}>Delete</button>
+      <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
+      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Open</button>
     </div>
     <div class="mm-storage-toolbar">
       <button class="mm-action-btn" id="mm-storage-prev" ${page <= 0 ? 'disabled' : ''}>Previous</button>
@@ -5704,7 +5799,10 @@ export function buildMenuHTML_browserSaves(main) {
   `;
 }
 
-export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn) {
+// `closeFn` closes whatever is showing this panel. Optional: the VR panel is a tab rather than a
+// dialog and has nothing to close, so it passes none and Cancel simply does not appear to do
+// anything there -- see the guard below, which hides it instead.
+export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn, closeFn = null) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
@@ -5738,6 +5836,30 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn)
     rebuildFn();
   });
 
+  // Nothing to cancel back to when this is a tab rather than a dialog.
+  const cancelBtn = q('#mm-storage-cancel');
+  if (cancelBtn) {
+    if (closeFn) cancelBtn.addEventListener('click', () => closeFn());
+    else cancelBtn.style.display = 'none';
+  }
+
+  // OPENING IS WHAT A DOUBLE CLICK ON A FILE MEANS. matt: "double clicking an entry in the
+  // browser open dialog should load that file and close the dialog." Select-then-press-Open still
+  // works and is what the toolbar is for; this is the shortcut everyone's hands already know.
+  //
+  // The dblclick handler reads the item's own key rather than the selection, because the first
+  // click of the pair has already set it -- but reading the dataset directly means the shortcut
+  // cannot be wrong even if selection state and the DOM ever disagree.
+  el.querySelectorAll('.mm-storage-item').forEach(item => {
+    item.addEventListener('dblclick', () => {
+      const key = item.dataset.saveKey;
+      if (!key) return;
+      if (guiFiles) guiFiles._selectedSaveKey = key;
+      guiFiles?.loadSpecificBrowserSave?.(key, true);
+      closeFn?.();
+    });
+  });
+
   // Select a save by clicking its thumbnail; the toolbar acts on the selection.
   el.querySelectorAll('.mm-storage-item').forEach(item => {
     item.addEventListener('click', () => {
@@ -5754,7 +5876,11 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn)
   // Load = replace the current scene; Import = append to it.
   q('#mm-storage-load')?.addEventListener('click', () => {
     const key = selKey();
-    if (key) guiFiles?.loadSpecificBrowserSave?.(key, true);
+    if (!key) return;
+    guiFiles?.loadSpecificBrowserSave?.(key, true);
+    // The dialog has done its job. Leaving it up over the scene it just loaded means every open
+    // is two actions, and it is the same reason the double click closes.
+    closeFn?.();
   });
   q('#mm-storage-import')?.addEventListener('click', () => {
     const key = selKey();
