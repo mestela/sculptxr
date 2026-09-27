@@ -317,8 +317,11 @@ check('...and the capsule slots are not gathered for disposal either',
 // is latched against a signature — see the section at the bottom, which runs it. This check
 // stays because the playback hold is still the cheapest short-circuit and losing it would put
 // a signature walk on every frame of every playing rig.
+// The multiplier suffix is allowed here: this check is about the SHORT-CIRCUIT (the latch is
+// returned without a re-measure), not about the exact expression. The multiplier is required on
+// every return by its own check further down.
 check('the scene unit is held while the rig is animating',
-  /if \(main\._skelUnit && window\._animPlaying\) return main\._skelUnit;/.test(SRC),
+  /if \(main\._skelUnit && window\._animPlaying\) return main\._skelUnit\b/.test(SRC),
   'a scene does not change size because something in it moved');
 check('...and it can still be re-measured when the scene really does change',
   /main\._skelUnitSig = sig;/.test(SRC) && /let best = 0;/.test(SRC),
@@ -423,11 +426,92 @@ check('...and it can still be re-measured when the scene really does change',
       sig([j1, mesh({ _isNull: true, _isPinTarget: true })]) === rigOnly);
   }
   // The latch itself: measuring and then ignoring the result would pass every check above.
+  // Same as the playback latch above: the SHORT-CIRCUIT is what is pinned, so the multiplier
+  // suffix is allowed. That it is present on this return too is checked in its own block.
   check('the measurement is skipped entirely when the signature is unchanged',
-    /if \(main\._skelUnit && main\._skelUnitSig === sig\) return main\._skelUnit;/.test(SRC));
+    /if \(main\._skelUnit && main\._skelUnitSig === sig\) return main\._skelUnit\b/.test(SRC));
   check('and there is no timer left to release it',
     !/_skelUnitAt/.test(SRC),
     'a 500ms re-measure is what made the old jump arrive as a step');
+}
+
+
+// ── THE RIG FALLBACK IS A LOCAL MEASURE, NOT THE RIG'S SPREAD ────────────────
+//
+// With no sculpt to measure, the unit comes from the rig itself. It used to be the greatest
+// distance from the joint CENTROID — the rig's overall reach — and that is not a size: it grows
+// with every limb added. The same rig drawn as a 7-joint stub and loaded as a 17-joint body
+// measured 42.4 and 132.6, a 3x jump in every marker, bone and snap radius. matt: "the pin
+// handle sizes are 4x what they used to be."
+//
+// The fix is the MEDIAN BONE LENGTH, and the property that matters is that it is INVARIANT to
+// how many limbs the rig has. So the block is lifted and RUN against two rigs that differ only
+// in limb count, and the answer must be the same.
+{
+  const i = SRC.indexOf('  if (best <= 1e-6) {\n    from = \'rig\';');
+  const j = SRC.indexOf('  // Empty scene: no sculpt AND no joints yet', i);
+  check('the rig fallback is liftable', i > 0 && j > i, 'the fallback moved');
+  if (i > 0 && j > i) {
+    const lifted = SRC.slice(i, j);
+    // A joint is a mesh with a parent and a position; boneLength is the parent-to-joint
+    // distance, and 0 for a root. The stub mirrors that contract exactly.
+    //
+    // `jointPos` and the two scratch vectors are here for the INJECTED spread measure, not for
+    // the shipped one: without them the injection throws inside the lifted block and the harness
+    // dies before it can report the failure, which is a test that fails by crashing rather than
+    // by asserting. The vectors are plain objects with the three methods the spread uses.
+    const vec = (x, y, z) => ({
+      x, y, z,
+      set(a, b, c) { this.x = a; this.y = b; this.z = c; return this; },
+      add(v) { this.x += v.x; this.y += v.y; this.z += v.z; return this; },
+      divideScalar(s) { this.x /= s; this.y /= s; this.z /= s; return this; },
+      distanceTo(v) { return Math.hypot(this.x - v.x, this.y - v.y, this.z - v.z); },
+    });
+    const _pA = vec(0, 0, 0), _pB = vec(0, 0, 0);
+    const Skeleton = {
+      joints: (mn) => mn.getMeshes().filter((m) => m._isBone),
+      jointPos: (jt, out) => out.set(jt._x, jt._y, jt._z),
+      boneLength: (mn, jt) => {
+        const p = jt._parentMesh;
+        if (!p || !p._isBone) return 0;
+        return Math.hypot(jt._x - p._x, jt._y - p._y, jt._z - p._z);
+      },
+    };
+    const fallbackOf = new Function('main', 'Skeleton', 'best', 'from', '_pA', '_pB',
+      lifted + '\nreturn best;').bind(null);
+    const scene = (list) => ({ getMeshes: () => list });
+    const joint = (x, y, z, parent) => ({
+      _isBone: true, _isNull: true, _x: x, _y: y, _z: z, _parentMesh: parent || null,
+    });
+    // `limbs` chains of four bones, each 10 long, hung off one root at the origin. The chains
+    // are laid out along y so they are genuinely far apart — the spread measure would see that
+    // and the median must not.
+    const build = (limbs) => {
+      const r = joint(0, 0, 0, null);
+      const all = [r];
+      for (let n = 0; n < limbs; n++) {
+        let prev = r;
+        for (let k = 1; k <= 4; k++) {
+          const jt = joint(10 * k, n * 40, 0, prev);
+          prev = jt;
+          all.push(jt);
+        }
+      }
+      return all;
+    };
+    const oneLimb = build(1);
+    const fourLimbs = build(4);
+    const a = fallbackOf(scene(oneLimb), Skeleton, 0, 'mesh', _pA, _pB);
+    const b = fallbackOf(scene(fourLimbs), Skeleton, 0, 'mesh', _pA, _pB);
+    check('the rig fallback is a bone length, not the rig\'s reach',
+      Math.abs(a - 10) < 1e-9, 'expected the 10-long bone, got ' + a);
+    check('...and it does not grow when limbs are added',
+      Math.abs(a - b) < 1e-9,
+      'one limb measured ' + a + ', four measured ' + b + ' — the spread bug is back');
+    // A lone root has no bone to measure, so it must fall through rather than report 0.
+    check('a rig with no bones falls through to the camera',
+      fallbackOf(scene([joint(0, 0, 0, null)]), Skeleton, 0, 'mesh', _pA, _pB) <= 1e-6);
+  }
 }
 
 
@@ -577,6 +661,101 @@ check('...and it can still be re-measured when the scene really does change',
   check('a detached mesh converts model space as a top-level one, not by throwing',
     /if \(!tm \|\| !wg \|\| !tm\.parent \|\| tm\.parent === wg\)/.test(MESH),
     "tm.parent.updateWorldMatrix on a deleted mesh is the reported TypeError");
+}
+
+// ── THE RIG SCALE IS A VIEW, AND IT SURVIVES A RELOAD ────────────────────────
+//
+// The unit is measured from the scene and is correct, but not always the size you want to work
+// at: a rig on a large sculpt gets markers in proportion and too small to aim at. So there is a
+// multiplier over the measured unit — a VIEW preference, stored with the other settings and
+// never written into a .sxr, so the same file opens at the same real size on any machine and
+// only the markers move. matt: "how can i change the global scene units? ... this should be a
+// preference in the settings pane."
+//
+// Two things have to hold, and the second is the one that was missing: the multiplier is applied
+// at the RETURN (so it is a view of the measurement, not part of it), and it is SEEDED from the
+// saved option at boot (or a scale dialled in last session is silently forgotten).
+{
+  // Applied at EVERY return, over the latched measurement — not folded into `_skelUnit`, which is
+  // the measurement itself. Folding it in would invalidate the signature and force a re-measure
+  // every time the slider moved.
+  //
+  // EVERY return, not just the last. There are three ways out of sceneUnit — the playback latch,
+  // the signature latch, and a fresh measurement — and the first cut only multiplied the last.
+  // The signature latch is the one that runs on every frame after the first, so the slider moved
+  // the number and no marker: the exact "it does nothing" report. This counts the returns and
+  // requires the multiplier on all of them.
+  const unitFn = /Skeleton\.sceneUnit = function \(main\) \{([\s\S]*?)\n\};/.exec(SRC);
+  check('sceneUnit is liftable', !!unitFn, 'sceneUnit moved');
+  if (unitFn) {
+    const returns = unitFn[1].match(/return [^;]+;/g) || [];
+    check('...and EVERY return applies the multiplier',
+      returns.length > 0 && returns.every((r) => /sceneUnitMul/.test(r)),
+      'a bare return bypasses the slider — got: ' + returns.join(' | '));
+  }
+  check('...and the latch stores the bare measurement',
+    /main\._skelUnit = best > 1e-6 \? best : 1;/.test(SRC),
+    'the latched value must not already carry the multiplier');
+  // The setter clamps to a positive finite number, so a bad option cannot zero every marker.
+  const setter = /Skeleton\.setSceneUnitMul = function \(mul\) \{([\s\S]*?)\n\};/.exec(SRC);
+  check('the multiplier setter is liftable', !!setter, 'setSceneUnitMul moved');
+  if (setter) {
+    // The setter is DEFINED, then CALLED — the body's own `return` is inside the function, so
+    // the outer body has to invoke it to get the clamped value back.
+    const run = new Function('mul', 'Skeleton',
+      'Skeleton.sceneUnitMul = 1;\n' + setter[0] + '\nreturn Skeleton.setSceneUnitMul(mul);');
+    const S = {};
+    check('a positive multiplier is taken as given', run(2.5, S) === 2.5, 'got ' + run(2.5, S));
+    check('...and a zero or negative one falls back to 1, not to nothing',
+      run(0, S) === 1 && run(-3, S) === 1, 'a 0 multiplier would make every marker invisible');
+    check('...and a non-number falls back to 1', run('wide', S) === 1 && run(NaN, S) === 1);
+  }
+  // SEEDED AT BOOT. The slider writes the live value and persists it; without a read-back on
+  // load the stored preference is dead and every marker returns at 1x.
+  const GL = fs.readFileSync(path.join(REPO, 'src/SculptGL.js'), 'utf8');
+  check('the saved rig scale is seeded into the live multiplier at boot',
+    /Skeleton\.setSceneUnitMul\(_ipadOpts\.rigScale\)/.test(GL),
+    'the slider persists rigScale but nothing reads it back — the preference is forgotten on reload');
+  // ...and the option is declared, or saveOption silently stops persisting it.
+  const OPTS = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
+  check('the rig scale option is declared',
+    /options\.rigScale = queryNumber\(getVal\('rigScale'\)/.test(OPTS),
+    'an undeclared key is dropped by saveOption and nothing says so');
+  // THE SLIDER MUST REBUILD THE RIG, NOT JUST REPAINT IT. Every marker's size is computed inside
+  // updateVisuals and written to the instanced batches there; render() alone re-draws the batches
+  // with the scales they already hold, so the number moves and nothing on screen does. This is
+  // the bug the first cut shipped: the slider called render() and the rig did not resize.
+  const MENU = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+  const rigCb = /wireSlider\(q\('#mm-rig-scale'\)[\s\S]*?\n  \},/.exec(MENU);
+  check('the rig scale slider is wired', !!rigCb, 'the slider moved');
+  if (rigCb) {
+    check('...and it rebuilds the rig, not just repaints it',
+      /Skeleton\.updateVisuals\(main\)/.test(rigCb[0]),
+      'render() alone leaves the instanced batches at their old scale — the slider does nothing');
+  }
+}
+
+// THE LABEL SITS BESIDE ITS BONE, NOT A SCENE-UNIT AWAY FROM IT.
+//
+// The length/name label was nudged off the shaft by a fixed world-Y offset of `jr * 1.6` — a
+// fraction of the SCENE UNIT. Two things were wrong with that. It was not perpendicular to the
+// bone, so on a near-vertical bone the nudge ran ALONG it and the label slid toward one end.
+// And it scaled with the scene unit, so raising the Rig Scale slider pushed the text further
+// from the bone on every frame. matt: "when alter the slider the text still moves away from the
+// center of each bone." The offset is now perpendicular to the bone and sized from the bone's
+// own width, which does not move when the marker scale does.
+{
+  const SKEL = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+  const place = /e\.label\.sprite\.position\.copy\(_pA\)[\s\S]*?;/.exec(SKEL);
+  check('the label placement is liftable', !!place, 'the label moved');
+  if (place) {
+    check('...and the nudge is perpendicular to the bone, not world up',
+      /addScaledVector\(_perp,/.test(place[0]),
+      'a world-Y nudge runs ALONG a near-vertical bone and slides the label to one end');
+    check('...and it is sized from the bone, not the scene unit',
+      /boneWidth\(len\)/.test(place[0]) && !/jr \* 1\.6/.test(place[0]),
+      'a scene-unit offset drifts off the bone as the Rig Scale slider moves');
+  }
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

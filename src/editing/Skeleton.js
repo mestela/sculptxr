@@ -74,6 +74,10 @@ const GHOST_OPACITY = 0.35;
 const _mTmp = new THREE.Matrix4();
 const _pA = new THREE.Vector3(), _pB = new THREE.Vector3();
 const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+// A direction perpendicular to the bone, for nudging its length label clear of the shaft, and
+// the normalised bone direction the cross is taken against — see the label placement in
+// updateVisuals. `_dir` itself is still the raw, unnormalised difference at that point.
+const _perp = new THREE.Vector3(), _perpDir = new THREE.Vector3();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 // The mirror plane's own axes, and the cursor relative to it — see updatePlane.
 const _vRight = new THREE.Vector3(), _vUp = new THREE.Vector3(), _vRel = new THREE.Vector3();
@@ -447,7 +451,15 @@ function boneWidth(len) { return len * 0.12; }
 // mismatched beads — which reads as noise, and as meaning something it does not. A constant
 // is the honest choice: the marker says "a joint is here", and that claim is the same size
 // everywhere. JOINT_R_FRAC is the single knob; bones stay proportional to their own length.
-const JOINT_R_FRAC = 0.03;
+//
+// 0.06, DOUBLED FROM 0.03. The rig-extent fallback used to measure the rig's SPREAD, which ran
+// several times a limb's length, so the markers were drawn against an inflated unit and came out
+// large. Fixing that fallback to a median bone length brought the unit down to a real size and
+// the markers with it — correct, but smaller than the size matt had been working at. matt: "can
+// they be double what they currently are? that should get them back to how they were." The pin
+// parts are multiples of this (jr * 2.2, jr * 1.5), so one number moves the dot and the pins
+// together and they stay in proportion.
+const JOINT_R_FRAC = 0.06;
 
 // ── BATCHED RIG VISUALS ───────────────────────────────────────────────────────────────────
 //
@@ -1249,6 +1261,12 @@ function makeCapsulePart(geo, taper) {
 const LABEL_FONT = 'bold 34px sans-serif';
 const LABEL_H = 64;      // canvas height; the width is sized to the text, see setLabelText
 const LABEL_PAD = 18;    // room for the stroke outline at both ends
+// HOW TALL A LABEL IS DRAWN, as a fraction of the scene unit, for both the joint name and the
+// bone length. 0.12, doubled from the 0.06 these were: at Rig Scale 1.0x the pins and joints
+// read correctly and the text did not. matt: "if the joint scale in settings is set to 1.0x,
+// the pins and joints look correct, but the text is too small, that should be doubled."
+// One constant for both so a name and the length beside it are never two sizes.
+const LABEL_SIZE = 0.12;
 
 function makeLabel() {
   const canvas = document.createElement('canvas');
@@ -1802,6 +1820,29 @@ Skeleton.jointVisible = function (joint) {
 // on the scene.
 let _lastUnit = 1, _lastUnitFrom = 'never', _lastUnitMeshes = 0, _unitRemeasures = 0;
 
+// THE RIG SCALE PREFERENCE. A single multiplier over the measured scene unit, so the user can
+// size every rig marker — joint dots, bones, pins, length labels, snap radii — without touching
+// the sculpt or the rig itself. It is a VIEW preference, not scene data: it is stored in
+// localStorage with the other settings and never written into a .sxr, so the same file opens at
+// the same real size on any machine and only the markers move.
+//
+// WHY IT EXISTS. The unit is measured from the scene, and that measurement is correct but not
+// always the size you want to work at: a rig drawn on a large sculpt gets markers that are
+// technically in proportion and practically too small to aim at, and the length labels shrink
+// with them. matt: "how can i change the global scene units? i went to show the length option for
+// bones, its now way too small. this should be a preference in the settings pane."
+//
+// Applied at the RETURN, not to the latched `_skelUnit`: the latch is the measurement, and this
+// is a view of it. Keeping them separate means changing the slider does not invalidate the
+// signature or force a re-measure — it just re-reads the same number through a new multiplier.
+Skeleton.sceneUnitMul = 1;
+
+Skeleton.setSceneUnitMul = function (mul) {
+  const v = Number(mul);
+  Skeleton.sceneUnitMul = Number.isFinite(v) && v > 0 ? v : 1;
+  return Skeleton.sceneUnitMul;
+};
+
 Skeleton.sceneUnit = function (main) {
   // RE-MEASURED ONLY WHEN THE SCENE CHANGES STRUCTURALLY, never on a timer.
   //
@@ -1819,7 +1860,13 @@ Skeleton.sceneUnit = function (main) {
   // measure at all — how many joints the fallback has to work with. A pose is none of those,
   // and neither is adding a pin: pins are nulls, and nulls are not the scene's size. That is
   // the whole of it. `window.rigUnit()` prints what it settled on and why.
-  if (main._skelUnit && window._animPlaying) return main._skelUnit;
+  // EVERY RETURN GOES THROUGH THE MULTIPLIER. There are three ways out of this function — the
+  // playback latch, the signature latch, and a fresh measurement — and the multiplier is a VIEW
+  // of the measurement, so it belongs on all three. It was only on the last one, which meant the
+  // slider did nothing after the first frame: the signature latch matched (the slider does not
+  // change the scene) and returned the bare unit, so the number moved and no marker did. The
+  // helper is the single place the multiplier is applied, so a fourth exit cannot forget it.
+  if (main._skelUnit && window._animPlaying) return main._skelUnit * Skeleton.sceneUnitMul;
 
   let sig = 2166136261 | 0;
   let real = 0;
@@ -1838,7 +1885,7 @@ Skeleton.sceneUnit = function (main) {
   // grows as a rig is drawn — so the joint COUNT is part of the signature. Their POSITIONS are
   // not, or posing a rig with no mesh bound to it would resize its own markers.
   if (!real) sig = (Math.imul(sig, 16777619) ^ Skeleton.joints(main).length) | 0;
-  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit;
+  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit * Skeleton.sceneUnitMul;
 
   let best = 0;
   let from = 'mesh';
@@ -1857,17 +1904,37 @@ Skeleton.sceneUnit = function (main) {
     if (Number.isFinite(r) && r > best) best = r;
   }
   // No sculpt in the scene — deleted, or a skeleton built before one exists. Fall back to
-  // the SKELETON's own extent rather than to 1: every marker, snap radius and default bone
+  // the SKELETON's own size rather than to 1: every marker, snap radius and default bone
   // radius is scaled by this, so a rig drawn at scene scale suddenly measured against 1
   // makes its own joints too small to see and its snaps too tight to hit.
+  //
+  // A LOCAL MEASURE, NOT THE RIG'S SPREAD. This used to take the greatest distance from the
+  // joint centroid — the rig's overall reach — and that is not a size, it is how far the rig
+  // happens to extend. It grows with every limb you add, so the same rig drawn as a 7-joint
+  // stub and then loaded as a 17-joint body measured 42.4 and 132.6 respectively: a 3x jump
+  // in every marker, bone and snap radius, with nothing the user did to explain it. matt:
+  // "the pin handle sizes are 4x what they used to be." The unit is recomputed on load, not
+  // saved, which is why it only showed up on a browser save.
+  //
+  // The MEDIAN BONE LENGTH is the size of a limb, and a limb is the same length whether the
+  // rig has two of them or eight. Median rather than mean so one long bone (a spine, a tail)
+  // cannot drag the whole rig's markers up with it, and median rather than max for the same
+  // reason the spread was wrong. A rig with no bones at all — a single joint, or joints with
+  // no parent — has no length to measure and falls through to the camera as before.
   if (best <= 1e-6) {
     from = 'rig';
     const js = Skeleton.joints(main);
-    if (js.length) {
-      _pA.set(0, 0, 0);
-      for (const j of js) _pA.add(Skeleton.jointPos(j, _pB));
-      _pA.divideScalar(js.length);
-      for (const j of js) best = Math.max(best, _pA.distanceTo(Skeleton.jointPos(j, _pB)));
+    const lens = [];
+    for (const j of js) {
+      const len = Skeleton.boneLength(main, j);
+      if (len > 1e-6) lens.push(len);
+    }
+    if (lens.length) {
+      lens.sort((a, b) => a - b);
+      const mid = lens.length >> 1;
+      // Even count: the mean of the two middles, so the answer does not jump between the two
+      // as a bone is added or removed.
+      best = lens.length % 2 ? lens[mid] : (lens[mid - 1] + lens[mid]) * 0.5;
     }
   }
   // Empty scene: no sculpt AND no joints yet, so there is no object to take a scale from.
@@ -1890,7 +1957,7 @@ Skeleton.sceneUnit = function (main) {
     console.log('[rigUnit] remeasured ' + main._skelUnit.toFixed(4) + ' from ' + from
       + ' (' + real + ' real meshes) — #' + _unitRemeasures);
   }
-  return main._skelUnit;
+  return main._skelUnit * Skeleton.sceneUnitMul;
 };
 
 // What the rig is sized by, and where that number came from.
@@ -1905,6 +1972,27 @@ window.rigUnit = function (main) {
     + ', measured from ' + _lastUnitFrom + ' (' + _lastUnitMeshes + ' real meshes)'
     + ' | joint dot ' + (_lastUnit * JOINT_R_FRAC).toFixed(4)
     + ' | ' + _unitRemeasures + ' remeasures so far');
+  // WHAT THE RIG FALLBACK MEASURED, when that is the source. The fallback is a MEDIAN BONE
+  // LENGTH, so this prints the lengths it chose between — a rig whose median is dominated by one
+  // long bone is the case the median exists to survive, and it is invisible without this.
+  if (_lastUnitFrom === 'rig') {
+    const app0 = main || window.app;
+    const lens = [];
+    for (const j of (app0 ? Skeleton.joints(app0) : [])) {
+      const len = Skeleton.boneLength(app0, j);
+      if (len > 1e-6) lens.push(len);
+    }
+    if (lens.length) {
+      lens.sort((a, b) => a - b);
+      console.log('[rigUnit] rig fallback: median bone length over ' + lens.length
+        + ' bone(s) — min ' + lens[0].toFixed(4) + ', median '
+        + (lens.length % 2 ? lens[lens.length >> 1]
+          : (lens[(lens.length >> 1) - 1] + lens[lens.length >> 1]) * 0.5).toFixed(4)
+        + ', max ' + lens[lens.length - 1].toFixed(4));
+    } else {
+      console.log('[rigUnit] rig fallback: no bones to measure (a lone joint, or roots only)');
+    }
+  }
   // THE OTHER CANDIDATE. A joint marker's drawn size is `sceneUnit * JOINT_R_FRAC`, but each
   // joint ALSO carries a scale baked into its own matrix at creation — and a reparent rewrites
   // that matrix to preserve the world transform, which is exactly where a stale three-side
@@ -2725,7 +2813,16 @@ function ensureEntry(main, id) {
           'joint-phys-ghost', jointPhysGeometry, true),
       },
       wire: { solid: wire, ghost: wireGhost },
+      // TWO LABELS, BECAUSE THEY ARE TWO FACTS ABOUT TWO THINGS. This used to be one sprite
+      // reading "shin 1.24" at the bone's midpoint, on the argument that they belong together --
+      // but a NAME belongs to the JOINT and a LENGTH belongs to the BONE, and drawing both on
+      // the bone put every name halfway down a shaft, a full bone away from the thing it names.
+      // matt: "should put the joint labels close to the joints? and then the lengths should
+      // remain on the midpoint of the bones? that will be easier to read anyway."
+      // It also lifts the old limitation that a chain's ROOT carried no name: the name rides the
+      // joint now, and every joint has one of those.
       label: makeLabel(),
+      nameLabel: makeLabel(),
       cap: {
         shaft: makeCapsuleShaftSlots(main),
         // THE ENDS ARE INSTANCED. They carry no taper -- world-axis aligned, with their three
@@ -2741,7 +2838,7 @@ function ensureEntry(main, id) {
                 e.wire.solid, e.wire.ghost,
                 e.cap.shaft.solid, e.cap.shaft.ghost,
                 e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
-    g.add(e.label.sprite, e.pinLink,
+    g.add(e.label.sprite, e.nameLabel.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
           e.pinS.solid, e.pinS.ghost);
     // Every capsule part is batched now; none of them are scene children.
@@ -2777,10 +2874,11 @@ function disposeEntry(main, id) {
       for (const m of mats) m.dispose();
     }
   }
-  if (e.label) {
-    g.remove(e.label.sprite);
-    e.label.sprite.material.dispose();
-    e.label.tex.dispose();
+  for (const lab of [e.label, e.nameLabel]) {
+    if (!lab) continue;
+    g.remove(lab.sprite);
+    lab.sprite.material.dispose();
+    lab.tex.dispose();
   }
   main._skelVis.delete(id);
 }
@@ -3137,6 +3235,7 @@ Skeleton.updateVisuals = function (main) {
       e.bone.solid.visible = e.bone.ghost.visible = false;
       e.wire.solid.visible = e.wire.ghost.visible = false;
       e.label.sprite.visible = false;
+      e.nameLabel.sprite.visible = false;
       e.pinT.solid.visible = e.pinT.ghost.visible = false;
       e.pinG.solid.visible = e.pinG.ghost.visible = false;
       e.pinS.solid.visible = e.pinS.ghost.visible = false;
@@ -3417,6 +3516,24 @@ Skeleton.updateVisuals = function (main) {
       }
     }
 
+    // THE NAME SITS ON THE JOINT IT NAMES, above the marker rather than halfway down a bone.
+    // Offset by the JOINT RADIUS, which is the right ruler here and the one place scaling with
+    // the scene unit is correct: the label has to clear the dot, and the dot is `jr`. So the
+    // Rig Scale slider moves the two together and the text stays the same distance off its own
+    // marker at any setting.
+    //
+    // Drawn BEFORE the bone is considered, so a chain's ROOT gets a name too -- it has no bone
+    // ending at it, which is exactly why it never had one before.
+    if (showNames) {
+      setLabelText(e.nameLabel, j._permanentStaticLabel || ('#' + id));
+      e.nameLabel.sprite.position.copy(_pB).addScaledVector(_up, jr * 2.2);
+      const _nh = unit * LABEL_SIZE;
+      e.nameLabel.sprite.scale.set(_nh * (e.nameLabel.aspect || 2), _nh, 1);
+      e.nameLabel.sprite.visible = true;
+    } else {
+      e.nameLabel.sprite.visible = false;
+    }
+
     const parent = j._parentMesh;
     const hasBone = Skeleton.isJoint(parent) && main.getMeshes().includes(parent);
     if (!hasBone) {
@@ -3438,24 +3555,42 @@ Skeleton.updateVisuals = function (main) {
       continue;
     }
 
-    if (showLen || showNames) {
-      // ONE SPRITE, BOTH FACTS. A second label per joint would double the sprite count for
-      // something you read rather than aim at, and the two belong together anyway: "forearm_02
-      // 1.24" is one statement about one bone. Name first, because it is what you are looking
-      // for; the number is the detail.
+    if (showLen) {
+      // THE LENGTH STAYS ON THE BONE, because that is what it measures. The name left this
+      // sprite and went to the joint (see above), so this one says a number and nothing else --
+      // which is also why it can sit right on the midpoint without being a mouthful of text in
+      // the middle of the rig.
+      setLabelText(e.label, len < 10 ? len.toFixed(2) : len.toFixed(1));
+      // A REAL PERPENDICULAR. The previous attempt took the bone's direction and SUBTRACTED ITS
+      // UP COMPONENT, calling the result perpendicular. It is not perpendicular to anything: it
+      // is the bone's own horizontal projection, which points the same way the bone LEANS. So on
+      // a leg with any bend at all the label was pushed out in front of the shin or in behind it
+      // rather than beside it, and because that direction swings with the bone it swung too as
+      // the joint moved. matt: "the bone for the shin (ie between knee and ankle) floats behind
+      // the shin bone, and seems to rotate with the ankle."
       //
-      // The label rides the bone ENDING at this joint, so a chain's ROOT — which no bone ends
-      // at — carries no name. That is the same limitation the length labels have always had,
-      // and the joint dot is still there to aim at.
-      const _nm = showNames ? (j._permanentStaticLabel || ('#' + id)) : '';
-      const _ln = showLen ? (len < 10 ? len.toFixed(2) : len.toFixed(1)) : '';
-      // Sit the label at the bone's midpoint, nudged off the shaft so it does not sit
-      // inside the geometry it is describing.
-      setLabelText(e.label, _nm && _ln ? (_nm + '  ' + _ln) : (_nm || _ln));
-      e.label.sprite.position.copy(_pA).addScaledVector(_dir, 0.5).addScaledVector(_up, jr * 1.6);
+      // A CROSS PRODUCT is the perpendicular. up x dir is square to the bone by construction, and
+      // being square to UP as well it is always a sideways push -- never toward or away from the
+      // viewer of a front view, which is the direction that reads as "floating off the bone".
+      //
+      // A VERTICAL BONE CROSSES AGAINST Z. up x dir is zero for a shin, so the degenerate case
+      // needs a second axis, and the choice of axis is the choice of which side the label lands.
+      // Z gives +X -- beside the leg. X would give Z, which is the front/back the whole fix is
+      // about.
+      //
+      // Sized from boneWidth(len) -- a fraction of the BONE -- so the offset only has to clear
+      // the shaft and does not grow when the Rig Scale slider moves the markers.
+      //
+      // `_dir` is still the RAW `_pB - _pA` here (it is normalised a few lines below), so the
+      // cross is taken against a normalised COPY and `_dir` is left as the code below expects.
+      _perpDir.copy(_dir).divideScalar(len);
+      _perp.crossVectors(_up, _perpDir);
+      if (_perp.lengthSq() < 1e-8) _perp.crossVectors(_zAxis, _perpDir);
+      _perp.normalize();
+      e.label.sprite.position.copy(_pA).addScaledVector(_dir, 0.5)
+        .addScaledVector(_perp, boneWidth(len) * 2.4);
       // Height sets the type size; width follows the canvas aspect, so nothing is stretched.
-      // 0.06 is 0.75 of the 0.08 these used to be — matt's call, they were too big.
-      const _h = unit * 0.06;
+      const _h = unit * LABEL_SIZE;
       e.label.sprite.scale.set(_h * (e.label.aspect || 2), _h, 1);
       e.label.sprite.visible = true;
     } else {

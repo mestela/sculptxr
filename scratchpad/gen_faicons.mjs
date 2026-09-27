@@ -3,7 +3,7 @@ const SOLID = 'node_modules/@fortawesome/fontawesome-free/svgs/solid/';
 const NAMES = [
   // panel markup
   'backward-step','backward','play','stop','forward','forward-step','circle',
-  'rotate-left','rotate-right','chevron-right','chevron-down','link','link-slash',
+  'rotate-left','rotate-right','chevron-left','chevron-right','chevron-down','link','link-slash',
   'cake-candles','copy','eye','eye-slash','pen','trash','lock','lock-open','cube',
   'asterisk','arrows-rotate',
   // The outliner's physics-bone marker: a joint that swings, and everything under it.

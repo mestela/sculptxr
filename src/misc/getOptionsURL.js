@@ -474,6 +474,12 @@ var getOptionsURL = function () {
   options.skinOpacity = queryNumber(getVal('skinOpacity'), 0.05, 1.0, 1.0);
   options.cageOpacity = queryNumber(getVal('cageOpacity'), 0.05, 1.0, 1.0);
 
+  // THE RIG SCALE. A view multiplier over the measured scene unit, so every rig marker — joint
+  // dots, bones, pins, length labels, snap radii — can be sized without touching the sculpt or
+  // the rig. Persisted like the other view preferences and never written into a .sxr: the file
+  // means the same real size on any machine, and only the markers move. See Skeleton.sceneUnitMul.
+  options.rigScale = queryNumber(getVal('rigScale'), 0.25, 4.0, 1.0);
+
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are
   // stale old-defaults (e.g. saturation 100%). Force 65/55/0 once, then respect user changes.

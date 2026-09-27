@@ -162,7 +162,8 @@ const MM_UNDO_H    = 38;
 // opt-out it lost on specificity to the :has() rules and changed nothing, which is the sort of
 // silent no-op this file has produced twice already.
 const AUTHORED_ROWS = ':not(.mm-add-row, .mm-rig-btn-row, .mm-btn-pair, .mm-choice-grid, '
-  + '.mm-toolbar, .mm-xform-row, .mm-check-pair, .acp-transport, .acp-btn-grid, .acp-frame-grid)';
+  + '.mm-toolbar, .mm-xform-row, .mm-check-pair, .mm-storage-toolbar, .acp-transport, '
+  + '.acp-btn-grid, .acp-frame-grid)';
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -1183,18 +1184,16 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   border-color: #89b4fa;
   background: #1e1e2e;
 }
+/* PAGER, PAGE COUNT, then the three named actions sharing what is left equally. The arrows and
+   the count take only the width they need (auto), which is what lets six controls sit on the one
+   line a three-column grid used to spend on three. */
 .mm-storage-toolbar {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: auto auto auto 1fr 1fr 1fr;
   gap: 5px;
   margin-bottom: 6px;
 }
-/* FOUR COLUMNS FOR THE ACTION ROW, which is its own class because the PAGINATION row below still
-   wants three (Previous, the page number, Next). Adding Cancel to a three-column grid wrapped Open
-   onto a second line at the left -- the exact corner it was being moved away from. */
-.mm-storage-toolbar.mm-storage-actions {
-  grid-template-columns: repeat(4, 1fr);
-}
+.mm-storage-toolbar .mm-storage-pg { padding: 0 9px; }
 .mm-storage-page {
   display: flex;
   align-items: center;
@@ -2084,6 +2083,10 @@ export function buildSharedSettingsHTML(main) {
   const gridOccOpacity = main.getGridOccludedOpacity?.() ?? 0.2;
   const exposure       = main.getExposure?.() ?? 1.0;
   const curTM          = main.getToneMapping?.() ?? 0;
+  // THE RIG SCALE. Read from the live Skeleton value rather than the options snapshot, because
+  // the slider writes through Skeleton.setSceneUnitMul and the options object is only refreshed
+  // on load — reading options here would show a stale number after a drag.
+  const rigScale       = Skeleton.sceneUnitMul ?? 1;
   const tmBtns = [
     { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
     { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
@@ -2103,6 +2106,13 @@ export function buildSharedSettingsHTML(main) {
       <span class="mm-lbl">Curvature</span>
       <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature*20)}">
       <span class="mm-val" id="mm-curvature-val">${Math.round(curvature*20)}</span>
+    </div>
+
+    <div class="mm-section-title">Rig</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Rig Scale</span>
+      <input type="range" id="mm-rig-scale" min="25" max="400" step="5" value="${Math.round(rigScale*100)}">
+      <span class="mm-val" id="mm-rig-scale-val">${rigScale.toFixed(2)}x</span>
     </div>
 
     <div class="mm-section-title">Ground Plane</div>
@@ -2132,6 +2142,23 @@ export function wireSharedSettings(el, main, paint) {
     const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [main.getMesh?.()];
     ms?.forEach((m) => m?.setCurvature?.(v / 20)); main.render?.();
   }, null, paint);
+  // THE RIG SCALE. Writes the live multiplier AND persists it, then REBUILDS THE RIG and repaints
+  // so it redraws at the new size on the frame you are looking at — the whole point is to judge it
+  // by eye, so it cannot wait for a reload.
+  //
+  // updateVisuals IS THE POINT, not an extra. Every marker's size — the joint dot, the bone body,
+  // the pin triad, the length labels, the snap radii — is computed INSIDE updateVisuals from
+  // Skeleton.sceneUnit(main), and the rig is drawn as INSTANCED batches whose per-instance scale
+  // is written there. Calling render() alone just re-draws the batches with the scales they
+  // already hold, so the slider moved the number and nothing on screen changed. Every other
+  // rig-affecting control in the app calls updateVisuals before render for exactly this reason.
+  // `paint` is the VR rasteriser's markDirty; on desktop it is a no-op and the DOM redraws itself.
+  wireSlider(q('#mm-rig-scale'), q('#mm-rig-scale-val'), (v) => {
+    const mul = Skeleton.setSceneUnitMul(v / 100);
+    getOptionsURL.saveOption('rigScale', mul, 250);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }, (v) => (v / 100).toFixed(2) + 'x', paint);
   wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
     main.setGridOpacity?.(v / 100);
   }, (v) => (v / 100).toFixed(2), paint);
@@ -4019,7 +4046,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         await guiFiles?.prepareBrowserSavePage?.();
         this._lastContentKey = '';
         this._rebuildContent();
-      }, paint);
+      }, paint, () => this.closeMenu());
       q('#mm-back-to-files')?.addEventListener('click', () => this._setMenu('files'));
 
     } else if (menu === 'history') {
@@ -5778,34 +5805,49 @@ export function buildMenuHTML_browserSaves(main) {
       <div class="mm-storage-list" id="mm-storage-grid">${thumbs}</div>
       <div class="mm-scrollbar-track mm-storage-sbar"><div class="mm-scrollbar-thumb"></div></div>
     </div>
-    ${/* CANCEL LEFT, OPEN RIGHT. matt: "the browser saves dialog has its buttons in the wrong
-         order. open should be the lower right, generally the confirm/yes/action button is lower
-         right, cancel is lower left." That is the convention on every platform this runs on, and
-         the row read Open / Import / Delete -- the primary action furthest from where the eye
-         ends up and hard against the destructive one.
-         Delete stays in the middle rather than next to Open: the two buttons you must never
-         confuse are the one that loads and the one that erases, so they do not share an edge. */ ''}
-    <div class="mm-storage-toolbar mm-storage-actions">
-      <button class="mm-action-btn" id="mm-storage-cancel">Cancel</button>
+    ${/* ONE ROW, NOT THREE. matt: "it should just be a single row for delete, import, open ...
+         the previous/next buttons are also on their own separate rows, thats stupid. wherever
+         possible we should be trying to avoid scrolling with the mainpanel."
+         They WERE authored as two three-column grids, and they still are on the desktop
+         overlay -- what broke them is .mm-dense, the sweep that reflows a panel's rows to fit
+         its width: it replaces the grid with a wrapping flex box and gives every .mm-action-btn
+         a 170px flex-basis, so in the main panel each row broke into one button per line. The
+         fix for that is the AUTHORED_ROWS exemption at the top of this file; this markup then
+         goes one better and spends the row it saved, folding the pager into the same line.
+         PAGING IS TWO ARROWS, not two words: "Previous" and "Next" earned a full column each
+         for a control you use only when a library outgrows a page, and shrinking them is what
+         pays for Delete / Import / Open keeping theirs. The three named buttons take equal
+         shares of what is left, with Open at the right-hand end -- the confirm corner -- and
+         Delete at the other, so the one that loads and the one that erases never touch. */ ''}
+    <div class="mm-storage-toolbar">
+      <button class="mm-action-btn mm-storage-pg" id="mm-storage-prev" title="Previous page" ${page <= 0 ? 'disabled' : ''}>${faIcon('chevron-left')}</button>
+      <span class="mm-storage-page">${page + 1}/${pageCount}</span>
+      <button class="mm-action-btn mm-storage-pg" id="mm-storage-next" title="Next page" ${page >= pageCount - 1 ? 'disabled' : ''}>${faIcon('chevron-right')}</button>
       <button class="mm-action-btn danger" id="mm-storage-delete" ${disabled}>Delete</button>
       <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
       <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Open</button>
     </div>
-    <div class="mm-storage-toolbar">
-      <button class="mm-action-btn" id="mm-storage-prev" ${page <= 0 ? 'disabled' : ''}>Previous</button>
-      <span class="mm-storage-page">${page + 1} / ${pageCount}</span>
-      <button class="mm-action-btn" id="mm-storage-next" ${page >= pageCount - 1 ? 'disabled' : ''}>Next</button>
-    </div>
   `;
 }
 
-// `closeFn` closes whatever is showing this panel. Optional: the VR panel is a tab rather than a
-// dialog and has nothing to close, so it passes none and Cancel simply does not appear to do
-// anything there -- see the guard below, which hides it instead.
+// `closeFn` closes whatever is showing this panel -- the desktop overlay's backdrop, or the VR
+// menu. Optional: a caller with nothing to close simply passes none and Open stays put.
 export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn, closeFn = null) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
+
+  // OPEN = REPLACE THE SCENE, and it is the one action that ends the visit: you asked for a file,
+  // you got it, so the dialog has nothing left to say and closes itself. Both ways in (the Open
+  // button and a double click on a thumbnail) go through here so they cannot drift apart.
+  // `closeFn` is whatever is showing this panel; a caller with nothing to close -- a bare test --
+  // simply passes none.
+  const openSave = (key) => {
+    if (!key) return;
+    if (guiFiles) guiFiles._selectedSaveKey = key;
+    guiFiles?.loadSpecificBrowserSave?.(key, true);
+    closeFn?.();
+  };
 
   q('#mm-browser-save')?.addEventListener('click', () => {
     // Same free-name prefill as the Files menu: this is the browser-saves panel's own Save
@@ -5836,32 +5878,12 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn,
     rebuildFn();
   });
 
-  // Nothing to cancel back to when this is a tab rather than a dialog.
-  const cancelBtn = q('#mm-storage-cancel');
-  if (cancelBtn) {
-    if (closeFn) cancelBtn.addEventListener('click', () => closeFn());
-    else cancelBtn.style.display = 'none';
-  }
-
-  // OPENING IS WHAT A DOUBLE CLICK ON A FILE MEANS. matt: "double clicking an entry in the
-  // browser open dialog should load that file and close the dialog." Select-then-press-Open still
-  // works and is what the toolbar is for; this is the shortcut everyone's hands already know.
-  //
-  // The dblclick handler reads the item's own key rather than the selection, because the first
-  // click of the pair has already set it -- but reading the dataset directly means the shortcut
-  // cannot be wrong even if selection state and the DOM ever disagree.
+  // Select a save by clicking its thumbnail; the toolbar acts on the selection. A DOUBLE click
+  // is the shortcut past the toolbar: it opens the save outright, the way a file browser does.
+  // matt: "double clicking an entry in the browser open dialog should load that file and close
+  // the dialog."
   el.querySelectorAll('.mm-storage-item').forEach(item => {
-    item.addEventListener('dblclick', () => {
-      const key = item.dataset.saveKey;
-      if (!key) return;
-      if (guiFiles) guiFiles._selectedSaveKey = key;
-      guiFiles?.loadSpecificBrowserSave?.(key, true);
-      closeFn?.();
-    });
-  });
-
-  // Select a save by clicking its thumbnail; the toolbar acts on the selection.
-  el.querySelectorAll('.mm-storage-item').forEach(item => {
+    item.addEventListener('dblclick', () => openSave(item.dataset.saveKey));
     item.addEventListener('click', () => {
       if (guiFiles) guiFiles._selectedSaveKey = item.dataset.saveKey;
       el.querySelectorAll('.mm-storage-item').forEach(card =>
@@ -5874,14 +5896,7 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn,
   });
 
   // Load = replace the current scene; Import = append to it.
-  q('#mm-storage-load')?.addEventListener('click', () => {
-    const key = selKey();
-    if (!key) return;
-    guiFiles?.loadSpecificBrowserSave?.(key, true);
-    // The dialog has done its job. Leaving it up over the scene it just loaded means every open
-    // is two actions, and it is the same reason the double click closes.
-    closeFn?.();
-  });
+  q('#mm-storage-load')?.addEventListener('click', () => openSave(selKey()));
   q('#mm-storage-import')?.addEventListener('click', () => {
     const key = selKey();
     if (key) guiFiles?.loadSpecificBrowserSave?.(key, false);

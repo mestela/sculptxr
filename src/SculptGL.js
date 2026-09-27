@@ -118,6 +118,13 @@ class SculptGL extends Scene {
     if (window._ipadStylusView   === undefined) window._ipadStylusView   = _ipadOpts.ipadStylusView   ?? false;
     if (window._ipadStylusSculpt === undefined) window._ipadStylusSculpt = _ipadOpts.ipadStylusSculpt ?? true;
 
+    // THE RIG SCALE, seeded from the saved preference. The slider writes Skeleton.sceneUnitMul
+    // live, but nothing read the stored value back on load — so a rig scale dialled in last
+    // session was silently forgotten and every marker came back at 1x. Seeded here with the
+    // other persisted view flags, before any rig is built, so the first marker drawn is already
+    // at the saved size. See Skeleton.setSceneUnitMul.
+    if (Number.isFinite(_ipadOpts.rigScale)) Skeleton.setSceneUnitMul(_ipadOpts.rigScale);
+
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;
     window.app = this; // Ensure 'app' is also set globally
