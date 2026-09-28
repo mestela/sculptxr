@@ -8,7 +8,7 @@
     "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js"
   },
   "name": "sculptxr",
-  "version": "3.59.0",
+  "version": "3.59.1",
   "description": "WebXR Sculpting",
   "main": "main.js",
   "directories": {
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "postinstall": "node scripts/patch-three-html-render.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "bump:patch": "node bump.mjs patch",

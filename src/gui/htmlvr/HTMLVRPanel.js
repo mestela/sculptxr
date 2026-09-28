@@ -1675,3 +1675,124 @@ window._panelProbe = function () {
   console.log('[panelProbe] ' + JSON.stringify(out, null, 1));
   return out.length;
 };
+
+// ── PANEL DRIFT ───────────────────────────────────────────────────────────────
+// window._panelDrift() — does the TEXTURE agree with the DOM about where a row is?
+//
+// The hover quad is placed from live DOM rects (getBoundingClientRect), but what you SEE is an
+// SVG rasterisation of a CLONE of that DOM. Those are two different layouts, and nothing in the
+// app checks that they agree. matt: "the highlight is increasingly misaligned the lower down the
+// menu... at the top its more aligned", which is the signature of the rasterised content
+// creeping relative to the DOM rather than of any single wrong number in the quad maths.
+//
+// So this measures the map between them instead of arguing about it. Two magenta bars are put
+// INTO THE FLOW -- one before the first row, one before the last fully visible row -- so they
+// are carried by exactly the same layout the rows are; then the panel is rasterised and the bars
+// are found in the bitmap. Their DOM separation and their TEXTURE separation should be equal:
+//
+//   scale 1.000, drift 0.0    the two layouts agree; the misalignment is somewhere else
+//   scale 0.985, drift -6.2   the texture lays the rows out SHORTER than the DOM does, so the
+//                             quad (correct per the DOM) sits BELOW the row you can see, by
+//                             more the further down you go
+//
+// Magenta, not white: a panel is full of white sliders and labels, and "brightest row" would
+// find one of those. Bars are removed and the panel repainted before this returns.
+window._panelDrift = async function (name) {
+  const live = [...HTMLVRPanel._live];
+  const re = name ? new RegExp(name, 'i') : null;
+  const p = live.find(q => q.mesh && q.mesh.visible && (!re || re.test(q.constructor.name)))
+         || live.find(q => !re || re.test(q.constructor.name));
+  if (!p || !p._element) { console.log('[panelDrift] no panel' + (name ? ' matching ' + name : '')); return null; }
+  const el = p._element;
+
+  // The container that actually holds the rows: the one with the longest run of children
+  // STACKED one under the other. Plain "most children" picks a 3-across button grid on some
+  // hidden tab, and a marker in a grid cell measures a box the rows do not move with.
+  let flow = null, best = 0;
+  for (const n of [el, ...el.querySelectorAll('*')]) {
+    if (n.getBoundingClientRect().height < 80) continue;
+    const kids = [...n.children].filter(c => { const r = c.getBoundingClientRect(); return r.height > 8 && r.width > 40; });
+    let stacked = 0;
+    for (let i = 1; i < kids.length; i++) {
+      if (kids[i].getBoundingClientRect().top >= kids[i - 1].getBoundingClientRect().bottom - 2) stacked++;
+    }
+    if (stacked > best) { best = stacked; flow = n; }
+  }
+  if (!flow) { console.log('[panelDrift] no stacked rows in ' + p.constructor.name); return null; }
+  const mk = () => {
+    const d = document.createElement('div');
+    d.dataset.driftMarker = '1';
+    d.style.cssText = 'height:2px;min-height:2px;width:100%;flex:0 0 100%;background:#ff00ff;';
+    return d;
+  };
+  const kids = [...flow.children].filter(c => { const r = c.getBoundingClientRect(); return r.height > 8 && r.width > 40; });
+  if (kids.length < 2) { console.log('[panelDrift] nothing to measure in ' + p.constructor.name); return null; }
+  const clipBot = el.getBoundingClientRect().bottom;
+  const lastVis = [...kids].reverse().find(c => c.getBoundingClientRect().bottom <= clipBot - 6) || kids[kids.length - 1];
+  const a = mk(), b = mk();
+  flow.insertBefore(a, kids[0]);
+  flow.insertBefore(b, lastVis);
+
+  const frame = () => new Promise(r => requestAnimationFrame(r));
+  let out = null, why = 'no paint: the polyfill only rasterises while something drains its rAF (Scene does, in session)';
+  try {
+    for (let tries = 0; tries < 12 && !out; tries++) {
+      requestPaintForced(getHostCanvas());
+      // The polyfill rasterises on its own rAF, and in an XR session that rAF only runs when
+      // Scene drains it -- so drain it here too, or this waits for a frame that never comes.
+      await frame(); drainRAF(); await frame();
+      await new Promise(r => setTimeout(r, 60));
+      let cv = null;
+      try { cv = getHostCanvas().captureElementImage(el); } catch (e) { why = 'capture: ' + (e?.message || e); continue; }
+      if (!cv || !cv.width) { why = 'capture returned an empty bitmap'; continue; }
+      const W = cv.width, H = cv.height;
+      const x0 = Math.floor(W * 0.35), w = Math.max(4, Math.floor(W * 0.3));
+      const px = cv.getContext('2d').getImageData(x0, 0, w, H).data;
+      // Rows that are magenta across the strip: r and b high, g low.
+      const hit = [];
+      for (let y = 0; y < H; y++) {
+        let n = 0;
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (px[i] > 170 && px[i + 2] > 170 && px[i + 1] < 90) n++;
+        }
+        if (n > w * 0.8) hit.push(y);
+      }
+      if (hit.length < 2) { why = 'markers not in the bitmap (stale capture, or the panel repainted without them)'; continue; }
+      const band = [];                       // consecutive rows -> one bar
+      for (const y of hit) {
+        const last = band[band.length - 1];
+        if (last && y - last.end <= 1) { last.end = y; } else band.push({ start: y, end: y });
+      }
+      if (band.length < 2) { why = 'only one marker band found'; continue; }
+      const first = band[0], lastB = band[band.length - 1];
+      const sy = H / (el.clientHeight || 1);   // bitmap px per CSS px
+      const texA = ((first.start + first.end) / 2 + 0.5) / sy;
+      const texB = ((lastB.start + lastB.end) / 2 + 0.5) / sy;
+      const rt = el.getBoundingClientRect().top;
+      const domA = a.getBoundingClientRect().top - rt + 1;
+      const domB = b.getBoundingClientRect().top - rt + 1;
+      const scale = (texB - texA) / (domB - domA);
+      out = {
+        panel: p.constructor.name,
+        elem: `${el.clientWidth}x${el.clientHeight}`,
+        bitmap: `${W}x${H}`,
+        dpr: +(H / (el.clientHeight || 1)).toFixed(3),
+        domA: +domA.toFixed(2), texA: +texA.toFixed(2),
+        domB: +domB.toFixed(2), texB: +texB.toFixed(2),
+        // 1.000 = the texture and the DOM lay the rows out identically.
+        scale: +scale.toFixed(4),
+        // CSS px the texture has crept by, at the bottom marker. Negative = content sits HIGHER
+        // than the DOM says, so the highlight lands BELOW the row.
+        drift: +(texB - texA - (domB - domA)).toFixed(2),
+        // Where the content starts, relative to where the quad maths assumes it does.
+        offsetAtTop: +(texA - domA).toFixed(2),
+      };
+    }
+  } finally {
+    a.remove(); b.remove();
+    requestPaintForced(getHostCanvas());
+  }
+  console.log('[panelDrift] ' + (out ? JSON.stringify(out) : 'no reading — ' + why));
+  return out;
+};
