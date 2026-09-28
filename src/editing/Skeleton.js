@@ -4037,16 +4037,12 @@ Skeleton.restoreJointRadii = function (snapshot) {
   for (const [j, r] of snapshot) j._jointRadius = r > 0 ? r : 0;
 };
 
-// Symmetry plane of the sculpt being rigged (not of the joints, which have none).
-// Returns { origin, normal } in model space, or null when symmetry is off / no mesh.
-// Cached briefly like sceneUnit — it is read every frame for the plane visual and the snap
-// test. Callers must treat the returned vectors as read-only.
+// Symmetry plane of the RIG. Returns { origin, normal } in model space, or null when symmetry
+// is off. Always the model-space origin, normal +X — see _computeSymmetryPlane.
+// No longer cached: the answer is a constant, so there is nothing to amortise, and the old
+// 250ms cache meant the symmetry toggle took a quarter of a second to show.
 Skeleton.symmetryPlane = function (main) {
-  const now = performance.now();
-  if (main._skelPlaneAt !== undefined && now - main._skelPlaneAt < 250) return main._skelPlane;
-  main._skelPlaneAt = now;
-  main._skelPlane = Skeleton._computeSymmetryPlane(main);
-  return main._skelPlane;
+  return Skeleton._computeSymmetryPlane(main);
 };
 
 // The rig's mirror plane whether or not the current selection is allowed in-stroke symmetry.
@@ -4083,24 +4079,21 @@ Skeleton.rigMirrorPlane = function (main) {
 
 Skeleton._computeSymmetryPlane = function (main, force) {
   if (!force && (!main.getSculptManager || !main.getSculptManager().getSymmetry())) return null;
-  const meshes = (main.getMeshes() || []).filter((m) => !Skeleton.isJoint(m) && !m._isNull);
-  const m = meshes.includes(main.getMesh()) ? main.getMesh() : meshes[0];
-  // The plane is READ off the sculpt, but it does not belong to the sculpt — it is where the
-  // centreline of the thing being rigged is. With no sculpt (deleted, or a skeleton being
-  // built before one exists) the world centreline is still a perfectly good answer, and it
-  // is the only way to draw a symmetric rig without a mesh in the scene. Returning null here
-  // took the plane, the snap and the mirrored joints away all at once.
-  if (!m || !m.getSymmetryOrigin) {
-    return { origin: new THREE.Vector3(0, 0, 0), normal: new THREE.Vector3(1, 0, 0) };
-  }
-  const o = m.getSymmetryOrigin(), n = m.getSymmetryNormal();
-  if (!o || !n) return null;
-  // Both are mesh-local; the joints live in model space, so carry them across.
-  _mTmp.fromArray(m.getModelSpaceMatrix());
-  const origin = new THREE.Vector3(o[0], o[1], o[2]).applyMatrix4(_mTmp);
-  const normal = new THREE.Vector3(n[0], n[1], n[2])
-    .transformDirection(_mTmp).normalize();
-  return { origin: origin, normal: normal };
+  // LOCKED TO THE MODEL-SPACE ORIGIN, NOT TO A MESH.
+  //
+  // This used to be read off the sculpt: `mesh.getSymmetryOrigin()` pushed through that mesh's
+  // model matrix. That makes the rig's centreline follow whichever mesh happened to be current
+  // — move a reference plane sideways and every joint you draw mirrors about the reference
+  // plane instead of the origin, with no control anywhere to put it back. matt hit exactly
+  // that, and there is no user-facing way out of it.
+  //
+  // The rig's own maths already assumes this: SkinMesh's SYM_AXIS is a hard model-space X, and
+  // joint twins are paired by their X sign. So the sculpt-relative plane was never the plane
+  // the rest of the rig was using — only the one it was drawn and snapped with.
+  //
+  // A fresh object each call because callers are not required to treat it as read-only and a
+  // shared constant would stay broken for the session if one of them wrote to it.
+  return { origin: new THREE.Vector3(0, 0, 0), normal: new THREE.Vector3(1, 0, 0) };
 };
 
 // The symmetry plane, drawn. A hip or a spine belongs exactly ON the centreline, and
