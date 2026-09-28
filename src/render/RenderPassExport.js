@@ -219,7 +219,7 @@ export async function exportRenderPass(main, mode = 'normal', size = DEFAULT_SIZ
   const canvas = await renderPassToCanvas(main, mode, size, fitted);
   if (!canvas) {
     const why = main._isNodeRenderer ? 'the pass could not be rendered'
-      : 'render passes need the node renderer (?renderer=webgpu)';
+      : 'render passes need the node renderer — drop ?renderer=webgl from the URL';
     if (window.screenLog) window.screenLog('Export failed: ' + why, 'red');
     console.warn('[renderpass] ' + why);
     return false;

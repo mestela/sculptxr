@@ -14,6 +14,8 @@ const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
 const OPTS = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
 const PANEL = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
 const VR = fs.readFileSync(path.join(REPO, 'src/editing/tools/TransformVR.js'), 'utf8');
+const GIZMO = fs.readFileSync(path.join(REPO, 'src/editing/GizmoVR.js'), 'utf8');
+const XFPANEL = fs.readFileSync(path.join(REPO, 'src/gui/transformPanel.js'), 'utf8');
 
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
@@ -52,21 +54,46 @@ check('the step is geometric', /const step = 1\.0 \+ [\d.]/.test(BRANCH)
 check('up is bigger', /valY < -T_PRESS \? cur \* step/.test(BRANCH),
   'the radius control has up as more; this must match or the hand is lied to');
 
-// THE RANGE LIVES IN THREE FILES. The stick clamps it, the option validates it, and the
-// settings slider offers it. Any two of those disagreeing means the stick can reach a size the
-// slider cannot show, or the option quietly clamps what the stick just saved.
-const stickClamp = /Math\.max\(([\d.]+), Math\.min\(([\d.]+), next\)\)/.exec(BRANCH);
+// THE RANGE IS DEFINED ONCE, AND EVERY CONTROL REFERS TO IT.
+//
+// It used to live as a literal in four places — the stick's clamp, the option's validator, the
+// settings slider and (once it existed) the tool-panel slider — and this block checked that the
+// copies agreed. They now come from GIZMO_MUL_MIN/MAX, exported from GizmoVR next to the code
+// that applies the multiplier, so the agreement is structural rather than something a test has
+// to keep watching. What is still worth pinning is that nobody has quietly reintroduced a
+// literal: a slider with a hardcoded `min="25"` would work today and drift the day the constant
+// moves. The OPTION's validator is the one remaining copy — getOptionsURL is a leaf that must
+// not import the editor — so its numbers are still read out and compared.
+const defMin = /export const GIZMO_MUL_MIN = ([\d.]+);/.exec(GIZMO);
+const defMax = /export const GIZMO_MUL_MAX = ([\d.]+);/.exec(GIZMO);
 const optClamp = /options\.gizmoSizeMul = queryNumber\(getVal\('gizmoSizeMul'\), ([\d.]+), ([\d.]+)/.exec(OPTS);
-const sliderRange = /id="mm-gizmo-mul" min="(\d+)" max="(\d+)"/.exec(PANEL);
-check('all three carry the range', !!stickClamp && !!optClamp && !!sliderRange);
-if (stickClamp && optClamp && sliderRange) {
-  const stick = [parseFloat(stickClamp[1]), parseFloat(stickClamp[2])];
+check('the range has one definition, in GizmoVR', !!defMin && !!defMax);
+check('the option validator still declares its own copy', !!optClamp);
+check('the stick clamps to the shared constants',
+  /Math\.max\(GIZMO_MUL_MIN, Math\.min\(GIZMO_MUL_MAX, next\)\)/.test(BRANCH),
+  'a literal clamp here can reach a size the sliders cannot show');
+check('the settings slider is built from the shared constants',
+  /id="mm-gizmo-mul" min="\$\{Math\.round\(GIZMO_MUL_MIN\*100\)\}" max="\$\{Math\.round\(GIZMO_MUL_MAX\*100\)\}"/.test(PANEL),
+  'a hardcoded min/max here is the old bug, re-entered');
+// THE GIZMO'S SIZE, ON THE GIZMO'S OWN PANEL. The settings copy is filed under a preferences
+// list; this one is in the Transform tool's shared section, so it is on the wrist panel and in
+// the menu whenever the gizmo is the thing in your hand. matt asked for exactly that.
+check('the Transform section carries a size slider', /id="xf-gizmo-mul"/.test(XFPANEL));
+check('the Transform slider is built from the shared constants',
+  /GIZMO_MUL_MIN, GIZMO_MUL_MAX \} from '\.\.\/editing\/GizmoVR\.js'/.test(XFPANEL)
+    && /min="\$\{Math\.round\(GIZMO_MUL_MIN \* 100\)\}"/.test(XFPANEL));
+check('the Transform slider writes the live value and persists it',
+  /window\._gizmoSizeMul = f;/.test(XFPANEL) && /saveOption\('gizmoSizeMul', f/.test(XFPANEL));
+// The thumbstick writes the same number, so the panel has to be able to follow it — a slider
+// that only moves when you move it will report a size the gizmo stopped being two clicks ago.
+check('the Transform slider follows the thumbstick',
+  /syncTransformSection/.test(XFPANEL) && /sIn\.value = String\(Math\.round\(mul \* 100\)\)/.test(XFPANEL));
+
+if (defMin && defMax && optClamp) {
+  const stick = [parseFloat(defMin[1]), parseFloat(defMax[1])];
   const opt = [parseFloat(optClamp[1]), parseFloat(optClamp[2])];
-  const slider = [parseInt(sliderRange[1], 10) / 100, parseInt(sliderRange[2], 10) / 100];
-  check('the stick and the option agree on the range',
-    stick[0] === opt[0] && stick[1] === opt[1], `stick ${stick} vs option ${opt}`);
-  check('the slider offers exactly what the stick can reach',
-    slider[0] === stick[0] && slider[1] === stick[1], `slider ${slider} vs stick ${stick}`);
+  check('the shared constants and the option agree on the range',
+    stick[0] === opt[0] && stick[1] === opt[1], `constants ${stick} vs option ${opt}`);
 
   // The step maths, run with the constant read out of the shipped source.
   const pct = parseFloat(/const step = 1\.0 \+ ([\d.]+)/.exec(BRANCH)[1]);
@@ -104,6 +131,44 @@ if (stickClamp && optClamp && sliderRange) {
       && !/isSecondaryTriggerPressed \? 15 : 30/.test(sceneCode),
     'a second meaning on the smooth-mode trigger is how the rate got lost per tool');
 }
+
+// THE SIZE IS SOLVED FROM A CONSTANT, NOT LATCHED FROM WHATEVER ZOOM IT WOKE UP AT.
+//
+// The VR rule is a constant PHYSICAL size, which is right — you reach for the gizmo with your
+// hand, so it must not balloon and shrink with double-grip zoom the way the world does. What was
+// wrong is where the constant came from. It captured `_refWorldScale` on the gizmo's first sizing
+// frame and then held k = refScale/worldScale forever, and physical size works out to
+// `bake * refScale` — so the gizmo's real size was decided by the zoom you happened to be at the
+// first time it drew. 12.5cm if that was the default 0.008, ten times that if you had zoomed in
+// first, eighty times that if its first update ran on the desktop (worldScale 0.701 there). No
+// path released the latch, so for the rest of the session you could not argue with it. matt: "the
+// transform gizmo gets larger and larger... something is resetting the scale of these elements
+// somewhere and i can't control it."
+check('the gizmo has no latched size reference', !/_refWorldScale/.test(GIZMO.split('\n')
+  .filter((l) => !l.trim().startsWith('//')).join('\n')),
+  'a latch here inherits whatever zoom the gizmo first drew at, for the whole session');
+const sizeM = /const GIZMO_SIZE_M = ([\d.]+);/.exec(GIZMO);
+check('the target physical size is a declared constant', !!sizeM);
+check('the VR branch solves k back from it',
+  /const k = \(GIZMO_SIZE_M \* gizmoSizeMul\(\)\) \/ \(\(this\._lastScale \|\| 1\) \* worldScale\);/.test(GIZMO),
+  'physical = bake * k * worldScale, so k = metres / (bake * worldScale) — anything else drifts');
+if (sizeM) {
+  // The default must be exactly what the old rule produced at the zoom it was calibrated for
+  // (the 15.625 sculpt-space bake at _vrScale 0.008), or this "fix" silently resizes the gizmo
+  // for everyone who never hit the bug.
+  const bake = parseFloat(/getOptionsURL\(\)\.gizmoScale \|\| ([\d.]+)/.exec(GIZMO)[1]);
+  const defaultVrScale = parseFloat(/this\._vrScale = ([\d.]+);/.exec(SCENE)[1]);
+  check('the default size is unchanged at the reference zoom',
+    Math.abs(parseFloat(sizeM[1]) - bake * defaultVrScale) < 1e-9,
+    `${sizeM[1]}m vs bake ${bake} x vrScale ${defaultVrScale} = ${bake * defaultVrScale}m`);
+}
+
+// BOTH BRANCHES TAKE THE MULTIPLIER. It was on the VR branch only, so the settings slider and
+// the thumbstick did nothing at all on the desktop — a control that exists and is inert reads as
+// no control, which is half of why matt asked for one that did not exist yet.
+check('the desktop branch applies the size multiplier too',
+  /const km = k \* gizmoSizeMul\(\);/.test(GIZMO),
+  'the desktop gizmo ignoring the slider is why it looked like there was no size control');
 
 // The grab tolerance is slop added AROUND the handle geometry. The geometry rides the gizmo's
 // matrix, so it shrinks; a fixed slop does not, and a gizmo at 0.25x would keep a grab zone

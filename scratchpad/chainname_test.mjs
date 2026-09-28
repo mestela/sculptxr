@@ -683,8 +683,13 @@ const label = (m) => m._permanentStaticLabel;
     /if \(showNames\) \{[\s\S]{0,600}?setLabelText\(e\.nameLabel/.test(SK2)
       && /if \(showLen\) \{[\s\S]{0,1600}?setLabelText\(e\.label, len </.test(SK2),
     'Lengths and Names are two buttons and must not switch each other');
-  check('...the name is placed on the JOINT, offset by the joint radius',
-    /e\.nameLabel\.sprite\.position\.copy\(_pB\)\.addScaledVector\(_up, jr \* [\d.]+\)/.test(SK2),
+  // OFFSET BY THE DOT'S OWN RADIUS, `jd`, and not by `jr`. The job of the offset is to clear the
+  // marker, so the ruler has to be whatever the marker was actually drawn at -- and the dot has
+  // been capped to its own joint since the finger-joint work. On `jr` (one number for the whole
+  // rig, and on a scene with a sculpt in it that number is the MESH's bounding radius) the text
+  // floated several dot-widths above a dot that was no longer anywhere near that big.
+  check('...the name is placed on the JOINT, offset by the radius the dot was drawn at',
+    /e\.nameLabel\.sprite\.position\.copy\(_pB\)\.addScaledVector\(_up, jd \* [\d.]+\)/.test(SK2),
     'half a bone away from the joint it names is where this started');
   check('...and drawn before the bone is considered, so a chain root gets one too',
     SK2.indexOf('setLabelText(e.nameLabel') < SK2.indexOf('const hasBone = Skeleton.isJoint(parent)'),
@@ -750,14 +755,21 @@ const label = (m) => m._permanentStaticLabel;
   // Lifted and RUN: the geometry of "how big and what shape" is worth checking as numbers.
   const m = /const LABEL_SIZE = ([\d.]+);/.exec(SK2);
   check('the label height is liftable', !!m);
-  // DOUBLED, from the 0.06 it had settled on. The rig markers and the text are sized by two
-  // different rulers -- the markers by JOINT_R_FRAC, the text by this -- and at Rig Scale 1.0x
-  // the markers were right and the text was not. matt: "if the joint scale in settings is set to
-  // 1.0x, the pins and joints look correct, but the text is too small, that should be doubled."
-  check('...and is double the 0.06 it was', m && Math.abs(parseFloat(m[1]) - 0.12) < 1e-9,
-    'got ' + (m && m[1]) + ', was 0.06');
+  // DOUBLED TWICE, and only the second one is on a ruler that will hold. 0.06 -> 0.12 was judged
+  // on a rig with no sculpt in the scene (matt: "the text is too small, that should be doubled"),
+  // which is the MEDIAN ruler, and then applied for a while against a mesh bounding radius five
+  // times larger. 0.12 -> 0.24 is the re-judgement made once the text was measured by markerUnit,
+  // so the tuning and the use are finally on the same ruler: "labels are 2x too small".
+  check('...and is 0.24', m && Math.abs(parseFloat(m[1]) - 0.24) < 1e-9,
+    'got ' + (m && m[1]) + ', was 0.12');
+  // WHAT IT MULTIPLIES MATTERS AS MUCH AS THE CONSTANT. That doubling was tuned on a rig with no
+  // sculpt in the scene, where sceneUnit is the MEDIAN BONE LENGTH; applied against the other
+  // source -- the biggest mesh's bounding radius, five times larger on the human base -- it put
+  // joint names taller than the limbs they name. matt, in a headset at Rig Scale 1.0x: "labels
+  // and pins are stupidly huge. i have to use 0.25x rig scale to make this usable." `mUnit` is
+  // the ruler the constant was tuned against. See Skeleton.markerUnit.
   check('...and ONE constant sizes both labels, so a name and its length never differ',
-    (SK2.match(/const _n?h = unit \* LABEL_SIZE;/g) || []).length === 2,
+    (SK2.match(/const _n?h = mUnit \* LABEL_SIZE;/g) || []).length === 2,
     'two sprites reading one rig at two type sizes');
 
   const BP = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');

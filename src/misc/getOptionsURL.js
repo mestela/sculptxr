@@ -210,23 +210,25 @@ var getOptionsURL = function () {
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
-  // ?renderer=webgpu switches to WebGPURenderer (WebGL backend) for the TSL migration. URL
-  // only, deliberately: this is not a preference to persist into someone's next session while
-  // the port is half done.
+  // WebGPURenderer (WebGL backend, TSL materials) is the DEFAULT as of 2026-09-29 — matt, after
+  // the XR lit-material fixes: "i'm getting more confident its working well. and i'm getting
+  // tired of having to add it to the url." `?renderer=webgl` goes back to the legacy renderer,
+  // and is the bisection switch when something looks wrong. URL only, deliberately: neither
+  // renderer is a preference to persist into someone's next session while the port is half done.
   // SAY SO WHEN IT IS NOT A VALUE WE KNOW.
   //
-  // `?renderer=webgpu?xrlayers=1` -- two question marks -- makes the value the whole string
-  // "webgpu?xrlayers=1", which is not 'webgpu', so this quietly hands back the legacy renderer.
-  // matt hit exactly that and spotted it only from the old environment list and black
+  // `?renderer=webgl?xrlayers=1` -- two question marks -- makes the value the whole string
+  // "webgl?xrlayers=1", which is not 'webgl', so the opt-out quietly does nothing. matt hit
+  // exactly that the other way round and spotted it only from the old environment list and black
   // controllers: "i don't trust that its using the new code path." A silent fallback to a
   // different renderer is the worst possible answer to a typo.
   const _rq = params.renderer;
   if (_rq !== undefined && _rq !== 'webgpu' && _rq !== 'webgl') {
-    console.warn('[options] ?renderer=' + JSON.stringify(_rq) + ' is not a renderer — falling '
-      + 'back to legacy WebGL. Separate flags with & rather than ?, e.g. '
-      + '?renderer=webgpu&xrlayers=1');
+    console.warn('[options] ?renderer=' + JSON.stringify(_rq) + ' is not a renderer — using '
+      + 'the default WebGPU renderer. Separate flags with & rather than ?, e.g. '
+      + '?renderer=webgl&xrlayers=1');
   }
-  options.renderer = _rq === 'webgpu' ? 'webgpu' : 'webgl';
+  options.renderer = _rq === 'webgl' ? 'webgl' : 'webgpu';
   options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 4); // [0-inf]
   options.shader = getEnum(Enums.Shader, getVal('shader'), Enums.Shader.PBR); // pbr/matcap/normal/uv
   options.filmic = queryBool(getVal('filmic'), false);

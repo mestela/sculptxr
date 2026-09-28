@@ -48,6 +48,7 @@ import {
   wireBoneSection,
 } from '../bonePanel.js';
 import { buildTransformSectionHTML, wireTransformSection } from '../transformPanel.js';
+import { GIZMO_MUL_MIN, GIZMO_MUL_MAX } from '../../editing/GizmoVR.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
@@ -2330,9 +2331,16 @@ function buildMenuHTML_settings(main) {
       <input type="range" id="mm-stylus-tilt" min="-45" max="45" step="1" value="${Math.round(stylusTilt)}">
       <span class="mm-val" id="mm-stylus-tilt-val">${Math.round(stylusTilt)}°</span>
     </div>
+
+    ${/* ITS OWN SECTION, not the tail of "Controller spike". The gizmo is not part of the stylus
+         and nobody looking for its size was ever going to find it between the spike's Z-Shift and
+         its Tilt. The Transform tool's wrist panel and menu section carry the same slider now
+         (gui/transformPanel.js) -- this copy stays because Settings is where you look for a
+         preference, and both write the one number, so they cannot disagree. */ ''}
+    <div class="mm-section-title">Transform gizmo</div>
     <div class="mm-row">
       <span class="mm-lbl">Gizmo size</span>
-      <input type="range" id="mm-gizmo-mul" min="25" max="200" step="5" value="${Math.round(gizmoSizeMul*100)}">
+      <input type="range" id="mm-gizmo-mul" min="${Math.round(GIZMO_MUL_MIN*100)}" max="${Math.round(GIZMO_MUL_MAX*100)}" step="5" value="${Math.round(gizmoSizeMul*100)}">
       <span class="mm-val" id="mm-gizmo-mul-val">${gizmoSizeMul.toFixed(2)}x</span>
     </div>
 

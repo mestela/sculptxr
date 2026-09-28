@@ -30,6 +30,30 @@ const CUBE_SIDE_PICK = CUBE_SIDE * 1.2;
 // used, so the desktop gizmo comes out the size it always was.
 const GIZMO_SIZE_SCREEN = 160.0;
 
+// CONSTANT PHYSICAL SIZE, the VR rule, in metres. 0.125 is what the old latched rule produced at
+// the default world scale (the 15.625 sculpt-space bake x _vrScale 0.008), so the gizmo comes out
+// the size it always was at the zoom it was calibrated at -- but now from a number rather than
+// from whatever zoom it first woke up at. See update().
+const GIZMO_SIZE_M = 0.125;
+
+// THE USER'S SIZE MULTIPLIER, AND ITS ENDS, DEFINED WHERE THE GIZMO IS SIZED.
+//
+// Three things write this number -- the thumbstick while Transform is active (Scene), the
+// Settings slider and the Transform section's slider (gui/transformPanel) -- and all three used
+// to carry their own copy of the 0.25/2.0 clamp. They are exported from here instead, so the
+// range a control offers cannot drift from the range the gizmo will honour.
+//
+// Live value first, saved value second: every writer sets the live one and persists the same
+// number, so a change takes effect this frame and survives the session. Read through one helper
+// because BOTH sizing branches need it now.
+export const GIZMO_MUL_MIN = 0.25;
+export const GIZMO_MUL_MAX = 2.0;
+
+export function gizmoSizeMul() {
+  const v = window._gizmoSizeMul != null ? window._gizmoSizeMul : getOptionsURL().gizmoSizeMul;
+  return Number.isFinite(v) && v > 0 ? v : 1.0;
+}
+
 // Bitmasks for Gizmo parts
 export const GIZMO_TYPE = {
   TRANS_X: 1 << 0,
@@ -442,16 +466,25 @@ class GizmoVR {
       mat4.multiply(baseMat, baseMat, mRot);
     }
 
-    // Keep a CONSTANT physical size regardless of world zoom. The gizmo group rides
-    // _worldGroup (which scales with double-grip zoom), so it otherwise balloons/shrinks
-    // with the world instead of staying fixed like the menus/panels. `scaleFactor` is a
-    // sculpt-space constant calibrated to be scaled DOWN by the (small) default worldScale,
-    // so we can't just divide worldScale out (that exposes the raw ~metres value). Instead
-    // capture the world scale the gizmo first sized at and hold that physical size:
-    // k = refScale/worldScale → exactly 1 at the reference, compensating only when zoomed.
-    if (this._refWorldScale === undefined || this._refWorldScale <= 0.0001) {
-      this._refWorldScale = worldScale;
-    }
+    // A CONSTANT PHYSICAL SIZE, AND THE CONSTANT IS A CONSTANT.
+    //
+    // The gizmo group rides _worldGroup, which scales with double-grip zoom, so without this it
+    // balloons and shrinks with the world instead of staying fixed like the menus and panels.
+    // That part was always right. What was wrong is where the reference came from: it LATCHED
+    // `_refWorldScale` to whatever the world scale happened to be the first time the gizmo ever
+    // sized itself, and then held k = refScale/worldScale forever. Physical size works out to
+    // `scaleFactor * refScale`, so the gizmo's real size was decided by the zoom you were at on
+    // its first frame -- 12.5cm if that was the default 0.008, but ten times that if you had
+    // zoomed in first, and eighty times that if the VR gizmo's first update had run on the
+    // desktop (worldScale 0.701 there). Nothing ever released the latch, so for the rest of the
+    // session it could not be argued with. matt: "the transform gizmo gets larger and larger...
+    // something is resetting the scale of these elements somewhere and i can't control it."
+    //
+    // So the reference is now a NUMBER OF METRES, and the whole sizing is solved back from it.
+    // GIZMO_SIZE_M is exactly what the old rule produced at the default world scale (15.625
+    // baked x 0.008 = 0.125m), so at the zoom the default was calibrated for nothing moves --
+    // it is the same gizmo, just one that cannot inherit somebody else's reference any more.
+    //
     // DESKTOP: screen-constant instead, and measured from the camera rather than from the
     // world scale. `_lastDistToEye` is frozen while a drag is running so the gizmo does not
     // resize under the cursor mid-edit -- the handle you grabbed has to stay where you
@@ -466,11 +499,15 @@ class GizmoVR {
       // left in, the two multiply and the gizmo fills the viewport.
       const k = ((this._lastDistToEye * GIZMO_SIZE_SCREEN) / camera.getConstantScreen())
         / (this._lastScale || 1);
-      mat4.scale(baseMat, baseMat, [k, k, k]);
+      // THE SIZE MULTIPLIER APPLIES HERE TOO. It was on the VR branch only, so the "Gizmo size"
+      // slider and the thumbstick did nothing whatsoever on the desktop -- a control that exists
+      // and is inert reads as no control at all.
+      const km = k * gizmoSizeMul();
+      mat4.scale(baseMat, baseMat, [km, km, km]);
     } else if (worldScale > 0.0001) {
-      // User size multiplier (persistent, settings slider) on top of the constant physical size.
-      const mul = window._gizmoSizeMul != null ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
-      const k = (this._refWorldScale / worldScale) * mul;
+      // Solved from the target size in metres: physical = lastScale (the bake) * k * worldScale,
+      // so k = metres / (bake * worldScale). No latch, no history, same answer every session.
+      const k = (GIZMO_SIZE_M * gizmoSizeMul()) / ((this._lastScale || 1) * worldScale);
       mat4.scale(baseMat, baseMat, [k, k, k]);
     }
 

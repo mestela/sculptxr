@@ -41,6 +41,7 @@ import Background from './drawables/Background.js';
 import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
+import { GIZMO_MUL_MIN, GIZMO_MUL_MAX } from './editing/GizmoVR.js';
 import ShaderBusy from './gui/ShaderBusy.js';
 import { renderPassToCanvas, exportRenderPass, autoRange } from './render/RenderPassExport.js';
 import { fixXRLayerSize } from './render/nodes/ThreeXRPatches.js';
@@ -4071,11 +4072,13 @@ class Scene {
   async initWebGL() {
     var canvas = document.getElementById('canvas');
 
-    // ?renderer=webgpu — THE MIGRATION FLAG (roadmap #2). The port is all-or-nothing at the
+    // THE MIGRATION FLAG (roadmap #2), NOW DEFAULTED ON. The port is all-or-nothing at the
     // swap, because WebGPURenderer cannot render a THREE.ShaderMaterial and every one of our
     // shaders is one. A flag lets the two renderers live side by side so master stays
     // shippable and the new path can be tested on device shader by shader, instead of the app
-    // being broken for the length of the port.
+    // being broken for the length of the port. As of 2026-09-29 the node renderer is what you
+    // get by default and `?renderer=webgl` is the way BACK to the legacy one — so anything
+    // below that says "under ?renderer=webgpu" now means "normally".
     //
     // forceWebGL is not a choice: in three 0.183.2 the WebGPU backend THROWS on entering XR
     // ("XR is currently not supported with a WebGPU backend"). The spike measured this path at
@@ -4087,9 +4090,9 @@ class Scene {
     // three in memory for the duration of the migration.
     //
     // Survivable, because three duck-types on `.isMesh` / `.isBufferGeometry` rather than
-    // instanceof, so objects built by one copy are recognised by the other. And loading it
-    // lazily means the default path never pays for it: no second copy, no bundle cost, nothing
-    // changed for anyone not passing the flag.
+    // instanceof, so objects built by one copy are recognised by the other. The lazy import
+    // used to mean the default path never paid for it; now that webgpu IS the default that
+    // reads the other way round — it is `?renderer=webgl` that skips the second copy of three.
     const useWebGPU = getOptionsURL().renderer === 'webgpu';
     if (useWebGPU) {
       const [WGPU, TSL] = await Promise.all([import('three/webgpu'), import('three/tsl')]);
@@ -12868,8 +12871,9 @@ class Scene {
                 ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
               const next = valY < -T_PRESS ? cur * step : cur / step; // UP -> bigger
 
-              // Clamped to the same range the settings slider offers, so the two agree.
-              window._gizmoSizeMul = Math.max(0.25, Math.min(2.0, next));
+              // Clamped to the range GizmoVR publishes, which is the same range both sliders
+              // offer -- one definition, so a control cannot promise a size the gizmo clamps away.
+              window._gizmoSizeMul = Math.max(GIZMO_MUL_MIN, Math.min(GIZMO_MUL_MAX, next));
               getOptionsURL.saveOption('gizmoSizeMul', window._gizmoSizeMul, 500);
               this._main ? this._main.render() : this.render();
             }

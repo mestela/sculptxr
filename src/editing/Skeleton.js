@@ -63,10 +63,13 @@ const PIN_SOFT_COLOR = 0xa6e3a1;
 const PIN_LINK_COLOR = 0xcba6f7;
 const _pinHSL = { h: 0, s: 0, l: 0 };   // scratch for the pin-weight saturation ramp
 const PLANE_COLOR = 0x89b4fa;
-// The snap-plane cursor's radius, in METRES OF ROOM -- half of the 2cm diameter matt asked for.
-// Deliberately not a fraction of sceneUnit: it is a "can you see it" marker, not a "does it match
-// the bones" one, so it has to be the same size on a thimble and on a building.
-const DISC_RADIUS_M = 0.01;
+// The snap-plane cursor used to have its own radius here, a fixed 0.01m of ROOM -- "can you see
+// it" rather than "does it match the bones", so it would read the same on a thimble and on a
+// building. Removed, and the reason is worth keeping: it REPLACES the joint dot rather than
+// joining it, so the two are one marker, and a constant in the room cannot track a marker
+// measured in the model. It went wrong twice from that -- once against the Rig Scale slider and
+// once against the joint-sized dot -- and both times it read as the cursor GROWING. It now takes
+// the dot's own radius in showPreview.
 const PLANE_HOT = 0xa6e3a1;
 const PIN_COLOR = 0xf38ba8;
 const GHOST_OPACITY = 0.35;
@@ -416,6 +419,11 @@ function capsuleEndGeometry() {
 // envelopes read as bloated tubes rather than as limbs, and they swamped the bones they were
 // meant to wrap. This is the number every downstream weight inherits.
 const DEFAULT_RADIUS_FRAC = 0.25;
+// A ROOT HAS NO BONE TO MEASURE, so its default capsule radius is a fraction of the scene unit
+// instead. Named because three places need it to agree: addJoint, Reset Radii, and markerUnit --
+// which solves it BACKWARDS to ask "how long would a bone with this radius be", and gets the
+// only sensible ruler there is before the first bone exists.
+const ROOT_RADIUS_FRAC = 0.05;
 // The panel's slider for this was removed -- matt judged the default right and the control was
 // costing more in mis-aimed presses than it was worth. `window._boneRadiusFrac` is kept as the
 // override because it is how the number is tried from the console, which is how it was tuned to
@@ -456,10 +464,25 @@ function boneWidth(len) { return len * 0.12; }
 // several times a limb's length, so the markers were drawn against an inflated unit and came out
 // large. Fixing that fallback to a median bone length brought the unit down to a real size and
 // the markers with it — correct, but smaller than the size matt had been working at. matt: "can
-// they be double what they currently are? that should get them back to how they were." The pin
-// parts are multiples of this (jr * 2.2, jr * 1.5), so one number moves the dot and the pins
-// together and they stay in proportion.
+// they be double what they currently are? that should get them back to how they were."
+//
+// WHICH UNIT THAT TUNING WAS DONE AGAINST IS THE POINT, and it is why this file went wrong later.
+// It was the MEDIAN BONE LENGTH — the rig-only fallback, measured with no sculpt in the scene.
+// sceneUnit's other source is the biggest mesh's BOUNDING RADIUS, four times larger on the human
+// base, so every constant here was tuned on one ruler and then silently applied on the other the
+// moment a body was in the scene. The dot survived it because it is capped by its own joint
+// (`jd`); the pins and the labels had no cap and came out four times too big. See
+// Skeleton.markerUnit. The pin parts are multiples of `jd` now, not of this, so a pin is the size
+// of the joint it is pinned to rather than the size of the average one.
 const JOINT_R_FRAC = 0.06;
+
+// HOW FAR A PIN STANDS OUTSIDE THE DOT IT IS PINNED TO, as a multiple of that dot's own radius.
+// 2.2 and 1.5 were the old numbers and they were multiples of `jr`, the whole-rig figure; carried
+// over verbatim onto the per-joint `jd` they came out too heavy, and matt re-judged them on the
+// corrected ruler: "pins are 1.5x too big". These are those two divided by 1.5, which keeps the
+// proportion between the triad and the softer rotation-only marker exactly as it was.
+const PIN_R_FRAC = 1.47;
+const PIN_SOFT_R_FRAC = 1.0;
 
 // ── BATCHED RIG VISUALS ───────────────────────────────────────────────────────────────────
 //
@@ -1266,7 +1289,13 @@ const LABEL_PAD = 18;    // room for the stroke outline at both ends
 // read correctly and the text did not. matt: "if the joint scale in settings is set to 1.0x,
 // the pins and joints look correct, but the text is too small, that should be doubled."
 // One constant for both so a name and the length beside it are never two sizes.
-const LABEL_SIZE = 0.12;
+//
+// 0.24, DOUBLED AGAIN, and this time against a ruler that will hold. 0.12 was itself a doubling
+// of 0.06, judged on a rig with no sculpt in the scene -- so it was tuned against the median bone
+// length and then spent a while being applied against a mesh bounding radius five times larger,
+// which is what made the text enormous. Now that the text is measured by markerUnit, the tuning
+// and the use are on the same ruler, and matt re-judged it there: "labels are 2x too small".
+const LABEL_SIZE = 0.24;
 
 function makeLabel() {
   const canvas = document.createElement('canvas');
@@ -1843,6 +1872,69 @@ Skeleton.setSceneUnitMul = function (mul) {
   return Skeleton.sceneUnitMul;
 };
 
+// THE MEDIAN BONE LENGTH: how big a LIMB is on this rig.
+//
+// Lifted out of sceneUnit's fallback because two callers need the same number. Median rather
+// than mean so one long bone (a spine, a tail) cannot drag the answer up with it, and median
+// rather than max for the same reason the rig's overall reach was wrong -- a rig does not get
+// bigger limbs because it grew more of them. Returns 0 when there is nothing to measure: a lone
+// joint, or joints with no parent.
+function medianBoneLength(main) {
+  const lens = [];
+  for (const j of Skeleton.joints(main)) {
+    const len = Skeleton.boneLength(main, j);
+    if (len > 1e-6) lens.push(len);
+  }
+  if (!lens.length) return 0;
+  lens.sort((a, b) => a - b);
+  const mid = lens.length >> 1;
+  // Even count: the mean of the two middles, so the answer does not jump between the two as a
+  // bone is added or removed.
+  return lens.length % 2 ? lens[mid] : (lens[mid - 1] + lens[mid]) * 0.5;
+}
+
+// WHAT A RIG MARKER IS MEASURED BY, which is NOT what the scene is measured by.
+//
+// `sceneUnit` has two sources that are not the same ruler, and nothing made them agree: with a
+// sculpt in the scene it is the biggest mesh's BOUNDING RADIUS, and with no sculpt it is the
+// MEDIAN BONE LENGTH. For a humanoid those differ by about four times -- the bundled human base
+// measures 83.9 tall, bounding radius 44.0, and its limb bones are around 11 -- so the same rig
+// got markers four times bigger the moment a body appeared beside it. matt rigged that mesh in a
+// headset at Rig Scale 1.0x: "labels and pins are stupidly huge. i have to use 0.25x rig scale to
+// make this usable", having just checked a rig loaded on its own and found it correct. Two
+// sessions, two rulers, and the slider is the only thing that ever bridged them.
+//
+// A bounding radius is the size of the SCENE. It is the right ruler for a snap radius, an IK
+// tolerance or a default bone radius -- things measured against the world you are working in --
+// and the wrong one for a marker drawn on a limb, which should be the size of a limb whether or
+// not there is a body around it. So the markers get their own accessor and everything else keeps
+// sceneUnit unchanged; nothing outside the drawing code moves.
+//
+// BEFORE THE FIRST BONE EXISTS there is no limb to measure, and this used to hand back the bare
+// sceneUnit -- which is the very ruler the whole accessor exists to avoid. The symptom was exact:
+// place the first joint with Names on and its label came out five times too big, then snapped to
+// the right size the moment a second joint gave it a bone to measure. matt: "the first bone gets
+// a rediculously huge label, until i make the next joint, then it goes back to the default
+// scale."
+//
+// So the fallback ASKS THE SAME QUESTION BACKWARDS. A root's capsule radius is
+// `unit * ROOT_RADIUS_FRAC` and a bone's is `len * radiusFrac()`, so the length of a bone that
+// would have been given the root's radius is `unit * ROOT_RADIUS_FRAC / radiusFrac()` -- the
+// implied limb length of a rig that has not grown one yet. It lands where the rig is about to:
+// on the human base that is 44.0 x 0.05 / 0.25 = 8.8, against the 8.0 the median settles on once
+// the limbs are drawn, so nothing visibly jumps when the first bone appears.
+//
+// Written from the two constants rather than as 0.2, so an override of `radiusFrac` moves the
+// fallback with the radii it is derived from instead of leaving it behind.
+//
+// NOT cached -- medianBoneLength is a walk over the joints, which is what sceneUnit's own
+// fallback already did every time it missed, and updateVisuals asks for it once a frame.
+Skeleton.markerUnit = function (main) {
+  const m = medianBoneLength(main);
+  if (m > 1e-6) return m * Skeleton.sceneUnitMul;
+  return Skeleton.sceneUnit(main) * (ROOT_RADIUS_FRAC / radiusFrac());
+};
+
 Skeleton.sceneUnit = function (main) {
   // RE-MEASURED ONLY WHEN THE SCENE CHANGES STRUCTURALLY, never on a timer.
   //
@@ -1923,19 +2015,7 @@ Skeleton.sceneUnit = function (main) {
   // no parent — has no length to measure and falls through to the camera as before.
   if (best <= 1e-6) {
     from = 'rig';
-    const js = Skeleton.joints(main);
-    const lens = [];
-    for (const j of js) {
-      const len = Skeleton.boneLength(main, j);
-      if (len > 1e-6) lens.push(len);
-    }
-    if (lens.length) {
-      lens.sort((a, b) => a - b);
-      const mid = lens.length >> 1;
-      // Even count: the mean of the two middles, so the answer does not jump between the two
-      // as a bone is added or removed.
-      best = lens.length % 2 ? lens[mid] : (lens[mid - 1] + lens[mid]) * 0.5;
-    }
+    best = medianBoneLength(main);
   }
   // Empty scene: no sculpt AND no joints yet, so there is no object to take a scale from.
   // Use how far the camera is pulled back — that is the size of what the user is looking at,
@@ -1972,25 +2052,30 @@ window.rigUnit = function (main) {
     + ', measured from ' + _lastUnitFrom + ' (' + _lastUnitMeshes + ' real meshes)'
     + ' | joint dot ' + (_lastUnit * JOINT_R_FRAC).toFixed(4)
     + ' | ' + _unitRemeasures + ' remeasures so far');
-  // WHAT THE RIG FALLBACK MEASURED, when that is the source. The fallback is a MEDIAN BONE
-  // LENGTH, so this prints the lengths it chose between — a rig whose median is dominated by one
-  // long bone is the case the median exists to survive, and it is invisible without this.
-  if (_lastUnitFrom === 'rig') {
+  // BOTH RULERS, ALWAYS, AND THE RATIO BETWEEN THEM.
+  //
+  // It used to print the median only when the median was the SOURCE — which is precisely the case
+  // where nothing is wrong. The failure is the other one: a sculpt in the scene, so the unit is
+  // that mesh's bounding radius, while every marker constant in this file was tuned against the
+  // median. On the human base those are 44.0 and about 8, and the ratio is what the Rig Scale
+  // slider was being used to cancel out. So print the number the markers use and the number the
+  // scene uses side by side, whichever one is in force — a discrepancy nobody can see is a
+  // discrepancy that gets blamed on the slider.
+  //
+  // Through medianBoneLength rather than a second copy of the arithmetic: two implementations of
+  // one measurement is how the two rulers drifted apart to begin with.
+  {
     const app0 = main || window.app;
-    const lens = [];
-    for (const j of (app0 ? Skeleton.joints(app0) : [])) {
-      const len = Skeleton.boneLength(app0, j);
-      if (len > 1e-6) lens.push(len);
-    }
-    if (lens.length) {
-      lens.sort((a, b) => a - b);
-      console.log('[rigUnit] rig fallback: median bone length over ' + lens.length
-        + ' bone(s) — min ' + lens[0].toFixed(4) + ', median '
-        + (lens.length % 2 ? lens[lens.length >> 1]
-          : (lens[(lens.length >> 1) - 1] + lens[lens.length >> 1]) * 0.5).toFixed(4)
-        + ', max ' + lens[lens.length - 1].toFixed(4));
+    const med = app0 ? medianBoneLength(app0) : 0;
+    if (med > 1e-6) {
+      console.log('[rigUnit] marker ruler (median bone length) ' + med.toFixed(4)
+        + ' x ' + Skeleton.sceneUnitMul + ' = ' + (med * Skeleton.sceneUnitMul).toFixed(4)
+        + ' | scene ruler ' + _lastUnit.toFixed(4)
+        + ' | ratio ' + (_lastUnit / med).toFixed(2) + 'x'
+        + (_lastUnitFrom === 'rig' ? '  (same source — nothing to reconcile)' : ''));
     } else {
-      console.log('[rigUnit] rig fallback: no bones to measure (a lone joint, or roots only)');
+      console.log('[rigUnit] no bones to measure (a lone joint, or roots only)'
+        + ' — markers fall back to the scene ruler');
     }
   }
   // THE OTHER CANDIDATE. A joint marker's drawn size is `sceneUnit * JOINT_R_FRAC`, but each
@@ -2676,7 +2761,7 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
     const len = Skeleton.jointPos(parent).distanceTo(Skeleton.jointPos(mesh));
     mesh._boneRadius = len * radiusFrac();
   } else {
-    mesh._boneRadius = unit * 0.05;
+    mesh._boneRadius = unit * ROOT_RADIUS_FRAC;
   }
 
   if (name) mesh._permanentStaticLabel = name;
@@ -3139,6 +3224,9 @@ Skeleton.updateVisuals = function (main) {
 
   const unit = Skeleton.sceneUnit(main);
   const jr = unit * JOINT_R_FRAC;
+  // THE LIMB RULER, for the markers that are one size across the whole rig. Asked once per draw
+  // and not per joint -- it walks the joints. See Skeleton.markerUnit for why it is not `unit`.
+  const mUnit = Skeleton.markerUnit(main);
   const live = new Set();
   const hi = main._skelHighlightId ?? -1;
   const hiAll = new Set(main._skelHighlightIds || [hi]);
@@ -3437,10 +3525,23 @@ Skeleton.updateVisuals = function (main) {
     // are the rotation half. So a 3DOF pin is lines, a 6DOF pin is lines AND rings, and the
     // rotation-only pin is rings alone. Nothing had to be invented for the fourth mode — it
     // is the half of the 6DOF marker that says what it still does.
+    // SIZED BY THE JOINT IT IS PINNED TO, on `jd` rather than on `jr`.
+    //
+    // A pin sits on a joint, so it is the same kind of marker as the dot and wants the same
+    // ruler: `jd` is the dot's radius, already capped by that joint's own bone (see the note
+    // where it is computed). On `jr` -- one number for the whole rig, taken from the biggest
+    // MESH's bounding radius -- a pin on an ankle came out the same size as one on the spine and
+    // several times the length of the foot it was attached to. matt, rigging the human base in a
+    // headset at Rig Scale 1.0x: "labels and pins are stupidly huge."
+    //
+    // The multipliers are unchanged, so a pin still reads as the marker that stands OUTSIDE the
+    // dot; it now does that on every joint rather than only on the average one. `_pickRadius`
+    // below is taken from these same numbers, so the zone that answers for the pin shrinks with
+    // the drawing and the two cannot disagree.
     const pinParts = [
-      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jr * 2.2],
-      [e.pinG, showPins && (pinMode === 2 || pinMode === 4), jr * 2.2],
-      [e.pinS, showPins && pinMode === 3, jr * 1.5],
+      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jd * PIN_R_FRAC],
+      [e.pinG, showPins && (pinMode === 2 || pinMode === 4), jd * PIN_R_FRAC],
+      [e.pinS, showPins && pinMode === 3, jd * PIN_SOFT_R_FRAC],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
@@ -3452,14 +3553,16 @@ Skeleton.updateVisuals = function (main) {
     // just reads as a broken pin. matt: "if the weight is zero, i think that line should be
     // hidden."
     const gap = showPins && pinMode && pinMode !== 4 && pinW > 0 ? _vPin.distanceTo(_pB) : 0;
-    if (gap > jr * 0.35) {
+    // The leader's threshold and its dashes are the pin's ruler too: on `jr` a foot pin's dashes
+    // were longer than the gap they were drawn across, so the leader read as a solid line.
+    if (gap > jd * 0.35) {
       const pa = e.pinLink.geometry.getAttribute('position');
       pa.setXYZ(0, _pB.x, _pB.y, _pB.z);
       pa.setXYZ(1, _vPin.x, _vPin.y, _vPin.z);
       pa.needsUpdate = true;
       e.pinLink.geometry.computeBoundingSphere();
-      e.pinLink.material.dashSize = jr * 0.8;
-      e.pinLink.material.gapSize = jr * 0.6;
+      e.pinLink.material.dashSize = jd * 0.8;
+      e.pinLink.material.gapSize = jd * 0.6;
       e.pinLink.computeLineDistances();
       e.pinLink.visible = true;
     } else {
@@ -3517,17 +3620,22 @@ Skeleton.updateVisuals = function (main) {
     }
 
     // THE NAME SITS ON THE JOINT IT NAMES, above the marker rather than halfway down a bone.
-    // Offset by the JOINT RADIUS, which is the right ruler here and the one place scaling with
-    // the scene unit is correct: the label has to clear the dot, and the dot is `jr`. So the
-    // Rig Scale slider moves the two together and the text stays the same distance off its own
-    // marker at any setting.
+    // Offset by the DOT'S OWN RADIUS: the job of the offset is to clear the dot, so the ruler is
+    // whatever the dot was actually drawn at. That used to be `jr`, and the note here said so --
+    // but the dot has been capped to its own joint since the finger-joint work, so on anything
+    // smaller than the average bone the text was pushed several dot-widths clear of a dot that
+    // was no longer there. Reading `jd` keeps the text the same distance off its own marker at
+    // every joint AND at every Rig Scale setting, which is what the offset was always for.
     //
     // Drawn BEFORE the bone is considered, so a chain's ROOT gets a name too -- it has no bone
     // ending at it, which is exactly why it never had one before.
     if (showNames) {
       setLabelText(e.nameLabel, j._permanentStaticLabel || ('#' + id));
-      e.nameLabel.sprite.position.copy(_pB).addScaledVector(_up, jr * 2.2);
-      const _nh = unit * LABEL_SIZE;
+      e.nameLabel.sprite.position.copy(_pB).addScaledVector(_up, jd * 2.2);
+      // SIZED BY THE LIMB, NOT BY THE SCENE. See Skeleton.markerUnit: with a body in the scene
+      // `unit` is that body's bounding radius, which on the human base is four times the length
+      // of the bones the text is labelling -- so the names came out taller than the limbs.
+      const _nh = mUnit * LABEL_SIZE;
       e.nameLabel.sprite.scale.set(_nh * (e.nameLabel.aspect || 2), _nh, 1);
       e.nameLabel.sprite.visible = true;
     } else {
@@ -3590,7 +3698,9 @@ Skeleton.updateVisuals = function (main) {
       e.label.sprite.position.copy(_pA).addScaledVector(_dir, 0.5)
         .addScaledVector(_perp, boneWidth(len) * 2.4);
       // Height sets the type size; width follows the canvas aspect, so nothing is stretched.
-      const _h = unit * LABEL_SIZE;
+      // The limb ruler, exactly as the name above it -- one constant, one unit, so a name and the
+      // length beside it are never two sizes.
+      const _h = mUnit * LABEL_SIZE;
       e.label.sprite.scale.set(_h * (e.label.aspect || 2), _h, 1);
       e.label.sprite.visible = true;
     } else {
@@ -3842,14 +3952,40 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
     main._skelPreview = { bone: p, dot: d, disc: disc };
   }
   const pv = main._skelPreview;
-  const jr = Skeleton.sceneUnit(main) * JOINT_R_FRAC;
+  const unit = Skeleton.sceneUnit(main);
+  const jr = unit * JOINT_R_FRAC;
 
   // The cursor says which of two things the next trigger will do. Continuing a chain draws it
-  // full size in the joint colour, at the end of the preview bone; with no chain in progress
-  // it is a smaller blue dot — a place to START one. Without that difference, ending a chain
-  // looks exactly like not having ended it, and the only other signal is a log line that is
-  // hidden by default.
+  // in the joint colour at the end of the preview bone; with no chain in progress it is a blue
+  // dot — a place to START one. Without that difference, ending a chain looks exactly like not
+  // having ended it, and the only other signal is a log line that is hidden by default.
   const rooting = !fromPos;
+
+  // THE PREVIEW DOT IS THE JOINT IT PREVIEWS, drawn by the joint's own rule.
+  //
+  // It used to be the bare `jr` -- one number for the whole rig, a fraction of the scene unit.
+  // But a DRAWN joint has not been that size since the finger-joint work: updateVisuals caps it
+  // by the joint's own radius, `min(jr, ownR * 0.6)`, so a marker can never swallow the joint it
+  // marks. The preview never got that cap, so the cursor was drawn at the uncapped size while
+  // every joint it had already placed was drawn at the capped one -- on an ordinary limb bone
+  // (len * 0.25 * 0.6 against unit * 0.06) that is getting on for three times too big. matt, in
+  // a headset at Rig Scale 1x: "the drawn joints are correct... but the sphere drawn on the end
+  // of the controller is huge. at the very least i would expect it to be drawn the same size as
+  // the joints."
+  //
+  // So it is sized from the radius the joint ABOUT TO BE MADE will actually be given -- the same
+  // two lines Skeleton.addJoint uses, `len * radiusFrac()` off a parent and the root fraction for a
+  // root -- and then run through updateVisuals' own cap. The cursor is now a true preview of the
+  // marker that will replace it, rather than a marker of its own with its own size rule.
+  //
+  // The rooting dot comes out smaller on its own (unit * 0.03, half of jr) because that is what a
+  // root joint's marker genuinely is, so the old hand-applied 0.6 for "you are starting a chain"
+  // is gone with nothing lost. A very short bone can now preview smaller than a root, which is
+  // honest -- the COLOUR is what says which of the two things the trigger will do.
+  const previewOwnR = rooting
+    ? unit * ROOT_RADIUS_FRAC
+    : toPos.distanceTo(fromPos) * radiusFrac();
+  const jd = previewOwnR > 1e-9 ? Math.min(jr, previewOwnR * 0.6) : jr;
 
   // THE DISC REPLACES THE DOT WHILE THE SNAP IS ABOUT TO FIRE, rather than joining it: two
   // markers on one point is two things to read, and the dot is the one carrying less -- a sphere
@@ -3869,21 +4005,29 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
       // Lying IN the plane: CircleGeometry is built in XY with a +Z normal, the same frame the
       // plane fill is built in, so it takes the same rotation. See updatePlane.
       disc.quaternion.setFromUnitVectors(_zAxis, snapPlane.normal);
-      // A FIXED SIZE IN THE ROOM, NOT IN THE MODEL. Everything else the rig draws is scaled by
-      // sceneUnit, which is right for a marker that has to match the bones and wrong for one you
-      // are meant to spot: on a small sculpt it would be a speck. matt asked for "a 2cm diameter
-      // disc", so 1cm of radius, divided back out through the world group's scale -- the rig is
-      // drawn inside a scaled group, so a constant there is not a constant in the room.
-      const ws = g.getWorldScale(_sTmp);
-      const unit = Math.abs(ws.x) > 1e-9 ? ws.x : 1;
-      disc.scale.setScalar(DISC_RADIUS_M / unit);
+      // THE SAME SIZE AS THE DOT IT REPLACES. It does replace it, not join it -- see the
+      // `o.visible = !snapPlane` line below -- so the two are one marker and must be one size.
+      //
+      // This was a FIXED SIZE IN THE ROOM: 1cm of radius, divided back out through the world
+      // group's scale, because matt asked for "a 2cm diameter disc" and a marker you are meant to
+      // spot should not become a speck on a small sculpt. That was right when the dot beside it
+      // was the bare `jr` and the two came out comparable. It stopped being right twice over:
+      // once when the Rig Scale slider arrived (turning it down shrank every other marker and
+      // left this at its full 2cm, so it appeared to GROW as the rig got smaller), and again now
+      // that the dot is sized by the joint it previews and is smaller still.
+      //
+      // A constant in the room cannot track a marker measured in the model, so it stops trying:
+      // `jd` is the dot's radius, which already carries the Rig Scale multiplier and the joint's
+      // own cap. The disc's job is to say which way the snap plane lies, and it does that at any
+      // size -- being BIGGER than the joint it is standing in for was never part of the job.
+      disc.scale.setScalar(jd);
       disc.updateMatrix(); disc.matrixWorldNeedsUpdate = true;
     }
   }
 
   for (const o of [pv.dot.solid, pv.dot.ghost]) {
     o.position.copy(toPos);
-    o.scale.setScalar(rooting ? jr * 0.6 : jr);
+    o.scale.setScalar(jd);
     o.material.color.setHex(rooting ? PLANE_COLOR : JOINT_COLOR);
     o.visible = !snapPlane;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
@@ -4008,7 +4152,7 @@ Skeleton.setRadiusFraction = function (main, frac) {
   const unit = Skeleton.sceneUnit(main);
   for (const j of Skeleton.joints(main)) {
     const len = Skeleton.boneLength(main, j);
-    j._boneRadius = len > 1e-9 ? len * frac : unit * 0.05;
+    j._boneRadius = len > 1e-9 ? len * frac : unit * ROOT_RADIUS_FRAC;
     // A RESET CLEARS THE JOINT SIZES TOO. Leaving them would make the button a half-reset: the
     // bones go back to a proportion of their length and the sized joints stay whatever they
     // were, so the rig comes back neither reset nor as it was.
