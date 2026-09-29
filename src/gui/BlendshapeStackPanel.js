@@ -40,7 +40,12 @@ const FA = {
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
 const PAD       = 10;
-const TOOLBAR_H = 38;
+const TOOLBAR_BTN_H = 38;
+// Fold bar for the layer list, under the buttons and immediately above the rows it governs — the
+// same strip the XY pad carries (PAD_HEADER_H). On a rig with all the ARKit shapes the list is
+// taller than the panel and pushes the pad out of reach.
+const LAYERS_HEADER_H = 22;
+const TOOLBAR_H = TOOLBAR_BTN_H + LAYERS_HEADER_H;
 const ROW_H     = 46;
 const BASE_H    = 30;
 const TRACK_H   = 6;
@@ -102,6 +107,9 @@ export default class BlendshapeStackPanel {
 
     // Hovered element { name, part } for hover highlights ('row'|'eye'|'lock'|'slider').
     this._hover = null;
+
+    // Layer list folded away (persisted, like the pad's fold).
+    this._layersCollapsed = !!getOptionsURL().blendLayersCollapsed;
 
     // ARKit name picker overlay (null = closed). When open it captures all input.
     this._picker = null;
@@ -264,6 +272,7 @@ export default class BlendshapeStackPanel {
   _contentHeight() {
     const track = this._track();
     const n = track?.blendshapes?.size || 0;
+    if (this._layersCollapsed) return TOOLBAR_H + PAD;
     return TOOLBAR_H + n * ROW_H + BASE_H + PAD;
   }
 
@@ -330,7 +339,7 @@ export default class BlendshapeStackPanel {
     if (!this._padOwned || !this._pad) return;
     const track = this._track();
     const nRows = track?.blendshapes ? track.blendshapes.size : 0;
-    const rowsWant = TOOLBAR_H + nRows * ROW_H + BASE_H;
+    const rowsWant = this._layersCollapsed ? TOOLBAR_H : TOOLBAR_H + nRows * ROW_H + BASE_H;
     const left = this._cssH - rowsWant;
 
     // A SHARE, NOT LEFTOVERS — and that distinction is the whole balance of this panel.
@@ -397,17 +406,21 @@ export default class BlendshapeStackPanel {
       ctx.rect(0, 0, W, H - this._padReserve);
       ctx.clip();
     }
-    let y = TOOLBAR_H;
-    for (const name of names) {
-      this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
-      y += ROW_H;
+    if (this._layersCollapsed) {
+      if (this._padOwned) ctx.restore();
+    } else {
+      let y = TOOLBAR_H;
+      for (const name of names) {
+        this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
+        y += ROW_H;
+      }
+
+      // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
+      this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
+
+      if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
+      if (this._padOwned) ctx.restore();
     }
-
-    // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
-    this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
-
-    if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
-    if (this._padOwned) ctx.restore();
 
     // The pad last, so it draws over the rows if a very long stack would otherwise run into it —
     // it is a fixed reservation at the bottom and the list is the thing that has to give.
@@ -431,10 +444,25 @@ export default class BlendshapeStackPanel {
     ctx.fillRect(0, 0, W, TOOLBAR_H);
     ctx.strokeStyle = Theme.surface0;
     ctx.beginPath();
+    ctx.moveTo(0, TOOLBAR_BTN_H - 0.5); ctx.lineTo(W, TOOLBAR_BTN_H - 0.5);
     ctx.moveTo(0, TOOLBAR_H - 0.5); ctx.lineTo(W, TOOLBAR_H - 0.5);
     ctx.stroke();
 
-    const bw = 34, bh = 26, by = (TOOLBAR_H - bh) / 2;
+    // Fold bar: caret + label, drawn like BlendshapePad._drawHeader.
+    const cx = 12, cy = TOOLBAR_BTN_H + LAYERS_HEADER_H / 2, r = 4;
+    this._toolbarBtns.push({ id: 'fold', x: 0, y: TOOLBAR_BTN_H, w: W, h: LAYERS_HEADER_H });
+    ctx.fillStyle = Theme.subtext0 || '#a6adc8';
+    ctx.beginPath();
+    if (this._layersCollapsed) { ctx.moveTo(cx - r, cy + r / 2); ctx.lineTo(cx + r, cy + r / 2); ctx.lineTo(cx, cy - r / 2 - 2); }
+    else                       { ctx.moveTo(cx - r, cy - r / 2); ctx.lineTo(cx + r, cy - r / 2); ctx.lineTo(cx, cy + r / 2 + 2); }
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Blendshape Layers', 24, cy + 0.5);
+
+    const bw = 34, bh = 26, by = (TOOLBAR_BTN_H - bh) / 2;
     const newBtn = { id: 'new', x: PAD, y: by, w: bw, h: bh };
     const delBtn = { id: 'del', x: PAD + bw + 6, y: by, w: bw, h: bh };
     // Split the selected layer into Left/Right halves — any layer, not only the ARKit names
@@ -915,6 +943,12 @@ export default class BlendshapeStackPanel {
 
   // ── Actions ──────────────────────────────────────────────────────────────────
   _onToolbar(id) {
+    if (id === 'fold') {
+      this._layersCollapsed = !this._layersCollapsed;
+      getOptionsURL.saveOption('blendLayersCollapsed', this._layersCollapsed);
+      this._relayout();
+      return;
+    }
     const mesh = this._mesh();
     if (!mesh) return;
     const reg = window._animationRegistry;

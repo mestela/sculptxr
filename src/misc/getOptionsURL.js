@@ -336,6 +336,7 @@ var getOptionsURL = function () {
   // straight off _rawSaved so it round-trips through queryBool like every other toggle --
   // a saved 'false' string would otherwise read as truthy.
   options.blendPadCollapsed = queryBool(getVal('blendPadCollapsed'), false);
+  options.blendLayersCollapsed = queryBool(getVal('blendLayersCollapsed'), false);
   // Nav throw strength after releasing a world grab (#19). 0 stops the scene dead, 1 is the
   // shipped feel. A number rather than a toggle because 'less, but not none' is the request.
   options.navThrow = queryNumber(getVal('navThrow'), 0, 1, 1);
