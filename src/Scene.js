@@ -5843,6 +5843,7 @@ class Scene {
       // changed nothing. See EnvIBL.neutralEnvironment, which is kept and unwired.
       installEnvironment(this._THREE_GPU, this._renderer, this._scene, env, (tex) => {
         this._nodeEnvTex = tex;
+        this._background?._applyBackground?.();   // the backdrop shows the same texture
       });
     }
     const ei = getOptionsURL().envIntensity;

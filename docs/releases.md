@@ -1,3 +1,9 @@
+# v3.65.0
+- **View -> Background -> Colour**, the new default: a swatch opening the same colour wheel the light uses, so it works in the headset panel as well as on desktop.
+- The scene background was never actually being applied at startup (the guard in Scene ran before Background existed), so the grey was the page showing through the canvas. Applied at construction now.
+- **Environment background draws on the node renderer** (it was a raw-shader quad WebGPU cannot draw), from the prefiltered environment. **Ambient env removed** -- it blew out to white.
+- A per-pixel multi-tap blur was tried for the environment blur and reverted: far too heavy per frame. The blur is still three's own (blocky); a baked blur is the fix.
+
 # v3.58.0
 - **A pin you can see preselected is a pin the trigger can take.** Grab's preselection was always right and the press did nothing, which is the clue: hover runs on its own stateless path, so the fault was never the pick.
 - `Grab.start()` is the **desktop** acquire -- it picks against `_mouseX/_mouseY`, which are only written from a DOM pointer event. Inside a headset there is none, so it picked against wherever the desktop cursor was left before the session.

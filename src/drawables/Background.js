@@ -6,6 +6,10 @@ import pbrGLSL from '../render/shaders/glsl/pbr.glsl.js';
 import * as THREE from 'three';
 
 const BG_GREY = 0x323232; // default "fixed grey" background
+// The same grey as an rgb triple, which is what the colour wheel and the swatch speak. Kept
+// literal rather than derived so the default Colour background is byte-identical to the grey
+// every other type falls back to -- switching types must not shift the backdrop.
+const BG_GREY_RGB = [50 / 255, 50 / 255, 50 / 255];
 
 // Fullscreen env backdrop — ports SculptGL's mainBackground.glsl into a three.js
 // RawShaderMaterial. Reuses pbrGLSL's octahedral LogLUV panorama decode
@@ -51,10 +55,24 @@ class Background {
     this._texWidth = 1;
     this._texHeight = 1;
 
-    this._type = 0; // 0: fixed grey, 1 env spec, 2 env ambient
+    this._type = 3; // 0: image, 1 env spec, 2 env ambient, 3 flat colour
     this._blur = 0.0;
+    // THE FLAT COLOUR, and the default type. Type 0 has always ended up grey whenever no image
+    // was imported, so the backdrop everyone actually sees was a fallback inside the Image
+    // branch with no control on it. It is its own type now, with the swatch that implies.
+    this._color = BG_GREY_RGB.slice();
 
     this.init();
+
+    // APPLY IT NOW, because the call that was meant to do this never ran. Scene's renderer init
+    // does `if (this._background && this._background._applyBackground)` right after creating the
+    // three.js scene, under a comment saying Background was constructed earlier -- it is not:
+    // Background needs `this._gl`, which that same function is what produces, so it is built
+    // afterwards in the constructor and the guard silently skipped. Nothing else ever called
+    // _applyBackground at startup, so scene.background was null for the whole session and the
+    // grey everyone saw was the PAGE behind a transparent canvas (body is #333333). That was
+    // harmless while the colour was a constant; it makes a colour swatch do nothing at all.
+    this._applyBackground();
   }
 
   init() {
@@ -124,6 +142,15 @@ class Background {
     this._applyBackground();
   }
 
+  getColor() {
+    return this._color;
+  }
+
+  setColor(rgb) {
+    this._color = [rgb[0], rgb[1], rgb[2]];
+    this._applyBackground();
+  }
+
   // Apply the background to the three.js scene (desktop/tablet). Skipped during XR
   // sessions — VR-opaque and AR-passthrough backgrounds are managed separately and
   // we must not stamp a colour over passthrough.
@@ -133,6 +160,18 @@ class Background {
     if (this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) return;
 
     scene.backgroundBlurriness = this._blur || 0;
+
+    // COLOUR IS CHECKED BEFORE THE IMPORTED TEXTURE, unlike every other type. Picking "Colour"
+    // is a statement about what the backdrop should be, so an image imported earlier must not
+    // override it -- it is still there, and selecting Image brings it straight back.
+    if (this._type === 3) {
+      this._hideEnvQuad();
+      // setRGB with an explicit sRGB colour space, because that is how `new THREE.Color(hex)`
+      // reads BG_GREY -- pass the same numbers as linear and the default grey comes out pale.
+      scene.background = new THREE.Color().setRGB(this._color[0], this._color[1], this._color[2], THREE.SRGBColorSpace);
+      scene.environment = null;
+      return;
+    }
 
     // A user-imported image takes precedence and is used per type (equirect for env).
     const tex = this._threeTex;
@@ -145,6 +184,19 @@ class Background {
     if (this._type === 0) {           // Image type, nothing imported → grey
       this._hideEnvQuad();
       scene.background = new THREE.Color(BG_GREY);
+      scene.environment = null;
+      return;
+    }
+
+    // THE NODE RENDERER CANNOT DRAW THE BACKDROP QUAD below: it is a RawShaderMaterial, which
+    // WebGPU has no path for, so Environment showed nothing at all. It has the prefiltered PMREM
+    // of the selected .hdr instead (Scene._nodeEnvTex), and scene.background takes that
+    // directly; blurriness is the mip lookup. Only the BACKGROUND is set: scene.environment
+    // stays null, because the lighting is on the PBR material and a scene-wide one breaks XR.
+    if (this._main._isNodeRenderer) {
+      this._hideEnvQuad();
+      scene.background = this._main._nodeEnvTex || new THREE.Color(BG_GREY);   // grey for the ~70ms the .hdr is loading
+      scene.backgroundBlurriness = this._blur || 0;
       scene.environment = null;
       return;
     }

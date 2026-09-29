@@ -6192,7 +6192,6 @@ export function buildMenuHTML_background(main) {
       { val: 3, label: 'Colour' },
       { val: 0, label: 'Image' },
       { val: 1, label: 'Environment' },
-      { val: 2, label: 'Ambient env' },
     ], type)}
     ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches -- the same reason
          the light's colour uses it: it is the only colour control in this app that survives
