@@ -1,3 +1,12 @@
+# v3.66.0
+- **Sparse transform keys.** Keys were glTF-style lockstep: every key held all nine channels, so TX could not have two keys while RY had twenty. Each slot now carries a per-channel key mask and a channel's curve passes only through its own keys; the other slots hold values derived from the curve, so anything that reads the arrays without knowing (glTF export, motion trail, IK) sees a baked version of the same motion.
+- **Keying is per group.** Move the object and only translate is keyed; an unchanged pose pins everything. Recording keys only the recorded channels, and punch-in overwrites only those -- a rotation-only pass no longer wipes the translate keys it flies over.
+- **The graph edits channels, not frames.** A time drag moves only the channel you grabbed (and joins a key it lands on); Delete in the graph removes that channel's key only. Rotation and scale now **play** as the same curve the graph draws -- they were lerped before, so what you shaped was not quite what played.
+- **Simplify Curves** (graph "..." menu): Tolerance or Ratio, live preview, per visible channel, scoped to the selected keys' time range, one undo step. Measured against the original curve, so error never accumulates.
+- **Why Simplify first came back "42 -> 42":** every .sxr up to v15 saved *default* tangents for every key, so every loaded key looked hand-tangented -- frozen auto tangents, and nothing Simplify would touch. .sxr v16 saves only real overrides (plus the key mask and rotation winding); old files' baked tangents are dropped on load.
+- A faint crosshair runs through a key while you drag it, to line it up against other curves.
+- One Delete and one autokey are one undo step each (both pushed a duplicate); tangent drags use the selected key's group; undoing a key drag no longer drops the pin weight.
+
 # v3.65.0
 - **View -> Background -> Colour**, the new default: a swatch opening the same colour wheel the light uses, so it works in the headset panel as well as on desktop.
 - The scene background was never actually being applied at startup (the guard in Scene ran before Background existed), so the grey was the page showing through the canvas. Applied at construction now.
