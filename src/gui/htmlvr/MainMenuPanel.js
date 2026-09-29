@@ -1905,6 +1905,7 @@ function isAncestorOf(a, b) {
 
 let _wfPickerOpen = false;
 let _litPickerOpen = false;   // the selected light's colour wheel
+let _bgPickerOpen  = false;   // the background colour wheel
 // The paint wheel needs neither an open flag nor a revision: it is always there, so its markup
 // never changes and there is nothing for the rebuild cache to miss. Both existed briefly, for the
 // swatch-and-OK version this replaced.
@@ -2088,6 +2089,10 @@ export function buildSharedSettingsHTML(main) {
   // the slider writes through Skeleton.setSceneUnitMul and the options object is only refreshed
   // on load — reading options here would show a stale number after a drag.
   const rigScale       = Skeleton.sceneUnitMul ?? 1;
+  // Same rule as the line above: the live value, not the options snapshot, or the slider jumps
+  // back to the stored number the next time the panel repaints mid-drag.
+  const pinScale       = Skeleton.pinSizeMul ?? 1;
+  const labelScale     = Skeleton.labelSizeMul ?? 1;
   const tmBtns = [
     { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
     { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
@@ -2114,6 +2119,20 @@ export function buildSharedSettingsHTML(main) {
       <span class="mm-lbl">Rig Scale</span>
       <input type="range" id="mm-rig-scale" min="25" max="400" step="5" value="${Math.round(rigScale*100)}">
       <span class="mm-val" id="mm-rig-scale-val">${rigScale.toFixed(2)}x</span>
+    </div>
+    ${/* PIN SIZE and LABEL SIZE sit HERE, beside Rig Scale, because that is where you are when
+         you notice one of them is wrong -- and because all three answer the same question in
+         different units. Rig Scale moves everything the rig draws; these two move one marker
+         each, as a multiple of the JOINT it belongs to. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Pin Size</span>
+      <input type="range" id="mm-pin-scale" min="25" max="400" step="5" value="${Math.round(pinScale*100)}">
+      <span class="mm-val" id="mm-pin-scale-val">${pinScale.toFixed(2)}x</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Label Size</span>
+      <input type="range" id="mm-label-scale" min="25" max="400" step="5" value="${Math.round(labelScale*100)}">
+      <span class="mm-val" id="mm-label-scale-val">${labelScale.toFixed(2)}x</span>
     </div>
 
     <div class="mm-section-title">Ground Plane</div>
@@ -2157,6 +2176,21 @@ export function wireSharedSettings(el, main, paint) {
   wireSlider(q('#mm-rig-scale'), q('#mm-rig-scale-val'), (v) => {
     const mul = Skeleton.setSceneUnitMul(v / 100);
     getOptionsURL.saveOption('rigScale', mul, 250);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }, (v) => (v / 100).toFixed(2) + 'x', paint);
+  // updateVisuals for the same reason Rig Scale needs it: the sizes are written into the
+  // instanced batches inside that call, and render() alone redraws them at the scale they already
+  // hold. A label is a sprite rather than a batch, but it is written in the same pass.
+  wireSlider(q('#mm-pin-scale'), q('#mm-pin-scale-val'), (v) => {
+    const mul = Skeleton.setPinSizeMul(v / 100);
+    getOptionsURL.saveOption('pinScale', mul, 250);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }, (v) => (v / 100).toFixed(2) + 'x', paint);
+  wireSlider(q('#mm-label-scale'), q('#mm-label-scale-val'), (v) => {
+    const mul = Skeleton.setLabelSizeMul(v / 100);
+    getOptionsURL.saveOption('labelScale', mul, 250);
     Skeleton.updateVisuals(main);
     main.render?.();
   }, (v) => (v / 100).toFixed(2) + 'x', paint);
@@ -4064,7 +4098,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       // null for everything else, so there is no second copy of any of them to drift.
       const fullRepaint = () => { this._lastContentKey = ''; this._rebuildContent(); };
       wireSectionRendering(el, main, fullRepaint, paint, paint);
-      wireMenuBackground(el, main, paint);
+      wireMenuBackground(el, main, fullRepaint);
       // SHADER AND RIG DISPLAY COME UP TO THE TOP LEVEL, the same hoist Gui.js applies to this
       // same menu on desktop -- buildMenuHTML_view wraps buildSectionHTML_rendering's whole
       // output in one 'Rendering' collapsible, which buries both a chevron deep. I fixed the
@@ -4094,7 +4128,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
 
     } else if (menu === 'background') {
-      wireMenuBackground(el, main, paint);
+      wireMenuBackground(el, main, () => { this._lastContentKey = ''; this._rebuildContent(); });
     } else if (menu === 'reference') {
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
@@ -6144,16 +6178,41 @@ export function wireMenuReference(el, main, repaintFn) {
 
 export function buildMenuHTML_background(main) {
   const bg   = main.getBackground?.();
-  const type = bg?._type ?? 0;
+  const type = bg?._type ?? 3;
   const blur = bg?._blur ?? 0;
   const fill = bg?._fill ?? false;
+  const col  = bg?._color ?? [0.196, 0.196, 0.196];
+  const colHex = '#' + [0, 1, 2].map((i) =>
+    Math.max(0, Math.min(255, Math.round(col[i] * 255))).toString(16).padStart(2, '0')).join('');
   return `
     <div class="mm-section-title">Type</div>
+    ${/* COLOUR FIRST because it is the default -- the list reads top-down as "the plain one, then
+         the three that need something imported or selected". */ ''}
     ${buildSelectHTML('mm-bg-type', [
+      { val: 3, label: 'Colour' },
       { val: 0, label: 'Image' },
       { val: 1, label: 'Environment' },
       { val: 2, label: 'Ambient env' },
     ], type)}
+    ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches -- the same reason
+         the light's colour uses it: it is the only colour control in this app that survives
+         being rasterised into a VR panel, and this menu renders there. Swatch opens it, OK
+         closes it. The swatch, the wheel and the OK share one wrapper so the type select can
+         show and hide all three with a single inline style write -- a rebuild here would throw
+         away the open options list, see the note on the desktop View wiring in Gui.js. */ ''}
+    <div id="mm-bg-color-row"${type!==3?' style="display:none"':''}>
+      <div class="mm-row">
+        <span class="mm-lbl">Colour</span>
+        <button id="mm-bg-swatch" title="Background colour"
+          style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${colHex};border:1px solid #45475a"></button>
+        <span class="mm-val"></span>
+      </div>
+      ${_bgPickerOpen ? `
+      <div class="mm-row" style="justify-content:center">
+        ${buildColorWheelHTML({ prefix: 'mm-bg-cw', size: 150 })}
+      </div>
+      <button class="mm-action-btn" id="mm-bg-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
+    </div>
     <div class="mm-row" id="mm-blur-row"${type!==1?' style="display:none"':''}>
       <span class="mm-lbl">Blur</span>
       <input type="range" id="mm-bg-blur" min="0" max="1" step="0.01" value="${blur}">
@@ -6182,6 +6241,8 @@ export function wireMenuBackground(el, main, repaintFn) {
     main.render?.();
     const blurRow = q('#mm-blur-row');
     if (blurRow) blurRow.style.display = n === 1 ? '' : 'none';
+    const colRow = q('#mm-bg-color-row');
+    if (colRow) colRow.style.display = n === 3 ? '' : 'none';
   });
 
   wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),
@@ -6196,6 +6257,31 @@ export function wireMenuBackground(el, main, repaintFn) {
     e.currentTarget.classList.toggle('active', bg?._fill ?? false);
     main.onCanvasResize?.();
   });
+
+  // THE COLOUR WHEEL. `repaintFn` here has to be a REBUILD, not a repaint: opening the wheel
+  // changes the markup, and the VR panel's rasteriser only re-photographs the DOM it already
+  // has. Both mounts in MainMenuPanel pass a rebuild for exactly this; the desktop dropdown's
+  // `repaint` already rebuilds its innerHTML.
+  q('#mm-bg-swatch')?.addEventListener('click', () => { _bgPickerOpen = true;  repaintFn?.(); });
+  q('#mm-bg-cw-ok')?.addEventListener('click',   () => { _bgPickerOpen = false; repaintFn?.(); });
+  const bgCw = q('#mm-bg-cw');
+  if (bgCw) {
+    // Disposed first: this menu rebuilds on every repaint, and an old wheel keeps
+    // document-level pointermove/pointerup listeners that would otherwise pile up.
+    el._bgWheel?.dispose?.();
+    el._bgWheel = new ColorWheel(bgCw, {
+      prefix: 'mm-bg-cw', size: 150,
+      get: () => (bg?._color ?? [0.196, 0.196, 0.196]).slice(0, 3),
+      set: (rgb) => {
+        bg?.setColor?.(rgb);
+        const sw = q('#mm-bg-swatch');
+        if (sw) sw.style.background = '#' + [0, 1, 2].map((i) =>
+          Math.max(0, Math.min(255, Math.round(rgb[i] * 255))).toString(16).padStart(2, '0')).join('');
+        main.render?.();
+      },
+      render: () => main.render?.(),
+    });
+  }
 
   fixSliderDrag(el);
 }

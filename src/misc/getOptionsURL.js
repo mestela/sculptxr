@@ -482,6 +482,18 @@ var getOptionsURL = function () {
   // means the same real size on any machine, and only the markers move. See Skeleton.sceneUnitMul.
   options.rigScale = queryNumber(getVal('rigScale'), 0.25, 4.0, 1.0);
 
+  // PIN SIZE and LABEL SIZE, each a multiplier over the JOINT the marker belongs to -- not over
+  // the scene unit, and not over the Rig Scale beside them. Both of those constants have been
+  // re-tuned three times, every round costing a headset session to discover the constant was
+  // fine and the unit under it had changed. matt: "this is getting tiresome. give me sliders in
+  // settings next to rig size that are controls for pin size, label size." See
+  // Skeleton.setPinSizeMul / setLabelSizeMul.
+  //
+  // The range is deliberately wide at the top: these exist to be judged by eye on a headset, and
+  // a slider that stops before the answer is another round trip.
+  options.pinScale   = queryNumber(getVal('pinScale'),   0.25, 4.0, 1.0);
+  options.labelScale = queryNumber(getVal('labelScale'), 0.25, 4.0, 1.0);
+
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are
   // stale old-defaults (e.g. saturation 100%). Force 65/55/0 once, then respect user changes.

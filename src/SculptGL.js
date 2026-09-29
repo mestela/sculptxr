@@ -124,6 +124,10 @@ class SculptGL extends Scene {
     // other persisted view flags, before any rig is built, so the first marker drawn is already
     // at the saved size. See Skeleton.setSceneUnitMul.
     if (Number.isFinite(_ipadOpts.rigScale)) Skeleton.setSceneUnitMul(_ipadOpts.rigScale);
+    // The pin and label multipliers seed the same way and for the same reason -- a size dialled
+    // in on a headset last night has to be the size the first marker is drawn at this morning.
+    if (Number.isFinite(_ipadOpts.pinScale)) Skeleton.setPinSizeMul(_ipadOpts.pinScale);
+    if (Number.isFinite(_ipadOpts.labelScale)) Skeleton.setLabelSizeMul(_ipadOpts.labelScale);
 
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;

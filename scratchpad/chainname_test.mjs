@@ -753,23 +753,31 @@ const label = (m) => m._permanentStaticLabel;
     /c\.width = want;[\s\S]{0,400}?ctx\.font = LABEL_FONT;/.test(SK2));
 
   // Lifted and RUN: the geometry of "how big and what shape" is worth checking as numbers.
-  const m = /const LABEL_SIZE = ([\d.]+);/.exec(SK2);
-  check('the label height is liftable', !!m);
-  // DOUBLED TWICE, and only the second one is on a ruler that will hold. 0.06 -> 0.12 was judged
-  // on a rig with no sculpt in the scene (matt: "the text is too small, that should be doubled"),
-  // which is the MEDIAN ruler, and then applied for a while against a mesh bounding radius five
-  // times larger. 0.12 -> 0.24 is the re-judgement made once the text was measured by markerUnit,
-  // so the tuning and the use are finally on the same ruler: "labels are 2x too small".
-  check('...and is 0.24', m && Math.abs(parseFloat(m[1]) - 0.24) < 1e-9,
-    'got ' + (m && m[1]) + ', was 0.12');
-  // WHAT IT MULTIPLIES MATTERS AS MUCH AS THE CONSTANT. That doubling was tuned on a rig with no
-  // sculpt in the scene, where sceneUnit is the MEDIAN BONE LENGTH; applied against the other
-  // source -- the biggest mesh's bounding radius, five times larger on the human base -- it put
-  // joint names taller than the limbs they name. matt, in a headset at Rig Scale 1.0x: "labels
-  // and pins are stupidly huge. i have to use 0.25x rig scale to make this usable." `mUnit` is
-  // the ruler the constant was tuned against. See Skeleton.markerUnit.
-  check('...and ONE constant sizes both labels, so a name and its length never differ',
-    (SK2.match(/const _n?h = mUnit \* LABEL_SIZE;/g) || []).length === 2,
+  // Lifted and RUN: the geometry of "how big and what shape" is worth checking as numbers.
+  const m = /const LABEL_R_FRAC = ([\d.]+);/.exec(SK2);
+  check('the label height is liftable', !!m, 'LABEL_SIZE became LABEL_R_FRAC — see below');
+  // RE-TUNED THREE TIMES (0.06, 0.12, 0.24) and every time the constant was fine and the UNIT
+  // under it had changed: the rig's spread, then a mesh bounding radius, then the median bone
+  // length. It is a multiple of the JOINT's own drawn radius now -- `jd`, measured per joint and
+  // capped by its own bone, which is the one marker in this file that has never been reported
+  // wrong, because it is the one thing not measured by the scene at all. There is no unit left to
+  // change underneath it. The exact figure is matt's to set from the Label Size slider, so what
+  // is pinned here is the SHAPE of the rule and not the number.
+  // Comments stripped: the notes in Skeleton.js name the old constant on purpose, to say what it
+  // used to be and why it moved. A test that cannot tell code from commentary reads the
+  // explanation of the fix as the bug.
+  const SK2CODE = SK2.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  check('the label height is a multiple of the joint radius, not of a scene unit',
+    m && parseFloat(m[1]) > 0 && !/LABEL_SIZE/.test(SK2CODE),
+    'got ' + (m && m[1]));
+  // ONE number for both sprites AND for every joint on the rig. Per-joint text was tried and
+  // rejected by eye: a name is something you read, and text that changes size down a limb reads
+  // as broken labels rather than as different joints. matt: "labels should all be the same size,
+  // not measured per joint." Still a multiple of a joint radius -- the median one -- so the ruler
+  // is the joint and not a scene unit.
+  check('...and ONE number sizes every label, so no two ever differ',
+    (SK2.match(/const _n?h = labelH;/g) || []).length === 2
+      && /const labelH = median\(joints\.map\(jointDotRadius\)\) \* LABEL_R_FRAC \* Skeleton\.labelSizeMul;/.test(SK2),
     'two sprites reading one rig at two type sizes');
 
   const BP = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');

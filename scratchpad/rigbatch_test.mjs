@@ -455,13 +455,20 @@ check('...and it can still be re-measured when the scene really does change',
   // `best = medianBoneLength(main)` against nothing — a ReferenceError, which is a test that
   // fails by crashing instead of by asserting. Both halves, concatenated, so what runs below is
   // still the shipped arithmetic and not a paraphrase of it.
+  // BOTH HELPERS NOW. `medianBoneLength` delegates to a shared `median`, so lifting only the
+  // former runs it against nothing -- a ReferenceError inside the lifted block, which kills the
+  // harness mid-file. run_all scores by OUTPUT WORDING, so a harness that dies before printing
+  // its tally is counted as PASSING: this crash read as green until it was run on its own.
+  const gi = SRC.indexOf('function median(vals) {');
+  const gj = gi < 0 ? -1 : SRC.indexOf('\n}\n', gi) + 3;
   const mi = SRC.indexOf('function medianBoneLength(main) {');
   const mj = mi < 0 ? -1 : SRC.indexOf('\n}\n', mi) + 3;
+  check('the shared median is liftable', gi > 0 && gj > gi, 'median() moved');
   check('the rig fallback is liftable', i > 0 && j > i, 'the fallback moved');
   check('...and the median it calls is liftable with it', mi > 0 && mj > mi,
     'medianBoneLength moved');
-  if (i > 0 && j > i && mi > 0 && mj > mi) {
-    const lifted = SRC.slice(mi, mj) + '\n' + SRC.slice(i, j);
+  if (i > 0 && j > i && mi > 0 && mj > mi && gi > 0 && gj > gi) {
+    const lifted = SRC.slice(gi, gj) + '\n' + SRC.slice(mi, mj) + '\n' + SRC.slice(i, j);
     // A joint is a mesh with a parent and a position; boneLength is the parent-to-joint
     // distance, and 0 for a root. The stub mirrors that contract exactly.
     //
@@ -744,113 +751,171 @@ check('...and it can still be re-measured when the scene really does change',
   }
 }
 
-// TWO RULERS, AND EVERY CONSTANT IN THE FILE WAS TUNED ON ONE OF THEM.
+// EVERYTHING DRAWN ON A LIMB IS A MULTIPLE OF THE JOINT IT BELONGS TO.
 //
 // sceneUnit has two sources that are not the same kind of measurement: with a sculpt in the scene
 // it is the biggest mesh's BOUNDING RADIUS, and with no sculpt it is the MEDIAN BONE LENGTH. On
-// the bundled human base those are 44.0 and about 8 -- five and a half times apart -- so the same
-// rig got markers five times bigger the moment a body appeared beside it. Worse, the marker
-// constants here (JOINT_R_FRAC's doubling to 0.06, LABEL_SIZE's doubling to 0.12) were both tuned
-// against the RIG ruler, on a rig with no sculpt, and then applied against the MESH one. matt,
-// rigging the human base in a headset at Rig Scale 1.0x, having just checked a rig loaded on its
-// own and found it correct: "labels and pins are stupidly huge. i have to use 0.25x rig scale to
-// make this usable."
+// the bundled human base those are 44.0 and 8.0 -- five and a half times apart -- so the same rig
+// got markers five times bigger the moment a body appeared beside it. Every marker constant in
+// Skeleton.js was tuned against one of those two and then applied against the other, three
+// separate times, and each round cost a headset session to find out that the constant was fine
+// and the unit under it had moved.
 //
-// The joint dot escaped it because it is capped by its own joint. The pins and the labels had no
-// cap, which is exactly the pair he named.
+// The joint dot always escaped it, because `jd` is measured PER JOINT and capped by its own bone
+// -- the only marker in the file not measured by the scene at all, and the only one never
+// reported wrong. So the pins and the text hang off `jd` now and there is no second ruler left to
+// drift. matt: "I think the text label size and pin size should be multipliers based on joint
+// size."
 {
   const SKEL = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
-  // ONE implementation of the median, shared by sceneUnit's fallback and markerUnit. Two copies
-  // of a measurement is how the two rulers got out of step in the first place.
-  check('the median bone length has one implementation',
-    /function medianBoneLength\(main\) \{/.test(SKEL)
-      && (SKEL.match(/lens\.sort\(\(a, b\) => a - b\)/g) || []).length === 1,
+  // Comments stripped throughout: the notes in that file name the units they moved AWAY from, on
+  // purpose. A test that cannot tell code from commentary reports the explanation as the bug.
+  const CODE = SKEL.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  // ONE implementation of the median, still, for sceneUnit's own fallback and the diagnostic.
+  check('the median has one implementation, shared by everything that needs one',
+    /function median\(vals\) \{/.test(CODE)
+      && (CODE.match(/\.sort\(\(a, b\) => a - b\)/g) || []).length === 1,
     'a second copy of the median is a second ruler waiting to drift');
-  check('...and sceneUnit\'s rig fallback uses it',
-    /from = 'rig';\s*\n\s*best = medianBoneLength\(main\);/.test(SKEL));
-  const mu = /Skeleton\.markerUnit = function \(main\) \{([\s\S]*?)\n\};/.exec(SKEL);
-  check('markerUnit exists', !!mu, 'the rig markers have no ruler of their own');
-  if (mu) {
-    check('...and it is the median bone length, through the Rig Scale multiplier',
-      /medianBoneLength\(main\)/.test(mu[1]) && /Skeleton\.sceneUnitMul/.test(mu[1]),
-      'a marker ruler that ignores the slider is a slider that does nothing to the markers');
-    // THE FALLBACK IS NOT THE BARE SCENE UNIT, which is the ruler this accessor exists to avoid.
-    // Handing it back meant the FIRST joint placed with Names on got a label five times too big,
-    // which then snapped to the right size the moment a second joint gave it a bone. matt: "the
-    // first bone gets a rediculously huge label, until i make the next joint, then it goes back
-    // to the default scale." It is the implied limb length instead -- solve a root's default
-    // radius back through the bone-radius fraction -- which lands within ~10% of where the median
-    // settles once the limbs exist, so nothing jumps when the first bone appears.
-    check('...and the no-bone fallback is an implied bone length, not the scene unit',
-      /Skeleton\.sceneUnit\(main\) \* \(ROOT_RADIUS_FRAC \/ radiusFrac\(\)\)/.test(mu[1]),
-      'the bare scene unit here is the first-joint label bug');
-    // Written from the two constants, so an override of radiusFrac carries the fallback with it.
-    const rootFrac = /const ROOT_RADIUS_FRAC = ([\d.]+);/.exec(SKEL);
-    const boneFrac = /const DEFAULT_RADIUS_FRAC = ([\d.]+);/.exec(SKEL);
-    check('both fractions the fallback is solved from are declared', !!rootFrac && !!boneFrac);
-    if (rootFrac && boneFrac) {
-      // Sanity on the arithmetic: on the human base (scene ruler 44.0) this must land near the
-      // 8.0 the median gives, or the first joint still visibly jumps when it gets a bone.
-      const implied = 44.0 * (parseFloat(rootFrac[1]) / parseFloat(boneFrac[1]));
-      check('...and the implied length lands near the median it will become',
-        Math.abs(implied - 8.0) / 8.0 < 0.2, implied.toFixed(2) + ' against a median of 8.0');
-    }
-    // A root's default radius has to come from the SAME constant the fallback solves back
-    // through, in every place that writes one, or the two drift and the jump returns.
-    // Comments stripped first: the note above markerUnit spells the expression out in prose, and
-    // a test that cannot tell code from commentary counts the explanation as a use.
-    const CODE = SKEL.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-    check('...and every root default radius uses that constant',
-      (CODE.match(/unit \* ROOT_RADIUS_FRAC/g) || []).length === 3
-        && !/unit \* 0\.05/.test(CODE),
-      'a literal 0.05 left behind is a root whose marker does not match its own radius');
-  }
-  // THE TEXT IS ONE SIZE FOR THE WHOLE RIG, so it needs a rig-sized ruler. It cannot use the
-  // per-joint cap the dot and the pins use -- a name in six different sizes is not a label set.
-  const labelSizes = SKEL.match(/=\s*(\w+) \* LABEL_SIZE;/g) || [];
-  check('both labels are sized by the limb ruler',
-    labelSizes.length === 2 && labelSizes.every((l) => /mUnit \* LABEL_SIZE/.test(l)),
-    'on the mesh ruler a joint name comes out taller than the limb it names — got: '
-      + labelSizes.join(' | '));
-  check('...and the ruler is fetched once per draw, not once per joint',
-    /const mUnit = Skeleton\.markerUnit\(main\);/.test(SKEL)
-      && (SKEL.match(/Skeleton\.markerUnit\(main\)/g) || []).length === 1,
-    'markerUnit walks the joints — asking per joint makes the draw quadratic');
-  // A PIN SITS ON A JOINT, so it is the joint's kind of marker and takes the joint's ruler --
-  // the same capped `jd` the dot is drawn at. On `jr` an ankle pin was the size of a spine pin
-  // and several times the length of the foot it was attached to.
-  const pinParts = /const pinParts = \[([\s\S]*?)\];/.exec(SKEL);
+  check("...and sceneUnit's rig fallback uses it",
+    /from = 'rig';\s*\n\s*best = medianBoneLength\(main\);/.test(CODE));
+  // AND NO THIRD UNIT. `markerUnit` was the previous cure -- the median, handed to the labels --
+  // and it was the right diagnosis with the wrong fix: it gave the rig a third ruler and left the
+  // text answering to something the joints did not.
+  check('there is no separate marker unit any more', !/markerUnit/.test(CODE),
+    'a third ruler for the markers is the bug this replaced, not the fix');
+
+  // A ROOT IS NOT A SMALLER JOINT.
+  //
+  // `_boneRadius` is the radius of the bone ENDING at a joint, so a root has none and falls back
+  // to `unit * ROOT_RADIUS_FRAC` -- an unrelated formula against an unrelated ruler, landing at
+  // about HALF what its own children get (0.66 against 1.32 on the human base). Every marker on
+  // the root is sized from it, so the root's name was visibly smaller than every other name on
+  // the rig. matt: "i noticed the label on the root joint is smaller than all the others."
+  //
+  // Measured by the widest bone LEAVING it instead. Built in the pass that already walks every
+  // joint's parent, so it costs nothing, and it is the DRAWN radius only -- `_boneRadius` is the
+  // capsule the skin binds to and must not move.
+  check('a root joint is measured by the bones below it',
+    /const rootStandIn = new Map\(\);/.test(CODE)
+      && /if \(r > \(rootStandIn\.get\(pid\) \|\| 0\)\) rootStandIn\.set\(pid, r\);/.test(CODE),
+    'on its own default a root draws at half its children and its name reads as a different size');
+  check('...and only where it actually has one',
+    /const stand = Skeleton\.isJoint\(j\._parentMesh\) \? 0 : \(rootStandIn\.get\(j\.getID\(\)\) \|\| 0\);/.test(CODE),
+    'a lone joint has nothing below it to measure and must keep the fallback');
+  check('...without touching the radius the skin binds to',
+    !/_boneRadius = .*rootStandIn/.test(CODE)
+      && /const bR = stand \|\| \(j\._boneRadius \|\| 0\);/.test(CODE),
+    'the stand-in is a drawing decision, not a change to the capsule');
+  // An explicitly shaped joint still wins: that is a statement about the joint, and the stand-in
+  // is a guess at one.
+  check('...and an explicit joint radius still outranks it',
+    /const jR = j\._jointRadius > 0 \? j\._jointRadius : bR;/.test(CODE));
+
+  // THE TEXT. One number for both sprites, off the joint, times the slider.
+  // ONE HEIGHT FOR EVERY LABEL ON THE RIG. Sized per joint the names came out different on every
+  // bone, which reads as the labels being broken rather than as the joints being different -- a
+  // name is something you READ. matt: "labels should all be the same size, not measured per
+  // joint." Still measured by the joint, though: the MEDIAN of the joint radii, so it is the size
+  // of a typical joint on this rig and not a scene unit sneaking back in.
+  check('every label on the rig is one height',
+    /const labelH = median\(joints\.map\(jointDotRadius\)\) \* LABEL_R_FRAC \* Skeleton\.labelSizeMul;/.test(CODE)
+      && (CODE.match(/const _n?h = labelH;/g) || []).length === 2,
+    'a name and the length beside it must never be two sizes, and neither must two names');
+  check('...computed once per draw, not once per joint',
+    (CODE.match(/const labelH = /g) || []).length === 1);
+  // And the dot radius itself has ONE definition, because the per-joint markers and the median
+  // above both need it -- two copies is how this file's rulers drifted apart every other time.
+  check('the joint dot radius has one definition',
+    /const jointDotRadius = \(j\) => \{/.test(CODE)
+      && /const jd = jointDotRadius\(j\);/.test(CODE)
+      && (CODE.match(/Math\.min\(jr, ownR \* 0\.6\)/g) || []).length === 1,
+    'the loop and the label median must not measure a joint two different ways');
+  // THE PINS. Same rule, same joint, their own slider -- and the triad and the rotation-only
+  // marker keep their proportion to each other, so a pin does not change shape with its mode.
+  const pinParts = /const pinParts = \[([\s\S]*?)\];/.exec(CODE);
   check('the pin parts are liftable', !!pinParts, 'the pin block moved');
   if (pinParts) {
-    check('...and every one is sized by its own joint',
-      /jd \* PIN_R_FRAC/.test(pinParts[1]) && /jd \* PIN_SOFT_R_FRAC/.test(pinParts[1])
+    check('...and every one is sized by its own joint, times the slider',
+      /const pinR = jd \* PIN_R_FRAC \* Skeleton\.pinSizeMul;/.test(CODE)
+        && /jd \* PIN_SOFT_R_FRAC \* Skeleton\.pinSizeMul/.test(pinParts[1])
         && !/jr \*/.test(pinParts[1]),
-      'a pin on the scene ruler swamps every joint smaller than the average one');
-    // The two multipliers keep their proportion to each other: the triad and the rotation-only
-    // marker are the same family and a pin should not change shape with its mode.
-    const pf = /const PIN_R_FRAC = ([\d.]+);/.exec(SKEL);
-    const psf = /const PIN_SOFT_R_FRAC = ([\d.]+);/.exec(SKEL);
-    check('the pin fractions are declared', !!pf && !!psf, 'a bare multiplier here drifts');
-    if (pf && psf) {
-      check('...and hold the 2.2 : 1.5 proportion they were drawn at',
-        Math.abs((parseFloat(pf[1]) / parseFloat(psf[1])) - (2.2 / 1.5)) < 0.02,
-        parseFloat(pf[1]) / parseFloat(psf[1]) + ' against ' + (2.2 / 1.5));
-    }
+      'a pin on a scene ruler swamps every joint smaller than the average one');
   }
-  check('the pin leader rides the same ruler as the pin',
-    /if \(gap > jd \* 0\.35\)/.test(SKEL) && /dashSize = jd \* 0\.8;/.test(SKEL)
-      && /gapSize = jd \* 0\.6;/.test(SKEL),
-    'dashes longer than the gap they cross read as a solid line');
-  // The name's offset exists to CLEAR THE DOT, so it must be measured with whatever the dot was
-  // actually drawn at -- which has been the capped `jd`, not `jr`, since the finger-joint work.
-  check('the name clears the dot by the dot\'s own radius',
-    /addScaledVector\(_up, jd \* 2\.2\)/.test(SKEL),
-    'on jr the text floats several dot-widths above a dot that is no longer that big');
-  // The pick zone is taken from the drawn sizes, so it shrinks with them and the two cannot
-  // disagree about where a pin is.
+  check('the pin leader rides the pin it links, slider and all',
+    /if \(gap > pinR \* [\d.]+\)/.test(CODE) && /dashSize = pinR \* [\d.]+;/.test(CODE)
+      && /gapSize = pinR \* [\d.]+;/.test(CODE),
+    'dashes that do not shrink with the pin read as a solid line');
+  // The name's offset exists to CLEAR THE DOT, so it is measured with what the dot was drawn at.
+  check("the name clears the dot by the dot's own radius",
+    /addScaledVector\(_up, jd \* [\d.]+\)/.test(CODE),
+    'on a whole-rig figure the text floats above a dot that is not that big');
+  // The pick zone is taken from the drawn sizes, so it follows the slider without being told.
   check('the pin pick radius is still taken from the drawn parts',
-    /for \(const \[, on, size\] of pinParts\) if \(on\) r = Math\.max\(r, size\);/.test(SKEL),
+    /for \(const \[, on, size\] of pinParts\) if \(on\) r = Math\.max\(r, size\);/.test(CODE),
     'a pick zone on its own number is a pin that does not mean what it looks like');
+
+  // ── THE TWO SLIDERS ────────────────────────────────────────────────────────
+  //
+  // These exist because the constants above were re-tuned three times and every round was a
+  // headset session. matt: "give me sliders in settings next to rig size that are controls for
+  // pin size, label size... i'll set what looks like good values, then you can make them
+  // defaults." A slider that does not persist, or does not seed at boot, is a value he has to set
+  // again every launch -- the same round trip in a different costume.
+  const setters = [['pin', 'setPinSizeMul', 'pinSizeMul'],
+                   ['label', 'setLabelSizeMul', 'labelSizeMul']];
+  for (const [name, setter, field] of setters) {
+    check('the ' + name + ' size multiplier has a setter',
+      new RegExp('Skeleton\\.' + setter + ' = function \\(mul\\) \\{').test(CODE));
+    check('...and it defaults to 1',
+      new RegExp('Skeleton\\.' + field + ' = 1;').test(CODE));
+  }
+  // The clamp guards the way setSceneUnitMul does: a zero or a NaN here makes every pin and every
+  // label vanish, which reads as the rig breaking rather than as a bad number.
+  const guard = /const _posMul = \(v, cur\) => \{([\s\S]*?)\n\};/.exec(SKEL);
+  check('a bad multiplier cannot zero the markers', !!guard);
+  if (guard) {
+    const run = new Function('v', 'cur',
+      'const _posMul = (v, cur) => {' + guard[1] + '\n};\nreturn _posMul(v, cur);');
+    check('...a positive multiplier is taken as given', run(2.5, 1) === 2.5);
+    check('...and zero, negative, NaN and a string all fall back',
+      run(0, 1) === 1 && run(-3, 1) === 1 && run(NaN, 1) === 1 && run('wide', 1) === 1,
+      'a 0 multiplier would make every pin and label invisible');
+  }
+  const OPT = fs.readFileSync(path.join(REPO, 'src/misc/getOptionsURL.js'), 'utf8');
+  check('both options are declared, or saveOption drops them silently',
+    /options\.pinScale\s+= queryNumber\(getVal\('pinScale'\)/.test(OPT)
+      && /options\.labelScale = queryNumber\(getVal\('labelScale'\)/.test(OPT),
+    'an undeclared key is dropped by saveOption and nothing says so');
+  const GL = fs.readFileSync(path.join(REPO, 'src/SculptGL.js'), 'utf8');
+  check('...and both are seeded into the live values at boot',
+    /Skeleton\.setPinSizeMul\(_ipadOpts\.pinScale\)/.test(GL)
+      && /Skeleton\.setLabelSizeMul\(_ipadOpts\.labelScale\)/.test(GL),
+    'a size dialled in last night has to be the size the first marker is drawn at');
+  const MENU2 = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+  check('both sliders are in the Rig section beside Rig Scale',
+    /id="mm-pin-scale"/.test(MENU2) && /id="mm-label-scale"/.test(MENU2)
+      && MENU2.indexOf('id="mm-rig-scale"') < MENU2.indexOf('id="mm-pin-scale"')
+      // The NEXT section title after Rig Scale, searched forward from it -- "Ground Plane" as a
+      // bare string occurs earlier in the file for an unrelated control, and searching for that
+      // put the section boundary 77k characters BEFORE the block being checked.
+      && MENU2.indexOf('id="mm-label-scale"')
+         < MENU2.indexOf('mm-section-title">Ground Plane', MENU2.indexOf('id="mm-rig-scale"')),
+    'filed away from Rig Scale is filed where nobody will look for it');
+  // Read from the LIVE value, not the options snapshot -- the same trap Rig Scale hit: the
+  // snapshot is only refreshed on load, so the slider jumps back mid-drag on a repaint.
+  check('...and both read the live multiplier when the panel is built',
+    /const pinScale\s+= Skeleton\.pinSizeMul \?\? 1;/.test(MENU2)
+      && /const labelScale\s+= Skeleton\.labelSizeMul \?\? 1;/.test(MENU2));
+  // updateVisuals, not render: the sizes are written into the instanced batches inside that call.
+  for (const id of ['mm-pin-scale', 'mm-label-scale']) {
+    const cb = new RegExp("wireSlider\\(q\\('#" + id + "'\\)[\\s\\S]*?\\n  \\},").exec(MENU2);
+    check('the ' + id + ' slider rebuilds the rig, not just repaints it',
+      !!cb && /Skeleton\.updateVisuals\(main\)/.test(cb[0]),
+      'render() alone leaves the batches at the size they already hold');
+    check('...and persists what it set',
+      !!cb && /getOptionsURL\.saveOption\('(pin|label)Scale'/.test(cb[0]));
+  }
 }
 
 // THE BONE-DRAW CURSOR IS THE JOINT IT PREVIEWS.
@@ -881,7 +946,7 @@ check('...and it can still be re-measured when the scene really does change',
     // these two expressions ever stop matching, the cursor and the marker it turns into disagree
     // again -- which is the whole of this bug, twice over now.
     const CAP = /Math\.min\(jr, (\w+) \* 0\.6\)/;
-    const drawnCap = CAP.exec(SKEL.slice(SKEL.indexOf('const bR = j._boneRadius || 0;')));
+    const drawnCap = CAP.exec(SKEL.slice(SKEL.indexOf('const jointDotRadius = (j) => {')));
     const prevCap = CAP.exec(body);
     check('the drawn joint dot is capped by its own radius', !!drawnCap);
     check('...and the preview dot uses the same cap', !!prevCap,
