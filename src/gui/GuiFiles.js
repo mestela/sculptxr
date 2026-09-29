@@ -422,7 +422,7 @@ class GuiFiles {
     }
     for (const [o, p] of detached) p.add(o); // no renderer: nothing captured, still restore
 
-    StorageDB.set(key, { 
+    return StorageDB.set(key, { 
       blob: blob, 
       thumb: thumb, 
       // Overwriting keeps the name it already had unless a new one is typed: a Save should not
@@ -437,7 +437,7 @@ class GuiFiles {
       if (window.screenLog) {
         window.screenLog(reuse ? `SUCCESS: Saved over ${key}` : `SUCCESS: Stashed sculpt ${key}`, 'lime');
       }
-      this.refreshBrowserSaves(); // Refresh internal list
+      return this.refreshBrowserSaves(); // returned so callers can rebuild once the list is fresh
     }).catch(err => {
       if (window.screenLog) window.screenLog(`ERROR: Stash failed: ${err}`, 'red');
     });

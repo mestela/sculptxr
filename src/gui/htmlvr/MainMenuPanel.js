@@ -6049,16 +6049,16 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   // taken is what fills a library with saves all called the same thing.
   q('#mm-browser-save-quick')?.addEventListener('click', () => {
     promptSaveName('Save to browser', guiFiles?.uniqueSaveName?.('scene') ?? 'scene',
-      (n) => guiFiles?.saveToBrowserStorage?.(n));
+      (n) => guiFiles?.saveToBrowserStorage?.(n)?.then(() => rebuildFn()));
   });
   // Incremental asks nothing: the whole point is the next version without a conversation.
   q('#mm-browser-save-incr')?.addEventListener('click', () => {
     const n = guiFiles?.nextIncrementalName?.();
-    if (n) guiFiles.saveToBrowserStorage(n);
+    if (n) guiFiles.saveToBrowserStorage(n)?.then(() => rebuildFn());
   });
   // No prompt: Save is the command you press without being asked anything.
   q('#mm-browser-save-over')?.addEventListener('click', () => {
-    guiFiles?.saveToBrowserStorage?.(null, { overwrite: true });
+    guiFiles?.saveToBrowserStorage?.(null, { overwrite: true })?.then(() => rebuildFn());
   });
   q('#mm-import-scale')?.addEventListener('change', (e) => {
     main._autoMatrix = e.target.checked;
