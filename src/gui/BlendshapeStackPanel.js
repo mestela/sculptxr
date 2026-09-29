@@ -143,6 +143,20 @@ export default class BlendshapeStackPanel {
     this._canvas.style.width   = '100%';
     // Block iPadOS Scribble / system gestures (same as GuiTimeline).
     this._canvas.style.touchAction = 'none';
+    // STICKY TOOLBAR. The buttons live in this same canvas, which scrolls with the tab panel, so
+    // on a rig with every ARKit shape they scrolled away. A second canvas pinned to the top of the
+    // scroll area redraws the toolbar band over the top of the first; its own hits map to the
+    // same toolbar-local coordinates as the original at rest.
+    this._tbCanvas = document.createElement('canvas');
+    Object.assign(this._tbCanvas.style, {
+      display: 'block', width: '100%', position: 'sticky', top: '0', zIndex: '2',
+      marginBottom: (-TOOLBAR_H) + 'px', touchAction: 'none',
+    });
+    this._tbCtx = this._tbCanvas.getContext('2d');
+    this._tbCanvas.addEventListener('pointerdown', (e) => this._onDown(e));
+    this._tbCanvas.addEventListener('pointerleave', () => this.clearHover());
+    this._tbCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    host.appendChild(this._tbCanvas);
     host.appendChild(this._canvas);
 
     this._ctx = this._canvas.getContext('2d');
@@ -286,6 +300,12 @@ export default class BlendshapeStackPanel {
     this._cssH = cssH;
     this._dpr  = window.devicePixelRatio || 1;
     this._canvas.style.height = cssH + 'px';
+    if (this._tbCanvas) {
+      this._tbCanvas.style.height = TOOLBAR_H + 'px';
+      this._tbCanvas.width  = Math.round(this._cssW * this._dpr);
+      this._tbCanvas.height = Math.round(TOOLBAR_H * this._dpr);
+      this._tbCtx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
+    }
     this._canvas.width  = Math.round(this._cssW * this._dpr);
     this._canvas.height = Math.round(this._cssH * this._dpr);
     this._ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
@@ -384,6 +404,19 @@ export default class BlendshapeStackPanel {
     if (this._padOwned) this._layoutPad();
 
     this._drawToolbar(ctx, W);
+    if (this._tbCanvas) {
+      // Second copy for the sticky overlay; its rects duplicate the ones just pushed, so keep the
+      // originals. Hidden while the picker is open (it draws over the toolbar band itself).
+      this._tbCanvas.style.display = this._picker ? 'none' : 'block';
+      if (!this._picker) {
+        const keep = this._toolbarBtns;
+        this._toolbarBtns = [];
+        const t = this._tbCtx;
+        t.clearRect(0, 0, W, TOOLBAR_H);
+        this._drawToolbar(t, W);
+        this._toolbarBtns = keep;
+      }
+    }
 
     const mesh = this._mesh();
     if (!mesh) {
@@ -706,7 +739,8 @@ export default class BlendshapeStackPanel {
 
   // ── Pointer handling ─────────────────────────────────────────────────────────
   _local(e) {
-    const rect = this._canvas.getBoundingClientRect();
+    const c = (this._tbCanvas && e.target === this._tbCanvas) ? this._tbCanvas : this._canvas;
+    const rect = c.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
@@ -722,7 +756,7 @@ export default class BlendshapeStackPanel {
   // ── DOM event wrappers ───────────────────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
-    try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
     this._pointerDown(this._local(e), e.altKey);
   }
   _onMove(e) { this._pointerMove(this._local(e)); }
