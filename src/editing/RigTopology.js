@@ -42,6 +42,8 @@ function snapshot(main, meshes) {
     present: main.getIndexMesh(m) >= 0,
     pinnedTo: m._pinnedJoint || null,
     pinMode: m._bonePinMode,
+    mirror: m._boneMirror || null,
+    label: m._permanentStaticLabel,
   }));
 }
 
@@ -81,6 +83,8 @@ function restore(main, snap) {
     e.mesh._boneBendRef = null;
     if (e.pinnedTo !== undefined) e.mesh._pinnedJoint = e.pinnedTo;
     if (e.pinMode !== undefined) e.mesh._bonePinMode = e.pinMode;
+    e.mesh._boneMirror = e.mirror;
+    if (e.label !== undefined) e.mesh._permanentStaticLabel = e.label;
   }
   // One top-down pass once every local matrix is back, so anything reading a world matrix
   // afterwards — the scene unit included — sees the restored hierarchy rather than a half of it.
@@ -234,6 +238,49 @@ RigTopology.dissolve = function (main, joint) {
   const after = snapshot(main, [joint, pin, ...kids]);
   restore(main, after);
   commit(main, before, after, 'Dissolve Bone');
+  return true;
+};
+
+// ── MERGE WITH MIRROR ────────────────────────────────────────────────────────
+//
+// Two parentless twins dragged onto the symmetry plane are one centreline joint. Bone Draw
+// mirrors the FIRST joint of a chain whenever it misses the plane's snap band, which leaves a
+// left/right pair of roots side by side; this is the way back. The survivor keeps its own
+// identity, the twin's children are handed to it (so both mirrored limbs now hang off one
+// root, exactly as if it had been placed on the plane), and the pair link is cleared because a
+// joint on the plane is its own twin. The twin's pin goes with it, as in dissolve.
+RigTopology.canMergeMirror = function (main, joint) {
+  const twin = joint && joint._boneMirror;
+  return !!(twin && twin !== joint && main.getIndexMesh(joint) >= 0 && main.getIndexMesh(twin) >= 0
+    && Skeleton.isJoint(joint) && Skeleton.isJoint(twin)
+    && !Skeleton.isJoint(joint._parentMesh) && !Skeleton.isJoint(twin._parentMesh)
+    && (joint._parentMesh || null) === (twin._parentMesh || null));
+};
+
+RigTopology.mergeMirror = function (main, joint) {
+  if (!RigTopology.canMergeMirror(main, joint)) return false;
+  const twin = joint._boneMirror;
+  const kids = Skeleton.childJoints(main, twin);
+  const pin = IKSolver.pinObject(twin) || null;
+  const before = snapshot(main, [joint, twin, pin, ...kids]);
+
+  for (const k of kids) main.setMeshParent(k.getID(), joint.getID(), { silent: true });
+  if (pin) {
+    main.removeMeshSilent(pin);
+    twin._boneIKPinObj = null;
+    twin._bonePinMode = 0;
+  }
+  main.removeMeshSilent(twin);
+  joint._boneMirror = null;
+  twin._boneMirror = null;
+  // Centreline joints carry no side suffix.
+  if (joint._permanentStaticLabel) {
+    joint._permanentStaticLabel = joint._permanentStaticLabel.replace(/_[LR]$/, '');
+  }
+
+  const after = snapshot(main, [joint, twin, pin, ...kids]);
+  restore(main, after);
+  commit(main, before, after, 'Merge Mirror Joint');
   return true;
 };
 

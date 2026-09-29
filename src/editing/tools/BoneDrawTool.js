@@ -4,6 +4,7 @@ import SculptBase from './SculptBase.js';
 import Skeleton from '../Skeleton.js';
 import Skinning from '../Skinning.js';
 import IKSolver from '../IKSolver.js';
+import RigTopology from '../RigTopology.js';
 import Enums from '../../misc/Enums.js';
 import Utils from '../../misc/Utils.js';
 import Geometry from '../../math3d/Geometry.js';
@@ -1388,9 +1389,22 @@ class BoneDrawTool extends SculptBase {
     // contradict its own mirror — but axis snap still applies, which is what keeps a
     // dragged eye joint pointing straight down Z.
     const gp = Skeleton.isJoint(g.joint._parentMesh) ? g.joint._parentMesh : null;
-    const at = g.twin
-      ? (this._axisEnabled() && gp ? Skeleton.snapAxis(Skeleton.jointPos(gp, _from), pos, _eff, null) : pos)
-      : this._resolve(pos, g.plane, _eff, gp);
+    //
+    // ...EXCEPT A ROOT PAIR. Bone Draw mirrors the first joint of a chain when it misses the
+    // plane's snap band, which leaves two parentless twins side by side. Dragging one into the
+    // band pulls it onto the plane (its twin follows to the same spot), and on release the pair
+    // merges into one centreline joint -- see RigTopology.mergeMirror.
+    g.mergeRoot = false;
+    let at;
+    if (g.twin && !gp && RigTopology.canMergeMirror(this._main, g.joint)
+        && this._inSnapBand(pos, g.plane)) {
+      g.mergeRoot = true;
+      at = Skeleton.projectToPlane(pos, g.plane, _eff);
+    } else {
+      at = g.twin
+        ? (this._axisEnabled() && gp ? Skeleton.snapAxis(Skeleton.jointPos(gp, _from), pos, _eff, null) : pos)
+        : this._resolve(pos, g.plane, _eff, gp);
+    }
     // ROTATION FIRST, then position. moveJoint writes the model-space TRANSLATION and, in
     // compensate mode, restores each child's model-space transform afterwards — so it has to be
     // the last thing that touches the chain, or the compensation is computed against a parent
@@ -1578,6 +1592,8 @@ class BoneDrawTool extends SculptBase {
         () => { Skeleton.restoreLocal(after); Skeleton.updateVisuals(main); main.render(); },
         false, 'Tweak Joint');
     }
+    // Dropped inside the plane's band as one of a root pair: it is one centreline joint now.
+    if (g.mergeRoot && RigTopology.mergeMirror(main, g.joint)) this._refresh();
   }
 
   // ---- pose (FK rotate) ----------------------------------------------------------
