@@ -1992,6 +1992,36 @@ class AnimationRegistry {
     }
   }
 
+  // Blendshapes that arrive WITH a mesh (glTF morph targets). No undo step of its own: the
+  // import's add is the undo, exactly as for an .sxr load. The base is the mesh as it stands,
+  // which for a glTF is the unmorphed POSITION; a non-zero file weight becomes one key at 0 so
+  // the object looks the way it was exported.
+  importBlendshapes(mesh, shapes) {
+    if (!mesh || !shapes || !shapes.length) return;
+    const id = mesh.getID();
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+      });
+    }
+    const track = this.tracks.get(id);
+    track.blendshapes = new Map();
+    track.blendshapeTracks = new Map();
+    track.baseShape = new Float32Array(mesh.getVertices());
+    track._bsNbVertices = mesh.getNbVertices ? mesh.getNbVertices() : 0;
+    track.baseLocked = true;
+    for (const s of shapes) {
+      // Sized to the vertex array's CAPACITY, as createBlendshape does, not to the file's count.
+      const delta = new Float32Array(track.baseShape.length);
+      delta.set(s.delta.subarray(0, Math.min(s.delta.length, delta.length)));
+      track.blendshapes.set(s.name, delta);
+      track.blendshapeTracks.set(s.name, s.weight ? { times: [0], values: [s.weight] } : { times: [], values: [] });
+    }
+    this.applyBlendshapes(mesh);
+    this._refreshBlendPanels(mesh);
+  }
+
   _refreshBlendPanels(mesh) {
     window._animPanel?.refreshBlendshapes?.(mesh, window.app);
     window._blendshapeStackPanel?._afterStructureChange?.();

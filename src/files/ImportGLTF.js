@@ -354,6 +354,34 @@ function buildMesh(prims, gl, name, stats) {
     mesh.setAlbedoMap ? mesh.setAlbedoMap(tex) : (mesh._albedoMap = tex);
   }
 
+  // MORPH TARGETS -> BLENDSHAPES. Nomad exports its layers as glTF morph targets. The deltas
+  // are per glTF vertex, so they go through the weld the same way colour does: welded copies
+  // of a vertex are bit-identical and carry the same delta, so any one of them (the rep) will
+  // do. They are in the mesh's LOCAL space, like the vertices, so the node matrix and the
+  // Nomad x50 (both of which live on the object matrix) apply to them without conversion.
+  // Held here and turned into tracks by Scene once the Multimesh wrapper (whose ID keys the
+  // track) exists.
+  const morphs = geo0.morphAttributes && geo0.morphAttributes.position;
+  if (morphs && morphs.length) {
+    const names = [];
+    for (const k in first.morphTargetDictionary || {}) names[first.morphTargetDictionary[k]] = k;
+    const rel = geo0.morphTargetsRelative;
+    mesh._importedMorphs = morphs.map((attr, t) => {
+      const d = new Float32Array(nbNew * 3);
+      const src = attr.array, stride = attr.itemSize;
+      for (let i = 0; i < nbNew; i++) {
+        const o = w.rep[i] * stride, r = w.rep[i] * 3;
+        d[i * 3] = src[o]; d[i * 3 + 1] = src[o + 1]; d[i * 3 + 2] = src[o + 2];
+        // three stores ABSOLUTE targets unless morphTargetsRelative; GLTFLoader sets it, but a
+        // delta is what the registry keeps either way.
+        if (!rel) { d[i * 3] -= pos[r]; d[i * 3 + 1] -= pos[r + 1]; d[i * 3 + 2] -= pos[r + 2]; }
+      }
+      const wt = first.morphTargetInfluences ? first.morphTargetInfluences[t] || 0 : 0;
+      return { name: names[t] || ('Shape ' + (t + 1)), delta: d, weight: wt };
+    });
+    if (stats) stats.blendshapes += morphs.length;
+  }
+
   if (stats) {
     stats.meshes++;
     stats.verts += nbNew;
@@ -402,7 +430,7 @@ Import.importGLTF = function (data, gl, onDone, onFail) {
     const used = json.extensionsUsed || [];
     const stats = { meshes: 0, verts: 0, quads: 0, merged: 0, uvs: 0,
                     transmissive: 0, textured: 0, perVertexMaterial: 0, vertexColours: 0,
-                    roughMetalMapped: 0, normalMapped: 0,
+                    roughMetalMapped: 0, normalMapped: 0, blendshapes: 0,
                     // Who wrote the file, so the caller can apply that source's unit
                     // conversion -- Nomad's units are not scene units. See Scene.loadScene.
                     generator: (json.asset && json.asset.generator) || '',

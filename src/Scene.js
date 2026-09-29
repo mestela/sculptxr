@@ -6962,7 +6962,12 @@ class Scene {
             mat4.multiply(m, S, m);
           }
         }
+        // Read BEFORE the add: addImportedMeshes swaps each entry for its Multimesh wrapper, and
+        // the wrapper's ID is what a blendshape track is keyed on.
+        const morphs = meshes.map((m) => m._importedMorphs);
         this.addImportedMeshes(meshes);
+        const reg = window._animationRegistry;
+        if (reg) for (let i = 0; i < meshes.length; i++) if (morphs[i]) reg.importBlendshapes(meshes[i], morphs[i]);
         // SAID OUT LOUD, because the interesting part of this import is what it RECOVERED, and
         // none of it is visible by looking: quads restored from a format with no quads, and
         // seam vertices welded back into one surface. Both are silent when they go wrong —
@@ -6980,7 +6985,8 @@ class Scene {
           + (stats.textured ? ', ' + stats.textured + ' with colour maps' : '')
           + (stats.roughMetalMapped ? ', ' + stats.roughMetalMapped + ' with metal/rough maps' : '')
           + (stats.normalMapped ? ', ' + stats.normalMapped + ' with normal maps' : '')
-          + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '');
+          + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '')
+          + (stats.blendshapes ? ', ' + stats.blendshapes + ' blendshapes' : '');
         console.log('[load] ' + msg);
         if (window.screenLog) window.screenLog(msg, 'lime');
         if (this._showToolToast) this._showToolToast('Imported ' + stats.meshes + ' object(s)');
