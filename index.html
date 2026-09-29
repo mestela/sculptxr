@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v3.66.0</title>
+    <title>SculptXR v3.66.1</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v3.66.0
+                                                              VERSION: v3.66.1
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -22,6 +22,8 @@
             background: #333;
         }
 
+        /* iPadOS ignores user-scalable=no: without this a double-tap on any panel zooms the page. */
+        html, body, * { touch-action: manipulation; }
         canvas {
             width: 100%;
             height: 100%;
@@ -157,6 +159,16 @@
       // "grey bar at the bottom" + broken fixed-width layout). The 3D viewport
       // handles its own 2-finger camera via Pointer Events (not these Gesture
       // events), so blocking them doesn't affect camera control.
+      // iPadOS still double-tap-zooms on blank (non-interactive) space despite touch-action, e.g.
+      // the gaps in a menu bar. Swallow the second tap's touchend there only, so rapid taps on
+      // buttons/inputs/canvases (which call preventDefault themselves or need the click) are untouched.
+      let _lastTap = 0;
+      document.addEventListener('touchend', e => {
+        const now = Date.now(), dbl = now - _lastTap < 350;
+        _lastTap = now;
+        if (dbl && !e.target.closest?.('button,a,input,textarea,select,label,canvas,[role=button],[contenteditable]')) e.preventDefault();
+      }, { passive: false, capture: true });
+
       ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
         document.addEventListener(t, e => e.preventDefault(), { passive: false }));
     </script>

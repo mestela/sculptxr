@@ -690,6 +690,7 @@ class Gui {
       display: 'flex', alignItems: 'center', gap: '2px',
       padding: '0 8px',
       zIndex: '1100',
+      touchAction: 'none',   // the bar never scrolls; stops a double-tap on its blank area zooming the page on iPad
       fontFamily: 'system-ui, -apple-system, sans-serif',
       boxSizing: 'border-box'
     });

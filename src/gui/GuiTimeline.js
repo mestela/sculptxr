@@ -188,7 +188,7 @@ export default class GuiTimeline {
         if (this._touchMap.size === 2) {
           this._cancelActiveAction();
           this._isTouchScrolling = true;
-          this._touchScrollPrev = this._getTouchCentroidAndDist();
+          this._beginTouchZoom();
           return; // don't pass 2nd finger down to onMouseDown
         }
         if (this._isTouchScrolling) return; // already scroll mode
@@ -4244,6 +4244,16 @@ export default class GuiTimeline {
     this.draw();
   }
 
+  _touchCanvasPoints() {
+    const r = this._canvas.getBoundingClientRect();
+    return [...this._touchMap.values()].slice(0, 2).map(p => ({ x: p.x - r.left, y: p.y - r.top }));
+  }
+
+  _beginTouchZoom() {
+    const [p1, p2] = this._touchCanvasPoints();
+    this.beginTwoPointerZoom(p1.x, p1.y, p2.x, p2.y);
+  }
+
   _getTouchCentroidAndDist() {
     const pts = [...this._touchMap.values()];
     const cx = (pts[0].x + pts[1].x) / 2;
@@ -5757,27 +5767,8 @@ export default class GuiTimeline {
     if (e.pointerType === 'touch' && this._touchMap.has(e.pointerId)) {
       this._touchMap.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this._isTouchScrolling && this._touchMap.size === 2) {
-        const cur = this._getTouchCentroidAndDist();
-        const prev = this._touchScrollPrev;
-        this._ensureViewInit();
-        const tlX = 200;
-        const tlW = this._cssWidth - tlX;
-        // Pan: centroid delta → time/value shift.
-        const secsPerPx = this._viewDuration / tlW;
-        this._viewStart -= (cur.cx - prev.cx) * secsPerPx;
-        if (this._mode === 'graph') {
-          this._panY -= (cur.cy - prev.cy);
-        }
-        // Zoom: distance ratio → scale time axis around centroid.
-        if (prev.dist > 1) {
-          const pivotT = this._viewStart + ((prev.cx - tlX) / tlW) * this._viewDuration;
-          const factor = prev.dist / cur.dist;
-          const newDuration = Math.max(0.01, this._viewDuration * factor);
-          this._viewStart = pivotT - (pivotT - this._viewStart) * (newDuration / this._viewDuration);
-          this._viewDuration = newDuration;
-        }
-        this._touchScrollPrev = cur;
-        this.draw();
+        const [p1, p2] = this._touchCanvasPoints();
+        this.updateTwoPointerZoom(p1.x, p1.y, p2.x, p2.y); // draws
         return;
       }
     }
@@ -6303,7 +6294,7 @@ export default class GuiTimeline {
       this._touchMap.delete(e.pointerId);
       if (this._touchMap.size < 2) {
         this._isTouchScrolling = false;
-        this._touchScrollPrev = null;
+        this.endTwoPointerZoom();
       }
       if (this._isTouchScrolling) return; // still scrolling with remaining finger
     }
