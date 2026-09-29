@@ -823,10 +823,10 @@ export function buildBonePoseHTML(main, style) {
   `;
 }
 
-export function buildBoneDisplayHTML(main, style) {
+export function buildBoneDisplayHTML(main, style, extraChips = '') {
   const c = DIALECT[style] || DIALECT.mm;
   return `
-    ${sectionTitle(c, 'Rig Display')}
+    ${sectionTitle(c, 'Display')}
     <!-- ON ITS OWN, ABOVE THE GRID. It governs every chip below it rather than being one of them,
          and sitting in the row made it read as a fourteenth display flag — one that would turn
          something called "All" on. matt: "'hide all' should be a toggle, not part of all the
@@ -852,6 +852,7 @@ export function buildBoneDisplayHTML(main, style) {
            Decorations deliberately leaves it alone; see the flag's note in Skeleton. The key is
            still meshHover, so nobody's saved setting resets over a rename. -->
       ${flagButton(c, 'mesh-hover', 'Mesh Box', Skeleton.displayFlagRaw('meshHover'))}
+      ${extraChips}
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule Opacity</span>
@@ -987,12 +988,19 @@ export function wireBoneSection(root, main, opts) {
   // CAPSULE TESSELLATION, next to the other capsule cost. It is the mobile-VR knob — 56 segments
   // are 566k triangles across the solid and ghost passes, 28 are 140k, and the sawtooth the high
   // count buys is mostly gone by 28. Changing it rebuilds the batches, so it is a press-and-see
-  // control rather than a drag: the slider writes on CHANGE, not on input.
+  // control rather than a live drag: it applies once the slider pauses.
   {
     const segIn = q('cap-seg'), segVal = q('cap-seg-val');
-    if (segIn) segIn.addEventListener('change', () => {
-      const v = Skeleton.setCapsuleSegments(main, parseInt(segIn.value, 10));
-      if (segVal) segVal.textContent = String(v);
+    // ON `input`, DEBOUNCED -- NOT `change`. fixSliderDrag (which every desktop mount runs) drives
+    // range inputs by pointer events and dispatches only `input`, so a `change` listener never
+    // fired: the slider moved, the label stayed at 56 and nothing was rebuilt. The debounce keeps
+    // the batch rebuild to one per pause instead of one per pixel of drag.
+    let segTimer = 0;
+    if (segIn) segIn.addEventListener('input', () => {
+      const n = parseInt(segIn.value, 10);
+      if (segVal) segVal.textContent = String(n);
+      clearTimeout(segTimer);
+      segTimer = setTimeout(() => Skeleton.setCapsuleSegments(main, n), 250);
     });
   }
 

@@ -1,3 +1,8 @@
+# v3.67.1
+- **Desktop menus tear off.** Every top-bar menu has a pin button in its header that floats it over the canvas as a draggable, resizable panel (not remembered between sessions).
+- **View menu tidy-up.** "Rig Display" is now **Display** and "Shader" is **Shading**; Ground Plane is a chip in the Display grid; the "Rendering" collapsible is gone, its contents sit directly on the page. The section label is "View" in the torn-off VR panel and main menu.
+- **Capsule Detail slider works again.** It listened for `change`, which the desktop slider drag never fires, so it never applied; it now applies on `input` (debounced).
+
 # v3.66.0
 - **Sparse transform keys.** Keys were glTF-style lockstep: every key held all nine channels, so TX could not have two keys while RY had twenty. Each slot now carries a per-channel key mask and a channel's curve passes only through its own keys; the other slots hold values derived from the curve, so anything that reads the arrays without knowing (glTF export, motion trail, IK) sees a baked version of the same motion.
 - **Keying is per group.** Move the object and only translate is keyed; an unchanged pose pins everything. Recording keys only the recorded channels, and punch-in overwrites only those -- a rotation-only pass no longer wipes the translate keys it flies over.

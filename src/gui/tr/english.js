@@ -197,7 +197,7 @@ var TR = {
   pressureIntensity: 'Pressure intensity',
 
   // rendering
-  renderingTitle: 'Rendering',
+  renderingTitle: 'View',
   renderingGrid: 'Show grid',
   renderingSymmetryLine: 'Show mirror line',
   renderingMatcap: 'Matcap',
@@ -207,7 +207,7 @@ var TR = {
   renderingTransparency: 'Transparency',
   renderingNormal: 'Normal shader',
   renderingUV: 'UV shader',
-  renderingShader: 'Shader',
+  renderingShader: 'Shading',
   renderingMaterial: 'Material',
   renderingImportUV: 'Import (jpg, png...)',
   renderingImportMatcap: 'Import (jpg, png...)',

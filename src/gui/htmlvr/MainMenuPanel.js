@@ -97,7 +97,7 @@ const lightIntToSlider = (x) => (!x || x <= 0 ? 0
 // it is the same markup and the same CSS in the VR panel and in the desktop sidebar -- so a
 // change to how pinning looks or is labelled cannot land on one and not the other.
 export const SECTION_LABELS = {
-  scene: 'Scene', rendering: 'Rendering', camera: 'Camera', topology: 'Topology',
+  scene: 'Scene', rendering: 'View', camera: 'Camera', topology: 'Topology',
   sculpting: 'Tools', properties: 'Properties', animation: 'Animation',
 };
 
@@ -2451,7 +2451,7 @@ export function buildMenuHTML_view(main) {
   //
   // Rendering opens because it is the one with the controls you actually reach for (shader,
   // opacity, the rig display flags); the other three are set once.
-  return collapsibleHTML('view-rendering', 'Rendering', buildSectionHTML_rendering(main))
+  return buildSectionHTML_rendering(main)
     + collapsibleHTML('view-camera', 'Camera', buildSectionHTML_camera(main), false)
     + collapsibleHTML('view-background', 'Background', buildMenuHTML_background(main), false)
     + collapsibleHTML('view-reference', 'Reference', buildMenuHTML_reference(), false);
@@ -3067,15 +3067,14 @@ export function buildSectionHTML_rendering(main) {
   // there and used only here, so deleting it from this section strands the rig display flags, the
   // capsule slider, Attach and Hide All with no home in the app at all. bonepanel_test says so
   // outright ("Rendering owns the rig display block"), which is what the check is for.
-  const rigDisplay = buildBoneDisplayHTML(main, 'mm');
+  const rigDisplay = buildBoneDisplayHTML(main, 'mm',
+    `<button class="mm-choice${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>`);
   return `
     <div id="mm-render-root" class="${shaderClass}">
       <!-- NO 'Scene Display' HEADING. It sat above one button, so it was a heading that announced
            a group of one — which is the thing that made this panel read as bitsy. -->
-      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
-
       <fieldset class="mm-disabled-group"${meshDisabled}>
-      <div class="mm-section-title">Shader</div>
+      <div class="mm-section-title">Shading</div>
       <div class="mm-choice-grid cols-5">${shaderBtns}</div>
 
       <!-- ONE ROW, AND ONLY THE ONE THAT APPLIES. Environment belongs to PBR and Matcap to
@@ -4119,7 +4118,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       // area that is actually shown, which is a subtler failure than not hoisting at all: they
       // were not nested and not visible. Desktop's own call does not have this trap because its
       // `el` (`dd`) IS the dropdown's content container already, nothing more.
-      hoistGroupsToTop(q('#mm-content'), ['Shader', 'Rig Display']);
+      hoistGroupsToTop(q('#mm-content'), ['Shading', 'Display']);
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
       q('#mm-ref-show')?.addEventListener('click', () => {

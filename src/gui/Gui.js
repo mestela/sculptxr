@@ -1,5 +1,5 @@
 import TR from './GuiTR.js';
-import { TAB_ICONS } from './tabIcons.js';
+import { TAB_ICONS, ICON_PIN } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
 import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen, hoistGroupsToTop } from './htmlvr/uiTokens.js';
 
@@ -739,7 +739,7 @@ class Gui {
                // with no home in the app at all. This is a layout preference of ONE menu, so it
                // is fixed in that menu: the builder keeps its contract, the sidebar tab is
                // untouched, and nothing else has to be re-tested.
-               hoistGroupsToTop(el, ['Shader', 'Rig Display']);
+               hoistGroupsToTop(el, ['Shading', 'Display']);
              } }]
         : [
           { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
@@ -870,8 +870,37 @@ class Gui {
       // Wired AFTER the builder's own pass, and covering both kinds of heading: the ones
       // groupSectionTitles just created and the ones a builder emitted itself (View).
       wireGroups(dd, () => {});
+      // TEAR-OFF, the desktop twin of the VR panel's float button. Added last so no builder or
+      // wire pass ever sees it, and it is the same header markup the sidebar sections use.
+      dd.insertAdjacentHTML('afterbegin',
+        `<div class="mm-section-header"><span class="mm-section-header-title">${def.label.replace(/\s*▾$/, '')}</span>`
+        + `<button class="mm-section-pin-btn" id="mm-menu-tear-btn" title="Float panel">${ICON_PIN}</button></div>`);
+      dd.querySelector('#mm-menu-tear-btn')?.addEventListener('click', () => {
+        this._closeAllDropdowns();
+        this.floatMenu(def);
+      });
     };
     rebuild();
+  }
+
+  // A top-bar menu floating over the canvas. Same panel as a pinned sidebar section, built from
+  // the menu's own builder and wiring; not persisted, since menus are reached from the bar.
+  floatMenu(def) {
+    if (!this._menuFloats) this._menuFloats = new Map();
+    if (this._menuFloats.has(def.id)) { this._menuFloats.get(def.id).raise(); return; }
+    injectFloatCSS();
+    const main = this._main;
+    const n = this._menuFloats.size;
+    const panel = new DesktopFloatPanel({
+      sectionId: def.id,
+      title: def.label.replace(/\s*▾$/, ''),
+      dockTitle: 'Close',
+      groupOpts: { defaultOpen: pageDefaultOpen(def.id) },
+      build: () => def.buildFn(main),
+      wire: (el, rb) => { def.wireFn(el, main, rb, ...(def.extraArgs ?? [])); fixSliderDrag(el); },
+      onRedock: (id) => { panel.dispose(); this._menuFloats.delete(id); },
+    }).mount(140 + n * 24, 90 + n * 24);
+    this._menuFloats.set(def.id, panel);
   }
 
   _closeAllDropdowns() {

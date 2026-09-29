@@ -24,6 +24,9 @@ export class DesktopFloatPanel {
     this._build = opts.build;         // () => html
     this._wire = opts.wire;           // (el, rebuild) => void
     this._onRedock = opts.onRedock;
+    this._title = opts.title;         // overrides the section label (menu tear-offs)
+    this._dockTitle = opts.dockTitle;
+    this._groupOpts = opts.groupOpts; // groupSectionTitles options, as the dropdown passes them
     this._onMoved = opts.onMoved;     // called when a drag ends, so the position can be saved
     this._el = null;
   }
@@ -70,8 +73,8 @@ export class DesktopFloatPanel {
     el.innerHTML = `
       <div class="dfp-head">
         <span class="dfp-icon">${TAB_ICONS[this._id] ?? ''}</span>
-        <span class="dfp-title">${SECTION_LABELS[this._id] ?? this._id}</span>
-        <button class="dfp-dock" title="Return to the sidebar">${ICON_DOCK}</button>
+        <span class="dfp-title">${this._title ?? SECTION_LABELS[this._id] ?? this._id}</span>
+        <button class="dfp-dock" title="${this._dockTitle ?? 'Return to the sidebar'}">${ICON_DOCK}</button>
       </div>
       <div class="dfp-body"></div>
       <div class="dfp-grip" title="Drag to resize"></div>`;
@@ -106,7 +109,7 @@ export class DesktopFloatPanel {
     }
     // Same two passes as every other host of these builders: a floated section must not lose
     // its collapsibles just for being floated. See TornOffPanel for the VR twin of this.
-    if (uiReorg()) groupSectionTitles(body);
+    if (uiReorg()) groupSectionTitles(body, this._groupOpts);
     wireGroups(body, () => {});
     this._wire?.(body, () => this.rebuild());
   }
