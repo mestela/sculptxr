@@ -4885,20 +4885,9 @@ class Scene {
       
       threeCam.aspect = aspect;
       
-      if (window._forcedAspect) {
-        // If aspect is forced, use a fixed base FOV to avoid compounding effects
-        const baseFov = 45;
-        this._camera.setFov(baseFov);
-        threeCam.fov = baseFov;
-      } else {
-        // Calculate adjusted FOV to maintain constant horizontal FOV
-        const baseFov = 45;
-        const adjFov = 2 * Math.atan(Math.tan(baseFov * Math.PI / 360.0) / aspect) * 360.0 / Math.PI;
-        
-        // Update custom camera FOV (which updates its projection matrix)
-        this._camera.setFov(adjFov);
-        threeCam.fov = adjFov;
-      }
+      // Vertical FOV is the user's (default 50, the camera slider): a resize must not rewrite it.
+      // Holding horizontal FOV constant instead blew a portrait iPad up to ~79 degrees.
+      threeCam.fov = this._camera.getFov();
       
       threeCam.updateProjectionMatrix();
       

@@ -182,7 +182,7 @@ var getOptionsURL = function () {
   options.projection = getEnum(Enums.Projection, getVal('projection'), Enums.Projection.PERSPECTIVE); // perspective/orthographic
   options.cameramode = getEnum(Enums.CameraMode, getVal('cameramode'), Enums.Projection.ORBIT); // orbit/spherical/plane
   options.pivot = queryBool(getVal('pivot'), true);
-  options.fov = queryNumber(getVal('fov'), 10, 90, 45); // [10-90]
+  options.fov = queryNumber(getVal('fov'), 10, 90, 50); // [10-90]
 
   // rendering
   options.flatshading = queryBool(getVal('flatshading'), false);

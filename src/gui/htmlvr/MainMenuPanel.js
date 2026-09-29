@@ -3051,7 +3051,7 @@ export function buildSectionHTML_rendering(main) {
   // Camera
   const camera  = main.getCamera?.() ?? main._camera;
   const proj    = camera?.getProjectionType?.() ?? 0;
-  const fov     = camera?.getFov?.() ?? 45;
+  const fov     = camera?.getFov?.() ?? 50;
   const mode    = camera?.getMode?.() ?? 0;
   const pivot   = camera?.getUsePivot?.() ?? false;
   const vmode   = main._spectatorViewMode ?? 0;
@@ -3170,7 +3170,7 @@ export function buildSectionHTML_rendering(main) {
 export function buildSectionHTML_camera(main) {
   const camera  = main.getCamera?.() ?? main._camera;
   const proj    = camera?.getProjectionType?.() ?? 0;
-  const fov     = camera?.getFov?.() ?? 45;
+  const fov     = camera?.getFov?.() ?? 50;
   const mode    = camera?.getMode?.() ?? 0;
   const pivot   = camera?.getUsePivot?.() ?? false;
   const vmode   = main._spectatorViewMode ?? 0;
