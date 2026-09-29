@@ -182,6 +182,11 @@ class SculptBase {
       materials: mesh.getMaterials() ? new Float32Array(mesh.getMaterials().subarray(0, mesh.getNbVertices() * 3)) : null,
       facesTexCoord: mesh.getFacesTexCoord() ? new Uint32Array(mesh.getFacesTexCoord().subarray(0, mesh.getNbFaces() * 4)) : null,
       groups: mesh.getFacesGroups() ? new Int32Array(mesh.getFacesGroups().subarray(0, mesh.getNbFaces())) : null,
+      // The uv array and its seam-duplicate table: facesTexCoord indexes the first and the
+      // second says which vertex each duplicate copies, so restoring faces without them
+      // scrambles the texture on undo.
+      texCoords: mesh.hasUV() ? new Float32Array(mesh.getTexCoords()) : null,
+      dupStartCount: mesh.hasUV() && mesh.getVerticesDuplicateStartCount() ? new Uint32Array(mesh.getVerticesDuplicateStartCount()) : null,
       nbFaces: mesh.getNbFaces(),
       nbVertices: mesh.getNbVertices()
     };
@@ -206,6 +211,8 @@ class SculptBase {
     if (snapshot.facesTexCoord) {
       mesh.setFacesTexCoord(snapshot.facesTexCoord);
     }
+    if (snapshot.texCoords) mesh.setTexCoords(snapshot.texCoords);
+    if (snapshot.dupStartCount) mesh.setVerticesDuplicateStartCount(snapshot.dupStartCount);
     
     mesh.allocateArrays();
     // Restore group ids after allocateArrays (which reallocates the face arrays).

@@ -1,3 +1,9 @@
+# v3.68.0
+- **Sel Loop** (Mesh Edit): tap an edge to add its whole edge loop to the edge selection; tap a selected edge to take its loop back out. Loops stop at poles, triangles and open edges; tapping an open rim selects the rim. Symmetry selects the mirrored loop too. The selection belongs to the mesh and survives tool switches; it is drawn only while Sel Loop is up. Groundwork for Bevel.
+- **Cut Loop** (Mesh Edit): tap an edge to cut a new loop across its edge ring, halfway along every ring edge. A ring ending on a triangle turns it into a quad (no T-junctions). Symmetry cuts the mirrored ring too, unless it is the same ring. Works on meshes with UVs: new corners get interpolated UVs, with one per side where the cut crosses a seam.
+- **Preselect for both**: the edge a tap would use lights up, and Cut Loop draws the line(s) it would cut, mirror included -- no line means no ring through that edge. Runs on desktop hover and per frame in VR.
+- **Undo keeps UVs.** The mesh snapshot the low-poly tools use for undo dropped the UV array and its seam table, so undoing a topology edit on a UV mesh could not restore its UVs.
+
 # v3.67.2
 - **Tweak Joint handles are easier to grab on desktop.** The face dots are 25% bigger, and the hover/press pick now works in screen space, so the highlight lands on the dot you point at (it was offset by parallax for the near and far faces). A lit handle also suppresses joint/bone preselect.
 

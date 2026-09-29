@@ -46,6 +46,8 @@ export const TOOL_TINTS = {
   [Enums.Tools.COLLAPSE_EDGE]:   '#5a5540',
   [Enums.Tools.DISSOLVE_VERTEX]: '#5a5540',
   [Enums.Tools.WELD]:            '#5a5540',
+  [Enums.Tools.SEL_LOOP]:        '#5a5540',
+  [Enums.Tools.CUT_LOOP]:        '#5a5540',
 };
 
 // ── Bright text tints (MainMenuPanel tool labels) ────────────────────────────
@@ -78,6 +80,8 @@ export const TOOL_TEXT_TINTS = {
   [Enums.Tools.COLLAPSE_EDGE]:   '#f9e2af',
   [Enums.Tools.DISSOLVE_VERTEX]: '#f9e2af',
   [Enums.Tools.WELD]:            '#f9e2af',
+  [Enums.Tools.SEL_LOOP]:        '#f9e2af',
+  [Enums.Tools.CUT_LOOP]:        '#f9e2af',
 };
 
 export const toolTint     = (id) => TOOL_TINTS[id]      ?? '#313244';

@@ -53,7 +53,10 @@ Enums.Tools = {
   BONE_DRAW: 34,
   // Picks things and does nothing else — see SelectTool. Appended, never renumbered: these
   // indices are persisted in settings and asserted by the harnesses.
-  SELECT: 35
+  SELECT: 35,
+  // Edge-loop tools, see EdgeLoops.js.
+  SEL_LOOP: 36,
+  CUT_LOOP: 37
 };
 
 // display shader type

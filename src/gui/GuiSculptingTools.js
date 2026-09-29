@@ -514,6 +514,16 @@ GuiTools[Enums.Tools.WELD] = {
   init: function () { }
 };
 
+GuiTools[Enums.Tools.SEL_LOOP] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.CUT_LOOP] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 GuiTools[Enums.Tools.CUT_TOOL] = {
   _ctrls: [],
   init: function () { }

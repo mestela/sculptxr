@@ -22,6 +22,8 @@ import FillHole from './FillHole.js';
 import DissolveEdge from './DissolveEdge.js';
 import SplitFace from './SplitFace.js';
 import SpinEdge from './SpinEdge.js';
+import SelLoop from './SelLoop.js';
+import CutLoop from './CutLoop.js';
 import CollapseEdge from './CollapseEdge.js';
 import DissolveVertex from './DissolveVertex.js';
 import Weld from './Weld.js';
@@ -75,6 +77,8 @@ Tools[Enums.Tools.GEODESIC_POSE] = GeodesicPoseTool;
 Tools[Enums.Tools.PAINT_GROUP] = PaintGroup;
 Tools[Enums.Tools.BONE_DRAW] = BoneDrawTool;
 Tools[Enums.Tools.SELECT] = SelectTool;
+Tools[Enums.Tools.SEL_LOOP] = SelLoop;
+Tools[Enums.Tools.CUT_LOOP] = CutLoop;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -112,5 +116,7 @@ Tools[Enums.Tools.GEODESIC_POSE].uiName = 'sculptGeodesicPose';
 Tools[Enums.Tools.PAINT_GROUP].uiName = 'sculptPaintGroup';
 Tools[Enums.Tools.BONE_DRAW].uiName = 'sculptBoneDraw';
 Tools[Enums.Tools.SELECT].uiName = 'sculptSelect';
+Tools[Enums.Tools.SEL_LOOP].uiName = 'sculptSelLoop';
+Tools[Enums.Tools.CUT_LOOP].uiName = 'sculptCutLoop';
 
 export default Tools;
