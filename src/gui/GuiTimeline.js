@@ -2,7 +2,8 @@ import TimelineHelper from './TimelineHelper.js';
 import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
          XF_GROUPS, xfVisible, xfIsVisible, xfToggleVisible,
          xfWeightTrack, xfChanVisible, xfSetChanVisible,
-         xfTimes } from '../editing/xfChannel.js';
+         xfTimes, xfKeyed, xfKeyedSlots, xfSegEval, xfEval, xfBit, maskSync, XF_ALL,
+         xfPruneEmpty, xfRefreshDerived } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
 import PhysicsBones from '../editing/PhysicsBones.js';
@@ -716,7 +717,289 @@ export default class GuiTimeline {
 
   _contextMenuCommands() {
     const main = this._main;
-    return [...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
+    return [...this._graphMenuCommands(), ...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
+  }
+
+  _graphMenuCommands() {
+    if (this._mode !== 'graph') return [];
+    const mesh = this._graphMesh();
+    const n = mesh ? window._animationRegistry?.tracks.get(mesh.getID())?.times?.length || 0 : 0;
+    return [{ label: 'Simplify Curves\u2026', enabled: n >= 3, run: () => this._openSimplify() }];
+  }
+
+  // ── SIMPLIFY CURVES ────────────────────────────────────────────────────────────
+  //
+  // A canvas-native panel like the menus above, so it reaches the synthetic VR timeline events.
+  // It PREVIEWS LIVE: every change restores the snapshot taken on open and simplifies that
+  // afresh, so the slider can go back up and get keys back. Nothing reaches the undo stack
+  // until Apply, and then exactly one step; Cancel puts the snapshot back.
+  //
+  // THE SELECTION DRIVES IT, and stays live while it is open. The first version cleared the
+  // selection on open and cancelled on any outside click, so select-then-simplify lost the
+  // selection and select-while-open lost the panel -- matt: "it dropped the key selection, so
+  // hitting apply did nothing." Now two or more selected keys set a TIME RANGE (not indices,
+  // which the preview renumbers), clicks outside go through to the graph, and every selection
+  // change re-runs the preview on the new range. Key DRAGS are refused while it is open: an edit
+  // made on the previewed track would be thrown away by the next re-run.
+  //
+  // Tolerance and Ratio are the two stopping rules of one algorithm (curveSimplify.js):
+  // remove the cheapest key, measured against the ORIGINAL curve, until the next one would cost
+  // more than the tolerance -- or until only that fraction of keys is left.
+  _openSimplify() {
+    const reg = window._animationRegistry;
+    const mesh = this._graphMesh();
+    const track = mesh && reg?.tracks.get(mesh.getID());
+    if (!track || !track.times || track.times.length < 3) return;
+    const prefs = this._simplifyPrefs || (this._simplifyPrefs = { mode: 'tolerance', tolerance: 0.02, ratio: 0.25 });
+    this._simplify = {
+      meshId: mesh.getID(), track, before: reg._snapshotTrack(track),
+      range: null, selSig: null, prefs, result: null, dragging: false,
+    };
+    this._simplifyReadSelection();
+    this._runSimplify();
+  }
+
+  // The selected transform keys on this object, as TIMES -- they survive the renumbering.
+  _simplifySelTimes() {
+    const s = this._simplify;
+    const out = [];
+    for (const k of window._animSelectedKeys || []) {
+      if (k.meshId !== s.meshId || k.type !== 'transform' || k.group === 'weight') continue;
+      const t = s.track.times[k.index];
+      if (t !== undefined) out.push(t);
+    }
+    return out;
+  }
+
+  // Two or more selected keys make a range; its END keys are fixed so the result joins the
+  // untouched curve either side exactly. Fewer than two means the whole curve.
+  _simplifyReadSelection() {
+    const s = this._simplify;
+    const ts = this._simplifySelTimes();
+    s.selSig = ts.slice().sort((a, b) => a - b).join(',');
+    s.range = ts.length >= 2 ? { t0: Math.min(...ts), t1: Math.max(...ts) } : null;
+  }
+
+  // The channels to simplify: the ones on screen. Hidden ones are not touched. Nothing
+  // visible (weight only) means all nine.
+  _simplifyJudge() {
+    const out = {};
+    let any = false;
+    for (const g of xfVisible()) {
+      if (g === 'weight') continue;
+      out[g] = [0, 1, 2].map((c) => xfChanVisible(g, c));
+      any = any || out[g].some(Boolean);
+    }
+    return any ? out : null;
+  }
+
+  _simplifyJudgeLabel(judge) {
+    if (!judge) return 'all channels';
+    const P = { pos: 'T', rot: 'R', scale: 'S' };
+    return Object.keys(judge).flatMap((g) => judge[g].map((on, c) => (on ? P[g] + 'XYZ'[c] : null))).filter(Boolean).join(' ');
+  }
+
+  // Called after every pointer release while open: a selection that moved re-scopes the preview,
+  // and a channel shown or hidden changes what the fit holds.
+  _simplifyAfterPointer() {
+    const s = this._simplifyLive();
+    if (!s || s.dragging) return;
+    const sig = this._simplifySelTimes().sort((a, b) => a - b).join(',');
+    const judgeSig = JSON.stringify(this._simplifyJudge());
+    if (sig === s.selSig && judgeSig === JSON.stringify(s.judge)) return;
+    if (sig !== s.selSig) this._simplifyReadSelection();
+    this._runSimplify();
+  }
+
+  // The track must still be the one this panel is editing. Anything else that rewrites it --
+  // an undo from the keyboard while the panel is open -- replaces its arrays, and applying on
+  // top of that would write a stale snapshot over the user's undo.
+  _simplifyLive() {
+    const s = this._simplify;
+    const reg = window._animationRegistry;
+    if (!s || reg?.tracks.get(s.meshId) !== s.track || (s.times && s.track.times !== s.times)
+        || (s.result && s.track.times.length !== s.result.after)) {
+      this._simplify = null;
+      return null;
+    }
+    return s;
+  }
+
+  _runSimplify() {
+    const s = this._simplifyLive();
+    if (!s) return;
+    const reg = window._animationRegistry;
+    const mesh = this._main._meshes?.find(m => m.getID() === s.meshId);
+    const mine = (k) => k.meshId === s.meshId && k.type === 'transform' && k.group !== 'weight';
+    const sel = (window._animSelectedKeys || []).map((k) => (mine(k) ? { k, t: s.track.times[k.index] } : { k }));
+    reg._restoreTrack(s.track, s.before, null);
+    let indices = null;
+    if (s.range) {
+      indices = new Set();
+      s.track.times.forEach((t, i) => { if (t > s.range.t0 && t < s.range.t1) indices.add(i); });
+    }
+    s.judge = this._simplifyJudge();
+    s.result = reg.simplifyTransformTrack(s.track, { ...s.prefs, indices, judge: s.judge });
+    s.times = s.track.times;
+    // Re-point the selection at the same keys by time; a key the preview removed drops out.
+    // Exact equality is safe: simplifying copies times, it never recomputes them.
+    const idxOf = new Map(s.track.times.map((t, i) => [t, i]));
+    window._animSelectedKeys = sel.flatMap(({ k, t }) => {
+      if (!mine(k)) return [k];
+      const i = idxOf.get(t);
+      return i === undefined ? [] : [{ ...k, index: i }];
+    });
+    window._animTransformBox = null;
+    // The selection just shrank by whatever the preview removed; that is not the user
+    // re-selecting, so it must not count as a change (the range ends always survive anyway).
+    s.selSig = this._simplifySelTimes().sort((a, b) => a - b).join(',');
+    if (mesh) reg.update(mesh, true);
+    window.app?.render?.();
+    this.draw();
+  }
+
+  // Slider moves arrive faster than a long take simplifies, so they coalesce: the latest value
+  // wins and the run happens once the event queue is clear. A timeout rather than rAF, because
+  // window.requestAnimationFrame does not fire inside an immersive session.
+  _queueSimplify() {
+    if (this._simplifyQueued) return;
+    this._simplifyQueued = true;
+    setTimeout(() => { this._simplifyQueued = false; this._runSimplify(); }, 0);
+  }
+
+  _applySimplify() {
+    const s = this._simplifyLive();
+    this._simplify = null;
+    if (!s || !s.result || s.result.keysAfter === s.result.keysBefore) { this.draw(); return; }
+    const reg = window._animationRegistry;
+    const before = s.before, after = reg._snapshotTrack(s.track);
+    const put = (snap) => {
+      const tr = reg.tracks.get(s.meshId);
+      if (tr) reg._restoreTrack(tr, snap, this._main._meshes?.find(m => m.getID() === s.meshId));
+      window._animSelectedKeys = [];
+      this.draw();
+    };
+    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Simplify Curves');
+    window._animStatusText = `Simplified: ${s.result.keysBefore} -> ${s.result.keysAfter} keys`;
+    this.draw();
+  }
+
+  _cancelSimplify() {
+    const s = this._simplifyLive();
+    this._simplify = null;
+    if (s) {
+      const reg = window._animationRegistry;
+      reg._restoreTrack(s.track, s.before, this._main._meshes?.find(m => m.getID() === s.meshId));
+    }
+    this.draw();
+  }
+
+  _simplifyLayout() {
+    const x = 208, y = HEADER_H + 26, w = 250, pad = 8, rowH = 24;
+    const r = { x, y, w, h: pad * 2 + rowH * 6 };
+    const iw = w - pad * 2;
+    r.title  = { x: x + pad, y: y + pad, w: iw, h: rowH };
+    r.tol    = { x: x + pad, y: y + pad + rowH, w: iw / 2 - 2, h: rowH - 4 };
+    r.ratio  = { x: x + pad + iw / 2 + 2, y: y + pad + rowH, w: iw / 2 - 2, h: rowH - 4 };
+    r.slider = { x: x + pad, y: y + pad + rowH * 2 + 6, w: iw, h: rowH - 12 };
+    r.label  = { x: x + pad, y: y + pad + rowH * 3, w: iw, h: rowH };
+    r.judge  = { x: x + pad, y: y + pad + rowH * 4, w: iw, h: rowH };
+    r.apply  = { x: x + pad, y: y + pad + rowH * 5, w: iw / 2 - 2, h: rowH - 4 };
+    r.cancel = { x: x + pad + iw / 2 + 2, y: y + pad + rowH * 5, w: iw / 2 - 2, h: rowH - 4 };
+    return r;
+  }
+
+  // Tolerance runs on a LOG scale, 0.1% to 25% of each group's range: the useful settings for
+  // a noisy take and for a clean hand-keyed curve are two orders of magnitude apart.
+  _simplifySliderPos(p) {
+    if (p.mode === 'ratio') return (p.ratio - 0.01) / 0.99;
+    return Math.log(p.tolerance / 0.001) / Math.log(250);
+  }
+
+  _simplifySetFromX(rx) {
+    const s = this._simplify, sl = this._simplifyLayout().slider;
+    const u = Math.max(0, Math.min(1, (rx - sl.x) / sl.w));
+    if (s.prefs.mode === 'ratio') s.prefs.ratio = 0.01 + u * 0.99;
+    else s.prefs.tolerance = 0.001 * Math.pow(250, u);
+    this._queueSimplify();
+  }
+
+  // Returns true when the panel took the press. A press outside is NOT the panel's: it goes on
+  // to the graph, so keys can be (re)selected with the panel open.
+  _simplifyMouseDown(rx, ry) {
+    if (!this._simplifyLive()) return false;
+    const L = this._simplifyLayout();
+    const inR = (b) => rx >= b.x && rx <= b.x + b.w && ry >= b.y && ry <= b.y + b.h;
+    if (!inR(L)) return false;
+    const p = this._simplify.prefs;
+    if (inR(L.tol) && p.mode !== 'tolerance') { p.mode = 'tolerance'; this._runSimplify(); }
+    else if (inR(L.ratio) && p.mode !== 'ratio') { p.mode = 'ratio'; this._runSimplify(); }
+    else if (inR({ x: L.slider.x - 6, y: L.slider.y - 6, w: L.slider.w + 12, h: L.slider.h + 12 })) {
+      this._simplify.dragging = true;
+      this._simplifySetFromX(rx);
+    }
+    else if (inR(L.apply)) this._applySimplify();
+    else if (inR(L.cancel)) this._cancelSimplify();
+    return true;
+  }
+
+  _drawSimplifyPanel(ctx) {
+    const s = this._simplifyLive();
+    if (!s) return;
+    const L = this._simplifyLayout();
+    const p = s.prefs;
+    const hov = (b) => this._lastMouseX >= b.x && this._lastMouseX <= b.x + b.w
+      && this._lastMouseY >= b.y && this._lastMouseY <= b.y + b.h;
+    const button = (b, label, on) => {
+      ctx.fillStyle = on ? TL_ACCENT : (hov(b) ? Theme.surface1 : Theme.surface0);
+      ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 3); ctx.fill();
+      ctx.fillStyle = Theme.text; ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
+    };
+    ctx.save();
+    ctx.fillStyle = Theme.crust; ctx.strokeStyle = Theme.surface1; ctx.lineWidth = 1;
+    ctx.fillRect(L.x, L.y, L.w, L.h);
+    ctx.strokeRect(L.x + 0.5, L.y + 0.5, L.w - 1, L.h - 1);
+
+    ctx.fillStyle = Theme.text; ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('Simplify Curves', L.title.x, L.title.y + L.title.h / 2);
+    ctx.fillStyle = Theme.overlay0; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    const fps = window._animFPS || 24;
+    ctx.fillText(s.range ? `frames ${Math.round(s.range.t0 * fps)}-${Math.round(s.range.t1 * fps)}` : 'whole curve',
+      L.title.x + L.title.w, L.title.y + L.title.h / 2);
+
+    button(L.tol, 'Tolerance', p.mode === 'tolerance');
+    button(L.ratio, 'Ratio', p.mode === 'ratio');
+
+    const sl = L.slider, u = Math.max(0, Math.min(1, this._simplifySliderPos(p)));
+    ctx.fillStyle = Theme.surface0;
+    ctx.beginPath(); ctx.roundRect(sl.x, sl.y, sl.w, sl.h, sl.h / 2); ctx.fill();
+    ctx.fillStyle = TL_ACCENT;
+    ctx.beginPath(); ctx.roundRect(sl.x, sl.y, Math.max(sl.h, sl.w * u), sl.h, sl.h / 2); ctx.fill();
+    ctx.fillStyle = Theme.text;
+    ctx.beginPath(); ctx.arc(sl.x + sl.w * u, sl.y + sl.h / 2, sl.h / 2 + 3, 0, Math.PI * 2); ctx.fill();
+
+    const pct = (v) => (v * 100 < 1 ? (v * 100).toFixed(2) : v * 100 < 10 ? (v * 100).toFixed(1) : (v * 100).toFixed(0)) + '%';
+    ctx.font = '12px sans-serif'; ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left'; ctx.fillStyle = Theme.subtext;
+    ctx.fillText(p.mode === 'ratio' ? `Keep ${pct(p.ratio)} of keys` : `Max error ${pct(p.tolerance)} of range`,
+      L.label.x, L.label.y + L.label.h / 2);
+    ctx.textAlign = 'right'; ctx.fillStyle = Theme.text;
+    if (s.result) ctx.fillText(`${s.result.keysBefore} -> ${s.result.keysAfter} keys`, L.label.x + L.label.w, L.label.y + L.label.h / 2);
+
+    // Which channels this acts on. With sparse keys each is simplified on its own, so hidden
+    // channels are left exactly as they are.
+    ctx.textAlign = 'left'; ctx.fillStyle = Theme.overlay0; ctx.font = '11px sans-serif';
+    ctx.fillText(`Simplifies ${this._simplifyJudgeLabel(s.judge)}${s.judge ? '; hidden channels untouched' : ''}`,
+      L.judge.x, L.judge.y + L.judge.h / 2, L.judge.w);
+
+    // Say so when there is nothing to do, rather than leaving Apply to silently do nothing.
+    const idle = s.result && s.result.keysAfter === s.result.keysBefore;
+    button(L.apply, idle ? 'Nothing to remove' : 'Apply', false);
+    button(L.cancel, 'Cancel', false);
+    ctx.restore();
   }
 
   _contextMenuRect() {
@@ -909,6 +1192,8 @@ export default class GuiTimeline {
       live.positions        = snap.positions        ? [...snap.positions]        : [];
       live.quaternions      = snap.quaternions      ? [...snap.quaternions]      : [];
       live.scales           = snap.scales           ? [...snap.scales]           : [];
+      live.keyMask          = snap.keyMask          ? [...snap.keyMask]          : null;
+      live.eulers           = snap.eulers           ? [...snap.eulers]           : null;
       live.shapeTimes       = snap.shapeTimes       ? [...snap.shapeTimes]       : [];
       live.shapes           = snap.shapes           ? snap.shapes.map(s => new Float32Array(s)) : [];
       live.shapeOutputTimes = snap.shapeOutputTimes ? [...snap.shapeOutputTimes] : [];
@@ -1013,6 +1298,8 @@ export default class GuiTimeline {
     const trGroups = new Map();  // "meshId_type" -> [indices]         (transform/shape)
     const slGroups = new Map();  // "meshId:layer" -> {meshId,layer,indices[]}   (#34 layers)
     const bsGroups = new Map();  // "meshId:name"  -> {meshId,name,indices[]}    (blendshape)
+    const xfKeys = new Map();    // meshId -> transform keys (per channel, see below)
+    const wKeys = new Map();     // meshId -> pin-weight key indices (its own times)
     window._animSelectedKeys.forEach(k => {
       if (k.type === 'blendshape') {
         const gk = `${k.meshId}:${k.name}`;
@@ -1022,11 +1309,37 @@ export default class GuiTimeline {
         const gk = `${k.meshId}:${k.layer}`;
         if (!slGroups.has(gk)) slGroups.set(gk, { meshId: k.meshId, layer: k.layer, indices: [] });
         slGroups.get(gk).indices.push(k.index);
-      } else if (k.type === 'transform' || k.type === 'shape') {
+      } else if (k.type === 'transform' && k.group === 'weight') {
+        if (!wKeys.has(k.meshId)) wKeys.set(k.meshId, []);
+        wKeys.get(k.meshId).push(k.index);
+      } else if (k.type === 'transform') {
+        if (!xfKeys.has(k.meshId)) xfKeys.set(k.meshId, []);
+        xfKeys.get(k.meshId).push(k);
+      } else if (k.type === 'shape') {
         const gk = `${k.meshId}_${k.type}`;
         if (!trGroups.has(gk)) trGroups.set(gk, []);
         trGroups.get(gk).push(k.index);
       }
+    });
+
+    // SPARSE KEYS: a graph key (it names a channel) deletes that channel's key only; a
+    // dopesheet key (no channel) is the whole slot. Slots left keying nothing are removed.
+    xfKeys.forEach((keys, meshId) => {
+      const tr = reg.tracks.get(meshId);
+      if (!tr?.times) return;
+      const m = maskSync(tr);
+      for (const k of keys) {
+        if (tr.times[k.index] === undefined) continue;
+        if (k.channel === undefined) m[k.index] = 0;
+        else m[k.index] &= ~xfBit(k.group || 'pos', k.channel);
+      }
+      xfPruneEmpty(tr);
+      xfRefreshDerived(tr);
+    });
+    wKeys.forEach((indices, meshId) => {
+      const st = xfWeightTrack(reg.tracks.get(meshId));
+      if (!st) return;
+      [...new Set(indices)].sort((a, b) => b - a).forEach((i) => { st.times.splice(i, 1); st.values.splice(i, 1); });
     });
 
     trGroups.forEach((indices, gk) => {
@@ -1035,10 +1348,7 @@ export default class GuiTimeline {
       const type = gk.slice(us + 1);
       if (!tr) return;
       indices.sort((a, b) => b - a).forEach(idx => {
-        if (type === 'transform' && tr.times?.[idx] !== undefined) {
-          tr.times.splice(idx, 1); tr.positions.splice(idx * 3, 3);
-          tr.quaternions.splice(idx * 4, 4); tr.scales.splice(idx * 3, 3);
-        } else if (type === 'shape' && tr.shapeTimes?.[idx] !== undefined) {
+        if (type === 'shape' && tr.shapeTimes?.[idx] !== undefined) {
           tr.shapeTimes.splice(idx, 1); tr.shapes.splice(idx, 1);
           if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
         }
@@ -1114,6 +1424,9 @@ export default class GuiTimeline {
           pos:   tr.positions.slice(k.index * 3, k.index * 3 + 3),
           quat:  tr.quaternions.slice(k.index * 4, k.index * 4 + 4),
           scale: tr.scales.slice(k.index * 3, k.index * 3 + 3),
+          // A graph key is ONE channel's key; a dopesheet key is the whole slot as keyed.
+          bits: k.channel !== undefined && k.group !== 'weight'
+            ? xfBit(k.group || 'pos', k.channel) : (maskSync(tr)[k.index] || XF_ALL),
         } });
       } else if (k.type === 'shape') {
         const t = tr.shapeTimes?.[k.index]; if (t === undefined) continue;
@@ -1206,14 +1519,9 @@ export default class GuiTimeline {
 
   // Insert a key with EXPLICIT copied values (not captured from the live mesh), replacing
   // any key already within an epsilon of `time`. Parallel-array splice, sorted by time.
-  _insertTransformKeyAt(tr, time, { pos, quat, scale }) {
+  _insertTransformKeyAt(tr, time, { pos, quat, scale, bits }) {
     tr.times = tr.times || []; tr.positions = tr.positions || []; tr.quaternions = tr.quaternions || []; tr.scales = tr.scales || [];
-    let idx = 0; while (idx < tr.times.length && tr.times[idx] < time) idx++;
-    if (idx < tr.times.length && Math.abs(tr.times[idx] - time) < 0.005) {
-      tr.positions.splice(idx * 3, 3, ...pos); tr.quaternions.splice(idx * 4, 4, ...quat); tr.scales.splice(idx * 3, 3, ...scale);
-    } else {
-      tr.times.splice(idx, 0, time); tr.positions.splice(idx * 3, 0, ...pos); tr.quaternions.splice(idx * 4, 0, ...quat); tr.scales.splice(idx * 3, 0, ...scale);
-    }
+    window._animationRegistry._putKey(tr, time, pos, quat, scale, bits || XF_ALL);
   }
 
   _insertShapeKeyAt(tr, time, { verts, outDelta }) {
@@ -2087,87 +2395,21 @@ export default class GuiTimeline {
           ctx.strokeStyle = _hovC ? this._lightenHex(colors[channel]) : colors[channel];
           ctx.lineWidth = _hovC ? 3.5 : 2;
           ctx.beginPath();
-          
-          for (let i = 0; i < track.times.length - 1; i++) {
-            const t1 = track.times[i];
-            const t2 = track.times[i + 1];
-            
-            const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-            const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
 
-            const isSelectedChannel = selChannel === channel;
-
-            let m0 = 1.0;
-            let m1 = 1.0;
-            
-            const dt = t2 - t1;
-            
-            const val1 = xfRead(track, i, channel, grp);
-            const val2 = xfRead(track, i + 1, channel, grp);
-
-            // Per GROUP as well as per channel -- see xfTanGet. Reading these ungrouped is what
-            // put a translation tangent on the scale curve.
-            const rightDt = xfTanGet(track, `${i}_right_dt`, grp);
-            const rightDv = xfTanGet(track, `${i}_right_dv_${channel}`, grp);
-            const leftDt = xfTanGet(track, `${i + 1}_left_dt`, grp);
-            const leftDv = xfTanGet(track, `${i + 1}_left_dv_${channel}`, grp);
-
-            const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-            const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-
-            let slope0 = 0;
-            if (i === 0) {
-              slope0 = (xfRead(track, 1, channel, grp) - xfRead(track, 0, channel, grp)) / (track.times[1] - track.times[0]);
-            } else if (i === track.times.length - 1) {
-              slope0 = (xfRead(track, i, channel, grp) - xfRead(track, i - 1, channel, grp)) / (track.times[i] - track.times[i - 1]);
-            } else {
-              const pIdx = (i - 1) * 3;
-              const nIdx = (i + 1) * 3;
-              const dt_seg = track.times[i + 1] - track.times[i - 1];
-              slope0 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel, grp) - xfRead(track, pIdx / 3, channel, grp)) / dt_seg : 0;
-            }
-
-            let slope1 = 0;
-            const i1 = i + 1;
-            if (i1 === 0) {
-              slope1 = (xfRead(track, 1, channel, grp) - xfRead(track, 0, channel, grp)) / (track.times[1] - track.times[0]);
-            } else if (i1 === track.times.length - 1) {
-              const pIdx = (i1 - 1) * 3;
-              const cIdx = i1 * 3;
-              slope1 = (xfRead(track, cIdx / 3, channel, grp) - xfRead(track, pIdx / 3, channel, grp)) / (track.times[i1] - track.times[i1 - 1]);
-            } else {
-              const pIdx = (i1 - 1) * 3;
-              const nIdx = (i1 + 1) * 3;
-              const dt_seg = track.times[i1 + 1] - track.times[i1 - 1];
-              slope1 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel, grp) - xfRead(track, pIdx / 3, channel, grp)) / dt_seg : 0;
-            }
-
-            const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
-            const dv1 = leftDv !== undefined ? leftDv : slope1 * dt1;
-
-            const p1x = dt0 / dt;
-            const p2x = 1 + dt1 / dt;
-
-            const hasTangents = xfTanGet(track, `${i}_right_dv_${channel}`, grp) !== undefined
-              || xfTanGet(track, `${i + 1}_left_dv_${channel}`, grp) !== undefined;
-
+          // Through THIS channel's keys only (sparse keys): a slot where other channels are
+          // keyed is not a point on this curve.
+          const ks = xfKeyedSlots(track, grp, channel);
+          for (let k = 0; k < ks.length - 1; k++) {
+            const a = ks[k], b = ks[k + 1];
+            const ap = k > 0 ? ks[k - 1] : -1, bn = k < ks.length - 2 ? ks[k + 2] : -1;
+            const t1 = track.times[a], t2 = track.times[b];
             const steps = 20;
-            for (let s = 0; s <= steps; s++) {
-              const targetAlpha = s / steps;
-              
-              const t = TimelineHelper.getBezierT(targetAlpha, p1x, p2x);
-              const val = TimelineHelper.evaluateBezier(t, val1, val2, dv0, dv1);
-              
-              const time = t1 + targetAlpha * (t2 - t1);
-              
+            for (let st = 0; st <= steps; st++) {
+              const time = t1 + (t2 - t1) * (st / steps);
+              const val = xfSegEval(track, grp, channel, a, ap, b, bn, time);
               const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
               const y = this._valY(val, grp, normR);
-              
-              if (i === 0 && s === 0) {
-                ctx.moveTo(x, y);
-              } else {
-                ctx.lineTo(x, y);
-              }
+              if (k === 0 && st === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }
           }
           // STROKE INSIDE THE CHANNEL LOOP. When the group wrapper was added, its closing brace
@@ -2188,6 +2430,7 @@ export default class GuiTimeline {
           const t = track.times[i];
           for (let channel = 0; channel < 3; channel++) {
             if (!xfChanVisible(grp, channel)) continue;
+            if (!xfKeyed(track, i, grp, channel)) continue;   // sparse: no key on this channel here
 
             const val = xfRead(track, i, channel, grp);
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -2279,13 +2522,16 @@ export default class GuiTimeline {
           ctx.strokeStyle = Theme.subtext; // Revert to gray!
           ctx.lineWidth = 1.5;
 
-          for (let i = 0; i < track.times.length; i++) {
+          // Handles belong to the SELECTED key's group -- reading them ungrouped is the bug
+          // that put a translation tangent on the scale curve.
+          const selGrp = (singleSelected && singleSelected.group) || xfGroup();
+          const _tks = xfKeyedSlots(track, selGrp, selChannel);
+          for (let _k = 0; _k < _tks.length; _k++) {
+            const i = _tks[_k];
             const t = track.times[i];
             const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-            
-            // Handles belong to the SELECTED key's group -- reading them ungrouped is the bug
-            // that put a translation tangent on the scale curve.
-            const selGrp = (singleSelected && singleSelected.group) || xfGroup();
+            const _prevT = _k > 0 ? track.times[_tks[_k - 1]] : null;
+            const _nextT = _k < _tks.length - 1 ? track.times[_tks[_k + 1]] : null;
             const val = xfRead(track, i, selChannel, selGrp);
             const ky = this.valueToY(val);
 
@@ -2294,9 +2540,9 @@ export default class GuiTimeline {
             const leftDt = xfTanGet(track, `${i}_left_dt`, selGrp);
             const leftDv = xfTanGet(track, `${i}_left_dv_${selChannel}`, selGrp);
 
-            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
-            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
-            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel, selGrp) : 0;
+            const dt_right = _nextT !== null ? _nextT - t : 0.2;
+            const dt_left = _prevT !== null ? t - _prevT : 0.2;
 
             const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
             const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * this._zoomY;
@@ -2305,7 +2551,7 @@ export default class GuiTimeline {
             const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * this._zoomY;
 
             // Draw right handle
-            if (i < track.times.length - 1) {
+            if (_nextT !== null) {
               ctx.beginPath();
               ctx.moveTo(kx, ky);
               ctx.lineTo(kx + rightXOff, ky + rightYOff);
@@ -2324,7 +2570,7 @@ export default class GuiTimeline {
             }
             
             // Draw left handle
-            if (i > 0) {
+            if (_prevT !== null) {
               ctx.beginPath();
               ctx.moveTo(kx, ky);
               ctx.lineTo(kx + leftXOff, ky + leftYOff);
@@ -2666,6 +2912,28 @@ export default class GuiTimeline {
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
     }
+
+    // KEY CROSSHAIR. While one key is being dragged, a faint line through it on each axis runs
+    // the full width and height of the graph, so it can be lined up by eye against keys on
+    // other curves -- same frame, or same value. Only for a single key: with several moving
+    // there is no one point to line up.
+    if (this._isDraggingKeyframe && window._animSelectedKeys?.length === 1) {
+      const k = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0)[0];
+      if (k && Number.isFinite(k.time) && Number.isFinite(k.val)) {
+        const kx = Math.round(tlX + ((k.time - loopStart) / visibleDuration) * tlW) + 0.5;
+        const ky = Math.round(this.valueToY(k.val)) + 0.5;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(tlX, headerH, tlW, graphH); ctx.clip();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(kx, headerH); ctx.lineTo(kx, headerH + graphH);
+        ctx.moveTo(tlX, ky); ctx.lineTo(tlX + tlW, ky);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   }
 
   getInitialKeysForTransform(selectedKeys, reg, selChannel) {
@@ -2745,7 +3013,7 @@ export default class GuiTimeline {
         if (grp === 'weight') continue;
         for (let c = 0; c < 3; c++) {
           if (!xfChanVisible(grp, c)) continue;
-          if (test(track.times.map((t, i) => ({ t, v: this._normVal(xfRead(track, i, c, grp), grp, _nr) }))))
+          if (test(xfKeyedSlots(track, grp, c).map((i) => ({ t: track.times[i], v: this._normVal(xfRead(track, i, c, grp), grp, _nr) }))))
             return { kind: 'transform', channel: c, group: grp };
         }
       }
@@ -2978,6 +3246,7 @@ export default class GuiTimeline {
         if (grp === 'weight') continue;
         for (let c = 0; c < 3; c++) {
           if (!xfChanVisible(grp, c)) continue; // hidden channel — not selectable
+          if (!xfKeyed(track, i, grp, c)) continue;  // sparse: this channel has no key here
           const val = xfRead(track, i, c, grp);
           const y = this._valY(val, grp, _normR);
           tlLog(`  key ${i} ch${c} val=${val} x=${x.toFixed(1)} y=${y.toFixed(1)}`,
@@ -3166,23 +3435,28 @@ export default class GuiTimeline {
       const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
       const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
 
-      for (let i = 0; i < track.times.length; i++) {
+      const _selGrp2 = (window._animSelectedKeys && window._animSelectedKeys.length === 1
+        && window._animSelectedKeys[0].group) || xfGroup();
+      const _tks = xfKeyedSlots(track, _selGrp2, selChannel);
+      for (let _k = 0; _k < _tks.length; _k++) {
+        const i = _tks[_k];
         const t = track.times[i];
         const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-        
-        const _selGrp2 = (window._animSelectedKeys && window._animSelectedKeys.length === 1
-          && window._animSelectedKeys[0].group) || xfGroup();
+        const _prevT = _k > 0 ? track.times[_tks[_k - 1]] : null;
+        const _nextT = _k < _tks.length - 1 ? track.times[_tks[_k + 1]] : null;
         const val = xfRead(track, i, selChannel, _selGrp2);
         const ky = this.valueToY(val);
 
+        // Both sides grouped, as the draw reads them. The left side used to read the legacy
+        // ungrouped key, so it could only be picked where the old key had put it.
         const rightDt = xfTanGet(track, `${i}_right_dt`, _selGrp2);
         const rightDv = xfTanGet(track, `${i}_right_dv_${selChannel}`, _selGrp2);
-        const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
-        const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+        const leftDt = xfTanGet(track, `${i}_left_dt`, _selGrp2);
+        const leftDv = xfTanGet(track, `${i}_left_dv_${selChannel}`, _selGrp2);
 
-        const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
-        const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
-        const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+        const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel, _selGrp2) : 0;
+        const dt_right = _nextT !== null ? _nextT - t : 0.2;
+        const dt_left = _prevT !== null ? t - _prevT : 0.2;
 
         const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
         const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * this._zoomY;
@@ -3191,7 +3465,7 @@ export default class GuiTimeline {
         const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * this._zoomY;
 
         // Check right handle
-        if (i < track.times.length - 1) {
+        if (_nextT !== null) {
           if (TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 10)) {
             this._isDraggingTangent = true;
             this._activeTangentTrack = track;
@@ -3205,7 +3479,7 @@ export default class GuiTimeline {
         }
         
         // Check left handle
-        if (i > 0) {
+        if (_prevT !== null) {
           if (TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 10)) {
             this._isDraggingTangent = true;
             this._activeTangentTrack = track;
@@ -3989,6 +4263,7 @@ export default class GuiTimeline {
   }
 
   _cancelActiveAction() {
+    this._keysDetached = false;
     this._rangeDrag = null;
     this._isDraggingPlayhead = false;
     this._isDraggingKeyframe = false;
@@ -4016,7 +4291,7 @@ export default class GuiTimeline {
     if (single && reg) {
       const tr = reg.tracks.get(single.meshId);
       if (tr?.tangentOffsets) {
-        const pfx = single.type === 'transform' ? xfTanPrefix() : '';
+        const pfx = single.type === 'transform' ? xfTanPrefix(single.group) : '';
         isTied = tr.tangentOffsets[`${pfx}${single.index}_tied`] !== false;
       }
     }
@@ -4295,6 +4570,8 @@ export default class GuiTimeline {
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
+
+    if (this._simplifyMouseDown(rx, ry)) return;
 
     // Shared canvas-native "…" menu. This path receives both desktop pointer events and the
     // synthetic VR timeline events, unlike the old DOM popup.
@@ -4588,7 +4865,7 @@ export default class GuiTimeline {
               const track = reg.tracks.get(singleSelected.meshId);
               if (track) {
                 if (!track.tangentOffsets) track.tangentOffsets = {};
-                const prefix = singleSelected.type === 'transform' ? xfTanPrefix() : '';
+                const prefix = singleSelected.type === 'transform' ? xfTanPrefix(singleSelected.group) : '';
                 const key = `${prefix}${singleSelected.index}_tied`;
                 const cur = track.tangentOffsets[key] !== false;
                 track.tangentOffsets[key] = !cur;
@@ -5421,6 +5698,22 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    // A key, handle or transform-box drag started with the panel open would edit the PREVIEW,
+    // which the next re-run throws away; the press has already selected, so that is all it does.
+    if (this._simplify && (this._isDraggingKeyframe || this._isDraggingTangent || this._activeTransformHandle)) {
+      this._isDraggingKeyframe = false;
+      this._isDraggingTangent = false;
+      this._activeTransformHandle = null;
+      this._undoTracksBeforeMove = null;
+    }
+    if (this._simplify?.dragging) {
+      const rect = this._canvas.getBoundingClientRect();
+      this._lastMouseX = e.clientX - rect.left;
+      this._lastMouseY = e.clientY - rect.top;
+      this._simplifySetFromX(this._lastMouseX);
+      this.draw();
+      return;
+    }
     if (this._rangeDrag) {
       const rect = this._canvas.getBoundingClientRect();
       this._rangeBarMove(e.clientX - rect.left);
@@ -5688,6 +5981,18 @@ export default class GuiTimeline {
       }
       
       if (window._animationRegistry) {
+        // SPARSE KEYS: before the first TIME move, split the dragged channels out of any slot
+        // they share with other keyed channels, so only they move. Value-only drags need not.
+        if (this._mode === 'graph' && dt !== 0 && !this._keysDetached) {
+          this._keysDetached = true;
+          const active = { meshId: this._activeMeshId, type: this._activeKeyframeType,
+            index: this._activeKeyframeIndex, channel: this._activeKeyframeChannel,
+            group: (window._animSelectedKeys || []).find((k) => k.index === this._activeKeyframeIndex
+              && k.channel === this._activeKeyframeChannel)?.group || 'pos' };
+          window._animationRegistry.detachChannelKeys(
+            [this._animSelectedKeysInitialTimes || [], window._animSelectedKeys || [], [active]]);
+          this._activeKeyframeIndex = active.index;
+        }
         if (this._mode === 'graph') {
           const targetVal = this.yToValue(ry);
           const dVal = dragAxis === 'time' ? 0 : targetVal - this._keyDragStartVal;
@@ -5963,9 +6268,12 @@ export default class GuiTimeline {
       this._cancelActiveAction();
       try { this.draw(); } catch (_) { /* a failed repaint must not re-trap the pointer */ }
     }
+    // After the body, so the release has already finished any selection it was making.
+    if (this._simplify) this._simplifyAfterPointer();
   }
 
   _onMouseUpBody(e) {
+    if (this._simplify?.dragging) { this._simplify.dragging = false; return; }
     if (this._rangeDrag) { this._rangeBarUp(); return; }
 
     // SR frame marker release: no-move = click → jump playhead to that frame; moved =
@@ -6127,6 +6435,7 @@ export default class GuiTimeline {
 
       }
       this._isDraggingKeyframe = false;
+      this._keysDetached = false;
       this._activeKeyframeTrack = null;
       this._activeKeyframeIndex = undefined;
       this._activeKeyframeType = null;
@@ -7044,6 +7353,7 @@ export default class GuiTimeline {
       this._drawContextMenu(ctx);
       this._drawRecOptMenu(ctx);
       this._drawAudioMenu(ctx);
+      this._drawSimplifyPanel(ctx);
       // Graph mode returns before the dopesheet tail below. Still publish the completed
       // draw so Scene uploads its changed canvas texture in VR (transport state included).
       this._drawRevision = (this._drawRevision || 0) + 1;

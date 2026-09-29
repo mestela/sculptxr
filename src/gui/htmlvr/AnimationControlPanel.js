@@ -17,6 +17,7 @@ import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import { faIcon } from './faIcons.js';
 import { uiReorg, groupSectionTitles, wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
 import TimelineHelper from '../TimelineHelper.js';
+import { maskSync, xfBit, xfRefreshDerived } from '../../editing/xfChannel.js';
 import IKSolver from '../../editing/IKSolver.js';
 import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
 
@@ -1578,8 +1579,12 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       if (k.type === 'transform' && track.positions) {
         const cur = track.positions[kIdx * 3 + ch] ?? 0;
         const nv  = _parseExpr(rawVal, cur);
-        if (nv != null && kIdx * 3 + ch < track.positions.length)
+        if (nv != null && kIdx * 3 + ch < track.positions.length) {
           track.positions[kIdx * 3 + ch] = nv;
+          // Typing a value IS keying that channel; unkeyed it would be re-derived away (sparse keys).
+          maskSync(track)[kIdx] |= xfBit('pos', ch);
+          xfRefreshDerived(track);
+        }
       } else if (k.type === 'blendshape' && k.name && ch === 0) {
         const bt = track.blendshapeTracks?.get(k.name);
         const cur = bt?.values?.[kIdx] ?? 0;
@@ -1934,32 +1939,18 @@ export class AnimationControlPanel extends HTMLVRPanel {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
-    const beforeState = new Map();
-    reg.tracks.forEach((track, meshId) => beforeState.set(meshId, TimelineHelper.cloneTrack(track)));
-
-    let actionName = '';
+    // ONE undo step, and it is the registry's: every branch below ends in deleteSelectedKeys,
+    // which snapshots and pushes its own. This used to push a second, clone-based step around it,
+    // so a single Delete took two undos to get back.
     if (window._animSelectedKeys?.length > 0) {
       reg.deleteSelectedKeys(window._animSelectedKeys);
-      actionName = 'delete selected keys';
     } else {
       const t = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
-        reg.deleteShapeKey(mesh, t); actionName = 'delete shape key';
-      } else {
-        reg.deleteTransformKey(mesh, t); actionName = 'delete transform key';
-      }
+      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) reg.deleteShapeKey(mesh, t);
+      else reg.deleteTransformKey(mesh, t);
     }
     reg.update(mesh, true);
-
-    const afterState = new Map();
-    reg.tracks.forEach((track, meshId) => afterState.set(meshId, TimelineHelper.cloneTrack(track)));
-
-    const timeline = window.app?.getGui?.()?._ctrlTimeline;
-    this._main.getStateManager().pushStateCustom(
-      () => { beforeState.forEach((t, id) => reg.tracks.set(id, TimelineHelper.cloneTrack(t))); this._main.render(); timeline?.draw(); },
-      () => { afterState.forEach((t, id)  => reg.tracks.set(id, TimelineHelper.cloneTrack(t))); this._main.render(); timeline?.draw(); },
-      false, actionName
-    );
+    window.app?.getGui?.()?._ctrlTimeline?.draw?.();
   }
 
   _onMeshCreated(_scene) {

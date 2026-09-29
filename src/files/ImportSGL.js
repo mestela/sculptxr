@@ -281,24 +281,26 @@ Import.importSGL = function (buffer, gl, main) {
           for (var k = 0; k < nbTransKeys * 4; ++k) trackObj.quaternions.push(f32a[off++]);
           for (var k = 0; k < nbTransKeys * 3; ++k) trackObj.scales.push(f32a[off++]);
 
-          if (version >= 6) {
+          if (version >= 16) {
+            trackObj.eulers = [];
+            for (var k = 0; k < nbTransKeys * 3; ++k) trackObj.eulers.push(f32a[off++]);
+            trackObj.keyMask = [];
+            for (var k = 0; k < nbTransKeys; ++k) trackObj.keyMask.push(u32a[off++]);
+            var nbTan = u32a[off++];
+            var KINDS = ['right_dt', 'left_dt', 'right_dv', 'left_dv', 'tied'];
+            var GROUPS = ['pos', 'rot', 'scale'];
             trackObj.tangentOffsets = {};
-            for (var k = 0; k < nbTransKeys; ++k) {
-              const rDt = f32a[off++];
-              trackObj.tangentOffsets[`trans_${k}_right_dt`] = rDt;
-              for (let c = 0; c < 3; c++) {
-                trackObj.tangentOffsets[`trans_${k}_right_dv_${c}`] = f32a[off++];
-              }
-
-              const lDt = f32a[off++];
-              trackObj.tangentOffsets[`trans_${k}_left_dt`] = lDt;
-              for (let c = 0; c < 3; c++) {
-                trackObj.tangentOffsets[`trans_${k}_left_dv_${c}`] = f32a[off++];
-              }
-
-              const tied = f32a[off++];
-              trackObj.tangentOffsets[`trans_${k}_tied`] = (tied > 0.5);
+            for (var r = 0; r < nbTan; ++r) {
+              var slot = u32a[off++], g = GROUPS[u32a[off++]], kind = KINDS[u32a[off++]], ch = u32a[off++];
+              var val = f32a[off++];
+              var key = 'trans_' + g + '_' + slot + '_' + kind + (kind === 'right_dv' || kind === 'left_dv' ? '_' + ch : '');
+              trackObj.tangentOffsets[key] = kind === 'tied' ? val > 0.5 : val;
             }
+          } else if (version >= 6) {
+            // v6-v15 wrote the DEFAULT tangents out for every key, so they are not overrides and
+            // are skipped: kept, they froze every loaded key's auto tangents and made Simplify
+            // treat every key as hand-set. Genuinely hand-set handles in those files are lost.
+            off += nbTransKeys * 9;
           }
 
           var rP = [f32a[off++], f32a[off++], f32a[off++]];

@@ -16887,91 +16887,10 @@ class Scene {
               }
             }
 
-            const tMat = keyMesh.getMatrix();
-            const pos = [tMat[12], tMat[13], tMat[14]];
-            
-            const sx = Math.hypot(tMat[0], tMat[1], tMat[2]);
-            const sy = Math.hypot(tMat[4], tMat[5], tMat[6]);
-            const sz = Math.hypot(tMat[8], tMat[9], tMat[10]);
-            
-            const m = mat3.fromValues(
-              tMat[0]/sx, tMat[1]/sx, tMat[2]/sx,
-              tMat[4]/sy, tMat[5]/sy, tMat[6]/sy,
-              tMat[8]/sz, tMat[9]/sz, tMat[10]/sz
-            );
-            const q = quat.create();
-            quat.fromMat3(q, m);
-
-            // Check if keyframe already exists for update vs add
-            let keyIdx = -1;
-            if (track.times) {
-              for (let i = 0; i < track.times.length; i++) {
-                if (Math.abs(track.times[i] - targetTime) < 0.005) {
-                  keyIdx = i;
-                  break;
-                }
-              }
-            }
-
-            const wasUpdate = keyIdx >= 0;
-            let oldData = null;
-            if (wasUpdate) {
-              oldData = {
-                pos: track.positions.slice(keyIdx * 3, keyIdx * 3 + 3),
-                q: track.quaternions.slice(keyIdx * 4, keyIdx * 4 + 4),
-                s: track.scales.slice(keyIdx * 3, keyIdx * 3 + 3)
-              };
-            }
-
-            // Use centralized method to add/update keyframe
+            // addTransformKey pushes its own snapshot undo. This used to push a SECOND, command-replay
+            // undo on top of it -- one autokey cost two undo steps, and the replay re-spliced lockstep
+            // slots, which sparse keys (per-channel masks) cannot survive.
             window._animationRegistry.addTransformKey(keyMesh, targetTime);
-
-            const newData = {
-              pos: [...pos],
-              q: [q[0], q[1], q[2], q[3]],
-              s: [sx, sy, sz]
-            };
-
-            if (this.getStateManager) {
-              this.getStateManager().pushStateCustom(
-                () => { // UNDO
-                  const tr = window._animationRegistry.tracks.get(meshId);
-                  if (!tr) return;
-                  if (wasUpdate) {
-                    // Restore old values
-                    let idx = 0;
-                    while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
-                    if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
-                      tr.positions.splice(idx*3, 3, ...oldData.pos);
-                      tr.quaternions.splice(idx*4, 4, ...oldData.q);
-                      tr.scales.splice(idx*3, 3, ...oldData.s);
-                    }
-                  } else {
-                    // Remove the added key
-                    window._animationRegistry.deleteTransformKey(keyMesh, targetTime);
-                  }
-                  window._animationRegistry.update(keyMesh, true);
-                },
-                () => { // REDO
-                  const tr = window._animationRegistry.tracks.get(meshId);
-                  if (!tr) return;
-                  let idx = 0;
-                  while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
-                  
-                  if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
-                    tr.positions.splice(idx*3, 3, ...newData.pos);
-                    tr.quaternions.splice(idx*4, 4, ...newData.q);
-                    tr.scales.splice(idx*3, 3, ...newData.s);
-                  } else {
-                    tr.times.splice(idx, 0, targetTime);
-                    tr.positions.splice(idx*3, 0, ...newData.pos);
-                    tr.quaternions.splice(idx*4, 0, ...newData.q);
-                    tr.scales.splice(idx*3, 0, ...newData.s);
-                  }
-                  window._animationRegistry.update(keyMesh, true);
-                }
-              );
-            }
           } else if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
             const fps = window._animFPS || 24;
             const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;

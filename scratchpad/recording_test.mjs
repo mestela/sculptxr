@@ -19,9 +19,10 @@ let tl = read('src/gui/GuiTimeline.js');
 
 // Defect injections (standing lesson 1) — source-level, since these checks read the source:
 //   REC_INJECT=noparkstart  a finished non-looping take is left on its last frame again
-//   REC_INJECT=livechannel  an unrecorded channel takes the LIVE value, baking in the hand you
-//                           switched off
-//   REC_INJECT=onepath      only one of the two capture paths goes through the gate
+//   REC_INJECT=livechannel  translate is keyed whether or not it is being recorded
+//   REC_INJECT=onepath      the single-target capture path keys every channel, ignoring the switch
+//   REC_INJECT=punchall     punch-in overwrite wipes EVERY channel's keys in the window, not just
+//                           the recorded ones
 //   REC_INJECT=menucloses   the channel menu closes on every toggle, like a command menu
 {
   const i = process.env.REC_INJECT || '';
@@ -30,9 +31,11 @@ let tl = read('src/gui/GuiTimeline.js');
     return src.replace(a, b);
   };
   if (i === 'noparkstart') reg = cut(reg, 'const t0 = window._animLoopStart ?? 0;', 'const t0 = -1;', i);
-  else if (i === 'livechannel') reg = cut(reg, 'P: ch.translate ? P : was.p,', 'P: P,', i);
+  else if (i === 'livechannel') reg = cut(reg, "(ch.translate ? xfGroupBits('pos') : 0)", "xfGroupBits('pos')", i);
   else if (i === 'onepath') reg = cut(reg,
-    'const g = this._gateChannels(this.activeMesh.getID(), elapsed,', 'const g = ({ P: (', i);
+    '[qx, qy, qz, qw], [sx, sy, sz], this._recordBits(), true);', '[qx, qy, qz, qw], [sx, sy, sz], XF_ALL, true);', i);
+  else if (i === 'punchall') reg = cut(reg, 'if (inWindow(targetTrack.times[i]) && (km[i] & rb)) { km[i] &= ~rb; any = true; }',
+    'if (inWindow(targetTrack.times[i])) { km[i] = 0; any = true; }', i);
   else if (i === 'menucloses') tl = cut(tl,
     "const cmd = this._recOptCommands()[Math.floor((ry - rr.y) / rr.cellH)];",
     "const cmd = this._recOptCommands()[0]; this._recOptMenuOpen = false;", i);
@@ -318,11 +321,10 @@ check('...and record mode comes off either way',
 
 // ── WHICH CHANNELS A TAKE WRITES ─────────────────────────────────────────────
 //
-// A key is one TRS sample in three parallel arrays indexed in lockstep, so "rotation only"
-// cannot mean writing fewer numbers — every key still needs a position and a scale. It means
-// the other channels come out UNCHANGED, and the only honest source for "unchanged" is the
-// animation as it stood before the take. Taking the live value would bake your hand into a
-// channel you switched off; freezing one value would flatten animation that channel already had.
+// SPARSE KEYS (2026-09-29). Under lockstep keys "rotation only" had to write a position anyway
+// and faked it from the pre-take animation. Now a take keys ONLY the recorded groups; the others
+// get no key at all and their curves are untouched -- which is what the pre-take fill was
+// approximating. The behaviour is exercised in sparsekeys_test.mjs; these pin the wiring.
 check('the channel set is read live-then-saved-then-on, like every other setting',
   /translate: read\('_recTranslate', 'recTranslate'\)/.test(reg)
     && /rotate: read\('_recRotate', 'recRotate'\)/.test(reg)
@@ -330,29 +332,18 @@ check('the channel set is read live-then-saved-then-on, like every other setting
 check('...defaulting to ALL THREE ON',
   /return v == null \? true : !!v;/.test(reg),
   'a recorder that quietly drops a channel is worse than one that records too much');
-check('an unrecorded channel is filled from the PRE-TAKE animation',
-  /_preTakeTRS\(id, time\)/.test(reg)
-    && /this\._trackStatesBeforeRecording &&\s*\n?\s*this\._trackStatesBeforeRecording\.get\(id\)/.test(reg),
-  'the live value bakes in the hand you switched off; a frozen value flattens what was there');
-// The substitution ITSELF, per channel. The check above proves the pre-take value is fetched;
-// this proves it is USED. REC_INJECT=livechannel removes the ternary and left the first version
-// of this section passing, because "the snapshot is read" and "the snapshot is written" are two
-// different claims.
-check('...and each channel actually takes it when switched off',
-  /P: ch\.translate \? P : was\.p,/.test(reg)
-    && /Q: ch\.rotate \? Q : was\.q,/.test(reg)
-    && /S: ch\.scale \? S : was\.s,/.test(reg));
-check('...and when there was no prior animation the live value stands',
-  /if \(!was\) return \{ P, Q, S \};/.test(reg),
-  'a key has to hold something, and there is nothing to preserve');
-check('...with the quaternion taking the SHORT arc between pre-take keys',
-  /const sgn = d < 0 \? -1 : 1;/.test(reg),
-  'the long way round reads as the object spinning between two keys it should pass straight through');
-check('the gate is applied at ONE point, and both capture paths go through it',
-  (reg.match(/_gateChannels\(/g) || []).length === 3,
+check('a take keys only the recorded groups',
+  /\(ch\.translate \? xfGroupBits\('pos'\) : 0\)/.test(reg)
+    && /\(ch\.rotate \? xfGroupBits\('rot'\) : 0\)/.test(reg)
+    && /\(ch\.scale \? xfGroupBits\('scale'\) : 0\)/.test(reg),
+  'an unrecorded group must get no key, so its curve is left exactly as it was');
+check('...and BOTH capture paths key through that rule',
+  /if \(this\.isRecording\) bits = this\._recordBits\(\);/.test(reg)
+    && /\[qx, qy, qz, qw\], \[sx, sy, sz\], this\._recordBits\(\), true\);/.test(reg),
   'the same rule written into each capture path is how the two come to disagree');
-check('...and the all-on case returns untouched, so the default costs nothing',
-  /if \(ch\.translate && ch\.rotate && ch\.scale\) return \{ P, Q, S \};/.test(reg));
+check('punch-in overwrite clears only the recorded groups in the window',
+  /if \(inWindow\(targetTrack\.times\[i\]\) && \(km\[i\] & rb\)\) \{ km\[i\] &= ~rb; any = true; \}/.test(reg),
+  'a rotation-only pass must not wipe the translate keys it flies over');
 
 // The dropdown itself.
 check('the record button has a channel dropdown beside it',

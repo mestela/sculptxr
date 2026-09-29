@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { quat, mat4 } from 'gl-matrix';
-import { rotSync, xfWrite } from './xfChannel.js';
+import { rotSync, xfWrite, xfTanGet, maskSync, xfEval, xfKeyedSlots, xfBit, xfGroupBits, XF_ALL, xfRefreshDerived, xfRemoveSlots, xfPruneEmpty, xfInsertSlot, xfSlotAt, eulerFromQuat, rotSetEuler, xfSlope } from './xfChannel.js';
+import { decimateKeys } from './curveSimplify.js';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
@@ -10,31 +11,6 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 
 const _regQuat = new THREE.Quaternion();
 const _regEuler = new THREE.Euler();
-
-// One TRS sample out of a track snapshot's parallel arrays.
-function trsAt(snap, i) {
-  return {
-    p: [snap.positions[i * 3], snap.positions[i * 3 + 1], snap.positions[i * 3 + 2]],
-    q: [snap.quaternions[i * 4], snap.quaternions[i * 4 + 1],
-      snap.quaternions[i * 4 + 2], snap.quaternions[i * 4 + 3]],
-    s: [snap.scales[i * 3], snap.scales[i * 3 + 1], snap.scales[i * 3 + 2]],
-  };
-}
-
-function trsLerp(a, b, u) {
-  const l = (x, y) => x + (y - x) * u;
-  // Short-arc nlerp on the quaternion: without the sign flip a pair either side of a half turn
-  // interpolates the long way round, which reads as the object spinning between two keys.
-  let d = a.q[0] * b.q[0] + a.q[1] * b.q[1] + a.q[2] * b.q[2] + a.q[3] * b.q[3];
-  const sgn = d < 0 ? -1 : 1;
-  const q = [0, 1, 2, 3].map((k) => l(a.q[k], b.q[k] * sgn));
-  const ql = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
-  return {
-    p: [0, 1, 2].map((k) => l(a.p[k], b.p[k])),
-    q: q.map((v) => v / ql),
-    s: [0, 1, 2].map((k) => l(a.s[k], b.s[k])),
-  };
-}
 
 const getOpt = () => getOptionsURL();
 
@@ -102,6 +78,7 @@ class AnimationRegistry {
       positions:        track.positions        ? track.positions.slice()                          : [],
       quaternions:      track.quaternions      ? track.quaternions.slice()                        : [],
       eulers:           track.eulers           ? track.eulers.slice()                             : [],
+      keyMask:          track.keyMask          ? track.keyMask.slice()                            : null,
       scales:           track.scales           ? track.scales.slice()                             : [],
       shapeTimes:       track.shapeTimes       ? track.shapeTimes.slice()                         : [],
       shapes:           track.shapes           ? track.shapes.map(s => new Float32Array(s))       : [],
@@ -135,6 +112,7 @@ class AnimationRegistry {
     track.positions        = snap.positions.slice();
     track.quaternions      = snap.quaternions.slice();
     track.eulers           = snap.eulers ? snap.eulers.slice() : null;
+    track.keyMask          = snap.keyMask ? snap.keyMask.slice() : null;
     track.scales           = snap.scales.slice();
     track.shapeTimes       = snap.shapeTimes.slice();
     track.shapes           = snap.shapes.map(s => new Float32Array(s));
@@ -759,14 +737,15 @@ class AnimationRegistry {
               }
             }
           }
-          for (let i = targetTrack.times.length - 1; i >= 0; i--) {
-            if (inWindow(targetTrack.times[i])) {
-              targetTrack.times.splice(i, 1);
-              targetTrack.positions.splice(i * 3, 3);
-              targetTrack.quaternions.splice(i * 4, 4);
-              if (targetTrack.eulers) targetTrack.eulers.splice(i * 3, 3);
-              targetTrack.scales.splice(i * 3, 3);
+          // Only the RECORDED groups are overwritten: a rotation-only pass must not wipe the
+          // translate keys it flies over. A slot left keying nothing is removed.
+          if (window._animKeyMode !== 'blendshape') {
+            const km = maskSync(targetTrack), rb = this._recordBits();
+            let any = false;
+            for (let i = 0; i < km.length; i++) {
+              if (inWindow(targetTrack.times[i]) && (km[i] & rb)) { km[i] &= ~rb; any = true; }
             }
+            if (any) xfPruneEmpty(targetTrack);
           }
         }
       }
@@ -795,8 +774,6 @@ class AnimationRegistry {
       if (stopAtRangeEnd) this.stopRecording();
       return;
     }
-
-    track.times.push(elapsed);
 
     if (this.activeMesh.getMatrix) {
       const m = mat4.create();
@@ -836,25 +813,105 @@ class AnimationRegistry {
         qx = 0; qy = 0; qz = 0; qw = 1;
       }
 
-      if (isNaN(m[12]) || isNaN(sx)) {
-        track.positions.push(0, 0, 0);
-        track.scales.push(1, 1, 1);
-        track.quaternions.push(0, 0, 0, 1);
-        track.eulers = null; // rebuilt on next read
-      } else {
-        // Through the SAME gate the other write path uses — see _gateChannels.
-        const g = this._gateChannels(this.activeMesh.getID(), elapsed,
-          [m[12], m[13], m[14]], [qx, qy, qz, qw], [sx, sy, sz]);
-        track.positions.push(g.P[0], g.P[1], g.P[2]);
-        track.scales.push(g.S[0], g.S[1], g.S[2]);
-        track.quaternions.push(g.Q[0], g.Q[1], g.Q[2], g.Q[3]);
-        track.eulers = null; // rebuilt on next read
+      if (!isNaN(m[12]) && !isNaN(sx)) {
+        this._putKey(track, elapsed, [m[12], m[13], m[14]], [qx, qy, qz, qw], [sx, sy, sz], this._recordBits(), true);
       }
     }
-    
-    // Auto-sort ring buffer so that when overdubbing out of order, interpolation remains stable!
-    this._sortRingBuffer(track);
+
     if (stopAtRangeEnd) this.stopRecording();
+  }
+
+  // Exchange the tangent overrides of two transform slots (they are keyed by slot index).
+  _swapTangentSlots(track, i, j) {
+    const to = track.tangentOffsets;
+    if (!to) return;
+    const out = {};
+    for (const k in to) {
+      const m = /^trans_((?:pos|rot|scale)_)?(\d+)_(.*)$/.exec(k);
+      if (!m) { out[k] = to[k]; continue; }
+      const n = +m[2] === i ? j : +m[2] === j ? i : +m[2];
+      out[`trans_${m[1] || ''}${n}_${m[3]}`] = to[k];
+    }
+    track.tangentOffsets = out;
+  }
+
+  // Two slots at the same time are one key moment: a channel dragged onto a frame where other
+  // channels are keyed JOINS that slot rather than sitting beside it. Where both slots key the
+  // same channel, the later one (the one just moved there) wins.
+  _mergeCoincidentSlots(track) {
+    const T = track.times;
+    if (!T || T.length < 2) return;
+    const m = maskSync(track), e = rotSync(track);
+    const gone = new Set();
+    for (let i = 1; i < T.length; i++) {
+      let a = i - 1;
+      while (gone.has(a) && a > 0) a--;
+      if (gone.has(a) || Math.abs(T[i] - T[a]) > 1e-5) continue;
+      for (const [g, off] of [['pos', 0], ['rot', 3], ['scale', 6]]) {
+        for (let c = 0; c < 3; c++) {
+          if (!(m[i] & (1 << (off + c)))) continue;
+          if (g === 'pos') track.positions[a * 3 + c] = track.positions[i * 3 + c];
+          else if (g === 'scale') track.scales[a * 3 + c] = track.scales[i * 3 + c];
+          else e[a * 3 + c] = e[i * 3 + c];
+        }
+        // Hand-set tangents follow the channels that brought them.
+        const to = track.tangentOffsets;
+        if (to && (m[i] & xfGroupBits(g))) {
+          for (const k of Object.keys(to)) {
+            const pre = `trans_${g}_${i}_`;
+            if (k.startsWith(pre)) to[`trans_${g}_${a}_${k.slice(pre.length)}`] = to[k];
+          }
+        }
+      }
+      if (m[i] & xfGroupBits('rot')) rotSetEuler(track, a, 0, e[a * 3]);
+      m[a] |= m[i];
+      m[i] = 0;
+      gone.add(i);
+    }
+    if (gone.size) xfRemoveSlots(track, gone);
+  }
+
+  // Split the selected CHANNEL keys into slots of their own, so a time drag moves only them.
+  // In the old lockstep model a slot was all nine channels, so dragging TX in time dragged TY,
+  // TZ, rotation and scale with it. A slot that the selection covers completely is left alone.
+  // `keyLists` are arrays of selection keys; their `index` is rewritten to follow the split.
+  detachChannelKeys(keyLists) {
+    const all = keyLists.flat().filter((k) => k && k.type === 'transform' && k.channel !== undefined
+      && k.group !== 'weight' && k.index !== undefined);
+    const byMesh = new Map();
+    for (const k of all) {
+      if (!byMesh.has(k.meshId)) byMesh.set(k.meshId, new Map());
+      const sel = byMesh.get(k.meshId);
+      sel.set(k.index, (sel.get(k.index) || 0) | xfBit(k.group || 'pos', k.channel));
+    }
+    byMesh.forEach((sel, meshId) => {
+      const tr = this.tracks.get(meshId);
+      if (!tr?.times) return;
+      const m = maskSync(tr);
+      const split = [...sel.keys()].filter((i) => (m[i] & ~sel.get(i)) && (m[i] & sel.get(i))).sort((a, b) => b - a);
+      if (!split.length) return;
+      for (const i of split) {
+        const bits = m[i] & sel.get(i);
+        const e = rotSync(tr);
+        xfInsertSlot(tr, i + 1, tr.times[i], tr.positions.slice(i * 3, i * 3 + 3),
+          tr.quaternions.slice(i * 4, i * 4 + 4), tr.scales.slice(i * 3, i * 3 + 3), bits);
+        for (let c = 0; c < 3; c++) tr.eulers[(i + 1) * 3 + c] = e[i * 3 + c];
+        tr.keyMask[i] &= ~bits;
+        // Copy the moving channels' hand tangents onto the new slot.
+        const to = tr.tangentOffsets;
+        if (to) for (const k of Object.keys(to)) {
+          const mm = /^trans_(pos|rot|scale)_(\d+)_(.*)$/.exec(k);
+          if (mm && +mm[2] === i && (bits & xfGroupBits(mm[1]))) to[`trans_${mm[1]}_${i + 1}_${mm[3]}`] = to[k];
+        }
+      }
+      const asc = split.slice().sort((a, b) => a - b);
+      const shift = (i) => asc.filter((x) => x < i).length;
+      for (const k of all) {
+        if (k.meshId !== meshId) continue;
+        const moved = asc.includes(k.index);
+        k.index = k.index + shift(k.index) + (moved ? 1 : 0);
+      }
+    });
   }
 
   sortTrack(track) {
@@ -876,9 +933,18 @@ class AnimationRegistry {
             let sx=s[i*3], sy=s[i*3+1], sz=s[i*3+2];
             s[i*3]=s[j*3]; s[i*3+1]=s[j*3+1]; s[i*3+2]=s[j*3+2];
             s[j*3]=sx; s[j*3+1]=sy; s[j*3+2]=sz;
+            // The mask and the eulers are per slot too; left behind they would attach keyed
+            // channels and winding to the wrong frames.
+            const km = maskSync(track);
+            [km[i], km[j]] = [km[j], km[i]];
+            const e = rotSync(track);
+            for (let c = 0; c < 3; c++) [e[i*3+c], e[j*3+c]] = [e[j*3+c], e[i*3+c]];
+            this._swapTangentSlots(track, i, j);
           }
         }
       }
+      this._mergeCoincidentSlots(track);
+      xfRefreshDerived(track);
     }
     if (track.shapeTimes) {
       let arr = track.shapeTimes;
@@ -1276,9 +1342,15 @@ class AnimationRegistry {
       tr.positions = (snap.positions || []).slice();
       tr.quaternions = (snap.quaternions || []).slice();
       tr.eulers = snap.eulers ? snap.eulers.slice() : null;
+      tr.keyMask = snap.keyMask ? snap.keyMask.slice() : null;
       tr.scales = (snap.scales || []).slice();
       this.sortTrack(tr);
     };
+    // The recorder deferred deriving the unkeyed channels (see _putKey); do it once, now.
+    for (const m of takeTargets) {
+      const tr = this.tracks.get(m.getID());
+      if (tr) xfRefreshDerived(tr);
+    }
     // #30: a shape take writes shapeTimes, a transform take writes times. Measure the
     // finalize (discard-tiny-take, duration lock, end-pad, undo) against whichever this
     // take actually recorded.
@@ -1821,6 +1893,9 @@ class AnimationRegistry {
         copy(tr.quaternions, 4);
         copy(tr.scales, 3);
         tr.eulers = null;                      // rebuilt on next read, from the new quaternions
+        const km = maskSync(tr);
+        km[n - 1] |= km[0];                    // whatever the first frame keys, the last now keys too
+        xfRefreshDerived(tr);
       }
       this._refreshAfterEdit(touched);
     };
@@ -2614,37 +2689,6 @@ class AnimationRegistry {
     };
   }
 
-  // The pre-take value of every channel at `time`, or null when this object had no animation
-  // before the take — in which case the caller keeps the live value, since there is nothing to
-  // preserve and a key has to hold something.
-  // Substitute the pre-take value for every channel this take is not recording. Live values
-  // pass straight through when all three are on, which is the default and the hot path.
-  _gateChannels(id, time, P, Q, S) {
-    const ch = this.recordChannels();
-    if (ch.translate && ch.rotate && ch.scale) return { P, Q, S };
-    const was = this._preTakeTRS(id, time);
-    if (!was) return { P, Q, S };   // nothing to preserve; a key must hold something
-    return {
-      P: ch.translate ? P : was.p,
-      Q: ch.rotate ? Q : was.q,
-      S: ch.scale ? S : was.s,
-    };
-  }
-
-  _preTakeTRS(id, time) {
-    const snap = this._trackStatesBeforeRecording &&
-      this._trackStatesBeforeRecording.get(id);
-    const t = snap && snap.times;
-    if (!t || !t.length) return null;
-    let i = 0;
-    while (i < t.length && t[i] < time) i++;
-    if (i === 0) return trsAt(snap, 0);
-    if (i >= t.length) return trsAt(snap, t.length - 1);
-    const t0 = t[i - 1], t1 = t[i];
-    const u = t1 > t0 ? (time - t0) / (t1 - t0) : 0;
-    return trsLerp(trsAt(snap, i - 1), trsAt(snap, i), u);
-  }
-
   _writeTransformKey(mesh, time) {
     if (!mesh) return;
     const id = mesh.getID();
@@ -2680,50 +2724,72 @@ class AnimationRegistry {
       qx /= ql; qy /= ql; qz /= ql; qw /= ql;
     }
 
-    // The channel gate, applied at the ONE point every take writes through. Both capture paths
-    // funnel into a key write; putting the rule in each of them separately is how the two would
-    // come to disagree about what "rotation only" means.
-    const g = this._gateChannels(id, time, [px, py, pz], [qx, qy, qz, qw], [sx, sy, sz]);
-    const gpx = g.P[0], gpy = g.P[1], gpz = g.P[2];
-    const gqx = g.Q[0], gqy = g.Q[1], gqz = g.Q[2], gqw = g.Q[3];
-    const gsx = g.S[0], gsy = g.S[1], gsz = g.S[2];
+    let bits;
+    if (this.isRecording) bits = this._recordBits();
+    else bits = this._changedGroupBits(track, time, [px, py, pz], [qx, qy, qz, qw], [sx, sy, sz]);
+    this._putKey(track, time, [px, py, pz], [qx, qy, qz, qw], [sx, sy, sz], bits, this.isRecording);
+  }
 
-    let idx = 0;
-    while (idx < track.times.length && track.times[idx] < time) idx++;
+  // WHICH GROUPS A TAKE KEYS: the recorded ones, and only those. Under lockstep keys "record
+  // rotation only" had to write a position anyway and fake it from the pre-take animation; with
+  // sparse keys the unrecorded groups simply get no key and keep their curves untouched.
+  _recordBits() {
+    const ch = this.recordChannels();
+    const b = (ch.translate ? xfGroupBits('pos') : 0) | (ch.rotate ? xfGroupBits('rot') : 0)
+      | (ch.scale ? xfGroupBits('scale') : 0);
+    return b || XF_ALL;
+  }
 
-    if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
-      track.positions.splice(idx*3, 3, gpx, gpy, gpz);
-      track.quaternions.splice(idx*4, 4, gqx, gqy, gqz, gqw);
-      track.eulers = null;
-      track.scales.splice(idx*3, 3, gsx, gsy, gsz);
-    } else {
-      track.times.splice(idx, 0, time);
-      track.positions.splice(idx*3, 0, gpx, gpy, gpz);
-      track.quaternions.splice(idx*4, 0, gqx, gqy, gqz, gqw);
-      track.eulers = null;
-      track.scales.splice(idx*3, 0, gsx, gsy, gsz);
-
-      // Shift tangent offsets up for keys after idx
-      if (track.tangentOffsets) {
-        const newOffsets = {};
-        for (const k in track.tangentOffsets) {
-          const parts = k.split('_');
-          if (parts[0] === 'trans') {
-            const kIdx = parseInt(parts[1], 10);
-            if (kIdx >= idx) {
-              parts[1] = (kIdx + 1).toString();
-              const newKey = parts.join('_');
-              newOffsets[newKey] = track.tangentOffsets[k];
-            } else {
-              newOffsets[k] = track.tangentOffsets[k];
-            }
-          } else {
-            newOffsets[k] = track.tangentOffsets[k];
-          }
-        }
-        track.tangentOffsets = newOffsets;
-      }
+  // PER-GROUP KEYING (matt, 2026-09-29): a key writes the T, R or S groups that differ from what
+  // the curves already say at this time -- move the object and only translate is keyed. When
+  // nothing differs the key is an explicit "pin the pose here", so every group is keyed; that
+  // is also what the first key of a fresh track does.
+  _changedGroupBits(track, time, P, Q, S) {
+    const n = track.times ? track.times.length : 0;
+    if (!n) return XF_ALL;
+    let bits = 0;
+    const EPS_P = 1e-5, EPS_S = 1e-5, EPS_R = 1e-3;   // scene units, scale, degrees
+    for (let c = 0; c < 3; c++) {
+      if (Math.abs(xfEval(track, 'pos', c, time) - P[c]) > EPS_P) bits |= xfGroupBits('pos');
+      if (Math.abs(xfEval(track, 'scale', c, time) - S[c]) > EPS_S) bits |= xfGroupBits('scale');
     }
+    const e = [xfEval(track, 'rot', 0, time), xfEval(track, 'rot', 1, time), xfEval(track, 'rot', 2, time)];
+    _regEuler.set(e[0] * Math.PI / 180, e[1] * Math.PI / 180, e[2] * Math.PI / 180, 'XYZ');
+    _regQuat.setFromEuler(_regEuler);
+    const dot = Math.abs(_regQuat.x * Q[0] + _regQuat.y * Q[1] + _regQuat.z * Q[2] + _regQuat.w * Q[3]);
+    if (2 * Math.acos(Math.min(1, dot)) * 180 / Math.PI > EPS_R) bits |= xfGroupBits('rot');
+    return bits || XF_ALL;
+  }
+
+  // Write one key: values for the channels in `bits`, into the slot at `time` (made if need be).
+  // Channels outside `bits` keep their curves. `deferDerive` skips re-deriving the unkeyed
+  // values, for the recorder, which writes thirty of these a second and derives once at the end.
+  _putKey(track, time, P, Q, S, bits, deferDerive = false) {
+    let i = xfSlotAt(track, time, 0.005);
+    if (i < 0) {
+      i = 0;
+      while (i < track.times.length && track.times[i] < time) i++;
+      xfInsertSlot(track, i, time, P, Q, S, XF_ALL);
+      track.keyMask[i] = bits;
+    } else {
+      const m = maskSync(track);
+      const e = rotSync(track);
+      for (let c = 0; c < 3; c++) {
+        if (bits & xfBit('pos', c)) track.positions[i * 3 + c] = P[c];
+        if (bits & xfBit('scale', c)) track.scales[i * 3 + c] = S[c];
+      }
+      if (bits & xfGroupBits('rot')) {
+        for (let k = 0; k < 4; k++) track.quaternions[i * 4 + k] = Q[k];
+        const ne = eulerFromQuat(track, i, [0, 0, 0]);
+        const ref = i > 0 ? i - 1 : -1;
+        for (let c = 0; c < 3; c++) {
+          e[i * 3 + c] = ref >= 0 ? ne[c] + Math.round((e[ref * 3 + c] - ne[c]) / 360) * 360 : ne[c];
+        }
+      }
+      m[i] |= bits;
+    }
+    if (!deferDerive) xfRefreshDerived(track);
+    return i;
   }
 
   // Advance the master duration and the playhead to a key just written.
@@ -2835,43 +2901,8 @@ class AnimationRegistry {
       });
     }
     const track = this.tracks.get(id);
-    let idx = 0;
-    while (idx < track.times.length && track.times[idx] < time) idx++;
-
     const { p, q, s } = this.clipboardTransform;
-    if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
-      track.positions.splice(idx*3, 3, p[0], p[1], p[2]);
-      track.quaternions.splice(idx*4, 4, q[0], q[1], q[2], q[3]);
-      track.eulers = null;
-      track.scales.splice(idx*3, 3, s[0], s[1], s[2]);
-    } else {
-      track.times.splice(idx, 0, time);
-      track.positions.splice(idx*3, 0, p[0], p[1], p[2]);
-      track.quaternions.splice(idx*4, 0, q[0], q[1], q[2], q[3]);
-      track.eulers = null;
-      track.scales.splice(idx*3, 0, s[0], s[1], s[2]);
-      
-      // Shift tangent offsets up for keys after idx
-      if (track.tangentOffsets) {
-        const newOffsets = {};
-        for (const k in track.tangentOffsets) {
-          const parts = k.split('_');
-          if (parts[0] === 'trans') {
-            const kIdx = parseInt(parts[1], 10);
-            if (kIdx >= idx) {
-              parts[1] = (kIdx + 1).toString();
-              const newKey = parts.join('_');
-              newOffsets[newKey] = track.tangentOffsets[k];
-            } else {
-              newOffsets[k] = track.tangentOffsets[k];
-            }
-          } else {
-            newOffsets[k] = track.tangentOffsets[k];
-          }
-        }
-        track.tangentOffsets = newOffsets;
-      }
-    }
+    this._putKey(track, time, p, q, s, XF_ALL);
     if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
   }
 
@@ -2922,177 +2953,111 @@ class AnimationRegistry {
     return true;
   }
 
+  // DELETE KEYS. A key selected in the GRAPH names a channel, and deletes that channel's key
+  // only -- the other channels keyed in the same slot keep theirs. A key selected in the
+  // DOPESHEET has no channel: it is the whole moment, so the whole slot goes. Shape keys are
+  // unchanged. One undo step, by snapshot: the old command replay re-inserted keys by time and
+  // could not know about per-channel masks.
   deleteSelectedKeys(selectedKeys) {
     if (!selectedKeys || selectedKeys.length === 0) return;
-    
-    const commands = [];
-    
-    // Capture data before deletion
-    selectedKeys.forEach(key => {
-      const track = this.tracks.get(key.meshId);
-      if (!track) return;
-      
-      if (key.type === 'transform' && track.times && track.times[key.index] !== undefined) {
-        const idx = key.index;
-        commands.push({
-          meshId: key.meshId,
-          type: 'transform',
-          time: track.times[idx],
-          pos: track.positions.slice(idx * 3, idx * 3 + 3),
-          quat: track.quaternions.slice(idx * 4, idx * 4 + 4),
-          scale: track.scales.slice(idx * 3, idx * 3 + 3)
-        });
-      } else if (key.type === 'shape' && track.shapeTimes && track.shapeTimes[key.index] !== undefined) {
-        const idx = key.index;
-        commands.push({
-          meshId: key.meshId,
-          type: 'shape',
-          time: track.shapeTimes[idx],
-          outputTime: track.shapeOutputTimes ? track.shapeOutputTimes[idx] : track.shapeTimes[idx],
-          shape: new Float32Array(track.shapes[idx])
-        });
-      }
-    });
+    const ids = [...new Set(selectedKeys.map((k) => k.meshId))].filter((id) => this.tracks.has(id));
+    const before = new Map(ids.map((id) => [id, this._snapshotTrack(this.tracks.get(id))]));
 
-    // Proceed with deletion
-    const groups = new Map();
-    selectedKeys.forEach(key => {
-      const groupKey = `${key.meshId}_${key.type}`;
-      if (!groups.has(groupKey)) groups.set(groupKey, []);
-      groups.get(groupKey).push(key.index);
-    });
-    
-    groups.forEach((indices, groupKey) => {
-      const [meshIdStr, type] = groupKey.split('_');
-      const meshId = parseInt(meshIdStr, 10);
-      const track = this.tracks.get(meshId);
-      if (!track) return;
-      
-      indices.sort((a, b) => b - a);
-      
-      indices.forEach(idx => {
-        if (type === 'transform' && track.times && track.times[idx] !== undefined) {
-          track.times.splice(idx, 1);
-          track.positions.splice(idx * 3, 3);
-          track.quaternions.splice(idx * 4, 4);
-          if (track.eulers) track.eulers.splice(idx * 3, 3);
-          track.scales.splice(idx * 3, 3);
-        } else if (type === 'shape' && track.shapeTimes && track.shapeTimes[idx] !== undefined) {
-          track.shapeTimes.splice(idx, 1);
-          if (track.shapeOutputTimes) track.shapeOutputTimes.splice(idx, 1);
-          track.shapes.splice(idx, 1);
+    for (const id of ids) {
+      const track = this.tracks.get(id);
+      const keys = selectedKeys.filter((k) => k.meshId === id);
+      const xf = keys.filter((k) => k.type === 'transform' && k.group !== 'weight' && track.times?.[k.index] !== undefined);
+      if (xf.length) {
+        const m = maskSync(track);
+        const whole = new Set();
+        for (const k of xf) {
+          if (k.channel === undefined) whole.add(k.index);
+          else m[k.index] &= ~xfBit(k.group || 'pos', k.channel);
         }
-      });
-
-      // Update tangent offsets after all deletions for this track
-      if (track.tangentOffsets) {
-        const newOffsets = {};
-        for (const k in track.tangentOffsets) {
-          const parts = k.split('_');
-          let kIdx = NaN;
-          let isTransform = false;
-          
-          if (parts[0] === 'trans') {
-            kIdx = parseInt(parts[1], 10);
-            isTransform = true;
-          } else {
-            kIdx = parseInt(parts[0], 10);
-          }
-          
-          if (!isNaN(kIdx)) {
-            if (indices.includes(kIdx)) {
-              continue; // Delete
-            }
-            // Count how many deleted indices are less than kIdx
-            const shift = indices.filter(idx => idx < kIdx).length;
-            const newIdx = kIdx - shift;
-            
-            if (isTransform) {
-              parts[1] = newIdx.toString();
-            } else {
-              parts[0] = newIdx.toString();
-            }
-            const newKey = parts.join('_');
-            newOffsets[newKey] = track.tangentOffsets[k];
-          } else {
-            newOffsets[k] = track.tangentOffsets[k];
-          }
-        }
-        track.tangentOffsets = newOffsets;
+        whole.forEach((i) => { m[i] = 0; });
+        xfPruneEmpty(track);
+        xfRefreshDerived(track);
       }
-    });
-    
+      const shapes = keys.filter((k) => k.type === 'shape' && track.shapeTimes?.[k.index] !== undefined)
+        .map((k) => k.index).sort((a, b) => b - a);
+      for (const idx of new Set(shapes)) {
+        track.shapeTimes.splice(idx, 1);
+        if (track.shapeOutputTimes) track.shapeOutputTimes.splice(idx, 1);
+        track.shapes.splice(idx, 1);
+        shiftTangentOffsets(track, idx, -1);   // shape tangents are bare `<i>_...` keys
+      }
+    }
+    const after = new Map(ids.map((id) => [id, this._snapshotTrack(this.tracks.get(id))]));
+
     window._animSelectedKeys = [];
     window._animTransformBox = null;
 
-    // Push to StateManager
-    if (window.app && window.app.getStateManager() && commands.length > 0) {
-      window.app.getStateManager().pushStateCustom(
-        () => { // UNDO
-          console.log("[Undo] Restore Deleted Keys (" + commands.length + " keys)");
-          commands.forEach(cmd => {
-            const tr = this.tracks.get(cmd.meshId);
-            if (!tr) return;
-            
-            if (cmd.type === 'transform') {
-              tr.times.push(cmd.time);
-              tr.positions.push(...cmd.pos);
-              tr.quaternions.push(...cmd.quat);
-              tr.eulers = null;
-              tr.scales.push(...cmd.scale);
-            } else if (cmd.type === 'shape') {
-              tr.shapeTimes.push(cmd.time);
-              if (tr.shapeOutputTimes) tr.shapeOutputTimes.push(cmd.outputTime);
-              tr.shapes.push(cmd.shape);
-            }
-          });
-          
-          const affectedTrackIds = new Set(commands.map(c => c.meshId));
-          affectedTrackIds.forEach(id => {
-            const tr = this.tracks.get(id);
-            if (tr) this.sortTrack(tr);
-          });
-          
-          if (window.app.render) window.app.render();
-        },
-        () => { // REDO
-          console.log("[Redo] Delete Keys (" + commands.length + " keys)");
-          commands.forEach(cmd => {
-            const tr = this.tracks.get(cmd.meshId);
-            if (!tr) return;
-            
-            const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
-            if (!times) return;
-            
-            let idx = -1;
-            for (let i = 0; i < times.length; i++) {
-              if (Math.abs(times[i] - cmd.time) < 0.005) {
-                idx = i;
-                break;
-              }
-            }
-            if (idx !== -1) {
-              if (cmd.type === 'transform') {
-                tr.times.splice(idx, 1);
-                tr.positions.splice(idx * 3, 3);
-                tr.quaternions.splice(idx * 4, 4);
-                if (tr.eulers) tr.eulers.splice(idx * 3, 3);
-                tr.scales.splice(idx * 3, 3);
-              } else if (cmd.type === 'shape') {
-                tr.shapeTimes.splice(idx, 1);
-                if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
-                tr.shapes.splice(idx, 1);
-              }
-            }
-          });
-          
-          if (window.app.render) window.app.render();
-        },
-        false,
-        "Delete Keys"
-      );
-    }
+    const put = (snaps) => {
+      snaps.forEach((snap, id) => {
+        const tr = this.tracks.get(id);
+        if (tr) this._restoreTrack(tr, snap, window.app?._meshes?.find((m) => m.getID() === id) || null);
+      });
+      window._animSelectedKeys = [];
+      if (window.app?.render) window.app.render();
+      window.app?.getGui?.()?._ctrlTimeline?.draw?.();
+    };
+    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Delete Keys');
   }
+
+  // SIMPLIFY CURVES: remove the transform keys the curve can do without (curveSimplify.js).
+  //
+  // In place and with NO undo of its own. The graph editor previews by restoring its snapshot
+  // and calling this again as the slider moves, then pushes one undo step on Apply -- an undo
+  // per slider tick would bury the edit under a hundred steps of itself.
+  //
+  // PER CHANNEL. With sparse keys each channel is decimated on its own keys alone, so a TX
+  // curve can come down to two keys while TY keeps twenty. The first version ran under lockstep
+  // keys and could only drop a frame all nine channels could spare, which on a real take (hand
+  // jitter in the rotation) meant nothing at all -- matt: "42 -> 42 keys" at every setting.
+  //
+  // Each channel's error is measured against its own range (floored, so a channel that barely
+  // moves is not held to its noise). A key with a hand-set tangent on that channel is kept.
+  // `indices` limits removal to those slots; `judge` ({ pos: [x, y, z], ... }) limits it to
+  // those channels -- the graph passes what is on screen, and hidden channels are untouched.
+  simplifyTransformTrack(track, { mode = 'tolerance', tolerance = 0.02, ratio = 0.25, indices = null, judge = null } = {}) {
+    const n = track?.times?.length || 0;
+    if (n < 3) return { before: n, after: n, keysBefore: 0, keysAfter: 0 };
+    const m = maskSync(track);
+    const eul = rotSync(track);
+    const count = () => m.reduce((a, b) => { let c = 0; for (let x = b; x; x >>= 1) c += x & 1; return a + c; }, 0);
+    const keysBefore = count();
+    const GROUPS = [['pos', track.positions, 1e-3], ['rot', eul, 1], ['scale', track.scales, 1e-3]];
+    for (const [g, arr, floor] of GROUPS) {
+      if (!arr || arr.length < n * 3) continue;
+      for (let c = 0; c < 3; c++) {
+        if (judge && !judge[g]?.[c]) continue;
+        const ks = xfKeyedSlots(track, g, c);
+        if (ks.length < 3) continue;
+        const T = ks.map((i) => track.times[i]);
+        const v = ks.map((i) => arr[i * 3 + c]);
+        let lo = Infinity, hi = -Infinity;
+        for (const x of v) { if (x < lo) lo = x; if (x > hi) hi = x; }
+        const removable = ks.map((i) => {
+          if (indices && !indices.has(i)) return false;
+          const to = track.tangentOffsets;
+          if (!to) return true;
+          return !(to[`trans_${g}_${i}_right_dt`] !== undefined || to[`trans_${g}_${i}_left_dt`] !== undefined
+            || to[`trans_${g}_${i}_right_dv_${c}`] !== undefined || to[`trans_${g}_${i}_left_dv_${c}`] !== undefined);
+        });
+        const tan = (k, side) => {
+          const i = ks[k];
+          const dt = xfTanGet(track, `${i}_${side}_dt`, g), dv = xfTanGet(track, `${i}_${side}_dv_${c}`, g);
+          return dt === undefined && dv === undefined ? undefined : { dt, dv };
+        };
+        const keep = decimateKeys(T, [{ v, norm: Math.max(hi - lo, floor), tan }], { mode, tolerance, ratio, removable });
+        ks.forEach((i, k) => { if (!keep[k]) m[i] &= ~xfBit(g, c); });
+      }
+    }
+    xfPruneEmpty(track);
+    xfRefreshDerived(track);
+    return { before: n, after: track.times.length, keysBefore, keysAfter: count() };
+  }
+
 
   getKeysInTimeRange(tMin, tMax, laneMin, laneMax) {
     let selected = [];
@@ -3207,29 +3172,7 @@ class AnimationRegistry {
 
   getInterpolatedPosition(track, time) {
     if (!track || !track.times || track.times.length === 0) return [0, 0, 0];
-    if (track.times.length === 1) return [track.positions[0], track.positions[1], track.positions[2]];
-    
-    let frameIdx = 0;
-    while (frameIdx < track.times.length - 1 && track.times[frameIdx + 1] < time) {
-      frameIdx++;
-    }
-    
-    if (frameIdx === track.times.length - 1) {
-      const idx = frameIdx * 3;
-      return [track.positions[idx], track.positions[idx+1], track.positions[idx+2]];
-    }
-    
-    const t1 = track.times[frameIdx];
-    const t2 = track.times[frameIdx + 1];
-    let alpha = 0;
-    if (t2 > t1) alpha = (time - t1) / (t2 - t1);
-    
-    const pIdx1 = frameIdx * 3, pIdx2 = (frameIdx + 1) * 3;
-    const px = track.positions[pIdx1] + (track.positions[pIdx2] - track.positions[pIdx1]) * alpha;
-    const py = track.positions[pIdx1 + 1] + (track.positions[pIdx2 + 1] - track.positions[pIdx1 + 1]) * alpha;
-    const pz = track.positions[pIdx1 + 2] + (track.positions[pIdx2 + 2] - track.positions[pIdx1 + 2]) * alpha;
-    
-    return [px, py, pz];
+    return [0, 1, 2].map((c) => xfEval(track, 'pos', c, time));
   }
 
   sortAllTracks() {
@@ -3238,23 +3181,10 @@ class AnimationRegistry {
     });
   }
 
-  getCurveSlope(track, keyIdx, channel) {
-    if (!track.times || track.times.length < 2) return 0;
-    const i = keyIdx;
-    const c = channel;
-    if (i === 0) {
-      return (track.positions[3 + c] - track.positions[c]) / (track.times[1] - track.times[0]);
-    }
-    if (i === track.times.length - 1) {
-      const pIdx = (i - 1) * 3;
-      const cIdx = i * 3;
-      return (track.positions[cIdx + c] - track.positions[pIdx + c]) / (track.times[i] - track.times[i - 1]);
-    }
-    const pIdx = (i - 1) * 3;
-    const nIdx = (i + 1) * 3;
-    const dt = track.times[i + 1] - track.times[i - 1];
-    if (dt === 0) return 0;
-    return (track.positions[nIdx + c] - track.positions[pIdx + c]) / dt;
+  // Auto-tangent slope at a slot, through the channel's own keyed neighbours.
+  getCurveSlope(track, keyIdx, channel, group = 'pos') {
+    if (!track?.times || track.times.length < 2) return 0;
+    return xfSlope(track, group, channel, keyIdx);
   }
 
   getBezierT(targetAlpha, p1x, p2x) {
@@ -3479,86 +3409,31 @@ class AnimationRegistry {
     }
 
     if (track.times && track.times.length >= 2) {
-      let frameIdx = 0;
-      while (frameIdx < track.times.length - 1 && track.times[frameIdx + 1] < track.playbackTime) {
-        frameIdx++;
-      }
+      // EVERY CHANNEL THROUGH ITS OWN KEYS (sparse keys, see xfChannel). Rotation and scale are
+      // the same bezier the graph editor draws; they used to be lerped here while the graph drew
+      // curves, so what you shaped was not quite what played.
+      const T = track.playbackTime;
+      const px = xfEval(track, 'pos', 0, T), py = xfEval(track, 'pos', 1, T), pz = xfEval(track, 'pos', 2, T);
+      const sx = xfEval(track, 'scale', 0, T), sy = xfEval(track, 'scale', 1, T), sz = xfEval(track, 'scale', 2, T);
 
-      const t1 = track.times[frameIdx];
-      const t2 = track.times[frameIdx + 1];
-      const dt = t2 - t1;
-      let px = 0, py = 0, pz = 0;
-      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-
-      for (let c = 0; c < 3; c++) {
-        const v1 = track.positions[frameIdx * 3 + c];
-        const v2 = track.positions[(frameIdx + 1) * 3 + c];
-        let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
-        const isSelectedChannel = singleSelected && singleSelected.type === 'transform' && singleSelected.meshId === mesh.getID() && singleSelected.channel === c;
-        if (track.times.length > 1) {
-          const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dt`] : undefined;
-          const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dv_${c}`] : undefined;
-          const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dt`] : undefined;
-          const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dv_${c}`] : undefined;
-          const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-          const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-          
-          const slope0 = this.getCurveSlope(track, frameIdx, c);
-          const slope1 = this.getCurveSlope(track, frameIdx + 1, c);
-          
-          const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
-          const dv1 = leftDv !== undefined ? leftDv : slope1 * dt1;
-
-          const p1x = dt0 / dt;
-          const p2x = 1 + dt1 / dt;
-          const t = this.getBezierT(alpha, p1x, p2x);
-          const omt = 1 - t;
-          const omtSq = omt * omt;
-          const omtCu = omtSq * omt;
-          const tSq = t * t;
-          const tCu = tSq * t;
-          const p1y = v1 + dv0;
-          const p2y = v2 + dv1;
-
-          const val = omtCu * v1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * v2;
-          if (c === 0) px = val; else if (c === 1) py = val; else if (c === 2) pz = val;
-        } else {
-          const val = v1 + (v2 - v1) * alpha;
-          if (c === 0) px = val; else if (c === 1) py = val; else if (c === 2) pz = val;
-        }
-      }
-
-      const pIdx1 = frameIdx * 3;
-      const pIdx2 = (frameIdx + 1) * 3;
-      let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
-      const sx = track.scales[pIdx1] + (track.scales[pIdx2] - track.scales[pIdx1]) * alpha;
-      const sy = track.scales[pIdx1 + 1] + (track.scales[pIdx2 + 1] - track.scales[pIdx1 + 1]) * alpha;
-      const sz = track.scales[pIdx1 + 2] + (track.scales[pIdx2 + 2] - track.scales[pIdx1 + 2]) * alpha;
-
-    const qIdx1 = frameIdx * 4, qIdx2 = (frameIdx + 1) * 4;
-    const q1 = [track.quaternions[qIdx1], track.quaternions[qIdx1 + 1], track.quaternions[qIdx1 + 2], track.quaternions[qIdx1 + 3]];
-    const q2 = [track.quaternions[qIdx2], track.quaternions[qIdx2 + 1], track.quaternions[qIdx2 + 2], track.quaternions[qIdx2 + 3]];
-    
     const outQuat = [0, 0, 0, 1];
-    // ROTATION INTERPOLATION. Euler by default: three independent channels lerped like any
-    // other curve, which is the only way a multi-turn key means anything — slerp always takes
-    // the short way round, so a key at 3600 degrees and a key at 0 are the same pose and
-    // nothing moves. Quaternion slerp stays available per track (`track.rotInterp = 'quat'`)
-    // or globally (`window._animRotInterp = 'quat'`), and is still the better choice for a
-    // tumbling motion where Euler will gimbal.
+    // Quaternion slerp stays available per track (`track.rotInterp = 'quat'`) or globally
+    // (`window._animRotInterp = 'quat'`) for tumbling motion where Euler gimbals. It slerps
+    // between the slots either side, so it ignores sparse rotation keys.
     const rotMode = track.rotInterp || window._animRotInterp || 'euler';
-    const eul = rotMode === 'euler' ? rotSync(track) : null;
-    if (eul && eul.length >= (frameIdx + 2) * 3) {
-      const e0 = frameIdx * 3, e1 = (frameIdx + 1) * 3;
-      _regEuler.set(
-        (eul[e0]     + (eul[e1]     - eul[e0])     * alpha) * Math.PI / 180,
-        (eul[e0 + 1] + (eul[e1 + 1] - eul[e0 + 1]) * alpha) * Math.PI / 180,
-        (eul[e0 + 2] + (eul[e1 + 2] - eul[e0 + 2]) * alpha) * Math.PI / 180,
-        'XYZ');
+    if (rotMode === 'euler') {
+      _regEuler.set(xfEval(track, 'rot', 0, T) * Math.PI / 180, xfEval(track, 'rot', 1, T) * Math.PI / 180,
+        xfEval(track, 'rot', 2, T) * Math.PI / 180, 'XYZ');
       _regQuat.setFromEuler(_regEuler);
       outQuat[0] = _regQuat.x; outQuat[1] = _regQuat.y;
       outQuat[2] = _regQuat.z; outQuat[3] = _regQuat.w;
     } else {
+      let frameIdx = 0;
+      while (frameIdx < track.times.length - 2 && track.times[frameIdx + 1] < T) frameIdx++;
+      const t1 = track.times[frameIdx], t2 = track.times[frameIdx + 1];
+      const alpha = t2 > t1 ? Math.min(1, Math.max(0, (T - t1) / (t2 - t1))) : 0;
+      const qIdx1 = frameIdx * 4, qIdx2 = (frameIdx + 1) * 4;
+      const q1 = track.quaternions.slice(qIdx1, qIdx1 + 4), q2 = track.quaternions.slice(qIdx2, qIdx2 + 4);
       quat.slerp(outQuat, q1, q2, alpha);
     }
 

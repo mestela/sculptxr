@@ -249,3 +249,227 @@ export function rotSetEuler(tr, i, channel, deg) {
     q[i * 4] = _rq.x; q[i * 4 + 1] = _rq.y; q[i * 4 + 2] = _rq.z; q[i * 4 + 3] = _rq.w;
   }
 }
+
+// ── SPARSE KEYS ─────────────────────────────────────────────────────────────────────
+//
+// Transform keys used to be LOCKSTEP: one `times` array, and every key held all nine channels.
+// That is glTF's model, not an animator's -- matt: "sparse keys are how animators think, and
+// this enforcing of glb style lockstep keys is stupid." It also crippled Simplify, which could
+// only drop a frame when all nine channels could spare it.
+//
+// So the arrays are now SLOTS, and `keyMask` says which channels are really keyed in each: nine
+// bits, TX TY TZ RX RY RZ SX SY SZ. A channel's curve passes only through its own keyed slots.
+// Its value in any other slot is DERIVED (xfRefreshDerived writes the curve's value there), so
+// everything that reads the arrays without knowing about the mask -- glTF export, the motion
+// trail, IK, the outliner fields -- sees a correct baked-lockstep version of the same motion.
+//
+// The mask rides the arrays the way `eulers` does: kept length-matched, and if a splice
+// somewhere misses it the mask resets to all-keyed. A missed splice therefore degrades to the
+// old lockstep behaviour; it never attaches keys to the wrong frames. Every slot insert and
+// removal should still go through xfInsertSlot / xfRemoveSlots so that does not happen.
+
+export const XF_BIT = { pos: 0, rot: 3, scale: 6 };
+export const XF_ALL = 0x1ff;
+export const xfBit = (group, c) => 1 << (XF_BIT[group] + c);
+export const xfGroupBits = (group) => 7 << XF_BIT[group];
+
+export function maskSync(tr) {
+  const n = tr?.times ? tr.times.length : 0;
+  if (!tr) return null;
+  if (!Array.isArray(tr.keyMask) || tr.keyMask.length !== n) tr.keyMask = new Array(n).fill(XF_ALL);
+  return tr.keyMask;
+}
+
+export function xfKeyed(tr, i, group, c) {
+  const m = maskSync(tr);
+  return !!(m[i] & xfBit(group, c));
+}
+
+function groupArr(tr, group) {
+  if (group === 'scale') return tr.scales;
+  if (group === 'rot') return rotSync(tr);
+  return tr.positions;
+}
+
+// Keyed slots of one channel, as indices into the slot arrays.
+export function xfKeyedSlots(tr, group, c) {
+  const m = maskSync(tr), b = xfBit(group, c), out = [];
+  for (let i = 0; i < m.length; i++) if (m[i] & b) out.push(i);
+  return out;
+}
+
+// Auto slope at keyed slot `i`, from its keyed neighbours `p` and `n` (-1 at the ends).
+function slopeAt(T, v, i, p, n) {
+  if (p < 0 && n < 0) return 0;
+  if (p < 0) return (v(n) - v(i)) / (T[n] - T[i]);
+  if (n < 0) return (v(i) - v(p)) / (T[i] - T[p]);
+  return (v(n) - v(p)) / (T[n] - T[p]);
+}
+
+// The auto-tangent slope of channel (group, c) at keyed slot i -- what the handles show.
+export function xfSlope(tr, group, c, i) {
+  const ks = xfKeyedSlots(tr, group, c);
+  const k = ks.indexOf(i);
+  if (k < 0) return 0;
+  const arr = groupArr(tr, group);
+  const v = (j) => arr[j * 3 + c];
+  const r = slopeAt(tr.times, v, i, k > 0 ? ks[k - 1] : -1, k < ks.length - 1 ? ks[k + 1] : -1);
+  return Number.isFinite(r) ? r : 0;
+}
+
+function solveBezierT(alpha, p1x, p2x) {
+  let t = alpha;
+  for (let it = 0; it < 6; it++) {
+    const o = 1 - t;
+    const x = 3 * o * o * t * p1x + 3 * o * t * t * p2x + t * t * t - alpha;
+    if (Math.abs(x) < 1e-7) return t;
+    const d = 3 * o * o * p1x + 6 * o * t * (p2x - p1x) + 3 * t * t * (1 - p2x);
+    if (!(d > 1e-6)) break;
+    t -= x / d;
+    if (t < 0 || t > 1) break;
+  }
+  let lo = 0, hi = 1;
+  t = 0.5;
+  for (let it = 0; it < 30; it++) {
+    const o = 1 - t;
+    const x = 3 * o * o * t * p1x + 3 * o * t * t * p2x + t * t * t;
+    if (Math.abs(x - alpha) < 1e-7) return t;
+    if (x < alpha) lo = t; else hi = t;
+    t = (lo + hi) / 2;
+  }
+  return t;
+}
+
+// Value of segment a->b (keyed slots) of channel (group, c) at `time`, with the keyed
+// neighbours ap (before a) and bn (after b) for the auto tangents. The same curve the graph
+// draws and playback plays.
+export function xfSegEval(tr, group, c, a, ap, b, bn, time) {
+  const T = tr.times, arr = groupArr(tr, group);
+  const v = (j) => arr[j * 3 + c];
+  const dt = T[b] - T[a];
+  if (!(dt > 0)) return v(b);
+  const rDt = xfTanGet(tr, `${a}_right_dt`, group), rDv = xfTanGet(tr, `${a}_right_dv_${c}`, group);
+  const lDt = xfTanGet(tr, `${b}_left_dt`, group), lDv = xfTanGet(tr, `${b}_left_dv_${c}`, group);
+  const dt0 = rDt !== undefined ? rDt : dt * 0.33;
+  const dt1 = lDt !== undefined ? lDt : -dt * 0.33;
+  const s0 = slopeAt(T, v, a, ap, b), s1 = slopeAt(T, v, b, a, bn);
+  const dv0 = rDv !== undefined ? rDv : (Number.isFinite(s0) ? s0 : 0) * dt0;
+  const dv1 = lDv !== undefined ? lDv : (Number.isFinite(s1) ? s1 : 0) * dt1;
+  const t = solveBezierT(Math.min(1, Math.max(0, (time - T[a]) / dt)), dt0 / dt, 1 + dt1 / dt);
+  const o = 1 - t;
+  return o * o * o * v(a) + 3 * o * o * t * (v(a) + dv0) + 3 * o * t * t * (v(b) + dv1) + t * t * t * v(b);
+}
+
+// Channel (group, c) at `time`, through its keyed slots only. Held flat before the first key
+// and after the last. `ks` may be passed in when evaluating many times.
+export function xfEval(tr, group, c, time, ks) {
+  ks = ks || xfKeyedSlots(tr, group, c);
+  const arr = groupArr(tr, group);
+  if (!ks.length || !arr) return group === 'scale' ? 1 : 0;
+  const T = tr.times;
+  if (ks.length === 1 || time <= T[ks[0]]) return arr[ks[0] * 3 + c];
+  const last = ks[ks.length - 1];
+  if (time >= T[last]) return arr[last * 3 + c];
+  let lo = 0, hi = ks.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >>> 1;
+    if (T[ks[mid]] <= time) lo = mid; else hi = mid;
+  }
+  return xfSegEval(tr, group, c, ks[lo], lo > 0 ? ks[lo - 1] : -1, ks[hi], hi < ks.length - 1 ? ks[hi + 1] : -1, time);
+}
+
+// Write every channel's curve value into the slots where that channel is not keyed, so the
+// arrays read as a baked lockstep version of the sparse curves. Rotation writes the eulers
+// and re-derives the quaternion. A no-op for a fully keyed track.
+export function xfRefreshDerived(tr) {
+  if (!tr?.times) return;
+  const m = maskSync(tr);
+  if (m.every((b) => b === XF_ALL)) return;
+  const touchedRot = new Set();
+  for (const g of ['pos', 'rot', 'scale']) {
+    const arr = groupArr(tr, g);
+    if (!arr) continue;
+    for (let c = 0; c < 3; c++) {
+      const ks = xfKeyedSlots(tr, g, c);
+      if (ks.length === m.length) continue;
+      const vals = [];
+      for (let i = 0; i < m.length; i++) if (!(m[i] & xfBit(g, c))) vals.push([i, xfEval(tr, g, c, tr.times[i], ks)]);
+      for (const [i, val] of vals) { arr[i * 3 + c] = val; if (g === 'rot') touchedRot.add(i); }
+    }
+  }
+  for (const i of touchedRot) rotSetEuler(tr, i, 0, tr.eulers[i * 3]);
+}
+
+// Tangent overrides are keyed by slot index: `trans_[group_]<i>_<rest>`.
+const TAN_RE = /^trans_((?:pos|rot|scale)_)?(\d+)_(.*)$/;
+export function xfTanSlot(k) { const m = TAN_RE.exec(k); return m ? +m[2] : -1; }
+
+function remapTangents(tr, remap) {
+  if (!tr.tangentOffsets) return;
+  const out = {};
+  for (const k in tr.tangentOffsets) {
+    const m = TAN_RE.exec(k);
+    if (!m) { out[k] = tr.tangentOffsets[k]; continue; }
+    const ni = remap(+m[2]);
+    if (ni >= 0) out[`trans_${m[1] || ''}${ni}_${m[3]}`] = tr.tangentOffsets[k];
+  }
+  tr.tangentOffsets = out;
+}
+
+// Remove slots (a Set or array of indices), keeping every parallel array, the mask and the
+// tangent overrides in step. Returns the old->new index map (-1 = removed).
+export function xfRemoveSlots(tr, slots) {
+  const n = tr.times.length;
+  const gone = slots instanceof Set ? slots : new Set(slots);
+  if (!gone.size) return null;
+  const eul = rotSync(tr), m = maskSync(tr);
+  const remap = new Int32Array(n).fill(-1);
+  const pick = (arr, w) => {
+    const out = [];
+    if (!arr) return arr;
+    for (let i = 0; i < n; i++) if (!gone.has(i)) for (let j = 0; j < w; j++) out.push(arr[i * w + j]);
+    return out;
+  };
+  let k = 0;
+  for (let i = 0; i < n; i++) if (!gone.has(i)) remap[i] = k++;
+  tr.positions = pick(tr.positions, 3);
+  tr.quaternions = pick(tr.quaternions, 4);
+  tr.scales = pick(tr.scales, 3);
+  tr.eulers = pick(eul, 3);
+  tr.keyMask = pick(m, 1);
+  tr.times = pick(tr.times, 1);
+  remapTangents(tr, (i) => remap[i]);
+  return remap;
+}
+
+// Drop every slot no channel is keyed in any more.
+export function xfPruneEmpty(tr) {
+  const m = maskSync(tr), gone = new Set();
+  m.forEach((b, i) => { if (!b) gone.add(i); });
+  return gone.size ? xfRemoveSlots(tr, gone) : null;
+}
+
+// Insert a slot at `idx` (time-sorted position), with values p[3], q[4], s[3] and keyed `bits`.
+// Values of channels not in `bits` are derived straight away from their curves.
+export function xfInsertSlot(tr, idx, time, p, q, s, bits) {
+  const eul = rotSync(tr), m = maskSync(tr);
+  tr.times.splice(idx, 0, time);
+  tr.positions.splice(idx * 3, 0, ...p);
+  tr.quaternions.splice(idx * 4, 0, ...q);
+  tr.scales.splice(idx * 3, 0, ...s);
+  m.splice(idx, 0, bits);
+  const e = eulerFromQuat({ quaternions: q }, 0, [0, 0, 0]);
+  // Unwrap against the previous slot so a spin stays continuous.
+  if (idx > 0) for (let c = 0; c < 3; c++) e[c] = unwrapTo(eul[(idx - 1) * 3 + c], e[c]);
+  eul.splice(idx * 3, 0, ...e);
+  tr.eulers = eul;
+  remapTangents(tr, (i) => (i >= idx ? i + 1 : i));
+  if (bits !== XF_ALL) xfRefreshDerived(tr);
+}
+
+// The slot at `time` (within `eps`), or -1.
+export function xfSlotAt(tr, time, eps = 1e-4) {
+  const T = tr?.times || [];
+  for (let i = 0; i < T.length; i++) if (Math.abs(T[i] - time) < eps) return i;
+  return -1;
+}

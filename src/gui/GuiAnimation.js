@@ -1,3 +1,4 @@
+import { XF_ALL } from '../editing/xfChannel.js';
 import TimelineHelper from './TimelineHelper.js';
 import TR from './GuiTR.js';
 
@@ -528,206 +529,42 @@ class GuiAnimation {
   }
 
   pasteKey() {
-    if (!window._animationRegistry) return;
-    let targetMesh = this._main.getMesh();
-    if (!targetMesh) return;
-    
-    if (window._animCopiedKeys && window._animCopiedKeys.length > 0) {
-      const tMin = Math.min(...window._animCopiedKeys.map(k => k.time));
-      const pasteTime = window._animCurrentTime || 0;
-      
-      const commands = [];
-      const main = this._main;
-      
-      window._animCopiedKeys.forEach(k => {
-        const targetTime = pasteTime + (k.time - tMin);
-        const id = targetMesh.getID();
-        
-        if (!window._animationRegistry.tracks.has(id)) {
-          window._animationRegistry.tracks.set(id, {
-            times: [], positions: [], quaternions: [], scales: [],
-            shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
-          });
-        }
-        const track = window._animationRegistry.tracks.get(id);
-        
-        let wasUpdate = false;
-        let oldData = null;
-        
-        if (k.type === 'transform') {
-          let foundIdx = -1;
-          if (track.times) {
-            for (let i = 0; i < track.times.length; i++) {
-              if (Math.abs(track.times[i] - targetTime) < 0.005) {
-                foundIdx = i;
-                break;
-              }
-            }
-          }
-          wasUpdate = foundIdx >= 0;
-          if (wasUpdate) {
-            oldData = {
-              pos: track.positions.slice(foundIdx * 3, foundIdx * 3 + 3),
-              q: track.quaternions.slice(foundIdx * 4, foundIdx * 4 + 4),
-              s: track.scales.slice(foundIdx * 3, foundIdx * 3 + 3)
-            };
-            track.positions.splice(foundIdx * 3, 3, ...k.p);
-            track.quaternions.splice(foundIdx * 4, 4, ...k.q);
-            track.scales.splice(foundIdx * 3, 3, ...k.s);
-          } else {
-            track.times.push(targetTime);
-            track.positions.push(...k.p);
-            track.quaternions.push(...k.q);
-            track.scales.push(...k.s);
-          }
-          
-          commands.push({
-            meshId: id,
-            type: 'transform',
-            time: targetTime,
-            wasUpdate,
-            oldData,
-            newData: { pos: [...k.p], q: [...k.q], s: [...k.s] }
-          });
-        } else if (k.type === 'shape') {
-          let foundIdx = -1;
-          if (track.shapeTimes) {
-            for (let i = 0; i < track.shapeTimes.length; i++) {
-              if (Math.abs(track.shapeTimes[i] - targetTime) < 0.005) {
-                foundIdx = i;
-                break;
-              }
-            }
-          }
-          wasUpdate = foundIdx >= 0;
-          if (wasUpdate) {
-            oldData = new Float32Array(track.shapes[foundIdx]);
-            track.shapes[foundIdx] = new Float32Array(k.shape);
-          } else {
-            track.shapeTimes.push(targetTime);
-            if (!track.shapeOutputTimes) track.shapeOutputTimes = [];
-            track.shapeOutputTimes.push(targetTime);
-            track.shapes.push(new Float32Array(k.shape));
-          }
-          
-          commands.push({
-            meshId: id,
-            type: 'shape',
-            time: targetTime,
-            wasUpdate,
-            oldData,
-            newData: new Float32Array(k.shape)
-          });
-        }
-      });
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    const targetMesh = this._main.getMesh();
+    if (!targetMesh || !window._animCopiedKeys?.length) return;
 
-      const affectedTrackIds = new Set(commands.map(c => c.meshId));
-      affectedTrackIds.forEach(id => {
-        const tr = window._animationRegistry.tracks.get(id);
-        if (tr) {
-          window._animationRegistry.sortTrack(tr);
-          window._animationRegistry.update(targetMesh, true);
-        }
-      });
+    const id = targetMesh.getID();
+    const track = reg._ensureTransformTrack(id);
+    if (!track.shapeTimes) track.shapeTimes = [];
+    if (!track.shapes) track.shapes = [];
+    // One undo step by SNAPSHOT. The command replay this replaced re-spliced lockstep slots by
+    // time, which cannot restore per-channel key masks (sparse keys).
+    const before = reg._snapshotTrack(track);
+    const tMin = Math.min(...window._animCopiedKeys.map((k) => k.time));
+    const pasteTime = window._animCurrentTime || 0;
 
-      if (main.getStateManager && commands.length > 0) {
-        main.getStateManager().pushStateCustom(
-          () => { // UNDO
-            commands.forEach(cmd => {
-              const tr = window._animationRegistry.tracks.get(cmd.meshId);
-              if (!tr) return;
-              
-              if (cmd.type === 'transform') {
-                if (cmd.wasUpdate) {
-                  let idx = 0;
-                  while (idx < tr.times.length && tr.times[idx] < cmd.time) idx++;
-                  if (idx < tr.times.length && Math.abs(tr.times[idx] - cmd.time) < 0.005) {
-                    tr.positions.splice(idx*3, 3, ...cmd.oldData.pos);
-                    tr.quaternions.splice(idx*4, 4, ...cmd.oldData.q);
-                    tr.scales.splice(idx*3, 3, ...cmd.oldData.s);
-                  }
-                } else {
-                  let idx = 0;
-                  while (idx < tr.times.length && tr.times[idx] < cmd.time) idx++;
-                  if (idx < tr.times.length && Math.abs(tr.times[idx] - cmd.time) < 0.005) {
-                    tr.times.splice(idx, 1);
-                    tr.positions.splice(idx*3, 3);
-                    tr.quaternions.splice(idx*4, 4);
-                    tr.scales.splice(idx*3, 3);
-                  }
-                }
-              } else if (cmd.type === 'shape') {
-                if (cmd.wasUpdate) {
-                  let idx = 0;
-                  while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < cmd.time) idx++;
-                  if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
-                    tr.shapes[idx] = cmd.oldData;
-                  }
-                  } else {
-                    let idx = 0;
-                    while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < cmd.time) idx++;
-                    if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
-                      tr.shapeTimes.splice(idx, 1);
-                      if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
-                      tr.shapes.splice(idx, 1);
-                    }
-                  }
-              }
-            });
-            
-            affectedTrackIds.forEach(id => {
-              const tr = window._animationRegistry.tracks.get(id);
-              if (tr) window._animationRegistry.sortTrack(tr);
-            });
-            
-            main.render();
-          },
-          () => { // REDO
-            commands.forEach(cmd => {
-              const tr = window._animationRegistry.tracks.get(cmd.meshId);
-              if (!tr) return;
-              
-              if (cmd.type === 'transform') {
-                let idx = 0;
-                while (idx < tr.times.length && tr.times[idx] < cmd.time) idx++;
-                
-                if (idx < tr.times.length && Math.abs(tr.times[idx] - cmd.time) < 0.005) {
-                  tr.positions.splice(idx*3, 3, ...cmd.newData.pos);
-                  tr.quaternions.splice(idx*4, 4, ...cmd.newData.q);
-                  tr.scales.splice(idx*3, 3, ...cmd.newData.s);
-                } else {
-                  tr.times.splice(idx, 0, cmd.time);
-                  tr.positions.splice(idx*3, 0, ...cmd.newData.pos);
-                  tr.quaternions.splice(idx*4, 0, ...cmd.newData.q);
-                  tr.scales.splice(idx*3, 0, ...cmd.newData.s);
-                }
-              } else if (cmd.type === 'shape') {
-                let idx = 0;
-                while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < cmd.time) idx++;
-                
-                if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
-                  tr.shapes[idx] = cmd.newData;
-                } else {
-                  tr.shapeTimes.splice(idx, 0, cmd.time);
-                  if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 0, cmd.time);
-                  tr.shapes.splice(idx, 0, cmd.newData);
-                }
-              }
-            });
-            
-            affectedTrackIds.forEach(id => {
-              const tr = window._animationRegistry.tracks.get(id);
-              if (tr) window._animationRegistry.sortTrack(tr);
-            });
-            
-            main.render();
-          },
-          false,
-          "Paste Keys"
-        );
+    for (const k of window._animCopiedKeys) {
+      const targetTime = pasteTime + (k.time - tMin);
+      if (k.type === 'transform') {
+        reg._putKey(track, targetTime, k.p, k.q, k.s, XF_ALL);
+      } else if (k.type === 'shape') {
+        const i = track.shapeTimes.findIndex((t) => Math.abs(t - targetTime) < 0.005);
+        if (i >= 0) track.shapes[i] = new Float32Array(k.shape);
+        else {
+          track.shapeTimes.push(targetTime);
+          if (!track.shapeOutputTimes) track.shapeOutputTimes = [];
+          track.shapeOutputTimes.push(targetTime);
+          track.shapes.push(new Float32Array(k.shape));
+        }
       }
-      if (window.screenLog) window.screenLog(`📥 Pasted ${window._animCopiedKeys.length} Keys`, 'lime');
     }
+    reg.sortTrack(track);
+    reg.update(targetMesh, true);
+    const after = reg._snapshotTrack(track);
+    const put = (snap) => { const tr = reg.tracks.get(id); if (tr) reg._restoreTrack(tr, snap, targetMesh); };
+    this._main.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Paste Keys');
+    if (window.screenLog) window.screenLog(`Pasted ${window._animCopiedKeys.length} Keys`, 'lime');
   }
 
   cutKey() {
@@ -740,57 +577,25 @@ class GuiAnimation {
     let targetMesh = this._main.getMesh();
     if (!targetMesh) return;
 
-    const reg = window._animationRegistry;
-    const beforeState = new Map();
-    reg.tracks.forEach((track, meshId) => {
-      beforeState.set(meshId, TimelineHelper.cloneTrack(track));
-    });
-
-    let actionName = '';
-
+    // ONE undo step, and it is the registry's: every branch ends in deleteSelectedKeys, which
+    // snapshots and pushes its own. This used to push a second, clone-based step around it, so a
+    // single Delete took two undos to get back.
     if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
       window._animationRegistry.deleteSelectedKeys(window._animSelectedKeys);
-      actionName = 'delete selected keys';
       if (window.screenLog) window.screenLog('🗑️ Deleted Selected Keys', 'orange');
     } else {
       const targetTime = window._animCurrentTime || 0;
       if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
         window._animationRegistry.deleteShapeKey(targetMesh, targetTime);
-        actionName = 'delete shape key';
         if (window.screenLog) window.screenLog('🗑️ Deleted Shape Key', 'orange');
       } else {
         window._animationRegistry.deleteTransformKey(targetMesh, targetTime);
-        actionName = 'delete transform key';
         if (window.screenLog) window.screenLog('🗑️ Deleted Transform Key', 'orange');
       }
     }
 
     window._animationRegistry.update(targetMesh, true);
-
-    const afterState = new Map();
-    reg.tracks.forEach((track, meshId) => {
-      afterState.set(meshId, TimelineHelper.cloneTrack(track));
-    });
-
-    const cbUndo = () => {
-      beforeState.forEach((track, meshId) => {
-        reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
-      });
-      this._main.render();
-      const timeline = this._ctrlGui._ctrlTimeline;
-      if (timeline) timeline.draw();
-    };
-
-    const cbRedo = () => {
-      afterState.forEach((track, meshId) => {
-        reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
-      });
-      this._main.render();
-      const timeline = this._ctrlGui._ctrlTimeline;
-      if (timeline) timeline.draw();
-    };
-
-    this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, actionName);
+    this._ctrlGui?._ctrlTimeline?.draw?.();
   }
 
   updateMesh() {

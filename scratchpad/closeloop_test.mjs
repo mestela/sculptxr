@@ -25,6 +25,9 @@ const body = slice('  closeLoop(targets) {', '  createBlendshape(mesh, name) {')
 
 const mod = `
 const window = { app: null };
+// Sparse keys: the mask helpers closeLoop now touches. Fully keyed tracks, so pass-through.
+const maskSync = (t) => (t.keyMask = t.keyMask && t.keyMask.length === t.times.length ? t.keyMask : t.times.map(() => 511));
+const xfRefreshDerived = () => {};
 class Reg {
   constructor() { this.tracks = new Map(); this.sorted = 0; }
   _snapshotTrack(t) {

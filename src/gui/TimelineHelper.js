@@ -1,4 +1,4 @@
-import { xfRead, xfWrite, xfTanPrefix, xfVisible, xfChanVisible,
+import { xfKeyed, xfRead, xfWrite, xfTanPrefix, xfVisible, xfChanVisible,
          xfWeightTrack } from '../editing/xfChannel.js';
 
 export default class TimelineHelper {
@@ -462,7 +462,8 @@ export default class TimelineHelper {
     else deltaX = Math.max(0, deltaX);
     
     if (!track.tangentOffsets) track.tangentOffsets = {};
-    const prefix = activeTangent.type === 'transform' ? xfTanPrefix() : '';
+    // The SELECTED key's group, which is the group the handle was drawn and picked in.
+    const prefix = activeTangent.type === 'transform' ? xfTanPrefix(singleSelected?.group) : '';
     const dt = (deltaX / tlW) * visibleDuration;
     const dv = -deltaY / zoomY;
     
@@ -511,6 +512,7 @@ export default class TimelineHelper {
           if (t < tMin || t > tMax) continue;
           for (let c = 0; c < 3; c++) {
             if (!xfChanVisible(grp, c)) continue;
+            if (!xfKeyed(track, i, grp, c)) continue;   // sparse: no key on this channel here
             const raw = xfRead(track, i, c, grp);
             if (typeof raw !== 'number' || !isFinite(raw)) continue;
             // The marquee's bounds come from SCREEN Y, so under Normalise they are in
@@ -612,6 +614,10 @@ export default class TimelineHelper {
       positions: track.positions ? [...track.positions] : [],
       quaternions: track.quaternions ? [...track.quaternions] : [],
       scales: track.scales ? [...track.scales] : [],
+      // Sparse keys: which channels each slot keys, and the unwrapped rotation. A clone without
+      // the mask comes back all-keyed; without eulers it loses winding.
+      keyMask: track.keyMask ? [...track.keyMask] : null,
+      eulers: track.eulers ? [...track.eulers] : null,
       shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
       shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
       shapeOutputTimes: track.shapeOutputTimes ? [...track.shapeOutputTimes] : [],
@@ -619,6 +625,14 @@ export default class TimelineHelper {
       muted: track.muted,
       tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
     };
+    // Scalar channels (the pin weight): the drag undo REPLACES the track with this clone, so a
+    // channel left out here was deleted by undoing any key drag.
+    if (track.scalarTracks) {
+      cloned.scalarTracks = new Map();
+      track.scalarTracks.forEach((st, name) => cloned.scalarTracks.set(name, {
+        ...st, times: st.times.slice(), values: st.values.slice(),
+        tangentOffsets: st.tangentOffsets ? JSON.parse(JSON.stringify(st.tangentOffsets)) : undefined }));
+    }
     if (track.restPos) cloned.restPos = [...track.restPos];
     if (track.restQuat) cloned.restQuat = [...track.restQuat];
     if (track.restScale) cloned.restScale = [...track.restScale];

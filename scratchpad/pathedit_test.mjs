@@ -58,7 +58,9 @@ const prelude = 'globalThis.window = globalThis.window || {};\n' +
   'const Enums = { Tools: { MOVE: 10, SMOOTH: 1, TRANSFORM: 13, GRAB: 15, TRANSFORM_VR: 16, BONE_DRAW: 34 } };\n' +
   // The falloff mode is a persisted option; the harness drives it through the live override so
   // each case says which mode it is testing rather than depending on a saved default.
-  'const getOptionsURL = () => (globalThis.__opts || {});\n';
+  'const getOptionsURL = () => (globalThis.__opts || {});\n' +
+  // Sparse keys: re-deriving unkeyed slots. These tracks are fully keyed, so it has nothing to do.
+  'const xfRefreshDerived = () => {};\n';
 // THE SOURCE THE HARNESS ACTUALLY RUNS. Every structural check below reads THIS, not the file
 // on disk: the injections rewrite it on its way to the module, so a check that re-reads SRC is
 // looking at source that is not being run and passes cheerfully with the defect in place. That

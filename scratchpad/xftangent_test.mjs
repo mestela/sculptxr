@@ -35,8 +35,8 @@
 //   XF_INJECT=pixelnorm   normalise maps to screen pixels again, so the axis and the grid are
 //                         left speaking raw units while the curves are normalised
 //   XF_INJECT=fitactive   Fit All measures only the active group again
-//   XF_INJECT=lostgroup   one end of each curve segment forgets its group and reads the active
-//                         one instead, so every non-active curve runs to the wrong value
+//   XF_INJECT=lostgroup   the curve forgets its group and evaluates the active one instead, so
+//                         every non-active curve is drawn with another group's values
 //   XF_INJECT=tinyspan    a flat channel is framed to the 1e-3 floor again
 import fs from 'fs';
 import path from 'path';
@@ -93,8 +93,8 @@ if (inject === 'ungrouped') {
   TL = cut(TL, '            const val = xfRead(track, i, c, grp);\n            if (typeof val !== \'number\' || !isFinite(val)) continue;',
     '            const val = xfRead(track, i, c);\n            if (typeof val !== \'number\' || !isFinite(val)) continue;', inject);
 } else if (inject === 'lostgroup') {
-  TL = cut(TL, 'const val2 = xfRead(track, i + 1, channel, grp);',
-    'const val2 = xfRead(track, i + 1, channel);', inject);
+  TL = cut(TL, 'xfSegEval(track, grp, channel, a, ap, b, bn, time)',
+    'xfSegEval(track, xfGroup(), channel, a, ap, b, bn, time)', inject);
 } else if (inject === 'tinyspan') {
   TL = cut(TL, "                                 : (FLAT_SPAN[xfGroup()] || 1);",
     "                                 : 1e-3;", inject);
@@ -157,16 +157,21 @@ check('...and stops leaking into the other groups',
 // ── EVERY SITE, or the write and the read disagree ────────────────────────────────────
 for (const [name, src] of [['GuiTimeline', TL], ['TimelineHelper', HELP]]) {
   check(name + ' uses the grouped prefix',
-    /xfTanPrefix\(\)/.test(src) && !/\? 'trans_' :/.test(src),
+    /xfTanPrefix\(/.test(src) && !/\? 'trans_' :/.test(src),
     'a file still writing the ungrouped key puts handles somewhere the reader will not look');
 }
 // ...and NAMING the group, now that several are drawn at once. Defaulting to the active group
 // was correct while the strip was a radio and is wrong the moment two curves share the graph.
+// Sparse keys: the curve is drawn through xfSegEval, which is also what playback evaluates, so
+// the grouped reads are pinned there.
+const XFC = fs.readFileSync(path.join(REPO, 'src/editing/xfChannel.js'), 'utf8');
 check('the curve reads its tangents through the same accessor, for ITS group',
-  /const rightDv = xfTanGet\(track, `\$\{i\}_right_dv_\$\{channel\}`, grp\);/.test(TL)
-    && /const leftDv = xfTanGet\(track, `\$\{i \+ 1\}_left_dv_\$\{channel\}`, grp\);/.test(TL));
-check('...including whether it HAS tangents at all',
-  /const hasTangents = xfTanGet\(track, `\$\{i\}_right_dv_\$\{channel\}`, grp\) !== undefined/.test(TL),
+  /xfSegEval\(track, grp, channel, a, ap, b, bn, time\)/.test(TL)
+    && /rDv = xfTanGet\(tr, `\$\{a\}_right_dv_\$\{c\}`, group\)/.test(XFC)
+    && /lDv = xfTanGet\(tr, `\$\{b\}_left_dv_\$\{c\}`, group\)/.test(XFC));
+check('...including the handle LENGTHS, both ends',
+  /const rDt = xfTanGet\(tr, `\$\{a\}_right_dt`, group\)/.test(XFC)
+    && /const lDt = xfTanGet\(tr, `\$\{b\}_left_dt`, group\)/.test(XFC),
   'reading this one ungrouped would draw handles the curve does not use');
 // And the handle DRAWING follows the selected key's group rather than the global active one.
 check('the tangent handles follow the selected key\'s group',
@@ -253,8 +258,8 @@ check('the tangent handles follow the selected key\'s group',
   // Both ends of the segment specifically, since it was the second one that was missed and the
   // first one that made it look fine.
   check('...at BOTH ends of every curve segment',
-    /const val1 = xfRead\(track, i, channel, grp\);/.test(TL)
-      && /const val2 = xfRead\(track, i \+ 1, channel, grp\);/.test(TL));
+    /const T = tr\.times, arr = groupArr\(tr, group\);/.test(XFC)
+      && /v\(a\) \+ 3 \* o \* o \* t \* \(v\(a\) \+ dv0\) \+ 3 \* o \* t \* t \* \(v\(b\) \+ dv1\)/.test(XFC));
 }
 
 // ── NORMALISE IS A -1..1 VIEW, NOT A SCREEN TRICK ─────────────────────────────────────
