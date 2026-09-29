@@ -147,9 +147,11 @@ export default class BlendshapeStackPanel {
     // on a rig with every ARKit shape they scrolled away. A second canvas pinned to the top of the
     // scroll area redraws the toolbar band over the top of the first; its own hits map to the
     // same toolbar-local coordinates as the original at rest.
+    // top:-10px = the wa-tab-panel base's 10px padding (Gui.js): sticky pins to the CONTENT edge, so
+    // top:0 left a 10px strip above the bar where scrolled rows showed through.
     this._tbCanvas = document.createElement('canvas');
     Object.assign(this._tbCanvas.style, {
-      display: 'block', width: '100%', position: 'sticky', top: '0', zIndex: '2',
+      display: 'block', width: '100%', position: 'sticky', top: '-10px', zIndex: '2',
       marginBottom: (-TOOLBAR_H) + 'px', touchAction: 'none',
     });
     this._tbCtx = this._tbCanvas.getContext('2d');
