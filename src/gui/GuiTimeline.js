@@ -511,6 +511,21 @@ export default class GuiTimeline {
       row('Translate', ch.translate, '_recTranslate', 'recTranslate'),
       row('Rotate', ch.rotate, '_recRotate', 'recRotate'),
       row('Scale', ch.scale, '_recScale', 'recScale'),
+      // Start triggers. Mutually exclusive, same as the ACP buttons they mirror.
+      { label: (window._animWaitForTrigger ? '\u2713  ' : '\u2003  ') + 'On Grab', on: !!window._animWaitForTrigger,
+        run: () => {
+          window._animWaitForTrigger = !window._animWaitForTrigger;
+          if (window._animWaitForTrigger) window._animCountIn = false;
+          window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
+          window.saveOption?.('animCountIn', !!window._animCountIn);
+        } },
+      { label: (window._animCountIn ? '\u2713  ' : '\u2003  ') + '3-2-1 Count-in', on: !!window._animCountIn,
+        run: () => {
+          window._animCountIn = !window._animCountIn;
+          if (window._animCountIn) window._animWaitForTrigger = false;
+          window.saveOption?.('animCountIn', !!window._animCountIn);
+          window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
+        } },
     ];
   }
 
@@ -518,12 +533,11 @@ export default class GuiTimeline {
     const btn = this._toolbarBtnDefs().find(b => b.id === 'recopts');
     // Right-aligned under the arrow, so a 140px menu hanging off a 16px button cannot run past
     // the edge of a narrow timeline.
-    return btn ? { x: Math.max(2, btn.x + btn.w - 140), y: btn.y + btn.h,
-      w: 140, h: 3 * 24, cellH: 24 } : null;
+    return btn ? { x: Math.max(2, btn.x + btn.w - 160), y: btn.y + btn.h,
+      w: 160, h: 5 * 24, cellH: 24 } : null;
   }
 
-  // THE AUDIO MENU. Same canvas-native construction as the channel menu above — one draw, one
-  // hit test — so it reaches the synthetic VR timeline events as well as desktop pointers.
+  // AUDIO COMMANDS, listed at the bottom of the "..." menu. Same canvas-native menu, so it reaches the synthetic VR timeline events as well as desktop pointers.
   //
   // Loading is desktop-only by necessity: it opens a file picker, and there is no file picker
   // inside an immersive session. Everything AFTER loading (playback, mute, the waveform) works
@@ -608,39 +622,6 @@ export default class GuiTimeline {
       ? reg.globalPlaybackTime : (window._animCurrentTime || 0));
   }
 
-  _audioMenuRect() {
-    const btn = this._toolbarBtnDefs().find(b => b.id === 'audio');
-    // Right-aligned under the button for the same reason as the channel menu: a 140px menu
-    // hanging off a narrow button must not run past the edge of a narrow timeline.
-    return btn ? { x: Math.max(2, btn.x + btn.w - 140), y: btn.y + btn.h,
-      w: 140, h: 3 * 24, cellH: 24 } : null;
-  }
-
-  _drawAudioMenu(ctx) {
-    if (!this._audioMenuOpen) return;
-    const r = this._audioMenuRect();
-    if (!r) return;
-    ctx.save();
-    ctx.fillStyle = Theme.crust; ctx.strokeStyle = Theme.surface1; ctx.lineWidth = 1;
-    ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
-    this._audioMenuCommands().forEach((cmd, i) => {
-      const y = r.y + i * r.cellH;
-      const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
-        && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
-      if (hov && cmd.enabled !== false) {
-        ctx.fillStyle = Theme.surface1;
-        ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2);
-      }
-      ctx.fillStyle = cmd.enabled === false ? Theme.surface2 : Theme.text;
-      ctx.font = '12px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(cmd.label, r.x + 8, y + r.cellH / 2);
-    });
-    ctx.restore();
-  }
-
   // THE WAVEFORM, DRAWN AS THE RULER'S BACKGROUND.
   //
   // It sits behind the frame ticks rather than in a lane of its own, which is not a compromise
@@ -695,6 +676,45 @@ export default class GuiTimeline {
     ctx.restore();
   }
 
+  // THE OVERFLOW MENU: the buttons the transport is sitting on. Same canvas-native
+  // construction as the others. Rows run the button's own action (_runToolbarBtn), so a hidden
+  // control behaves exactly as it does when it is showing.
+  _overflowItems() { return this._tbOverflow || []; }
+
+  _overflowRect() {
+    const btn = this._toolbarBtnDefs().find(b => b.id === 'overflow');
+    const n = this._overflowItems().length;
+    if (!btn || !n) return null;
+    const w = 230;
+    return { x: Math.max(2, Math.min(btn.x, this._cssWidth - w - 2)), y: btn.y + btn.h,
+      w, h: n * 26, cellH: 26 };
+  }
+
+  _overflowLabel(b) {
+    const base = b.label || b.tooltip || b.id;
+    return (b.active ? '\u2713  ' : '\u2003  ') + (b.id === 'ctxmenu' ? 'More\u2026' : base);
+  }
+
+  _drawOverflowMenu(ctx) {
+    if (!this._overflowMenuOpen) return;
+    const r = this._overflowRect();
+    if (!r) return;
+    ctx.save();
+    ctx.fillStyle = Theme.crust; ctx.strokeStyle = Theme.surface1; ctx.lineWidth = 1;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    this._overflowItems().forEach((b, i) => {
+      const y = r.y + i * r.cellH;
+      const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
+        && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
+      if (hov && !b.disabled) { ctx.fillStyle = Theme.surface1; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2); }
+      ctx.fillStyle = b.disabled ? Theme.overlay0 : Theme.text;
+      ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(this._overflowLabel(b), r.x + 10, y + r.cellH / 2, r.w - 16);
+    });
+    ctx.restore();
+  }
+
   _drawRecOptMenu(ctx) {
     if (!this._recOptMenuOpen) return;
     const r = this._recOptRect();
@@ -717,7 +737,7 @@ export default class GuiTimeline {
 
   _contextMenuCommands() {
     const main = this._main;
-    return [...this._graphMenuCommands(), ...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
+    return [...this._graphMenuCommands(), ...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || []), ...this._audioMenuCommands()];
   }
 
   _graphMenuCommands() {
@@ -1003,7 +1023,9 @@ export default class GuiTimeline {
   }
 
   _contextMenuRect() {
-    const btn = this._toolbarBtnDefs().find(b => b.id === 'ctxmenu');
+    const defs = this._toolbarBtnDefs();
+    // Hidden under the transport? Then it opens from the » button that stands in for it.
+    const btn = defs.find(b => b.id === 'ctxmenu') || defs.find(b => b.id === 'overflow');
     const count = this._contextMenuCommands().length;
     return btn && count ? { x: btn.x, y: btn.y + btn.h, w: 190, h: count * 24, cellH: 24 } : null;
   }
@@ -1166,10 +1188,11 @@ export default class GuiTimeline {
     }
   }
 
-  // Toolbar frame field rect (right-aligned in the toolbar row).
+  // Toolbar frame field rect (right-aligned, on the SECOND toolbar row so it never covers the
+  // transport / record button in the first).
   _frameFieldRect() {
     const w = 64, h = 20, margin = 10;
-    return { x: Math.round(this._cssWidth - w - margin), y: 5, w, h };
+    return { x: Math.round(this._cssWidth - w - margin), y: 34, w, h };
   }
 
   // Snapshot all tracks (for undo). Deep-copies keyframe arrays via cloneTrack.
@@ -1675,7 +1698,7 @@ export default class GuiTimeline {
   _valueFieldRect() {
     const fr = this._frameFieldRect();
     const w = 64, gap = 6;
-    return { x: fr.x - w - gap, y: 5, w, h: 20 };
+    return { x: fr.x - w - gap, y: 34, w, h: 20 };
   }
 
   // Apply a value expression to the selected key(s) from the toolbar value field.
@@ -4307,10 +4330,10 @@ export default class GuiTimeline {
     }
     const marqOn = !!window._animMarqueeMode;
     const btns = [];
-    let bx = 10;
+    let bx = 4;
     // Mode toggle — two FA icons
-    btns.push({ id: 'mode', x: bx, y: 5, w: 46, h: 20, icon: 'mode', tooltip: 'Toggle Dopesheet / Graph' });
-    bx += 54;
+    btns.push({ id: 'mode', x: 4, y: 10, w: 52, h: 20, icon: 'mode', tooltip: 'Toggle Dopesheet / Graph' });
+    bx += 60;
     // ORDER: show tangents, tangent mode, marquee, fit all, transform box, snap.
     //
     // The two tangent controls were split either side of Fit All, reading as two unrelated
@@ -4319,47 +4342,45 @@ export default class GuiTimeline {
     // while the handles are hidden.
     // Tangents show/hide (graph only, text)
     if (isGraph) {
-      btns.push({ id: 'tangents', x: bx, y: 5, w: 70, h: 20,
+      btns.push({ id: 'tangents', x: bx, y: 10, w: 70, h: 20,
         label: 'Tangents', active: tanOn, tooltip: 'Show tangent handles' });
       bx += 78;
     }
     // Tied tangents (graph only, text)
     if (isGraph) {
-      btns.push({ id: 'tangents-tied', x: bx, y: 5, w: 105, h: 20,
-        label: isTied ? 'Tangents: Tied' : 'Tangents: Free',
-        disabled: !single, tooltip: 'Toggle tied / free tangents' });
-      bx += 113;
+      // An icon, not the words: linked chain = tied, broken chain = free. Was a 105px
+      // "Tangents: Tied" label; the state reads from the glyph and the tooltip names it.
+      btns.push({ id: 'tangents-tied', x: bx, y: 10, w: 28, h: 20,
+        icon: isTied ? '\uf0c1' : '\uf127',
+        disabled: !single,
+        tooltip: isTied ? 'Tangents tied — click to free them' : 'Tangents free — click to tie them' });
+      bx += 36;
     }
     // Drag vs Marquee toggle (icon drawn programmatically in draw())
-    btns.push({ id: 'marquee', x: bx, y: 5, w: 28, h: 20, active: marqOn, tooltip: marqOn ? 'Marquee Selection on — click for Drag mode' : 'Drag Mode on — click for Marquee Selection' });
+    btns.push({ id: 'marquee', x: bx, y: 10, w: 28, h: 20, active: marqOn, tooltip: marqOn ? 'Marquee Selection on — click for Drag mode' : 'Drag Mode on — click for Marquee Selection' });
     bx += 36;
     // Fit All
-    btns.push({ id: 'fit', x: bx, y: 5, w: 28, h: 20, icon: '', tooltip: 'Fit All (X + Y)' });
+    btns.push({ id: 'fit', x: bx, y: 10, w: 28, h: 20, icon: '', tooltip: 'Fit All (X + Y)' });
     bx += 36;
     // T.Box
-    btns.push({ id: 'tbox', x: bx, y: 5, w: 28, h: 20, icon: '', active: tboxOn, tooltip: 'Transform Box' });
+    btns.push({ id: 'tbox', x: bx, y: 10, w: 28, h: 20, icon: '', active: tboxOn, tooltip: 'Transform Box' });
     bx += 36;
     // Snap
-    btns.push({ id: 'snap', x: bx, y: 5, w: 28, h: 20, icon: '', active: snapOn, tooltip: 'Snap to Frames' });
+    btns.push({ id: 'snap', x: bx, y: 10, w: 28, h: 20, icon: '', active: snapOn, tooltip: 'Snap to Frames' });
     bx += 36;
     // Autokey — a mirror of the AnimationControlPanel toggle so it's reachable while
     // working in the dopesheet. Global flag (window._animAutoKey); keys on sculpt-end
     // (see SculptGL.js / Scene.js autokey blocks).
-    btns.push({ id: 'autokey', x: bx, y: 5, w: 40, h: 20, label: 'Auto', active: !!window._animAutoKey, tooltip: 'Autokey: auto-key the active object on edit' });
+    btns.push({ id: 'autokey', x: bx, y: 10, w: 40, h: 20, label: 'Auto', active: !!window._animAutoKey, tooltip: 'Autokey: auto-key the active object on edit' });
     bx += 48;
-    // Audio — load / mute / clear one clip against the transport. Text label rather than a
-    // glyph: the FA speaker icons read as a volume control, and this is a track, not a fader.
-    btns.push({ id: 'audio', x: bx, y: 5, w: 44, h: 20, label: 'Audio',
-      active: !!window._audioTrack?.hasClip?.() && !window._audioTrack.isMuted(),
-      tooltip: 'Audio track: load a clip, mute it, or clear it' });
-    bx += 52;
     // "…" context menu — the flatscreen (desktop/iPad) skin of the VR radial's command
     // model (Scene._resolveRadialCommands): Copy / Paste / Paste Link / Dup / Make Unique
     // / Delete on the current key/frame selection. Opens a DOM popup on click.
-    btns.push({ id: 'ctxmenu', x: bx, y: 5, w: 28, h: 20, label: '...', tooltip: 'More: Copy / Paste / Paste Link / Dup / Make Unique / Delete' });
+    btns.push({ id: 'ctxmenu', x: bx, y: 10, w: 28, h: 20, label: '...', tooltip: 'More: Copy / Paste / Dup / Delete / Audio' });
     // Transport — centered but guaranteed not to overlap the left-side buttons.
     // _leftSafeEnd = right edge of the "…" button plus a 12px breathing room.
     const _leftSafeEnd = bx + 28 + 12;
+    if (window._animLoopEnabled === undefined) window._animLoopEnabled = true;
     const playing = !!window._animPlaying;
     const armed   = !!(window._animArmed || window._animWaitingForGrab || reg?.isRecording || reg?.isCountingIn);
     const _tbDefs = [
@@ -4368,6 +4389,8 @@ export default class GuiTimeline {
       { id: 'playpause', icon: playing ? '' : '', active: playing, tooltip: playing ? 'Pause' : 'Play' },
       { id: 'stepfwd',   icon: '',                                             tooltip: 'Next frame' },
       { id: 'end',       icon: '',                                             tooltip: 'Go to end' },
+      { id: 'loop',      icon: '\uf363', active: window._animLoopEnabled !== false,
+        tooltip: 'Loop playback and recording through the range' },
       { id: 'record',    icon: '',    active: armed,                           tooltip: armed ? 'Disarm recording' : 'Arm recording' },
     ];
     // Remember where the left-hand group ended, so the transport can be told to stay clear of
@@ -4376,7 +4399,7 @@ export default class GuiTimeline {
     const _tbBtnW = 38, _tbBtnGap = 6;
     // The channel dropdown rides directly on Record, narrow and with no gap before it, so it
     // reads as part of that button rather than as a seventh transport control.
-    const _recOptW = 16;
+    const _recOptW = 26;
     const _tbTotal = _tbDefs.length * _tbBtnW + (_tbDefs.length - 1) * _tbBtnGap + _recOptW;
     // THE TRANSPORT IS NEVER THE CONTROL THAT GOES MISSING.
     //
@@ -4401,40 +4424,47 @@ export default class GuiTimeline {
       _tbX = Math.max(8, _tbMax);
       // Right-to-left: the rightmost of the left-hand group is the first to go, which keeps the
       // mode toggle (leftmost, and the one you need to get back out of graph mode) longest.
+      //
+      // Dropped buttons are not lost: a "»" overflow button sits just left of the transport and
+      // lists them, the standard sign that a toolbar has more than it is showing. They are
+      // parked on this._tbOverflow for its menu.
+      const _ovW = 24, _ovGap = 4;
+      const _limit = _tbX - 8 - _ovW - _ovGap;
+      const dropped = [];
       for (let i = _leftBtnCount - 1; i >= 0; i--) {
-        if (btns[i].x + btns[i].w <= _tbX - 8) break;
-        btns.splice(i, 1);
+        if (btns[i].x + btns[i].w <= _limit) break;
+        dropped.unshift(btns.splice(i, 1)[0]);
       }
+      if (dropped.length) {
+        const last = btns[btns.length - 1];
+        btns.push({ id: 'overflow', x: Math.max(last ? last.x + last.w + _ovGap : 4, _tbX - 8 - _ovW),
+          y: 10, w: _ovW, h: 20, icon: '\uf101', active: !!this._overflowMenuOpen,
+          tooltip: `${dropped.length} more control${dropped.length === 1 ? '' : 's'} hidden by the transport` });
+      }
+      this._tbOverflow = dropped;
+    } else {
+      this._tbOverflow = [];
     }
     _tbDefs.forEach(def => {
-      btns.push({ ...def, x: _tbX, y: 5, w: _tbBtnW, h: 20 });
+      btns.push({ ...def, x: _tbX, y: 10, w: _tbBtnW, h: 20 });
       _tbX += _tbBtnW + _tbBtnGap;
       if (def.id === 'record') {
         _tbX -= _tbBtnGap;
         const _reg = window._animationRegistry;
         const _ch = _reg ? _reg.recordChannels() : null;
-        btns.push({ id: 'recopts', x: _tbX, y: 5, w: _recOptW, h: 20, label: '\u25be',
+        btns.push({ id: 'recopts', x: _tbX, y: 10, w: _recOptW, h: 20, label: '\u25be',
           // Lit only when a channel is OFF, so the arrow is a quiet affordance normally and a
           // warning when a take is about to ignore something.
-          active: !!_ch && !(_ch.translate && _ch.rotate && _ch.scale),
-          tooltip: 'Which channels a take records: translate / rotate / scale' });
+          active: (!!_ch && !(_ch.translate && _ch.rotate && _ch.scale)) || !!window._animWaitForTrigger || !!window._animCountIn,
+          tooltip: 'Record options: channels, On Grab, 3-2-1 count-in' });
         _tbX += _recOptW + _tbBtnGap;
       }
     });
 
     // Recording row. Kept in the timeline itself because this is the surface visible while
     // posing; the main Animation panel mirrors the same globals and lifecycle.
-    if (window._animLoopEnabled === undefined) window._animLoopEnabled = true;
     let rx = 205;
     const recMode = [
-      { id: 'loop', label: 'Loop', w: 50, active: window._animLoopEnabled !== false,
-        tooltip: 'Loop playback and recording through the range' },
-      { id: 'trigger', label: 'On Grab', w: 68, active: !!window._animWaitForTrigger,
-        tooltip: 'Arm now; begin recording on the next Grab or TransformVR drag' },
-      { id: 'countin', label: '3-2-1', w: 54, active: !!window._animCountIn,
-        tooltip: 'Begin recording after a countdown' },
-      { id: 'reset-rig', label: 'Reset Rig + Pins', w: 112,
-        tooltip: 'Return the skeleton and pin controls to their rest pose' },
       // The playback range used to live here as two 68px buttons reading "Start 39" / "End 86".
       // It now lives ON the range slider, where the numbers sit at the ends of the thing they
       // describe and need no prefix to say what they are. matt: "drop them to be inline at the
@@ -4447,10 +4477,148 @@ export default class GuiTimeline {
         tooltip: 'Playback speed' },
     ];
     for (const def of recMode) {
-      btns.push({ ...def, x: rx, y: 31, h: 20 });
+      btns.push({ ...def, x: rx, y: 34, h: 20 });
       rx += def.w + 7;
     }
     return btns;
+  }
+
+  // Runs one toolbar button's action. Shared by the toolbar click and the overflow menu, so a
+  // button hidden under the transport does exactly what it does when it is showing.
+  // Returns true when the action already redrew (menus), false when the caller should.
+  _runToolbarBtn(hit) {
+    switch (hit.id) {
+      case 'mode': {
+        this._mode = this._mode === 'graph' ? 'dope' : 'graph';
+        window.saveOption?.('vrTimelineMode', this._mode);
+        if (this._mode === 'graph') {
+          this.autoFitGraph();
+          if (this._viewDuration === undefined) {
+            const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+            const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+            const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+            this._viewStart = loopStart;
+            this._viewDuration = Math.max(0.1, loopEnd - loopStart);
+          }
+        }
+        break;
+      }
+      case 'tangents-tied': {
+        const reg = window._animationRegistry;
+        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+        if (singleSelected) {
+          const track = reg.tracks.get(singleSelected.meshId);
+          if (track) {
+            if (!track.tangentOffsets) track.tangentOffsets = {};
+            const prefix = singleSelected.type === 'transform' ? xfTanPrefix(singleSelected.group) : '';
+            const key = `${prefix}${singleSelected.index}_tied`;
+            const cur = track.tangentOffsets[key] !== false;
+            track.tangentOffsets[key] = !cur;
+          }
+        }
+        break;
+      }
+      case 'fit':
+        this.fitAll();
+        break;
+      case 'tangents':
+        window._animShowTangents = !window._animShowTangents;
+        break;
+      case 'tbox':
+        window._animShowTransformBox = !window._animShowTransformBox;
+        break;
+      case 'snap':
+        window._animSnapToFrame = window._animSnapToFrame === false ? true : false;
+        break;
+      case 'autokey': {
+        window._animAutoKey = !window._animAutoKey;
+        // Keep the AnimationControlPanel's Autokey button in sync (same global).
+        const _ak = document.querySelector('#acp-autokey-btn');
+        if (_ak) _ak.classList.toggle('active', !!window._animAutoKey);
+        break;
+      }
+      case 'marquee':
+        window._animMarqueeMode = !window._animMarqueeMode;
+        break;
+      case 'ctxmenu':
+        this._contextMenuOpen = !this._contextMenuOpen;
+        this._speedMenuOpen = false;
+        this._recOptMenuOpen = false;
+        this.draw();
+        return true;
+      case 'overflow':
+        this._overflowMenuOpen = !this._overflowMenuOpen;
+        this._contextMenuOpen = false;
+        this._speedMenuOpen = false;
+        this._recOptMenuOpen = false;
+        this.draw();
+        return true;
+      case 'recopts':
+        this._recOptMenuOpen = !this._recOptMenuOpen;
+        this._contextMenuOpen = false;
+        this._speedMenuOpen = false;
+        this.draw();
+        return true;
+      case 'rewind': {
+        const _reg = window._animationRegistry;
+        const _t0 = window._animLoopStart ?? 0;
+        // seek, not a hand-rolled update: this one only re-evaluated the ACTIVE mesh, so
+        // every other animated object — and the drawn rig — stayed on the old frame.
+        _reg?.seek(_t0);
+        break;
+      }
+      case 'stepback': {
+        const _fps2 = window._animFPS || 24;
+        const _t2 = Math.max(window._animLoopStart ?? 0,
+          Math.round(((window._animCurrentTime || 0) * _fps2 - 1)) / _fps2);
+        // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
+        // other animated object — and the drawn rig — stayed on the old frame.
+        window._animationRegistry?.seek(_t2);
+        break;
+      }
+      case 'playpause': {
+        const _playReg = window._animationRegistry;
+        if (window._animPlaying) {
+          window._animPlaying = false;
+          if (_playReg) _playReg.lastGlobalTime = null;
+        } else {
+          _playReg?.startPlayback?.(1);
+        }
+        break;
+      }
+      case 'stepfwd': {
+        const _fps3 = window._animFPS || 24;
+        const _end3 = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
+        const _t3 = Math.min(_end3,
+          Math.round(((window._animCurrentTime || 0) * _fps3 + 1)) / _fps3);
+        // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
+        // other animated object — and the drawn rig — stayed on the old frame.
+        window._animationRegistry?.seek(_t3);
+        break;
+      }
+      case 'end': {
+        const _tEnd = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
+        // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
+        // other animated object — and the drawn rig — stayed on the old frame.
+        window._animationRegistry?.seek(_tEnd);
+        break;
+      }
+      case 'record':
+        // Same toggle lifecycle as the ACP Record button (start/stop + arm/disarm),
+        // so the two record controls agree instead of doing different things.
+        window._animationRegistry?.toggleRecord?.(this._main?.getMesh?.());
+        break;
+      case 'loop':
+        window._animLoopEnabled = window._animLoopEnabled === false;
+        window.saveOption?.('animLoopEnabled', window._animLoopEnabled);
+        break;
+      case 'speed':
+        this._speedMenuOpen = !this._speedMenuOpen;
+        this._contextMenuOpen = false;
+        this.draw();
+        return true;
+    }
+    return false;
   }
 
   // Flatscreen "…" context menu — the desktop/iPad skin of the VR radial. Reads the same
@@ -4493,7 +4661,7 @@ export default class GuiTimeline {
     }];
   }
 
-  // ── Gutter header buttons (key ops + mode) — single row, y:27-47 ──
+  // ── Gutter header buttons (key ops + mode) — single row, y:34-54 ──
   _gutterBtnDefs() {
     const mode   = window._animKeyMode || 'transform';
     const hasSel = !!(window._animSelectedKeys?.length);
@@ -4507,7 +4675,7 @@ export default class GuiTimeline {
       && this.selectedAnimationIds().some((id) => _delReg.tracks?.has(id));
     const btns   = [];
     const GUTTER_W = 196;
-    const by = 27, bh = 20;
+    const by = 34, bh = 20;
     const r2BtnW = 28, r2Gap = 4;
     // XF/SH/BS/SR are DISPLAY toggles (multi-select): each shows/hides that key type
     // in the sheet. The active add-type (last-activated, drawn brightest) is what the
@@ -4517,23 +4685,31 @@ export default class GuiTimeline {
     // Compact layout so all 7 buttons (SR mode) fit inside the gutter clip.
     let x = 4;
     const gap = 2, bw = 24;
+    // THE ADD / DELETE KEYS ARE THE MOST-TOUCHED BUTTONS HERE, so they are as tall as an XF
+    // button plus its visibility strip (modeBtnH) and up to as wide as that is tall. They
+    // share the space left of the XF/SH/BS/SR block, so with three across (SR's New/Dup/Del,
+    // or shape mode's +L) the width shrinks to fit rather than running under it.
+    const opH = 34;
+    const opsRight = GUTTER_W - (4 * bw + 3 * gap) - 2 - 6;   // left edge of XF, less a gutter
+    const opCount = (mode === 'shaperep' || mode === 'shape') ? 3 : 2;
+    const opW = Math.min(opH, Math.floor((opsRight - x - (opCount - 1) * gap) / opCount));
     if (mode === 'shaperep') {
       // Consistent with the other modes: + = new, trash = delete. 'Dup' stays text so
       // it isn't confused with the copy/paste workflow coming next.
-      btns.push({ id: 'sr_new', icon: '', x, y: by, w: bw, h: bh, tooltip: 'New blank frame' }); x += bw + gap;
-      btns.push({ id: 'sr_dup', label: 'Dup', x, y: by, w: bw, h: bh, tooltip: 'Duplicate frame' }); x += bw + gap;
-      btns.push({ id: 'sr_del', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Delete frame' }); x += bw + gap;
+      btns.push({ id: 'sr_new', icon: '', x, y: by, w: opW, h: opH, tooltip: 'New blank frame' }); x += opW + gap;
+      btns.push({ id: 'sr_dup', label: 'Dup', x, y: by, w: opW, h: opH, tooltip: 'Duplicate frame' }); x += opW + gap;
+      btns.push({ id: 'sr_del', icon: '', x, y: by, w: opW, h: opH, tooltip: 'Delete frame' }); x += opW + gap;
     } else {
-      btns.push({ id: 'addkey', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Add key at playhead' }); x += bw + gap;
-      btns.push({ id: 'delkey', icon: '', x, y: by, w: bw, h: bh,
+      btns.push({ id: 'addkey', icon: '', x, y: by, w: opW, h: opH, tooltip: 'Add key at playhead' }); x += opW + gap;
+      btns.push({ id: 'delkey', icon: '', x, y: by, w: opW, h: opH,
         disabled: !hasSel && !hasTrackSel,
         // Says WHICH of the two it would do, so a destructive button is never a guess.
         tooltip: hasTrackSel ? 'Delete this object\u2019s animation'
-          : 'Delete selected key(s)' }); x += bw + gap;
+          : 'Delete selected key(s)' }); x += opW + gap;
       // Shape mode: New shape layer (#34). Recording arms the new layer; click a layer's
       // name in a lane to (re)arm it, click the active one again → back to the base track.
       if (mode === 'shape') {
-        btns.push({ id: 'newlayer', label: '+L', x, y: by, w: bw + 4, h: bh, tooltip: 'New shape layer (recording targets it)' }); x += bw + 4 + gap;
+        btns.push({ id: 'newlayer', label: '+L', x, y: by, w: opW, h: opH, tooltip: 'New shape layer (recording targets it)' }); x += opW + gap;
       }
     }
     // XF/SH/BS/SR are TALLER split buttons: top 60% = keying state (which mode the
@@ -4585,6 +4761,24 @@ export default class GuiTimeline {
 
     // Shared canvas-native "…" menu. This path receives both desktop pointer events and the
     // synthetic VR timeline events, unlike the old DOM popup.
+    // Overflow menu: a row runs that button's action and closes; clicking the » button itself
+    // just closes (so it toggles); anywhere else closes and the click carries on.
+    if (this._overflowMenuOpen) {
+      const orr = this._overflowRect();
+      this._overflowMenuOpen = false;
+      if (orr && rx >= orr.x && rx <= orr.x + orr.w && ry >= orr.y && ry < orr.y + orr.h) {
+        const b = this._overflowItems()[Math.floor((ry - orr.y) / orr.cellH)];
+        if (b && !b.disabled) {
+          try { if (!this._runToolbarBtn(b)) this.draw(); } catch (err) { console.error('[TL overflow] failed', err); }
+        }
+        this.draw();
+        return;
+      }
+      const ob = this._toolbarBtnDefs().find(x => x.id === 'overflow');
+      this.draw();
+      if (ob && rx >= ob.x && rx <= ob.x + ob.w && ry >= ob.y && ry <= ob.y + ob.h) return;
+    }
+
     // The channel menu first, and a hit does NOT close it: these are switches, not commands.
     if (this._recOptMenuOpen) {
       const rr = this._recOptRect();
@@ -4597,26 +4791,6 @@ export default class GuiTimeline {
       this._recOptMenuOpen = false;
       // Deliberately no `return`: the click that dismisses the menu still lands on whatever it
       // was over, which is what makes closing it feel free rather than like a wasted click.
-      this.draw();
-    }
-
-    // Audio menu: Load and Clear are commands, Audible is a switch, so a hit closes the menu
-    // only for the two that have nothing left to look at.
-    if (this._audioMenuOpen) {
-      const ar = this._audioMenuRect();
-      if (ar && rx >= ar.x && rx <= ar.x + ar.w && ry >= ar.y && ry < ar.y + ar.h) {
-        const idx = Math.floor((ry - ar.y) / ar.cellH);
-        const cmd = this._audioMenuCommands()[idx];
-        if (cmd && cmd.enabled !== false) {
-          try { cmd.run?.(); } catch (err) { console.error('[TL audio] command failed', err); }
-          if (idx !== 1) this._audioMenuOpen = false;
-        }
-        this.draw();
-        return;
-      }
-      this._audioMenuOpen = false;
-      // Same as the channel menu: no `return`, so the dismissing click still lands on
-      // whatever it was over.
       this.draw();
     }
 
@@ -4705,7 +4879,7 @@ export default class GuiTimeline {
     }
 
     if (ry < HEADER_H) {
-      // Gutter header buttons (x:0-195, y:27-47) — key ops + mode.
+      // Gutter header buttons (x:0-195, y:34-54) — key ops + mode.
       if (rx < 196) {
         const gbBtns = this._gutterBtnDefs();
         const gbHit = gbBtns.find(b => rx >= b.x && rx <= b.x + b.w && ry >= b.y && ry <= b.y + b.h);
@@ -4852,158 +5026,14 @@ export default class GuiTimeline {
       const hit = tbBtns.find(b => !b.disabled && rx >= b.x && rx <= b.x + b.w && ry >= b.y && ry <= b.y + b.h);
       if (hit) {
         console.log('[TL] toolbar hit:', hit.id, 'rx:', Math.round(rx), 'ry:', Math.round(ry));
-        switch (hit.id) {
-          case 'mode': {
-            this._mode = this._mode === 'graph' ? 'dope' : 'graph';
-            window.saveOption?.('vrTimelineMode', this._mode);
-            if (this._mode === 'graph') {
-              this.autoFitGraph();
-              if (this._viewDuration === undefined) {
-                const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-                const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-                const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-                this._viewStart = loopStart;
-                this._viewDuration = Math.max(0.1, loopEnd - loopStart);
-              }
-            }
-            break;
-          }
-          case 'tangents-tied': {
-            const reg = window._animationRegistry;
-            const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-            if (singleSelected) {
-              const track = reg.tracks.get(singleSelected.meshId);
-              if (track) {
-                if (!track.tangentOffsets) track.tangentOffsets = {};
-                const prefix = singleSelected.type === 'transform' ? xfTanPrefix(singleSelected.group) : '';
-                const key = `${prefix}${singleSelected.index}_tied`;
-                const cur = track.tangentOffsets[key] !== false;
-                track.tangentOffsets[key] = !cur;
-              }
-            }
-            break;
-          }
-          case 'fit':
-            this.fitAll();
-            break;
-          case 'tangents':
-            window._animShowTangents = !window._animShowTangents;
-            break;
-          case 'tbox':
-            window._animShowTransformBox = !window._animShowTransformBox;
-            break;
-          case 'snap':
-            window._animSnapToFrame = window._animSnapToFrame === false ? true : false;
-            break;
-          case 'autokey': {
-            window._animAutoKey = !window._animAutoKey;
-            // Keep the AnimationControlPanel's Autokey button in sync (same global).
-            const _ak = document.querySelector('#acp-autokey-btn');
-            if (_ak) _ak.classList.toggle('active', !!window._animAutoKey);
-            break;
-          }
-          case 'marquee':
-            window._animMarqueeMode = !window._animMarqueeMode;
-            break;
-          case 'ctxmenu':
-            this._contextMenuOpen = !this._contextMenuOpen;
-            this._speedMenuOpen = false;
-            this._recOptMenuOpen = false;
-            this.draw();
-            return;
-          case 'recopts':
-            this._recOptMenuOpen = !this._recOptMenuOpen;
-            this._contextMenuOpen = false;
-            this._speedMenuOpen = false;
-            this.draw();
-            return;
-          case 'audio':
-            this._audioMenuOpen = !this._audioMenuOpen;
-            this._contextMenuOpen = false;
-            this._speedMenuOpen = false;
-            this._recOptMenuOpen = false;
-            this.draw();
-            return;
-          case 'rewind': {
-            const _reg = window._animationRegistry;
-            const _t0 = window._animLoopStart ?? 0;
-            // seek, not a hand-rolled update: this one only re-evaluated the ACTIVE mesh, so
-            // every other animated object — and the drawn rig — stayed on the old frame.
-            _reg?.seek(_t0);
-            break;
-          }
-          case 'stepback': {
-            const _fps2 = window._animFPS || 24;
-            const _t2 = Math.max(window._animLoopStart ?? 0,
-              Math.round(((window._animCurrentTime || 0) * _fps2 - 1)) / _fps2);
-            // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
-            // other animated object — and the drawn rig — stayed on the old frame.
-            window._animationRegistry?.seek(_t2);
-            break;
-          }
-          case 'playpause': {
-            const _playReg = window._animationRegistry;
-            if (window._animPlaying) {
-              window._animPlaying = false;
-              if (_playReg) _playReg.lastGlobalTime = null;
-            } else {
-              _playReg?.startPlayback?.(1);
-            }
-            break;
-          }
-          case 'stepfwd': {
-            const _fps3 = window._animFPS || 24;
-            const _end3 = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
-            const _t3 = Math.min(_end3,
-              Math.round(((window._animCurrentTime || 0) * _fps3 + 1)) / _fps3);
-            // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
-            // other animated object — and the drawn rig — stayed on the old frame.
-            window._animationRegistry?.seek(_t3);
-            break;
-          }
-          case 'end': {
-            const _tEnd = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
-            // seek, not a hand-rolled update: this only re-evaluated the ACTIVE mesh, so every
-            // other animated object — and the drawn rig — stayed on the old frame.
-            window._animationRegistry?.seek(_tEnd);
-            break;
-          }
-          case 'record':
-            // Same toggle lifecycle as the ACP Record button (start/stop + arm/disarm),
-            // so the two record controls agree instead of doing different things.
-            window._animationRegistry?.toggleRecord?.(this._main?.getMesh?.());
-            break;
-          case 'loop':
-            window._animLoopEnabled = window._animLoopEnabled === false;
-            window.saveOption?.('animLoopEnabled', window._animLoopEnabled);
-            break;
-          case 'trigger':
-            window._animWaitForTrigger = !window._animWaitForTrigger;
-            if (window._animWaitForTrigger) window._animCountIn = false;
-            window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
-            window.saveOption?.('animCountIn', !!window._animCountIn);
-            break;
-          case 'countin':
-            window._animCountIn = !window._animCountIn;
-            if (window._animCountIn) window._animWaitForTrigger = false;
-            window.saveOption?.('animCountIn', !!window._animCountIn);
-            window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
-            break;
-          case 'reset-rig':
-            IKSolver.resetRigAndPins(this._main);
-            break;
-          case 'speed':
-            this._speedMenuOpen = !this._speedMenuOpen;
-            this._contextMenuOpen = false;
-            this.draw();
-            return;
-        }
-        this.draw();
+        if (!this._runToolbarBtn(hit)) this.draw();
         return;
       }
-      this._isDraggingPlayhead = true;
-      this.handleInteraction(e);
-      this._scrubPress();
+      // A press in the header that hit no button is a MISS, not a scrub. This used to fall
+      // through to a playhead drag, so a click a few pixels off a toolbar button (or in the
+      // gaps between them) jumped the playhead. Scrubbing belongs to the ruler, which is
+      // answered above, before any of this.
+      return;
     } else {
       // Gutter click/drag for Graph Editor channels in Desktop Timeline
       if (this._mode === 'graph' && rx < 200 && ry > HEADER_H) {
@@ -7083,12 +7113,12 @@ export default class GuiTimeline {
           // Chart-column flipped vertically.
           ctx.save();
           ctx.fillStyle = dopeActive ? Theme.text : Theme.overlay0;
-          ctx.translate(Math.round(btn.x + 13), cy);
+          ctx.translate(Math.round(btn.x + btn.w * 0.28), cy);
           ctx.scale(1, -1);
           ctx.fillText('', 0, 0);
           ctx.restore();
           ctx.fillStyle = graphActive ? Theme.text : Theme.overlay0;
-          ctx.fillText('', Math.round(btn.x + 33), cy);
+          ctx.fillText('', Math.round(btn.x + btn.w * 0.72), cy);
         } else {
           ctx.textBaseline = 'alphabetic'; ctx.font = '13px sans-serif'; ctx.fillStyle = Theme.text;
           ctx.fillText('D/G', cx, ty);
@@ -7176,7 +7206,7 @@ export default class GuiTimeline {
         ctx.textBaseline = 'middle';
         if (_faReady) {
           // Larger font for wide transport buttons (row 1), normal for row 2.
-          const faSize = btn.w >= 40 ? 14 : 11;
+          const faSize = btn.w >= 40 ? 14 : btn.h >= 30 ? 18 : 11;
           ctx.font = `900 ${faSize}px "Font Awesome 6 Free"`;
           ctx.fillText(btn.icon, cx, cy);
         } else {
@@ -7187,7 +7217,7 @@ export default class GuiTimeline {
         ctx.fillStyle = btn.disabled ? Theme.surface1 : (dimHidden ? Theme.subtext : Theme.text);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.font = 'bold 9px sans-serif';
+        ctx.font = btn.h >= 30 ? 'bold 12px sans-serif' : 'bold 9px sans-serif';
         ctx.fillText(btn.label, cx, cy);
       }
     });
@@ -7343,7 +7373,7 @@ export default class GuiTimeline {
       this._drawSpeedMenu(ctx);
       this._drawContextMenu(ctx);
       this._drawRecOptMenu(ctx);
-      this._drawAudioMenu(ctx);
+      this._drawOverflowMenu(ctx);
       this._drawSimplifyPanel(ctx);
       // Graph mode returns before the dopesheet tail below. Still publish the completed
       // draw so Scene uploads its changed canvas texture in VR (transport state included).
@@ -7414,7 +7444,7 @@ export default class GuiTimeline {
     this._drawSpeedMenu(ctx);
     this._drawContextMenu(ctx);
     this._drawRecOptMenu(ctx);
-    this._drawAudioMenu(ctx);
+    this._drawOverflowMenu(ctx);
     this._drawRevision = (this._drawRevision || 0) + 1;
   }
 }

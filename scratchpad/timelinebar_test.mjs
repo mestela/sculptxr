@@ -99,7 +99,7 @@ for (const width of [420, 500, 600, 700, 900, 1200]) {
 console.log('\nwhat survives when there is not room');
 {
   const wide = defs({ width: 1400, mode: 'graph', audio: true }).map((x) => x.id);
-  check('a wide panel keeps every control', wide.includes('audio') && wide.includes('tangents')
+  check('a wide panel keeps every control', !wide.includes('audio') && wide.includes('tangents')
     && wide.includes('mode') && wide.includes('playpause'), wide.join(','));
 
   const narrow = defs({ width: 500, mode: 'graph', audio: true }).map((x) => x.id);

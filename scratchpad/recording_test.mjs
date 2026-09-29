@@ -73,7 +73,7 @@ check('start-on-grab returns to a coherent waiting state after each take',
 
 const header = +(tl.match(/const HEADER_H = (\d+);/)?.[1] || 0);
 check('recording controls use the expanded toolbar area, not the gutter',
-  header >= 80 && /let rx = 205;[\s\S]{0,1800}?x: rx, y: 31, h: 20/.test(tl),
+  header >= 80 && /let rx = 205;[\s\S]{0,1800}?x: rx, y: 34, h: 20/.test(tl),
   'HEADER_H=' + header);
 // The header now carries a third band — the range slider — between the toolbar rows and the
 // ruler. The invariant is unchanged and is what these two guard: the ruler begins below
@@ -95,9 +95,10 @@ check('playback never moves a carefully positioned viewport',
   !/_followPlaybackViewport/.test(tl));
 check('dopesheet scrubbing uses the visible viewport too',
   /loopStart = this\._viewStart !== undefined \? this\._viewStart : loopStart;[\s\S]{0,120}?visibleDuration = this\._viewDuration/.test(tl));
-for (const id of ['loop', 'trigger', 'countin', 'reset-rig']) {
-  check('timeline exposes ' + id, tl.includes(`id: '${id}'`));
-}
+check('timeline exposes loop', tl.includes("id: 'loop'"));
+// On Grab / 3-2-1 moved into the record dropdown; Reset Rig + Pins was removed from the timeline.
+check('On Grab + count-in live in the record dropdown', /label: .*'On Grab'/.test(tl) && /'3-2-1 Count-in'/.test(tl));
+check('timeline no longer has a Reset Rig button', !tl.includes("id: 'reset-rig'"));
 // THE RANGE MOVED, THE REQUIREMENT DID NOT. It used to be two buttons on the transport row
 // ("Start 39" / "End 86"); it is now the range slider, where a handle released without moving
 // opens its own number and the two global fields open theirs. What these guard is that all four
@@ -159,9 +160,8 @@ check('XR hover and cursor state recover after system overlays',
 check('non-loop recording parks without automatic playback',
   /window\._animLoopEnabled !== false/.test(reg)
     && /startPlayback\(direction = 1\)/.test(reg));
-check('animation clear button is selection scoped',
-  acp.includes('Delete animation from selected objects')
-    && /deleteAnimationFromSelectedObjects/.test(acp));
+check('the Animation panel no longer carries a clear-all button (the timeline deletes)',
+  !acp.includes('acp-clear-all') && /deleteAnimationFromSelectedObjects/.test(tl));
 check('timeline more menu is canvas native for desktop and VR',
   /_drawContextMenu\(ctx\)/.test(tl)
     && /_contextMenuCommands\(\)/.test(tl)
@@ -367,8 +367,8 @@ check('...closing only on a click elsewhere, which still does its own job',
   'no early return on dismissal, so the closing click is not wasted');
 check('...drawn canvas-native like the other menus, so VR gets it too',
   (tl.match(/_drawRecOptMenu\(ctx\)/g) || []).length === 3);
-check('...and the arrow lights only when a channel is OFF',
-  /active: !!_ch && !\(_ch\.translate && _ch\.rotate && _ch\.scale\)/.test(tl),
+check('...and the arrow lights when a channel is OFF or a start trigger is set',
+  /active: \(!!_ch && !\(_ch\.translate && _ch\.rotate && _ch\.scale\)\)/.test(tl),
   'a quiet affordance normally, a warning when a take is about to ignore something');
 check('the two menus are mutually exclusive',
   /case 'recopts':[\s\S]{0,180}?this\._contextMenuOpen = false;/.test(tl));
