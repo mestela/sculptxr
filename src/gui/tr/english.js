@@ -147,6 +147,8 @@ var TR = {
   sculptSpinEdge: 'Spin Edge',
   sculptSelLoop: 'Sel Loop',
   sculptCutLoop: 'Cut Loop',
+  sculptBevel: 'Bevel',
+  sculptSelEdge: 'Sel Edge',
   sculptWeld: 'Weld',
   sculptSnapWeldCenter: 'Snap & Weld to Center',
   sculptExtrude: 'Extrude',

@@ -45,7 +45,7 @@ const TOPOLOGY_TOOLS = new Set([
   Enums.Tools.DELETE_FACE, Enums.Tools.FILL_HOLE, Enums.Tools.DISSOLVE_EDGE,
   Enums.Tools.SPLIT_FACE, Enums.Tools.COLLAPSE_EDGE, Enums.Tools.DISSOLVE_VERTEX,
   Enums.Tools.WELD, Enums.Tools.SNAP_WELD_CENTER, Enums.Tools.SPLIT_EDGE,
-  Enums.Tools.EDGE_CREATE, Enums.Tools.CUT_LOOP,
+  Enums.Tools.EDGE_CREATE, Enums.Tools.CUT_LOOP, Enums.Tools.BEVEL,
 ]);
 
 // TOOLS THAT FIND THEIR OWN TARGET on the press, rather than acting on whatever is selected.
@@ -167,7 +167,7 @@ class SculptManager {
     // state on leaving. (W still toggles it manually while the tool is active.)
     {
       const wantsWire = (id >= Enums.Tools.DELETE_FACE && id <= Enums.Tools.INSET)
-                        || id === Enums.Tools.SEL_LOOP || id === Enums.Tools.CUT_LOOP
+                        || id === Enums.Tools.SEL_EDGE || id === Enums.Tools.SEL_LOOP || id === Enums.Tools.CUT_LOOP || id === Enums.Tools.BEVEL
                         || id === Enums.Tools.PAINT_GROUP;
       const meshes = this._main.getMeshes?.() ?? [];
       if (wantsWire && !this._wfForcedByEdit) {

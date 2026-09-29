@@ -1,12 +1,11 @@
 import * as THREE from 'three';
-import { buildAdjacency, isEdge, keyVerts, nearestFaceEdge } from './EdgeLoops.js';
+import { buildAdjacency, keyVerts, nearestFaceEdge } from './EdgeLoops.js';
 
 // THE EDGE SELECTION, shared by the edge tools (Sel Loop fills it; Bevel will consume it).
 //
 // It lives on the mesh at the level being edited (getCurrentMesh), as a Set of edgeKeys --
-// vertex pairs, so it outlives the edge renumbering every initTopology does. A key whose
-// vertices are no longer joined (another tool split or removed the edge) is dropped the next
-// time the selection is read, so a stale entry can never be acted on.
+// vertex pairs, so it outlives the edge renumbering every initTopology does. Any change to the
+// topology clears it (see topoStamp), so a stale entry can never be acted on.
 //
 // Highlights are thin square tubes parented to the mesh's own three object, so they follow the
 // mesh when it moves. Not THREE.Line: lines are one pixel in a headset and LINE_STRIP poisons
@@ -30,16 +29,31 @@ export function hoverAdjacency(m) {
   return adj;
 }
 
+// A fingerprint of the topology. ANY topology edit clears the selection (matt's call: a
+// selection that half-survives a cut is worse than none), and not every tool swaps the face
+// array for a new one, so the contents are hashed rather than the reference compared.
+function topoStamp(m) {
+  const f = m.getFaces(), n = m.getNbFaces() * 4;
+  let h = (n * 31 + m.getNbVertices()) | 0;
+  for (let i = 0; i < n; ++i) h = (h * 31 + f[i]) | 0;
+  return h;
+}
+
 export function getEdgeSelection(mesh) {
   const m = activeOf(mesh);
   if (!m) return new Set();
-  if (!m._edgeSel) m._edgeSel = new Set();
-  const adj = buildAdjacency(m.getFaces(), m.getNbFaces());
-  for (const k of m._edgeSel) {
-    const [a, b] = keyVerts(k);
-    if (!isEdge(adj, a, b)) m._edgeSel.delete(k);
-  }
+  const stamp = topoStamp(m);
+  if (!m._edgeSel || m._edgeSelStamp !== stamp) m._edgeSel = new Set();
+  m._edgeSelStamp = stamp;
   return m._edgeSel;
+}
+
+// Put a selection back exactly (Bevel's undo), stamped against the topology as it is now.
+export function setEdgeSelection(mesh, keys) {
+  const m = activeOf(mesh);
+  if (!m) return;
+  m._edgeSel = new Set(keys);
+  m._edgeSelStamp = topoStamp(m);
 }
 
 const _overlays = {};

@@ -524,6 +524,16 @@ GuiTools[Enums.Tools.CUT_LOOP] = {
   init: function () { }
 };
 
+GuiTools[Enums.Tools.SEL_EDGE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.BEVEL] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 GuiTools[Enums.Tools.CUT_TOOL] = {
   _ctrls: [],
   init: function () { }

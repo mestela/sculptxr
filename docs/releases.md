@@ -1,3 +1,8 @@
+# v3.69.0
+- **Bevel** (Mesh Edit): select edges with Sel Loop / Sel Edge, then press on the mesh and drag -- the selected edges are chamfered (one segment) and the width follows the drag; release commits. VR width is 1:1 with the hand's travel; on desktop a 300px drag reaches the maximum. The width is clamped before any slid edge is 45% used, so the bevel can never fold over itself. Three or more selected edges meeting at a corner get a cap; a run that stops partway ends through the original vertex, with the neighbour faces split so there is no T-junction. UVs carry through. One undo step, and undoing it restores the selection.
+- **Sel Edge** (Mesh Edit): the edge under the cursor preselects; click toggles that single edge (and its mirror with symmetry on) in the same edge selection Sel Loop fills.
+- **Any topology change clears the edge selection**, rather than leaving the half of it that survived.
+
 # v3.68.0
 - **Sel Loop** (Mesh Edit): tap an edge to add its whole edge loop to the edge selection; tap a selected edge to take its loop back out. Loops stop at poles, triangles and open edges; tapping an open rim selects the rim. Symmetry selects the mirrored loop too. The selection belongs to the mesh and survives tool switches; it is drawn only while Sel Loop is up. Groundwork for Bevel.
 - **Cut Loop** (Mesh Edit): tap an edge to cut a new loop across its edge ring, halfway along every ring edge. A ring ending on a triangle turns it into a quad (no T-junctions). Symmetry cuts the mirrored ring too, unless it is the same ring. Works on meshes with UVs: new corners get interpolated UVs, with one per side where the cut crosses a seam.

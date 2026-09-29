@@ -56,7 +56,9 @@ Enums.Tools = {
   SELECT: 35,
   // Edge-loop tools, see EdgeLoops.js.
   SEL_LOOP: 36,
-  CUT_LOOP: 37
+  CUT_LOOP: 37,
+  BEVEL: 38,
+  SEL_EDGE: 39
 };
 
 // display shader type

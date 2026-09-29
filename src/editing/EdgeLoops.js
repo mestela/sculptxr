@@ -312,3 +312,279 @@ export function mirrorEdge(adj, vertices, nbVertices, a, b) {
   if (ma < 0 || mb < 0 || !isEdge(adj, ma, mb)) return null;
   return [ma, mb];
 }
+
+// ── BEVEL ────────────────────────────────────────────────────────────────────────────────────
+//
+// A one-segment bevel (a chamfer) of the edge set `keys`. The topology is built ONCE, and every
+// vertex it moves or creates is recorded as "original vertex + w * fixed direction", so a width
+// drag is just place(w) -- no rebuild per frame.
+//
+// Per vertex v touched by the selection, the faces round v are walked in order and the selected
+// edges cut that fan into SECTORS. Each sector gets its own vertex (the first reuses v, so no
+// vertex is orphaned), which slides along the sector's one unselected edge; with none (a single
+// face between two selected edges) it moves along both, to the point at width w from each; with
+// several, along their average. Each selected edge becomes a quad between its two faces' new
+// vertices. Where three or more selected edges meet (or two at a boundary), a CAP fills the hole.
+//
+// THE OPEN END (k == 1 on a closed fan -- a run that stops at v): v stays, the two faces on the
+// selected edge get new vertices slid along their other edge at v, the neighbouring faces take
+// that new vertex into their side (a quad becomes a pentagon, split into quad + triangle), and
+// the bevel face itself runs through v at that end. NOT a separate [v, vL, vR] triangle: vL and
+// vR lie on v's own edges, so that triangle lies flat across the neighbouring face and overlaps
+// it. Only interior edges bevel; boundary edges in `keys` are ignored.
+//
+// Same data shape as cutRing (uvs/facesUV in OBJ form). Returns null when nothing can be
+// bevelled, else { nbFaces, faces, facesUV, groups, nbVertices, colors, materials, wMax,
+// moved (indices whose position depends on w), place(w) -> { vertices, uvs } }.
+export function bevelEdges(data, keys) {
+  const { faces, nbFaces, nbVertices } = data;
+  const V = data.vertices;
+  const adj = buildAdjacency(faces, nbFaces);
+  const sel = new Set([...keys].filter((k) => (adj.edgeFaces.get(k) || []).length === 2));
+  if (!sel.size) return null;
+  const isSel = (a, b) => sel.has(edgeKey(a, b));
+  const hasUV = !!(data.uvs && data.facesUV);
+
+  const vf = new Map();
+  for (let f = 0; f < nbFaces; ++f) for (const v of faceVerts(faces, f)) {
+    const l = vf.get(v);
+    if (l) l.push(f); else vf.set(v, [f]);
+  }
+  const touched = new Set();
+  for (const k of sel) for (const v of keyVerts(k)) touched.add(v);
+
+  const P = (i) => [V[i * 3], V[i * 3 + 1], V[i * 3 + 2]];
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const len = (a) => Math.hypot(a[0], a[1], a[2]);
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const sinAt = (v, a, b) => {
+    const da = sub(P(a), P(v)), db = sub(P(b), P(v));
+    return Math.max(0.25, len(cross(da, db)) / (len(da) * len(db) || 1));
+  };
+  const faceNormal = (f) => {
+    const vs = faceVerts(faces, f);
+    const n = [0, 0, 0];
+    for (let i = 0; i < vs.length; ++i) {
+      const a = P(vs[i]), b = P(vs[(i + 1) % vs.length]);
+      n[0] += (a[1] - b[1]) * (a[2] + b[2]); n[1] += (a[2] - b[2]) * (a[0] + b[0]); n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+    }
+    return n;
+  };
+
+  let nbV = nbVertices;
+  const specs = new Map();   // vertex index -> { base, terms: [[j, coefPerW]] }
+  const sv = new Map();      // "f:v" -> the vertex that replaces v in face f
+  const inserts = [];        // { f, a, b, m }: put m between a and b in face f's cycle
+  const caps = [];           // { verts: [...], ref: normal, uvFace: [face per corner] }
+  const openEnds = new Set(); // vertices where a selected run stops
+
+  const fanOf = (v) => {
+    const info = vf.get(v).map((f) => {
+      const vs = faceVerts(faces, f), i = vs.indexOf(v);
+      return { f, prev: vs[(i + vs.length - 1) % vs.length], next: vs[(i + 1) % vs.length] };
+    });
+    const byPrev = new Map(info.map((x) => [x.prev, x]));
+    const nexts = new Set(info.map((x) => x.next));
+    let start = info.find((x) => !nexts.has(x.prev));
+    const closed = !start;
+    if (closed) start = info[0];
+    const order = [];
+    const seen = new Set();
+    for (let cur = start; cur && !seen.has(cur.f); cur = byPrev.get(cur.next)) { seen.add(cur.f); order.push(cur); }
+    return order.length === info.length && byPrev.size === info.length ? { order, closed } : null;
+  };
+
+  for (const v of touched) {
+    const fan = fanOf(v);
+    if (!fan) return null; // non-manifold vertex
+    let { order, closed } = fan;
+    const k = order.filter((x) => isSel(v, x.next)).length;
+    const ref = order.reduce((n, x) => { const m = faceNormal(x.f); return [n[0] + m[0], n[1] + m[1], n[2] + m[2]]; }, [0, 0, 0]);
+
+    if (closed && k === 1) {
+      const i1 = order.findIndex((x) => isSel(v, x.next));
+      const F1 = order[i1], F2 = order[(i1 + 1) % order.length];
+      const a = F1.next, p1 = F1.prev, p2 = F2.next;
+      const G1 = order[(i1 + order.length - 1) % order.length], G2 = order[(i1 + 2) % order.length];
+      const vL = nbV++, vR = nbV++;
+      specs.set(vL, { base: v, terms: [[p1, 1 / (len(sub(P(p1), P(v))) * sinAt(v, p1, a))]] });
+      specs.set(vR, { base: v, terms: [[p2, 1 / (len(sub(P(p2), P(v))) * sinAt(v, p2, a))]] });
+      sv.set(F1.f + ':' + v, vL);
+      sv.set(F2.f + ':' + v, vR);
+      if (G1.f !== F2.f) inserts.push({ f: G1.f, a: v, b: p1, m: vL, uvFace: G1.f });
+      if (G2.f !== F1.f) inserts.push({ f: G2.f, a: v, b: p2, m: vR, uvFace: G2.f });
+      openEnds.add(v);
+      continue;
+    }
+
+    if (closed) {
+      const r = order.findIndex((x) => isSel(v, x.prev));
+      order = order.slice(r).concat(order.slice(0, r));
+    }
+    const sectors = [];
+    let cur = [];
+    for (const x of order) {
+      cur.push(x);
+      if (isSel(v, x.next)) { sectors.push(cur); cur = []; }
+    }
+    if (cur.length) sectors.push(cur);
+
+    const capVerts = [], capFaces = [];
+    sectors.forEach((sec, si) => {
+      const s = sec[0].prev, e = sec[sec.length - 1].next;
+      const cands = sec.slice(0, -1).map((x) => x.next);
+      if (!isSel(v, s)) cands.push(s);
+      if (!isSel(v, e)) cands.push(e);
+      const bounds = [s, e].filter((b) => isSel(v, b));
+      let terms;
+      if (cands.length === 1) {
+        const c = cands[0];
+        const sn = bounds.reduce((t, b) => t + sinAt(v, c, b), 0) / (bounds.length || 1);
+        terms = [[c, 1 / (len(sub(P(c), P(v))) * sn)]];
+      } else if (cands.length === 0) {
+        const sn = sinAt(v, s, e);
+        terms = [[s, 1 / (len(sub(P(s), P(v))) * sn)], [e, 1 / (len(sub(P(e), P(v))) * sn)]];
+      } else {
+        terms = cands.map((c) => [c, 1 / (cands.length * len(sub(P(c), P(v))))]);
+      }
+      const idx = si === 0 ? v : nbV++;
+      specs.set(idx, { base: v, terms });
+      for (const x of sec) sv.set(x.f + ':' + v, idx);
+      capVerts.push(idx); capFaces.push(sec[0].f);
+    });
+    if ((closed && k >= 3) || (!closed && k >= 2)) caps.push({ verts: capVerts, ref, uvFace: capFaces });
+  }
+
+  // ── positions and the width limit ──
+  let wMax = Infinity;
+  for (const { base, terms } of specs.values()) for (const [, c] of terms) wMax = Math.min(wMax, 0.45 / c);
+  const moved = [...specs.keys()];
+  const posAt = (w) => {
+    const out = new Float32Array(nbV * 3);
+    out.set(V.subarray(0, nbVertices * 3));
+    for (const [i, { base, terms }] of specs) {
+      for (let c = 0; c < 3; ++c) {
+        let p = V[base * 3 + c];
+        for (const [j, k] of terms) p += k * w * (V[j * 3 + c] - V[base * 3 + c]);
+        out[i * 3 + c] = p;
+      }
+    }
+    return out;
+  };
+
+  // ── uvs: one new entry per (face, replaced corner), shared where the source uvs agree ──
+  const uvSpecs = [];
+  const uvKey = new Map();
+  const nbUV = hasUV ? data.uvs.length / 2 : 0;
+  const cornerUV = (f, v) => {
+    const vs = faceVerts(faces, f), i = vs.indexOf(v);
+    return i < 0 ? -1 : data.facesUV[f * 4 + i];
+  };
+  const uvFor = (f, idx) => {
+    if (!hasUV) return 0;
+    const spec = specs.get(idx);
+    if (!spec) return cornerUV(f, idx);
+    const base = cornerUV(f, spec.base);
+    const terms = spec.terms.map(([j, c]) => [cornerUV(f, j), c]).filter(([u]) => u >= 0);
+    const key = base + '|' + terms.map((t) => t.join(':')).join(',');
+    let u = uvKey.get(key);
+    if (u === undefined) { u = nbUV + uvSpecs.length; uvKey.set(key, u); uvSpecs.push({ base, terms }); }
+    return u;
+  };
+
+  // ── faces ──
+  const out = [];  // { corners: [{v, uv}], group }
+  const groupOf = (f) => (data.groups ? data.groups[f] : 0);
+  const split = (cs) => {
+    const res = [];
+    while (cs.length > 4) { res.push(cs.slice(0, 4)); cs = [cs[0]].concat(cs.slice(3)); }
+    res.push(cs);
+    return res;
+  };
+  for (let f = 0; f < nbFaces; ++f) {
+    const vs = faceVerts(faces, f);
+    let cs = vs.map((v, i) => {
+      const r = sv.get(f + ':' + v);
+      return r === undefined ? { v, uv: hasUV ? data.facesUV[f * 4 + i] : 0 } : { v: r, uv: uvFor(f, r) };
+    });
+    for (const ins of inserts) {
+      if (ins.f !== f) continue;
+      for (let i = 0; i < cs.length; ++i) {
+        const x = cs[i].v, y = cs[(i + 1) % cs.length].v;
+        if ((x === ins.a && y === ins.b) || (x === ins.b && y === ins.a)) {
+          cs.splice(i + 1, 0, { v: ins.m, uv: uvFor(f, ins.m) });
+          break;
+        }
+      }
+    }
+    if (cs.length > 6) return null;
+    for (const piece of split(cs)) out.push({ corners: piece, group: groupOf(f) });
+  }
+  for (const k of sel) {
+    const [f1, f2] = adj.edgeFaces.get(k);
+    let [u, v] = keyVerts(k);
+    const vs = faceVerts(faces, f1), i = vs.indexOf(u);
+    if (vs[(i + 1) % vs.length] !== v) [u, v] = [v, u]; // f1 runs u -> v
+    const S = (x, f) => { const r = sv.get(f + ':' + x); return r === undefined ? x : r; };
+    const q = [[S(v, f1), f1], [S(u, f1), f1]];
+    if (openEnds.has(u)) q.push([u, f1]);
+    q.push([S(u, f2), f2], [S(v, f2), f2]);
+    if (openEnds.has(v)) q.push([v, f1]);
+    for (const piece of split(q.map(([x, f]) => ({ v: x, uv: uvFor(f, x) })))) out.push({ corners: piece, group: groupOf(f1) });
+  }
+  const probe = posAt(Math.min(wMax, 1e9) * 0.5);
+  for (const cap of caps) {
+    let cs = cap.verts.map((x, i) => ({ v: x, uv: uvFor(cap.uvFace[i], x) }));
+    const n = [0, 0, 0];
+    for (let i = 0; i < cs.length; ++i) {
+      const a = cs[i].v * 3, b = cs[(i + 1) % cs.length].v * 3;
+      n[0] += (probe[a + 1] - probe[b + 1]) * (probe[a + 2] + probe[b + 2]);
+      n[1] += (probe[a + 2] - probe[b + 2]) * (probe[a] + probe[b]);
+      n[2] += (probe[a] - probe[b]) * (probe[a + 1] + probe[b + 1]);
+    }
+    if (n[0] * cap.ref[0] + n[1] * cap.ref[1] + n[2] * cap.ref[2] < 0) cs = cs.reverse();
+    for (const piece of split(cs)) out.push({ corners: piece, group: 0 });
+  }
+
+  const nbF = out.length;
+  const F = new Uint32Array(nbF * 4);
+  const FU = hasUV ? new Uint32Array(nbF * 4) : null;
+  const groups = data.groups ? new Int32Array(nbF) : null;
+  out.forEach(({ corners, group }, f) => {
+    for (let i = 0; i < 4; ++i) {
+      F[f * 4 + i] = i < corners.length ? corners[i].v : TRI;
+      if (FU) FU[f * 4 + i] = i < corners.length ? corners[i].uv : TRI;
+    }
+    if (groups) groups[f] = group;
+  });
+
+  const copyArr = (src) => {
+    if (!src) return null;
+    const o = new Float32Array(nbV * 3);
+    o.set(src.subarray(0, nbVertices * 3));
+    for (const [i, { base }] of specs) if (i >= nbVertices) for (let c = 0; c < 3; ++c) o[i * 3 + c] = src[base * 3 + c];
+    return o;
+  };
+
+  return {
+    faces: F, nbFaces: nbF, facesUV: FU, groups, nbVertices: nbV,
+    colors: copyArr(data.colors), materials: copyArr(data.materials),
+    wMax, moved,
+    place(w) {
+      w = Math.max(0, Math.min(w, wMax));
+      let uvs = null;
+      if (hasUV) {
+        uvs = new Float32Array((nbUV + uvSpecs.length) * 2);
+        uvs.set(data.uvs);
+        uvSpecs.forEach(({ base, terms }, i) => {
+          for (let c = 0; c < 2; ++c) {
+            let t = data.uvs[base * 2 + c];
+            for (const [u, k] of terms) t += k * w * (data.uvs[u * 2 + c] - data.uvs[base * 2 + c]);
+            uvs[(nbUV + i) * 2 + c] = t;
+          }
+        });
+      }
+      return { vertices: posAt(w), uvs };
+    },
+  };
+}

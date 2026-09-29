@@ -27,7 +27,7 @@ class SelLoop extends SculptBase {
     const sel = getEdgeSelection(mesh);
     const adding = !sel.has(edgeKey(e[0], e[1]));
     const apply = (a, b) => {
-      for (const [u, v] of walkLoop(adj, a, b).edges) {
+      for (const [u, v] of this._edgesFrom(adj, a, b)) {
         if (adding) sel.add(edgeKey(u, v)); else sel.delete(edgeKey(u, v));
       }
     };
@@ -41,6 +41,11 @@ class SelLoop extends SculptBase {
     this._main.render();
     if (window.screenLog) window.screenLog(`[SelLoop] ${sel.size} edges selected`, '#a6e3a1');
     return true;
+  }
+
+  // What one tap toggles: the whole loop. Sel Edge overrides this to just the edge.
+  _edgesFrom(adj, a, b) {
+    return walkLoop(adj, a, b).edges;
   }
 
   stroke() {}

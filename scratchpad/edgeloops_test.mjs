@@ -12,6 +12,10 @@
 //   EL_INJECT=nocap    an end triangle is left alone, which leaves a T-junction
 //   EL_INJECT=nopole   the loop walks through a pole instead of stopping at it
 //   EL_INJECT=noseam   a new vertex gets ONE uv whichever side of a uv seam the face is on
+//   EL_INJECT=nocap    ...see above; bevel's own:
+//   EL_INJECT=bnocap   bevel leaves the corner holes where 3+ selected edges meet
+//   EL_INJECT=bnoins   bevel's open end does not put the new vertex into the neighbouring faces
+//   EL_INJECT=bnoflip  bevel caps are not oriented against the surface
 //
 // Run: node scratchpad/edgeloops_test.mjs
 import fs from 'fs';
@@ -26,6 +30,9 @@ const sub = (from, to) => {
 if (inject === 'flip') sub('return [vs[(i + 3) % 4], vs[(j + 1) % 4]];', 'return [vs[(j + 1) % 4], vs[(i + 3) % 4]];');
 if (inject === 'nocap') sub('if (isTri(cf)) return { edges, quads, cap: cf, closed: false };', 'if (isTri(cf)) return { edges, quads, cap: -1, closed: false };');
 if (inject === 'noseam') sub("const key = p + '_' + q;", 'const key = String(m[0]);');
+if (inject === 'bnocap') sub('if ((closed && k >= 3) || (!closed && k >= 2)) caps.push', 'if (false) caps.push');
+if (inject === 'bnoins') sub('if (ins.f !== f) continue;', 'continue;');
+if (inject === 'bnoflip') sub('if (n[0] * cap.ref[0] + n[1] * cap.ref[1] + n[2] * cap.ref[2] < 0) cs = cs.reverse();', '');
 if (inject === 'nopole') sub('if (nb.size !== 4 || adj.vertFaces.get(v) !== 4) return -1;', '');
 src = src.replace(/^import Utils .*$/m, 'const Utils = { TRI_INDEX: 4294967295 };');
 const EL = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
@@ -221,6 +228,99 @@ function cutChecks(label, m, ring, boundaryEnds) {
     JSON.stringify(vs));
   check('uv: facesUV stays parallel to faces (TRI where faces has TRI)',
     out.facesUV.every((x, i) => (x === TRI) === (out.faces[i] === TRI)));
+}
+
+
+// ── BEVEL ─────────────────────────────────────────────────────────────────────────────────
+// Directed-edge census: in a consistently wound manifold every directed edge appears ONCE, and
+// an interior edge appears once each way. Catches holes, T-junctions and flipped faces at once.
+function directed(faces, n) {
+  const d = new Map();
+  let degenerate = 0;
+  for (let f = 0; f < n; ++f) {
+    const vs = EL.faceVerts(faces, f);
+    if (new Set(vs).size !== vs.length) degenerate++;
+    for (let i = 0; i < vs.length; ++i) {
+      const k = vs[i] + '>' + vs[(i + 1) % vs.length];
+      d.set(k, (d.get(k) || 0) + 1);
+    }
+  }
+  let dup = 0, open = 0;
+  for (const [k, c] of d) {
+    if (c > 1) dup++;
+    const [a, b] = k.split('>');
+    if (!d.has(b + '>' + a)) open++;
+  }
+  return { dup, open, degenerate, edges: new Set([...d.keys()].map((k) => EL.edgeKey(...k.split('>').map(Number)))).size };
+}
+function bevel(m, keys, w, extra = {}) {
+  const r = EL.bevelEdges({ faces: m.faces, nbFaces: nbF(m), vertices: m.vertices, nbVertices: nbV(m), colors: null, materials: null, groups: null, ...extra }, new Set(keys));
+  if (!r) return null;
+  return { ...r, ...r.place(w) };
+}
+function bevelChecks(label, m, keys, w, expect) {
+  const before = directed(m.faces, nbF(m));
+  const r = bevel(m, keys, w);
+  check(label + ': bevel produced a mesh', !!r);
+  if (!r) return null;
+  const d = directed(r.faces, r.nbFaces);
+  check(label + ': no degenerate faces', d.degenerate === 0, d.degenerate + '');
+  check(label + ': consistently wound (no directed edge twice)', d.dup === 0, d.dup + ' duplicated');
+  check(label + ': no new holes', d.open === before.open + (expect.open || 0), `open ${before.open} -> ${d.open}`);
+  const eulerB = nbV(m) - before.edges + nbF(m), eulerA = r.nbVertices - d.edges + r.nbFaces;
+  check(label + ': Euler characteristic unchanged', eulerA === eulerB, `${eulerB} -> ${eulerA}`);
+  if (expect.v !== undefined) check(label + ': vertex/face counts', r.nbVertices === expect.v && r.nbFaces === expect.f, `v ${r.nbVertices} f ${r.nbFaces}`);
+  return r;
+}
+{
+  const c = cube();
+  // Each end's third face takes both new vertices and splits in two; the bevel face runs through
+  // both original corners, six corners, so two quads.
+  bevelChecks('cube, one edge (both ends open)', c, [EL.edgeKey(0, 1)], 0.3, { v: 12, f: 10 });
+  bevelChecks('cube, a face loop (k=2 corners)', c, [EL.edgeKey(4, 5), EL.edgeKey(5, 6), EL.edgeKey(6, 7), EL.edgeKey(7, 4)], 0.3, { v: 12, f: 10 });
+  const all = [];
+  for (let f = 0; f < 6; ++f) { const vs = EL.faceVerts(c.faces, f); for (let i = 0; i < 4; ++i) all.push(EL.edgeKey(vs[i], vs[(i + 1) % 4])); }
+  const r = bevelChecks('cube, every edge (k=3 corners)', c, all, 0.3, { v: 24, f: 26 });
+  const tris = r ? Array.from({ length: r.nbFaces }, (_, f) => r.faces[f * 4 + 3] === TRI).filter(Boolean).length : -1;
+  check('cube, every edge: the eight corners are triangles', tris === 8, tris + '');
+}
+{
+  const t = tube(6, 2);
+  const loop = [];
+  for (let i = 0; i < 6; ++i) loop.push(EL.edgeKey(t.id(i, 1), t.id(i + 1, 1)));
+  bevelChecks('tube, a closed loop', t, loop, 0.2, { v: nbV(t) + 6, f: nbF(t) + 6 });
+}
+{
+  const g = grid(4, 2);
+  const row = [];
+  for (let i = 0; i < 4; ++i) row.push(EL.edgeKey(g.id(i, 1), g.id(i + 1, 1)));
+  const r = bevelChecks('grid, a row into the boundary', g, row, 0.25, { v: nbV(g) + 5, f: nbF(g) + 4, open: 2 });
+  // Planar and axis-aligned, so the width is exact: every moved vertex sits 0.25 off the row.
+  const off = r.moved.map((i) => Math.abs(r.vertices[i * 3 + 1] - 1));
+  check('grid: every moved vertex is exactly the width off the edge', off.every((d) => Math.abs(d - 0.25) < 1e-6), off.join(','));
+  const big = bevel(g, row, 1e9);
+  check('grid: width clamps before the slides pass 45% of their edges', Math.abs(big.wMax - 0.45) < 1e-6, big.wMax + '');
+}
+{
+  // A run stopping in the MIDDLE of a grid: both ends are ordinary valence-4 vertices.
+  const g = grid(4, 3);
+  bevelChecks('grid, an open run inside the mesh', g, [EL.edgeKey(g.id(1, 1), g.id(2, 1)), EL.edgeKey(g.id(2, 1), g.id(3, 1))], 0.25, {});
+}
+{
+  // UVs = the xy position, so a correct interpolation gives every corner a uv equal to its xy.
+  const g = grid(4, 2);
+  const uvs = new Float32Array(nbV(g) * 2);
+  for (let i = 0; i < nbV(g); ++i) { uvs[i * 2] = g.vertices[i * 3]; uvs[i * 2 + 1] = g.vertices[i * 3 + 1]; }
+  const row = [];
+  for (let i = 0; i < 4; ++i) row.push(EL.edgeKey(g.id(i, 1), g.id(i + 1, 1)));
+  const r = bevel(g, row, 0.25, { uvs, facesUV: new Uint32Array(g.faces) });
+  let worst = 0;
+  for (let i = 0; i < r.nbFaces * 4; ++i) {
+    if (r.faces[i] === TRI) continue;
+    const v = r.faces[i], u = r.facesUV[i];
+    worst = Math.max(worst, Math.abs(r.uvs[u * 2] - r.vertices[v * 3]), Math.abs(r.uvs[u * 2 + 1] - r.vertices[v * 3 + 1]));
+  }
+  check('bevel uv: every corner uv follows its vertex (planar mapping stays exact)', worst < 1e-6, 'worst ' + worst);
 }
 
 // ── MIRROR ────────────────────────────────────────────────────────────────────────────────
