@@ -25,7 +25,7 @@ const CSS = `
   color: #cdd6f4; background: rgba(30, 30, 46, 0.82);
   border: 1px solid rgba(205, 214, 244, 0.28); border-radius: 10px;
   cursor: pointer; user-select: none; -webkit-user-select: none;
-  touch-action: manipulation; z-index: 40;
+  touch-action: none; z-index: 40;
 }
 #${ID}.armed {
   color: #1e1e2e; background: #f9e2af; border-color: #f9e2af;
@@ -57,6 +57,9 @@ export default class ModifierButton {
     el.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // A tap toggles: the one-shot pin arms for the next click, Select stays on until tapped
+      // again. (A momentary hold was tried: on iPad, a held thumb stops the Pencil's contact
+      // reaching the page.)
       SecondaryAction.toggle(this._main);
       this.refresh();
     });
@@ -85,6 +88,25 @@ export default class ModifierButton {
     return tl.getBoundingClientRect().height || 0;
   }
 
+  // CLEAR OF THE SIDEBAR. Anchoring to the window edge put the button underneath the tool panel
+  // whenever it was open, which on a wide sidebar is most of the time. Watched like the timeline:
+  // dragging its edge or collapsing it changes the size, and one observer sees every path.
+  _sidebarWidth() {
+    const sb = document.getElementById('gui-sidebar');
+    if (!sb) return 0;
+    if (sb !== this._sidebar) {
+      this._sidebar = sb;
+      if (typeof ResizeObserver !== 'undefined') {
+        this._sbObserver = this._sbObserver || new ResizeObserver(() => this.refresh());
+        this._sbObserver.observe(sb);
+      }
+    }
+    if (sb.style.display === 'none') return 0;
+    const r = sb.getBoundingClientRect();
+    // Only a sidebar docked on the right edge is in the way of a right-hand button.
+    return r.width && r.right >= window.innerWidth - 2 ? r.width : 0;
+  }
+
   // Cheap, and called from the places that already mean "the tool or selection changed".
   refresh() {
     const el = this._el;
@@ -103,10 +125,14 @@ export default class ModifierButton {
     }
     el.style.display = 'flex';
     el.textContent = label;
-    el.classList.toggle('armed', SecondaryAction.armed(this._main));
+    // Lit for the one-shot when armed; for Select whenever it is HELD or Shift is down, so a
+    // keyboard user can see what the button is for.
+    const isSelect = !!SecondaryAction.of(this._main)?.latch;
+    el.classList.toggle('armed', SecondaryAction.armed(this._main) || SecondaryAction.latched(this._main)
+      || (isSelect && !!this._main._shiftKey));
     const left = !!getOptionsURL()[SIDE_OPT];
     el.style.left = left ? GAP + 'px' : '';
-    el.style.right = left ? '' : GAP + 'px';
+    el.style.right = left ? '' : (GAP + this._sidebarWidth()) + 'px';
     el.style.bottom = (this._timelineHeight() + GAP) + 'px';
   }
 }

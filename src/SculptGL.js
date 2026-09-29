@@ -1370,6 +1370,7 @@ class SculptGL extends Scene {
   onKeyDown(e) {
     this._shiftKey = e.shiftKey;
     this._altKey = e.altKey;
+    this._modifierButton?.refresh?.(); // lights the Select button while Shift is held
 
     // TYPING WINS. Every shortcut below this line — and everything callFunc fans out to — is
     // bound to a bare key, so a focused text field could not receive its own characters:
@@ -1473,6 +1474,7 @@ class SculptGL extends Scene {
   onKeyUp(e) {
     this._shiftKey = e.shiftKey;
     this._altKey = e.altKey;
+    this._modifierButton?.refresh?.();
     if (Utils.isTypingTarget(e)) return;
     this._gui.callFunc('onKeyUp', e);
   }

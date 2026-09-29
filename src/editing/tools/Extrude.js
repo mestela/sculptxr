@@ -3,6 +3,7 @@ import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
 import Enums from '../../misc/Enums.js';
+import SecondaryAction from '../SecondaryAction.js';
 import * as THREE from 'three';
 
 class Extrude extends SculptBase {
@@ -28,8 +29,11 @@ class Extrude extends SculptBase {
     this._hideHover();
     const isDesktop = !main._vrSculpting;
     
-    if (isDesktop && main._shiftKey) {
+    if (isDesktop && (main._shiftKey || SecondaryAction.latched(main))) {
       const picking = main.getPicking();
+      // A touch tap has no hover, so the pick is stale; refresh it at the pointer (SculptManager only
+      // does this for single-action tools, and Extrude is continuous).
+      picking.intersectionMouseMeshes();
       const pickedFace = picking.getPickedFace();
       if (pickedFace !== undefined && pickedFace >= 0) {
         this._dragSelectMode = this._selectedFaces.has(pickedFace) ? 'remove' : 'add';
@@ -1095,7 +1099,7 @@ class Extrude extends SculptBase {
     const activeMesh = mesh ? (mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh) : null;
     
     // Support drag selection on desktop!
-    if (main._shiftKey) {
+    if (main._shiftKey || SecondaryAction.latched(main)) {
       if (!activeMesh) return;
       const picking = main.getPicking();
       const pickedFace = picking.getPickedFace();

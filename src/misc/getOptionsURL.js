@@ -380,9 +380,10 @@ var getOptionsURL = function () {
   options.boneShowWire = queryBool(getVal('boneShowWire'), true);
   options.boneShowJointDots = queryBool(getVal('boneShowJointDots'), true);
   options.boneShowPins = queryBool(getVal('boneShowPins'), true);
-  // Which side the on-screen secondary-action modifier sits on. Off = right, matching the
-  // right-click shorthand; a left-hander swaps it so it is not under the drawing hand.
-  options.modifierLeft = queryBool(getVal('modifierLeft'), false);
+  // Which side the on-screen secondary-action modifier sits on. Default LEFT: the thumb of the
+  // off hand holds it while the drawing hand (right, by default) taps with the Pencil. A
+  // left-hander sets this false to swap it under the other thumb.
+  options.modifierLeft = queryBool(getVal('modifierLeft'), true);
   // Motion path editing: does the brush travel ALONG the strand (default) or straight through
   // space? A path is monotonic in time, so along-the-strand is implicitly a time-ordered
   // falloff; off reaches every pass through a region, which is occasionally what you want.
