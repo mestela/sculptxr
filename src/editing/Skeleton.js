@@ -1593,7 +1593,7 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   const half = Skeleton.jointHalf(j, fallbackR || 0, _halfH);
   Skeleton.jointCentre(j, _pJH);   // the SHAPE's centre — a face drag moves it off the joint
 
-  const r = Skeleton.sceneUnit(main) * 0.018;
+  const r = Skeleton.sceneUnit(main) * 0.0225;
   h.centrePos.copy(_pJH);
   for (let i = 0; i < HANDLE_AXES.length; i++) {
     const [ax, sign] = HANDLE_AXES[i];
@@ -1605,6 +1605,10 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
     h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
   }
   return h;
+};
+
+Skeleton.scaleHandleAxis = function (i) {
+  return { axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] };
 };
 
 // Which handle is under a point, if any. Generous radius: a dot is small on purpose, and a grab
@@ -1627,7 +1631,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
   const h = main._jointHandles;
   if (!h) return;
   const hot = grip ? grip.index : -99;
-  const r = Skeleton.sceneUnit(main) * 0.018;
+  const r = Skeleton.sceneUnit(main) * 0.0225;
   for (let i = 0; i < h.faces.length; i++) {
     const on = hot === i;
     const f = h.faces[i];

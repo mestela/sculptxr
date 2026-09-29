@@ -1,3 +1,6 @@
+# v3.67.2
+- **Tweak Joint handles are easier to grab on desktop.** The face dots are 25% bigger, and the hover/press pick now works in screen space, so the highlight lands on the dot you point at (it was offset by parallax for the near and far faces). A lit handle also suppresses joint/bone preselect.
+
 # v3.67.1
 - **Desktop menus tear off.** Every top-bar menu has a pin button in its header that floats it over the canvas as a draggable, resizable panel (not remembered between sessions).
 - **View menu tidy-up.** "Rig Display" is now **Display** and "Shader" is **Shading**; Ground Plane is a chip in the Display grid; the "Rendering" collapsible is gone, its contents sit directly on the page. The section label is "View" in the torn-off VR panel and main menu.

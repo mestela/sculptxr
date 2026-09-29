@@ -609,6 +609,26 @@ class BoneDrawTool extends SculptBase {
     return true;
   }
 
+  // The handle under the cursor, in SCREEN space. The old desktop pick intersected the cursor ray
+  // with a camera-facing plane through the JOINT and compared that point to each dot's 3D
+  // position — but the near and far face dots sit in front of and behind that plane, so the ray
+  // hit them at a parallax offset and they lit up beside the dot, not on it. Projecting the dots
+  // and comparing pixels picks what is drawn where it is drawn.
+  _pickHandleScreen() {
+    const main = this._main;
+    const h = main._jointHandles;
+    if (!h || !h.group.visible || !h.joint) return null;
+    const mx = main._mouseX, my = main._mouseY;
+    let best = null, bestD = this._pickPx() * 1.3;
+    for (let i = 0; i < h.pos.length; i++) {
+      if (!this._toScreen(h.pos[i], _s0)) continue;
+      const d = Math.hypot(_s0.x - mx, _s0.y - my);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best < 0 || best === null ? null
+      : Object.assign({ kind: 'face', index: best }, Skeleton.scaleHandleAxis(best));
+  }
+
   _pickJointScreen() {
     const main = this._main;
     const mx = main._mouseX, my = main._mouseY;
@@ -1013,10 +1033,7 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'joint') {
       const main2 = this._main;
       const hj = main2._jointHandles && main2._jointHandles.joint;
-      let grip = null;
-      if (hj && this._planePoint(Skeleton.jointPos(hj, _jp).clone(), _hit)) {
-        grip = Skeleton.pickScaleHandle(main2, _hit, this._snapDist() * 1.4);
-      }
+      const grip = hj ? this._pickHandleScreen() : null;
       if (grip) {
         this._beginScale(hj, grip, Skeleton.boneRadiusOf(main2, hj));
         this._drag = { kind: 'joint', joint: hj, anchor: Skeleton.jointPos(hj, _jp).clone(),
@@ -1222,10 +1239,7 @@ class BoneDrawTool extends SculptBase {
     // what lights up is exactly what a press would grab rather than an approximation of it.
     if (this._mode === 'joint') {
       const hj = this._main._jointHandles && this._main._jointHandles.joint;
-      let grip = null;
-      if (hj && !this._drag && this._planePoint(Skeleton.jointPos(hj, _jp).clone(), _hit)) {
-        grip = Skeleton.pickScaleHandle(this._main, _hit, this._snapDist() * 1.4);
-      }
+      const grip = hj && !this._drag ? this._pickHandleScreen() : null;
       // The grip being dragged wins over anything hovered, so a drag keeps its handle lit even
       // as the cursor travels away from it.
       const lit = this._scale ? this._scale.grip : grip;
@@ -1245,7 +1259,9 @@ class BoneDrawTool extends SculptBase {
     // picked a joint for it. The desktop hover was picking a SEGMENT here (_pickBoneScreen), so it
     // lit the bone and then grabbed whichever joint was nearest, which is a different thing. One
     // pick for every mode now: what lights is what a press takes.
-    const hit = this._drag ? this._drag.joint : this._pickRigNodeScreen();
+    // In Tweak Joint a lit handle owns the preselect: a joint or bone nearby must not light too.
+    const hit = this._drag ? this._drag.joint
+      : (this._mode === 'joint' && this._litHandle >= 0) ? null : this._pickRigNodeScreen();
     if (hit === this._hilite) return;
     this._hilite = hit;
     Skeleton.setHighlight(this._main, hit);
