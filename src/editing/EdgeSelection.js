@@ -123,8 +123,8 @@ export function showEdgeSelection(mesh) {
   const v = m.getVertices();
   const pairs = [...sel].map(keyVerts);
   // Thickness follows the edges themselves, so it reads the same on a cube and a dense head.
-  const r = (pairs.reduce((s, [a, b]) => s + vtx(v, a).distanceTo(vtx(v, b)), 0) / pairs.length) * 0.03;
-  drawTubes('sel', tm, pairs.map(([a, b]) => [lifted(m, a, r), lifted(m, b, r)]), r, 0xff9e3b, 2);
+  const r = (pairs.reduce((s, [a, b]) => s + vtx(v, a).distanceTo(vtx(v, b)), 0) / pairs.length) * 0.045 * 0.25;
+  drawTubes('sel', tm, pairs.map(([a, b]) => [lifted(m, a, r), lifted(m, b, r)]), r, 0x00ffaa, 2);
 }
 
 export function hideEdgeSelection() {
@@ -154,18 +154,54 @@ export function showEdgeHover(mesh, edge, paths) {
   if (!m || !tm || !edge) { hideEdgeHover(); return; }
   const v = m.getVertices();
   const len = vtx(v, edge[0]).distanceTo(vtx(v, edge[1]));
-  const r = len * 0.045;
-  drawTubes('hover', tm, [[lifted(m, edge[0], r), lifted(m, edge[1], r)]], r, 0xf9e2af, 3);
+  const r = len * 0.045 * 0.25;
+  drawTubes('hover', tm, [[lifted(m, edge[0], r), lifted(m, edge[1], r)]], r, 0xffd733, 3);
   const segs = [];
   for (const { pts, closed } of paths || []) {
     for (let i = 0; i + 1 < pts.length; ++i) segs.push([pts[i], pts[i + 1]]);
     if (closed && pts.length > 2) segs.push([pts[pts.length - 1], pts[0]]);
   }
-  if (segs.length) drawTubes('path', tm, segs, len * 0.02, 0x89dceb, 3);
+  if (segs.length) drawTubes('path', tm, segs, len * 0.02, 0x00ffaa, 3);
   else hide('path');
 }
 
 export function hideEdgeHover() {
   hide('hover');
   hide('path');
+}
+
+// THE SEL LOOP PRESELECT, FOR ANY TOOL THAT ACTS ON THE EDGE UNDER THE CURSOR (Dis Edge, Spin
+// Edge, Col Edge). Desktop hover runs through preUpdate on every mouse move, VR through
+// updateXR every frame; the pick was already made for the brush cursor, so this adds none. The
+// highlight is hidden on press (the edit changes the topology under it) and on tool switch.
+export function addEdgeHover(Tool) {
+  const P = Tool.prototype;
+  const { preUpdate, updateXR, start, clearPreview } = P;
+
+  P._updateHover = function () {
+    const hit = pickEdge(this._main);
+    const key = hit ? hit.edge[0] + '_' + hit.edge[1] : '';
+    if (key === this._hoverKey) return;
+    this._hoverKey = key;
+    if (hit) showEdgeHover(hit.mesh, hit.edge); else hideEdgeHover();
+    this._main.render();
+  };
+  P.preUpdate = function (...a) {
+    preUpdate.apply(this, a);
+    this._updateHover();
+  };
+  P.updateXR = function (...a) {
+    if (updateXR) updateXR.apply(this, a);
+    this._updateHover();
+  };
+  P.start = function (...a) {
+    hideEdgeHover();
+    this._hoverKey = '';
+    return start.apply(this, a);
+  };
+  P.clearPreview = function (...a) {
+    if (clearPreview) clearPreview.apply(this, a);
+    hideEdgeHover();
+    this._hoverKey = '';
+  };
 }

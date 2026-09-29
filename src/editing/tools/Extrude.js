@@ -2,6 +2,7 @@ import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
+import Enums from '../../misc/Enums.js';
 import * as THREE from 'three';
 
 class Extrude extends SculptBase {
@@ -24,6 +25,7 @@ class Extrude extends SculptBase {
 
   start(ctrl) {
     const main = this._main;
+    this._hideHover();
     const isDesktop = !main._vrSculpting;
     
     if (isDesktop && main._shiftKey) {
@@ -119,81 +121,105 @@ class Extrude extends SculptBase {
   }
 
   updateSelectionHighlight() {
+    this._selectionMesh = this._updateFaceOverlay(this._selectionMesh, this._selectedFaces, 0x00ffaa, 0.4);
+  }
+
+  // PRESELECT: the face under the cursor, in the app's preselect yellow, so it is clear what the
+  // next click will tag (selected faces are cyan, the "selected" colour everywhere else).
+  // Runs from preUpdate, which already picked for the brush cursor — no extra pick, so the
+  // shared picking state is untouched.
+  updateHoverHighlight() {
+    const main = this._main;
+    let faces = null;
+    if (!main._vrSculpting && main._action !== Enums.Action.SCULPT_EDIT) {
+      const picking = main.getPicking();
+      const f = picking.getPickedFace();
+      const mesh = this.getMesh();
+      if (f !== undefined && f >= 0 && mesh && picking.getMesh() === mesh) {
+        faces = new Set([f]);
+        if (main.getSculptManager().getSymmetry()) {
+          const sym = this.getSymmetricalFace(mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh, f);
+          if (sym !== -1) faces.add(sym);
+        }
+      }
+    }
+    // Skip the rebuild while the same face is still under the cursor.
+    const key = faces ? [...faces].join(',') : '';
+    if (key === this._hoverKey) return;
+    this._hoverKey = key;
+    this._hoverMesh = this._updateFaceOverlay(this._hoverMesh, faces, 0xffd733, 0.45);
+    this._main.render();
+  }
+
+  preUpdate(canBeContinuous) {
+    super.preUpdate(canBeContinuous);
+    this.updateHoverHighlight();
+  }
+
+  _hideHover() {
+    this._hoverKey = '';
+    if (this._hoverMesh) this._hoverMesh.visible = false;
+  }
+
+  // One world-space overlay mesh per face set; returns the (possibly new) mesh.
+  _updateFaceOverlay(overlay, faceSet, color, opacity) {
     const mesh = this.getMesh();
-    if (!mesh) return;
+    if (!mesh) return overlay;
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
     const faces = activeMesh.getFaces();
     const vertices = activeMesh.getVertices();
     const mat = activeMesh.getMatrix();
-    
+
     const positions = [];
-    
-    if (this._selectedFaces && this._selectedFaces.size > 0) {
-      for (const fIdx of this._selectedFaces) {
+    const w = [0, 0, 0];
+    const pushTriangle = (a, b, c) => {
+      for (const v of [a, b, c]) {
+        vec3.transformMat4(w, v, mat);
+        positions.push(w[0], w[1], w[2]);
+      }
+    };
+    const P = (i) => [vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]];
+
+    if (faceSet && faceSet.size > 0) {
+      for (const fIdx of faceSet) {
         const idf = fIdx * 4;
-        const v1 = faces[idf];
-        const v2 = faces[idf + 1];
-        const v3 = faces[idf + 2];
         const v4 = faces[idf + 3];
-        const isTri = v4 === Utils.TRI_INDEX;
-        
-        const p1 = [vertices[v1 * 3], vertices[v1 * 3 + 1], vertices[v1 * 3 + 2]];
-        const p2 = [vertices[v2 * 3], vertices[v2 * 3 + 1], vertices[v2 * 3 + 2]];
-        const p3 = [vertices[v3 * 3], vertices[v3 * 3 + 1], vertices[v3 * 3 + 2]];
-        const p4 = isTri ? null : [vertices[v4 * 3], vertices[v4 * 3 + 1], vertices[v4 * 3 + 2]];
-        
-        const pushTriangle = (a, b, c) => {
-          const wa = [0,0,0], wb = [0,0,0], wc = [0,0,0];
-          vec3.transformMat4(wa, a, mat);
-          vec3.transformMat4(wb, b, mat);
-          vec3.transformMat4(wc, c, mat);
-          positions.push(wa[0], wa[1], wa[2]);
-          positions.push(wb[0], wb[1], wb[2]);
-          positions.push(wc[0], wc[1], wc[2]);
-        };
-        
-        pushTriangle(p1, p2, p3);
-        if (!isTri) {
-          pushTriangle(p1, p3, p4);
-        }
+        const p1 = P(faces[idf]), p3 = P(faces[idf + 2]);
+        pushTriangle(p1, P(faces[idf + 1]), p3);
+        if (v4 !== Utils.TRI_INDEX) pushTriangle(p1, p3, P(v4));
       }
     }
-    
+
     if (positions.length === 0) {
-      if (this._selectionMesh) {
-        this._selectionMesh.visible = false;
-      }
-      return;
+      if (overlay) overlay.visible = false;
+      return overlay;
     }
-    
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    
-    if (!this._selectionMesh) {
-      const material = new THREE.MeshBasicMaterial({ 
-        color: 0xffff00, 
-        depthTest: false, 
-        transparent: true, 
-        depthWrite: false, 
-        opacity: 0.4,
+
+    if (!overlay) {
+      const material = new THREE.MeshBasicMaterial({
+        color, depthTest: false, transparent: true, depthWrite: false, opacity,
         side: THREE.DoubleSide
       });
-      this._selectionMesh = new THREE.Mesh(geometry, material);
-      this._selectionMesh.renderOrder = 10000;
-      this._selectionMesh.isPickable = false;
-      
+      overlay = new THREE.Mesh(geometry, material);
+      overlay.renderOrder = 10000;
+      overlay.isPickable = false;
+
       const sceneApp = this._main.getScene ? this._main.getScene() : this._main._scene;
       let targetScene = sceneApp;
       if (sceneApp && sceneApp._scene) targetScene = sceneApp._scene;
-      
+
       let parentNode = targetScene;
       if (this._main._worldGroup) parentNode = this._main._worldGroup;
-      parentNode.add(this._selectionMesh);
+      parentNode.add(overlay);
     } else {
-      this._selectionMesh.geometry.dispose();
-      this._selectionMesh.geometry = geometry;
-      this._selectionMesh.visible = true;
+      overlay.geometry.dispose();
+      overlay.geometry = geometry;
+      overlay.visible = true;
     }
+    return overlay;
   }
 
   // Called by SculptManager.setToolIndex when switching away. The yellow face tags are a
@@ -206,6 +232,7 @@ class Extrude extends SculptBase {
   clearPreview() {
     if (this._selectedFaces) this._selectedFaces.clear();
     if (this._selectionMesh) this._selectionMesh.visible = false;
+    this._hideHover();
   }
 
   onUndo() {
@@ -293,6 +320,7 @@ class Extrude extends SculptBase {
       return;
     }
     
+    this._startMouseX = main._mouseX;
     this._startMouseY = main._mouseY;
 
     // Calculate initial normal for desktop extrusion
@@ -313,6 +341,8 @@ class Extrude extends SculptBase {
     this._extrudeNormal[1] = e1z * e2x - e1x * e2z;
     this._extrudeNormal[2] = e1x * e2y - e1y * e2x;
     vec3.normalize(this._extrudeNormal, this._extrudeNormal);
+
+    this._computeDragMap(activeMesh, [p1x, p1y, p1z], [e1x, e1y, e1z], [e2x, e2y, e2z]);
 
     const cx = (p1x + p2x + p3x) / 3;
     this._primaryIsRight = cx >= -0.01;
@@ -772,6 +802,8 @@ class Extrude extends SculptBase {
   // WebXR Support for 6DOF Dragging
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
+    // Preselect: desktop gets this from preUpdate; in VR the controller's pick is refreshed per frame.
+    this.updateHoverHighlight();
     
     if (options && options.controllers) {
       const dominantHand = options.handedness;
@@ -1023,6 +1055,40 @@ class Extrude extends SculptBase {
     return true;
   }
 
+  // SCREEN-SPACE DRAG MAP, built once when the press lands. The old map was a fixed 0.002 model
+  // units per pixel of vertical mouse travel, so the distance you got depended on nothing you
+  // could see: not the zoom, not the mesh scale, not the direction dragged. Now the pointer is
+  // projected onto where the face normal points ON SCREEN, and the pixel->unit ratio comes from
+  // the face's own projected size, so the surface follows the pointer at any zoom.
+  _computeDragMap(activeMesh, p1, e1, e2) {
+    const cam = this._main.getCamera();
+    const mat = activeMesh.getMatrix();
+    const len = (v) => Math.hypot(v[0], v[1], v[2]);
+    const L = (len(e1) + len(e2)) * 0.5 || 1;
+    const c = [p1[0] + (e1[0] + e2[0]) / 3, p1[1] + (e1[1] + e2[1]) / 3, p1[2] + (e1[2] + e2[2]) / 3];
+    const scr = (dx, dy, dz) => cam.project(vec3.transformMat4([0, 0, 0], [c[0] + dx, c[1] + dy, c[2] + dz], mat));
+    const s0 = scr(0, 0, 0);
+    const n = this._extrudeNormal;
+    const sn = scr(n[0] * L, n[1] * L, n[2] * L);
+    const d = [sn[0] - s0[0], sn[1] - s0[1]];   // screen px for L of travel along the normal
+    // Pixels per unit at this depth, from the largest of the normal and the two edges, so a
+    // face seen edge-on still has a scale.
+    const px = (v) => { const p = scr(v[0], v[1], v[2]); return Math.hypot(p[0] - s0[0], p[1] - s0[1]) / len(v); };
+    const pxPerUnit = Math.max(px(e1), px(e2), Math.hypot(d[0], d[1]) / L, 1e-6);
+    // Face pointing at (or away from) the camera: the normal has almost no screen length, so
+    // drag UP to push out instead of dividing by nothing.
+    const floor = 0.35 * pxPerUnit * L;
+    if (Math.hypot(d[0], d[1]) < floor) { d[0] = 0; d[1] = -floor; }
+    this._dragD = d;
+    this._dragL = L;
+  }
+
+  _dragScale(dx, dy) {
+    const d = this._dragD;
+    if (!d) return -dy * 0.002;
+    return (dx * d[0] + dy * d[1]) / (d[0] * d[0] + d[1] * d[1]) * this._dragL;
+  }
+
   sculptStroke() {
     const main = this._main;
     const mesh = this.getMesh();
@@ -1054,11 +1120,7 @@ class Extrude extends SculptBase {
 
     if (!mesh || !this._extrudedVerts || !this._vProxy || !this._extrudeNormal) return;
     
-    // Calculate delta based on mouse Y movement
-    const dy = main._mouseY - this._startMouseY;
-    
-    // We need a scale factor to map pixels to world space units
-    const scale = -dy * 0.002; 
+    const scale = this._dragScale(main._mouseX - this._startMouseX, main._mouseY - this._startMouseY);
     
     const transDelta = vec3.create();
     vec3.scale(transDelta, this._extrudeNormal, scale);
