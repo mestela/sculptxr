@@ -18,7 +18,7 @@
 // setBlendshapeWeight, deleteBlendshape, renameBlendshape, enter/exit edit mode)
 // against the active mesh (main.getMesh()).
 
-import { arkitByRegion, arkitEntry, arkitUnifiedFor } from '../editing/ArkitBlendshapes.js';
+import { arkitByRegion, arkitEntry, lrPairFor } from '../editing/ArkitBlendshapes.js';
 import { Theme } from './theme.js';
 import BlendshapePad, { PAD_HEADER_H } from './BlendshapePad.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -437,11 +437,15 @@ export default class BlendshapeStackPanel {
     const bw = 34, bh = 26, by = (TOOLBAR_H - bh) / 2;
     const newBtn = { id: 'new', x: PAD, y: by, w: bw, h: bh };
     const delBtn = { id: 'del', x: PAD + bw + 6, y: by, w: bw, h: bh };
-    this._toolbarBtns.push(newBtn, delBtn);
+    // Split the selected layer into Left/Right halves — any layer, not only the ARKit names
+    // whose rows carry their own split icon.
+    const splitBtn = { id: 'split', x: PAD + (bw + 6) * 2, y: by, w: bw, h: bh };
+    this._toolbarBtns.push(newBtn, delBtn, splitBtn);
 
     this._drawIconBtn(ctx, newBtn, FA.plus,  Theme.blue, this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
     this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : Theme.surface2, this._hover?.btn === 'del');
+    this._drawIconBtn(ctx, splitBtn, FA.split, canDel ? Theme.text : Theme.surface2, this._hover?.btn === 'split');
 
     // ── THE FOUR PAD SLOTS ────────────────────────────────────────────────────────────
     //
@@ -457,7 +461,7 @@ export default class BlendshapeStackPanel {
     // WHICH side without needing a word for it.
     if (this._pad) {
       const selected = this._track()?.editingBlendshape || null;
-      let sx = PAD + (bw + 6) * 2 + 10;
+      let sx = PAD + (bw + 6) * 3 + 10;
       for (const slot of ['left', 'right', 'up', 'down']) {
         const b = { id: 'slot_' + slot, slot, x: sx, y: by, w: bh, h: bh };
         this._toolbarBtns.push(b);
@@ -605,10 +609,12 @@ export default class BlendshapeStackPanel {
     if (isBase) { this._rows.push(r); return; }
 
     // Right slot: symmetric ARKit shapes get a split button (→ L/R); a recognised L/R
-    // half gets a combine button (→ back to one symmetric shape); everything else keeps
-    // the numeric readout (the weight is already shown by the slider).
+    // half (ARKit, or a '<x>Left'/'<x>Right' pair from the toolbar split) gets a combine
+    // button (→ back to one shape); everything else keeps the numeric readout (the weight
+    // is already shown by the slider). Any layer can be split from the toolbar.
     const sym  = arkitEntry(name)?.category === 'symmetric';
-    const half = !sym ? arkitUnifiedFor(name) : null;
+    const bs   = this._track()?.blendshapes;
+    const half = !sym && bs ? lrPairFor(name, (n) => bs.has(n)) : null;
     const sx = W - PAD - 10;
     if (sym) {
       const hot = hov === 'split';
@@ -940,6 +946,10 @@ export default class BlendshapeStackPanel {
       if (!name) return;
       reg.deleteBlendshape(mesh, name);
       this._afterStructureChange();
+    } else if (id === 'split') {
+      const name = track_editing(reg, mesh);
+      if (name && reg.splitBlendshapeLR(mesh, name)) this._afterStructureChange();
+      else this.flash();
     }
   }
 

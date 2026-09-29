@@ -107,6 +107,28 @@ export function arkitSplitTargets(name) {
   return [e.arkit[0]];
 }
 
+// The L/R pair ANY layer splits into: ARKit's own names for a symmetric ARKit shape,
+// otherwise '<name>Left' / '<name>Right' (the same suffix convention ARKit uses).
+export function lrSplitNames(name) {
+  const e = arkitEntry(name);
+  return e && e.category === 'symmetric' ? [e.arkit.left, e.arkit.right] : [name + 'Left', name + 'Right'];
+}
+
+// The pair a half belongs to, for combining back: ARKit's table first, else a generic
+// '<x>Left'/'<x>Right' — but only when its sibling EXISTS (`has(name)`), so a custom layer
+// that merely ends in "Left" is not mistaken for half of something. ARKit names that are not
+// symmetric halves (jawLeft is a directional pose) never match generically.
+export function lrPairFor(name, has) {
+  const a = arkitUnifiedFor(name);
+  if (a) return a;
+  if (arkitEntry(name)) return null;
+  const m = /^(.+)(Left|Right)$/.exec(name);
+  if (!m) return null;
+  const left = m[1] + 'Left', right = m[1] + 'Right';
+  if (!has(m[2] === 'Left' ? right : left)) return null;
+  return { unified: m[1], left, right };
+}
+
 // Sanity: the library must cover exactly the ARKit 52.
 export function arkitFlatCount() {
   return ARKIT_BLENDSHAPES.reduce((n, e) => {

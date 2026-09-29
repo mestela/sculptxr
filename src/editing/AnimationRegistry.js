@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { quat, mat4 } from 'gl-matrix';
 import { rotSync, xfWrite, xfTanGet, maskSync, xfEval, xfKeyedSlots, xfBit, xfGroupBits, XF_ALL, xfRefreshDerived, xfRemoveSlots, xfPruneEmpty, xfInsertSlot, xfSlotAt, eulerFromQuat, rotSetEuler, xfSlope } from './xfChannel.js';
 import { decimateKeys } from './curveSimplify.js';
-import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
+import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
 import Skeleton from './Skeleton.js';
@@ -2022,23 +2022,28 @@ class AnimationRegistry {
     this._refreshBlendPanels(mesh);
   }
 
+  // Undo for split/combine: put back the weight-key objects these layers had, which
+  // removeLayer/addLayer would otherwise leave as fresh empty tracks.
+  _keySnapshot(track, names) {
+    const saved = names.map((n) => [n, track.blendshapeTracks?.get(n)]);
+    return () => { for (const [n, k] of saved) if (k && track.blendshapes.has(n)) track.blendshapeTracks.set(n, k); };
+  }
+
   _refreshBlendPanels(mesh) {
     window._animPanel?.refreshBlendshapes?.(mesh, window.app);
     window._blendshapeStackPanel?._afterStructureChange?.();
     window._blendshapeStackPanelVR?._afterStructureChange?.();
   }
 
-  // Split a sculpted SYMMETRIC blendshape (e.g. eyeBlink) into its two ARKit halves
-  // (eyeBlinkLeft + eyeBlinkRight) by blending the delta across the symmetry plane
-  // (local x = 0). left+right at weight 1 reproduce the original. The symmetric source
-  // layer is replaced by the pair. Convention: x < 0 → Left (call again / flip if the
-  // mesh faces the other way and L/R come out swapped).
+  // Split a blendshape into Left + Right halves by blending the delta across the symmetry
+  // plane (local x = 0). left+right at weight 1 reproduce the original. The source layer is
+  // replaced by the pair. A symmetric ARKit shape (eyeBlink) gets its ARKit half names
+  // (eyeBlinkLeft/Right); any other layer gets '<name>Left'/'<name>Right' — see lrSplitNames.
+  // Convention: x < 0 → Left (call again / flip if the mesh faces the other way and L/R
+  // come out swapped).
   splitBlendshapeLR(mesh, name) {
     if (!mesh || !name) return false;
-    const entry = arkitEntry(name);
-    const targets = arkitSplitTargets(name);
-    if (!entry || entry.category !== 'symmetric' || !targets || targets.length !== 2) return false;
-    const [leftName, rightName] = targets;
+    const [leftName, rightName] = lrSplitNames(name);
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes || !track.blendshapes.has(name) || !track.baseShape) return false;
 
@@ -2088,10 +2093,17 @@ class AnimationRegistry {
       if (!track.blendshapeTracks.has(nm)) track.blendshapeTracks.set(nm, { times: [], values: [] });
     };
 
+    // Both halves inherit the source's weight keys, so left+right reproduce exactly what the
+    // mesh wore before the split instead of dropping to 0.
+    const srcKeys = track.blendshapeTracks?.get(name);
+    const restoreKeys = this._keySnapshot(track, [name, leftName, rightName]);
+    const cloneKeys = () => srcKeys ? structuredClone(srcKeys) : { times: [], values: [] };
     const apply = () => {
       removeLayer(name);
       addLayer(leftName, leftDelta);
       addLayer(rightName, rightDelta);
+      track.blendshapeTracks.set(leftName, cloneKeys());
+      track.blendshapeTracks.set(rightName, cloneKeys());
       this.applyBlendshapes(mesh);
       this._refreshBlendPanels(mesh);
     };
@@ -2100,6 +2112,7 @@ class AnimationRegistry {
       if (prevLeft) addLayer(leftName, prevLeft);
       if (prevRight) addLayer(rightName, prevRight);
       addLayer(name, prevSource);
+      restoreKeys();
       track.editingBlendshape = wasEditing;
       this.applyBlendshapes(mesh);
       this._refreshBlendPanels(mesh);
@@ -2118,11 +2131,11 @@ class AnimationRegistry {
   // when unedited; sums whatever's there otherwise). `name` is either half. One undo step.
   combineBlendshapeLR(mesh, name) {
     if (!mesh || !name) return false;
-    const info = arkitUnifiedFor(name);
-    if (!info) return false;
-    const { unified, left, right } = info;
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes) return false;
+    const info = lrPairFor(name, (n) => track.blendshapes.has(n));
+    if (!info) return false;
+    const { unified, left, right } = info;
 
     const dL = track.blendshapes.get(left) || null;
     const dR = track.blendshapes.get(right) || null;
@@ -2151,9 +2164,15 @@ class AnimationRegistry {
       if (!track.blendshapeTracks.has(nm)) track.blendshapeTracks.set(nm, { times: [], values: [] });
     };
 
+    // The combined shape takes a half's weight keys (left's if it has any), the inverse of
+    // split handing the source's keys to both halves.
+    const halfKeys = track.blendshapeTracks?.get(dL ? left : right);
+    const restoreKeys = this._keySnapshot(track, [unified, left, right]);
     const apply = () => {
+      const keys = halfKeys ? structuredClone(halfKeys) : { times: [], values: [] };
       removeLayer(left); removeLayer(right);
       addLayer(unified, combined);
+      track.blendshapeTracks.set(unified, keys);
       this.applyBlendshapes(mesh);
       this._refreshBlendPanels(mesh);
     };
@@ -2162,6 +2181,7 @@ class AnimationRegistry {
       if (prevUnified) addLayer(unified, prevUnified);
       if (prevL) addLayer(left, prevL);
       if (prevR) addLayer(right, prevR);
+      restoreKeys();
       track.editingBlendshape = wasEditing;
       this.applyBlendshapes(mesh);
       this._refreshBlendPanels(mesh);
