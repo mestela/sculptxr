@@ -687,7 +687,12 @@ class SculptGL extends Scene {
         // started. On some iPadOS versions touchstart arrives AFTER pointerdown — if we
         // unconditionally reset here, the touch fallback sees ptrHandled:false and fires
         // a second onMouseDown, producing double extrudes/operations.
-        if (this._action !== Enums.Action.SCULPT_EDIT) {
+        // "Already sculpting" is judged by whether a pointerdown JUST landed, not by _action:
+        // a suppressed pointerup leaves _action stuck at SCULPT_EDIT, and the stale
+        // ptrHandled=true from the previous stroke then blocks the fallback for this one
+        // (every second stroke lost).
+        const _justDown = (performance.now() - (this._lastPenDownMs || 0)) < 60;
+        if (!_justDown) {
           this._ptrDownHandledThisTouch = false;
           if (window.screenLog) window.screenLog(`[dbl] touchstart stylus — ptrHandled→false (not sculpting)`, '#89dceb');
         } else {
@@ -816,8 +821,13 @@ class SculptGL extends Scene {
         return;
       }
       event.preventDefault();
+      // A PEN EVENT ON THE CANVAS MEANS THE POINTER IS OVER THE CANVAS. Safari sends a compat
+      // `mouseout` when the pencil leaves hover range, which sets _focusGui (onMouseOut), and
+      // does not reliably send a pointerover when it comes back -- so _focusGui stays true and
+      // onDeviceDown drops every stroke. Clear it here.
+      if (this._focusGui && (event.type === 'pointerdown' || event.pressure > 0)) this._focusGui = false;
       if (event.type === 'pointerdown') {
-        // Debounce: reject any pen pointerdown that arrives within 300ms of the
+        // Debounce: reject any pen pointerdown that arrives within 100ms of the
         // previous accepted one. This catches:
         //   - True simultaneous duplicates (0ms apart)
         //   - Pen-tip bounce sequences (pointerdown→pointerup→pointerdown in <5ms)
@@ -827,12 +837,12 @@ class SculptGL extends Scene {
         //     We synthesise a stroke-start from the pressure crossing; the real
         //     pointerdown arriving 15–80ms later must be treated as a duplicate,
         //     otherwise it force-ends and restarts the stroke (double extrude, double
-        //     collapse, etc). 300ms matches the SculptManager single-action debounce
-        //     and is safe because intentional rapid re-presses are > 300ms apart.
+        //     collapse, etc). Every duplicate seen is <=80ms; 100ms must stay well under
+        //     the interval of genuine rapid strokes (3-5/sec) or every 2nd is dropped.
         const msSinceLastDown = performance.now() - (this._lastPenDownMs || 0);
         if (window.screenLog) window.screenLog(`[dbl] pen pointerdown ms:${Math.round(msSinceLastDown)} ptrHandled:${this._ptrDownHandledThisTouch} action:${this._action}`, '#cba6f7');
-        if (msSinceLastDown < 300) {
-          if (window.screenLog) window.screenLog(`[dbl] pen pointerdown DEBOUNCED (${Math.round(msSinceLastDown)}ms<300)`, '#f9e2af');
+        if (msSinceLastDown < 100) {
+          if (window.screenLog) window.screenLog(`[dbl] pen pointerdown DEBOUNCED (${Math.round(msSinceLastDown)}ms<100)`, '#f9e2af');
           return;
         }
         this._lastPenDownMs = performance.now();
@@ -862,6 +872,11 @@ class SculptGL extends Scene {
         this._lastPenMoveMs = performance.now();
 
         if (event.pressure === 0) {
+          // A HOVER MOVE MEANS THE NIB IS UP, so a stroke still marked active lost its
+          // pointerup (Safari drops it when the pencil is held still). While _action is stuck
+          // at SCULPT_EDIT, onDeviceMove feeds hover to sculpt.update() instead of the pick,
+          // so the brush cursor freezes in place. End the stroke to unstick it.
+          if (this._action === Enums.Action.SCULPT_EDIT && !this._vrSculpting && event.buttons === 0) this.onDeviceUp();
           const rect = this._canvas.getBoundingClientRect();
           this._penHoverMouseX = this._pixelRatio * (event.clientX - rect.left);
           this._penHoverMouseY = this._pixelRatio * (event.clientY - rect.top);
