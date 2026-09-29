@@ -1019,7 +1019,18 @@ class SculptGL extends Scene {
         const py = this._pixelRatio * (at.y - rect.top);
         const picking = this.getPicking && this.getPicking();
         let node = null;
-        if (picking && picking.intersectionMouseMeshes(this.getMeshes(), px, py, false, true)) {
+        // THE BONE TOOL'S OWN PICK FIRST. Its preselect (what a pencil hover or a mouse lights)
+        // is the nearest joint, or the root of the bone, in SCREEN pixels within a pick radius.
+        // The raycast below is a different test -- it needs the ray to pass through the joint's
+        // small cone -- so a finger that was "on" a lit joint could miss it, fall through to the
+        // stale selection, and pin the wrong joint. Ask the tool's question at the press point;
+        // the raycast stays as the fallback for what the screen pick cannot see (pins).
+        const tool = this._sculptManager?.getCurrentTool?.();
+        if (tool && tool._pickRigNodeScreen) {
+          this._mouseX = px; this._mouseY = py;
+          node = tool._pickRigNodeScreen() || null;
+        }
+        if (!node && picking && picking.intersectionMouseMeshes(this.getMeshes(), px, py, false, true)) {
           const hit = picking.getMesh();
           if (hit && (hit._isBone || hit._isPinTarget)) node = hit;
         }

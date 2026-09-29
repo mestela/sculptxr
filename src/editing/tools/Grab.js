@@ -396,7 +396,13 @@ class Grab extends SculptBase {
     const mx = main._mouseX, my = main._mouseY;
     // Grab is a SELECTION-style tool — an immediate transform with no gizmo — so it opts into
     // rig picking: a joint or a pin is exactly the sort of thing you reach out and move with it.
-    if (!picking.intersectionMouseMeshes(main.getMeshes(), mx, my, false, true)) {
+    if (this._forcePick) {
+      // The bone tool's Grab mode already decided what is under the cursor (its preselect), so
+      // take exactly that -- a joint's origin is [0,0,0] in its own space.
+      picking._mesh = this._forcePick;
+      picking.setIntersectionPoint([0, 0, 0]);
+      this._forcePick = null;
+    } else if (!picking.intersectionMouseMeshes(main.getMeshes(), mx, my, false, true)) {
       const lhx = main._penHoverMouseX;
       const lhy = main._penHoverMouseY;
       const dx = lhx !== undefined ? Math.abs(lhx - mx) : Infinity;

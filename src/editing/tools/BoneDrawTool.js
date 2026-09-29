@@ -741,7 +741,19 @@ class BoneDrawTool extends SculptBase {
 
   start() {
     if (this._main._xrSession) return false; // VR drives everything from updateXR
-    if (this._mode === 'grab') return this._grabTool()?.start(...arguments) || false;
+    if (this._mode === 'grab') {
+      const g = this._grabTool();
+      if (!g) return false;
+      if (g.start(...arguments)) return true;
+      // THE PRESELECT AND THE GRAB'S PICK ARE DIFFERENT TESTS. The highlight comes from the
+      // screen pick (a joint, or the root of the bone under the cursor), but Grab's own pick
+      // only lands on a joint's point or a pin -- bone bodies are not pickable in this mode.
+      // So a bone lit yellow could still miss on press, and the press fell through to the
+      // camera (desktop) or did nothing (iPad). Take what is lit.
+      const h = this._hilite;
+      if (h && this._main.getMeshes().includes(h)) { g._forcePick = h; return g.start(...arguments) || false; }
+      return false;
+    }
     if (this._mode === 'draw') return this._startDraw();
     return this._startScreenDrag();
   }
