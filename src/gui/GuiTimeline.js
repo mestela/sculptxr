@@ -12,6 +12,27 @@ import PhysicsBones from '../editing/PhysicsBones.js';
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
 const TL_ACCENT = '#3b82f6';
 
+// HOVER FEEDBACK, ONE RULE FOR EVERY CONTROL. A hovered control is lifted toward white and
+// ringed, whatever its resting fill was (surface1 -> the same surface1 gave no feedback at all,
+// and an active accent button had none either). In VR this is how you confirm what the laser is
+// on before you pull the trigger, so it must read on every button, disabled ones excepted.
+function hoverLift(hex, amount = 0.22) {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const mix = (c) => Math.round(c + (255 - c) * amount);
+  return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
+}
+function hoverRing(ctx, x, y, w, h, r = 3) {
+  ctx.save();
+  ctx.strokeStyle = Theme.text;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x + 0.75, y + 0.75, w - 1.5, h - 1.5, r);
+  ctx.stroke();
+  ctx.restore();
+}
+
 
 // Deep trace for the graph editor, off by default. `window._tlTrace = true` in the console and
 // every key hit-test reports what it compared against what, which is the only way to tell
@@ -481,7 +502,7 @@ export default class GuiTimeline {
       const hov = this._lastMouseX >= x && this._lastMouseX <= x + r.cellW
         && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
       if (speed === current || hov) {
-        ctx.fillStyle = speed === current ? TL_ACCENT : Theme.surface1;
+        ctx.fillStyle = speed === current ? (hov ? hoverLift(TL_ACCENT) : TL_ACCENT) : Theme.surface2;
         ctx.fillRect(x + 1, y + 1, r.cellW - 2, r.cellH - 2);
       }
       ctx.fillStyle = Theme.text;
@@ -707,7 +728,7 @@ export default class GuiTimeline {
       const y = r.y + i * r.cellH;
       const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
         && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
-      if (hov && !b.disabled) { ctx.fillStyle = Theme.surface1; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2); }
+      if (hov && !b.disabled) { ctx.fillStyle = Theme.surface2; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2); }
       ctx.fillStyle = b.disabled ? Theme.overlay0 : Theme.text;
       ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(this._overflowLabel(b), r.x + 10, y + r.cellH / 2, r.w - 16);
@@ -727,7 +748,7 @@ export default class GuiTimeline {
       const y = r.y + i * r.cellH;
       const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
         && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
-      if (hov) { ctx.fillStyle = Theme.surface1; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2); }
+      if (hov) { ctx.fillStyle = Theme.surface2; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2); }
       ctx.fillStyle = cmd.on ? Theme.text : Theme.overlay0;
       ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(cmd.label, r.x + 10, y + r.cellH / 2);
@@ -971,8 +992,9 @@ export default class GuiTimeline {
     const hov = (b) => this._lastMouseX >= b.x && this._lastMouseX <= b.x + b.w
       && this._lastMouseY >= b.y && this._lastMouseY <= b.y + b.h;
     const button = (b, label, on) => {
-      ctx.fillStyle = on ? TL_ACCENT : (hov(b) ? Theme.surface1 : Theme.surface0);
+      ctx.fillStyle = hov(b) ? hoverLift(on ? TL_ACCENT : Theme.surface0, 0.3) : (on ? TL_ACCENT : Theme.surface0);
       ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 3); ctx.fill();
+      if (hov(b)) hoverRing(ctx, b.x, b.y, b.w, b.h);
       ctx.fillStyle = Theme.text; ctx.font = '12px sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2);
@@ -1044,7 +1066,7 @@ export default class GuiTimeline {
       const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
         && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
       if (hov && cmd.enabled !== false) {
-        ctx.fillStyle = Theme.surface1; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2);
+        ctx.fillStyle = Theme.surface2; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2);
       }
       ctx.fillStyle = cmd.enabled === false ? Theme.overlay0 : Theme.text;
       ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -2114,10 +2136,11 @@ export default class GuiTimeline {
         const on = r.norm ? this._xfNorm() : xfIsVisible(r.g);
         const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
                  && this._lastMouseY >= r.y && this._lastMouseY <= r.y + r.h;
-        ctx.fillStyle = on ? TL_ACCENT : (hov ? Theme.surface1 : Theme.surface0);
+        ctx.fillStyle = hov ? hoverLift(on ? TL_ACCENT : Theme.surface0, 0.3) : (on ? TL_ACCENT : Theme.surface0);
         ctx.beginPath();
         ctx.roundRect(r.x, r.y, r.w, r.h, 3);
         ctx.fill();
+        if (hov) hoverRing(ctx, r.x, r.y, r.w, r.h);
         ctx.fillStyle = on ? '#ffffff' : Theme.text;
         ctx.font = 'bold 10px sans-serif';
         ctx.textAlign = 'center';
@@ -4027,11 +4050,12 @@ export default class GuiTimeline {
     // The two global fields. Drawn like the toolbar's own fields so they read as typeable.
     for (const [kind, r, val] of [['field-start', g.fs, g.proj.start],
                                   ['field-end',   g.fe, g.proj.end]]) {
-      ctx.fillStyle = Theme.crust;
+      ctx.fillStyle = hot === kind ? Theme.surface0 : Theme.crust;
       ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 3); ctx.fill();
-      ctx.strokeStyle = hot === kind ? TL_ACCENT : Theme.surface1;
+      ctx.strokeStyle = Theme.surface1;
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.roundRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1, 3); ctx.stroke();
+      if (hot === kind) hoverRing(ctx, r.x, r.y, r.w, r.h);
       ctx.fillStyle = Theme.subtext;
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'center';
@@ -4055,7 +4079,7 @@ export default class GuiTimeline {
                                             ['loop-end',   g.hB, g.loop.end,   'right']]) {
       const hx = Math.max(g.x0, Math.min(g.x1, span[0] + RANGE_HANDLE_OUT));
       const hw2 = Math.max(4, span[1] - span[0] - RANGE_HANDLE_OUT);
-      ctx.fillStyle = hot === kind ? '#88bbff' : TL_ACCENT;
+      ctx.fillStyle = hot === kind ? '#a9cbff' : TL_ACCENT;
       ctx.beginPath();
       ctx.roundRect(align === 'left' ? hx : hx - 0, g.y + 2, hw2, g.h - 4, 2);
       ctx.fill();
@@ -7020,9 +7044,9 @@ export default class GuiTimeline {
       const fill = btn.disabled  ? Theme.surface0
                  : btn.id === 'record' && btn.active ? '#cc2244'  // record armed → red
                  : btn.active   ? TL_ACCENT
-                 : hov          ? Theme.surface1
                                 : Theme.surface1;
-      _drawBtn(btn.x, btn.y, btn.w, btn.h, fill);
+      _drawBtn(btn.x, btn.y, btn.w, btn.h, hov && !btn.disabled ? hoverLift(fill) : fill);
+      if (hov && !btn.disabled) hoverRing(ctx, btn.x, btn.y, btn.w, btn.h);
       ctx.textAlign = 'center';
       // cy: integer pixel center for geometry and FA glyphs (textBaseline:'middle', even px = integer midpoint).
       // ty: alphabetic baseline snapped to whole pixel for plain-text labels (avoids subpixel blur on 1x displays).
@@ -7168,7 +7192,7 @@ export default class GuiTimeline {
         const topH = Math.round(btn.h * 0.60);
         const cx2 = Math.round(btn.x + btn.w / 2);
         // Top zone (keying)
-        ctx.fillStyle = btn.active ? TL_ACCENT : (hov ? Theme.surface0 : Theme.surface1);
+        ctx.fillStyle = hov ? hoverLift(btn.active ? TL_ACCENT : Theme.surface1) : (btn.active ? TL_ACCENT : Theme.surface1);
         ctx.beginPath();
         ctx.roundRect(btn.x, btn.y, btn.w, topH, [3, 3, 0, 0]);
         ctx.fill();
@@ -7183,6 +7207,7 @@ export default class GuiTimeline {
         ctx.textBaseline = 'middle';
         ctx.font = 'bold 10px sans-serif';
         ctx.fillText(btn.label, cx2, Math.round(btn.y + topH / 2));
+        if (hov) hoverRing(ctx, btn.x, btn.y, btn.w, btn.h);
         return;
       }
       // Display toggles (XF/SH/BS/SR) carry a `shown` flag → three visual states:
@@ -7192,12 +7217,12 @@ export default class GuiTimeline {
       const fill = btn.disabled ? Theme.surface0
                  : btn.active   ? TL_ACCENT
                  : dimHidden    ? Theme.surface0
-                 : hov          ? Theme.surface1
                                 : Theme.surface1;
-      ctx.fillStyle = fill;
+      ctx.fillStyle = hov && !btn.disabled ? hoverLift(fill) : fill;
       ctx.beginPath();
       ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 3);
       ctx.fill();
+      if (hov && !btn.disabled) hoverRing(ctx, btn.x, btn.y, btn.w, btn.h);
       const cx = Math.round(btn.x + btn.w / 2);
       const cy = Math.round(btn.y + btn.h / 2);
       if (btn.icon) {
