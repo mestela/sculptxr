@@ -12882,11 +12882,12 @@ class Scene {
               // THE TOOL DOING THE WORK, not the one that will be current again a frame from now.
               // See _smoothModeTool: while smooth mode is held, Smooth is what the
               // stick should be tuning.
-              const smoothTool = this._smoothMode?.tool || null;
-              const tools = smoothTool || this._sculptManager.getCurrentTool();
+              // The tool the wrist panel is showing: Smooth while the off-hand trigger is held.
+              const tools = this.effectiveTool();
               const maxRadius = 250.0;
-              if (valY < -T_PRESS) change = maxRadius * STICK_STEP;  // UP -> bigger
-              if (valY > T_PRESS) change = -maxRadius * STICK_STEP;  // DOWN -> smaller
+              const RADIUS_STEP = STICK_STEP * 0.625; // radius ran too fast at the shared step (0.5 was too slow)
+              if (valY < -T_PRESS) change = maxRadius * RADIUS_STEP;  // UP -> bigger
+              if (valY > T_PRESS) change = -maxRadius * RADIUS_STEP;  // DOWN -> smaller
 
               if (change !== 0 && tools) {
                 const oldVal = tools._radius;
@@ -12894,6 +12895,7 @@ class Scene {
 
 
                 tools.setRadius(newVal);
+                try { this._miniPanel?.syncFromState?.(); } catch (_) {}
                 // AND REMEMBER IT. The panel sliders have always saved; this — the thumbstick,
                 // which is how the radius actually gets set in VR — did not, so every session
                 // started back at the constructor's default no matter what you had dialled in
@@ -12902,7 +12904,7 @@ class Scene {
                 // Under the same key the panels write -- and keyed to the tool that was actually
                 // changed, so a radius dialled in while smoothing is saved as Smooth's.
                 getOptionsURL.saveOption(
-                  `tool_${smoothTool ? this._smoothToolIndex() : this._sculptManager.getToolIndex()}_radius`,
+                  `tool_${this.effectiveToolIndex()}_radius`,
                   newVal, 500);
 
                 // Update GuiXR and GuiMini Sliders if visible
@@ -12927,7 +12929,7 @@ class Scene {
               state.lastIntensityTime = now;
 
               let intChange = 0.0;
-              const tools = this._smoothMode?.tool || this._sculptManager.getCurrentTool();
+              const tools = this.effectiveTool();
 
               if (valX < -T_PRESS) intChange = -STICK_STEP; // Left -> weaker
               if (valX > T_PRESS) intChange = STICK_STEP;   // Right -> stronger
@@ -12937,6 +12939,7 @@ class Scene {
                 const newVal = Math.max(0.0, Math.min(1.0, oldVal + intChange));
 
                 tools.setIntensity(newVal);
+                try { this._miniPanel?.syncFromState?.(); } catch (_) {}
 
                 // Update UI Widgets if active
 
@@ -17618,7 +17621,11 @@ class Scene {
                 }
 
                 // 2. Position Volume Indicator (Fixed at controller tip)
-                if (activeVol && (uiHitDist === undefined || uiHitDist === Infinity)) {
+                // KEPT VISIBLE WHILE A PANEL SLIDER IS BEING DRAGGED: the slider is usually radius or
+                // intensity, and the point is to see the result in context without aiming off the menu.
+                const _sliderDrag = !!this._lastHtmlPanelHit?._sliderDragTarget;
+                if (activeVol && (uiHitDist === undefined || uiHitDist === Infinity || _sliderDrag)) {
+                    activeVol.visible = !isPicking;
                     activeVol.position.set(tipPhys[0], tipPhys[1], tipPhys[2]);
                     
                     if (isCubeShape && tool._alignToController === false) {
