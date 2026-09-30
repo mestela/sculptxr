@@ -229,6 +229,10 @@ class Selection {
       const dotMat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true });
       this._threeDot = new THREE.Mesh(dotGeo, dotMat);
       this._threeDot.renderOrder = 10000;
+      // Mirrored-stroke centre: a dot only (no ring/sphere), as in SculptGL. Marks that
+      // symmetry is on and where the plane is without drawing it.
+      this._threeSymDot = new THREE.Mesh(dotGeo, dotMat);
+      this._threeSymDot.renderOrder = 10000;
     }
 
     // Voxel brush is a 3D volume, so it gets a translucent sphere (radius 1, scaled
@@ -281,6 +285,7 @@ class Selection {
       if (this._depthRail) this._depthRail.style.display = 'none';
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot) this._threeDot.visible = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
       return;
     }
 
@@ -318,6 +323,7 @@ class Selection {
 
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
       return;
     }
     if (this._threeVoxelSphere) this._threeVoxelSphere.visible = false;
@@ -334,6 +340,7 @@ class Selection {
         threeMesh.add(this._threeCircle);
         threeMesh.add(this._threeDot);
       }
+      if (this._threeSymDot.parent !== threeMesh) threeMesh.add(this._threeSymDot);
 
       var worldRadius = Math.sqrt(picking.computeWorldRadius2(true)); // Ignore pressure for indicator
       const m = threeMesh.matrixWorld.elements;
@@ -364,6 +371,14 @@ class Selection {
 
       this._threeDot.visible = !inEditMode; // hide centre dot during radius drag
 
+      const pickingSym = main.getPickingSymmetry();
+      const symOn = !!(sm && sm.getSymmetry() && pickingSym && pickingSym.getMesh() === mesh);
+      if (symOn) {
+        this._threeSymDot.position.fromArray(pickingSym.getIntersectionPoint());
+        this._threeSymDot.scale.set(dotLocalRadius, dotLocalRadius, dotLocalRadius);
+      }
+      this._threeSymDot.visible = symOn && !inEditMode;
+
       // Cache position/radius so the circle can stay visible when cursor leaves the mesh
       this._lastLocalRadius  = localRadius;
       this._lastScreenRadius = sm ? sm.getCurrentTool().getScreenRadius() : localRadius;
@@ -382,6 +397,7 @@ class Selection {
       }
       this._threeCircle.visible = true;
       this._threeDot.visible = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
 
     } else if (this._showPathCircle(main, sm)) {
       // handled there
@@ -389,6 +405,7 @@ class Selection {
     } else {
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
     }
     // _isEditMode is managed by GuiSculpting — do NOT reset it here
   }
@@ -457,6 +474,7 @@ class Selection {
       ? camera.getThreeCamera().quaternion : this._threeCircle.quaternion);
     this._threeCircle.visible = true;
     this._threeDot.visible = false;
+    if (this._threeSymDot) this._threeSymDot.visible = false;
     return true;
   }
 

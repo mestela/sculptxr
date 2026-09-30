@@ -9585,12 +9585,23 @@ class Scene {
             ringLine.add(lineBottomRight);
             group.add(ringLine);
 
-            const dotGeo = new THREE.BufferGeometry();
-            dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-            const dotMat = new THREE.PointsMaterial({ color: 0x4488ff, size: 2, sizeAttenuation: false, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
-            const centerDot = new THREE.Points(dotGeo, dotMat);
+            // Centre dots are SPHERES, not THREE.Points: WebGPU draws every point at 1px whatever
+            // `size` says. Metres in scene space, so they live on the group, NOT under ringLine
+            // (which is scaled by the brush radius).
+            const DOT_R = 0.0015;
+            const dotGeo = new THREE.SphereGeometry(DOT_R, 12, 8);
+            const centerDot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 }));
             centerDot.name = "cursor_dot";
-            ringLine.add(centerDot);
+            centerDot.visible = false;
+            group.add(centerDot);
+
+            // Mirrored-stroke centre: a dot only, like SculptGL. Not a child of ringLine (which
+            // is scaled by the brush radius and hidden in air/voxel/grab).
+            const symDotMat = new THREE.MeshBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
+            const symDot = new THREE.Mesh(dotGeo, symDotMat);
+            symDot.name = "sym_dot";
+            symDot.visible = false;
+            group.add(symDot);
 
             group.visible = false;
             // A MATERIAL THAT REFUSES TO TEST DEPTH MUST NOT WRITE IT.
@@ -17409,6 +17420,7 @@ class Scene {
             let pickedMesh = null;
             let pNormal = null;
             let wInter = null;
+            let wSym = null; // mirrored stroke centre, scene space (dot only, no ring)
             let sceneNormal = null;
 
             if (uiHitDist === undefined || uiHitDist === Infinity) {
@@ -17486,6 +17498,16 @@ class Scene {
                         vec3.set(wInter, _eh.x, _eh.y, _eh.z);
                     } else {
                         vec3.scaleAndAdd(wInter, origin, dir, hitDist); // fallback (no worldGroup)
+                    }
+
+                    // Mirror of the contact, through the same helper the stroke uses (rest space
+                    // on a posed character), lifted to scene space like wInter.
+                    if (_wg && (this._main || this).getSculptManager?.().getSymmetry?.()) {
+                        const _sp = vec3.clone(localHit);
+                        this._picking.mirrorLocalPoint(pickedMesh, _sp, pickedMesh.getSymmetryOrigin(), pickedMesh.getSymmetryNormal());
+                        vec3.transformMat4(_sp, _sp, pickedMesh.getModelSpaceMatrix());
+                        const _sh = new THREE.Vector3(_sp[0], _sp[1], _sp[2]).applyMatrix4(_wg.matrixWorld);
+                        wSym = vec3.fromValues(_sh.x, _sh.y, _sh.z);
                     }
 
                     // // if (doLog) console.log(`  hitDist: ${hitDist.toFixed(3)} wInt: ${wInter.map(x=>x.toFixed(2))}`);
@@ -17573,6 +17595,14 @@ class Scene {
                 // surface.
                 const isGrabTool = tool && tool.constructor && tool.constructor.name === 'Grab';
 
+                const symDot = cursorGroup.getObjectByName("sym_dot");
+                const centerDot = cursorGroup.getObjectByName("cursor_dot");
+                if (symDot) {
+                    const _showSym = !!wSym && !isVoxelTool && !isGrabTool && !isTransformTool
+                      && (uiHitDist === undefined || uiHitDist === Infinity);
+                    symDot.visible = _showSym;
+                    if (_showSym) symDot.position.set(wSym[0], wSym[1], wSym[2]);
+                }
                 if (volumeSphere) volumeSphere.visible = !isCubeShape && !isPicking;
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
                 const activeVol = isCubeShape ? volumeCube : volumeSphere;
@@ -17615,9 +17645,11 @@ class Scene {
                         ringLine.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(sceneNormal[0], sceneNormal[1], sceneNormal[2]));
                         ringLine.scale.set(physicalRadius, physicalRadius, physicalRadius);
                     }
+                    if (centerDot) { centerDot.visible = true; centerDot.position.set(wInter[0], wInter[1], wInter[2]); }
                 } else {
                     // // if (doLog) console.log(`  Mode: AIR/UI, hiding surface ring`);
                     if (ringLine) ringLine.visible = false;
+                    if (centerDot) centerDot.visible = false;
                 }
 
                 // 2. Position Volume Indicator (Fixed at controller tip)
