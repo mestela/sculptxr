@@ -13235,8 +13235,16 @@ class Scene {
           const _ok = _dk === 'L' ? 'R' : 'L';
           const _dg = this._pinchGap?.[_dk], _og = this._pinchGap?.[_ok];
           const _margin = window._sysPinchMargin ?? 0.010;
+          const P_ON_SYS = this.getPinchOn();
           const _otherOwnsIt = Number.isFinite(_dg) && Number.isFinite(_og) && _og < _dg - _margin;
-          if (!_otherOwnsIt) isPinching = true;
+          // ...AND ONLY WHILE OUR OWN GAP IS NEAR THE "Pinch distance" SETTING. visionOS decides
+          // select from a gaze/intent heuristic that fires before the fingers meet and holds
+          // after they part, and this OR bypassed the slider entirely: matt, "detects a pinch too
+          // early, releases too late". The slack keeps the catch-what-we-missed job (a platform
+          // pinch a few mm past our threshold) without letting it override the setting.
+          const _slack = window._sysPinchSlack ?? 0.008;
+          const _tooOpen = Number.isFinite(_dg) && _dg > P_ON_SYS + _slack;
+          if (!_otherOwnsIt && !_tooOpen) isPinching = true;
         }
 
         mockGamepad = {
