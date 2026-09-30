@@ -111,6 +111,9 @@ export const SCULPT_TOOLS = [
   entry(Enums.Tools.MASKING),
 ];
 
+// Tools that move a whole object/rig, not vertices. Shown apart from the sculpt brushes.
+export const XFORM_TOOL_IDS = [Enums.Tools.SELECT, Enums.Tools.GRAB, Enums.Tools.BONE_DRAW, Enums.Tools.TRANSFORM_VR];
+
 export const MESH_TOOLS = [
   entry(Enums.Tools.CUT_TOOL),
   entry(Enums.Tools.SEL_EDGE),

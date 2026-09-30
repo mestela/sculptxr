@@ -39,7 +39,7 @@ import PanelTrace from '../../misc/PanelTrace.js';
 import { toolTextTint } from './toolTints.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
-import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
+import { SCULPT_TOOLS, MESH_TOOLS, XFORM_TOOL_IDS, toolLabel } from './toolLists.js';
 import {
   buildBoneSectionHTML,
   buildBonePoseHTML,
@@ -3278,9 +3278,13 @@ function buildSculptingHTML(main, part) {
   // Mesh/sculpt tools don't apply to a voxel object — dim the inactive ones when the Voxel
   // tool is active so the live set (the Voxel-mode grid below) is obvious.
   const dimForVoxel = (cur === Enums.Tools.VOXEL) ? ' mm-dim' : '';
-  const sculptBtns = SCULPT_TOOLS.map(t =>
-    `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
-  ).join('');
+  // Grab/Select/Bones/Transform were four names for "move something" scattered through Sculpt;
+  // they get their own section. SCULPT_TOOLS itself is untouched (the VR wrist picker reads it).
+  const XFORM_IDS = XFORM_TOOL_IDS;
+  const toolBtn = t =>
+    `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`;
+  const sculptBtns = SCULPT_TOOLS.filter(t => !XFORM_IDS.includes(t.id)).map(toolBtn).join('');
+  const xformBtns = XFORM_IDS.map(id => toolBtn({ id, label: toolLabel(id) })).join('');
   const meshBtns = MESH_TOOLS.map(t =>
     `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
@@ -3292,12 +3296,16 @@ function buildSculptingHTML(main, part) {
     if (uiReorg()) {
       return collapsibleHTML('tools-sculpt', 'Sculpt',
                `<div class="mm-choice-grid cols-3">${sculptBtns}</div>`)
+           + collapsibleHTML('tools-xform', 'Transform & Anim',
+               `<div class="mm-choice-grid cols-3">${xformBtns}</div>`)
            + collapsibleHTML('tools-mesh', 'Mesh Edit',
                `<div class="mm-choice-grid cols-3">${meshBtns}</div>`, false);
     }
     return `
     <div class="mm-section-title">Sculpt</div>
     <div class="mm-choice-grid cols-3">${sculptBtns}</div>
+    <div class="mm-section-title">Transform &amp; Anim</div>
+    <div class="mm-choice-grid cols-3">${xformBtns}</div>
     <div class="mm-section-title">Mesh Edit</div>
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
   `;
