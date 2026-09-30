@@ -637,6 +637,29 @@ class SculptBase {
       return;
     }
 
+    // DAB RATE CAP. The distance gate above only stops dabbing at rest; while moving, every frame
+    // clears it, so dabs/second == framerate and a 90Hz device builds a stroke 1.5x faster than a
+    // 60Hz one (matt: AVP brush "massive even at light intensity", GalaxyXR/desktop measured).
+    // Cap the dab rate in TIME so it stops depending on the display. Accumulator, not a plain
+    // last-dab timestamp, so a 60Hz frame that lands 1ms early is not dropped (that would halve
+    // the rate). window._vrDabHz tunes it, 0 = uncapped (old behaviour) for A/B.
+    var dabHz = (typeof window._vrDabHz === 'number') ? window._vrDabHz : 60;
+    var now = performance.now();
+    if (dabHz > 0) {
+      var iv = 1000 / dabHz;
+      var due = this._nextDabT || 0;
+      if (!this._forceNextStroke && now + 2 < due) return;
+      this._nextDabT = this._forceNextStroke ? now + iv : Math.max(due + iv, now - 0.5 * iv);
+    }
+    if (window._vrDabTrace) {
+      if (now - (this._dabTraceT || 0) > 1000) {
+        if (this._dabTraceT) console.log('[dab] ' + this._dabCount + ' dabs/s (cap ' + dabHz + ')');
+        this._dabTraceT = now;
+        this._dabCount = 0;
+      }
+      this._dabCount++;
+    }
+
     this._forceNextStroke = false;
 
 
