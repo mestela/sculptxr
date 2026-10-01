@@ -47,6 +47,7 @@ const Skeleton = {
   // Capsule solidity is a slider in the Rig Display block, so the panel asks for it while
   // building — a stub without it throws before a single check runs.
   capsuleOpacity: () => (_capOp == null ? 0.16 : _capOp),
+  shaftOpacity: () => (_capOp == null ? 0.16 : _capOp), setShaftOpacity: (m, v) => v,
   setCapsuleOpacity: (main, v) => { _capOp = Math.max(0.05, Math.min(1, v)); return _capOp; },
   // Capsule tessellation is a setting now — the panel reads it to draw the Capsule Detail slider.
   capsuleSegments: () => (_capSeg == null ? 56 : _capSeg),
@@ -55,6 +56,7 @@ const Skeleton = {
   isJoint: (m) => !!(m && m._isBone),
   // The squircle exponent the Roundness slider edits — 2 is round. See Skeleton.jointRound.
   jointRound: (j) => ((j && typeof j._jointRound === 'number' && j._jointRound > 2) ? Math.min(j._jointRound, 12) : 2),
+  jointShapesSkin: (j) => !(j && j._noSkinShape),
   setJointRound: (j, p) => { if (j) j._jointRound = p; },
   // Whether a rig edit mirrors: the panel asks before offering a physics twin, so a stub without
   // it throws before a single check runs. Reads the mock's own symmetry flag, which is what makes
@@ -1404,7 +1406,10 @@ check('no panel still carries its own solver toggle',
 // good to have a toggle or a slider to control opacity... it would be great to have it be fully
 // opaque and animate with the skin turned off."
 check('the rig display block has a capsule solidity slider',
-  /id="bone-cap-op"/.test(SRC) && /Capsule Opacity/.test(SRC));
+  /id="bone-cap-op"/.test(SRC) && /Sphere Opacity/.test(SRC));
+check('...and a separate one for the connecting cylinders',
+  /id="bone-shaft-op"/.test(SRC) && /Cylinder Opacity/.test(SRC)
+    && /Skeleton\.setShaftOpacity\(main, parseInt\(sIn\.value, 10\) \/ 100\)/.test(SRC));
 check('...live on drag, and persisted by Skeleton',
   /Skeleton\.setCapsuleOpacity\(main, parseInt\(input\.value, 10\) \/ 100\)/.test(SRC));
 // A transparent capsule must not write depth or it punches holes in what is behind it; an opaque
@@ -1503,8 +1508,12 @@ check('a fully solid capsule skips the blend but stays in the transparent pass',
     && /m\.blending = \(!ghost && m\.opacity >= 0\.999\) \? THREE\.NoBlending : THREE\.NormalBlending;/.test(SKEL_SRC),
   'the opaque pass runs before the ghost, and that is what re-broke the sorting');
 check('every solid-pass capsule writes depth, translucent or not',
-  /m\.depthWrite = !ghost;/.test(SKEL_SRC),
+  /m\.depthWrite = !ghost && mine >= other;/.test(SKEL_SRC),
   'no draw order can sort instances; only the depth buffer can');
+// ...unless it is the FAINTER of spheres and cylinders, which must never occlude the other: a 5%
+// cylinder writing depth punched holes in the spheres behind it. Equal (the default) = both write.
+check('...except the fainter of spheres and cylinders, which never occludes the other',
+  /const mine = key\.startsWith\('capShaft'\) \? shaftBase : endBase;/.test(SKEL_SRC));
 // The ghost is the pass drawn THROUGH the mesh, so with a sculpt visible it is most of the
 // capsule surface anyone looks at. Leaving it flat was most of why the toggle looked inert.
 check('...and the ghost pass is shaded too, being the half you actually see',

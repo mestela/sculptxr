@@ -208,15 +208,34 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, s
   // result into the parent's frame afterwards, rather than the other way round.
   if (shape && shape.hA && shape.hB) {
     const hA = shape.hA, hB = shape.hB;
+    // A TURNED JOINT'S EXTENTS RUN ALONG ITS OWN AXES, so the offset is taken into that frame,
+    // scaled there and brought back — blended between the two ends' frames by t, exactly as the
+    // skin's relax and the bind measure it. Null for an unturned pair: the old arithmetic.
+    const qA = shape.qA || null, qB = shape.qB || null;
+    const rot = !!(qA || qB);
+    const _qa = rot ? (qA ? qA.clone() : new THREE.Quaternion()) : null;
+    const _qb = rot ? (qB ? qB.clone() : new THREE.Quaternion()) : null;
+    if (rot && _qa.dot(_qb) < 0) _qb.set(-_qb.x, -_qb.y, -_qb.z, -_qb.w);
+    const _q = new THREE.Quaternion();
     const _c = new THREE.Vector3(), _o = new THREE.Vector3();
     for (let i = 0; i < verts.length; i += 3) {
       _o.set(verts[i] - A.x, verts[i + 1] - A.y, verts[i + 2] - A.z);
       const t = Math.max(0, Math.min(1, _o.dot(axis) / len));
       _c.copy(A).addScaledVector(axis, t * len);
       _o.set(verts[i] - _c.x, verts[i + 1] - _c.y, verts[i + 2] - _c.z);
-      verts[i]     = _c.x + _o.x * (hA[0] + (hB[0] - hA[0]) * t);
-      verts[i + 1] = _c.y + _o.y * (hA[1] + (hB[1] - hA[1]) * t);
-      verts[i + 2] = _c.z + _o.z * (hA[2] + (hB[2] - hA[2]) * t);
+      if (rot) {
+        _q.set(_qa.x + (_qb.x - _qa.x) * t, _qa.y + (_qb.y - _qa.y) * t,
+          _qa.z + (_qb.z - _qa.z) * t, _qa.w + (_qb.w - _qa.w) * t).normalize();
+        _o.applyQuaternion(_q.invert());
+        _q.invert();
+      }
+      _o.set(_o.x * (hA[0] + (hB[0] - hA[0]) * t),
+        _o.y * (hA[1] + (hB[1] - hA[1]) * t),
+        _o.z * (hA[2] + (hB[2] - hA[2]) * t));
+      if (rot) _o.applyQuaternion(_q);
+      verts[i] = _c.x + _o.x;
+      verts[i + 1] = _c.y + _o.y;
+      verts[i + 2] = _c.z + _o.z;
     }
   }
   return { verts: new Float32Array(verts), faces: new Uint32Array(faces) };
@@ -558,7 +577,9 @@ WeightCage.bake = function (main) {
     // is no way to carry a non-uniform scale through a rotation. So the capsule is shaped
     // where the numbers mean something and the finished vertices are mapped afterwards.
     const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 1,
-                                RADIAL, RINGS, LENGTH_SEGS, { hA: hA, hB: hB });
+                                RADIAL, RINGS, LENGTH_SEGS, { hA: hA, hB: hB,
+                                  qA: Skeleton.jointRotIsSet(p) ? Skeleton.jointQuat(p) : null,
+                                  qB: Skeleton.jointRotIsSet(j) ? Skeleton.jointQuat(j) : null });
     if (!geo) continue;
     // Parented to the parent joint, so the cage's own transform starts as identity and stays
     // legible when it is moved by hand later.

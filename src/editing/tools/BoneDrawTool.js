@@ -112,6 +112,9 @@ const BONE_PICK_SLACK = 1.5;
 const _vGrab = new THREE.Vector3();
 const _halfDrag = [0, 0, 0];
 const _jpRad = new THREE.Vector3();
+const _axDrag = new THREE.Vector3(), _offDrag = new THREE.Vector3();
+const _rv0 = new THREE.Vector3(), _rv1 = new THREE.Vector3(), _rq = new THREE.Quaternion();
+const _ringP = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
@@ -626,8 +629,41 @@ class BoneDrawTool extends SculptBase {
       const d = Math.hypot(_s0.x - mx, _s0.y - my);
       if (d < bestD) { bestD = d; best = i; }
     }
-    return best < 0 || best === null ? null
-      : Object.assign({ kind: 'face', index: best }, Skeleton.scaleHandleAxis(best));
+    if (best !== null) return Object.assign({ kind: 'face', index: best }, Skeleton.scaleHandleAxis(best));
+    // THE RINGS, sampled round their circumference and compared in pixels like the dots — what is
+    // drawn where it is drawn. Only when no dot is under the cursor: a dot is the smaller target.
+    let ring = -1;
+    bestD = this._pickPx();
+    for (let k = 0; k < 3; k++) {
+      if (!h.ringOn || !h.ringOn[k]) continue;
+      const a = h.ringAxis[k];
+      _wA.set(Math.abs(a.x) < 0.9 ? 1 : 0, Math.abs(a.x) < 0.9 ? 0 : 1, 0).cross(a).normalize();
+      _wB.crossVectors(a, _wA);
+      for (let n = 0; n < 48; n++) {
+        const t = (n / 48) * Math.PI * 2;
+        _ringP.copy(h.centrePos).addScaledVector(_wA, Math.cos(t) * h.ringR)
+          .addScaledVector(_wB, Math.sin(t) * h.ringR);
+        if (!this._toScreen(_ringP, _s0)) continue;
+        const d = Math.hypot(_s0.x - mx, _s0.y - my);
+        if (d < bestD) { bestD = d; ring = k; }
+      }
+    }
+    return ring < 0 ? null : Skeleton.ringHandle(ring);
+  }
+
+  // Where the cursor meets a ring's own plane, for a rotate drag. A ring seen nearly edge-on has no
+  // useful intersection, so that case falls back to the camera plane through the joint; the drag
+  // then projects onto the ring's plane itself (see _scaleTo), which still turns the right way.
+  _ringPoint(out) {
+    const sc = this._scale;
+    const h = this._main._jointHandles;
+    if (!sc || !h || !this._screenRay(_rayO, _rayD)) return false;
+    const a = sc.ringAxis;
+    const denom = a.dot(_rayD);
+    if (Math.abs(denom) < 0.2) return this._planePoint(h.centrePos, out);
+    const t = a.dot(_wA.copy(sc.centre).sub(_rayO)) / denom;
+    out.copy(_rayO).addScaledVector(_rayD, t);
+    return true;
   }
 
   _pickJointScreen() {
@@ -1151,7 +1187,8 @@ class BoneDrawTool extends SculptBase {
     }
 
     if (d.kind === 'joint') {
-      if (this._planePoint(d.anchor, _hit)) this._scaleTo(_hit);
+      const ringDrag = this._scale && this._scale.grip.kind === 'ring';
+      if (ringDrag ? this._ringPoint(_hit) : this._planePoint(d.anchor, _hit)) this._scaleTo(_hit);
       return;
     }
 
@@ -1917,10 +1954,20 @@ class BoneDrawTool extends SculptBase {
     const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
       ? joint._boneMirror : null;
     const snap = (j) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
-      (Skeleton.jointOffset(j) || [0, 0, 0]).slice()];
+      (Skeleton.jointOffset(j) || [0, 0, 0]).slice(), Skeleton.jointRot(j).slice()];
     const before = [snap(joint)];
     if (twin) before.push(snap(twin));
-    this._scale = { joint: joint, twin: twin, grip: grip, before: before,
+    // A RING TURNS THE SHAPE about that ring's axis as it was at the grab, by the angle the hand
+    // sweeps round the joint's centre. Everything is fixed at the grab — the axis, the centre, the
+    // rotation it started from — so a drag is one rotation, not an accumulation of frame deltas.
+    const h = main._jointHandles;
+    const ring = grip.kind === 'ring' && h ? {
+      ringAxis: h.ringAxis[grip.axis].clone(),
+      centre: h.centrePos.clone(),
+      rot0: Skeleton.jointQuat(joint),
+      from: null,
+    } : null;
+    this._scale = { joint: joint, twin: twin, grip: grip, before: before, ...ring,
       // The radius the extents are a multiple OF, fixed at the grab: reading it live would make
       // a drag that changes the radius compound with itself.
       base: Math.max(Skeleton.jointRadius(joint, fallbackR || 0), 1e-6),
@@ -1942,24 +1989,39 @@ class BoneDrawTool extends SculptBase {
   _scaleTo(pos) {
     const sc = this._scale;
     if (!sc) return;
+    if (sc.grip.kind === 'ring') { this._rotateTo(pos); return; }
     const axis = sc.grip.axis;
     const sign = sc.grip.sign;
-    const jointAt = Skeleton.jointPos(sc.joint, _jpRad).getComponent(axis);
+    // THE FACE MOVES ALONG THE JOINT'S OWN AXIS, which is the world's until the shape is turned.
+    // Everything below is measured along that one direction; the offset is a model-space vector,
+    // so only its component along it changes. The unturned path writes the component directly,
+    // exactly as before.
+    const turned = Skeleton.jointRotIsSet(sc.joint);
+    _axDrag.set(0, 0, 0).setComponent(axis, 1);
+    if (turned) _axDrag.applyQuaternion(Skeleton.jointQuat(sc.joint, _rq));
+    const jointAt = Skeleton.jointPos(sc.joint, _jpRad).dot(_axDrag);
     const cur = (Skeleton.jointScale(sc.joint) || [1, 1, 1]).slice();
     const off = (Skeleton.jointOffset(sc.joint) || [0, 0, 0]).slice();
+    const offAlong = _offDrag.fromArray(off).dot(_axDrag);
+    const setAlong = (v) => {
+      if (!turned) { off[axis] = v; return; }
+      _offDrag.addScaledVector(_axDrag, v - offAlong);
+      off[0] = _offDrag.x; off[1] = _offDrag.y; off[2] = _offDrag.z;
+    };
     const clamp = (v) => Math.max(0.05, Math.min(20, v));
 
+    // A centreline joint only ever pitches, so its own x IS the world's and this rule still holds.
     if (sc.centreline && axis === 0) {
-      cur[axis] = clamp(Math.abs(pos.getComponent(axis) - jointAt) / sc.base);
-      off[axis] = 0;
+      cur[axis] = clamp(Math.abs(pos.dot(_axDrag) - jointAt) / sc.base);
+      setAlong(0);
     } else {
       // Where the face you did NOT grab is right now, in world terms — that is what stays put.
       const half = Skeleton.jointHalf(sc.joint, sc.base, _halfDrag)[axis];
-      const centre = jointAt + off[axis];
+      const centre = jointAt + offAlong;
       const pinned = centre - sign * half;
-      const moved = pos.getComponent(axis);
+      const moved = pos.dot(_axDrag);
       cur[axis] = clamp(Math.abs(moved - pinned) / (2 * sc.base));
-      off[axis] = (moved + pinned) / 2 - jointAt;
+      setAlong((moved + pinned) / 2 - jointAt);
     }
     Skeleton.setJointScale(sc.joint, cur[0], cur[1], cur[2]);
     Skeleton.setJointOffset(sc.joint, off[0], off[1], off[2]);
@@ -1967,6 +2029,33 @@ class BoneDrawTool extends SculptBase {
     if (sc.twin) {
       Skeleton.setJointScale(sc.twin, cur[0], cur[1], cur[2]);
       Skeleton.setJointOffset(sc.twin, -off[0], off[1], off[2]);
+    }
+    this._liveWeights();
+    this._refresh();
+  }
+
+  // TURN THE SHAPE by the angle the hand has swept round the ring since the grab. Both points are
+  // flattened onto the ring's plane first, so height above it does nothing and a desktop point
+  // that came off the camera plane (an edge-on ring) still reads as a turn about the right axis.
+  _rotateTo(pos) {
+    const sc = this._scale;
+    const a = sc.ringAxis;
+    _rv1.subVectors(pos, sc.centre);
+    _rv1.addScaledVector(a, -_rv1.dot(a));
+    if (_rv1.lengthSq() < 1e-16) return;
+    // The first usable point is the zero: the turn is measured from where the hand actually took
+    // hold, not from where the ring happened to be drawn.
+    if (!sc.from) { sc.from = _rv1.clone(); return; }
+    _rv0.copy(sc.from);
+    const ang = Math.atan2(a.dot(_wA.crossVectors(_rv0, _rv1)), _rv0.dot(_rv1));
+    _rq.setFromAxisAngle(a, ang).multiply(sc.rot0);
+    let r = [_rq.x, _rq.y, _rq.z, _rq.w];
+    if (sc.centreline) r = Skeleton.centrelineRot(r);
+    Skeleton.setJointRot(sc.joint, r[0], r[1], r[2], r[3]);
+    // The twin turns as its mirror image. SYM_AXIS is x throughout the rig, as for the offset.
+    if (sc.twin) {
+      const m = Skeleton.mirrorRot(Skeleton.jointRot(sc.joint));
+      Skeleton.setJointRot(sc.twin, m[0], m[1], m[2], m[3]);
     }
     this._liveWeights();
     this._refresh();
@@ -1985,18 +2074,20 @@ class BoneDrawTool extends SculptBase {
     const main = this._main;
     const before = sc.before;
     const after = before.map(([j]) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
-      (Skeleton.jointOffset(j) || [0, 0, 0]).slice()]);
+      (Skeleton.jointOffset(j) || [0, 0, 0]).slice(), Skeleton.jointRot(j).slice()]);
     const apply = (rows) => {
-      for (const [j, v, o] of rows) {
+      for (const [j, v, o, q] of rows) {
         Skeleton.setJointScale(j, v[0], v[1], v[2]);
         Skeleton.setJointOffset(j, o[0], o[1], o[2]);
+        Skeleton.setJointRot(j, q[0], q[1], q[2], q[3]);
       }
       Skinning.resolveWeightsAll(main);
       Skeleton.updateVisuals(main);
       main.render?.();
     };
     main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(before), () => apply(after), false, 'Joint Scale');
+      () => apply(before), () => apply(after), false,
+      sc.grip.kind === 'ring' ? 'Joint Rotate' : 'Joint Scale');
   }
 
   _releaseRadius() {

@@ -480,7 +480,7 @@ check('one bone per vertex, weight 1', (() => {
     /Skeleton\.jointCentre\(p, _a\);/.test(WCS) && /Skeleton\.jointCentre\(j, _b\);/.test(WCS),
     'a face drag moves a joint\'s shape off its joint; the drawn capsule already follows it');
   check('...so the capsule TAPERS between two different ends',
-    /\{ hA: hA, hB: hB \}/.test(WCS)
+    /\{ hA: hA, hB: hB,/.test(WCS)
       && /function capsuleGeometry\(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, shape\)/.test(WCS),
     'one radius for the whole bone cannot join a large joint to a small one');
   check('...and no longer reads the raw radius as the shape',
@@ -490,7 +490,8 @@ check('one bone per vertex, weight 1', (() => {
   // can only be applied in the space they were measured in -- a rotated parent's local axes are
   // not those axes, and a non-uniform scale cannot be carried through a rotation.
   check('the shaping happens in MODEL space, and the result is mapped to the parent afterwards',
-    WCS.indexOf('{ hA: hA, hB: hB }') < WCS.indexOf('_v.set(geo.verts[vi]'),
+    WCS.indexOf('{ hA: hA, hB: hB,') >= 0
+      && WCS.indexOf('{ hA: hA, hB: hB,') < WCS.indexOf('_v.set(geo.verts[vi]'),
     'shaping in the parent frame would skew every rotated bone');
 
   // Same rows and the same count as the plain capsule: the bind walks this topology and

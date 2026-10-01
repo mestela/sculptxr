@@ -596,6 +596,11 @@ function ensureTaperAttrs(mesh, cap) {
   // ellipsoid everything was before this existed.
   g.setAttribute('aPA', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
   g.setAttribute('aPB', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
+  // ...and each end's ROTATION, since a joint's shape may turn. Identity-filled, so an unwritten
+  // slot is the world-aligned shape every capsule was before rotation existed.
+  const ident = (n) => { const a = new Float32Array(n * 4); for (let i = 0; i < n; i++) a[i * 4 + 3] = 1; return a; };
+  g.setAttribute('aRA', new THREE.InstancedBufferAttribute(ident(cap), 4));
+  g.setAttribute('aRB', new THREE.InstancedBufferAttribute(ident(cap), 4));
 }
 
 // The end spheres carry ONE exponent — a cap belongs to a single joint.
@@ -820,6 +825,244 @@ function physLineVariant(main, slot, key, geoFn, ghost) {
   return slot;
 }
 
+// ── CAPSULES THAT PASS THROUGH EACH OTHER ────────────────────────────────────────────
+//
+// Two bone capsules that share no joint and still overlap are where Make Skin folds: the relax
+// pulls both limbs onto one surface and they pass through each other (the biped2 armpits, the
+// shoulders buried in a wide chest). matt: "make the capsule material show when capsules are
+// intersecting." Shown as white marks filling the overlap itself (drawOverlapMarks), not by
+// tinting the capsules — tinting the whole of both read as a strange colour, not a place. Capsules that share a joint, or that one bone joins, overlap by design, so they
+// are exempt (see the loop), and so is any bone touching a joint whose Shapes Skin is off — switching that off is how you say you
+// meant it (a jaw inside a head).
+//
+// APPROXIMATE, and on purpose: samples along each axis, measured against the other's axis, with
+// each shape's extent taken in the direction between them (per-axis, turned, p-norm — the same
+// measure the skin's relax uses). A display cue, not a proof; a pair that only grazes (under 2%
+// of the combined radius) is let off, so touching capsules do not flicker red.
+//
+// Cached against a hash of everything it reads, so a still rig costs one hash per frame.
+const _ovQ = new THREE.Quaternion(), _ovV = new THREE.Vector3();
+function shapeExtent(ha, hb, ra, rb, pa, pb, t, d) {
+  const hx = ha[0] + (hb[0] - ha[0]) * t, hy = ha[1] + (hb[1] - ha[1]) * t, hz = ha[2] + (hb[2] - ha[2]) * t;
+  _ovV.copy(d);
+  if (ra || rb) {
+    const a = ra || IDENT_ROT, b = rb || IDENT_ROT;
+    const sg = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]) < 0 ? -1 : 1;
+    _ovQ.set(a[0] + (sg * b[0] - a[0]) * t, a[1] + (sg * b[1] - a[1]) * t,
+      a[2] + (sg * b[2] - a[2]) * t, a[3] + (sg * b[3] - a[3]) * t).normalize().invert();
+    _ovV.applyQuaternion(_ovQ);
+  }
+  const p = pa + (pb - pa) * t;
+  const ux = _ovV.x / Math.max(hx, 1e-9), uy = _ovV.y / Math.max(hy, 1e-9), uz = _ovV.z / Math.max(hz, 1e-9);
+  const n = p <= 2.0001 ? Math.hypot(ux, uy, uz)
+    : Math.pow(Math.pow(Math.abs(ux), p) + Math.pow(Math.abs(uy), p) + Math.pow(Math.abs(uz), p), 1 / p);
+  return n > 1e-12 ? 1 / n : 0;
+}
+function capsuleList(main) {
+  const out = [];
+  const live = new Set(main.getMeshes());
+  for (const j of Skeleton.joints(main)) {
+    const p = j._parentMesh;
+    const cr = j._boneRadius || 0;
+    if (!Skeleton.isJoint(p) || !live.has(p) || !(cr > 1e-9)) continue;
+    if (!Skeleton.jointVisible(j)) continue;
+    out.push({ j: j, p: p, a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
+      ha: Skeleton.jointHalf(p, cr), hb: Skeleton.jointHalf(j, cr),
+      ra: Skeleton.jointRotIsSet(p) ? Skeleton.jointRot(p) : null,
+      rb: Skeleton.jointRotIsSet(j) ? Skeleton.jointRot(j) : null,
+      pa: Skeleton.jointRound(p), pb: Skeleton.jointRound(j),
+      meant: !Skeleton.jointShapesSkin(p) || !Skeleton.jointShapesSkin(j) });
+  }
+  return out;
+}
+function capsuleHash(caps) {
+  let h = caps.length;
+  const f = (v) => { h = (h * 31 + Math.round(v * 4096)) | 0; };
+  for (const c of caps) {
+    h = (h * 31 + c.j.getID()) | 0; h = (h * 31 + c.p.getID()) | 0;
+    f(c.a.x); f(c.a.y); f(c.a.z); f(c.b.x); f(c.b.y); f(c.b.z);
+    f(c.ha[0]); f(c.ha[1]); f(c.ha[2]); f(c.hb[0]); f(c.hb[1]); f(c.hb[2]);
+    f(c.pa); f(c.pb); if (c.ra) { f(c.ra[0]); f(c.ra[1]); f(c.ra[2]); } if (c.rb) { f(c.rb[0]); f(c.rb[1]); f(c.rb[2]); }
+    h = (h * 31 + (c.meant ? 1 : 0)) | 0;
+  }
+  return h;
+}
+const _ovP = new THREE.Vector3(), _ovC = new THREE.Vector3(), _ovAx = new THREE.Vector3(), _ovD = new THREE.Vector3();
+function passesInto(A, B) {
+  const N = 8;
+  _ovAx.subVectors(B.b, B.a);
+  const len2 = _ovAx.lengthSq();
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    _ovP.copy(A.a).lerp(A.b, t);
+    if (insideCapsule(B, _ovP, 0.98)) return true;
+    let u = len2 > 1e-18 ? _ovD.subVectors(_ovP, B.a).dot(_ovAx) / len2 : 0;
+    u = u < 0 ? 0 : (u > 1 ? 1 : u);
+    _ovC.copy(B.a).addScaledVector(_ovAx, u);
+    _ovD.subVectors(_ovC, _ovP);
+    const dist = _ovD.length();
+    if (dist < 1e-9) return true;
+    _ovD.divideScalar(dist);
+    const rA = shapeExtent(A.ha, A.hb, A.ra, A.rb, A.pa, A.pb, t, _ovD);
+    _ovD.negate();
+    const rB = shapeExtent(B.ha, B.hb, B.ra, B.rb, B.pa, B.pb, u, _ovD);
+    if (dist < (rA + rB) * 0.98) return true;
+  }
+  return false;
+}
+
+// Is point x inside capsule B (shrunk by `k`, so a surface point only just touching does not count)?
+const _inAx = new THREE.Vector3(), _inC = new THREE.Vector3(), _inD = new THREE.Vector3();
+function insideCapsule(B, x, k) {
+  _inAx.subVectors(B.b, B.a);
+  const len2 = _inAx.lengthSq();
+  let u = len2 > 1e-18 ? _inD.subVectors(x, B.a).dot(_inAx) / len2 : 0;
+  u = u < 0 ? 0 : (u > 1 ? 1 : u);
+  _inC.copy(B.a).addScaledVector(_inAx, u);
+  _inD.subVectors(x, _inC);
+  const dist = _inD.length();
+  if (dist < 1e-9) return true;
+  _inD.divideScalar(dist);
+  return dist < shapeExtent(B.ha, B.hb, B.ra, B.rb, B.pa, B.pb, u, _inD) * k;
+}
+
+// THE INTERSECTION, AS DOTS ON THE SURFACES. Every point of A's surface that lies inside B gets a
+// dot, so the patch where the two meet is outlined on both — which is what matt asked for: "i was
+// thinking more like it would hilight the intersection", after the first version tinted both whole
+// capsules white. Sampling the AXIS instead found three crossings on biped2 and drew one dot at the
+// chin, because a wide shallow overlap (a head resting in a chest) is wide, not deep.
+//
+// A's surface: rings round the shaft, and a sphere of directions at each end (the end shapes are
+// what reach past the shaft). Dots are world-sized, a fraction of the capsule they sit on, so they
+// read the same in a headset as on a desktop.
+const FIB_DIRS = (() => {
+  const out = [], n = 96, g = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i++) {
+    const y = 1 - (2 * (i + 0.5)) / n, r = Math.sqrt(1 - y * y), a = g * i;
+    out.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+  }
+  return out;
+})();
+const _smX = new THREE.Vector3(), _smAx = new THREE.Vector3(), _smU = new THREE.Vector3(), _smV = new THREE.Vector3();
+const _smDir = new THREE.Vector3();
+function surfaceMarks(A, B, marks) {
+  const put = (t, dir) => {
+    const e = shapeExtent(A.ha, A.hb, A.ra, A.rb, A.pa, A.pb, t, dir);
+    _smX.copy(A.a).lerp(A.b, t).addScaledVector(dir, e);
+    if (insideCapsule(B, _smX, 0.995)) {
+      marks.push({ x: _smX.x, y: _smX.y, z: _smX.z, r: e * 0.07 });
+    }
+  };
+  for (const d of FIB_DIRS) { put(0, d); put(1, d); }
+  _smAx.subVectors(A.b, A.a);
+  if (_smAx.lengthSq() < 1e-18) return;
+  _smAx.normalize();
+  _smU.set(Math.abs(_smAx.x) < 0.9 ? 1 : 0, Math.abs(_smAx.x) < 0.9 ? 0 : 1, 0).cross(_smAx).normalize();
+  _smV.crossVectors(_smAx, _smU);
+  const RING = 32, ALONG = 12;
+  for (let s = 1; s < ALONG; s++) {
+    for (let r = 0; r < RING; r++) {
+      const a = (r / RING) * Math.PI * 2;
+      _smDir.copy(_smU).multiplyScalar(Math.cos(a)).addScaledVector(_smV, Math.sin(a));
+      put(s / ALONG, _smDir);
+    }
+  }
+}
+// The ids of the child joints whose bone capsule passes through another it shares no joint with.
+// THE MARKS, DRAWN: one InstancedMesh of small spheres, drawn over the capsules they sit on (the
+// capsule passes write depth, so anything inside or level with a capsule surface would otherwise be
+// hidden by it). RED, to read as an error — white read as more joints. A stock basic material, converted for
+// the node renderer by the global sweep like the joint handles' are.
+const MAX_OVERLAP_MARKS = 4096;
+const _mkM = new THREE.Matrix4(), _mkQ = new THREE.Quaternion(), _mkP = new THREE.Vector3(), _mkS = new THREE.Vector3();
+function drawOverlapMarks(main, marks) {
+  const n = marks ? Math.min(marks.length, MAX_OVERLAP_MARKS) : 0;
+  let im = main._overlapMarkMesh;
+  if (!n) { if (im) im.visible = false; return; }
+  if (!im || im.userData.cap < n) {
+    const cap = Math.min(MAX_OVERLAP_MARKS, Math.max(256, 1 << Math.ceil(Math.log2(n))));
+    if (im) { im.parent && im.parent.remove(im); im.dispose?.(); }
+    im = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xff1a1a, transparent: true, opacity: 0.9,
+        depthTest: false, depthWrite: false, toneMapped: false }), cap);
+    im.userData.cap = cap;
+    im.renderOrder = 10001;     // over the capsules (9996) and the wire (9999), under the handles
+    im.frustumCulled = false;
+    im.isPickable = false;
+    im.raycast = () => {};
+    skelGroup(main).add(im);
+    main._overlapMarkMesh = im;
+  }
+  if (im.userData.drawn !== marks) {
+    for (let i = 0; i < n; i++) {
+      const k = marks[i];
+      _mkM.compose(_mkP.set(k.x, k.y, k.z), _mkQ, _mkS.setScalar(k.r));
+      im.setMatrixAt(i, _mkM);
+    }
+    im.count = n;
+    im.instanceMatrix.needsUpdate = true;
+    im.userData.drawn = marks;
+  }
+  im.visible = true;
+}
+
+// The same joint, or one bone apart.
+function near(a, b) { return a === b || a._parentMesh === b || b._parentMesh === a; }
+function capsuleOverlaps(main) {
+  const caps = capsuleList(main);
+  const h = capsuleHash(caps);
+  if (main._capOverlapHash === h && main._capOverlaps) return main._capOverlaps;
+  const hit = new Set();
+  const pairs = [];
+  const marks = [];
+  for (let i = 0; i < caps.length; i++) {
+    const A = caps[i];
+    if (A.meant) continue;
+    for (let k = i + 1; k < caps.length; k++) {
+      const B = caps[k];
+      if (B.meant) continue;
+      // NEIGHBOURS ARE EXEMPT: bones that share a joint, or that one bone joins. Measured on
+      // biped2, every overlap but one was of that kind — a thigh starting inside the pelvis
+      // sphere, an upper arm inside the chest — which is a big joint doing its job, and flagging
+      // it turned 13 of 21 capsules red, which is no signal at all. What is left is limbs that
+      // are not neighbours meeting anyway: there, the head's lower half down in the chest and
+      // shoulders, which is exactly where its skin tangled.
+      if (near(A.j, B.j) || near(A.j, B.p) || near(A.p, B.j) || near(A.p, B.p)) continue;
+      if (passesInto(A, B) || passesInto(B, A)) {
+        surfaceMarks(A, B, marks);
+        surfaceMarks(B, A, marks);
+        hit.add(A.j.getID()); hit.add(B.j.getID());
+        pairs.push([A.j, B.j]);
+      }
+    }
+  }
+  main._capOverlapHash = h;
+  main._capOverlaps = hit;
+  // Which bone against which, by child joint: the console answer to "why is this one marked".
+  main._capOverlapPairs = pairs;
+  main._capOverlapMarks = marks;
+  return hit;
+}
+
+// THE SHAFT'S OWN OPACITY. The ends say how big each joint is and the shafts say what connects
+// them, and a rig reads differently depending on which you want to see through — solid joints
+// with ghosted links, or the other way round. matt: "a way to control capsule opacity vs
+// connecting cylinder opacity". Unset follows the capsule opacity, so nothing changes for anyone
+// who never touches it.
+function shaftOpacity() {
+  const live = window._boneShaftOpacity;
+  if (typeof live === 'number') return live;
+  const saved = getOptionsURL().boneShaftOpacity;
+  return typeof saved === 'number' ? saved : Skeleton.capsuleOpacity();
+}
+function setShaftOpacity(main, v) {
+  const clamped = Math.max(0, Math.min(1, v));
+  window._boneShaftOpacity = clamped;
+  try { getOptionsURL.saveOption('boneShaftOpacity', clamped, 300); } catch (_) {}
+  if (main) Skeleton.updateVisuals(main);
+  return clamped;
+}
+
 // One pass over every slot, at the end of the frame's visual update.
 // THE CAPSULE BATCHES CARRY WHAT AN INSTANCE CANNOT: opacity, depth-write and render order are
 // material state, so they are set on the batch once a pass rather than per joint. Everything else
@@ -828,10 +1071,12 @@ const CAP_HI_MUL = 2.125;   // the ratio preselection has always brightened by (
 function tuneCapsuleBatches(main) {
   const all = main._skelBatch;
   if (!all) return;
-  const base = Skeleton.capsuleOpacity();
+  const endBase = Skeleton.capsuleOpacity();
+  const shaftBase = Skeleton.shaftOpacity();
   const shaded = Skeleton.displayFlag('capsuleShaded');
   for (const [key, b] of all) {
     if (!key.startsWith('capEnd') && !key.startsWith('capShaft')) continue;
+    const base = key.startsWith('capShaft') ? shaftBase : endBase;
     const m = b.mesh.material;
     const hi = key.endsWith('Hi');
     // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
@@ -862,7 +1107,14 @@ function tuneCapsuleBatches(main) {
     // nearest capsule wins. The cost is that you no longer see one capsule THROUGH another --
     // only the nearest is blended against what was already in the buffer (the sculpt, the
     // grid), which still shows through it -- and that is the trade the rig wants.
-    m.depthWrite = !ghost;
+    // ...EXCEPT THE FAINTER OF THE TWO PARTS. With the spheres and the cylinders on separate
+    // sliders, a cylinder turned down to 5% was still writing depth, so an all-but-invisible link
+    // punched holes in the spheres and bones behind it. matt: "even at 5% the draw order of things
+    // still goes odd". So the part that is fainter than the other never occludes it; with the two
+    // equal (the default, since the cylinders follow the spheres) both write, exactly as before.
+    const mine = key.startsWith('capShaft') ? shaftBase : endBase;
+    const other = key.startsWith('capShaft') ? endBase : shaftBase;
+    m.depthWrite = !ghost && mine >= other;
     m.depthTest = ghost ? true : m.depthTest;
     // THE GHOST DRAWS FIRST, so it can only reveal through the SCULPT. It is a GreaterDepth
     // pass -- "paint me wherever something is nearer" -- so what is already in the depth buffer
@@ -923,6 +1175,8 @@ function flushBatches(main) {
     const hb = ha ? m.geometry.getAttribute('aHB') : null;
     const pa = ha ? m.geometry.getAttribute('aPA') : null;
     const pb = ha ? m.geometry.getAttribute('aPB') : null;
+  const ra = ha ? m.geometry.getAttribute('aRA') : null;
+  const rb = ha ? m.geometry.getAttribute('aRB') : null;
     const pe = (typeof key === 'string' && key.startsWith('capEnd'))
       ? m.geometry.getAttribute('aP') : null;
     // The instance transform as data, for the node path -- see ensureRigInstanceAttrs.
@@ -957,6 +1211,11 @@ function flushBatches(main) {
         hb.setXYZ(i, s._hb[0], s._hb[1], s._hb[2]);
         // 2 when the slot has not said otherwise, so an unwritten instance is the ellipsoid.
         if (pa) { pa.setX(i, s._pa || 2); pb.setX(i, s._pb || 2); }
+        if (ra) {
+          const qa = s._ra || IDENT_ROT, qb = s._rb || IDENT_ROT;
+          ra.setXYZW(i, qa[0], qa[1], qa[2], qa[3]);
+          rb.setXYZW(i, qb[0], qb[1], qb[2], qb[3]);
+        }
       }
       if (pe) pe.setX(i, s._p || 2);
       if (aq) {
@@ -970,6 +1229,7 @@ function flushBatches(main) {
     }
     if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
     if (pa) { pa.needsUpdate = true; pb.needsUpdate = true; }
+    if (ra) { ra.needsUpdate = true; rb.needsUpdate = true; }
     if (pe) pe.needsUpdate = true;
     if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; at.needsUpdate = true; }
     m.count = i;
@@ -1206,7 +1466,11 @@ function shadeMaterial(mat, cylinder) {
 function taperMaterialInstanced(mat) {
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = 'attribute vec3 aHA;\nattribute vec3 aHB;\n'
-      + 'attribute float aPA;\nattribute float aPB;\n' + shader.vertexShader;
+      + 'attribute float aPA;\nattribute float aPB;\n'
+      + 'attribute vec4 aRA;\nattribute vec4 aRB;\n'
+      // v rotated by the unit quaternion q.
+      + 'vec3 _qrot(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }\n'
+      + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n'
       + 'mat3 _im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
@@ -1227,17 +1491,21 @@ function taperMaterialInstanced(mat) {
       // so dividing by that norm lands on it: p = 2 leaves the ellipse exactly as it was (the
       // direction is already unit length), and higher p pushes the corners out towards a box.
       // Branched, because pow() three times is not free and almost every joint is round.
+      // A TURNED JOINT: into its frame (blended between the two ends by _t), shaped there, and
+      // back out. Identity at both ends is the world-aligned shape and costs two no-op rotations.
+      + '  vec4 _qj = normalize(mix(aRA, aRB, _t));\n'
+      + '  _w = _qrot(vec4(-_qj.xyz, _qj.w), _w);\n'
       + '  float _p = mix(aPA, aPB, _t);\n'
       + '  if (_p > 2.001) {\n'
       + '    float _n = pow(pow(abs(_w.x), _p) + pow(abs(_w.y), _p) + pow(abs(_w.z), _p), 1.0 / _p);\n'
       + '    if (_n > 1e-6) _w /= _n;\n'
       + '  }\n'
-      + '  vec3 _b = _rotInv * (_w * _h);\n'
+      + '  vec3 _b = _rotInv * _qrot(_qj, _w * _h);\n'
       + '  transformed.x = _b.x;\n'
       + '  transformed.z = _b.z;\n'
       + '}');
   };
-  mat.customProgramCacheKey = () => 'skelTaperInstancedP';
+  mat.customProgramCacheKey = () => 'skelTaperInstancedPR';
   return mat;
 }
 
@@ -1420,6 +1688,9 @@ Skeleton.boneRadiusOf = function (main, j) {
 // enable the volume tools for these joint spheres now so i can do nonlinear setups... just keep
 // the bbox controls for width, height, depth."
 //
+// (Since 2026-09-30 the shape may TURN — see jointRot — and these then run along the joint's own
+// axes. The history below is why the default stays world-aligned.)
+//
 // WORLD-AXIS ALIGNED, and no rotation or offset — matt's scope, and for a rig authored in a
 // T-pose the world axes ARE width, height and depth, which is why the box handles read the way
 // you expect. It also sidesteps the trap the removed joint volumes fell into: a DRAWN joint
@@ -1534,6 +1805,84 @@ Skeleton.jointHalf = function (j, fallback, out) {
   return out;
 };
 
+// ---- joint rotation -----------------------------------------------------------
+//
+// THE JOINT'S SHAPE MAY TURN. The box Make Skin builds on a joint and the ellipsoid it wraps
+// onto both used to be world-axis aligned with no way out — right for a T-posed torso, wrong for
+// a curled finger or a tail, where the edge flow wants to follow the curl. matt: "allow in tweak
+// mode for the cubes to be rotated. eg to get a natural curl on fingers, or on a tail, or to
+// better align the resultant edge flow."
+//
+// A MODEL-SPACE QUATERNION, [x, y, z, w], and nothing to do with the POSE: a joint's matrix is
+// how the rig is posed, this is which way its shape faces at rest, exactly as `_jointScale` and
+// `_jointOffset` are. Unset is identity, and identity is stored as NOTHING, so a rig that never
+// touched it serialises nothing and every consumer takes its old, unrotated path.
+//
+// The scale is in the ROTATED frame: `jointHalf` is still three half-extents, now along the
+// joint's own three axes rather than the world's. The offset stays in model space — it is a
+// position, and a face drag writes it in whichever direction the face happens to point.
+const IDENT_ROT = [0, 0, 0, 1];
+Skeleton.jointRot = function (j) {
+  const r = j && j._jointRot;
+  return (r && r.length === 4) ? r : IDENT_ROT;
+};
+
+Skeleton.jointRotIsSet = function (j) {
+  const r = j && j._jointRot;
+  return !!(r && r.length === 4 && (r[0] || r[1] || r[2]));
+};
+
+Skeleton.setJointRot = function (j, x, y, z, w) {
+  if (!j) return false;
+  let l = Math.hypot(x, y, z, w);
+  if (!(l > 1e-12)) { delete j._jointRot; return true; }
+  // One hemisphere, w >= 0, so the same rotation is always the same four numbers — the twin is
+  // then an exact reflection of it, and a file round-trips without flipping sign.
+  if (w < 0) l = -l;
+  x /= l; y /= l; z /= l; w /= l;
+  if (Math.abs(x) < 1e-7 && Math.abs(y) < 1e-7 && Math.abs(z) < 1e-7) delete j._jointRot;
+  else j._jointRot = [x, y, z, w];
+  return true;
+};
+
+Skeleton.jointQuat = function (j, out) {
+  const r = Skeleton.jointRot(j);
+  return (out || new THREE.Quaternion()).set(r[0], r[1], r[2], r[3]);
+};
+
+// A ROTATION SEEN IN A MIRROR, across the plane through the origin with normal n. M R M for the
+// reflection M = I - 2nn^T, which on a quaternion is: reflect the vector part, then negate it.
+// For the rig's own mirror (n = x) that is (x, -y, -z, w).
+Skeleton.mirrorRot = function (r, n) {
+  const nx = n ? n.x : 1, ny = n ? n.y : 0, nz = n ? n.z : 0;
+  const d = 2 * (r[0] * nx + r[1] * ny + r[2] * nz);
+  return [-(r[0] - d * nx), -(r[1] - d * ny), -(r[2] - d * nz), r[3]];
+};
+
+// A CENTRELINE JOINT MAY ONLY PITCH. It is its own mirror twin, so the only rotations that leave
+// it symmetric are the ones about the mirror normal: the TWIST about x out of a swing-twist
+// split, which on a quaternion is just (x, 0, 0, w) renormalised.
+Skeleton.centrelineRot = function (r) {
+  const l = Math.hypot(r[0], r[3]);
+  return l > 1e-9 ? [r[0] / l, 0, 0, r[3] / l] : [0, 0, 0, 1];
+};
+
+// ---- does this joint shape the skin? --------------------------------------------
+//
+// A joint can DEFORM the skin without SHAPING it: a jaw drawn inside a head, a twist bone halfway
+// down a forearm. Make Skin skips such a joint — no box, no bridge, no capsule in the surface it
+// wraps — and joins its children to the nearest joint above it that does shape the skin. The
+// bind is untouched: it is still a bone, and still gets weights from its capsule. matt: "define
+// joints that will be used for deformation, but explicitly DON'T affect the skin at all" — the
+// complement of a shaper, which shapes the skin and deforms nothing.
+//
+// Stored only when OFF, so every rig made before it reads as shaping, which is what it did.
+Skeleton.jointShapesSkin = function (j) { return !(j && j._noSkinShape); };
+Skeleton.setJointShapesSkin = function (j, on) {
+  if (!j) return;
+  if (on) delete j._noSkinShape; else j._noSkinShape = true;
+};
+
 // ---- joint scale handles ------------------------------------------------------
 //
 // SIX DOTS, one on each face of the joint's bounding box. A face dot says which axis it changes
@@ -1570,10 +1919,26 @@ function scaleHandleGroup(main) {
     g.add(m);
     return m;
   };
+  // THE ROTATION RINGS, one per axis of the joint's own frame, drawn outside the face dots so
+  // the two kinds of handle never sit on top of each other. A thin torus rather than a line —
+  // lines do not draw on the webgpu renderer — scaled as a whole, so the tube thickens with the
+  // ring; at these sizes that reads as the ring being in proportion rather than as a fault.
+  const ringGeo = new THREE.TorusGeometry(1, 0.018, 6, 72);
+  const mkRing = (color) => {
+    const m = mk(color);
+    m.geometry = ringGeo;
+    return m;
+  };
   main._jointHandles = {
     group: g,
     faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax])),
     pos: HANDLE_AXES.map(() => new THREE.Vector3()),
+    rings: [0xff6b6b, 0x6bff8f, 0x6bb6ff].map(mkRing),
+    // Each ring's axis in model space and its radius, written with the draw and read by the pick
+    // and the drag — one source, as for the dots.
+    ringAxis: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
+    ringOn: [false, false, false],
+    ringR: 0,
     centrePos: new THREE.Vector3(),
     joint: null,
   };
@@ -1589,16 +1954,38 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   if (!j) { h.group.visible = false; return h; }
   h.group.visible = true;
 
-  // World-axis aligned, so there is no frame to build: the extents ARE the offsets to the faces.
+  // In the joint's own frame: the extents are the offsets to the faces along its three axes, and
+  // an unturned joint's frame is the world's.
   const half = Skeleton.jointHalf(j, fallbackR || 0, _halfH);
   Skeleton.jointCentre(j, _pJH);   // the SHAPE's centre — a face drag moves it off the joint
+  const turned = Skeleton.jointRotIsSet(j);
+  if (turned) Skeleton.jointQuat(j, _qJH);
 
   const r = Skeleton.sceneUnit(main) * 0.0225;
   h.centrePos.copy(_pJH);
+  // Outside the largest face dot, with room for the dot itself, so a ring is never picked for a dot.
+  h.ringR = Math.max(half[0], half[1], half[2]) * 1.3 + r * 3;
+  // A CENTRELINE JOINT ONLY GETS THE X RING. Pitch is the only turn that keeps a joint that is its
+  // own mirror twin symmetric, and a ring that is there but refuses to turn is a broken handle.
+  const centreline = Skeleton.jointIsCentreline(main, j);
+  for (let k = 0; k < 3; k++) {
+    const ring = h.rings[k];
+    const on = !centreline || k === 0;
+    h.ringOn[k] = on;
+    ring.visible = on;
+    h.ringAxis[k].set(0, 0, 0).setComponent(k, 1);
+    if (turned) h.ringAxis[k].applyQuaternion(_qJH);
+    // The torus lies in its own xy plane, so it is turned until its z runs along the ring's axis.
+    ring.quaternion.setFromUnitVectors(_zUp, h.ringAxis[k]);
+    ring.position.copy(h.centrePos);
+    ring.scale.setScalar(h.ringR);
+    ring.updateMatrix(); ring.matrixWorldNeedsUpdate = true;
+  }
   for (let i = 0; i < HANDLE_AXES.length; i++) {
     const [ax, sign] = HANDLE_AXES[i];
     _vFace.set(0, 0, 0);
     _vFace.setComponent(ax, sign * half[ax]);
+    if (turned) _vFace.applyQuaternion(_qJH);
     h.pos[i].copy(h.centrePos).add(_vFace);
     h.faces[i].position.copy(h.pos[i]);
     h.faces[i].scale.setScalar(r);
@@ -1621,8 +2008,24 @@ Skeleton.pickScaleHandle = function (main, p, radius) {
     const d = h.pos[i].distanceToSquared(p);
     if (d < bestD) { bestD = d; bestI = i; best = { kind: 'face', axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] }; }
   }
+  // A RING, by distance to the circle itself: height above its plane and how far off its radius.
+  // A dot wins a tie — it is the smaller target, and one the hand reaches for on purpose.
+  if (!best && h.rings) {
+    for (let k = 0; k < 3; k++) {
+      if (!h.ringOn[k]) continue;
+      _vFace.subVectors(p, h.centrePos);
+      const up = _vFace.dot(h.ringAxis[k]);
+      const across = Math.sqrt(Math.max(0, _vFace.lengthSq() - up * up)) - h.ringR;
+      const d = up * up + across * across;
+      if (d < bestD) { bestD = d; best = Skeleton.ringHandle(k); bestI = best.index; }
+    }
+  }
   return best ? Object.assign(best, { index: bestI }) : null;
 };
+
+// A ring grip, as the pick returns it. Its index follows the six dots so one number can say which
+// handle is lit.
+Skeleton.ringHandle = function (k) { return { kind: 'ring', axis: k, index: HANDLE_AXES.length + k }; };
 
 // WHICH HANDLE IS UNDER THE HAND, lit. A dot with no hover state gives you no way to know which
 // one you are about to take until you have taken it — and they sit close together on a small
@@ -1647,6 +2050,15 @@ Skeleton.highlightScaleHandle = function (main, grip) {
     f.scale.setScalar(on ? r * 1.6 : r);
     f.material.opacity = on ? 1 : 0.9;
     f.updateMatrix(); f.matrixWorldNeedsUpdate = true;
+  }
+  // The rings light the same way, minus the size bump — a ring is not a small target.
+  if (h.rings) {
+    for (let k = 0; k < 3; k++) {
+      const ring = h.rings[k];
+      const on = hot === HANDLE_AXES.length + k;
+      ring.material.color.setHex(on ? HILITE_COLOR : ring.userData.baseColor);
+      ring.material.opacity = on ? 1 : 0.9;
+    }
   }
 };
 
@@ -1805,6 +2217,8 @@ const _qC = new THREE.Quaternion();
 const _upY = new THREE.Vector3(0, 1, 0);
 const _pJH = new THREE.Vector3();
 const _vFace = new THREE.Vector3();
+const _qJH = new THREE.Quaternion();
+const _zUp = new THREE.Vector3(0, 0, 1);
 const _mRot = new THREE.Matrix4();
 const _fallbackColor = new THREE.Color(0.6, 0.6, 0.6);
 const _wireCol = new THREE.Color();
@@ -3311,6 +3725,8 @@ Skeleton.updateVisuals = function (main) {
   // property is the same one WeightCage.isCage tests, and a scan is cheaper than a cycle.
   const showCaps = Skeleton.displayFlag('capsules')
     && !(main.getMeshes() || []).some((m) => m && m._isWeightCage);
+  if (showCaps) Skeleton.capsuleOverlaps(main);
+  drawOverlapMarks(main, showCaps ? main._capOverlapMarks : null);
   // The bone body and its edge overlay, each switchable. Turning both off brings the joint
   // dots back on their own, because otherwise there would be nothing on screen marking a
   // target that is still perfectly pickable — the bone IS the target now.
@@ -3932,6 +4348,8 @@ Skeleton.updateVisuals = function (main) {
     // Highlighting brightens rather than recolours, so the capsule-to-vertex colour match is
     // never broken by preselection.
     const capColor = Skeleton.boneColor(main, parent);
+    // At zero a part is not drawn at all — not drawn invisibly, which would still write depth.
+    const shaftOn = Skeleton.shaftOpacity() > 0, endsOn = Skeleton.capsuleOpacity() > 0;
     // The base is a setting now, not a constant -- see Skeleton.capsuleOpacity. Highlighting
     // still brightens by about the same ratio it always did, and is capped so a fully opaque
     // capsule cannot be asked for more than solid.
@@ -3956,21 +4374,30 @@ Skeleton.updateVisuals = function (main) {
       // The shaft spans two joints, so it carries both exponents and the shader blends them —
       // a boxy palm running into a round finger tapers in sharpness as well as in size.
       o._pa = Skeleton.jointRound(parent); o._pb = Skeleton.jointRound(j);
+      // Each end's rotation, one hemisphere apart so the shader's blend takes the short way
+      // round (the same choice the skin's relax makes). Copied for the reason the extents are.
+      const rA = Skeleton.jointRot(parent), rB = Skeleton.jointRot(j);
+      const sg = (rA[0] * rB[0] + rA[1] * rB[1] + rA[2] * rB[2] + rA[3] * rB[3]) < 0 ? -1 : 1;
+      o._ra = o._ra || [0, 0, 0, 1];
+      o._rb = o._rb || [0, 0, 0, 1];
+      o._ra[0] = rA[0]; o._ra[1] = rA[1]; o._ra[2] = rA[2]; o._ra[3] = rA[3];
+      o._rb[0] = sg * rB[0]; o._rb[1] = sg * rB[1]; o._rb[2] = sg * rB[2]; o._rb[3] = sg * rB[3];
       o.scale.set(1, lenC, 1);
-      o.visible = true;
+      o.visible = shaftOn;
       o._hi = !!(isHi || isSel);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
-    // The end caps are world-axis aligned — no rotation on them — so the three extents go
-    // straight into the scale.
+    // The end caps turn with their joint's shape, and the three extents go into the scale, which
+    // compose() applies BEFORE the rotation — so they run along the joint's own axes.
     for (const [part, at, ph, k, pj] of [[e.cap.a, _cA, hA, HEAD_INSET, parent],
                                         [e.cap.b, _cB, hB, 1, j]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
+        Skeleton.jointQuat(pj, o.quaternion);
         o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
         // A cap belongs to ONE joint, so it takes that joint's sharpness rather than a blend.
         o._p = Skeleton.jointRound(pj);
-        o.visible = true;
+        o.visible = endsOn;
         // Which of the two batches this end belongs to this frame. The opacity that used to
         // carry the preselection cannot ride on an instance, so it rides on the batch.
         o._hi = !!(isHi || isSel);
@@ -5092,7 +5519,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 18;  // v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 20;  // v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -5366,6 +5793,15 @@ Skeleton.serialize = function (meshes, main) {
   meshes.forEach((m, i) => {
     if (m && m._isBone && Skeleton.jointRoundIsSet(m)) rounds.push({ i: i, p: m._jointRound });
   });
+  // v20: the joints that deform but do not shape the skin. Only those are written.
+  const noShape = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && !Skeleton.jointShapesSkin(m)) noShape.push(i); });
+  // v19: which way each joint's shape faces. Only turned joints are written, so a rig that never
+  // turned one costs one count.
+  const rots = [];
+  meshes.forEach((m, i) => {
+    if (m && m._isBone && Skeleton.jointRotIsSet(m)) rots.push({ i: i, q: m._jointRot });
+  });
 
   const vols = [];
 
@@ -5390,6 +5826,8 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + rig.length * 7;     // v15: i + aim, saccades, amp, speed, smooth, mirror
   slots += 1 + phys3.length * 4;   // v17: i + mass, substeps, iterations
   slots += 1 + lights.length * 14; // v18: i + type, rgb, intensity, range, cone, cast, 4 shadow, res
+  slots += 1 + rots.length * 5;    // v19: i + the shape's rotation quaternion
+  slots += 1 + noShape.length;     // v20: i of each joint that does not shape the skin
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -5465,6 +5903,10 @@ Skeleton.serialize = function (meshes, main) {
     f[o++] = li.shNear; f[o++] = li.shBias; f[o++] = li.shInt; f[o++] = li.shRad;
     u[o++] = li.shRes;
   }
+  u[o++] = rots.length;
+  for (const r of rots) { u[o++] = r.i; f[o++] = r.q[0]; f[o++] = r.q[1]; f[o++] = r.q[2]; f[o++] = r.q[3]; }
+  u[o++] = noShape.length;
+  for (const i of noShape) u[o++] = i;
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -5863,6 +6305,25 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       }
     }
 
+    // v19: the joint shapes' rotations.
+    if (ver >= 19) {
+      const rn = u[o++];
+      for (let i = 0; i < rn; i++) {
+        const mi = u[o++];
+        const x = f[o++], y = f[o++], z = f[o++], w = f[o++];
+        if (meshes[mi]) Skeleton.setJointRot(meshes[mi], x, y, z, w);
+      }
+    }
+
+    // v20: the joints that deform without shaping the skin.
+    if (ver >= 20) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const mi = u[o++];
+        if (meshes[mi]) Skeleton.setJointShapesSkin(meshes[mi], false);
+      }
+    }
+
     for (const p of pendingPins) {
       if (p.pin) {
         // v3: the null came back with the file. Re-flag it — _isPinTarget and the mode live on
@@ -6099,9 +6560,14 @@ Skeleton.capsuleOpacity = function () {
 // Published here rather than at the definitions above, which run before `Skeleton` exists.
 Skeleton.capsuleSegments = capsuleSegments;
 Skeleton.setCapsuleSegments = setCapsuleSegments;
+Skeleton.capsuleOverlaps = capsuleOverlaps;
+Skeleton.shaftOpacity = shaftOpacity;
+Skeleton.setShaftOpacity = setShaftOpacity;
 
+// ZERO IS ALLOWED, and means the part is not drawn at all. matt: "the sliders for opacity should
+// let me go down to 0. yes i'll probably forget its there, but then i only have myself to blame."
 Skeleton.setCapsuleOpacity = function (main, v) {
-  const clamped = Math.max(0.05, Math.min(1, v));
+  const clamped = Math.max(0, Math.min(1, v));
   window._boneCapsuleOpacity = clamped;
   try { getOptionsURL.saveOption('boneCapsuleOpacity', clamped, 300); } catch (_) {}
   if (main) Skeleton.updateVisuals(main);

@@ -56,6 +56,9 @@ const window = { _boneSkinRelax: RELAX,
   // almost everywhere — a difference anywhere else is per-axis sizing reaching a case it should
   // not. See levelsFor.
   _boneSkinPerAxis: process.env.SKIN_PER_AXIS === '0' ? false : undefined,
+  // SKIN_EMBED=0 builds a buried joint's box where it was drawn, inside its parent — the old
+  // behaviour, for the A/B. See layoutCages.
+  _boneSkinEmbed: process.env.SKIN_EMBED === '0' ? false : undefined,
  };
 const Utils = { TRI_INDEX: 4294967295 };
 const Enums = { Shader: { MATCAP: 0 } };
@@ -92,6 +95,14 @@ const Skeleton = {
   // Lifted from the real file, not stubbed: this is the surface Make Skin wraps onto and the
   // one the weight cage uses, and a fake of it would test my fake.
   shapePoint: null,
+  // The shape's rotation, [x,y,z,w]; fixtures set _jointRot directly. Unset is identity and
+  // must take the unrotated path, which the bit-identity check leans on.
+  jointRot: (j) => ((j && j._jointRot && j._jointRot.length === 4) ? j._jointRot : [0, 0, 0, 1]),
+  jointRotIsSet: (j) => !!(j && j._jointRot && (j._jointRot[0] || j._jointRot[1] || j._jointRot[2])),
+  jointQuat: (j, out) => {
+    const r = (j && j._jointRot && j._jointRot.length === 4) ? j._jointRot : [0, 0, 0, 1];
+    return (out || new THREE.Quaternion()).set(r[0], r[1], r[2], r[3]);
+  },
 };
 `;
 
@@ -538,6 +549,40 @@ const SKEL04 = skeleton([
 ]);
 suite("matt's skel04", SKEL04, { bones: 16 });
 
+// matt's biped2.sxr (2026-09-30), joint for joint, shapes and turns included. The wide chest
+// (neck_01) swallows both shoulder joints and the pelvis swallows both hips — the BURIED-JOINT
+// case layoutCages exists for. Without it the shoulders fold into a crease ("the pinching i was
+// talking about at the shoulders").
+//
+// head_03 is left OUT: a leaf buried inside head_02 (matt's jaw/mouth experiment), which the
+// builder bridges into a tangle. It is the case the per-joint "Shapes Skin" toggle is for.
+const BIPED2_ROWS = JSON.parse(fs.readFileSync(new URL('./fixtures/biped2_joints.json', import.meta.url), 'utf8'));
+function jointsFromRows(rows, drop) {
+  const by = new Map();
+  const out = [];
+  for (const r of rows) {
+    if (drop && drop.includes(r.n)) continue;
+    const j = { name: r.n, p: r.p.slice(), _boneRadius: r.br, _parentMesh: null };
+    if (r.jr) j._jointRadius = r.jr;
+    if (r.js) j._jointScale = r.js.slice();
+    if (r.jo) j._jointOffset = r.jo.slice();
+    if (r.jq) j._jointRot = r.jq.slice();
+    if (r.jp) j._jointRound = r.jp;
+    by.set(r.n, j);
+    out.push(j);
+  }
+  for (const r of rows) if (by.has(r.n) && r.par) by.get(r.n)._parentMesh = by.get(r.par) || null;
+  return out;
+}
+const BIPED2 = jointsFromRows(BIPED2_ROWS, ['head_03']);
+// THE ARMPITS STILL FOLD, and the count is stated rather than tolerated silently. The folds sit
+// under each shoulder (x ~7, y ~20-22), where the arm tube and the side of a chest this wide nearly
+// touch and the relax pulls both onto one surface — the relaxOverlaps limit described in suite().
+// How far the buried box is pushed is NOT the lever: swept 0 / 0.25 / 0.5 / 1 / 1.5 of its extent
+// it gave 22 / 52 / 41 / 24 / 23 pairs, no trend. Without layoutCages (SKIN_EMBED=0) it is 48, 37
+// of them at the HIPS, which layoutCages clears to 0.
+suite("matt's biped2 (no mouth)", BIPED2, { relaxOverlaps: process.env.SKIN_EMBED === '0' ? 48 : 41 });
+
 // THE SILHOUETTE IS THE SPEC. matt: "if i look at the silouteete of the capsules vs the
 // silouette of the skin, they should be nearly identical. right now the skin is far too skinny
 // and lumpy. this shouldn't require tuning."
@@ -957,6 +1002,158 @@ if (SkinMesh._boxLattice) {
     + 'capsule ends have to be the shape centres, not the joint positions');
   check('...and a joint with no offset is where it always was',
     Math.abs(px) < 0.05, 'unshifted middle sits at x = ' + px.toFixed(3));
+}
+
+// ── A ROTATED JOINT ───────────────────────────────────────────────────────────────────
+//
+// A joint's shape may turn (_jointRot, model space). The box is built in the joint's own frame
+// and the relax measures each ellipsoid in it, so the property that pins all of it at once is
+// EQUIVARIANCE: turn the whole rig — every position and every shape by one rotation R — and the
+// skin that comes back must be R times the old skin, vertex for vertex. Anything left in the
+// world frame (a claim, the lattice, the SDF) breaks that. About X, because X is the symmetry
+// normal and the seam pin holds x = 0; a rotation about X leaves that plane where it was.
+console.log('\nrotated joints');
+{
+  const copyRig = (src) => {
+    const map = new Map();
+    const out = src.map((j) => {
+      const c = Object.assign({}, j, { p: j.p.slice() });
+      map.set(j, c);
+      return c;
+    });
+    for (const c of out) if (c._parentMesh) c._parentMesh = map.get(c._parentMesh);
+    return out;
+  };
+  const R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.65);
+  const turnRig = (src) => {
+    const rig = copyRig(src);
+    const v = new THREE.Vector3();
+    for (const j of rig) {
+      v.fromArray(j.p).applyQuaternion(R); j.p = v.toArray();
+      if (j._jointOffset) { v.fromArray(j._jointOffset).applyQuaternion(R); j._jointOffset = v.toArray(); }
+      const q = new THREE.Quaternion();
+      if (j._jointRot) q.fromArray(j._jointRot);
+      q.premultiply(R);
+      j._jointRot = [q.x, q.y, q.z, q.w];
+    }
+    return rig;
+  };
+  // Shaped as well as placed, so the per-axis extents and the offset are in play too.
+  const shaped = copyRig(BRANCH);
+  shaped[1]._jointScale = [1.6, 1, 0.6]; shaped[1]._jointRadius = 0.35;
+  shaped[4]._jointOffset = [0, 0.05, 0.04];
+  // NOT THE HAND. Its build sits on a TIE — turning it by 1e-7 rad already changes which faces
+  // the bridges pair up (the vertices move 0.025 while 0.3 rad happens to land on the same side
+  // of the tie and matches to 1e-7). That is an equal-cost choice flipping on float noise, which
+  // predates rotation and is a property of the builder, not of the frame; equivariance cannot be
+  // asked of a result that is not a function of its input to begin with.
+  for (const [label, rig] of [['hips', HIPS], ['branch', BRANCH], ['shaped branch', shaped]]) {
+    const a = build(rig), b = build(turnRig(rig));
+    let worst = Infinity;
+    if (a && b && a.vertices.length === b.vertices.length) {
+      worst = 0;
+      const v = new THREE.Vector3();
+      for (let i = 0; i < a.vertices.length; i += 3) {
+        v.set(a.vertices[i], a.vertices[i + 1], a.vertices[i + 2]).applyQuaternion(R);
+        worst = Math.max(worst, Math.hypot(v.x - b.vertices[i], v.y - b.vertices[i + 1], v.z - b.vertices[i + 2]));
+      }
+    }
+    check('turning the whole ' + label + ' rig turns its skin with it', worst < 1e-4,
+      a && b ? (a.vertices.length === b.vertices.length ? 'worst ' + worst.toExponential(2)
+        : a.vertices.length / 3 + ' vs ' + b.vertices.length / 3 + ' verts') : 'did not build');
+  }
+
+  // A curl and a twist inside one chain: still a closed, all-quad, single shell.
+  const curl = skeleton([
+    ['a', null, 0, 0, 0, 0.25],
+    ['b', 'a', 0, 1, 0, 0.22],
+    ['c', 'b', 0.3, 1.9, 0, 0.2],
+    ['d', 'c', 0.8, 2.6, 0, 0.18],
+  ]);
+  const qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -0.35);
+  const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.6);
+  curl[1]._jointRot = qz.toArray();
+  curl[2]._jointRot = qz.clone().multiply(qz).multiply(qy).toArray();
+  suite('a curled and twisted chain', curl, {});
+
+  // The ellipsoid turns with the box: a joint three times wider in its own x, turned a quarter
+  // about y, must come out three times wider in WORLD z.
+  const flat = () => skeleton([
+    ['a', null, 0, -2, 0, 0.2],
+    ['b', 'a', 0, 0, 0, 0.2],
+    ['c', 'b', 0, 2, 0, 0.2],
+  ]);
+  const spread = (arr) => {
+    const V = arr.vertices;
+    let x = 0, z = 0;
+    for (let i = 0; i < V.length; i += 3) {
+      if (Math.abs(V[i + 1]) > 0.2) continue;
+      x = Math.max(x, Math.abs(V[i])); z = Math.max(z, Math.abs(V[i + 2]));
+    }
+    return [x, z];
+  };
+  const plainF = flat();
+  plainF[1]._jointRadius = 0.4; plainF[1]._jointScale = [3, 1, 1];
+  const turnedF = flat();
+  turnedF[1]._jointRadius = 0.4; turnedF[1]._jointScale = [3, 1, 1];
+  turnedF[1]._jointRot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2).toArray();
+  const [px, pz] = spread(build(plainF));
+  const [tx, tz] = spread(build(turnedF));
+  check('a flat joint turned a quarter is flat the other way', px > 2 * pz && tz > 2 * tx
+    && Math.abs(px - tz) < 0.05 * px,
+    'unturned x ' + px.toFixed(3) + ' z ' + pz.toFixed(3) + ', turned x ' + tx.toFixed(3) + ' z ' + tz.toFixed(3));
+
+  // A twin's rotation is the reflection of its partner's, and the skin must stay mirrored.
+  const hips = copyRig(HIPS);
+  const ql = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.3, 0.5, -0.4));
+  hips[2]._jointRot = [ql.x, ql.y, ql.z, ql.w];
+  hips[3]._jointRot = [ql.x, -ql.y, -ql.z, ql.w];
+  const hv = build(hips).vertices;
+  const key = (x, y, z) => [x, y, z].map((n) => (Math.abs(n) < 1e-9 ? 0 : n).toFixed(5)).join(',');
+  const have = new Set();
+  for (let i = 0; i < hv.length; i += 3) have.add(key(hv[i], hv[i + 1], hv[i + 2]));
+  let missing = 0;
+  for (let i = 0; i < hv.length; i += 3) if (!have.has(key(-hv[i], hv[i + 1], hv[i + 2]))) missing++;
+  check('twins turned as mirror images keep the skin symmetric', missing === 0,
+    missing + ' verts with no mirror partner');
+}
+
+// ── A JOINT THAT DEFORMS BUT DOES NOT SHAPE THE SKIN ─────────────────────────────────
+//
+// "Shapes Skin" off (_noSkinShape): Make Skin leaves the joint out and joins its children to the
+// nearest ancestor that does shape it. So switching it off must be EXACTLY the same skin as never
+// having drawn the joint — for a leaf (matt's jaw, head_03 on biped2) and for a joint mid-chain
+// (a twist bone), where the chain must come out as if drawn straight past it.
+console.log('\njoints that do not shape the skin');
+{
+  const sameArr = (a, b) => !!a && !!b && a.vertices.length === b.vertices.length
+    && a.vertices.every((v, i) => Object.is(v, b.vertices[i])) && a.faces.every((v, i) => v === b.faces[i]);
+  const skipBuild = (all) => {
+    const skip = new Set(all.filter((j) => j._noSkinShape));
+    const js = all.filter((j) => !skip.has(j));
+    return SkinMesh._buildArrays(js, SkinMesh._adjacency(js, skip));
+  };
+  const withJaw = jointsFromRows(BIPED2_ROWS, []);
+  withJaw.find((j) => j.name === 'head_03')._noSkinShape = true;
+  check('a jaw that does not shape the skin leaves no trace in it', sameArr(skipBuild(withJaw), build(BIPED2)),
+    'biped2 with head_03 switched off should equal biped2 without head_03');
+
+  const chain = (withTwist) => skeleton(withTwist ? [
+    ['a', null, 0, 0, 0, 0.25],
+    ['b', 'a', 0, 1, 0, 0.25],
+    ['tw', 'b', 0.2, 1.6, 0, 0.22],
+    ['c', 'tw', 0.4, 2.2, 0, 0.2],
+    ['d', 'c', 0.6, 3.0, 0, 0.18],
+  ] : [
+    ['a', null, 0, 0, 0, 0.25],
+    ['b', 'a', 0, 1, 0, 0.25],
+    ['c', 'b', 0.4, 2.2, 0, 0.2],
+    ['d', 'c', 0.6, 3.0, 0, 0.18],
+  ]);
+  const twisted = chain(true);
+  twisted[2]._noSkinShape = true;
+  check('...and one mid-chain is bridged straight past', sameArr(skipBuild(twisted), build(chain(false))),
+    'a twist bone switched off should give the chain drawn without it');
 }
 
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));

@@ -351,10 +351,13 @@ NodeMaterials.rigCapsule = function (opts = {}) {
     const h = mix(attribute('aHA', 'vec3'), attribute('aHB', 'vec3'), t);
     const p = mix(attribute('aPA', 'float'), attribute('aPB', 'float'), t);
     const radial = vec3(pos.x, 0.0, pos.z);
-    const w = qrot(tsl, q, radial);
+    // A TURNED JOINT: the world direction goes into the joint's own frame (blended between the two
+    // ends), is shaped there, and comes back. Identity at both ends is the world-aligned shape.
+    const qj = mix(attribute('aRA', 'vec4'), attribute('aRB', 'vec4'), t).normalize();
+    const w = qrot(tsl, vec4(qj.xyz.negate(), qj.w), qrot(tsl, q, radial));
     const shaped = select(p.greaterThan(2.001), w.div(max(pnorm(w, p), float(1e-6))), w);
     // ...and back into object space, ready to be placed by the instance transform below.
-    const b = qrot(tsl, vec4(q.xyz.negate(), q.w), shaped.mul(h));
+    const b = qrot(tsl, vec4(q.xyz.negate(), q.w), qrot(tsl, qj, shaped.mul(h)));
     posNode = vec3(b.x, pos.y, b.z);
     normalObj = radial.normalize();
   } else {

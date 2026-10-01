@@ -417,6 +417,13 @@ function copyJoint(main, src, pos, parent, name, plane) {
       c._jointOffset = o.slice();
     }
   }
+  // The shape's rotation reflects like the offset does: a twin's turn is the mirror image of its
+  // partner's, or a curled left finger comes out curled the wrong way on the right hand.
+  if (!Skeleton.jointShapesSkin(src)) Skeleton.setJointShapesSkin(c, false);
+  if (Skeleton.jointRotIsSet(src)) {
+    const r = plane ? Skeleton.mirrorRot(src._jointRot, plane.normal) : src._jointRot;
+    Skeleton.setJointRot(c, r[0], r[1], r[2], r[3]);
+  }
   // The pose the solver seeds from. A joint created now has none, and without it the first solve
   // adopts whatever pose the rig happens to be in — same reason as Split.
   c._ikRest = mat4.clone(c.getMatrix());

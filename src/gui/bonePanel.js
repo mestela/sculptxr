@@ -495,7 +495,9 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>` : ''}`;
+    </div>
+    <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin">Shapes Skin</button>` : ''}`;
 
     const viewBody = buildBoneQuickDisplayHTML(main, style) + `
     <div class="${c.toggles}">
@@ -565,7 +567,9 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>` : ''}
+    </div>
+    <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin">Shapes Skin</button>` : ''}
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
@@ -855,10 +859,16 @@ export function buildBoneDisplayHTML(main, style, extraChips = '') {
       ${extraChips}
     </div>
     <div class="${c.row}">
-      <span class="${c.lbl}">Capsule Opacity</span>
-      <input type="range" id="bone-cap-op" min="5" max="100" step="5"
+      <span class="${c.lbl}">Sphere Opacity</span>
+      <input type="range" id="bone-cap-op" min="0" max="100" step="5"
         value="${Math.round(Skeleton.capsuleOpacity() * 100)}">
       <span class="${c.val}" id="bone-cap-op-val">${Math.round(Skeleton.capsuleOpacity() * 100)}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Cylinder Opacity</span>
+      <input type="range" id="bone-shaft-op" min="0" max="100" step="5"
+        value="${Math.round(Skeleton.shaftOpacity() * 100)}">
+      <span class="${c.val}" id="bone-shaft-op-val">${Math.round(Skeleton.shaftOpacity() * 100)}</span>
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule Detail</span>
@@ -1036,6 +1046,48 @@ export function wireBoneSection(root, main, opts) {
       main.render?.();
     });
   }
+
+  // BACK TO WORLD-ALIGNED, the joint and its twin, as one undo step. Turning a ring back to
+  // exactly zero by hand is not something a hand can do.
+  q('rot-reset')?.addEventListener('click', () => {
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (sel.length !== 1) return;
+    const twin = Skeleton.mirrorEdits(main) ? sel[0]._boneMirror : null;
+    const rows = [sel[0]];
+    if (twin && twin !== sel[0] && main.getMeshes?.().includes(twin)) rows.push(twin);
+    const before = rows.map((j) => [j, Skeleton.jointRot(j).slice()]);
+    const apply = (list) => {
+      for (const [j, r] of list) Skeleton.setJointRot(j, r[0], r[1], r[2], r[3]);
+      Skinning.resolveWeightsAll(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    const after = rows.map((j) => [j, [0, 0, 0, 1]]);
+    apply(after);
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(before), () => apply(after), false, 'Reset Joint Rotation');
+  });
+
+  // WHETHER THIS JOINT SHAPES THE SKIN. Off, Make Skin leaves it out — a jaw inside a head, a twist
+  // bone — while it still deforms like any bone. The twin follows, as every joint-shape edit does.
+  q('shapes-skin')?.addEventListener('click', () => {
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (sel.length !== 1) return;
+    const twin = Skeleton.mirrorEdits(main) ? sel[0]._boneMirror : null;
+    const rows = [sel[0]];
+    if (twin && twin !== sel[0] && main.getMeshes?.().includes(twin)) rows.push(twin);
+    const on = !Skeleton.jointShapesSkin(sel[0]);
+    const apply = (v) => {
+      for (const j of rows) Skeleton.setJointShapesSkin(j, v);
+      q('shapes-skin')?.classList.toggle('active', v);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    apply(on);
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(!on), () => apply(on), false, on ? 'Joint Shapes Skin' : 'Joint Deform Only');
+    refresh();
+  });
 
   q('sym')?.addEventListener('click', () => {
     const sm = main.getSculptManager?.();
@@ -1372,6 +1424,16 @@ export function wireBoneSection(root, main, opts) {
     input?.addEventListener('input', () => {
       const v = Skeleton.setCapsuleOpacity(main, parseInt(input.value, 10) / 100);
       if (val) val.textContent = String(Math.round(v * 100));
+      // A cylinder nobody has set follows the spheres, and its slider should say so as it goes.
+      const si = q('shaft-op'), sv = q('shaft-op-val');
+      if (si) si.value = String(Math.round(Skeleton.shaftOpacity() * 100));
+      if (sv) sv.textContent = String(Math.round(Skeleton.shaftOpacity() * 100));
+      main.render?.();
+    });
+    const sIn = q('shaft-op'), sVal = q('shaft-op-val');
+    sIn?.addEventListener('input', () => {
+      const v = Skeleton.setShaftOpacity(main, parseInt(sIn.value, 10) / 100);
+      if (sVal) sVal.textContent = String(Math.round(v * 100));
       main.render?.();
     });
   }
@@ -1837,6 +1899,10 @@ export function syncBoneSection(root, main) {
   // panel also write. Synced here so a toggle in either of those is reflected the next time this
   // panel repaints, rather than the three going out of step with each other.
   setFlag('sym', !!main.getSculptManager?.()?._symmetry);
+  {
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (sel.length === 1) setFlag('shapes-skin', Skeleton.jointShapesSkin(sel[0]));
+  }
   {
     // Label AND state: the button says which way it will go, so it has to be rewritten rather
     // than only re-classed.

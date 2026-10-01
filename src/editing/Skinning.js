@@ -71,7 +71,22 @@ function envelopeT2(px, py, pz, sg) {
   const len2 = dx * dx + dy * dy + dz * dz;
   let t = len2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / len2 : 0;
   if (t < 0) t = 0; else if (t > 1) t = 1;
-  const cx = px - (ax + dx * t), cy = py - (ay + dy * t), cz = pz - (az + dz * t);
+  let cx = px - (ax + dx * t), cy = py - (ay + dy * t), cz = pz - (az + dz * t);
+  // A TURNED JOINT IS MEASURED IN ITS OWN FRAME, the same blend the skin's relax uses (see
+  // SkinMesh capsuleTarget), so the weights follow the shape that was built. `ri` holds both
+  // ends' inverse rotations, already mesh-local and in one hemisphere; null for an unturned pair.
+  const ri = sg.ri;
+  if (ri) {
+    let qx = ri[0] + (ri[4] - ri[0]) * t, qy = ri[1] + (ri[5] - ri[1]) * t;
+    let qz = ri[2] + (ri[6] - ri[2]) * t, qw = ri[3] + (ri[7] - ri[3]) * t;
+    const ql = Math.hypot(qx, qy, qz, qw) || 1;
+    qx /= ql; qy /= ql; qz /= ql; qw /= ql;
+    const tx = 2 * (qy * cz - qz * cy), ty = 2 * (qz * cx - qx * cz), tz = 2 * (qx * cy - qy * cx);
+    const rx = cx + qw * tx + (qy * tz - qz * ty);
+    const ry = cy + qw * ty + (qz * tx - qx * tz);
+    const rz = cz + qw * tz + (qx * ty - qy * tx);
+    cx = rx; cy = ry; cz = rz;
+  }
   const hx = sg.ha[0] + (sg.hb[0] - sg.ha[0]) * t;
   const hy = sg.ha[1] + (sg.hb[1] - sg.ha[1]) * t;
   const hz = sg.ha[2] + (sg.hb[2] - sg.ha[2]) * t;
@@ -132,6 +147,23 @@ function boneSegments(mesh, joints, pos) {
     return _vSeg.copy(at).add(_vOff).clone();
   };
 
+  // THE SHAPES' ROTATIONS, INTO MESH-LOCAL AND INVERTED. A joint's rotation is model space and
+  // the segments are mesh-local, so each is taken through the mesh's own rotation first:
+  // (M^-1 q)^-1 = q^-1 M. Null when neither end is turned, which is every rig made before
+  // rotation existed, so their binds measure exactly as they did.
+  let meshQ = null;
+  const segRotations = (p, j) => {
+    if (!Skeleton.jointRotIsSet(p) && !Skeleton.jointRotIsSet(j)) return null;
+    if (!meshQ) {
+      meshQ = new THREE.Quaternion();
+      _mMesh.decompose(new THREE.Vector3(), meshQ, new THREE.Vector3());
+    }
+    const ia = Skeleton.jointQuat(p).invert().multiply(meshQ);
+    const ib = Skeleton.jointQuat(j).invert().multiply(meshQ);
+    if (ia.dot(ib) < 0) ib.set(-ib.x, -ib.y, -ib.z, -ib.w);
+    return new Float64Array([ia.x, ia.y, ia.z, ia.w, ib.x, ib.y, ib.z, ib.w]);
+  };
+
   const segs = [];
   joints.forEach((j, i) => {
     const p = j._parentMesh;
@@ -149,6 +181,7 @@ function boneSegments(mesh, joints, pos) {
       joint: index.get(p),
       a: centre(p, pos[index.get(p)]), b: centre(j, pos[i]),
       ha: half(p), hb: half(j),
+      ri: segRotations(p, j),
     });
   });
   return segs;
@@ -727,6 +760,7 @@ Skinning.bind = function (main, mesh) {
 
   const nbV = level.getNbVertices();
   mesh._skinJoints = joints.map((j) => j.getID());
+  mesh._skinJointSig = jointSig(joints);
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   // The PRE-SMOOTHING assignment, kept because a partial re-solve amends it and re-smooths;
@@ -1904,10 +1938,81 @@ Skinning.apply = function (main, mesh) {
 // entire reason this line exists; do not replace it with a total.
 let _passTraceAt = 0;
 
+// A BIND THAT FOLLOWS RIG EDITS. The bind used to be frozen to the joints that existed when you
+// pressed it: a joint drawn afterwards never got a vertex, and deleting or dissolving a bound
+// joint made every re-solve refuse ("rebinding is the fix") — and rebinding from scratch takes
+// the CURRENT mesh as the bind shape, which collapses a posed character. matt: "ensure we can add
+// and remove/dissolve joints after the skin has been made, and the weighting updates without
+// fuss or collapsing."
+//
+// So when the joint set changes, the bind is carried over rather than redone:
+//   - a joint that survives keeps its inverse bind, so nothing already bound moves;
+//   - a NEW joint's bind frame is its nearest bound ancestor's bind frame times where the new
+//     joint sits relative to that ancestor NOW. At the bind pose that is simply where it is; on
+//     a posed rig it is where it would have been, so a jaw drawn on a posed head binds right;
+//   - a removed joint just drops out;
+// and the weights are then re-solved over the new set at the BIND pose, against the rest shape —
+// never the posed mesh, which is the collapse.
+// ORDER-FREE: the mesh list can be reordered without the rig changing, and that must not re-solve.
+function jointSig(joints) {
+  let h = joints.length;
+  for (const j of joints) h = (h + Math.imul(j.getID() + 1, 0x9E3779B1)) | 0;
+  return h;
+}
+Skinning.syncJoints = function (main, mesh, joints) {
+  if (!Skinning.isBound(mesh)) return false;
+  joints = joints || Skeleton.joints(main);
+  const oldIds = mesh._skinJoints;
+  const oldSet = new Set(oldIds);
+  if (oldIds.length === joints.length && joints.every((j) => oldSet.has(j.getID()))) {
+    mesh._skinJointSig = jointSig(joints);
+    return false;
+  }
+  const oldAt = new Map();
+  oldIds.forEach((id, i) => oldAt.set(id, i));
+  _mMesh.fromArray(mesh.getModelSpaceMatrix());
+  _mInv.copy(_mMesh).invert();
+  const nowLocal = (j) => new THREE.Matrix4().multiplyMatrices(_mInv, new THREE.Matrix4().fromArray(j.getModelSpaceMatrix()));
+  const invBind = joints.map((j) => {
+    const at = oldAt.get(j.getID());
+    if (at !== undefined) return mesh._skinInvBind[at];
+    let a = j._parentMesh;
+    while (a && !oldAt.has(a.getID ? a.getID() : -1)) a = a._parentMesh;
+    if (!a) return nowLocal(j).invert();
+    const bindA = new THREE.Matrix4().copy(mesh._skinInvBind[oldAt.get(a.getID())]).invert();
+    const rel = nowLocal(a).invert().multiply(nowLocal(j));
+    return bindA.multiply(rel).invert();
+  });
+  mesh._skinJoints = joints.map((j) => j.getID());
+  mesh._skinInvBind = invBind;
+  // Everything indexed by joint position is stale: the raw assignment (a partial re-solve would
+  // amend it in the old numbering) and the pose stamp (sized to the old joint count).
+  mesh._skinRaw = null;
+  mesh._skinStampBuf = null;
+  mesh._skinMushDirty = true;
+  mesh._skinDirty = true;
+  mesh._skinJointSig = jointSig(joints);
+  Skinning.resolveWeights(main, mesh);
+  return true;
+};
+
 Skinning.update = function (main) {
   if (window._skinPause) return;
   const meshes = main.getMeshes();
   if (!meshes) return;
+
+  // Did the rig gain or lose a joint? A count and an id sum, once a frame, so an unchanged rig
+  // pays for one filter over the mesh list and nothing else.
+  if (Skinning.anyBound(main)) {
+    const joints = Skeleton.joints(main);
+    const sig = jointSig(joints);
+    for (let i = 0; i < meshes.length; i++) {
+      const m = meshes[i];
+      if (!Skinning.isBound(m)) continue;
+      if (m._skinJointSig === undefined) m._skinJointSig = jointSig(resolveJoints(main, m).filter(Boolean));
+      if (m._skinJointSig !== sig) Skinning.syncJoints(main, m, joints);
+    }
+  }
 
   const trace = !!window._skinTrace;
   const t0 = trace ? performance.now() : 0;
