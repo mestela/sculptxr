@@ -1158,7 +1158,7 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 }
 .mm-storage-item img,
 .mm-storage-item .mm-storage-noimg {
-  width: 34px; height: 34px; flex-shrink: 0;
+  width: 41px; height: 41px; flex-shrink: 0;
   border-radius: 3px;
   object-fit: cover;
   background: #313244;
