@@ -13,6 +13,7 @@ if (import.meta.env.DEV) {
 }
 
 window.SculptGL = SculptGL;
+import './pwa.js';
 
 // Re-rasterise panels once the FontAwesome web-font is loaded so icons don't
 // intermittently bake blank on a cold load.

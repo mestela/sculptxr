@@ -56,6 +56,7 @@ cp -r app dist/
 mkdir -p dist/src/workers
 cp -r src/workers/* dist/src/workers/
 cp node_modules/manifold-3d/manifold.wasm dist/
+node scripts/gen-sw.mjs
 
 echo "🚀 Deploying to ${HOST}:${DEST}..."
 

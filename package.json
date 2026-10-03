@@ -20,6 +20,7 @@
     "postinstall": "node scripts/patch-three-html-render.mjs",
     "build": "vite build",
     "preview": "vite preview",
+    "pwa:preview": "bash scripts/pwa-preview.sh",
     "bump:patch": "node bump.mjs patch",
     "bump:minor": "node bump.mjs minor",
     "bump:major": "node bump.mjs major",
