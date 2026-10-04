@@ -1895,6 +1895,18 @@ class Scene {
         _reg && _reg.playbackDirection !== undefined ? _reg.playbackDirection : 1);
     }
 
+    // METRONOME: same level-triggered reconcile as the audio above, and independent of whether a
+    // clip is loaded (a click track is most useful with no audio at all).
+    if (window._metronome) {
+      const _mreg = window._animationRegistry;
+      window._metronome.sync(
+        _mreg && Number.isFinite(_mreg.globalPlaybackTime)
+          ? _mreg.globalPlaybackTime : (window._animCurrentTime || 0),
+        !!window._animPlaying,
+        window._animPlaybackSpeed !== undefined ? window._animPlaybackSpeed : 1.0,
+        _mreg && _mreg.playbackDirection !== undefined ? _mreg.playbackDirection : 1);
+    }
+
     // PHYSICS BONES, on the pose playback just wrote and before the pins are re-seated.
     //
     // LIVE ALL THE TIME, not only during playback. matt: "they should live sim in general grab

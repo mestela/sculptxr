@@ -1847,10 +1847,33 @@ export function buildAudioSectionHTML(renderToggle) {
       <span class="mm-val" id="${g.id}-val">${ms}ms</span>
     </div>`;
   }).join('\n    ');
+  const metRows = METRONOME_SLIDERS.map((m) => {
+    const v = Number.isFinite(window[m.win]) ? window[m.win] : (opts[m.opt] ?? m.dflt);
+    const shown = Math.round(v * m.k);
+    return `<div class="mm-row">
+      <span class="mm-lbl">${m.label}</span>
+      <input type="range" id="${m.id}" min="${m.min}" max="${m.max}" step="${m.step}" value="${shown}">
+      <span class="mm-val" id="${m.id}-val">${shown}${m.unit}</span>
+    </div>`;
+  }).join('\n    ');
+  const metOn = window._metronomeOn !== undefined ? !!window._metronomeOn : !!opts.metronome;
   return `<div class="mm-section-title">Audio Scrub</div>
     ${renderToggle('mm-audio-scrub', 'Scrub audio', on)}
-    ${rows}`;
+    ${rows}
+    <div class="mm-section-title">Metronome</div>
+    ${renderToggle('mm-metronome', 'Metronome (also counts in recording)', metOn)}
+    ${metRows}`;
 }
+
+// Metronome tempo / bar length / level. Stored as-is (bpm, beats) except volume, shown x100.
+const METRONOME_SLIDERS = [
+  { id: 'mm-met-bpm',   label: 'BPM',            win: '_metronomeBpm',   opt: 'metronomeBpm',
+    min: 40, max: 240, step: 1, dflt: 120, k: 1,   unit: '' },
+  { id: 'mm-met-beats', label: 'Beats per bar',  win: '_metronomeBeats', opt: 'metronomeBeats',
+    min: 1,  max: 12,  step: 1, dflt: 4,   k: 1,   unit: '' },
+  { id: 'mm-met-vol',   label: 'Click volume',   win: '_metronomeVol',   opt: 'metronomeVol',
+    min: 5,  max: 100, step: 5, dflt: 0.5, k: 100, unit: '%' },
+];
 
 // `slide` is passed in because the two panels wire sliders differently: the VR panel needs a
 // dirty hook so the rasteriser repaints the texture, the desktop sidebar is live DOM and needs
@@ -1872,6 +1895,25 @@ export function wireAudioSection(q, slide, paint) {
         paint?.();
       });
     }
+  }
+  const met = q('#mm-metronome');
+  if (met) {
+    const set = (on) => window._metronome?.setEnabled(on);
+    if (met.tagName === 'INPUT') {
+      met.addEventListener('change', (e) => { set(e.target.checked); paint?.(); });
+    } else {
+      met.addEventListener('click', () => {
+        set(!window._metronomeOn);
+        met.classList.toggle('active', !!window._metronomeOn);
+        paint?.();
+      });
+    }
+  }
+  for (const m of METRONOME_SLIDERS) {
+    slide(q('#' + m.id), q('#' + m.id + '-val'), (v) => {
+      window[m.win] = v / m.k;
+      getOptionsURL.saveOption(m.opt, v / m.k, 300);
+    }, (v) => `${Math.round(v)}${m.unit}`);
   }
   for (const g of AUDIO_GRAINS) {
     slide(q('#' + g.id), q('#' + g.id + '-val'), (ms) => {

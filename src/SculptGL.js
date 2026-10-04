@@ -25,6 +25,7 @@ var LONGPRESS_SLOP = 12;   // CSS px
 
 import ReferenceManager from './editing/ReferenceManager.js';
 import AudioTrack from './editing/AudioTrack.js';
+import Metronome from './editing/Metronome.js';
 import { FrameGroup } from './editing/FrameGroup.js';
 
 // Manage events
@@ -151,6 +152,8 @@ class SculptGL extends Scene {
     // callers with no other reason to know about SculptGL.
     this._audioTrack = new AudioTrack();
     window._audioTrack = this._audioTrack;
+    // Click track on the same transport; shares the audio track's AudioContext.
+    window._metronome = new Metronome();
 
     // Frame-by-frame animation as real outliner objects + keyframed visibility (voxel
     // frames own worker distance-field slots). Replaced the old FrameAnimation cel system.

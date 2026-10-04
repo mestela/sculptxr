@@ -378,20 +378,24 @@ class AnimationRegistry {
     // If user wants a countdown AND this isn't a rapid layer overdub:
     if (window._animCountIn) {
       this.isCountingIn = true;
-      window._animStatusText = '3...';
-      
-      let count = 3;
+      // With the metronome on, the count-in is one bar of clicks at the set tempo, so the take
+      // starts on the beat; otherwise the usual 3 one-second ticks.
+      const met = window._metronome?.enabled() ? window._metronome : null;
+      let count = met ? met.beatsPerBar() : 3;
+      window._animStatusText = `${count}...`;
+      met?.click(true);
       this.countInTimer = setInterval(() => {
         count--;
         if (count > 0) {
           window._animStatusText = `${count}...`;
+          met?.click(false);
         } else {
           if (this.countInTimer) clearInterval(this.countInTimer);
           this.countInTimer = null;
           this.isCountingIn = false;
           this._executePunchIn(id);
         }
-      }, 1000);
+      }, met ? 60000 / met.bpm() : 1000);
     } else {
       // Immediate DAWs Punch In
       this._executePunchIn(id);

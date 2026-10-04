@@ -423,6 +423,11 @@ var getOptionsURL = function () {
   options.audioGrainSec     = queryNumber(getVal('audioGrainSec'),     0.01, 0.5,  0.09);
   options.audioGrainSpacing = queryNumber(getVal('audioGrainSpacing'), 0.01, 0.4,  0.05);
   options.audioGrainFade    = queryNumber(getVal('audioGrainFade'),    0.0,  0.05, 0.004);
+  // Metronome: click track on the transport (see Metronome.js).
+  options.metronome         = queryBool(getVal('metronome'), false);
+  options.metronomeBpm      = queryNumber(getVal('metronomeBpm'),   20, 300, 120);
+  options.metronomeBeats    = queryNumber(getVal('metronomeBeats'),  1,  12,   4);
+  options.metronomeVol      = queryNumber(getVal('metronomeVol'),  0.05, 1,  0.5);
 
   options.tabletRadiusFactor    = queryNumber(getVal('tabletRadiusFactor'),    0.0, 1.0,   0.75);
   options.tabletIntensityFactor = queryNumber(getVal('tabletIntensityFactor'), 0.0, 1.0,   0.0);

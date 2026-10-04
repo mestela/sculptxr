@@ -572,6 +572,8 @@ export default class GuiTimeline {
       { label: (at?.isMuted?.() ? '\u2003  ' : '\u2713  ') + 'Audible', enabled: has,
         run: () => at?.setMuted?.(!at.isMuted()) },
       { label: 'Clear', enabled: has, run: () => at?.clear?.() },
+      { label: (window._metronome?.enabled() ? '\u2713  ' : '\u2003  ') + 'Metronome', enabled: !!window._metronome,
+        run: () => { window._metronome.setEnabled(!window._metronome.enabled()); at?.unlock?.(); } },
     ];
   }
 
