@@ -6187,6 +6187,7 @@ export function buildMenuHTML_background(main) {
   const bg   = main.getBackground?.();
   const type = bg?._type ?? 3;
   const blur = bg?._blur ?? 0;
+  const expo = bg?._exposure ?? 1;
   const fill = bg?._fill ?? false;
   const col  = bg?._color ?? [0.196, 0.196, 0.196];
   const colHex = '#' + [0, 1, 2].map((i) =>
@@ -6224,6 +6225,11 @@ export function buildMenuHTML_background(main) {
       <input type="range" id="mm-bg-blur" min="0" max="1" step="0.01" value="${blur}">
       <span class="mm-val" id="mm-bg-blur-val">${blur.toFixed(2)}</span>
     </div>
+    <div class="mm-row" id="mm-bg-exp-row"${type!==1?' style="display:none"':''}>
+      <span class="mm-lbl">Exposure</span>
+      <input type="range" id="mm-bg-exp" min="0" max="3" step="0.01" value="${expo}">
+      <span class="mm-val" id="mm-bg-exp-val">${expo.toFixed(2)}</span>
+    </div>
     <div class="mm-section-title">Image</div>
     ${/* The lone Fill toggle was costing a second line for one four-letter word. It joins the
          two actions: the sweep gives a toggle and an action the same shape, so the only thing
@@ -6247,12 +6253,18 @@ export function wireMenuBackground(el, main, repaintFn) {
     main.render?.();
     const blurRow = q('#mm-blur-row');
     if (blurRow) blurRow.style.display = n === 1 ? '' : 'none';
+    const expRow = q('#mm-bg-exp-row');
+    if (expRow) expRow.style.display = n === 1 ? '' : 'none';
     const colRow = q('#mm-bg-color-row');
     if (colRow) colRow.style.display = n === 3 ? '' : 'none';
   });
 
   wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),
     (v) => { if (bg) { bg._blur = v; bg._applyBackground?.(); } main.render?.(); },
+    v => v.toFixed(2));
+
+  wireSlider(q('#mm-bg-exp'), q('#mm-bg-exp-val'),
+    (v) => { if (bg) { bg._exposure = v; bg._applyBackground?.(); } main.render?.(); },
     v => v.toFixed(2));
 
   q('#mm-bg-reset')?.addEventListener('click',  () => { bg?.deleteTexture?.(); main.render?.(); });

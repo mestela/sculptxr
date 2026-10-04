@@ -367,6 +367,7 @@ export class HTMLVRPanel {
 
     // Pointer drag state
     this._sliderDragTarget = null;
+    this._wheelDrag        = null;   // a ColorWheel root while a press that started on it is held
     this._hoveredBtn       = null;
 
     // Texture / dirty flag
@@ -835,7 +836,7 @@ export class HTMLVRPanel {
     // slider owns the press. Everything else here is hover, which is deliberate — a pointermove
     // into the offscreen DOM activates :hover and costs a full rasterisation — so the scroll
     // drag joins the one existing exception rather than lifting it.
-    if (this._sliderDragTarget || this._dragScroll) {
+    if (this._sliderDragTarget || this._dragScroll || this._wheelDrag) {
       this._vrDispatch('pointermove', uv, 1, true);
       return;
     }
@@ -1024,6 +1025,7 @@ export class HTMLVRPanel {
     // suppresses repaint (update() skips paint while dragging) and captures input.
     if (this._sliderDragTarget) { this._sliderDragTarget = null; this.markDirty(); }
     if (this._scrollDrag) this._scrollDrag = null;
+    this._wheelDrag = null;
     // Same for a drag-scroll: a ray that leaves the panel mid-drag must not come back to a
     // scroll still anchored to where it started, which would jump the content on the first move.
     if (this._dragScroll) { this._dragScroll = null; this.markDirty(); }
@@ -1440,6 +1442,14 @@ export class HTMLVRPanel {
     }
     if (type === 'pointerup') this._sliderDragTarget = null;
 
+    // A COLOUR WHEEL OWNS THE PRESS THAT STARTED ON IT, the way a slider does. Its ColorWheel
+    // listens for pointermove on the document, but a hover move is never dispatched into the DOM
+    // (see onVRMove), so a held press delivered the down and nothing after: click-to-set worked
+    // and drag did not. Moves are now forwarded while this is set, aimed at the wheel itself so
+    // they keep arriving when the ray strays off it, and the panel does not start a
+    // drag-to-scroll from the same press.
+    if (type === 'pointerdown') this._wheelDrag = el.closest?.('[data-colorwheel]') || null;
+
     const drag = this._sliderDragTarget;
     if (drag && (type === 'pointerdown' || type === 'pointermove')) {
       drag.value = this._sliderValueFromAbsX(drag, absX);
@@ -1488,7 +1498,7 @@ export class HTMLVRPanel {
     // Content follows the finger, as it does on every touch surface: drag down and the content
     // comes down with you, so scrollTop decreases.
     if (window._dragTrace) this._dragTraceOut(type, el, absX, absY);
-    if (type === 'pointerdown' && !this._sliderDragTarget && !this._scrollDrag) {
+    if (type === 'pointerdown' && !this._sliderDragTarget && !this._scrollDrag && !this._wheelDrag) {
       const sc = this._scrollClipEl(el) || this._findScrollable(this._element);
       // Only a container that actually overflows: on a short panel this would otherwise eat
       // every press and give nothing back.
@@ -1547,7 +1557,7 @@ export class HTMLVRPanel {
       if (type === 'pointerup'   && btn) btn.classList.remove('active');
     }
 
-    const target = drag || el;
+    const target = drag || this._wheelDrag || el;
 
     // Skip DOM pointermove dispatch when nothing visual changed and no drag is
     // active.  Dispatching pointermove unconditionally causes the browser to
@@ -1556,13 +1566,14 @@ export class HTMLVRPanel {
     // and responds to by calling requestPaint() from its own internal observer —
     // bypassing our requestPaintOnce dedup and triggering a full rasterisation
     // every XR frame.  pointerdown/pointerup always dispatch so click targets fire.
-    if (type !== 'pointermove' || changed || drag) {
+    if (type !== 'pointermove' || changed || drag || this._wheelDrag) {
       target.dispatchEvent(new PointerEvent(type, {
         bubbles: true, cancelable: true, composed: true,
         pointerId: 1, pointerType: 'mouse',
         clientX: absX, clientY: absY, buttons,
       }));
     }
+    if (type === 'pointerup') this._wheelDrag = null;   // after the dispatch: the wheel's own release listener has to see it
 
     // A TAP IS A CLICK; A DRAG IS A SCROLL. The click used to fire on POINTERDOWN in VR, on the
     // reasoning that the press is the moment you meant it and aim drifts afterwards. That is

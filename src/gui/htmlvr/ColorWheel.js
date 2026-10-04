@@ -51,7 +51,7 @@ export function buildColorWheelHTML(opts) {
     <button id="${prefix}-swap" style="position:absolute;left:${px(46 * M.k)};top:${px(10 * M.k)};padding:2px 5px;background:#181825;border:1px solid #45475a;border-radius:4px;color:#a6adc8;font-size:13px;cursor:pointer;outline:none;line-height:1">&#8644;</button>
     <button id="${prefix}-eye" style="position:absolute;right:${px(8 * M.k)};top:${px(10 * M.k)};padding:2px 5px;background:#181825;border:1px solid #45475a;border-radius:4px;color:#6c7086;font-size:11px;cursor:pointer;outline:none;line-height:1">pick</button>` : '';
   return `
-    <div id="${prefix}" style="position:relative;width:${px(size)};height:${px(M.h)};background:#1e1e2e;border-radius:8px;overflow:hidden;touch-action:none">
+    <div id="${prefix}" data-colorwheel style="position:relative;width:${px(size)};height:${px(M.h)};background:#1e1e2e;border-radius:8px;overflow:hidden;touch-action:none">
       ${head}
       <div id="${prefix}-ring" style="position:absolute;left:${px(M.m)};top:${px(M.head)};width:${px(M.D)};height:${px(M.D)};border-radius:50%;background:conic-gradient(from 90deg,#f00 0%,#ff0 16.67%,#0f0 33.33%,#0ff 50%,#00f 66.67%,#f0f 83.33%,#f00 100%);-webkit-mask:radial-gradient(circle closest-side,transparent 77%,black 78%);mask:radial-gradient(circle closest-side,transparent 77%,black 78%)"></div>
       <div id="${prefix}-sv" style="position:absolute;left:${px(M.sx)};top:${px(M.sy)};width:${px(M.ss)};height:${px(M.ss)};overflow:hidden">
@@ -79,6 +79,7 @@ export class ColorWheel {
     this._render   = opts.render;           // called on every change, before onchange
     this._region    = null;                 // 'hue' | 'sv' | null
     this._cachedHue = null;
+    this._hue       = 0;                    // last hue the user chose; an rgb with no saturation or no value cannot say
     this._lastSwap  = 0;
     this._lastEye   = 0;
 
@@ -99,6 +100,15 @@ export class ColorWheel {
     document.removeEventListener('pointerup',     this._onUp);
   }
 
+  // THE HUE OF A COLOUR THAT HAS NONE. Grey and black convert to hue 0 whatever hue was last
+  // picked, so dragging round the ring on the default grey set a colour identical to the one it
+  // started with: nothing moved, not even the indicator. The wheel remembers the hue it was
+  // given and falls back to it when the colour cannot supply one.
+  _hueOf(h, s, v) {
+    if (s > 1e-4 && v > 1e-4) this._hue = h;
+    return this._hue;
+  }
+
   _el(id) { return this._root.querySelector('#' + this._prefix + id); }
 
   _localXY(e) {
@@ -112,7 +122,8 @@ export class ColorWheel {
     if (!col) return;
     const M = this._M;
 
-    const [h, s, v] = Utils.rgb2hsv(col[0], col[1], col[2]);
+    const [h0, s, v] = Utils.rgb2hsv(col[0], col[1], col[2]);
+    const h = this._hueOf(h0, s, v);
     const aHue = (this._region === 'sv' && this._cachedHue !== null) ? this._cachedHue : h;
 
     if (this._extras) {
@@ -185,7 +196,8 @@ export class ColorWheel {
     if (!col) return;
     const M = this._M;
 
-    const [h, s, v] = Utils.rgb2hsv(col[0], col[1], col[2]);
+    const [h0, s, v] = Utils.rgb2hsv(col[0], col[1], col[2]);
+    const h = this._hueOf(h0, s, v);
     const dx   = lx - M.cx, dy = ly - M.cy;
     const dist = Math.sqrt(dx * dx + dy * dy);
     const slop = 10 * M.k;
@@ -221,7 +233,8 @@ export class ColorWheel {
       this._region = 'hue';
       let ang = Math.atan2(dy, dx);
       if (ang < 0) ang += Math.PI * 2;
-      this._set(Utils.hsv2rgb(ang / (Math.PI * 2), s, v));
+      this._hue = ang / (Math.PI * 2);
+      this._set(Utils.hsv2rgb(this._hue, s, v));
       this._render?.(); this.draw(); this._onchange?.();
     }
   }

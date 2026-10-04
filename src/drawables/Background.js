@@ -57,6 +57,9 @@ class Background {
 
     this._type = 3; // 0: image, 1 env spec, 2 env ambient, 3 flat colour
     this._blur = 0.0;
+    // The backdrop's own brightness, deliberately separate from the rendering panel's exposure
+    // (which lights the sculpt): dimming a bright HDRI behind the work should not darken the work.
+    this._exposure = 1.0;
     // THE FLAT COLOUR, and the default type. Type 0 has always ended up grey whenever no image
     // was imported, so the backdrop everyone actually sees was a fallback inside the Image
     // branch with no control on it. It is its own type now, with the swatch that implies.
@@ -151,15 +154,22 @@ class Background {
     this._applyBackground();
   }
 
-  // Apply the background to the three.js scene (desktop/tablet). Skipped during XR
-  // sessions — VR-opaque and AR-passthrough backgrounds are managed separately and
-  // we must not stamp a colour over passthrough.
+  // Apply the background to the three.js scene. Skipped only in PASSTHROUGH (anything but an
+  // 'opaque' blend mode), where we must not stamp a colour over the room. It used to skip every
+  // XR session on the claim that VR backgrounds were "managed separately" -- nothing manages
+  // them, so every Background control was a no-op inside a headset and the VR backdrop stayed
+  // whatever it was when the session started.
   _applyBackground() {
     const scene = this._main && this._main._scene;
     if (!scene) return;
-    if (this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) return;
+    const xr = this._main._renderer && this._main._renderer.xr;
+    if (xr && xr.isPresenting) {
+      const blend = this._main._xrSession && this._main._xrSession.environmentBlendMode;
+      if (blend !== 'opaque') return;
+    }
 
     scene.backgroundBlurriness = this._blur || 0;
+    scene.backgroundIntensity = this._exposure;
 
     // COLOUR IS CHECKED BEFORE THE IMPORTED TEXTURE, unlike every other type. Picking "Colour"
     // is a statement about what the backdrop should be, so an image imported earlier must not
@@ -260,7 +270,7 @@ class Background {
     }
     // Per-HDRI baseline exposure × the rendering panel's exposure slider (read live).
     const envExp = env && env.exposure !== undefined ? env.exposure : 1.0;
-    u.uExposure.value = envExp * (this._main.getExposure ? this._main.getExposure() : 1.0);
+    u.uExposure.value = envExp * this._exposure * (this._main.getExposure ? this._main.getExposure() : 1.0);
   }
 
   _showEnvQuad() {
