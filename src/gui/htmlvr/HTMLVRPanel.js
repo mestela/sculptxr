@@ -100,6 +100,21 @@ export function registerGradeMaterial(mat) {
   return mat;
 }
 
+// Material for a canvas-textured panel (timeline / blendshapes). Same node panel material as an
+// HTMLVRPanel, so the two take the identical colour path: the stock MeshBasicMaterial + the
+// onBeforeCompile grade is ignored by WebGPURenderer, which left these panels ungraded and a
+// different colour from every other menu.
+export function makeCanvasPanelMaterial(tex) {
+  const node = NodeMaterials.panel({ depthWrite: true, depthTest: true });
+  if (node) {
+    node.userData.setMap(tex);
+    return _installGrade(node);
+  }
+  return registerGradeMaterial(new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: true, depthTest: true,
+  }));
+}
+
 // Set the menu brightness/saturation from the Settings sliders (0..1 each).
 let _gradeRecompileTimer = null;
 export function setMenuColorGrade(b01, s01, g01) {
