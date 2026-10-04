@@ -1449,6 +1449,20 @@ function buildShellHTML() {
 // XML forbids "--" inside a comment -- so one prose dash blanked the whole panel with nothing
 // but "SVG image failed to load". It renders fine on desktop, whose HTML parser is lenient,
 // which is exactly what makes it worth a rule rather than care.
+// EXAMPLE SCENES are .sxr files shipped in public/examples, listed by examples.json so a new one
+// needs no code. The list expands inline under New rather than being a menu of its own, which
+// keeps it working in both hosts of this markup (the VR panel and the desktop overlay) with
+// nothing but the rebuild callback they already pass. Fetched on first open, then cached.
+let _examples = null;
+const examplesURL = (f) => new URL('examples/' + f, document.baseURI).href;
+function buildExamplesHTML() {
+  if (!_examples) return '<div class="mm-info">Loading examples…</div>';
+  if (!_examples.length) return '<div class="mm-info">No examples</div>';
+  return _examples.map((e, i) => `
+    <button class="mm-action-btn mm-left" data-example="${i}" title="${String(e.desc || '').replace(/"/g, '&quot;')}">${
+      String(e.name).replace(/[&<>]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]))}</button>`).join('');
+}
+
 export function buildMenuHTML_files(main) {
   const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
   // SAVE OVERWRITES, SAVE AS MAKES ANOTHER ONE -- the pair every other application has. The name
@@ -1491,8 +1505,10 @@ export function buildMenuHTML_files(main) {
     <div class="mm-choice-grid cols-2">
       <button class="mm-action-btn mm-left${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
         title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
-      <span></span>
+      <button class="mm-action-btn mm-left" id="mm-new-example"
+        title="Replace the scene with an example">New from example…</button>
     </div>
+    ${main._examplesOpen ? buildExamplesHTML() : ''}
     ${/* BROWSER IS THE FIRST COLUMN because it is the one used most; disk is the occasional
           trip out of the app. The left column is where the eye lands, so it belongs to the
           everyday command in every one of these rows. */ ''}
@@ -6064,6 +6080,34 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
       else if (!main.sendMeshToNomad()) status.textContent = 'Select a mesh to send';
     });
   }
+
+  q('#mm-new-example')?.addEventListener('click', async () => {
+    main._examplesOpen = !main._examplesOpen;
+    if (main._examplesOpen && !_examples) {
+      rebuildFn();
+      try {
+        const r = await fetch(examplesURL('examples.json'));
+        _examples = r.ok ? await r.json() : [];
+      } catch (_) { _examples = []; }
+    }
+    rebuildFn();
+  });
+  el.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', async () => {
+    const ex = _examples?.[+b.dataset.example];
+    if (!ex) return;
+    try {
+      const r = await fetch(examplesURL(ex.file));
+      if (!r.ok) throw new Error(r.status);
+      const buf = await r.arrayBuffer();
+      main.clearScene();
+      if (guiFiles) guiFiles._currentSaveKey = null;   // not a file of yours: Save must not land over anything
+      main.loadScene(buf, 'sgl');
+      main._examplesOpen = false;
+      main.render?.(); rebuildFn();
+    } catch (err) {
+      console.error('[examples] load failed:', err);
+    }
+  }));
 
   q('#mm-clear-scene')?.addEventListener('click', () => {
     if (!main._clearSceneConfirm) {
