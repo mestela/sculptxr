@@ -16,7 +16,7 @@ function deviceLabel() {
   const ua = navigator.userAgent;
   const xr = 'xr' in navigator;
   let name = 'desktop';
-  if (/Macintosh/.test(ua) && xr && !/Chrome/i.test(ua)) name = 'visionpro';
+  if (xr && /AppleWebKit/.test(ua) && !/Chrome|Android/i.test(ua)) name = 'visionpro';   // UA platform token changed with visionOS 27
   else if (/iPad|iPhone/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) name = 'ipad';
   else if (/Android|Quest|X11/i.test(ua) && xr) name = 'headset';
   let h = 0;

@@ -4135,7 +4135,12 @@ class Scene {
       this._directPipeline = null;
       {
         const ua = navigator.userAgent;
-        const isVisionOS = /Macintosh/.test(ua) && !/Chrome|Chromium/i.test(ua) && ('xr' in navigator);
+        // NOT KEYED ON THE UA'S PLATFORM TOKEN. A Vision Pro reported "Macintosh" until a visionOS
+        // update made Safari 27 report "iPad; CPU iPhone OS 18_7", and the old test silently went
+        // false -- the warped stereo came back with no other symptom. WebKit with navigator.xr is
+        // the whole signal: iPadOS/macOS Safari expose no WebXR, and every Chromium headset
+        // (Quest, GalaxyXR) says Chrome in its UA.
+        const isVisionOS = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Android/i.test(ua) && ('xr' in navigator);
         if (isVisionOS && typeof WGPU.DirectRenderPipeline === 'function') {
           this._directPipeline = new WGPU.DirectRenderPipeline(this._renderer);
         }
