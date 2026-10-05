@@ -49,10 +49,14 @@ const CSS = `
   font-weight: 600;
   text-align: right;
   padding: 8px 12px;
-  min-height: 46px;
+  height: 46px;
+  box-sizing: border-box;
   margin-bottom: 12px;
   letter-spacing: 1px;
-  word-break: break-all;
+  /* One line, fixed height. A long value used to wrap onto a second line, growing the panel;
+     clearing then shrank it again and left a doubled strip at the bottom of the VR panel. */
+  white-space: nowrap;
+  overflow: hidden;
   line-height: 1;
   display: flex;
   align-items: center;

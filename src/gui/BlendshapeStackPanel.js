@@ -1121,8 +1121,10 @@ export default class BlendshapeStackPanel {
     const name = row.name;
     const oldW = this._weightOf(name);
     const oldR = { ...this._rangeOf(name) };
-    np.open(oldW, { label: name + ' weight' }, (v) => {
+    // Two decimals is all the slider means; the raw float showed ~8 digits in the numpad.
+    np.open(Math.round(oldW * 100) / 100, { label: name + ' weight' }, (v) => {
       if (!Number.isFinite(v)) return;
+      v = Math.round(v * 100) / 100;
       const r = this._rangeOf(name);
       if (v < r.min) r.min = v;
       if (v > r.max) r.max = v;
