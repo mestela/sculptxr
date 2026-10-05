@@ -2307,6 +2307,11 @@ class AnimationRegistry {
       v.set(baseVerts);
     } else if (track.baseShape) {
       v.set(track.baseShape);
+      // The vertex buffer is allocated with spare capacity, so it can be longer than the shape.
+      // Zero the spare tail: the delta loop below used to run to v.length and read past the end of
+      // each delta, writing NaN into it, which made three's computeBoundingSphere/Box log an
+      // error on every recomposite (~65-130ms each with the console attached).
+      if (v.length > track.baseShape.length) v.fill(0, track.baseShape.length);
     }
 
     // Always show the true weighted composition so every weight slider is live,
@@ -2327,7 +2332,8 @@ class AnimationRegistry {
 
       const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight !== 0) {
-        for (let i = 0; i < v.length; i++) {
+        const n = Math.min(v.length, delta.length);
+        for (let i = 0; i < n; i++) {
           v[i] += delta[i] * weight;
         }
       }

@@ -35,6 +35,7 @@ const FA = {
   split:    '\uf337', // fa-arrows-left-right (split symmetric shape into L/R)
   combine:  '\uf387', // fa-code-merge (combine L/R halves back into one symmetric shape)
   grip:     '\uf7a4', // fa-grip-lines (drag handle for reordering layers)
+  reset:    '\uf2ea', // fa-rotate-left (reset the active layer's slider range to 0..1)
   pen:      '\uf304', // fa-pen (rename \u2014 VR-friendly alternative to double-tap)
 };
 
@@ -533,12 +534,17 @@ export default class BlendshapeStackPanel {
     // Split the selected layer into Left/Right halves — any layer, not only the ARKit names
     // whose rows carry their own split icon.
     const splitBtn = { id: 'split', x: PAD + (bw + 6) * 2, y: by, w: bw, h: bh };
-    this._toolbarBtns.push(newBtn, delBtn, splitBtn);
+    const resetBtn = { id: 'rrange', x: PAD + (bw + 6) * 3, y: by, w: bw, h: bh };
+    this._toolbarBtns.push(newBtn, delBtn, splitBtn, resetBtn);
 
     this._drawIconBtn(ctx, newBtn, FA.plus,  Theme.blue, this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
     this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : Theme.surface2, this._hover?.btn === 'del');
     this._drawIconBtn(ctx, splitBtn, FA.split, canDel ? Theme.text : Theme.surface2, this._hover?.btn === 'split');
+    const actName = this._track()?.editingBlendshape;
+    const ar = actName ? this._rangeOf(actName) : null;
+    const stretched = !!ar && (ar.min !== 0 || ar.max !== 1);
+    this._drawIconBtn(ctx, resetBtn, FA.reset, stretched ? Theme.text : Theme.surface2, this._hover?.btn === 'rrange');
 
     // ── THE FOUR PAD SLOTS ────────────────────────────────────────────────────────────
     //
@@ -554,7 +560,7 @@ export default class BlendshapeStackPanel {
     // WHICH side without needing a word for it.
     if (this._pad) {
       const selected = this._track()?.editingBlendshape || null;
-      let sx = PAD + (bw + 6) * 3 + 10;
+      let sx = PAD + (bw + 6) * 4 + 10;
       for (const slot of ['left', 'right', 'up', 'down']) {
         const b = { id: 'slot_' + slot, slot, x: sx, y: by, w: bh, h: bh };
         this._toolbarBtns.push(b);
@@ -674,7 +680,11 @@ export default class BlendshapeStackPanel {
     ctx.fillStyle = isBase ? (locked ? Theme.subtext : Theme.subtext)
                           : (muted ? Theme.overlay0 : (isActive || nameHot ? Theme.text : Theme.text));
     ctx.font = (isActive ? '600 ' : '') + '12px sans-serif';
-    const valW = isBase ? PAD : 36;
+    const sym  = !isBase && arkitEntry(name)?.category === 'symmetric';
+    const bs   = this._track()?.blendshapes;
+    const half = !isBase && !sym && bs ? lrPairFor(name, (n) => bs.has(n)) : null;
+    // Readout always shows now (tap it for the numpad); split/combine icons sit to its right.
+    const valW = isBase ? PAD : ((sym || half) ? 80 : 44);
     const nameMaxX = W - PAD - valW;
     // Non-base rows reserve ~20px at the name's right edge for the rename pencil.
     const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart - (isBase ? 0 : 20));
@@ -705,9 +715,6 @@ export default class BlendshapeStackPanel {
     // half (ARKit, or a '<x>Left'/'<x>Right' pair from the toolbar split) gets a combine
     // button (→ back to one shape); everything else keeps the numeric readout (the weight
     // is already shown by the slider). Any layer can be split from the toolbar.
-    const sym  = arkitEntry(name)?.category === 'symmetric';
-    const bs   = this._track()?.blendshapes;
-    const half = !sym && bs ? lrPairFor(name, (n) => bs.has(n)) : null;
     const sx = W - PAD - 10;
     if (sym) {
       const hot = hov === 'split';
@@ -723,23 +730,42 @@ export default class BlendshapeStackPanel {
       ctx.fillText(FA.combine, sx, top + 16 + 0.5);
       ctx.textAlign = 'left';
       r.combine = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
-    } else {
-      ctx.fillStyle = muted ? Theme.overlay0 : Theme.overlay1;
-      ctx.font = '11px ui-monospace, monospace';
+    }
+    // Numeric readout, every layer. Tap → numpad; a value outside 0..1 widens the slider range.
+    {
+      const rx = (sym || half) ? W - PAD - 38 : W - PAD;
+      const vHot = hov === 'value';
+      if (vHot) {
+        ctx.fillStyle = Theme.surface0;
+        this._roundRect(ctx, rx - 46, top + 4, 50, 22, 4); ctx.fill();
+      }
+      ctx.fillStyle = vHot ? Theme.text : (muted ? Theme.overlay0 : Theme.overlay1);
+      ctx.font = '12px ui-monospace, monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(weight.toFixed(2), W - PAD, top + 16);
+      ctx.fillText(weight.toFixed(2), rx, top + 16);
       ctx.textAlign = 'left';
+      r.value = { x0: rx - 46, x1: rx + 4, y0: top, y1: top + 28 };
     }
 
     // Slider (second line) — thicker/white thumb on hover.
     const trackX0 = TRACK_X0, trackX1 = W - PAD, trackY = top + 33;
     const tw = trackX1 - trackX0;
-    const w01 = Math.max(0, Math.min(1, weight));
+    const rng = this._rangeOf(name);
+    const w01 = Math.max(0, Math.min(1, (weight - rng.min) / (rng.max - rng.min)));
     const sliderHot = hov === 'slider';
     ctx.fillStyle = sliderHot ? Theme.surface1 : Theme.surface0;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw, TRACK_H, TRACK_H / 2); ctx.fill();
     ctx.fillStyle = Theme.blue;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw * w01, TRACK_H, TRACK_H / 2); ctx.fill();
+    // Tick marks for 0 and 1 once the range is stretched past them, so the sculptable 1.0
+    // detent can be found by eye.
+    if (rng.min < 0 || rng.max > 1) {
+      ctx.fillStyle = Theme.overlay1;
+      for (const d of [0, 1]) {
+        const tx = trackX0 + tw * (d - rng.min) / (rng.max - rng.min);
+        ctx.fillRect(tx - 1, trackY - 7, 2, 14);
+      }
+    }
     const hx = trackX0 + tw * w01;
     ctx.beginPath(); ctx.arc(hx, trackY, sliderHot ? 8 : 7, 0, Math.PI * 2);
     ctx.fillStyle = sliderHot ? Theme.text : Theme.text; ctx.fill();
@@ -760,6 +786,7 @@ export default class BlendshapeStackPanel {
     if (inRect(row.split))   return { row, part: 'split' };
     if (inRect(row.combine)) return { row, part: 'combine' };
     if (inRect(row.rename))  return { row, part: 'rename' };
+    if (inRect(row.value))   return { row, part: 'value' };
     if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
       return { row, part: 'slider' };
     return { row, part: 'row' };
@@ -873,6 +900,7 @@ export default class BlendshapeStackPanel {
       this._applyWeightFromX(row, p.x);
       return;
     }
+    if (part === 'value' && !row.isBase) { this._editValue(row); return; }
     // Pencil → rename (VR-friendly; double-tap still works too).
     if (part === 'rename' && !row.isBase) { this._beginRename(row); return; }
     // Row body → make it the active sculpt layer (Base deactivates). Double-tap → rename.
@@ -1023,9 +1051,73 @@ export default class BlendshapeStackPanel {
     ctx.fillText(this._ellipsize(ctx, this._reorderName, W - PAD * 2 - 12), PAD + 6, ty);
   }
 
+  // The slider's range for a layer: 0..1 unless widened by a numpad entry or by keys already
+  // beyond it (a loaded file). Materialised on first look so the key scan runs once.
+  _rangeOf(name) {
+    const track = this._track();
+    if (!track) return { min: 0, max: 1 };
+    if (!track.blendshapeRange) track.blendshapeRange = new Map();
+    let r = track.blendshapeRange.get(name);
+    if (!r) {
+      r = { min: 0, max: 1 };
+      for (const v of track.blendshapeTracks?.get(name)?.values || []) {
+        if (v < r.min) r.min = v;
+        if (v > r.max) r.max = v;
+      }
+      track.blendshapeRange.set(name, r);
+    }
+    return r;
+  }
+
+  _editValue(row) {
+    const mesh = this._mesh();
+    const reg = window._animationRegistry;
+    const np = window._vrNumpad;
+    if (!mesh || !np) return;
+    const name = row.name;
+    const oldW = this._weightOf(name);
+    const oldR = { ...this._rangeOf(name) };
+    np.open(oldW, { label: name + ' weight' }, (v) => {
+      if (!Number.isFinite(v)) return;
+      const r = this._rangeOf(name);
+      if (v < r.min) r.min = v;
+      if (v > r.max) r.max = v;
+      reg.setBlendshapeWeight(mesh, name, v);
+      const newR = { ...r };
+      window.app?.getStateManager?.()?.pushStateCustom(
+        () => { Object.assign(this._rangeOf(name), oldR); reg.setBlendshapeWeight(mesh, name, oldW); this.draw(); },
+        () => { Object.assign(this._rangeOf(name), newR); reg.setBlendshapeWeight(mesh, name, v); this.draw(); },
+        false, 'Set Blendshape Weight');
+      this.draw();
+    }, null, null, this._vrMesh);
+  }
+
+  // Back to 0..1 for the active layer; its current weight is pulled inside so the thumb is not
+  // left pegged beyond the end of the track.
+  _resetRange() {
+    const mesh = this._mesh();
+    const name = this._track()?.editingBlendshape;
+    if (!mesh || !name) { this.flash(); return; }
+    const r = this._rangeOf(name);
+    r.min = 0; r.max = 1;
+    const w = this._weightOf(name);
+    if (w < 0 || w > 1) window._animationRegistry.setBlendshapeWeight(mesh, name, Math.max(0, Math.min(1, w)));
+    this.draw();
+  }
+
   _applyWeightFromX(row, x) {
     const tw = row.trackX1 - row.trackX0;
-    const w = Math.max(0, Math.min(1, (x - row.trackX0) / tw));
+    const r = this._rangeOf(row.name);
+    const span = r.max - r.min;
+    let w = r.min + Math.max(0, Math.min(1, (x - row.trackX0) / tw)) * span;
+    // The ends are SNAPPED. A VR ray stops reporting once it leaves the panel, and the track ends
+    // a margin short of the panel edge, so a hard pull to the right used to stall at 0.98 -- which
+    // is locked out of sculpting by design. Resizing "fixed" it only by shrinking the margin.
+    const SNAP = 12;
+    if (x >= row.trackX1 - SNAP) w = r.max;
+    else if (x <= row.trackX0 + SNAP) w = r.min;
+    // Detents at 0 and 1 for a stretched range, where 1.0 would otherwise be a pixel-perfect aim.
+    else for (const d of [0, 1]) if (d > r.min && d < r.max && Math.abs(w - d) < span * 0.015) w = d;
     const mesh = this._mesh();
     if (mesh) window._animationRegistry.setBlendshapeWeight(mesh, row.name, w);
     this.draw();
@@ -1041,6 +1133,7 @@ export default class BlendshapeStackPanel {
       if (this._vrMode) this.draw(); else this._relayout();
       return;
     }
+    if (id === 'rrange') { this._resetRange(); return; }
     const mesh = this._mesh();
     if (!mesh) return;
     const reg = window._animationRegistry;
