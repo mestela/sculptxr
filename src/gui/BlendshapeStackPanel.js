@@ -884,6 +884,9 @@ export default class BlendshapeStackPanel {
     // Eye (non-base): plain → mute/unmute; modifier (Alt / secondary trigger) → solo.
     if (part === 'eye' && !row.isBase) {
       if (mesh) (solo ? reg.toggleBlendshapeSolo : reg.toggleBlendshapeMute).call(reg, mesh, row.name);
+      // A plain press starts a paint stroke: every other eye the ray crosses before release is set
+      // to the state this one just took, so many layers go on/off in one gesture.
+      if (mesh && !solo) this._eyePaint = { muted: reg.isBlendshapeMuted(mesh, row.name), lastY: p.y };
       this.draw();
       return;
     }
@@ -931,6 +934,22 @@ export default class BlendshapeStackPanel {
   _pointerMove(p) {
     if (this._picker) { this._pickerMove(p); return; }
     if (this._sbDrag) { this._sbSet(p.y); return; }
+    if (this._eyePaint) {
+      // PAINT EVERY ROW BETWEEN THE LAST SAMPLE AND THIS ONE, not just the row under the pointer.
+      // Pointer events are sparse in a fast stroke (a mouse flick, or a ray swept across the
+      // panel), so hit-testing only the current point skipped whatever fell between samples.
+      const mesh = this._mesh(), reg = window._animationRegistry;
+      const y0 = Math.min(this._eyePaint.lastY, p.y), y1 = Math.max(this._eyePaint.lastY, p.y);
+      this._eyePaint.lastY = p.y;
+      let changed = false;
+      if (mesh) for (const r of this._rows) {
+        if (r.isBase || r.top + r.h <= y0 || r.top > y1) continue;
+        if (this._padOwned && (r.top + r.h <= TOOLBAR_H || r.top >= this._cssH - this._padReserve)) continue;
+        if (reg.isBlendshapeMuted(mesh, r.name) !== this._eyePaint.muted) { reg.toggleBlendshapeMute(mesh, r.name); changed = true; }
+      }
+      if (changed) this.draw();
+      return;
+    }
     // LATCHED on the press, not re-hit-tested: a drag that starts on the pad has to keep going
     // when the ray wanders off it, exactly as the weight sliders above do.
     if (this._padActive) { this._pad.pointerMove(p.x, p.y); return; }
@@ -981,6 +1000,7 @@ export default class BlendshapeStackPanel {
 
   _pointerUp() {
     if (this._sbDrag) { this._sbDrag = false; this.draw(); return; }
+    if (this._eyePaint) { this._eyePaint = null; return; }
     if (this._padActive) { this._padActive = false; this._pad.pointerUp(); return; }
     if (this._picker) { this._pickerUp(); return; }
     if (this._reorderName) {
