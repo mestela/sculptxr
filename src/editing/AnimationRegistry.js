@@ -3425,6 +3425,22 @@ class AnimationRegistry {
 
     track.playbackTime = this.globalPlaybackTime || 0;
 
+    // A SLIDER OVERRIDE LASTS ONLY WHILE THE PLAYHEAD STAYS PUT. The stack panel records the
+    // playhead time beside each preview it makes with Auto off (blendshapeHoldT); once the
+    // playhead moves, the animation channel takes the shape back. A slider still being held
+    // (blendshapeDragHold) is exempt, so dragging works during playback.
+    if (track.blendshapeHoldT && track.blendshapeHoldT.size) {
+      let _freed = false;
+      for (const [n, t] of track.blendshapeHoldT) {
+        if (track.blendshapeDragHold?.has(n)) continue;
+        if (Math.abs(t - track.playbackTime) > 1e-6) {
+          track.blendshapeHoldT.delete(n);
+          if (track.blendshapePreview?.delete(n)) _freed = true;
+        }
+      }
+      if (_freed) this.applyBlendshapes(mesh);
+    }
+
     // Once a second, not per frame: it walks the track list and compares name arrays, which is
     // trivial but not free, and a loss that takes a second to report is still a loss reported.
     const _bsNow = performance.now();
@@ -3449,7 +3465,10 @@ class AnimationRegistry {
     // Clearing then would erase the performance as it was being played.
     if (window._animPlaying && !this.isRecording
         && track.blendshapePreview && track.blendshapePreview.size) {
-      track.blendshapePreview.clear();
+      // A slider still held keeps its override; everything else is posing state and ends.
+      const _hold = track.blendshapeDragHold;
+      if (_hold && _hold.size) { for (const n of [...track.blendshapePreview.keys()]) if (!_hold.has(n)) track.blendshapePreview.delete(n); }
+      else track.blendshapePreview.clear();
       window._blendshapePad?.reset?.();
     }
 

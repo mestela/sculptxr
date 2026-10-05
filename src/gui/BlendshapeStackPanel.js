@@ -281,7 +281,7 @@ export default class BlendshapeStackPanel {
   _stateSignature() {
     const track = this._track();
     if (!track) return 'none';
-    let s = (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
+    let s = (window._animAutoKey ? 'A' : 'a') + (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
           + (track.blendshapes?.size || 0) + '|';
     track.blendshapes?.forEach((d, n) => {
       s += n + ':' + this._weightOf(n).toFixed(4) + (track.blendshapeMuted?.has(n) ? 'm' : '') + ';';
@@ -535,7 +535,10 @@ export default class BlendshapeStackPanel {
     // whose rows carry their own split icon.
     const splitBtn = { id: 'split', x: PAD + (bw + 6) * 2, y: by, w: bw, h: bh };
     const resetBtn = { id: 'rrange', x: PAD + (bw + 6) * 3, y: by, w: bw, h: bh };
-    this._toolbarBtns.push(newBtn, delBtn, splitBtn, resetBtn);
+    // Auto-key: the same global the graph editor's Auto button flips. Off, slider moves are
+    // previews only; on, they key at the playhead.
+    const autoBtn = { id: 'autokey', x: PAD + (bw + 6) * 4 + 10 + (bh + 4) * 4 + 4, y: by, w: 40, h: bh };
+    this._toolbarBtns.push(newBtn, delBtn, splitBtn, resetBtn, autoBtn);
 
     this._drawIconBtn(ctx, newBtn, FA.plus,  Theme.blue, this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
@@ -545,6 +548,16 @@ export default class BlendshapeStackPanel {
     const ar = actName ? this._rangeOf(actName) : null;
     const stretched = !!ar && (ar.min !== 0 || ar.max !== 1);
     this._drawIconBtn(ctx, resetBtn, FA.reset, stretched ? Theme.text : Theme.surface2, this._hover?.btn === 'rrange');
+
+    {
+      const on = !!window._animAutoKey, hot = this._hover?.btn === 'autokey';
+      ctx.fillStyle = on ? Theme.blue : (hot ? Theme.surface1 : Theme.surface0);
+      this._roundRect(ctx, autoBtn.x, autoBtn.y, autoBtn.w, autoBtn.h, 4); ctx.fill();
+      ctx.fillStyle = on ? Theme.crust : Theme.subtext;
+      ctx.font = '600 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('Auto', autoBtn.x + autoBtn.w / 2, autoBtn.y + autoBtn.h / 2 + 0.5);
+      ctx.textAlign = 'left';
+    }
 
     // ── THE FOUR PAD SLOTS ────────────────────────────────────────────────────────────
     //
@@ -985,11 +998,22 @@ export default class BlendshapeStackPanel {
     if (!this._dragName) return;
     const name = this._dragName;
     const oldW = this._dragStartW;
-    const newW = this._weightOf(name);
     this._dragName = null;
+    // Release: Auto on writes the key at the playhead and drops the hold; Auto off leaves the
+    // value standing as a preview (like the pad -- the pad's Key button or playback ends it).
+    const track = this._track(), rmesh = this._mesh();
+    const keyed = !!window._animAutoKey;
+    track?.blendshapeDragHold?.delete(name);
+    if (!keyed && track) this._holdAtPlayhead(track, name);
+    if (keyed) {
+      track?.blendshapePreview?.delete(name);
+      if (rmesh && this._dragW != null) window._animationRegistry.setBlendshapeWeight(rmesh, name, this._dragW);
+    }
+    this._dragW = null;
+    const newW = this._weightOf(name);
 
     // Push a single undo step for the whole drag if the value actually changed.
-    if (this._dragMoved && oldW !== newW && window.app?.getStateManager) {
+    if (keyed && this._dragMoved && oldW !== newW && window.app?.getStateManager) {
       const mesh = this._mesh();
       window.app.getStateManager().pushStateCustom(
         () => { window._animationRegistry.setBlendshapeWeight(mesh, name, oldW); this.draw(); },
@@ -1082,6 +1106,13 @@ export default class BlendshapeStackPanel {
       const r = this._rangeOf(name);
       if (v < r.min) r.min = v;
       if (v > r.max) r.max = v;
+      if (!window._animAutoKey) {
+        reg.setBlendshapePreview(mesh, name, v);
+        this._holdAtPlayhead(this._track(), name);
+        reg.applyBlendshapes(mesh);
+        this.draw();
+        return;
+      }
       reg.setBlendshapeWeight(mesh, name, v);
       const newR = { ...r };
       window.app?.getStateManager?.()?.pushStateCustom(
@@ -1105,6 +1136,12 @@ export default class BlendshapeStackPanel {
     this.draw();
   }
 
+  // Tie an Auto-off override to the current playhead; the registry frees it when the playhead moves.
+  _holdAtPlayhead(track, name) {
+    if (!track) return;
+    (track.blendshapeHoldT || (track.blendshapeHoldT = new Map())).set(name, track.playbackTime || 0);
+  }
+
   _applyWeightFromX(row, x) {
     const tw = row.trackX1 - row.trackX0;
     const r = this._rangeOf(row.name);
@@ -1118,8 +1155,16 @@ export default class BlendshapeStackPanel {
     else if (x <= row.trackX0 + SNAP) w = r.min;
     // Detents at 0 and 1 for a stretched range, where 1.0 would otherwise be a pixel-perfect aim.
     else for (const d of [0, 1]) if (d > r.min && d < r.max && Math.abs(w - d) < span * 0.015) w = d;
-    const mesh = this._mesh();
-    if (mesh) window._animationRegistry.setBlendshapeWeight(mesh, row.name, w);
+    // HELD AS A PREVIEW, KEYED ON RELEASE (only with Auto on). Writing a key per move meant that during playback the
+    // curve overwrote the slider a frame later, so on a keyframed layer it looked disabled. A
+    // preview outranks the curve for as long as the slider is held (same mechanism as the pad).
+    const mesh = this._mesh(), track = this._track();
+    if (mesh && track) {
+      (track.blendshapePreview || (track.blendshapePreview = new Map())).set(row.name, w);
+      (track.blendshapeDragHold || (track.blendshapeDragHold = new Set())).add(row.name);
+      this._dragW = w;
+      window._animationRegistry.applyBlendshapes(mesh);
+    }
     this.draw();
   }
 
@@ -1134,6 +1179,12 @@ export default class BlendshapeStackPanel {
       return;
     }
     if (id === 'rrange') { this._resetRange(); return; }
+    if (id === 'autokey') {
+      window._animAutoKey = !window._animAutoKey;
+      document.querySelector('#acp-autokey-btn')?.classList.toggle('active', !!window._animAutoKey);
+      this.draw();
+      return;
+    }
     const mesh = this._mesh();
     if (!mesh) return;
     const reg = window._animationRegistry;
