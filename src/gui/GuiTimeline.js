@@ -3459,6 +3459,64 @@ export default class GuiTimeline {
       }
     }
 
+    // A PRESS ON A SELECTED KEY GRABS THE SELECTION, whatever else is in reach. The hit loops
+    // below take the FIRST key inside the radius in index order, so with a marquee selection
+    // next to unselected keys (another channel's key at the same time, a neighbour a few pixels
+    // over) the press could land on an unselected one, replace the selection with it and drag
+    // only that. matt: "i aim at one of those selected keys and drag, i would expect all of the
+    // selection to be dragged." Selected keys are tested first and nearest-wins among them.
+    {
+      const sel = window._animSelectedKeys;
+      if (sel && sel.length > 1) {
+        const normR = this._xfNormRanges(track);
+        let best = null, bestD = Infinity, bestTrack = track;
+        for (const k of sel) {
+          if (k.meshId !== id) continue;
+          let t, y, kt = track;
+          if (k.type === 'transform') {
+            const grp = k.group || 'pos', ch = k.channel !== undefined ? k.channel : 0;
+            if (grp === 'weight' || !xfChanVisible(grp, ch)) continue;
+            t = track.times?.[k.index];
+            if (t == null) continue;
+            y = this._valY(xfRead(track, k.index, ch, grp), grp, normR);
+          } else if (k.type === 'shape') {
+            if (window._animChannelVisible?.[3] === false) continue;
+            t = track.shapeTimes?.[k.index];
+            if (t == null) continue;
+            y = this.valueToY(track.shapeOutputTimes?.[k.index]);
+          } else if (k.type === 'blendshape') {
+            kt = track.blendshapeTracks?.get(k.name);
+            if (!kt || window._animBsChannelVisible?.[k.name] === false) continue;
+            t = kt.times?.[k.index];
+            if (t == null) continue;
+            y = this.valueToY(kt.values[k.index]);
+          } else continue;
+          const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+          if (!TimelineHelper.isKeyHovered(x, y, rx, ry, 10)) continue;
+          const d = Math.hypot(x - rx, y - ry);
+          if (d < bestD) { best = k; bestD = d; bestTrack = kt; }
+        }
+        if (best) {
+          this._isDraggingKeyframe = true;
+          this._activeKeyframeTrack = bestTrack;
+          this._activeMeshId = id;
+          this._undoTracksBeforeMove = new Map();
+          reg.tracks.forEach((tr, mId) => this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr)));
+          this._activeKeyframeIndex = best.index;
+          this._activeKeyframeType = best.type;
+          this._activeKeyframeChannel = best.type === 'transform' ? (best.channel !== undefined ? best.channel : 0) : 0;
+          if (best.type === 'blendshape') this._activeBlendshapeName = best.name;
+          this._keyDragStartRx = rx;
+          this._keyDragStartRy = ry;
+          this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+          this._keyDragStartVal = this.yToValue(ry);
+          this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(reg);
+          this.draw();
+          return;
+        }
+      }
+    }
+
     if (track.times && track.positions) {
       const _chVis = window._animChannelVisible || [true, true, true, true];
       tlLog(`mousedown rx=${rx.toFixed(1)} ry=${ry.toFixed(1)} group=${xfGroup()}`,
@@ -3508,19 +3566,7 @@ export default class GuiTimeline {
                 && (k.group || 'pos') === grp);
 
             if (isPartSelection) {
-              this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
-                const tr = reg.tracks.get(k.meshId);
-                const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
-                // IN THE KEY'S OWN GROUP. Read ungrouped, every selected key took its start
-                // value from the ACTIVE group -- so a rotation X key began the drag holding
-                // translation X's value, and `startVal + delta` landed every X key on the same
-                // number. matt: "all the x values snap together across translate and rotate,
-                // same for y, same for z."
-                const startVal = k.type === 'transform'
-                  ? xfRead(tr, k.index, k.channel !== undefined ? k.channel : 0, k.group)
-                  : 0;
-                return { ...k, time, startVal };
-              });
+              this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(window._animationRegistry);
             } else {
               this._animSelectedKeysInitialTimes = null;
               
@@ -3583,12 +3629,7 @@ export default class GuiTimeline {
           const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'shape' && k.index === i);
           
           if (isPartSelection) {
-            this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
-              const tr = reg.tracks.get(k.meshId);
-              const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
-              const startVal = k.type === 'shape' ? tr.shapeOutputTimes[k.index] : 0;
-              return { ...k, time, startVal };
-            });
+            this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(window._animationRegistry);
           } else {
             this._animSelectedKeysInitialTimes = null;
             
@@ -3650,6 +3691,11 @@ export default class GuiTimeline {
               window._animSelectedKeys = [{ meshId: id, type: 'blendshape', name, index: i }];
               window._animTransformBox = null;
             }
+            // The pointer's value, like the transform branch, and the whole selection's start
+            // state: without it a blendshape drag moved only the grabbed key and started from a
+            // stale value left by the previous drag.
+            this._keyDragStartVal = this.yToValue(ry);
+            this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(window._animationRegistry);
             this.draw();
             found = true;
             return;
@@ -3851,20 +3897,13 @@ export default class GuiTimeline {
       }
     }
 
-    // Nothing hit — pan by default; fall back to marquee when the marquee toggle is on.
-    if (window._animMarqueeMode) {
-      this._isDraggingMarquee = true;
-      this._marqueeStart = { x: rx, y: ry };
-      this._marqueeEnd   = { x: rx, y: ry };
-      this._undoSelectionBeforeMarquee = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({...k})) : [];
-    } else {
-      this._ensureViewInit();
-      this._isPanningGraphXY    = true;
-      this._panXYStartRx        = rx;
-      this._panXYStartRy        = ry;
-      this._panXYStartViewStart = this._viewStart;
-      this._panXYStartPanY      = this._panY;
-    }
+    // Nothing hit — marquee. A single pointer never pans the graph (that took the press from the
+    // marquee and fought key dragging); pan and zoom are the two-handed gesture, the wheel and
+    // middle-drag.
+    this._isDraggingMarquee = true;
+    this._marqueeStart = { x: rx, y: ry };
+    this._marqueeEnd   = { x: rx, y: ry };
+    this._undoSelectionBeforeMarquee = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({...k})) : [];
   }
 
   // WHY DID THAT CLICK MISS? (window._tlTrace = true)
@@ -4549,7 +4588,6 @@ export default class GuiTimeline {
         isTied = tr.tangentOffsets[`${pfx}${single.index}_tied`] !== false;
       }
     }
-    const marqOn = !!window._animMarqueeMode;
     const btns = [];
     let bx = 4;
     // Mode toggle — two FA icons
@@ -4577,9 +4615,6 @@ export default class GuiTimeline {
         tooltip: isTied ? 'Tangents tied — click to free them' : 'Tangents free — click to tie them' });
       bx += 36;
     }
-    // Drag vs Marquee toggle (icon drawn programmatically in draw())
-    btns.push({ id: 'marquee', x: bx, y: 10, w: 28, h: 20, active: marqOn, tooltip: marqOn ? 'Marquee Selection on — click for Drag mode' : 'Drag Mode on — click for Marquee Selection' });
-    bx += 36;
     // Fit All
     btns.push({ id: 'fit', x: bx, y: 10, w: 28, h: 20, icon: '', tooltip: 'Fit All (X + Y)' });
     bx += 36;
@@ -4758,9 +4793,6 @@ export default class GuiTimeline {
         if (_ak) _ak.classList.toggle('active', !!window._animAutoKey);
         break;
       }
-      case 'marquee':
-        window._animMarqueeMode = !window._animMarqueeMode;
-        break;
       case 'ctxmenu':
         this._contextMenuOpen = !this._contextMenuOpen;
         this._speedMenuOpen = false;
@@ -5660,15 +5692,6 @@ export default class GuiTimeline {
         // key must not be picked/marqueed alongside a visible one at the same time.
         const _keyShow = window._animKeyShow || { transform: true, shape: true, blendshape: true, shaperep: true };
 
-        // In marquee mode, skip key-drag detection — always start marquee.
-        if (window._animMarqueeMode) {
-          if (window._tlTrace) console.log('[tl] -> MARQUEE MODE is on: key detection skipped entirely');
-          this._isDraggingMarquee = true;
-          this._marqueeStart = { x: rx, y: ry };
-          this._marqueeEnd   = { x: rx, y: ry };
-          return;
-        }
-
         tracks.forEach(([meshId, trackObj], laneIdx) => {
           const ty = headerH + (laneIdx * trackH) - dsScroll;
           const kyTransform = ty + trackH / 2; // centred (matches drawDopeSheet)
@@ -5700,11 +5723,7 @@ export default class GuiTimeline {
                   
                   const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'transform' && k.index === i);
                   if (isPartSelection) {
-                    this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
-                      const tr = reg.tracks.get(k.meshId);
-                      const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
-                      return { ...k, time };
-                    });
+                    this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(window._animationRegistry);
                   } else {
                     this._animSelectedKeysInitialTimes = null;
                     // Select only this key!
@@ -5775,11 +5794,7 @@ export default class GuiTimeline {
 
                   const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'shape' && k.index === i);
                   if (isPartSelection) {
-                    this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
-                      const tr = reg.tracks.get(k.meshId);
-                      const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
-                      return { ...k, time };
-                    });
+                    this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(window._animationRegistry);
                   } else {
                     this._animSelectedKeysInitialTimes = null;
                     // Select only this key!
@@ -5867,6 +5882,7 @@ export default class GuiTimeline {
                     window._animSelectedKeys = [{ meshId, type: 'blendshape', name, index: i }];
                     window._animTransformBox = null;
                   }
+                  this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(window._animationRegistry);
                   keyFound = true;
                   break;
                 }
@@ -5946,6 +5962,23 @@ export default class GuiTimeline {
       this._marqueeStart = { x: rx, y: ry };
       this._marqueeEnd = { x: rx, y: ry };
     }
+  }
+
+  // Start time (and value) of EVERY selected key, so a drag that grabs any one of them moves the
+  // whole selection. Built per key type: a mixed selection (a dopesheet marquee sweeps transform,
+  // blendshape and shape keys together) used to throw reading `shapeTimes` off a track that has
+  // none, which killed the drag before it moved anything.
+  _snapshotSelectionForDrag(reg) {
+    return (window._animSelectedKeys || []).filter(k => k.type !== 'sr' && k.type !== 'frame').map(k => {
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr) return null;
+      let startVal = 0;
+      // IN THE KEY'S OWN GROUP -- see the note where the graph drag used to build this inline.
+      if (k.type === 'transform') startVal = xfRead(tr, k.index, k.channel !== undefined ? k.channel : 0, k.group);
+      else if (k.type === 'shape') startVal = tr.shapeOutputTimes?.[k.index] ?? 0;
+      else if (k.type === 'blendshape') startVal = tr.blendshapeTracks?.get(k.name)?.values?.[k.index] ?? 0;
+      return { ...k, time: this._keyTimeOf(tr, k), startVal };
+    }).filter(Boolean);
   }
 
   // Read a key's current time from its track, for any dopesheet key type. Shared by the
@@ -7121,10 +7154,19 @@ export default class GuiTimeline {
     });
 
     // Add blendshape keys in the marquee time range
+    //
+    // BY ROW, NOT BY LANE. Blendshape rows stack BELOW the lane's slot (see the mouse-down
+    // comment: with one object the slot is a quarter-height and the rows run past it), so the
+    // lane-index test above selected nothing for a marquee drawn over them -- it drew, and no
+    // key turned yellow. Same row maths and the same newest-first order as the hit test and
+    // drawDopeSheet.
     tracks.forEach(([meshId, trackObj], laneIdx) => {
-      if (laneIdx < laneMin || laneIdx > laneMax) return;
       if (!trackObj.blendshapeTracks) return;
-      trackObj.blendshapeTracks.forEach((bTrack, name) => {
+      const ty2 = headerH + (laneIdx * trackH) - _marqScroll;
+      let bIdx = 0;
+      TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
+        const rowY = ty2 + trackH / 2 + 22 + (bIdx++) * 18;
+        if (rowY < y1 - MARQ_PAD || rowY > y2 + MARQ_PAD) return;
         if (!bTrack.times || window._animBsChannelVisible?.[name] === false) return; // hidden — not selectable
         for (let i = 0; i < bTrack.times.length; i++) {
           const t = bTrack.times[i];
@@ -7311,18 +7353,7 @@ export default class GuiTimeline {
       const cy = Math.round(btn.y + btn.h / 2);
       const ty = Math.round(btn.y + btn.h * 0.68);
       const cx = Math.round(btn.x + btn.w / 2);
-      if (btn.id === 'marquee') {
-        // Dashed-rectangle selection-box icon — drawn directly, no font needed.
-        const ic = btn.active ? Theme.text : Theme.subtext;
-        ctx.strokeStyle = ic; ctx.fillStyle = ic; ctx.lineWidth = 1.5;
-        ctx.setLineDash([2, 1.5]);
-        const ix = btn.x + btn.w / 2 - 7, iy = cy - 4;
-        ctx.strokeRect(ix, iy, 14, 9);
-        ctx.setLineDash([]);
-        [[0, 0], [14, 0], [0, 9], [14, 9]].forEach(([dx, dy]) => {
-          ctx.beginPath(); ctx.arc(ix + dx, iy + dy, 1.5, 0, Math.PI * 2); ctx.fill();
-        });
-      } else if (btn.id === 'fit') {
+      if (btn.id === 'fit') {
         // FIT ALL: a magnifier with arrows into the four corners of its bounding box. Drawn
         // rather than a glyph, because the three 28px buttons were a marquee rectangle, a
         // magnifier and a grid -- three small outlined squares that read as the same button at

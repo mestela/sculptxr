@@ -24,6 +24,30 @@ var handleNegativeIndexFace = function (i32) {
 // see ExportSGL for file description
 //
 /** Import SGL file */
+// BAKED DEFAULTS ARE NOT OVERRIDES.
+//
+// Blendshape, shape and scalar keys were exported with EVERY key's handles written out, filling
+// in the defaults for the ones nobody touched (dt = a third of the next gap, dv = 0; 25 for
+// shape keys, which was never even in seconds). Read back, each of those became a hand-set
+// override: the auto tangent -- which follows the neighbouring keys -- was replaced by a FLAT
+// handle, so every curve came back with slightly wrong tangents, and a shape key got a handle
+// 25 seconds long. A key whose five numbers are exactly the exporter's defaults carries no
+// information, so it is not stored as an override and the auto tangent comes back.
+function isBakedDefaultKey(rDt, rDv, lDt, lDv, tied, defDt) {
+  var near = function (a, b) { return Math.abs(a - b) < 1e-4; };
+  return tied && rDv === 0 && lDv === 0 && near(rDt, defDt) && near(lDt, -defDt);
+}
+// Store a key's tangent record unless it is the baked default. `next` = the following key's time.
+function setKeyTangents(to, k, t, next, rDt, rDv, lDt, lDv, tied, fixedDefault) {
+  var defDt = fixedDefault !== undefined ? fixedDefault : (next !== undefined ? next - t : 0.2) * 0.33;
+  if (isBakedDefaultKey(rDt, rDv, lDt, lDv, tied, defDt)) return;
+  to[k + '_right_dt'] = rDt;
+  to[k + '_right_dv'] = rDv;
+  to[k + '_left_dt'] = lDt;
+  to[k + '_left_dv'] = lDv;
+  to[k + '_tied'] = tied;
+}
+
 Import.importSGL = function (buffer, gl, main) {
   var f32a = new Float32Array(buffer);
   var u32a = new Uint32Array(buffer);
@@ -253,11 +277,9 @@ Import.importSGL = function (buffer, gl, main) {
               
               if (!trackObj.tangentOffsets) trackObj.tangentOffsets = {};
               
-              trackObj.tangentOffsets[`${k}_right_dt`] = f32a[off++];
-              trackObj.tangentOffsets[`${k}_right_dv`] = f32a[off++];
-              trackObj.tangentOffsets[`${k}_left_dt`] = f32a[off++];
-              trackObj.tangentOffsets[`${k}_left_dv`] = f32a[off++];
-              trackObj.tangentOffsets[`${k}_tied`] = (f32a[off++] > 0.5);
+              // 25 / -25 is the exporter's stand-in for "no handle"; see isBakedDefaultKey.
+              var _sr = f32a[off++], _srv = f32a[off++], _sl = f32a[off++], _slv = f32a[off++];
+              setKeyTangents(trackObj.tangentOffsets, k, time, undefined, _sr, _srv, _sl, _slv, f32a[off++] > 0.5, 25);
             }
             
             var activeVCount = finalMesh.getNbVertices();
@@ -376,14 +398,15 @@ Import.importSGL = function (buffer, gl, main) {
           var bTrack = { times: [], values: [] };
           if (nbBsKeys > 0) {
             bTrack.tangentOffsets = {};
+            var _raw = [];
             for (var k = 0; k < nbBsKeys; k++) {
               bTrack.times.push(f32a[off++]);
               bTrack.values.push(f32a[off++]);
-              bTrack.tangentOffsets[`${k}_right_dt`] = f32a[off++];
-              bTrack.tangentOffsets[`${k}_right_dv`] = f32a[off++];
-              bTrack.tangentOffsets[`${k}_left_dt`]  = f32a[off++];
-              bTrack.tangentOffsets[`${k}_left_dv`]  = f32a[off++];
-              bTrack.tangentOffsets[`${k}_tied`]     = f32a[off++] > 0.5;
+              _raw.push([f32a[off++], f32a[off++], f32a[off++], f32a[off++], f32a[off++] > 0.5]);
+            }
+            for (var k = 0; k < nbBsKeys; k++) {
+              var _r = _raw[k];
+              setKeyTangents(bTrack.tangentOffsets, k, bTrack.times[k], bTrack.times[k + 1], _r[0], _r[1], _r[2], _r[3], _r[4]);
             }
           }
           trackObj.blendshapeTracks.set(bsName, bTrack);
@@ -459,14 +482,15 @@ Import.importSGL = function (buffer, gl, main) {
         }
         if (!sTrack.scalarTracks) sTrack.scalarTracks = new Map();
         var _st = { times: [], values: [], tangentOffsets: {} };
+        var _sraw = [];
         for (var _sk = 0; _sk < nbSKeys; _sk++) {
           _st.times.push(f32a[off++]);
           _st.values.push(f32a[off++]);
-          _st.tangentOffsets[_sk + '_right_dt'] = f32a[off++];
-          _st.tangentOffsets[_sk + '_right_dv'] = f32a[off++];
-          _st.tangentOffsets[_sk + '_left_dt']  = f32a[off++];
-          _st.tangentOffsets[_sk + '_left_dv']  = f32a[off++];
-          _st.tangentOffsets[_sk + '_tied']     = f32a[off++] > 0.5;
+          _sraw.push([f32a[off++], f32a[off++], f32a[off++], f32a[off++], f32a[off++] > 0.5]);
+        }
+        for (var _sk = 0; _sk < nbSKeys; _sk++) {
+          var _q = _sraw[_sk];
+          setKeyTangents(_st.tangentOffsets, _sk, _st.times[_sk], _st.times[_sk + 1], _q[0], _q[1], _q[2], _q[3], _q[4]);
         }
         if (nbSKeys > 0) sTrack.scalarTracks.set(sName, _st);
       }

@@ -118,9 +118,13 @@ class GuiFiles {
   saveTextureMetalness() { return this.saveMetalness(); }
 
   _getExportMeshes() {
-    if (this._exportAll) return this._main.getMeshes();
-    var selected = this._main.getSelectedMeshes();
-    return selected.length ? selected : undefined;
+    // THE VIDEO PLANE IS NOT SCENE CONTENT. The clip is saved as a reference (MediaRef), and
+    // loading it again builds a fresh plane -- so a plane saved here came back as a stale extra
+    // "reference image" next to the new one, and relinking looked like it had made a copy.
+    var vm = this._main._referenceManager && this._main._referenceManager._videoMesh;
+    var meshes = this._exportAll ? this._main.getMeshes() : this._main.getSelectedMeshes();
+    if (vm) meshes = meshes.filter(function (m) { return m !== vm; });
+    return (this._exportAll || meshes.length) ? meshes : undefined;
   }
 
   _extractTexture(gl, width, height) {

@@ -159,16 +159,19 @@ check('the drawing uses it too', /TimelineHelper\.laneHeight\(laneAreaH, tracks\
     !/reg\.getKeysInTimeRange\(/.test(code),
     'that call indexes the registry map with dopesheet row numbers');
   const marq = code.slice(code.indexOf('const MARQ_PAD'));
-  // Three collectors share the lane range (transform, blendshape, SR). The shape-LAYER one
-  // legitimately differs: its sub-rows stack BELOW the lane's own slot, so a lane-index test
-  // would cut them off — it compares its computed row Y against the rectangle instead.
+  // Two collectors share the lane range (transform, SR). The shape-LAYER and BLENDSHAPE ones
+  // legitimately differ: their sub-rows stack BELOW the lane's own slot, so a lane-index test
+  // would cut them off — they compare a computed row Y against the rectangle instead.
   // Asserted rather than waved past, because "the odd one out" is what the transform
   // collector turned out to be.
   const collectors = (marq.match(/laneIdx < laneMin \|\| laneIdx > laneMax/g) || []).length;
-  check('the three lane-indexed collectors agree', collectors === 3, `${collectors} collectors`);
+  check('the two lane-indexed collectors agree', collectors === 2, `${collectors} collectors`);
   check('the shape-layer collector bounds itself geometrically instead',
     /rowY < y1 \|\| rowY > y2/.test(marq),
     'its sub-rows extend past the lane, so a lane index would drop them');
+  check('the blendshape collector does too',
+    /rowY = ty2 \+ trackH \/ 2 \+ 22 \+ \(bIdx\+\+\) \* 18/.test(marq),
+    'a marquee over the blendshape rows drew but selected nothing');
 
   // Lane maths carries the scroll, like every other lane computation in the file.
   check('the lane range carries the scroll',

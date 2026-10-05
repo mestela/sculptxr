@@ -10698,9 +10698,10 @@ class Scene {
     if (!this._vtlZoomActive) {
       // Both controllers must be over usable timeline space to START the gesture.
       if (!tl.isEmptyGraphSpaceAt(pL.cx, pL.cy) || !tl.isEmptyGraphSpaceAt(pR.cx, pR.cy)) return;
-      // Cancel any single-hand pan that may have begun, then capture the anchors.
-      this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
+      // Cancel any single-hand marquee that may have begun, then capture the anchors. The cancel
+      // comes FIRST: releasing a live marquee finalizes it, and an empty one clears the selection.
       tl._cancelActiveAction?.();
+      this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
       tl.beginTwoPointerZoom(pL.cx, pL.cy, pR.cx, pR.cy);
       this._vtlZoomActive = true;
     } else {
@@ -14389,7 +14390,9 @@ class Scene {
           // Start: must be pointing at panel. Continue: latch until grip release
           // regardless of _isPointingAtMenu, so dragging over the sculpt doesn't drop the panel.
           const _panelDragBusy = this._hasPanelDragActive(source.handedness);
-          const _worldNavBusy  = this._vrGrip[source.handedness]?.active ?? false;
+          // A grab that STARTED as a world move owns this hand until release (single OR two-handed).
+          // Sweeping the ray across a panel mid-move must not hand the grip to that panel.
+          const _worldNavBusy  = (this._vrGrip[source.handedness]?.active ?? false) || !!this._vrTwoHanded.latch;
           const _hitSrc = source.handedness === 'left' ? this._vrUIHitSourceLeft : this._vrUIHitSourceRight;
           const mmOnPanel  = _hitSrc === 'MainMenuPanel';
 
@@ -14551,7 +14554,7 @@ class Scene {
           // is almost everywhere.
           //
           // window._panelGrabGuard = false restores the old fall-through in-session.
-          if (isGrip && window._panelGrabGuard !== false
+          if (isGrip && !_worldNavBusy && window._panelGrabGuard !== false
               && (this._isPointingAtMenu || this._panelGrabIntent(source.handedness))) {
             if (source.handedness === 'left') { leftGrip = false; }
             else                              { rightGrip = false; }
@@ -15899,6 +15902,7 @@ class Scene {
   _hasPanelDragActive(handedness) {
     if (this._mmDragActive  && this._mmDragHand  === handedness) return true;
     if (this._vtlDragActive && this._vtlDragHand === handedness) return true;
+    if (this._vbsDragActive && this._vbsDragHand === handedness) return true;
     if (this._tornOffPanels) {
       for (const sectionId of this._tornOffPanels.keys()) {
         if (this['_topDragActive_' + sectionId] && this['_topDragHand_' + sectionId] === handedness) return true;

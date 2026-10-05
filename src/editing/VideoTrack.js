@@ -86,7 +86,12 @@ class VideoTrack {
     if (input) {
       input.addEventListener('change', (e) => {
         if (e.target.files && e.target.files.length > 0) {
-          this.loadFile(e.target.files[0]);
+          // Through the app's loader so the clip's own soundtrack comes with it, exactly as when
+          // the video is opened from the file menu. Straight to loadFile, a relink from the
+          // timeline's "not loaded" lane restored the picture and left the audio unlinked.
+          const app = window.app;
+          if (app && app._loadVideoFile) app._loadVideoFile(e.target.files[0]);
+          else this.loadFile(e.target.files[0]);
           input.value = '';
         }
       });
