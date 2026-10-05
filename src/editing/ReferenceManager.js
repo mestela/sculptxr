@@ -41,7 +41,7 @@ class ReferenceManager {
     reader.readAsDataURL(file);
   }
 
-  addReference(img, texture) {
+  addReference(img, texture, opts = {}) {
     const main = this._main;
     // A reference is a first-class mesh (MeshReference): it lives in getMeshes(), so
     // it shows in the outliner and can be selected / transformed / hidden / etc.
@@ -64,6 +64,26 @@ class ReferenceManager {
         const c = new THREE.Vector3(); box.getCenter(c);
         factor = (Math.max(1, size.y) * 1.3) / 50;
         center = [c.x, c.y, c.z];
+        // BESIDE THE MODEL, not through it. A reference image is placed at the model's centre
+        // (a plane behind the sculpt's silhouette is what you trace). A VIDEO is something you
+        // animate ALONGSIDE, and at the centre a portrait clip (narrower than the head) sat
+        // entirely inside it -- loaded, playing, and invisible. So: model height, to the
+        // viewer's right of the model's bounds with a small gap.
+        if (opts.beside) {
+          const H = Math.max(1e-3, size.y);
+          factor = H / 50;
+          const W = H * (img.width / Math.max(1, img.height));
+          const cam = main._camera && main._camera.getThreeCamera && main._camera.getThreeCamera();
+          const R = new THREE.Vector3(1, 0, 0);
+          if (cam) R.applyQuaternion(cam.quaternion);
+          R.transformDirection(new THREE.Matrix4().copy(parent.matrixWorld).invert());
+          R.y = 0;
+          if (R.lengthSq() < 1e-6) R.set(1, 0, 0);
+          R.normalize();
+          const reach = Math.abs(R.x) * size.x / 2 + Math.abs(R.z) * size.z / 2;
+          const off = reach + W / 2 + 0.1 * H;
+          center = [c.x + R.x * off, c.y, c.z + R.z * off];
+        }
       }
     }
     const m = mat4.create();
@@ -99,9 +119,29 @@ class ReferenceManager {
     const canvas = vt.canvas();
     if (!canvas) return;
     const tex = new THREE.CanvasTexture(canvas);
-    this._videoMesh = this.addReference(canvas, tex);
+    this._videoMesh = this.addReference(canvas, tex, { beside: true });
     this._videoTex = tex;
     vt.onFrame = () => { tex.needsUpdate = true; this._main.render?.(); };
+    // Before the clip's start there is no picture: hide the plane (without touching the user's own
+    // outliner visibility, which is restored on entering the clip).
+    const mesh = this._videoMesh;
+    vt.onSpan = (inSpan) => {
+      const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+      if (tm) tm.visible = inSpan && mesh.isVisible();
+      this._main.render?.();
+    };
+  }
+
+  // The video plane's visibility, for the timeline's eye on the video lane. Same flag as the
+  // outliner's eye; the span gate (nothing before the clip starts) is applied on top.
+  videoVisible() { return !!this._videoMesh && this._videoMesh.isVisible(); }
+  setVideoVisible(v) {
+    const m = this._videoMesh;
+    if (!m) return;
+    m.setVisible(!!v);
+    const tm = m.getThreeMesh && m.getThreeMesh();
+    if (tm) tm.visible = !!v && (window._videoTrack?._inSpan !== false);
+    this._main.render?.();
   }
 
   clearVideo() {

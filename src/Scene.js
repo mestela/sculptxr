@@ -76,6 +76,7 @@ import { TornOffPanel           } from './gui/htmlvr/TornOffPanel.js';
 import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 import BlendshapeStackPanel from './gui/BlendshapeStackPanel.js';
+import MediaRef from './files/MediaRef.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 import { VrKeyboard             } from './gui/htmlvr/VrKeyboard.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
@@ -7046,6 +7047,10 @@ class Scene {
       if (fileType === 'sgl') Skeleton.deserialize(fileData, added, this);
 
       // Textures: the images and the material scalars. Last of the restores because it is the
+      // The clips: a reference only (name, offset, switches). The timeline shows a "missing"
+      // lane for each until a file of that name is loaded.
+      if (fileType === 'sgl') MediaRef.deserialize(fileData);
+
       // only one that finishes ASYNCHRONOUSLY -- decoding an image is -- so the maps land a
       // frame or two after everything else is already standing.
       if (fileType === 'sgl') TextureIO.deserialize(fileData, added, THREE);
@@ -7421,6 +7426,9 @@ class Scene {
       if (this._meshes[i]._nomadMeshId === nomadMeshId) return this._meshes[i];
     }
     return null;
+    // The clips belong to the scene: File > New / Open-replace used to leave the video plane's
+    // track and the audio (and their lanes and waveform in the timeline) behind.
+    try { window._videoTrack?.clear?.(); window._audioTrack?.clear?.(); window._pendingMedia = null; } catch (e) { console.error('media clear failed:', e); }
   }
 
   clearScene() {

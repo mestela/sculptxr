@@ -75,6 +75,10 @@ class VideoTrack {
 
     // Set by Scene: called after the canvas changed, so the texture can be re-uploaded.
     this.onFrame = null;
+    // Set by ReferenceManager: called with false while the transport is BEFORE the clip's start
+    // (the plane is hidden -- the clip has not begun) and true once it is inside or past it.
+    this.onSpan = null;
+    this._inSpan = true;
     // Set by Scene: called when a clip is loaded or cleared, so the plane can be made or hidden.
     this.onClipChange = null;
 
@@ -199,6 +203,7 @@ class VideoTrack {
       if (warnings.length) console.warn(`[video] conform with: ${FFMPEG_HINT}`);
 
       this.onClipChange?.(true);
+      window._mediaRef?.applyLoaded('video', this, file);   // a scene saved with this file
       this._request(0);
       return true;
     } catch (e) {
@@ -210,6 +215,7 @@ class VideoTrack {
   clear() {
     this._dropClip();
     this._name = '';
+    this._offset = 0;
     this.onClipChange?.(false);
   }
 
@@ -225,6 +231,7 @@ class VideoTrack {
     if (this._input) { try { this._input.dispose?.(); } catch (e) { /* gone */ } }
     this._input = null; this._sink = null; this._ts = null;
     this._shown = -1; this._want = -1; this._warnings = [];
+    this._inSpan = true;
   }
 
   // The frame the transport time falls in: the last frame whose timestamp is <= t. Clamped, so
@@ -247,10 +254,23 @@ class VideoTrack {
   // Once per frame. Pure follow: whatever the transport time is, show that frame.
   sync(time, playing, dir) {
     if (!this._sink) return;
+    // NOTHING BEFORE THE CLIP STARTS. Offset the clip to frame 12 and frames 0-11 show no
+    // picture at all, rather than frame 0 held. (Past the END the last frame is still held, as
+    // an NLE does -- see frameAt.) The same 0.25ms slack as frameAt, so a boundary time with
+    // float noise on it counts as inside.
+    const inSpan = time - this._offset + 0.00025 >= 0;
+    if (inSpan !== this._inSpan) { this._inSpan = inSpan; this.onSpan?.(inSpan); }
+    if (!inSpan) { this._playing = false; return; }
     // Only FORWARD playback uses the pipeline. Reverse and scrubbing ask for unrelated frames,
     // which is what a per-frame fetch is for.
     this._playing = !!playing && dir !== -1;
-    const f = this.frameAt(time);
+    // DURING FORWARD PLAYBACK, ASK FOR THE FRAME THAT WILL BE ON SCREEN WHEN THIS ONE IS DONE.
+    // A decoded frame is drawn, uploaded and rendered a frame or so after it is requested, so
+    // the picture trailed the transport (and the 3D scene, which renders at transport time).
+    // One frame by default, `window._videoLeadMs` to override. Scrubbing and stepping stay exact:
+    // there the frame under the playhead is the whole point.
+    const lead = this._playing ? (window._videoLeadMs !== undefined ? window._videoLeadMs / 1000 : 1 / (this._fps || 24)) : 0;
+    const f = this.frameAt(time + lead);
     if (f === this._shown && !this._busy) { this._want = f; return; }
     this._request(f);
   }

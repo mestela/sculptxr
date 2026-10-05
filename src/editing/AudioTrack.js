@@ -89,6 +89,15 @@ class AudioTrack {
     this._name = '';
     // Where the clip starts on the timeline, in seconds. Negative pre-rolls it.
     this._offset = 0;
+    // A/V SYNC. `_lead` is how far AHEAD of the transport the sound is played, in seconds: the
+    // output path's own delay (measured, see _updateLead) plus the user's manual advance
+    // (`window._avOffsetMs`, saved). See sync().
+    this._lat = null;
+    this._lead = 0;
+    try {
+      const saved = parseFloat(localStorage.getItem('sxr_avOffsetMs'));
+      if (window._avOffsetMs === undefined && Number.isFinite(saved)) window._avOffsetMs = saved;
+    } catch (e) { /* storage blocked: the offset just starts at 0 */ }
     this._gain = 1.0;
     this._muted = false;
 
@@ -186,6 +195,7 @@ class AudioTrack {
         this._peaks = null;
         console.log(`[audio] loaded "${file.name}" ${buf.duration.toFixed(2)}s`
           + ` ${buf.numberOfChannels}ch @${buf.sampleRate}Hz`);
+        window._mediaRef?.applyLoaded('audio', this, file);   // a scene saved with this file
         return true;
       })
       .catch((e) => {
@@ -203,6 +213,7 @@ class AudioTrack {
     this._buffer = null;
     this._peaks = null;
     this._name = '';
+    this._offset = 0;
   }
 
   _stop() {
@@ -228,12 +239,45 @@ class AudioTrack {
     // worklet, and this is one line.
     src.playbackRate.value = rate;
     src.connect(this._gainNode);
-    src.start(0, Math.max(0, srcTime));
+    // SCHEDULED AT A KNOWN CONTEXT TIME, not "now". start(0) begins at the next block the audio
+    // thread renders, and on the Galaxy XR blocks are 107ms apart, so "now" was somewhere in a
+    // 107ms window and the anchor below (ctx.currentTime, equally stale) could not say where. A
+    // start a fixed beat ahead has an exact anchor; the clip is begun that far INTO itself so it
+    // is where the transport wants it when it actually starts.
+    // On the very first start the smoothed clock has not seen a block yet and can read up to one
+    // block (107ms) behind; pad the lead by one so `when` cannot already be in the past.
+    const now = this._ctxNow();
+    const delta = 0.12 + (this._clockReady() ? 0 : 0.11);
+    const when = now + delta;
+    const startPos = Math.max(0, srcTime) + delta * rate;
+    src.start(when, startPos);
     this._source = src;
     this._rate = rate;
-    this._anchorCtxTime = ctx.currentTime;
-    this._anchorSrcTime = Math.max(0, srcTime);
+    this._anchorCtxTime = when;
+    this._anchorSrcTime = startPos;
   }
+
+  // A SMOOTH AUDIO CLOCK. `AudioContext.currentTime` is a STAIRCASE: it moves once per hardware
+  // block (measured on the Galaxy XR: 106.7ms steps, ~9Hz). The transport is slaved to the audio
+  // clock (AnimationRegistry reads masterTime every frame), so a staircase there made the 3D
+  // animation advance in ~9Hz hops -- the "choppy playback with audio".
+  //
+  // currentTime lags the true clock by anywhere from 0 to one block, never leads it. So the
+  // true offset between the audio clock and performance.now() is the UPPER ENVELOPE of
+  // (currentTime - now) over the readings: a reading taken just after a step is nearly exact.
+  // The envelope decays very slowly to follow real drift between the two clocks.
+  // The clock is `ready` once a full block has been seen.
+  _ctxNow() {
+    const c = this._ctx;
+    const now = performance.now() / 1000;
+    if (this._k === null || this._k === undefined) { this._k = null; this._kSince = now; }
+    const obs = c.currentTime - now;
+    if (this._k === null || obs > this._k) this._k = obs;
+    else this._k -= 0.0002 * Math.max(0, now - (this._kT || now));
+    this._kT = now;
+    return now + this._k;
+  }
+  _clockReady() { return this._kSince !== undefined && performance.now() / 1000 - this._kSince > 0.2; }
 
   // CHANGE SPEED WITHOUT RESTARTING. Restarting to change rate is a stop and a start, which is
   // an audible seam every time you touch the speed control. Setting playbackRate live is
@@ -245,15 +289,50 @@ class AudioTrack {
     if (!this._source || rate === this._rate) return;
     const at = this._audioSrcTime();
     this._anchorSrcTime = at;
-    this._anchorCtxTime = this._ctx.currentTime;
+    this._anchorCtxTime = this._ctxNow();
     this._rate = rate;
     this._source.playbackRate.value = rate;
   }
 
   // Where the playing node believes it is, in buffer seconds. Null when nothing is playing.
+  // THE DELAY BETWEEN "THE CONTEXT IS RENDERING THIS" AND "IT IS COMING OUT OF THE SPEAKER".
+  //
+  // The transport is a picture clock: the 3D scene and the video show the frame for transport
+  // time T when T arrives. Audio scheduled at context time T is only HEARD a little later, by
+  // the whole output path -- on the Galaxy XR measured at ~0.47s (baseLatency 0.107 + output
+  // 0.368, and getOutputTimestamp agrees). Uncorrected, the voice trails the mouth by ~11 frames.
+  //
+  // getOutputTimestamp() is the measured figure (the context time the device is playing right
+  // now); base+outputLatency is the fallback. Smoothed, because a source re-anchored on a
+  // jittery target would restart for nothing.
+  _updateLead() {
+    const c = this._ctx;
+    let auto = 0;
+    if (c && window._avAutoLatency !== false) {
+      let l = 0;
+      try {
+        const o = c.getOutputTimestamp && c.getOutputTimestamp();
+        if (o && o.contextTime > 0) l = c.currentTime - o.contextTime;
+      } catch (e) { /* not implemented */ }
+      if (!(l > 0.001 && l < 1)) l = (c.baseLatency || 0) + (c.outputLatency || 0);
+      l = Math.min(1, Math.max(0, l));
+      this._lat = this._lat === null ? l : this._lat * 0.95 + l * 0.05;
+      auto = this._lat;
+    }
+    this._lead = auto + (window._avOffsetMs || 0) / 1000;
+    return this._lead;
+  }
+  // For the menu label: the automatic part, in ms.
+  latencyMs() { return Math.round((this._lat || 0) * 1000); }
+  setAdvanceMs(ms) {
+    window._avOffsetMs = Number.isFinite(ms) ? ms : 0;
+    try { localStorage.setItem('sxr_avOffsetMs', String(window._avOffsetMs)); } catch (e) { /* fine */ }
+    this._stop();   // re-anchored on the next sync, at the new lead
+  }
+
   _audioSrcTime() {
     if (!this._source || !this._ctx) return null;
-    return this._anchorSrcTime + (this._ctx.currentTime - this._anchorCtxTime) * this._rate;
+    return this._anchorSrcTime + (this._ctxNow() - this._anchorCtxTime) * this._rate;
   }
 
   // ONE SCRUB GRAIN: a short window of the clip at the playhead, faded at both ends, fired and
@@ -350,7 +429,11 @@ class AudioTrack {
     // An immersive session can suspend the context on entry; resume is a no-op when running.
     if (this._ctx.state === 'suspended') this._ctx.resume();
 
-    const srcTime = time - this._offset;
+    // PLAYED AHEAD BY THE OUTPUT DELAY, so it is HEARD on the transport's beat. The first `lead`
+    // seconds of playback from a standing start are therefore silent -- that sound would have had
+    // to be heard before play was pressed.
+    const lead = this._updateLead();
+    const srcTime = time - this._offset + lead;
     // Outside the clip's span on the timeline. The transport carries on; there is simply
     // nothing to hear, which is the same answer as a gap in any NLE.
     if (srcTime < 0 || srcTime >= this._buffer.duration) {
@@ -383,8 +466,10 @@ class AudioTrack {
   // would drag the playhead back to the end of the loop it just left.
   masterTime(transportTime) {
     const srcNow = this._audioSrcTime();
-    if (srcNow === null || this._muted) return null;
-    const audioTransport = srcNow + this._offset;
+    // Not until the smoothed clock has seen a whole hardware block: before that it can be a
+    // block (107ms) off, and the transport would be dragged to it.
+    if (srcNow === null || this._muted || !this._clockReady()) return null;
+    const audioTransport = srcNow + this._offset - this._lead;
     if (Math.abs(audioTransport - transportTime) > MASTER_TRUST_BAND) return null;
     return audioTransport;
   }

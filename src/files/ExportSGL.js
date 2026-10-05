@@ -1,6 +1,7 @@
 import { rotSync, maskSync } from '../editing/xfChannel.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
 import TextureIO from './TextureIO.js';
+import MediaRef from './MediaRef.js';
 import Skeleton from '../editing/Skeleton.js';
 
 var Export = {};
@@ -527,6 +528,14 @@ Export.exportSGL = function (meshes, main) {
     // Frame-by-frame (cel) animation: append an independent, footer-located block
     // after the mesh data. Old importers stop after the mesh data and ignore it.
     var parts = [data];
+    // The video/audio clips, as a reference (name, offset, switches). FIRST of the footer blocks:
+    // see MediaRef for why that position is safe for every other reader.
+    try {
+      var mdiaBuf = MediaRef.serialize(main);
+      if (mdiaBuf && mdiaBuf.byteLength) parts.push(mdiaBuf);
+    } catch (e) {
+      console.error('[MediaRef] export append failed', e);
+    }
     // Textures: the images and material scalars, appended footer block. FIRST of the three, for
     // the same reason the comment below gives -- FrameGroup's reader only inspects the final 8
     // bytes, so its block has to stay last, and SKEL's finder walks past whatever is after it.

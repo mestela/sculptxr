@@ -42,7 +42,14 @@ const tlLog = (...a) => { if (window._tlTrace) console.log('[tl]', ...a); };
 // Timeline header height (toolbar row + gutter key-mode row + frame ruler). Single
 // source of truth — referenced everywhere the lanes/ruler/hit-tests offset from the
 // header. Bump this alone to resize the header.
-const HEADER_H = 112;
+const HEADER_BASE = 112;
+// MEDIA LANES: one bar per loaded clip (video, and audio when it is not just the video's own
+// soundtrack), between the ruler and the dopesheet/graph. They are part of the header, so the
+// whole file's `HEADER_H`-relative layout and hit-testing moves with them -- the same way it
+// moved when the range lane was added. HEADER_H is therefore a live value: HEADER_BASE plus one
+// lane per clip, refreshed by _syncMediaLanes at the top of draw and of every pointer entry.
+const MEDIA_LANE_H = 26;
+let HEADER_H = HEADER_BASE;
 const TOOLBAR_BOTTOM = 55;
 
 // THE RANGE BAR LANE, between the toolbar and the frame ruler.
@@ -577,6 +584,16 @@ export default class GuiTimeline {
       { label: (at?.isMuted?.() ? '\u2003  ' : '\u2713  ') + 'Audible', enabled: has,
         run: () => at?.setMuted?.(!at.isMuted()) },
       { label: 'Clear', enabled: has, run: () => at?.clear?.() },
+      // A/V SYNC: the output delay is compensated automatically; this is the manual advance on
+      // top of it (positive = sound earlier), for a device that reports its latency wrongly.
+      { label: `A/V sync\u2026  auto ${at?.latencyMs?.() ?? 0}ms, adjust ${(window._avOffsetMs || 0) >= 0 ? '+' : ''}${window._avOffsetMs || 0}ms`,
+        enabled: has,
+        run: () => {
+          const np = window._vrNumpad;
+          if (!np) return;
+          np.open(window._avOffsetMs || 0, { label: 'Audio earlier by (ms)', integer: true },
+            (v) => at?.setAdvanceMs?.(v), null, null, this._main?._vrTimelineMesh || null);
+        } },
       { label: (window._metronome?.enabled() ? '\u2713  ' : '\u2003  ') + 'Metronome', enabled: !!window._metronome,
         run: () => { window._metronome.setEnabled(!window._metronome.enabled()); at?.unlock?.(); } },
     ];
@@ -648,6 +665,160 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     at.scrubTouch(reg && Number.isFinite(reg.globalPlaybackTime)
       ? reg.globalPlaybackTime : (window._animCurrentTime || 0));
+  }
+
+  // THE CLIPS AS BARS. Each loaded clip is a bar from its start to its end on the timeline, in a
+  // lane under the ruler; dragging the bar moves WHERE THE CLIP STARTS (not a retime), whole
+  // frames at a time. A video that carries the audio loaded with it is one linked bar -- its
+  // waveform is drawn inside it and the drag moves both -- so a clip is never half-moved; audio
+  // loaded on its own gets its own bar.
+  _mediaLanes() {
+    const vt = window._videoTrack, at = window._audioTrack;
+    const lanes = [];
+    const hasV = !!vt?.hasClip?.(), hasA = !!at?.hasClip?.();
+    const linked = hasV && hasA && at.name() === vt.name();
+    if (hasV) lanes.push({ kind: 'video', linked });
+    if (hasA && !linked) lanes.push({ kind: 'audio', linked: false });
+    // A scene opened with a saved clip reference whose file has not been loaded yet: a "missing"
+    // lane, so the reference is visible (and relinkable) instead of silently absent.
+    const pend = window._pendingMedia;
+    if (!hasV && pend?.video) lanes.push({ kind: 'video', missing: true, name: pend.video.name });
+    if (!hasA && pend?.audio && !(pend.video && pend.video.name === pend.audio.name)) {
+      lanes.push({ kind: 'audio', missing: true, name: pend.audio.name });
+    }
+    return lanes;
+  }
+
+  _syncMediaLanes() {
+    HEADER_H = HEADER_BASE + this._mediaLanes().length * MEDIA_LANE_H;
+  }
+
+  _mediaClip(lane) {
+    const t = lane.kind === 'video' ? window._videoTrack : window._audioTrack;
+    return { t, off: t.offset(), dur: t.duration(), name: t.name() };
+  }
+
+  _drawMediaLanes(ctx, w, tlX, tlW, loopStart, visibleDuration) {
+    const lanes = this._mediaLanes();
+    this._mediaView = { tlX, tlW, loopStart, visibleDuration };
+    const fps = window._animFPS || 24;
+    lanes.forEach((lane, i) => {
+      const y = w.y + HEADER_BASE + i * MEDIA_LANE_H;
+      ctx.fillStyle = Theme.mantle;
+      ctx.fillRect(w.x, y, w.w, MEDIA_LANE_H);
+      if (lane.missing) {
+        ctx.strokeStyle = Theme.surface1;
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(w.x, y + MEDIA_LANE_H - 0.5); ctx.lineTo(w.x + w.w, y + MEDIA_LANE_H - 0.5); ctx.stroke();
+        ctx.save();
+        ctx.beginPath(); ctx.rect(w.x, y, 196, MEDIA_LANE_H); ctx.clip();
+        ctx.fillStyle = '#e0af68';
+        ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText((lane.kind === 'video' ? 'Video  ' : 'Audio  ') + lane.name, w.x + 10, y + MEDIA_LANE_H / 2 + 0.5);
+        ctx.restore();
+        ctx.save();
+        ctx.beginPath(); ctx.rect(tlX, y, tlW, MEDIA_LANE_H); ctx.clip();
+        ctx.fillStyle = '#e0af68';
+        ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText('Not loaded \u2014 click to load "' + lane.name + '" (saved offset and settings are applied when you do)', tlX + 8, y + MEDIA_LANE_H / 2 + 0.5);
+        ctx.restore();
+        return;
+      }
+      const c = this._mediaClip(lane);
+      ctx.strokeStyle = Theme.surface1;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(w.x, y + MEDIA_LANE_H - 0.5); ctx.lineTo(w.x + w.w, y + MEDIA_LANE_H - 0.5); ctx.stroke();
+
+      // Gutter label (clipped short of the icons).
+      ctx.save();
+      ctx.beginPath(); ctx.rect(w.x, y, 118, MEDIA_LANE_H); ctx.clip();
+      ctx.fillStyle = Theme.subtext;
+      ctx.font = '11px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText((lane.kind === 'video' ? 'Video  ' : 'Audio  ') + c.name, w.x + 10, y + MEDIA_LANE_H / 2 + 0.5);
+      ctx.restore();
+
+      // The icons: a speaker (mute the sound -- audio lanes and a video with its own soundtrack)
+      // and, on the video lane, an eye (show/hide the picture).
+      ctx.font = '900 13px "Font Awesome 6 Free"';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (const ic of this._mediaIcons(lane, y)) {
+        ctx.fillStyle = ic.on ? Theme.text : Theme.overlay0;
+        ctx.fillText(ic.glyph, ic.x + ic.w / 2, y + MEDIA_LANE_H / 2 + 0.5);
+      }
+
+      // The bar.
+      const x0 = tlX + (c.off - loopStart) / visibleDuration * tlW;
+      const x1 = x0 + c.dur / visibleDuration * tlW;
+      const bx0 = Math.max(tlX, x0), bx1 = Math.min(tlX + tlW, x1);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(tlX, y, tlW, MEDIA_LANE_H); ctx.clip();
+      if (bx1 > bx0) {
+        const dragging = this._mediaDrag && this._mediaDrag.kind === lane.kind;
+        ctx.fillStyle = lane.kind === 'video' ? (dragging ? '#5b6fb5' : '#43538c') : (dragging ? '#3f8a7a' : '#2f6b5e');
+        ctx.fillRect(bx0, y + 3, bx1 - bx0, MEDIA_LANE_H - 6);
+        // Waveform inside the bar: the audio clip's, for an audio bar or a linked video bar.
+        if (lane.kind === 'audio' || lane.linked) this._drawWaveform(ctx, tlX, tlW, y + 3, MEDIA_LANE_H - 6, loopStart, visibleDuration);
+        ctx.fillStyle = '#e6e9ff';
+        ctx.font = '10px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText('f' + Math.round(c.off * fps), Math.max(bx0, tlX) + 5, y + MEDIA_LANE_H / 2 + 0.5);
+      }
+      ctx.restore();
+    });
+  }
+
+  // The gutter icons for one lane: { id, x, w, glyph, on }, left to right.
+  _mediaIcons(lane, y) {
+    const icons = [];
+    if (lane.missing) return icons;
+    const at = window._audioTrack;
+    if (lane.kind === 'audio' || lane.linked) {
+      const m = !!at?.isMuted?.();
+      icons.push({ id: 'mute', x: 124, w: 32, glyph: m ? '\uf6a9' : '\uf028', on: !m });
+    }
+    if (lane.kind === 'video') {
+      const vis = !!this._main?._referenceManager?.videoVisible?.();
+      icons.push({ id: 'eye', x: 160, w: 32, glyph: vis ? '\uf06e' : '\uf070', on: vis });
+    }
+    return icons;
+  }
+
+  // Which lane (if any) a point in the header band falls in.
+  _mediaLaneAt(ry) {
+    const i = Math.floor((ry - HEADER_BASE) / MEDIA_LANE_H);
+    const lanes = this._mediaLanes();
+    return (i >= 0 && i < lanes.length) ? lanes[i] : null;
+  }
+
+  _mediaBarDown(rx, ry) {
+    const lane = this._mediaLaneAt(ry);
+    const v = this._mediaView;
+    if (!lane || !v) return false;
+    if (rx < 200) {
+      const hit = this._mediaIcons(lane, 0).find((ic) => rx >= ic.x && rx < ic.x + ic.w);
+      if (hit?.id === 'mute') { const at = window._audioTrack; at?.setMuted?.(!at.isMuted()); this.draw(); return true; }
+      if (hit?.id === 'eye') { const rm = this._main?._referenceManager; rm?.setVideoVisible?.(!rm.videoVisible()); this.draw(); return true; }
+      return true;   // the label area: nothing to do, and not a scrub either
+    }
+    if (rx < v.tlX) return false;
+    if (lane.missing) { this._openFilePicker(lane.kind === 'video' ? 'videoopen' : 'audioopen'); return true; }
+    const c = this._mediaClip(lane);
+    const x0 = v.tlX + (c.off - v.loopStart) / v.visibleDuration * v.tlW;
+    const x1 = x0 + c.dur / v.visibleDuration * v.tlW;
+    if (rx < x0 || rx > x1) return false;
+    this._mediaDrag = { kind: lane.kind, linked: lane.linked, startX: rx, startOff: c.off };
+    this.draw();
+    return true;
+  }
+
+  _mediaBarMove(rx) {
+    const d = this._mediaDrag, v = this._mediaView;
+    if (!d || !v) return;
+    const fps = window._animFPS || 24;
+    const off = Math.round((d.startOff + (rx - d.startX) / v.tlW * v.visibleDuration) * fps) / fps;
+    const vt = window._videoTrack, at = window._audioTrack;
+    if (d.kind === 'video') { vt.setOffset(off); if (d.linked) at.setOffset(off); }
+    else at.setOffset(off);
+    this.draw();
   }
 
   // THE WAVEFORM, DRAWN AS THE RULER'S BACKGROUND.
@@ -4791,6 +4962,7 @@ export default class GuiTimeline {
   // vals / labels: parallel arrays for v1/v2/v3 inputs
 
   onMouseDown(e) {
+    this._syncMediaLanes();
     // The desktop half of the multi-select modifier, captured here because the row handlers
     // downstream are reached through several paths and none of them carry the event. The VR
     // half is read live from Scene.multiSelectHeld and needs no capture.
@@ -4921,10 +5093,21 @@ export default class GuiTimeline {
       if (this._rangeBarDown(rx, ry)) return;
       return;   // the lane's own dead zones are still the lane's, not the playhead's
     }
-    if (ry >= TOOLBAR_BOTTOM + RANGE_H && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
+    if (ry >= TOOLBAR_BOTTOM + RANGE_H && ry < HEADER_BASE && rx >= _tlX && rx <= _tlX + _tlW) {
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
       this._scrubPress();
+      return;
+    }
+    // The clip bars: a press ON a bar drags it; a press elsewhere in a clip lane scrubs, as the
+    // ruler does.
+    if (ry >= HEADER_BASE && ry < HEADER_H) {
+      if (this._mediaBarDown(rx, ry)) return;
+      if (rx >= _tlX && rx <= _tlX + _tlW) {
+        this._isDraggingPlayhead = true;
+        this.handleInteraction(e);
+        this._scrubPress();
+      }
       return;
     }
 
@@ -5795,6 +5978,7 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    this._syncMediaLanes();
     // A key, handle or transform-box drag started with the panel open would edit the PREVIEW,
     // which the next re-run throws away; the press has already selected, so that is all it does.
     if (this._simplify && (this._isDraggingKeyframe || this._isDraggingTangent || this._activeTransformHandle)) {
@@ -5814,6 +5998,11 @@ export default class GuiTimeline {
     if (this._rangeDrag) {
       const rect = this._canvas.getBoundingClientRect();
       this._rangeBarMove(e.clientX - rect.left);
+      return;
+    }
+
+    if (this._mediaDrag) {
+      this._mediaBarMove(e.clientX - this._canvas.getBoundingClientRect().left);
       return;
     }
 
@@ -6384,6 +6573,7 @@ export default class GuiTimeline {
   }
 
   _onMouseUpBody(e) {
+    if (this._mediaDrag) { this._mediaDrag = null; this.draw(); return; }
     if (this._simplify?.dragging) { this._simplify.dragging = false; return; }
     if (this._rangeDrag) { this._rangeBarUp(); return; }
 
@@ -7026,6 +7216,7 @@ export default class GuiTimeline {
   }
 
   draw() {
+    this._syncMediaLanes();
     // Re-read whether Delete has anything to act on. Cheap: syncDeleteButton compares a
     // signature and returns before touching the DOM unless the answer changed.
     this._notifySelectionChanged();
@@ -7328,7 +7519,7 @@ export default class GuiTimeline {
     // already been expanded for them.
     // Below the range lane, so the ruler keeps the height it had and the waveform with it.
     const rulerY = TOOLBAR_BOTTOM + RANGE_H;
-    const rulerH = headerH - rulerY;
+    const rulerH = HEADER_BASE - rulerY;
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(tlX, w.y + rulerY, tlW, rulerH);
 
@@ -7378,6 +7569,8 @@ export default class GuiTimeline {
     ctx.moveTo(tlX, w.y + rulerY);
     ctx.lineTo(tlX + tlW, w.y + rulerY);
     ctx.stroke();
+
+    this._drawMediaLanes(ctx, w, tlX, tlW, loopStart, visibleDuration);
 
     // Show status or value of closest key to playhead
     ctx.textBaseline = 'middle';

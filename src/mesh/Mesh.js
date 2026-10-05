@@ -584,17 +584,27 @@ class Mesh {
         return;
       }
       const _v    = this.getVertices();
+      // THE DELTA IS THE SIZE OF THE BASE SHAPE, NOT THE VERTEX BUFFER. The buffer is allocated
+      // with spare capacity (here 75,075 floats for 73,734 in use), and sizing the delta to it
+      // (a) made every layer fail the length check on its first stroke and be re-allocated at
+      // capacity, and (b) filled the spare tail with NaN (baseShape[j] is undefined out there).
+      // The NaN then went back into the mesh through applyBlendshapes, and three logged
+      // "computeBoundingSphere: radius is NaN" on every geometry update -- ~140ms each on the
+      // headset, which is what made sculpting a new layer crawl.
+      const _n = _track.baseShape.length;
       let _delta  = _track.blendshapes?.get(_name);
-      if (!_delta || _delta.length !== _v.length) {
-        _delta = new Float32Array(_v.length);
+      if (!_delta || _delta.length !== _n) {
+        const _old = _delta;
+        _delta = new Float32Array(_n);
+        if (_old) _delta.set(_old.subarray(0, Math.min(_n, _old.length)));
         _track.blendshapes.set(_name, _delta);
       }
       const _others = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, _name) : null;
       if (_others) {
-        for (let _j = 0; _j < _v.length; _j++)
+        for (let _j = 0; _j < _n; _j++)
           _delta[_j] = _v[_j] - _track.baseShape[_j] - _others[_j];
       } else {
-        for (let _j = 0; _j < _v.length; _j++)
+        for (let _j = 0; _j < _n; _j++)
           _delta[_j] = _v[_j] - _track.baseShape[_j];
       }
     } else if (_track?.baseShape && !_track._applyingBS) {

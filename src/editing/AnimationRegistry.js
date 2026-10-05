@@ -2332,9 +2332,17 @@ class AnimationRegistry {
 
       const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight !== 0) {
-        const n = Math.min(v.length, delta.length);
+        // Never past the base shape: a delta longer than it (an older capture sized to the spare
+        // vertex capacity) carries NaN in its tail. Repaired in place -- trimmed to the base
+        // length -- so a scene already polluted stops polluting itself.
+        let d = delta;
+        if (track.baseShape && d.length > track.baseShape.length) {
+          d = d.slice(0, track.baseShape.length);
+          track.blendshapes.set(name, d);
+        }
+        const n = Math.min(v.length, d.length);
         for (let i = 0; i < n; i++) {
-          v[i] += delta[i] * weight;
+          v[i] += d[i] * weight;
         }
       }
     });
