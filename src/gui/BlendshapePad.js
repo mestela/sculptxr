@@ -44,7 +44,7 @@ const SLOTS = ['right', 'left', 'up', 'down'];
 //
 // Folded, the pad IS this bar: it has to keep somewhere to press, which is why it collapses to a
 // header rather than to nothing.
-export const PAD_HEADER_H = 22;
+export const PAD_HEADER_H = 34;
 
 // Slot -> the axis reading that drives it. Kept as data because both the weight function and the
 // label drawing need the same answer, and two copies of "which corner is +x" would drift.
@@ -105,6 +105,7 @@ class BlendshapePad {
     // Set by the host so a fold can ask it to re-measure: the desktop canvas resizes itself, the
     // VR panel re-shares its reserved strip. The pad does not know which it is in, and should not.
     this._onFold = null;
+    this._hoverHeader = false;
   }
 
   mount(host) {
@@ -348,6 +349,13 @@ class BlendshapePad {
     this.pointerMove(e.clientX - r.left, e.clientY - r.top);
   }
 
+  // Hover feedback for the fold bar (desktop pointer or VR ray). Host calls with null to clear.
+  hoverAt(mx, my) {
+    const hb = this._headerRect();
+    const on = mx != null && mx >= hb.x && mx <= hb.x + hb.w && my >= hb.y && my <= hb.y + hb.h;
+    if (on !== this._hoverHeader) { this._hoverHeader = on; this.draw(); }
+  }
+
   pointerMove(mx, my) {
     if (!this._dragging) return;
     const p = this._padRect();
@@ -395,7 +403,7 @@ class BlendshapePad {
   _drawHeader(ctx) {
     const h = this._headerRect();
     ctx.save();
-    ctx.fillStyle = Theme.mantle;
+    ctx.fillStyle = this._hoverHeader ? Theme.surface0 : Theme.mantle;
     ctx.fillRect(h.x, h.y, h.w, h.h);
     ctx.strokeStyle = Theme.surface0;
     ctx.beginPath();
@@ -404,18 +412,18 @@ class BlendshapePad {
 
     // A drawn triangle rather than an icon glyph: this file loads no icon font, and a caret is
     // three lines. Points DOWN when the pad is open (press to fold it away) and UP when folded.
-    const cx = h.x + 12, cy = h.y + h.h / 2, r = 4;
-    ctx.fillStyle = Theme.subtext0 || '#a6adc8';
+    const cx = h.x + 16, cy = h.y + h.h / 2, r = 6;
+    ctx.fillStyle = this._hoverHeader ? Theme.text : (Theme.subtext0 || '#a6adc8');
     ctx.beginPath();
     if (this._collapsed) { ctx.moveTo(cx - r, cy + r / 2); ctx.lineTo(cx + r, cy + r / 2); ctx.lineTo(cx, cy - r / 2 - 2); }
     else                 { ctx.moveTo(cx - r, cy - r / 2); ctx.lineTo(cx + r, cy - r / 2); ctx.lineTo(cx, cy + r / 2 + 2); }
     ctx.closePath();
     ctx.fill();
 
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('XY Pad', h.x + 24, cy + 0.5);
+    ctx.fillText('XY Pad', h.x + 32, cy + 0.5);
     ctx.restore();
   }
 

@@ -10073,8 +10073,22 @@ class Scene {
     // on first open and reopen alike.
     const _opts   = window.getOptionsURL?.() || {};
     const _defAsp = 900 / 150;
-    const _worldW = _opts.vrTimelineW > 0 ? _opts.vrTimelineW : 0.90;
-    const _worldH = _opts.vrTimelineH > 0 ? _opts.vrTimelineH : _worldW / _defAsp;
+    // DEFAULT SIZE: as wide as the main panel and the blendshape panel together (the toolbar is
+    // compact enough now that it no longer needs 0.9m), and placed below them -- see the
+    // placement block further down. A saved size outranks it.
+    const _cam0 = this._camera?.getThreeCamera();
+    const _mm0  = this._mainMenuPanel?.mesh;
+    const _bs0  = this._vrBlendMesh?.visible ? this._vrBlendMesh : null;
+    let _span = null;
+    if (_cam0 && _mm0) {
+      const r0 = new THREE.Vector3(1, 0, 0).applyQuaternion(_cam0.quaternion);
+      const a = this._extentAlong(_mm0, r0), b = _bs0 ? this._extentAlong(_bs0, r0) : null;
+      if (a) _span = { min: Math.min(a.min, b ? b.min : Infinity), max: Math.max(a.max, b ? b.max : -Infinity) };
+    }
+    const _spanW  = _span ? _span.max - _span.min : 0;
+    const _worldW = _opts.vrTimelineW > 0 ? _opts.vrTimelineW : (_spanW > 0.2 ? _spanW : 0.90);
+    const _worldH = _opts.vrTimelineH > 0 ? _opts.vrTimelineH
+      : (_spanW > 0.2 && !(_opts.vrTimelineW > 0) ? _worldW / 3.5 : _worldW / _defAsp);
     const _cssW   = Math.round(_worldW * 1500);
     const _cssH   = Math.round(_worldH * 1500);
 
@@ -10156,34 +10170,27 @@ class Scene {
     const _tlRestored = this._restorePanelPose('timeline', this._vrTimelineMesh);
     if (cam && !_tlRestored) {
       if (mm) {
-        // BESIDE THE MENU, NOT ON TOP OF IT. This used to open at the menu's exact world
-        // position — matt: "it appears over where the mainpanel, confusing."
-        //
-        // Placed by EDGES, not by half-widths: put the panel at the menu, face it the same way,
-        // then measure where both actually reach along camera-right and slide this one until its
-        // RIGHT edge clears the menu's LEFT edge by a gap. Nothing here assumes where the pivot
-        // is or that the stored width is the drawn width, which is what the half-width version
-        // got wrong.
-        //
-        // CAMERA-right, not the menu's own right, so "left of the menu" means left from where
-        // you are standing whatever angle the menu is held at.
+        // BELOW THE MENU (and the blendshape panel when open), centred under their combined
+        // span. Placed by EDGES, not half-widths: put the panel at the menu, face it the same
+        // way, then measure along camera-right / camera-up and slide it until it sits centred
+        // with its top edge a gap under the lowest of them. CAMERA axes, so "below" is below
+        // from where you stand whatever angle the menu is held at.
         const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
         const pos = new THREE.Vector3();
         mm.getWorldPosition(pos);
-        this._vrTimelineMesh.position.copy(pos);
-        this._vrTimelineMesh.quaternion.copy(cam.quaternion);
-        const menuExt = this._extentAlong(mm, camRight);
-        const tlExt   = this._extentAlong(this._vrTimelineMesh, camRight);
-        if (menuExt && tlExt) {
-          const GAP = 0.02;   // ~36px at 1800 px/m; matt asked for at least 10
-          this._vrTimelineMesh.position.addScaledVector(
-            camRight, (menuExt.min - GAP) - tlExt.max);
+        const tlm = this._vrTimelineMesh;
+        tlm.position.copy(pos);
+        tlm.quaternion.copy(cam.quaternion);
+        const tlR = this._extentAlong(tlm, camRight), tlU = this._extentAlong(tlm, camUp);
+        const mmU = this._extentAlong(mm, camUp);
+        const bsU = _bs0 ? this._extentAlong(_bs0, camUp) : null;
+        if (_span && tlR && tlU && mmU) {
+          const GAP = 0.02;
+          const lowest = Math.min(mmU.min, bsU ? bsU.min : Infinity);
+          tlm.position.addScaledVector(camRight, (_span.min + _span.max) / 2 - (tlR.min + tlR.max) / 2);
+          tlm.position.addScaledVector(camUp, (lowest - GAP) - tlU.max);
         } else {
-          // No measurable box (a panel whose geometry has not been built yet). Fall back to the
-          // half-width guess rather than dropping the panel on the menu.
-          const menuHalfW = (mm.geometry?.parameters?.width ?? 0.30) * 0.5;
-          this._vrTimelineMesh.position.addScaledVector(
-            camRight, -(menuHalfW + _worldW / 2 + 0.02));
+          tlm.position.addScaledVector(camUp, -0.4);
         }
       } else {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
@@ -10301,6 +10308,7 @@ class Scene {
   // to interact, secondary trigger + eye = solo.
   _openVRBlendshapes() {
     // SIZE IS THE USER'S, and it persists — the corner grip resizes this panel exactly as it does
+        const camUp    = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
     // the timeline, and the choice survives a reload the same way.
     //
     // The old fixed 0.17x0.23m is 255x345 css px at 1500 px/m, and that is where "i can only see

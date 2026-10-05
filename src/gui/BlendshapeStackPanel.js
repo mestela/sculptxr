@@ -44,7 +44,7 @@ const TOOLBAR_BTN_H = 38;
 // Fold bar for the layer list, under the buttons and immediately above the rows it governs — the
 // same strip the XY pad carries (PAD_HEADER_H). On a rig with all the ARKit shapes the list is
 // taller than the panel and pushes the pad out of reach.
-const LAYERS_HEADER_H = 22;
+const LAYERS_HEADER_H = 34;
 const TOOLBAR_H = TOOLBAR_BTN_H + LAYERS_HEADER_H;
 const ROW_H     = 46;
 const BASE_H    = 30;
@@ -110,6 +110,11 @@ export default class BlendshapeStackPanel {
 
     // Layer list folded away (persisted, like the pad's fold).
     this._layersCollapsed = !!getOptionsURL().blendLayersCollapsed;
+    // VR only: the canvas is a fixed size, so the layer list scrolls inside the space above the
+    // pad (desktop's canvas grows with the list and the sidebar scrolls instead).
+    this._scrollY = 0;
+    this._scrollMax = 0;
+    this._sbDrag = false;
 
     // ARKit name picker overlay (null = closed). When open it captures all input.
     this._picker = null;
@@ -436,15 +441,20 @@ export default class BlendshapeStackPanel {
     // CLIPPED to the space above the pad. Without this the rows draw underneath it and the pad
     // paints over them — which is not "hidden", it is a row you can still HIT but cannot SEE.
     if (this._padOwned) {
+      // Below the toolbar too, now that rows can be scrolled up under it.
       ctx.save();
       ctx.beginPath();
-      ctx.rect(0, 0, W, H - this._padReserve);
+      ctx.rect(0, TOOLBAR_H, W, H - this._padReserve - TOOLBAR_H);
       ctx.clip();
     }
+    const viewH = H - this._padReserve - TOOLBAR_H;
+    this._scrollMax = (this._padOwned && !this._layersCollapsed)
+      ? Math.max(0, names.length * ROW_H + BASE_H - viewH) : 0;
+    this._scrollY = Math.max(0, Math.min(this._scrollMax, this._scrollY));
     if (this._layersCollapsed) {
       if (this._padOwned) ctx.restore();
     } else {
-      let y = TOOLBAR_H;
+      let y = TOOLBAR_H - this._scrollY;
       for (const name of names) {
         this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
         y += ROW_H;
@@ -454,6 +464,7 @@ export default class BlendshapeStackPanel {
       this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
 
       if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
+      if (this._scrollMax > 0) this._drawScrollbar(ctx, W, TOOLBAR_H, viewH);
       if (this._padOwned) ctx.restore();
     }
 
@@ -474,6 +485,23 @@ export default class BlendshapeStackPanel {
     if (this._picker) this._drawPicker(ctx, W, H);
   }
 
+  // Scrollbar track geometry, shared by draw and hit-test so the two cannot drift.
+  _sbGeom() {
+    const top = TOOLBAR_H, h = this._cssH - this._padReserve - TOOLBAR_H;
+    const thumbH = Math.max(40, h * h / (h + this._scrollMax));
+    const thumbY = top + (h - thumbH) * (this._scrollY / this._scrollMax);
+    return { top, h, thumbH, thumbY, x: this._cssW - 14, w: 14 };
+  }
+
+  _drawScrollbar(ctx, W) {
+    const g = this._sbGeom();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(g.x, g.top, g.w, g.h);
+    ctx.fillStyle = this._sbDrag ? Theme.blue : Theme.overlay0;
+    this._roundRect(ctx, g.x + 3, g.thumbY, g.w - 6, g.thumbH, 4);
+    ctx.fill();
+  }
+
   _drawToolbar(ctx, W) {
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(0, 0, W, TOOLBAR_H);
@@ -484,18 +512,20 @@ export default class BlendshapeStackPanel {
     ctx.stroke();
 
     // Fold bar: caret + label, drawn like BlendshapePad._drawHeader.
-    const cx = 12, cy = TOOLBAR_BTN_H + LAYERS_HEADER_H / 2, r = 4;
+    const cx = 16, cy = TOOLBAR_BTN_H + LAYERS_HEADER_H / 2, r = 6;
     this._toolbarBtns.push({ id: 'fold', x: 0, y: TOOLBAR_BTN_H, w: W, h: LAYERS_HEADER_H });
-    ctx.fillStyle = Theme.subtext0 || '#a6adc8';
+    const foldHov = this._hover?.btn === 'fold';
+    if (foldHov) { ctx.fillStyle = Theme.surface0; ctx.fillRect(0, TOOLBAR_BTN_H, W, LAYERS_HEADER_H - 1); }
+    ctx.fillStyle = foldHov ? Theme.text : (Theme.subtext0 || '#a6adc8');
     ctx.beginPath();
     if (this._layersCollapsed) { ctx.moveTo(cx - r, cy + r / 2); ctx.lineTo(cx + r, cy + r / 2); ctx.lineTo(cx, cy - r / 2 - 2); }
     else                       { ctx.moveTo(cx - r, cy - r / 2); ctx.lineTo(cx + r, cy - r / 2); ctx.lineTo(cx, cy + r / 2 + 2); }
     ctx.closePath();
     ctx.fill();
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = '14px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Blendshape Layers', 24, cy + 0.5);
+    ctx.fillText('Blendshape Layers', 32, cy + 0.5);
 
     const bw = 34, bh = 26, by = (TOOLBAR_BTN_H - bh) / 2;
     const newBtn = { id: 'new', x: PAD, y: by, w: bw, h: bh };
@@ -752,6 +782,8 @@ export default class BlendshapeStackPanel {
   }
 
   _hitRow(p) {
+    // Rows scrolled under the toolbar or the pad are not hittable.
+    if (this._padOwned && (p.y < TOOLBAR_H || p.y >= this._cssH - this._padReserve)) return null;
     return this._rows.find(r => p.y >= r.top && p.y < r.top + r.h) || null;
   }
 
@@ -779,6 +811,15 @@ export default class BlendshapeStackPanel {
     if (this._padOwned && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
+    if (this._scrollMax > 0) {
+      const g = this._sbGeom();
+      if (p.x >= g.x && p.y >= g.top && p.y <= g.top + g.h) {
+        this._sbDrag = true;
+        this._sbGrab = (p.y >= g.thumbY && p.y <= g.thumbY + g.thumbH) ? p.y - g.thumbY : g.thumbH / 2;
+        this._sbSet(p.y);
+        return;
+      }
+    }
 
     const { row, part } = this._classifyHit(p);
     if (!row) return;
@@ -839,8 +880,16 @@ export default class BlendshapeStackPanel {
     this._handleTapForRename(row);
   }
 
+  _sbSet(y) {
+    const g = this._sbGeom();
+    const f = (y - this._sbGrab - g.top) / (g.h - g.thumbH);
+    this._scrollY = Math.max(0, Math.min(this._scrollMax, f * this._scrollMax));
+    this.draw();
+  }
+
   _pointerMove(p) {
     if (this._picker) { this._pickerMove(p); return; }
+    if (this._sbDrag) { this._sbSet(p.y); return; }
     // LATCHED on the press, not re-hit-tested: a drag that starts on the pad has to keep going
     // when the ray wanders off it, exactly as the weight sliders above do.
     if (this._padActive) { this._pad.pointerMove(p.x, p.y); return; }
@@ -861,6 +910,7 @@ export default class BlendshapeStackPanel {
       return;
     }
     // Not dragging → hover feedback. Redraw only when the hovered element changes.
+    if (this._padOwned) this._pad.hoverAt(p.x, p.y);
     let h;
     const btn = this._hitToolbar(p);
     if (btn) {
@@ -883,9 +933,13 @@ export default class BlendshapeStackPanel {
   }
 
   // Clear hover (DOM pointerleave, or VR ray leaving the panel — called by Scene).
-  clearHover() { if (this._hover) { this._hover = null; this.draw(); } }
+  clearHover() {
+    this._pad?.hoverAt(null);
+    if (this._hover) { this._hover = null; this.draw(); }
+  }
 
   _pointerUp() {
+    if (this._sbDrag) { this._sbDrag = false; this.draw(); return; }
     if (this._padActive) { this._padActive = false; this._pad.pointerUp(); return; }
     if (this._picker) { this._pickerUp(); return; }
     if (this._reorderName) {
@@ -924,7 +978,7 @@ export default class BlendshapeStackPanel {
     const names = this._layerNames();
     const from  = names.indexOf(name);
     if (from < 0) { this.draw(); return; }
-    let to = Math.floor((dropY - TOOLBAR_H) / ROW_H);
+    let to = Math.floor((dropY - TOOLBAR_H + this._scrollY) / ROW_H);
     to = Math.max(0, Math.min(names.length - 1, to));
     if (to === from) { this.draw(); return; }
 
@@ -951,10 +1005,10 @@ export default class BlendshapeStackPanel {
   // Insertion line + floating label shown while a row is being dragged to reorder.
   _drawReorderHint(ctx, W, names) {
     const n = names.length;
-    let to = Math.floor((this._reorderCurY - TOOLBAR_H) / ROW_H);
+    let to = Math.floor((this._reorderCurY - TOOLBAR_H + this._scrollY) / ROW_H);
     to = Math.max(0, Math.min(n - 1, to));
 
-    const lineY = TOOLBAR_H + to * ROW_H;
+    const lineY = TOOLBAR_H + to * ROW_H - this._scrollY;
     ctx.strokeStyle = Theme.blue; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, lineY); ctx.lineTo(W, lineY); ctx.stroke();
     ctx.lineWidth = 1;
@@ -982,7 +1036,9 @@ export default class BlendshapeStackPanel {
     if (id === 'fold') {
       this._layersCollapsed = !this._layersCollapsed;
       getOptionsURL.saveOption('blendLayersCollapsed', this._layersCollapsed);
-      this._relayout();
+      // _relayout is desktop-only (it bails with no DOM host), so in VR nothing redrew until the
+      // sync loop next saw state change -- the fold only showed after a jiggle.
+      if (this._vrMode) this.draw(); else this._relayout();
       return;
     }
     const mesh = this._mesh();
@@ -1061,7 +1117,12 @@ export default class BlendshapeStackPanel {
   // picker overlay's internal scroll when open (matches the mouse-wheel path).
   onVRScroll(delta) {
     const pk = this._picker;
-    if (!pk) return;
+    if (!pk) {
+      if (this._scrollMax <= 0) return;
+      this._scrollY = Math.max(0, Math.min(this._scrollMax, this._scrollY + delta));
+      this.draw();
+      return;
+    }
     pk.scroll = Math.max(0, Math.min(pk.maxScroll, pk.scroll + delta));
     this.draw();
   }
