@@ -41,7 +41,7 @@ class ReferenceManager {
     reader.readAsDataURL(file);
   }
 
-  addReference(img) {
+  addReference(img, texture) {
     const main = this._main;
     // A reference is a first-class mesh (MeshReference): it lives in getMeshes(), so
     // it shows in the outliner and can be selected / transformed / hidden / etc.
@@ -76,7 +76,8 @@ class ReferenceManager {
     // The default material isn't textured in three.js — apply the image as a map.
     const tm = mesh.getThreeMesh && mesh.getThreeMesh();
     if (tm) {
-      const tex = new THREE.Texture(img);
+      // A caller-supplied texture is a live one (the video canvas); it must not be rebuilt here.
+      const tex = texture || new THREE.Texture(img);
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.needsUpdate = true;
       if (tm.material && tm.material.dispose) tm.material.dispose();
@@ -86,6 +87,30 @@ class ReferenceManager {
     this._references.push(mesh);
     main.render?.();
     if (window.screenLog) window.screenLog('Reference Added', 'lime');
+    return mesh;
+  }
+
+  // THE VIDEO CLIP AS A REFERENCE PLANE. It is an ordinary reference -- outliner entry, move,
+  // scale, hide, undo -- whose texture is the canvas VideoTrack draws each frame into. Nothing
+  // here knows about time: VideoTrack.sync (driven from Scene's render loop) decides the frame,
+  // and this only re-uploads the canvas when it changes.
+  addVideo(vt) {
+    this.clearVideo();
+    const canvas = vt.canvas();
+    if (!canvas) return;
+    const tex = new THREE.CanvasTexture(canvas);
+    this._videoMesh = this.addReference(canvas, tex);
+    this._videoTex = tex;
+    vt.onFrame = () => { tex.needsUpdate = true; this._main.render?.(); };
+  }
+
+  clearVideo() {
+    if (!this._videoMesh) return;
+    const m = this._videoMesh;
+    this._videoMesh = null; this._videoTex = null;
+    this._references = this._references.filter((r) => r !== m);
+    this._main.removeMeshes?.([m]);
+    this._main.render?.();
   }
 
   clear() {
