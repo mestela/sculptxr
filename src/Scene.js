@@ -8429,6 +8429,15 @@ class Scene {
     this._preventRender = false;
     // The smooth-mode latch is only refreshed inside the XR frame loop, so leaving it set would
     // have every effectiveTool()/selectedTool() read on desktop answering with whatever was true
+    // The VR timeline shares its canvas with the desktop one. Leaving it "open" left the desktop
+    // timeline stuck at the VR texture size; close it and give the canvas back.
+    try {
+      this._closeVRTimeline();
+      this.getGui()?._ctrlTimeline?.setVisibility(false);
+      document.querySelector('#acp-show-timeline-btn')?.classList.remove('active');
+      window._animTimelineTabEl?.classList.remove('tl-on');
+    } catch (_) {}
+
     // when the headset came off. Cleared, they fall back to the live manager.
     this._smoothMode = null;
     this._smoothModeShown = false;

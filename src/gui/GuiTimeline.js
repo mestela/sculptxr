@@ -125,6 +125,7 @@ export default class GuiTimeline {
     this._isPanningGraph = false;
     this._isPanningDope = false;
     this._layerDotDrag = null;
+    this._eyeDrag = null;   // { visible, lastCh } -- paint an eye state down the gutter
     this._isZoomingGraph = false;
     this._panStartRy = 0;
     this._panStartOffsetY = 0;
@@ -1781,6 +1782,12 @@ export default class GuiTimeline {
   }
 
   onResize() {
+    // THE VR VIEW OWNS THE CANVAS while it is open. One canvas serves both the desktop timeline
+    // and the VR texture, and window 'resize' / the sidebar ResizeObserver both land here -- a
+    // resize event in the headset re-sized the canvas to the desktop container and left the mesh
+    // geometry unchanged, so the drawing came out at the wrong scale and the hit areas no longer
+    // matched it (content at ~2/3 size, dead toolbar, no resize).
+    if (this._vrOwned) return;
     const sidebar = document.querySelector('#gui-sidebar');
     if (sidebar) {
       this._container.style.right = sidebar.offsetWidth + 'px';
@@ -3923,6 +3930,13 @@ export default class GuiTimeline {
     // a window-resize event and inadvertently call renderer.setSize() in XR mode.
     // cssW/cssH come from the persisted panel size so the texture matches the
     // mesh geometry (no stretching / low-res on first open or reopen).
+    // VR hit mapping dispatches pointer events at the canvas with canvas-space client coords and
+    // relies on the container's rect being {0,0} (display:none). A desktop timeline left open put
+    // the container at its desktop position, so every VR hit was offset by it and the graph
+    // editor was dead. Hide the desktop view while VR owns the canvas; closeVRView restores it.
+    if (!this._vrOwned) this._desktopDisplay = this._container.style.display;
+    this._container.style.display = 'none';
+    this._vrOwned = true;
     const dpr = window.devicePixelRatio || 1;
     this._canvas.width  = Math.round(cssW) * dpr;
     this._canvas.height = Math.round(cssH) * dpr;
@@ -3945,6 +3959,12 @@ export default class GuiTimeline {
 
   closeVRView() {
     this._visible = false;
+    // Hand the canvas back to the desktop timeline at the desktop size.
+    if (this._vrOwned) {
+      this._vrOwned = false;
+      this._container.style.display = this._desktopDisplay ?? '';
+      this.onResize();
+    }
   }
 
   startLoop() {
@@ -5095,10 +5115,16 @@ export default class GuiTimeline {
             if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
             if (m && m.kind === 'xf') {
               if (e.shiftKey) this._soloChannel({ kind: 'transform', channel: m.channel });
-              else xfSetChanVisible(m.group, m.channel, !xfChanVisible(m.group, m.channel));
+              else {
+                xfSetChanVisible(m.group, m.channel, !xfChanVisible(m.group, m.channel));
+                this._eyeDrag = { visible: xfChanVisible(m.group, m.channel), lastCh: channel };
+              }
             } else if (m && m.kind === 'shape') {
               if (e.shiftKey) this._soloChannel({ kind: 'shape', channel: 3 });
-              else window._animChannelVisible[3] = !window._animChannelVisible[3];
+              else {
+                window._animChannelVisible[3] = !window._animChannelVisible[3];
+                this._eyeDrag = { visible: !!window._animChannelVisible[3], lastCh: channel };
+              }
             } else if (m && m.kind === 'weight') {
               // The weight row's eye is the W filter itself -- one channel, one switch, rather
               // than two controls that can disagree about whether it is showing.
@@ -5127,6 +5153,7 @@ export default class GuiTimeline {
                 this._soloChannel({ kind: 'blendshape', name: bsName });
               } else {
                 window._animBsChannelVisible[bsName] = window._animBsChannelVisible[bsName] === false ? true : false;
+                this._eyeDrag = { visible: window._animBsChannelVisible[bsName] !== false, lastCh: channel };
                 this._pruneSelectionToVisible();
                 this.draw();
               }
@@ -5783,6 +5810,39 @@ export default class GuiTimeline {
     if (this._rangeDrag) {
       const rect = this._canvas.getBoundingClientRect();
       this._rangeBarMove(e.clientX - rect.left);
+      return;
+    }
+
+    // EYE DRAG-THROUGH: the state the pressed eye took is painted onto every channel row between
+    // the last sample and this one (a fast stroke delivers sparse events, so the row under the
+    // pointer alone would skip the ones in between).
+    if (this._eyeDrag) {
+      const rect = this._canvas.getBoundingClientRect();
+      const ry = e.clientY - rect.top;
+      const rowH = 22, gutterY = HEADER_H + 4 + XF_SEG_H;
+      const cur = Math.floor((ry - gutterY + this._gutterScrollY) / rowH);
+      const a = Math.min(this._eyeDrag.lastCh, cur), b = Math.max(this._eyeDrag.lastCh, cur);
+      this._eyeDrag.lastCh = cur;
+      const reg = window._animationRegistry;
+      const mesh = this._graphMesh();
+      const track = mesh ? reg.tracks.get(mesh.getID()) : null;
+      const meta = this._gutterRowMeta || [];
+      const bsNames = track?.blendshapeTracks ? TimelineHelper.bsNames(track) : [];
+      const vis = this._eyeDrag.visible;
+      if (!window._animChannelVisible) window._animChannelVisible = [true, true, true, true];
+      if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+      for (let ch = Math.max(0, a); ch <= b; ch++) {
+        const m = meta[ch];
+        if (m) {
+          if (m.kind === 'xf') xfSetChanVisible(m.group, m.channel, vis);
+          else if (m.kind === 'shape') window._animChannelVisible[3] = vis;
+        } else {
+          const n = bsNames[ch - meta.length];
+          if (n !== undefined) window._animBsChannelVisible[n] = vis;
+        }
+      }
+      this._pruneSelectionToVisible();
+      this.draw();
       return;
     }
 
@@ -6687,6 +6747,7 @@ export default class GuiTimeline {
     this._isPanningGraph = false;
     this._isPanningDope = false;
     this._layerDotDrag = null;
+    this._eyeDrag = null;
     this._isZoomingGraph = false;
     this._isResizingPanel = false;
     this._isDraggingGutter = false;
