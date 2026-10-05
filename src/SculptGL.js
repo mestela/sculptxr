@@ -25,6 +25,7 @@ var LONGPRESS_SLOP = 12;   // CSS px
 
 import ReferenceManager from './editing/ReferenceManager.js';
 import AudioTrack from './editing/AudioTrack.js';
+import VideoTrack from './editing/VideoTrack.js';
 import Metronome from './editing/Metronome.js';
 import { FrameGroup } from './editing/FrameGroup.js';
 
@@ -145,6 +146,14 @@ class SculptGL extends Scene {
     // Re-anchor the head to your current hand pose (call if it drifts off).
     window.recenterPuppet = () => { this._puppetAnchor = null; if (window.screenLog) window.screenLog('🧦 Puppet re-centered', 'lime'); };
     this._referenceManager = new ReferenceManager(this);
+    // One video clip against the timeline, same contract as the audio track above: a property of
+    // the transport, driven from Scene's render loop. Shown as a reference plane.
+    this._videoTrack = new VideoTrack();
+    window._videoTrack = this._videoTrack;
+    this._videoTrack.onClipChange = (has) => {
+      if (has) this._referenceManager.addVideo(this._videoTrack);
+      else this._referenceManager.clearVideo();
+    };
 
     // One audio clip against the timeline, for lipsync and timing reference. Global because
     // it is a property of the TRANSPORT, not of this instance: the timeline draws its
@@ -1587,6 +1596,10 @@ class SculptGL extends Scene {
     return /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|aif|aiff)$/i.test(name || '');
   }
 
+  static isVideoFile(name) {
+    return /\.(mp4|m4v|mov|webm|mkv)$/i.test(name || '');
+  }
+
   loadFiles(event) {
     event.stopPropagation();
     event.preventDefault();
@@ -1599,7 +1612,7 @@ class SculptGL extends Scene {
     // would otherwise clear the scene and give you a waveform in exchange for your work.
     var anyModel = false;
     for (var k = 0; k < files.length; ++k) {
-      if (!SculptGL.isAudioFile(files[k].name)) { anyModel = true; break; }
+      if (!SculptGL.isAudioFile(files[k].name) && !SculptGL.isVideoFile(files[k].name)) { anyModel = true; break; }
     }
     // OPEN REPLACES, IMPORT ADDS. This path has always appended, which is Import's behaviour --
     // there was simply no Open, so a menu offering one button could not say which it was. The
@@ -1630,10 +1643,28 @@ class SculptGL extends Scene {
         if (_fo) _fo.value = '';
         continue;
       }
+      if (SculptGL.isVideoFile(file.name)) {
+        if (window.screenLog) window.screenLog(`Video: ${file.name}`, 'cyan');
+        this._loadVideoFile(file);
+        var _fv = document.getElementById('fileopen');
+        if (_fv) _fv.value = '';
+        continue;
+      }
       var fileType = this.getFileType(file.name);
       if (window.screenLog) window.screenLog(`Reading: ${file.name} (${fileType})`, "yellow");
       this.readFile(file, fileType);
     }
+  }
+
+  // A video file carries its own soundtrack, and the two share an origin on the timeline, so
+  // take the audio from it too -- unless a clip is already loaded, which is a deliberate choice
+  // (the dialogue take) that a reference video must not silently replace.
+  _loadVideoFile(file) {
+    const vt = this._videoTrack, at = window._audioTrack;
+    vt.loadFile(file).then((ok) => {
+      if (!ok) { if (window.screenLog) window.screenLog(`Video load failed: ${file.name}`, 'red'); return; }
+      if (at && !at.hasClip()) at.loadFile(file).then((a) => { if (a) at.unlock(); });
+    });
   }
 
   readFile(file, ftype) {

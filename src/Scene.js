@@ -1895,6 +1895,16 @@ class Scene {
         _reg && _reg.playbackDirection !== undefined ? _reg.playbackDirection : 1);
     }
 
+    // VIDEO: the same level-triggered follow, but with nothing to start or stop -- the frame
+    // shown is a pure function of the transport time. See VideoTrack.sync.
+    if (window._videoTrack && window._videoTrack.hasClip()) {
+      const _vreg = window._animationRegistry;
+      window._videoTrack.sync(_vreg && Number.isFinite(_vreg.globalPlaybackTime)
+        ? _vreg.globalPlaybackTime : (window._animCurrentTime || 0),
+        !!window._animPlaying,
+        _vreg && _vreg.playbackDirection !== undefined ? _vreg.playbackDirection : 1);
+    }
+
     // METRONOME: same level-triggered reconcile as the audio above, and independent of whether a
     // clip is loaded (a click track is most useful with no audio at all).
     if (window._metronome) {

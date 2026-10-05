@@ -566,7 +566,11 @@ export default class GuiTimeline {
   _audioMenuCommands() {
     const at = window._audioTrack;
     const has = !!at?.hasClip?.();
+    const vt = window._videoTrack;
     return [
+      { label: 'Load video\u2026', enabled: true,
+        run: () => this._openFilePicker('videoopen') },
+      { label: 'Clear video', enabled: !!vt?.hasClip?.(), run: () => vt?.clear?.() },
       { label: 'Load audio\u2026', enabled: true,
         run: () => this._openFilePicker('audioopen') },
       { label: (at?.isMuted?.() ? '\u2003  ' : '\u2713  ') + 'Audible', enabled: has,
