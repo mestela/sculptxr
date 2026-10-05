@@ -68,7 +68,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { HTMLVRPanel, makeCanvasPanelMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
+import { HTMLVRPanel, registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -10099,7 +10099,11 @@ class Scene {
       this._vrTimelineTexture = tex;
 
       const geo = new THREE.PlaneGeometry(_worldW, _worldH);
-      const mat = makeCanvasPanelMaterial(tex); // same material + Settings grade as the HTML panels
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true,
+        side: THREE.DoubleSide, depthWrite: true, depthTest: true,
+      });
+      registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
       this._vrTimelineMesh = new THREE.Mesh(geo, mat);
       this._scene.add(this._vrTimelineMesh);
 
@@ -10326,7 +10330,11 @@ class Scene {
       this._vrBlendTexture = tex;
 
       const geo = new THREE.PlaneGeometry(_worldW, _worldH);
-      const mat = makeCanvasPanelMaterial(tex); // same material + Settings grade as the HTML panels
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true,
+        side: THREE.DoubleSide, depthWrite: true, depthTest: true,
+      });
+      registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
       this._vrBlendMesh = new THREE.Mesh(geo, mat);
       this._vrBlendPanel._vrMesh = this._vrBlendMesh; // so the panel can anchor the keyboard to itself
       this._scene.add(this._vrBlendMesh);
