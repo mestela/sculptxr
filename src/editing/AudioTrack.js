@@ -123,6 +123,7 @@ class AudioTrack {
     if (!Number.isFinite(window._audioGrainSec))     window._audioGrainSec     = _o.audioGrainSec     ?? GRAIN_SEC;
     if (!Number.isFinite(window._audioGrainSpacing)) window._audioGrainSpacing = _o.audioGrainSpacing ?? GRAIN_THROTTLE;
     if (!Number.isFinite(window._audioGrainFade))    window._audioGrainFade    = _o.audioGrainFade    ?? GRAIN_FADE;
+    if (!Number.isFinite(window._audioWaveGain))     window._audioWaveGain     = _o.audioWaveGain     ?? 1;
     if (window._audioScrub === undefined)            window._audioScrub        = _o.audioScrub !== false;
 
     const input = document.getElementById('audioopen');
@@ -505,7 +506,12 @@ class AudioTrack {
         max[b] = hi === -Infinity ? 0 : hi;
       }
     }
-    this._peaks = { min: min, max: max, count: n };
+    // NORMALISED FOR DISPLAY. A quiet clip drew as a flat line, so the envelope is scaled up
+    // until its loudest peak fills the lane; the sound itself is untouched. Capped, so a clip
+    // that is essentially silence is not blown up into noise.
+    let top = 0;
+    for (let b = 0; b < n; b++) top = Math.max(top, -min[b], max[b]);
+    this._peaks = { min: min, max: max, count: n, norm: top > 1e-4 ? Math.min(50, 1 / top) : 1 };
     return this._peaks;
   }
 }

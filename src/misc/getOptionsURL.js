@@ -423,6 +423,7 @@ var getOptionsURL = function () {
   options.audioGrainSec     = queryNumber(getVal('audioGrainSec'),     0.01, 0.5,  0.09);
   options.audioGrainSpacing = queryNumber(getVal('audioGrainSpacing'), 0.01, 0.4,  0.05);
   options.audioGrainFade    = queryNumber(getVal('audioGrainFade'),    0.0,  0.05, 0.004);
+  options.audioWaveGain     = queryNumber(getVal('audioWaveGain'),     0.25, 8,    1);
   // Metronome: click track on the transport (see Metronome.js).
   options.metronome         = queryBool(getVal('metronome'), false);
   options.metronomeBpm      = queryNumber(getVal('metronomeBpm'),   20, 300, 120);

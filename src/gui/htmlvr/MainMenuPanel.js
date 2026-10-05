@@ -1873,9 +1873,16 @@ export function buildAudioSectionHTML(renderToggle) {
     </div>`;
   }).join('\n    ');
   const metOn = window._metronomeOn !== undefined ? !!window._metronomeOn : !!opts.metronome;
+  const wg = Number.isFinite(window._audioWaveGain) ? window._audioWaveGain : (opts.audioWaveGain ?? 1);
+  const wgPct = Math.round(wg * 100);
   return `<div class="mm-section-title">Audio Scrub</div>
     ${renderToggle('mm-audio-scrub', 'Scrub audio', on)}
     ${rows}
+    <div class="mm-row">
+      <span class="mm-lbl">Waveform gain</span>
+      <input type="range" id="mm-audio-wavegain" min="25" max="800" step="25" value="${wgPct}">
+      <span class="mm-val" id="mm-audio-wavegain-val">${wgPct}%</span>
+    </div>
     <div class="mm-section-title">Metronome</div>
     ${renderToggle('mm-metronome', 'Metronome (also counts in recording)', metOn)}
     ${metRows}`;
@@ -1931,6 +1938,12 @@ export function wireAudioSection(q, slide, paint) {
       getOptionsURL.saveOption(m.opt, v / m.k, 300);
     }, (v) => `${Math.round(v)}${m.unit}`);
   }
+  // Waveform height multiplier, on top of the per-clip normalisation (AudioTrack.peaks).
+  slide(q('#mm-audio-wavegain'), q('#mm-audio-wavegain-val'), (pct) => {
+    window._audioWaveGain = pct / 100;
+    getOptionsURL.saveOption('audioWaveGain', pct / 100, 300);
+    window.app?.getGui?.()?._ctrlTimeline?.draw?.();
+  }, (v) => `${Math.round(v)}%`);
   for (const g of AUDIO_GRAINS) {
     slide(q('#' + g.id), q('#' + g.id + '-val'), (ms) => {
       window[g.win] = ms / 1000;

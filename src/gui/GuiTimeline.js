@@ -801,6 +801,10 @@ export default class GuiTimeline {
     }
     if (rx < v.tlX) return false;
     if (lane.missing) { this._openFilePicker(lane.kind === 'video' ? 'videoopen' : 'audioopen'); return true; }
+    // A LOCKED REFERENCE CANNOT BE RETIMED. The icons above still work -- mute and show/hide
+    // are not edits to where the clip sits -- but dragging the bar is. A linked bar moves the
+    // video's own soundtrack with it, so it is held by the same lock.
+    if (lane.kind === 'video' && this._main?._referenceManager?._videoMesh?._selectLocked) return true;
     const c = this._mediaClip(lane);
     const x0 = v.tlX + (c.off - v.loopStart) / v.visibleDuration * v.tlW;
     const x1 = x0 + c.dur / v.visibleDuration * v.tlW;
@@ -853,6 +857,9 @@ export default class GuiTimeline {
     ctx.globalAlpha = at.isMuted() ? 0.25 : 0.55;
     ctx.fillStyle = Theme.sky;
 
+    // Display scale: the clip's own normalisation (quiet audio still fills the lane) times the
+    // user's Waveform gain setting.
+    const wk = (peaks.norm || 1) * (Number.isFinite(window._audioWaveGain) ? window._audioWaveGain : 1);
     const secPerPx = visibleDuration / tlW;
     for (let px = 0; px < tlW; px++) {
       const t0 = loopStart + px * secPerPx - off;
@@ -868,8 +875,8 @@ export default class GuiTimeline {
         if (peaks.max[b] > hi) hi = peaks.max[b];
       }
       if (hi < lo) continue;
-      const yTop = mid - hi * half;
-      const yBot = mid - lo * half;
+      const yTop = mid - Math.min(1, hi * wk) * half;
+      const yBot = mid - Math.max(-1, lo * wk) * half;
       ctx.fillRect(tlX + px, yTop, 1, Math.max(1, yBot - yTop));
     }
     ctx.restore();
