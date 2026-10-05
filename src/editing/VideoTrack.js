@@ -12,6 +12,8 @@
 // keyframe at or before N, decode forward to N, draw it. Measured (spike/, 540p, desktop and
 // GXR/AVP/Quest/PCVR confirmed usable by hand): H.264 all-intra ~2.5ms a seek, GOP 12 with no
 // B-frames ~5ms, a default long-GOP encode ~50ms (frame-exact but too slow to scrub).
+// Galaxy XR, flipping two adjacent frames: hardware decode of a GOP clip showed the wrong frame
+// ~30% of the time, so GOP clips are decoded in software (see the VideoSampleSink below).
 //
 // SO IMPORTS ARE EXPECTED TO BE PRE-CONFORMED. For 3D animation work that is a fair ask of the
 // user, and it is checked at load: constant frame rate, no B-frames, short GOP. A clip that
@@ -37,8 +39,13 @@ import { Input, ALL_FORMATS, BlobSource, VideoSampleSink, EncodedPacketSink } fr
 const MAX_WIDTH = 1920;
 // Above this a scrub has to decode more than a second of frames from the previous keyframe.
 const GOOD_GOP = 30;
-const FFMPEG_HINT = 'ffmpeg -i in.mov -vf scale=-2:720 -r 24 -c:v libx264 -g 12 -bf 0'
-  + ' -pix_fmt yuv420p -crf 20 -c:a aac out.mp4';
+// ALL-INTRA (-g 1): every frame is a keyframe, so a seek decodes exactly one frame and nothing
+// depends on a neighbour. Measured on the Galaxy XR (flipping 19<->20, pixels compared against a
+// settled render): GOP 12 on the hardware decoder returned the WRONG PICTURE ~30% of the time
+// (right timestamp, pixels from another frame of the GOP); GOP 12 in software and all-intra in
+// either decoder were exact.
+const FFMPEG_HINT = 'ffmpeg -i in.mov -vf scale=-2:720 -r 24 -c:v libx264 -g 1 -bf 0'
+  + ' -pix_fmt yuv420p -crf 18 -c:a aac out.mp4';
 
 class VideoTrack {
 
@@ -50,6 +57,7 @@ class VideoTrack {
     this._offset = 0;         // where frame 0 sits on the timeline, seconds
     this._fps = 0;
     this._warnings = [];
+    this._gopMax = 0;
 
     this._canvas = null;
     this._ctx = null;
@@ -92,13 +100,15 @@ class VideoTrack {
   warnings() { return this._warnings; }
   shownFrame() { return this._shown; }
   // `skipped` counts frames the transport asked for that were never decoded because a newer one
-  // arrived first; `mismatches` counts decodes that returned a different frame than asked for.
+  // arrived first; `mismatches` counts decodes whose TIMESTAMP differs from the one asked for.
+  // It cannot see a frame with the right timestamp and the wrong pixels, which is the failure a
+  // hardware decoder showed on GOP clips -- 0 here does not prove the picture is right.
   stats() {
     const ms = this._stats.ms.slice().sort((a, b) => a - b);
     const q = (p) => (ms.length ? +ms[Math.min(ms.length - 1, Math.floor(p * ms.length))].toFixed(1) : 0);
     return { decodes: this._stats.decodes, mismatches: this._stats.mismatches,
       skipped: this._stats.skipped, p50: q(0.5), p95: q(0.95), max: +this._stats.maxMs.toFixed(1),
-      hw: window._videoHW || 'default', latency: window._videoLatency !== false };
+      hw: window._videoHW || (this._gopMax > 1 ? 'prefer-software (auto)' : 'default'), latency: window._videoLatency !== false };
   }
   setOffset(s) { this._offset = s || 0; this._want = -1; }
 
@@ -145,7 +155,8 @@ class VideoTrack {
         warnings.push('variable frame rate: frame numbers will not match the timeline (use -r)');
       }
       if (reorder) warnings.push('has B-frames: scrubbing will be slow (use -bf 0)');
-      if (gopMax > GOOD_GOP) warnings.push(`keyframe every ${gopMax} frames: scrubbing will be slow (use -g 12)`);
+      if (gopMax > GOOD_GOP) warnings.push(`keyframe every ${gopMax} frames: scrubbing will be slow (use -g 1)`);
+      else if (gopMax > 1) warnings.push(`keyframe every ${gopMax} frames: decoded in software to stay frame-exact; all-intra (-g 1) is fastest`);
 
       const w0 = track.displayWidth, h0 = track.displayHeight;
       const scale = Math.min(1, MAX_WIDTH / w0);
@@ -158,14 +169,20 @@ class VideoTrack {
 
       this._dropClip();
       this._input = input;
-      // A/B SWITCHES for a device whose decoder misbehaves, read once per load (reload the clip
-      // after changing them): `_videoHW` = 'prefer-software' | 'prefer-hardware' |
-      // 'no-preference'; `_videoLatency` = false to turn the low-latency hint off. Latency is ON
+      // SOFTWARE DECODE UNLESS THE CLIP IS ALL-INTRA. A hardware decoder asked for a frame inside
+      // a GOP returned the wrong picture under a correct timestamp (see FFMPEG_HINT), which is the
+      // one thing a frame reference must not do -- and software was also the faster of the two on
+      // the Galaxy XR (33ms vs 61ms at 540p). All-intra clips have nothing to get wrong, so they
+      // keep the hardware default.
+      //
+      // A/B SWITCHES, read once per load (reload the clip after changing them): `_videoHW` =
+      // 'prefer-software' | 'prefer-hardware' | 'no-preference' overrides the choice above;
+      // `_videoLatency` = false to turn the low-latency hint off. Latency is ON
       // by default because this is decode-on-demand of one frame, never a stream: a hardware
       // decoder that holds output back waiting for more input shows up as a frame arriving late
       // or not at all.
       this._sink = new VideoSampleSink(track, {
-        hardwareAcceleration: window._videoHW || undefined,
+        hardwareAcceleration: window._videoHW || (gopMax > 1 ? 'prefer-software' : undefined),
         optimizeForLatency: window._videoLatency !== false,
       });
       this._stats = { decodes: 0, mismatches: 0, skipped: 0, ms: [], maxMs: 0 };
@@ -173,6 +190,7 @@ class VideoTrack {
       this._fps = 1 / frameDur;
       this._name = file.name;
       this._warnings = warnings;
+      this._gopMax = gopMax;
       this._shown = -1; this._want = -1;
 
       console.log(`[video] loaded "${file.name}" ${w0}x${h0} ${track.codec} ${n} frames`
