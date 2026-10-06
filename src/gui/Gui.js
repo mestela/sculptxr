@@ -143,6 +143,22 @@ class Gui {
     this._ctrls = [];
   }
 
+  getUiScale() { return this._uiScale || 1; }
+
+  // OVERALL UI SCALE (Settings > UI Scale). CSS zoom on the sidebar and top bar only -- they are
+  // the two fixed chrome elements, sized in CSS px, so zooming both by the same factor keeps
+  // their relative offsets right. The canvas is NOT zoomed: it fills what they leave, which is
+  // why onCanvasResize reads their RENDERED rects rather than their CSS sizes.
+  applyUiScale(z, silent) {
+    z = Math.min(1.5, Math.max(0.5, Number(z) || 1));
+    this._uiScale = z;
+    window._uiScale = z;   // read by the canvas-drawn panels (timeline, blendshape) for hit-testing
+    if (this._sidebarEl) this._sidebarEl.style.zoom = z === 1 ? '' : String(z);
+    if (this._topbarEl) this._topbarEl.style.zoom = z === 1 ? '' : String(z);
+    if (!silent) this._main?.onCanvasResize?.();
+    window.dispatchEvent(new CustomEvent('sxr-uiscale', { detail: z }));
+  }
+
   initGui() {
     this.deleteGui();
 
@@ -252,13 +268,13 @@ class Gui {
     let _resizeRafPending = false;
     sidebarHandle.addEventListener('pointerdown', (e) => {
       _resizeStartX = e.clientX;
-      _resizingW = sidebarEl.offsetWidth;
+      _resizingW = parseFloat(sidebarEl.style.width) || SIDEBAR_WIDTH; // CSS px (pre-zoom)
       sidebarHandle.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
     sidebarHandle.addEventListener('pointermove', (e) => {
       if (!_resizingW) return;
-      const newW = Math.max(240, Math.min(700, _resizingW - (e.clientX - _resizeStartX)));
+      const newW = Math.max(240, Math.min(700, _resizingW - (e.clientX - _resizeStartX) / this.getUiScale()));
       sidebarEl.style.width = newW + 'px';
       if (this._topbarEl) this._topbarEl.style.right = newW + 'px';
       if (!_resizeRafPending) {
@@ -695,6 +711,7 @@ class Gui {
       boxSizing: 'border-box'
     });
     document.body.appendChild(topbarEl);
+    this.applyUiScale(getOptionsURL().uiScale ?? 1, true);
 
     // Dropdown menu definitions
     const menuDefs = [
@@ -1481,6 +1498,16 @@ class WebAwesomeFolderMock {
     labelRow.appendChild(labelSpan);
     labelRow.appendChild(valSpan);
     row.appendChild(labelRow);
+    valSpan.style.cursor = 'pointer';
+    valSpan.addEventListener('click', () => {
+      const np = window._vrNumpad;
+      if (!np || np.isBlockingOpen || slider.hasAttribute('disabled')) return;
+      const lo = parseFloat(min), hi = parseFloat(max);
+      np.open(parseFloat(slider.value), { label: name, min: lo, max: hi, integer: Number(step) >= 1 }, (val) => {
+        slider.value = Math.min(hi, Math.max(lo, val));
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      }, valSpan, null);
+    });
 
     const slider = document.createElement('wa-slider');
     slider.setAttribute('min', min.toString());

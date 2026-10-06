@@ -207,6 +207,24 @@ export default class GuiTimeline {
     // device type so we don't need separate mouse-vs-touch paths.  `button` and
     // `clientX/Y` have the same meaning as on MouseEvent, so the existing
     // onMouseDown/Move/Up handlers work without modification.
+    // UI SCALE for a canvas-drawn panel. The canvas is backed at (visual size / scale) so the
+    // whole layout is drawn in LOGICAL px and CSS stretches it to the visual box; this listener
+    // is registered FIRST so every later handler sees pointer coordinates remapped back into
+    // logical space (left/top stay put, the offset from them is divided by the scale). The raw
+    // value is kept for the panel-resize drag, which works in real screen px.
+    const _remap = (e) => {
+      const z = this._uiS();
+      if (z === 1) return;
+      const r = this._canvas.getBoundingClientRect();
+      const cx = e.clientX, cy = e.clientY;
+      Object.defineProperty(e, '_rawY', { value: cy, configurable: true });
+      Object.defineProperty(e, 'clientX', { value: r.left + (cx - r.left) / z, configurable: true });
+      Object.defineProperty(e, 'clientY', { value: r.top + (cy - r.top) / z, configurable: true });
+    };
+    ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel'].forEach(t =>
+      this._canvas.addEventListener(t, _remap, true));
+    window.addEventListener('sxr-uiscale', () => { this._applyFloatZoom(); this.onResize(); });
+
     this._canvas.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {} // keep move/up on this element
@@ -1972,13 +1990,13 @@ export default class GuiTimeline {
     if (this._vrOwned) return;
     const sidebar = document.querySelector('#gui-sidebar');
     if (sidebar) {
-      this._container.style.right = sidebar.offsetWidth + 'px';
+      this._container.style.right = sidebar.getBoundingClientRect().width + 'px';
       this._container.style.width = 'auto';
       
       if (!this._sidebarObserver) {
         this._sidebarObserver = new ResizeObserver(entries => {
           for (let entry of entries) {
-            this._container.style.right = entry.contentRect.width + 'px';
+            this._container.style.right = entry.target.getBoundingClientRect().width + 'px';
             this.onResize();
           }
         });
@@ -1988,13 +2006,15 @@ export default class GuiTimeline {
       this._container.style.width = '100%';
     }
 
+    this._applyFloatZoom();
     const rect = this._container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    this._canvas.width = rect.width * dpr;
-    this._canvas.height = rect.height * dpr;
+    const z = this._uiS();
+    this._canvas.width = rect.width / z * dpr;
+    this._canvas.height = rect.height / z * dpr;
     
-    this._cssWidth = rect.width;
-    this._cssHeight = rect.height;
+    this._cssWidth = rect.width / z;
+    this._cssHeight = rect.height / z;
     
     this._ctx.scale(dpr, dpr);
     this.draw();
@@ -4534,6 +4554,18 @@ export default class GuiTimeline {
     this.draw();
   }
 
+  // The UI Scale, for the desktop view only: the VR view draws at 1:1 into a texture.
+  _uiS() { return this._vrOwned ? 1 : (window._uiScale || 1); }
+
+  // The floating typed-entry boxes sit inside the container at logical coordinates, so they are
+  // zoomed by the same factor (a zoomed element's left/top/width are scaled with it).
+  _applyFloatZoom() {
+    const z = this._uiS();
+    for (const ch of this._container.children) {
+      if (ch !== this._canvas) ch.style.zoom = z === 1 ? '' : String(z);
+    }
+  }
+
   _touchCanvasPoints() {
     const r = this._canvas.getBoundingClientRect();
     return [...this._touchMap.values()].slice(0, 2).map(p => ({ x: p.x - r.left, y: p.y - r.top }));
@@ -5116,8 +5148,8 @@ export default class GuiTimeline {
 
     if (ry < 5) {
       this._isResizingPanel = true;
-      this._resizeStartScreenY = e.clientY;
-      this._resizeStartHeight = this._cssHeight;
+      this._resizeStartScreenY = e._rawY ?? e.clientY;
+      this._resizeStartHeight = this._container.getBoundingClientRect().height; // visual px
       return;
     }
 
@@ -6151,7 +6183,7 @@ export default class GuiTimeline {
     }
 
     if (this._isResizingPanel) {
-      const dy = e.clientY - this._resizeStartScreenY;
+      const dy = (e._rawY ?? e.clientY) - this._resizeStartScreenY;
       const newHeight = Math.max(100, this._resizeStartHeight - dy);
       this._container.style.height = newHeight + 'px';
       this.onResize();

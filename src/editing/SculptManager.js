@@ -619,6 +619,12 @@ class SculptManager {
     //
     // On the press EDGE: one press is one step of the gesture, and a held trigger at 90Hz
     // would otherwise name the child and the parent in consecutive frames.
+    // THE PRESS THAT ARMED IT IS NOT A CLICK ON THE SCENE. The trigger that pressed the menu's
+    // "Set parent" button is still down on the first armed frame; seen as a fresh press edge it
+    // was taken as a pick of nothing (or of whatever the ray crossed), which cancelled -- the
+    // mode started and exited at once. Require a release first.
+    if (!RigPending.armed(this._main)) this._rigPendWasArmed = false;
+    else if (!this._rigPendWasArmed) { this._rigPendWasArmed = true; this._rigPendPressed = !!isPressed; }
     if (RigPending.armed(this._main)) {
       // AND KEEP THE PRESELECTION ALIVE, because switching the tool off switched off the thing
       // that was driving it. Grab and the transforms are what maintain the rig highlight in

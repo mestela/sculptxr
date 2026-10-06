@@ -81,7 +81,7 @@ export default class BlendshapeStackPanel {
     this._ctx    = null;
     this._cssW   = 280;
     this._cssH   = 200;
-    this._dpr    = window.devicePixelRatio || 1;
+    this._dpr    = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
 
     // Row layout cache rebuilt every draw(): array of hit-test rects.
     this._rows = [];        // { name, top, isBase, trackX0, trackX1, dotCx, dotCy }
@@ -187,6 +187,7 @@ export default class BlendshapeStackPanel {
     }, { passive: false });
 
     // Re-layout when the sidebar/panel changes width.
+    window.addEventListener('sxr-uiscale', () => this._relayout());
     this._ro = new ResizeObserver(() => this._relayout());
     this._ro.observe(host);
 
@@ -306,7 +307,7 @@ export default class BlendshapeStackPanel {
 
   _applyCanvasSize(cssH) {
     this._cssH = cssH;
-    this._dpr  = window.devicePixelRatio || 1;
+    this._dpr  = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
     this._canvas.style.height = cssH + 'px';
     if (this._tbCanvas) {
       this._tbCanvas.style.height = TOOLBAR_H + 'px';
@@ -813,7 +814,8 @@ export default class BlendshapeStackPanel {
   _local(e) {
     const c = (this._tbCanvas && e.target === this._tbCanvas) ? this._tbCanvas : this._canvas;
     const rect = c.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const z = window._uiScale || 1;
+    return { x: (e.clientX - rect.left) / z, y: (e.clientY - rect.top) / z };
   }
 
   _hitToolbar(p) {

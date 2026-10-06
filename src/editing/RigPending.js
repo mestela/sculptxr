@@ -46,7 +46,18 @@ RigPending.arm = function (main, mode) {
   if (!main) return null;
   main._rigPendingMode = mode;
   main._rigPendingSubject = null;
-  say(mode === 'parent' ? 'Set parent: click the CHILD' : 'Aim at: click the EYE');
+  main._rigPendingNamedAt = 0;
+  // A SELECTED OBJECT IS THE CHILD, and the gesture starts at the second step. matt: "if
+  // something is already selected, it should be treated as the child, and go immediately to
+  // 'select parent'." With nothing selected it is the old three steps.
+  const sel = main.getSelectedMeshes && main.getSelectedMeshes();
+  const child = sel && sel.length ? sel[0] : null;
+  if (child) {
+    main._rigPendingSubject = child.getID();
+    say('child = ' + label(child) + ' — now click the ' + (mode === 'parent' ? 'PARENT' : 'TARGET'));
+  } else {
+    say(mode === 'parent' ? 'Set parent: click the CHILD' : 'Aim at: click the EYE');
+  }
   return mode;
 };
 
@@ -193,9 +204,18 @@ RigPending.take = function (main, target) {
       return false;
     }
     main._rigPendingSubject = target.getID();
+    main._rigPendingNamedAt = performance.now();
     say('child = ' + label(target) + ' — now click the '
       + (RigPending.armed(main) === 'parent' ? 'PARENT' : 'TARGET'));
     refreshOutliners(main);
+    return false;
+  }
+  // THE CLICK THAT NAMED THE CHILD MUST NOT ALSO ANSWER FOR THE PARENT. A duplicated pointer/
+  // mouse event (or a double tap) landed on the child again, "completed" against itself and
+  // disarmed -- the tool looked like it exited as soon as the child was clicked.
+  if (performance.now() - (main._rigPendingNamedAt || 0) < 350) return false;
+  if (target && target.getID() === main._rigPendingSubject) {
+    say('that is the child itself — click a different ' + (RigPending.armed(main) === 'parent' ? 'PARENT' : 'TARGET'));
     return false;
   }
   return RigPending.complete(main, target);

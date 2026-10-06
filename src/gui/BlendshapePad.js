@@ -91,7 +91,7 @@ class BlendshapePad {
     this._ctx = null;
     this._cssW = 280;
     this._cssH = 200;
-    this._dpr = window.devicePixelRatio || 1;
+    this._dpr = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
 
     // Slot -> blendshape name. Empty slots simply contribute nothing.
     this._assign = { right: null, left: null, up: null, down: null };
@@ -124,6 +124,7 @@ class BlendshapePad {
     window.addEventListener('pointercancel', () => this._onUp());
     c.addEventListener('contextmenu', (e) => e.preventDefault());
 
+    window.addEventListener('sxr-uiscale', () => this._relayout());
     this._ro = new ResizeObserver(() => this._relayout());
     this._ro.observe(host);
 
@@ -235,7 +236,7 @@ class BlendshapePad {
     const w = Math.max(120, this._host.clientWidth || this._cssW);
     this._cssW = w;
     this._cssH = this._collapsed ? PAD_HEADER_H : PAD_HEADER_H + Math.round(w * 0.78);
-    this._dpr = window.devicePixelRatio || 1;
+    this._dpr = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
     this._canvas.width = Math.round(this._cssW * this._dpr);
     this._canvas.height = Math.round(this._cssH * this._dpr);
     this._canvas.style.height = this._cssH + 'px';
@@ -309,7 +310,8 @@ class BlendshapePad {
 
   _onDown(e) {
     const r = this._canvas.getBoundingClientRect();
-    this.pointerDown(e.clientX - r.left, e.clientY - r.top);
+    const z = window._uiScale || 1; // canvas lives in the CSS-zoomed sidebar: rect is visual, layout is logical
+    this.pointerDown((e.clientX - r.left) / z, (e.clientY - r.top) / z);
   }
 
   // ── Point-based core, in CANVAS coordinates — shared by the mouse and the VR ray, exactly as
@@ -346,7 +348,8 @@ class BlendshapePad {
   _onMove(e) {
     if (!this._dragging || !this._canvas) return;
     const r = this._canvas.getBoundingClientRect();
-    this.pointerMove(e.clientX - r.left, e.clientY - r.top);
+    const z = window._uiScale || 1;
+    this.pointerMove((e.clientX - r.left) / z, (e.clientY - r.top) / z);
   }
 
   // Hover feedback for the fold bar (desktop pointer or VR ray). Host calls with null to clear.

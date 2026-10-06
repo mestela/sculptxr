@@ -10,6 +10,7 @@ import Scene from './Scene.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import SecondaryAction from './editing/SecondaryAction.js';
 import RigPending from './editing/RigPending.js';
+import { installNumberTap } from './gui/NumberTap.js';
 
 // Pixels a right press may travel and still count as a click rather than an orbit.
 const RIGHT_CLICK_SLOP = 4;
@@ -146,6 +147,7 @@ class SculptGL extends Scene {
     // Re-anchor the head to your current hand pose (call if it drifts off).
     window.recenterPuppet = () => { this._puppetAnchor = null; if (window.screenLog) window.screenLog('🧦 Puppet re-centered', 'lime'); };
     this._referenceManager = new ReferenceManager(this);
+    installNumberTap();
     // One video clip against the timeline, same contract as the audio track above: a property of
     // the transport, driven from Scene's render loop. Shown as a reference plane.
     this._videoTrack = new VideoTrack();

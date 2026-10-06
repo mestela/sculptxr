@@ -488,6 +488,8 @@ var getOptionsURL = function () {
   // dots, bones, pins, length labels, snap radii — can be sized without touching the sculpt or
   // the rig. Persisted like the other view preferences and never written into a .sxr: the file
   // means the same real size on any machine, and only the markers move. See Skeleton.sceneUnitMul.
+  // OVERALL UI SCALE for the desktop sidebar + top bar (Settings > UI Scale, 0.5..1.5).
+  options.uiScale = queryNumber(getVal('uiScale'), 0.5, 1.5, 1.0);
   options.rigScale = queryNumber(getVal('rigScale'), 0.25, 4.0, 1.0);
 
   // PIN SIZE and LABEL SIZE, each a multiplier over the JOINT the marker belongs to -- not over

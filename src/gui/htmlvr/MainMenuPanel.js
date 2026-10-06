@@ -2651,11 +2651,14 @@ export function buildSectionHTML_scene(main) {
   let meshRows = renderTree(null, 0);
   if (!meshRows) meshRows = '<div class="mm-info">No meshes in scene</div>';
 
-  // ── Rig section — shown when exactly one node is selected ──────────────────
+  // ── Rig section — ALWAYS shown. With anything but exactly one node selected, the controls that
+  // act on "the selection" (transform fields, Mirror Eye, Saccades) are dimmed and disabled, but
+  // Set parent / Aim at stay live: they name their own child, so they need no selection.
   let rigHTML = '';
-  if (selected.length === 1) {
-    const sel    = selected[0];
-    const selId  = sel.getID();
+  {
+    const sel    = selected.length === 1 ? selected[0] : null;
+    const selOff = sel ? '' : ' disabled';
+    const selId  = sel ? sel.getID() : -1;
     const lookAtId = main.getLookAt?.(selId) ?? null;
     const parent   = main.getParentMesh?.(selId) ?? null;
     const lookTgt  = (lookAtId != null) ? nodes.find((m) => m.getID() === lookAtId) : null;
@@ -2665,7 +2668,7 @@ export function buildSectionHTML_scene(main) {
     const sacSpeed = main.getSaccadeSpeed?.(selId) ?? 1;
     const sacSmooth = +(main.getSaccadeSmooth?.(selId) ?? 0).toFixed(2);
 
-    const trs = main.getTransformTRS?.(selId) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
+    const trs = (sel && main.getTransformTRS?.(selId)) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
     const _f = (n) => (Math.round(n * 1000) / 1000);
     // Per-row bake button (freezes that component into the geometry, right next to its values).
     const _bake = { t: ['mm-bake-t', 'Bake translation into geometry (position → 0)'],
@@ -2688,9 +2691,11 @@ export function buildSectionHTML_scene(main) {
         <button class="mm-xf-bake" id="${_clear[type][0]}" title="${_clear[type][1]}">C</button>
       </div>`;
     rigHTML = `
+      <div style="${sel ? '' : 'opacity:.4;pointer-events:none'}">
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
       ${_xfRow('r', 'Rot', trs.r, '1')}
       ${_xfRow('s', 'Scale', trs.s, '0.01')}
+      </div>
 
       <div class="mm-rig-btn-row">
         <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
@@ -2707,13 +2712,13 @@ export function buildSectionHTML_scene(main) {
              a live eye-rig constraint: a render-only twin that reflects POSITION and then aims
              itself at the source's look-at target, so the pair converges. It ignores rotation
              on purpose. The toolbar's Mirror makes real reflected COPIES, rotation and all. -->
-        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Eye rig: live twin reflected across X that re-aims itself at the same target (rotation is NOT copied). For real mirrored copies use Mirror in the toolbar.">Mirror Eye</button>
+        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror"${selOff} title="Eye rig: live twin reflected across X that re-aims itself at the same target (rotation is NOT copied). For real mirrored copies use Mirror in the toolbar.">Mirror Eye</button>
         <!-- SACCADES JOINS THE ROW. It is a constraint like the other three — something the node
              does on its own once switched on — and it sat alone on a full-width line below them
              for no reason but the order it was written in. Its two sliders stay underneath and
              still appear only when it is on. matt: "so there'll be 4 constraint buttons in a row;
              set parent, aim at, mirror x, saccades." -->
-        <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades">Saccades</button>
+        <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades"${selOff}>Saccades</button>
       </div>
       ${parent ? `<button class="mm-action-btn" data-rig="clear-parent">Clear parent</button>` : ''}
       ${lookTgt ? `<button class="mm-action-btn" data-rig="clear-aim">Clear aim</button>` : ''}
@@ -6470,6 +6475,12 @@ export function buildMenuHTML_desktopSettings(main) {
     ${buildSharedSettingsHTML(main)}
     <div class="mm-section-title">Numeric Input</div>
     ${chk('Always show numpad', opts.alwaysNumpad)}
+    <div class="mm-section-title">UI Scale</div>
+    <div class="mm-row">
+      <span class="mm-lbl">UI Scale</span>
+      <input type="range" id="mm-ui-scale" min="50" max="150" step="5" value="${Math.round((opts.uiScale ?? 1) * 100)}">
+      <span class="mm-val" id="mm-ui-scale-val">${Math.round((opts.uiScale ?? 1) * 100)}%</span>
+    </div>
     <div class="mm-section-title">Pen Pressure</div>
     <div class="mm-row">
       <span class="mm-lbl">Radius factor</span>
@@ -6523,6 +6534,32 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireCheck('#mm-stylus-controls-view',  'ipadStylusView',   '_ipadStylusView');
   wireCheck('#mm-stylus-sculpts',        'ipadStylusSculpt', '_ipadStylusSculpt');
   wireCheck('#mm-always-show-numpad',    'alwaysNumpad',     '_alwaysNumpad');
+
+  // UI SCALE applies on RELEASE ('change'), not while dragging: zooming the sidebar moves the
+  // very slider being dragged out from under the pointer. 'input' only updates the readout.
+  // The release is detected on the DOCUMENT, not just by the slider's own 'change': on iPad the
+  // panel can be rebuilt under the pointer mid-drag, which destroys the input before its
+  // 'change' ever fires (and the value silently reverted to 100 on reopen). The pending value is
+  // held here, applied on the first pointer/touch release anywhere, with an idle timer as backstop.
+  let uiPending = null, uiTimer = 0;
+  const uiApply = () => {
+    clearTimeout(uiTimer);
+    if (uiPending == null) return;
+    const z = uiPending; uiPending = null;
+    getOptionsURL.saveOption('uiScale', z, 0);
+    main.getGui?.()?.applyUiScale?.(z);
+  };
+  const uiS = q('#mm-ui-scale'), uiV = q('#mm-ui-scale-val');
+  uiS?.addEventListener('input', () => {
+    if (uiV) uiV.textContent = uiS.value + '%';
+    uiPending = parseFloat(uiS.value) / 100;
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(uiApply, 1200);
+    for (const t of ['pointerup', 'touchend', 'mouseup'])
+      document.addEventListener(t, uiApply, { once: true, capture: true });
+  });
+  uiS?.addEventListener('change', uiApply);
+
 
   // The same list the VR panel wires, from the same place. These settings are owned by their
   // modules (PhysicsBones, PanelTrace), which persist them, rather than by a bare window write.

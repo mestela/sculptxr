@@ -42,7 +42,6 @@ import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import { GIZMO_MUL_MIN, GIZMO_MUL_MAX } from './editing/GizmoVR.js';
-import ShaderBusy from './gui/ShaderBusy.js';
 import { renderPassToCanvas, exportRenderPass, autoRange } from './render/RenderPassExport.js';
 import { fixXRLayerSize } from './render/nodes/ThreeXRPatches.js';
 import BootOverlay from './gui/BootOverlay.js';
@@ -3936,21 +3935,7 @@ class Scene {
         }
         BootOverlay.tick(this._renderer, this._framesDrawn > 3);
         this._framesDrawn = (this._framesDrawn || 0) + 1;
-        // NOT IN A SESSION. matt: "turn off the popups in immersive that say 'compiling
-        // material', its annoying and i think has served its purpose."
-        //
-        // It did serve it: the plate is how we learned the notices were firing on COUNT rather
-        // than cost -- 84 builds at a 3.3ms median, each buying a 700ms notice -- which led to
-        // the 40ms hitch threshold, and from there to the empty-rig fix that took entry from
-        // 30-odd pipelines to 2. With entry compiling almost nothing there is little left to
-        // explain, and a head-locked plate in a headset is worse than the pause it describes.
-        //
-        // Kept on the desktop, where it costs a sprite nobody is wearing and still answers
-        // "why did that stutter". BootOverlay covers the boot case separately.
-        if (!this._renderer.xr.isPresenting) {
-          ShaderBusy.attach(this._scene);
-          ShaderBusy.tick(this._renderer, _renderCam);
-        }
+        // No "compiling shaders" plate (ShaderBusy) anywhere: it was a debug aid, matt never wants it seen.
         this._tickSteadyState();
       }
 
@@ -4894,9 +4879,12 @@ class Scene {
     // Force viewport to fill the area excluding top bar and sidebar.
     // Read sidebar width dynamically so resize drag stays in sync.
     const sidebarEl = document.getElementById('gui-sidebar');
-    const sidebarW = sidebarEl ? sidebarEl.offsetWidth : 380;
+    // RENDERED sizes (rects), not CSS sizes: the sidebar and top bar are CSS-zoomed by the UI Scale.
+    const sidebarW = sidebarEl ? sidebarEl.getBoundingClientRect().width : 380;
+    const topbarEl = document.getElementById('gui-topbar');
+    const topbarH = topbarEl ? topbarEl.getBoundingClientRect().height : 36;
     viewport.style.position = 'absolute';
-    viewport.style.top = '36px';
+    viewport.style.top = topbarH + 'px';
     viewport.style.bottom = '0px';
     viewport.style.left = '0px';
     viewport.style.right = sidebarW + 'px';
@@ -5098,7 +5086,9 @@ class Scene {
       const pts = new Float32Array([-1,0,0, 1,0,0,  0,-1,0, 0,1,0,  0,0,-1, 0,0,1]);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-      const cross = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x66e0ff, depthWrite: false }));
+      const cross = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x66e0ff }));
+      // depthWrite ON: meshes are transparent and draw after this opaque line, so without it they
+      // painted over a null that was in front of them.
       cross.name = 'null_cruciform';
       cross.frustumCulled = false;
       cross.scale.setScalar(4);
@@ -16306,7 +16296,11 @@ class Scene {
     // press edge, RigPending's own one-press-one-step gesture. So it is exempted here the same
     // way an already-busy tool already is.
     if ((this._isPointingAtMenu || this._wasPointingAtMenu || this._vrMenuTriggerLatch)
-        && !isSculpting && !isToolActive && !this._rigPendingMode) {
+        && !isSculpting && !isToolActive
+        // ARMED IS EXEMPT ONLY AWAY FROM A MENU. With the ray ON a panel (the outliner row you are
+        // choosing the child/parent from) the press belongs to the panel; exempting it let the
+        // same press reach updateXR as a scene click on nothing and cancel the assignment.
+        && (!this._rigPendingMode || this._isPointingAtMenu)) {
       // DEBUG: STICKY BRUSH DIAGNOSIS
       if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
         window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${trigger.pressed} Val=${trigger.value.toFixed(2)}`, trigger.pressed ? "lime" : "red");
