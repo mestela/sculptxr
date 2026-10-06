@@ -10193,6 +10193,7 @@ class Scene {
         // with its top edge a gap under the lowest of them. CAMERA axes, so "below" is below
         // from where you stand whatever angle the menu is held at.
         const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+        const camUp    = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
         const pos = new THREE.Vector3();
         mm.getWorldPosition(pos);
         const tlm = this._vrTimelineMesh;
@@ -10325,7 +10326,6 @@ class Scene {
   // to interact, secondary trigger + eye = solo.
   _openVRBlendshapes() {
     // SIZE IS THE USER'S, and it persists — the corner grip resizes this panel exactly as it does
-        const camUp    = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
     // the timeline, and the choice survives a reload the same way.
     //
     // The old fixed 0.17x0.23m is 255x345 css px at 1500 px/m, and that is where "i can only see
