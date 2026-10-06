@@ -144,6 +144,20 @@ class ReferenceManager {
     this._main.render?.();
   }
 
+  // Undo of a delete re-runs initRender on the restored plane, which rebuilds its material and
+  // drops the live canvas texture -- the plane came back blank while the clip kept playing into
+  // a texture nothing drew. Reapply the same texture (StateAddRemove calls this after initRender).
+  rebindVideo() {
+    const m = this._videoMesh, tex = this._videoTex;
+    const tm = m && m.getThreeMesh && m.getThreeMesh();
+    if (!tm || !tex) return;
+    if (tm.material && tm.material.map === tex) return;
+    if (tm.material && tm.material.dispose) tm.material.dispose();
+    tm.material = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false });
+    tm.visible = m.isVisible() && (window._videoTrack?._inSpan !== false);
+    tex.needsUpdate = true;
+  }
+
   clearVideo() {
     if (!this._videoMesh) return;
     const m = this._videoMesh;

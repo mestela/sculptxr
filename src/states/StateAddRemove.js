@@ -40,6 +40,8 @@ class StateAddRemove {
       meshesMain[i].initRender();
     }
 
+    main._referenceManager?.rebindVideo?.();
+
     var sel = this._selectMeshes;
     main.setMesh(sel[0] ? sel[0] : null);
     var sMeshes = main.getSelectedMeshes();

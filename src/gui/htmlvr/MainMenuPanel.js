@@ -1535,7 +1535,7 @@ export function buildMenuHTML_files(main) {
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj"
-      title="Import a mesh or audio file — obj, sgl, ply, stl, glb, mp3, wav">Mesh or audio…</button>
+      title="Import a mesh, audio or video file — obj, sgl, ply, stl, glb, mp3, wav, mp4, webm">Mesh / audio / video…</button>
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>

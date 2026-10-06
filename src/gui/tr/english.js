@@ -30,7 +30,7 @@ var TR = {
   // file
   fileTitle: 'Files (import/export)',
   fileImportTitle: 'Import',
-  fileAdd: 'Import file...',
+  fileAdd: 'Import mesh / audio / video...',
   fileAutoMatrix: 'Scale and center',
   fileVertexSRGB: 'sRGB vertex color',
   fileExportSceneTitle: 'Export Scene',
