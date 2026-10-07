@@ -6499,6 +6499,7 @@ export function buildMenuHTML_desktopSettings(main) {
     <label class="mm-check-row"><span>Show debug log</span><input type="checkbox" id="mm-debug-log"${debugActive ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <label class="mm-check-row"><span>Show Eruda console</span><input type="checkbox" id="mm-eruda-console"><span class="mm-checkmark"></span></label>
     <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
+    ${window._sxrInstall ? '<button class="mm-action-btn" id="mm-install-app">Install app</button>' : ''}
   `;
   // Language selector hidden: the legacy TR(key) translations only cover the old
   // yagui UI, while the current HTML panels are hardcoded English and don't consult
@@ -6573,6 +6574,8 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireSlider(q('#mm-tablet-intensity'), q('#mm-tablet-intensity-val'),
     (v) => { Tablet.intensityFactor = v; getOptionsURL.saveOption('tabletIntensityFactor', v, 300); }, v => v.toFixed(2));
   fixSliderDrag(el);
+
+  q('#mm-install-app')?.addEventListener('click', () => window._sxrInstall?.());
 
   q('#mm-debug-log')?.addEventListener('change', (e) => {
     const next = e.target.checked;

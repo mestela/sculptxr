@@ -178,7 +178,7 @@
 
 <body>
     <div id="xr-ui">
-        <button id="vr-button" class="xr-button">Enter VR</button>
+        <button id="vr-button" class="xr-button" style="display: none;">Enter VR</button>
         <button id="ar-button" class="xr-button" style="display: none;">Enter AR</button>
     </div>
 
@@ -499,6 +499,7 @@
                 navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
                     if (supported) {
                         btnVR.textContent = 'Enter VR';
+                        btnVR.style.display = ''; // hidden until app.start() has finished and XR is supported
                         btnVR.addEventListener('click', () => onEnterVR('immersive-vr'));
                     } else {
                         btnVR.style.display = 'none';

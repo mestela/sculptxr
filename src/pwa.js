@@ -8,18 +8,11 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   document.readyState === 'complete' ? idle() : addEventListener('load', idle);
 }
 
-let _prompt = null;
+// The install offer lives in Settings > Advanced (MainMenuPanel); window._sxrInstall is set only
+// while the browser is offering one.
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
-  _prompt = e;
-  if (matchMedia('(display-mode: standalone)').matches || document.getElementById('sxr-install')) return;
-  const b = document.createElement('button');
-  b.id = 'sxr-install';
-  b.textContent = 'Install app';
-  b.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:99998;padding:7px 12px;border:none;' +
-    'border-radius:9px;background:#89b4fa;color:#11111b;font:600 12px sans-serif;cursor:pointer;' +
-    'box-shadow:0 4px 14px rgba(0,0,0,0.45);';
-  b.addEventListener('click', async () => { _prompt.prompt(); await _prompt.userChoice; b.remove(); _prompt = null; });
-  document.body.appendChild(b);
+  if (matchMedia('(display-mode: standalone)').matches) return;
+  window._sxrInstall = async () => { e.prompt(); await e.userChoice; window._sxrInstall = null; };
 });
-window.addEventListener('appinstalled', () => document.getElementById('sxr-install')?.remove());
+window.addEventListener('appinstalled', () => { window._sxrInstall = null; });
