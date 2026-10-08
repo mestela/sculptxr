@@ -1460,6 +1460,10 @@ export class HTMLVRPanel {
       let rangeEl = null;
       if (el.tagName === 'INPUT' && el.type === 'range') {
         rangeEl = el;
+      } else if (el.closest?.('.mm-val, button')) {
+        // A press ON the value readout (or any button) in a slider's row is not a miss on the
+        // track. It was caught by the branch below and clamped the slider to its end, so clicking
+        // a value to open the numpad jumped it to maximum (matt, 2026-10-09).
       } else {
         const row = el.closest?.('.mp-row, .mm-row, .acp-row, [data-row]') || null;
         const cand = row ? row.querySelector('input[type=range]') : null;
