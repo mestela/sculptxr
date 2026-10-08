@@ -298,7 +298,7 @@ check('slots are not added to the overlay group',
 // then deleted some more and got this error: Cannot read properties of undefined (reading
 // 'vcMat')". Only the pin markers are still meshes.
 check('...and dispose does not try to free a slot',
-  /for \(const p of \[e\.pinB, e\.pinS\]\)/.test(SRC)
+  /for \(const p of \[e\.pinB, e\.pinS, e\.pinR\]\)/.test(SRC)
     && !/\.\.\.caps/.test(SRC),
   'a slot owns nothing to dispose, and calling dispose on one would throw');
 check('...and the capsule slots are not gathered for disposal either',
@@ -744,7 +744,7 @@ check('...and it can still be re-measured when the scene really does change',
   // with the scales they already hold, so the number moves and nothing on screen does. This is
   // the bug the first cut shipped: the slider called render() and the rig did not resize.
   const MENU = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
-  const rigCb = /wireSlider\(q\('#mm-rig-scale'\)[\s\S]*?\n  \},/.exec(MENU);
+  const rigCb = /wireScaleSlider\(el, q\('#mm-rig-scale'\)[\s\S]*?\n  \}, paint\);/.exec(MENU);
   check('the rig scale slider is wired', !!rigCb, 'the slider moved');
   if (rigCb) {
     check('...and it rebuilds the rig, not just repaints it',
@@ -900,7 +900,7 @@ check('...and it can still be re-measured when the scene really does change',
       && /const labelScale\s+= Skeleton\.labelSizeMul \?\? 1;/.test(MENU2));
   // updateVisuals, not render: the sizes are written into the instanced batches inside that call.
   for (const id of ['mm-pin-scale', 'mm-label-scale']) {
-    const cb = new RegExp("wireSlider\\(q\\('#" + id + "'\\)[\\s\\S]*?\\n  \\},").exec(MENU2);
+    const cb = new RegExp("wireScaleSlider\\(el, q\\('#" + id + "'\\)[\\s\\S]*?\\n  \\}, paint\\);").exec(MENU2);
     check('the ' + id + ' slider rebuilds the rig, not just repaints it',
       !!cb && /Skeleton\.updateVisuals\(main\)/.test(cb[0]),
       'render() alone leaves the batches at the size they already hold');
