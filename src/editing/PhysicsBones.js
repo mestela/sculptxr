@@ -843,7 +843,7 @@ PhysicsBones.step = function (main, dt) {
       // file. The authored rest is `_ikRest` and nothing here may write it: matt: "the only thing
       // that should change the rest pose is draw or tweak. everything else is a modification to
       // the pose, not the rest pose."
-      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); }
+      else if (!same && !solverPosed) { st.rest = Array.prototype.slice.call(now); _wt.adopts++; }
       // else: the solver posed it this frame. Leave it where the solve put it -- physics layers
       // on top of that -- but keep the rest we already had, so a reset still has a pose to
       // return to that nothing simulated or solved ever wrote.
@@ -1747,6 +1747,31 @@ PhysicsBones.solveStep = function (main, dt) {
   return window._physXPBD ? PhysicsBones.stepXPBD(main, dt) : PhysicsBones.step(main, dt);
 };
 
+// `physWorldTrace()` from the console prints one line a second while the sim runs: worst frame dt,
+// steps, how many times a joint's rest pose was RE-ADOPTED (a rest that keeps being re-adopted
+// has no restoring force), the world group's scale/position, and how far a NON-simulated joint's
+// model-space position wobbles frame to frame (should be ~0 while the world is gripped, since the
+// sim works in model space). Built to tell "frame-time spikes" from "model-space noise" from "rest
+// churn" when the chain shakes as the world is moved. Inert unless switched on.
+const _wt = { on: false, t0: 0, steps: 0, maxDt: 0, adopts: 0, jit: 0, lastP: null };
+window.physWorldTrace = function (on) { _wt.on = on !== false; _wt.t0 = 0; return _wt.on; };
+function worldTraceTick(main, dt) {
+  const now = performance.now();
+  _wt.steps++; _wt.maxDt = Math.max(_wt.maxDt, dt);
+  const r = PhysicsBones.roots(main)[0];
+  if (r) {
+    Skeleton.jointPos(r, _pRig);
+    if (_wt.lastP) _wt.jit = Math.max(_wt.jit, _pRig.distanceTo(_wt.lastP));
+    _wt.lastP = (_wt.lastP || new THREE.Vector3()).copy(_pRig);
+  }
+  if (now - _wt.t0 < 1000) return;
+  const wg = window._sxrWorldGroup;
+  console.log('[physWorld] steps ' + _wt.steps + '  max dt ' + (_wt.maxDt * 1000).toFixed(1) + 'ms  rest-adopts '
+    + _wt.adopts + '  root-joint frame jitter ' + _wt.jit.toExponential(2)
+    + (wg ? '  world scale ' + wg.scale.x.toFixed(4) + ' pos ' + wg.position.toArray().map((v) => v.toFixed(2)).join(',') : ''));
+  _wt.t0 = now; _wt.steps = 0; _wt.maxDt = 0; _wt.adopts = 0; _wt.jit = 0;
+}
+
 PhysicsBones.tick = function (main, nowSeconds) {
   if (!PhysicsBones.roots(main).length) return false;
   // NOT WHILE THE BIND POSE IS HELD. Physics writes joints every frame, so with the hold on it
@@ -1774,6 +1799,7 @@ PhysicsBones.tick = function (main, nowSeconds) {
   const dt = _lastTime === null ? 1 / 60 : t - _lastTime;
   _lastTime = t;
   if (dt <= 0) return false;
+  if (_wt.on) worldTraceTick(main, dt);
   PhysicsBones.solveStep(main, dt);
   return true;
 };

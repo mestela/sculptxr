@@ -13,6 +13,7 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 // Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
 const _MS_INV = mat4.create();
 const _MS_OUT = mat4.create();
+const _MS_ACC = new Float64Array(16); // full-precision accumulator for the local-chain compose
 
 /*
 Basic usage:
@@ -391,6 +392,22 @@ class Mesh {
     const tm = this.getThreeMesh();
     const wg = window._sxrWorldGroup;
     if (!tm || !wg || tm.parent === wg) { mat4.copy(out, this._transformData._matrix); return out; }
+    // COMPOSED FROM THE LOCAL MATRICES, NEVER FROM matrixWorld. three only recomputes a node's
+    // world matrix when ITS OWN matrixWorldNeedsUpdate is set, and `updateWorldMatrix(true,false)`
+    // does not push a parent's change down to the node it was called on -- so after the world
+    // group moved (a VR grip) every joint's matrixWorld was stale until the renderer's next full
+    // walk, and `inverse(fresh wg) * stale joint` came out wrong by the distance the world had
+    // moved. Measured on the GXR 2026-10-09: up to 12 model units off for a joint that had not
+    // moved, which is what made physics bones shake. The local chain has no such state.
+    // Falls back to the world-matrix path if the chain does not end at the world group.
+    let ok = false;
+    mat4.copy(_MS_ACC, tm.matrix.elements);
+    for (let o = tm.parent; o; o = o.parent) {
+      if (o === wg) { ok = true; break; }
+      if (o.matrixAutoUpdate) o.updateMatrix();
+      mat4.multiply(_MS_ACC, o.matrix.elements, _MS_ACC);
+    }
+    if (ok) { mat4.copy(out, _MS_ACC); return out; }
     tm.updateWorldMatrix(true, false);
     mat4.invert(_MS_INV, wg.matrixWorld.elements);
     mat4.multiply(out, _MS_INV, tm.matrixWorld.elements);
