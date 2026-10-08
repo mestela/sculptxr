@@ -2227,6 +2227,32 @@ export function buildSharedSettingsHTML(main) {
   `;
 }
 
+// A MULTIPLIER SLIDER THAT CAN LAND ON 1.00x. Three things, because a ray cannot hold a thumb to
+// one step in five: it SNAPS to 1.00x within a few steps either side (a detent), clicking the
+// number opens the VR numpad, and either way the slider and the readout follow. matt, 2026-10-09:
+// "its really hard to reset it back to 1.0x, it always wants to jump to .95x or 1.05x ... i also
+// tried to click on the value itself to bring up the numpad, it didn't appear."
+const SCALE_DETENT = 7;   // percent either side of 100 that snaps to 100
+function wireScaleSlider(el, sliderEl, valEl, label, apply, paint) {
+  if (!sliderEl) return;
+  const set = (v) => {
+    const snapped = Math.abs(v - 100) <= SCALE_DETENT ? 100 : v;
+    if (snapped !== v) sliderEl.value = String(snapped);
+    return snapped;
+  };
+  wireSlider(sliderEl, valEl, (v) => apply(set(v)), (v) => (set(v) / 100).toFixed(2) + 'x', paint);
+  valEl?.addEventListener('click', (e) => {
+    const np = window._vrNumpad;
+    if (!np || !np.shouldUse() || np.isBlockingOpen) return;
+    e.preventDefault(); e.stopPropagation();
+    const lo = parseFloat(sliderEl.min) / 100, hi = parseFloat(sliderEl.max) / 100;
+    np.open(parseFloat(sliderEl.value) / 100, { label, min: lo, max: hi, integer: false }, (val) => {
+      sliderEl.value = String(Math.round(Math.min(hi, Math.max(lo, val)) * 100));
+      sliderEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }, valEl, el._vrPanel || null);
+  });
+}
+
 // The matching wiring, so neither page can gain a control the other cannot operate.
 export function wireSharedSettings(el, main, paint) {
   const q = (id) => el.querySelector(id);
@@ -2245,27 +2271,27 @@ export function wireSharedSettings(el, main, paint) {
   // already hold, so the slider moved the number and nothing on screen changed. Every other
   // rig-affecting control in the app calls updateVisuals before render for exactly this reason.
   // `paint` is the VR rasteriser's markDirty; on desktop it is a no-op and the DOM redraws itself.
-  wireSlider(q('#mm-rig-scale'), q('#mm-rig-scale-val'), (v) => {
+  wireScaleSlider(el, q('#mm-rig-scale'), q('#mm-rig-scale-val'), 'Rig Scale', (v) => {
     const mul = Skeleton.setSceneUnitMul(v / 100);
     getOptionsURL.saveOption('rigScale', mul, 250);
     Skeleton.updateVisuals(main);
     main.render?.();
-  }, (v) => (v / 100).toFixed(2) + 'x', paint);
+  }, paint);
   // updateVisuals for the same reason Rig Scale needs it: the sizes are written into the
   // instanced batches inside that call, and render() alone redraws them at the scale they already
   // hold. A label is a sprite rather than a batch, but it is written in the same pass.
-  wireSlider(q('#mm-pin-scale'), q('#mm-pin-scale-val'), (v) => {
+  wireScaleSlider(el, q('#mm-pin-scale'), q('#mm-pin-scale-val'), 'Pin Size', (v) => {
     const mul = Skeleton.setPinSizeMul(v / 100);
     getOptionsURL.saveOption('pinScale', mul, 250);
     Skeleton.updateVisuals(main);
     main.render?.();
-  }, (v) => (v / 100).toFixed(2) + 'x', paint);
-  wireSlider(q('#mm-label-scale'), q('#mm-label-scale-val'), (v) => {
+  }, paint);
+  wireScaleSlider(el, q('#mm-label-scale'), q('#mm-label-scale-val'), 'Label Size', (v) => {
     const mul = Skeleton.setLabelSizeMul(v / 100);
     getOptionsURL.saveOption('labelScale', mul, 250);
     Skeleton.updateVisuals(main);
     main.render?.();
-  }, (v) => (v / 100).toFixed(2) + 'x', paint);
+  }, paint);
   wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
     main.setGridOpacity?.(v / 100);
   }, (v) => (v / 100).toFixed(2), paint);
