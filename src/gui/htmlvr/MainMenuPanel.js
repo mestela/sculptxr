@@ -39,6 +39,7 @@ import PanelTrace from '../../misc/PanelTrace.js';
 import { toolTextTint } from './toolTints.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
+import Mesh from '../../mesh/Mesh.js';
 import { SCULPT_TOOLS, MESH_TOOLS, XFORM_TOOL_IDS, toolLabel } from './toolLists.js';
 import {
   buildBoneSectionHTML,
@@ -3525,6 +3526,7 @@ function buildSculptingHTML(main, part) {
         <div class="mm-row">
           <span class="mm-lbl">Active Group</span>
           <input type="range" id="mm-group-active" min="1" max="8" step="1" value="${grp}">
+          <span id="mm-group-swatch" style="display:inline-block;width:14px;height:14px;border-radius:3px;flex-shrink:0;background:${groupSwatchCss(grp)}"></span>
           <span class="mm-val" id="mm-group-active-val">${grp}</span>
         </div>
         <button class="mm-toggle${showGroups ? ' active' : ''}" id="mm-group-show">Show Groups</button>`;
@@ -4671,6 +4673,12 @@ export function wireVRScrollbar(scrollEl, trackEl, thumbEl, dirtyFn) {
  * Wire an input[type=range] to a value-display span and a callback.
  * dirtyFn is called after each input event (pass markDirty for VR, or a rebuild fn for desktop).
  */
+// CSS colour of a face group, from the same palette the overlay paints with.
+const groupSwatchCss = (g) => {
+  const c = Mesh.prototype.getFaceGroupColor(g, [0, 0, 0]);
+  return `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+};
+
 export function wireSlider(sliderEl, valEl, cb, formatFn, dirtyFn) {
   if (!sliderEl) return;
   const fmt = formatFn ?? String;
@@ -5612,7 +5620,11 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     // Face-group paint controls (only present when the Groups tool is active)
     wireSlider(
       el.querySelector('#mm-group-active'), el.querySelector('#mm-group-active-val'),
-      (v) => { if (tool.setGroup) tool.setGroup(v); }, null, sliderDirtyFn
+      (v) => {
+        if (tool.setGroup) tool.setGroup(v);
+        const sw = el.querySelector('#mm-group-swatch');
+        if (sw) sw.style.background = groupSwatchCss(v);
+      }, null, sliderDirtyFn
     );
     el.querySelector('#mm-group-show')?.addEventListener('click', (e) => {
       const mesh = main.getMesh?.();

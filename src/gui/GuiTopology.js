@@ -68,7 +68,13 @@ class GuiMultiresolution {
     this._steeringWeight = 1.0;
     menu.addTitle('Face Groups');
     menu.addButton('Paint Groups', this, 'activatePaintGroup');
-    menu.addSlider('Active Group', this._group, this.onGroupChanged.bind(this), 1, 8, 1);
+    var grpCtrl = menu.addSlider('Active Group', this._group, this.onGroupChanged.bind(this), 1, 8, 1);
+    // Colour swatch beside the number, so a group id can be matched to the colour on the model.
+    this._groupSwatch = document.createElement('span');
+    this._groupSwatch.style.cssText = 'display:inline-block;width:14px;height:14px;border-radius:3px;margin:0 6px 0 auto;';
+    var grpLabelRow = grpCtrl.domSlider && grpCtrl.domSlider.previousElementSibling;
+    if (grpLabelRow) grpLabelRow.insertBefore(this._groupSwatch, grpLabelRow.lastElementChild);
+    this._updateGroupSwatch();
     this._ctrlShowGroups = menu.addCheckbox('Show Groups', false, this.toggleShowGroups.bind(this));
 
     // quad remeshing
@@ -129,8 +135,15 @@ class GuiMultiresolution {
     main.render();
   }
 
+  _updateGroupSwatch() {
+    if (!this._groupSwatch) return;
+    var c = Mesh.prototype.getFaceGroupColor(this._group, [0, 0, 0]);
+    this._groupSwatch.style.background = 'rgb(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' + Math.round(c[2] * 255) + ')';
+  }
+
   onGroupChanged(val) {
     this._group = val | 0;
+    this._updateGroupSwatch();
     var tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT_GROUP);
     if (tool) tool.setGroup(this._group);
   }

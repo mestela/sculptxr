@@ -2446,6 +2446,7 @@ class Mesh {
     var col = new Float32Array(nbTris * 9);
     var gcol = [0.0, 0.0, 0.0];
     var t = 0;
+    var faceTri = new Uint32Array(nbFaces + 1); // first overlay triangle of each face
     var writeTri = (ia, ib, ic) => {
       var o = t * 9;
       var a = ia * 3, b = ib * 3, c = ic * 3;
@@ -2459,9 +2460,12 @@ class Mesh {
       this.getFaceGroupColor(groups[i], gcol);
       var id = i * 4;
       var a = fAr[id], b = fAr[id + 1], c = fAr[id + 2], d = fAr[id + 3];
+      faceTri[i] = t;
       writeTri(a, b, c);
       if (d !== Utils.TRI_INDEX) writeTri(a, c, d);
     }
+    faceTri[nbFaces] = t;
+    rd._groupOverlayFaceTri = faceTri;
 
     if (!rd._groupOverlayMesh) {
       // depthWrite:false so the (decorative, camera-pulled) overlay polygon doesn't write
@@ -2487,6 +2491,33 @@ class Mesh {
       var colAttr = geom.getAttribute('color'); colAttr.array.set(col); colAttr.needsUpdate = true;
     }
     rd._groupOverlayMesh.visible = true;
+  }
+
+  // Paint-stroke fast path: positions have not moved, only these faces' group changed, so
+  // rewrite just their colour entries (no allocation, no position copy). The upload is a
+  // needsUpdate flag, so three sends it once per render however many dabs landed in the frame.
+  // Falls back to the full rebuild whenever the cached layout no longer matches the mesh.
+  updateGroupOverlayFaces(iFaces) {
+    var rd = this._renderData;
+    var ov = rd._groupOverlayMesh;
+    var faceTri = rd._groupOverlayFaceTri;
+    var groups = this._meshData._facesGroups;
+    var colAttr = ov && ov.geometry.getAttribute('color');
+    if (!ov || !faceTri || !groups || !colAttr || !this.getShowFacesGroups() ||
+        faceTri.length !== this.getNbFaces() + 1 ||
+        colAttr.array.length !== faceTri[faceTri.length - 1] * 9) {
+      this.updateGroupOverlay();
+      return;
+    }
+    var col = colAttr.array;
+    var gcol = [0.0, 0.0, 0.0];
+    for (var k = 0, n = iFaces.length; k < n; ++k) {
+      var f = iFaces[k];
+      this.getFaceGroupColor(groups[f], gcol);
+      var lo = faceTri[f] * 9, hi = faceTri[f + 1] * 9;
+      for (var o = lo; o < hi; o += 3) { col[o] = gcol[0]; col[o + 1] = gcol[1]; col[o + 2] = gcol[2]; }
+    }
+    colAttr.needsUpdate = true;
   }
 
   // Deterministic palette for group ids. Group 0 (unpainted) reads as neutral light gray;
