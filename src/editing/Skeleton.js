@@ -2436,19 +2436,30 @@ Skeleton.sceneUnit = function (main) {
 
   let best = 0;
   let from = 'mesh';
-  for (const m of main.getMeshes() || []) {
-    if (Skeleton.isJoint(m) || m._isNull) continue;
-    const tm = m.getThreeMesh && m.getThreeMesh();
-    const g = tm && tm.geometry;
-    if (!g) continue;
-    if (!g.boundingSphere) g.computeBoundingSphere();
-    const ms = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : null;
-    const s = ms ? Math.hypot(ms[0], ms[1], ms[2]) : 1;
-    const r = (g.boundingSphere ? g.boundingSphere.radius : 1) * s;
-    // A non-finite radius (a mesh whose vertices went bad) must not poison the scene unit:
-    // every joint marker and bone is scaled by it, so one NaN silently makes the whole
-    // skeleton invisible — a confusing symptom a long way from its cause.
-    if (Number.isFinite(r) && r > best) best = r;
+  // HIDDEN MESHES DO NOT SIZE THE RIG. A hidden mesh is not what you are looking at: a stray
+  // 4-vertex mesh and a hidden 98k-vertex copy had a rig's unit at 64 against 25 for the visible
+  // character, so pins and labels came out 2.5x too big at every slider setting (matt, 2026-10-09,
+  // a rig from a few weeks earlier). Only if NOTHING is visible do the hidden ones count, so a
+  // scene with everything hidden still gets a unit. The signature does not include visibility, so
+  // hiding the character later does not resize the markers -- the latch holds until the scene
+  // changes structurally, as before.
+  for (const visibleOnly of [true, false]) {
+    for (const m of main.getMeshes() || []) {
+      if (Skeleton.isJoint(m) || m._isNull) continue;
+      if (visibleOnly && m.isVisible && !m.isVisible()) continue;
+      const tm = m.getThreeMesh && m.getThreeMesh();
+      const g = tm && tm.geometry;
+      if (!g) continue;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const ms = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : null;
+      const s = ms ? Math.hypot(ms[0], ms[1], ms[2]) : 1;
+      const r = (g.boundingSphere ? g.boundingSphere.radius : 1) * s;
+      // A non-finite radius (a mesh whose vertices went bad) must not poison the scene unit:
+      // every joint marker and bone is scaled by it, so one NaN silently makes the whole
+      // skeleton invisible — a confusing symptom a long way from its cause.
+      if (Number.isFinite(r) && r > best) best = r;
+    }
+    if (best > 1e-6) break;
   }
   // No sculpt in the scene — deleted, or a skeleton built before one exists. Fall back to
   // the SKELETON's own size rather than to 1: every marker, snap radius and default bone
