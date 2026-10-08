@@ -1472,7 +1472,13 @@ export class HTMLVRPanel {
           // Generous vertically -- the track is a few px tall and the point of this branch is
           // to catch a press that MISSED it -- but bounded by the row, not by the panel.
           const pad = Math.max(10, r.height);
-          if (absY >= r.top - pad && absY <= r.bottom + pad) rangeEl = cand;
+          // ...and horizontally bounded too: the catch is for a press that missed the track
+          // VERTICALLY. A press to the right of it, on the value readout or the gap beside it,
+          // was grabbing the slider and clamping it to its maximum (matt: a click on a value
+          // "jumps the slider to its maximum", and once to 4.0x).
+          const padX = 14;
+          if (absY >= r.top - pad && absY <= r.bottom + pad
+              && absX >= r.left - padX && absX <= r.right + padX) rangeEl = cand;
         }
       }
       if (rangeEl && !disabledEl(rangeEl)) this._sliderDragTarget = rangeEl;

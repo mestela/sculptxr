@@ -684,6 +684,13 @@ export class VrNumpad extends HTMLVRPanel {
     }
 
     // ── Place numpad beside the field, in front of the panel ─────────────────
+    // `config.centerOnPanel`: dead centre of the parent panel instead of beside the field. matt,
+    // 2026-10-09, on the Rig Scale readout: "it should appear in the center of the parent panel,
+    // not off to the left".
+    if (this._config && this._config.centerOnPanel) {
+      xFromFieldCentre = -(numW / 2 + GAP);   // cancels the beside-the-field offset below
+      yOffset = 0;
+    }
     this.mesh.position
       .copy(panelWorldPos)
       .addScaledVector(right,  xFromFieldCentre + numW / 2 + GAP)
