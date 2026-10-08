@@ -372,8 +372,12 @@ class Selection {
       this._threeDot.visible = !inEditMode; // hide centre dot during radius drag
 
       const pickingSym = main.getPickingSymmetry();
-      const symOn = !!(sm && sm.getSymmetry() && pickingSym && pickingSym.getMesh() === mesh);
-      if (symOn) {
+      // THE MIRRORED-STROKE DOT IS OFF IN GRAB. With a posed or asymmetric rig the mirror of the point
+      // under the cursor is computed in a space that has nothing to do with where the body is now,
+      // so hovering an arm drew the dot on the leg. Other tools keep it; posed symmetry gets its own
+      // pass, and `window._showSymmetryDot = true` forces it back on in Grab meanwhile.
+      const symOn = (curIdx !== Enums.Tools.GRAB || window._showSymmetryDot === true)
+        && !!(sm && sm.getSymmetry() && pickingSym && pickingSym.getMesh() === mesh);      if (symOn) {
         this._threeSymDot.position.fromArray(pickingSym.getIntersectionPoint());
         this._threeSymDot.scale.set(dotLocalRadius, dotLocalRadius, dotLocalRadius);
       }

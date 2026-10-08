@@ -318,6 +318,8 @@ var getOptionsURL = function () {
   // Centre handle of the VR gizmo carries the controller's ROTATION as well as its
   // position (6DOF, the way Grab holds a thing). Off = the centre handle translates only.
   options.xfFreeRotate = queryBool(getVal('xfFreeRotate'), false);
+  // Transform's Pin Pose mode: the gizmo follows the cursor onto the nearest pin or free joint.
+  options.xfPinPose = queryBool(getVal('xfPinPose'), false);
 
   // Bone display flags — persisted so the rig looks the way you left it. Capsules and
   // weights default OFF: both are diagnostics drawn over the sculpt. Registry and accessors

@@ -6,6 +6,7 @@
 // two dialects of class name.
 import getOptionsURL from '../misc/getOptionsURL.js';
 import { gizmoSizeMul, GIZMO_MUL_MIN, GIZMO_MUL_MAX } from '../editing/GizmoVR.js';
+import { pinPoseOn } from '../editing/pinPoseMode.js';
 
 // Only the class names differ between the panels; the markup and every handler are shared.
 const DIALECT = {
@@ -53,6 +54,7 @@ export function freeRotateOn() {
 export function buildTransformSectionHTML(main, style) {
   const c = DIALECT[style] || DIALECT.mm;
   const on = freeRotateOn();
+  const pp = pinPoseOn();
   const mul = gizmoSizeMul();
   const title = c.title
     ? `<div class="${c.title}">Transform</div>`
@@ -63,6 +65,10 @@ export function buildTransformSectionHTML(main, style) {
       <button class="${c.toggle}${on ? ' active' : ''}" id="xf-freerot"
         title="Centre handle carries rotation as well as position (6DOF), like grabbing the object">
         Free rotate ${on ? 'On' : 'Off'}
+      </button>
+      <button class="${c.toggle}${pp ? ' active' : ''}" id="xf-pinpose"
+        title="Pose a rig directly. The gizmo follows the cursor onto the nearest pin or free (FK) joint \u2014 no click to select \u2014 and offers only what that thing can do: position pins translate, rotation pins rotate, full pins do both, FK joints rotate. The skinned body and joints the pins already control are not selectable. Desktop only.">
+        Pin Pose ${pp ? 'On' : 'Off'}
       </button>
     </div>
     <div class="${c.row}">
@@ -81,6 +87,7 @@ export function wireTransformSection(root, main, opts) {
   if (!btn) return;
   opts = opts || {};
   const refresh = opts.refresh || (() => {});
+  const onSlider = 'sliderDirty' in opts ? opts.sliderDirty : refresh;
 
   // ON INPUT, NOT ON CHANGE: GizmoVR reads the multiplier out of the matrix every frame, so the
   // gizmo resizes under your hand as the slider moves -- which is the only way to judge a size.
@@ -100,9 +107,21 @@ export function wireTransformSection(root, main, opts) {
       getOptionsURL.saveOption('gizmoSizeMul', f, 500);
       if (sVal) sVal.textContent = f.toFixed(2) + 'x';
       main.render?.();
-      refresh();
+      // THE DESKTOP SIDEBAR REBUILDS ITSELF IN `refresh`, and a rebuild on every `input` replaces the
+      // slider element mid-drag -- so it could only be clicked, never dragged. The panel that asked
+      // for a repaint per tick (the VR wrist panel, whose texture must be re-rasterised) passes
+      // `refresh`; the desktop panel passes `sliderDirty: null` and its DOM draws itself.
+      onSlider?.();
     });
   }
+
+  root.querySelector('#xf-pinpose')?.addEventListener('click', () => {
+    const next = !pinPoseOn();
+    window._xfPinPose = next;
+    getOptionsURL.saveOption('xfPinPose', next, 0);
+    main.render?.();
+    refresh();
+  });
 
   btn.addEventListener('click', () => {
     const next = !freeRotateOn();
@@ -119,6 +138,12 @@ export function syncTransformSection(root, main) {
   const on = freeRotateOn();
   btn.classList.toggle('active', on);
   btn.textContent = `Free rotate ${on ? 'On' : 'Off'}`;
+  const ppBtn = root.querySelector('#xf-pinpose');
+  if (ppBtn) {
+    const pp = pinPoseOn();
+    ppBtn.classList.toggle('active', pp);
+    ppBtn.textContent = `Pin Pose ${pp ? 'On' : 'Off'}`;
+  }
 
   // The thumbstick writes the same number, so the slider has to follow it -- otherwise the panel
   // reports a size the gizmo stopped being two clicks ago.

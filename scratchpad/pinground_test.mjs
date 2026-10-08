@@ -248,7 +248,8 @@ check('...so the ONLY ground clamp in the solver is the one in pinAnchor',
 // here still reads correctly in an older build: the bit is ignored there and the pin comes back
 // with its mode intact and the clamp off, which is the pre-feature behaviour.
 check('the flag is written to bit 7 of the bone word',
-  /\| \(\(\(m\._boneIKPin \| 0\) & 8\) \? 128 : 0\)/.test(SKEL));
+  // pinBits is the joint's mode, or 0 when its pin was deleted (see deletedpin_test.mjs)
+  /\| \(\(pinBits & 8\) \? 128 : 0\)/.test(SKEL));
 check('...and read back out of it, separately from the mode',
   /function pinAboveGroundOf\(bone\) \{ return \(bone & 128\) \? 8 : 0; \}/.test(SKEL));
 check('...without being folded into pinModeOf, which must keep meaning only the mode',

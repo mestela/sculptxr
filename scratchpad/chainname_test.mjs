@@ -481,7 +481,7 @@ const label = (m) => m._permanentStaticLabel;
   const SK2 = SK_PATCH(SK_RAW);
   const GR = GR_PATCH(fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8'));
   check('the desktop hover keeps the non-rig answer instead of dropping it',
-    /applyRigHover\(main, isRigNode\(hit\) \? hit : null\);\s*\n\s*applyMeshHover\(main, hit\);/.test(SK2),
+    /applyRigHover\(main, (?:isRigNode\(hit\) \? hit : null|node)\);\s*\n\s*applyMeshHover\(main, hit\);/.test(SK2),
     'every hover route already computed it and then threw it away unless it was a rig node');
   check('...and the VR grab ray does the same',
     /Skeleton\.applyMeshHover\(this\._main, node \? null : mesh\);/.test(GR),

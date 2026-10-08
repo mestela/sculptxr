@@ -3,6 +3,7 @@ import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
 import getOptionsURL from '../misc/getOptionsURL.js';
+import { gizmoBasis, basisAxis, ringTangent, rotationEdit, scaleEdit, axisParamFromRay } from './gizmoMath.js';
 
 
 // Configuration constants
@@ -78,6 +79,16 @@ const ROT_XYZ = GIZMO_TYPE.ROT_X | GIZMO_TYPE.ROT_Y | GIZMO_TYPE.ROT_Z;
 const PLANE_XYZ = GIZMO_TYPE.PLANE_X | GIZMO_TYPE.PLANE_Y | GIZMO_TYPE.PLANE_Z;
 const SCALE_XYZW = GIZMO_TYPE.SCALE_X | GIZMO_TYPE.SCALE_Y | GIZMO_TYPE.SCALE_Z | GIZMO_TYPE.SCALE_W;
 
+// WHICH HANDLES A THING OFFERS. A handle for something the node cannot do is a handle that lies:
+// a rotate-only pin has no use for an arrow, and no pin has any use for a scale cube. Named sets
+// rather than raw masks so the tool that picks one says what it means.
+export const GIZMO_SETS = {
+  ALL: TRANS_XYZ | ROT_XYZ | PLANE_XYZ | SCALE_XYZW | GIZMO_TYPE.ROT_W | GIZMO_TYPE.TRANS_W,
+  MOVE: TRANS_XYZ | PLANE_XYZ | GIZMO_TYPE.TRANS_W,
+  TURN: ROT_XYZ | GIZMO_TYPE.ROT_W,
+  MOVE_TURN: TRANS_XYZ | PLANE_XYZ | ROT_XYZ | GIZMO_TYPE.TRANS_W | GIZMO_TYPE.ROT_W,
+};
+
 // ONE MATERIAL FOR THE WHOLE GIZMO, with the colour in the GEOMETRY.
 //
 // Every handle used to carry its own MeshBasicMaterial because each is a different colour. On
@@ -105,6 +116,38 @@ function gizmoMaterial(doubleSided) {
   if (doubleSided) return (_gizmoMatD = _gizmoMatD || mk(THREE.DoubleSide));
   return (_gizmoMatS = _gizmoMatS || mk(THREE.FrontSide));
 }
+
+// GIZMO MATERIALS FOR THE RIBBONS AND FOR A HELD HANDLE, built on demand and cached by what makes them
+// differ. The colour is in the GEOMETRY (see gizmoMaterial); `tint` multiplies it down.
+const _gizmoMats = new Map();
+function gizmoMat(side, opacity, tint = 0xffffff) {
+  const key = side + '|' + opacity.toFixed(4) + '|' + tint;
+  let m = _gizmoMats.get(key);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({ vertexColors: true, color: tint, transparent: true, opacity,
+      depthTest: false, depthWrite: false, side });
+    _gizmoMats.set(key, m);
+  }
+  return m;
+}
+
+// THE DESKTOP ROTATION RINGS ARE OPEN-CYLINDER RIBBONS, and a cylinder seen from the side shows two
+// surfaces: the OUTSIDE of the near half (front faces) and the INSIDE of the far half (back faces). The
+// front is drawn as a ribbon; the back is drawn with the same geometry and vertex colours, dimmed and
+// more transparent, so which half of a ring is nearer is plain at a glance, and a highlighted ring
+// still lights on both halves.
+const RIBBON_FRONT_OPACITY = 0.4;
+const RIBBON_BACK_OPACITY = 0.275;
+const RIBBON_BACK_TINT = 0x6a6a6a;       // multiplies the vertex colours down to ~40%
+
+// A HANDLE THAT IS BEING DRAGGED goes to this fraction of its own opacity: still there to read, but not
+// in front of the pose it is being used to change.
+const HELD_OPACITY_MUL = 0.25;
+function heldOf(m) { return gizmoMat(m.side, m.opacity * HELD_OPACITY_MUL, m.color.getHex()); }
+
+// How wide the ribbon is along the ring's own axis, as a fraction of ROT_RADIUS. A band rather than a
+// wire, but a slim one: it should not fill the gizmo or obscure what is behind it.
+const RIBBON_FRAC = 0.11;
 
 // Fill a handle's colour buffer. Cached against the last value: this is called for every part
 // every frame, and re-uploading fifteen buffers a frame to write the same numbers is exactly the
@@ -314,6 +357,13 @@ class GizmoVR {
     };
   }
 
+  // Swap a handle's material between its normal one and its held one, remembering the normal.
+  _setHeldLook(mesh, held) {
+    if (!mesh.userData._matN) mesh.userData._matN = mesh.material;
+    const want = held ? heldOf(mesh.userData._matN) : mesh.userData._matN;
+    if (mesh.material !== want) mesh.material = want;
+  }
+
   _resize(scale) {
     if (this._group) this._group.clear();
     // Re-create geometry with new scale
@@ -356,6 +406,7 @@ class GizmoVR {
   }
 
   update(camera) {
+    if (this._handleSetFn) this.setActivatedType(this._handleSetFn());
     // 1. Calculate Center
     let meshes = this._main.getTransformableMeshes();
     // The fallback honours the lock too -- otherwise it hands the gizmo straight back the mesh
@@ -447,7 +498,16 @@ class GizmoVR {
     // shared local frame, so its centroid gizmo is world-aligned. TransformVR uses the same
     // rule when interpreting rotation and scale gestures; keeping the display/picker local to
     // meshes[0] here made the visible X ring disagree with the world-X rotation it produced.
-    if (meshes.length === 1) {
+    if (this._desktop) {
+      // DESKTOP: the displayed frame IS the dragged frame, and it is the MODEL-space one. The
+      // branch below reads the mesh's LOCAL matrix, which for a parented mesh (every joint and
+      // pin) is relative to a parent the gizmo is not drawn in. LIVE during a drag, like every
+      // other gizmo: it turns with the object. The drag itself is measured against the frame
+      // frozen at press (`_editBasis`), so the handle turning under the cursor changes nothing
+      // about what the drag does.
+      const B = this._basisFor(meshes);
+      if (B) mat4.multiply(baseMat, baseMat, B);
+    } else if (meshes.length === 1) {
       const m = meshes[0].getMatrix();
       const sx = Math.hypot(m[0], m[1], m[2]);
       const sy = Math.hypot(m[4], m[5], m[6]);
@@ -525,8 +585,28 @@ class GizmoVR {
       
       const threeMesh = components[i]._drawGeo.getThreeMesh();
       if (threeMesh) {
+        // A handle the current set does not offer is not drawn either (it is not picked: the
+        // tiered pick already tests the type).
+        // (The interior trackball ball is never drawn; leave its own flag alone.)
+        // WHILE A HANDLE IS HELD, ONLY THAT HANDLE IS DRAWN. The rest of the gizmo is in the way of
+        // watching what the one you are dragging does, and comes back the moment you let go.
+        // (Dragging the interior trackball, which has no drawn handle, leaves nothing showing.)
+        const _held = this._desktop && this._isEditing && this._selected;
+        if (components[i] !== this._rotBall) {
+          threeMesh.visible = !!(this._activatedType & components[i]._type) && (!_held || components[i] === this._selected);
+        }
         mat4.copy(threeMesh.matrix.elements, components[i]._finalMatrix);
         threeMesh.matrixWorldNeedsUpdate = true;
+        // The handle being dragged is shown at a quarter of its opacity (and put back afterwards).
+        const heldNow = !!(_held && components[i] === this._selected);
+        this._setHeldLook(threeMesh, heldNow);
+        const bm = components[i]._backMesh;
+        if (bm) {
+          mat4.copy(bm.matrix.elements, components[i]._finalMatrix);
+          bm.matrixWorldNeedsUpdate = true;
+          bm.visible = threeMesh.visible;
+          this._setHeldLook(bm, heldNow);
+        }
       }
       
       if (components[i]._pickGeo) {
@@ -742,7 +822,9 @@ class GizmoVR {
   // centre of the mesh. So this is a repair as much as a merge.
 
   setActivatedType(type) {
+    if (type === this._activatedType) return;
     this._activatedType = type;
+    this._initPickables();
   }
 
   _computeCenterGizmo(center = [0.0, 0.0, 0.0]) {
@@ -769,8 +851,28 @@ class GizmoVR {
   // was a drag affordance, not information -- the object moves under the cursor either way.
   _updateLineHelper() {}
 
+  // The frame the desktop handles are drawn in AND dragged about. A single node follows its own
+  // model-space orientation; a multi-selection has no shared frame, so it is world-aligned.
+  // Null means world.
+  _basisFor(meshes) {
+    if (meshes.length !== 1) return null;
+    const m = meshes[0];
+    // A tool that knows better than the node's own matrix (a joint, whose axes mean nothing
+    // about the limb) supplies the frame; anything it declines gets the model-space orientation.
+    const f = this._frameFn ? this._frameFn(m) : null;
+    if (f) return f;
+    return gizmoBasis(m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : m.getMatrix());
+  }
+
+  // Axis n of the frozen edit frame, in model space.
+  _editAxis(n, out) {
+    return this._editBasis ? basisAxis(this._editBasis, n, out)
+      : vec3.set(out || vec3.create(), n === 0 ? 1 : 0, n === 1 ? 1 : 0, n === 2 ? 1 : 0);
+  }
+
   _saveEditMatrices() {
     const meshes = this._main.getTransformableMeshes();
+    this._editBasis = this._desktop ? this._basisFor(meshes) : null;
     const center = this._computeCenterGizmo();
     mat4.translate(this._editTrans, mat4.identity(this._editTrans), center);
     mat4.invert(this._editTransInv, this._editTrans);
@@ -814,20 +916,55 @@ class GizmoVR {
 
   // ── drag starts ──────────────────────────────────────────────────────────────────────
 
+  // MODEL SPACE <-> THE SCREEN. The gizmo, like everything in the scene, is drawn under _worldGroup,
+  // which scales (and may move) the model; the camera projects WORLD points. Projecting a model-space
+  // point directly puts it somewhere else -- on a rig low in the scene, tens of pixels from where the
+  // gizmo is drawn -- so the trackball zone, the arcball and every drag's screen-space bookkeeping
+  // were measured on a circle that was not the one on screen: press inside the visible ring and the
+  // tool saw nothing there and orbited the view. Every projection and unprojection goes through the
+  // world group here.
+  _wgMat() {
+    const wg = this._main._worldGroup;
+    if (!wg || !wg.matrixWorld || !wg.updateMatrixWorld) return null;
+    wg.updateMatrixWorld(true);
+    return wg.matrixWorld.elements;
+  }
+
+  _toWorld(p) {
+    const W = this._wgMat();
+    if (!W) return [p[0], p[1], p[2]];
+    return [W[0] * p[0] + W[4] * p[1] + W[8] * p[2] + W[12],
+      W[1] * p[0] + W[5] * p[1] + W[9] * p[2] + W[13],
+      W[2] * p[0] + W[6] * p[1] + W[10] * p[2] + W[14]];
+  }
+
+  _toModel(p) {
+    const W = this._wgMat();
+    if (!W) return [p[0], p[1], p[2]];
+    const inv = mat4.invert(mat4.create(), W);
+    return vec3.transformMat4([0, 0, 0], p, inv);
+  }
+
+  _proj(camera, p) { return camera.project(this._toWorld(p)); }
+
+  _unprojModel(camera, x, y, z) { return this._toModel(camera.unproject(x, y, z)); }
+
   _startRotateEdit() {
+    // WHICH WAY THE CURSOR HAS TO TRAVEL, from the point actually grabbed. The tangent of the
+    // ring at that point (axis x radius) is the direction a positive rotation carries it; its
+    // screen projection is the drag line. No per-axis sign: the old table assumed the ring was
+    // seen from the front and the displayed axis was the dragged one, and was wrong in both.
     const main = this._main;
     const camera = main.getCamera();
-    const projCenter = [0.0, 0.0, 0.0];
-    this._computeCenterGizmo(projCenter);
-    vec3.copy(projCenter, camera.project(projCenter));
-
+    const c = this._computeCenterGizmo([0.0, 0.0, 0.0]);
+    const axisW = this._editAxis(this._selected._nbAxis, [0, 0, 0]);
+    const P = vec3.transformMat4([0, 0, 0], this._selected._lastInter, this._selected._finalMatrix);
+    this._rotAxis = axisW;
+    const t = ringTangent(axisW, P, c, [0, 0, 0]);
+    const a = this._proj(camera, P);
+    const b = this._proj(camera, vec3.scaleAndAdd([0, 0, 0], P, t, vec3.dist(P, c) * 0.25 || 1.0));
     const dir = this._editLineDirection;
-    const sign = this._selected._nbAxis === 0 ? -1.0 : 1.0;
-    const lastInter = this._selected._lastInter;
-    vec3.set(dir, -sign * lastInter[2], -sign * lastInter[1], sign * lastInter[0]);
-    vec3.transformMat4(dir, dir, this._selected._finalMatrix);
-    vec3.copy(dir, camera.project(dir));
-    vec2.normalize(dir, vec2.sub(dir, dir, projCenter));
+    vec2.normalize(dir, vec2.sub(dir, b, a));
     vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
   }
 
@@ -839,11 +976,11 @@ class GizmoVR {
 
     this._computeCenterGizmo(origin);
     const nbAxis = this._selected._nbAxis;
-    if (nbAxis !== -1) vec3.set(dir, 0.0, 0.0, 0.0)[nbAxis] = 1.0;
+    if (nbAxis !== -1) this._editAxis(nbAxis, dir);
     vec3.add(dir, origin, dir);
 
-    vec3.copy(origin, camera.project(origin));
-    vec3.copy(dir, camera.project(dir));
+    vec3.copy(origin, this._proj(camera, origin));
+    vec3.copy(dir, this._proj(camera, dir));
     vec2.normalize(dir, vec2.sub(dir, dir, origin));
 
     this._editOffset[0] = main._mouseX - origin[0];
@@ -855,7 +992,7 @@ class GizmoVR {
     const camera = main.getCamera();
     const origin = this._editLineOrigin;
     this._computeCenterGizmo(origin);
-    vec3.copy(origin, camera.project(origin));
+    vec3.copy(origin, this._proj(camera, origin));
     this._editOffset[0] = main._mouseX - origin[0];
     this._editOffset[1] = main._mouseY - origin[1];
     vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
@@ -872,15 +1009,15 @@ class GizmoVR {
     const camera = main.getCamera();
     const origin = this._editLineOrigin;
     this._computeCenterGizmo(origin);
-    vec3.copy(origin, camera.project(origin));
+    vec3.copy(origin, this._proj(camera, origin));
     this._editOffset[0] = main._mouseX - origin[0];
     this._editOffset[1] = main._mouseY - origin[1];
     vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
 
     const c = this._computeCenterGizmo([0, 0, 0]);
-    const cs = camera.project(c);
-    const n0 = camera.unproject(cs[0], cs[1], 0.0);
-    const n1 = camera.unproject(cs[0], cs[1], 0.5);
+    const cs = this._proj(camera, c);
+    const n0 = this._unprojModel(camera, cs[0], cs[1], 0.0);
+    const n1 = this._unprojModel(camera, cs[0], cs[1], 0.5);
     this._camPlaneNormal = vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], n1, n0));
   }
 
@@ -902,15 +1039,11 @@ class GizmoVR {
 
     let angle = (7 * dist) / Math.min(main.getCanvasWidth(), main.getCanvasHeight());
     angle %= Math.PI * 2;
-    const nbAxis = this._selected._nbAxis;
 
     const meshes = main.getTransformableMeshes();
     for (let i = 0; i < meshes.length; ++i) {
       const mrot = meshes[i].getEditMatrix();
-      mat4.identity(mrot);
-      if (nbAxis === 0) mat4.rotateX(mrot, mrot, -angle);
-      else if (nbAxis === 1) mat4.rotateY(mrot, mrot, -angle);
-      else if (nbAxis === 2) mat4.rotateZ(mrot, mrot, -angle);
+      rotationEdit(this._rotAxis, angle, mrot);
       this._scaleRotateEditMatrix(mrot, i);
     }
   }
@@ -926,22 +1059,16 @@ class GizmoVR {
     vec2.sub(vec, vec, this._editOffset);
     vec2.scaleAndAdd(vec, origin, dir, vec2.dot(vec, dir));
 
-    const near = camera.unproject(vec[0], vec[1], 0.0);
-    const far = camera.unproject(vec[0], vec[1], 0.1);
+    const near = this._unprojModel(camera, vec[0], vec[1], 0.0);
+    const far = this._unprojModel(camera, vec[0], vec[1], 0.1);
     vec3.transformMat4(near, near, this._editTransInv);
     vec3.transformMat4(far, far, this._editTransInv);
 
     vec3.normalize(vec, vec3.sub(vec, far, near));
 
-    const inter = [0.0, 0.0, 0.0];
-    inter[this._selected._nbAxis] = 1.0;
-    const a01 = -vec3.dot(vec, inter);
-    const b0 = vec3.dot(near, vec);
-    const det = Math.abs(1.0 - a01 * a01);
-    const b1 = -vec3.dot(near, inter);
-    inter[this._selected._nbAxis] = (a01 * b0 - b1) / det;
-
-    this._updateMatrixTranslate(inter);
+    const axisW = this._editAxis(this._selected._nbAxis, [0, 0, 0]);
+    const t = axisParamFromRay(near, vec, axisW);
+    this._updateMatrixTranslate(vec3.scale(axisW, axisW, t));
   }
 
   _updatePlaneEdit() {
@@ -950,13 +1077,12 @@ class GizmoVR {
     const vec = [main._mouseX, main._mouseY, 0.0];
     vec2.sub(vec, vec, this._editOffset);
 
-    const near = camera.unproject(vec[0], vec[1], 0.0);
-    const far = camera.unproject(vec[0], vec[1], 0.1);
+    const near = this._unprojModel(camera, vec[0], vec[1], 0.0);
+    const far = this._unprojModel(camera, vec[0], vec[1], 0.1);
     vec3.transformMat4(near, near, this._editTransInv);
     vec3.transformMat4(far, far, this._editTransInv);
 
-    const inter = [0.0, 0.0, 0.0];
-    inter[this._selected._nbAxis] = 1.0;
+    const inter = this._editAxis(this._selected._nbAxis, [0, 0, 0]);
     const dist1 = vec3.dot(near, inter);
     const dist2 = vec3.dot(far, inter);
     if (dist1 === dist2) return false;
@@ -974,8 +1100,8 @@ class GizmoVR {
     const vec = [main._mouseX, main._mouseY, 0.0];
     vec2.sub(vec, vec, this._editOffset);
 
-    const near = camera.unproject(vec[0], vec[1], 0.0);
-    const far = camera.unproject(vec[0], vec[1], 0.1);
+    const near = this._unprojModel(camera, vec[0], vec[1], 0.0);
+    const far = this._unprojModel(camera, vec[0], vec[1], 0.1);
     vec3.transformMat4(near, near, this._editTransInv);
     vec3.transformMat4(far, far, this._editTransInv);
 
@@ -1012,8 +1138,8 @@ class GizmoVR {
     const meshes = main.getTransformableMeshes();
     for (let i = 0; i < meshes.length; ++i) {
       const edim = meshes[i].getEditMatrix();
-      mat4.identity(edim);
-      mat4.scale(edim, edim, inter);
+      if (this._editBasis) scaleEdit(this._editBasis, inter, edim);
+      else { mat4.identity(edim); mat4.scale(edim, edim, inter); }
       this._scaleRotateEditMatrix(edim, i);
     }
   }
@@ -1023,10 +1149,8 @@ class GizmoVR {
     const meshes = this._main.getTransformableMeshes();
     for (let i = 0; i < meshes.length; ++i) {
       vec3.transformMat4(tmp, inter, this._editScaleRotInv[i]);
-      // The gizmo rides _worldGroup, which carries a scale; the mesh matrix does not.
-      let S = 1.0;
-      if (this._main._worldGroup) S = this._main._worldGroup.scale.x;
-      vec3.scale(tmp, tmp, 1.0 / S);
+      // (`inter` is in MODEL space now -- the ray is unprojected through the world group -- so there is
+      // no scale left to divide out here.)
       const edim = meshes[i].getEditMatrix();
       mat4.identity(edim);
       mat4.translate(edim, edim, tmp);
@@ -1042,15 +1166,24 @@ class GizmoVR {
   _gizmoScreenRadius() {
     const camera = this._main.getCamera();
     const c = this._computeCenterGizmo([0, 0, 0]);
-    const cs = camera.project(c);
+    const cs = this._proj(camera, c);
     // ROT_RADIUS IS A PRE-BAKE NUMBER. This gizmo bakes `_lastScale` into the ring geometry
     // and leaves the matrix carrying only the sizing factor, so the ring's real radius in the
     // part's own frame is ROT_RADIUS * _lastScale. Using the bare constant (what Gizmo.js did,
     // correctly, because its geometry was unit-sized) measured the sphere at 8 screen pixels:
     // the trackball zone then never armed and the arcball mapped every drag to a wild angle.
-    const edge = vec3.transformMat4([0, 0, 0],
-      [ROT_RADIUS * (this._lastScale || 1), 0.0, 0.0], this._rotX._finalMatrix);
-    const es = camera.project(edge);
+    //
+    // ...AND THE EDGE IS TAKEN ACROSS THE VIEW, NOT ALONG A GIZMO AXIS. The rings are great circles of
+    // a sphere, and the sphere's outline on screen is the same size however the gizmo is turned. This
+    // used to step along the ring part's own X axis -- which is the ring's rotation AXIS, and points
+    // at the camera for a gizmo whose X is the view direction (the hips pin, looked at from the
+    // front): the "radius" came out a third of the circle you can see, and a press inside the visible
+    // ring but outside that sliver found no handle and orbited the view.
+    const b = this._cameraBasis();
+    const F = this._rotX._finalMatrix;
+    const R = ROT_RADIUS * (this._lastScale || 1) * Math.hypot(F[0], F[1], F[2]);
+    const edge = vec3.scaleAndAdd([0, 0, 0], c, b.right, R);
+    const es = this._proj(camera, edge);
     const dx = es[0] - cs[0], dy = es[1] - cs[1];
     return { cx: cs[0], cy: cs[1], r: Math.max(1e-3, Math.sqrt(dx * dx + dy * dy)) };
   }
@@ -1072,11 +1205,11 @@ class GizmoVR {
   _cameraBasis() {
     const camera = this._main.getCamera();
     const c = this._computeCenterGizmo([0, 0, 0]);
-    const cs = camera.project(c);
-    const o = camera.unproject(cs[0], cs[1], 0.0);
-    const oR = camera.unproject(cs[0] + 10, cs[1], 0.0);
-    const oU = camera.unproject(cs[0], cs[1] - 10, 0.0);
-    const oF = camera.unproject(cs[0], cs[1], 0.5);
+    const cs = this._proj(camera, c);
+    const o = this._unprojModel(camera, cs[0], cs[1], 0.0);
+    const oR = this._unprojModel(camera, cs[0] + 10, cs[1], 0.0);
+    const oU = this._unprojModel(camera, cs[0], cs[1] - 10, 0.0);
+    const oF = this._unprojModel(camera, cs[0], cs[1], 0.5);
     return {
       right: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], oR, o)),
       up: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], oU, o)),
@@ -1369,28 +1502,47 @@ class GizmoVR {
     //
     // So the tolerance goes in the geometry for the desktop and VR keeps the thin torus it was
     // tuned against.
-    rot._pickGeo = Primitives.createTorus(
-      this._gl,
-      radius * scale,
-      (this._desktop ? THICKNESS_PICK : THICKNESS * mthick) * scale,
-      rad,
-      6,
-      64
-    );
+    // ON THE DESKTOP A RING IS AN OPEN CYLINDER -- a ribbon, not a wire -- so its near and far halves can
+    // be shaded differently (see gizmoMat and RIBBON_BACK_*), and the band you see is the band you can pick.
+    // VR keeps its thin half-arc torus, which is what it was tuned against.
+    const ribbon = this._desktop;
+    const rh = ROT_RADIUS * RIBBON_FRAC * scale;
+    rot._pickGeo = ribbon
+      ? Primitives.createCylinder(this._gl, radius * scale, radius * scale, rh, 64, 1, false, false)
+      : Primitives.createTorus(
+        this._gl,
+        radius * scale,
+        (this._desktop ? THICKNESS_PICK : THICKNESS * mthick) * scale,
+        rad,
+        6,
+        64
+      );
     rot._pickGeo._gizmo = rot;
     { const _pm = rot._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; }
 
-    rot._drawGeo = Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
+    rot._drawGeo = ribbon
+      ? Primitives.createCylinder(this._gl, radius * scale, radius * scale, rh, 64, 1, false, false)
+      : Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
     rot._drawGeo.setShaderType(Enums.Shader.FLAT);
 
     const threeMesh = rot._drawGeo.getThreeMesh();
     if (threeMesh) {
-      threeMesh.material = gizmoMaterial(false);
+      threeMesh.material = ribbon ? gizmoMat(THREE.FrontSide, RIBBON_FRONT_OPACITY) : gizmoMaterial(false);
       setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       mat4.copy(threeMesh.matrix.elements, rot._baseMatrix);
       threeMesh.renderOrder = 100;
       if (this._group) this._group.add(threeMesh);
+      if (ribbon) {
+        // The far half: the same geometry seen from inside, behind the front and dimmer.
+        const back = new THREE.Mesh(threeMesh.geometry, gizmoMat(THREE.BackSide, RIBBON_BACK_OPACITY, RIBBON_BACK_TINT));
+        back.matrixAutoUpdate = false;
+        mat4.copy(back.matrix.elements, rot._baseMatrix);
+        back.renderOrder = 99;
+        back.frustumCulled = false;
+        rot._backMesh = back;
+        if (this._group) this._group.add(back);
+      }
     }
   }
 

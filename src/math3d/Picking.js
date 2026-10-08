@@ -5,6 +5,8 @@ import Tablet from '../misc/Tablet.js';
 import Utils from '../misc/Utils.js';
 import TR from '../gui/GuiTR.js';
 import Skeleton from '../editing/Skeleton.js';
+import GrabChannels from '../editing/grabChannels.js';
+import { pinPoseOn } from '../editing/pinPoseMode.js';
 
 var _TMP_NEAR = [0.0, 0.0, 0.0];
 var _TMP_SYMOFF = [0.0, 0.0, 0.0];
@@ -87,9 +89,25 @@ const BONE_SELECT = (main) => {
   if (window._rigBoneSelect === false) return false;
   if (window._rigBoneSelect === true) return true;
   const sm = main && main.getSculptManager && main.getSculptManager();
-  if (!sm || sm.getToolIndex() !== BONE_DRAW_TOOL) return false;
+  if (!sm) return false;
+  // ...EXCEPT GRAB WITH TRANSLATION OFF ON A DESKTOP, which turns a limb rather than moving a
+  // joint. Turning a limb means reaching for the MIDDLE of a bone, and without segments a pick
+  // there resolves to the nearer end -- grab halfway down a forearm and the wrist starts turning.
+  // Everything the note above warns about is the VR pin path (a held bone short-circuits it), and
+  // there is no such path on a desktop, where Grab holds one thing at a time and a pin still wins
+  // when the cursor is on it (rigWinner).
+  // Transform's Pin Pose mode hovers BONES for the same reason (the joint at the top of the one under
+  // the cursor gets the gizmo), and only on a desktop.
+  if (sm.getToolIndex() === TRANSFORM_TOOL) return !main._xrSession && pinPoseOn();
+  if (sm.getToolIndex() === GRAB_TOOL) {
+    return !main._xrSession && GrabChannels.channels().translate === false;
+  }
+  if (sm.getToolIndex() !== BONE_DRAW_TOOL) return false;
   return sm.getCurrentTool && sm.getCurrentTool()._mode === 'grab' ? false : true;
 };
+// Grab's index, for the same reason as the Bone tool's below: Enums stays out of the pick module.
+const GRAB_TOOL = 15;
+const TRANSFORM_TOOL = 13;
 // Enums is not imported here and importing it for one number would drag the tool tables into
 // the pick loop's module. The index is stable and asserted in rigpick_test.
 const BONE_DRAW_TOOL = 34;

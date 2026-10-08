@@ -7,6 +7,7 @@ import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
 import RigTopology from '../editing/RigTopology.js';
+import { orientJoints } from '../editing/JointOrient.js';
 import { collapsibleHTML, uiReorg, squeezeLabel } from './htmlvr/uiTokens.js';
 
 // The Bones tool's controls, in ONE place, for every panel that shows them.
@@ -734,6 +735,10 @@ export function buildBonePoseHTML(main, style) {
       <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
       <button class="${c.action}" id="bone-restpose"
         title="Put every joint back to the skeleton as it was built. Recorded when you draw a bone and updated by Tweak, so it exists from the first bone \u2014 posing, grabbing and IK never change it.">Rest Pose</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-orient"
+        title="Turn every joint's own axes onto its limb: X down the bone, Z about the bend, worked out from the chain. Nothing moves \u2014 joints, pins, skin and anything parented to a joint stay exactly where they are. Drawing a bone and Tweak do this for you; this is for a rig made before that existed. Refused while the rig has keyframes.">Orient Joints</button>
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
@@ -1800,6 +1805,14 @@ export function wireBoneSection(root, main, opts) {
     pinCmd('pin-half',  (j) => IKSolver.setPinWeightKey(main, j, 0.5));
     pinCmd('pin-clear', (j) => IKSolver.clearPinWeight(main, j));
   }
+
+  q('orient')?.addEventListener('click', () => {
+    const r = orientJoints(main, { name: 'Orient Joints' });
+    if (!r.ok) say('Bones: not oriented \u2014 ' + r.reason, false);
+    else say(r.changed ? `Bones: ${r.changed} joint${r.changed > 1 ? 's' : ''} oriented to the chain` : 'Bones: joints are already oriented', true);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  });
 
   q('restpose')?.addEventListener('click', () => {
     // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the

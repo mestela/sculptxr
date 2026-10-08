@@ -1,6 +1,16 @@
 import { vec3, mat4 } from 'gl-matrix';
-import GizmoVR from '../GizmoVR.js';
+import GizmoVR, { GIZMO_SETS, GIZMO_TYPE } from '../GizmoVR.js';
+import IKSolver from '../IKSolver.js';
+import Skeleton from '../Skeleton.js';
+import { gizmoFrameFor } from '../JointFrame.js';
+import { ownedIds, fkTarget, fkCandidates } from '../fkPick.js';
+import { pinPoseOn } from '../pinPoseMode.js';
 import SculptBase from './SculptBase.js';
+
+// How long the cursor must rest on another target, inside the current gizmo's area, before the gizmo
+// moves to it. Long enough that crossing a bone on the way to a handle does nothing, short enough
+// that pointing at the next thing still feels immediate.
+const PIN_POSE_DWELL_MS = 350;
 
 class Transform extends SculptBase {
 
@@ -12,6 +22,17 @@ class Transform extends SculptBase {
     // fork of it and is gone; `_desktop` is what selects the mouse behaviour.
     this._gizmo = new GizmoVR(main);
     this._gizmo._desktop = true;
+    // Asked every frame by the gizmo's own update(), so a selection change from anywhere (the
+    // outliner, a click, undo) is reflected without waiting for the mouse to move.
+    this._gizmo._handleSetFn = () => {
+      // Belt and braces for the drag-hides-other-pins flag: if no drag is running it must not be set.
+      if (!this._gizmo._isEditing && main._gizmoDragPin !== undefined) main._gizmoDragPin = undefined;
+      // A target the cursor is resting on is waiting out its dwell (PIN_POSE_DWELL_MS), and a resting
+      // cursor sends no events -- so the wait is finished here, once a frame.
+      if (this._ppCand && !this._gizmo._isEditing && this._pinPoseActive()) this._pinPoseHover(!!this._gizmo._selected && this._gizmo._selected._type !== GIZMO_TYPE.ROT_W);
+      return this._handleSet();
+    };
+    this._gizmo._frameFn = (mesh) => this._frameFor(mesh);
 
     window.debugGizmoDesktop = () => {
       const g = this._gizmo;
@@ -55,10 +76,111 @@ class Transform extends SculptBase {
     return true;
   }
 
+  // WHICH HANDLES THE SELECTION OFFERS. A pin only does what its mode holds: a position pin has
+  // no orientation to turn, a rotate pin no position to move, and nothing on a pin scales. Any
+  // other selection keeps the full set.
+  _handleSet() {
+    const sel = this._main.getSelectedMeshes();
+    const m = sel.length === 1 ? sel[0] : null;
+    // A free joint, in Pin Pose, is FK: it turns about its own origin and nothing else.
+    if (m && Skeleton.isJoint(m) && this._pinPoseActive()) return GIZMO_SETS.TURN;
+    if (!m || !m._isPinTarget || !m._pinnedJoint) return GIZMO_SETS.ALL;
+    switch (IKSolver.pinMode(m._pinnedJoint)) {
+      case IKSolver.PIN_ROT: return GIZMO_SETS.TURN;
+      case IKSolver.PIN_FULL: return GIZMO_SETS.MOVE_TURN;
+      default: return GIZMO_SETS.MOVE;      // position and soft (pole) pins
+    }
+  }
+
+  // THE FRAME THE HANDLES ARE DRAWN IN. A joint (or the pin standing for one) offers the axes a
+  // person reaches for -- down the bone, and about its bend -- worked out from the chain; see
+  // JointFrame. A pin that only moves has nothing to turn, so its arrows are the world's: a
+  // stale orientation copied from the joint at the moment it was pinned would only surprise.
+  // Anything else (null) keeps its own model-space orientation.
+  _frameFor(mesh) {
+    if (!mesh) return null;
+    if (mesh._isPinTarget && mesh._pinnedJoint && this._handleSet() === GIZMO_SETS.MOVE) return mat4.create();
+    return gizmoFrameFor(this._main, mesh, Skeleton);
+  }
+
+  // ---- Pin Pose (see editing/pinPoseMode.js) --------------------------------------------
+
+  _pinPoseActive() { return pinPoseOn() && !this._main._xrSession; }
+
+  _owned() {
+    const now = performance.now();
+    if (!this._ownCache || now - this._ownAt > 150) { this._ownCache = ownedIds(this._main); this._ownAt = now; }
+    return this._ownCache;
+  }
+
+  // Is the cursor still on the gizmo's own ground -- inside the ring, or out along an arrow? A
+  // handle is bigger than the thing it is on, and the gizmo must not let go of its target on the way
+  // from the target to a handle.
+  _cursorNearGizmo() {
+    try {
+      const s = this._gizmo._gizmoScreenRadius();
+      const main = this._main;
+      return Math.hypot(main._mouseX - s.cx, main._mouseY - s.cy) <= s.r * 1.8;
+    } catch (e) { return false; }
+  }
+
+  // The gizmo follows the cursor: the nearest pin, or the free joint at the top of the nearest bone,
+  // is lit and selected, so the next press drags its handle directly. Only what the rig can actually
+  // pose is a candidate (fkPick.js); nothing else -- the skin, a joint the pins control -- is ever
+  // selected by this mode. A selection the user made themselves is left alone unless the cursor
+  // reaches something new; only the one this mode made is dropped when the cursor moves away.
+  _pinPoseHover(overHandle) {
+    const main = this._main;
+    // Over a handle of a live gizmo the target never changes, and neither does the highlight.
+    if (overHandle && main.getSelectedMeshes().length === 1) { this._ppCand = null; return; }
+    const owned = this._owned();
+    Skeleton.hoverRigFromMouse(main, main.getPicking?.(), fkCandidates(main, owned, true),
+      (node, bone) => fkTarget(node, bone, owned).joint);
+    const id = (main._pinHighlightId ?? -1) >= 0 ? main._pinHighlightId : (main._skelHighlightId ?? -1);
+    const node = id >= 0 ? main.getMeshes().find((m) => m.getID() === id) : null;
+    const sel = main.getSelectedMeshes();
+    if (node) {
+      if (sel.length === 1 && sel[0] === node) this._ppCand = null;
+      if (!(sel.length === 1 && sel[0] === node)) {
+        // A target to switch TO, while a gizmo is up and the cursor is on it or inside its area.
+        if (sel.length === 1 && this._gizmo._group && this._gizmo._group.visible) {
+          if (this._cursorNearGizmo()) {
+            const now = performance.now();
+            if (this._ppCand !== node) { this._ppCand = node; this._ppSince = now; return; }
+            if (now - this._ppSince < PIN_POSE_DWELL_MS) return;   // not yet: it was only a brush past
+          }
+        }
+        this._ppCand = null;
+        this._ppAuto = node;
+        main.setMesh(node, true);     // keepTool: we are already in Transform
+        // The handle picked for the OLD target must not survive onto the new one.
+        const sg = this._gizmo._selected;
+        if (sg) { sg._isSelected = false; this._gizmo._selected = null; }
+      }
+    } else {
+      this._ppCand = null;
+      if (this._ppAuto && sel.length === 1 && sel[0] === this._ppAuto && !this._cursorNearGizmo()) {
+        this._ppAuto = null;
+        main.setMesh(null, true);
+      }
+    }
+  }
+
   preUpdate() {
     var picking = this._main.getPicking();
     var mesh = picking.getMesh();
-    this._gizmo.onMouseOver();
+    // PIN POSE: the gizmo goes to whatever the cursor is nearest -- but not at the first brush past
+    // another bone. Reaching for a handle means crossing ground that belongs to other targets, so
+    // while the cursor is over a handle of the current gizmo it never switches, and while it is
+    // anywhere else inside the gizmo's own area it switches only to a target it has stayed on for
+    // a moment (PIN_POSE_DWELL_MS). Outside the gizmo it switches at once.
+    const posing = !this._gizmo._isEditing && this._pinPoseActive();
+    // The interior free-rotate ball is a handle for dragging, but it covers everything inside the rings,
+    // so for the question "is the cursor ON the gizmo" it does not count: the cursor inside it is on
+    // the gizmo's ground (dwell applies), not on a ring or an arrow (never switch).
+    const overHandle = this._gizmo.onMouseOver() && !!(this._gizmo._group && this._gizmo._group.visible)
+      && !!this._gizmo._selected && this._gizmo._selected._type !== GIZMO_TYPE.ROT_W;
+    if (posing) this._pinPoseHover(overHandle);
     picking._mesh = mesh;
     this._main.setCanvasCursor('default');
   }
@@ -69,13 +191,25 @@ class Transform extends SculptBase {
     if (mesh && mesh._isVoxel) return false; // LOCK TRANSFORM
     var picking = main.getPicking();
 
+    // PIN POSE: the gizmo can have moved onto a target since the last mouse event (the hover that put
+    // it there ran, and the cursor then rested inside it), so the handle under the cursor has not been
+    // worked out for THIS gizmo yet. Work it out now, or a press inside the circle finds no handle and
+    // falls through to orbiting the view.
+    if (this._pinPoseActive() && !this._gizmo._isEditing) this._gizmo.onMouseOver();
     if (mesh && this._gizmo.onMouseDown()) {
       picking._mesh = mesh;
+      // Every other pin hides for the length of the drag (see Skeleton.updateVisuals).
+      const dragged = main.getSelectedMeshes()[0];
+      main._gizmoDragPin = dragged && dragged._isPinTarget ? dragged.getID() : -1;
       // "Start on click" recording: armed-and-waiting → begin the take when the gizmo
       // drag starts (desktop equivalent of grabbing the object in VR).
       window._animationRegistry?.beginInteraction?.(mesh);
       return true;
     }
+
+    // PIN POSE SELECTS BY HOVER, never by press: a press either takes a handle (above) or does
+    // nothing. In particular it can never grab the skin or a joint the pins control.
+    if (this._pinPoseActive()) return false;
 
     // The gizmo is a selection tool before it is a transform tool, so it reaches rig nodes:
     // a bone or a pin is precisely what you want to put the gizmo on.
@@ -107,6 +241,7 @@ class Transform extends SculptBase {
 
   end() {
     this._gizmo.onMouseUp();
+    this._main._gizmoDragPin = undefined;
 
     var meshes = this._main.getSelectedMeshes();
     const main = this._main;
@@ -164,6 +299,9 @@ class Transform extends SculptBase {
   }
 
   update() {}
+
+  // A tool change mid-drag would otherwise leave every other pin hidden for good.
+  clearPreview() { this._main._gizmoDragPin = undefined; }
 
   updateXR(picking, isPressed, origin, dir, options) {
     // If the desktop tool is accidentally active in VR, don't crash the input loop!

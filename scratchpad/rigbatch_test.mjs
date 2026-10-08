@@ -298,7 +298,7 @@ check('slots are not added to the overlay group',
 // then deleted some more and got this error: Cannot read properties of undefined (reading
 // 'vcMat')". Only the pin markers are still meshes.
 check('...and dispose does not try to free a slot',
-  /for \(const p of \[e\.pinT, e\.pinG, e\.pinS\]\)/.test(SRC)
+  /for \(const p of \[e\.pinB, e\.pinS\]\)/.test(SRC)
     && !/\.\.\.caps/.test(SRC),
   'a slot owns nothing to dispose, and calling dispose on one would throw');
 check('...and the capsule slots are not gathered for disposal either',
@@ -703,10 +703,12 @@ check('...and it can still be re-measured when the scene really does change',
   // requires the multiplier on all of them.
   const unitFn = /Skeleton\.sceneUnit = function \(main\) \{([\s\S]*?)\n\};/.exec(SRC);
   check('sceneUnit is liftable', !!unitFn, 'sceneUnit moved');
+  check('a flat screen defaults to half the headset size, and the slider is a preference on top', /const FLAT_SCREEN_RIG_MUL = 0\.5;/.test(SRC));
   if (unitFn) {
     const returns = unitFn[1].match(/return [^;]+;/g) || [];
     check('...and EVERY return applies the multiplier',
-      returns.length > 0 && returns.every((r) => /sceneUnitMul/.test(r)),
+      returns.length > 0 && returns.every((r) => /unitMul\(main\)|sceneUnitMul/.test(r))
+        && /function unitMul\(main\) \{\s*return Skeleton\.sceneUnitMul \* \(main && main\._xrSession \? 1 : FLAT_SCREEN_RIG_MUL\);/.test(SRC),
       'a bare return bypasses the slider — got: ' + returns.join(' | '));
   }
   check('...and the latch stores the bare measurement',
@@ -796,21 +798,11 @@ check('...and it can still be re-measured when the scene really does change',
   // Measured by the widest bone LEAVING it instead. Built in the pass that already walks every
   // joint's parent, so it costs nothing, and it is the DRAWN radius only -- `_boneRadius` is the
   // capsule the skin binds to and must not move.
-  check('a root joint is measured by the bones below it',
-    /const rootStandIn = new Map\(\);/.test(CODE)
-      && /if \(r > \(rootStandIn\.get\(pid\) \|\| 0\)\) rootStandIn\.set\(pid, r\);/.test(CODE),
-    'on its own default a root draws at half its children and its name reads as a different size');
-  check('...and only where it actually has one',
-    /const stand = Skeleton\.isJoint\(j\._parentMesh\) \? 0 : \(rootStandIn\.get\(j\.getID\(\)\) \|\| 0\);/.test(CODE),
-    'a lone joint has nothing below it to measure and must keep the fallback');
-  check('...without touching the radius the skin binds to',
-    !/_boneRadius = .*rootStandIn/.test(CODE)
-      && /const bR = stand \|\| \(j\._boneRadius \|\| 0\);/.test(CODE),
-    'the stand-in is a drawing decision, not a change to the capsule');
-  // An explicitly shaped joint still wins: that is a statement about the joint, and the stand-in
-  // is a guess at one.
-  check('...and an explicit joint radius still outranks it',
-    /const jR = j\._jointRadius > 0 \? j\._jointRadius : bR;/.test(CODE));
+  // (The root stand-in that used to size the dot is gone: every joint dot is one size now, so a root
+  // is no longer a special case. The capsule radius the skin binds to is untouched.)
+  check('the dot no longer follows its capsule: no stand-in, no own-radius cap',
+    !/rootStandIn/.test(CODE) && !/Math\.min\(jr, ownR \* 0\.6\)/.test(CODE) && !/_jointRadius > 0 \? j\._jointRadius : bR/.test(CODE),
+    'a dot sized by its joint\'s capsule is two things saying "size" at once');
 
   // THE TEXT. One number for both sprites, off the joint, times the slider.
   // ONE HEIGHT FOR EVERY LABEL ON THE RIG. Sized per joint the names came out different on every
@@ -827,9 +819,8 @@ check('...and it can still be re-measured when the scene really does change',
   // And the dot radius itself has ONE definition, because the per-joint markers and the median
   // above both need it -- two copies is how this file's rulers drifted apart every other time.
   check('the joint dot radius has one definition',
-    /const jointDotRadius = \(j\) => \{/.test(CODE)
-      && /const jd = jointDotRadius\(j\);/.test(CODE)
-      && (CODE.match(/Math\.min\(jr, ownR \* 0\.6\)/g) || []).length === 1,
+    /const jointDotRadius = \(j\) => \{\s*const L = shortestBone\.get\(j\.getID\(\)\);\s*return L > 1e-9 \? Math\.min\(jr, L\) : jr;\s*\};/.test(CODE)
+      && /const jd = jointDotRadius\(j\);/.test(CODE),
     'the loop and the label median must not measure a joint two different ways');
   // THE PINS. Same rule, same joint, their own slider -- and the triad and the rotation-only
   // marker keep their proportion to each other, so a pin does not change shape with its mode.
@@ -942,22 +933,11 @@ check('...and it can still be re-measured when the scene really does change',
   check('showPreview is liftable', !!prev, 'showPreview moved');
   if (prev) {
     const body = prev[1];
-    // THE SAME CAP, WRITTEN THE SAME WAY, as the one updateVisuals applies to a drawn joint. If
-    // these two expressions ever stop matching, the cursor and the marker it turns into disagree
-    // again -- which is the whole of this bug, twice over now.
-    const CAP = /Math\.min\(jr, (\w+) \* 0\.6\)/;
-    const drawnCap = CAP.exec(SKEL.slice(SKEL.indexOf('const jointDotRadius = (j) => {')));
-    const prevCap = CAP.exec(body);
-    check('the drawn joint dot is capped by its own radius', !!drawnCap);
-    check('...and the preview dot uses the same cap', !!prevCap,
-      'an uncapped preview is up to 17x the joint it previews at finger scale');
-    // The radius it caps is the one addJoint will actually store: `len * radiusFrac()` off a
-    // parent, `unit * 0.05` for a root. Read from the preview AND from addJoint, and compared --
-    // a preview measured by a rule of its own is a preview that lies about what it will make.
-    check('the preview measures the joint it is about to make',
-      /toPos\.distanceTo\(fromPos\) \* radiusFrac\(\)/.test(body)
-        && /unit \* ROOT_RADIUS_FRAC/.test(body),
-      'the cursor must use the radius addJoint will store, not a rule of its own');
+    // ONE SIZE: the preview dot is the same bare `jr` every drawn joint dot is.
+    check('the drawn joint dot is jr, shrunk only to its shortest bone', /Math\.min\(jr, L\)/.test(SKEL));
+    check('...and the preview dot follows the same rule', /const jd = previewLen > 1e-9 \? Math\.min\(jr, previewLen\) : jr;/.test(body),
+      'a preview with a size rule of its own will drift from the joints it becomes');
+    // (The preview no longer measures the joint it will make: the dot is one size, so there is nothing to measure.)
     check('...and addJoint still stores exactly that',
       /mesh\._boneRadius = len \* radiusFrac\(\);/.test(SKEL)
         && /mesh\._boneRadius = unit \* ROOT_RADIUS_FRAC;/.test(SKEL),

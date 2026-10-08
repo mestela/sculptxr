@@ -5556,7 +5556,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   // Both callbacks repaint: this panel has no in-place state sync, so a rebuild is how a
   // toggle shows that it toggled.
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
-  wireTransformSection(el, main, { refresh: repaintFn });
+  wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
     window._sculptLocked = !window._sculptLocked;

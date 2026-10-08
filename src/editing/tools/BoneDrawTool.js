@@ -5,6 +5,7 @@ import Skeleton from '../Skeleton.js';
 import Skinning from '../Skinning.js';
 import IKSolver from '../IKSolver.js';
 import RigTopology from '../RigTopology.js';
+import { autoOrient } from '../JointOrient.js';
 import Enums from '../../misc/Enums.js';
 import Utils from '../../misc/Utils.js';
 import Geometry from '../../math3d/Geometry.js';
@@ -496,6 +497,9 @@ class BoneDrawTool extends SculptBase {
     // to be in at the first scrub, which is the history the rest pose exists to remove. Filling
     // it here costs one matrix and makes drawing the rig the moment that defines it.
     IKSolver.captureRest(main);
+    // The chain just grew, so some joint's bend (and with it its hinge) is new: turn the joints
+    // that need it onto their frame. Joined to the Draw Bone undo step just pushed.
+    autoOrient(main);
     this._refresh();
 
     // Deep trace (window._boneTrace = true). Logs the requested position next to where the
@@ -1393,7 +1397,11 @@ class BoneDrawTool extends SculptBase {
     // one had pins=1.
     main._rigRestEdit = true;
     const tipOffset = tip ? Skeleton.jointPos(joint, _jp2).clone().sub(tip) : null;
-    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot, tipOffset: tipOffset,
+    // The REST of the same joints, so undoing a Tweak puts the rest back with the matrices: they
+    // are one fact, and restoring one without the other leaves a joint whose rest disagrees with
+    // where it stands (which Orient Joints, and the solver's rest seed, both read).
+    const restBefore = snapshot.map(([mesh]) => (mesh._ikRest ? mat4.clone(mesh._ikRest) : null));
+    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot, restBefore: restBefore, tipOffset: tipOffset,
       // A TAP IS A SELECT; ONLY A DELIBERATE MOVE IS A DRAG.
       //
       // Nothing was wrong with the drag itself — the trace showed the joint tracking the hand
@@ -1624,11 +1632,17 @@ class BoneDrawTool extends SculptBase {
     });
     const sm = main.getStateManager && main.getStateManager();
     if (moved && sm && sm.pushStateCustom) {
+      const restBefore = g.restBefore || [];
+      const restAfter = before.map(([mesh]) => (mesh._ikRest ? mat4.clone(mesh._ikRest) : null));
+      const putRest = (list) => before.forEach(([mesh], i) => { mesh._ikRest = list[i] ? mat4.clone(list[i]) : null; });
       sm.pushStateCustom(
-        () => { Skeleton.restoreLocal(before); Skeleton.updateVisuals(main); main.render(); },
-        () => { Skeleton.restoreLocal(after); Skeleton.updateVisuals(main); main.render(); },
+        () => { Skeleton.restoreLocal(before); putRest(restBefore); Skeleton.updateVisuals(main); main.render(); },
+        () => { Skeleton.restoreLocal(after); putRest(restAfter); Skeleton.updateVisuals(main); main.render(); },
         false, 'Tweak Joint');
     }
+    // Where a joint sits is the statement of how its chain bends, so a Tweak can change a hinge.
+    // Joined to the Tweak Joint step above (or alone, if nothing moved and this is a no-op).
+    if (moved) autoOrient(this._main);
     // Dropped inside the plane's band as one of a root pair: it is one centreline joint now.
     if (g.mergeRoot && RigTopology.mergeMirror(main, g.joint)) this._refresh();
   }

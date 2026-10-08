@@ -6,6 +6,9 @@ import AnimationRegistry from '../AnimationRegistry.js';
 import IKSolver from '../IKSolver.js';
 import GrabChannels from '../grabChannels.js';
 import Skeleton from '../Skeleton.js';
+import Skinning from '../Skinning.js';
+import { aimChild } from '../JointFrame.js';
+import { ownedIds, fkTarget, fkCandidates } from '../fkPick.js';
 
 const _gV = new THREE.Vector3();
 const _grabM = new THREE.Matrix4();
@@ -14,6 +17,9 @@ const _grabS = new THREE.Vector3();
 const _grabTarget = [0, 0, 0];
 const _grabPrevT = new THREE.Vector3();
 const _grabTargetV = new THREE.Vector3();
+const _aimQ0 = new THREE.Quaternion(), _aimQ1 = new THREE.Quaternion(), _aimQ2 = new THREE.Quaternion();
+const _aimM = new THREE.Matrix4(), _aimP = new THREE.Vector3(), _aimS = new THREE.Vector3();
+const _aimD0 = new THREE.Vector3(), _aimD1 = new THREE.Vector3(), _aimTip = new THREE.Vector3();
 
 class Grab extends SculptBase {
 
@@ -396,13 +402,14 @@ class Grab extends SculptBase {
     const mx = main._mouseX, my = main._mouseY;
     // Grab is a SELECTION-style tool — an immediate transform with no gizmo — so it opts into
     // rig picking: a joint or a pin is exactly the sort of thing you reach out and move with it.
+    const _forced = !!this._forcePick;   // the bone tool already decided what is grabbed
     if (this._forcePick) {
       // The bone tool's Grab mode already decided what is under the cursor (its preselect), so
       // take exactly that -- a joint's origin is [0,0,0] in its own space.
       picking._mesh = this._forcePick;
       picking.setIntersectionPoint([0, 0, 0]);
       this._forcePick = null;
-    } else if (!picking.intersectionMouseMeshes(main.getMeshes(), mx, my, false, true)) {
+    } else if (!picking.intersectionMouseMeshes(this._pickList(), mx, my, false, true)) {
       const lhx = main._penHoverMouseX;
       const lhy = main._penHoverMouseY;
       const dx = lhx !== undefined ? Math.abs(lhx - mx) : Infinity;
@@ -419,6 +426,30 @@ class Grab extends SculptBase {
     }
     var mesh = picking.getMesh();
     if (!mesh || mesh._isVoxel) return false;
+
+    // ROTATE-ONLY IS BONE-FOCUSED, NOT JOINT-FOCUSED. A pick on a bone resolves to whichever END
+    // is nearer, which is right for moving a joint -- but to turn a limb you reach for the middle
+    // of the bone: grab halfway down a forearm and the nearer end is the wrist, so the wrist
+    // started rotating instead of the forearm. The bone under the cursor is named by its CHILD
+    // joint (`_rigHitSegment`); turning it means turning the joint at its TOP, aimed along that
+    // very bone. A root bone with no joint above it, or a pick that was a point rather than a
+    // segment, falls back to the joint that was picked.
+    let _aimBone = null;
+    if (!_forced && !GrabChannels.channels().translate && Skinning.isBound(mesh)) return false;
+    if (!_forced && !GrabChannels.channels().translate && Skeleton.isJoint(mesh)) {
+      // ...AND ONLY WHAT FK CAN ACTUALLY TURN. A joint under the influence of the pins (anything on
+      // a path from an active pin to the root: the legs, the spine, a pinned wrist's whole arm) is
+      // rewritten by the solver on the next solve, so a rotation applied to it is thrown away.
+      // Those are not offered at all.
+      const t = this._fkTarget(mesh, picking._rigHitSegment, this._ownedIds(true));
+      if (!t.joint) return false;
+      if (t.joint !== mesh) {
+        mesh = t.joint;
+        _aimBone = t.bone;
+        picking._mesh = mesh;
+        picking.setIntersectionPoint([0, 0, 0]);
+      }
+    }
 
 
     // Desktop Ctrl-click still multi-selects here — that is a keyboard modifier and does not
@@ -444,8 +475,15 @@ class Grab extends SculptBase {
     // Derived from the view matrix directly rather than cam.project() so it is
     // stable even when optimizeNearFar() hasn't fired yet (defaults near=0.01,
     // far=5000 give viewportZ ≈ 0.9999 which makes unproject numerically catastrophic).
+    // MODEL SPACE, NOT LOCAL. Everything below -- the anchor, the drag plane, the delta, the IK target
+    // and the write-back -- is in the space the cursor ray is mapped into. A mesh's own matrix is
+    // relative to its PARENT, so for anything parented (every pin under another pin, every joint
+    // below the root) the anchor landed at the local offset instead of where the thing is, and the
+    // first mouse move jumped by the difference: a pin parented to the hips pin went 310 units for
+    // a 20-pixel drag. For an unparented mesh the two are the same matrix.
+    this._grabInitModelM = mesh.getModelSpaceMatrix ? mesh.getModelSpaceMatrix(mat4.create()) : mat4.clone(mesh.getMatrix());
     var hitLocal = picking.getIntersectionPoint();
-    var hitWorld = vec3.transformMat4(vec3.create(), hitLocal, mesh.getMatrix());
+    var hitWorld = vec3.transformMat4(vec3.create(), hitLocal, this._grabInitModelM);
     var cam      = main.getCamera();
     var view     = cam._view;
 
@@ -478,7 +516,7 @@ class Grab extends SculptBase {
     var renderedZ  = worldScale * hitCam[2] + (1.0 - worldScale) * view[14]; // negative
     this._grabEffectiveDepth = -renderedZ / worldScale; // positive
 
-    var m = mesh.getMatrix();
+    var m = this._grabInitModelM;
     this._grabInitT = [m[12], m[13], m[14]];
 
     // THE ANCHOR IS THE HIT POINT ITSELF — no reconstruction.
@@ -510,7 +548,78 @@ class Grab extends SculptBase {
 
     this._grabUpdateCount = 0;
 
+    // ROTATE-ONLY ON A JOINT IS AN AIM, NOT A SOLVE. With translation switched off in the Grab
+    // channels, grabbing a joint turns it so the bone it starts (joint -> child) points where the
+    // cursor drags: a one-bone "aim at". Children ride it through the scene graph, the parents
+    // are untouched, nothing asks the solver for anything -- that is forward kinematics, and it
+    // is how an FK arm is posed.
+    this._grabAim = null;
+    if (this._grabIsJoint && !GrabChannels.channels().translate) this._beginAim(mesh, _aimBone);
+
     return true;
+  }
+
+  // THE JOINTS THE SOLVER OWNS, cached for a moment because the hover asks every frame and building
+  // the solver's graph is not free; the press asks for a fresh answer. (The rule itself -- what FK
+  // may take -- lives in fkPick.js, shared with Transform's Pin Pose mode.)
+  _ownedIds(fresh) {
+    const now = performance.now();
+    if (fresh || !this._ownCache || now - this._ownAt > 150) {
+      this._ownCache = ownedIds(this._main);
+      this._ownAt = now;
+    }
+    return this._ownCache;
+  }
+
+  _fkTarget(node, bone, owned) { return fkTarget(node, bone, owned); }
+
+  _fkCandidates(owned) { return fkCandidates(this._main, owned, false); }
+
+  // The extra arguments of the hover: none for an ordinary grab; for rotate-only, the meshes FK can
+  // turn and a resolver that lights the joint the press will take (the top of the bone), or nothing.
+  _fkHoverArgs() {
+    if (GrabChannels.channels().translate) return [];
+    const owned = this._ownedIds();
+    return [this._fkCandidates(owned), (node, bone) => this._fkTarget(node, bone, owned).joint];
+  }
+
+  // The mesh list the desktop pick runs against.
+  _pickList() {
+    if (GrabChannels.channels().translate) return this._main.getMeshes();
+    return this._fkCandidates(this._ownedIds(true));
+  }
+
+  // Everything the aim needs, fixed at the press so the drag is a pure function of the cursor:
+  // the joint's position, which way the bone points, the joint's own orientation, and where the
+  // bone's TIP is. The cursor then MOVES the tip (by how far it has travelled on a screen-parallel
+  // plane through the tip), so pressing on the joint itself does not make the bone leap to point
+  // at the joint's own pixel. Built from the start pose each frame rather than accumulated: a
+  // chain of shortest-arc steps comes back rotated when the cursor does (the twist ratchet the
+  // solver's notes describe), and an absolute aim does not.
+  _beginAim(joint, bone) {
+    const main = this._main;
+    const jm = joint.getModelSpaceMatrix();
+    const J = new THREE.Vector3(jm[12], jm[13], jm[14]);
+    // The bone that was grabbed, if the pick named one; otherwise the one the chain continues to.
+    const child = bone || aimChild(main, joint, Skeleton);
+    if (child) {
+      const cm = child.getModelSpaceMatrix();
+      _aimTip.set(cm[12], cm[13], cm[14]);
+    } else {
+      // A leaf has no outgoing bone: continue the incoming one, at its length.
+      const par = joint._parentMesh;
+      if (!par || !Skeleton.isJoint(par)) return;
+      const pm = par.getModelSpaceMatrix();
+      _aimD0.set(jm[12] - pm[12], jm[13] - pm[13], jm[14] - pm[14]);
+      if (_aimD0.lengthSq() < 1e-18) return;
+      _aimTip.copy(J).add(_aimD0);
+    }
+    _aimD0.copy(_aimTip).sub(J);
+    if (_aimD0.lengthSq() < 1e-18) return;
+    _aimM.fromArray(jm); _aimM.decompose(_aimP, _aimQ0, _aimS);
+    this._grabAim = { J: J, tip: _aimTip.clone(), d0: _aimD0.clone().normalize(), q0: _aimQ0.clone(), anchor: null };
+    // The drag plane now passes through the tip, not the picked point.
+    this._grabPlanePt = vec3.fromValues(this._grabAim.tip.x, this._grabAim.tip.y, this._grabAim.tip.z);
   }
 
   update() {
@@ -546,6 +655,32 @@ class Grab extends SculptBase {
     var delta    = vec3.sub(vec3.create(), curWorld, this._grabInitWorld);
 
 
+    if (this._grabIsJoint && this._grabAim) {
+      const a = this._grabAim;
+      // The first frame fixes where on the tip's plane the cursor started; from then on the tip
+      // is wherever it began plus how far the cursor has moved.
+      if (!a.anchor) a.anchor = vec3.clone(curWorld);
+      _aimD1.set(a.tip.x + curWorld[0] - a.anchor[0], a.tip.y + curWorld[1] - a.anchor[1], a.tip.z + curWorld[2] - a.anchor[2])
+        .sub(a.J);
+      if (_aimD1.lengthSq() < 1e-18) return;
+      _aimD1.normalize();
+      a.aimDir = _aimD1.clone();   // kept so a test can compare it with where the bone ended up
+      // New orientation = (shortest arc from the starting bone direction to the aim) x (starting
+      // orientation). Applied as a delta from where the joint is now, which is how rotateJoint
+      // takes it, and in the parent's frame so a joint deep in a posed chain turns correctly.
+      _aimQ1.setFromUnitVectors(a.d0, _aimD1).multiply(a.q0);
+      _aimM.fromArray(this._grabbedMesh.getModelSpaceMatrix()); _aimM.decompose(_aimP, _aimQ2, _aimS);
+      _aimQ1.multiply(_aimQ2.invert());
+      IKSolver.rotateJoint(this._grabbedMesh, _aimQ1);
+      // Acknowledged, not solved: Scene's watchers would otherwise treat the turn as someone
+      // dragging a joint behind the solver's back and re-solve the chain around it.
+      IKSolver.syncPinCache(main);
+      IKSolver.syncJointCache(main);
+      Skeleton.updateVisuals(main);
+      main.render();
+      return;
+    }
+
     if (this._grabIsJoint) {
       // The dragged joint is the effector; every pin holds. The solve writes the whole chain,
       // so nothing is set on the joint directly.
@@ -558,10 +693,16 @@ class Grab extends SculptBase {
       return;
     }
 
-    var m = this._grabbedMesh.getMatrix();
-    m[12] = this._grabInitT[0] + delta[0];
-    m[13] = this._grabInitT[1] + delta[1];
-    m[14] = this._grabInitT[2] + delta[2];
+    // Written in MODEL space and converted through the parent, so a parented mesh moves by exactly the
+    // cursor's delta whatever its parent's scale or rotation. (Writing the delta straight into the
+    // LOCAL translation scaled it by the parent's scale and turned it by the parent's rotation.)
+    const next = mat4.clone(this._grabInitModelM);
+    next[12] = this._grabInitT[0] + delta[0];
+    next[13] = this._grabInitT[1] + delta[1];
+    next[14] = this._grabInitT[2] + delta[2];
+    if (this._grabbedMesh.setModelSpaceMatrix) this._grabbedMesh.setModelSpaceMatrix(next);
+    else { var m = this._grabbedMesh.getMatrix(); m[12] = next[12]; m[13] = next[13]; m[14] = next[14]; }
+    if (this._grabbedMesh._isPinTarget || this._grabbedMesh._isBone) Skeleton.syncThree(this._grabbedMesh);
 
     this._grabbedMesh.updateMatrices(cam);
     main.render();
@@ -581,6 +722,7 @@ class Grab extends SculptBase {
       main.getStateManager().pushStateCustom(() => put(before), () => put(after), false, 'Pose');
       this._grabbedMesh = null;
       this._grabIsJoint = false;
+      this._grabAim = null;
       this._grabUndoRig = null;
       this._undoMatrix = null;
       this._isTwoHanded = false;
@@ -618,7 +760,7 @@ class Grab extends SculptBase {
     // Shared with the Transform tool: Skeleton.hoverRigFromMouse. Two tools needing the same
     // preselection is exactly how the mouse and VR picks drifted apart earlier.
     if (!this._main._xrSession && !this._grabbedMesh) {
-      Skeleton.hoverRigFromMouse(this._main, this._main.getPicking?.());
+      Skeleton.hoverRigFromMouse(this._main, this._main.getPicking?.(), ...this._fkHoverArgs());
     } else if (this._grabbedMesh) {
       // A GRAB IN FLIGHT IS NOT A PRESELECTION.
       //

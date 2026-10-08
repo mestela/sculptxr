@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { restModelMatrices } from './JointFrame.js';
 import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 import RigPending from './RigPending.js';
@@ -265,15 +266,14 @@ function mergeColored(parts) {
   return out;
 }
 
-let _triadGeo = null;
-function triadGeometry() {
-  if (_triadGeo) return _triadGeo;
-  const t = 0.1; // arm thickness; arms run through the joint so the centre reads as a point
-  return (_triadGeo = mergeColored([
-    [new THREE.BoxGeometry(2, t, t), AXIS_COLORS[0]],
-    [new THREE.BoxGeometry(t, 2, t), AXIS_COLORS[1]],
-    [new THREE.BoxGeometry(t, t, 2), AXIS_COLORS[2]],
-  ]));
+// A POSITION OR ORIENTATION PIN IS A SMALL BOX. It used to be an axis triad, with three gimbal rings
+// added for a full pin -- a lot to read on a rig with eight of them, and the orientation it spelled
+// out is now shown by the Transform gizmo that pops up on the pin you point at. A box says "a
+// control is here", the colour says which kind, and nothing about it invites reading an axis.
+let _boxGeo = null;
+function boxGeometry() {
+  if (_boxGeo) return _boxGeo;
+  return (_boxGeo = new THREE.BoxGeometry(1, 1, 1));
 }
 
 // The STEERING goal's marker, and the shape is doing real work. A triad says "this point is
@@ -288,20 +288,6 @@ let _tetraGeo = null;
 function tetraGeometry() {
   if (_tetraGeo) return _tetraGeo;
   return (_tetraGeo = new THREE.TetrahedronGeometry(1.15));
-}
-
-let _gimbalGeo = null;
-function gimbalGeometry() {
-  if (_gimbalGeo) return _gimbalGeo;
-  const r = 0.92, tube = 0.05, seg = 28;
-  // A torus lies in XY and turns about Z; rotate two copies so each ring turns about its own
-  // axis, and colour each ring by the axis it turns ABOUT.
-  const rx = new THREE.TorusGeometry(r, tube, 5, seg); rx.rotateY(Math.PI / 2);
-  const ry = new THREE.TorusGeometry(r, tube, 5, seg); ry.rotateX(Math.PI / 2);
-  const rz = new THREE.TorusGeometry(r, tube, 5, seg);
-  return (_gimbalGeo = mergeColored([
-    [rx, AXIS_COLORS[0]], [ry, AXIS_COLORS[1]], [rz, AXIS_COLORS[2]],
-  ]));
 }
 
 // makePair paints one colour; these carry their colours per vertex instead.
@@ -490,7 +476,11 @@ const JOINT_R_FRAC = 0.06;
 // Skeleton.pinSizeMul rides on top, so the 2.2 : 1.5 proportion is fixed here and how big the
 // pair is, is a slider. See setPinSizeMul. Judged on the DESKTOP; if a headset wants a different
 // default these split per platform rather than moving again.
-const PIN_R_FRAC = 2.2;
+// ...EXCEPT THAT A POSITION/ORIENTATION PIN IS NOW A BOX, and PIN_R_FRAC is its SIDE as a multiple of the
+// joint dot's radius: 2.4 is a box that just encloses the dot, so it reads as a box around the joint
+// rather than a marker standing off it. (It was 2.2 as the half-extent of a triad, i.e. a marker
+// more than twice as big across.)
+const PIN_R_FRAC = 2.4;
 const PIN_SOFT_R_FRAC = 1.5;
 
 // ── BATCHED RIG VISUALS ───────────────────────────────────────────────────────────────────
@@ -2306,6 +2296,17 @@ let _lastUnit = 1, _lastUnitFrom = 'never', _lastUnitMeshes = 0, _unitRemeasures
 // signature or force a re-measure — it just re-reads the same number through a new multiplier.
 Skeleton.sceneUnitMul = 1;
 
+// THE RIG'S DEFAULT SIZE ON A FLAT SCREEN IS HALF WHAT IT IS IN A HEADSET. Every marker, bone
+// width and snap radius is measured from the scene unit, and the unit was tuned against the
+// headset: at the slider's 1x the joints are about twice the size anyone wants on a monitor.
+// matt: "if i bring the joint scale down to 0.5x, that is what the scale should be by default."
+// So the slider still reads 1x -- it is a preference on top of this -- and the platform supplies
+// the other half. Anything that is not a presenting XR session counts as a flat screen.
+const FLAT_SCREEN_RIG_MUL = 0.5;
+function unitMul(main) {
+  return Skeleton.sceneUnitMul * (main && main._xrSession ? 1 : FLAT_SCREEN_RIG_MUL);
+}
+
 Skeleton.setSceneUnitMul = function (mul) {
   const v = Number(mul);
   Skeleton.sceneUnitMul = Number.isFinite(v) && v > 0 ? v : 1;
@@ -2412,7 +2413,7 @@ Skeleton.sceneUnit = function (main) {
   // slider did nothing after the first frame: the signature latch matched (the slider does not
   // change the scene) and returned the bare unit, so the number moved and no marker did. The
   // helper is the single place the multiplier is applied, so a fourth exit cannot forget it.
-  if (main._skelUnit && window._animPlaying) return main._skelUnit * Skeleton.sceneUnitMul;
+  if (main._skelUnit && window._animPlaying) return main._skelUnit * unitMul(main);
 
   let sig = 2166136261 | 0;
   let real = 0;
@@ -2431,7 +2432,7 @@ Skeleton.sceneUnit = function (main) {
   // grows as a rig is drawn — so the joint COUNT is part of the signature. Their POSITIONS are
   // not, or posing a rig with no mesh bound to it would resize its own markers.
   if (!real) sig = (Math.imul(sig, 16777619) ^ Skeleton.joints(main).length) | 0;
-  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit * Skeleton.sceneUnitMul;
+  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit * unitMul(main);
 
   let best = 0;
   let from = 'mesh';
@@ -2491,7 +2492,7 @@ Skeleton.sceneUnit = function (main) {
     console.log('[rigUnit] remeasured ' + main._skelUnit.toFixed(4) + ' from ' + from
       + ' (' + real + ' real meshes) — #' + _unitRemeasures);
   }
-  return main._skelUnit * Skeleton.sceneUnitMul;
+  return main._skelUnit * unitMul(main);
 };
 
 // What the rig is sized by, and where that number came from.
@@ -3026,7 +3027,13 @@ function pickPreserving(picking, fn) {
 // Desktop / iPad: pick from the cursor.
 // `meshes` narrows what may be hovered — the rig assignment passes pins only, so the
 // preselection cannot offer a bone the pick would refuse.
-Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
+//
+// `boneFocus` is for a tool that acts on a BONE and turns the joint at the top of it (Grab,
+// rotate-only): a function (node, bone) -> node | null that says which joint reads as hovered --
+// the one the press will take, instead of whichever end of the bone happened to be nearer the
+// cursor -- or null when nothing there is the tool's to take. The bone itself is lit separately
+// through `_rigHoverBone`. A pin is never passed to it.
+Skeleton.hoverRigFromMouse = function (main, picking, meshes, boneFocus) {
   if (window._grabTrace && (!main || !picking)) {
     console.log('[rigHover] mouse: main=' + !!main + ' picking=' + !!picking);
   }
@@ -3040,7 +3047,15 @@ Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
     main._rigHoverBone = picking._rigHitSegment || null;
     return got;
   });
-  applyRigHover(main, isRigNode(hit) ? hit : null);
+  let node = isRigNode(hit) ? hit : null;
+  // A function, so the tool decides: it is given the node under the cursor and the bone under it
+  // (or null) and returns the node to light, or null for "nothing here is yours".
+  if (typeof boneFocus === 'function' && node && !node._isPinTarget) {
+    node = boneFocus(node, main._rigHoverBone || null);
+    // Nothing here is the tool's to take, so no bone lights either.
+    if (!node) main._rigHoverBone = null;
+  }
+  applyRigHover(main, node);
   applyMeshHover(main, hit);
 };
 
@@ -3157,13 +3172,17 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
   mesh.isPickable = false;  // sculpt brushes skip it; VR ray-select still reaches it
   mesh._boneRadius = 0;     // filled in below once the bone length is known
 
-  // Shrink the pick sphere to a small locator. Kept uniform so the flat bone visuals
-  // (which read the joint's model-space translation only) stay truthful.
+  // A JOINT HAS NO SCALE. It used to be sized `unit * 0.036` here, to make the pick sphere about the
+  // size of its marker -- but the rig is picked by proximity to the joint's POSITION, never by that
+  // sphere, so the number bought nothing and cost a great deal: every child's local translation
+  // was in units of 1/s, a part parented under a joint came out at 1/s of the scene, a pin seated
+  // from a joint inherited s, and every reparent that preserved the world transform baked s into
+  // somebody. Scale is something the USER does, with the Transform tool's scale handle or by typing
+  // into the transform panel. Nothing in the rig -- bone lengths, radii, Tweak, reparenting --
+  // reads it, and a joint made here is at 1.
   const unit = Skeleton.sceneUnit(main);
-  const s = unit * 0.036; // × the primitive's 0.5 radius → pick sphere ≈ the drawn marker
   const m = mesh.getMatrix();
   mat4.identity(m);
-  mat4.scale(m, m, [s, s, s]);
   m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 
   if (opts && opts.silent) main.addMeshSilent(mesh);
@@ -3332,8 +3351,7 @@ function ensureEntry(main, id) {
 
     e = {
       pinLink: link,
-      pinT: makePinPart(triadGeometry()),
-      pinG: makePinPart(gimbalGeometry()),
+      pinB: makePinPart(boxGeometry(), false),
       pinS: makePinPart(tetraGeometry(), false),
       // BATCHED. One instance per bone and one per joint, each drawn twice, which is where the
       // ~185 draw calls came from. Everything else here is still a Mesh of its own — pins exist
@@ -3378,7 +3396,7 @@ function ensureEntry(main, id) {
                 e.cap.shaft.solid, e.cap.shaft.ghost,
                 e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
     g.add(e.label.sprite, e.nameLabel.sprite, e.pinLink,
-          e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
+          e.pinB.solid, e.pinB.ghost,
           e.pinS.solid, e.pinS.ghost);
     // Every capsule part is batched now; none of them are scene children.
     main._skelVis.set(id, e);
@@ -3403,7 +3421,7 @@ function disposeEntry(main, id) {
   // entry went away therefore threw here, on the frame after the delete. matt: "i could delete
   // some and it was fine, but then deleted some more and got this error: Cannot read properties
   // of undefined (reading 'vcMat')". Only the pin markers are still real meshes.
-  for (const p of [e.pinT, e.pinG, e.pinS]) {
+  for (const p of [e.pinB, e.pinS]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     // Both materials, not `o.material`: a pin disposed while it was highlighted would leak the
@@ -3740,32 +3758,19 @@ Skeleton.updateVisuals = function (main) {
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
   const hasChildBone = new Set();
-  // A ROOT'S STAND-IN RADIUS, taken from the bones that LEAVE it.
-  //
-  // `_boneRadius` on a joint is the radius of the bone ENDING at it -- `len * radiusFrac()` from
-  // its parent -- so a root, having no parent, falls back to `unit * ROOT_RADIUS_FRAC`. That is
-  // an unrelated formula against an unrelated ruler, and on an ordinary rig it lands at about
-  // HALF what its own children get: measured 0.66 against 1.32 on the human base. Every marker on
-  // the root is sized from it, so the root's name came out visibly smaller than every other name
-  // on the rig. matt: "i noticed the label on the root joint is smaller than all the others."
-  //
-  // A root is not a smaller joint. It is a joint with nothing above it to measure, so it is
-  // measured by what is below it instead -- the widest bone leaving it, which is the same kind of
-  // quantity its children are sized by. Widest rather than narrowest because a root is the base
-  // of the structure (a hip carries the legs), and because it is the choice that cannot make the
-  // root the runt of its own rig again.
-  //
-  // Built in the pass that is already walking every joint's parent, so it costs nothing extra.
-  // The DRAWN radius only -- `_boneRadius` itself is the capsule the skin binds to and is not
-  // touched here.
-  const rootStandIn = new Map();
+  // THE SHORTEST BONE AT EACH JOINT, for the dot's ceiling below. Built in the same pass that
+  // records which joints have a bone hanging off them.
+  const shortestBone = new Map();
+  const _bp = new THREE.Vector3(), _bq = new THREE.Vector3();
   for (const j of joints) {
     const p = j._parentMesh;
     if (!Skeleton.isJoint(p)) continue;
     hasChildBone.add(p.getID());
-    const r = j._boneRadius || 0;
-    const pid = p.getID();
-    if (r > (rootStandIn.get(pid) || 0)) rootStandIn.set(pid, r);
+    const len = Skeleton.jointPos(j, _bp).distanceTo(Skeleton.jointPos(p, _bq));
+    for (const id of [j.getID(), p.getID()]) {
+      const cur = shortestBone.get(id);
+      if (cur === undefined || len < cur) shortestBone.set(id, len);
+    }
   }
   // THE DRAWN RADIUS OF A JOINT'S DOT, in one place.
   //
@@ -3773,16 +3778,15 @@ Skeleton.updateVisuals = function (main) {
   // taken across the whole rig -- and this file's recurring bug is a measurement implemented
   // twice with a fix landing in only one copy.
   //
-  // `jr` is the whole-rig figure and acts only as a CEILING: the size is the joint's own radius,
-  // so a marker can never swallow the joint it marks. A root has no bone ending at it and takes
-  // its stand-in instead (see rootStandIn); an explicitly shaped joint outranks both, because
-  // shaping a joint by hand is a statement about that joint and the rest are guesses at one.
+  // ...AND IT IS ONE SIZE, WITH A CEILING THAT IS THE SAME FOR EVERY JOINT. The dot used to follow
+  // its joint's capsule radius, so dots varied down a limb and changed with every radius edit --
+  // two things saying "size" at once. The capsules carry the sizes; the dot is a marker, `jr` (a
+  // fraction of the scene unit) for every joint. The one exception is a joint whose shortest bone
+  // is SHORTER than that radius -- a finger -- where the dot would swallow the very bones it marks:
+  // it shrinks to that bone length and no further. A lone joint, with no bone, takes `jr`.
   const jointDotRadius = (j) => {
-    const stand = Skeleton.isJoint(j._parentMesh) ? 0 : (rootStandIn.get(j.getID()) || 0);
-    const bR = stand || (j._boneRadius || 0);
-    const jR = j._jointRadius > 0 ? j._jointRadius : bR;
-    const ownR = (bR && jR) ? Math.min(bR, jR) : (bR || jR);
-    return ownR > 1e-9 ? Math.min(jr, ownR * 0.6) : jr;
+    const L = shortestBone.get(j.getID());
+    return L > 1e-9 ? Math.min(jr, L) : jr;
   };
 
   // ONE LABEL HEIGHT FOR THE WHOLE RIG, and it is deliberately not per joint.
@@ -3837,8 +3841,7 @@ Skeleton.updateVisuals = function (main) {
       e.wire.solid.visible = e.wire.ghost.visible = false;
       e.label.sprite.visible = false;
       e.nameLabel.sprite.visible = false;
-      e.pinT.solid.visible = e.pinT.ghost.visible = false;
-      e.pinG.solid.visible = e.pinG.ghost.visible = false;
+      e.pinB.solid.visible = e.pinB.ghost.visible = false;
       e.pinS.solid.visible = e.pinS.ghost.visible = false;
       e.pinLink.visible = false;
       hideCaps(e);
@@ -4049,10 +4052,16 @@ Skeleton.updateVisuals = function (main) {
     // below is taken from these same numbers, so the zone that answers for the pin shrinks with
     // the drawing and the two cannot disagree.
     const pinR = jd * PIN_R_FRAC * Skeleton.pinSizeMul;
+    // WHILE A GIZMO DRAG IS RUNNING, NO PIN IS DRAWN -- the one being dragged included. The only
+    // thing on screen that belongs to the drag is the handle you hold, and every marker around it
+    // is clutter, most of all the dragged pin's own, which sits exactly under the gizmo.
+    // `main._gizmoDragPin` is undefined when no drag is running; while one is, it is the dragged
+    // pin's id (or -1 if what is dragged is not a pin). Set by the Transform tool at press,
+    // cleared at release. Only "is it set" matters here.
+    const showPinsHere = showPins && main._gizmoDragPin === undefined;
     const pinParts = [
-      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), pinR],
-      [e.pinG, showPins && (pinMode === 2 || pinMode === 4), pinR],
-      [e.pinS, showPins && pinMode === 3, jd * PIN_SOFT_R_FRAC * Skeleton.pinSizeMul],
+      [e.pinB, showPinsHere && (pinMode === 1 || pinMode === 2 || pinMode === 4), pinR],
+      [e.pinS, showPinsHere && pinMode === 3, jd * PIN_SOFT_R_FRAC * Skeleton.pinSizeMul],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
@@ -4063,7 +4072,7 @@ Skeleton.updateVisuals = function (main) {
     // The dash means "the solve has not met this goal"; on a pin that is asking for nothing it
     // just reads as a broken pin. matt: "if the weight is zero, i think that line should be
     // hidden."
-    const gap = showPins && pinMode && pinMode !== 4 && pinW > 0 ? _vPin.distanceTo(_pB) : 0;
+    const gap = showPinsHere && pinMode && pinMode !== 4 && pinW > 0 ? _vPin.distanceTo(_pB) : 0;
     // The leader's threshold and its dashes are the pin's ruler too: on `jr` a foot pin's dashes
     // were longer than the gap they were drawn across, so the leader read as a solid line.
     if (gap > pinR * 0.24) {
@@ -4480,31 +4489,10 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
   // having ended it, and the only other signal is a log line that is hidden by default.
   const rooting = !fromPos;
 
-  // THE PREVIEW DOT IS THE JOINT IT PREVIEWS, drawn by the joint's own rule.
-  //
-  // It used to be the bare `jr` -- one number for the whole rig, a fraction of the scene unit.
-  // But a DRAWN joint has not been that size since the finger-joint work: updateVisuals caps it
-  // by the joint's own radius, `min(jr, ownR * 0.6)`, so a marker can never swallow the joint it
-  // marks. The preview never got that cap, so the cursor was drawn at the uncapped size while
-  // every joint it had already placed was drawn at the capped one -- on an ordinary limb bone
-  // (len * 0.25 * 0.6 against unit * 0.06) that is getting on for three times too big. matt, in
-  // a headset at Rig Scale 1x: "the drawn joints are correct... but the sphere drawn on the end
-  // of the controller is huge. at the very least i would expect it to be drawn the same size as
-  // the joints."
-  //
-  // So it is sized from the radius the joint ABOUT TO BE MADE will actually be given -- the same
-  // two lines Skeleton.addJoint uses, `len * radiusFrac()` off a parent and the root fraction for a
-  // root -- and then run through updateVisuals' own cap. The cursor is now a true preview of the
-  // marker that will replace it, rather than a marker of its own with its own size rule.
-  //
-  // The rooting dot comes out smaller on its own (unit * 0.03, half of jr) because that is what a
-  // root joint's marker genuinely is, so the old hand-applied 0.6 for "you are starting a chain"
-  // is gone with nothing lost. A very short bone can now preview smaller than a root, which is
-  // honest -- the COLOUR is what says which of the two things the trigger will do.
-  const previewOwnR = rooting
-    ? unit * ROOT_RADIUS_FRAC
-    : toPos.distanceTo(fromPos) * radiusFrac();
-  const jd = previewOwnR > 1e-9 ? Math.min(jr, previewOwnR * 0.6) : jr;
+  // THE PREVIEW DOT IS THE JOINT IT PREVIEWS: `jr`, shrunk to the bone it ends if that bone is
+  // shorter -- the same rule as jointDotRadius in updateVisuals.
+  const previewLen = rooting ? 0 : toPos.distanceTo(fromPos);
+  const jd = previewLen > 1e-9 ? Math.min(jr, previewLen) : jr;
 
   // THE DISC REPLACES THE DOT WHILE THE SNAP IS ABOUT TO FIRE, rather than joining it: two
   // markers on one point is two things to read, and the dot is the one carrying less -- a sphere
@@ -5569,6 +5557,14 @@ Skeleton.serialize = function (meshes, main) {
     // them. matt: "lights aren't being saved/loaded properly to sxr".
     const light = !!m._isLight;
     if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow && !light) return;
+    // A DELETED PIN IS NO PIN, AND THE FILE MUST SAY SO. Deleting a pin takes its mesh out of the
+    // scene and leaves the joint's `_boneIKPin` mode (and `_boneIKPinObj`) alone on purpose, so
+    // undo can put the same object back. This block then wrote that stale mode with no link --
+    // which the loader reads as an old (pre-v3) file carrying only a MODE, and answers by making
+    // a fresh pin where the joint stands. matt: deleted pin_spine_01, saved, reloaded, it was
+    // back. A joint whose pin object is gone writes mode 0. (A joint with a mode and NO pin
+    // object at all is left alone: that is a rig mid-load, and the migration is for it.)
+    const pinBits = (m._isBone && m._boneIKPinObj && !livePin(m)) ? 0 : (m._boneIKPin | 0);
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
@@ -5600,10 +5596,10 @@ Skeleton.serialize = function (meshes, main) {
       // every existing flag for the same reason each of those was: an older build reads neither
       // bit, and gets the proxy back as an ordinary object and the light back as an ordinary
       // null, which is exactly the pre-feature scene rather than a broken one.
-      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0)
-        | (((m._boneIKPin | 0) & 4) << 2)
+      bone: (m._isBone ? 1 : 0) | ((pinBits & 3) << 1) | (m._selectLocked ? 8 : 0)
+        | ((pinBits & 4) << 2)
         | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)
-        | (((m._boneIKPin | 0) & 8) ? 128 : 0)
+        | ((pinBits & 8) ? 128 : 0)
         | (m._isShadowCatcher ? 256 : 0) | (m._isShadowLight ? 512 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
@@ -5932,6 +5928,152 @@ function findSkelBlock(buffer) {
 // Pins are joined up at the very END of a load: a migrated pin has to be built where the joint
 // finally stands, not where it stood before the file's matrices were applied.
 const pendingPins = [];
+
+// A PIN HAS NO SCALE OF ITS OWN. Pins made by older builds were seated with their joint's
+// whole model matrix, scale included -- and a joint's scale is the unit the rig was drawn at, so
+// a pin came out at 6.8 (or whatever the rig's bake was) and silently multiplied everything
+// parented under it: a neck pin parented to the hips pin had its offset read in units of 6.8.
+// matt: "i don't like the idea of the pins having scales at all, its an extra variable i would
+// want to avoid. or i want to explicitly set this scale myself for whatever reason."
+//
+// So a pin whose scale is exactly its joint's (the signature of that seating) is put back to unit
+// scale, WORLD-PRESERVING: its position and orientation stay, and everything parented to it keeps
+// its own world transform (a child's local matrix is re-derived, which is the step baking a
+// parent's scale by hand skips -- the child then lands wherever its old local offset now points,
+// which is how a baked hips pin dropped the neck pin next to the hips). A scale set to anything
+// else is a decision and is left alone. Roots first, so a pin under a pin is judged after its
+// parent has already been normalised.
+function _scaleOf(e) {
+  return [Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10])];
+}
+Skeleton.normalizePinScales = function (main) {
+  if (!main) return 0;
+  const all = main.getMeshes() || [];
+  const pins = all.filter((m) => m && m._isPinTarget && m._pinnedJoint && m.getModelSpaceMatrix && m.setModelSpaceMatrix);
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  pins.sort((a, b) => depth(a) - depth(b));
+  const near = (a, b) => Math.abs(a - b) <= 0.01 * Math.max(1, Math.abs(b));
+  // The three-side matrices of a freshly loaded rig are not guaranteed to match the SculptGL ones
+  // yet (a pin's world matrix is read through its parent's), and every model-space read below goes
+  // through them -- so they are brought into line first, roots first.
+  for (const m of all) if (m && (m._isPinTarget || m._isBone)) Skeleton.syncThree(m);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+  let fixed = 0;
+  for (const pin of pins) {
+    const model = pin.getModelSpaceMatrix(mat4.create());
+    const ps = _scaleOf(model), js = _scaleOf(pin._pinnedJoint.getModelSpaceMatrix(mat4.create()));
+    if (ps.every((v) => near(v, 1))) continue;                       // already unit
+    if (!(near(ps[0], js[0]) && near(ps[1], js[1]) && near(ps[2], js[2]))) continue;   // a chosen scale
+    const kids = all.filter((c) => c && c._parentMesh === pin);
+    const kidModels = kids.map((k) => mat4.clone(k.getModelSpaceMatrix(mat4.create())));
+    _mTmp.fromArray(model);
+    _mTmp.decompose(_vTmp, _qPin, _sTmp);
+    _mTmp.compose(_vTmp, _qPin, _sOnePin);
+    pin.setModelSpaceMatrix(_mTmp.elements);
+    Skeleton.syncThree(pin);
+    kids.forEach((k, i) => { k.setModelSpaceMatrix(kidModels[i]); Skeleton.syncThree(k); });
+    fixed++;
+  }
+  return fixed;
+};
+
+// JOINTS CARRIED A SCALE THEY WERE NEVER MEANT TO HAVE. Every joint made by an older build has
+// `unit * 0.036` baked into its matrix (see createJoint), the same number on every joint of a rig.
+// This strips it, world-preserving: a joint keeps its position and orientation, and everything
+// that depends on the joint's frame keeps its place --
+//   * every joint's LOCAL matrix is re-derived from the new parent (so bone offsets are in real
+//     units, not 1/s),
+//   * so is its recorded REST,
+//   * a part parented under a joint (a weight cage) keeps its world transform,
+//   * and a skin bound to the joint is told: J' = J . S^-1, so invBind' = S . invBind and nothing
+//     deforms.
+// Only the RIG'S OWN scale goes: the scale most of the joints share in model space. A joint at a
+// different one is a decision somebody made with the scale handle, and is left as it is. A rig
+// that is keyed is skipped (its keys hold local translations in the old units).
+Skeleton.normalizeJointScales = function (main) {
+  const joints = Skeleton.joints(main).filter(Boolean);
+  if (!joints.length) return 0;
+  const near = (a, b) => Math.abs(a - b) <= 0.01 * Math.max(1e-9, Math.abs(b));
+  // Judged on the MODEL-space scale, because that is what a legacy rig has: the baked `unit *
+  // 0.036` sits on whichever joint was created first (the root), and every descendant inherits it
+  // through a local matrix of scale 1 -- so a per-joint local check sees one joint at 6.8 and
+  // twenty-three at 1, and would call the rig clean.
+  for (const j of joints) Skeleton.syncThree(j);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+  const info = joints.map((j) => {
+    const sc = _scaleOf(j.getModelSpaceMatrix(mat4.create()));
+    return { j, s: sc[0], uniform: near(sc[0], sc[1]) && near(sc[0], sc[2]) };
+  });
+  // The scale most of the rig shares, other than 1.
+  let best = 0, bestN = 0;
+  for (const a of info) {
+    if (!a.uniform || near(a.s, 1)) continue;
+    const n = info.filter((b) => b.uniform && near(b.s, a.s)).length;
+    if (n > bestN) { best = a.s; bestN = n; }
+  }
+  if (!best || bestN * 2 < info.length) return 0;
+  const targets = new Map();
+  for (const a of info) if (a.uniform && near(a.s, best)) targets.set(a.j, a.s);
+
+  const reg = window._animationRegistry;
+  const all = main.getMeshes() || [];
+  const kids = all.filter((c) => c && !Skeleton.isJoint(c) && Skeleton.isJoint(c._parentMesh));
+  if (reg && reg.tracks && reg.tracks.size
+      && joints.concat(kids).some((m) => reg.tracks.has(m.getID()))) {
+    console.log('[Skeleton] joint scale left as it is: the rig is keyed');
+    return 0;
+  }
+
+  // Three-side matrices into line before any model-space read.
+  for (const m of kids) Skeleton.syncThree(m);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  const order = joints.slice().sort((a, b) => depth(a) - depth(b));
+  const restOld = restModelMatrices(Skeleton, joints);
+  const modelOld = new Map(joints.map((j) => [j, j.getModelSpaceMatrix(mat4.create())]));
+  const kidModel = new Map(kids.map((k) => [k, k.getModelSpaceMatrix(mat4.create())]));
+  const strip = (m, s) => mat4.scale(mat4.create(), m, [1 / s, 1 / s, 1 / s]);
+  const modelNew = new Map(), restNew = new Map();
+  for (const j of joints) {
+    const s = targets.get(j);
+    modelNew.set(j, s ? strip(modelOld.get(j), s) : modelOld.get(j));
+    restNew.set(j, s ? strip(restOld.get(j), _scaleOf(restOld.get(j))[0]) : restOld.get(j));
+  }
+  const baseOf = (j, models) => {
+    const p = j._parentMesh;
+    if (!p) return mat4.create();
+    if (Skeleton.isJoint(p)) return models.get(p);
+    return p.getModelSpaceMatrix ? p.getModelSpaceMatrix(mat4.create()) : mat4.create();
+  };
+  main._rigRestEdit = true;
+  for (const j of order) {
+    const inv = (m) => mat4.invert(mat4.create(), m);
+    mat4.copy(j.getMatrix(), mat4.multiply(mat4.create(), inv(baseOf(j, modelNew)), modelNew.get(j)));
+    Skeleton.syncThree(j);
+    if (j._ikRest) j._ikRest = mat4.multiply(mat4.create(), inv(baseOf(j, restNew)), restNew.get(j));
+  }
+  for (const k of kids) {
+    const p = k._parentMesh;
+    mat4.copy(k.getMatrix(), mat4.multiply(mat4.create(), mat4.invert(mat4.create(), modelNew.get(p)), kidModel.get(k)));
+    Skeleton.syncThree(k);
+  }
+  // The skin: J' = J . S^-1, so the inverse bind takes S on the left.
+  for (const m of all) {
+    if (!m || !m._skinW || !m._skinInvBind || !m._skinJoints) continue;
+    m._skinJoints.forEach((id, a) => {
+      const j = joints.find((x) => x.getID() === id);
+      const s = j && targets.get(j);
+      if (s) m._skinInvBind[a].premultiply(new THREE.Matrix4().makeScale(s, s, s));
+    });
+    m._skinDirty = true;
+  }
+  for (const m of joints.concat(kids)) Skeleton.syncThree(m);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+  for (const j of joints) { j._boneBendRef = null; j._ikLastM = mat4.clone(j.getMatrix()); }
+  main._rigRestEdit = false;
+  return targets.size;
+};
 
 Skeleton.deserialize = function (buffer, meshes, main) {
   try {
@@ -6367,6 +6509,12 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     }
     pendingPins.length = 0;
 
+    // Pins carry no scale of their own; older files seated them at their joint's. FIRST, while the
+    // joints still have the scale the pins are compared against.
+    try { Skeleton.normalizePinScales(main); } catch (e) { console.warn('[Skeleton] pin scale normalise failed', e); }
+    // ...and neither do joints: older builds baked `unit * 0.036` into every one.
+    try { if (!window._skipJointScaleMigration) Skeleton.normalizeJointScales(main); } catch (e) { console.warn('[Skeleton] joint scale normalise failed', e); main._rigRestEdit = false; }
+
     Skeleton.updateVisuals(main);
   } catch (e) {
     console.error('[Skeleton] import restore failed', e);
@@ -6600,5 +6748,9 @@ Skeleton.hoveredJoint = function (main) {
   if (id == null || id < 0) return null;
   return Skeleton.joints(main).find((j) => j.getID() === id) || null;
 };
+
+// Console handle, for the harnesses that drive the live module (a dynamic import of this file from a
+// page gets a SECOND copy once the dev server has hot-reloaded it, with its own state).
+if (typeof window !== 'undefined') window._Skeleton = Skeleton;
 
 export default Skeleton;

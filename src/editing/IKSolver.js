@@ -58,6 +58,7 @@ const _qHinge = new THREE.Quaternion();
 const _qPart = new THREE.Quaternion(), _qId = new THREE.Quaternion();
 const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
 const _qPInv = new THREE.Quaternion(), _qLocal = new THREE.Quaternion();
+const _qRest = new THREE.Quaternion(), _mTmp2 = new THREE.Matrix4(), _vTmp2 = new THREE.Vector3(), _sTmp2 = new THREE.Vector3();
 const _qNow = new THREE.Quaternion();
 const _mTmp = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
 const _sOne = new THREE.Vector3(1, 1, 1);
@@ -1500,6 +1501,13 @@ function fitLocalRotation(n, kids, out) {
   if (p && p.getModelSpaceMatrix) modelQuat(p, _qPInv).invert();
   else _qPInv.identity(); // the root: its own frame IS model space
   Skeleton.jointPos(n.joint, _v2); // where the joint is, now that its parents are written
+  // THE JOINT'S REST ROTATION, relative to its parent. Identity for a joint drawn world-aligned,
+  // which is the case this convention was written for. An ORIENTED joint (JointOrient) has its
+  // axes turned onto its bend, so its child offset below is in THOSE axes and "zero twist" has
+  // to mean zero twist from the REST orientation, not from the parent's axes: carry the offsets
+  // into the parent's frame through the rest rotation, fit there, and put the rest back on.
+  // With an identity rest every line of this reduces to what it was.
+  const hasRest = jointRestQuat(n.joint, _qRest);
   let k = 0;
   for (const c of kids) {
     scratchPair(k);
@@ -1507,10 +1515,23 @@ function fitLocalRotation(n, kids, out) {
     // what makes the result independent of the poses that came before.
     const lm = c.joint.getMatrix();
     _fromBuf[k].set(lm[12], lm[13], lm[14]);
+    if (hasRest) _fromBuf[k].applyQuaternion(_qRest);
     _toBuf[k].subVectors(c.pos, _v2).applyQuaternion(_qPInv);
     k++;
   }
-  return alignVectors(_fromBuf, _toBuf, k, out, window._ikFitPasses || 3);
+  alignVectors(_fromBuf, _toBuf, k, out, window._ikFitPasses || 3);
+  if (hasRest) out.multiply(_qRest);
+  return out;
+}
+
+// The rotation part of a joint's recorded rest (its LOCAL matrix), or false when it is identity
+// or nothing was recorded -- so the common, world-aligned rig pays nothing and changes nothing.
+function jointRestQuat(joint, out) {
+  const r = joint._ikRest;
+  if (!r) return false;
+  _mTmp2.fromArray(r);
+  _mTmp2.decompose(_vTmp2, out, _sTmp2);
+  return Math.abs(out.x) + Math.abs(out.y) + Math.abs(out.z) > 1e-6;
 }
 
 // ── FK ROLL: THE ONE ROTATION THE SOLVE DOES NOT OWN ──────────────────────────────────
