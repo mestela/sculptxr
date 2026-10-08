@@ -1570,7 +1570,7 @@ function applyFkRoll(n, kids, q) {
 function setLocalRotation(joint, q) {
   _mLocal.fromArray(joint.getMatrix());
   _mLocal.decompose(_vTmp, _qJoint, _sTmp);
-  _mLocal.compose(_vTmp, q, _sTmp);
+  _mLocal.compose(_vTmp, q.normalize(), _sTmp);   // unit q: see rotateJoint
   mat4.copy(joint.getMatrix(), _mLocal.elements);
   Skeleton.syncThree(joint);
 }
@@ -1597,7 +1597,12 @@ function rotateJoint(joint, qModel) {
   }
   _mLocal.fromArray(joint.getMatrix());
   _mLocal.decompose(_vTmp, _qJoint, _sTmp);
-  _qJoint.premultiply(_qStep);
+  // NORMALISED, or the joint's scale is a feedback loop. `decompose` of a float32 matrix with a
+  // hair of shear hands back a quaternion that is not exactly unit, and `compose` turns |q| != 1
+  // into SCALE (|q|^2). The next solve decomposes that scale straight back in and multiplies it
+  // again, so a root held by a pin whose chain is at full reach grew or shrank geometrically until
+  // the whole skin collapsed to a point (matt: moving the hips pin, rigbug.sxr).
+  _qJoint.premultiply(_qStep).normalize();
   _mLocal.compose(_vTmp, _qJoint, _sTmp);
   mat4.copy(joint.getMatrix(), _mLocal.elements);
   Skeleton.syncThree(joint);
@@ -1663,7 +1668,7 @@ function applyRotations(main, nodes, root, rootFixed) {
         _mLocal.fromArray(n.joint.getMatrix());
         _mLocal.decompose(_vTmp, _qJoint, _sTmp);
         if (applyFkRoll(n, kids, _qJoint)) {
-          _mLocal.compose(_vTmp, _qJoint, _sTmp);
+          _mLocal.compose(_vTmp, _qJoint.normalize(), _sTmp);
           mat4.copy(n.joint.getMatrix(), _mLocal.elements);
           Skeleton.syncThree(n.joint);
         }
