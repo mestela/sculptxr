@@ -1143,7 +1143,11 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   overscroll-behavior: contain;   /* a flick inside the list must not scroll the panel too */
   scrollbar-width: none;          /* the rasteriser does not paint native scrollbars */
   padding-right: 16px;            /* room for the track, which overlays the right edge */
-  margin-bottom: 6px;
+  /* NO margin-bottom ON A SCROLL CONTAINER: the rasteriser drops it, so the toolbar below drew
+     6px higher than the DOM put it and the VR hover highlight on Open sat 6px low (measured on
+     the GXR 2026-10-09: texture button 405-436 vs DOM 412-442; the gap now lives on the
+     toolbar's margin-top and the two agree). */
+  margin-bottom: 0;
   box-sizing: border-box;
 }
 .mm-storage-list::-webkit-scrollbar { display: none; }
@@ -1193,6 +1197,7 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   display: grid;
   grid-template-columns: auto auto auto 1fr 1fr 1fr;
   gap: 5px;
+  margin-top: 6px;
   margin-bottom: 6px;
 }
 .mm-storage-toolbar .mm-storage-pg { padding: 0 9px; }
@@ -2246,7 +2251,7 @@ function wireScaleSlider(el, sliderEl, valEl, label, apply, paint) {
     if (!np || !np.shouldUse() || np.isBlockingOpen) return;
     e.preventDefault(); e.stopPropagation();
     const lo = parseFloat(sliderEl.min) / 100, hi = parseFloat(sliderEl.max) / 100;
-    np.open(parseFloat(sliderEl.value) / 100, { label, min: lo, max: hi, integer: false }, (val) => {
+    np.open(parseFloat(sliderEl.value) / 100, { label, min: lo, max: hi, integer: false, centerOnPanel: true }, (val) => {
       sliderEl.value = String(Math.round(Math.min(hi, Math.max(lo, val)) * 100));
       sliderEl.dispatchEvent(new Event('input', { bubbles: true }));
     }, valEl, el._vrPanel || null);
