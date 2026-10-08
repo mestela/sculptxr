@@ -54,7 +54,7 @@ const SELECT_COLOR = 0x00ffaa;
 // also reads from across the scene, where a small triad does not.
 const PIN_POS_COLOR = 0x89b4fa;   // 3DOF: held in place, free to rotate
 const PIN_FULL_COLOR = 0xf38ba8;  // 6DOF: position and orientation both held
-// ROTATION-ONLY: orientation held, position free. Purple and a DIAMOND, because it used to be the
+// ROTATION-ONLY: orientation held, position free. Purple, because it used to be the
 // 6DOF red box and read as a position pin (matt, 2026-10-09: "the head/neck pin, its a red box
 // implying its a pos+rot pin, but its a rotation pin").
 const PIN_ROT_COLOR = 0xcba6f7;
@@ -288,14 +288,6 @@ function boxGeometry() {
 //
 // A tetrahedron rather than a sphere or a cube: it is unmistakable at a glance next to a
 // triad, it is the only marker in the rig with a flat face, and it has an obvious point.
-// The ROTATION-ONLY marker: an octahedron (a diamond), the one shape in the rig that is neither the
-// position/6DOF box nor the steering tetrahedron.
-let _octaGeo = null;
-function octaGeometry() {
-  if (_octaGeo) return _octaGeo;
-  return (_octaGeo = new THREE.OctahedronGeometry(1.15));
-}
-
 let _tetraGeo = null;
 function tetraGeometry() {
   if (_tetraGeo) return _tetraGeo;
@@ -3380,7 +3372,9 @@ function ensureEntry(main, id) {
       pinLink: link,
       pinB: makePinPart(boxGeometry(), false),
       pinS: makePinPart(tetraGeometry(), false),
-      pinR: makePinPart(octaGeometry(), false),
+      // ROTATION-ONLY: the same box as the position / 6DOF pins (same size), told apart by colour.
+      // An octahedron was tried and read as a rotated cube.
+      pinR: makePinPart(boxGeometry(), false),
       // BATCHED. One instance per bone and one per joint, each drawn twice, which is where the
       // ~185 draw calls came from. Everything else here is still a Mesh of its own — pins exist
       // only on pinned joints, capsules and labels are off by default, so none of them carry
