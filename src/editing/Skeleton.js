@@ -54,6 +54,10 @@ const SELECT_COLOR = 0x00ffaa;
 // also reads from across the scene, where a small triad does not.
 const PIN_POS_COLOR = 0x89b4fa;   // 3DOF: held in place, free to rotate
 const PIN_FULL_COLOR = 0xf38ba8;  // 6DOF: position and orientation both held
+// ROTATION-ONLY: orientation held, position free. Purple and a DIAMOND, because it used to be the
+// 6DOF red box and read as a position pin (matt, 2026-10-09: "the head/neck pin, its a red box
+// implying its a pos+rot pin, but its a rotation pin").
+const PIN_ROT_COLOR = 0xcba6f7;
 // A STEERING GOAL, not a hold — green, and deliberately far from both pin colours, because the
 // one thing that must be legible at a glance is that this marker does not anchor anything. It
 // slides the joint around the freedom the hard pins leave and gives way completely to them.
@@ -284,6 +288,14 @@ function boxGeometry() {
 //
 // A tetrahedron rather than a sphere or a cube: it is unmistakable at a glance next to a
 // triad, it is the only marker in the rig with a flat face, and it has an obvious point.
+// The ROTATION-ONLY marker: an octahedron (a diamond), the one shape in the rig that is neither the
+// position/6DOF box nor the steering tetrahedron.
+let _octaGeo = null;
+function octaGeometry() {
+  if (_octaGeo) return _octaGeo;
+  return (_octaGeo = new THREE.OctahedronGeometry(1.15));
+}
+
 let _tetraGeo = null;
 function tetraGeometry() {
   if (_tetraGeo) return _tetraGeo;
@@ -3368,6 +3380,7 @@ function ensureEntry(main, id) {
       pinLink: link,
       pinB: makePinPart(boxGeometry(), false),
       pinS: makePinPart(tetraGeometry(), false),
+      pinR: makePinPart(octaGeometry(), false),
       // BATCHED. One instance per bone and one per joint, each drawn twice, which is where the
       // ~185 draw calls came from. Everything else here is still a Mesh of its own — pins exist
       // only on pinned joints, capsules and labels are off by default, so none of them carry
@@ -3412,7 +3425,8 @@ function ensureEntry(main, id) {
                 e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
     g.add(e.label.sprite, e.nameLabel.sprite, e.pinLink,
           e.pinB.solid, e.pinB.ghost,
-          e.pinS.solid, e.pinS.ghost);
+          e.pinS.solid, e.pinS.ghost,
+          e.pinR.solid, e.pinR.ghost);
     // Every capsule part is batched now; none of them are scene children.
     main._skelVis.set(id, e);
   }
@@ -3436,7 +3450,7 @@ function disposeEntry(main, id) {
   // entry went away therefore threw here, on the frame after the delete. matt: "i could delete
   // some and it was fine, but then deleted some more and got this error: Cannot read properties
   // of undefined (reading 'vcMat')". Only the pin markers are still real meshes.
-  for (const p of [e.pinB, e.pinS]) {
+  for (const p of [e.pinB, e.pinS, e.pinR]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     // Both materials, not `o.material`: a pin disposed while it was highlighted would leak the
@@ -3858,6 +3872,7 @@ Skeleton.updateVisuals = function (main) {
       e.nameLabel.sprite.visible = false;
       e.pinB.solid.visible = e.pinB.ghost.visible = false;
       e.pinS.solid.visible = e.pinS.ghost.visible = false;
+      e.pinR.solid.visible = e.pinR.ghost.visible = false;
       e.pinLink.visible = false;
       hideCaps(e);
       continue;
@@ -4075,7 +4090,8 @@ Skeleton.updateVisuals = function (main) {
     // cleared at release. Only "is it set" matters here.
     const showPinsHere = showPins && main._gizmoDragPin === undefined;
     const pinParts = [
-      [e.pinB, showPinsHere && (pinMode === 1 || pinMode === 2 || pinMode === 4), pinR],
+      [e.pinB, showPinsHere && (pinMode === 1 || pinMode === 2), pinR],
+      [e.pinR, showPinsHere && pinMode === 4, pinR],
       [e.pinS, showPinsHere && pinMode === 3, jd * PIN_SOFT_R_FRAC * Skeleton.pinSizeMul],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
@@ -4131,7 +4147,8 @@ Skeleton.updateVisuals = function (main) {
         if (o.material && o.material.color) {
           o.material.color.setHex(pinHeld ? SELECT_COLOR : (pinHot ? HILITE_COLOR
             : (pinMode === 3 ? PIN_SOFT_COLOR
-              : ((pinMode === 2 || pinMode === 4) ? PIN_FULL_COLOR : PIN_POS_COLOR))));
+              : (pinMode === 4 ? PIN_ROT_COLOR
+                : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR)))));
           // SATURATION IS THE WEIGHT. A pin fading in has always looked exactly like one at full
           // strength, so the only way to know what a pin was doing was to find its curve. Now it
           // greys out as it lets go and comes back to full colour as it takes hold. matt: "maybe
@@ -4328,8 +4345,9 @@ Skeleton.updateVisuals = function (main) {
     // Same precedence as the joint marker above: selected outranks preselected, so a bone does not
     // flick to yellow when the hand passes over something already chosen.
     const boneTint = (boneHeld || boneSel) ? SELECT_COLOR : (boneHot ? HILITE_COLOR
-      : ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR
-        : (tintMode === 1 ? PIN_POS_COLOR : restTint)));
+      : (tintMode === 4 ? PIN_ROT_COLOR
+        : (tintMode === 2 ? PIN_FULL_COLOR
+          : (tintMode === 1 ? PIN_POS_COLOR : restTint))));
     // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
     // Its whole job is to make the bone's roll and taper legible, and it can only do that by
     // contrasting with the body it sits on — matched exactly, the ridge lines disappear into
