@@ -1141,9 +1141,27 @@ export class HTMLVRPanel {
    *   relX = uv.x * panelRect.width
    *   relY = uv.y * panelRect.height
    */
+  // THE RECT THE TEXTURE ACTUALLY COVERS: the panel's CONTENT box, in the same screen px as
+  // getBoundingClientRect. The rasteriser and the plane are both sized from clientWidth/Height
+  // (see panelPixelSize), which exclude a border, so uv 0..1 spans the content box. Measuring
+  // uv against the border box instead puts everything off by the border and by the ratio
+  // (client/offset) -- invisible on a borderless panel, and on one with a 2px border it is
+  // 2px at the top and ~0.7% more by the bottom, which is where matt saw the Open button's
+  // highlight drift in the Browser Saves dialog (2026-10-09).
+  _contentRect() {
+    const root = this._element;
+    const r = root.getBoundingClientRect();
+    const sx = r.width  / (root.offsetWidth  || r.width  || 1);
+    const sy = r.height / (root.offsetHeight || r.height || 1);
+    const w = (root.clientWidth  || root.offsetWidth)  * sx;
+    const h = (root.clientHeight || root.offsetHeight) * sy;
+    const left = r.left + root.clientLeft * sx, top = r.top + root.clientTop * sy;
+    return { left, top, right: left + w, bottom: top + h, width: w, height: h };
+  }
+
   _uvToElement(uv) {
     const root      = this._element;
-    const panelRect = root.getBoundingClientRect();
+    const panelRect = this._contentRect();
     const relX = uv.x * panelRect.width;
     const relY = uv.y * panelRect.height;
 
@@ -1285,7 +1303,7 @@ export class HTMLVRPanel {
     this._hoverScrollTop = this._scrollTopOf(target);
     this._hoverEl = target;
 
-    const panelRect = this._element.getBoundingClientRect();
+    const panelRect = this._contentRect();
     const r = target.getBoundingClientRect();
     if (!panelRect.width || !panelRect.height) { q.visible = false; return; }
 
