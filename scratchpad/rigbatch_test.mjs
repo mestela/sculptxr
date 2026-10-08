@@ -708,7 +708,7 @@ check('...and it can still be re-measured when the scene really does change',
     const returns = unitFn[1].match(/return [^;]+;/g) || [];
     check('...and EVERY return applies the multiplier',
       returns.length > 0 && returns.every((r) => /unitMul\(main\)|sceneUnitMul/.test(r))
-        && /function unitMul\(main\) \{\s*return Skeleton\.sceneUnitMul \* \(main && main\._xrSession \? 1 : FLAT_SCREEN_RIG_MUL\);/.test(SRC),
+        && /function unitMul\(main\) \{\s*return Skeleton\.sceneUnitMul \* \(main && main\._xrSession \? XR_RIG_MUL : FLAT_SCREEN_RIG_MUL\);/.test(SRC),
       'a bare return bypasses the slider — got: ' + returns.join(' | '));
   }
   check('...and the latch stores the bare measurement',

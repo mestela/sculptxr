@@ -2303,8 +2303,12 @@ Skeleton.sceneUnitMul = 1;
 // So the slider still reads 1x -- it is a preference on top of this -- and the platform supplies
 // the other half. Anything that is not a presenting XR session counts as a flat screen.
 const FLAT_SCREEN_RIG_MUL = 0.5;
+// AND THE HEADSET'S OWN DEFAULT IS 0.6 OF THE OLD ONE. matt, 2026-10-09, in the GXR after the
+// hidden-mesh fix: "its better, but still too big. if i set the rig scale down to 0.6 it feels
+// right, can you factor that in?" So the slider's 1.0x now means what 0.6x used to.
+const XR_RIG_MUL = 0.6;
 function unitMul(main) {
-  return Skeleton.sceneUnitMul * (main && main._xrSession ? 1 : FLAT_SCREEN_RIG_MUL);
+  return Skeleton.sceneUnitMul * (main && main._xrSession ? XR_RIG_MUL : FLAT_SCREEN_RIG_MUL);
 }
 
 Skeleton.setSceneUnitMul = function (mul) {
