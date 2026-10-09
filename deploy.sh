@@ -51,6 +51,15 @@ echo "{\"version\": \"$FULL_VERSION_STR\"}" > dist/version.json
 
 # Copy static assets that Vite doesn't bundle automatically
 cp -r app dist/
+# THE DEFAULT ENVIRONMENT MAP IS GITIGNORED (*.hdr), so a build from a clean checkout or worktree
+# does not contain it and ships a site whose lighting environment 404s. Found on production
+# 2026-10-09. Build from a tree that has the .hdr files, or copy them in first.
+if [ ! -f dist/app/resources/environments/ferndale_studio_07_1k.hdr ]; then
+  echo "❌ WARNING: dist/app/resources/environments/ferndale_studio_07_1k.hdr is MISSING (gitignored)."
+  echo "   The deployed site will have no default environment. Copy app/resources/environments/*.hdr"
+  echo "   from your main working tree into this tree and re-run, unless the server already has them."
+  if [ -z "$ALLOW_NO_HDR" ]; then echo "   (set ALLOW_NO_HDR=1 to deploy anyway)"; exit 1; fi
+fi
 
 # Copy Voxel Workers and wasm to dist in the correct relative path
 mkdir -p dist/src/workers
