@@ -1,3 +1,7 @@
+# v4.0.1
+- **Paste Keys always lands on the playhead and goes back onto the objects the keys were copied from.** It no longer needs old keys deselected or joints re-selected first: keys left selected (the ones just copied, or just pasted) don't pull a paste back onto themselves, and a leftover selection from Grab (one pin or joint) is ignored. Select two or more objects to paste onto just those. A single copied key is still stamped on every selected key. The paste reports what it did, or why nothing happened.
+- **Dopesheet marquee grabs only the rows it touches.** The box has to reach a lane's key row, not merely come near its edge, so it no longer picks up keys from the row above or below.
+
 # v4.0.0
 The first production release since v3.52. Everything from v3.53 through v3.71 ships with it, plus a round of rig, timeline and Grab work.
 
