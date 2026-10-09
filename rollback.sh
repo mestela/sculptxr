@@ -5,6 +5,7 @@
 #   ./rollback.sh -y                    same, no question -- the emergency form
 #   ./rollback.sh -b                    do it to BETA (tokeru.com/sculptxrbeta) instead
 #   ./rollback.sh -l                    just list the snapshots
+#   ./rollback.sh -n                    DRY RUN: show what would change, change nothing
 #   ./rollback.sh -s v3.52.1_2026...    a specific snapshot (a folder name from -l)
 #   ./rollback.sh --kill-sw             also force the service-worker kill switch (below)
 #
@@ -28,12 +29,14 @@ SNAPNAME=""
 YES=""
 LIST=""
 KILL=""
+DRY=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -y) YES=1 ;;
     -b) SITE=sculptxrbeta ;;
     -l) LIST=1 ;;
+    -n) DRY=1 ;;
     -s) SNAPNAME="$2"; shift ;;
     --kill-sw) KILL=1 ;;
     *) echo "unknown option $1"; exit 2 ;;
@@ -60,6 +63,13 @@ SNAP_V=$(ssh ${SSH_OPTS} ${USER}@${HOST} "grep -o 'v[0-9][0-9.]*' ${PICK}/versio
 echo
 echo "LIVE now : ${LIVE_V}   (tokeru.com/${SITE})"
 echo "RESTORE  : ${SNAP_V}   (${PICK##*/})"
+if [ -n "$DRY" ]; then
+  echo
+  echo "DRY RUN: files the restore would change in tokeru.com/${SITE} (nothing is touched):"
+  ssh ${SSH_OPTS} ${USER}@${HOST} "rsync -a --delete -n -i '${PICK}/' \$HOME/tokeru.com/${SITE}/ | grep -v '^\\.' | head -40; echo; echo \"total changed entries: \$(rsync -a --delete -n -i '${PICK}/' \$HOME/tokeru.com/${SITE}/ | grep -vc '^\\.')\""
+  echo "sw.js: $(ssh ${SSH_OPTS} ${USER}@${HOST} "[ -f '${PICK}/sw.js' ] && echo 'in the snapshot, restored as it was' || echo 'NOT in the snapshot -> the kill-switch sw.js would be written'")"
+  exit 0
+fi
 if [ -z "$YES" ]; then
   read -r -p "Roll ${SITE} back to ${SNAP_V}? [y/N] " ans
   [ "$ans" = "y" ] || [ "$ans" = "Y" ] || { echo "Cancelled."; exit 1; }
