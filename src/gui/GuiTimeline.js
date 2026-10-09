@@ -1721,21 +1721,21 @@ export default class GuiTimeline {
       .filter((m) => m && m.getID && !m._isFrameGroup && !reg?.tracks.get(m.getID())?.muted);
   }
 
-  // Which object each clipboard object lands on.
-  //   no targets selected          -> back onto the originals
-  //   targets include every source -> back onto the originals (extra selected things ignored)
-  //   targets are a SUBSET of the sources -> only those (select some bone names, paste, and only
-  //                                   those bones take the keys)
-  //   same count, different things -> BY ORDER (copy arm A's joints, select arm B's, paste)
-  //   anything else                -> the selection is UNRELATED to the clipboard, so it is
-  //                                   ignored and the keys go back onto the originals. The Grab
-  //                                   tool leaves whatever it last took (a pin, a joint) selected,
-  //                                   and honouring that as "paste only onto this" pasted nothing
-  //                                   at all -- matt, 2026-10-10, on production.
+  // Which object each clipboard object lands on. THE DEFAULT IS BACK ONTO THE ORIGINALS: if the
+  // objects the keys were copied from still exist, paste puts the keys on them again, whatever is
+  // or is not selected (matt, 2026-10-10: "i shouldn't have to re-select joints before paste").
+  // Only a DELIBERATE multi-selection (two or more objects) re-targets it, because the Grab tool
+  // leaves whatever it last took selected -- one pin or one joint -- and honouring that as a choice
+  // pasted nothing, or just that one bone.
+  //   fewer than two selected          -> the originals
+  //   selection includes every source  -> the originals (extra selected things ignored)
+  //   selection is a subset of sources -> only those (select two or more bone names to paste just them)
+  //   same count, different objects    -> BY ORDER (copy arm A's joints, select arm B's, paste)
+  //   anything else                    -> the originals
   _mapClipTargets(clipIds, tgtIds) {
     const map = new Map();
     const identity = (ids) => { ids.forEach((id) => map.set(id, id)); return map; };
-    if (!tgtIds.length) return identity(clipIds);
+    if (tgtIds.length < 2) return identity(clipIds);
     const tset = new Set(tgtIds), cset = new Set(clipIds);
     if (clipIds.every((id) => tset.has(id))) return identity(clipIds);
     if (tgtIds.every((id) => cset.has(id))) return identity(clipIds.filter((id) => tset.has(id)));
