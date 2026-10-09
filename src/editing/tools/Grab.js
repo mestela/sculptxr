@@ -1182,23 +1182,24 @@ class Grab extends SculptBase {
           // Same rule as the desktop grab: taking a BONE is an IK operation, not a transform.
           this._grabIsJoint = Skeleton.isJoint(mesh);
           this._grabUndoRig = this._grabIsJoint ? IKSolver.captureAll(this._main) : null;
-          // AUTO, decided ONCE at the press: a bone turns (FK) unless the X button of the
+          // AUTO, decided ONCE at the press: a bone turns (FK) unless the Y button of the
           // NON-DOMINANT hand is held, or FK cannot turn it because the pins own it. See
           // GrabChannels.forGesture.
           //
-          // X and not a trigger because Grab is AMBIDEXTROUS -- either hand takes a pin or a bone,
+          // Y and not a trigger because Grab is AMBIDEXTROUS -- either hand takes a pin or a bone,
           // and the off-hand trigger is the other hand's grab. The dominant hand's A is the pin
-          // ring and its B the main radial, so the one free face button is the non-dominant X.
-          // It works whichever hand is grabbing: the thumb of the free hand, or of the grabbing
-          // hand if it is the non-dominant one.
+          // ring and its B the main radial, and the non-dominant X swaps the mini panel for the
+          // main one, so the one free face button is the non-dominant Y (its only other use is a
+          // debug panel toggle that is off by default). It works whichever hand is grabbing: the
+          // thumb of the free hand, or of the grabbing hand if it is the non-dominant one.
           this._gestureKind = null;
           if (this._grabIsJoint) {
             const dom = this._main._dominantHand;
-            const modifierIK = controllers.some((c) => c.handedness !== dom && !!c.buttons?.[4]?.pressed);
+            const modifierIK = controllers.some((c) => c.handedness !== dom && !!c.buttons?.[5]?.pressed);
             const fkAble = !!this._fkTarget(mesh, null, this._ownedIds(true)).joint;
             this._gestureKind = (modifierIK || !fkAble) ? 'ik' : 'fk';
             this._press(active.handedness, { gestureKind: this._gestureKind,
-              why: modifierIK ? 'non-dominant X held' : (fkAble ? 'bone default' : 'pins own this joint') });
+              why: modifierIK ? 'non-dominant Y held' : (fkAble ? 'bone default' : 'pins own this joint') });
           }
           this._activeController = active; // First assignment
           // THE DELTA BASELINE BELONGS TO THIS GRAB, so it starts empty.

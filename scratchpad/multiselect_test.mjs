@@ -187,12 +187,12 @@ check('...and so does the dopesheet, captured on pointer down',
 // with a second hand.
 // Grab is AMBIDEXTROUS (either hand takes a pin or a bone), so the off-hand trigger can never be
 // a modifier here. Its IK modifier (matt, 2026-10-09: pins best mode, bones FK, IK on a button) is
-// the X button of the NON-DOMINANT hand, read once at the press of a joint.
+// the Y button of the NON-DOMINANT hand, read once at the press of a joint.
 check('Grab does NOT consult the VR trigger modifier',
   !/multiSelectHeld/.test(code(GRAB)),
   'the secondary trigger is the other hand’s grab in this tool');
-check('...its IK modifier is the non-dominant hand’s X button',
-  /c\.handedness !== dom && !!c\.buttons\?\.\[4\]\?\.pressed/.test(GRAB));
+check('...its IK modifier is the non-dominant hand’s Y button',
+  /c\.handedness !== dom && !!c\.buttons\?\.\[5\]\?\.pressed/.test(GRAB));
 check('...but desktop Ctrl-click still multi-selects there',
   /setOrUnsetMesh\(mesh, ctrl\)/.test(GRAB),
   'a keyboard modifier does not collide with the second hand');
