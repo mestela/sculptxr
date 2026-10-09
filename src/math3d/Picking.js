@@ -672,7 +672,7 @@ class Picking {
       if (!this._rigTraceAt || now - this._rigTraceAt > 1000) {
         this._rigTraceAt = now;
         const top = this._rigTraceList.sort((a, b) => a.mm - b.mm).slice(0, 5)
-          .map((c) => c.kind + ' ' + c.n + (c.from !== c.n ? '<' + c.from : '') + ' ' + c.mm + 'mm').join(' | ');
+          .map((c) => c.kind + ' ' + c.n + (c.from !== c.n ? '<' + c.from : '') + ' ' + c.mm + 'mm' + (c.mm > c.reach ? '(out of ' + c.reach + ')' : '')).join(' | ');
         console.log('[rigPick] won: ' + (nearRig ? (nearRig._name || nearRig.getID()) : 'none') + '   cands: ' + top);
       }
       this._rigTraceList.length = 0;
@@ -784,6 +784,11 @@ class Picking {
         // own reach back to the generic default the moment BONE_SELECT was off, in every tool
         // but Bone Draw.
         const reach = Math.max(base, (mesh._pickRadius || 0) * vrScale);
+        if (window._rigPickTrace) {
+          (this._rigTraceList || (this._rigTraceList = [])).push({
+            n: vrHit._name || vrHit.getID(), id: vrHit.getID(), mm: Math.round(physicalDistance * 1000),
+            reach: Math.round(reach * 1000), kind: vrHit._isPinTarget ? 'pin' : (segIsBone ? 'seg' : 'pt'), from: mesh._name || mesh.getID() });
+        }
         if (physicalDistance > reach) continue;
         // MEASURED AGAINST ITS OWN REACH, exactly as the desktop score is measured against its
         // own cone — and for a reason that only appeared when bones became pick surface.
@@ -796,11 +801,6 @@ class Picking {
         // pick at all.
         // Same rule as the desktop pick, measured from the controller tip: nearest of each
         // kind, and rigWinner decides between them.
-        if (window._rigPickTrace) {
-          (this._rigTraceList || (this._rigTraceList = [])).push({
-            n: vrHit._name || vrHit.getID(), id: vrHit.getID(), mm: Math.round(physicalDistance * 1000),
-            kind: vrHit._isPinTarget ? 'pin' : (segIsBone ? 'seg' : 'pt'), from: mesh._name || mesh.getID() });
-        }
         if (vrHit._isPinTarget) {
           if (physicalDistance < nearPinD) { nearPinD = physicalDistance; nearPin = vrHit; }
         } else if (physicalDistance < nearBoneD) {

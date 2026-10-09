@@ -60,8 +60,15 @@ class Grab extends SculptBase {
   _pickPinForController(picking, controller) {
     const ray = this._pinControllerRay(controller);
     if (!ray) return null;
-    const targets = this._main.getMeshes().filter(m => m?.isVisible?.() && m._isPinTarget);
-    if (!targets.length) return null;
+    // THE SAME QUESTION THE HOVER ASKS: every rig node, nearest wins, a pin only by its bias.
+    // This used to list PINS ONLY, so any pin inside the controller's reach was taken whatever
+    // was nearer -- harmless at human scale, where the elbow you point at is metres from the hips
+    // pin, and fatal at the default 30cm world, where every pin is within a hand of every joint:
+    // the elbow lit up, the trigger took the hips pin. matt, 2026-10-09: "i can see it preselect
+    // highlight, but when i squeeze the trigger, it picks the hips pin instead." A bone winning
+    // here returns null, which is the existing route to the ordinary joint / bone grab.
+    const targets = this._main.getMeshes().filter(m => m?.isVisible?.() && (m._isPinTarget || m._isBone));
+    if (!targets.some(m => m._isPinTarget)) return null;
     if (!picking.intersectionRayMeshes(targets, ray.origin, ray.direction, true)) return null;
     const pin = picking.getMesh();
     if (!pin?._isPinTarget) return null;
