@@ -82,6 +82,7 @@ ssh ${SSH_OPTS} ${USER}@${HOST} "mkdir -p ${DEST}"
 # one back. See rollback.sh.
 SITE=$(basename "${DEST%/}")
 ssh ${SSH_OPTS} ${USER}@${HOST} "
+  set -e
   LIVE=${DEST%/}
   if [ -d \"\$LIVE\" ]; then
     PREV=\$(grep -o 'v[0-9][0-9.]*' \"\$LIVE/version.json\" 2>/dev/null | head -1)
@@ -89,7 +90,7 @@ ssh ${SSH_OPTS} ${USER}@${HOST} "
     mkdir -p \$HOME/rollbacks/${SITE} && cp -al \"\$LIVE\" \"\$SNAP\" && echo \"📸 snapshot -> \$SNAP\"
     ls -1d \$HOME/rollbacks/${SITE}/v*/ 2>/dev/null | sed 's|/\$||' | awk -F_ '{print \$NF\" \"\$0}' | sort -r | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf
   fi
-"
+" || { echo "❌ ROLLBACK SNAPSHOT FAILED -- refusing to overwrite the live site without one."; exit 1; }
 
 # 2. Rsync files
 rsync -avz -e "ssh ${SSH_OPTS}" dist/ ${USER}@${HOST}:${DEST}/
