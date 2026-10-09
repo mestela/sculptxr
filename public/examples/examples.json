@@ -1,3 +1,12 @@
 [
-  { "name": "Head with blendshapes", "file": "headblend.sxr", "desc": "Sculpted head with eight keyframed ARKit blendshapes" }
+  {
+    "name": "Head with blendshapes",
+    "file": "headblend.sxr",
+    "desc": "Sculpted head with eight keyframed ARKit blendshapes"
+  },
+  {
+    "name": "Skinny (v05)",
+    "file": "skinny_v05.sxr",
+    "desc": "Rigged skinny character, saved from the headset"
+  }
 ]
