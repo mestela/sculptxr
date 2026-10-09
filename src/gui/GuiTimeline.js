@@ -1706,9 +1706,9 @@ export default class GuiTimeline {
   //
   // ONE CLIPBOARD, TWO MODES, chosen by what is selected (matt, 2026-10-09):
   //
-  //   KEYS selected  -> KEY mode.  Copy takes those keys. Paste anchors the EARLIEST copied key
-  //                     on the EARLIEST selected key, objects being the ones that own the
-  //                     selected keys; a clipboard of ONE key is stamped on every selected key.
+  //   KEYS selected  -> KEY mode.  Copy takes those keys. Paste puts the EARLIEST copied key on the
+  //                     PLAYHEAD (the selection never moves it); a clipboard of ONE key is stamped
+  //                     on every selected key instead.
   //   no keys        -> POSE mode. Copy takes the live pose of the selected objects. Paste keys
   //                     that pose onto the selected objects AT THE PLAYHEAD (or, if keys are
   //                     selected, at each selected key's time). One pose is applied to all.
@@ -1791,16 +1791,17 @@ export default class GuiTimeline {
     const keyMode = clip.mode !== 'pose';
     const uniq = (a) => [...new Set(a)];
 
-    // WHERE and ONTO WHAT. Keys selected: at the earliest selected key, onto the objects that own
-    // them. Otherwise: at the playhead, onto the selected objects.
-    let anchorTime = playhead, tgtIds;
-    if (selKeys.length) {
-      anchorTime = Math.min(...selKeys.map((k) => this._keyTimeOf(reg.tracks.get(k.meshId), k)));
-      tgtIds = uniq(selKeys.map((k) => k.meshId));
-    } else {
-      tgtIds = this._selectedAnimatable().map((m) => m.getID());
-    }
-    anchorTime = snap(anchorTime);
+    // WHERE and ONTO WHAT. WHERE is always the PLAYHEAD: a clipboard of several keys lands with its
+    // earliest key on the playhead. It used to land on the earliest SELECTED key instead, but the
+    // keys you have just copied (or just pasted) are still selected, so a paste at a new time went
+    // back onto the old keys and looked like nothing happened -- matt, 2026-10-10: "i still have to
+    // deselect the old keys before the new ones will paste". (One copied key is the exception: it
+    // is stamped on every selected key, below.) ONTO WHAT: the owners of the selected keys, else the
+    // selected objects; _mapClipTargets decides how much of that to believe.
+    const anchorTime = snap(playhead);
+    const tgtIds = selKeys.length
+      ? uniq(selKeys.map((k) => k.meshId))
+      : this._selectedAnimatable().map((m) => m.getID());
 
     const before = this._snapshotTracks();
     const landed = [];                   // { meshId, type, name, layer, time } for the selection rebuild
