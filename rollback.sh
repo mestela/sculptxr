@@ -16,7 +16,7 @@
 #   1. keeps the BROKEN state as ~/rollbacks/<site>/bad_<version>_<time> (for finding out why)
 #   2. restores the snapshot over the live folder (server-side rsync --delete)
 #   3. if the restored build has no sw.js (production before the service worker shipped), writes a
-#      KILL-SWITCH sw.js: it clears the sxr-* caches and unregisters itself, so a browser that
+#      KILL-SWITCH sw.js: it clears the sxr-* caches and unregisters itself (no reload), so a browser that
 #      installed the newer worker does not keep serving its cached, newer files under the older
 #      index.html. The next normal deploy overwrites it.
 #
@@ -47,14 +47,14 @@ done
 SSH_OPTS="-o ControlMaster=auto -o ControlPath=/tmp/ssh_mux_%h_%p_%r -o ControlPersist=24h -o PasswordAuthentication=no"
 
 echo "== snapshots for ${SITE} =="
-ssh ${SSH_OPTS} ${USER}@${HOST} "ls -1dt \$HOME/rollbacks/${SITE}/*/ 2>/dev/null | sed 's|.*/rollbacks/||'"
+ssh ${SSH_OPTS} ${USER}@${HOST} "ls -1d \$HOME/rollbacks/${SITE}/*/ 2>/dev/null | sed 's|/\$||' | awk -F_ '{print \$NF\" \"\$0}' | sort -r | cut -d' ' -f2- | sed 's|.*/rollbacks/||'"
 [ -n "$LIST" ] && exit 0
 
 # Pick the snapshot: a named one, else the newest that is not a bad_ one.
 PICK=$(ssh ${SSH_OPTS} ${USER}@${HOST} "
   D=\$HOME/rollbacks/${SITE}
   if [ -n '${SNAPNAME}' ]; then [ -d \"\$D/${SNAPNAME}\" ] && echo \"\$D/${SNAPNAME}\"
-  else ls -1dt \$D/v*/ 2>/dev/null | head -1 | sed 's|/\$||'; fi
+  else ls -1d \$D/v*/ 2>/dev/null | sed 's|/\$||' | awk -F_ '{print \$NF\" \"\$0}' | sort -r | head -1 | cut -d' ' -f2-; fi
 ")
 if [ -z "$PICK" ]; then echo "No snapshot found for ${SITE}."; exit 1; fi
 
@@ -84,19 +84,19 @@ ssh ${SSH_OPTS} ${USER}@${HOST} "
   rsync -a --delete '${PICK}/' \"\$LIVE/\"
   if [ ! -f '${PICK}/sw.js' ] || [ -n '${KILL}' ]; then
     cat > \"\$LIVE/sw.js\" <<'SWEOF'
-// ROLLBACK KILL SWITCH (written by rollback.sh). Clears this site's caches, unregisters itself and
-// reloads open pages, so no browser keeps serving files cached by a newer build. A normal deploy
-// replaces this file.
+// ROLLBACK KILL SWITCH (written by rollback.sh). Clears this site's caches and unregisters itself,
+// so no browser keeps serving files cached by a newer build. It does NOT reload pages: a build
+// that re-registers its worker on load would loop. The stale-build banner (version.json is
+// network-first) already asks open pages to reload. A normal deploy replaces this file.
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k.startsWith('sxr-')) await caches.delete(k);
   await self.registration.unregister();
-  for (const c of await self.clients.matchAll({ type: 'window' })) c.navigate(c.url);
 })()));
 SWEOF
     echo 'kill-switch sw.js written'
   fi
-  ls -1dt \$HOME/rollbacks/${SITE}/bad_*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+  ls -1d \$HOME/rollbacks/${SITE}/bad_*/ 2>/dev/null | sed 's|/\$||' | awk -F_ '{print \$NF\" \"\$0}' | sort -r | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf
   echo \"kept broken state: \$BAD\"
 "
 echo "Rolled back in $(( $(date +%s) - START ))s."

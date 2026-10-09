@@ -87,7 +87,7 @@ ssh ${SSH_OPTS} ${USER}@${HOST} "
     PREV=\$(grep -o 'v[0-9][0-9.]*' \"\$LIVE/version.json\" 2>/dev/null | head -1)
     SNAP=\$HOME/rollbacks/${SITE}/\${PREV:-unknown}_\$(date +%Y%m%d-%H%M%S)
     mkdir -p \$HOME/rollbacks/${SITE} && cp -al \"\$LIVE\" \"\$SNAP\" && echo \"📸 snapshot -> \$SNAP\"
-    ls -1dt \$HOME/rollbacks/${SITE}/v*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+    ls -1d \$HOME/rollbacks/${SITE}/v*/ 2>/dev/null | sed 's|/\$||' | awk -F_ '{print \$NF\" \"\$0}' | sort -r | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf
   fi
 "
 
