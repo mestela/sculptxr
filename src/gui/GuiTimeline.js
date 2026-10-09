@@ -5328,7 +5328,12 @@ export default class GuiTimeline {
             case 'addkey':
               if (reg && mesh) {
                 const km = window._animKeyMode || 'transform';
-                if (km === 'shape') {
+                // EVERYTHING SELECTED, not just the graph target (matt, 2026-10-09: "it only
+                // added a key for a single selection, not everything i selected").
+                const _selAll = this._main.getSelectedMeshes?.() || [];
+                if (_selAll.length > 1) {
+                  reg.addKeysForMeshes(_selAll, t, km);
+                } else if (km === 'shape') {
                   reg.addShapeKey(mesh, t);
                 } else if (km === 'blendshape') {
                   const tr = reg.tracks.get(mesh.getID());

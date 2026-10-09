@@ -2939,6 +2939,31 @@ class AnimationRegistry {
     return list.length;
   }
 
+  // ADD KEY FOR A WHOLE SELECTION, in whichever key mode is active. Muted objects are skipped:
+  // muted animation cannot be edited (matt, 2026-10-09). Transform keys go through keyTransforms,
+  // so many objects are ONE undo step; shape / blendshape keys are per object. Returns how many
+  // objects were keyed.
+  addKeysForMeshes(meshes, time, mode, pushUndo = true) {
+    const list = (meshes || []).filter((m) => m && m.getID && !this.tracks.get(m.getID())?.muted);
+    if (!list.length) return 0;
+    if (mode === 'shape') {
+      for (const m of list) this.addShapeKey(m, time);
+    } else if (mode === 'blendshape') {
+      for (const m of list) {
+        const tr = this.tracks.get(m.getID());
+        tr?.blendshapeTracks?.forEach((bTrack, name) => {
+          const w = bTrack.times.length > 0 ? (this.evaluateScalarTrack?.(bTrack, time) ?? 0) : 0;
+          this.setBlendshapeWeight?.(m, name, w);
+        });
+      }
+    } else if (list.length === 1 && pushUndo) {
+      this.addTransformKey(list[0], time);
+    } else {
+      this.keyTransforms(list, time, 'Add Transform Keys', pushUndo);
+    }
+    return list.length;
+  }
+
   copyTransformKey(mesh, time) {
     if (!mesh) return;
     const track = this.tracks.get(mesh.getID());

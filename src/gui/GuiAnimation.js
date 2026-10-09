@@ -457,9 +457,18 @@ class GuiAnimation {
         return;
       }
     } else {
-      window._animationRegistry.addTransformKey(targetMesh, targetTime);
-      actionName = 'add transform key';
-      if (window.screenLog) window.screenLog('◆ Added Transform Key', 'lime');
+      // Everything selected, as ONE key set (its undo is the whole-registry snapshot pair below,
+      // so the per-set undo is suppressed).
+      const _selAll = this._main.getSelectedMeshes?.() || [];
+      if (_selAll.length > 1) {
+        const n = window._animationRegistry.addKeysForMeshes(_selAll, targetTime, 'transform', false);
+        actionName = 'add transform keys';
+        if (window.screenLog) window.screenLog('◆ Added Transform Keys (' + n + ')', 'lime');
+      } else {
+        window._animationRegistry.addTransformKey(targetMesh, targetTime);
+        actionName = 'add transform key';
+        if (window.screenLog) window.screenLog('◆ Added Transform Key', 'lime');
+      }
     }
 
     const afterState = new Map();

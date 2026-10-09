@@ -1378,6 +1378,13 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const r = reg(); const target = _getTargetMesh();
     if (!r || !target) return;
     const t = window._animCurrentTime || 0;
+    // EVERYTHING SELECTED gets a key, not just the first selected object.
+    const _selAll = main.getSelectedMeshes?.() || [];
+    if (_selAll.length > 1) {
+      r.addKeysForMeshes(_selAll, t, window._animKeyMode);
+      repaint();
+      return;
+    }
     if (window._animKeyMode === 'shape') r.addShapeKey(target, t);
     else if (window._animKeyMode === 'blendshape') {
       // Key ALL blendshapes at their current evaluated weight (including weight=0)
