@@ -49,7 +49,7 @@ function grabChannelHTML() {
   const ch = GrabChannels.channels();
   return `
         <div class="mp-toggles">
-          <button class="mp-toggle-btn${GrabChannels.auto() ? ' active' : ''}" id="mp-grab-auto" title="Pins: full. Bones: FK turn. Hold the non-dominant hand's X: IK.">Auto</button>
+          <button class="mp-toggle-btn${GrabChannels.auto() ? ' active' : ''}" id="mp-grab-auto" title="Pins: full. Bones: FK turn. Hold the non-dominant hand's Y: IK.">Auto</button>
           <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-grab-translate">Translate</button>
           <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-grab-rotate">Rotate</button>
         </div>`;

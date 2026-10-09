@@ -3537,7 +3537,7 @@ function buildSculptingHTML(main, part) {
       const gch = GrabChannels.channels();
       brushHTML += collapsibleHTML('grab-channels', 'Grab', `
         <div class="mm-choice-grid cols-3">
-          <button class="mm-choice${GrabChannels.auto() ? ' active' : ''}" id="mm-grab-auto" title="Pins: full. Bones: FK turn. Hold the non-dominant hand's X: IK.">Auto</button>
+          <button class="mm-choice${GrabChannels.auto() ? ' active' : ''}" id="mm-grab-auto" title="Pins: full. Bones: FK turn. Hold the non-dominant hand's Y: IK.">Auto</button>
           <button class="mm-choice${gch.translate ? ' active' : ''}" id="mm-grab-translate">Translate</button>
           <button class="mm-choice${gch.rotate ? ' active' : ''}" id="mm-grab-rotate">Rotate</button>
         </div>`, false);
