@@ -1721,18 +1721,26 @@ export default class GuiTimeline {
       .filter((m) => m && m.getID && !m._isFrameGroup && !reg?.tracks.get(m.getID())?.muted);
   }
 
-  // Which object each clipboard object lands on. Identity when the targets include every source
-  // (the common case: copy here, paste here, or at another time); else BY ORDER when the counts
-  // match (copy arm A's joints, select arm B's, paste); else identity for the ones that overlap.
-  // No targets selected at all: identity (back onto the originals).
+  // Which object each clipboard object lands on.
+  //   no targets selected          -> back onto the originals
+  //   targets include every source -> back onto the originals (extra selected things ignored)
+  //   targets are a SUBSET of the sources -> only those (select some bone names, paste, and only
+  //                                   those bones take the keys)
+  //   same count, different things -> BY ORDER (copy arm A's joints, select arm B's, paste)
+  //   anything else                -> the selection is UNRELATED to the clipboard, so it is
+  //                                   ignored and the keys go back onto the originals. The Grab
+  //                                   tool leaves whatever it last took (a pin, a joint) selected,
+  //                                   and honouring that as "paste only onto this" pasted nothing
+  //                                   at all -- matt, 2026-10-10, on production.
   _mapClipTargets(clipIds, tgtIds) {
     const map = new Map();
-    if (!tgtIds.length) { clipIds.forEach((id) => map.set(id, id)); return map; }
-    const tset = new Set(tgtIds);
-    if (clipIds.every((id) => tset.has(id))) clipIds.forEach((id) => map.set(id, id));
-    else if (clipIds.length === tgtIds.length) clipIds.forEach((id, i) => map.set(id, tgtIds[i]));
-    else clipIds.forEach((id) => { if (tset.has(id)) map.set(id, id); });
-    return map;
+    const identity = (ids) => { ids.forEach((id) => map.set(id, id)); return map; };
+    if (!tgtIds.length) return identity(clipIds);
+    const tset = new Set(tgtIds), cset = new Set(clipIds);
+    if (clipIds.every((id) => tset.has(id))) return identity(clipIds);
+    if (tgtIds.every((id) => cset.has(id))) return identity(clipIds.filter((id) => tset.has(id)));
+    if (clipIds.length === tgtIds.length) { clipIds.forEach((id, i) => map.set(id, tgtIds[i])); return map; }
+    return identity(clipIds);
   }
 
   copyKeysSmart() {
@@ -1901,8 +1909,13 @@ export default class GuiTimeline {
     this._main?.render?.();
     this.draw();
     const n = landed.length + srCount;
-    window.screenLog?.(`Pasted ${n} ${keyMode ? 'key' : 'pose key'}${n === 1 ? '' : 's'}`
-      + (skipped ? `  (${skipped} skipped: muted, no match, or not compatible)` : ''), '#a6e3a1');
+    const _objs = new Set(landed.map((t) => t.meshId)).size;
+    window.screenLog?.(n === 0
+      ? 'Nothing pasted' + (skipped ? ` (${skipped} skipped: muted, no match, or not compatible)` : '')
+      : `Pasted ${n} ${keyMode ? 'key' : 'pose key'}${n === 1 ? '' : 's'} on ${_objs} object${_objs === 1 ? '' : 's'}`
+        + (skipped ? `  (${skipped} skipped: muted, no match, or not compatible)` : ''),
+      n === 0 ? '#f9e2af' : '#a6e3a1');
+    if (window._keyclipTrace) console.log('[keyclip] paste', { keyMode, anchorTime, tgtIds, landed: landed.length, skipped, selKeys: selKeys.length, clip: clip.keys.length });
   }
 
   // Insert a key with EXPLICIT copied values (not captured from the live mesh), replacing
@@ -7480,16 +7493,25 @@ export default class GuiTimeline {
     const _selLaneIds = new Set(_selMeshes.map((m) => m.getID()).filter((id) => tracks.some(([tid]) => tid === id)));
     const _restrictToSel = _selLaneIds.size >= 2;
     const _laneOk = (meshId, trackObj) => !trackObj.muted && (!_restrictToSel || _selLaneIds.has(meshId));
+    // A LANE IS IN THE MARQUEE ONLY IF THE BOX TOUCHES ITS KEY ROW, not merely its slot. The slot
+    // test (padded by 8px on each side) swept in the row above or below whenever a box edge came
+    // near a lane boundary -- matt: "i clearly draw a box around only the arm keys, but when i
+    // release, it will often grab too many keys from the row above my marquee". Each key kind sits
+    // on a known row (see drawDopeSheet), so the test is on THAT y, with a pad of about a key's
+    // own radius.
+    const KEY_ROW_PAD = 5;
+    const rowTouched = (cy) => cy >= y1 - KEY_ROW_PAD && cy <= y2 + KEY_ROW_PAD;
     tracks.forEach(([meshId, trackObj], laneIdx) => {
-      if (laneIdx < laneMin || laneIdx > laneMax) return;
       if (!_laneOk(meshId, trackObj)) return;
-      if (trackObj.times) {
+      const laneTop = headerH + laneIdx * trackH - _marqScroll;
+      const rowXf = laneTop + trackH / 2, rowShape = rowXf + 10;
+      if (trackObj.times && rowTouched(rowXf)) {
         for (let j = 0; j < trackObj.times.length; j++) {
           const t = trackObj.times[j];
           if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'transform', index: j });
         }
       }
-      if (trackObj.shapeTimes) {
+      if (trackObj.shapeTimes && rowTouched(rowShape)) {
         for (let j = 0; j < trackObj.shapeTimes.length; j++) {
           const t = trackObj.shapeTimes[j];
           if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'shape', index: j });
@@ -7524,7 +7546,7 @@ export default class GuiTimeline {
     // Add SR frame-group markers in range (keyed by child id — stable across retime resort).
     if (window._frameGroup) {
       tracks.forEach(([meshId], laneIdx) => {
-        if (laneIdx < laneMin || laneIdx > laneMax) return;
+        if (!rowTouched(headerH + laneIdx * trackH - _marqScroll + trackH / 2)) return;
         if (_restrictToSel && !_selLaneIds.has(meshId)) return;
         const grp = this._main._meshes?.find(m => m.getID() === meshId && m._isFrameGroup);
         if (!grp) return;
