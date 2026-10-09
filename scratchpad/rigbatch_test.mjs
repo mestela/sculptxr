@@ -369,8 +369,10 @@ check('...and it can still be re-measured when the scene really does change',
   if (i > 0 && j > i) {
     const lifted = SRC.slice(i, j);
     const Skeleton = { isJoint: (m) => !!m._isBone, joints: (mn) => mn.getMeshes().filter((m) => m._isBone) };
+    // The signature also asks which meshes count (unitMeshes), so that helper is lifted with it.
+    const helper = SRC.slice(SRC.indexOf('function unitMeshes(main) {'), SRC.indexOf('Skeleton.sceneUnit = function'));
     const sigOf = new Function('main', 'Skeleton', 'Math',
-      lifted + '\nreturn sig;').bind(null);
+      helper + '\n' + lifted + '\nreturn sig;').bind(null);
 
     let nextId = 1;
     const mesh = (o = {}) => {
@@ -384,6 +386,24 @@ check('...and it can still be re-measured when the scene really does change',
 
     const sculpt = mesh();
     const base = sig([sculpt]);
+
+    // WHICH MESHES SIZE THE RIG (matt, 2026-10-09: pins huge on a rig whose scene held a hidden
+    // 4-vertex mesh and a hidden 98k copy, both bigger than the visible, skinned character).
+    {
+      const um = new Function('main', 'Skeleton', helper + '\nreturn unitMeshes(main);');
+      const pick = (list) => um(scene(list), Skeleton).use.map((m) => m._id);
+      const skinned = mesh({ _skinW: true, isVisible: () => true });
+      const hiddenBig = mesh({ isVisible: () => false });
+      const visPlain = mesh({ isVisible: () => true });
+      check('a skinned mesh sizes the rig, whatever else is in the scene',
+        pick([hiddenBig, skinned, visPlain]).join() === String(skinned._id));
+      check('...and still does when it is the one that is hidden (hiding the character must not resize the rig)',
+        pick([hiddenBig, mesh({ _skinW: true, isVisible: () => false })]).length === 1);
+      check('with nothing skinned, hidden meshes are ignored',
+        pick([hiddenBig, visPlain]).join() === String(visPlain._id));
+      check('with everything hidden, there is still a unit to take',
+        pick([hiddenBig]).length === 1);
+    }
 
     // THE REPORTED BUG. A pin is a null; a null is not the size of the scene.
     const pin = mesh({ _isNull: true, _isPinTarget: true });

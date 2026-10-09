@@ -2398,6 +2398,21 @@ function medianBoneLength(main) {
 // (PIN_R_FRAC, LABEL_R_FRAC), so nothing that is drawn on a limb is measured by the room around
 // it, and there is no second ruler left to drift. `rigUnit()` still prints the median beside the
 // scene unit, because the ratio between them is the history of three wrong tunings.
+// THE MESHES THAT SIZE THE RIG, in order of how little they change: skinned (the rig drives them),
+// else visible, else everything. `all` is every real mesh, for the latch signature.
+function unitMeshes(main) {
+  const all = [];
+  for (const m of main.getMeshes() || []) {
+    if (Skeleton.isJoint(m) || m._isNull) continue;
+    all.push(m);
+  }
+  const bound = all.filter((m) => m._skinW);
+  if (bound.length) return { all, use: bound, tier: 1 };
+  const vis = all.filter((m) => !(m.isVisible && !m.isVisible()));
+  if (vis.length) return { all, use: vis, tier: 2 };
+  return { all, use: all, tier: 3 };
+}
+
 Skeleton.sceneUnit = function (main) {
   // RE-MEASURED ONLY WHEN THE SCENE CHANGES STRUCTURALLY, never on a timer.
   //
@@ -2436,6 +2451,11 @@ Skeleton.sceneUnit = function (main) {
     sig = (Math.imul(sig, 16777619) ^ (Math.round(ss * 4096) | 0)) | 0;
   }
   sig = (Math.imul(sig, 16777619) ^ real) | 0;
+  // WHICH MESHES COUNT is part of the signature, or a latched unit outlives the thing that
+  // decided it (see unitMeshes): which meshes are skinned, and -- only when none are -- which
+  // are visible.
+  for (const m of unitMeshes(main).all) sig = (Math.imul(sig, 16777619) ^ (m._skinW ? 3 : 5) ^ (m.isVisible && !m.isVisible() ? 7 : 11)) | 0;
+  sig = (Math.imul(sig, 16777619) ^ unitMeshes(main).tier) | 0;
   // With no sculpt in the scene the unit comes from the rig's own extent, which legitimately
   // grows as a rig is drawn — so the joint COUNT is part of the signature. Their POSITIONS are
   // not, or posing a rig with no mesh bound to it would resize its own markers.
@@ -2444,30 +2464,25 @@ Skeleton.sceneUnit = function (main) {
 
   let best = 0;
   let from = 'mesh';
-  // HIDDEN MESHES DO NOT SIZE THE RIG. A hidden mesh is not what you are looking at: a stray
-  // 4-vertex mesh and a hidden 98k-vertex copy had a rig's unit at 64 against 25 for the visible
-  // character, so pins and labels came out 2.5x too big at every slider setting (matt, 2026-10-09,
-  // a rig from a few weeks earlier). Only if NOTHING is visible do the hidden ones count, so a
-  // scene with everything hidden still gets a unit. The signature does not include visibility, so
-  // hiding the character later does not resize the markers -- the latch holds until the scene
-  // changes structurally, as before.
-  for (const visibleOnly of [true, false]) {
-    for (const m of main.getMeshes() || []) {
-      if (Skeleton.isJoint(m) || m._isNull) continue;
-      if (visibleOnly && m.isVisible && !m.isVisible()) continue;
-      const tm = m.getThreeMesh && m.getThreeMesh();
-      const g = tm && tm.geometry;
-      if (!g) continue;
-      if (!g.boundingSphere) g.computeBoundingSphere();
-      const ms = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : null;
-      const s = ms ? Math.hypot(ms[0], ms[1], ms[2]) : 1;
-      const r = (g.boundingSphere ? g.boundingSphere.radius : 1) * s;
-      // A non-finite radius (a mesh whose vertices went bad) must not poison the scene unit:
-      // every joint marker and bone is scaled by it, so one NaN silently makes the whole
-      // skeleton invisible — a confusing symptom a long way from its cause.
-      if (Number.isFinite(r) && r > best) best = r;
-    }
-    if (best > 1e-6) break;
+  // WHICH MESHES SIZE THE RIG: the ones it drives, else the ones you can see, else all of them.
+  // Hidden meshes must not set the unit -- a stray 4-vertex mesh and a hidden 98k copy had it at
+  // 64 against 25 for the visible character, so pins and labels came out 2.5x too big at every
+  // slider setting (matt, 2026-10-09) -- and the "visible" test alone was not enough, because the
+  // unit is latched and a mesh that was still visible during load locked the wrong number in.
+  // SKINNED comes first because it is the one fact that does not move: hiding the character to
+  // look at its rig must not resize the rig. See unitMeshes.
+  for (const m of unitMeshes(main).use) {
+    const tm = m.getThreeMesh && m.getThreeMesh();
+    const g = tm && tm.geometry;
+    if (!g) continue;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    const ms = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : null;
+    const s = ms ? Math.hypot(ms[0], ms[1], ms[2]) : 1;
+    const r = (g.boundingSphere ? g.boundingSphere.radius : 1) * s;
+    // A non-finite radius (a mesh whose vertices went bad) must not poison the scene unit:
+    // every joint marker and bone is scaled by it, so one NaN silently makes the whole
+    // skeleton invisible — a confusing symptom a long way from its cause.
+    if (Number.isFinite(r) && r > best) best = r;
   }
   // No sculpt in the scene — deleted, or a skeleton built before one exists. Fall back to
   // the SKELETON's own size rather than to 1: every marker, snap radius and default bone
