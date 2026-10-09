@@ -140,7 +140,11 @@ export default class TimelineHelper {
       // row and the keys read as one selection. Without it the target is invisible: you click a
       // row, switch to the graph, and have to infer from the curves whether it took.
       const isGraphTarget = uiState && uiState._graphMeshId === id;
-      ctx.fillStyle = isGraphTarget ? '#ffff00' : (track.muted ? '#6c7086' : '#cdd6f4');
+      // EVERY SELECTED OBJECT'S NAME IS YELLOW, not just the target's -- a multi-selection made
+      // by dragging down the names has to read as one (matt, 2026-10-09).
+      const isSelectedRow = !!(laneMesh && uiState && uiState._main && uiState._main.getIndexSelectMesh
+                               && uiState._main.getIndexSelectMesh(laneMesh) >= 0);
+      ctx.fillStyle = (isGraphTarget || isSelectedRow) ? '#ffff00' : (track.muted ? '#6c7086' : '#cdd6f4');
       ctx.font = isGraphTarget ? 'bold 12px sans-serif' : '12px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';

@@ -3372,6 +3372,26 @@ export default class GuiTimeline {
   // first and the single-object hit tests below run unchanged against it. Transform keys of the
   // visible channels only (the part you actually click); the target is tried first so overlapping
   // keys keep going to it.
+  // Drop any selected key whose object, blendshape channel or shape layer is muted: muted
+  // animation cannot be edited, copied, pasted or moved.
+  _pruneMutedSelection() {
+    const reg = window._animationRegistry;
+    const sel = window._animSelectedKeys;
+    if (!reg || !sel || !sel.length) return;
+    const keep = sel.filter((k) => {
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr) return true;
+      if (tr.muted) return false;
+      if (k.type === 'blendshape' && tr.blendshapeMuted?.has(k.name)) return false;
+      if (k.type === 'shapeLayer' && tr.shapeLayers?.[k.layer]?.muted) return false;
+      return true;
+    });
+    if (keep.length !== sel.length) {
+      window._animSelectedKeys = keep;
+      if (keep.length < 2) window._animTransformBox = null;
+    }
+  }
+
   _graphObjectUnder(rx, ry) {
     const reg = window._animationRegistry;
     const meshes = this._graphMeshes();
@@ -3380,7 +3400,7 @@ export default class GuiTimeline {
     const loopStart = this._viewStart ?? 0, visibleDuration = this._viewDuration ?? 1;
     for (const m of meshes) {
       const tr = reg.tracks.get(m.getID());
-      if (!tr || !tr.times) continue;
+      if (!tr || !tr.times || tr.muted) continue;
       const normR = this._xfNormRanges(tr);
       for (let i = 0; i < tr.times.length; i++) {
         const x = tlX + ((tr.times[i] - loopStart) / visibleDuration) * tlW;
@@ -3411,6 +3431,14 @@ export default class GuiTimeline {
     const id = activeMesh.getID();
     const track = reg.tracks.get(id);
     if (!track) return;
+    // A MUTED object's keys cannot be picked or dragged: the press just starts a marquee.
+    if (track.muted) {
+      this._isDraggingMarquee = true;
+      this._marqueeStart = { x: rx, y: ry };
+      this._marqueeEnd   = { x: rx, y: ry };
+      this._undoSelectionBeforeMarquee = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({...k})) : [];
+      return;
+    }
 
     const headerH = HEADER_H;
     const tlX = 200;
@@ -5643,6 +5671,7 @@ export default class GuiTimeline {
               if (Math.abs(ry - (ty2 + trackH / 2 + 22 + bIdx * 18)) > 9) continue;
               if (rx < 170) reg.toggleBlendshapeMute?.(laneMesh, bsNames[bIdx]); // M ≈ x162
               else this._deleteBlendshapeTrack(laneMesh, bsNames[bIdx]);          // × ≈ x178
+              this._pruneMutedSelection();
               this.draw();
               return;
             }
@@ -5658,7 +5687,7 @@ export default class GuiTimeline {
                 if (setTo) this._selShapeLayerIdxs.add(li); else this._selShapeLayerIdxs.delete(li);
                 this._layerDotDrag = { meshId, setTo };            // drag-through select/deselect
               }
-              else if (rx >= 154 && rx < 170) reg.toggleShapeLayerMute?.(laneMesh, li);   // M
+              else if (rx >= 154 && rx < 170) { reg.toggleShapeLayerMute?.(laneMesh, li); this._pruneMutedSelection(); }   // M
               else if (rx >= 170 && rx < 188) reg.removeShapeLayer?.(laneMesh, li);        // ×
               else if (rx < 150) reg.setActiveShapeLayer?.(laneMesh, trackObj.activeShapeLayerIdx === li ? -1 : li); // arm
               else continue;
@@ -5687,6 +5716,7 @@ export default class GuiTimeline {
           // Object-level M mute (lane-centre row, right column).
           if (rx >= 176 && rx < 200 && ry >= ty2 && ry < ty2 + trackH && !(laneMesh && laneMesh._isFrameGroup)) {
             trackObj.muted = !trackObj.muted;
+            this._pruneMutedSelection();
             this.draw();
             return; // Don't start marquee
           }
@@ -5829,6 +5859,9 @@ export default class GuiTimeline {
         const _keyShow = window._animKeyShow || { transform: true, shape: true, blendshape: true, shaperep: true };
 
         tracks.forEach(([meshId, trackObj], laneIdx) => {
+          // A MUTED OBJECT'S KEYS CANNOT BE PICKED (matt, 2026-10-09: "a muted object should have
+          // its keys unable to be affected at all"). Frame-group rows have no mute and are exempt.
+          if (trackObj.muted) return;
           const ty = headerH + (laneIdx * trackH) - dsScroll;
           const kyTransform = ty + trackH / 2; // centred (matches drawDopeSheet)
           const kyShape     = ty + trackH / 2 + 10; // matches drawDopeSheet offset
@@ -5990,7 +6023,8 @@ export default class GuiTimeline {
             const ty2 = headerH + (laneIdx * trackH) - dsScroll;
             let bIdx = 0;
             TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
-              if (keyFound || !bTrack.times || _keyShow.blendshape === false) { bIdx++; return; }
+              if (keyFound || !bTrack.times || _keyShow.blendshape === false
+                  || trackObj.muted || trackObj.blendshapeMuted?.has(name)) { bIdx++; return; }
               const bKy = ty2 + trackH / 2 + 22 + bIdx * 18;
               for (let i = 0; i < bTrack.times.length; i++) {
                 const t = bTrack.times[i];
@@ -6038,7 +6072,7 @@ export default class GuiTimeline {
             const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
             for (let li = 0; li < trackObj.shapeLayers.length; li++) {
               const L = trackObj.shapeLayers[li];
-              if (!L.shapeTimes) continue;
+              if (!L.shapeTimes || L.muted || trackObj.muted) continue;
               const rowY = ty2 + trackH / 2 + 22 + (bsCount + li) * 18;
               for (let i = 0; i < L.shapeTimes.length; i++) {
                 const t = L.shapeTimes[i];
@@ -7225,7 +7259,7 @@ export default class GuiTimeline {
       for (const activeMesh of this._graphMeshes()) {
         const id = activeMesh.getID();
         const track = reg.tracks.get(id);
-        if (track) {
+        if (track && !track.muted) {
           // Under Normalise each object has its own ranges; the marquee reads the published ones.
           const _prevNorm = window._animXfNormRanges;
           window._animXfNormRanges = this._xfNormRanges(track);
@@ -7294,8 +7328,17 @@ export default class GuiTimeline {
     // directly; this one was the odd path out, and removing the rig-row fold shifted the row
     // numbering enough to make the mismatch bite.
     const newKeys = [];
+    // WHAT A MARQUEE MAY TOUCH. Never a muted object, and -- when two or more objects are
+    // SELECTED -- only those: sweeping a rectangle across non-contiguous selected names used to
+    // grab every key it crossed. A single selected object does not restrict (that is the ordinary
+    // state, and the sweep must still reach other rows).
+    const _selMeshes = this._main.getSelectedMeshes?.() || [];
+    const _selLaneIds = new Set(_selMeshes.map((m) => m.getID()).filter((id) => tracks.some(([tid]) => tid === id)));
+    const _restrictToSel = _selLaneIds.size >= 2;
+    const _laneOk = (meshId, trackObj) => !trackObj.muted && (!_restrictToSel || _selLaneIds.has(meshId));
     tracks.forEach(([meshId, trackObj], laneIdx) => {
       if (laneIdx < laneMin || laneIdx > laneMax) return;
+      if (!_laneOk(meshId, trackObj)) return;
       if (trackObj.times) {
         for (let j = 0; j < trackObj.times.length; j++) {
           const t = trackObj.times[j];
@@ -7319,12 +7362,14 @@ export default class GuiTimeline {
     // drawDopeSheet.
     tracks.forEach(([meshId, trackObj], laneIdx) => {
       if (!trackObj.blendshapeTracks) return;
+      if (!_laneOk(meshId, trackObj)) return;
       const ty2 = headerH + (laneIdx * trackH) - _marqScroll;
       let bIdx = 0;
       TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
         const rowY = ty2 + trackH / 2 + 22 + (bIdx++) * 18;
         if (rowY < y1 - MARQ_PAD || rowY > y2 + MARQ_PAD) return;
         if (!bTrack.times || window._animBsChannelVisible?.[name] === false) return; // hidden — not selectable
+        if (trackObj.blendshapeMuted?.has(name)) return;                              // muted channel — not selectable
         for (let i = 0; i < bTrack.times.length; i++) {
           const t = bTrack.times[i];
           if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'blendshape', name, index: i });
@@ -7336,6 +7381,7 @@ export default class GuiTimeline {
     if (window._frameGroup) {
       tracks.forEach(([meshId], laneIdx) => {
         if (laneIdx < laneMin || laneIdx > laneMax) return;
+        if (_restrictToSel && !_selLaneIds.has(meshId)) return;
         const grp = this._main._meshes?.find(m => m.getID() === meshId && m._isFrameGroup);
         if (!grp) return;
         window._frameGroup.children(grp).forEach(child => {
@@ -7349,11 +7395,12 @@ export default class GuiTimeline {
     // 1/3/7 picks exactly those. Mirrors drawDopeSheet's row layout.
     tracks.forEach(([meshId, trackObj], laneIdx) => {
       if (!trackObj.shapeLayers || !trackObj.shapeLayers.length) return;
+      if (!_laneOk(meshId, trackObj)) return;
       const ty2 = headerH + (laneIdx * trackH) - this._dopeScroll();
       const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
       for (let li = 0; li < trackObj.shapeLayers.length; li++) {
         const L = trackObj.shapeLayers[li];
-        if (!L.shapeTimes) continue;
+        if (!L.shapeTimes || L.muted) continue;
         const rowY = ty2 + trackH / 2 + 22 + (bsCount + li) * 18;
         if (rowY < y1 || rowY > y2) continue;
         for (let i = 0; i < L.shapeTimes.length; i++) {
@@ -7391,6 +7438,7 @@ export default class GuiTimeline {
     // at a time; the first in row order is the one nearest the top of the rectangle, which is
     // the one you were reaching for. It is also a no-op when the sweep caught nothing, so an
     // empty marquee leaves the graph where it was rather than blanking it.
+    this._pruneMutedSelection();
     if (newKeys.length) this._setGraphTarget(newKeys[0].meshId);
 
     // Automatically create transform box around selection!

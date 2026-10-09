@@ -102,7 +102,7 @@ check('...and an empty sweep leaves the graph alone',
   check('the dopesheet marks the target row',
     /uiState && uiState\._graphMeshId === id/.test(TH),
     'nothing in the dopesheet says which row the graph will show');
-  check('...in the selected-key yellow', /isGraphTarget \? '#ffff00'/.test(TH));
+  check('...in the selected-key yellow', /\(isGraphTarget \|\| isSelectedRow\) \? '#ffff00'/.test(TH));
   check('...without losing the muted colour', /track\.muted \? '#6c7086' : '#cdd6f4'/.test(TH),
     'a muted row must still read as muted when it is not the target');
 

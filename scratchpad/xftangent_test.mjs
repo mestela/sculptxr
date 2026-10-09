@@ -328,7 +328,7 @@ check('key dots are drawn at the shared, smaller radius',
 // A syntax check cannot see this. Depth can: a beginPath and the stroke or fill that finishes it
 // must sit at the same brace depth, or the finish is outside the loop that started it.
 {
-  const from = TL.indexOf('// 5. Draw Curves for Active Mesh');
+  const from = TL.indexOf('// 5. Draw the curves of EVERY selected object');
   const to = TL.indexOf('// ── THE PIN WEIGHT CURVE');
   const region = from >= 0 && to > from ? TL.slice(from, to) : '';
   check('the curve block was found', region.length > 0);
