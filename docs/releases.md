@@ -1,3 +1,18 @@
+# v4.0.0
+The first production release since v3.52. Everything from v3.53 through v3.71 ships with it, plus a round of rig, timeline and Grab work.
+
+- **WebGPU renderer is the default** (`?renderer=webgl` opts out): PBR on three's lit pipeline, shadows in XR sessions, Vision Pro fixed, ~16,450 lines of legacy UI removed, lights as a system.
+- **Mesh Edit**: Sel Loop, Cut Loop, Sel Edge and Bevel. glTF/GLB import with textures and morph targets.
+- **Sparse transform keys**: each channel has its own keys; the graph edits channels, not frames; Simplify Curves.
+- **VR Grab, Auto**: a pin takes the full gesture, a bone turns (FK) by default, and holding **Y** on the non-dominant hand drags it as IK (also automatic where the pins own the joint). Press now agrees with hover, so the nearest thing you see lit is what the trigger takes at any world scale. The old Translate / Rotate switches still apply with Auto off.
+- **Rig size is measured from the skinned mesh**, not from hidden stray meshes, and the headset default is 0.6x of what it was. Rig / Pin / Label Size sliders snap to 1.00x and their numpad opens centred on the panel. A rotation-only pin is a purple box instead of the 6DOF red one.
+- **Physics bones no longer shake when you move the world**: model-space reads used stale world matrices after a grip.
+- **Timeline**: shift or the off-hand trigger drags a selection down the dopesheet names (selected names turn yellow); the graph editor shows every selected object's curves, marquees across them and fits them all; muted objects and channels can't be picked, marqueed, copied or moved.
+- **Copy / Paste / Cut and Add Key follow the selection**: with keys selected they act on those keys (paste lands on the earliest selected key; one copied key stamps onto every selected key); with none they copy and paste the selected objects' pose at the playhead. Add Key keys every selected object in one undo step. One clipboard serves the shortcuts, radial menu, animation panel and desktop panel.
+- **Face-group painting is fast** (colour-only updates), with a swatch beside the group number.
+- Fixed: the hover highlight on the Browser Saves dialog's Open button sat too low (the rasteriser drops a margin on scroll containers).
+- A clean example scene, **Skinny (v07)**, under Examples.
+
 # v3.69.0
 - **Bevel** (Mesh Edit): select edges with Sel Loop / Sel Edge, then press on the mesh and drag -- the selected edges are chamfered (one segment) and the width follows the drag; release commits. VR width is 1:1 with the hand's travel; on desktop a 300px drag reaches the maximum. The width is clamped before any slid edge is 45% used, so the bevel can never fold over itself. Three or more selected edges meeting at a corner get a cap; a run that stops partway ends through the original vertex, with the neighbour faces split so there is no T-junction. UVs carry through. One undo step, and undoing it restores the selection.
 - **Sel Edge** (Mesh Edit): the edge under the cursor preselects; click toggles that single edge (and its mirror with symmetry on) in the same edge selection Sel Loop fills.
