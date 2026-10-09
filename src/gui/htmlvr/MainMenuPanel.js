@@ -3536,7 +3536,8 @@ function buildSculptingHTML(main, part) {
     if (isGrab) {
       const gch = GrabChannels.channels();
       brushHTML += collapsibleHTML('grab-channels', 'Grab', `
-        <div class="mm-choice-grid cols-2">
+        <div class="mm-choice-grid cols-3">
+          <button class="mm-choice${GrabChannels.auto() ? ' active' : ''}" id="mm-grab-auto" title="Pins: full. Bones: FK turn. Off-hand trigger: IK.">Auto</button>
           <button class="mm-choice${gch.translate ? ' active' : ''}" id="mm-grab-translate">Translate</button>
           <button class="mm-choice${gch.rotate ? ' active' : ''}" id="mm-grab-rotate">Rotate</button>
         </div>`, false);
@@ -5697,6 +5698,10 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     };
     grabChannel('#mm-grab-translate', 'translate');
     grabChannel('#mm-grab-rotate', 'rotate');
+    el.querySelector('#mm-grab-auto')?.addEventListener('click', (e) => {
+      e.currentTarget.classList.toggle('active', GrabChannels.setAuto(!GrabChannels.auto()));
+      lightRepaintFn();
+    });
 
     el.querySelector('#mm-brush-clay')?.addEventListener('click', (e) => {
       tool._clay = !tool._clay;

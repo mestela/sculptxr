@@ -306,7 +306,7 @@ class Grab extends SculptBase {
       // turning, so a grabbed JOINT always got a new position and always became an IK effector
       // -- there was no way to simply turn a bone. With translation off the joint stays exactly
       // where it is, nothing asks the solve for a new position, and the rotation is FK.
-      const _ch = GrabChannels.channels();
+      const _ch = GrabChannels.forGesture('pin');
       if (!_ch.translate || !_ch.rotate) {
         const start = state.startMatrix;
         if (start) {
@@ -1182,6 +1182,18 @@ class Grab extends SculptBase {
           // Same rule as the desktop grab: taking a BONE is an IK operation, not a transform.
           this._grabIsJoint = Skeleton.isJoint(mesh);
           this._grabUndoRig = this._grabIsJoint ? IKSolver.captureAll(this._main) : null;
+          // AUTO, decided ONCE at the press: a bone turns (FK) unless the off-hand trigger is
+          // held -- and is not itself holding a pin, which is the two-handed posing gesture --
+          // or FK cannot turn it because the pins own it. See GrabChannels.forGesture.
+          this._gestureKind = null;
+          if (this._grabIsJoint) {
+            const other = active.handedness === 'left' ? 'right' : 'left';
+            const modifierIK = !!this._main.multiSelectHeld?.() && !this._vrPinGrabs.has(other);
+            const fkAble = !!this._fkTarget(mesh, null, this._ownedIds(true)).joint;
+            this._gestureKind = (modifierIK || !fkAble) ? 'ik' : 'fk';
+            this._press(active.handedness, { gestureKind: this._gestureKind,
+              why: modifierIK ? 'off-hand trigger held' : (fkAble ? 'bone default' : 'pins own this joint') });
+          }
           this._activeController = active; // First assignment
           // THE DELTA BASELINE BELONGS TO THIS GRAB, so it starts empty.
           //
@@ -1298,7 +1310,7 @@ class Grab extends SculptBase {
               // gating that alone left this untouched, which is why the buttons appeared to do
               // nothing at all. matt: "i put it into rotate mode... the bone follows the
               // translation of my controller."
-              const _ch = GrabChannels.channels();
+              const _ch = this._gestureKind ? GrabChannels.forGesture(this._gestureKind) : GrabChannels.channels();
 
               if (!_ch.translate) {
                 // ROTATION ONLY IS FORWARD KINEMATICS, so it does not go near the solver.

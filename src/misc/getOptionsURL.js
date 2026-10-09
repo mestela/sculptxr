@@ -414,6 +414,7 @@ var getOptionsURL = function () {
   // turns a grabbed joint from an IK effector into a plain FK rotation.
   options.grabTranslate = queryBool(getVal('grabTranslate'), true);
   options.grabRotate = queryBool(getVal('grabRotate'), true);
+  options.grabAuto = queryBool(getVal('grabAuto'), true);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

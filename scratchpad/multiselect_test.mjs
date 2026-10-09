@@ -185,9 +185,18 @@ check('...and so does the dopesheet, captured on pointer down',
 // skeleton off its pins — matt: "the skeleton started doing an ik solve and drifting away from
 // the pins." Desktop Ctrl-click still works there, because a keyboard modifier does not collide
 // with a second hand.
-check('Grab does NOT consult the VR modifier',
-  !/multiSelectHeld/.test(code(GRAB)),
-  'the secondary trigger is the other hand’s grab in this tool');
+// REVISED 2026-10-09 (matt: "pins behave in their best mode. bones default to rotate. if alt
+// trigger is pressed, it goes into IK mode"). Grab now reads the modifier in exactly ONE place:
+// at the press of a JOINT, and never while the other hand is itself holding a pin -- so the
+// two-handed pin gesture the old rule protected is untouched, and a held left trigger no longer
+// starts a solve on its own (it only chooses IK for a bone the right hand is taking).
+{
+  const uses = (code(GRAB).match(/multiSelectHeld/g) || []).length;
+  check('Grab consults the VR modifier in ONE place only', uses === 1, 'found ' + uses);
+  check('...and not while the other hand holds a pin',
+    /multiSelectHeld\?\.\(\)\s*&&\s*!this\._vrPinGrabs\.has\(other\)/.test(GRAB),
+    'the secondary trigger is also the other hand’s pin grab in this tool');
+}
 check('...but desktop Ctrl-click still multi-selects there',
   /setOrUnsetMesh\(mesh, ctrl\)/.test(GRAB),
   'a keyboard modifier does not collide with the second hand');

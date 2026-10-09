@@ -49,6 +49,7 @@ function grabChannelHTML() {
   const ch = GrabChannels.channels();
   return `
         <div class="mp-toggles">
+          <button class="mp-toggle-btn${GrabChannels.auto() ? ' active' : ''}" id="mp-grab-auto" title="Pins: full. Bones: FK turn. Off-hand trigger: IK.">Auto</button>
           <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-grab-translate">Translate</button>
           <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-grab-rotate">Rotate</button>
         </div>`;
@@ -708,6 +709,10 @@ export class MiniPanel extends HTMLVRPanel {
       };
       grabBtn('#mp-grab-translate', 'translate');
       grabBtn('#mp-grab-rotate', 'rotate');
+      extras.querySelector('#mp-grab-auto')?.addEventListener('click', () => {
+        GrabChannels.setAuto(!GrabChannels.auto());
+        this.syncFromState();
+      });
       // Same entry point the main menu uses, so the two cannot drift: press to arm, press again
       // to cancel, and the viewport completes it.
       // `extras`, not `extrasEl`. This function's local is `extras`; `extrasEl` is the PARAMETER
@@ -975,6 +980,7 @@ export class MiniPanel extends HTMLVRPanel {
       // it -- matt: "they don't even pretend to disable visually."
       if (idx === Enums.Tools.GRAB) {
         const gch = GrabChannels.channels();
+        extrasEl.querySelector('#mp-grab-auto')?.classList.toggle('active', GrabChannels.auto());
         extrasEl.querySelector('#mp-grab-translate')?.classList.toggle('active', gch.translate);
         extrasEl.querySelector('#mp-grab-rotate')?.classList.toggle('active', gch.rotate);
       }
