@@ -1401,35 +1401,20 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     repaint();
   });
 
-  const _copyKeys = () => {
-    const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
-    const t = window._animCurrentTime || 0;
-    if (window._animKeyMode === 'shape') r.copyShapeKey?.(target, t);
-    else r.copyTransformKey?.(target, t);
-  };
+  // COPY / PASTE / CUT go through the TIMELINE's clipboard, the same one the shortcuts and the
+  // dopesheet / graph use: keys selected -> those keys, none -> the selected objects' pose.
+  const _tl = () => main.getGui?.()?._ctrlTimeline;
+  const _copyKeys = () => { _tl()?.copyKeysSmart?.(); };
 
   el.querySelector('#acp-copy-key')?.addEventListener('click', _copyKeys);
 
   el.querySelector('#acp-paste-key')?.addEventListener('click', () => {
-    const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
-    const t = window._animCurrentTime || 0;
-    if (window._animKeyMode === 'shape' && r.clipboardShape) {
-      r.pasteShapeKey?.(target, t); r.update(target, true);
-    } else if (r.clipboardTransform) {
-      r.pasteTransformKey?.(target, t); r.update(target, true);
-    }
+    _tl()?.pasteKeys?.(false);
     repaint();
   });
 
   el.querySelector('#acp-cut-key')?.addEventListener('click', () => {
-    _copyKeys();
-    const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
-    const t = window._animCurrentTime || 0;
-    if (window._animKeyMode === 'shape') r.deleteShapeKey?.(target, t);
-    else r.deleteTransformKey?.(target, t);
+    _tl()?.cutKeysSmart?.();
     repaint();
   });
 

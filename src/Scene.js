@@ -15160,6 +15160,7 @@ class Scene {
     const tl = () => this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
     const hasKeySel = !!(window._animSelectedKeys && window._animSelectedKeys.length);
     const canPaste  = !!(window._animKeyClipboard && window._animKeyClipboard.keys && window._animKeyClipboard.keys.length);
+    const hasObjSel = !!(this.getSelectedMeshes && this.getSelectedMeshes().length);
     const selMesh   = this.getMesh && this.getMesh();
     const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
     // #34: shape-layer multiselect commands (Combine when 2+ selected) — same source as the
@@ -15361,7 +15362,8 @@ class Scene {
       // ...AND THE SAME FOR THE CLIPBOARD THREE. They are the TIMELINE's clipboard — keys, not
       // objects — which the bare words did not say, so on a rig they read as a general Copy that
       // never did anything. Named for their subject, and only offered where that subject exists.
-      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },
+      // Keys selected: copy those keys. None: copy the selected objects' POSE.
+      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: hasKeySel || hasObjSel, run: () => tl()?.copyKeysSmart?.() },
       { label: 'Paste Keys', icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Linked', icon: 'fa-link',      enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link

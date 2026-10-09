@@ -1438,8 +1438,11 @@ class SculptGL extends Scene {
     if (!_typing && (e.ctrlKey || e.metaKey)) {
       const _tl = this._gui?._ctrlTimeline;
       const _kc = (e.key || '').toLowerCase();
-      if (_tl && _kc === 'c' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.copySelectedKeys(); return; }
-      if (_tl && _kc === 'x' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.cutSelectedKeys(); return; }
+      // With keys selected this is the key clipboard anywhere; with none it is the POSE clipboard,
+      // but only while the pointer is over the timeline, so Ctrl-C elsewhere is left alone.
+      const _tlOver = !!(_tl && _tl._visible && _tl.isMouseOver());
+      if (_tl && _kc === 'c' && (window._animSelectedKeys?.length || _tlOver)) { e.preventDefault(); _tl.copyKeysSmart(); return; }
+      if (_tl && _kc === 'x' && (window._animSelectedKeys?.length || _tlOver)) { e.preventDefault(); _tl.cutKeysSmart(); return; }
       if (_tl && _kc === 'v' && window._animKeyClipboard?.keys?.length) { e.preventDefault(); _tl.pasteKeys(e.shiftKey); return; }
     }
     // Delete/Backspace removes the selected timeline key(s) when the timeline is open and

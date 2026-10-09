@@ -1702,68 +1702,207 @@ export default class GuiTimeline {
     window.screenLog?.(`Copied ${keys.length} key${keys.length > 1 ? 's' : ''}`, '#a6e3a1');
   }
 
-  // Paste the clipboard at the playhead: earliest key lands on the playhead, the rest
-  // keep their relative offsets. Keys go back onto their ORIGINAL mesh/track/name.
-  // `linked` is reserved for frame (shape-replacement) keys — for scalar keyframes a
-  // paste is always a value copy, so it's currently a no-op distinction here.
+  // ── SELECTION-AWARE COPY / PASTE / CUT ────────────────────────────────────────────────
+  //
+  // ONE CLIPBOARD, TWO MODES, chosen by what is selected (matt, 2026-10-09):
+  //
+  //   KEYS selected  -> KEY mode.  Copy takes those keys. Paste anchors the EARLIEST copied key
+  //                     on the EARLIEST selected key, objects being the ones that own the
+  //                     selected keys; a clipboard of ONE key is stamped on every selected key.
+  //   no keys        -> POSE mode. Copy takes the live pose of the selected objects. Paste keys
+  //                     that pose onto the selected objects AT THE PLAYHEAD (or, if keys are
+  //                     selected, at each selected key's time). One pose is applied to all.
+  //
+  // Muted objects and channels are skipped throughout, and the clipboard is the SAME for the
+  // dopesheet, the graph, the animation panel and the shortcuts (there used to be three).
+  _selectedAnimatable() {
+    const reg = window._animationRegistry;
+    return (this._main.getSelectedMeshes?.() || [])
+      .filter((m) => m && m.getID && !m._isFrameGroup && !reg?.tracks.get(m.getID())?.muted);
+  }
+
+  // Which object each clipboard object lands on. Identity when the targets include every source
+  // (the common case: copy here, paste here, or at another time); else BY ORDER when the counts
+  // match (copy arm A's joints, select arm B's, paste); else identity for the ones that overlap.
+  // No targets selected at all: identity (back onto the originals).
+  _mapClipTargets(clipIds, tgtIds) {
+    const map = new Map();
+    if (!tgtIds.length) { clipIds.forEach((id) => map.set(id, id)); return map; }
+    const tset = new Set(tgtIds);
+    if (clipIds.every((id) => tset.has(id))) clipIds.forEach((id) => map.set(id, id));
+    else if (clipIds.length === tgtIds.length) clipIds.forEach((id, i) => map.set(id, tgtIds[i]));
+    else clipIds.forEach((id) => { if (tset.has(id)) map.set(id, id); });
+    return map;
+  }
+
+  copyKeysSmart() {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    this._pruneMutedSelection();
+    if (window._animSelectedKeys?.length) { this.copySelectedKeys(); return; }
+    const objs = this._selectedAnimatable();
+    if (!objs.length) { window.screenLog?.('Nothing selected to copy', '#f9e2af'); return; }
+    window._animKeyClipboard = {
+      mode: 'pose', anchor: 0,
+      keys: objs.map((m) => ({ type: 'pose', meshId: m.getID(), time: 0, payload: reg._trsOfMatrix(m.getMatrix()) })),
+    };
+    window.screenLog?.(`Copied pose of ${objs.length} object${objs.length > 1 ? 's' : ''}`, '#a6e3a1');
+  }
+
+  cutKeysSmart() {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    this._pruneMutedSelection();
+    if (window._animSelectedKeys?.length) { this.cutSelectedKeys(); return; }
+    // Pose mode: copy the pose, then delete the keys that sit exactly on the playhead.
+    this.copyKeysSmart();
+    const t = window._animCurrentTime || 0;
+    const keys = [];
+    for (const m of this._selectedAnimatable()) {
+      const tr = reg.tracks.get(m.getID());
+      if (!tr?.times) continue;
+      for (let i = 0; i < tr.times.length; i++) {
+        if (Math.abs(tr.times[i] - t) < 0.02) keys.push({ meshId: m.getID(), type: 'transform', index: i });
+      }
+    }
+    if (!keys.length) return;
+    window._animSelectedKeys = keys;
+    this.deleteSelectedKeys();
+  }
+
+  // Paste. `linked` is reserved for frame (shape-replacement) keys.
   pasteKeys(linked = false) {
     const reg = window._animationRegistry;
     const clip = window._animKeyClipboard;
     if (!reg || !clip?.keys?.length) return;
+    this._pruneMutedSelection();
     const playhead = window._animCurrentTime || 0;
     const fps = window._animFPS || 24;
     const snap = (t) => (window._animSnapToFrame !== false) ? Math.round(t * fps) / fps : t;
+    const selKeys = (window._animSelectedKeys || []).filter((k) => k.type !== 'sr');
+    const keyMode = clip.mode !== 'pose';
+    const uniq = (a) => [...new Set(a)];
+
+    // WHERE and ONTO WHAT. Keys selected: at the earliest selected key, onto the objects that own
+    // them. Otherwise: at the playhead, onto the selected objects.
+    let anchorTime = playhead, tgtIds;
+    if (selKeys.length) {
+      anchorTime = Math.min(...selKeys.map((k) => this._keyTimeOf(reg.tracks.get(k.meshId), k)));
+      tgtIds = uniq(selKeys.map((k) => k.meshId));
+    } else {
+      tgtIds = this._selectedAnimatable().map((m) => m.getID());
+    }
+    anchorTime = snap(anchorTime);
 
     const before = this._snapshotTracks();
-    const targets = []; // scalar keys — for the scalar undo + selection rebuild
-    let srCount = 0;
-    for (const k of clip.keys) {
-      const time = snap(playhead + (k.time - clip.anchor));
-      if (k.type === 'sr') {
-        // Frame (shape-replacement): paste a new frame. linked=true → shared-data
-        // instance (reuse a phoneme). FrameGroup.pasteFrame handles its own undo.
-        if (window._frameGroup?.pasteFrame?.(k.srMesh, time, linked)) srCount++;
-        continue;
+    const landed = [];                   // { meshId, type, name, layer, time } for the selection rebuild
+    let srCount = 0, skipped = 0;
+    const mutedTarget = (id) => !!reg.tracks.get(id)?.muted;
+    const ensureXf = (id) => reg.tracks.get(id) || reg._ensureTransformTrack(id);
+
+    if (!keyMode) {
+      // POSE: one pose applies to every target; several map by identity / order.
+      const poses = clip.keys;
+      const srcIds = poses.map((p) => p.meshId);
+      const pairs = [];                  // [targetId, time]
+      if (selKeys.length) {
+        for (const k of selKeys) pairs.push([k.meshId, snap(this._keyTimeOf(reg.tracks.get(k.meshId), k))]);
+      } else {
+        for (const id of tgtIds) pairs.push([id, snap(playhead)]);
       }
-      const tr = reg.tracks.get(k.meshId);
-      if (!tr) continue; // paste requires the source track to still exist
-      if (k.type === 'transform')      this._insertTransformKeyAt(tr, time, k.payload);
-      else if (k.type === 'shape')     this._insertShapeKeyAt(tr, time, k.payload);
-      else if (k.type === 'shapeLayer') { if (!this._insertShapeLayerKeyAt(tr, k.layer, time, k.payload)) continue; }
-      else if (k.type === 'blendshape') this._insertBlendshapeKeyAt(tr, k.name, time, k.payload.value);
-      else continue;
-      if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
-      targets.push({ meshId: k.meshId, type: k.type, name: k.name, layer: k.layer, time });
+      const map = this._mapClipTargets(srcIds, uniq(pairs.map((p) => p[0])));
+      const done = new Set();
+      for (const [tid, time] of pairs) {
+        if (mutedTarget(tid)) { skipped++; continue; }
+        const src = poses.length === 1 ? poses[0] : poses.find((p) => map.get(p.meshId) === tid);
+        if (!src) { skipped++; continue; }
+        const dk = tid + '@' + time;
+        if (done.has(dk)) continue; done.add(dk);
+        const tr = ensureXf(tid);
+        this._insertTransformKeyAt(tr, time, { ...src.payload, bits: XF_ALL });
+        if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
+        landed.push({ meshId: tid, type: 'transform', time });
+      }
+    } else {
+      const entries = clip.keys;
+      const clipIds = uniq(entries.filter((k) => k.type !== 'sr').map((k) => k.meshId));
+      const map = this._mapClipTargets(clipIds, tgtIds);
+
+      const put = (k, tid, time) => {
+        if (mutedTarget(tid)) { skipped++; return; }
+        let tr = reg.tracks.get(tid);
+        if (!tr && k.type === 'transform') tr = reg._ensureTransformTrack(tid);
+        if (!tr) { skipped++; return; }
+        if (k.type === 'transform') this._insertTransformKeyAt(tr, time, k.payload);
+        else if (k.type === 'shape' || k.type === 'shapeLayer') {
+          // A shape is a vertex-delta snapshot: only the SAME vertex count fits.
+          const have = k.type === 'shape' ? tr.shapes?.[0]?.length : tr.shapeLayers?.[k.layer]?.shapes?.[0]?.length;
+          if (have !== undefined && have !== k.payload.verts.length) { skipped++; return; }
+          if (k.type === 'shape') this._insertShapeKeyAt(tr, time, k.payload);
+          else if (!this._insertShapeLayerKeyAt(tr, k.layer, time, k.payload)) { skipped++; return; }
+        } else if (k.type === 'blendshape') {
+          if (!tr.blendshapeTracks?.get(k.name)) { skipped++; return; }
+          this._insertBlendshapeKeyAt(tr, k.name, time, k.payload.value);
+        } else { skipped++; return; }
+        if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
+        landed.push({ meshId: tid, type: k.type, name: k.name, layer: k.layer, time });
+      };
+
+      if (entries.length === 1 && entries[0].type !== 'sr' && selKeys.length) {
+        // ONE key on the clipboard, keys selected: stamp it on EVERY selected key.
+        const k = entries[0];
+        for (const sk of selKeys) {
+          if (sk.type !== k.type) { skipped++; continue; }
+          put(k, sk.meshId, snap(this._keyTimeOf(reg.tracks.get(sk.meshId), sk)));
+        }
+      } else {
+        for (const k of entries) {
+          const time = snap(anchorTime + (k.time - clip.anchor));
+          if (k.type === 'sr') {
+            // Frame (shape-replacement): paste a new frame. linked=true -> shared-data instance
+            // (reuse a phoneme). FrameGroup.pasteFrame handles its own undo.
+            if (window._frameGroup?.pasteFrame?.(k.srMesh, time, linked)) srCount++;
+            continue;
+          }
+          const tid = map.get(k.meshId);
+          if (tid === undefined) { skipped++; continue; }
+          put(k, tid, time);
+        }
+      }
     }
 
-    // Scalar keys: one undo entry + rebuild the selection onto them. (SR frames carry
-    // their own undo via FrameGroup, so they're excluded here.)
-    if (targets.length) {
-      window._animSelectedKeys = targets.map(t => {
+    // One undo entry + the selection rebuilt onto what landed. (SR frames carry their own undo.)
+    if (landed.length) {
+      window._animSelectedKeys = landed.map((t) => {
         const tr = reg.tracks.get(t.meshId);
         const times = t.type === 'transform' ? tr.times
                     : t.type === 'shape'     ? tr.shapeTimes
                     : t.type === 'shapeLayer' ? tr.shapeLayers?.[t.layer]?.shapeTimes
                     : tr.blendshapeTracks?.get(t.name)?.times;
-        const idx = times?.findIndex(x => Math.abs(x - t.time) < 0.005) ?? -1;
+        const idx = times?.findIndex((x) => Math.abs(x - t.time) < 0.005) ?? -1;
         if (idx < 0) return null;
         if (t.type === 'blendshape') return { meshId: t.meshId, type: 'blendshape', name: t.name, index: idx };
         if (t.type === 'shapeLayer') return { meshId: t.meshId, type: 'shapeLayer', layer: t.layer, index: idx };
         return { meshId: t.meshId, type: t.type, index: idx };
       }).filter(Boolean);
+      window._animTransformBox = null;
       const after = this._snapshotTracks();
       this._main.getStateManager().pushStateCustom(
         () => { window._animSelectedKeys = []; this._restoreTracksInPlace(before); },
         () => { window._animSelectedKeys = []; this._restoreTracksInPlace(after); },
-        false, 'Paste Keyframe'
+        false, keyMode ? 'Paste Keyframe' : 'Paste Pose'
       );
+      // Show the result at the playhead on every object that took a key.
+      for (const id of new Set(landed.map((t) => t.meshId))) {
+        const m = this._main._meshes?.find((x) => x.getID() === id);
+        if (m) reg.update(m, true);
+      }
     }
-    const m = this._main?.getMesh?.();
-    if (m) reg.update(m, true);
     this._main?.render?.();
     this.draw();
-    const n = targets.length + srCount;
-    window.screenLog?.(`Pasted ${n} ${linked && srCount ? 'linked ' : ''}key${n > 1 ? 's' : ''}`, '#a6e3a1');
+    const n = landed.length + srCount;
+    window.screenLog?.(`Pasted ${n} ${keyMode ? 'key' : 'pose key'}${n === 1 ? '' : 's'}`
+      + (skipped ? `  (${skipped} skipped: muted, no match, or not compatible)` : ''), '#a6e3a1');
   }
 
   // Insert a key with EXPLICIT copied values (not captured from the live mesh), replacing

@@ -497,89 +497,11 @@ class GuiAnimation {
     this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, actionName);
   }
 
-  copyKey() {
-    if (!window._animationRegistry) return;
-    let targetMesh = this._main.getMesh();
-    if (!targetMesh) return;
-    
-    if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
-      window._animCopiedKeys = window._animSelectedKeys.map(k => {
-        const track = window._animationRegistry.tracks.get(k.meshId);
-        if (!track) return null;
-        
-        let kTime = k.time;
-        if (kTime === undefined) {
-          const times = k.type === 'transform' ? track.times : track.shapeTimes;
-          kTime = times ? times[k.index] : undefined;
-        }
-        if (kTime === undefined) return null;
-
-        if (k.type === 'transform' && track.times) {
-          return {
-            meshId: k.meshId,
-            type: 'transform',
-            time: kTime,
-            p: track.positions.slice(k.index * 3, k.index * 3 + 3),
-            q: track.quaternions.slice(k.index * 4, k.index * 4 + 4),
-            s: track.scales.slice(k.index * 3, k.index * 3 + 3)
-          };
-        } else if (k.type === 'shape' && track.shapeTimes) {
-          return {
-            meshId: k.meshId,
-            type: 'shape',
-            time: kTime,
-            shape: new Float32Array(track.shapes[k.index])
-          };
-        }
-        return null;
-      }).filter(Boolean);
-      if (window.screenLog) window.screenLog(`📋 Copied ${window._animCopiedKeys.length} Keys`, 'lime');
-    }
-  }
-
-  pasteKey() {
-    const reg = window._animationRegistry;
-    if (!reg) return;
-    const targetMesh = this._main.getMesh();
-    if (!targetMesh || !window._animCopiedKeys?.length) return;
-
-    const id = targetMesh.getID();
-    const track = reg._ensureTransformTrack(id);
-    if (!track.shapeTimes) track.shapeTimes = [];
-    if (!track.shapes) track.shapes = [];
-    // One undo step by SNAPSHOT. The command replay this replaced re-spliced lockstep slots by
-    // time, which cannot restore per-channel key masks (sparse keys).
-    const before = reg._snapshotTrack(track);
-    const tMin = Math.min(...window._animCopiedKeys.map((k) => k.time));
-    const pasteTime = window._animCurrentTime || 0;
-
-    for (const k of window._animCopiedKeys) {
-      const targetTime = pasteTime + (k.time - tMin);
-      if (k.type === 'transform') {
-        reg._putKey(track, targetTime, k.p, k.q, k.s, XF_ALL);
-      } else if (k.type === 'shape') {
-        const i = track.shapeTimes.findIndex((t) => Math.abs(t - targetTime) < 0.005);
-        if (i >= 0) track.shapes[i] = new Float32Array(k.shape);
-        else {
-          track.shapeTimes.push(targetTime);
-          if (!track.shapeOutputTimes) track.shapeOutputTimes = [];
-          track.shapeOutputTimes.push(targetTime);
-          track.shapes.push(new Float32Array(k.shape));
-        }
-      }
-    }
-    reg.sortTrack(track);
-    reg.update(targetMesh, true);
-    const after = reg._snapshotTrack(track);
-    const put = (snap) => { const tr = reg.tracks.get(id); if (tr) reg._restoreTrack(tr, snap, targetMesh); };
-    this._main.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Paste Keys');
-    if (window.screenLog) window.screenLog(`Pasted ${window._animCopiedKeys.length} Keys`, 'lime');
-  }
-
-  cutKey() {
-    this.copyKey();
-    this.deleteKey();
-  }
+  // Copy / Paste / Cut are the TIMELINE's selection-aware clipboard (keys selected -> those keys,
+  // none -> the selected objects' pose); this panel just forwards, so there is one clipboard.
+  copyKey()  { this._ctrlGui?._ctrlTimeline?.copyKeysSmart?.(); }
+  pasteKey() { this._ctrlGui?._ctrlTimeline?.pasteKeys?.(false); }
+  cutKey()   { this._ctrlGui?._ctrlTimeline?.cutKeysSmart?.(); }
 
   deleteKey() {
     if (!window._animationRegistry) return;

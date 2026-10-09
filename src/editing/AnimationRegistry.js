@@ -2757,13 +2757,9 @@ class AnimationRegistry {
     };
   }
 
-  _writeTransformKey(mesh, time) {
-    if (!mesh) return;
-    const id = mesh.getID();
-    const track = this._ensureTransformTrack(id);
-
-    // Extract TRS from matrix safely
-    const m = mesh.getMatrix ? mesh.getMatrix() : [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+  // POSITION, QUATERNION AND SCALE OF A LOCAL MATRIX -- the one decomposition keys are written
+  // from, shared with the pose clipboard so a copied pose and a keyed pose are the same numbers.
+  _trsOfMatrix(m) {
     const px = m[12], py = m[13], pz = m[14];
     const sx = Math.hypot(m[0], m[1], m[2]);
     const sy = Math.hypot(m[4], m[5], m[6]);
@@ -2791,6 +2787,17 @@ class AnimationRegistry {
       const ql = Math.hypot(qx, qy, qz, qw) || 1.0;
       qx /= ql; qy /= ql; qz /= ql; qw /= ql;
     }
+    return { pos: [px, py, pz], quat: [qx, qy, qz, qw], scale: [sx, sy, sz] };
+  }
+
+  _writeTransformKey(mesh, time) {
+    if (!mesh) return;
+    const id = mesh.getID();
+    const track = this._ensureTransformTrack(id);
+
+    // Extract TRS from matrix safely
+    const m = mesh.getMatrix ? mesh.getMatrix() : [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    const { pos: [px, py, pz], quat: [qx, qy, qz, qw], scale: [sx, sy, sz] } = this._trsOfMatrix(m);
 
     let bits;
     if (this.isRecording) bits = this._recordBits();
