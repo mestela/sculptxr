@@ -47,14 +47,19 @@ export function openNumberFor(range, target, txt) {
   const k = Number.isFinite(shown) && Math.abs(shown) > 1e-9 && Math.abs(raw) > 1e-9 ? raw / shown : 1;
   const cur = k === 1 || !Number.isFinite(shown) ? raw : shown;
   const dec = stepDecimals(range.step);
-  np.open(cur, { label: labelOf(range, target), integer: step >= 1 && k === 1 },
+  // centerOnPanel: the numpad opens dead centre on the panel the slider lives on, not off to one
+  // side of it (matt, 2026-10-09: "it should appear in the center of the parent panel").
+  np.open(cur, { label: labelOf(range, target), integer: step >= 1 && k === 1, centerOnPanel: true },
     (val) => {
       let r = (k === 1 ? val : val * k);
       r = Math.min(hi, Math.max(lo, r));
       if (step > 0) r = lo + Math.round((r - lo) / step) * step;
       range.value = dec ? r.toFixed(dec) : String(r);
+      // A TYPED value is exact: sliders with a detent (the 1.00x snap) must not round it.
+      window.__sliderTyped = true;
       range.dispatchEvent(new Event('input', { bubbles: true }));
       range.dispatchEvent(new Event('change', { bubbles: true }));
+      window.__sliderTyped = false;
     }, target, panelOf(target));
 }
 
