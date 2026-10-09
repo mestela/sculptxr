@@ -192,6 +192,7 @@ function isRigFurniture(mesh) {
 // rule, and each round moved the margin somewhere else. Two distances and one comparison cannot
 // drift: for any pair of candidates the answer is the same every time, and it is one number to
 // argue about rather than four interacting ones.
+window.rigPickTrace = function (on) { window._rigPickTrace = on !== false; return window._rigPickTrace; };
 function rigWinner(pin, pinD, bone, boneD) {
   if (!pin) return bone;
   if (!bone) return pin;
@@ -664,6 +665,18 @@ class Picking {
     // nearMesh, so requiring one meant a hit on a bone with no mesh behind it reported NOTHING
     // — which read as the rig having become unselectable altogether.
     var nearRig = rigWinner(nearPin, nearPinD, nearBone, nearBoneD);
+    if (window._rigPickTrace && this._rigTraceList) {
+      // `rigPickTrace()` in the console: one line per second, the nearest candidates the VR rig
+      // pick saw (mm from the controller tip) and which one won. Inert unless switched on.
+      const now = performance.now();
+      if (!this._rigTraceAt || now - this._rigTraceAt > 1000) {
+        this._rigTraceAt = now;
+        const top = this._rigTraceList.sort((a, b) => a.mm - b.mm).slice(0, 5)
+          .map((c) => c.kind + ' ' + c.n + (c.from !== c.n ? '<' + c.from : '') + ' ' + c.mm + 'mm').join(' | ');
+        console.log('[rigPick] won: ' + (nearRig ? (nearRig._name || nearRig.getID()) : 'none') + '   cands: ' + top);
+      }
+      this._rigTraceList.length = 0;
+    }
     if (nearRig && !isRigFurniture(nearMesh)) {
       nearMesh = nearRig;
       nearFace = nearRigFace;
@@ -783,6 +796,11 @@ class Picking {
         // pick at all.
         // Same rule as the desktop pick, measured from the controller tip: nearest of each
         // kind, and rigWinner decides between them.
+        if (window._rigPickTrace) {
+          (this._rigTraceList || (this._rigTraceList = [])).push({
+            n: vrHit._name || vrHit.getID(), id: vrHit.getID(), mm: Math.round(physicalDistance * 1000),
+            kind: vrHit._isPinTarget ? 'pin' : (segIsBone ? 'seg' : 'pt'), from: mesh._name || mesh.getID() });
+        }
         if (vrHit._isPinTarget) {
           if (physicalDistance < nearPinD) { nearPinD = physicalDistance; nearPin = vrHit; }
         } else if (physicalDistance < nearBoneD) {
