@@ -5,8 +5,8 @@
     "desc": "Sculpted head with eight keyframed ARKit blendshapes"
   },
   {
-    "name": "Skinny (v05)",
-    "file": "skinny_v05.sxr",
-    "desc": "Rigged skinny character, saved from the headset"
+    "name": "Skinny (v07)",
+    "file": "skinny_v07.sxr",
+    "desc": "Rigged skinny character with pins and physics bones, saved from the headset"
   }
 ]
