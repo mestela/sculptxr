@@ -31,9 +31,9 @@ const strays = (TL.match(/Math\.max\(4, tracks\.length\)/g) || []).length
 check('no call site recomputes it', strays === 0,
   `${strays} site(s) still divide the height themselves — drawing and hit-testing can disagree`);
 
-// And every one of them goes through the helper: four in the timeline, one in the drawing.
+// And every one of them goes through the helper: five in the timeline (the name-drag lane lookup is the fifth), one in the drawing.
 const users = (TL.match(/TimelineHelper\.laneHeight\(/g) || []).length;
-check('every timeline call site uses the helper', users === 4, `${users} of 4`);
+check('every timeline call site uses the helper', users === 5, `${users} of 5`);
 check('the drawing uses it too', /TimelineHelper\.laneHeight\(laneAreaH, tracks\.length\)/.test(TH));
 
 // The behaviour itself, run against the real constant read out of the source.

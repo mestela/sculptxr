@@ -132,6 +132,7 @@ export default class GuiTimeline {
     this._isPanningGraph = false;
     this._isPanningDope = false;
     this._layerDotDrag = null;
+    this._nameDrag = null;   // drag-through select down the lane NAMES (shift / secondary trigger)
     this._eyeDrag = null;   // { visible, lastCh } -- paint an eye state down the gutter
     this._isZoomingGraph = false;
     this._panStartRy = 0;
@@ -2609,7 +2610,11 @@ export default class GuiTimeline {
     // the same yellow the dopesheet gives the target row, so the two read as one selection.
     {
       const _gm = this._graphMesh();
-      const _gname = _gm ? (_gm._permanentStaticLabel || `Object ${_gm.getID()}`) : 'nothing selected';
+      const _nameOf = (m) => m._permanentStaticLabel || `Object ${m.getID()}`;
+      const _gall = this._graphMeshes();
+      const _gname = _gm
+        ? (_gall.length > 1 ? `${_nameOf(_gm)} +${_gall.length - 1} more` : _nameOf(_gm))
+        : 'nothing selected';
       ctx.save();
       ctx.fillStyle = _gm ? '#ffff00' : '#6c7086';
       ctx.font = 'bold 12px sans-serif';
@@ -2619,8 +2624,12 @@ export default class GuiTimeline {
       ctx.restore();
     }
 
-    // 5. Draw Curves for Active Mesh
-    const activeMesh = this._graphMesh();
+    // 5. Draw the curves of EVERY selected object. The target is full strength; the others are
+    // drawn dimmer so the target still reads, and every one of them is live (clickable, marquee-
+    // selectable, draggable).
+    const _graphTarget = this._graphMesh();
+    for (const activeMesh of this._graphMeshes()) {
+    ctx.globalAlpha = activeMesh === _graphTarget ? 1 : 0.5;
     if (activeMesh) {
       const id = activeMesh.getID();
       const track = reg.tracks.get(id);
@@ -2641,7 +2650,7 @@ export default class GuiTimeline {
         // whatever the group's range happens to be -- a 2-degree nudge on a 180-degree curve
         // would land as 180. The drag scales by the group's half-range to get back to real
         // units, and this is where that number lives.
-        window._animXfNormRanges = normR;
+        if (activeMesh === _graphTarget) window._animXfNormRanges = normR;
         ctx.setLineDash([]);
         for (const grp of xfVisible()) {
           if (grp === 'weight') continue;   // one channel, its own track -- drawn below
@@ -3103,7 +3112,10 @@ export default class GuiTimeline {
       }
     }
 
-    // Draw Transform Box in Graph Mode!
+    }
+    ctx.globalAlpha = 1;
+
+    // Draw Transform Box in Graph Mode! Over the WHOLE selection, each key read from its own track.
     if (window._animShowTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
       const activeMesh = this._graphMesh();
       if (activeMesh) {
@@ -3116,7 +3128,8 @@ export default class GuiTimeline {
           let maxV = -Infinity;
 
           window._animSelectedKeys.forEach(sk => {
-            if (sk.meshId !== id) return;
+            const track = reg.tracks.get(sk.meshId);
+            if (!track) return;
             let t, val;
             if (sk.type === 'transform') {
               t   = xfTimes(track, sk.group)?.[sk.index];
@@ -3354,9 +3367,44 @@ export default class GuiTimeline {
 
   endTwoPointerZoom() { this._tpZoom = null; }
 
+  // WHICH OBJECT'S KEY IS UNDER THE PRESS. With several objects drawn, a click has to go to the
+  // one whose key you pointed at, not always the graph target -- so the target is moved there
+  // first and the single-object hit tests below run unchanged against it. Transform keys of the
+  // visible channels only (the part you actually click); the target is tried first so overlapping
+  // keys keep going to it.
+  _graphObjectUnder(rx, ry) {
+    const reg = window._animationRegistry;
+    const meshes = this._graphMeshes();
+    if (!reg || meshes.length < 2) return null;
+    const tlX = 200, tlW = this._cssWidth - 200;
+    const loopStart = this._viewStart ?? 0, visibleDuration = this._viewDuration ?? 1;
+    for (const m of meshes) {
+      const tr = reg.tracks.get(m.getID());
+      if (!tr || !tr.times) continue;
+      const normR = this._xfNormRanges(tr);
+      for (let i = 0; i < tr.times.length; i++) {
+        const x = tlX + ((tr.times[i] - loopStart) / visibleDuration) * tlW;
+        if (Math.abs(x - rx) > 10) continue;
+        for (const grp of xfVisible()) {
+          if (grp === 'weight') continue;
+          for (let c = 0; c < 3; c++) {
+            if (!xfChanVisible(grp, c) || !xfKeyed(tr, i, grp, c)) continue;
+            const y = this._valY(xfRead(tr, i, c, grp), grp, normR);
+            if (TimelineHelper.isKeyHovered(x, y, rx, ry, 10)) return m;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   handleGraphMouseDown(rx, ry) {
     const reg = window._animationRegistry;
     if (!reg) return;
+    {
+      const under = this._graphObjectUnder(rx, ry);
+      if (under && under !== this._graphMesh()) this._graphMeshId = under.getID();
+    }
 
     const activeMesh = this._graphMesh();
     if (!activeMesh) return;
@@ -3395,7 +3443,8 @@ export default class GuiTimeline {
       let maxV = -Infinity;
 
       window._animSelectedKeys.forEach(sk => {
-        if (sk.meshId !== id) return;
+        const track = reg.tracks.get(sk.meshId);   // each key from its OWN object's track
+        if (!track) return;
         let t, val;
         if (sk.type === 'transform') {
           t   = xfTimes(track, sk.group)?.[sk.index];
@@ -3495,10 +3544,13 @@ export default class GuiTimeline {
     {
       const sel = window._animSelectedKeys;
       if (sel && sel.length > 1) {
-        const normR = this._xfNormRanges(track);
         let best = null, bestD = Infinity, bestTrack = track;
+        const _normCache = new Map();
         for (const k of sel) {
-          if (k.meshId !== id) continue;
+          const track = reg.tracks.get(k.meshId);
+          if (!track) continue;
+          if (!_normCache.has(k.meshId)) _normCache.set(k.meshId, this._xfNormRanges(track));
+          const normR = _normCache.get(k.meshId);
           let t, y, kt = track;
           if (k.type === 'transform') {
             const grp = k.group || 'pos', ch = k.channel !== undefined ? k.channel : 0;
@@ -3526,7 +3578,7 @@ export default class GuiTimeline {
         if (best) {
           this._isDraggingKeyframe = true;
           this._activeKeyframeTrack = bestTrack;
-          this._activeMeshId = id;
+          this._activeMeshId = best.meshId;
           this._undoTracksBeforeMove = new Map();
           reg.tracks.forEach((tr, mId) => this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr)));
           this._activeKeyframeIndex = best.index;
@@ -4022,6 +4074,23 @@ export default class GuiTimeline {
     this._notifySelectionChanged();
   }
 
+  // EVERY OBJECT THE GRAPH SHOWS: the graph target first (it wins clicks and owns the value drag),
+  // then the rest of the selection that has animation to show. With one object selected this is
+  // [target], so a single-object graph behaves exactly as before. matt, 2026-10-09: "i should be
+  // able to go to the graph editor, and see all the channels for all the selected things."
+  _graphMeshes() {
+    const reg = window._animationRegistry;
+    const target = this._graphMesh();
+    const out = [];
+    const has = (m) => { const t = reg?.tracks.get(m.getID()); return !!(t && t.times && t.times.length >= 1); };
+    if (target) out.push(target);
+    for (const m of (this._main.getSelectedMeshes?.() || [])) {
+      if (m === target || out.includes(m)) continue;
+      if (has(m)) out.push(m);
+    }
+    return out;
+  }
+
   _graphMesh() {
     const id = this._graphMeshId;
     if (id != null) {
@@ -4036,11 +4105,9 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
 
-    const activeMesh = this._graphMesh();
-    if (!activeMesh) return;
-    const id = activeMesh.getID();
-    const track = reg.tracks.get(id);
-    if (!track) return;
+    // EVERY object the graph shows, so Fit frames the whole selection.
+    const _tracks = this._graphMeshes().map((m) => reg.tracks.get(m.getID())).filter(Boolean);
+    if (!_tracks.length) return;
 
     let minVal = Infinity;
     let maxVal = -Infinity;
@@ -4050,6 +4117,7 @@ export default class GuiTimeline {
     // EVERY VISIBLE GROUP, not just the active one. Measured ungrouped, Fit All framed the
     // active group and left the others running off the top of the graph -- matt: "the fit all
     // button seems to only fit on x, not on Y." It was fitting Y, to a third of the curves.
+    for (const track of _tracks) {
     if (track.times && track.times.length > 0) {
       for (const grp of xfVisible()) {
         if (grp === 'weight') continue;
@@ -4094,6 +4162,8 @@ export default class GuiTimeline {
       });
     }
 
+    }
+
     if (minVal === Infinity) {
       minVal = 0;
       maxVal = 1;
@@ -4119,6 +4189,7 @@ export default class GuiTimeline {
     
     const anyTransformVisible = channelsVisible[0] || channelsVisible[1] || channelsVisible[2];
     
+    for (const track of _tracks) {
     if (anyTransformVisible && track.times && track.times.length > 0) {
       minT = Math.min(minT, track.times[0]);
       maxT = Math.max(maxT, track.times[track.times.length - 1]);
@@ -4136,6 +4207,8 @@ export default class GuiTimeline {
           maxT = Math.max(maxT, bTrack.times[bTrack.times.length - 1]);
         }
       });
+    }
+
     }
 
     if (minT !== Infinity && maxT !== Infinity) {
@@ -4935,6 +5008,22 @@ export default class GuiTimeline {
     return null;
   }
 
+  // The mesh whose lane is under this y in the dopesheet, by the same slot geometry the name
+  // click uses. Null between lanes / outside them.
+  _dopeLaneMeshAt(ry) {
+    const tracks = this._dopesheetTracks();
+    const headerH = HEADER_H;
+    const trackH = TimelineHelper.laneHeight(this._cssHeight - headerH, tracks.length);
+    const dsScroll = this._dopeScroll();
+    for (let laneIdx = 0; laneIdx < tracks.length; laneIdx++) {
+      const ty2 = headerH + laneIdx * trackH - dsScroll;
+      if (ry >= ty2 && ry < ty2 + trackH) {
+        return this._main._meshes?.find((m) => m.getID() === tracks[laneIdx][0]) || null;
+      }
+    }
+    return null;
+  }
+
   // Extra "…" menu commands from the shape-layer multiselect (#34): Combine when 2+ selected.
   _shapeLayerMenuCommands() {
     const reg = window._animationRegistry;
@@ -5583,6 +5672,14 @@ export default class GuiTimeline {
           // this only catches a click on the lane's own name strip.
           if (rx < 176 && ry >= ty2 && ry < ty2 + trackH) {
             this._setGraphTarget(meshId);
+            // WITH THE MULTI-SELECT MODIFIER (shift/ctrl, or the secondary trigger in VR) the
+            // press also starts a drag-through: every name the cursor passes over is painted to
+            // the state this one ended in, the way the shape-layer dots work. matt, 2026-10-09:
+            // "i should be able to hold down shift (or the alt trigger) and select/drag through
+            // names in the dopesheet column to select many things."
+            if ((this._main.multiSelectHeld?.() || this._lastModifierDown) && laneMesh) {
+              this._nameDrag = { setTo: this._main.getIndexSelectMesh?.(laneMesh) >= 0 };
+            }
             this.draw();
             return; // a deliberate pick, not the start of a marquee
           }
@@ -6108,6 +6205,22 @@ export default class GuiTimeline {
       }
       this._pruneSelectionToVisible();
       this.draw();
+      return;
+    }
+
+    // Lane-name drag-through: paint the state the press ended in onto every name passed over.
+    if (this._nameDrag) {
+      const rect = this._canvas.getBoundingClientRect();
+      const mesh = this._dopeLaneMeshAt(e.clientY - rect.top);
+      if (mesh && !mesh._isFrameGroup) {
+        const isSel = this._main.getIndexSelectMesh?.(mesh) >= 0;
+        if (isSel !== this._nameDrag.setTo) {
+          this._main.setOrUnsetMesh?.(mesh, true, true);
+          this._graphMeshId = mesh.getID();
+          this._notifySelectionChanged();
+          this.draw();
+        }
+      }
       return;
     }
 
@@ -7013,6 +7126,7 @@ export default class GuiTimeline {
     this._isPanningGraph = false;
     this._isPanningDope = false;
     this._layerDotDrag = null;
+    this._nameDrag = null;
     this._eyeDrag = null;
     this._isZoomingGraph = false;
     this._isResizingPanel = false;
@@ -7107,12 +7221,16 @@ export default class GuiTimeline {
       const beforeSelection = this._undoSelectionBeforeMarquee || [];
       
       const newKeys = [];
-      const activeMesh = this._graphMesh();
-      if (activeMesh) {
+      // EVERY object the graph shows, so one sweep selects all the arm keys at once.
+      for (const activeMesh of this._graphMeshes()) {
         const id = activeMesh.getID();
         const track = reg.tracks.get(id);
         if (track) {
+          // Under Normalise each object has its own ranges; the marquee reads the published ones.
+          const _prevNorm = window._animXfNormRanges;
+          window._animXfNormRanges = this._xfNormRanges(track);
           newKeys.push(...TimelineHelper.getKeysInGraphRange(reg, id, tMin, tMax, vMin, vMax));
+          window._animXfNormRanges = _prevNorm;
         }
       }
       if (!addMode) window._animSelectedKeys = [];
