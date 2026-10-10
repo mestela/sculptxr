@@ -2400,6 +2400,17 @@ function medianBoneLength(main) {
 // scene unit, because the ratio between them is the history of three wrong tunings.
 // THE MESHES THAT SIZE THE RIG, in order of how little they change: skinned (the rig drives them),
 // else visible, else everything. `all` is every real mesh, for the latch signature.
+// A plane or a card: one bounding-box extent under 3% of the longest.
+function isFlatMesh(m) {
+  const g = m.getThreeMesh && m.getThreeMesh() && m.getThreeMesh().geometry;
+  if (!g) return false;
+  if (!g.boundingBox) g.computeBoundingBox();
+  const b = g.boundingBox;
+  if (!b || b.isEmpty()) return false;
+  const e = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z].sort((a, c) => a - c);
+  return e[2] > 1e-9 && e[0] < e[2] * 0.03;
+}
+
 function unitMeshes(main) {
   const all = [];
   for (const m of main.getMeshes() || []) {
@@ -2471,7 +2482,13 @@ Skeleton.sceneUnit = function (main) {
   // unit is latched and a mesh that was still visible during load locked the wrong number in.
   // SKINNED comes first because it is the one fact that does not move: hiding the character to
   // look at its rig must not resize the rig. See unitMeshes.
-  for (const m of unitMeshes(main).use) {
+  // A FLOOR IS NOT A CHARACTER. A ground quad's bounding sphere is as big as the quad is wide, so
+  // a 450-unit plane under a 140-unit figure set the unit to the plane's 225 and every joint came
+  // out three times too big at the slider's 1.0x. matt: "the joint scale is still an issue ... in
+  // settings the joint scale is at 1.0x." Flat meshes only count when nothing else does.
+  const unitUse = unitMeshes(main).use;
+  const solid = unitUse.filter((m) => !isFlatMesh(m));
+  for (const m of solid.length ? solid : unitUse) {
     const tm = m.getThreeMesh && m.getThreeMesh();
     const g = tm && tm.geometry;
     if (!g) continue;

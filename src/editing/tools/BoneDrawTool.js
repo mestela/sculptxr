@@ -128,7 +128,7 @@ const _vO = new THREE.Vector3(), _vD = new THREE.Vector3();
 const _vP = new THREE.Vector3(), _vMesh = new THREE.Matrix4(), _vInv = new THREE.Matrix4();
 const _vNear = [0, 0, 0], _vDir = [0, 0, 0], _vHit = [0, 0, 0];
 const _vA = [0, 0, 0], _vB = [0, 0, 0], _vC = [0, 0, 0];
-const _vT = [];
+const _vT = [], _vSpans = [];
 
 // Distance in px from (px,py) to the segment a-b. The bone pick is a segment pick, not a
 // joint pick — a capsule is grabbed anywhere along its shaft, which is where you look when
@@ -929,9 +929,10 @@ class BoneDrawTool extends SculptBase {
   // the same answer a screen gives for every other occlusion.
   _volumeSpanT(o, d) {
     const meshes = this._main.getMeshes() || [];
-    _vT.length = 0;
+    _vSpans.length = 0;
     for (const mesh of meshes) {
       if (!mesh || Skeleton.isJoint(mesh) || mesh._isNull) continue;
+      _vT.length = 0;
       if (mesh.isVisible && mesh.isVisible() === false) continue;
       if (!mesh.getModelSpaceMatrix || !mesh.intersectRay) continue;
       // Model -> mesh local, so the octree and the triangles are asked in their own space.
@@ -969,19 +970,59 @@ class BoneDrawTool extends SculptBase {
           if (hd >= 0.0) this._pushT(o, d, _vHit);
         }
       }
+      this._pushSpans();
     }
-    if (_vT.length < 2) return null;
+    return this._nearestSpanMid();
+  }
+
+  // One mesh's crossings -> its inside-intervals, paired off in order (in, out, in, out...).
+  // PER MESH, because the pairing is parity and parity only means anything within one closed
+  // surface. Pooled across meshes, a body and the thin clothing shell on it interleave --
+  // body-in, cloth-in, cloth-out, ... -- and the first "pair" is the body's skin and the
+  // cloth's outer face, a sliver on the front of the character. matt: "the 2 joints drawn so
+  // far aren't at the center of the volume ... right on the front of the mesh."
+  _pushSpans() {
     _vT.sort((a, b) => a - b);
-    // Coincident crossings -- a shared edge hit by both its triangles, or two meshes skinned
-    // to the same shell -- would otherwise read as a zero-thickness span and put the joint on
-    // the surface, which is the exact failure this replaces.
+    // A shared edge is hit by both its triangles: one crossing, reported twice. Collapse those
+    // BEFORE pairing, or the duplicate flips the parity of everything behind it.
     const eps = this._volumeEps();
-    let a = _vT[0];
-    for (let i = 1; i < _vT.length; i++) {
-      if (_vT[i] - a > eps) return (a + _vT[i]) * 0.5;
-      a = _vT[i];
+    let n = 0;
+    for (let i = 0; i < _vT.length; i++) {
+      if (n && _vT[i] - _vT[n - 1] <= eps) continue;
+      _vT[n++] = _vT[i];
     }
-    return null;
+    for (let i = 0; i + 1 < n; i += 2) _vSpans.push(_vT[i], _vT[i + 1]);
+  }
+
+  // The union of every mesh's spans, then the NEAREST merged one, midpoint. Overlap is what
+  // makes a body and the cloth over it one volume; a hand in front of a torso stays two,
+  // because the gap between them is outside both.
+  //
+  // CLOTH SITS A HAIR OFF THE SKIN, so strict overlap is not enough: a singlet 0.02 clear of
+  // the body left two volumes, and the nearest -- the cloth's thin front wall -- won. Spans
+  // closer than GAP merge, and a merged span thinner than GAP is a sliver (a shell, a belt)
+  // that only counts when there is nothing thicker to point at. Measured in the scene's own
+  // unit so it means the same on a thumbnail and on a building.
+  _nearestSpanMid() {
+    const n = _vSpans.length >> 1;
+    if (!n) return null;
+    const gap = 0.03 * (Skeleton.sceneUnit(this._main) || 1);
+    const idx = [];
+    for (let i = 0; i < n; i++) idx.push(i);
+    idx.sort((a, b) => _vSpans[a * 2] - _vSpans[b * 2]);
+    let bestLo = 0, bestHi = 0, found = false;
+    let lo = _vSpans[idx[0] * 2], hi = _vSpans[idx[0] * 2 + 1];
+    const take = () => {
+      if (!found || (hi - lo >= gap && bestHi - bestLo < gap)) { bestLo = lo; bestHi = hi; found = true; }
+    };
+    for (let k = 1; k < n; k++) {
+      const a = _vSpans[idx[k] * 2], b = _vSpans[idx[k] * 2 + 1];
+      if (a <= hi + gap) { if (b > hi) hi = b; continue; }
+      take();
+      lo = a; hi = b;
+    }
+    take();
+    return (bestLo + bestHi) * 0.5;
   }
 
   // A crossing, as a distance along the model-space ray.
@@ -1039,6 +1080,12 @@ class BoneDrawTool extends SculptBase {
       return Math.abs(Skeleton.planeDistance(pos, plane)) <= this._planeSnap();
     }
     Skeleton.projectToPlane(pos, plane, _snapTo);
+    // BOTH bands must agree. Px alone is blind to how big the figure is on screen: a character
+    // framed small has a hip-width of a handful of pixels, so 14px swallowed the whole leg and
+    // the chain below it rode the plane (the axis snap carries x down from the parent). The
+    // model-space cap is what a leg offset can never be inside; the px band is what stops a
+    // zoomed-in cursor from being yanked from further than it can see.
+    if (Skeleton.planeDistance(pos, plane) ** 2 > (Skeleton.sceneUnit(this._main) * 0.07) ** 2) return false;
     if (!this._toScreen(pos, _s0) || !this._toScreen(_snapTo, _s1)) return false;
     return Math.hypot(_s0.x - _s1.x, _s0.y - _s1.y) <= this._planeSnapPx();
   }
