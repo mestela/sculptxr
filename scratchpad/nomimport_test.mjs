@@ -16,5 +16,6 @@ ok('face indices in range', mx < m.count_vertex, 'max ' + mx);
 const cnt = {}; for (const x of g) cnt[x] = (cnt[x] || 0) + 1;
 ok('face groups match defs', Object.keys(cnt).length === m.groups.length, JSON.stringify(cnt));
 ok('every array decodes', (() => { let n = 0; const w = (o) => { if (o && typeof o === 'object') { if (o.offset !== undefined && o.type) { nom.bytesOf(o); n++; } for (const k in o) w(o[k]); } }; w(nom.scene.meshes); return n > 20; })());
+ok('typeless all-zeros array takes its size from the caller', nom.bytesOf({ count: 5, only_zeros: true }, 'u16').length === 10);
 console.log('done in ' + (Date.now() - t) + ' ms');
 process.exit(bad ? 1 : 0);

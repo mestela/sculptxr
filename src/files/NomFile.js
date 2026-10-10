@@ -61,9 +61,12 @@ class NomFile {
 
   // Raw bytes of a descriptor, decompressed. Returns a fresh Uint8Array (aligned, so typed
   // views over `.buffer` are safe). null when the descriptor is absent.
-  bytesOf(desc) {
+  //
+  // `fallbackType` is for an all-zeros array, which Nomad may write as just {count, only_zeros}
+  // with no `type`: the element size then comes from what the array IS (a mask is u16, ...).
+  bytesOf(desc, fallbackType) {
     if (!desc) return null;
-    const size = TYPE_SIZE[desc.type];
+    const size = TYPE_SIZE[desc.type || (desc.only_zeros && fallbackType)];
     if (!size) throw new Error('Unknown .nom array type ' + desc.type);
     const n = desc.count * size;
     if (desc.only_zeros) return new Uint8Array(n);
@@ -106,7 +109,7 @@ class NomFile {
 
   f32(desc) { const b = this.bytesOf(desc); return b && new Float32Array(b.buffer); }
   i32(desc) { const b = this.bytesOf(desc); return b && new Int32Array(b.buffer); }
-  u16(desc) { const b = this.bytesOf(desc); return b && new Uint16Array(b.buffer); }
+  u16(desc) { const b = this.bytesOf(desc, 'u16'); return b && new Uint16Array(b.buffer); }
 }
 
 export default NomFile;

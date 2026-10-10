@@ -55,7 +55,7 @@ function decodeMesh(nom, m, name) {
   const rgbm = nom.bytesOf(m.colors);
   if (rgbm) out.colors = NomadCodec.decodeRGBM(rgbm, 0, nbVertices);
 
-  const rough = nom.bytesOf(m.roughness), metal = nom.bytesOf(m.metalness), mask = nom.u16(m.masks);
+  const rough = nom.bytesOf(m.roughness, 'u8'), metal = nom.bytesOf(m.metalness, 'u8'), mask = nom.u16(m.masks);
   if (rough || metal || mask) {
     const ms = out.materials = new Float32Array(nbVertices * 3);
     for (let i = 0; i < nbVertices; i++) {
