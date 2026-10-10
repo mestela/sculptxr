@@ -9,6 +9,8 @@ var Import = {
   importGLTF: ImportGLTF.importGLTF,
   importNOM: ImportNOM.importNOM,
   buildNOMLevels: ImportNOM.buildLevels,
+  addNOMLights: ImportNOM.addLights,
+  settleNOMLevels: ImportNOM.settleLevels,
   importOBJ: ImportOBJ.importOBJ,
   importSGL: ImportSGL.importSGL,
   importPLY: ImportPLY.importPLY,

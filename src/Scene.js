@@ -5133,7 +5133,7 @@ class Scene {
     // keeps the placement, the parenting and the keys. Aim is the locator's local -Z, so the
     // ordinary gizmo aims a spot with no special mode.
     mesh._lightType   = 0;
-    mesh._lightConeDeg = 35;   // outer half-angle; the inner edge is derived in the shader upload
+    mesh._lightConeDeg = 35;   // outer HALF-angle (the control shows 2x: the full angle); the inner edge is derived in the shader upload
     // RANGE FROM THE SCENE, not a constant. Units here are arbitrary and large -- the camel is
     // about 180 across -- so a fixed range would light either nothing or everything depending on
     // the model. Half the scene's diagonal puts the falloff somewhere useful on the first frame,
@@ -6994,6 +6994,11 @@ class Scene {
         });
         const reg = window._animationRegistry;
         if (reg) for (let i = 0; i < meshes.length; i++) if (morphs[i]) reg.importBlendshapes(meshes[i], morphs[i]);
+        if (fileType === 'nom') {
+          // detail vectors last: see ImportNOM.settleLevels
+          for (const m of meshes) if (m._nomSource) Import.settleNOMLevels(m);
+          stats.lights = Import.addNOMLights(this, stats, meshes);
+        }
         // SAID OUT LOUD, because the interesting part of this import is what it RECOVERED, and
         // none of it is visible by looking: quads restored from a format with no quads, and
         // seam vertices welded back into one surface. Both are silent when they go wrong —
@@ -7012,7 +7017,9 @@ class Scene {
           + (stats.roughMetalMapped ? ', ' + stats.roughMetalMapped + ' with metal/rough maps' : '')
           + (stats.normalMapped ? ', ' + stats.normalMapped + ' with normal maps' : '')
           + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '')
-          + (stats.blendshapes ? ', ' + stats.blendshapes + ' blendshapes' : '');
+          + (stats.blendshapes ? ', ' + stats.blendshapes + ' blendshapes' : '')
+          + (stats.layers ? ', ' + stats.layers + ' layer channels flattened' : '')
+          + (fileType === 'nom' && stats.lights ? ', ' + stats.lights + ' light(s)' : '');
         console.log('[load] ' + msg);
         if (window.screenLog) window.screenLog(msg, 'lime');
         if (this._showToolToast) this._showToolToast('Imported ' + stats.meshes + ' object(s)');

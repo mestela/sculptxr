@@ -2815,8 +2815,8 @@ export function buildSectionHTML_scene(main) {
     ${(_lit._lightType || 0) === 1 ? `
     <div class="mm-row">
       <span class="mm-lbl">Cone</span>
-      <input type="range" id="mm-light-cone" min="5" max="89" step="1" value="${Math.round(_lit._lightConeDeg ?? 35)}">
-      <span class="mm-val" id="mm-light-cone-val">${Math.round(_lit._lightConeDeg ?? 35)}&deg;</span>
+      <input type="range" id="mm-light-cone" min="10" max="178" step="1" value="${Math.round((_lit._lightConeDeg ?? 35) * 2)}">
+      <span class="mm-val" id="mm-light-cone-val">${Math.round((_lit._lightConeDeg ?? 35) * 2)}&deg;</span>
     </div>` : ''}
     ${/* COLOUR SITS ABOVE THE SHADOW BLOCK, deliberately. matt: "ensure the colour swatch
          stays near the top, it shouldn't be pushed after shadows, as then it looks like it's
@@ -4853,7 +4853,10 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     }, (v) => (v / 100).toFixed(2), null);
     wireSlider(el.querySelector('#mm-light-cone'), el.querySelector('#mm-light-cone-val'), (v) => {
       const L = _litSel(); if (!L) return;
-      L._lightConeDeg = v;
+      // THE CONTROL IS THE FULL CONE ANGLE (diameter); `_lightConeDeg` stays the half-angle the
+      // shader, the gizmo and saved scenes already use. Nomad and Blender both measure the full
+      // angle, so that is what a number typed here means to anyone moving a scene between them.
+      L._lightConeDeg = v / 2;
       // The cone handle IS the angle, so it has to be rebuilt as the slider moves or it starts
       // lying. Cheap enough to do per input event: ~60 line segments.
       main.decorateLight?.(L);
