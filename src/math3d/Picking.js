@@ -445,6 +445,24 @@ class Picking {
     }
     this._isVRHit = false;
 
+    // WHILE A CAPSULE IS THE SELECTION, CAPSULES BEAT EVERYTHING ELSE UNDER THE CURSOR. A cage
+    // lives inside the skin it weights, so the nearest surface was always the skin: sculpting
+    // capsules meant fishing for one through the character, and a click meant for the next
+    // capsule along took the body instead. matt: "selection isn't great, its not easy to move
+    // between capsules that are close by." A first pass over the cages alone, and only when it
+    // finds nothing does the full pick run -- so clicking clear of every capsule still reaches
+    // the skin, and nothing outside capsule work changes.
+    if (!includeRig && !this._cagePass && this._main && this._main.getMesh
+        && this._main.getMesh() && this._main.getMesh()._isWeightCage) {
+      var cages = meshes.filter(function (m) { return m._isWeightCage; });
+      if (cages.length) {
+        this._cagePass = true;
+        var cageHit = this.intersectionMouseMeshes(cages, mouseX, mouseY, twoSided, includeRig);
+        this._cagePass = false;
+        if (cageHit) return cageHit;
+      }
+    }
+
     var vNear = this.unproject(mouseX, mouseY, 0.0);
     var vFar = this.unproject(mouseX, mouseY, 0.1);
     var nearDistance = Infinity;

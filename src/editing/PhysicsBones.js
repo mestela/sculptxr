@@ -528,6 +528,17 @@ PhysicsBones.reset = function (main) {
 
 PhysicsBones.isSettled = function () { return _state.size > 0; };
 
+// Is any physics chain actually MOVING? `isSettled` above answers "is there state", which is true for
+// every rig that merely has a physics-flagged joint -- at rest, for hours. The idle frame throttle needs
+// the other question: a chain that has stopped does not need frames drawn for it.
+PhysicsBones.isMoving = function () {
+  for (const st of _state.values()) {
+    if (st.v && st.v.lengthSq() > 1e-6) return true;
+    if (st.p && st.prev && st.p.distanceToSquared(st.prev) > 1e-8) return true;
+  }
+  return false;
+};
+
 // ── SELF COLLISION (roadmap #36) ──────────────────────────────────────────────────────
 //
 // matt: flagged physics joints "swing through each other and through the rest of the rig", and

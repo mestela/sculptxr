@@ -997,6 +997,15 @@ class Scene {
     // created at most once.  Paying the ~300ms cost here means VR entry is instant.
     this.initVRControllers();
 
+    // WHAT COUNTS AS ACTIVITY, for the idle throttle in applyRender. Anything the person does at the window.
+    this._lastActivityT = performance.now();
+    this._lastDrawT = 0;
+    const _bump = () => { this._lastActivityT = performance.now(); };
+    for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup',
+      'touchstart', 'touchmove', 'dragover', 'drop']) {
+      window.addEventListener(ev, _bump, { capture: true, passive: true });
+    }
+
     // Start Three.js continuous render loop
     // This replaces manual window.requestAnimationFrame and session.requestAnimationFrame calls
     if (this._renderer) {
@@ -1408,6 +1417,28 @@ class Scene {
 
   render() {
     this._drawFullScene = true;
+    this._lastActivityT = performance.now();
+  }
+
+  // THE IDLE THROTTLE. `_drawFullScene` is set and never cleared, so the whole scene was redrawn on every
+  // display frame for ever -- including with nobody touching anything, which on a rigged character is a
+  // few thousand GPU buffer writes a second. That is what ran Chrome's GPU process out of GPU resources
+  // (macOS: "likely leaking IOGPUResource", then a GPU process crash and a blank, unrecoverable viewport;
+  // see ThreeXRPatches.installInPlaceUniformUpdate). So a still window refreshes at IDLE_FPS instead, and
+  // anything that could be changing the picture keeps full rate: input, an open stroke, playing or
+  // recording animation, a running physics chain, a headset, or `window._idleThrottle = false`.
+  _idleSkipFrame() {
+    if (window._idleThrottle === false) return false;
+    if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) return false;
+    const now = performance.now();
+    const sm = this._sculptManager;
+    const busy = (now - this._lastActivityT) < 1500
+      || window._animPlaying || (window._animationRegistry && window._animationRegistry.isRecording)
+      || (sm && sm._strokeActive) || PhysicsBones.isMoving();
+    if (busy) { this._lastDrawT = now; return false; }
+    if (now - this._lastDrawT < 250) return true;      // 4 fps
+    this._lastDrawT = now;
+    return false;
   }
 
   // One line a second: how many frames arrived, how long our own work took, and how much of the
@@ -2082,7 +2113,7 @@ class Scene {
 
     this._mark('draw');
     if (this._drawFullScene || (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
-      this._drawScene();
+      if (!this._idleSkipFrame()) this._drawScene();
     } else {
        if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) {
            console.log("WARNING: isPresenting is true but not rendering!");

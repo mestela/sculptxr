@@ -168,6 +168,9 @@ function boneSegments(mesh, joints, pos) {
   joints.forEach((j, i) => {
     const p = j._parentMesh;
     if (!index.has(p)) return;
+    // A bone that gets no capsule is not a segment either -- the draw and the cages agree on this
+    // (Skeleton.boneHasCapsule), and a weight coming from a capsule you cannot see is the confusion.
+    if (!Skeleton.jointShapesSkin(j)) return;
     // The bone's own radius is the fallback at both ends, as everywhere else — a joint that has
     // never been sized keeps exactly the shape it had.
     const rb = Math.max((j._boneRadius || 0) / scale, 1e-4);
@@ -837,8 +840,10 @@ Skinning.resolveWeights = function (main, mesh, touched) {
   // inverse bind matrix, so this stays right with the character posed. The rest vertices are
   // bind-pose too, and comparing a posed cage against them is what would make the weights jump
   // the moment you moved an arm.
+  const _r0 = performance.now();
   const prepared = prepareCages(main, joints,
     (ji) => new THREE.Matrix4().copy(mesh._skinInvBind[ji]).invert());
+  const _r1 = performance.now();
   let raw;
   if (prepared.length) {
     raw = resolveCagesRaw(mesh, prepared, nbV, touched);
@@ -847,7 +852,9 @@ Skinning.resolveWeights = function (main, mesh, touched) {
     if (!segs.length) return false;
     raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
   }
+  const _r2 = performance.now();
   const w = solveSmoothing(lvl, raw, joints.length);
+  const _r3 = performance.now();
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   mesh._skinRaw = rawSnapshot(raw);
@@ -856,6 +863,12 @@ Skinning.resolveWeights = function (main, mesh, touched) {
   // "what changed" when there is none. With smoothing on, repaint everything.
   Skinning.refreshWeightColors(main, mesh,
     Skinning.mushSmoothIterations() > 0 ? null : raw.changed || null);
+  // Where this mesh's time went, summed over every bound mesh in a re-solve (see onCageEdited).
+  const _t = Skinning._stageMs || (Skinning._stageMs = {});
+  _t.prepare = (_t.prepare || 0) + (_r1 - _r0);
+  _t.measure = (_t.measure || 0) + (_r2 - _r1);
+  _t.smooth = (_t.smooth || 0) + (_r3 - _r2);
+  _t.colors = (_t.colors || 0) + (performance.now() - _r3);
   return true;
 };
 
@@ -882,7 +895,9 @@ function resolveCagesRaw(mesh, prepared, nbV, touched) {
   const seen = new Set();
   for (const c of list) {
     const ji = mesh._skinJoints.indexOf(c._cageJointId);
-    const p = prepared.find((q) => q.joint === ji);
+    // THE CAGE ITSELF, not the first one on the same joint: a branching joint owns one cage per child
+    // bone, and sculpting the second would otherwise re-measure the first's neighbourhood.
+    const p = prepared.find((q) => q.mesh === c);
     if (ji < 0 || !p) return full();   // a capsule we cannot place: measure everything
     for (const i of WeightCage.candidates(V, nbV, p, base, MAX_INFLUENCES)) seen.add(i);
   }
@@ -947,6 +962,7 @@ Skinning.onCageEdited = function (main, cage) {
   const touched = (mir && mir.ok && mir.twinCage && mir.twinCage !== cage)
     ? [cage, mir.twinCage] : [cage];
   const _t1 = performance.now();
+  Skinning._stageMs = {};
   const n = Skinning.resolveWeightsAll(main, touched);
   const _t2 = performance.now();
   const p = window._skinPerfLast = {
@@ -957,6 +973,7 @@ Skinning.onCageEdited = function (main, cage) {
     colored: Skinning._lastColored | 0,
     of: Skinning._lastVerts | 0,
     meshes: n,
+    stages: Object.fromEntries(Object.entries(Skinning._stageMs || {}).map(([k, v]) => [k, Math.round(v)])),
   };
   if (window._skinPerf) {
     console.log('[skin] stroke ' + p.total + 'ms  (mirror ' + p.mirror + ', resolve ' + p.resolve
@@ -2071,6 +2088,8 @@ Skinning.update = function (main) {
   }
   console.log(out);
 };
+
+WeightCage.onChanged = (main) => Skinning.resolveWeightsAll(main);
 
 export default Skinning;
 export { MAX_INFLUENCES };

@@ -345,6 +345,9 @@ export function buildBoneAuthoringHTML(main, style) {
         hasCages ? 'Delete Weight Cages' : 'Bake Weight Cages'}</button>
       <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
     </div>
+    <div class="${c.btnRow}">
+      <button class="${c.wide}${WeightCage.splitAtJoints() ? ' active' : ''}" id="bone-cage-split" title="On: baked capsules end in a flat cut at their joints, so neighbours stop sharing a ball of overlap (round caps stay on leaf ends). Off: fully round capsules. Applies to the next Bake or Reset Capsules.">Split Capsules at Joints</button>
+    </div>
     ${bound ? `<div class="${c.btnRow}">
       <button class="${c.action}" id="bone-unbind">Unbind</button>
     </div>` : ''}
@@ -368,6 +371,10 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-select-cages" title="Select every weight cage, so they can be hidden, moved or deleted as a set">Select Cages</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-reset-cages" title="Put the selected capsules (all, if none selected) back to what a fresh bake makes from the rig as it is now. Mirror twins go with them.">Reset Capsules</button>
+      <button class="${c.action}" id="bone-delete-cages" title="Delete the selected capsules (all, if none selected). Mirror twins go with them.">Delete Capsules</button>
     </div>` : ''}
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
@@ -498,7 +505,7 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
     </div>
     <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
-    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin">Shapes Skin</button>` : ''}`;
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin" title="Off: Make Skin leaves this joint out, and the bone leading INTO it gets no capsule (drawn, baked or bound). For pivots like a scapula, a jaw or a twist bone. Its own outgoing bones are unaffected.">Shapes Skin</button>` : ''}`;
 
     const viewBody = buildBoneQuickDisplayHTML(main, style) + `
     <div class="${c.toggles}">
@@ -570,7 +577,7 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
     </div>
     <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
-    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin">Shapes Skin</button>` : ''}
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin" title="Off: Make Skin leaves this joint out, and the bone leading INTO it gets no capsule (drawn, baked or bound). For pivots like a scapula, a jaw or a twist bone. Its own outgoing bones are unaffected.">Shapes Skin</button>` : ''}
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
@@ -699,6 +706,10 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-select-cages" title="Select every weight cage, so they can be hidden, moved or deleted as a set">Select Cages</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-reset-cages" title="Put the selected capsules (all, if none selected) back to what a fresh bake makes from the rig as it is now. Mirror twins go with them.">Reset Capsules</button>
+      <button class="${c.action}" id="bone-delete-cages" title="Delete the selected capsules (all, if none selected). Mirror twins go with them.">Delete Capsules</button>
     </div>` : ''}
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
@@ -864,7 +875,7 @@ export function buildBoneDisplayHTML(main, style, extraChips = '') {
       ${extraChips}
     </div>
     <div class="${c.row}">
-      <span class="${c.lbl}">Sphere Opacity</span>
+      <span class="${c.lbl}">Capsule Opacity</span>
       <input type="range" id="bone-cap-op" min="0" max="100" step="5"
         value="${Math.round(Skeleton.capsuleOpacity() * 100)}">
       <span class="${c.val}" id="bone-cap-op-val">${Math.round(Skeleton.capsuleOpacity() * 100)}</span>
@@ -1425,9 +1436,20 @@ export function wireBoneSection(root, main, opts) {
   // look, judged by watching. Skeleton persists it and rebuilds the batches, so the change lands
   // on the frame you are looking at and survives a reload.
   {
+    // The dedicated Cage Opacity slider (where the panel has one) follows, so it never disagrees.
+    const syncCageSlider = (v) => {
+      const ci = q('cage-op'), cv = q('cage-op-val');
+      const pct = Math.round(Math.max(0.05, v) * 100);
+      if (ci) ci.value = String(pct);
+      if (cv) cv.textContent = pct + '%';
+    };
     const input = q('cap-op'), val = q('cap-op-val');
     input?.addEventListener('input', () => {
       const v = Skeleton.setCapsuleOpacity(main, parseInt(input.value, 10) / 100);
+      // THE BAKED CAPSULES ARE CAPSULES TOO. matt: "if i change sphere or cylinder opacity, that
+      // should change the opacity for all the capsules, both spheres and these converted meshes."
+      WeightCage.setOpacity(main, v);
+      syncCageSlider(v);
       if (val) val.textContent = String(Math.round(v * 100));
       // A cylinder nobody has set follows the spheres, and its slider should say so as it goes.
       const si = q('shaft-op'), sv = q('shaft-op-val');
@@ -1438,6 +1460,8 @@ export function wireBoneSection(root, main, opts) {
     const sIn = q('shaft-op'), sVal = q('shaft-op-val');
     sIn?.addEventListener('input', () => {
       const v = Skeleton.setShaftOpacity(main, parseInt(sIn.value, 10) / 100);
+      WeightCage.setOpacity(main, v);
+      syncCageSlider(v);
       if (sVal) sVal.textContent = String(Math.round(v * 100));
       main.render?.();
     });
@@ -1557,6 +1581,28 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
     refresh();
     say('selected ' + cages.length + ' weight cage' + (cages.length === 1 ? '' : 's'));
+  });
+
+  q('cage-split')?.addEventListener('click', () => {
+    const on = !WeightCage.splitAtJoints();
+    WeightCage.setSplit(on);
+    q('cage-split')?.classList.toggle('active', on);
+    say(`Bones: capsules ${on ? 'split at joints' : 'fully round'} -- applies to the next Bake or Reset Capsules`);
+  });
+
+  // RESET AND DELETE: the selected capsules, or all of them when none are selected.
+  const selectedCages = () => (main.getSelectedMeshes?.() || []).filter((m) => WeightCage.isCage(m));
+  q('reset-cages')?.addEventListener('click', () => {
+    const sel = selectedCages();
+    const res = WeightCage.reset(main, sel);
+    say(res.ok ? `Bones: reset ${res.reset} capsule(s) to the rig's current shape` : `Bones: ${res.why}`, res.ok);
+    refresh();
+  });
+  q('delete-cages')?.addEventListener('click', () => {
+    const sel = selectedCages();
+    const n = WeightCage.deleteSome(main, sel.length ? sel : WeightCage.cages(main));
+    say(n ? `Bones: deleted ${n} capsule(s)` : 'Bones: no weight cages to delete', !!n);
+    rebuild();
   });
 
   // Delta mush strength, in smoothing iterations — the radius, in edges, that the smoothing

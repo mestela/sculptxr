@@ -3,6 +3,7 @@ import SculptGL from './SculptGL.js';
 import { installFontReadyRepaint } from './gui/htmlvr/fontReady.js';
 import { VERSION } from './Version.js';
 import './misc/whyNoPick.js'; // registers window._whyNoPick()
+import './misc/Watchdog.js'; // names the operation a frozen main thread is stuck in
 
 // A CONSOLE AND AN EVAL CHANNEL FOR THE DEVICES THAT HAVE NEITHER -- iPad and Vision Pro, where
 // no debugging protocol reaches us. Static import.meta.env.DEV so the whole thing is tree-shaken

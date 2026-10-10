@@ -2307,7 +2307,19 @@ class Mesh {
     // per frame.
     const tm = this._renderData && this._renderData._threeMesh;
     const mat = tm && tm.material;
-    if (!mat || !mat.userData || !mat.userData.isPhysicalPBR) return;
+    if (!mat || !mat.userData) return;
+    // Every non-PBR mode: crossing 1.0 swaps between the shared material and this mesh's own
+    // (NodeMaterials.getFor); inside the translucent range only the number moves.
+    if (!mat.userData.isPhysicalPBR) {
+      if (mat.userData.sculptShaderId === undefined) return;
+      // Variants are SHARED by opacity step (NodeMaterials.getFor), so the number can never be
+      // moved in place -- that would move every mesh on the same step. Re-query instead; it is a
+      // cache lookup.
+      if (alpha < 1 || mat.userData.sculptOpacityVariant) {
+        tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+      }
+      return;
+    }
     if ((alpha < 1) !== !!mat.transparent) {
       tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
     } else if (alpha < 1) {

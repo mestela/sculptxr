@@ -3099,7 +3099,7 @@ export function buildSectionHTML_rendering(main) {
   const shadowLive  = main.isShadowActive?.() ?? false;
   const isCatcher   = main.getShadowCatcher?.() ?? false;
   const curvature   = mesh?.getCurvature?.() ?? 0;
-  const opacity     = mesh?.getOpacity?.() ?? 1;
+  const opacity     = (sceneMeshes(main)[0] || mesh)?.getOpacity?.() ?? 1;
   const isFlat      = getOptionsURL().flatshading;
   const isWire      = getOptionsURL().wireframe;
   const isSolid     = mesh?._renderData?._threeMesh?.material?.visible ?? true;
@@ -5326,6 +5326,14 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
 }
 
+// THE MESHES A GLOBAL SETTING APPLIES TO: everything that is geometry in the scene, and none of
+// the furniture. Joints, pins and lights are not "meshes" to the person moving a slider, and the
+// weight capsules answer to the capsule opacity slider instead.
+function sceneMeshes(main) {
+  return (main.getMeshes?.() ?? []).filter((m) => !m._isBone && !m._isNull && !m._isLight
+    && !m._isWeightCage && !m._isPinTarget);
+}
+
 export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = fullRepaintFn, sliderDirtyFn = null) {
   const mesh   = main.getMesh?.();
   const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : (mesh ? [mesh] : []);
@@ -5425,8 +5433,12 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   // UP to make the mesh disappear — which is the opposite of every other opacity in the app,
   // including the capsule slider right below it. Now 0 is see-through, 100 is solid, and 100 is
   // where a mesh starts. Curvature moved to Settings.
+  // GLOBAL, NOT THE SELECTION. This acted on whatever was selected, and while rigging the
+  // selection is whatever you last sculpted -- so reaching for the skin's opacity dimmed the
+  // capsule you happened to be holding. matt: "these opacity sliders should be global, not per
+  // selection." Every real mesh; the rig and the weight capsules have their own opacity sliders.
   wireSlider(el.querySelector('#mm-opacity'), el.querySelector('#mm-opacity-val'), (v) => {
-    meshes?.forEach(m => m.setOpacity?.(v / 100)); main.render?.();
+    sceneMeshes(main).forEach(m => m.setOpacity?.(v / 100)); main.render?.();
   }, (v) => `${v}%`, sliderDirtyFn);
 
   el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {

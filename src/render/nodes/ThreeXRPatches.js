@@ -15,6 +15,36 @@
  */
 
 /**
+ * UNIFORM BUFFERS ARE UPDATED IN PLACE, NOT RE-SPECIFIED.
+ *
+ * three's WebGL backend writes a changed uniform buffer with gl.bufferData(), which re-specifies the
+ * buffer's storage; on Chrome's ANGLE-Metal path each call can mean a brand-new GPU buffer. With a rig
+ * in the scene that was measured at ~1,200 bufferData calls a second while the app sat idle, and macOS
+ * logged "PID ... likely leaking IOGPUResource (count=495000)" for the GPU process before it died --
+ * Chrome's GPU process crashed, the page lost its context (viewport blank, "WEBGL CONTEXT LOST"), and
+ * every other app using the GPU went blank with it. The buffer was allocated at its full size when it was
+ * created (createUniformBuffer), so the same bytes can simply be written over it.
+ */
+function installInPlaceUniformUpdate(backend) {
+  const gl = backend.gl;
+  const original = backend.updateBinding.bind(backend);
+  backend.updateBinding = function (binding) {
+    if ((binding.isUniformsGroup || binding.isUniformBuffer) && binding.updateRanges
+        && binding.updateRanges.length === 0 && ArrayBuffer.isView(binding.buffer)) {
+      const data = this.get(binding);
+      const arr = binding.buffer;
+      if (data.bufferGPU && data._sxrBytes === arr.byteLength) {
+        gl.bindBuffer(gl.UNIFORM_BUFFER, data.bufferGPU);
+        gl.bufferSubData(gl.UNIFORM_BUFFER, 0, arr);
+        return;
+      }
+      data._sxrBytes = arr.byteLength;
+    }
+    return original(binding);
+  };
+}
+
+/**
  * BUG A -- UNIFORM BLOCK BINDING POINTS COLLIDE.
  *
  * WebGLBackend.createBindings numbers uniform-block binding points with a counter that runs
@@ -549,6 +579,7 @@ export function applyXRBackendPatches(renderer, WGPU, TSL) {
   // blitting to the XR layer, which visionOS mishandles (see the DirectRenderPipeline note in
   // Scene.js, and tokeru.com/xrblit). Question answered, so the switches are gone.
   if (renderer.backend && renderer.backend.gl) installStableBindingPoints(renderer.backend);
+  if (renderer.backend && renderer.backend.gl && renderer.backend.updateBinding) installInPlaceUniformUpdate(renderer.backend);
   installCameraPositionUpdate(WGPU, TSL);
   installPerEyeLightVector(WGPU, TSL, renderer);
   installNestedRenderGuard(renderer);

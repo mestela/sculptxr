@@ -205,7 +205,36 @@ NodeMaterials.get = function (shaderId) {
 // is drawn, which is then. A glb imported while in a session is the case to watch.
 NodeMaterials.getFor = function (mesh, shaderId) {
   if (!cache) return null;
-  if (!mesh || shaderId !== Enums.Shader.PBR) return NodeMaterials.get(shaderId);
+  if (!mesh) return NodeMaterials.get(shaderId);
+  if (shaderId !== Enums.Shader.PBR) {
+    // EVERY OTHER MODE SHARES ONE MATERIAL, so opacity has nowhere to live: Mesh.setOpacity
+    // moved a number nothing read, and the View menu's Mesh Opacity -- and the capsule opacity
+    // that sits on top of it -- did nothing on any matcap mesh (which is nearly all of them).
+    // matt: "we have a mesh opacity slider in the view menu, but it doesn't work atm."
+    //
+    // SHARED BY OPACITY STEP, NOT BUILT PER MESH. The first cut gave every translucent mesh a
+    // material of its own, which is 26 capsules and a skin or two -- and each material is a pipeline
+    // for the GPU to compile. The GPU log from the session that lost its context ends in ANGLE-Metal's
+    // "Overflowed the metal library cache limit of 64 elements" and then a GPU process segfault.
+    // Opacity is quantised to 5% steps so a rig of capsules at one setting is ONE material, and a
+    // slider drag can only ever make twenty. A mesh at 1.0 goes back to the shared opaque one.
+    const op = mesh.getOpacity ? mesh.getOpacity() : 1;
+    if (!(op < 1)) return NodeMaterials.get(shaderId);
+    const step = Math.max(1, Math.round(op * 20));
+    mapped = mapped || new Map();
+    const okey = 'op|' + shaderId + '|' + step;
+    let own = mapped.get(okey);
+    if (!own) {
+      own = build(shaderId);
+      own.userData.sculptOpacityVariant = true;
+      own.opacity = step / 20;
+      own.transparent = true;
+      // A see-through mesh that still writes depth hides whatever is behind it, which defeats it.
+      own.depthWrite = false;
+      mapped.set(okey, own);
+    }
+    return own;
+  }
   const wantsOwn = (mesh.hasTextureMap && mesh.hasTextureMap())
     || (mesh.getTransmission && mesh.getTransmission() > 0)
     || (mesh.getOpacity && mesh.getOpacity() < 1);

@@ -404,7 +404,29 @@ class SculptManager {
     //
     // Here for the same reason as the two gates below it: start() is the one place every input
     // route passes through, and nothing has begun yet, so there is nothing to undo.
-    const _active = this._main.getMesh && this._main.getMesh();
+    let _active = this._main.getMesh && this._main.getMesh();
+    // A PRESS ON A CAPSULE SELECTS THAT CAPSULE. Sculpting acts on the selection, so with the
+    // skin locked and still selected the press hit the lock gate below and fell through to an
+    // orbit -- "every time I try, I move the camera" -- and with one capsule selected, reaching
+    // the next one along meant going back to the outliner. Only when the selection is a locked
+    // mesh or another capsule, so a plain sculpt on an unlocked skin is never taken over.
+    if (_active && (_active._isWeightCage || _active._selectLocked)
+        && !SELF_TARGETING_TOOLS.has(this._toolIndex) && !this._main._vrSculpting) {
+      const cages = WeightCage.cages(this._main);
+      const picking = this._main.getPicking && this._main.getPicking();
+      if (cages.length && picking && picking.intersectionMouseMeshes(cages)) {
+        const hit = picking.getMesh();
+        if (hit && hit._isWeightCage && hit !== _active) {
+          this._main.setMesh(hit);
+          _active = hit;
+        }
+      }
+    }
+    // A CENTRELINE CAPSULE MIRRORS ABOUT THE WORLD PLANE, whatever way its bone happens to face -- see
+    // WeightCage.alignSymmetryPlane. Capsules with a twin on the other side are mirrored onto it at stroke end.
+    if (this._symmetry && _active && WeightCage.isCage(_active) && _active._cageMirror && _active._cageMirror.self) {
+      WeightCage.alignSymmetryPlane(_active);
+    }
     if (_active && _active._selectLocked && !SELF_TARGETING_TOOLS.has(this._toolIndex)) {
       // SAID OUT LOUD. A tool that quietly does nothing reads as a broken tool -- the whole
       // reason the lock was confusing in the first place was that it never announced itself.

@@ -136,7 +136,11 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, s
 
   lengthSegs = Math.max(2, lengthSegs || 2);
   const verts = [];
-  const push = (p) => { verts.push(p.x, p.y, p.z); return verts.length / 3 - 1; };
+  // Which end each vertex belongs to while the rows are laid out: 0 = A's cap and ring, 1 = B's, -1 = the
+  // tube. The reshape below pins an end's vertices to that end's scale (see there).
+  const endOf = [];
+  let curEnd = -1;
+  const push = (p) => { verts.push(p.x, p.y, p.z); endOf.push(curEnd); return verts.length / 3 - 1; };
   const _p = new THREE.Vector3();
 
   // ROWS FROM POLE TO POLE, built as an explicit list rather than an index puzzle.
@@ -165,19 +169,29 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, s
     rows.push({ ids: ids, pole: false });
   };
 
+  // A FLAT END, when the caller asks for one (see endCuts): the cap's rows keep their radii but stand at
+  // the end ring's own height, so the hemisphere becomes a disc of concentric rings. Done HERE, before
+  // the per-axis reshape below, because that reshape stretches every vertex by world-axis extents --
+  // the disc and the end ring go through the same linear map and so stay coplanar, which is not true of
+  // a cut made afterwards on the finished shape (it leaves slivers off the end ring, whose normals then
+  // turn the inside/outside test inside out).
+  const flatA = !!(shape && shape.flatA), flatB = !!(shape && shape.flatB);
   // Cap A: pole round to the ring sitting on A.
+  curEnd = 0;
   for (let i = 0; i <= rings; i++) {
     const ang = (Math.PI / 2) * (1 - i / rings);
-    addRow(A.clone().addScaledVector(axis, -Math.sin(ang) * r), Math.cos(ang) * r);
+    addRow(A.clone().addScaledVector(axis, flatA ? 0 : -Math.sin(ang) * r), Math.cos(ang) * r);
   }
+  curEnd = -1;
   // The tube, divided along its length. i starts at 1 because the ring at A is already there.
   for (let i = 1; i < lengthSegs; i++) {
     addRow(A.clone().addScaledVector(axis, (len * i) / lengthSegs), r);
   }
   // Cap B: the ring on B, round to the pole.
+  curEnd = 1;
   for (let i = 0; i <= rings; i++) {
     const ang = (Math.PI / 2) * (i / rings);
-    addRow(B.clone().addScaledVector(axis, Math.sin(ang) * r), Math.cos(ang) * r);
+    addRow(B.clone().addScaledVector(axis, flatB ? 0 : Math.sin(ang) * r), Math.cos(ang) * r);
   }
 
   const faces = [];
@@ -238,7 +252,11 @@ function capsuleGeometry(ax, ay, az, bx, by, bz, r, radial, rings, lengthSegs, s
       verts[i + 2] = _c.z + _o.z;
     }
   }
-  return { verts: new Float32Array(verts), faces: new Uint32Array(faces) };
+  // The vertex ids of each end's cap and ring, so a caller can move an end as a group (see tiltEnd).
+  const endA = [], endB = [];
+  for (let i = 0; i < endOf.length; i++) { if (endOf[i] === 0) endA.push(i); else if (endOf[i] === 1) endB.push(i); }
+  return { verts: new Float32Array(verts), faces: new Uint32Array(faces), endA: endA, endB: endB,
+           lengthSegs: lengthSegs, len: len };
 }
 
 WeightCage.capsuleGeometry = capsuleGeometry;
@@ -318,10 +336,40 @@ WeightCage.prepare = function (cage, skinInvModel, jointIndex) {
   // Recorded once per cage here rather than tested per vertex: this runs once per cage per bind
   // and the sign is a property of the transform, not of the point.
   const flip = m.determinant() < 0 ? -1 : 1;
-  return { joint: jointIndex, verts: out, faces: faces, bb: bb, mesh: cage, flip: flip };
+  // ANGLE-WEIGHTED VERTEX NORMALS, for the inside/outside test (see signedDistance). The sign used to
+  // come from the nearest triangle's own normal, which is right on a smooth capsule and wrong at a sharp
+  // rim: when the nearest point is a rim VERTEX, "the nearest triangle" is whichever adjacent face was
+  // tested first, and a query out beside the cut face has the wrong sign against it. The normal that is
+  // right for every query whose nearest point is a vertex is the sum of the adjacent faces' normals,
+  // each weighted by the angle it makes there.
+  const vn = new Float32Array(n * 3);
+  const addTri = (a, b, c) => {
+    const ax = out[a * 3], ay = out[a * 3 + 1], az = out[a * 3 + 2];
+    const bx = out[b * 3], by = out[b * 3 + 1], bz = out[b * 3 + 2];
+    const cx = out[c * 3], cy = out[c * 3 + 1], cz = out[c * 3 + 2];
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az, e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+    let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    const nl = Math.hypot(nx, ny, nz);
+    if (nl < 1e-12) return;
+    nx /= nl; ny /= nl; nz /= nl;
+    const corner = (i, ux, uy, uz, wx, wy, wz) => {
+      const lu = Math.hypot(ux, uy, uz), lw = Math.hypot(wx, wy, wz);
+      if (lu < 1e-12 || lw < 1e-12) return;
+      const ang = Math.acos(Math.max(-1, Math.min(1, (ux * wx + uy * wy + uz * wz) / (lu * lw))));
+      vn[i * 3] += nx * ang; vn[i * 3 + 1] += ny * ang; vn[i * 3 + 2] += nz * ang;
+    };
+    corner(a, e1x, e1y, e1z, e2x, e2y, e2z);
+    corner(b, ax - bx, ay - by, az - bz, cx - bx, cy - by, cz - bz);
+    corner(c, ax - cx, ay - cy, az - cz, bx - cx, by - cy, bz - cz);
+  };
+  for (let t = 0; t + 3 < faces.length; t += 4) {
+    addTri(faces[t], faces[t + 1], faces[t + 2]);
+    if (faces[t + 3] !== Utils.TRI_INDEX) addTri(faces[t], faces[t + 2], faces[t + 3]);
+  }
+  return { joint: jointIndex, verts: out, faces: faces, bb: bb, mesh: cage, flip: flip, vn: vn };
 };
 
-const _cp = [0, 0, 0];
+const _cp = [0, 0, 0], _bcp = [0, 0, 0];
 const _v1 = [0, 0, 0], _v2 = [0, 0, 0], _v3 = [0, 0, 0], _pt = [0, 0, 0];
 
 // SIGNED distance from a point to a cage, negative inside.
@@ -340,35 +388,100 @@ WeightCage.signedDistance = function (c, px, py, pz, slack) {
    || px > bb[3] + slack || py > bb[4] + slack || pz > bb[5] + slack) return Infinity;
 
   const f = c.faces, v = c.verts;
-  let best = Infinity, bestSign = 1;
+  let best = Infinity;
+  let b1 = 0, b2 = 0, b3 = 0;
   _pt[0] = px; _pt[1] = py; _pt[2] = pz;
   // ivec4 per face: a quad is measured as its two triangles, a triangle has TRI_INDEX in the
   // fourth slot and is measured once.
   for (let t = 0; t + 3 < f.length; t += 4) {
     const quad = f[t + 3] !== Utils.TRI_INDEX;
     for (let half = 0; half < (quad ? 2 : 1); half++) {
-    const i1 = f[t] * 3;
-    const i2 = (half === 0 ? f[t + 1] : f[t + 2]) * 3;
-    const i3 = (half === 0 ? f[t + 2] : f[t + 3]) * 3;
+    const k1 = f[t];
+    const k2 = half === 0 ? f[t + 1] : f[t + 2];
+    const k3 = half === 0 ? f[t + 2] : f[t + 3];
+    const i1 = k1 * 3, i2 = k2 * 3, i3 = k3 * 3;
     _v1[0] = v[i1]; _v1[1] = v[i1 + 1]; _v1[2] = v[i1 + 2];
     _v2[0] = v[i2]; _v2[1] = v[i2 + 1]; _v2[2] = v[i2 + 2];
     _v3[0] = v[i3]; _v3[1] = v[i3 + 1]; _v3[2] = v[i3 + 2];
     const d2 = Geometry.distance2PointTriangle(_pt, _v1, _v2, _v3, _cp);
     if (d2 >= best) continue;
-    best = d2;
-    // Which side: the face normal against the vector from the surface to the point.
-    const ex = _v2[0] - _v1[0], ey = _v2[1] - _v1[1], ez = _v2[2] - _v1[2];
-    const fx = _v3[0] - _v1[0], fy = _v3[1] - _v1[1], fz = _v3[2] - _v1[2];
-    const nx = ey * fz - ez * fy, ny = ez * fx - ex * fz, nz = ex * fy - ey * fx;
-    const dot = nx * (px - _cp[0]) + ny * (py - _cp[1]) + nz * (pz - _cp[2]);
-    bestSign = dot < 0 ? -1 : 1;
+    best = d2; b1 = k1; b2 = k2; b3 = k3;
+    // Kept: _cp is overwritten by every later triangle, and the sign is decided after the loop.
+    _bcp[0] = _cp[0]; _bcp[1] = _cp[1]; _bcp[2] = _cp[2];
     }
+  }
+  let bestSign = 1;
+  if (isFinite(best)) {
+    // WHICH SIDE: the surface normal AT THE CLOSEST POINT against the vector from it to the query. That
+    // normal is the vertex normals blended by the closest point's barycentric weights -- on a flat
+    // interior it is the face normal; on a rim or at a vertex it is the correct pseudo-normal, which a
+    // single face's normal is not.
+    const i1 = b1 * 3, i2 = b2 * 3, i3 = b3 * 3;
+    const ax = v[i1], ay = v[i1 + 1], az = v[i1 + 2];
+    const e1x = v[i2] - ax, e1y = v[i2 + 1] - ay, e1z = v[i2 + 2] - az;
+    const e2x = v[i3] - ax, e2y = v[i3 + 1] - ay, e2z = v[i3 + 2] - az;
+    const wx = _bcp[0] - ax, wy = _bcp[1] - ay, wz = _bcp[2] - az;
+    const d00 = e1x * e1x + e1y * e1y + e1z * e1z, d01 = e1x * e2x + e1y * e2y + e1z * e2z;
+    const d11 = e2x * e2x + e2y * e2y + e2z * e2z;
+    const d20 = wx * e1x + wy * e1y + wz * e1z, d21 = wx * e2x + wy * e2y + wz * e2z;
+    const den = d00 * d11 - d01 * d01;
+    const vn = c.vn;
+    let nx, ny, nz;
+    if (vn && Math.abs(den) > 1e-12) {
+      const w1 = (d11 * d20 - d01 * d21) / den, w2 = (d00 * d21 - d01 * d20) / den, w0 = 1 - w1 - w2;
+      nx = w0 * vn[i1] + w1 * vn[i2] + w2 * vn[i3];
+      ny = w0 * vn[i1 + 1] + w1 * vn[i2 + 1] + w2 * vn[i3 + 1];
+      nz = w0 * vn[i1 + 2] + w1 * vn[i2 + 2] + w2 * vn[i3 + 2];
+    } else {
+      nx = e1y * e2z - e1z * e2y; ny = e1z * e2x - e1x * e2z; nz = e1x * e2y - e1y * e2x;
+    }
+    const dot = nx * (px - _bcp[0]) + ny * (py - _bcp[1]) + nz * (pz - _bcp[2]);
+    bestSign = dot < 0 ? -1 : 1;
   }
   if (!isFinite(best)) return Infinity;
   // The handedness correction goes HERE and not on the Infinity above: that is a broadphase
   // miss, and -Infinity would read as the deepest inside of anything rather than as a skip.
   return bestSign * (c.flip || 1) * Math.sqrt(best);
 };
+
+// THE WINNING CAGE FOR ONE POINT, without testing all of them. Every cage used to be measured against
+// every vertex (the broadphase "slack" was the biggest cage's diagonal, which reaches nearly everything),
+// so a weight re-solve cost vertices x cages x triangles -- seconds per stroke on a full rig. The cheap
+// fact that saves it: a point OUTSIDE a cage's bounding box is at least the box distance from it, so once
+// a better distance is in hand that cage cannot win and is skipped unmeasured. A point INSIDE a box can
+// still be deeper inside than anything found, so those are always measured. Cages are visited nearest
+// box first, which finds the winner on the first or second test.
+let _nlb = new Float64Array(256), _nord = new Int32Array(256);
+// `slack` keeps the old reach: a cage further than that from the point is not a candidate, so a vertex far
+// from every cage still ends up unowned exactly as before.
+function nearestCage(cages, px, py, pz, slack, res) {
+  const n = cages.length;
+  if (n > _nlb.length) { _nlb = new Float64Array(n * 2); _nord = new Int32Array(n * 2); }
+  for (let c = 0; c < n; c++) {
+    const bb = cages[c].bb;
+    const dx = Math.max(bb[0] - px, 0, px - bb[3]);
+    const dy = Math.max(bb[1] - py, 0, py - bb[4]);
+    const dz = Math.max(bb[2] - pz, 0, pz - bb[5]);
+    _nlb[c] = (dx === 0 && dy === 0 && dz === 0) ? -Infinity : Math.hypot(dx, dy, dz);
+    _nord[c] = c;
+  }
+  // Insertion sort by box distance: n is a few dozen and the order is nearly settled for neighbours.
+  for (let i = 1; i < n; i++) {
+    const o = _nord[i], k = _nlb[o];
+    let j = i - 1;
+    while (j >= 0 && _nlb[_nord[j]] > k) { _nord[j + 1] = _nord[j]; j--; }
+    _nord[j + 1] = o;
+  }
+  let bestD = Infinity, bestC = -1;
+  for (let i = 0; i < n; i++) {
+    const c = _nord[i];
+    if (_nlb[c] >= bestD || _nlb[c] > slack) break;   // sorted, so nothing after this can win either
+    const d = WeightCage.signedDistance(cages[c], px, py, pz, 1e30);
+    if (d < bestD) { bestD = d; bestC = c; }
+  }
+  res.c = bestC; res.d = bestD;
+}
+const _nres = { c: -1, d: Infinity };
 
 // ONE BONE PER VERTEX, ranked by signed distance: inside beats outside, deepest inside wins,
 // and a vertex outside every cage falls to the nearest surface. `outside` counts the vertices
@@ -384,11 +497,8 @@ WeightCage.weights = function (verts, nbV, cages, maxInfluences, slack) {
   let outside = 0;
   for (let i = 0; i < nbV; i++) {
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
-    let bestJoint = -1, bestD = Infinity;
-    for (let c = 0; c < cages.length; c++) {
-      const d = WeightCage.signedDistance(cages[c], px, py, pz, slack);
-      if (d < bestD) { bestD = d; bestJoint = cages[c].joint; }
-    }
+    nearestCage(cages, px, py, pz, slack, _nres);
+    const bestJoint = _nres.c < 0 ? -1 : cages[_nres.c].joint, bestD = _nres.d;
     if (bestJoint < 0) continue;
     if (bestD > 0) outside++;
     idx[i * maxInfluences] = bestJoint;
@@ -453,11 +563,8 @@ WeightCage.weightsPartial = function (verts, cages, maxInfluences, slack, candid
   for (let n = 0; n < candidates.length; n++) {
     const i = candidates[n];
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
-    let bestJoint = -1, bestD = Infinity;
-    for (let c = 0; c < cages.length; c++) {
-      const d = WeightCage.signedDistance(cages[c], px, py, pz, slack);
-      if (d < bestD) { bestD = d; bestJoint = cages[c].joint; }
-    }
+    nearestCage(cages, px, py, pz, slack, _nres);
+    const bestJoint = _nres.c < 0 ? -1 : cages[_nres.c].joint, bestD = _nres.d;
     // A candidate that reaches no cage at all keeps whatever it had: dropping it would UNWEIGHT
     // a vertex on the strength of a broadphase miss.
     if (bestJoint < 0) continue;
@@ -496,7 +603,8 @@ function makeCage(main, geo, owner, namedAfter, prefix) {
   // keeps colour, and it means sculpting the cage keeps it, since new vertices inherit from
   // their neighbours.
   // sRGB components -- this paints SculptGL vertex colours. See Skeleton.boneColorSRGB.
-  const col = Skeleton.boneColorSRGB(main, owner);
+  // The capsule's own colour: the owner's hue, stepped by which of its branches this bone is.
+  const col = Skeleton.capsuleColorSRGB(main, namedAfter);
   const cAr = base.getColors();
   if (cAr) {
     for (let ci = 0; ci < cAr.length; ci += 3) {
@@ -518,6 +626,9 @@ function makeCage(main, geo, owner, namedAfter, prefix) {
   // WHICH BONE THIS SPEAKS FOR. By joint ID rather than index: the joint list is rebuilt on
   // every call and an index would point at a different bone the moment one is added or split.
   cage._cageJointId = owner.getID();
+  // THE BONE IT WAS BUILT FOR, which is not `_cageJointId`: that is the joint it hangs from, shared by
+  // every child bone of that joint. Reset needs the bone to rebuild from.
+  cage._cageBoneId = namedAfter.getID();
   cage._permanentStaticLabel = prefix + (namedAfter._permanentStaticLabel || namedAfter.getID());
   // SILENT: a bake makes twenty of these and it is ONE action. addNewMesh would push a state
   // per cage, so undoing a bake meant undoing each capsule in turn — matt: "if i bake capsules,
@@ -530,6 +641,182 @@ function makeCage(main, geo, owner, namedAfter, prefix) {
   return cage;
 }
 
+// ── SPLIT AT THE JOINTS ─────────────────────────────────────────────────────────────────
+//
+// Every capsule ends in a sphere on its joint, and a joint is shared: the thigh's end and the shin's
+// start are the same ball at the knee, so the two cages overlap almost completely there -- and a big
+// belly radius on the spine overlaps everything it touches. Overlapping shapes cannot be pulled apart
+// by sculpting, because whichever you grab, the other is still sitting in the same place. matt:
+// "could we try generating capsule meshes that don't intersect where possible? so they essentially be
+// split at the equator of the joint sphere?"
+//
+// So each end is CLIPPED by a plane through its joint, and everything beyond it is flattened onto it:
+//   - a joint with ONE bone continuing from it (a knee): a flat cut on the plane that bisects the bend;
+//   - a BRANCH (hips, neck): a flat cut square to each bone's own axis;
+//   - a LEAF, or the root end of a chain with nothing across from it, keeps its round cap.
+// See endCuts for the details and for why it is built into the capsule rather than applied to it.
+// The topology is untouched (vertices are only moved), so mirror pairing, reset and sculpting all see
+// the same mesh. A point beyond the plane is carried along the bone's axis onto it, which a flat disc
+// of concentric rings is exactly what the flattened hemisphere becomes -- no folded surface.
+// Off with `WeightCage.setSplit(false)` for the old fully-round capsules.
+WeightCage.splitAtJoints = function () {
+  const live = window._cageSplit;
+  if (typeof live === 'boolean') return live;
+  const saved = getOptionsURL().cageSplit;
+  return typeof saved === 'boolean' ? saved : true;
+};
+WeightCage.setSplit = function (on) {
+  window._cageSplit = !!on;
+  try { getOptionsURL.saveOption('cageSplit', !!on, 0); } catch (_) {}
+  return !!on;
+};
+
+// Slide one end's vertices (its cap and ring, ALL of them -- both sides of the plane) onto the plane
+// through `o` with outward normal `n`, along the bone's outward axis `u`. Done on the finished shape in
+// model space, so the plane is exactly the one asked for and the capsule on the far side of the joint,
+// doing the same with the same plane, meets it. An end that starts flat and square stays a clean disc:
+// every vertex of it moves onto one plane, and nothing is left on the wrong side of it to fold. Skipped
+// when the cut is so slanted, or the bone so short, that an end would slide past `limit` (the next row
+// of the tube) -- the square cut it already has is the fallback.
+const _teV = new THREE.Vector3();
+function tiltEnd(verts, ids, o, n, u, limit) {
+  const nu = n.dot(u);
+  if (nu < 0.25) return;
+  let worst = 0;
+  const move = new Array(ids.length);
+  for (let k = 0; k < ids.length; k++) {
+    const i = ids[k] * 3;
+    const sd = n.x * (verts[i] - o.x) + n.y * (verts[i + 1] - o.y) + n.z * (verts[i + 2] - o.z);
+    move[k] = -sd / nu;
+    if (Math.abs(move[k]) > worst) worst = Math.abs(move[k]);
+  }
+  if (worst > limit) return;
+  for (let k = 0; k < ids.length; k++) {
+    const i = ids[k] * 3;
+    verts[i] += u.x * move[k]; verts[i + 1] += u.y * move[k]; verts[i + 2] += u.z * move[k];
+  }
+}
+
+// THE PLANE AT A JOINT, shared by the capsule arriving at it and the one leaving: the bone [pp -> jp]
+// arrives at jp, the bone [jp -> jq] leaves. Both capsules compute it from the same inputs, so they get
+// the same plane and meet along it.
+//
+// Ideal: the plane that bisects the bend, i.e. tilted half the bend angle from each bone. But a tilted
+// cut slides the end ring along its axis by (radius x tan tilt), and it must not reach the next ring of
+// the tube or a short, fat bone folds over itself -- so each bone allows a maximum tilt, and the plane
+// is the nearest one to the bisector that stays inside both limits. Where the two cannot both be met it
+// is shared out in proportion, which keeps the plane common at the price of one bone running a little
+// over its margin (the margin is 0.8 of the fold point).
+function boneExtent(j) {
+  const p = j._parentMesh, cr = j._boneRadius || 0;
+  const hA = Skeleton.jointHalf(p, cr, [0, 0, 0]), hB = Skeleton.jointHalf(j, cr, [0, 0, 0]);
+  return Math.max(hA[0], hA[1], hA[2], hB[0], hB[1], hB[2]);
+}
+function jointPlane(jp, jq) {
+  const J = Skeleton.jointCentre(jp, new THREE.Vector3());
+  const A = Skeleton.jointCentre(jp._parentMesh, new THREE.Vector3());
+  const C = Skeleton.jointCentre(jq, new THREE.Vector3());
+  const lenP = A.distanceTo(J), lenQ = J.distanceTo(C);
+  const dP = J.clone().sub(A).normalize(), dQ = C.clone().sub(J).normalize();
+  const cosB = Math.max(-1, Math.min(1, dP.dot(dQ)));
+  const beta = Math.acos(cosB);
+  if (beta < 1e-4 || beta > Math.PI - 1e-3) return dP.clone();
+  const limitOf = (len, ext) => Math.atan(0.8 * (len / 2) / Math.max(ext, 1e-9));
+  const aP = limitOf(lenP, boneExtent(jp)), aQ = limitOf(lenQ, boneExtent(jq));
+  // theta = the plane's tilt from the arriving bone; the leaving bone sees beta - theta.
+  let theta = beta / 2;
+  const lo = beta - aQ, hi = aP;
+  if (lo <= hi) theta = Math.max(lo, Math.min(hi, theta));
+  else theta = beta * aP / (aP + aQ);
+  const sb = Math.sin(beta);
+  return dP.clone().multiplyScalar(Math.sin(beta - theta) / sb)
+    .addScaledVector(dQ, Math.sin(theta) / sb).normalize();
+}
+
+// THE CUT AT EACH END of the bone [p -> j]: {cutA, cutB}, each an outward plane normal or null (round).
+//   a joint with ONE bone continuing from it (a knee): the shared bisecting plane (jointPlane);
+//   a BRANCH (hips, neck: several bones leave it): square to this bone's own axis -- a bisector means
+//     nothing with three bones there, and this removes the backward bulge of each;
+//   a LEAF, or the root end of a lone chain: round.
+// (An earlier version cut AFTER the capsule was built and folded the rim at a slant. These are laid out
+// inside capsuleGeometry, before its per-axis reshape.)
+function endCuts(main, p, j, a, b) {
+  const joints = Skeleton.joints(main);
+  const kidsOf = (x) => joints.filter((k) => k._parentMesh === x && Skeleton.boneHasCapsule(k));
+  const d = new THREE.Vector3().subVectors(b, a).normalize();
+  const out = { cutA: null, cutB: null };
+  const kids = kidsOf(j);
+  if (kids.length === 1) out.cutB = jointPlane(j, kids[0]);
+  else if (kids.length > 1) out.cutB = d.clone();
+  const sibs = kidsOf(p);
+  if (sibs.length === 1 && Skeleton.boneHasCapsule(p)) out.cutA = jointPlane(p, j).negate();
+  else if (sibs.length > 1) out.cutA = d.clone().negate();
+  return out;
+}
+
+// ONE CAGE, from the shape the joint's capsule has RIGHT NOW. Shared by the bake and by reset, so a
+// reset can only ever produce what a fresh bake would. Null where no capsule is drawn.
+const CAGE_RADIAL = 10, CAGE_RINGS = 3, CAGE_LENGTH_SEGS = 2;
+function buildCage(main, j) {
+  const RADIAL = CAGE_RADIAL, RINGS = CAGE_RINGS, LENGTH_SEGS = CAGE_LENGTH_SEGS;
+  const _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _v = new THREE.Vector3();
+  const _hA = [0, 0, 0], _hB = [0, 0, 0];
+  const p = j._parentMesh;
+  if (!Skeleton.isJoint(p)) return null;            // a root has no bone above it
+  // THE SAME GATE THE DRAW USES, so a cage exists exactly where a capsule is drawn.
+  const cr = j._boneRadius || 0;
+  if (!Skeleton.boneHasCapsule(j)) return null;
+
+  // ── BUILT FROM THE SHAPE YOU TWEAKED, NOT FROM THE RAW BONE ──────────────────────
+  //
+  // matt: "the 'make capsule meshes' doesn't take into account the most recent tweak bones
+  // edits." It took a single radius straight off `_boneRadius` and ran it from the parent's
+  // ORIGIN to the child's, so everything Tweak Joint exists to author was discarded: the
+  // per-joint radius override, the width/height/depth scale that makes a joint an ellipsoid,
+  // and the offset a face drag uses to move a joint's shape off the joint itself. A rig that
+  // had been shaped for an hour baked as a row of plain uniform tubes.
+  //
+  // These are the same two calls the capsule draw makes -- jointHalf is described in Skeleton
+  // as "one definition, used by the draw, the skin and the handles, so they cannot disagree
+  // about how big a joint is", and this was the one place that disagreed. jointCentre is the
+  // offset-aware position, which is why the drawn capsule already spans the shapes rather
+  // than the joints.
+  const hA = Skeleton.jointHalf(p, cr, _hA);
+  const hB = Skeleton.jointHalf(j, cr, _hB);
+  Skeleton.jointCentre(p, _a);
+  Skeleton.jointCentre(j, _b);
+
+  // IN MODEL SPACE FIRST, THEN INTO THE PARENT'S FRAME -- and that order is forced, not a
+  // preference. The extents above are WORLD-AXIS ALIGNED, so they can only be applied in the
+  // space they were measured in; a rotated parent's local axes are not those axes, and there
+  // is no way to carry a non-uniform scale through a rotation. So the capsule is shaped
+  // where the numbers mean something and the finished vertices are mapped afterwards.
+  const cuts = WeightCage.splitAtJoints() ? endCuts(main, p, j, _a, _b) : null;
+  const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 1,
+                              RADIAL, RINGS, LENGTH_SEGS, { hA: hA, hB: hB,
+                                qA: Skeleton.jointRotIsSet(p) ? Skeleton.jointQuat(p) : null,
+                                qB: Skeleton.jointRotIsSet(j) ? Skeleton.jointQuat(j) : null,
+                                flatA: !!(cuts && cuts.cutA), flatB: !!(cuts && cuts.cutB) });
+  if (!geo) return null;
+  if (cuts) {
+    const d = _v.subVectors(_b, _a).normalize().clone();
+    if (cuts.cutB) tiltEnd(geo.verts, geo.endB, _b, cuts.cutB, d, 0.8 * geo.len / geo.lengthSegs);
+    if (cuts.cutA) tiltEnd(geo.verts, geo.endA, _a, cuts.cutA, d.clone().negate(), 0.8 * geo.len / geo.lengthSegs);
+  }
+  // Parented to the parent joint, so the cage's own transform starts as identity and stays
+  // legible when it is moved by hand later.
+  _mP.fromArray(p.getModelSpaceMatrix());
+  _mInv.copy(_mP).invert();
+  for (let vi = 0; vi < geo.verts.length; vi += 3) {
+    _v.set(geo.verts[vi], geo.verts[vi + 1], geo.verts[vi + 2]).applyMatrix4(_mInv);
+    geo.verts[vi] = _v.x; geo.verts[vi + 1] = _v.y; geo.verts[vi + 2] = _v.z;
+  }
+
+  const cage = makeCage(main, geo, p, j, 'cage_');
+  return cage;
+}
+
 WeightCage.bake = function (main) {
   const joints = Skeleton.joints(main);
   if (!joints.length) return { ok: false, why: 'no skeleton to bake from' };
@@ -537,60 +824,10 @@ WeightCage.bake = function (main) {
   const existing = WeightCage.cages(main);
   if (existing.length) return { ok: false, why: 'cages already exist — delete them first' };
 
-  // LENGTH_SEGS 2 puts an edge loop at the middle of every bone, which is the least that
-  // makes a capsule shapeable; more is more to sculpt and more for the bind to walk.
-  const RADIAL = 10, RINGS = 3, LENGTH_SEGS = 2;
   const made = [];
-  const _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
-  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _v = new THREE.Vector3();
-  const _hA = [0, 0, 0], _hB = [0, 0, 0];
 
   for (const j of joints) {
-    const p = j._parentMesh;
-    if (!Skeleton.isJoint(p)) continue;            // a root has no bone above it
-    // THE SAME GATE THE DRAW USES, so a cage exists exactly where a capsule is drawn.
-    const cr = j._boneRadius || 0;
-    if (!(cr > 1e-9)) continue;
-
-    // ── BUILT FROM THE SHAPE YOU TWEAKED, NOT FROM THE RAW BONE ──────────────────────
-    //
-    // matt: "the 'make capsule meshes' doesn't take into account the most recent tweak bones
-    // edits." It took a single radius straight off `_boneRadius` and ran it from the parent's
-    // ORIGIN to the child's, so everything Tweak Joint exists to author was discarded: the
-    // per-joint radius override, the width/height/depth scale that makes a joint an ellipsoid,
-    // and the offset a face drag uses to move a joint's shape off the joint itself. A rig that
-    // had been shaped for an hour baked as a row of plain uniform tubes.
-    //
-    // These are the same two calls the capsule draw makes -- jointHalf is described in Skeleton
-    // as "one definition, used by the draw, the skin and the handles, so they cannot disagree
-    // about how big a joint is", and this was the one place that disagreed. jointCentre is the
-    // offset-aware position, which is why the drawn capsule already spans the shapes rather
-    // than the joints.
-    const hA = Skeleton.jointHalf(p, cr, _hA);
-    const hB = Skeleton.jointHalf(j, cr, _hB);
-    Skeleton.jointCentre(p, _a);
-    Skeleton.jointCentre(j, _b);
-
-    // IN MODEL SPACE FIRST, THEN INTO THE PARENT'S FRAME -- and that order is forced, not a
-    // preference. The extents above are WORLD-AXIS ALIGNED, so they can only be applied in the
-    // space they were measured in; a rotated parent's local axes are not those axes, and there
-    // is no way to carry a non-uniform scale through a rotation. So the capsule is shaped
-    // where the numbers mean something and the finished vertices are mapped afterwards.
-    const geo = capsuleGeometry(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 1,
-                                RADIAL, RINGS, LENGTH_SEGS, { hA: hA, hB: hB,
-                                  qA: Skeleton.jointRotIsSet(p) ? Skeleton.jointQuat(p) : null,
-                                  qB: Skeleton.jointRotIsSet(j) ? Skeleton.jointQuat(j) : null });
-    if (!geo) continue;
-    // Parented to the parent joint, so the cage's own transform starts as identity and stays
-    // legible when it is moved by hand later.
-    _mP.fromArray(p.getModelSpaceMatrix());
-    _mInv.copy(_mP).invert();
-    for (let vi = 0; vi < geo.verts.length; vi += 3) {
-      _v.set(geo.verts[vi], geo.verts[vi + 1], geo.verts[vi + 2]).applyMatrix4(_mInv);
-      geo.verts[vi] = _v.x; geo.verts[vi + 1] = _v.y; geo.verts[vi + 2] = _v.z;
-    }
-
-    const cage = makeCage(main, geo, p, j, 'cage_');
+    const cage = buildCage(main, j);
     if (cage) made.push(cage);
   }
 
@@ -602,7 +839,7 @@ WeightCage.bake = function (main) {
   const owners = made.map((c) => ({ cage: c, owner: c._parentMesh }));
   main.getStateManager?.()?.pushStateCustom?.(
     () => {
-      for (const o of owners) main.removeMeshSilent(o.cage);
+      for (const o of owners) dropCage(main, o.cage);
       Skeleton.updateVisuals(main); main.render?.();
     },
     () => {
@@ -762,9 +999,13 @@ function localVerts(cage) {
 
 // Pair every cage with its twin, once, while they are still the shapes the generator made.
 // Stored on the SOURCE cage, both directions, so either side can be the one you sculpt.
-WeightCage.pairMirrors = function (main) {
+WeightCage.pairMirrors = function (main, only) {
   const plane = Skeleton.rigMirrorPlane(main);
-  const cages = WeightCage.cages(main);
+  const allCages = WeightCage.cages(main);
+  // `only`: pair just these (a reset), leaving every other cage's pairing -- and the sculpt it was
+  // matched against -- alone. Re-pairing a sculpted twin against its neighbour would fail the
+  // quality bar and quietly turn its symmetry off.
+  const cages = only ? allCages.filter((c) => only.includes(c)) : allCages;
   for (const c of cages) { c._cageMirror = null; }
   // WHETHER THIS WAS A REAL ATTEMPT. With symmetry off there is no plane, so nothing below
   // runs and every cage comes back unpaired -- which is not the same statement as "these shapes
@@ -774,15 +1015,19 @@ WeightCage.pairMirrors = function (main) {
   if (!plane) return { paired: 0, unpaired: cages.length };
 
   const joints = Skeleton.joints(main);
-  const byJoint = new Map();
-  for (const c of cages) byJoint.set(c._cageJointId, c);
+  // BY BONE, NOT BY THE JOINT IT HANGS FROM. `_cageJointId` is the joint a cage is parented to, and a
+  // branching joint has one cage per child -- the hips of a biped has three (spine and both hip
+  // stubs). Keyed by that joint the map held only the last of them, every centreline owner "mirrored
+  // onto itself", and the two thigh stubs failed the quality bar and lost their symmetry.
+  const byBone = new Map();
+  for (const c of allCages) { const b = boneOf(c, joints); if (b) byBone.set(b.getID(), c); }
   let paired = 0, unpaired = 0;
 
   for (const c of cages) {
-    const joint = joints.find((j) => j.getID() === c._cageJointId);
-    if (!joint) { unpaired++; continue; }
-    const twinJoint = joint._boneMirror || joint;          // centreline: mirrors onto itself
-    const twin = twinJoint === joint ? c : byJoint.get(twinJoint.getID());
+    const bone = boneOf(c, joints);
+    if (!bone) { unpaired++; continue; }
+    const twinBone = bone._boneMirror || bone;             // centreline: mirrors onto itself
+    const twin = twinBone === bone ? c : byBone.get(twinBone.getID());
     const a = localVerts(c), b = twin ? localVerts(twin) : null;
     if (!twin || !a || !b || a.nb !== b.nb) { unpaired++; continue; }
 
@@ -792,7 +1037,7 @@ WeightCage.pairMirrors = function (main) {
     // exactly mirrored, and a nearest-neighbour map across a bad pair collapses several source
     // vertices onto one target -- which is precisely what "going crazy" looks like. A tenth of
     // the capsule's own radius is a generous bar for two shapes that should be identical.
-    const r = joint._boneRadius || 0;
+    const r = bone._boneRadius || 0;
     if (r > 0 && mm.worst > r * 0.1) { unpaired++; continue; }
     c._cageMirror = { toId: twin.getID(), M: M, map: mm.map, nb: a.nb, self: twin === c };
     paired++;
@@ -870,12 +1115,162 @@ WeightCage.mirrorEdit = function (main, cage) {
   return { ok: true, twinCage: dstCage, twin: pair.self ? 'self' : 'twin' };
 };
 
+// Take a cage out of the scene AND give its GPU buffers back. removeMeshSilent only detaches it: every
+// reset, delete and undo left its geometry (solid and wireframe) allocated on the GPU for ever -- 52 more
+// per reset of a 26-capsule rig, measured -- and the page the user left alone for two minutes lost its
+// graphics context. Disposing is safe for undo: a disposed geometry is simply re-uploaded the next time
+// the same cage is drawn.
+function dropCage(main, cage) {
+  main.removeMeshSilent(cage);
+  const tm = cage.getThreeMesh && cage.getThreeMesh();
+  if (tm && tm.traverse) tm.traverse((o) => { if (o.geometry && o.geometry.dispose) o.geometry.dispose(); });
+}
+
+// ── RESET AND DELETE, ONE CAPSULE OR ALL ────────────────────────────────────────────────
+//
+// matt: "we need a way to reset capsules, delete capsule meshes." Deleting everything already
+// existed (deleteAll, the Bake button's other face); what was missing was doing it to the few you
+// have ruined, and putting a sculpted one back to what a fresh bake would make.
+//
+// With symmetry on, a capsule's mirror twin goes with it: resetting one side of a symmetric rig
+// and leaving the other sculpted is the state symmetry sculpting exists to prevent, and the pair
+// has to be rebuilt together to be matchable at all (see pairMirrors).
+// The bone (child joint) a cage was built for. A cage made by this build records it. One from a file
+// saved before that existed -- or after the joints were renamed, which leaves its label naming a joint
+// that is no longer called that -- is found by WHERE IT IS: of the joints hanging from the cage's owner,
+// the one whose bone (owner -> child) midpoint is nearest the cage's centre. The answer is cached.
+const _bcV = new THREE.Vector3(), _bcA = new THREE.Vector3(), _bcB = new THREE.Vector3(), _bcM = new THREE.Matrix4();
+function boneOf(cage, joints) {
+  if (cage._cageBoneId != null) {
+    const j = joints.find((x) => x.getID() === cage._cageBoneId);
+    if (j) return j;
+  }
+  const owner = joints.find((x) => x.getID() === cage._cageJointId);
+  if (!owner) return null;
+  const kids = joints.filter((k) => k._parentMesh === owner);
+  if (!kids.length) return null;
+  const level = cage.getCurrentMesh ? cage.getCurrentMesh() : cage;
+  const v = level.getVertices && level.getVertices();
+  const n = level.getNbVertices ? level.getNbVertices() : 0;
+  if (!v || !n) return null;
+  _bcM.fromArray(cage.getModelSpaceMatrix());
+  const c = new THREE.Vector3();
+  for (let i = 0; i < n; i++) c.add(_bcV.set(v[i * 3], v[i * 3 + 1], v[i * 3 + 2]).applyMatrix4(_bcM));
+  c.multiplyScalar(1 / n);
+  let best = null, bd = Infinity;
+  for (const k of kids) {
+    Skeleton.jointCentre(owner, _bcA); Skeleton.jointCentre(k, _bcB);
+    const d = _bcA.add(_bcB).multiplyScalar(0.5).distanceTo(c);
+    if (d < bd) { bd = d; best = k; }
+  }
+  if (best) cage._cageBoneId = best.getID();
+  return best;
+}
+
+function withTwins(main, cages) {
+  const set = new Set(cages);
+  if (Skeleton.rigMirrorPlane(main)) {
+    const joints = Skeleton.joints(main);
+    const all = WeightCage.cages(main);
+    for (const c of cages) {
+      const j = boneOf(c, joints);
+      const tj = j && j._boneMirror;
+      const twin = tj && all.find((o) => { const b = boneOf(o, joints); return b && b === tj; });
+      if (twin) set.add(twin);
+    }
+  }
+  return Array.from(set);
+}
+
+// POINT A CAPSULE'S SYMMETRY AT THE WORLD MIRROR PLANE. A mesh's symmetry plane lives in its own local
+// frame (its x axis through its centre), and a capsule is parented to a joint whose frame can face any
+// way -- so the in-stroke mirror of a centreline capsule (spine, neck, head) reflected across "its own
+// x", which on a bone lying along a different axis was the wrong plane entirely. matt: "shapes on the
+// center line should have worldspace symmetry ... right now ... its all local symmetry to each capsule
+// shape, and often its on the wrong axis, making it useless."
+// The rig's mirror plane is model-space x = 0 (Skeleton._computeSymmetryPlane); this expresses it in the
+// capsule's local frame -- normal M^T n, origin M^-1 (0,0,0) -- and writes it where the mesh's
+// symmetry reads it. Redone at the start of each stroke because the joint, and so the frame, can move.
+const _asM = new THREE.Matrix4(), _asO = new THREE.Vector3();
+WeightCage.alignSymmetryPlane = function (cage) {
+  const td = cage && cage._transformData;
+  if (!td) return false;
+  const M = cage.getModelSpaceMatrix();
+  let nx = M[0], ny = M[4], nz = M[8];
+  const nl = Math.hypot(nx, ny, nz);
+  if (!(nl > 1e-12)) return false;
+  nx /= nl; ny /= nl; nz /= nl;
+  _asM.fromArray(M);
+  if (Math.abs(_asM.determinant()) < 1e-18) return false;
+  _asO.set(0, 0, 0).applyMatrix4(_asM.invert());
+  const c = td._center;
+  const r = cage.computeLocalRadius ? cage.computeLocalRadius() : 1;
+  td._symmetryNormal = [nx, ny, nz];
+  td._symmetryOffset = r > 1e-9 ? (nx * (_asO.x - c[0]) + ny * (_asO.y - c[1]) + nz * (_asO.z - c[2])) / r : 0;
+  cage._symmetryData = null;       // the vertex pairing was built against the old plane
+  return true;
+};
+
+// Skinning registers itself here (it imports this file, so this file cannot import it): the weights
+// have to be re-solved whenever the SET of cages changes, not only when one is sculpted.
+WeightCage.onChanged = null;
+
+function restoreOwners(main, owners) {
+  for (const o of owners) {
+    main.addMeshSilent(o.cage);
+    if (o.owner && main.setMeshParent) main.setMeshParent(o.cage.getID(), o.owner.getID(), { silent: true });
+  }
+}
+
+// Delete the given cages (or, with none given, all of them). Returns how many went.
+WeightCage.deleteSome = function (main, cages) {
+  const targets = withTwins(main, (cages || []).filter(WeightCage.isCage));
+  if (!targets.length) return 0;
+  const owners = targets.map((c) => ({ cage: c, owner: c._parentMesh }));
+  const after = () => { WeightCage.onChanged?.(main); Skeleton.updateVisuals(main); main.render?.(); };
+  for (const o of owners) dropCage(main, o.cage);
+  after();
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => { restoreOwners(main, owners); after(); },
+    () => { for (const o of owners) dropCage(main, o.cage); after(); },
+    false, 'Delete Weight Cages');
+  return targets.length;
+};
+
+// Put the given cages (or all of them) back to the shape a fresh bake makes from the rig as it is
+// now. Returns { ok, reset } or { ok: false, why }.
+WeightCage.reset = function (main, cages) {
+  const all = WeightCage.cages(main);
+  const targets = withTwins(main, (cages && cages.length ? cages : all).filter(WeightCage.isCage));
+  if (!targets.length) return { ok: false, why: 'no weight cages to reset' };
+  const joints = Skeleton.joints(main);
+  const oldOwners = targets.map((c) => ({ cage: c, owner: c._parentMesh }));
+  for (const o of oldOwners) dropCage(main, o.cage);
+  const fresh = [];
+  for (const c of targets) {
+    const j = boneOf(c, joints);
+    const n = j ? buildCage(main, j) : null;
+    if (n) fresh.push(n);
+  }
+  const newOwners = fresh.map((c) => ({ cage: c, owner: c._parentMesh }));
+  const pairs = WeightCage.pairMirrors(main, fresh);
+  main._cagePairTried = true;
+  WeightCage.applyOpacity(main);
+  const after = () => { WeightCage.onChanged?.(main); Skeleton.updateVisuals(main); main.render?.(); };
+  after();
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => { for (const o of newOwners) dropCage(main, o.cage); restoreOwners(main, oldOwners); after(); },
+    () => { for (const o of oldOwners) dropCage(main, o.cage); restoreOwners(main, newOwners); after(); },
+    false, 'Reset Weight Cages');
+  return { ok: true, reset: fresh.length, paired: pairs.paired };
+};
+
 // ...and one state for undoing them all, for the same reason.
 WeightCage.deleteAll = function (main) {
   const cages = WeightCage.cages(main);
   if (!cages.length) return 0;
   const owners = cages.map((c) => ({ cage: c, owner: c._parentMesh }));
-  for (const o of owners) main.removeMeshSilent(o.cage);
+  for (const o of owners) dropCage(main, o.cage);
   main.getStateManager?.()?.pushStateCustom?.(
     () => {
       for (const o of owners) {
@@ -885,7 +1280,7 @@ WeightCage.deleteAll = function (main) {
       Skeleton.updateVisuals(main); main.render?.();
     },
     () => {
-      for (const o of owners) main.removeMeshSilent(o.cage);
+      for (const o of owners) dropCage(main, o.cage);
       Skeleton.updateVisuals(main); main.render?.();
     },
     false, 'Delete Weight Cages');

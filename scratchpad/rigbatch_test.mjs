@@ -656,10 +656,12 @@ check('...and it can still be re-measured when the scene really does change',
   check('the identity palette states its colour space',
     /setHSL\([^)]*THREE\.SRGBColorSpace\)/.test(SRC),
     "setHSL's default is the working space, which is linear -- the colour is then converted twice");
-  // ...and the reserved arcs are real, or a chain can wear the selection colour again.
-  check('the chain palette keeps clear of the preselect and select hues',
-    /const CHAIN_HUE_EXCLUDE = \[0\.134, 0\.444\];/.test(SRC)
+  // The palette spans the whole wheel again (matt, 2026-10-10: too few colours to read regions), and
+  // the avoidance maths still has to compare the hues the slots actually have.
+  check('the chain palette uses the whole hue wheel, compared by real hue',
+    !/CHAIN_HUE_EXCLUDE/.test(SRC)
       && /function chainHue\(i, n\)/.test(SRC)
+      && /return \(i \+ 0\.5\) \/ n;/.test(SRC)
       && !/hueGap\(i \/ BONE_PALETTE_SIZE, a \/ BONE_PALETTE_SIZE\)/.test(SRC),
     'the avoidance maths has to compare the hues the slots actually have, not their indices');
   check('...and the unmanaged pipeline has its own accessor',
@@ -668,7 +670,7 @@ check('...and it can still be re-measured when the scene really does change',
     /Skeleton\.boneColorSRGB\(main, j\)/.test(SKIN),
     'these are SculptGL vertex colours, not a three material');
   check('...and so do the weight cages',
-    /Skeleton\.boneColorSRGB\(main, owner\)/.test(CAGE));
+    /Skeleton\.capsuleColorSRGB\(main, namedAfter\)/.test(CAGE));
 }
 
 // ── A DELETED PIN IS NOT A PIN ────────────────────────────────────────────────────────────

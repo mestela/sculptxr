@@ -393,7 +393,7 @@ check('one bone per vertex, weight 1', (() => {
   // them to the framebuffer unconverted. The linear ones three wants read three stops too light
   // here -- which is the bug that made the capsules look pastel next to these very cages.
   check('a baked capsule takes the colour of its bone',
-    /const col = Skeleton\.boneColorSRGB\(main, owner\);/.test(SRC)
+    /const col = Skeleton\.capsuleColorSRGB\(main, namedAfter\);/.test(SRC)
       && /cAr\[ci\] = col\.r; cAr\[ci \+ 1\] = col\.g; cAr\[ci \+ 2\] = col\.b;/.test(SRC),
     'twenty-one grey capsules say nothing about which belongs to what');
   check('...as vertex colours, so sculpting keeps them',
@@ -503,7 +503,7 @@ check('one bone per vertex, weight 1', (() => {
   // child radius 3 at +6x: old bake gave a uniform tube of -4.8..4.8 / -5..45 / -5..5; the new
   // one gives -22.6..22.6 / -11.9..43 / -6..6, matching the drawn ends to the tessellation.
   check('...and the bake gate matches the draw, so a cage exists where a capsule is drawn',
-    /const cr = j\._boneRadius \|\| 0;\s*\n\s*if \(!\(cr > 1e-9\)\) continue;/.test(WCS));
+    /const cr = j\._boneRadius \|\| 0;\s*\n\s*if \(!Skeleton\.boneHasCapsule\(j\)\) return null;/.test(WCS));
 }
 
 // ── A MIRRORED SKIN TURNS EVERY CAGE INSIDE OUT ─────────────────────────────────────
@@ -530,7 +530,7 @@ check('one bone per vertex, weight 1', (() => {
 
   check('a cage records the handedness of the space it was carried into',
     /const flip = m\.determinant\(\) < 0 \? -1 : 1;/.test(WCS)
-      && /mesh: cage, flip: flip \}/.test(WCS),
+      && /mesh: cage, flip: flip, vn: vn \}/.test(WCS),
     'a negative determinant reverses winding, and the normal is what decides inside');
   check('...and the distance is corrected by it',
     /return bestSign \* \(c\.flip \|\| 1\) \* Math\.sqrt\(best\);/.test(WCS));

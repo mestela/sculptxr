@@ -1370,12 +1370,23 @@ class SculptGL extends Scene {
     event.preventDefault();
   }
 
+  // THESE USED TO BE alert()s ("Oops... / Wow... Context is restored"), which are modal, flash past
+  // and say nothing useful. The browser CAN restore a lost context, but three's WebGPURenderer marks
+  // itself device-lost for good (Renderer._isDeviceLost) and skips every draw after that, so a
+  // "restored" context is still a blank viewport with a working UI. The scene is still in memory and
+  // a save to disk does not touch the GPU, so say that.
   onContextLost() {
-    (window._vrAlert || window.alert)('Oops... WebGL context lost.');
+    const msg = 'Graphics context lost -- the viewport will go blank. Your scene is still in memory: '
+      + 'use Files > Save to disk, then reload the page.';
+    console.error('[gl] ' + msg);
+    if (window.screenLog) window.screenLog(msg, '#f38ba8');
   }
 
   onContextRestored() {
-    (window._vrAlert || window.alert)('Wow... Context is restored.');
+    const msg = 'Graphics context was restored, but the renderer cannot resume from it. '
+      + 'Use Files > Save to disk, then reload the page.';
+    console.error('[gl] ' + msg);
+    if (window.screenLog) window.screenLog(msg, '#f9e2af');
   }
 
   ////////////////

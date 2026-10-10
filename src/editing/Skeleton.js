@@ -42,7 +42,7 @@ const HILITE_COLOR = 0xffd733;  // preselection: yellow — "this is what the ne
 // colours to read as "this one" -- and was not vibrant enough to win against them. matt: "the cyan
 // especially isn't very vibrant. lets swap the cyan for the maya highlight colour which is roughly
 // (0,255,170)." Same green Maya uses for a selected component, and it has no neighbour in the
-// chain palette -- see CHAIN_HUE_EXCLUDE.
+// chain palette.
 const SELECT_COLOR = 0x00ffaa;
 // NO PER-HAND COLOURS. The rig used to tint whatever each controller was touching red or
 // green by handedness, which put a third and fourth colour on a surface that already has to say
@@ -858,7 +858,7 @@ function capsuleList(main) {
   for (const j of Skeleton.joints(main)) {
     const p = j._parentMesh;
     const cr = j._boneRadius || 0;
-    if (!Skeleton.isJoint(p) || !live.has(p) || !(cr > 1e-9)) continue;
+    if (!live.has(p) || !Skeleton.boneHasCapsule(j)) continue;
     if (!Skeleton.jointVisible(j)) continue;
     out.push({ j: j, p: p, a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
       ha: Skeleton.jointHalf(p, cr), hb: Skeleton.jointHalf(j, cr),
@@ -2068,11 +2068,15 @@ Skeleton.highlightScaleHandle = function (main, grip) {
 // taking the palette entry furthest in hue from its parent, its grandparent, and the siblings
 // already assigned. A hash spreads colours evenly over the WHOLE rig, which says nothing about
 // whether any particular adjacent pair is distinguishable.
-// EIGHT, not twelve: four went when the green and cyan ends of the range did, and the spacing
-// between the survivors is held at the 0.053 it already had rather than repacking twelve into a
-// smaller arc. A busy rig reuses a colour sooner; the parent/sibling avoidance below is what
-// keeps the ones that TOUCH apart, and that is the case a reuse could actually confuse.
-const BONE_PALETTE_SIZE = 8;
+// SIXTEEN, AROUND THE WHOLE WHEEL. The palette was cut to eight and then confined to one arc so no
+// chain could wear the preselect yellow or the select green, and what it bought was a rig where a
+// run of neighbouring bones all came out the same blue -- which defeats the whole point of the
+// colours, since the boundary between two touching bones is what you are trying to see. matt: "the
+// available colours are too few, so i can't really see the regions ... lets remove that, go back to
+// the full hue range, i suspect it might not be an issue anymore." The state highlights have since
+// grown a size bump and a wire box of their own; the parent/sibling avoidance below is what keeps
+// the pairs that touch apart, and sixteen slots give it room to.
+const BONE_PALETTE_SIZE = 16;
 const _paletteColors = [];
 function paletteColor(i) {
   let c = _paletteColors[i];
@@ -2103,49 +2107,15 @@ function paletteColor(i) {
   return c;
 }
 
-// THE STATE COLOURS ARE NOT AVAILABLE TO THE CHAINS.
-//
-// Preselection is yellow and selection is Maya green, and a random chain landing on either hue
-// means the rig is wearing the colour that is supposed to mean "this one". matt: "if we're going
-// to use yellow and cyan for preselect highlight, can we keep those colours or nearby colours
-// away from the random bone chains? it makes it hard to see what is selected."
-//
-// SKIPPING SLOTS WAS NOT ENOUGH, and the arithmetic says why. Twelve hues on an even grid sit
-// 0.083 apart, so a band only ever catches the single NEAREST slot and its neighbours stay where
-// they were -- 0x1ff9f9 sat 0.056 from the green and 0x1ff91f 0.111, and matt saw both: "i still
-// see a cyan and a green that are too close to the maya highlight colour."
-//
-// So the palette is not a grid any more. Two arcs of hue are reserved outright, and the twelve
-// colours are spread evenly through WHAT IS LEFT -- which keeps all twelve (skipping cost two)
-// and puts the nearest one 0.093 away instead of 0.028. The cost is chain-to-chain spacing,
-// 0.083 -> 0.053, and that is the right thing to spend: two chains a little closer in hue is a
-// smaller problem than a chain wearing the selection colour, and the parent/sibling avoidance
-// below already keeps the ones that TOUCH far apart.
-const CHAIN_HUE_EXCLUDE = [0.134, 0.444];   // 0xffd733 preselect, 0x00ffaa select
-
-// ONE ARC, AND IT STARTS PAST CYAN.
-//
-// A band either side of each state colour left two arcs and twelve colours, and matt cut the
-// first four of them by eye: the two yellow-greens between preselect and select (0x8bf91f,
-// 0x46f91f) and the two cyan-blues just past select (0x1fc8f9, 0x1f83f9). "remove the first 4
-// colours from the usable palette for bones."
-//
-// Which collapses to something simpler than a band: the short arc BETWEEN the two state hues is
-// gone entirely -- there is not enough room between yellow and green for a colour that reads as
-// neither -- so what is left is one run from blue round through purple, magenta and red to
-// orange. Nothing green, nothing cyan, nothing yellow.
-//
-// 0.620 is where the cut lands, not a band measured from 0.444: a hue has to be far enough from
-// the green to read as blue, and that is further than it needs to be from the yellow.
-const CHAIN_ARC = [0.620, CHAIN_HUE_EXCLUDE[0] + 1 - 0.09];   // 0.620 .. 1.044
-// 20% below the 0.55 the palette was authored at -- see the note where it is used.
+// The whole hue wheel. (Two arcs used to be reserved for the preselect and select colours; see the
+// note at BONE_PALETTE_SIZE for why that went.) 20% below the 0.55 the palette was authored at --
+// see the note where it is used.
 const CHAIN_LIGHTNESS = 0.44;
-const CHAIN_ARC_TOTAL = CHAIN_ARC[1] - CHAIN_ARC[0];
 
 // Slot index -> hue. The half-step keeps the first slot off the very edge of the arc, so the
 // worst case is half a step inside it rather than exactly on the boundary.
 function chainHue(i, n) {
-  return (CHAIN_ARC[0] + ((i + 0.5) / n) * CHAIN_ARC_TOTAL) % 1;
+  return (i + 0.5) / n;
 }
 
 function hueGap(a, b) {
@@ -2242,6 +2212,58 @@ Skeleton.boneColor = function (main, joint) {
 const _srgbOut = new THREE.Color();
 Skeleton.boneColorSRGB = function (main, joint) {
   return _srgbOut.copy(Skeleton.boneColor(main, joint)).convertLinearToSRGB();
+};
+
+// DOES THE BONE ENDING AT `j` GET A CAPSULE? One definition, read by the draw, the bake and the
+// capsule bind, so they cannot disagree (the cages have always been "exactly where a capsule is
+// drawn"). A bone needs a parent joint and a radius, and its end joint has to SHAPE THE SKIN: switch
+// "Shapes Skin" off on a pivot -- a scapula, a jaw, a twist bone -- and the bone leading to it is no
+// capsule at all. matt: "strictly speaking the first joints of the arms don't need a capsule, they're
+// the scapule, they're really a pivot/rotation offset more than anything." The joint's OWN capsule,
+// the bone leaving it, is unaffected: it still moves with that joint.
+Skeleton.boneHasCapsule = function (j) {
+  return !!j && Skeleton.isJoint(j._parentMesh) && (j._boneRadius || 0) > 1e-9 && Skeleton.jointShapesSkin(j);
+};
+
+// A BRANCH IS ONE FAMILY OF CAPSULES. A joint with several bones leaving it owns one capsule per
+// bone, all weighted to that one joint and so all in its colour -- three identical orange capsules
+// at the hips, three identical blue ones at the neck, which read as three joints. matt: "this is what
+// i was finding confusing." So siblings keep the owner's HUE (it is what the weight preview paints on
+// the skin, and the skin does not care which of the joint's bones a vertex is near) and step through
+// LIGHTNESS, darkest to lightest, in child-id order. A joint with one capsule is untouched.
+const TINT_SPAN = 0.26;
+Skeleton.capsuleTints = function (main, joints) {
+  const byParent = new Map();
+  for (const j of (joints || Skeleton.joints(main))) {
+    if (!Skeleton.boneHasCapsule(j)) continue;
+    const pid = j._parentMesh.getID();
+    if (!byParent.has(pid)) byParent.set(pid, []);
+    byParent.get(pid).push(j);
+  }
+  const out = new Map();
+  for (const kids of byParent.values()) {
+    kids.sort((a, b) => a.getID() - b.getID());
+    kids.forEach((j, k) => out.set(j.getID(), { k: k, n: kids.length }));
+  }
+  return out;
+};
+
+const _tintHSL = { h: 0, s: 0, l: 0 };
+const _tintOut = new THREE.Color();
+// The colour of the capsule for the bone ending at `j`, in three's working space. `tints` is the
+// per-pass map when the caller has one; without it the map is built here.
+Skeleton.capsuleColor = function (main, j, tints) {
+  const base = Skeleton.boneColor(main, j._parentMesh);
+  const t = (tints || main._capTints || Skeleton.capsuleTints(main)).get(j.getID());
+  if (!t || t.n < 2) return base;
+  base.getHSL(_tintHSL, THREE.SRGBColorSpace);
+  const l = _tintHSL.l + (t.k / (t.n - 1) - 0.5) * TINT_SPAN;
+  return _tintOut.setHSL(_tintHSL.h, _tintHSL.s, Math.max(0.18, Math.min(0.78, l)), THREE.SRGBColorSpace);
+};
+
+// ...and in the unmanaged pipeline's sRGB components, for the baked cages' vertex colours.
+Skeleton.capsuleColorSRGB = function (main, j, tints) {
+  return _srgbOut.copy(Skeleton.capsuleColor(main, j, tints)).convertLinearToSRGB();
 };
 
 Skeleton.joints = function (main) {
@@ -3813,6 +3835,8 @@ Skeleton.updateVisuals = function (main) {
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
   const hasChildBone = new Set();
+  // Which capsules are siblings, once per pass -- see Skeleton.capsuleTints.
+  const capTints = main._capTints = Skeleton.capsuleTints(main, joints);
   // THE SHORTEST BONE AT EACH JOINT, for the dot's ceiling below. Built in the same pass that
   // records which joints have a bone hanging off them.
   const shortestBone = new Map();
@@ -4398,7 +4422,7 @@ Skeleton.updateVisuals = function (main) {
     // batch per taper ratio and an entry rebuild every time you dragged one. The spheres are
     // what say how big a joint is, and the SKIN is tapered exactly (see SkinMesh capsuleTarget).
     const cr = j._boneRadius || 0;
-    if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
+    if (!showCaps || !Skeleton.boneHasCapsule(j)) { hideCaps(e); continue; }
     const hA = Skeleton.jointHalf(parent, cr, _halfA);
     const hB = Skeleton.jointHalf(j, cr, _halfB);
     // The capsule spans the two SHAPES, which a face drag can move off their joints. The skin is
@@ -4415,7 +4439,7 @@ Skeleton.updateVisuals = function (main) {
     // radius still belongs to this joint; ownership and authorship are different things.)
     // Highlighting brightens rather than recolours, so the capsule-to-vertex colour match is
     // never broken by preselection.
-    const capColor = Skeleton.boneColor(main, parent);
+    const capColor = Skeleton.capsuleColor(main, j, capTints);
     // At zero a part is not drawn at all — not drawn invisibly, which would still write depth.
     const shaftOn = Skeleton.shaftOpacity() > 0, endsOn = Skeleton.capsuleOpacity() > 0;
     // The base is a setting now, not a constant -- see Skeleton.capsuleOpacity. Highlighting
