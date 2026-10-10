@@ -604,6 +604,21 @@ class GuiFiles {
     this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation, main: this._main }), this._exportFileName(baseName, 'glb'));
   }
 
+  // Back to Nomad: the .nom the scene was loaded from, with only the moved objects' transforms
+  // changed. Needs a .nom import to work from -- there is nothing to patch otherwise.
+  saveFileAsNOM(baseName) {
+    var meshes = this._getExportMeshes();
+    if (!meshes) return;
+    var res = Export.exportNOM(meshes);
+    if (!res) {
+      if (window.screenLog) window.screenLog('Export .nom: nothing here came from a .nom file', 'yellow');
+      return;
+    }
+    if (window.screenLog) window.screenLog('.nom: ' + res.moved + ' moved, ' + res.reshaped + ' reshaped'
+      + (res.mismatched ? ', ' + res.mismatched + ' skipped (topology changed)' : '') + ', the rest copied as-is', 'lime');
+    this._save(new Blob([res.bytes], { type: 'application/octet-stream' }), this._exportFileName(baseName, 'nom'));
+  }
+
   saveFileAsOBJ(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;

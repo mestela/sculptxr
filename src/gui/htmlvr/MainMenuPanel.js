@@ -1551,6 +1551,7 @@ export function buildMenuHTML_files(main) {
     <div class="mm-section-title">Export</div>
     <div class="mm-choice-grid cols-4">
       <button class="mm-choice" id="mm-export-glb">glb</button>
+      <button class="mm-choice" id="mm-export-nom">nom</button>
       <button class="mm-choice" id="mm-export-obj">obj</button>
       <button class="mm-choice" id="mm-export-ply">ply</button>
       <button class="mm-choice" id="mm-export-stl">stl</button>
@@ -6228,6 +6229,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   const fileName = () => guiFiles?.currentSaveNameForFile?.() ?? 'scene';
   q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save to disk (.sxr)', fileName(), n => guiFiles?.saveFileAsSGL?.(n))));
   q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', fileName(), n => guiFiles?.saveFileAsGLB?.(n)));
+  q('#mm-export-nom')?.addEventListener('click', () => promptSaveName('Save .nom as', fileName(), n => guiFiles?.saveFileAsNOM?.(n)));
   q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', fileName(), n => guiFiles?.saveFileAsOBJ?.(n)));
   q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', fileName(), n => guiFiles?.saveFileAsPLY?.(n)));
   q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', fileName(), n => guiFiles?.saveFileAsSTL?.(n)));

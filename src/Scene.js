@@ -6949,8 +6949,8 @@ class Scene {
     // (This used to be a refusal: the app EXPORTS glb, so getFileType answered 'glb' for a file
     // nothing could open and the load ended in silence. matt: "i tried loading a glb and obj back
     // into sculptxr, both just silently return nothing, no error on the console.")
-    if (fileType === 'glb' || fileType === 'gltf') {
-      Import.importGLTF(fileData, this._gl, (meshes, stats) => {
+    if (fileType === 'glb' || fileType === 'gltf' || fileType === 'nom') {
+      (fileType === 'nom' ? Import.importNOM : Import.importGLTF)(fileData, this._gl, (meshes, stats) => {
         if (!meshes || !meshes.length) {
           const msg = 'Nothing to import from that ' + fileType.toUpperCase() + ' — no meshes in it.';
           console.warn('[load] ' + msg);
@@ -6983,7 +6983,15 @@ class Scene {
         // Read BEFORE the add: addImportedMeshes swaps each entry for its Multimesh wrapper, and
         // the wrapper's ID is what a blendshape track is keyed on.
         const morphs = meshes.map((m) => m._importedMorphs);
-        this.addImportedMeshes(meshes);
+        // A .nom keeps the placement AFTER the fit-to-view, which is what the export measures a
+        // move against (see ExportNOM). `beforeCommit` runs once the normalise has been applied.
+        this.addImportedMeshes(meshes, fileType !== 'nom' ? undefined : (added) => {
+          for (const m of added) {
+            if (!m._nomSource) continue;
+            Import.buildNOMLevels(m);
+            m._nomLoadMatrix = Float32Array.from(m.getMatrix());
+          }
+        });
         const reg = window._animationRegistry;
         if (reg) for (let i = 0; i < meshes.length; i++) if (morphs[i]) reg.importBlendshapes(meshes[i], morphs[i]);
         // SAID OUT LOUD, because the interesting part of this import is what it RECOVERED, and
@@ -7092,6 +7100,8 @@ class Scene {
       if (innerMesh._permanentStaticId) {
         mesh._permanentStaticId = innerMesh._permanentStaticId;
       }
+      // The .nom this came from, for the return trip (see ExportNOM).
+      if (innerMesh._nomSource) mesh._nomSource = innerMesh._nomSource;
 
       if (!this._vertexSRGB && mesh.getColors()) {
         Utils.convertArrayVec3toSRGB(mesh.getColors());
