@@ -5038,7 +5038,12 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     el.querySelector(id)?.addEventListener('click', (e) => {
       e.stopPropagation();
       const sel = main.getSelectedMeshes?.() ?? [];
-      if (sel.length === 1 && moveOutlinerRow(main, sel[0], dir)) repaintFn();
+      if (sel.length !== 1) return;
+      const before = main.snapshotOutlinerKeys?.();
+      if (moveOutlinerRow(main, sel[0], dir)) {
+        main.pushOutlinerOrderUndo?.(before, main.snapshotOutlinerKeys?.());
+        repaintFn();
+      }
     });
   }
 
@@ -5074,10 +5079,14 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         clear(); dragged = null;
         if (!node) return;
         e.preventDefault();
-        if (node._parentMesh) main.setMeshParent(node.getID(), null);
+        const order = { before: main.snapshotOutlinerKeys?.() };
+        const reparent = !!node._parentMesh;
+        if (reparent) main.setMeshParent(node.getID(), null, { order });
         const tops = (main.getMeshes?.() ?? []).filter((m) => m !== node && !m._isVoxelChunk && !m._parentMesh);
         const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
         if (last) placeOutlinerRow(main, node, last, true);
+        order.after = main.snapshotOutlinerKeys?.();
+        if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
         repaintFn();
       });
     }
@@ -5116,8 +5125,12 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
           target._outlinerCollapsed = false;
         } else {
           const par = target._parentMesh || null;
-          if ((node._parentMesh || null) !== par) main.setMeshParent(node.getID(), par ? par.getID() : null);
+          const order = { before: main.snapshotOutlinerKeys?.() };
+          const reparent = (node._parentMesh || null) !== par;
+          if (reparent) main.setMeshParent(node.getID(), par ? par.getID() : null, { order });
           placeOutlinerRow(main, node, target, z === 'after');
+          order.after = main.snapshotOutlinerKeys?.();
+          if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
         }
         repaintFn();
       });

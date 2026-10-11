@@ -6492,11 +6492,31 @@ class Scene {
       rest: child._ikRest ? mat4.clone(child._ikRest) : null,
     };
     if (!opts || !opts.silent) {
+      // opts.order = { before, after } (outliner key snapshots, see snapshotOutlinerKeys): a drag
+      // and drop that reparents AND positions is ONE undo step, so the keys ride along.
+      const ord = opts && opts.order;
       this.getStateManager?.()?.pushStateCustom?.(
-        () => apply(before.parent, before.matrix, before.rest),
-        () => apply(after.parent, after.matrix, after.rest),
+        () => { apply(before.parent, before.matrix, before.rest); if (ord) this._restoreOutlinerKeys(ord.before); },
+        () => { apply(after.parent, after.matrix, after.rest); if (ord) this._restoreOutlinerKeys(ord.after); },
         false, 'Set Parent');
     }
+  }
+
+  // OUTLINER ORDER UNDO. The order is `_outlinerKey` on each mesh (see MainMenuPanel.outlinerKey);
+  // a snapshot is mesh -> key (undefined = never moved).
+  snapshotOutlinerKeys() {
+    return new Map(this._meshes.map((m) => [m, m._outlinerKey]));
+  }
+  _restoreOutlinerKeys(snap) {
+    if (!snap) return;
+    snap.forEach((k, m) => { if (k === undefined) delete m._outlinerKey; else m._outlinerKey = k; });
+    Skeleton.refreshOutliner?.(this);
+  }
+  pushOutlinerOrderUndo(before, after) {
+    this.getStateManager?.()?.pushStateCustom?.(
+      () => this._restoreOutlinerKeys(before),
+      () => this._restoreOutlinerKeys(after),
+      false, 'Reorder');
   }
 
   getParentMesh(childId) {
