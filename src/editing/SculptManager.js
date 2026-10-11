@@ -410,7 +410,12 @@ class SculptManager {
     // orbit -- "every time I try, I move the camera" -- and with one capsule selected, reaching
     // the next one along meant going back to the outliner. Only when the selection is a locked
     // mesh or another capsule, so a plain sculpt on an unlocked skin is never taken over.
-    if (_active && (_active._isWeightCage || _active._selectLocked)
+    // ...OR HIDDEN. With the skin hidden to work on the capsules the selection is still whatever
+    // was picked last (a hidden floor, in matt's scene): the press then started a stroke on
+    // something nobody can see, missed it, and fell through to an orbit -- "it always rotates the
+    // camera no matter where i start the click", with the symmetry marker on the wrong plane.
+    const _hiddenSel = !!(_active && _active.isVisible && _active.isVisible() === false);
+    if (_active && (_active._isWeightCage || _active._selectLocked || _hiddenSel)
         && !SELF_TARGETING_TOOLS.has(this._toolIndex) && !this._main._vrSculpting) {
       const cages = WeightCage.cages(this._main);
       const picking = this._main.getPicking && this._main.getPicking();
@@ -424,6 +429,7 @@ class SculptManager {
     }
     // A CENTRELINE CAPSULE MIRRORS ABOUT THE WORLD PLANE, whatever way its bone happens to face -- see
     // WeightCage.alignSymmetryPlane. Capsules with a twin on the other side are mirrored onto it at stroke end.
+    if (this._symmetry && _active) WeightCage.ensurePaired(this._main, _active);
     if (this._symmetry && _active && WeightCage.isCage(_active) && _active._cageMirror && _active._cageMirror.self) {
       WeightCage.alignSymmetryPlane(_active);
     }
@@ -617,6 +623,17 @@ class SculptManager {
     if (this.isUsingContinuous())
       return;
     this.getCurrentTool().update();
+    this._mirrorCageLive();
+  }
+
+  // A LEFT/RIGHT CAPSULE'S TWIN FOLLOWS DURING THE STROKE, not on release. The copy is only the
+  // capsule's own few hundred vertices (the skin is re-solved at the end, not here), so it is cheap
+  // enough for every update. A centreline capsule has no twin to copy to -- its in-stroke mirror does
+  // that -- and mirrorEdit declines it.
+  _mirrorCageLive() {
+    if (!this._strokeActive) return;
+    const m = this._main.getMesh && this._main.getMesh();
+    if (m && WeightCage.isCage(m) && m._cageMirror && !m._cageMirror.self) WeightCage.mirrorEdit(this._main, m);
   }
 
   updateXR(picking, isPressed, origin, dir, options) {

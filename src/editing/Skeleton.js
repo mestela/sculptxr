@@ -3821,7 +3821,7 @@ Skeleton.updateVisuals = function (main) {
   const showCaps = Skeleton.displayFlag('capsules')
     && !(main.getMeshes() || []).some((m) => m && m._isWeightCage);
   if (showCaps) Skeleton.capsuleOverlaps(main);
-  drawOverlapMarks(main, showCaps ? main._capOverlapMarks : null);
+  drawOverlapMarks(main, showCaps && Skeleton.displayFlag('overlaps') ? main._capOverlapMarks : null);
   // The bone body and its edge overlay, each switchable. Turning both off brings the joint
   // dots back on their own, because otherwise there would be nothing on screen marking a
   // target that is still perfectly pickable — the bone IS the target now.
@@ -6670,6 +6670,10 @@ const DISPLAY_FLAGS = {
   // it is a label per bone, and a rig full of them is unreadable while you are working.
   names: ['_boneShowNames', 'boneShowNames', false],
   capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
+  // The red dots drawn where two capsules that are not neighbours pass through each other. On
+  // by default (it is how the display has always been); a switch because on a dense or fat rig
+  // they swamp the model. Only the dots: the overlap test itself still runs.
+  overlaps: ['_boneShowOverlaps', 'boneShowOverlaps', true],
   // WHERE MAKE SKIN WILL ATTACH each bone, drawn on the joint boxes it will build from. Off by
   // default: it is a rig-time diagnostic for the case where a joint has more bones than its box
   // has room for, not something to have on while posing. See SkinPreview.
@@ -6792,7 +6796,7 @@ Skeleton.setDecorationsHidden = function (main, on) {
 //
 // It leaves for the same reason `meshHover` never joined: the master switch clears the rig off
 // the screen, and it must not silently reach into how the mesh itself is shaded.
-const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'capsuleShaded', 'solid',
+const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'overlaps', 'capsuleShaded', 'solid',
   'wire', 'joints', 'pins', 'trails', 'gnomons', 'gnomonsAll', 'skinClaims']);
 
 Skeleton.displayFlag = function (name) {

@@ -4091,6 +4091,11 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     this._applyReorgClass();
     if (key === this._lastContentKey) return;
+    // A RENAME IN PROGRESS IS NOT REBUILT AWAY. The first click of a double-click selects the row,
+    // which bumps _outlinerRev, and that rebuild lands AFTER the second click has already swapped
+    // the row's label for the input -- so the field appeared and was wiped in the same breath, and
+    // double-click never renamed. The key is left unset, so the rebuild runs when the rename commits.
+    if (this._element.querySelector('.mm-rename-input')) return;
     this._lastContentKey = key;
 
     // Update top menubar active state
@@ -5002,7 +5007,15 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     btn.replaceChildren(input);
     // Focusing the input is what triggers the Quest's native keyboard — skip it in VR so
     // only our on-screen keyboard shows.
-    if (!_useVrKb) { input.focus(); input.select(); }
+    // Focused (and given its blur-to-commit) a beat LATER, not inside the click: the second click
+    // of a double-click is followed by the browser's own dblclick handling, which took the focus
+    // back and fired the blur, committing the rename the instant it opened.
+    if (!_useVrKb) {
+      setTimeout(() => {
+        input.focus(); input.select();
+        input.addEventListener('blur', () => commit(true));
+      }, 60);
+    }
     let done = false;
     const commit = (save) => {
       if (done) return; done = true;
@@ -5026,8 +5039,6 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         if (v) input.value = v;
         commit(!!v);
       }, input, vrPanel);
-    } else {
-      input.addEventListener('blur', () => commit(true));
     }
   };
 
@@ -5216,7 +5227,10 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // A click that landed inside a row is that row's business and is left alone: its own listener
   // has already run, and a deselect here would immediately undo the select it just made.
   el.querySelector('.mm-outliner-list')?.addEventListener('click', (e) => {
-    if (e.target.closest && e.target.closest('.mm-outliner-row')) return;
+    // composedPath, not target.closest: the row's own handler may already have REPLACED the
+    // clicked label (a double-click swaps it for the rename field), and a detached target has no
+    // row above it -- so the rename was read as a click on empty space and deselected itself.
+    if (e.composedPath().some((n) => n.classList && n.classList.contains('mm-outliner-row'))) return;
     cancelPending();          // an armed set-parent/aim is asking you to click a NODE
     main.setOrUnsetMesh?.(null);
     main.render?.(); repaintFn();

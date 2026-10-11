@@ -859,6 +859,7 @@ export function buildBoneDisplayHTML(main, style, extraChips = '') {
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
       ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
       ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlagRaw('capsuleShaded'))}
+      ${flagButton(c, 'overlaps', 'Overlaps', Skeleton.displayFlagRaw('overlaps'))}
       ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlagRaw('skinClaims'))}
       ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlagRaw('weights'))}
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlagRaw('lengths'))}
@@ -996,6 +997,7 @@ export function wireBoneSection(root, main, opts) {
   flag('names', 'names');
   flag('caps', 'capsules');
   flag('caps-shade', 'capsuleShaded');
+  flag('overlaps', 'overlaps');
   // Where Make Skin will bridge each bone. Named 'Attach' rather than 'Claims': the lattice's
   // word for it says nothing to someone deciding whether their fingers will come out right.
   flag('skin-claims', 'skinClaims');
@@ -1974,6 +1976,7 @@ export function syncBoneSection(root, main) {
   setFlag('names', Skeleton.displayFlagRaw('names'));
   setFlag('caps', Skeleton.displayFlagRaw('capsules'));
   setFlag('caps-shade', Skeleton.displayFlagRaw('capsuleShaded'));
+  setFlag('overlaps', Skeleton.displayFlagRaw('overlaps'));
   setFlag('weights', Skeleton.displayFlagRaw('weights'));
   setFlag('solid', Skeleton.displayFlagRaw('solid'));
   setFlag('wire', Skeleton.displayFlagRaw('wire'));

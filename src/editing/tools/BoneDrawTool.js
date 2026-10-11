@@ -129,6 +129,7 @@ const _vP = new THREE.Vector3(), _vMesh = new THREE.Matrix4(), _vInv = new THREE
 const _vNear = [0, 0, 0], _vDir = [0, 0, 0], _vHit = [0, 0, 0];
 const _vA = [0, 0, 0], _vB = [0, 0, 0], _vC = [0, 0, 0];
 const _vT = [], _vSpans = [];
+const _vUp = new THREE.Vector3(0, 1, 0), _vX = new THREE.Vector3(1, 0, 0);
 
 // Distance in px from (px,py) to the segment a-b. The bone pick is a segment pick, not a
 // joint pick — a capsule is grabbed anywhere along its shaft, which is where you look when
@@ -371,7 +372,8 @@ class BoneDrawTool extends SculptBase {
   }
 
   // Place one joint (plus its mirror) and advance the chain.
-  _place(pos) {
+  // `radius` (desktop Bone Draw: _radiusGuess) sizes the new joint and its twin; 0 = default.
+  _place(pos, radius) {
     const main = this._main;
     const parent = this._validParent();
 
@@ -439,6 +441,21 @@ class BoneDrawTool extends SculptBase {
     } else {
       this._chainParentMirror = joint;
     }
+
+    // The guess rides on the joints themselves, so the one undo step below (which removes and
+    // re-adds them whole) already covers it.
+    //
+    // CAPPED BY THE BONE IT ENDS, and not guessed at all for a chain's first joint. Measured on
+    // matt's hand-fitted wrestler rig, a limb joint's radius is 0.2-0.45 of the bone leading to it. A silhouette cannot tell a shoulder from the torso it
+    // sits in -- it reads the whole mass -- so the length of the bone is the one limit that
+    // knows. A root has no bone, and its radius is a design choice, so it keeps the default.
+    if (radius > 0 && parent && Skeleton.isJoint(parent)) {
+      // Centreline joints (belly, chest, head) are the masses, and matt's own rig puts them at 0.7-1.0
+      // of the bone; the limbs either side sit at 0.2-0.45.
+      const k = offPlane ? 0.45 : 0.9;
+      radius = Math.min(radius, k * Skeleton.jointPos(joint).distanceTo(Skeleton.jointPos(parent)));
+    } else radius = 0;
+    if (radius > 0) for (const m of made) m.mesh._jointRadius = radius;
 
     this._chainParent = joint;
     this._chainIndex++;
@@ -1022,6 +1039,7 @@ class BoneDrawTool extends SculptBase {
       lo = a; hi = b;
     }
     take();
+    this._spanLo = bestLo; this._spanHi = bestHi;   // for _radiusGuess
     return (bestLo + bestHi) * 0.5;
   }
 
@@ -1034,6 +1052,75 @@ class BoneDrawTool extends SculptBase {
   // How far apart two crossings must be to bound a real span. A fraction of the scene unit,
   // so it means the same thing on a thumbnail and on a building.
   _volumeEps() { return 1e-3 * (Skeleton.sceneUnit(this._main) || 1); }
+
+  // THE RADIUS OF THE LIMB UNDER THE CURSOR, guessed from the same mesh the midpoint comes from.
+  //
+  // The width of the SILHOUETTE, not the depth along the view ray: a ray off the middle of a
+  // limb crosses a chord shorter than its diameter, while the silhouette across a limb seen
+  // side-on is the diameter whatever the ray did. So four lines through the cursor (spaced round
+  // the view axis) are each grown outward until the ray no longer finds the same volume, and
+  // the NARROWEST of the four is the cross-section -- the three along the limb run on. "The same
+  // volume" means the span there overlaps the span under the cursor in depth,
+  // which keeps a body behind a limb from reading as part of it. The edge is found
+  // by doubling, then bisection, so a click costs ~100 ray casts.
+  //
+  // Never wider than the view-ray thickness through the middle (see DEPTH CHORD below). Returns 0
+  // when there is nothing to measure, and the caller then leaves the joint at the default.
+  _radiusGuess(ro, rd) {
+    const main = this._main;
+    if (!ro && (main._xrSession || !this._hasSculpt())) return 0;
+    if (!ro && !this._screenRay(_vO, _vD)) return 0;
+    const o = (ro || _vO).clone(), d = (rd || _vD).clone();   // ro/rd: a model-space ray, for tests
+    const t0 = this._volumeSpanT(o, d);
+    if (t0 === null) return 0;
+    const lo0 = this._spanLo, hi0 = this._spanHi, T0 = hi0 - lo0;
+    const unit = Skeleton.sceneUnit(main) || 1;
+    // The cap is how far a search may run before it counts as unbounded. Relative to the thickness
+    // as well as the scene: the unit is a rig measure and a sphere ten times it is a legitimate hit.
+    const cap = Math.max(unit * 0.5, T0 * 2), eps = unit * 0.005;
+    const a = new THREE.Vector3().crossVectors(d, Math.abs(d.y) < 0.9 ? _vUp : _vX).normalize();
+    const b = new THREE.Vector3().crossVectors(d, a).normalize();
+    const dirs = [a, b,
+      a.clone().add(b).normalize(), a.clone().sub(b).normalize()];
+    const p = new THREE.Vector3();
+    const same = (u, k) => {
+      p.copy(o).addScaledVector(u, k);
+      // the same volume = a span that overlaps the one under the cursor in depth. (Comparing
+      // midpoints drifts near a limb's edge, where the span thins and its middle moves.)
+      return this._volumeSpanT(p, d) !== null && this._spanLo <= hi0 && this._spanHi >= lo0;
+    };
+    const reach = (u, sign) => {
+      let lo = 0, hi = eps;
+      while (same(u, sign * hi)) { lo = hi; hi *= 2; if (hi > cap) return cap; }
+      for (let i = 0; i < 8; i++) { const m = (lo + hi) * 0.5; if (same(u, sign * m)) lo = m; else hi = m; }
+      return lo;
+    };
+    // A chord off the middle of a ROUND part (a head, a fist) is shorter than its diameter, and
+    // the narrowest of the four then reads small. Each pass re-centres on the middle of the
+    // LONGEST bounded chord -- through a ball that runs towards its centre -- and measures again;
+    // a limb's straight sides make the shift zero, a ball converges in two or three passes. The
+    // widest pass wins (the narrowest chord only grows towards the diameter).
+    let width = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let best = Infinity, long = -1, shift = 0, longU = null;
+      for (const u of dirs) {
+        const e1 = reach(u, 1), e2 = reach(u, -1), w = e1 + e2;
+        if (w < best) best = w;
+        if (w < 2 * cap && w > long) { long = w; longU = u; shift = (e1 - e2) * 0.5; }
+      }
+      if (best > width) width = best;
+      // Only for a part that is roundish here. When the longest bounded chord is much longer than
+      // the narrowest, this is a limb joined to something (or the joint between two), and
+      // re-centring would walk into the neighbour.
+      if (!longU || Math.abs(shift) < eps || long > best * 1.6) break;
+      o.addScaledVector(longU, shift);
+    }
+    // THE DEPTH CHORD IS THE OTHER CEILING. Where a part touches its neighbours (an arm against a
+    // torso, a head on shoulders) the silhouette merges them and reads as the whole figure; the
+    // depth through the middle of the part is still just that part. Taken at the re-centred spot.
+    width = Math.min(width < 2 * cap ? width : Infinity, T0);
+    return width > 1e-9 ? width * 0.5 : 0;
+  }
 
   // The midpoint itself, in model space. Null when the cursor is off the mesh.
   _volumeCentre(out) {
@@ -1275,7 +1362,7 @@ class BoneDrawTool extends SculptBase {
         this._refresh();
         return;
       }
-      this._place(d.pos);
+      this._place(d.pos, this._radiusGuess());
       Skeleton.hidePreview(this._main);
       this._refresh();
       return;

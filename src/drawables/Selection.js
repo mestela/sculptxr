@@ -7,6 +7,9 @@ import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
 import MotionPathEdit from '../editing/MotionPathEdit.js';
 import Skeleton from '../editing/Skeleton.js';
+import WeightCage from '../editing/WeightCage.js';
+
+const _symTmp = [0, 0, 0];
 
 var _TMP_MATPV = mat4.create();
 var _TMP_MAT = mat4.create();
@@ -377,8 +380,14 @@ class Selection {
       // so hovering an arm drew the dot on the leg. Other tools keep it; posed symmetry gets its own
       // pass, and `window._showSymmetryDot = true` forces it back on in Grab meanwhile.
       const symOn = (curIdx !== Enums.Tools.GRAB || window._showSymmetryDot === true)
-        && !!(sm && sm.getSymmetry() && pickingSym && pickingSym.getMesh() === mesh);      if (symOn) {
-        this._threeSymDot.position.fromArray(pickingSym.getIntersectionPoint());
+        // a capsule's marker is placed by mirrorLocalPoint, so it needs no hit from the mirror pick
+        // (which has none on a left/right capsule: the mirror of the cursor is on the OTHER capsule)
+        && !!(sm && sm.getSymmetry() && (WeightCage.isCage(mesh) || (pickingSym && pickingSym.getMesh() === mesh)));
+      if (symOn) {
+        const _sp = pickingSym.getIntersectionPoint();
+        // a capsule's mirror is across the rig plane, in this capsule's frame (see mirrorLocalPoint)
+        if (WeightCage.isCage(mesh) && WeightCage.mirrorLocalPoint(mesh, interPoint, _symTmp)) this._threeSymDot.position.fromArray(_symTmp);
+        else this._threeSymDot.position.fromArray(_sp);
         this._threeSymDot.scale.set(dotLocalRadius, dotLocalRadius, dotLocalRadius);
       }
       this._threeSymDot.visible = symOn && !inEditMode;

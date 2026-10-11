@@ -4,6 +4,7 @@ import Geometry from '../../math3d/Geometry.js';
 import { vec3, mat4 } from 'gl-matrix';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
 import Mesh from '../../mesh/Mesh.js';
+import WeightCage from '../WeightCage.js';
 
 // Overview sculpt :
 // start (check if we hit the mesh, start state stack) -> startSculpt
@@ -290,8 +291,20 @@ class SculptBase {
     }
 
     var mesh = picking.getMesh();
-    if (mesh && main.getSculptManager().getSymmetry())
+    if (mesh && main.getSculptManager().getSymmetry()) {
+      // A CENTRELINE CAPSULE'S MIRROR PLANE IS THE WORLD ONE, and the stroke only pointed it there
+      // on press -- so the hover marker mirrored across the capsule's own stale x until you touched
+      // it. Pointed here too, while hovering. (Pairing first: only a paired capsule knows it is a
+      // centreline one.)
+      if (WeightCage.isCage(mesh)) {
+        WeightCage.ensurePaired(main, mesh);
+        // EVERY capsule, not only the centreline ones: a left/right capsule's twin is mirrored across
+        // the world plane too, and the marker is drawn in the hovered capsule's own frame, so its own
+        // x axis put the dot 90 degrees off until the first stroke pointed the plane.
+        WeightCage.alignSymmetryPlane(mesh);
+      }
       main.getPickingSymmetry().intersectionMouseMesh(mesh);
+    }
   }
 
   update(continuous) {

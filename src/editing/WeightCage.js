@@ -1045,6 +1045,33 @@ WeightCage.pairMirrors = function (main, only) {
   return { paired: paired, unpaired: unpaired };
 };
 
+// Where a point on a capsule lands when mirrored across the rig's plane (model-space x = 0), as a point in
+// THE SAME CAPSULE'S frame -- which is where the cursor's mirror marker lives. A left/right capsule's twin
+// is a different mesh, so the picker's own mirror (a ray reflected back onto this same mesh) finds
+// nothing there and the marker sat on top of the cursor; this puts it where the stroke will act.
+const _mlM = new THREE.Matrix4(), _mlP = new THREE.Vector3();
+WeightCage.mirrorLocalPoint = function (cage, p, out) {
+  _mlM.fromArray(cage.getModelSpaceMatrix());
+  _mlP.set(p[0], p[1], p[2]).applyMatrix4(_mlM);
+  _mlP.x = -_mlP.x;
+  if (Math.abs(_mlM.determinant()) < 1e-18) return false;
+  _mlP.applyMatrix4(_mlM.invert());
+  out[0] = _mlP.x; out[1] = _mlP.y; out[2] = _mlP.z;
+  return true;
+};
+
+// Pair the cages if this one has no pair yet and a real attempt has not already failed (the same
+// rule mirrorEdit applies at stroke END). Called at stroke START as well: a scene loaded from a file
+// has cages and no pairs, and the in-stroke mirror needs the pair to exist BEFORE the first stroke
+// -- paired only at its end, the first stroke on a spine, neck or head capsule was not symmetric.
+WeightCage.ensurePaired = function (main, cage) {
+  if (!WeightCage.isCage(cage) || cage._cageMirror) return;
+  if (!Skeleton.rigMirrorPlane(main)) return;
+  if (main._cagePairTried && main._cagePairHadPlane) return;
+  main._cagePairTried = true;
+  WeightCage.pairMirrors(main);
+};
+
 WeightCage.mirrorEdit = function (main, cage) {
   if (!WeightCage.isCage(cage)) return null;
   // The toggle still governs: symmetry off means no mirroring, whatever is paired.
@@ -1205,8 +1232,14 @@ WeightCage.alignSymmetryPlane = function (cage) {
   _asO.set(0, 0, 0).applyMatrix4(_asM.invert());
   const c = td._center;
   const r = cage.computeLocalRadius ? cage.computeLocalRadius() : 1;
+  const off = r > 1e-9 ? (nx * (_asO.x - c[0]) + ny * (_asO.y - c[1]) + nz * (_asO.z - c[2])) / r : 0;
+  // Unchanged is not rewritten: this now also runs on HOVER (every frame), and dropping the vertex
+  // pairing each time would rebuild it each time.
+  const n0 = td._symmetryNormal;
+  if (n0 && Math.abs(n0[0] - nx) + Math.abs(n0[1] - ny) + Math.abs(n0[2] - nz) < 1e-9
+      && Math.abs((td._symmetryOffset || 0) - off) < 1e-9) return true;
   td._symmetryNormal = [nx, ny, nz];
-  td._symmetryOffset = r > 1e-9 ? (nx * (_asO.x - c[0]) + ny * (_asO.y - c[1]) + nz * (_asO.z - c[2])) / r : 0;
+  td._symmetryOffset = off;
   cage._symmetryData = null;       // the vertex pairing was built against the old plane
   return true;
 };
