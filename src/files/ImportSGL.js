@@ -3,6 +3,7 @@ import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import ExportSGL from './ExportSGL.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
+import { installStencils } from './NomMultires.js';
 import MeshResolution from '../mesh/multiresolution/MeshResolution.js';
 import AnimationRegistry from '../editing/AnimationRegistry.js';
 import Mesh from '../mesh/Mesh.js';
@@ -231,6 +232,9 @@ Import.importSGL = function (buffer, gl, main) {
       }
 
       Mesh.OPTIMIZE = globalOptTemp;
+
+      // a Nomad-style stack (triangles in the cage) subdivides by its own stencil, which a save does not carry
+      installStencils(mm, MeshResolution);
 
       // There is deliberately one render object for the complete resolution stack.
       if (mm.initThreeMesh) mm.initThreeMesh();

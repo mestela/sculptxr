@@ -1057,6 +1057,7 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 }
 /* 16px on touch: iOS zooms the page on focus of anything smaller, and the page cannot zoom back. */
 @media (hover: none) and (pointer: coarse) { .mm-rename-input { font-size: 16px; } }
+.mm-outliner-row.drag-src { opacity: 0.5; }
 .mm-outliner-row.drop-before { box-shadow: inset 0 2px 0 #89b4fa; }
 .mm-outliner-row.drop-after  { box-shadow: inset 0 -2px 0 #89b4fa; }
 .mm-outliner-row.drop-into   { background: rgba(137,180,250,0.22); box-shadow: inset 0 0 0 1px #89b4fa; }
@@ -1099,7 +1100,9 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 }
 .mm-xf-bake:hover, .mm-xf-bake.hover { background: #313244; color: #f9e2af; }
 /* Outliner toolbar — icon-only copy/delete buttons. */
-.mm-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+/* WRAPS to a second row when the panel is too narrow for every button (an iPad sidebar, the VR panel):
+   the buttons are fixed-size and do not shrink, so they spilled out of the panel instead. */
+.mm-toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .mm-tool-btn {
   width: 32px; height: 28px; flex-shrink: 0;
   border: 1px solid #45475a; border-radius: 5px;
@@ -2621,6 +2624,12 @@ export function moveOutlinerRow(main, mesh, dir) {
   return true;
 }
 
+// ROWS CAN BE DRAGGED everywhere except VR (no pointer to drag with): a mouse drags natively, touch and
+// pen by a long press (see the pointer path in the wiring). The up/down buttons are the VR way to reorder.
+export function outlinerDragEnabled() {
+  return !window.app?._renderer?.xr?.isPresenting;
+}
+
 // Put `mesh` directly before/after `target` among target's siblings, under target's parent
 // (the caller reparents first). Keys are reassigned as a permutation of the ones the new sibling
 // set already holds, exactly as moveOutlinerRow does.
@@ -2978,8 +2987,8 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}>${faIcon('link-slash')}</button>
       <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}>${faIcon(selAnyVisible ? 'eye' : 'eye-slash')}</button>
       <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}>${faIcon('pen')}</button>
-      <button class="mm-tool-btn" id="mm-move-up" title="Move up in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-up')}</button>
-      <button class="mm-tool-btn" id="mm-move-down" title="Move down in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-down')}</button>
+      ${outlinerDragEnabled() ? '' : `<button class="mm-tool-btn" id="mm-move-up" title="Move up in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-up')}</button>
+      <button class="mm-tool-btn" id="mm-move-down" title="Move down in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-down')}</button>`}
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}>${faIcon('trash')}</button>
       <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}>${faIcon(tbLocked ? 'lock' : 'lock-open')}</button>
     </div>
@@ -4087,7 +4096,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       // (same section, same mesh count) and the rebuild below is skipped, so the panel keeps
       // showing the old names until something unrelated forces it. See Skeleton.refreshOutliner.
       : `sec:${this._activeSection}:${shaderType}:${meshCount}:${curTool}:${symOn}:${contOn}:${uiReorg() ? 1 : 0}`
-        + `:${this._main._outlinerRev | 0}`;
+        + `:${this._main._outlinerRev | 0}:${outlinerDragEnabled() ? 1 : 0}`;
 
     this._applyReorgClass();
     if (key === this._lastContentKey) return;
@@ -5058,24 +5067,58 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     });
   }
 
-  // DRAG AND DROP, DESKTOP ONLY (a mouse; VR and touch have the up/down buttons). Over a row's
-  // top or bottom quarter the drop INSERTS before/after it; over the middle it PARENTS to it.
-  // (A quarter, not a sliver: a row is ~16px tall and a few percent of that is under a pixel.)
-  // Row order comes from the sibling keys, parenting from main.setMeshParent, which keeps its
-  // world transform, refuses cycles and has its own undo.
-  if (window.matchMedia?.('(hover: hover) and (pointer: fine)').matches && !window._vrKeyboard?.shouldUse?.()) {
-    const rowOf = (n) => n?.closest?.('.mm-outliner-row');
+  // DRAG AND DROP (everywhere but VR). Over a row's top or bottom quarter the drop INSERTS before/after
+  // it; over the middle it PARENTS to it; over empty space below the rows it moves the node OUT to the
+  // top level, last. (A quarter, not a sliver: a row is ~16px tall and a few percent of that is under a
+  // pixel.) Order comes from the sibling keys, parenting from main.setMeshParent, which keeps its world
+  // transform, refuses cycles and has its own undo.
+  //
+  // A MOUSE drags natively (HTML5 drag events). TOUCH and PEN use a pointer-event drag started by a
+  // LONG PRESS, so an ordinary swipe still scrolls the list and a tap still selects.
+  if (outlinerDragEnabled()) {
     const meshOfRow = (r) => findMesh(r?.querySelector('[data-action="select"]')?.dataset.meshId);
-    const clear = () => el.querySelectorAll('.drop-before,.drop-after,.drop-into').forEach((r) => r.classList.remove('drop-before', 'drop-after', 'drop-into'));
+    const clear = () => el.querySelectorAll('.drop-before,.drop-after,.drop-into,.drag-src').forEach((r) => r.classList.remove('drop-before', 'drop-after', 'drop-into', 'drag-src'));
     const inside = (a, root) => { for (let p = a; p; p = p._parentMesh) if (p === root) return true; return false; };
-    const zoneOf = (e, r) => {
-      const b = r.getBoundingClientRect(), f = (e.clientY - b.top) / b.height;
+    const zoneOf = (y, r) => {
+      const b = r.getBoundingClientRect(), f = (y - b.top) / b.height;
       return f < 0.25 ? 'before' : f > 0.75 ? 'after' : 'into';
     };
+    // the two things a drop does, shared by the mouse and the touch path
+    const dropOnRow = (node, target, z) => {
+      if (!node || !target || target === node) return;
+      if (inside(z === 'into' ? target : target._parentMesh, node)) return;
+      if (z === 'into') {
+        main.setMeshParent(node.getID(), target.getID());
+        target._outlinerCollapsed = false;
+      } else {
+        const par = target._parentMesh || null;
+        const order = { before: main.snapshotOutlinerKeys?.() };
+        const reparent = (node._parentMesh || null) !== par;
+        if (reparent) main.setMeshParent(node.getID(), par ? par.getID() : null, { order });
+        placeOutlinerRow(main, node, target, z === 'after');
+        order.after = main.snapshotOutlinerKeys?.();
+        if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
+      }
+      repaintFn();
+    };
+    const dropOut = (node) => {
+      if (!node) return;
+      const order = { before: main.snapshotOutlinerKeys?.() };
+      const reparent = !!node._parentMesh;
+      if (reparent) main.setMeshParent(node.getID(), null, { order });
+      const tops = (main.getMeshes?.() ?? []).filter((m) => m !== node && !m._isVoxelChunk && !m._parentMesh);
+      const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
+      if (last) placeOutlinerRow(main, node, last, true);
+      order.after = main.snapshotOutlinerKeys?.();
+      if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
+      repaintFn();
+    };
+    const canMouse = !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
     let dragged = null;
-    // EMPTY SPACE BELOW THE ROWS = "out of its parent": the node goes to the top level, last.
     const list = el.querySelector('.mm-outliner-list');
-    if (list) {
+
+    // ── mouse: native drag ──
+    if (list && canMouse) {
       list.addEventListener('dragover', (e) => {
         if (!dragged || e.target.closest('.mm-outliner-row')) return;
         e.preventDefault();
@@ -5090,60 +5133,119 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         clear(); dragged = null;
         if (!node) return;
         e.preventDefault();
-        const order = { before: main.snapshotOutlinerKeys?.() };
-        const reparent = !!node._parentMesh;
-        if (reparent) main.setMeshParent(node.getID(), null, { order });
-        const tops = (main.getMeshes?.() ?? []).filter((m) => m !== node && !m._isVoxelChunk && !m._parentMesh);
-        const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
-        if (last) placeOutlinerRow(main, node, last, true);
-        order.after = main.snapshotOutlinerKeys?.();
-        if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
-        repaintFn();
+        dropOut(node);
       });
     }
     el.querySelectorAll('.mm-outliner-row').forEach((row) => {
-      row.draggable = true;
-      row.addEventListener('dragstart', (e) => {
-        if (e.target?.tagName === 'INPUT') { e.preventDefault(); return; }   // renaming
-        dragged = meshOfRow(row);
-        if (!dragged) { e.preventDefault(); return; }
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', dragged._permanentStaticLabel || '');
-      });
-      row.addEventListener('dragend', () => { dragged = null; clear(); });
-      row.addEventListener('dragover', (e) => {
-        const target = meshOfRow(row);
-        if (!dragged || !target || target === dragged) return;
-        const z = zoneOf(e, row);
-        // can't drop a node into (or beside, which parents it to) its own subtree
-        if (inside(z === 'into' ? target : target._parentMesh, dragged)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        clear();
-        row.classList.add('drop-' + z);
-      });
-      row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) row.classList.remove('drop-before', 'drop-after', 'drop-into'); });
-      row.addEventListener('drop', (e) => {
-        const target = meshOfRow(row);
-        const node = dragged;
-        clear(); dragged = null;
-        if (!node || !target || target === node) return;
-        e.preventDefault();
-        const z = zoneOf(e, row);
-        if (inside(z === 'into' ? target : target._parentMesh, node)) return;
-        if (z === 'into') {
-          main.setMeshParent(node.getID(), target.getID());
-          target._outlinerCollapsed = false;
-        } else {
-          const par = target._parentMesh || null;
-          const order = { before: main.snapshotOutlinerKeys?.() };
-          const reparent = (node._parentMesh || null) !== par;
-          if (reparent) main.setMeshParent(node.getID(), par ? par.getID() : null, { order });
-          placeOutlinerRow(main, node, target, z === 'after');
-          order.after = main.snapshotOutlinerKeys?.();
-          if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
-        }
-        repaintFn();
+      if (canMouse) {
+        row.draggable = true;
+        row.addEventListener('dragstart', (e) => {
+          if (e.target?.tagName === 'INPUT') { e.preventDefault(); return; }   // renaming
+          dragged = meshOfRow(row);
+          if (!dragged) { e.preventDefault(); return; }
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', dragged._permanentStaticLabel || '');
+        });
+        row.addEventListener('dragend', () => { dragged = null; clear(); });
+        row.addEventListener('dragover', (e) => {
+          const target = meshOfRow(row);
+          if (!dragged || !target || target === dragged) return;
+          const z = zoneOf(e.clientY, row);
+          // can't drop a node into (or beside, which parents it to) its own subtree
+          if (inside(z === 'into' ? target : target._parentMesh, dragged)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          clear();
+          row.classList.add('drop-' + z);
+        });
+        row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) row.classList.remove('drop-before', 'drop-after', 'drop-into'); });
+        row.addEventListener('drop', (e) => {
+          const target = meshOfRow(row);
+          const node = dragged;
+          clear(); dragged = null;
+          if (!node || !target || target === node) return;
+          e.preventDefault();
+          dropOnRow(node, target, zoneOf(e.clientY, row));
+        });
+      }
+
+      // ── touch / pen: long-press, then drag with the finger ──
+      row.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' || e.button > 0 || e.target?.tagName === 'INPUT') return;
+        const node = meshOfRow(row);
+        if (!node) return;
+        row.draggable = false;                         // the system's own long-press drag would fight this
+        let x0 = e.clientX, y0 = e.clientY, x = x0, y = y0, active = false, scroller = 0;
+        const pid = e.pointerId;
+        const hit = () => {
+          const t = document.elementFromPoint(x, y);
+          const r = t && t.closest && t.closest('.mm-outliner-row');
+          if (r && el.contains(r)) {
+            const target = meshOfRow(r);
+            if (!target || target === node) return { none: true };
+            const z = zoneOf(y, r);
+            if (inside(z === 'into' ? target : target._parentMesh, node)) return { none: true };
+            return { row: r, target, z };
+          }
+          const lr = list && list.getBoundingClientRect();
+          if (lr && x >= lr.left && x <= lr.right && y >= lr.top && y <= lr.bottom) return { out: true };
+          return { none: true };
+        };
+        const show = () => {
+          clear();
+          row.classList.add('drag-src');
+          const h = hit();
+          if (h.row) h.row.classList.add('drop-' + h.z);
+          else if (h.out) list.lastElementChild?.classList.add('drop-after');
+        };
+        const cleanup = () => {
+          clearTimeout(timer); clearInterval(scroller);
+          window.removeEventListener('pointermove', move, true);
+          window.removeEventListener('pointerup', up, true);
+          window.removeEventListener('pointercancel', cancel, true);
+          list && list.removeEventListener('touchmove', block);
+          clear();
+          if (canMouse) row.draggable = true;
+        };
+        const block = (ev) => { if (active) ev.preventDefault(); };
+        const start = () => {
+          active = true;
+          list && list.addEventListener('touchmove', block, { passive: false });
+          // edge auto-scroll while the finger is held near the top or bottom of the list
+          scroller = setInterval(() => {
+            const lr = list && list.getBoundingClientRect();
+            if (!lr) return;
+            if (y < lr.top + 28) list.scrollTop -= 8; else if (y > lr.bottom - 28) list.scrollTop += 8;
+            show();
+          }, 40);
+          if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+          show();
+        };
+        const move = (ev) => {
+          if (ev.pointerId !== pid) return;
+          x = ev.clientX; y = ev.clientY;
+          if (!active) { if (Math.hypot(x - x0, y - y0) > 8) cleanup(); return; }   // a swipe: let it scroll
+          ev.preventDefault();
+          show();
+        };
+        const swallowClick = () => {
+          const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+          window.addEventListener('click', eat, true);
+          setTimeout(() => window.removeEventListener('click', eat, true), 350);
+        };
+        const up = (ev) => {
+          if (ev.pointerId !== pid) return;
+          const was = active, h = was ? hit() : null;
+          cleanup();
+          if (!was) return;
+          swallowClick();                              // the lift is not a tap on a row
+          if (h.row) dropOnRow(node, h.target, h.z); else if (h.out) dropOut(node);
+        };
+        const cancel = (ev) => { if (ev.pointerId === pid) cleanup(); };
+        const timer = setTimeout(start, e.pointerType === 'pen' ? 220 : 380);
+        window.addEventListener('pointermove', move, true);
+        window.addEventListener('pointerup', up, true);
+        window.addEventListener('pointercancel', cancel, true);
       });
     });
   }

@@ -414,6 +414,14 @@ class Multimesh extends Mesh {
       var wOpts = optionsObj;
       if (Number.isFinite(wOpts.wireframeAlpha)) rawAlpha = wOpts.wireframeAlpha;
       if (Number.isFinite(wOpts.wireframeBias)) rawBias = wOpts.wireframeBias;
+      // A WEIGHT CAPSULE'S WIRE HAS TO BE READABLE: it is how you see what a stroke did to the shape, and at the
+      // shared 25% a dark edge on a bright opaque capsule is nearly invisible (and on a large capsule the
+      // 0.001 bias leaves it z-fighting with its own fill). So capsules get a firmer wire and a bias
+      // that scales with the capsule instead of a fixed 0.001.
+      if (this._isWeightCage) {
+        rawAlpha = Math.max(rawAlpha, 0.85);
+        rawBias = Math.max(rawBias, 0.03);
+      }
       var useSurface = wOpts.wireframeSurface ?? true;
       if (useSurface === false) {
         var hx = wOpts.wireframeColor || '#000000';

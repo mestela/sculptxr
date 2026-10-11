@@ -140,3 +140,35 @@ export function applyStencil(st, src, out, count) {
     out[j * 3] = x; out[j * 3 + 1] = y; out[j * 3 + 2] = z;
   }
 }
+
+// A NOMAD-STYLE LEVEL STACK THAT CAME BACK FROM A .sxr. The stencil that makes a level subdivide the way Nomad
+// does (triangle -> three quads with a face point) is a function installed on the lower level, and a save does not
+// carry it: a reloaded stack fell back to SculptGL's own rule (triangle -> four triangles, no face point), which
+// does not produce the file's vertices. The vertices that rule cannot reach (a Nomad body: the four face points of
+// its four cage triangles) read as zero, their details became whole positions, and every analysis/synthesis round
+// trip -- the one Bind runs, and the one the skin pass runs each frame -- put spikes of up to a body's width
+// around the triangles. The stencil is rebuilt here from the saved face lists and put back.
+// `Base` is MeshResolution (passed in: this file imports nothing). Returns how many levels were restored.
+export function installStencils(mm, Base) {
+  const stack = mm && mm._meshes;
+  if (!stack || stack.length < 2) return 0;
+  let n = 0;
+  for (let k = 1; k < stack.length; k++) {
+    const lower = stack[k - 1], up = stack[k];
+    if (Object.prototype.hasOwnProperty.call(lower, 'computePartialSubdivision')) continue;   // already pointed at one
+    const lf = lower.getFaces(), nOld = lower.getNbVertices();
+    let tris = 0;
+    for (let f = 0; f < lower.getNbFaces(); f++) if (lf[f * 4 + 3] === TRI) { tris++; break; }
+    if (!tris) continue;                                                // all quads: SculptGL's rule IS Catmull-Clark
+    const st = buildStencil(lf, up.getFaces(), nOld, up.getNbVertices());
+    if (!st) continue;
+    lower.computePartialSubdivision = function (sv, sc, sm, nbUp) {
+      if (nbUp !== st.n) return Base.prototype.computePartialSubdivision.call(this, sv, sc, sm, nbUp);
+      applyStencil(st, this.getVertices(), sv, nbUp);
+      applyStencil(st, this.getColors(), sc, nbUp);
+      applyStencil(st, this.getMaterials(), sm, nbUp);
+    };
+    n++;
+  }
+  return n;
+}

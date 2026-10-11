@@ -721,7 +721,17 @@ Skinning.bind = function (main, mesh) {
   // the visible sculpt. Do this directly on the resolution objects rather than changing
   // selection: Bind must not unexpectedly drop the user's viewport to the lowest level.
   if (mesh._meshes?.length) {
-    for (let i = mesh._sel || 0; i > 0; i--) mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+    // EACH LEVEL'S NORMALS ARE REFRESHED AS IT IS ANALYSED, as stepping down by hand does (setSelection ->
+    // updateResolution). The detail frames are built from the upper level's normals, and the level just
+    // written by the copy still carried the ones from before it, so the cage came out of the next step
+    // with frames that no longer matched its vertices and the synthesis that follows rebuilt a different
+    // surface -- 181,000 of a Nomad body's 195,000 vertices moved, some by a third of its height ("it
+    // looks really corrupted after binding"), while binding from level 0 first, which has nothing to
+    // analyse, was fine.
+    for (let i = mesh._sel || 0; i > 0; i--) {
+      mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+      mesh._meshes[i - 1].updateGeometry();
+    }
   }
   mesh._skinLevel = 0;
   mesh._skinSizeWarned = false;
@@ -955,12 +965,21 @@ Skinning.onCageEdited = function (main, cage) {
   // MIRROR FIRST, THEN MEASURE. The twin capsule is part of the shape being weighted, so
   // re-solving before it moves would weight the skin against a half-finished edit and leave the
   // other side of the character a stroke behind.
-  const mir = WeightCage.mirrorEdit(main, cage);
-  // A mirrored twin is a second capsule that moved, and the vertices it can have changed are
-  // not the ones the touched capsule can. Passing only one of them would leave the other side's
-  // weights stale until something else happened to re-solve them.
-  const touched = (mir && mir.ok && mir.twinCage && mir.twinCage !== cage)
-    ? [cage, mir.twinCage] : [cage];
+  //
+  // GLUED NEIGHBOURS FIRST (see WeightCage.glueEdit): the stroke has already carried them along, so
+  // this is the catch-up for an undo and the list of who moved, and each of them is mirrored too.
+  WeightCage.glueEdit(main, cage);
+  const edited = [cage];
+  for (const g of WeightCage.takeGlued(main)) if (!edited.includes(g)) edited.push(g);
+  const touched = [cage];
+  for (const c of edited) {
+    const mir = WeightCage.mirrorEdit(main, c);
+    // A mirrored twin is a second capsule that moved, and the vertices it can have changed are
+    // not the ones the touched capsule can. Passing only one of them would leave the other side's
+    // weights stale until something else happened to re-solve them.
+    if (c !== cage && !touched.includes(c)) touched.push(c);
+    if (mir && mir.ok && mir.twinCage && !touched.includes(mir.twinCage)) touched.push(mir.twinCage);
+  }
   const _t1 = performance.now();
   Skinning._stageMs = {};
   const n = Skinning.resolveWeightsAll(main, touched);
@@ -1455,6 +1474,57 @@ function analyseDown(mesh, level) {
 // was written by the skin pass and copied byte for byte into `_skinPosed`, so a vertex the
 // brush did not reach is bit-identical -- and on a 20k mesh a fifty-vertex stroke then costs
 // fifty matrix inversions instead of twenty thousand.
+// THE REST-SHAPE JOURNAL, so that undo is EXACT.
+//
+// A stroke on a posed skin is carried into rest space by inverting the LINEAR blend of the joints, and the
+// skin pass then draws mush(blend(rest)), which is not the same surface (up to twice the stroke across a hard
+// weight seam, measured). Undo used to restore the posed vertices and run the same inversion back, and a
+// round trip through two different operators does not return: one smoothing stroke across a seam and three
+// undos took the rest shape from 2.5 to 6, 14 and 33 units away -- "each time I tried to undo it got worse".
+// So the commit records, for every vertex it changed, the rest/src values before and after, hangs the record
+// on the stroke's undo state, and undo/redo write those values back verbatim.
+// Only when the stroke was at the bound level itself: above it, analyseDown has also changed the levels below.
+function restJournal(mesh) {
+  Skinning._lastRestEntry = null;
+  const stack = mesh._meshes;
+  if (stack && stack.length && (mesh._sel | 0) !== stack.indexOf(boundLevel(mesh))) return null;
+  const e = { mesh: mesh, idx: [], oldRest: [], oldSrc: [], newRest: [], newSrc: [] };
+  let at = -1;
+  Skinning._lastRestEntry = e;
+  return {
+    before(i, src, rest) {
+      at = e.idx.length; e.idx.push(i);
+      e.oldRest.push(rest[i * 3], rest[i * 3 + 1], rest[i * 3 + 2]);
+      e.oldSrc.push(src[i * 3], src[i * 3 + 1], src[i * 3 + 2]);
+    },
+    after(src, rest) {
+      const i = e.idx[at] * 3;
+      e.newRest.push(rest[i], rest[i + 1], rest[i + 2]);
+      e.newSrc.push(src[i], src[i + 1], src[i + 2]);
+    },
+    afterValues(x, y, z) { e.newRest.push(x, y, z); e.newSrc.push(x, y, z); },
+    drop() {                                   // a vertex that was recorded and then not committed
+      e.idx.length = at; e.oldRest.length = at * 3; e.oldSrc.length = at * 3;
+    },
+  };
+}
+
+// Put a recorded commit back (`which` = 'undo' or 'redo'), vertex for vertex. False when it does not apply.
+Skinning.applyRestEntry = function (entry, which) {
+  const m = entry && entry.mesh;
+  if (!m || !Skinning.isBound(m) || !m._skinRest || !m._skinSrc) return false;
+  const rest = which === 'undo' ? entry.oldRest : entry.newRest, src = which === 'undo' ? entry.oldSrc : entry.newSrc;
+  for (let k = 0; k < entry.idx.length; k++) {
+    const i = entry.idx[k] * 3, j = k * 3;
+    if (i + 2 >= m._skinRest.length) continue;
+    m._skinRest[i] = rest[j]; m._skinRest[i + 1] = rest[j + 1]; m._skinRest[i + 2] = rest[j + 2];
+    m._skinSrc[i] = src[j]; m._skinSrc[i + 1] = src[j + 1]; m._skinSrc[i + 2] = src[j + 2];
+  }
+  m._skinMushDirty = true;      // the mush deltas are defined against the rest pose
+  m._skinDirty = true;          // the pass redraws from the restored rest
+  return true;
+};
+
 function commitPosed(main, mesh, level, nbV) {
   const ref = mesh._skinPosed;
   if (!ref || ref.length !== nbV * 3) {
@@ -1467,10 +1537,12 @@ function commitPosed(main, mesh, level, nbV) {
   const idx = mesh._skinIdx, wts = mesh._skinW;
 
   let moved = 0, singular = 0;
+  const jr = restJournal(mesh);   // what this commit changes, so undo can put it back EXACTLY (see applyRestEntry)
   for (let i = 0; i < nbV; i++) {
     const i3 = i * 3;
     const dx = out[i3] - ref[i3], dy = out[i3 + 1] - ref[i3 + 1], dz = out[i3 + 2] - ref[i3 + 2];
     if (dx === 0 && dy === 0 && dz === 0) continue;
+    if (jr) jr.before(i, src, rest);
 
     // The blended basis, weighted exactly as apply() weights it.
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0, total = 0;
@@ -1495,6 +1567,7 @@ function commitPosed(main, mesh, level, nbV) {
     if (total <= 1e-6) {
       src[i3] += dx; src[i3 + 1] += dy; src[i3 + 2] += dz;
       rest[i3] += dx; rest[i3 + 1] += dy; rest[i3 + 2] += dz;
+      if (jr) jr.after(src, rest);
       moved++;
       continue;
     }
@@ -1504,7 +1577,7 @@ function commitPosed(main, mesh, level, nbV) {
     // part of a stroke, writing a garbage inverse loses the model.
     const c0 = b4 * b8 - b5 * b7, c1 = b5 * b6 - b3 * b8, c2 = b3 * b7 - b4 * b6;
     const det = b0 * c0 + b1 * c1 + b2 * c2;
-    if (!(Math.abs(det) > 1e-12)) { singular++; continue; }
+    if (!(Math.abs(det) > 1e-12)) { singular++; if (jr) jr.drop(); continue; }
     const id = 1 / det;
     const i0 = c0 * id, i1 = (b2 * b7 - b1 * b8) * id, i2 = (b1 * b5 - b2 * b4) * id;
     const i3a = c1 * id, i4 = (b0 * b8 - b2 * b6) * id, i5 = (b2 * b3 - b0 * b5) * id;
@@ -1515,6 +1588,7 @@ function commitPosed(main, mesh, level, nbV) {
     const rz = i6 * dx + i7 * dy + i8 * dz;
     src[i3] += rx; src[i3 + 1] += ry; src[i3 + 2] += rz;
     rest[i3] += rx; rest[i3 + 1] += ry; rest[i3 + 2] += rz;
+    if (jr) jr.after(src, rest);
     moved++;
   }
 
@@ -1523,6 +1597,19 @@ function commitPosed(main, mesh, level, nbV) {
       + 'committed', singular);
   }
   if (!moved) return false;
+
+  // THE INVERSION ABOVE IS OF THE LINEAR BLEND ONLY, and the skin pass then adds delta mush, so with mush on
+  // the pass does not redraw exactly what was sculpted: at a hard weight seam it moves the surface by up to
+  // twice the stroke (three smoothing strokes across one: rest 0.17, 0.54, 1.3 units off, the display snapping
+  // by 0.27, 0.59, 1.28 when the pass ran). Refining the commit against the real pass was tried -- re-draw,
+  // measure, push the residual back through the inverse -- and DIVERGES at every gain (0.2 to 1.0: several units
+  // after one stroke), because mush recomputes its detail against the new rest. Undo is made exact instead (the
+  // journal above) and the artist is told where the edit is not: sculpt at the bind pose (Hold Bind Pose) to
+  // keep it exact.
+  if (Skinning.mushIterations() > 0 && !mesh._skinPosedWarned && window.screenLog) {
+    mesh._skinPosedWarned = true;
+    window.screenLog('Sculpting while posed is approximate with Delta Mush on -- use Hold Bind Pose for exact edits (undo is exact either way)', '#f9e2af');
+  }
 
   // The reference has to move with the stroke: a second stroke can land before the next skin
   // pass, and measuring it against a stale reference would commit the FIRST stroke twice.
@@ -1568,6 +1655,16 @@ Skinning.commitToRest = function (main, mesh) {
   if (!Skinning.atBindPose(main, mesh)) return commitPosed(main, mesh, level, nbV);
 
   const v = level.getVertices();
+  const jb = restJournal(mesh);
+  if (jb) {
+    for (let i = 0; i < nbV; i++) {
+      const i3 = i * 3;
+      if (v[i3] === mesh._skinRest[i3] && v[i3 + 1] === mesh._skinRest[i3 + 1] && v[i3 + 2] === mesh._skinRest[i3 + 2]
+          && v[i3] === mesh._skinSrc[i3] && v[i3 + 1] === mesh._skinSrc[i3 + 1] && v[i3 + 2] === mesh._skinSrc[i3 + 2]) continue;
+      jb.before(i, mesh._skinSrc, mesh._skinRest);
+      jb.afterValues(v[i3], v[i3 + 1], v[i3 + 2]);
+    }
+  }
   mesh._skinSrc.set(v.subarray(0, nbV * 3));
   // THE BIND SHAPE ITSELF MOVED, so `_skinRest` follows. It is what weights are re-solved from
   // when a joint radius changes and what unbind puts back -- leaving it on the pre-sculpt shape

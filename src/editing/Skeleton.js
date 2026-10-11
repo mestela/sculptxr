@@ -6674,6 +6674,9 @@ const DISPLAY_FLAGS = {
   // by default (it is how the display has always been); a switch because on a dense or fat rig
   // they swamp the model. Only the dots: the overlap test itself still runs.
   overlaps: ['_boneShowOverlaps', 'boneShowOverlaps', true],
+  // Glue the seams where two capsules meet (WeightCage.glueEdit). Not a decoration, so Hide All
+  // Decorations leaves it alone: it changes what a stroke does, not what is drawn.
+  glueSeams: ['_cageGlueSeams', 'cageGlueSeams', true],
   // WHERE MAKE SKIN WILL ATTACH each bone, drawn on the joint boxes it will build from. Off by
   // default: it is a rig-time diagnostic for the case where a joint has more bones than its box
   // has room for, not something to have on while posing. See SkinPreview.

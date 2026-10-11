@@ -430,6 +430,7 @@ class SculptManager {
     // A CENTRELINE CAPSULE MIRRORS ABOUT THE WORLD PLANE, whatever way its bone happens to face -- see
     // WeightCage.alignSymmetryPlane. Capsules with a twin on the other side are mirrored onto it at stroke end.
     if (this._symmetry && _active) WeightCage.ensurePaired(this._main, _active);
+    if (_active) WeightCage.seamBegin(this._main, _active);
     if (this._symmetry && _active && WeightCage.isCage(_active) && _active._cageMirror && _active._cageMirror.self) {
       WeightCage.alignSymmetryPlane(_active);
     }
@@ -612,7 +613,15 @@ class SculptManager {
     // ...AND A STROKE ON A BOUND MESH IS AN EDIT TO ITS REST SHAPE. The skin pass rebuilds the
     // bound level from `_skinSrc` on every pose change, so a stroke that never reaches it is
     // reverted the moment the rig next moves -- silently, which is the failure this closes.
+    Skinning._lastRestEntry = null;
     Skinning.commitToRest(this._main, this._main.getMesh?.());
+    // what that commit changed in the rest shape rides on the stroke's undo state, so undo can put it back exactly
+    const _re = Skinning._lastRestEntry;
+    Skinning._lastRestEntry = null;
+    if (_re && _re.idx.length) {
+      const _cs = this._main.getStateManager?.()?.getCurrentState?.();
+      if (_cs) _cs._restEntry = _re;
+    }
   }
 
   preUpdate() {
@@ -630,10 +639,17 @@ class SculptManager {
   // capsule's own few hundred vertices (the skin is re-solved at the end, not here), so it is cheap
   // enough for every update. A centreline capsule has no twin to copy to -- its in-stroke mirror does
   // that -- and mirrorEdit declines it.
+  //
+  // GLUED SEAMS come first (WeightCage.glueEdit): a neighbour's ring follows this capsule's, and the
+  // neighbour is then mirrored to ITS twin as well, so the whole chain stays in step.
   _mirrorCageLive() {
     if (!this._strokeActive) return;
     const m = this._main.getMesh && this._main.getMesh();
-    if (m && WeightCage.isCage(m) && m._cageMirror && !m._cageMirror.self) WeightCage.mirrorEdit(this._main, m);
+    if (!m || !WeightCage.isCage(m)) return;
+    const glued = WeightCage.glueEdit(this._main, m);
+    for (const c of [m, ...glued]) {
+      if (c._cageMirror && !c._cageMirror.self) WeightCage.mirrorEdit(this._main, c);
+    }
   }
 
   updateXR(picking, isPressed, origin, dir, options) {

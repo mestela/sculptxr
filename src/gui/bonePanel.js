@@ -860,6 +860,7 @@ export function buildBoneDisplayHTML(main, style, extraChips = '') {
       ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
       ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlagRaw('capsuleShaded'))}
       ${flagButton(c, 'overlaps', 'Overlaps', Skeleton.displayFlagRaw('overlaps'))}
+      ${flagButton(c, 'glue-seams', 'Glue Seams', Skeleton.displayFlagRaw('glueSeams'))}
       ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlagRaw('skinClaims'))}
       ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlagRaw('weights'))}
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlagRaw('lengths'))}
@@ -998,6 +999,7 @@ export function wireBoneSection(root, main, opts) {
   flag('caps', 'capsules');
   flag('caps-shade', 'capsuleShaded');
   flag('overlaps', 'overlaps');
+  flag('glue-seams', 'glueSeams');
   // Where Make Skin will bridge each bone. Named 'Attach' rather than 'Claims': the lattice's
   // word for it says nothing to someone deciding whether their fingers will come out right.
   flag('skin-claims', 'skinClaims');
@@ -1888,7 +1890,11 @@ export function wireBoneSection(root, main, opts) {
   // on purpose. So this is the way out, and it is also the A/B for the bug that caused it:
   // revert, repeat the stroke, compare.
   q('revert')?.addEventListener('click', () => {
-    const mesh = (main.getMeshes() || []).find((m) => Skinning.isBound(m));
+    // THE SELECTED BOUND MESH, not the first one found: with the body, head and clothes all bound this reverted
+    // whichever of them came first in the scene, so "restore the clothes" quietly restored something else.
+    const sel = (main.getSelectedMeshes && main.getSelectedMeshes()) || [];
+    const mesh = [main.getMesh && main.getMesh(), ...sel].find((m) => m && Skinning.isBound(m))
+      || (main.getMeshes() || []).find((m) => Skinning.isBound(m));
     if (!mesh) { say('Bones: nothing is bound to the skeleton', false); return; }
     // Bounded to the BIND SHAPE's length, not the level's: the level can carry more vertices
     // than the weights cover, and a snapshot longer than `_skinRest` cannot be written back.
@@ -1924,8 +1930,10 @@ export function wireBoneSection(root, main, opts) {
   });
 
   q('bindpose')?.addEventListener('click', () => {
+    // the selected bound mesh first (each bound mesh has its own bind pose), else the first one
     const mesh = Skinning.anyBound(main)
-      ? (main.getMeshes() || []).find((m) => Skinning.isBound(m)) : null;
+      ? ([main.getMesh && main.getMesh(), ...((main.getSelectedMeshes && main.getSelectedMeshes()) || [])].find((m) => m && Skinning.isBound(m))
+          || (main.getMeshes() || []).find((m) => Skinning.isBound(m))) : null;
     if (!mesh) { say('Bones: nothing is bound to the skeleton', false); return; }
     if (Skinning.bindPoseHeld()) {
       Skinning.exitBindPose(main);
@@ -1977,6 +1985,7 @@ export function syncBoneSection(root, main) {
   setFlag('caps', Skeleton.displayFlagRaw('capsules'));
   setFlag('caps-shade', Skeleton.displayFlagRaw('capsuleShaded'));
   setFlag('overlaps', Skeleton.displayFlagRaw('overlaps'));
+  setFlag('glue-seams', Skeleton.displayFlagRaw('glueSeams'));
   setFlag('weights', Skeleton.displayFlagRaw('weights'));
   setFlag('solid', Skeleton.displayFlagRaw('solid'));
   setFlag('wire', Skeleton.displayFlagRaw('wire'));

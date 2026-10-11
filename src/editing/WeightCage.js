@@ -744,12 +744,12 @@ function endCuts(main, p, j, a, b) {
   const joints = Skeleton.joints(main);
   const kidsOf = (x) => joints.filter((k) => k._parentMesh === x && Skeleton.boneHasCapsule(k));
   const d = new THREE.Vector3().subVectors(b, a).normalize();
-  const out = { cutA: null, cutB: null };
+  const out = { cutA: null, cutB: null, sharedA: false, sharedB: false };
   const kids = kidsOf(j);
-  if (kids.length === 1) out.cutB = jointPlane(j, kids[0]);
+  if (kids.length === 1) { out.cutB = jointPlane(j, kids[0]); out.sharedB = true; }
   else if (kids.length > 1) out.cutB = d.clone();
   const sibs = kidsOf(p);
-  if (sibs.length === 1 && Skeleton.boneHasCapsule(p)) out.cutA = jointPlane(p, j).negate();
+  if (sibs.length === 1 && Skeleton.boneHasCapsule(p)) { out.cutA = jointPlane(p, j).negate(); out.sharedA = true; }
   else if (sibs.length > 1) out.cutA = d.clone().negate();
   return out;
 }
@@ -757,6 +757,68 @@ function endCuts(main, p, j, a, b) {
 // ONE CAGE, from the shape the joint's capsule has RIGHT NOW. Shared by the bake and by reset, so a
 // reset can only ever produce what a fresh bake would. Null where no capsule is drawn.
 const CAGE_RADIAL = 10, CAGE_RINGS = 3, CAGE_LENGTH_SEGS = 2;
+// ── THE SHARED SEAM, BUILT ONCE ─────────────────────────────────────────────────────────
+//
+// Two capsules meeting at a bend are cut on one plane, but each used to make its own ring there (a circle
+// square to ITS axis, slid onto the plane) -- two different curves, so nothing could be shared between
+// them. matt: "all the capsules should be constructed the same... no reason we can't get them to have a
+// matching layout on either side of the split."
+//
+// So at a shared cut the end disc is built from ONE description that only depends on the joint: the
+// plane (through the joint's centre, normal pointing along the chain), the joint's extents, and a
+// reference direction taken from the world, never from a capsule's own axis. Both capsules compute the
+// same ten points and the same inner rings and pole, so the two discs coincide vertex for vertex.
+// (Each capsule's own vertex k is given to whichever canonical point is nearest, by cyclic shift and
+// direction, so the tube does not twist -- the weld finds partners by position afterwards.)
+const DISC_FRACTIONS = [0.5, Math.sin(Math.PI / 3), 1];      // rings from the pole outwards (CAGE_RINGS = 3)
+function endDisc(end) {
+  const R = CAGE_RADIAL, a = ringStart(end);                  // a = the OUTER ring's first id
+  if (end === 'A') {                                          // rows: pole 0, then 1..R, R+1..2R, outer
+    return { pole: 0, rows: [{ f: DISC_FRACTIONS[0], at: 1 }, { f: DISC_FRACTIONS[1], at: 1 + R }, { f: 1, at: a }] };
+  }
+  return { pole: a + 3 * R, rows: [{ f: 1, at: a }, { f: DISC_FRACTIONS[1], at: a + R }, { f: DISC_FRACTIONS[0], at: a + 2 * R }] };
+}
+function seamHalf(joint) { return Skeleton.jointHalf(joint, joint._boneRadius || 0, [0, 0, 0]); }
+const _csUp = new THREE.Vector3(0, 1, 0), _csX = new THREE.Vector3(1, 0, 0);
+function canonicalSeam(verts, end, joint, O, nFwd) {
+  const R = CAGE_RADIAL, h = seamHalf(joint);
+  const n = nFwd.clone().normalize();
+  const ref = Math.abs(n.dot(_csUp)) > 0.95 ? _csX : _csUp;
+  const e1 = ref.clone().addScaledVector(n, -ref.dot(n)).normalize();
+  const e2 = new THREE.Vector3().crossVectors(n, e1);
+  const q = Skeleton.jointRotIsSet(joint) ? Skeleton.jointQuat(joint) : null;
+  const qi = q ? q.clone().invert() : null;
+  const C = [], d = new THREE.Vector3(), l = new THREE.Vector3();
+  for (let k = 0; k < R; k++) {
+    const t = (k / R) * Math.PI * 2;
+    d.copy(e1).multiplyScalar(Math.cos(t)).addScaledVector(e2, Math.sin(t));
+    l.copy(d); if (qi) l.applyQuaternion(qi);                  // into the joint's own axes
+    const inv = Math.sqrt((l.x / h[0]) ** 2 + (l.y / h[1]) ** 2 + (l.z / h[2]) ** 2);
+    C.push(inv > 1e-12 ? O.clone().addScaledVector(d, 1 / inv) : O.clone());
+  }
+  const disc = endDisc(end), outer = disc.rows[end === 'A' ? 2 : 0];
+  // the existing outer ring, then the cyclic shift and direction that keeps each vertex nearest its own point
+  let best = Infinity, bs = 0, bd = 1;
+  for (const dir of [1, -1]) {
+    for (let s = 0; s < R; s++) {
+      let c = 0;
+      for (let k = 0; k < R; k++) {
+        const i = (outer.at + k) * 3, P = C[(((dir * k + s) % R) + R) % R];
+        c += (verts[i] - P.x) ** 2 + (verts[i + 1] - P.y) ** 2 + (verts[i + 2] - P.z) ** 2;
+      }
+      if (c < best) { best = c; bs = s; bd = dir; }
+    }
+  }
+  for (const row of disc.rows) {
+    for (let k = 0; k < R; k++) {
+      const P = C[(((bd * k + bs) % R) + R) % R], i = (row.at + k) * 3;
+      verts[i] = O.x + (P.x - O.x) * row.f; verts[i + 1] = O.y + (P.y - O.y) * row.f; verts[i + 2] = O.z + (P.z - O.z) * row.f;
+    }
+  }
+  const pi = disc.pole * 3;
+  verts[pi] = O.x; verts[pi + 1] = O.y; verts[pi + 2] = O.z;
+}
+
 function buildCage(main, j) {
   const RADIAL = CAGE_RADIAL, RINGS = CAGE_RINGS, LENGTH_SEGS = CAGE_LENGTH_SEGS;
   const _mP = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
@@ -803,6 +865,9 @@ function buildCage(main, j) {
     const d = _v.subVectors(_b, _a).normalize().clone();
     if (cuts.cutB) tiltEnd(geo.verts, geo.endB, _b, cuts.cutB, d, 0.8 * geo.len / geo.lengthSegs);
     if (cuts.cutA) tiltEnd(geo.verts, geo.endA, _a, cuts.cutA, d.clone().negate(), 0.8 * geo.len / geo.lengthSegs);
+    // a cut that is SHARED with the next capsule gets the one ring both of them are built from
+    if (cuts.sharedB && geo.verts.length / 3 === CAGE_NB) canonicalSeam(geo.verts, 'B', j, _b.clone(), cuts.cutB);
+    if (cuts.sharedA && geo.verts.length / 3 === CAGE_NB) canonicalSeam(geo.verts, 'A', p, _a.clone(), cuts.cutA.clone().negate());
   }
   // Parented to the parent joint, so the cage's own transform starts as identity and stays
   // legible when it is moved by hand later.
@@ -1043,6 +1108,143 @@ WeightCage.pairMirrors = function (main, only) {
     paired++;
   }
   return { paired: paired, unpaired: unpaired };
+};
+
+// ── GLUED SEAMS ─────────────────────────────────────────────────────────────────────────
+//
+// Where two capsules meet at a joint with ONE bone continuing from it (an elbow, a knee) their end discs are
+// built from the same description (see canonicalSeam), so the discs coincide vertex for vertex: ten ring
+// vertices at each of three radii plus the pole. A glued seam is those 31 vertex PAIRS, found by position,
+// and moving one of a pair moves its partner to the same place -- an exact weld, no resampling.
+//
+// Only seams that really do coincide are glued (all 31 pairs found): capsules baked before the shared
+// seam existed, or sculpted apart with the glue off, are left alone. Branches (a neck, a hip) are not
+// shared: their cuts are square to each bone's own axis.
+//
+// Vertex layout is the generator's (capsuleGeometry): pole, CAGE_RINGS rings, the tube rows, CAGE_RINGS
+// rings, pole. An end's outer ring is the last cap ring before the tube.
+const CAGE_NB = 2 + (2 * CAGE_RINGS + CAGE_LENGTH_SEGS - 1) * CAGE_RADIAL;
+function ringStart(end) {
+  return end === 'A' ? 1 + (CAGE_RINGS - 1) * CAGE_RADIAL
+    : 1 + CAGE_RINGS * CAGE_RADIAL + (CAGE_LENGTH_SEGS - 1) * CAGE_RADIAL;
+}
+// the 31 vertex ids of an end's disc: pole, then the three rings
+function discIds(end) {
+  const d = endDisc(end), ids = [d.pole];
+  for (const row of d.rows) for (let k = 0; k < CAGE_RADIAL; k++) ids.push(row.at + k);
+  return ids;
+}
+const _sgM = new THREE.Matrix4();
+function modelPoints(cage, L, ids) {
+  _sgM.fromArray(cage.getModelSpaceMatrix());
+  return ids.map((i) => new THREE.Vector3(L.verts[i * 3], L.verts[i * 3 + 1], L.verts[i * 3 + 2]).applyMatrix4(_sgM));
+}
+// Match X's disc to Y's by position; null unless every vertex has exactly one partner.
+function matchDiscs(main, X, xe, Y, ye) {
+  const LX = localVerts(X), LY = localVerts(Y);
+  if (!LX || !LY || LX.nb !== CAGE_NB || LY.nb !== CAGE_NB) return null;
+  const ix = discIds(xe), iy = discIds(ye);
+  const px = modelPoints(X, LX, ix), py = modelPoints(Y, LY, iy);
+  const tol = Math.max(1e-6, (Skeleton.sceneUnit(main) || 1) * 1e-4);
+  const used = new Set(), theirs = [];
+  for (let a = 0; a < px.length; a++) {
+    let bi = -1, bd = tol;
+    for (let b = 0; b < py.length; b++) {
+      if (used.has(b)) continue;
+      const d = px[a].distanceTo(py[b]);
+      if (d < bd) { bd = d; bi = b; }
+    }
+    if (bi < 0) return null;
+    used.add(bi); theirs.push(iy[bi]);
+  }
+  return { mine: ix, theirs: theirs };
+}
+WeightCage.seamsOf = function (main) {
+  const cages = WeightCage.cages(main);
+  const key = cages.map((c) => c.getID()).join(',');
+  if (main._cageSeamKey === key && main._cageSeams) return main._cageSeams;
+  const joints = Skeleton.joints(main);
+  const byBone = new Map();
+  for (const c of cages) { const b = boneOf(c, joints); if (b) byBone.set(b.getID(), { cage: c, bone: b }); }
+  const seams = new Map();
+  const add = (x, xe, y, ye, pr, rev) => {
+    const id = x.getID();
+    if (!seams.has(id)) seams.set(id, []);
+    seams.get(id).push({ end: xe, other: y, otherEnd: ye, mine: rev ? pr.theirs : pr.mine, theirs: rev ? pr.mine : pr.theirs });
+  };
+  for (const { cage, bone } of byBone.values()) {
+    const kids = joints.filter((k) => k._parentMesh === bone && Skeleton.boneHasCapsule(k));
+    if (kids.length !== 1) continue;
+    const e = byBone.get(kids[0].getID());
+    if (!e) continue;
+    const pr = matchDiscs(main, cage, 'B', e.cage, 'A');
+    if (!pr) continue;                       // not coincident: an older or sculpted-apart pair, left alone
+    add(cage, 'B', e.cage, 'A', pr, false);
+    // the same pairs read from the other side: X's ids <-> Y's ids swap roles
+    add(e.cage, 'A', cage, 'B', pr, true);
+  }
+  main._cageSeamKey = key;
+  main._cageSeams = seams;
+  return seams;
+};
+function readDisc(L, ids) {
+  const out = new Float32Array(ids.length * 3);
+  for (let k = 0; k < ids.length; k++) { out[k * 3] = L.verts[ids[k] * 3]; out[k * 3 + 1] = L.verts[ids[k] * 3 + 1]; out[k * 3 + 2] = L.verts[ids[k] * 3 + 2]; }
+  return out;
+}
+// Record each glued disc as the stroke begins, so a later look can tell what THIS stroke moved.
+WeightCage.seamBegin = function (main, cage) {
+  if (!WeightCage.isCage(cage)) return;
+  const list = WeightCage.seamsOf(main).get(cage.getID());
+  const L = list && localVerts(cage);
+  if (!L || L.nb !== CAGE_NB) return;
+  cage._glueSnap = {};
+  for (const s of list) cage._glueSnap[s.end] = readDisc(L, s.mine);
+};
+const _gM = new THREE.Matrix4(), _gI = new THREE.Matrix4(), _gP = new THREE.Vector3();
+// Carry this capsule's moved seam vertices onto their partners on the neighbour. Returns the neighbours
+// that changed (also remembered for the weight solve: see takeGlued).
+WeightCage.glueEdit = function (main, cage) {
+  if (!Skeleton.displayFlag('glueSeams') || !WeightCage.isCage(cage)) return [];
+  const list = WeightCage.seamsOf(main).get(cage.getID());
+  const snap = cage._glueSnap;
+  const X = list && snap && localVerts(cage);
+  if (!X || X.nb !== CAGE_NB) return [];
+  const changed = [];
+  for (const s of list) {
+    const now = readDisc(X, s.mine), was = snap[s.end];
+    if (!was) { snap[s.end] = now; continue; }
+    const moved = [];
+    for (let k = 0; k < s.mine.length; k++) {
+      if (Math.abs(now[k * 3] - was[k * 3]) + Math.abs(now[k * 3 + 1] - was[k * 3 + 1]) + Math.abs(now[k * 3 + 2] - was[k * 3 + 2]) > 1e-7) moved.push(k);
+    }
+    if (!moved.length) continue;
+    snap[s.end] = now;
+    const Y = localVerts(s.other);
+    if (!Y || Y.nb !== CAGE_NB) continue;
+    _gM.fromArray(cage.getModelSpaceMatrix());
+    _gI.fromArray(s.other.getModelSpaceMatrix());
+    if (Math.abs(_gI.determinant()) < 1e-18) continue;
+    _gI.invert();
+    for (const k of moved) {
+      _gP.set(now[k * 3], now[k * 3 + 1], now[k * 3 + 2]).applyMatrix4(_gM).applyMatrix4(_gI);
+      const o = s.theirs[k] * 3;
+      Y.verts[o] = _gP.x; Y.verts[o + 1] = _gP.y; Y.verts[o + 2] = _gP.z;
+    }
+    s.other.updateGeometry();
+    s.other.updateBuffers();
+    if (!s.other._glueSnap) s.other._glueSnap = {};
+    s.other._glueSnap[s.otherEnd] = readDisc(Y, s.theirs);
+    if (!changed.includes(s.other)) changed.push(s.other);
+    (main._cageGlued || (main._cageGlued = new Set())).add(s.other);
+  }
+  return changed;
+};
+// The capsules glue moved since last asked, for the weight solve at the end of the stroke.
+WeightCage.takeGlued = function (main) {
+  const out = main._cageGlued ? Array.from(main._cageGlued) : [];
+  main._cageGlued = null;
+  return out;
 };
 
 // Where a point on a capsule lands when mirrored across the rig's plane (model-space x = 0), as a point in
