@@ -19,6 +19,8 @@ const NAMES = [
   // The outliner toolbar's own add-primitive button, opening a menu of Cube/Sphere/etc. rather
   // than a whole "Primitives" section at the bottom of a panel with a fixed, unscrollable height.
   'plus',
+  // outliner reorder
+  'chevron-up',
 ];
 const out = {};
 for (const n of NAMES) {

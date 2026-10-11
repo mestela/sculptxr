@@ -1057,6 +1057,9 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 }
 /* 16px on touch: iOS zooms the page on focus of anything smaller, and the page cannot zoom back. */
 @media (hover: none) and (pointer: coarse) { .mm-rename-input { font-size: 16px; } }
+.mm-outliner-row.drop-before { box-shadow: inset 0 2px 0 #89b4fa; }
+.mm-outliner-row.drop-after  { box-shadow: inset 0 -2px 0 #89b4fa; }
+.mm-outliner-row.drop-into   { background: rgba(137,180,250,0.22); box-shadow: inset 0 0 0 1px #89b4fa; }
 .mm-mesh-btn:hover, .mm-mesh-btn.hover { background: #313244; color: #cdd6f4; }
 .mm-mesh-btn.active { color: #89b4fa; background: rgba(137,180,250,0.1); }
 .mm-node-icon { display: inline-block; width: 10px; font-size: 8px; text-align: center; margin-right: 4px; color: #6c7086; }
@@ -2600,6 +2603,39 @@ export function wireMenuAbout(el) {
 
 // ── Section content builders ─────────────────────────────────────────────────
 
+// A row's place in the list. The creation id until the user moves it; a move only ever
+// permutes the keys its siblings already hold, so keys stay unique and a mesh created later
+// (always a larger id) still lands at the end. Saved by rank in the SKEL block (v21).
+export function outlinerKey(m) { return m._outlinerKey !== undefined ? m._outlinerKey : m.getID(); }
+
+// Move `mesh` one place up (-1) or down (+1) among its siblings (same parent). Returns whether
+// anything moved.
+export function moveOutlinerRow(main, mesh, dir) {
+  const sibs = (main.getMeshes?.() ?? []).filter((m) => !m._isVoxelChunk && (m._parentMesh || null) === (mesh._parentMesh || null));
+  sibs.sort((a, b) => outlinerKey(a) - outlinerKey(b));
+  const i = sibs.indexOf(mesh), j = i + dir;
+  if (i < 0 || j < 0 || j >= sibs.length) return false;
+  const keys = sibs.map(outlinerKey);
+  [sibs[i], sibs[j]] = [sibs[j], sibs[i]];
+  sibs.forEach((m, k) => { m._outlinerKey = keys[k]; });
+  return true;
+}
+
+// Put `mesh` directly before/after `target` among target's siblings, under target's parent
+// (the caller reparents first). Keys are reassigned as a permutation of the ones the new sibling
+// set already holds, exactly as moveOutlinerRow does.
+export function placeOutlinerRow(main, mesh, target, after) {
+  const par = target._parentMesh || null;
+  const sibs = (main.getMeshes?.() ?? []).filter((m) => !m._isVoxelChunk && (m._parentMesh || null) === par);
+  const keys = sibs.map(outlinerKey).sort((a, b) => a - b);
+  const rest = sibs.filter((m) => m !== mesh).sort((a, b) => outlinerKey(a) - outlinerKey(b));
+  const at = rest.indexOf(target);
+  if (at < 0 || !sibs.includes(mesh)) return false;
+  rest.splice(at + (after ? 1 : 0), 0, mesh);
+  rest.forEach((m, k) => { m._outlinerKey = keys[k]; });
+  return true;
+}
+
 export function buildSectionHTML_scene(main) {
   const meshes   = main.getMeshes?.() ?? [];
   const selected = main.getSelectedMeshes?.() ?? [];
@@ -2620,9 +2656,10 @@ export function buildSectionHTML_scene(main) {
     nodes.push(m);
   }
 
-  // Stable outliner order: sort by creation id (getID is monotonic). This keeps
-  // rows from shuffling when selection state changes — only parenting nests them.
-  nodes.sort((a, b) => a.getID() - b.getID());
+  // Stable outliner order: sort by creation id (getID is monotonic) unless the user has moved
+  // the row (_outlinerKey, see moveOutlinerRow). This keeps rows from shuffling when selection
+  // state changes — only parenting nests them.
+  nodes.sort((a, b) => outlinerKey(a) - outlinerKey(b));
 
   // Two-step rig assignment state (lives on main so it survives panel rebuilds):
   //   _rigPendingMode = 'parent' | 'lookat' | null,  _rigPendingSubject = mesh id
@@ -2941,6 +2978,8 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}>${faIcon('link-slash')}</button>
       <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}>${faIcon(selAnyVisible ? 'eye' : 'eye-slash')}</button>
       <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}>${faIcon('pen')}</button>
+      <button class="mm-tool-btn" id="mm-move-up" title="Move up in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-up')}</button>
+      <button class="mm-tool-btn" id="mm-move-down" title="Move down in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-down')}</button>
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}>${faIcon('trash')}</button>
       <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}>${faIcon(tbLocked ? 'lock' : 'lock-open')}</button>
     </div>
@@ -4995,6 +5034,96 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // Toolbar pencil → rename the selected mesh (double-click a row still works, but it's awkward
   // in VR). Single selection only — the button is disabled otherwise, since one name cannot be
   // typed into six meshes.
+  for (const [id, dir] of [['#mm-move-up', -1], ['#mm-move-down', 1]]) {
+    el.querySelector(id)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sel = main.getSelectedMeshes?.() ?? [];
+      if (sel.length === 1 && moveOutlinerRow(main, sel[0], dir)) repaintFn();
+    });
+  }
+
+  // DRAG AND DROP, DESKTOP ONLY (a mouse; VR and touch have the up/down buttons). Over a row's
+  // top or bottom quarter the drop INSERTS before/after it; over the middle it PARENTS to it.
+  // (A quarter, not a sliver: a row is ~16px tall and a few percent of that is under a pixel.)
+  // Row order comes from the sibling keys, parenting from main.setMeshParent, which keeps its
+  // world transform, refuses cycles and has its own undo.
+  if (window.matchMedia?.('(hover: hover) and (pointer: fine)').matches && !window._vrKeyboard?.shouldUse?.()) {
+    const rowOf = (n) => n?.closest?.('.mm-outliner-row');
+    const meshOfRow = (r) => findMesh(r?.querySelector('[data-action="select"]')?.dataset.meshId);
+    const clear = () => el.querySelectorAll('.drop-before,.drop-after,.drop-into').forEach((r) => r.classList.remove('drop-before', 'drop-after', 'drop-into'));
+    const inside = (a, root) => { for (let p = a; p; p = p._parentMesh) if (p === root) return true; return false; };
+    const zoneOf = (e, r) => {
+      const b = r.getBoundingClientRect(), f = (e.clientY - b.top) / b.height;
+      return f < 0.25 ? 'before' : f > 0.75 ? 'after' : 'into';
+    };
+    let dragged = null;
+    // EMPTY SPACE BELOW THE ROWS = "out of its parent": the node goes to the top level, last.
+    const list = el.querySelector('.mm-outliner-list');
+    if (list) {
+      list.addEventListener('dragover', (e) => {
+        if (!dragged || e.target.closest('.mm-outliner-row')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        clear();
+        list.lastElementChild?.classList.add('drop-after');
+      });
+      list.addEventListener('dragleave', (e) => { if (!list.contains(e.relatedTarget)) clear(); });
+      list.addEventListener('drop', (e) => {
+        if (e.target.closest('.mm-outliner-row')) return;
+        const node = dragged;
+        clear(); dragged = null;
+        if (!node) return;
+        e.preventDefault();
+        if (node._parentMesh) main.setMeshParent(node.getID(), null);
+        const tops = (main.getMeshes?.() ?? []).filter((m) => m !== node && !m._isVoxelChunk && !m._parentMesh);
+        const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
+        if (last) placeOutlinerRow(main, node, last, true);
+        repaintFn();
+      });
+    }
+    el.querySelectorAll('.mm-outliner-row').forEach((row) => {
+      row.draggable = true;
+      row.addEventListener('dragstart', (e) => {
+        if (e.target?.tagName === 'INPUT') { e.preventDefault(); return; }   // renaming
+        dragged = meshOfRow(row);
+        if (!dragged) { e.preventDefault(); return; }
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', dragged._permanentStaticLabel || '');
+      });
+      row.addEventListener('dragend', () => { dragged = null; clear(); });
+      row.addEventListener('dragover', (e) => {
+        const target = meshOfRow(row);
+        if (!dragged || !target || target === dragged) return;
+        const z = zoneOf(e, row);
+        // can't drop a node into (or beside, which parents it to) its own subtree
+        if (inside(z === 'into' ? target : target._parentMesh, dragged)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        clear();
+        row.classList.add('drop-' + z);
+      });
+      row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) row.classList.remove('drop-before', 'drop-after', 'drop-into'); });
+      row.addEventListener('drop', (e) => {
+        const target = meshOfRow(row);
+        const node = dragged;
+        clear(); dragged = null;
+        if (!node || !target || target === node) return;
+        e.preventDefault();
+        const z = zoneOf(e, row);
+        if (inside(z === 'into' ? target : target._parentMesh, node)) return;
+        if (z === 'into') {
+          main.setMeshParent(node.getID(), target.getID());
+          target._outlinerCollapsed = false;
+        } else {
+          const par = target._parentMesh || null;
+          if ((node._parentMesh || null) !== par) main.setMeshParent(node.getID(), par ? par.getID() : null);
+          placeOutlinerRow(main, node, target, z === 'after');
+        }
+        repaintFn();
+      });
+    });
+  }
+
   el.querySelector('#mm-rename-sel')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const sel = main.getSelectedMeshes?.() ?? [];

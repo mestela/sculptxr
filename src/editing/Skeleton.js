@@ -5590,7 +5590,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 20;  // v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 22;  // v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -5882,13 +5882,24 @@ Skeleton.serialize = function (meshes, main) {
     if (m && m._isBone && Skeleton.jointRotIsSet(m)) rots.push({ i: i, q: m._jointRot });
   });
 
+  // v21: the outliner order the user made, as the mesh index at each rank. Empty (one count)
+  // unless a row was ever moved, so an untouched scene's file is unchanged.
+  const keyOf = (m) => (m ? (m._outlinerKey !== undefined ? m._outlinerKey : m.getID()) : Infinity);
+  const order = meshes.some((m) => m && m._outlinerKey !== undefined)
+    ? meshes.map((m, i) => i).sort((a, b) => keyOf(meshes[a]) - keyOf(meshes[b]) || a - b) : [];
+
+  // v22: expanded/collapsed state of each branch, as [mesh index, collapsed] for every mesh that
+  // has one (unset = the default, expanded).
+  const fold = [];
+  meshes.forEach((m, i) => { if (m && typeof m._outlinerCollapsed === 'boolean') fold.push(i, m._outlinerCollapsed ? 1 : 0); });
+
   const vols = [];
 
   // ...OR IF ANY NODE CARRIES A CONSTRAINT. This block is skipped entirely when there is no
   // hierarchy and no skin, which was right when it only held bones — but v15 put the aim/saccade/
   // mirror state in here, and a scene can easily have an eye rig and no skeleton at all. Without
   // `rig` in this test that state was built, saved to nothing, and silently absent on reload.
-  if (!entries.length && !skins.length && !rig.length) return null;
+  if (!entries.length && !skins.length && !rig.length && !order.length && !fold.length) return null;
 
   let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
@@ -5907,6 +5918,8 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + lights.length * 14; // v18: i + type, rgb, intensity, range, cone, cast, 4 shadow, res
   slots += 1 + rots.length * 5;    // v19: i + the shape's rotation quaternion
   slots += 1 + noShape.length;     // v20: i of each joint that does not shape the skin
+  slots += 1 + order.length;       // v21: mesh index at each outliner rank
+  slots += 1 + fold.length;        // v22: (mesh index, collapsed) pairs
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -5986,6 +5999,10 @@ Skeleton.serialize = function (meshes, main) {
   for (const r of rots) { u[o++] = r.i; f[o++] = r.q[0]; f[o++] = r.q[1]; f[o++] = r.q[2]; f[o++] = r.q[3]; }
   u[o++] = noShape.length;
   for (const i of noShape) u[o++] = i;
+  u[o++] = order.length;
+  for (const i of order) u[o++] = i;
+  u[o++] = fold.length / 2;
+  for (const w of fold) u[o++] = w;
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6546,6 +6563,26 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       for (let i = 0; i < nn; i++) {
         const mi = u[o++];
         if (meshes[mi]) Skeleton.setJointShapesSkin(meshes[mi], false);
+      }
+    }
+
+    // v21: the outliner order. Rank r gets the r-th smallest of the loaded meshes' own ids as its
+    // key, so the keys are ids that already exist and anything created later still sorts last.
+    if (ver >= 21) {
+      const nn = u[o++], at = [];
+      for (let i = 0; i < nn; i++) { const m = meshes[u[o++]]; if (m) at.push(m); }
+      if (at.length) {
+        const ids = at.map((m) => m.getID()).sort((a, b) => a - b);
+        at.forEach((m, r) => { m._outlinerKey = ids[r]; });
+      }
+    }
+
+    // v22: which branches were folded.
+    if (ver >= 22) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const mi = u[o++], c = u[o++];
+        if (meshes[mi]) meshes[mi]._outlinerCollapsed = !!c;
       }
     }
 
