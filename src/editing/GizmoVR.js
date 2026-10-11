@@ -205,6 +205,11 @@ class GizmoVR {
     this._gl = main._gl;
 
     this._group = new THREE.Group();
+    // Gizmo parts are Multimesh objects, and Mesh.js gives every one castShadow=true at birth, so
+    // the handles threw a shadow right where you were working (a light's gizmo most of all).
+    // castShadow is not part of the material's cache key, so clearing it as parts arrive is safe.
+    const _add = this._group.add.bind(this._group);
+    this._group.add = (...objs) => { for (const o of objs) o.traverse((c) => { c.castShadow = false; }); return _add(...objs); };
     this._group.name = "Transform Gizmo Group";
     this._group.visible = false; // Hide by default
 

@@ -1049,8 +1049,14 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   flex: 1; min-width: 0;
   background: #11111b; color: #cdd6f4;
   border: 1px solid #89b4fa; border-radius: 4px;
-  font-size: 8px; padding: 2px 4px; outline: none;   /* matches .mm-mesh-btn, or the row jumps height on rename */
+  font-size: 13px; padding: 3px 5px; outline: none;
+  /* The panel root is user-select:none, and an editable field inherits that. iOS refuses to put the
+     caret (and so the keyboard) in a field whose used user-select is none: that was the iPad
+     rename that did nothing. */
+  -webkit-user-select: text; user-select: text;
 }
+/* 16px on touch: iOS zooms the page on focus of anything smaller, and the page cannot zoom back. */
+@media (hover: none) and (pointer: coarse) { .mm-rename-input { font-size: 16px; } }
 .mm-mesh-btn:hover, .mm-mesh-btn.hover { background: #313244; color: #cdd6f4; }
 .mm-mesh-btn.active { color: #89b4fa; background: rgba(137,180,250,0.1); }
 .mm-node-icon { display: inline-block; width: 10px; font-size: 8px; text-align: center; margin-right: 4px; color: #6c7086; }

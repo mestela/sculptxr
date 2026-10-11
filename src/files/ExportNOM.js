@@ -58,23 +58,10 @@ Export.exportNOM = function (meshes) {
         mismatched++;                                // topology changed: cannot write back
       } else {
         const was = file.f32(desc);
-        // THE FILE'S VERTICES ARE THE BASE, WITHOUT ITS LAYERS: the layer offsets are stored apart
-        // and Nomad adds them back. The posed array in the app already includes the layers (they
-        // are blendshapes here), so their weighted contribution comes back out, or Nomad would add
-        // it a second time. It is the object-space offset that comes out, which is exactly what
-        // Nomad will add, so what Nomad shows is what the app showed.
+        // THE FILE'S VERTICES INCLUDE ITS VISIBLE LAYERS (see applyLayers in ImportNOM.js): the
+        // layer offsets are kept apart only so Nomad can toggle them. The app's posed array is
+        // that same composite (base + weighted blendshapes), so it goes back as it is.
         const cur = Float32Array.from(now.subarray(0, nb * 3));
-        const shapes = src1.layerShapes;
-        const reg = typeof window !== 'undefined' ? window._animationRegistry : null;
-        const track = shapes && shapes.length && reg && reg.tracks ? reg.tracks.get(m.getID()) : null;
-        if (track && track.blendshapes) {
-          for (const name of shapes) {
-            const d = track.blendshapes.get(name);
-            if (!d || (track.blendshapeMuted && track.blendshapeMuted.has(name))) continue;
-            const w = reg.blendshapePreviewAt(track, name, track.blendshapeTracks.get(name));
-            if (w) for (let i = 0; i < cur.length; i++) cur[i] -= d[i] * w;
-          }
-        }
         const out = new Float32Array(nb * 3), pi = src1.pi;
         for (let j = 0; j < nb; j++) {
           const t = (pi ? pi[j] : j) * 3;

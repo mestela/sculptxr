@@ -123,11 +123,11 @@ function applyLayers(nom, m, out) {
   };
   const names = new Set();
   for (const L of m.layers || []) {
-    if (L.visible === false) continue;
+    const hidden = L.visible === false;
     const f = L.factor === undefined ? 1 : L.factor;
 
     // colour
-    if (L.colors && L.visible_color !== false && L.colors.count === n && !L.colors.only_zeros) {
+    if (!hidden && L.colors && L.visible_color !== false && L.colors.count === n && !L.colors.only_zeros) {
       const lay = NomadCodec.decodeRGBM(nom.bytesOf(L.colors), 0, n);
       const A = nom.bytesOf(L.opacity_color, 'u8');
       const k = f * (L.factor_color === undefined ? 1 : L.factor_color);
@@ -145,7 +145,7 @@ function applyLayers(nom, m, out) {
     // roughness (slot 0 of the material vector) and metalness (slot 1)
     for (const [name, slot, field] of [['roughness', 0, 'roughness'], ['metalness', 1, 'metalness']]) {
       const D = L[field];
-      if (!D || L['visible_' + name] === false || D.only_zeros || D.count !== n || !out.materials) continue;
+      if (hidden || !D || L['visible_' + name] === false || D.only_zeros || D.count !== n || !out.materials) continue;
       const lay = nom.bytesOf(D, 'u8'), A = nom.bytesOf(L['opacity_' + name], 'u8');
       const k = f * (L['factor_' + name] === undefined ? 1 : L['factor_' + name]);
       unit(L['blend_' + name]);
@@ -162,8 +162,11 @@ function applyLayers(nom, m, out) {
       let name = L.name || 'Layer', u = 2;
       while (names.has(name)) name = (L.name || 'Layer') + ' ' + u++;
       names.add(name);
-      info.shapes.push({ name, delta: nom.f32(L.offsets).slice(),
-                         weight: L.visible_offset === false ? 0 : f * (L.factor_offset === undefined ? 1 : L.factor_offset) });
+      const delta = nom.f32(L.offsets).slice();
+      const off = hidden || L.visible_offset === false;      // a hidden layer is not in `vertices`
+      const weight = off ? 0 : f * (L.factor_offset === undefined ? 1 : L.factor_offset);
+      if (weight && out.vertices) for (let i = 0; i < delta.length; i++) out.vertices[i] -= delta[i] * weight;
+      info.shapes.push({ name, delta, weight });
     }
   }
   return info;

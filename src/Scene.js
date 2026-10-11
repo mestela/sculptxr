@@ -5228,7 +5228,11 @@ class Scene {
     // survives being shared. Geometry is still rebuilt per type; geometry is not compiled.
     if (!Scene._lightHostMat) {
       Scene._lightHostMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
-      Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false });
+      // transparent (no blend) puts the handle in the same pass as the meshes, which are all
+      // transparent: an opaque line is drawn FIRST, writes no depth, and every mesh then paints
+    tm.castShadow = false;   // Mesh.js sets it at birth; the light's own marker must not shadow its light
+      // over it, so it always looked behind. See renderOrder on `rays` below.
+      Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false, transparent: true, blending: THREE.NoBlending });
     }
     tm.material = Scene._lightHostMat;
 
@@ -5286,6 +5290,7 @@ class Scene {
     const c = mesh._lightColor;
     const col = new Float32Array(pts.length);
     for (let i = 0; i < col.length; i += 3) { col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2]; }
+    rays.renderOrder = 150;   // after the meshes (0), so depth TESTING decides what covers it
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const rays = new THREE.LineSegments(geo, Scene._lightRayMat);
     rays.name = 'light_rays';
