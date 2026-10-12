@@ -903,8 +903,11 @@ class SculptGL extends Scene {
         const PRESSURE_THRESHOLD = 0.02;
         const prevPressure = this._lastPenPressure || 0;
         this._lastPenPressure = event.pressure;
+        // TIP CONTACT ONLY (buttons bit 0). A barrel button mapped to middle click (Wacom) arrives
+        // as buttons=4 with a NONZERO pressure once a mouse has been used, which fired this and
+        // replaced the pan the real pointerdown had just started with a left press -> orbit.
         if (event.pressure >= PRESSURE_THRESHOLD && prevPressure < PRESSURE_THRESHOLD
-            && this._action !== Enums.Action.SCULPT_EDIT) {
+            && (event.buttons & 1) && this._action !== Enums.Action.SCULPT_EDIT) {
           // Treat this like a real pointerdown: set the bounce timestamp so any
           // real pointerdown that arrives late is ignored as a duplicate.
           // Also set _ptrDownHandledThisTouch so the touchmove fallback knows the
@@ -2047,11 +2050,11 @@ class SculptGL extends Scene {
     // orbits the camera — so this only becomes an action if the pointer never moved. Decided
     // on release, the same way Bone Draw's tap distinguishes itself from a drag.
     //
-    // MOUSE ONLY. On iPad a second finger is dispatched as MOUSE_RIGHT to mean PAN (see the
+    // MOUSE (or a pen on a touchless desktop, whose barrel button is a real right button). On iPad a second finger is dispatched as MOUSE_RIGHT to mean PAN (see the
     // gesture table above), so a pan that happened to start and end on the same spot would
     // fire this. Pen and touch reach the secondary action through the on-screen modifier,
     // which is the whole reason that button exists.
-    if (button === MOUSE_RIGHT && event.pointerType !== 'pen' && event.pointerType !== 'touch') {
+    if (button === MOUSE_RIGHT && event.pointerType !== 'touch' && (event.pointerType !== 'pen' || !navigator.maxTouchPoints)) {
       this._rightClickX = mouseX;
       this._rightClickY = mouseY;
       this._rightMoved = false;

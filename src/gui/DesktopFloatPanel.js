@@ -88,6 +88,9 @@ export class DesktopFloatPanel {
     // Clicking anywhere on a panel raises it, so a stack of them stays workable.
     el.addEventListener('pointerdown', () => this.raise(), true);
     this.rebuild();
+    // A NEW panel opens on top: every .dfp shares one z-index until raised, and the CSS default
+    // ties with the older ones, so the later DOM order is not enough once any has been raised.
+    this.raise();
     return this;
   }
 

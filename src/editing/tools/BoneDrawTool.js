@@ -1569,13 +1569,15 @@ class BoneDrawTool extends SculptBase {
     // dragged eye joint pointing straight down Z.
     const gp = Skeleton.isJoint(g.joint._parentMesh) ? g.joint._parentMesh : null;
     //
-    // ...EXCEPT A ROOT PAIR. Bone Draw mirrors the first joint of a chain when it misses the
+    // ...EXCEPT A PAIR OF TWINS UNDER ONE PARENT (canMergeMirror). A root pair is the Bone Draw
+    // case; the first spine joint drawn off-plane under the hips is the same thing one level down.
+    // Bone Draw mirrors the first joint of a chain when it misses the
     // plane's snap band, which leaves two parentless twins side by side. Dragging one into the
     // band pulls it onto the plane (its twin follows to the same spot), and on release the pair
     // merges into one centreline joint -- see RigTopology.mergeMirror.
     g.mergeRoot = false;
     let at;
-    if (g.twin && !gp && RigTopology.canMergeMirror(this._main, g.joint)
+    if (g.twin && RigTopology.canMergeMirror(this._main, g.joint)
         && this._inSnapBand(pos, g.plane)) {
       g.mergeRoot = true;
       at = Skeleton.projectToPlane(pos, g.plane, _eff);

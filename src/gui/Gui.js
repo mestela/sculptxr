@@ -859,7 +859,9 @@ class Gui {
         box-sizing: border-box;
         max-height: 80vh;
         overflow-y: auto;
-        z-index: 1200;
+        /* ABOVE EVERY FLOATING PANEL: .dfp raises itself with a counter that starts at 3000 and
+           only grows, so a menu has to sit well over it (and under the 99999+ modal overlays). */
+        z-index: 90000;
       }
     `;
     document.head.appendChild(style);

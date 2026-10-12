@@ -243,7 +243,8 @@ RigTopology.dissolve = function (main, joint) {
 
 // ── MERGE WITH MIRROR ────────────────────────────────────────────────────────
 //
-// Two parentless twins dragged onto the symmetry plane are one centreline joint. Bone Draw
+// Two twins under the SAME parent (a root pair, or spine_01 L/R under the hips) dragged onto
+// the symmetry plane are one centreline joint. Bone Draw
 // mirrors the FIRST joint of a chain whenever it misses the plane's snap band, which leaves a
 // left/right pair of roots side by side; this is the way back. The survivor keeps its own
 // identity, the twin's children are handed to it (so both mirrored limbs now hang off one
@@ -253,7 +254,6 @@ RigTopology.canMergeMirror = function (main, joint) {
   const twin = joint && joint._boneMirror;
   return !!(twin && twin !== joint && main.getIndexMesh(joint) >= 0 && main.getIndexMesh(twin) >= 0
     && Skeleton.isJoint(joint) && Skeleton.isJoint(twin)
-    && !Skeleton.isJoint(joint._parentMesh) && !Skeleton.isJoint(twin._parentMesh)
     && (joint._parentMesh || null) === (twin._parentMesh || null));
 };
 

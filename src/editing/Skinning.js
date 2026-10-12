@@ -65,11 +65,13 @@ function label(mesh) {
 // It has to be this and not raw proximity for the same reason as before: a thick torso and a
 // thin finger otherwise compete on absolute distance and the thin one wins territory it has no
 // business owning, purely by being close to the surface.
+let _atStart = false;   // set by envelopeT2: the nearest point on the segment is its START joint
 function envelopeT2(px, py, pz, sg) {
   const ax = sg.a.x, ay = sg.a.y, az = sg.a.z;
   const dx = sg.b.x - ax, dy = sg.b.y - ay, dz = sg.b.z - az;
   const len2 = dx * dx + dy * dy + dz * dz;
   let t = len2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / len2 : 0;
+  _atStart = t <= 0;
   if (t < 0) t = 0; else if (t > 1) t = 1;
   let cx = px - (ax + dx * t), cy = py - (ay + dy * t), cz = pz - (az + dz * t);
   // A TURNED JOINT IS MEASURED IN ITS OWN FRAME, the same blend the skin's relax uses (see
@@ -187,6 +189,26 @@ function boneSegments(mesh, joints, pos) {
       ri: segRotations(p, j),
     });
   });
+
+  // THE BALL AT THE END OF A CHAIN IS ITS OWN JOINT'S. A bone moves with its parent, so the ball
+  // drawn at a chain's last joint (head_01 with its big extents, a toe, a fingertip) is the far
+  // end of the bone INTO it and turned with the parent: rotating head_01 moved nothing, because
+  // no bone STARTS there (its child, head_02, is a pivot with Shapes Skin off). Give such a joint
+  // a zero-length segment of its own ball. It measures identically to the parent bone's end cap,
+  // so it only takes what the tie-break above gives it -- the region beyond the end of the chain.
+  const owners = new Set(segs.map((sg) => sg.joint));
+  joints.forEach((j, i) => {
+    if (owners.has(i) || !index.has(j._parentMesh) || !Skeleton.jointShapesSkin(j)) return;
+    const rb = Math.max((j._boneRadius || 0) / scale, 1e-4);
+    const h = Skeleton.jointHalf(j, rb * scale, [0, 0, 0]);
+    const at = centre(j, pos[i]);
+    segs.push({
+      joint: i, a: at, b: at,
+      ha: [Math.max(h[0] / scale, 1e-4), Math.max(h[1] / scale, 1e-4), Math.max(h[2] / scale, 1e-4)],
+      hb: [Math.max(h[0] / scale, 1e-4), Math.max(h[1] / scale, 1e-4), Math.max(h[2] / scale, 1e-4)],
+      ri: segRotations(j, j),
+    });
+  });
   return segs;
 }
 
@@ -214,11 +236,21 @@ function nearestCapsuleWeights(verts, nbV, segs) {
 
   for (let i = 0; i < nbV; i++) {
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
-    let bestJoint = -1, bestT2 = Infinity;
+    let bestJoint = -1, bestT2 = Infinity, bestStart = false;
 
     for (let s = 0; s < segs.length; s++) {
       const t2 = envelopeT2(px, py, pz, segs[s]);
-      if (t2 < bestT2) { bestT2 = t2; bestJoint = segs[s].joint; }
+      // A TIE GOES TO THE JOINT THAT OWNS THE BALL. Where a vertex is nearest to a shared joint
+      // (the heel behind an ankle, the back of a skull behind head_01, an elbow tip) the bone
+      // ending there and the bone starting there measure the IDENTICAL distance -- the same centre
+      // and the same extents -- and `<` then handed the whole wedge to whichever segment happened
+      // to come first in the list, which is the parent more often than not. A joint's ball is its
+      // own shape (its radius lives on it), so when it is the nearest point of the bone that
+      // STARTS at it, that bone wins the tie: the heel turns with the foot, the skull with the head.
+      const eps = bestT2 === Infinity ? 0 : 1e-9 * (1 + bestT2);
+      if (t2 < bestT2 - eps || (t2 <= bestT2 + eps && _atStart && !bestStart)) {
+        bestT2 = t2; bestJoint = segs[s].joint; bestStart = _atStart;
+      }
     }
 
     if (bestJoint < 0) continue;

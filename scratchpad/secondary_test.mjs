@@ -125,7 +125,7 @@ function app(toolIndex, hovered) {
   // ON IPAD A SECOND FINGER IS DISPATCHED AS MOUSE_RIGHT TO MEAN PAN. A pan that starts and
   // ends on the same spot would fire the secondary action if this guard were dropped.
   check('pen and touch are excluded from the right-click shorthand',
-    /button === MOUSE_RIGHT && event\.pointerType !== 'pen' && event\.pointerType !== 'touch'/.test(GL),
+    /button === MOUSE_RIGHT && event\.pointerType !== 'touch' && \(event\.pointerType !== 'pen' \|\| !navigator\.maxTouchPoints\)/.test(GL),
     'an iPad pan would fire the secondary action');
 
   check('Escape disarms, and only consumes the key when it was armed',

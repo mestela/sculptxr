@@ -1,3 +1,9 @@
+# v4.1.25
+- **A joint's ball turns with that joint.** The capsule bind gave the big shape at a chain's last joint (head_01, toes, fingertips) to the PARENT bone, so rotating head_01 moved nothing, and gave exact ties (the heel behind an ankle, an elbow tip, the back of the skull) to whichever bone came first in the list, usually the parent, so the heel followed the shin instead of the foot. A tie now goes to the bone that starts at the joint, and a chain-end joint owns its own ball. Rebind (or edit a capsule) to re-solve existing files.
+- **Merge mirror joints under any shared parent.** Dragging a left/right pair of twins onto the symmetry plane merges them when they share a parent (the first spine joint under the hips), not only for root pairs.
+- **Desktop pen fixes.** A barrel button mapped to middle click pans instead of orbiting (the pressure workaround no longer fires without tip contact); the barrel button as right click opens the marking menu.
+- **Menus above floating panels; a new torn-off panel opens on top.**
+
 # v4.1.24
 - **Lights load again.** A scene with a spotlight (or any light) failed to build the light's marker on load, because a line had slipped above the variable it uses; File > New also leaves the video and audio clips behind no more, and clips restore after textures as intended.
 - **A tablet pen orbits the view on a desktop.** Pressing the pen on empty space rotates the camera when the device has no touch screen (iPad behaviour unchanged). The Multitouch routing options now show once a pen has been used, not only on iPad.
