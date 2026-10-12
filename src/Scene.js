@@ -5230,11 +5230,11 @@ class Scene {
       Scene._lightHostMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
       // transparent (no blend) puts the handle in the same pass as the meshes, which are all
       // transparent: an opaque line is drawn FIRST, writes no depth, and every mesh then paints
-    tm.castShadow = false;   // Mesh.js sets it at birth; the light's own marker must not shadow its light
       // over it, so it always looked behind. See renderOrder on `rays` below.
       Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false, transparent: true, blending: THREE.NoBlending });
     }
     tm.material = Scene._lightHostMat;
+    tm.castShadow = false;   // Mesh.js sets it at birth; the light's own marker must not shadow its light
 
     // REBUILT, NOT ADDED TO. The handle is type-specific, so changing the type has to replace
     // it; without this every switch left the previous one behind.
@@ -5290,11 +5290,11 @@ class Scene {
     const c = mesh._lightColor;
     const col = new Float32Array(pts.length);
     for (let i = 0; i < col.length; i += 3) { col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2]; }
-    rays.renderOrder = 150;   // after the meshes (0), so depth TESTING decides what covers it
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     const rays = new THREE.LineSegments(geo, Scene._lightRayMat);
     rays.name = 'light_rays';
     rays.frustumCulled = false;
+    rays.renderOrder = 150;   // after the meshes (0), so depth TESTING decides what covers it
     // Sized off the scene like the light's own range is, rather than a constant: scene units
     // here are arbitrary and large, so a fixed 4 was invisible in one scene and a nuisance in
     // the next. A twentieth of the range puts it at marker size in whatever it lands in.
@@ -7108,13 +7108,13 @@ class Scene {
       if (fileType === 'sgl') Skeleton.deserialize(fileData, added, this);
 
       // Textures: the images and the material scalars. Last of the restores because it is the
-      // The clips: a reference only (name, offset, switches). The timeline shows a "missing"
-      // lane for each until a file of that name is loaded.
-      if (fileType === 'sgl') MediaRef.deserialize(fileData);
-
       // only one that finishes ASYNCHRONOUSLY -- decoding an image is -- so the maps land a
       // frame or two after everything else is already standing.
       if (fileType === 'sgl') TextureIO.deserialize(fileData, added, THREE);
+
+      // The clips: a reference only (name, offset, switches). The timeline shows a "missing"
+      // lane for each until a file of that name is loaded.
+      if (fileType === 'sgl') MediaRef.deserialize(fileData);
 
       if (fileType === 'sgl' && this._frameGroup) {
         try { this._frameGroup.deserialize(fileData, added); }
@@ -7489,13 +7489,13 @@ class Scene {
       if (this._meshes[i]._nomadMeshId === nomadMeshId) return this._meshes[i];
     }
     return null;
-    // The clips belong to the scene: File > New / Open-replace used to leave the video plane's
-    // track and the audio (and their lanes and waveform in the timeline) behind.
-    try { window._videoTrack?.clear?.(); window._audioTrack?.clear?.(); window._pendingMedia = null; } catch (e) { console.error('media clear failed:', e); }
   }
 
   clearScene() {
     this.getStateManager().reset();
+    // The clips belong to the scene: File > New / Open-replace used to leave the video plane's
+    // track and the audio (and their lanes and waveform in the timeline) behind.
+    try { window._videoTrack?.clear?.(); window._audioTrack?.clear?.(); window._pendingMedia = null; } catch (e) { console.error('media clear failed:', e); }
     
     // Through detachMeshThree, so a parented mesh is taken out of its real parent rather than
     // asked to leave a group it was never in.

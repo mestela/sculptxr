@@ -830,6 +830,7 @@ class SculptGL extends Scene {
     Tablet.pressure = event.pressure;
 
     if (event.pointerType === 'pen') {
+      window._penSeen = true;
       if (this._fingerPointers.size > 0 && event.pressure < 0.05) {
         event.preventDefault();
         return;
@@ -2082,10 +2083,10 @@ class SculptGL extends Scene {
       this._action = Enums.Action.MASK_EDIT;
     } else if ((!canEdit || button === MOUSE_RIGHT) && event.altKey)
       this._action = Enums.Action.CAMERA_PAN_ZOOM_ALT;
-    else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit && (event.pointerType !== 'pen' || window._ipadStylusView)))
+    else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit && (event.pointerType !== 'pen' || window._ipadStylusView || !navigator.maxTouchPoints)))
       this._action = Enums.Action.CAMERA_ROTATE;
     else if (button === MOUSE_LEFT && !canEdit && event.pointerType === 'pen')
-      this._action = Enums.Action.NOTHING; // pen missed mesh — cursor tracks freely, no camera rotate
+      this._action = Enums.Action.NOTHING; // pen missed mesh on a touch device (iPad) — fingers own the camera there; a touchless desktop pen orbits above
     else
       this._action = Enums.Action.SCULPT_EDIT;
 

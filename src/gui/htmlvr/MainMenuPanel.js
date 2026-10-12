@@ -6768,7 +6768,8 @@ export function buildMenuHTML_desktopSettings(main) {
 
   const isIpad = /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const chk = (id, checked) => `<label class="mm-check-row"><span>${id}</span><input type="checkbox" id="mm-${id.toLowerCase().replace(/\s+/g,'-')}"${checked ? ' checked' : ''}><span class="mm-checkmark"></span></label>`;
-  const ipadSection = isIpad ? `
+  // A pen seen on the canvas (SculptGL.onPointer) is enough: a Wacom on a Mac wants the same routing options.
+  const ipadSection = (isIpad || window._penSeen) ? `
     <div class="mm-section-title">Multitouch</div>
     ${chk('Fingers control view',  opts.ipadFingerView)}
     ${chk('Fingers sculpt',        opts.ipadFingerSculpt)}
