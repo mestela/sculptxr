@@ -1418,6 +1418,57 @@ Skinning.anyBound = function (main) {
   return (main.getMeshes() || []).some(Skinning.isBound);
 };
 
+// MOVE A SKIN DOWN TO THE LOWEST LEVEL. matt: "we should ONLY bind at the lowest level." The skin goes to
+// its bind pose, is unbound there (which writes the bind-pose shape back into the level it was on),
+// that shape is carried down the stack to level 0 by the same analysis Bind runs, and it is bound again
+// -- at level 0, from the bone volumes, exactly as a fresh Bind would. The pose the joints were in is
+// put back afterwards. Returns true when it moved anything. Not undoable: it is a one-way repair.
+Skinning.rebaseToLowest = function (main, mesh) {
+  if (!Skinning.isBound(mesh) || !mesh._meshes || mesh._meshes.length < 2) return false;
+  const lvl = boundLevel(mesh);
+  const idx = lvl ? mesh._meshes.indexOf(lvl) : -1;
+  if (idx <= 0) return false;
+  const joints = Skeleton.joints(main);
+  const saved = joints.map((j) => [j, Float32Array.from(j.getMatrix())]);
+  const before = mesh._skinRest.length / 3;
+  // THE WEIGHTS COME DOWN WITH IT, not re-solved: a lower level's vertices are the FIRST vertices of
+  // the level above (subdivision appends), so the old map's first n entries are exactly the low
+  // level's weights. Re-solving would quietly change how the character deforms -- whatever the
+  // weights were made with is what the file was posed against. Verified against the positions below.
+  const oldIdx = mesh._skinIdx, oldW = mesh._skinW, oldRest = mesh._skinRest;
+  Skinning.goToBindPose(main, mesh);
+  Skinning.unbind(mesh);
+  for (let i = idx; i > 0; i--) {
+    mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+    mesh._meshes[i - 1].updateGeometry();
+  }
+  const r = Skinning.bind(main, mesh);
+  let kept = false;
+  if (!(r && r.ok === false) && mesh._skinRest) {
+    const n = mesh._skinRest.length / 3;
+    let ext = 0, diff = 0;
+    for (let k = 0; k < n * 3; k++) {
+      ext = Math.max(ext, Math.abs(oldRest[k]));
+      diff = Math.max(diff, Math.abs(oldRest[k] - mesh._skinRest[k]));
+    }
+    if (oldIdx.length >= n * MAX_INFLUENCES && diff <= 1e-4 * Math.max(ext, 1e-6)) {
+      mesh._skinIdx = new Int32Array(oldIdx.subarray(0, n * MAX_INFLUENCES));
+      mesh._skinW = new Float32Array(oldW.subarray(0, n * MAX_INFLUENCES));
+      mesh._skinRaw = rawSnapshot({ idx: mesh._skinIdx, wts: mesh._skinW });
+      mesh._skinMushDirty = true;
+      Skinning.refreshWeightColors(main, mesh);
+      kept = true;
+    }
+  }
+  for (const [j, m] of saved) { j.getMatrix().set(m); Skeleton.syncThree(j); }
+  Skinning.markDirtyAll(main);
+  main.render?.();
+  console.log('[skin] ' + (mesh._permanentStaticLabel || mesh.getName?.() || 'mesh') + ': moved the skin from level '
+    + idx + ' (' + before + ' verts) to level 0 (' + (mesh._skinRest ? mesh._skinRest.length / 3 : '?') + ' verts)'
+    + (r && r.ok === false ? ' -- bind refused: ' + r.why : (kept ? ', weights kept' : ', weights re-solved (levels did not nest)')));
+  return !(r && r.ok === false);
+};
+
 Skinning.unbind = function (mesh) {
   if (!mesh) return;
   Skinning.restoreColors(mesh);
@@ -2391,6 +2442,17 @@ Skinning.update = function (main) {
   if (window._skinPause) return;
   const meshes = main.getMeshes();
   if (!meshes) return;
+
+  // A SKIN ON ANY LEVEL BUT THE LOWEST IS MOVED DOWN, once per mesh (see rebaseToLowest). Bind has
+  // always bound at level 0; a skin ends up higher when levels are created BELOW it afterwards (Reverse
+  // on an already-bound mesh), and files saved like that carry the dense level's weights for good.
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    if (m._skinRebaseTried || !Skinning.isBound(m) || !m._meshes || m._meshes.length < 2) continue;
+    m._skinRebaseTried = true;
+    const lvl = boundLevel(m);
+    if (lvl && m._meshes.indexOf(lvl) > 0) Skinning.rebaseToLowest(main, m);
+  }
 
   // Did the rig gain or lose a joint? A count and an id sum, once a frame, so an unchanged rig
   // pays for one filter over the mesh list and nothing else.

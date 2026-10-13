@@ -389,6 +389,8 @@ class GuiMultiresolution {
 
     main.getStateManager().pushState(stateRes);
     main.setMesh(mul);
+    // Reverse puts a new level BELOW the one a skin is bound to; skins live on the lowest level only.
+    if (Skinning.isBound(mul)) Skinning.rebaseToLowest(main, mul);
     main.render();
   }
 

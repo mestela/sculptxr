@@ -1,3 +1,7 @@
+# v4.1.27
+- **Skins live on the lowest multires level only.** A skin that ended up on a higher level (Reverse run on an already-bound mesh puts new levels below it) is moved down to level 0 automatically -- after Reverse, and once when such a file is loaded -- with its weights carried down unchanged, so the pose is identical. Del Higher on a bound mesh is then safe, which is what makes heavy files shrink.
+- **New example: Wrestler** (5.9 MB) -- rigged, pinned, clothed, skinned at the base level.
+
 # v4.1.26
 - **Bone Volumes replace the capsule bind.** One flat-ended cylinder per bone (constant elliptical section, small gap at each end so neighbours never touch), drawn with a checkerboard and slightly rounded ends; the weights follow the volumes by distance to their surface, with Soft Gaps blending across the joints. No shared joint balls, so a size edit changes one bone only. Chain tips own nothing.
 - **Edit a volume from its root.** In Tweak Joint, select a joint (or click a volume or bone) to get handles on the volume leaving it: width, height and uniform scale, plus lopsided width/height (one face pinned) except width on centreline bones. Tap the joint again to move to its next bone. Mirrored to the twin; live weights; one undo per drag. Reset Joint resets the selected joint's volumes. Solo Edit blacks out every other bone while you drag.
