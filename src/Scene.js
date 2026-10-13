@@ -1670,6 +1670,7 @@ class Scene {
     // from the other function, which never ran at all and read as "no frames rendered".
     this._btAt = window._boneTrace ? performance.now() : 0;
     this._mark('matrices');
+    this._sizeSpotCones();
     this.updateMatricesAndSort();
     // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.
     this._mark('xr-setup');
@@ -5306,8 +5307,41 @@ class Scene {
     // setting how big an icon is -- and capped, so a big import does not bring a big star.
     const _r = this._lightRefDistForScene ? this._lightRefDistForScene() : 20;
     rays.scale.setScalar(Math.max(0.35, Math.min(_r * 0.08, 3)));
+    rays.userData.baseScale = rays.scale.x;
     tm.add(rays);
     return mesh;
+  }
+
+  // A SPOT'S CONE IS SHORT UNTIL THE LIGHT IS SELECTED. Full length it sits across the model and
+  // gets in the way. matt: "the cone for spotlights really gets in the way". Uniform scale, so the
+  // angle it shows is unchanged; only the length drops, to a tenth. Once a frame, before matrices.
+  _sizeSpotCones() {
+    const ms = this._meshes;
+    if (!ms) return;
+    let sel = null;
+    for (let i = 0; i < ms.length; i++) {
+      const m = ms[i];
+      if (!m._isLight || (m._lightType || 0) !== 1) continue;
+      const tm = m.getThreeMesh && m.getThreeMesh();
+      const rays = tm && tm.getObjectByName('light_rays');
+      const base = rays && rays.userData.baseScale;
+      if (!base) continue;
+      if (!sel) sel = this.getSelectedMeshes ? this.getSelectedMeshes() : [];
+      const on = sel.includes(m);
+      const want = base * (on ? 1 : 0.1);
+      if (rays.scale.x !== want) rays.scale.setScalar(want);
+      // ...and dimmed to a light grey: the light's colour at 60%, full when selected.
+      const k = on ? 1 : 0.6;
+      const a = rays.geometry.getAttribute('color');
+      const c = m._lightColor;
+      if (a && c && rays.userData.tint !== k) {
+        rays.userData.tint = k;
+        for (let j = 0; j < a.array.length; j += 3) {
+          a.array[j] = c[0] * k; a.array[j + 1] = c[1] * k; a.array[j + 2] = c[2] * k;
+        }
+        a.needsUpdate = true;
+      }
+    }
   }
 
   // Repaint the handle after a colour change, so the gizmo keeps telling the truth.
@@ -5322,6 +5356,7 @@ class Scene {
     for (let i = 0; i < a.array.length; i += 3) {
       a.array[i] = c[0]; a.array[i + 1] = c[1]; a.array[i + 2] = c[2];
     }
+    rays.userData.tint = undefined;   // full colour now; _sizeSpotCones re-dims an unselected spot
     a.needsUpdate = true;
   }
 

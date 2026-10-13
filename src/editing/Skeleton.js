@@ -613,6 +613,12 @@ function ensureSharpAttr(mesh, cap) {
 // against is the opaque content (the sculpt, and the bone and joint bodies, which are opaque),
 // which is the one thing an xray exists to see through. The solid passes then paint over it.
 const GHOST_ORDER = 9995;
+// Then the solid capsules' depth prepass, then their colour -- see tuneCapsuleBatches.
+const PRE_ORDER = 9996;
+const SOLID_ORDER = 9996.5;
+// ...unless the part is fully solid, when both go BEFORE the sculpt (see tuneCapsuleBatches).
+const UNDER_PRE_ORDER = -10;
+const UNDER_SOLID_ORDER = -9.5;
 
 // NOTHING IN A CAPSULE SHARES A SURFACE WITH ANYTHING ELSE IN A CAPSULE.
 //
@@ -648,8 +654,9 @@ function makeBatch(main, geo, ghost, key) {
   const needsOwnGeo = isShaftKey(key)
     || (typeof key === 'string' && key.startsWith('capEnd'));
   if (needsOwnGeo) geo = geo.clone();
+  const isCapKey = isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'));
   const mat = ghost
-    ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
+    ? new THREE.MeshBasicMaterial({ side: isCapKey ? THREE.FrontSide : THREE.DoubleSide, transparent: true,
         opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
     : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const isEnd = (typeof key === 'string' && key.startsWith('capEnd'));
@@ -671,6 +678,16 @@ function makeBatch(main, geo, ghost, key) {
     else if (isEnd) sharpMaterialInstanced(mat);
     if (isShaftKey(key) || isEnd) shadeMaterial(mat, isShaftKey(key));
   }
+  // A SOLID CAPSULE BATCH GETS A DEPTH PREPASS, drawn by its own mesh -- see syncPrepass.
+  let preMat = null;
+  if (isCapKey && !ghost) {
+    preMat = (NodeMaterials.isActive && NodeMaterials.isActive())
+      ? NodeMaterials.rigCapsule({ shaft: isShaftKey(key), pre: true, key: key + 'Pre' }) : null;
+    if (!preMat) {
+      preMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, colorWrite: false, transparent: true });
+      if (isShaftKey(key)) taperMaterialInstanced(preMat); else sharpMaterialInstanced(preMat);
+    }
+  }
   const m = new THREE.InstancedMesh(geo, capMat || mat, BATCH_CAP0);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   if (isShaftKey(key)) ensureTaperAttrs(m, BATCH_CAP0);
@@ -685,7 +702,7 @@ function makeBatch(main, geo, ghost, key) {
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
-  return { mesh: m, cap: BATCH_CAP0, ghost: !!ghost };
+  return { mesh: m, cap: BATCH_CAP0, ghost: !!ghost, preMat };
 }
 
 // THE PER-INSTANCE COLOUR BUFFER, ALLOCATED UP FRONT AND NOT ON FIRST USE.
@@ -1068,6 +1085,19 @@ function tuneCapsuleBatches(main) {
   const endBase = Skeleton.capsuleOpacity();
   const shaftBase = Skeleton.shaftOpacity();
   const shaded = Skeleton.displayFlag('capsuleShaded');
+  // THE GHOST IS THE VOLUME SEEN THROUGH THE SKIN, so it takes the skin's opacity into account:
+  // what shows of a volume behind a skin at opacity m is (1 - m) of it. The ghost draws after the
+  // skin rather than under it, so this is the composite approximated, not exact -- but it is
+  // the right shape. It used to be a fixed 0.5625 of the capsule opacity whatever the skin was
+  // doing. matt: with Mesh Opacity at 50% "i don't see the volumes underneath, its still
+  // clipping", and at 100% the volumes inside the skin should not show at all. The most opaque
+  // real mesh decides, since the slider is global.
+  let meshOp = 0;
+  for (const ms of (main.getMeshes ? main.getMeshes() : [])) {
+    if (ms._isLight || ms._isBone || ms._isNull || !ms.getOpacity) continue;
+    if (ms.isVisible && !ms.isVisible()) continue;
+    meshOp = Math.max(meshOp, ms.getOpacity() ?? 1);
+  }
   for (const [key, b] of all) {
     if (!key.startsWith('capEnd') && !key.startsWith('capShaft')) continue;
     const base = key.startsWith('capShaft') ? shaftBase : endBase;
@@ -1075,7 +1105,7 @@ function tuneCapsuleBatches(main) {
     const hi = key.endsWith('Hi');
     // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
     const ghost = /G(Hi)?$/.test(key);
-    m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
+    m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 1 - meshOp : 1);
     // FULLY SOLID SKIPS THE BLEND, BUT NOT THE PASS. matt asked for the skin's rule -- "when the
     // solidity is at 100%, all the xray/transparency code paths in the material should be
     // skipped" -- and taking that literally, by clearing `transparent`, moved the solid capsules
@@ -1108,8 +1138,17 @@ function tuneCapsuleBatches(main) {
     // equal (the default, since the cylinders follow the spheres) both write, exactly as before.
     const mine = key.startsWith('capShaft') ? shaftBase : endBase;
     const other = key.startsWith('capShaft') ? endBase : shaftBase;
-    m.depthWrite = !ghost && mine >= other;
-    m.depthTest = ghost ? true : m.depthTest;
+    // ...BUT WRITING DEPTH IN THE COLOUR PASS WAS STILL ORDER-DEPENDENT. A far capsule drawn first
+    // blended, then the near one blended over it: two layers where the order went one way, one
+    // where it went the other, and with DoubleSide a capsule's own far wall did the same inside
+    // it. matt: "the volume shapes aren't properly sorted, its all a bit messy and hard to read".
+    // So the depth now goes down FIRST, from a depth-only twin of the batch (syncPrepass), and
+    // the colour pass tests LessEqual against it without writing: exactly the nearest surface of
+    // the whole rig blends, once, whatever order the instances are in. The fainter part still
+    // stays out of the prepass, for the reason above.
+    b.preOn = mine >= other;
+    m.depthWrite = false;
+    m.depthTest = true;
     // THE GHOST DRAWS FIRST, so it can only reveal through the SCULPT. It is a GreaterDepth
     // pass -- "paint me wherever something is nearer" -- so what is already in the depth buffer
     // when it runs decides what it shows through. Sharing 9996 with the solid pass, the solid
@@ -1118,7 +1157,19 @@ function tuneCapsuleBatches(main) {
     // behind a leg, i can still see the arm fully through the leg." One order earlier, the only
     // depth it can test against is the sculpt's, which is the one thing it exists to show
     // through -- and the solid pass then paints over it.
-    b.mesh.renderOrder = ghost ? GHOST_ORDER : 9996;
+    // A FULLY SOLID PART IS DRAWN UNDER THE SKIN, NOT OVER IT. Before the sculpt, with its depth
+    // written, the skin then composites over it exactly: where the skin is in front it blends over
+    // the volume at its own opacity, where the volume pokes out the skin fails the depth test. No
+    // ghost is needed, so none is drawn -- the ghost is unsorted, and was the double-shaded caps.
+    // Drawn after, the skin's depth cut the volumes even at Mesh Opacity 0. matt: "mesh opacity
+    // 0%, capsule opacity 100% looks weird" and at 50% "still has caps double shading".
+    // Translucent volumes keep the over-the-skin passes: drawn under, their depth would cut the
+    // skin behind them.
+    const under = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) >= 0.999;
+    b.off = ghost && (under || m.opacity < 0.004);
+    b.mesh.renderOrder = ghost ? GHOST_ORDER : (under ? UNDER_SOLID_ORDER : SOLID_ORDER);
+    b.preOrder = under ? UNDER_PRE_ORDER : PRE_ORDER;
+    if (b.pre) { b.pre.visible = b.mesh.visible && b.preOn; b.pre.renderOrder = b.preOrder; }
   }
 }
 
@@ -1227,10 +1278,30 @@ function flushBatches(main) {
     if (pe) pe.needsUpdate = true;
     if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; at.needsUpdate = true; }
     m.count = i;
-    m.visible = i > 0;
+    m.visible = i > 0 && !b.off;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    if (b.preMat) syncPrepass(b);
   }
+}
+
+// THE DEPTH PREPASS: the same instances as the solid batch, depth only. A twin mesh rather than
+// a second material, because a mesh draws with one. It shares the batch's geometry (so its
+// instanced attributes) and instanceMatrix, and is re-made only when a rebuild replaced those.
+function syncPrepass(b) {
+  const m = b.mesh;
+  let p = b.pre;
+  if (!p || p.geometry !== m.geometry || p.instanceMatrix !== m.instanceMatrix) {
+    if (p) p.parent?.remove(p);
+    p = b.pre = new THREE.InstancedMesh(m.geometry, b.preMat, 1);
+    p.instanceMatrix = m.instanceMatrix;
+    p.isPickable = false;
+    p.frustumCulled = false;
+    m.parent?.add(p);
+  }
+  p.count = m.count;
+  p.visible = m.visible && b.preOn !== false;
+  p.renderOrder = b.preOrder ?? PRE_ORDER;
 }
 
 // Dropped wholesale when the rig is rebuilt: the slots are indexed by creation order, so a
@@ -4607,7 +4678,8 @@ Skeleton.updateVisuals = function (main) {
       // disc becomes a shallow dome of that depth, meeting the wall tangentially at its rim. The
       // overall length is unchanged, so the gap to the next volume is too. (The bind keeps the flat
       // ends; the difference is a sliver at the rim.)
-      vf.bevel = Math.min(0.25 * Math.min(vf.r * vf.W, vf.r * vf.H), 0.3 * vf.axial);
+      // Half the section radius deep (was a quarter): matt, "we could soften/bevel the volumes more".
+      vf.bevel = Math.min(0.5 * Math.min(vf.r * vf.W, vf.r * vf.H), 0.3 * vf.axial);
       _cA.copy(vf.C0).addScaledVector(vf.d, vf.bevel);
       _cB.copy(vf.C1).addScaledVector(vf.d, -vf.bevel);
       _dirC.copy(vf.d);

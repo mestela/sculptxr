@@ -182,6 +182,11 @@ export function makePhysical(gpu, tsl, mesh) {
     if (op < 1) {
       m.opacity = op;
       m.transparent = true;
+      // No depth write, as the other shaders' translucent variants (NodeMaterials.getFor): a
+      // see-through skin that writes depth cuts the bone volumes drawn after it -- at Mesh Opacity
+      // 0 an invisible skin was carving holes in them. matt: "0% mesh opacity, 80% capsule
+      // opacity still seems to be doing incorrect sorting".
+      m.depthWrite = false;
     }
 
     m.userData.sculptMeshId = mesh.getID ? mesh.getID() : null;

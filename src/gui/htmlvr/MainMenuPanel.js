@@ -5706,7 +5706,9 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   // capsule you happened to be holding. matt: "these opacity sliders should be global, not per
   // selection." Every real mesh; the rig and the weight capsules have their own opacity sliders.
   wireSlider(el.querySelector('#mm-opacity'), el.querySelector('#mm-opacity-val'), (v) => {
-    sceneMeshes(main).forEach(m => m.setOpacity?.(v / 100)); main.render?.();
+    sceneMeshes(main).forEach(m => m.setOpacity?.(v / 100));
+    Skeleton.updateVisuals(main);   // the volumes' xray follows the skin's opacity (tuneCapsuleBatches)
+    main.render?.();
   }, (v) => `${v}%`, sliderDirtyFn);
 
   el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {

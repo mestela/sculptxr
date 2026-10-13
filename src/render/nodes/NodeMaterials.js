@@ -169,6 +169,8 @@ NodeMaterials.buildOverlayVariants = function () {
       for (const hi of [false, true]) {
         const key = (shaft ? 'capShaft' : 'capEnd') + (ghost ? 'G' : '') + (hi ? 'Hi' : '');
         if (NodeMaterials.rigCapsule({ shaft, ghost, key })) n++;
+        // ...and each solid batch's depth prepass (see Skeleton.syncPrepass).
+        if (!ghost && NodeMaterials.rigCapsule({ shaft, pre: true, key: key + 'Pre' })) n++;
       }
     }
   }
@@ -279,6 +281,8 @@ function applyOpacity(mat, mesh) {
   // left at 0), so it cannot be derived from transmission > 0 -- doing that put the coat back
   // in the OPAQUE pass, where its blending is ignored and it painted black over the scene.
   mat.transparent = op < 1 || mat.transmission > 0 || !!mat.userData.isGlassCoat;
+  // A translucent mesh writes no depth (see makePhysical); glass keeps its own rule.
+  if (!mat.userData.isGlassCoat && !(mat.transmission > 0)) mat.depthWrite = !(op < 1);
 }
 
 // ── A CONVERTED MATERIAL'S `.color` AND `.opacity` HAVE TO KEEP WORKING ─────────────────
@@ -353,12 +357,19 @@ NodeMaterials.rigCapsule = function (opts = {}) {
     uniform } = tsl;
   const shaft = !!opts.shaft;
 
+  // THREE PASSES, one material each (see Skeleton.tuneCapsuleBatches for the order):
+  //   pre   -- depth only, every volume, so the depth buffer holds the NEAREST volume surface;
+  //   solid -- colour, LessEqual against that, no depth write: exactly one layer per pixel blends,
+  //            whatever order the instances happen to sit in the buffer;
+  //   ghost -- the xray, GreaterDepth. FRONT faces only: a double-sided ghost drew each volume's
+  //            far wall too, two layers of the same shape through the sculpt.
   const m = unlit({
-    side: gpu.DoubleSide,
+    side: opts.ghost ? gpu.FrontSide : gpu.DoubleSide,
     transparent: true,
     opacity: opts.ghost ? 0.35 : 1.0,
     depthTest: true,
     depthWrite: !opts.ghost,
+    ...(opts.pre ? { colorWrite: false } : {}),
     ...(opts.ghost ? { depthFunc: gpu.GreaterDepth } : {}),
   });
 
@@ -442,6 +453,10 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   const checkMix = uniform(1);
   const check = mix(float(1.0), mix(float(1.0), float(0.68), parity), checkMix);
   m.colorNode = col.mul(gain).mul(check);
+  // NO FRESNEL RIM. Tried (v4.1.28): opacity rising toward grazing angles. On a flat-ended
+  // volume the end disc faces the camera and stays faint while the wall beside it goes nearly
+  // opaque, so every cap got a hard ring, and the xray ghost drew rings inside the sculpt. matt:
+  // "the caps on the volume have a harsh edge which is distracting." One opacity everywhere.
   m.userData.checkMix = checkMix;
   m.userData.shadeMix = shadeMix;
   m.userData.rigCapsule = true;
