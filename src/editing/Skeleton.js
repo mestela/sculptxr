@@ -1638,6 +1638,10 @@ Skeleton.isJoint = function (m) { return !!(m && m._isBone); };
 // Must live BELOW `const Skeleton`: assigning onto it from up beside DEFAULT_RADIUS_FRAC put
 // the write in the const's temporal dead zone and the whole module failed to evaluate.
 Skeleton.defaultRadiusFrac = function () { return DEFAULT_RADIUS_FRAC; };
+// The panel's Reset Joint / Reset Radii read it through here: the button called Skeleton.radiusFraction()
+// for a long while after it stopped existing, so every press threw a TypeError.
+Skeleton.radiusFraction = radiusFrac;
+
 
 // ---- joint radius ------------------------------------------------------------
 //
@@ -1948,6 +1952,38 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   if (!j) { h.group.visible = false; return h; }
   h.group.visible = true;
 
+  // BONE VOLUMES: the handles belong to the volume LEAVING this joint, drawn at its root face --
+  // width and height dots on the section's axes, and the uniform-scale dot on the rim diagonal. The
+  // along-bone dot is not used (a volume's length is its bone's), and the rotation rings are off.
+  if (Skeleton.displayFlag('volumes')) {
+    const bone = Skeleton.volumeActive(main, j);
+    if (!bone) { h.group.visible = false; return h; }
+    const f = Skeleton.volumeFrame(main, bone, main._volHandleFrame || (main._volHandleFrame = {}));
+    const rr = Skeleton.sceneUnit(main) * 0.0225;
+    h.centrePos.copy(f.C0);
+    for (let k = 0; k < 3; k++) { h.ringOn[k] = false; h.rings[k].visible = false; }
+    const w = f.r * f.W, ht = f.r * f.H, dg = 0.7071;
+    const put = (i, x, y, z) => {
+      h.pos[i].set(x, y, z);
+      h.faces[i].position.copy(h.pos[i]);
+      h.faces[i].scale.setScalar(rr);
+      h.faces[i].visible = true;
+      h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+    };
+    put(0, f.C0.x + f.e1.x * w, f.C0.y + f.e1.y * w, f.C0.z + f.e1.z * w);
+    put(1, f.C0.x - f.e1.x * w, f.C0.y - f.e1.y * w, f.C0.z - f.e1.z * w);
+    put(4, f.C0.x + f.e3.x * ht, f.C0.y + f.e3.y * ht, f.C0.z + f.e3.z * ht);
+    put(5, f.C0.x - f.e3.x * ht, f.C0.y - f.e3.y * ht, f.C0.z - f.e3.z * ht);
+    // uniform scale: on the rim, between width and height
+    put(2, f.C0.x + (f.e1.x * w + f.e3.x * ht) * dg, f.C0.y + (f.e1.y * w + f.e3.y * ht) * dg,
+           f.C0.z + (f.e1.z * w + f.e3.z * ht) * dg);
+    // the unused y- dot: hidden and parked out of reach so it can never be picked
+    h.faces[3].visible = false;
+    h.pos[3].set(1e9, 1e9, 1e9);
+    return h;
+  }
+  for (let i = 0; i < h.faces.length; i++) h.faces[i].visible = true;   // back from volumes mode
+
   // In the joint's own frame: the extents are the offsets to the faces along its three axes, and
   // an unturned joint's frame is the world's.
   const half = Skeleton.jointHalf(j, fallbackR || 0, _halfH);
@@ -2068,7 +2104,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
 // taking the palette entry furthest in hue from its parent, its grandparent, and the siblings
 // already assigned. A hash spreads colours evenly over the WHOLE rig, which says nothing about
 // whether any particular adjacent pair is distinguishable.
-// SIXTEEN, AROUND THE WHOLE WHEEL. The palette was cut to eight and then confined to one arc so no
+// TWENTY (was sixteen: 8 slots is a 0.4 step, see assignBoneColors), AROUND THE WHOLE WHEEL. The palette was cut to eight and then confined to one arc so no
 // chain could wear the preselect yellow or the select green, and what it bought was a rig where a
 // run of neighbouring bones all came out the same blue -- which defeats the whole point of the
 // colours, since the boundary between two touching bones is what you are trying to see. matt: "the
@@ -2076,7 +2112,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
 // the full hue range, i suspect it might not be an issue anymore." The state highlights have since
 // grown a size bump and a wire box of their own; the parent/sibling avoidance below is what keeps
 // the pairs that touch apart, and sixteen slots give it room to.
-const BONE_PALETTE_SIZE = 16;
+const BONE_PALETTE_SIZE = 20;
 const _paletteColors = [];
 function paletteColor(i) {
   let c = _paletteColors[i];
@@ -2123,40 +2159,65 @@ function hueGap(a, b) {
   return d > 0.5 ? 1 - d : d;
 }
 
-// Rebuild the id -> palette-slot map. Roots first, so a joint's parent always already has a
-// colour when its own is chosen.
+// Rebuild the id -> palette-slot map.
+//
+// A PURE FUNCTION OF THE TREE, so the same rig has the same colours on every load. It used to be a
+// greedy walk in whatever order the scene listed the joints and tie-broken on how often each slot
+// was already used, so a save/load that reordered the list (or shifted ids) recoloured the rig.
+// Now the only inputs are the parent/child structure and each joint's NAME (id as a last resort),
+// both of which the file keeps.
+//
+// A CHAIN STEPS 8 OF 20 SLOTS (0.4 of the wheel) PER JOINT. Five hues, 72 degrees apart, and any
+// two joints within four steps of each other on a chain differ by at least two of those -- so
+// parent/child differ by 144 degrees, grandparent/child by 72, and the upper and lower arm cannot
+// land on two shades of the same green, which two greedy picks next to a busy hip could.
+// SIBLINGS FAN OUT AROUND THAT STEP (+-4 slots, 72 degrees) so a branch's children differ from
+// each other as well as from the joint they hang from; the lightness tints of capsuleTints separate
+// them further on the capsules.
 function assignBoneColors(main, joints) {
-  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
-  const order = joints.slice().sort((a, b) => depth(a) - depth(b));
-  const slot = new Map();      // joint id -> palette index
-  const used = new Array(BONE_PALETTE_SIZE).fill(0);
-  const kidsDone = new Map();  // parent id -> palette indices already given to its children
-
-  for (const j of order) {
-    const parent = j._parentMesh;
-    const gp = parent && parent._parentMesh;
-    const avoid = [];
-    if (parent && slot.has(parent.getID())) avoid.push(slot.get(parent.getID()));
-    if (gp && slot.has(gp.getID())) avoid.push(slot.get(gp.getID()));
-    const pid = parent ? parent.getID() : -1;
-    for (const s of (kidsDone.get(pid) || [])) avoid.push(s);
-
-    let best = 0, bestScore = -Infinity;
-    for (let i = 0; i < BONE_PALETTE_SIZE; i++) {
-      let near = 1;
-      // REAL HUES, not slot fractions: the slots are no longer evenly spaced (see chainHue), so
-      // comparing indices would measure a distance the colours do not have.
-      for (const a of avoid) near = Math.min(near, hueGap(chainHue(i, BONE_PALETTE_SIZE), chainHue(a, BONE_PALETTE_SIZE)));
-      // Distance from the colours that touch this one comes first; even usage across the rig
-      // is only a tie-break, so a busy rig still cycles rather than clumping.
-      const score = near * 10 - used[i];
-      if (score > bestScore) { bestScore = score; best = i; }
-    }
-    slot.set(j.getID(), best);
-    used[best]++;
-    if (!kidsDone.has(pid)) kidsDone.set(pid, []);
-    kidsDone.get(pid).push(best);
+  const N = BONE_PALETTE_SIZE, STEP = N * 0.4, FAN = N * 0.2;
+  const inSet = new Set(joints);
+  const label = (j) => j._permanentStaticLabel || '';
+  const byName = (a, b) => (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : a.getID() - b.getID());
+  const kids = new Map();
+  const roots = [];
+  for (const j of joints) {
+    const p = j._parentMesh;
+    if (p && inSet.has(p)) {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(j);
+    } else roots.push(j);
   }
+  roots.sort(byName);
+  const slot = new Map();      // joint id -> palette index
+  const gapSlots = (a, b) => { const d = Math.abs(a - b) % N; return Math.min(d, N - d); };
+  // Each child takes the slot that is furthest (min circular distance) from its parent, its
+  // grandparent and the siblings placed before it; ties go to the slot closest to the ideal
+  // parent + STEP (+ fan), so chains keep their regular rhythm and the result never depends on
+  // iteration accidents -- only on the tree and the sort above.
+  const walk = (j, s, up) => {
+    slot.set(j.getID(), s);
+    const ks = kids.get(j);
+    if (!ks) return;
+    ks.sort(byName);
+    const n = ks.length;
+    const placed = [];
+    ks.forEach((k, i) => {
+      const off = n === 1 ? 0 : Math.round(-FAN + (2 * FAN * i) / (n - 1));
+      const ideal = (((s + STEP + off) % N) + N) % N;
+      const avoid = [s, ...up, ...placed];
+      let best = ideal, bestGap = -1;
+      for (let c = 0; c < N; c++) {
+        let g = N;
+        for (const a of avoid) g = Math.min(g, gapSlots(c, a));
+        const better = g > bestGap || (g === bestGap && gapSlots(c, ideal) < gapSlots(best, ideal));
+        if (better) { bestGap = g; best = c; }
+      }
+      placed.push(best);
+      walk(k, best, [s, ...up].slice(0, 1));
+    });
+  };
+  roots.forEach((r, i) => walk(r, (i * 7) % N, []));
   main._skelColorSlots = slot;
   return slot;
 }
@@ -2166,7 +2227,13 @@ function assignBoneColors(main, joints) {
 function colorSlots(main) {
   const joints = Skeleton.joints(main);
   let sig = joints.length;
-  for (const j of joints) sig += j.getID() * 31;
+  for (const j of joints) {
+    sig += j.getID() * 31;
+    // NAMES AND PARENTS ARE INPUTS NOW (assignBoneColors), so a rename or a reparent recolours.
+    const l = j._permanentStaticLabel;
+    if (l) for (let c = 0; c < l.length; c++) sig += l.charCodeAt(c) * (c + 7);
+    if (j._parentMesh) sig += j._parentMesh.getID() * 17;
+  }
   if (main._skelColorSig !== sig || !main._skelColorSlots) {
     main._skelColorSig = sig;
     return assignBoneColors(main, joints);
@@ -2221,6 +2288,106 @@ Skeleton.boneColorSRGB = function (main, joint) {
 // capsule at all. matt: "strictly speaking the first joints of the arms don't need a capsule, they're
 // the scapule, they're really a pivot/rotation offset more than anything." The joint's OWN capsule,
 // the bone leaving it, is unaffected: it still moves with that joint.
+// THE GAP LEFT AT EACH END OF A BONE VOLUME, as a fraction of the bone's length (Bone Volumes mode).
+// ~1cm on a thigh in the Voodoo footage. window._volGap overrides it for tuning.
+Skeleton.volumeGap = function () {
+  const g = window._volGap;
+  return (typeof g === 'number' && g >= 0 && g < 0.45) ? g : 0.04;
+};
+
+// HOW FAR IN FROM EACH JOINT A VOLUME STARTS: just the gap. Volumes are flat-ended cylinders now (they
+// were capsules, whose rounded ends reached a radius past the axis end and still overlapped at every bend),
+// so the clearance is the gap itself along the axis. Clamped so a very short bone keeps a sliver of axis.
+Skeleton.volumeInset = function (len) {
+  return Math.min(len * Skeleton.volumeGap(), len * 0.45);
+};
+
+// ---- bone volumes: section data and frame -----------------------------------------------------
+//
+// A VOLUME BELONGS TO A BONE, and a bone is stored on its END joint (`_boneRadius`, as ever). In this
+// mode that radius is the volume's UNIFORM scale, and `_volW` / `_volH` multiply it into an elliptical
+// cross-section. They are edited from the bone's ROOT, like Voodoo: selecting a joint edits the volume
+// leaving it (Skeleton.volumeActive picks which, when it has several).
+Skeleton.volumeSection = function (j) {
+  return [j && j._volW > 0 ? j._volW : 1, j && j._volH > 0 ? j._volH : 1];
+};
+Skeleton.setVolumeSection = function (j, w, h) {
+  if (!j) return;
+  const c = (v) => Math.max(0.05, Math.min(20, v || 1));
+  if (Math.abs(w - 1) < 1e-6) delete j._volW; else j._volW = c(w);
+  if (Math.abs(h - 1) < 1e-6) delete j._volH; else j._volH = c(h);
+};
+
+// THE SECTION'S CENTRE CAN SIT OFF THE BONE, as multiples of the radius along the section's width
+// (o1) and height (o3) axes: a face drag pins the opposite face, so a head can be deeper in front of
+// the bone than behind it. The mirror twin's width offset is NEGATED (the twin's width axis is the
+// reflection of this one turned round -- see volumeFrame), its height offset is the same.
+Skeleton.volumeOffset = function (j) {
+  return [j && j._volO1 ? j._volO1 : 0, j && j._volO3 ? j._volO3 : 0];
+};
+Skeleton.setVolumeOffset = function (j, o1, o3) {
+  if (!j) return;
+  if (Math.abs(o1) < 1e-6) delete j._volO1; else j._volO1 = o1;
+  if (Math.abs(o3) < 1e-6) delete j._volO3; else j._volO3 = o3;
+};
+
+// The volumes leaving a joint, in a fixed order (id), and which one a selection is editing.
+Skeleton.volumeKids = function (main, p) {
+  return Skeleton.joints(main).filter((k) => k._parentMesh === p && Skeleton.boneHasCapsule(k))
+    .sort((a, b) => a.getID() - b.getID());
+};
+Skeleton.volumeActive = function (main, p) {
+  const kids = Skeleton.volumeKids(main, p);
+  if (!kids.length) return null;
+  const at = (main._volActive && main._volActive.get(p.getID())) || 0;
+  return kids[at % kids.length];
+};
+Skeleton.volumeCycle = function (main, p) {
+  const n = Skeleton.volumeKids(main, p).length;
+  if (n < 2) return false;
+  if (!main._volActive) main._volActive = new Map();
+  main._volActive.set(p.getID(), (((main._volActive.get(p.getID()) || 0) + 1) % n));
+  return true;
+};
+
+// THE SECTION FRAME, in model space, from the bone alone: y runs along the bone, x is the width
+// (horizontal, from world up), z is the height (the remaining axis). World up is Y, or Z when the bone
+// is nearly vertical, so the frame is a pure function of the two joint positions and never flips with
+// the selection. The bind builds the same frame in mesh-local space (Skinning.boneSegments).
+const _vfD = new THREE.Vector3(), _vfE1 = new THREE.Vector3(), _vfE3 = new THREE.Vector3();
+const _vfUp = new THREE.Vector3(), _vfM = new THREE.Matrix4();
+Skeleton.volumeFrame = function (main, j, out) {
+  out = out || {};
+  const p = j._parentMesh;
+  out.P = (out.P || new THREE.Vector3()); out.J = (out.J || new THREE.Vector3());
+  Skeleton.jointPos(p, out.P); Skeleton.jointPos(j, out.J);
+  _vfD.subVectors(out.J, out.P);
+  out.len = _vfD.length();
+  if (out.len > 1e-9) _vfD.divideScalar(out.len); else _vfD.set(0, -1, 0);
+  _vfUp.set(0, Math.abs(_vfD.y) > 0.95 ? 0 : 1, Math.abs(_vfD.y) > 0.95 ? 1 : 0);
+  _vfE1.crossVectors(_vfUp, _vfD).normalize();
+  _vfE3.crossVectors(_vfE1, _vfD).normalize();
+  out.d = (out.d || new THREE.Vector3()).copy(_vfD);
+  out.e1 = (out.e1 || new THREE.Vector3()).copy(_vfE1);
+  out.e3 = (out.e3 || new THREE.Vector3()).copy(_vfE3);
+  _vfM.makeBasis(_vfE1, _vfD, _vfE3);
+  out.Q = (out.Q || new THREE.Quaternion()).setFromRotationMatrix(_vfM);
+  out.r = j._boneRadius || 0;
+  const sec = Skeleton.volumeSection(j);
+  out.W = sec[0]; out.H = sec[1];
+  out.inset = Math.max(0, Skeleton.volumeInset(out.len));
+  const off = Skeleton.volumeOffset(j);
+  out.o1 = off[0]; out.o3 = off[1];
+  // B0 is the root point ON the bone; C0/C1 are the section centres, which an offset moves off it.
+  out.B0 = (out.B0 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.inset);
+  out.C0 = (out.C0 || new THREE.Vector3()).copy(out.B0)
+    .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
+  out.C1 = (out.C1 || new THREE.Vector3()).copy(out.J).addScaledVector(_vfD, -out.inset)
+    .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
+  out.axial = out.len - 2 * out.inset;
+  return out;
+};
+
 Skeleton.boneHasCapsule = function (j) {
   return !!j && Skeleton.isJoint(j._parentMesh) && (j._boneRadius || 0) > 1e-9 && Skeleton.jointShapesSkin(j);
 };
@@ -4423,15 +4590,36 @@ Skeleton.updateVisuals = function (main) {
     // what say how big a joint is, and the SKIN is tapered exactly (see SkinMesh capsuleTarget).
     const cr = j._boneRadius || 0;
     if (!showCaps || !Skeleton.boneHasCapsule(j)) { hideCaps(e); continue; }
+    const vol = Skeleton.displayFlag('volumes');
     const hA = Skeleton.jointHalf(parent, cr, _halfA);
     const hB = Skeleton.jointHalf(j, cr, _halfB);
-    // The capsule spans the two SHAPES, which a face drag can move off their joints. The skin is
-    // built from the same two points (SkinMesh caps), so the preview and the result agree.
-    Skeleton.jointCentre(parent, _cA);
-    Skeleton.jointCentre(j, _cB);
-    _dirC.subVectors(_cB, _cA);
-    const lenC = _dirC.length();
-    if (lenC > 1e-9) _dirC.divideScalar(lenC);
+    let vf = null;
+    if (vol) {
+      // BONE VOLUMES: a flat-ended cylinder of constant elliptical section, in the bone's own frame
+      // (Skeleton.volumeFrame), inset by the gap at each end -- exactly what the bind measures
+      // (Skinning.boneSegments), so the picture and the weights cannot disagree. Nothing of the joint
+      // balls is used: radius is the bone's, section is the bone's.
+      vf = Skeleton.volumeFrame(main, j, main._volFrameScratch || (main._volFrameScratch = {}));
+      _halfA[0] = _halfB[0] = vf.r * vf.W;
+      _halfA[1] = _halfB[1] = vf.r;
+      _halfA[2] = _halfB[2] = vf.r * vf.H;
+      // A SMALL ROUNDED BEVEL AT EACH END, display only: the shaft stops short by `bevel` and the end
+      // disc becomes a shallow dome of that depth, meeting the wall tangentially at its rim. The
+      // overall length is unchanged, so the gap to the next volume is too. (The bind keeps the flat
+      // ends; the difference is a sliver at the rim.)
+      vf.bevel = Math.min(0.25 * Math.min(vf.r * vf.W, vf.r * vf.H), 0.3 * vf.axial);
+      _cA.copy(vf.C0).addScaledVector(vf.d, vf.bevel);
+      _cB.copy(vf.C1).addScaledVector(vf.d, -vf.bevel);
+      _dirC.copy(vf.d);
+    } else {
+      // The capsule spans the two SHAPES, which a face drag can move off their joints. The skin is
+      // built from the same two points (SkinMesh caps), so the preview and the result agree.
+      Skeleton.jointCentre(parent, _cA); Skeleton.jointCentre(j, _cB);
+      _dirC.subVectors(_cB, _cA);
+    }
+    let lenC = vol ? Math.max(vf.axial - 2 * vf.bevel, 1e-6) : _dirC.length();
+    if (!vol && lenC > 1e-9) _dirC.divideScalar(lenC);
+    const srcA = j;   // (no longer varies: only the volume branch below reads rotation from the frame)
     _qC.setFromUnitVectors(_upY, lenC > 1e-9 ? _dirC : _upY);
     const crMid = ((hA[0] + hA[1] + hA[2]) + (hB[0] + hB[1] + hB[2])) / 6;
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
@@ -4446,7 +4634,9 @@ Skeleton.updateVisuals = function (main) {
     // still brightens by about the same ratio it always did, and is capped so a fully opaque
     // capsule cannot be asked for more than solid.
     const capBase = Skeleton.capsuleOpacity();
-    const capOp = (isHi || isSel) ? Math.min(1, capBase * 2.125) : capBase;
+    // In volumes mode a bone lights when its ROOT joint is selected and it is the volume being edited.
+    const volSel = vol && sel.has(parent.getID()) && Skeleton.volumeActive(main, parent) === j;
+    const capOp = (isHi || isSel || volSel) ? Math.min(1, capBase * 2.125) : capBase;
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
       o.position.copy(_cA).addScaledVector(_dirC, lenC * 0.5); // cylinder is centre-origin
       o.quaternion.copy(_qC);
@@ -4465,10 +4655,12 @@ Skeleton.updateVisuals = function (main) {
       o._hb[0] = hB[0] * SHAFT_INSET; o._hb[1] = hB[1] * SHAFT_INSET; o._hb[2] = hB[2] * SHAFT_INSET;
       // The shaft spans two joints, so it carries both exponents and the shader blends them —
       // a boxy palm running into a round finger tapers in sharpness as well as in size.
-      o._pa = Skeleton.jointRound(parent); o._pb = Skeleton.jointRound(j);
+      o._pa = vol ? 2 : Skeleton.jointRound(parent); o._pb = vol ? 2 : Skeleton.jointRound(j);
       // Each end's rotation, one hemisphere apart so the shader's blend takes the short way
       // round (the same choice the skin's relax makes). Copied for the reason the extents are.
-      const rA = Skeleton.jointRot(parent), rB = Skeleton.jointRot(j);
+      // A volume's section frame IS its rotation: the shader shapes the cross-section in this frame.
+      const rA = vol ? [vf.Q.x, vf.Q.y, vf.Q.z, vf.Q.w] : Skeleton.jointRot(parent);
+      const rB = vol ? rA : Skeleton.jointRot(j);
       const sg = (rA[0] * rB[0] + rA[1] * rB[1] + rA[2] * rB[2] + rA[3] * rB[3]) < 0 ? -1 : 1;
       o._ra = o._ra || [0, 0, 0, 1];
       o._rb = o._rb || [0, 0, 0, 1];
@@ -4476,7 +4668,7 @@ Skeleton.updateVisuals = function (main) {
       o._rb[0] = sg * rB[0]; o._rb[1] = sg * rB[1]; o._rb[2] = sg * rB[2]; o._rb[3] = sg * rB[3];
       o.scale.set(1, lenC, 1);
       o.visible = shaftOn;
-      o._hi = !!(isHi || isSel);
+      o._hi = !!(isHi || isSel || volSel);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
     // The end caps turn with their joint's shape, and the three extents go into the scale, which
@@ -4485,20 +4677,39 @@ Skeleton.updateVisuals = function (main) {
                                         [e.cap.b, _cB, hB, 1, j]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
-        Skeleton.jointQuat(pj, o.quaternion);
-        o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
-        // A cap belongs to ONE joint, so it takes that joint's sharpness rather than a blend.
-        o._p = Skeleton.jointRound(pj);
-        o.visible = endsOn;
+        if (vol) {
+          // A VOLUME'S END IS A SHALLOW DOME: the sphere batch squashed to the bevel depth along the bone,
+          // in the section frame, centred where the shaft stops -- so the cylinder is closed (the shaft is
+          // an open tube), its rim is rounded, and a rig of volumes alone reads as solid shapes.
+          o.quaternion.copy(vf.Q);
+          o.scale.set(ph[0] * SHAFT_INSET, Math.max(vf.bevel, 1e-6), ph[2] * SHAFT_INSET);
+          o._p = 2;
+          o.visible = endsOn;
+        } else {
+          Skeleton.jointQuat(pj, o.quaternion);
+          o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
+          // A cap belongs to ONE joint, so it takes that joint's sharpness rather than a blend.
+          o._p = Skeleton.jointRound(pj);
+          o.visible = endsOn;
+        }
         // Which of the two batches this end belongs to this frame. The opacity that used to
         // carry the preselection cannot ride on an instance, so it rides on the batch.
         o._hi = !!(isHi || isSel);
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
     }
+    // THE BALL AT A JOINT WEARS THAT JOINT'S COLOUR. The shaft and the parent-end ball belong to
+    // the parent (it moves them); the ball at THIS joint is the joint's own shape -- its radius is
+    // what you drag, and past the joint plane its vertices are weighted to it (see boneSegments) --
+    // so painting it in the parent's colour showed red on the capsule over blue weights. matt: "the
+    // neck bone is red, the head bone is blue. but if i use the radius on the head bone, the joint
+    // capsule is drawn in red, but the weight i see on the skin is blue." The joint's own base hue
+    // is the one the weight preview paints with, so the two agree.
+    const ballColor = vol ? capColor : Skeleton.boneColor(main, j);   // a volume is one bone: one colour
     for (const part of [e.cap.shaft, e.cap.a, e.cap.b]) {
-      part.solid.material.color.copy(capColor);
-      part.ghost.material.color.copy(capColor);
+      const pc = part === e.cap.b ? ballColor : capColor;
+      part.solid.material.color.copy(pc);
+      part.ghost.material.color.copy(pc);
       // Opacity is batch state now (see tuneCapsuleBatches); recorded here and ignored, so this
       // placement code does not have to know which of the two it is.
       part.solid.material.opacity = capOp;
@@ -4750,18 +4961,54 @@ Skeleton.setRadiusFraction = function (main, frac) {
   }
 };
 
+// RESET ONE JOINT (the bone panel's Reset Joint): its bone radius back to the default proportion of
+// its bone's length, its own size cleared, and every tweak on it (box scale, offset, rotation)
+// removed. Only the joints passed in -- the caller adds mirror twins -- unlike setRadiusFraction,
+// which re-proportions the whole rig.
+Skeleton.resetJoint = function (main, joints, frac) {
+  const unit = Skeleton.sceneUnit(main);
+  for (const j of joints) {
+    const len = Skeleton.boneLength(main, j);
+    j._boneRadius = len > 1e-9 ? len * frac : unit * ROOT_RADIUS_FRAC;
+    j._jointRadius = 0;
+    delete j._jointScale;
+    delete j._jointOffset;
+    delete j._jointRot;
+    delete j._volW;
+    delete j._volH;
+    delete j._volO1;
+    delete j._volO3;
+  }
+};
+
 // Radii of every joint, for undo. Small (one float per joint), so snapshotting all of them
 // is simpler and safer than tracking which ones an edit touched.
 Skeleton.captureRadii = function (main) {
-  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0, j._jointRadius || 0]);
+  // The 4th element is the joint's TWEAK (scale / offset / rotation), copied so a later edit
+  // cannot write through the snapshot. Undefined in older snapshots.
+  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0, j._jointRadius || 0, {
+    s: j._jointScale ? j._jointScale.slice() : null,
+    o: j._jointOffset ? j._jointOffset.slice() : null,
+    q: j._jointRot ? j._jointRot.slice() : null,
+    vw: j._volW, vh: j._volH, vo1: j._volO1, vo3: j._volO3,
+  }]);
 };
 
 Skeleton.restoreRadii = function (snapshot) {
   // The joint size rides along, so one undo of Reset Radii puts back both halves of what it
   // changed. Third element absent means an older snapshot: leave the joint alone.
-  for (const [j, r, jr] of snapshot) {
+  for (const [j, r, jr, tw] of snapshot) {
     j._boneRadius = r;
     if (jr !== undefined) j._jointRadius = jr > 0 ? jr : 0;
+    if (tw) {
+      if (tw.s) j._jointScale = tw.s.slice(); else delete j._jointScale;
+      if (tw.o) j._jointOffset = tw.o.slice(); else delete j._jointOffset;
+      if (tw.q) j._jointRot = tw.q.slice(); else delete j._jointRot;
+      if (tw.vw > 0) j._volW = tw.vw; else delete j._volW;
+      if (tw.vh > 0) j._volH = tw.vh; else delete j._volH;
+      if (tw.vo1) j._volO1 = tw.vo1; else delete j._volO1;
+      if (tw.vo3) j._volO3 = tw.vo3; else delete j._volO3;
+    }
   }
 };
 
@@ -6685,6 +6932,18 @@ const DISPLAY_FLAGS = {
   // a far one. The flat look stays a switch away.
   capsuleShaded: ['_boneCapsuleShaded', 'boneCapsuleShaded', true],
   weights: ['_boneShowWeights', 'boneShowWeights', false],
+  // While a radius or a box handle is being dragged, paint every OTHER bone's vertices black so the
+  // edited joint's territory is the only thing lit. Behaviour, not decoration. Off by default.
+  soloRadius: ['_boneSoloRadius', 'boneSoloRadius', false],
+  // BONE VOLUMES (experimental): the Voodoo / Rhythm & Hues model. One constant-section capsule per
+  // bone, sized by the bone's own end joint, shortened by a small gap at each end so neighbours never
+  // overlap; the weights follow those volumes (Skinning.boneSegments). Behaviour, so Hide All
+  // Decorations leaves it alone. `volSoft` blends bones across the gaps by distance instead of
+  // splitting them rigidly.
+  // ON, and the only mode now (the tapered ball-ended capsules are gone from the UI). A NEW KEY on purpose,
+  // so a `false` saved while this was an experiment cannot hide the volumes.
+  volumes: ['_boneVolumesOn', 'boneVolumesOn', true],
+  volSoft: ['_boneVolSoft', 'boneVolSoft', true],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
   // BACK AS A TOGGLE. The dots were removed when the bone became the pick target, and came

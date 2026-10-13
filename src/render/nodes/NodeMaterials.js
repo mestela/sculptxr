@@ -422,7 +422,27 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   const brightest = max(max(col.r, col.g), col.b);
   const gain = select(brightest.greaterThan(1e-4),
     max(shade, float(0)).min(float(1.0).div(brightest)), shade);
-  m.colorNode = col.mul(gain);
+  // A CHECKERBOARD, so a volume's ORIENTATION reads at a glance -- a solid-colour cylinder looks the
+  // same however it is turned, and the Voodoo rig's checker is a good part of why its shapes read.
+  // Squares, not stretched: eight around, and along the shaft a cell as long as one of those is wide
+  // (so a long bone gets more rows, not longer ones). The end discs get eight wedges and a few rings.
+  // Darken rather than recolour, so the bone's identity colour is still what the cell shows.
+  const { uv, floor, mod } = tsl;
+  const u = uv();
+  let parity;
+  if (shaft) {
+    const hA = attribute('aHA', 'vec3');
+    const r = max(hA.x.add(hA.z).mul(0.5), float(1e-6));
+    const cell = r.mul(2.0 * Math.PI / 8.0);
+    const along = u.y.mul(sc.y).div(cell);
+    parity = mod(floor(u.x.mul(8.0)).add(floor(along)), float(2.0));
+  } else {
+    parity = mod(floor(u.x.mul(8.0)).add(floor(u.y.mul(6.0))), float(2.0));
+  }
+  const checkMix = uniform(1);
+  const check = mix(float(1.0), mix(float(1.0), float(0.68), parity), checkMix);
+  m.colorNode = col.mul(gain).mul(check);
+  m.userData.checkMix = checkMix;
   m.userData.shadeMix = shadeMix;
   m.userData.rigCapsule = true;
   m.userData.nodeShared = true;

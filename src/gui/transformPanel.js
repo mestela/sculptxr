@@ -106,7 +106,10 @@ export function wireTransformSection(root, main, opts) {
       window._gizmoSizeMul = f;
       getOptionsURL.saveOption('gizmoSizeMul', f, 500);
       if (sVal) sVal.textContent = f.toFixed(2) + 'x';
-      main.render?.();
+      // Show the gizmo while it is being sized, even if Pin Pose had put it away (Transform.showForSizing).
+      const tool = main.getSculptManager?.()?.getCurrentTool?.();
+      if (tool && tool.showForSizing) tool.showForSizing();
+      else main.render?.();
       // THE DESKTOP SIDEBAR REBUILDS ITSELF IN `refresh`, and a rebuild on every `input` replaces the
       // slider element mid-drag -- so it could only be clicked, never dragged. The panel that asked
       // for a repaint per tick (the VR wrist panel, whose texture must be re-rasterised) passes

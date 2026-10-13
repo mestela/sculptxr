@@ -119,7 +119,7 @@ const px = (block, prop) => {
     /const DEFAULT_RADIUS_FRAC = 0\.25;/.test(
       fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8')));
   check('...and the button that pushed it now reads as the reset it is',
-    /id="bone-rad-all">Reset Radii</.test(BONE),
+    /id="bone-rad-all">Reset Joint</.test(BONE),
     '"Apply To All" names a value the panel no longer has');
 }
 

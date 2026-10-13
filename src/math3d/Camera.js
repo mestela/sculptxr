@@ -164,6 +164,18 @@ class Camera {
     return this._usePivot;
   }
 
+  // MODEL UNITS PER CSS PIXEL at a point `dist` from the eye -- what a screen-constant marker scales
+  // by. Perspective: the visible width at that depth (2 * dist / proj[0]) over the canvas width.
+  // ORTHOGRAPHIC: the frustum's own width (updateOrtho gives mat4.ortho -w..w, w = _width * zoom) over
+  // the canvas width, and NOT the eye distance, which in ortho is a fixed far placement that says
+  // nothing about the size on screen -- the reason the gizmo came out several times too small there.
+  worldPerPixel(dist) {
+    const cw = this._main.getCanvas().clientWidth || 1;
+    if (this._projectionType === Enums.Projection.ORTHOGRAPHIC)
+      return (2 * this._width * this.getOrthoZoom()) / cw;
+    return (2 * dist) / (cw * this._proj[0]);
+  }
+
   getConstantScreen() {
     var cwidth = this._main.getCanvas().clientWidth;
     if (this._projectionType === Enums.Projection.ORTHOGRAPHIC)

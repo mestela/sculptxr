@@ -3031,6 +3031,10 @@ export function buildSectionHTML_topology(main) {
   const isDyn   = !!(mesh?.isDynamic);
   const numLvl  = isMulti ? mesh._meshes.length : 0;
   const curLvl  = isMulti ? mesh._sel : 0;
+  // A MULTI-SELECTION steps every multires mesh in it, so the buttons are live if any of them can move.
+  const mres = (main.getSelectedMeshes?.() || []).filter((m) => m && m._meshes);
+  const canDown = (isMulti && curLvl > 0) || mres.some((m) => m._sel > 0);
+  const canUp = (isMulti && curLvl < numLvl - 1) || mres.some((m) => m._sel < m._meshes.length - 1);
 
   const res = Remesh.RESOLUTION;
 
@@ -3051,8 +3055,8 @@ export function buildSectionHTML_topology(main) {
     <div class="mm-section-title">Multiresolution</div>
     ${multiInfo}
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-level-down" ${isMulti && curLvl > 0 ? '' : 'disabled'}>Level −</button>
-      <button class="mm-action-btn" id="mm-level-up"   ${isMulti && curLvl < numLvl - 1 ? '' : 'disabled'}>Level +</button>
+      <button class="mm-action-btn" id="mm-level-down" ${canDown ? '' : 'disabled'}>Level −</button>
+      <button class="mm-action-btn" id="mm-level-up"   ${canUp ? '' : 'disabled'}>Level +</button>
     </div>
     <div class="mm-btn-pair">
       <button class="mm-action-btn" id="mm-subdivide" ${mesh ? '' : 'disabled'}>Subdivide</button>
@@ -5791,16 +5795,36 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
     if (bound) { main.setMesh?.(bound); repaintFn(); }
   };
 
-  el.querySelector('#mm-level-down')?.addEventListener('click', () => {
+  // LEVEL -/+ STEP EVERY SELECTED MULTIRES MESH, each from its own level -- a character in several
+  // pieces is several multires meshes, and stepping them one at a time was the only way. One mesh goes
+  // through the topology GUI as before; several are one undo step together.
+  const stepLevels = (dir) => {
     retarget();
-    const m = main.getMesh?.();
-    if (m?._meshes && m._sel > 0) { topo?.onResolutionChanged?.(m._sel); main.render?.(); repaintFn(); }
-  });
-  el.querySelector('#mm-level-up')?.addEventListener('click', () => {
-    retarget();
-    const m = main.getMesh?.();
-    if (m?._meshes && m._sel < m._meshes.length - 1) { topo?.onResolutionChanged?.(m._sel + 2); main.render?.(); repaintFn(); }
-  });
+    const cur = main.getMesh?.();
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => m && m._meshes);
+    if (cur?._meshes && !sel.includes(cur)) sel.push(cur);
+    const moving = sel.filter((m) => (dir < 0 ? m._sel > 0 : m._sel < m._meshes.length - 1));
+    if (!moving.length) return;
+    if (moving.length === 1 && moving[0] === cur) {
+      topo?.onResolutionChanged?.(cur._sel + 1 + dir);
+    } else {
+      const before = moving.map((m) => [m, m.getCurrentMesh()]);
+      for (const m of moving) m.selectResolution(m._sel + dir);
+      const after = moving.map((m) => [m, m.getCurrentMesh()]);
+      const apply = (rows) => {
+        for (const [m, sub] of rows) m.selectMesh(sub);
+        main.getGui?.()?.updateMesh?.();
+        main.render?.();
+        repaintFn();
+      };
+      main.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Multires Level');
+      main.getGui?.()?.updateMesh?.();
+    }
+    main.render?.();
+    repaintFn();
+  };
+  el.querySelector('#mm-level-down')?.addEventListener('click', () => stepLevels(-1));
+  el.querySelector('#mm-level-up')?.addEventListener('click', () => stepLevels(1));
   el.querySelector('#mm-subdivide')?.addEventListener('click',   () => { retarget(); topo?.subdivide?.();    main.render?.(); repaintFn(); });
   el.querySelector('#mm-reverse')?.addEventListener('click',     () => { retarget(); topo?.reverse?.();      main.render?.(); repaintFn(); });
   el.querySelector('#mm-del-lower')?.addEventListener('click',   () => { retarget(); topo?.deleteLower?.();  main.render?.(); repaintFn(); });

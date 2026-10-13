@@ -1,3 +1,12 @@
+# v4.1.26
+- **Bone Volumes replace the capsule bind.** One flat-ended cylinder per bone (constant elliptical section, small gap at each end so neighbours never touch), drawn with a checkerboard and slightly rounded ends; the weights follow the volumes by distance to their surface, with Soft Gaps blending across the joints. No shared joint balls, so a size edit changes one bone only. Chain tips own nothing.
+- **Edit a volume from its root.** In Tweak Joint, select a joint (or click a volume or bone) to get handles on the volume leaving it: width, height and uniform scale, plus lopsided width/height (one face pinned) except width on centreline bones. Tap the joint again to move to its next bone. Mirrored to the twin; live weights; one undo per drag. Reset Joint resets the selected joint's volumes. Solo Edit blacks out every other bone while you drag.
+- **Bone colours** are deterministic (same rig, same colours after save/load) and adjacent bones sit further apart on the hue wheel.
+- **Right-click menu** targets the joint under the cursor (or the nearer end of the volume under it), lit while the menu is open -- so a knee between pinned hips and ankles can be given an Aim pin.
+- **Transform gizmo**: draws over the rig on desktop; the size slider shows the gizmo while you drag it; correct size in orthographic view.
+- **Multires Level -/+** step every selected multires mesh (one undo).
+- **Fixes**: Shapes Skin toggle re-solves the weights; joint roundness is honoured by the bind; Reset Joint no longer throws (Skeleton.radiusFraction was missing); a weight re-solve with no shapes left clears the weights instead of keeping stale ones.
+
 # v4.1.25
 - **A joint's ball turns with that joint.** The capsule bind gave the big shape at a chain's last joint (head_01, toes, fingertips) to the PARENT bone, so rotating head_01 moved nothing, and gave exact ties (the heel behind an ankle, an elbow tip, the back of the skull) to whichever bone came first in the list, usually the parent, so the heel followed the shin instead of the foot. A tie now goes to the bone that starts at the joint, and a chain-end joint owns its own ball. Rebind (or edit a capsule) to re-solve existing files.
 - **Merge mirror joints under any shared parent.** Dragging a left/right pair of twins onto the symmetry plane merges them when they share a parent (the first spine joint under the hips), not only for root pairs.

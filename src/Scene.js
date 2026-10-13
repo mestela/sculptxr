@@ -15135,7 +15135,63 @@ class Scene {
     return (b.value ?? 0) >= this._triggerThreshold();
   }
 
+  // THE JOINT UNDER THE CURSOR, from every visible joint, in screen space -- ignoring any tool's own
+  // idea of what is pickable. Pin Pose's hover skips joints the pins already control (a knee between a
+  // pinned hip and a pinned ankle), which is right for where its GIZMO goes and wrong for the menu:
+  // adding an Aim pin to exactly that knee is the point of the menu. A joint within ~18 CSS px, else the
+  // nearer end of the volume under the cursor, else the nearest joint within ~60 px.
+  _jointUnderCursor() {
+    const cam = this.getCamera && this.getCamera();
+    const tcam = cam && cam.getThreeCamera && cam.getThreeCamera();
+    const canvas = this._canvas;
+    if (!tcam || !canvas || this._mouseX == null) return null;
+    const pr = this.getPixelRatio ? this.getPixelRatio() : 1;
+    const v = this._menuPickV || (this._menuPickV = new THREE.Vector3());
+    const mx = this._mouseX, my = this._mouseY;
+    const toScreen = (p, out) => {
+      v.copy(p);
+      if (this._worldGroup) this._worldGroup.localToWorld(v);
+      v.project(tcam);
+      if (v.z > 1) return false;
+      out[0] = (v.x * 0.5 + 0.5) * canvas.width; out[1] = (-v.y * 0.5 + 0.5) * canvas.height;
+      return true;
+    };
+    const s = [0, 0], s0 = [0, 0], s1 = [0, 0], s2 = [0, 0];
+    const joints = Skeleton.joints(this).filter((j) => Skeleton.jointVisible(j));
+    // 1. A joint right under the cursor.
+    let best = null, bestD = 18 * pr, far = null, farD = 60 * pr;
+    for (const j of joints) {
+      if (!toScreen(Skeleton.jointPos(j, this._menuPickP || (this._menuPickP = new THREE.Vector3())), s)) continue;
+      const d = Math.hypot(s[0] - mx, s[1] - my);
+      if (d < bestD) { bestD = d; best = j; }
+      if (d < farD) { farD = d; far = j; }
+    }
+    if (best) return best;
+    // 2. A VOLUME under the cursor: the joint at its nearer end. Clicking on the leg just above the knee
+    //    means the knee more often than the hip, and the click is on the shape you can see, not on a dot.
+    let vb = null, vbScore = 1, vbT = 0;
+    const f = this._menuPickF || (this._menuPickF = {});
+    for (const j of joints) {
+      if (!Skeleton.boneHasCapsule(j)) continue;
+      Skeleton.volumeFrame(this, j, f);
+      if (!toScreen(f.C0, s0) || !toScreen(f.C1, s1)) continue;
+      const tmp = this._menuPickQ || (this._menuPickQ = new THREE.Vector3());
+      tmp.copy(f.C0).addScaledVector(f.e1, f.r * Math.max(f.W, f.H));
+      if (!toScreen(tmp, s2)) continue;
+      const half = Math.max(Math.hypot(s2[0] - s0[0], s2[1] - s0[1]), 4 * pr);
+      const dx = s1[0] - s0[0], dy = s1[1] - s0[1], l2 = dx * dx + dy * dy;
+      let t = l2 > 1e-9 ? ((mx - s0[0]) * dx + (my - s0[1]) * dy) / l2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const score = Math.hypot(mx - (s0[0] + dx * t), my - (s0[1] + dy * t)) / half;
+      if (score < vbScore) { vbScore = score; vb = j; vbT = t; }
+    }
+    if (vb) return vbT < 0.5 && Skeleton.isJoint(vb._parentMesh) ? vb._parentMesh : vb;
+    // 3. Failing both, the nearest joint within a generous reach.
+    return far;
+  }
+
   _resolvePinJoint() {
+    if (this._menuJoint) return this._menuJoint;
     const hov = Skeleton.hoveredJoint(this);
     if (hov) return hov;
     const sel = this.getMesh && this.getMesh();
@@ -15761,9 +15817,23 @@ class Scene {
         && this._sculptManager.getCurrentTool();
       if (tool && tool._pickBoneScreen) this._rigHoverBone = tool._pickBoneScreen() || null;
     }
+    // The joint right under the cursor wins over hover and selection for the PIN commands, for the
+    // length of this call only (the commands latch their joint when built). See _jointUnderCursor.
+    this._menuJoint = this._jointUnderCursor();
     const cmds = this._resolveViewportMenuCommands();
+    // WHAT THE MENU WILL ACT ON, LIT for as long as it is open -- otherwise you are choosing a pin
+    // mode for a joint you cannot see named anywhere. matt: "when r.clicked, the nearest bone should
+    // highlight, right now its flying blind." Cleared when the menu closes.
+    const target = this._resolvePinJoint();
+    this._menuJoint = null;
     this._rigHoverBone = _prevHoverBone;
-    return this._viewportMenu.open(cmds, clientX, clientY);
+    const opened = this._viewportMenu.open(cmds, clientX, clientY);
+    if (opened && target) {
+      Skeleton.setHighlight(this, target);
+      this._viewportMenu.onClose = () => { Skeleton.setHighlight(this, null); this.render?.(); };
+      this.render?.();
+    }
+    return opened;
   }
 
   _quickSwapTool() {

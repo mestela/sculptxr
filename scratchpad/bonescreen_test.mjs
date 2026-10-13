@@ -93,6 +93,8 @@ const Skeleton = {
   setDisplayFlag: (n, v) => { const r = FLAG_ROWS[n]; if (r) window[r[0]] = !!v; },
   DISPLAY_FLAGS: FLAG_ROWS,
   isJoint: (m) => !!(m && m._isBone),
+  // No bone has a volume in this fixture: the picks under test are the joint and bone-line ones.
+  boneHasCapsule: () => false,
   joints: (main) => main.getMeshes().filter((m) => m._isBone),
   jointVisible: (j) => j._hidden !== true,
   jointPos(j, out) {

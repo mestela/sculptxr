@@ -122,6 +122,7 @@ const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
 const _snapTo = new THREE.Vector3();
 const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2();
+const _s2 = new THREE.Vector2(), _pickTmp = new THREE.Vector3(), _pickR = new THREE.Vector3();
 // The volume probe's own scratch: a model-space ray, a mesh-space copy of it, and the
 // matrices either way.
 const _vO = new THREE.Vector3(), _vD = new THREE.Vector3();
@@ -725,9 +726,38 @@ class BoneDrawTool extends SculptBase {
 
   // The screen twin of _pickRigNode: the joint under the cursor, else the ROOT of the bone under
   // it. Same reasoning, same Maya model -- see the note there.
+  // THE VOLUME UNDER THE CURSOR (Bone Volumes): each is a thick line on screen -- its axis from root face
+  // to far face, as wide as its section projects -- so the pick is "on the drawn volume", not "near
+  // its centre line". The most central hit wins. Returns the bone's END joint; `_lastVolHit` keeps it.
+  _pickVolumeScreen() {
+    const main = this._main;
+    const mx = main._mouseX, my = main._mouseY;
+    this._lastVolHit = null;
+    const f = this._pickFrame || (this._pickFrame = {});
+    let best = null, bestScore = 1;
+    for (const j of Skeleton.joints(main)) {
+      if (!Skeleton.boneHasCapsule(j) || !Skeleton.jointVisible(j)) continue;
+      Skeleton.volumeFrame(main, j, f);
+      if (!this._toScreen(f.C0, _s0) || !this._toScreen(f.C1, _s1)) continue;
+      const rr = f.r * Math.max(f.W, f.H);
+      _pickTmp.copy(f.C0).addScaledVector(this._camRight(_pickR), rr);
+      if (!this._toScreen(_pickTmp, _s2)) continue;
+      const half = Math.max(Math.hypot(_s2.x - _s0.x, _s2.y - _s0.y), 4);
+      const d = _distToSegment(mx, my, _s0, _s1);
+      const score = d / half;                       // < 1 means inside the drawn width
+      if (score < bestScore) { bestScore = score; best = j; }
+    }
+    this._lastVolHit = best;
+    return best;
+  }
+
   _pickRigNodeScreen() {
     const j = this._pickJointScreen();
-    if (j) return j;
+    if (j) { this._lastVolHit = null; return j; }
+    if (Skeleton.displayFlag('volumes')) {
+      const v = this._pickVolumeScreen();
+      if (v && Skeleton.isJoint(v._parentMesh)) return v._parentMesh;
+    }
     const bone = this._pickBoneScreen();
     const root = bone && bone._parentMesh;
     const main = this._main;
@@ -1229,8 +1259,24 @@ class BoneDrawTool extends SculptBase {
         Skeleton.setHighlight(main2, hj);
         return true;
       }
-      const pick = this._pickJointScreen();
+      // THE SAME PICK THE HOVER USES (joint, else a volume or bone -> its root), so what lights is what a
+      // press takes. A volume or bone selects the joint it leaves and brings its handles up, with that
+      // bone the one being edited.
+      const pick = this._pickRigNodeScreen();
       if (!pick) return false;
+      if (Skeleton.displayFlag('volumes')) {
+        const hit = this._lastVolHit;
+        const kids = Skeleton.volumeKids(main2, pick);
+        if (hit && kids.includes(hit)) {
+          if (!main2._volActive) main2._volActive = new Map();
+          main2._volActive.set(pick.getID(), kids.indexOf(hit));
+        } else if (hj && pick === hj && Skeleton.volumeCycle(main2, pick)) {
+          // Tapping the joint that already has the handles moves them to its next bone.
+          Skeleton.updateVisuals(main2);
+          main2.render?.();
+          return true;
+        }
+      }
       this._selectLater(pick);            // no handle hit: choose the joint to put handles on
       this._hilite = pick;
       Skeleton.setHighlight(main2, pick);
@@ -1978,6 +2024,13 @@ class BoneDrawTool extends SculptBase {
   // need to be able to scale joints, not bones."
   _beginRadius(joint) {
     const main = this._main;
+    // BONE VOLUMES: the radius tool is the uniform scale of the volume leaving the picked joint.
+    if (Skeleton.displayFlag('volumes')) {
+      const bones = this._volBones(joint);
+      this._radius = bones ? { joint, vol: bones, before: this._volRows(bones), startPos: null, startRadius: bones[0]._boneRadius || 0 } : null;
+      if (bones) this._soloBegin([joint, joint._boneMirror], true);
+      return;
+    }
     const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
       ? joint._boneMirror : null;
     const before = [[joint, joint._jointRadius || 0]];
@@ -1996,6 +2049,7 @@ class BoneDrawTool extends SculptBase {
     // drag counts from is the number on screen.
     this._radius = { joint: joint, twin: twin, before: before, startPos: null,
       startRadius: Skeleton.jointRadius(joint, Skeleton.boneRadiusOf(this._main, joint)) };
+    this._soloBegin([joint, twin]);
   }
 
   // THE CAMERA'S RIGHT, in model space. Same construction as _camAxis and for the same reason:
@@ -2056,6 +2110,13 @@ class BoneDrawTool extends SculptBase {
     }
     const d = r.startRadius
       + _wRad.copy(pos).sub(r.startPos).dot(this._camRight(_wRight));
+    if (r.vol) {
+      const minV = Math.max(Skeleton.boneLength(this._main, r.vol[0]) * 0.02, 1e-6);
+      for (const j of r.vol) j._boneRadius = Math.max(d, minV);
+      this._liveWeights();
+      this._refresh();
+      return;
+    }
     // A capsule with no thickness has no support at all, so never let a drag collapse one to
     // zero — that would silently unweight everything the bone owned.
     const min = Math.max(Skeleton.boneLength(this._main, r.joint) * 0.02, 1e-6);
@@ -2064,6 +2125,32 @@ class BoneDrawTool extends SculptBase {
     if (r.twin) Skeleton.setJointRadius(r.twin, val); // a mirrored rig stays mirrored
     this._liveWeights();
     this._refresh();
+  }
+
+  // SOLO WHILE EDITING A JOINT'S SIZE (display flag soloRadius). A joint's radius shapes the bone
+  // arriving at it (owned by its parent) and the bone leaving it (owned by the joint itself), so the
+  // lit set is the joint and its parent -- and the twins' -- and everything else paints black. The
+  // weight preview is forced on for the duration and put back after, so the flag works from a rig
+  // whose weights are hidden.
+  _soloBegin(joints, ownersOnly) {
+    if (!Skeleton.displayFlag('soloRadius')) return;
+    const ids = new Set();
+    for (const j of joints) {
+      if (!j) continue;
+      ids.add(j.getID());
+      if (!ownersOnly && Skeleton.isJoint(j._parentMesh)) ids.add(j._parentMesh.getID());
+    }
+    this._soloActive = true;
+    this._soloWeightsWere = Skeleton.displayFlagRaw('weights');
+    Skeleton.setDisplayFlag('weights', true);
+    Skinning.setSolo(this._main, ids);
+  }
+
+  _soloEnd() {
+    if (!this._soloActive) return;
+    this._soloActive = false;
+    Skeleton.setDisplayFlag('weights', this._soloWeightsWere);
+    Skinning.setSolo(this._main, null);
   }
 
   // Re-solve the bound weights mid-drag, so the vertices a capsule owns recolour under your
@@ -2089,8 +2176,119 @@ class BoneDrawTool extends SculptBase {
   // the face goes. No offset and no rotation, which is matt's scope — "just keep the bbox
   // controls for width, height, depth" — so the opposite face moves out to match and the joint
   // stays centred on the joint.
+  // ── BONE VOLUMES: EDITING A BONE'S SECTION FROM ITS ROOT ───────────────────────────────────
+  //
+  // Selecting a joint edits the volume LEAVING it (the one that is lit; tap the joint again to move to
+  // its next bone when it has several), like Voodoo, where the controls sit at the root. Three grips:
+  // the width dots (+-x of the section) and the height dots (+-z) set the ellipse, and the diagonal dot
+  // is the UNIFORM scale -- none of them touches the bone's length. The edit goes to the bone's mirror
+  // twin as well.
+  _volBones(joint) {
+    const main = this._main;
+    const b = Skeleton.volumeActive(main, joint);
+    if (!b) return null;
+    const out = [b];
+    const t = b._boneMirror;
+    if (t && t !== b && main.getMeshes().includes(t) && Skeleton.boneHasCapsule(t)) out.push(t);
+    return out;
+  }
+
+  _volRows(bones) {
+    return bones.map((j) => [j, j._boneRadius || 0, j._volW, j._volH, j._volO1, j._volO3]);
+  }
+
+  _volApplyRows(rows) {
+    for (const [j, r, w, h, o1, o3] of rows) {
+      j._boneRadius = r;
+      if (w > 0) j._volW = w; else delete j._volW;
+      if (h > 0) j._volH = h; else delete j._volH;
+      if (o1) j._volO1 = o1; else delete j._volO1;
+      if (o3) j._volO3 = o3; else delete j._volO3;
+    }
+  }
+
+  _beginVolEdit(joint, grip) {
+    const bones = this._volBones(joint);
+    if (!bones) return false;
+    const f = Skeleton.volumeFrame(this._main, bones[0], {});
+    // A CENTRELINE bone keeps its width symmetric (it is its own mirror); everything else, and the
+    // height of every bone, moves one face with the other pinned.
+    const centreline = Skeleton.jointIsCentreline(this._main, bones[0]);
+    this._vol = { joint, bones, grip, before: this._volRows(bones), f, r0: f.r, W0: f.W, H0: f.H,
+      o10: f.o1, o30: f.o3, centreline, startPerp: 0 };
+    this._soloBegin([joint, joint._boneMirror], true);
+    return true;
+  }
+
+  _volTo(pos) {
+    const v = this._vol;
+    if (!v) return;
+    const f = v.f;
+    const dx = pos.x - f.C0.x, dy = pos.y - f.C0.y, dz = pos.z - f.C0.z;
+    const along = dx * f.d.x + dy * f.d.y + dz * f.d.z;
+    const px = dx - f.d.x * along, py = dy - f.d.y * along, pz = dz - f.d.z * along;   // across the axis
+    const w = Math.abs(px * f.e1.x + py * f.e1.y + pz * f.e1.z);
+    const h = Math.abs(px * f.e3.x + py * f.e3.y + pz * f.e3.z);
+    const axis = v.grip.axis;
+    const minR = Math.max(f.len * 0.02, 1e-6);
+    if (axis === 0 || axis === 2) {
+      // Measured from the root point ON the bone (B0), along the grabbed axis, so the hand and the
+      // faces are in the same coordinates as the stored offset.
+      const e = axis === 0 ? f.e1 : f.e3;
+      const bx = pos.x - f.B0.x, by = pos.y - f.B0.y, bz = pos.z - f.B0.z;
+      const m = bx * e.x + by * e.y + bz * e.z;                 // the hand, along the axis
+      const c0 = (axis === 0 ? v.o10 : v.o30) * v.r0;           // the section centre at the grab
+      const h0 = (axis === 0 ? v.W0 : v.H0) * v.r0;             // its half-extent at the grab
+      let half, centre;
+      if (axis === 0 && v.centreline) {
+        half = Math.max(Math.abs(m - c0), minR); centre = c0;   // symmetric about the bone
+      } else {
+        const pinned = c0 - v.grip.sign * h0;                   // the face you did not grab stays put
+        half = Math.max(Math.abs(m - pinned) / 2, minR);
+        centre = pinned + v.grip.sign * half;
+      }
+      for (const j of v.bones) {
+        const mirror = j !== v.bones[0];
+        if (axis === 0) {
+          Skeleton.setVolumeSection(j, half / v.r0, v.H0);
+          Skeleton.setVolumeOffset(j, (mirror ? -1 : 1) * centre / v.r0, v.o30);
+        } else {
+          Skeleton.setVolumeSection(j, v.W0, half / v.r0);
+          Skeleton.setVolumeOffset(j, (mirror ? -1 : 1) * v.o10, centre / v.r0);
+        }
+      }
+    } else {
+      // The first frame only ANCHORS the drag (the dot sits on the rim, so the hand starts there).
+      const perp = Math.hypot(px, py, pz);
+      if (!v.startPerp) { v.startPerp = Math.max(perp, 1e-9); return; }
+      const k = perp / v.startPerp;
+      for (const j of v.bones) j._boneRadius = Math.max(v.r0 * k, minR);
+    }
+    this._liveWeights();
+    this._refresh();
+  }
+
+  _releaseVol() {
+    const v = this._vol;
+    this._vol = null;
+    this._soloEnd();
+    if (!v) return;
+    this._liveWeights(true);
+    const main = this._main;
+    const before = v.before, after = this._volRows(v.bones);
+    const apply = (rows) => {
+      this._volApplyRows(rows);
+      Skinning.resolveWeightsAll(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    main.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Bone Volume');
+  }
+
   _beginScale(joint, grip, fallbackR) {
     const main = this._main;
+    // Bone Volumes edit the bone's section from its root, not the joint's box: see _beginVolEdit.
+    if (Skeleton.displayFlag('volumes') && this._beginVolEdit(joint, grip)) { this._scale = null; return; }
     // THE TWIN GETS THE EDIT, like every other edit in this tool. matt: "mirroring should happen
     // from left hand to right hand, left foot to right foot etc, but the only symmetry WITHIN the
     // tweak joint handles should be for joints on the center line." Two different symmetries, and
@@ -2125,6 +2323,7 @@ class BoneDrawTool extends SculptBase {
       // take it off the plane the rest of the rig is built around. Read once at the grab so the
       // rule cannot change under your hand halfway through a drag.
       centreline: Skeleton.jointIsCentreline(main, joint) };
+    this._soloBegin([joint, twin]);
   }
 
   // ONE FACE MOVES, THE OTHER STAYS. Scaling about the centre was the first version and it made
@@ -2137,6 +2336,7 @@ class BoneDrawTool extends SculptBase {
   // a head is its own mirror twin and sliding it sideways would take it off the plane. There the
   // old centred behaviour is the correct one.
   _scaleTo(pos) {
+    if (this._vol) { this._volTo(pos); return; }
     const sc = this._scale;
     if (!sc) return;
     if (sc.grip.kind === 'ring') { this._rotateTo(pos); return; }
@@ -2212,8 +2412,10 @@ class BoneDrawTool extends SculptBase {
   }
 
   _releaseScale() {
+    if (this._vol) { this._releaseVol(); this._grabHand = null; return; }
     const sc = this._scale;
     this._scale = null;
+    this._soloEnd();
     // Hand ownership is released with the drag, exactly as _releaseGrab / _releasePose /
     // _releaseIK do. A stale owner outlives the drag and the next mode's first grab is then
     // arbitrated against a hand that is no longer holding anything.
@@ -2243,9 +2445,23 @@ class BoneDrawTool extends SculptBase {
   _releaseRadius() {
     const r = this._radius;
     this._radius = null;
+    this._soloEnd();
     // `before` is missing when the radius drag never actually captured one — which happens when
     // the tool is switched away mid-drag, since setToolIndex calls clearPreview and that lands
     // here. Without this the map below throws and takes the tool switch with it.
+    if (r && r.vol) {
+      this._liveWeights(true);
+      this._selectLater(r.joint);
+      const main = this._main, before = r.before, after = this._volRows(r.vol);
+      const apply = (rows) => {
+        this._volApplyRows(rows);
+        Skinning.resolveWeightsAll(main);
+        Skeleton.updateVisuals(main);
+        main.render?.();
+      };
+      main.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Bone Volume');
+      return;
+    }
     if (!r || !r.before) return;
     this._liveWeights(true); // land on the final radius, not on the last throttled tick
     this._selectLater(r.joint);

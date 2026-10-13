@@ -308,6 +308,23 @@ class Transform extends SculptBase {
     // Ideally the UI should switch them to TransformVR, but we need to survive this frame.
   }
 
+  // THE SIZE SLIDER SHOWS WHAT IT IS SIZING. Pin Pose drops its automatic selection the moment the
+  // cursor leaves the bone -- which is exactly what reaching for the panel does -- so the gizmo was
+  // hidden while you dragged its size and you saw the result only after selecting something again.
+  // Put it back on the last thing it was on. Pin Pose treats that as its own selection, so it lets go
+  // again as soon as the cursor is back over the canvas and away from it.
+  showForSizing() {
+    const main = this._main;
+    if (!main.getSelectedMeshes().length) {
+      const last = this._gizmo._lastTarget;
+      if (last && main.getMeshes().includes(last)) {
+        main.setMesh(last, true);   // keepTool
+        if (this._pinPoseActive()) this._ppAuto = last;
+      }
+    }
+    main.render?.();
+  }
+
   postRender() {
     var g = this._gizmo._group;
 

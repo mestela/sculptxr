@@ -410,7 +410,24 @@ class GizmoVR {
     }
   }
 
+  // ON DESKTOP THE GIZMO DRAWS OVER EVERYTHING. Its materials already skip the depth test, but three
+  // sorts transparent objects by renderOrder first, and the rig's volumes, plane and cursors sit at
+  // 9996-9998 while the gizmo's parts are 99-102 -- so the volumes were painted over it. Lifted by a
+  // fixed amount while not presenting (VR keeps its own ordering with the panels), put back after.
+  _applyOnTop() {
+    const on = !(this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting);
+    // Every frame, but only writing what differs: parts are rebuilt when the mode changes and a new one
+    // must be lifted too.
+    this._group.traverse((o) => {
+      if (!(o.isMesh || o.isLine || o.isSprite || o.isPoints)) return;
+      if (o.userData._ro0 === undefined) o.userData._ro0 = o.renderOrder || 0;
+      const want = o.userData._ro0 + (on ? 20000 : 0);
+      if (o.renderOrder !== want) o.renderOrder = want;
+    });
+  }
+
   update(camera) {
+    this._applyOnTop();
     if (this._handleSetFn) this.setActivatedType(this._handleSetFn());
     // 1. Calculate Center
     let meshes = this._main.getTransformableMeshes();
@@ -419,6 +436,8 @@ class GizmoVR {
     if (meshes.length === 0 && this._main.getMesh() && !this._main.getMesh()._selectLocked) {
       meshes = [this._main.getMesh()];
     }
+    // What the gizmo was last ON, so the size slider can bring it back there (Transform.showForSizing).
+    if (meshes.length > 0) this._lastTarget = meshes[0];
     const center = [0.0, 0.0, 0.0];
 
     if (meshes.length > 0) {
@@ -562,8 +581,11 @@ class GizmoVR {
       // then uses the matrix only to hold that physical size against world zoom. The screen
       // rule wants the matrix to carry the whole size, so the bake has to come back out --
       // left in, the two multiply and the gizmo fills the viewport.
-      const k = ((this._lastDistToEye * GIZMO_SIZE_SCREEN) / camera.getConstantScreen())
-        / (this._lastScale || 1);
+      // (C/2) x model-units-per-pixel, which for perspective is exactly dist*C/getConstantScreen() as
+      // before, and for ORTHOGRAPHIC is measured from the frustum instead of the meaningless eye distance.
+      const wpp = camera.worldPerPixel ? camera.worldPerPixel(this._lastDistToEye)
+        : (2 * this._lastDistToEye) / camera.getConstantScreen();
+      const k = ((GIZMO_SIZE_SCREEN * 0.5) * wpp) / (this._lastScale || 1);
       // THE SIZE MULTIPLIER APPLIES HERE TOO. It was on the VR branch only, so the "Gizmo size"
       // slider and the thumbstick did nothing whatsoever on the desktop -- a control that exists
       // and is inert reads as no control at all.
