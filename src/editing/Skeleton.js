@@ -2518,17 +2518,40 @@ Skeleton.volumeCycle = function (main, p) {
   return true;
 };
 
-// THE SECTION FRAME, in model space, from the bone alone: y runs along the bone, x is the width
-// (horizontal, from world up), z is the height (the remaining axis). World up is Y, or Z when the bone
-// is nearly vertical, so the frame is a pure function of the two joint positions and never flips with
-// the selection. The bind builds the same frame in mesh-local space (Skinning.boneSegments).
+// THE SECTION FRAME, in model space: y runs along the bone, x is the width (horizontal, from world
+// up), z is the height (the remaining axis). World up is Y, or Z when the bone is nearly vertical.
+// The bind builds the same frame in mesh-local space (Skinning.boneSegments).
+//
+// BUILT AT REST, CARRIED BY THE PARENT JOINT. It used to be built from the joints as they are now,
+// which made it a function of the bone's DIRECTION and nothing else: swing an arm and world up
+// re-derived the width axis, so the section rolled about the bone; cross |d.y| 0.95 and it snapped
+// 90 degrees; twist the joint and nothing moved. matt: "the volumes spin about their axis... they
+// should be essentially parented to their joints." So the frame is built from the REST skeleton
+// (`_ikRest`, the same rest Tweak edits re-record) and then moved rigidly by the parent joint's
+// rest-to-now transform. At rest that transform is the identity and nothing changes.
 const _vfD = new THREE.Vector3(), _vfE1 = new THREE.Vector3(), _vfE3 = new THREE.Vector3();
 const _vfUp = new THREE.Vector3(), _vfM = new THREE.Matrix4();
+const _vfRestP = new THREE.Matrix4(), _vfRestJ = new THREE.Matrix4(), _vfT = new THREE.Matrix4();
+const _vfL = new THREE.Matrix4(), _vfMS = new Float32Array(16), _vfR = new THREE.Matrix3();
+// A joint's REST transform in model space: its own and its joint ancestors' `_ikRest`, on top of
+// whatever non-joint object the chain hangs from as it is now (as JointFrame.restModelMatrices).
+function restModel(j, out) {
+  out.fromArray(j._ikRest || j.getMatrix());
+  let p = j._parentMesh;
+  for (; p && Skeleton.isJoint(p); p = p._parentMesh) out.premultiply(_vfL.fromArray(p._ikRest || p.getMatrix()));
+  if (p && p.getModelSpaceMatrix) out.premultiply(_vfL.fromArray(p.getModelSpaceMatrix(_vfMS)));
+  return out;
+}
 Skeleton.volumeFrame = function (main, j, out) {
   out = out || {};
   const p = j._parentMesh;
   out.P = (out.P || new THREE.Vector3()); out.J = (out.J || new THREE.Vector3());
-  Skeleton.jointPos(p, out.P); Skeleton.jointPos(j, out.J);
+  restModel(p, _vfRestP); restModel(j, _vfRestJ);
+  out.P.setFromMatrixPosition(_vfRestP); out.J.setFromMatrixPosition(_vfRestJ);
+  // rest -> now, for the parent joint; the identity when the rig is at rest
+  _vfT.fromArray(p.getModelSpaceMatrix(_vfMS)).multiply(_vfRestP.invert());
+  let moved = false;
+  for (let k = 0; k < 16 && !moved; k++) moved = Math.abs(_vfT.elements[k] - (k % 5 ? 0 : 1)) > 1e-7;
   _vfD.subVectors(out.J, out.P);
   out.len = _vfD.length();
   if (out.len > 1e-9) _vfD.divideScalar(out.len); else _vfD.set(0, -1, 0);
@@ -2567,6 +2590,15 @@ Skeleton.volumeFrame = function (main, j, out) {
   out.C1 = (out.C1 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.t1)
     .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
   out.axial = out.t1 - out.t0;
+  if (moved) {
+    for (const v of [out.P, out.J, out.B0, out.C0, out.C1]) v.applyMatrix4(_vfT);
+    _vfR.setFromMatrix4(_vfT);
+    out.d.applyMatrix3(_vfR).normalize();
+    out.e1.applyMatrix3(_vfR).normalize();
+    out.e3.applyMatrix3(_vfR).normalize();
+    _vfM.makeBasis(out.e1, out.d, out.e3);
+    out.Q.setFromRotationMatrix(_vfM);
+  }
   return out;
 };
 
@@ -4803,7 +4835,10 @@ Skeleton.updateVisuals = function (main) {
     let lenC = vol ? Math.max(vf.axial - 2 * vf.bevel, 1e-6) : _dirC.length();
     if (!vol && lenC > 1e-9) _dirC.divideScalar(lenC);
     const srcA = j;   // (no longer varies: only the volume branch below reads rotation from the frame)
-    _qC.setFromUnitVectors(_upY, lenC > 1e-9 ? _dirC : _upY);
+    // A volume's shaft wears the section frame itself (its y IS the bone), not the shortest arc from
+    // up: the shortest arc rolls with the bone's direction, and the checker rolled with it.
+    if (vol) _qC.copy(vf.Q);
+    else _qC.setFromUnitVectors(_upY, lenC > 1e-9 ? _dirC : _upY);
     const crMid = ((hA[0] + hA[1] + hA[2]) + (hB[0] + hB[1] + hB[2])) / 6;
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
     // which is the same colour the weight preview paints onto the vertices it claims. (The
