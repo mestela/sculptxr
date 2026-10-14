@@ -239,10 +239,14 @@ export function buildBoneAuthoringHTML(main, style) {
   //
   // The joint the roundness slider edits: the single selected joint, or nothing.
   const roundSel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-  const roundTarget = roundSel.length === 1 ? roundSel[0] : null;
-  const roundVal = roundTarget ? Skeleton.jointRound(roundTarget) : 2;
+  // With Bone Volumes on it is the VOLUME being edited (the one leaving the selected joint), not the joint.
+  const roundVol = Skeleton.displayFlag('volumes');
+  const roundTarget = roundSel.length !== 1 ? null
+    : (roundVol ? Skeleton.volumeActive(main, roundSel[0]) : roundSel[0]);
+  const roundVal = roundTarget ? (roundVol ? Skeleton.volumeRound(roundTarget) : Skeleton.jointRound(roundTarget)) : 2;
+  // Named by the SELECTED joint either way: a volume is edited from its root, so that is the name you see.
   const roundName = roundTarget
-    ? (roundTarget._permanentStaticLabel || ('joint ' + roundTarget.getID())) : '';
+    ? (roundSel[0]._permanentStaticLabel || ('joint ' + roundSel[0].getID())) : '';
   const physP = physTarget ? PhysicsBones.params(physTarget) : PhysicsBones.DEFAULTS;
   // A SLIDER THAT DOES NOTHING IS WORSE THAN ONE THAT IS NOT THERE -- you drag it, the rig does
   // not change, and you are left wondering which of the two is broken. The constraint solver
@@ -947,6 +951,22 @@ export function buildBoneSectionHTML(main, style) {
 // after anything that changes which BUTTONS exist (binding swaps Bind for Rebind/Unbind, and
 // Make Skin changes the selection), since a panel that only syncs classes would keep showing
 // the old set.
+// REST POSE, shared by this panel's button and the Transform section's (transformPanel.js), so the
+// two cannot drift apart.
+export function restPose(main, say) {
+  // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
+  // next physics step pulled the chain straight off it again, toward a target adopted from
+  // whatever last wrote the joint -- an IK drag, typically. Cleared here, the step re-derives
+  // it from _ikRest. See PhysicsBones.clearRest.
+  PhysicsBones.clearRest(main);
+  PhysicsBones.reset(main);
+  const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
+  window._physicsNeedsInit = true;
+  say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
+  Skeleton.updateVisuals(main);
+  main.render?.();
+}
+
 export function wireBoneSection(root, main, opts) {
   // This one wire function services four composable blocks. Bail only when NONE is present;
   // checking #bone-draw made pose/display/animation controls inert outside Bone Draw.
@@ -1062,6 +1082,20 @@ export function wireBoneSection(root, main, opts) {
       const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
       if (sel.length !== 1) return;
       const v = parseInt(rIn.value, 10) / 10;
+      // Bone Volumes: the volume being edited and its twin (see roundTarget above).
+      if (Skeleton.displayFlag('volumes')) {
+        const b = Skeleton.volumeActive(main, sel[0]);
+        if (!b) return;
+        Skeleton.setVolumeRound(b, v);
+        const bt = Skeleton.mirrorEdits(main) ? b._boneMirror : null;
+        if (bt && main.getMeshes?.().includes(bt)) Skeleton.setVolumeRound(bt, v);
+        if (rVal) rVal.textContent = v.toFixed(1);
+        Skeleton.updateVisuals(main);
+        const now = performance.now();
+        if (now - (rIn._lastSolve || 0) > 120) { rIn._lastSolve = now; Skinning.resolveWeightsAll(main); }
+        main.render?.();
+        return;
+      }
       Skeleton.setJointRound(sel[0], v);
       // THE TWIN TAKES IT TOO, like every other joint-shape edit. Tweak Joint already writes the
       // twin's scale and offset when it drags a face — sharpness is the same kind of property and
@@ -1906,19 +1940,7 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
-  q('restpose')?.addEventListener('click', () => {
-    // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
-    // next physics step pulled the chain straight off it again, toward a target adopted from
-    // whatever last wrote the joint -- an IK drag, typically. Cleared here, the step re-derives
-    // it from _ikRest. See PhysicsBones.clearRest.
-    PhysicsBones.clearRest(main);
-    PhysicsBones.reset(main);
-    const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
-    window._physicsNeedsInit = true;
-    say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
-    Skeleton.updateVisuals(main);
-    main.render?.();
-  });
+  q('restpose')?.addEventListener('click', () => restPose(main, say));
 
   // SCULPT THE BIND SHAPE. Two things the rest of the app has never had: an exact way to REACH
   // the pose the skin was bound in (the rig's rest pose is a different pose and can differ from

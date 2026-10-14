@@ -238,6 +238,14 @@ function boneSegments(mesh, joints, pos) {
       if (Math.abs(_vD.dot(_vUp)) > 0.95) _vUp.set(0, 0, 1).applyMatrix3(_m3Inv).normalize();
       _vE1.crossVectors(_vUp, _vD).normalize();
       _vE3.crossVectors(_vE1, _vD).normalize();
+      // The twist, exactly as Skeleton.volumeFrame turns it.
+      const tw = Skeleton.volumeTwist(j);
+      if (tw) {
+        const c = Math.cos(tw), sn = Math.sin(tw);
+        _vUp.copy(_vE1);
+        _vE1.multiplyScalar(c).addScaledVector(_vE3, sn);
+        _vE3.multiplyScalar(c).addScaledVector(_vUp, -sn);
+      }
       _mBasisV.makeBasis(_vE1, _vD, _vE3);
       _qV.setFromRotationMatrix(_mBasisV).invert();
       const ri = new Float64Array([_qV.x, _qV.y, _qV.z, _qV.w, _qV.x, _qV.y, _qV.z, _qV.w]);
@@ -247,12 +255,17 @@ function boneSegments(mesh, joints, pos) {
       const off = Skeleton.volumeOffset(j);
       const ox = (_vE1.x * off[0] + _vE3.x * off[1]) * r, oy = (_vE1.y * off[0] + _vE3.y * off[1]) * r,
         oz = (_vE1.z * off[0] + _vE3.z * off[1]) * r;
+      // The two ends along the bone, as Skeleton.volumeFrame places them (t0 / t1, as fractions here).
+      const en = Skeleton.volumeEnds(j);
+      const t0 = g - en[0], t1 = Math.max(1 - g + en[1], t0 + 0.05);
       out.push({
         joint: pi, end: i, pa: A, pb: B,
-        a: new THREE.Vector3(A.x + dx * g + ox, A.y + dy * g + oy, A.z + dz * g + oz),
-        b: new THREE.Vector3(B.x - dx * g + ox, B.y - dy * g + oy, B.z - dz * g + oz),
+        a: new THREE.Vector3(A.x + dx * t0 + ox, A.y + dy * t0 + oy, A.z + dz * t0 + oz),
+        b: new THREE.Vector3(A.x + dx * t1 + ox, A.y + dy * t1 + oy, A.z + dz * t1 + oz),
         ha: h, hb: h, ri: ri,
-        flat: true, len: len * (1 - 2 * g),
+        // The section's sharpness (Skeleton.volumeRound): a rounded-rectangle volume weighs as one.
+        pe: [Skeleton.volumeRound(j), Skeleton.volumeRound(j)],
+        flat: true, len: len * (t1 - t0),
       });
     });
     return out;

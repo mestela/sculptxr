@@ -121,7 +121,7 @@ const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
 const _snapTo = new THREE.Vector3();
-const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2();
+const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2(), _s3 = new THREE.Vector2();
 const _s2 = new THREE.Vector2(), _pickTmp = new THREE.Vector3(), _pickR = new THREE.Vector3();
 // The volume probe's own scratch: a model-space ray, a mesh-space copy of it, and the
 // matrices either way.
@@ -679,11 +679,14 @@ class BoneDrawTool extends SculptBase {
   _ringPoint(out) {
     const sc = this._scale;
     const h = this._main._jointHandles;
-    if (!sc || !h || !this._screenRay(_rayO, _rayD)) return false;
-    const a = sc.ringAxis;
+    // A volume's twist ring is on the bone axis at the ring's drawn centre (see updateScaleHandles).
+    const v = this._vol;
+    if ((!sc && !v) || !h || !this._screenRay(_rayO, _rayD)) return false;
+    const a = sc ? sc.ringAxis : v.f.d;
+    const centre = sc ? sc.centre : h.centrePos;
     const denom = a.dot(_rayD);
     if (Math.abs(denom) < 0.2) return this._planePoint(h.centrePos, out);
-    const t = a.dot(_wA.copy(sc.centre).sub(_rayO)) / denom;
+    const t = a.dot(_wA.copy(centre).sub(_rayO)) / denom;
     out.copy(_rayO).addScaledVector(_rayD, t);
     return true;
   }
@@ -753,7 +756,23 @@ class BoneDrawTool extends SculptBase {
 
   _pickRigNodeScreen() {
     const j = this._pickJointScreen();
-    if (j) { this._lastVolHit = null; return j; }
+    if (j) {
+      this._lastVolHit = null;
+      // A SHORT VOLUME IS ALL JOINT ON SCREEN: the joint pick reaches most of the way along it from both
+      // ends, so the volume pick never ran and the hips' centre volume (to the spine) could not be taken.
+      // matt: "i can't select the center one". So off the dot itself, a volume LEAVING this joint that
+      // is under the cursor says which of its volumes to edit; it selects the same joint either way.
+      // Right on the dot, nothing changes: a tap there still cycles the joint's volumes.
+      if (Skeleton.displayFlag('volumes')) {
+        const main = this._main;
+        Skeleton.jointPos(j, _jp);
+        const onDot = this._toScreen(_jp, _s3)
+          && Math.hypot(_s3.x - main._mouseX, _s3.y - main._mouseY) < this._pickPx() * 0.4;
+        const v = onDot ? null : this._pickVolumeScreen();
+        this._lastVolHit = (v && v._parentMesh === j) ? v : null;
+      }
+      return j;
+    }
     if (Skeleton.displayFlag('volumes')) {
       const v = this._pickVolumeScreen();
       if (v && Skeleton.isJoint(v._parentMesh)) return v._parentMesh;
@@ -1253,7 +1272,15 @@ class BoneDrawTool extends SculptBase {
       const grip = hj ? this._pickHandleScreen() : null;
       if (grip) {
         this._beginScale(hj, grip, Skeleton.boneRadiusOf(main2, hj));
-        this._drag = { kind: 'joint', joint: hj, anchor: Skeleton.jointPos(hj, _jp).clone(),
+        // THE PLANE GOES THROUGH THE HANDLE, AND THE CLICK'S OFFSET FROM IT IS KEPT. Through the joint,
+        // the first projected point was wherever the cursor ray met a plane the handle is not on, so
+        // the edit snapped to it on the first move. matt: the handles "jump as soon as i start the
+        // drag, rather than staying in place". With both, the first move reproduces the handle exactly.
+        // (A ring measures from where it was taken hold of already, so it keeps the joint plane.)
+        const hp = grip.kind !== 'ring' && main2._jointHandles.pos[grip.index];
+        const anchor = hp ? hp.clone() : Skeleton.jointPos(hj, _jp).clone();
+        const grabOff = (hp && this._planePoint(anchor, _wB)) ? anchor.clone().sub(_wB) : null;
+        this._drag = { kind: 'joint', joint: hj, anchor: anchor, grabOff: grabOff,
           startX: startX, startY: startY };
         this._hilite = hj;
         Skeleton.setHighlight(main2, hj);
@@ -1371,8 +1398,12 @@ class BoneDrawTool extends SculptBase {
     }
 
     if (d.kind === 'joint') {
-      const ringDrag = this._scale && this._scale.grip.kind === 'ring';
-      if (ringDrag ? this._ringPoint(_hit) : this._planePoint(d.anchor, _hit)) this._scaleTo(_hit);
+      const ringDrag = (this._scale && this._scale.grip.kind === 'ring')
+        || (this._vol && this._vol.grip.kind === 'ring');
+      if (ringDrag ? this._ringPoint(_hit) : this._planePoint(d.anchor, _hit)) {
+        if (!ringDrag && d.grabOff) _hit.add(d.grabOff);
+        this._scaleTo(_hit);
+      }
       return;
     }
 
@@ -2194,16 +2225,19 @@ class BoneDrawTool extends SculptBase {
   }
 
   _volRows(bones) {
-    return bones.map((j) => [j, j._boneRadius || 0, j._volW, j._volH, j._volO1, j._volO3]);
+    return bones.map((j) => [j, j._boneRadius || 0, j._volW, j._volH, j._volO1, j._volO3, j._volE0, j._volE1, j._volR]);
   }
 
   _volApplyRows(rows) {
-    for (const [j, r, w, h, o1, o3] of rows) {
+    for (const [j, r, w, h, o1, o3, e0, e1, tw] of rows) {
       j._boneRadius = r;
       if (w > 0) j._volW = w; else delete j._volW;
       if (h > 0) j._volH = h; else delete j._volH;
       if (o1) j._volO1 = o1; else delete j._volO1;
       if (o3) j._volO3 = o3; else delete j._volO3;
+      if (e0) j._volE0 = e0; else delete j._volE0;
+      if (e1) j._volE1 = e1; else delete j._volE1;
+      if (tw) j._volR = tw; else delete j._volR;
     }
   }
 
@@ -2231,7 +2265,27 @@ class BoneDrawTool extends SculptBase {
     const h = Math.abs(px * f.e3.x + py * f.e3.y + pz * f.e3.z);
     const axis = v.grip.axis;
     const minR = Math.max(f.len * 0.02, 1e-6);
-    if (axis === 0 || axis === 2) {
+    if (v.grip.kind === 'ring') {
+      // THE TWIST RING: the hand's angle round the bone, about the volume's middle, from where it took
+      // hold. The twin turns the other way (Skeleton.volumeTwist).
+      _rv1.copy(f.C0).add(f.C1).multiplyScalar(0.5);
+      _rv1.subVectors(pos, _rv1);
+      _rv1.addScaledVector(f.d, -_rv1.dot(f.d));
+      if (_rv1.lengthSq() < 1e-16) return;
+      if (!v.from) { v.from = _rv1.clone(); return; }
+      // Measured about +d; the twist turns e1 toward e3, which is about -d, hence the minus.
+      const ang = Math.atan2(f.d.dot(_wA.crossVectors(v.from, _rv1)), v.from.dot(_rv1));
+      v.bones.forEach((j, k) => Skeleton.setVolumeTwist(j, (k ? -1 : 1) * (f.twist - ang)));
+    } else if (axis === 'end') {
+      // AN END DOT: the hand's position along the bone (from the root joint P) is where that end goes.
+      // The other end stays put, and the volume never gets shorter than a twentieth of its bone.
+      const t = (pos.x - f.P.x) * f.d.x + (pos.y - f.P.y) * f.d.y + (pos.z - f.P.z) * f.d.z;
+      const L = Math.max(f.len, 1e-9), keep = L * 0.05;
+      let e0 = f.end0, e1 = f.end1;
+      if (v.grip.sign < 0) e0 = (f.inset - Math.min(t, f.t1 - keep)) / L;
+      else e1 = (Math.max(t, f.t0 + keep) - L + f.inset) / L;
+      for (const j of v.bones) Skeleton.setVolumeEnds(j, e0, e1);
+    } else if (axis === 0 || axis === 2) {
       // Measured from the root point ON the bone (B0), along the grabbed axis, so the hand and the
       // faces are in the same coordinates as the stored offset.
       const e = axis === 0 ? f.e1 : f.e3;

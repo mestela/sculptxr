@@ -1,6 +1,7 @@
 import './misc/Polyfill.js';
 import { VERSION } from './Version.js';
 import { vec3, mat4, quat, mat3 } from 'gl-matrix';
+import * as THREE from 'three';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
 import getOptionsURL from './misc/getOptionsURL.js';
@@ -1535,6 +1536,7 @@ class SculptGL extends Scene {
     var cam = this._camera;
     var pivot = [0.0, 0.0, 0.0];
     if (!res) {
+      if (this._frameSelectedJoints()) return;
       return this.resetCameraMeshes();
     }
 
@@ -1558,6 +1560,51 @@ class SculptGL extends Scene {
   onDoubleTap2Fingers() {
     if (this._focusGui) return;
     this.resetCameraMeshes();
+  }
+
+  // DOUBLE-CLICK ON EMPTY SPACE IN THE BONES TOOL FRAMES THE SELECTED JOINTS, not the scene. matt: "in
+  // tweak mode, if i have a bone selected, double clicking in empty space to frame the view should
+  // frame the selected bone." With Bone Volumes on, each joint's box is the volume it is editing (the
+  // one its handles are on); otherwise the joint and the bone arriving at it. False when there is
+  // nothing to frame, so the caller falls back to the whole scene.
+  _frameSelectedJoints() {
+    if (this._isImmersiveAR || (this.isInVR && this.isInVR())) return false;
+    if (this.getSculptManager?.()?.getToolIndex?.() !== Enums.Tools.BONE_DRAW) return false;
+    const sel = (this.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (!sel.length) return false;
+    const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    const grow = (x, y, z, r) => {
+      box[0] = Math.min(box[0], x - r); box[1] = Math.min(box[1], y - r); box[2] = Math.min(box[2], z - r);
+      box[3] = Math.max(box[3], x + r); box[4] = Math.max(box[4], y + r); box[5] = Math.max(box[5], z + r);
+    };
+    const f = this._frameJointF || (this._frameJointF = {});
+    for (const j of sel) {
+      const bone = Skeleton.displayFlag('volumes') ? Skeleton.volumeActive(this, j) : null;
+      if (bone) {
+        Skeleton.volumeFrame(this, bone, f);
+        const r = f.r * Math.max(f.W, f.H) + f.r * Math.hypot(f.o1, f.o3);
+        grow(f.C0.x, f.C0.y, f.C0.z, r);
+        grow(f.C1.x, f.C1.y, f.C1.z, r);
+      } else {
+        const r = Skeleton.boneRadiusOf ? Skeleton.boneRadiusOf(this, j) || 0 : 0;
+        const p = Skeleton.jointPos(j, this._frameJointP || (this._frameJointP = new THREE.Vector3()));
+        grow(p.x, p.y, p.z, r);
+        if (Skeleton.isJoint(j._parentMesh)) {
+          Skeleton.jointPos(j._parentMesh, p);
+          grow(p.x, p.y, p.z, r);
+        }
+      }
+    }
+    if (!Number.isFinite(box[0])) return false;
+    const pivot = [(box[0] + box[3]) * 0.5, (box[1] + box[4]) * 0.5, (box[2] + box[5]) * 0.5];
+    // At least a little room: a single joint with no radius is a point, and a zero zoom is inside it.
+    const zoom = Math.max(this.computeRadiusFromBoundingBox(box), Skeleton.sceneUnit(this) * 0.05)
+      * this._camera.computeFrustumFit();
+    const spectatorTransform = this.getSpectatorTransform();
+    if (spectatorTransform) vec3.transformMat4(pivot, pivot, spectatorTransform);
+    this._camera.setAndFocusOnPivot(pivot, zoom);
+    this.render();
+    return true;
   }
 
   resetCameraMeshes(meshes) {

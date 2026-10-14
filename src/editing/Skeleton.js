@@ -1105,7 +1105,12 @@ function tuneCapsuleBatches(main) {
     const hi = key.endsWith('Hi');
     // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
     const ghost = /G(Hi)?$/.test(key);
-    m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 1 - meshOp : 1);
+    // A HIGHLIGHT BRIGHTENS BUT NEVER TURNS SOLID: a translucent volume lit up past 1.0 went down
+    // the under-the-skin path alone and drew unlike every other volume. matt, editing in Tweak
+    // Joint with both opacities below 100%: "it starts to shade strangely again".
+    const solid = base >= 0.999;
+    const op = solid ? 1 : (hi ? Math.max(base, Math.min(0.85, base * CAP_HI_MUL)) : base);
+    m.opacity = op * (ghost ? 1 - meshOp : 1);
     // FULLY SOLID SKIPS THE BLEND, BUT NOT THE PASS. matt asked for the skin's rule -- "when the
     // solidity is at 100%, all the xray/transparency code paths in the material should be
     // skipped" -- and taking that literally, by clearing `transparent`, moved the solid capsules
@@ -1165,7 +1170,7 @@ function tuneCapsuleBatches(main) {
     // 0%, capsule opacity 100% looks weird" and at 50% "still has caps double shading".
     // Translucent volumes keep the over-the-skin passes: drawn under, their depth would cut the
     // skin behind them.
-    const under = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) >= 0.999;
+    const under = solid;
     b.off = ghost && (under || m.opacity < 0.004);
     b.mesh.renderOrder = ghost ? GHOST_ORDER : (under ? UNDER_SOLID_ORDER : SOLID_ORDER);
     b.preOrder = under ? UNDER_PRE_ORDER : PRE_ORDER;
@@ -1968,6 +1973,10 @@ Skeleton.setJointShapesSkin = function (j, on) {
 // Drawn for the SELECTED joint only. Handles on every joint at once would be twenty times the
 // clutter and would make the rig unpickable.
 const HANDLE_AXES = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+// Two more dots after the six, for a bone VOLUME only: its root end and its far end, each dragged along
+// the bone (Skeleton.volumeEnds). Hidden and parked out of reach for a joint's box.
+const END_DOTS = 2;
+const RING_BASE = HANDLE_AXES.length + END_DOTS;   // the rings' handle indices follow every dot
 
 function scaleHandleGroup(main) {
   if (main._jointHandles) return main._jointHandles;
@@ -2000,8 +2009,9 @@ function scaleHandleGroup(main) {
   };
   main._jointHandles = {
     group: g,
-    faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax])),
-    pos: HANDLE_AXES.map(() => new THREE.Vector3()),
+    faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax]))
+      .concat([mk(0x6bff8f), mk(0x6bff8f)]),
+    pos: HANDLE_AXES.map(() => new THREE.Vector3()).concat([new THREE.Vector3(), new THREE.Vector3()]),
     rings: [0xff6b6b, 0x6bff8f, 0x6bb6ff].map(mkRing),
     // Each ring's axis in model space and its radius, written with the draw and read by the pick
     // and the drag — one source, as for the dots.
@@ -2024,16 +2034,29 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   h.group.visible = true;
 
   // BONE VOLUMES: the handles belong to the volume LEAVING this joint, drawn at its root face --
-  // width and height dots on the section's axes, and the uniform-scale dot on the rim diagonal. The
-  // along-bone dot is not used (a volume's length is its bone's), and the rotation rings are off.
+  // width and height dots on the section's axes, the uniform-scale dot on the rim diagonal, and a dot
+  // at the centre of each END face that slides that end along the bone. The rotation rings are off.
   if (Skeleton.displayFlag('volumes')) {
     const bone = Skeleton.volumeActive(main, j);
     if (!bone) { h.group.visible = false; return h; }
     const f = Skeleton.volumeFrame(main, bone, main._volHandleFrame || (main._volHandleFrame = {}));
     const rr = Skeleton.sceneUnit(main) * 0.0225;
-    h.centrePos.copy(f.C0);
     for (let k = 0; k < 3; k++) { h.ringOn[k] = false; h.rings[k].visible = false; }
     const w = f.r * f.W, ht = f.r * f.H, dg = 0.7071;
+    // THE TWIST RING, round the bone at the volume's MIDDLE, clear of the end cones and the section dots
+    // at the root. One ring (the bone's own axis, green like the axis it turns about).
+    h.centrePos.copy(f.C0).add(f.C1).multiplyScalar(0.5);
+    h.ringOn[1] = true;
+    h.ringAxis[1].copy(f.d);
+    h.ringR = Math.max(w, ht) * 1.35 + rr * 3;
+    {
+      const ring = h.rings[1];
+      ring.visible = true;
+      ring.quaternion.setFromUnitVectors(_zUp, f.d);
+      ring.position.copy(h.centrePos);
+      ring.scale.setScalar(h.ringR);
+      ring.updateMatrix(); ring.matrixWorldNeedsUpdate = true;
+    }
     const put = (i, x, y, z) => {
       h.pos[i].set(x, y, z);
       h.faces[i].position.copy(h.pos[i]);
@@ -2051,9 +2074,21 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
     // the unused y- dot: hidden and parked out of reach so it can never be picked
     h.faces[3].visible = false;
     h.pos[3].set(1e9, 1e9, 1e9);
+    // THE TWO ENDS, at the centre of each end face: drag along the bone to lengthen or shorten that end.
+    put(6, f.C0.x, f.C0.y, f.C0.z);
+    put(7, f.C1.x, f.C1.y, f.C1.z);
+    // CONES, NOT DOTS, where a handle moves one way: each end's points out along the bone, and the
+    // uniform-scale one points away from the root face's centre, white so it does not read as an axis.
+    // matt: "can those 2 height controls be cones, so its clear which way they move?"
+    handleCone(h, 6, _vfDir.copy(f.d).negate(), 0x6bff8f);
+    handleCone(h, 7, _vfDir.copy(f.d), 0x6bff8f);
+    handleCone(h, 2, _vfDir.copy(h.pos[2]).sub(f.C0), 0xffffff);
     return h;
   }
-  for (let i = 0; i < h.faces.length; i++) h.faces[i].visible = true;   // back from volumes mode
+  // Back from volumes mode: the box's six dots, round and in their axis colours again.
+  handleDot(h, 2, 0x6bff8f);
+  for (let i = 0; i < h.faces.length; i++) h.faces[i].visible = i < HANDLE_AXES.length;
+  for (let i = HANDLE_AXES.length; i < h.pos.length; i++) h.pos[i].set(1e9, 1e9, 1e9);
 
   // In the joint's own frame: the extents are the offsets to the faces along its three axes, and
   // an unturned joint's frame is the world's.
@@ -2095,7 +2130,29 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   return h;
 };
 
+// A handle drawn as a cone pointing along `dir`, or put back to a round dot. The colour goes in
+// userData.baseColor too, which is what the preselect tint restores.
+const _vfDir = new THREE.Vector3();
+let _handleConeGeo = null;
+function handleCone(h, i, dir, color) {
+  const m = h.faces[i];
+  if (!_handleConeGeo) _handleConeGeo = new THREE.ConeGeometry(0.85, 2.6, 14);
+  if (m.userData.dotGeo === undefined) m.userData.dotGeo = m.geometry;
+  m.geometry = _handleConeGeo;
+  if (dir.lengthSq() > 1e-12) m.quaternion.setFromUnitVectors(_upY, dir.normalize());
+  if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
+  m.updateMatrix(); m.matrixWorldNeedsUpdate = true;
+}
+function handleDot(h, i, color) {
+  const m = h.faces[i];
+  if (m.userData.dotGeo) m.geometry = m.userData.dotGeo;
+  m.quaternion.identity();
+  if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
+}
+
 Skeleton.scaleHandleAxis = function (i) {
+  // A volume's end dot: axis 'end', sign -1 for the root end and +1 for the far end.
+  if (i >= HANDLE_AXES.length) return { axis: 'end', sign: i === HANDLE_AXES.length ? -1 : 1 };
   return { axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] };
 };
 
@@ -2107,7 +2164,7 @@ Skeleton.pickScaleHandle = function (main, p, radius) {
   let best = null, bestD = radius * radius, bestI = -1;
   for (let i = 0; i < h.pos.length; i++) {
     const d = h.pos[i].distanceToSquared(p);
-    if (d < bestD) { bestD = d; bestI = i; best = { kind: 'face', axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] }; }
+    if (d < bestD) { bestD = d; bestI = i; best = Object.assign({ kind: 'face' }, Skeleton.scaleHandleAxis(i)); }
   }
   // A RING, by distance to the circle itself: height above its plane and how far off its radius.
   // A dot wins a tie — it is the smaller target, and one the hand reaches for on purpose.
@@ -2126,7 +2183,7 @@ Skeleton.pickScaleHandle = function (main, p, radius) {
 
 // A ring grip, as the pick returns it. Its index follows the six dots so one number can say which
 // handle is lit.
-Skeleton.ringHandle = function (k) { return { kind: 'ring', axis: k, index: HANDLE_AXES.length + k }; };
+Skeleton.ringHandle = function (k) { return { kind: 'ring', axis: k, index: RING_BASE + k }; };
 
 // WHICH HANDLE IS UNDER THE HAND, lit. A dot with no hover state gives you no way to know which
 // one you are about to take until you have taken it — and they sit close together on a small
@@ -2156,7 +2213,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
   if (h.rings) {
     for (let k = 0; k < 3; k++) {
       const ring = h.rings[k];
-      const on = hot === HANDLE_AXES.length + k;
+      const on = hot === RING_BASE + k;
       ring.material.color.setHex(on ? HILITE_COLOR : ring.userData.baseColor);
       ring.material.opacity = on ? 1 : 0.9;
     }
@@ -2402,6 +2459,46 @@ Skeleton.setVolumeOffset = function (j, o1, o3) {
   if (Math.abs(o3) < 1e-6) delete j._volO3; else j._volO3 = o3;
 };
 
+// THE VOLUME'S TWO ENDS CAN MOVE ALONG THE BONE, as fractions of the bone's length past where they
+// would sit (just inside each joint, by the gap): e0 pushes the root end back behind the root joint,
+// e1 the far end out past the tip; negative pulls them in. matt: a head bone pivots at the base of the
+// skull, but "the capture volume should be longer, the back of the head is further behind the head
+// bone, and the end can extend beyond the tip of the bone". A twin takes the same values.
+// THE VOLUME'S SHARPNESS: the same superellipse exponent a joint shape takes (2 = round, higher = a
+// soft box), applied to the section so a volume can be a rounded rectangle -- a ribcage, a pelvis, a
+// foot. Its own field rather than the end joint's `_jointRound`, which still shapes that joint's
+// capsule when volumes are off. matt: "the sharpness/hardness control, could that be made to work
+// with these new volumes?"
+Skeleton.volumeRound = function (j) {
+  const r = j && j._volP;
+  return (typeof r === 'number' && r >= ROUND_MIN) ? Math.min(r, ROUND_MAX) : ROUND_MIN;
+};
+Skeleton.setVolumeRound = function (j, p) {
+  if (!j) return;
+  const v = Math.max(ROUND_MIN, Math.min(ROUND_MAX, p || ROUND_MIN));
+  if (v <= ROUND_MIN + 1e-6) delete j._volP; else j._volP = v;
+};
+
+// THE VOLUME'S TWIST about its own bone, in radians: turns the section (width, height, offset and
+// sharpness all ride on it). matt: "a single rotate using the long axis of the bone as the axis of
+// rotation". The mirror twin takes the NEGATED angle -- its width axis is the reflection turned round,
+// as for the width offset (see volumeFrame).
+Skeleton.volumeTwist = function (j) { return (j && j._volR) || 0; };
+Skeleton.setVolumeTwist = function (j, a) {
+  if (!j) return;
+  a = Math.atan2(Math.sin(a || 0), Math.cos(a || 0));
+  if (Math.abs(a) < 1e-5) delete j._volR; else j._volR = a;
+};
+
+Skeleton.volumeEnds = function (j) {
+  return [j && j._volE0 ? j._volE0 : 0, j && j._volE1 ? j._volE1 : 0];
+};
+Skeleton.setVolumeEnds = function (j, e0, e1) {
+  if (!j) return;
+  if (Math.abs(e0) < 1e-6) delete j._volE0; else j._volE0 = e0;
+  if (Math.abs(e1) < 1e-6) delete j._volE1; else j._volE1 = e1;
+};
+
 // The volumes leaving a joint, in a fixed order (id), and which one a selection is editing.
 Skeleton.volumeKids = function (main, p) {
   return Skeleton.joints(main).filter((k) => k._parentMesh === p && Skeleton.boneHasCapsule(k))
@@ -2438,6 +2535,15 @@ Skeleton.volumeFrame = function (main, j, out) {
   _vfUp.set(0, Math.abs(_vfD.y) > 0.95 ? 0 : 1, Math.abs(_vfD.y) > 0.95 ? 1 : 0);
   _vfE1.crossVectors(_vfUp, _vfD).normalize();
   _vfE3.crossVectors(_vfE1, _vfD).normalize();
+  // The twist turns the section about the bone: e1' = c e1 + s e3, e3' = c e3 - s e1 (still e1' x d = e3').
+  const tw = Skeleton.volumeTwist(j);
+  if (tw) {
+    const c = Math.cos(tw), sn = Math.sin(tw);
+    _vfUp.copy(_vfE1);
+    _vfE1.multiplyScalar(c).addScaledVector(_vfE3, sn);
+    _vfE3.multiplyScalar(c).addScaledVector(_vfUp, -sn);
+  }
+  out.twist = tw;
   out.d = (out.d || new THREE.Vector3()).copy(_vfD);
   out.e1 = (out.e1 || new THREE.Vector3()).copy(_vfE1);
   out.e3 = (out.e3 || new THREE.Vector3()).copy(_vfE3);
@@ -2449,13 +2555,18 @@ Skeleton.volumeFrame = function (main, j, out) {
   out.inset = Math.max(0, Skeleton.volumeInset(out.len));
   const off = Skeleton.volumeOffset(j);
   out.o1 = off[0]; out.o3 = off[1];
+  // The two ends, as distances along the bone from P (see Skeleton.volumeEnds).
+  const ends = Skeleton.volumeEnds(j);
+  out.end0 = ends[0]; out.end1 = ends[1];
+  out.t0 = out.inset - out.end0 * out.len;
+  out.t1 = Math.max(out.len - out.inset + out.end1 * out.len, out.t0 + out.len * 0.05);
   // B0 is the root point ON the bone; C0/C1 are the section centres, which an offset moves off it.
-  out.B0 = (out.B0 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.inset);
+  out.B0 = (out.B0 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.t0);
   out.C0 = (out.C0 || new THREE.Vector3()).copy(out.B0)
     .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
-  out.C1 = (out.C1 || new THREE.Vector3()).copy(out.J).addScaledVector(_vfD, -out.inset)
+  out.C1 = (out.C1 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.t1)
     .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
-  out.axial = out.len - 2 * out.inset;
+  out.axial = out.t1 - out.t0;
   return out;
 };
 
@@ -4727,7 +4838,8 @@ Skeleton.updateVisuals = function (main) {
       o._hb[0] = hB[0] * SHAFT_INSET; o._hb[1] = hB[1] * SHAFT_INSET; o._hb[2] = hB[2] * SHAFT_INSET;
       // The shaft spans two joints, so it carries both exponents and the shader blends them —
       // a boxy palm running into a round finger tapers in sharpness as well as in size.
-      o._pa = vol ? 2 : Skeleton.jointRound(parent); o._pb = vol ? 2 : Skeleton.jointRound(j);
+      o._pa = vol ? Skeleton.volumeRound(j) : Skeleton.jointRound(parent);
+      o._pb = vol ? Skeleton.volumeRound(j) : Skeleton.jointRound(j);
       // Each end's rotation, one hemisphere apart so the shader's blend takes the short way
       // round (the same choice the skin's relax makes). Copied for the reason the extents are.
       // A volume's section frame IS its rotation: the shader shapes the cross-section in this frame.
@@ -4755,7 +4867,7 @@ Skeleton.updateVisuals = function (main) {
           // an open tube), its rim is rounded, and a rig of volumes alone reads as solid shapes.
           o.quaternion.copy(vf.Q);
           o.scale.set(ph[0] * SHAFT_INSET, Math.max(vf.bevel, 1e-6), ph[2] * SHAFT_INSET);
-          o._p = 2;
+          o._p = Skeleton.volumeRound(j);   // the dome's rim is the section, so it takes the same sharpness
           o.visible = endsOn;
         } else {
           Skeleton.jointQuat(pj, o.quaternion);
@@ -4766,7 +4878,9 @@ Skeleton.updateVisuals = function (main) {
         }
         // Which of the two batches this end belongs to this frame. The opacity that used to
         // carry the preselection cannot ride on an instance, so it rides on the batch.
-        o._hi = !!(isHi || isSel);
+        // A volume's ends light with its shaft (volSel), or the edited volume drew 85% sides with
+        // 50% caps. matt: "caps look different from sides".
+        o._hi = !!(isHi || isSel || volSel);
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
     }
@@ -5050,6 +5164,10 @@ Skeleton.resetJoint = function (main, joints, frac) {
     delete j._volH;
     delete j._volO1;
     delete j._volO3;
+    delete j._volE0;
+    delete j._volE1;
+    delete j._volP;
+    delete j._volR;
   }
 };
 
@@ -5062,7 +5180,7 @@ Skeleton.captureRadii = function (main) {
     s: j._jointScale ? j._jointScale.slice() : null,
     o: j._jointOffset ? j._jointOffset.slice() : null,
     q: j._jointRot ? j._jointRot.slice() : null,
-    vw: j._volW, vh: j._volH, vo1: j._volO1, vo3: j._volO3,
+    vw: j._volW, vh: j._volH, vo1: j._volO1, vo3: j._volO3, ve0: j._volE0, ve1: j._volE1, vp: j._volP, vr: j._volR,
   }]);
 };
 
@@ -5080,6 +5198,10 @@ Skeleton.restoreRadii = function (snapshot) {
       if (tw.vh > 0) j._volH = tw.vh; else delete j._volH;
       if (tw.vo1) j._volO1 = tw.vo1; else delete j._volO1;
       if (tw.vo3) j._volO3 = tw.vo3; else delete j._volO3;
+      if (tw.ve0) j._volE0 = tw.ve0; else delete j._volE0;
+      if (tw.ve1) j._volE1 = tw.ve1; else delete j._volE1;
+      if (tw.vp) j._volP = tw.vp; else delete j._volP;
+      if (tw.vr) j._volR = tw.vr; else delete j._volR;
     }
   }
 };
@@ -5909,7 +6031,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 22;  // v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 25;  // v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6214,6 +6336,24 @@ Skeleton.serialize = function (meshes, main) {
 
   const vols = [];
 
+  // v23: each bone volume's shape, where any part of it is set. Width, height and offset were never
+  // written at all, so a shaped rig came back as round cylinders on the bone.
+  const volShape = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isBone) return;
+    const sec = Skeleton.volumeSection(m), off = Skeleton.volumeOffset(m), en = Skeleton.volumeEnds(m);
+    if (sec[0] !== 1 || sec[1] !== 1 || off[0] || off[1] || en[0] || en[1]) {
+      volShape.push({ i: i, v: [sec[0], sec[1], off[0], off[1], en[0], en[1]] });
+    }
+  });
+
+  // v24: each bone volume's sharpness, where it is not round.
+  const volRound = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && m._volP) volRound.push({ i: i, p: m._volP }); });
+  // v25: each bone volume's twist, where it is turned.
+  const volTwist = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && m._volR) volTwist.push({ i: i, a: m._volR }); });
+
   // ...OR IF ANY NODE CARRIES A CONSTRAINT. This block is skipped entirely when there is no
   // hierarchy and no skin, which was right when it only held bones — but v15 put the aim/saccade/
   // mirror state in here, and a scene can easily have an eye rig and no skeleton at all. Without
@@ -6239,6 +6379,9 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + noShape.length;     // v20: i of each joint that does not shape the skin
   slots += 1 + order.length;       // v21: mesh index at each outliner rank
   slots += 1 + fold.length;        // v22: (mesh index, collapsed) pairs
+  slots += 1 + volShape.length * 7; // v23: i + width, height, o1, o3, e0, e1
+  slots += 1 + volRound.length * 2; // v24: i + sharpness
+  slots += 1 + volTwist.length * 2; // v25: i + twist
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6322,6 +6465,12 @@ Skeleton.serialize = function (meshes, main) {
   for (const i of order) u[o++] = i;
   u[o++] = fold.length / 2;
   for (const w of fold) u[o++] = w;
+  u[o++] = volShape.length;
+  for (const vs of volShape) { u[o++] = vs.i; for (const x of vs.v) f[o++] = x; }
+  u[o++] = volRound.length;
+  for (const vr of volRound) { u[o++] = vr.i; f[o++] = vr.p; }
+  u[o++] = volTwist.length;
+  for (const vt of volTwist) { u[o++] = vt.i; f[o++] = vt.a; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6905,6 +7054,37 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       }
     }
 
+    // v23: the bone volumes' shapes.
+    if (ver >= 23) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]];
+        const v = [f[o++], f[o++], f[o++], f[o++], f[o++], f[o++]];
+        if (!m) continue;
+        Skeleton.setVolumeSection(m, v[0], v[1]);
+        Skeleton.setVolumeOffset(m, v[2], v[3]);
+        Skeleton.setVolumeEnds(m, v[4], v[5]);
+      }
+    }
+
+    // v24: the bone volumes' sharpness.
+    if (ver >= 24) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], pv = f[o++];
+        if (m) Skeleton.setVolumeRound(m, pv);
+      }
+    }
+
+    // v25: the bone volumes' twist.
+    if (ver >= 25) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], a = f[o++];
+        if (m) Skeleton.setVolumeTwist(m, a);
+      }
+    }
+
     for (const p of pendingPins) {
       if (p.pin) {
         // v3: the null came back with the file. Re-flag it — _isPinTarget and the mode live on
@@ -7015,7 +7195,7 @@ const DISPLAY_FLAGS = {
   // ON, and the only mode now (the tapered ball-ended capsules are gone from the UI). A NEW KEY on purpose,
   // so a `false` saved while this was an experiment cannot hide the volumes.
   volumes: ['_boneVolumesOn', 'boneVolumesOn', true],
-  volSoft: ['_boneVolSoft', 'boneVolSoft', true],
+  volSoft: ['_boneVolSoft', 'boneVolSoft', false],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
   // BACK AS A TOGGLE. The dots were removed when the bone became the pick target, and came

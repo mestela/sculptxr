@@ -7,6 +7,9 @@
 import getOptionsURL from '../misc/getOptionsURL.js';
 import { gizmoSizeMul, GIZMO_MUL_MIN, GIZMO_MUL_MAX } from '../editing/GizmoVR.js';
 import { pinPoseOn } from '../editing/pinPoseMode.js';
+import Enums from '../misc/Enums.js';
+import Skeleton from '../editing/Skeleton.js';
+import { restPose } from './bonePanel.js';
 
 // Only the class names differ between the panels; the markup and every handler are shared.
 const DIALECT = {
@@ -56,6 +59,15 @@ export function buildTransformSectionHTML(main, style) {
   const on = freeRotateOn();
   const pp = pinPoseOn();
   const mul = gizmoSizeMul();
+  // REST POSE, when there is a rig to put back. matt: "there's no 'rest pose' button in the properties
+  // for the transform tool". Not on the VR transform tool, whose panel already has the bone pose block
+  // with its own Rest Pose (MainMenuPanel).
+  const vrXf = main.getSculptManager?.()?.getToolIndex?.() === Enums.Tools.TRANSFORM_VR;
+  const restBtn = (!vrXf && Skeleton.joints(main).length) ? `
+    <div class="${c.toggles}">
+      <button class="${c.toggle}" id="xf-restpose"
+        title="Put every joint back to the skeleton as it was built (the same as Rest Pose in the Bones tool).">Rest Pose</button>
+    </div>` : '';
   const title = c.title
     ? `<div class="${c.title}">Transform</div>`
     : c.divider;
@@ -78,6 +90,7 @@ export function buildTransformSectionHTML(main, style) {
         title="How big the transform gizmo is drawn. Same number the thumbstick moves while Transform is active.">
       <span class="${c.val}" id="xf-gizmo-mul-val">${mul.toFixed(2)}x</span>
     </div>
+    ${restBtn}
   `;
 }
 
@@ -117,6 +130,14 @@ export function wireTransformSection(root, main, opts) {
       onSlider?.();
     });
   }
+
+  root.querySelector('#xf-restpose')?.addEventListener('click', () => {
+    restPose(main, (msg, ok) => {
+      console.log('[transform] ' + msg);
+      if (window.screenLog) window.screenLog(msg, ok === false ? '#f38ba8' : 'cyan');
+    });
+    refresh();
+  });
 
   root.querySelector('#xf-pinpose')?.addEventListener('click', () => {
     const next = !pinPoseOn();
