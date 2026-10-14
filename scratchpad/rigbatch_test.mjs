@@ -88,13 +88,13 @@ check('...copying the half-extents into the slot rather than referencing the scr
 // The seam between two capsules is the intersection of two FACETED surfaces, so its zigzag is
 // the facet sagitta, r(1 - cos(pi/n)): 2.5% of the radius at the 14 segments these had, 0.06% at
 // 56. Instanced, so this is one geometry rather than one per bone.
-check('the capsules are tessellated finely enough that the seam is not a sawtooth',
-  // The counts are a SETTING now (the mobile-VR knob), so what is pinned is the DEFAULT and the
-  // fact that both geometries take it — a hardcoded low number would be the regression here.
-  /const CAP_SEGMENTS_DEFAULT = 56;/.test(SRC)
+// LOW BY DEFAULT since 2026-10-14: 56 cost 1.6M tris a frame on GalaxyXR and matt chose cheap
+// over smooth ("they can be very low res"); the slider still reaches 56 for anyone who wants it.
+check('the capsule tessellation is a low default that both geometries take',
+  /const CAP_SEGMENTS_DEFAULT = 16;/.test(SRC)
     && /new THREE\.CylinderGeometry\(1, 1, 1, n, 1, true\)/.test(SRC)
     && /new THREE\.SphereGeometry\(1, n,/.test(SRC),
-  'at 14 segments the zigzag is about a pixel wide at a working zoom');
+  'a high default is what cost the headset its frame rate');
 check('...and inset, so the shaft never shares a surface with the spheres it enters',
   /const SHAFT_INSET = 0\.97;/.test(SRC) && /const HEAD_INSET = 0\.98;/.test(SRC));
 // ── SHARPNESS REACHES THE DRAWN CAPSULE, NOT ONLY THE SKIN ───────────────────────────────────

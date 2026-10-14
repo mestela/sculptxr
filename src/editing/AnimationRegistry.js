@@ -2321,6 +2321,7 @@ class AnimationRegistry {
     // capture while editing a non-isolated view is handled by otherLayersOffset()
     // in Mesh.updateGeometry, which subtracts these other-layer contributions.
     const muted = track.blendshapeMuted;
+    const used = [];   // what the composite is made of, for the skin's mush (captureSource)
     track.blendshapes.forEach((delta, name) => {
       const bTrack = track.blendshapeTracks.get(name);
       // A PREVIEWED SHAPE NEEDS NO KEYS. The early-out is right for playback — an unkeyed shape
@@ -2344,6 +2345,7 @@ class AnimationRegistry {
         for (let i = 0; i < n; i++) {
           v[i] += d[i] * weight;
         }
+        used.push([d, weight]);
       }
     });
 
@@ -2351,7 +2353,13 @@ class AnimationRegistry {
     // deltas in rest space. Hand the composite to the skin pass as its rest-space source
     // before the geometry update, or the two systems fight — skinning would otherwise
     // keep re-transforming its own output every frame.
-    Skinning.captureSource(mesh);
+    //
+    // AND WHEN IT TAKES, THE SKIN PASS IS THE REFRESH. It re-skins this same frame (captureSource
+    // sets _skinDirty) and runs updateGeometry + buffers over the posed result, so refreshing the
+    // unposed composite here was a full normals pass and upload thrown away every frame of
+    // playback: ~14ms/frame on the wrestler on GalaxyXR (2026-10-14), most of post-input.
+    const base = baseVerts || track.baseShape;
+    if (Skinning.captureSource(mesh, base && { base, shapes: used, rev: track._bsRev | 0 })) return;
 
     // Guard: prevent the updateGeometry intercept from treating this recomposition
     // as a sculpt stroke and incorrectly rebasing baseShape or layer deltas.
@@ -3856,8 +3864,11 @@ class AnimationRegistry {
     }
 
     // 2. New Blendshape System (Layered on top)
+    //    NOT FOR A HIDDEN MESH: a recomposite is a full vertex rewrite + skin re-pose for a surface
+    //    nobody can see. Marked stale instead, and Mesh.setVisible catches it up on unhide.
     if (track.blendshapes && track.blendshapes.size > 0) {
-      this.applyBlendshapes(mesh, baseForBlendshapes);
+      if (mesh.isVisible && !mesh.isVisible()) track._bsStale = true;
+      else { track._bsStale = false; this.applyBlendshapes(mesh, baseForBlendshapes); }
     }
 
     // 3. Shape LAYERS (#34) — for the NO-base-shape-animation case only (when a base shape
@@ -3918,6 +3929,7 @@ window.bsRestore = () => {
     if (cur && cur.length === d.length) cur.set(d);
     else track.blendshapes?.set(n, new Float32Array(d));
   });
+  track._bsRev = (track._bsRev | 0) + 1;   // written in place: the skin's mush cache keys on this
   reg.applyBlendshapes(mesh);
   console.log(`[Blendshapes] bsRestore: ${snap.layers.size} layer(s) + base restored`);
 };

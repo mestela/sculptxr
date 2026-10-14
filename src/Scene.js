@@ -6732,6 +6732,7 @@ class Scene {
       if (tr) {
         if (tr.baseShape) xformPositions(tr.baseShape);
         if (tr.blendshapes) for (const d of tr.blendshapes.values()) xformVectors(d);
+        tr._bsRev = (tr._bsRev | 0) + 1;   // written in place: see Skinning composeMush
       }
 
       mesh.setMatrix(matElems);

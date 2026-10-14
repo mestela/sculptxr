@@ -358,7 +358,9 @@ let _capShaftGeo = null;
 // desktop GPU and is not free on a mobile one. matt: "its starting to feel gluggy on mobilevr."
 //
 // Persisted, so a value found in a headset survives the session it was found in.
-const CAP_SEGMENTS_DEFAULT = 56;
+// 16 BY DEFAULT since 2026-10-14. On GalaxyXR with the wrestler, 56 meant 4368 tris an end cap and
+// 1.6M a frame for capsules alone. matt: "they can be very low res". The slider still goes up.
+const CAP_SEGMENTS_DEFAULT = 16;
 function capsuleSegments() {
   const live = window._boneCapSegments;
   if (typeof live === 'number') return Math.max(8, Math.min(64, Math.round(live)));
@@ -834,225 +836,6 @@ function physLineVariant(main, slot, key, geoFn, ghost) {
   if (!all.has(key)) lineBatchSlot(main, key, geoFn, ghost);   // makes the batch; slot discarded
   slot._keyPhys = key;
   return slot;
-}
-
-// ── CAPSULES THAT PASS THROUGH EACH OTHER ────────────────────────────────────────────
-//
-// Two bone capsules that share no joint and still overlap are where Make Skin folds: the relax
-// pulls both limbs onto one surface and they pass through each other (the biped2 armpits, the
-// shoulders buried in a wide chest). matt: "make the capsule material show when capsules are
-// intersecting." Shown as white marks filling the overlap itself (drawOverlapMarks), not by
-// tinting the capsules — tinting the whole of both read as a strange colour, not a place. Capsules that share a joint, or that one bone joins, overlap by design, so they
-// are exempt (see the loop), and so is any bone touching a joint whose Shapes Skin is off — switching that off is how you say you
-// meant it (a jaw inside a head).
-//
-// APPROXIMATE, and on purpose: samples along each axis, measured against the other's axis, with
-// each shape's extent taken in the direction between them (per-axis, turned, p-norm — the same
-// measure the skin's relax uses). A display cue, not a proof; a pair that only grazes (under 2%
-// of the combined radius) is let off, so touching capsules do not flicker red.
-//
-// Cached against a hash of everything it reads, so a still rig costs one hash per frame.
-const _ovQ = new THREE.Quaternion(), _ovV = new THREE.Vector3();
-function shapeExtent(ha, hb, ra, rb, pa, pb, t, d) {
-  const hx = ha[0] + (hb[0] - ha[0]) * t, hy = ha[1] + (hb[1] - ha[1]) * t, hz = ha[2] + (hb[2] - ha[2]) * t;
-  _ovV.copy(d);
-  if (ra || rb) {
-    const a = ra || IDENT_ROT, b = rb || IDENT_ROT;
-    const sg = (a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]) < 0 ? -1 : 1;
-    _ovQ.set(a[0] + (sg * b[0] - a[0]) * t, a[1] + (sg * b[1] - a[1]) * t,
-      a[2] + (sg * b[2] - a[2]) * t, a[3] + (sg * b[3] - a[3]) * t).normalize().invert();
-    _ovV.applyQuaternion(_ovQ);
-  }
-  const p = pa + (pb - pa) * t;
-  const ux = _ovV.x / Math.max(hx, 1e-9), uy = _ovV.y / Math.max(hy, 1e-9), uz = _ovV.z / Math.max(hz, 1e-9);
-  const n = p <= 2.0001 ? Math.hypot(ux, uy, uz)
-    : Math.pow(Math.pow(Math.abs(ux), p) + Math.pow(Math.abs(uy), p) + Math.pow(Math.abs(uz), p), 1 / p);
-  return n > 1e-12 ? 1 / n : 0;
-}
-function capsuleList(main) {
-  const out = [];
-  const live = new Set(main.getMeshes());
-  for (const j of Skeleton.joints(main)) {
-    const p = j._parentMesh;
-    const cr = j._boneRadius || 0;
-    if (!live.has(p) || !Skeleton.boneHasCapsule(j)) continue;
-    if (!Skeleton.jointVisible(j)) continue;
-    out.push({ j: j, p: p, a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
-      ha: Skeleton.jointHalf(p, cr), hb: Skeleton.jointHalf(j, cr),
-      ra: Skeleton.jointRotIsSet(p) ? Skeleton.jointRot(p) : null,
-      rb: Skeleton.jointRotIsSet(j) ? Skeleton.jointRot(j) : null,
-      pa: Skeleton.jointRound(p), pb: Skeleton.jointRound(j),
-      meant: !Skeleton.jointShapesSkin(p) || !Skeleton.jointShapesSkin(j) });
-  }
-  return out;
-}
-function capsuleHash(caps) {
-  let h = caps.length;
-  const f = (v) => { h = (h * 31 + Math.round(v * 4096)) | 0; };
-  for (const c of caps) {
-    h = (h * 31 + c.j.getID()) | 0; h = (h * 31 + c.p.getID()) | 0;
-    f(c.a.x); f(c.a.y); f(c.a.z); f(c.b.x); f(c.b.y); f(c.b.z);
-    f(c.ha[0]); f(c.ha[1]); f(c.ha[2]); f(c.hb[0]); f(c.hb[1]); f(c.hb[2]);
-    f(c.pa); f(c.pb); if (c.ra) { f(c.ra[0]); f(c.ra[1]); f(c.ra[2]); } if (c.rb) { f(c.rb[0]); f(c.rb[1]); f(c.rb[2]); }
-    h = (h * 31 + (c.meant ? 1 : 0)) | 0;
-  }
-  return h;
-}
-const _ovP = new THREE.Vector3(), _ovC = new THREE.Vector3(), _ovAx = new THREE.Vector3(), _ovD = new THREE.Vector3();
-function passesInto(A, B) {
-  const N = 8;
-  _ovAx.subVectors(B.b, B.a);
-  const len2 = _ovAx.lengthSq();
-  for (let k = 0; k <= N; k++) {
-    const t = k / N;
-    _ovP.copy(A.a).lerp(A.b, t);
-    if (insideCapsule(B, _ovP, 0.98)) return true;
-    let u = len2 > 1e-18 ? _ovD.subVectors(_ovP, B.a).dot(_ovAx) / len2 : 0;
-    u = u < 0 ? 0 : (u > 1 ? 1 : u);
-    _ovC.copy(B.a).addScaledVector(_ovAx, u);
-    _ovD.subVectors(_ovC, _ovP);
-    const dist = _ovD.length();
-    if (dist < 1e-9) return true;
-    _ovD.divideScalar(dist);
-    const rA = shapeExtent(A.ha, A.hb, A.ra, A.rb, A.pa, A.pb, t, _ovD);
-    _ovD.negate();
-    const rB = shapeExtent(B.ha, B.hb, B.ra, B.rb, B.pa, B.pb, u, _ovD);
-    if (dist < (rA + rB) * 0.98) return true;
-  }
-  return false;
-}
-
-// Is point x inside capsule B (shrunk by `k`, so a surface point only just touching does not count)?
-const _inAx = new THREE.Vector3(), _inC = new THREE.Vector3(), _inD = new THREE.Vector3();
-function insideCapsule(B, x, k) {
-  _inAx.subVectors(B.b, B.a);
-  const len2 = _inAx.lengthSq();
-  let u = len2 > 1e-18 ? _inD.subVectors(x, B.a).dot(_inAx) / len2 : 0;
-  u = u < 0 ? 0 : (u > 1 ? 1 : u);
-  _inC.copy(B.a).addScaledVector(_inAx, u);
-  _inD.subVectors(x, _inC);
-  const dist = _inD.length();
-  if (dist < 1e-9) return true;
-  _inD.divideScalar(dist);
-  return dist < shapeExtent(B.ha, B.hb, B.ra, B.rb, B.pa, B.pb, u, _inD) * k;
-}
-
-// THE INTERSECTION, AS DOTS ON THE SURFACES. Every point of A's surface that lies inside B gets a
-// dot, so the patch where the two meet is outlined on both — which is what matt asked for: "i was
-// thinking more like it would hilight the intersection", after the first version tinted both whole
-// capsules white. Sampling the AXIS instead found three crossings on biped2 and drew one dot at the
-// chin, because a wide shallow overlap (a head resting in a chest) is wide, not deep.
-//
-// A's surface: rings round the shaft, and a sphere of directions at each end (the end shapes are
-// what reach past the shaft). Dots are world-sized, a fraction of the capsule they sit on, so they
-// read the same in a headset as on a desktop.
-const FIB_DIRS = (() => {
-  const out = [], n = 96, g = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < n; i++) {
-    const y = 1 - (2 * (i + 0.5)) / n, r = Math.sqrt(1 - y * y), a = g * i;
-    out.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
-  }
-  return out;
-})();
-const _smX = new THREE.Vector3(), _smAx = new THREE.Vector3(), _smU = new THREE.Vector3(), _smV = new THREE.Vector3();
-const _smDir = new THREE.Vector3();
-function surfaceMarks(A, B, marks) {
-  const put = (t, dir) => {
-    const e = shapeExtent(A.ha, A.hb, A.ra, A.rb, A.pa, A.pb, t, dir);
-    _smX.copy(A.a).lerp(A.b, t).addScaledVector(dir, e);
-    if (insideCapsule(B, _smX, 0.995)) {
-      marks.push({ x: _smX.x, y: _smX.y, z: _smX.z, r: e * 0.07 });
-    }
-  };
-  for (const d of FIB_DIRS) { put(0, d); put(1, d); }
-  _smAx.subVectors(A.b, A.a);
-  if (_smAx.lengthSq() < 1e-18) return;
-  _smAx.normalize();
-  _smU.set(Math.abs(_smAx.x) < 0.9 ? 1 : 0, Math.abs(_smAx.x) < 0.9 ? 0 : 1, 0).cross(_smAx).normalize();
-  _smV.crossVectors(_smAx, _smU);
-  const RING = 32, ALONG = 12;
-  for (let s = 1; s < ALONG; s++) {
-    for (let r = 0; r < RING; r++) {
-      const a = (r / RING) * Math.PI * 2;
-      _smDir.copy(_smU).multiplyScalar(Math.cos(a)).addScaledVector(_smV, Math.sin(a));
-      put(s / ALONG, _smDir);
-    }
-  }
-}
-// The ids of the child joints whose bone capsule passes through another it shares no joint with.
-// THE MARKS, DRAWN: one InstancedMesh of small spheres, drawn over the capsules they sit on (the
-// capsule passes write depth, so anything inside or level with a capsule surface would otherwise be
-// hidden by it). RED, to read as an error — white read as more joints. A stock basic material, converted for
-// the node renderer by the global sweep like the joint handles' are.
-const MAX_OVERLAP_MARKS = 4096;
-const _mkM = new THREE.Matrix4(), _mkQ = new THREE.Quaternion(), _mkP = new THREE.Vector3(), _mkS = new THREE.Vector3();
-function drawOverlapMarks(main, marks) {
-  const n = marks ? Math.min(marks.length, MAX_OVERLAP_MARKS) : 0;
-  let im = main._overlapMarkMesh;
-  if (!n) { if (im) im.visible = false; return; }
-  if (!im || im.userData.cap < n) {
-    const cap = Math.min(MAX_OVERLAP_MARKS, Math.max(256, 1 << Math.ceil(Math.log2(n))));
-    if (im) { im.parent && im.parent.remove(im); im.dispose?.(); }
-    im = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6),
-      new THREE.MeshBasicMaterial({ color: 0xff1a1a, transparent: true, opacity: 0.9,
-        depthTest: false, depthWrite: false, toneMapped: false }), cap);
-    im.userData.cap = cap;
-    im.renderOrder = 10001;     // over the capsules (9996) and the wire (9999), under the handles
-    im.frustumCulled = false;
-    im.isPickable = false;
-    im.raycast = () => {};
-    skelGroup(main).add(im);
-    main._overlapMarkMesh = im;
-  }
-  if (im.userData.drawn !== marks) {
-    for (let i = 0; i < n; i++) {
-      const k = marks[i];
-      _mkM.compose(_mkP.set(k.x, k.y, k.z), _mkQ, _mkS.setScalar(k.r));
-      im.setMatrixAt(i, _mkM);
-    }
-    im.count = n;
-    im.instanceMatrix.needsUpdate = true;
-    im.userData.drawn = marks;
-  }
-  im.visible = true;
-}
-
-// The same joint, or one bone apart.
-function near(a, b) { return a === b || a._parentMesh === b || b._parentMesh === a; }
-function capsuleOverlaps(main) {
-  const caps = capsuleList(main);
-  const h = capsuleHash(caps);
-  if (main._capOverlapHash === h && main._capOverlaps) return main._capOverlaps;
-  const hit = new Set();
-  const pairs = [];
-  const marks = [];
-  for (let i = 0; i < caps.length; i++) {
-    const A = caps[i];
-    if (A.meant) continue;
-    for (let k = i + 1; k < caps.length; k++) {
-      const B = caps[k];
-      if (B.meant) continue;
-      // NEIGHBOURS ARE EXEMPT: bones that share a joint, or that one bone joins. Measured on
-      // biped2, every overlap but one was of that kind — a thigh starting inside the pelvis
-      // sphere, an upper arm inside the chest — which is a big joint doing its job, and flagging
-      // it turned 13 of 21 capsules red, which is no signal at all. What is left is limbs that
-      // are not neighbours meeting anyway: there, the head's lower half down in the chest and
-      // shoulders, which is exactly where its skin tangled.
-      if (near(A.j, B.j) || near(A.j, B.p) || near(A.p, B.j) || near(A.p, B.p)) continue;
-      if (passesInto(A, B) || passesInto(B, A)) {
-        surfaceMarks(A, B, marks);
-        surfaceMarks(B, A, marks);
-        hit.add(A.j.getID()); hit.add(B.j.getID());
-        pairs.push([A.j, B.j]);
-      }
-    }
-  }
-  main._capOverlapHash = h;
-  main._capOverlaps = hit;
-  // Which bone against which, by child joint: the console answer to "why is this one marked".
-  main._capOverlapPairs = pairs;
-  main._capOverlapMarks = marks;
-  return hit;
 }
 
 // THE SHAFT'S OWN OPACITY. The ends say how big each joint is and the shafts say what connects
@@ -4201,8 +3984,6 @@ Skeleton.updateVisuals = function (main) {
   // property is the same one WeightCage.isCage tests, and a scan is cheaper than a cycle.
   const showCaps = Skeleton.displayFlag('capsules')
     && !(main.getMeshes() || []).some((m) => m && m._isWeightCage);
-  if (showCaps) Skeleton.capsuleOverlaps(main);
-  drawOverlapMarks(main, showCaps && Skeleton.displayFlag('overlaps') ? main._capOverlapMarks : null);
   // The bone body and its edge overlay, each switchable. Turning both off brings the joint
   // dots back on their own, because otherwise there would be nothing on screen marking a
   // target that is still perfectly pickable — the bone IS the target now.
@@ -7207,7 +6988,6 @@ const DISPLAY_FLAGS = {
   // The red dots drawn where two capsules that are not neighbours pass through each other. Off
   // by default and out of the Display menu since bone volumes, which never overlap. Only the
   // dots: the overlap test itself still runs.
-  overlaps: ['_boneShowOverlaps', 'boneShowOverlaps', false],
   // Glue the seams where two capsules meet (WeightCage.glueEdit). Not a decoration, so Hide All
   // Decorations leaves it alone: it changes what a stroke does, not what is drawn. Off by default
   // and out of the Display menu since bone volumes replaced the capsule/cage bind.
@@ -7346,7 +7126,7 @@ Skeleton.setDecorationsHidden = function (main, on) {
 //
 // It leaves for the same reason `meshHover` never joined: the master switch clears the rig off
 // the screen, and it must not silently reach into how the mesh itself is shaded.
-const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'overlaps', 'capsuleShaded', 'solid',
+const DECOR_FLAGS = new Set(['lengths', 'names', 'capsules', 'capsuleShaded', 'solid',
   'wire', 'joints', 'pins', 'trails', 'gnomons', 'gnomonsAll', 'skinClaims']);
 
 Skeleton.displayFlag = function (name) {
@@ -7382,7 +7162,6 @@ Skeleton.capsuleOpacity = function () {
 // Published here rather than at the definitions above, which run before `Skeleton` exists.
 Skeleton.capsuleSegments = capsuleSegments;
 Skeleton.setCapsuleSegments = setCapsuleSegments;
-Skeleton.capsuleOverlaps = capsuleOverlaps;
 Skeleton.shaftOpacity = shaftOpacity;
 Skeleton.setShaftOpacity = setShaftOpacity;
 

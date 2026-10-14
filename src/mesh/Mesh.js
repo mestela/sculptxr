@@ -67,6 +67,11 @@ class Mesh {
 
   setVisible(bool) {
     this._isVisible = bool;
+    // Playback skips recompositing a hidden mesh's blendshapes (AnimationRegistry.update), so
+    // showing it again has to catch up, or a paused scene shows the pose from when it was hidden.
+    const reg = bool && window._animationRegistry;
+    const track = reg && reg.tracks.get(this.getID());
+    if (track && track._bsStale) { track._bsStale = false; reg.applyBlendshapes(this); }
   }
 
   setVertices(vAr) {
@@ -624,6 +629,7 @@ class Mesh {
         for (let _j = 0; _j < _n; _j++)
           _delta[_j] = _v[_j] - _track.baseShape[_j];
       }
+      _track._bsRev = (_track._bsRev | 0) + 1;   // written in place: see Skinning composeMush
     } else if (_track?.baseShape && !_track._applyingBS) {
       // Base layer active: rebase baseShape to the new neutral.
       //
@@ -645,6 +651,7 @@ class Mesh {
       } else {
         _track.baseShape.set(_v);
       }
+      _track._bsRev = (_track._bsRev | 0) + 1;
     }
 
     // Phase times for the skin trace. Split here because "the refresh is slow" was never
@@ -2788,9 +2795,24 @@ class Mesh {
       attr.array.set(vertices);
       attr.needsUpdate = true;
 
+      // ONE PASS, AND THE SPHERE FROM THE BOX. three's computeBoundingBox + computeBoundingSphere
+      // walk the attribute three times through per-vertex Vector3 reads: ~3.5ms a frame for the
+      // wrestler's 12k body on GalaxyXR (2026-10-14), every frame the skin pass refreshes it. The
+      // bounds only feed frustum culling and three's raycast early-out, so a sphere around the box
+      // (looser, never smaller) does both jobs.
       if (geom) {
-        geom.computeBoundingSphere();
-        geom.computeBoundingBox();
+        let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+        for (let i = 0; i < vertices.length; i += 3) {
+          const x = vertices[i], y = vertices[i + 1], z = vertices[i + 2];
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+          if (z < z0) z0 = z; if (z > z1) z1 = z;
+        }
+        const box = geom.boundingBox || (geom.boundingBox = new THREE.Box3());
+        const sph = geom.boundingSphere || (geom.boundingSphere = new THREE.Sphere());
+        box.min.set(x0, y0, z0); box.max.set(x1, y1, z1);
+        box.getCenter(sph.center);
+        sph.radius = 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0);
       }
     }
   }

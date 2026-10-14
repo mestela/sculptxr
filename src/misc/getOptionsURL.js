@@ -333,7 +333,6 @@ var getOptionsURL = function () {
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
   options.boneShowSkinClaims = queryBool(getVal('boneShowSkinClaims'), false);
-  options.boneShowOverlaps = queryBool(getVal('boneShowOverlaps'), false);
   options.cageGlueSeams = queryBool(getVal('cageGlueSeams'), false);
   options.boneHideDecor = queryBool(getVal('boneHideDecor'), false);
   // The kaospad folded away in the blendshape stack panel. Registered here rather than read

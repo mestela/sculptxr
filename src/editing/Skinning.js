@@ -809,17 +809,30 @@ function mushScratch(mesh, n) {
 // `_skinRest`, so a blendshape's detail is preserved rather than being read as deformation
 // and smoothed away.
 function buildMush(mesh, level, iters, step) {
-  const src = mesh._skinSrc;
+  const r = mushFrom(mesh, level, mesh._skinSrc, iters, step);
+  mesh._skinMushPair = r.pair;
+  mesh._skinMushDelta = r.delta;
+  mesh._skinMushIters = iters;
+  mesh._skinMushStep = step;
+  mesh._skinMushDirty = false;
+}
+// The deltas of `src` against its own smoothed surface. Returns the smoothed positions too, which
+// live in the mesh's scratch and are only valid until the next smoothing.
+function mushFrom(mesh, level, src, iters, step) {
   const nbV = (src.length / 3) | 0;
   if (!mesh._skinAdj || mesh._skinAdj.off.length !== nbV + 1) mesh._skinAdj = flatAdjacency(level);
   const off = mesh._skinAdj.off, nb = mesh._skinAdj.nb;
 
   const sc = mushScratch(mesh, src.length);
   const sm = smoothPositions(src, sc.a, sc.b, off, nb, iters, step);
-
-  const pair = new Int32Array(nbV * 2);
-  const delta = new Float32Array(nbV * 3);
-  const f = sc.f;
+  const r = mushDeltas(src, sm, off, nb, new Int32Array(nbV * 2), new Float32Array(nbV * 3), sc.f);
+  r.sm = sm;
+  return r;
+}
+// Per vertex: the best-spread neighbour pair on the smoothed surface `sm`, and the offset of `src`
+// from it in that pair's frame. Written into `pair`/`delta`.
+function mushDeltas(src, sm, off, nb, pair, delta, f) {
+  const nbV = (src.length / 3) | 0;
 
   for (let i = 0; i < nbV; i++) {
     const s = off[i], e = off[i + 1];
@@ -861,11 +874,56 @@ function buildMush(mesh, level, iters, step) {
     }
   }
 
+  return { pair, delta };
+}
+
+// THE REST-POSE MUSH OF A BLENDSHAPE COMPOSITE, WITHOUT REBUILDING IT. Playback recomposes the
+// rest pose every frame, and a full buildMush (smooth + a best-pair search per vertex) was ~8.5ms
+// of a GalaxyXR frame on the wrestler's 12k body at 10 iterations (2026-10-14).
+//
+// smoothPositions is LINEAR (a fixed-step neighbour average), so for rest = base + sum(w * shape)
+//   S(rest) = S(base) + sum(w * S(shape))      -- exactly
+// and each S() is built once. Pairs, frames and deltas are then rebuilt from that exact S(rest)
+// by the same pass as a full build (mushDeltas), so the result IS buildMush's; only the smoothing
+// iterations are skipped. Reusing the base's PAIRS instead was measured 0.85% of the diagonal off
+// on a posed frame, and rotating precomputed per-shape deltas by the base's frames 3.4% off: the
+// wrestler's shapes move vertices ~20% of its size.
+//
+// Keyed on the base and shape ARRAYS (replacing one is how most edits land) plus `rev`, which the
+// in-place writers bump (the sculpt intercept in Mesh.updateGeometry, bsRestore, freeze).
+function composeMush(mesh, level, iters, step) {
+  const bs = mesh._skinMushBS;
+  const src = mesh._skinSrc, n = src.length;
+  if (!bs || bs.base.length < n) return false;
+  for (const [d] of bs.shapes) if (d.length < n) return false;
+  let c = mesh._skinMushCache;
+  if (!c || c.base !== bs.base || c.rev !== bs.rev || c.iters !== iters || c.step !== step || c.n !== n) {
+    const r = mushFrom(mesh, level, bs.base.subarray(0, n), iters, step);
+    c = mesh._skinMushCache = { base: bs.base, rev: bs.rev, iters, step, n,
+      smBase: new Float32Array(r.sm.subarray(0, n)), smShape: new Map(),
+      sm: new Float32Array(n), pair: new Int32Array(r.pair.length), delta: new Float32Array(n) };
+  }
+  const sm = c.sm;
+  sm.set(c.smBase);
+  for (const [d, w] of bs.shapes) {
+    let ss = c.smShape.get(d);
+    if (!ss) {
+      const sc = mushScratch(mesh, n);
+      ss = new Float32Array(smoothPositions(d.subarray(0, n), sc.a, sc.b,
+        mesh._skinAdj.off, mesh._skinAdj.nb, iters, step).subarray(0, n));
+      c.smShape.set(d, ss);
+    }
+    for (let i = 0; i < n; i++) sm[i] += ss[i] * w;
+  }
+  // The same per-vertex pass as a full build, against the composed smooth surface.
+  const { pair, delta } = mushDeltas(src, sm, mesh._skinAdj.off, mesh._skinAdj.nb, c.pair, c.delta,
+    mushScratch(mesh, n).f);
   mesh._skinMushPair = pair;
   mesh._skinMushDelta = delta;
   mesh._skinMushIters = iters;
   mesh._skinMushStep = step;
   mesh._skinMushDirty = false;
+  return true;
 }
 
 // Smooth the DEFORMED positions in `out` and put the stored detail back on top, in place.
@@ -880,7 +938,9 @@ function applyMush(mesh, level, out, nbV) {
 
   if (!mesh._skinMushDelta || mesh._skinMushDelta.length !== nbV * 3 ||
       mesh._skinMushIters !== iters || mesh._skinMushStep !== step || mesh._skinMushDirty) {
-    buildMush(mesh, level, iters, step);
+    // Composed only when a blendshape capture is the ONLY reason it is stale: every other writer
+    // of `_skinSrc` (bind, the sculpt write-back, restores) sets the flag to true, which wins.
+    if (mesh._skinMushDirty !== 'bs' || !composeMush(mesh, level, iters, step)) buildMush(mesh, level, iters, step);
   }
 
   // The pass is O(vertices x iterations) and runs on every frame a joint moves, so it is the
@@ -1517,21 +1577,29 @@ Skinning.unbind = function (mesh) {
 // Called by applyBlendshapes once it has composited base + deltas: that composite IS the
 // rest-space pose skinning should transform. Without this the two systems fight — the
 // skin pass would keep re-transforming its own output.
-Skinning.captureSource = function (mesh) {
-  if (!mesh || !mesh._skinSrc) return;
+// Returns true when it captured, which means the next skin pass WILL refresh the mesh (geometry,
+// normals, buffers) -- so the caller's own refresh is redundant and can be skipped.
+// `bs` is { base, shapes: [[delta, weight]...], rev } -- what the composite was made of, so the
+// mush can be composed rather than rebuilt (composeMush). Omitted, the mush rebuilds as before.
+Skinning.captureSource = function (mesh, bs) {
+  if (!mesh || !mesh._skinSrc) return false;
   // Read the bound level, and only when it still matches: the source array is the rest space
   // the skin pass transforms, and filling it from a different level would feed the deformation
   // vertices that are not the ones it is weighted for.
   const lvl = boundLevel(mesh);
-  if (!lvl) return;
+  if (!lvl) return false;
   const v = lvl.getVertices();
-  if (v.length < mesh._skinSrc.length) return;
+  if (v.length < mesh._skinSrc.length) return false;
   mesh._skinSrc.set(v.subarray(0, mesh._skinSrc.length));
+  // Only when the bound level IS the composited array: on another level the shapes are not
+  // what `_skinSrc` was filled from.
+  mesh._skinMushBS = bs && v === mesh.getVertices() ? bs : null;
   mesh._skinDirty = true; // the rest pose changed, so re-skin even if no joint moved
   // The mush deltas are DEFINED against that rest pose, so they are stale too. Rebuilt
   // lazily on the next skin pass rather than here: a blendshape being scrubbed fires this
   // every frame, and only the frames that actually deform need the rebuild.
-  mesh._skinMushDirty = true;
+  if (mesh._skinMushDirty !== true) mesh._skinMushDirty = 'bs';
+  return !window._skinPause;
 };
 
 // ---- rest-space write-back ------------------------------------------------------
