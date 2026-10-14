@@ -350,7 +350,9 @@ export function buildBoneAuthoringHTML(main, style) {
       <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
     </div>
     <div class="${c.btnRow}">
-      <button class="${c.wide}${WeightCage.splitAtJoints() ? ' active' : ''}" id="bone-cage-split" title="On: baked capsules end in a flat cut at their joints, so neighbours stop sharing a ball of overlap (round caps stay on leaf ends). Off: fully round capsules. Applies to the next Bake or Reset Capsules.">Split Capsules at Joints</button>
+      <button class="${c.action}${WeightCage.splitAtJoints() ? ' active' : ''}" id="bone-cage-split" title="Split Capsules at Joints. On: baked capsules end in a flat cut at their joints, so neighbours stop sharing a ball of overlap (round caps stay on leaf ends). Off: fully round capsules. Applies to the next Bake or Reset Capsules.">Split Capsules</button>
+      <button class="${c.action}${Skeleton.displayFlagRaw('volSoft') ? ' active' : ''}" id="bone-vol-soft"
+        title="Vertices outside every bone volume blend between the nearest ones instead of snapping to one">Soft Gaps</button>
     </div>
     ${bound ? `<div class="${c.btnRow}">
       <button class="${c.action}" id="bone-unbind">Unbind</button>
@@ -605,6 +607,8 @@ export function buildBoneAuthoringHTML(main, style) {
         ? 'Delete the baked weight cages; binding returns to the drawn capsules'
         : 'Bake editable cage geometry you can sculpt to shape the skin weights'}">${
         hasCages ? 'Delete Weight Cages' : 'Bake Weight Cages'}</button>
+      <button class="${c.action}${Skeleton.displayFlagRaw('volSoft') ? ' active' : ''}" id="bone-vol-soft"
+        title="Vertices outside every bone volume blend between the nearest ones instead of snapping to one">Soft Gaps</button>
     </div>
     ` : ''}
     <div class="${c.btnRow}">
@@ -857,24 +861,30 @@ export function buildBoneDisplayHTML(main, style, extraChips = '') {
          buttons." -->
     <button class="${c.wide}${Skeleton.decorationsHidden() ? ' active' : ''}" id="bone-hide-decor">${
       Skeleton.decorationsHidden() ? 'Decorations Hidden' : 'Hide All Decorations'}</button>
+    <!-- THREE GROUPS, DIVIDED: the rig and its weights, then the motion-trail read-outs, then the
+         scene helpers. Overlaps and Glue Seams went with the capsule/cage bind; Soft Gaps is a
+         bind setting, not a display one, and lives in the Bone tool's Setup. -->
     <div class="${c.toggles}">
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlagRaw('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlagRaw('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
       ${flagButton(c, 'caps', 'Volumes', Skeleton.displayFlagRaw('capsules'))}
       ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlagRaw('capsuleShaded'))}
-      ${flagButton(c, 'overlaps', 'Overlaps', Skeleton.displayFlagRaw('overlaps'))}
-      ${flagButton(c, 'glue-seams', 'Glue Seams', Skeleton.displayFlagRaw('glueSeams'))}
       ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlagRaw('skinClaims'))}
       ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlagRaw('weights'))}
       ${flagButton(c, 'solo-radius', 'Solo Edit', Skeleton.displayFlagRaw('soloRadius'))}
-      ${flagButton(c, 'vol-soft', 'Soft Gaps', Skeleton.displayFlagRaw('volSoft'))}
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlagRaw('lengths'))}
       ${flagButton(c, 'names', 'Names', Skeleton.displayFlagRaw('names'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlagRaw('pins'))}
+    </div>
+    <hr class="${c.divider || 'mm-divider'}">
+    <div class="${c.toggles}">
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlagRaw('trails'))}
       ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlagRaw('gnomons'))}
       ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlagRaw('gnomonsAll'))}
+    </div>
+    <hr class="${c.divider || 'mm-divider'}">
+    <div class="${c.toggles}">
       <!-- Not a rig layer, but this is the preselection panel and that is what it is: the wire
            box an ordinary mesh shows, yellow while pointed at and cyan while selected. Hide All
            Decorations deliberately leaves it alone; see the flag's note in Skeleton. The key is
@@ -1032,8 +1042,6 @@ export function wireBoneSection(root, main, opts) {
   flag('names', 'names');
   flag('caps', 'capsules');
   flag('caps-shade', 'capsuleShaded');
-  flag('overlaps', 'overlaps');
-  flag('glue-seams', 'glueSeams');
   // Where Make Skin will bridge each bone. Named 'Attach' rather than 'Claims': the lattice's
   // word for it says nothing to someone deciding whether their fingers will come out right.
   flag('skin-claims', 'skinClaims');
@@ -2050,8 +2058,6 @@ export function syncBoneSection(root, main) {
   setFlag('names', Skeleton.displayFlagRaw('names'));
   setFlag('caps', Skeleton.displayFlagRaw('capsules'));
   setFlag('caps-shade', Skeleton.displayFlagRaw('capsuleShaded'));
-  setFlag('overlaps', Skeleton.displayFlagRaw('overlaps'));
-  setFlag('glue-seams', Skeleton.displayFlagRaw('glueSeams'));
   setFlag('weights', Skeleton.displayFlagRaw('weights'));
   setFlag('solid', Skeleton.displayFlagRaw('solid'));
   setFlag('wire', Skeleton.displayFlagRaw('wire'));

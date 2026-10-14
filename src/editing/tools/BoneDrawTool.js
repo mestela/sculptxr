@@ -1507,7 +1507,8 @@ class BoneDrawTool extends SculptBase {
       const grip = hj && !this._drag ? this._pickHandleScreen() : null;
       // The grip being dragged wins over anything hovered, so a drag keeps its handle lit even
       // as the cursor travels away from it.
-      const lit = this._scale ? this._scale.grip : grip;
+      const held = this._scale || this._vol;
+      const lit = held ? held.grip : grip;
       if ((lit ? lit.index : -1) !== (this._litHandle ?? -1)) {
         this._litHandle = lit ? lit.index : -1;
         Skeleton.highlightScaleHandle(this._main, lit);
@@ -2773,7 +2774,10 @@ class BoneDrawTool extends SculptBase {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
       const scHand = (options && options.handedness) || null;
-      if (down && !this._scale) {
+      // A VOLUME edit lives in _vol, not _scale (_beginScale hands off and nulls _scale), so both
+      // count as the drag here -- gating on _scale alone left a volume grab begun and never driven.
+      const live = this._scale || this._vol;
+      if (down && !live) {
         const hj = main._jointHandles && main._jointHandles.joint;
         const grip = hj ? Skeleton.pickScaleHandle(main, _tip, this._snapDist() * 1.2) : null;
         if (grip) {
@@ -2784,14 +2788,16 @@ class BoneDrawTool extends SculptBase {
           if (hit) this._selectLater(hit);   // no handle under the hand: selecting is all it can mean
         }
       }
-      if (this._scale && (!this._grabHand || !scHand || scHand === this._grabHand)) {
+      const drag = this._scale || this._vol;
+      if (drag && (!this._grabHand || !scHand || scHand === this._grabHand)) {
         if (isPressed) this._scaleTo(_tip);
         else this._releaseScale();
       }
+      const held = this._scale || this._vol;
       Skeleton.highlightScaleHandle(main,
-        this._scale ? this._scale.grip
+        held ? held.grip
           : Skeleton.pickScaleHandle(main, _tip, this._snapDist() * 1.2));
-      this._hilite = this._scale ? this._scale.joint : this._pickRigNode(_tip);
+      this._hilite = held ? held.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       main._rigHoverBone = this._pickBone(_tip);
       return;

@@ -766,6 +766,9 @@ const CSS = `
    NOTE: this whole block is a JS TEMPLATE LITERAL. No backticks anywhere, comments included. */
 .mm-toggle.mm-tick.active::before { content: '✓ '; }
 
+/* Between groups of chips, as the wrist tool picker's divider. */
+.mm-divider { border: none; border-top: 1px solid #313244; margin: 8px 0; }
+
 /* Choice grid (combobox replacement) */
 .mm-choice-grid {
   display: grid;

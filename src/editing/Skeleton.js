@@ -7169,13 +7169,14 @@ const DISPLAY_FLAGS = {
   // it is a label per bone, and a rig full of them is unreadable while you are working.
   names: ['_boneShowNames', 'boneShowNames', false],
   capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
-  // The red dots drawn where two capsules that are not neighbours pass through each other. On
-  // by default (it is how the display has always been); a switch because on a dense or fat rig
-  // they swamp the model. Only the dots: the overlap test itself still runs.
-  overlaps: ['_boneShowOverlaps', 'boneShowOverlaps', true],
+  // The red dots drawn where two capsules that are not neighbours pass through each other. Off
+  // by default and out of the Display menu since bone volumes, which never overlap. Only the
+  // dots: the overlap test itself still runs.
+  overlaps: ['_boneShowOverlaps', 'boneShowOverlaps', false],
   // Glue the seams where two capsules meet (WeightCage.glueEdit). Not a decoration, so Hide All
-  // Decorations leaves it alone: it changes what a stroke does, not what is drawn.
-  glueSeams: ['_cageGlueSeams', 'cageGlueSeams', true],
+  // Decorations leaves it alone: it changes what a stroke does, not what is drawn. Off by default
+  // and out of the Display menu since bone volumes replaced the capsule/cage bind.
+  glueSeams: ['_cageGlueSeams', 'cageGlueSeams', false],
   // WHERE MAKE SKIN WILL ATTACH each bone, drawn on the joint boxes it will build from. Off by
   // default: it is a rig-time diagnostic for the case where a joint has more bones than its box
   // has room for, not something to have on while posing. See SkinPreview.
