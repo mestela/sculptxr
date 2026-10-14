@@ -365,7 +365,12 @@ export function xfSegEval(tr, group, c, a, ap, b, bn, time) {
 export function xfEval(tr, group, c, time, ks) {
   ks = ks || xfKeyedSlots(tr, group, c);
   const arr = groupArr(tr, group);
-  if (!ks.length || !arr) return group === 'scale' ? 1 : 0;
+  // A CHANNEL WITH NO KEYS AT ALL HOLDS WHAT ITS SLOTS WERE WRITTEN WITH -- the live value at
+  // the moment each key went in -- not zero. A rotate-only take leaves translate unkeyed, and
+  // returning 0 here snapped the hips pin to the world origin on frame 0 (and a translate-only
+  // take zeroed the rotation). xfRefreshDerived leaves those slots alone for the same reason.
+  if (!ks.length) return arr && arr.length > c ? arr[c] : (group === 'scale' ? 1 : 0);
+  if (!arr) return group === 'scale' ? 1 : 0;
   const T = tr.times;
   if (ks.length === 1 || time <= T[ks[0]]) return arr[ks[0] * 3 + c];
   const last = ks[ks.length - 1];
@@ -391,7 +396,8 @@ export function xfRefreshDerived(tr) {
     if (!arr) continue;
     for (let c = 0; c < 3; c++) {
       const ks = xfKeyedSlots(tr, g, c);
-      if (ks.length === m.length) continue;
+      // Nothing keyed: no curve to derive from, so the captured values stand (see xfEval).
+      if (ks.length === m.length || !ks.length) continue;
       const vals = [];
       for (let i = 0; i < m.length; i++) if (!(m[i] & xfBit(g, c))) vals.push([i, xfEval(tr, g, c, tr.times[i], ks)]);
       for (const [i, val] of vals) { arr[i * 3 + c] = val; if (g === 'rot') touchedRot.add(i); }

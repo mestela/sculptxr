@@ -2343,13 +2343,24 @@ Skinning.apply = function (main, mesh) {
   // one bound mesh the last one to run was overwriting everyone else's breakdown and the trace
   // was quietly reporting it as theirs. Cleared here and snapshotted below, per mesh.
   if (window._skinTrace) window._skinPhase = null;
+  // THE SKIN PASS'S OWN REFRESH IS NOT A SCULPT. Mesh.updateGeometry rebases a blendshape
+  // track's baseShape from whatever is on screen, so without this guard the POSED vertices
+  // became the rest-space base; playback's applyBlendshapes then fed base+deltas back into
+  // `_skinSrc` via captureSource, and the next pass posed the already-posed shape -- a
+  // feedback loop that grew every frame. Wrestler example: press play, the arms explode.
+  const _bsTrack = window._animationRegistry?.tracks?.get(mesh.getID());
+  if (_bsTrack) _bsTrack._applyingBS = true;
   // SKIP THE OCTREE. A posed frame is not a picked frame: the tree is rebuilt by the first
   // query that needs it, which is the next brush stroke or ray, not the next frame of a drag.
-  if (_synth) {
-    mesh.updateResolution(true);
-  } else {
-    mesh.updateGeometry(undefined, undefined, true);
-    if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+  try {
+    if (_synth) {
+      mesh.updateResolution(true);
+    } else {
+      mesh.updateGeometry(undefined, undefined, true);
+      if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+    }
+  } finally {
+    if (_bsTrack) _bsTrack._applyingBS = false;
   }
 
   // HAND THE NUMBERS UP, do not print them here. One bound mesh made a line per mesh the whole

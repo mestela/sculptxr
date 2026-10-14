@@ -4279,7 +4279,17 @@ export default class GuiTimeline {
       if (m) return m;
       this._graphMeshId = null; // the object went away — fall back rather than graph nothing
     }
-    return this._main.getMesh();
+    // THE GRAPH HOLDS THE LAST ANIMATED SELECTION. Pin Pose selects by hover and drops the
+    // selection when the cursor moves off, so the graph emptied the moment you reached for it
+    // after a take. matt: "the graph editor should retain the last keyed object/bone, even if
+    // the transform tool itself deselects". Selecting something else that HAS keys switches it.
+    const reg = window._animationRegistry;
+    const keyed = (m) => !!reg?.tracks.get(m.getID())?.times?.length;
+    const sel = this._main.getMesh();
+    if (sel && keyed(sel)) { this._graphLastKeyedId = sel.getID(); return sel; }
+    const last = this._graphLastKeyedId != null
+      && this._main._meshes?.find((x) => x.getID() === this._graphLastKeyedId);
+    return last && keyed(last) ? last : sel;
   }
 
   autoFitGraph() {
