@@ -3,6 +3,8 @@ import Mesh from '../../mesh/Mesh.js';
 import SculptBase from './SculptBase.js';
 import Geometry from '../../math3d/Geometry.js';
 
+import { addEdgeHover } from '../EdgeSelection.js';
+
 class SpinEdge extends SculptBase {
   constructor(main) {
     super(main);
@@ -196,5 +198,7 @@ class SpinEdge extends SculptBase {
   stroke(picking) {
   }
 }
+
+addEdgeHover(SpinEdge);
 
 export default SpinEdge;

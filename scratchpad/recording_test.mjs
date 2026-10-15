@@ -19,9 +19,10 @@ let tl = read('src/gui/GuiTimeline.js');
 
 // Defect injections (standing lesson 1) — source-level, since these checks read the source:
 //   REC_INJECT=noparkstart  a finished non-looping take is left on its last frame again
-//   REC_INJECT=livechannel  an unrecorded channel takes the LIVE value, baking in the hand you
-//                           switched off
-//   REC_INJECT=onepath      only one of the two capture paths goes through the gate
+//   REC_INJECT=livechannel  translate is keyed whether or not it is being recorded
+//   REC_INJECT=onepath      the single-target capture path keys every channel, ignoring the switch
+//   REC_INJECT=punchall     punch-in overwrite wipes EVERY channel's keys in the window, not just
+//                           the recorded ones
 //   REC_INJECT=menucloses   the channel menu closes on every toggle, like a command menu
 {
   const i = process.env.REC_INJECT || '';
@@ -30,9 +31,11 @@ let tl = read('src/gui/GuiTimeline.js');
     return src.replace(a, b);
   };
   if (i === 'noparkstart') reg = cut(reg, 'const t0 = window._animLoopStart ?? 0;', 'const t0 = -1;', i);
-  else if (i === 'livechannel') reg = cut(reg, 'P: ch.translate ? P : was.p,', 'P: P,', i);
+  else if (i === 'livechannel') reg = cut(reg, "(ch.translate ? xfGroupBits('pos') : 0)", "xfGroupBits('pos')", i);
   else if (i === 'onepath') reg = cut(reg,
-    'const g = this._gateChannels(this.activeMesh.getID(), elapsed,', 'const g = ({ P: (', i);
+    '[qx, qy, qz, qw], [sx, sy, sz], this._recordBits(), true);', '[qx, qy, qz, qw], [sx, sy, sz], XF_ALL, true);', i);
+  else if (i === 'punchall') reg = cut(reg, 'if (inWindow(targetTrack.times[i]) && (km[i] & rb)) { km[i] &= ~rb; any = true; }',
+    'if (inWindow(targetTrack.times[i])) { km[i] = 0; any = true; }', i);
   else if (i === 'menucloses') tl = cut(tl,
     "const cmd = this._recOptCommands()[Math.floor((ry - rr.y) / rr.cellH)];",
     "const cmd = this._recOptCommands()[0]; this._recOptMenuOpen = false;", i);
@@ -70,7 +73,7 @@ check('start-on-grab returns to a coherent waiting state after each take',
 
 const header = +(tl.match(/const HEADER_H = (\d+);/)?.[1] || 0);
 check('recording controls use the expanded toolbar area, not the gutter',
-  header >= 80 && /let rx = 205;[\s\S]{0,1800}?x: rx, y: 31, h: 20/.test(tl),
+  header >= 80 && /let rx = 205;[\s\S]{0,1800}?x: rx, y: 34, h: 20/.test(tl),
   'HEADER_H=' + header);
 // The header now carries a third band — the range slider — between the toolbar rows and the
 // ruler. The invariant is unchanged and is what these two guard: the ruler begins below
@@ -92,9 +95,10 @@ check('playback never moves a carefully positioned viewport',
   !/_followPlaybackViewport/.test(tl));
 check('dopesheet scrubbing uses the visible viewport too',
   /loopStart = this\._viewStart !== undefined \? this\._viewStart : loopStart;[\s\S]{0,120}?visibleDuration = this\._viewDuration/.test(tl));
-for (const id of ['loop', 'trigger', 'countin', 'reset-rig']) {
-  check('timeline exposes ' + id, tl.includes(`id: '${id}'`));
-}
+check('timeline exposes loop', tl.includes("id: 'loop'"));
+// On Grab / 3-2-1 moved into the record dropdown; Reset Rig + Pins was removed from the timeline.
+check('On Grab + count-in live in the record dropdown', /label: .*'On Grab'/.test(tl) && /'3-2-1 Count-in'/.test(tl));
+check('timeline no longer has a Reset Rig button', !tl.includes("id: 'reset-rig'"));
 // THE RANGE MOVED, THE REQUIREMENT DID NOT. It used to be two buttons on the transport row
 // ("Start 39" / "End 86"); it is now the range slider, where a handle released without moving
 // opens its own number and the two global fields open theirs. What these guard is that all four
@@ -156,9 +160,8 @@ check('XR hover and cursor state recover after system overlays',
 check('non-loop recording parks without automatic playback',
   /window\._animLoopEnabled !== false/.test(reg)
     && /startPlayback\(direction = 1\)/.test(reg));
-check('animation clear button is selection scoped',
-  acp.includes('Delete animation from selected objects')
-    && /deleteAnimationFromSelectedObjects/.test(acp));
+check('the Animation panel no longer carries a clear-all button (the timeline deletes)',
+  !acp.includes('acp-clear-all') && /deleteAnimationFromSelectedObjects/.test(tl));
 check('timeline more menu is canvas native for desktop and VR',
   /_drawContextMenu\(ctx\)/.test(tl)
     && /_contextMenuCommands\(\)/.test(tl)
@@ -281,8 +284,13 @@ check('VR timeline uploads only after a throttled canvas redraw',
     && /revision !== this\._vrTimelineUploadedRevision/.test(scene));
 check('graph redraws publish their VR texture revision',
   /if \(this\._mode === 'graph'\) \{[\s\S]{0,500}?_drawRevision[\s\S]{0,80}?return;/.test(tl));
+// THIS PINNED THE TYPO. It required `_refreshContent()` -- a method that has never existed on any
+// panel -- and passed for as long as the bug was there, reporting that the Files menu rebuilds
+// while every press of it threw. A name is not an invariant; what matters is that the callback
+// invalidates the cache key and calls the panel's REAL rebuild. panelmethods_test checks that the
+// method named here is one the class actually defines.
 check('VR clear-scene confirmation rebuilds the Files menu',
-  /const rebuildFiles = \(\) => \{[\s\S]{0,120}?_lastContentKey = ''[\s\S]{0,80}?_refreshContent\(\)/.test(mainMenu)
+  /const rebuildFiles = \(\) => \{[\s\S]{0,400}?_lastContentKey = ''[\s\S]{0,80}?_rebuildContent\(\)/.test(mainMenu)
     && /main\._clearSceneConfirm = false;[\s\S]{0,60}?rebuildFn\(\);/.test(mainMenu));
 
 
@@ -313,11 +321,10 @@ check('...and record mode comes off either way',
 
 // ── WHICH CHANNELS A TAKE WRITES ─────────────────────────────────────────────
 //
-// A key is one TRS sample in three parallel arrays indexed in lockstep, so "rotation only"
-// cannot mean writing fewer numbers — every key still needs a position and a scale. It means
-// the other channels come out UNCHANGED, and the only honest source for "unchanged" is the
-// animation as it stood before the take. Taking the live value would bake your hand into a
-// channel you switched off; freezing one value would flatten animation that channel already had.
+// SPARSE KEYS (2026-09-29). Under lockstep keys "rotation only" had to write a position anyway
+// and faked it from the pre-take animation. Now a take keys ONLY the recorded groups; the others
+// get no key at all and their curves are untouched -- which is what the pre-take fill was
+// approximating. The behaviour is exercised in sparsekeys_test.mjs; these pin the wiring.
 check('the channel set is read live-then-saved-then-on, like every other setting',
   /translate: read\('_recTranslate', 'recTranslate'\)/.test(reg)
     && /rotate: read\('_recRotate', 'recRotate'\)/.test(reg)
@@ -325,29 +332,18 @@ check('the channel set is read live-then-saved-then-on, like every other setting
 check('...defaulting to ALL THREE ON',
   /return v == null \? true : !!v;/.test(reg),
   'a recorder that quietly drops a channel is worse than one that records too much');
-check('an unrecorded channel is filled from the PRE-TAKE animation',
-  /_preTakeTRS\(id, time\)/.test(reg)
-    && /this\._trackStatesBeforeRecording &&\s*\n?\s*this\._trackStatesBeforeRecording\.get\(id\)/.test(reg),
-  'the live value bakes in the hand you switched off; a frozen value flattens what was there');
-// The substitution ITSELF, per channel. The check above proves the pre-take value is fetched;
-// this proves it is USED. REC_INJECT=livechannel removes the ternary and left the first version
-// of this section passing, because "the snapshot is read" and "the snapshot is written" are two
-// different claims.
-check('...and each channel actually takes it when switched off',
-  /P: ch\.translate \? P : was\.p,/.test(reg)
-    && /Q: ch\.rotate \? Q : was\.q,/.test(reg)
-    && /S: ch\.scale \? S : was\.s,/.test(reg));
-check('...and when there was no prior animation the live value stands',
-  /if \(!was\) return \{ P, Q, S \};/.test(reg),
-  'a key has to hold something, and there is nothing to preserve');
-check('...with the quaternion taking the SHORT arc between pre-take keys',
-  /const sgn = d < 0 \? -1 : 1;/.test(reg),
-  'the long way round reads as the object spinning between two keys it should pass straight through');
-check('the gate is applied at ONE point, and both capture paths go through it',
-  (reg.match(/_gateChannels\(/g) || []).length === 3,
+check('a take keys only the recorded groups',
+  /\(ch\.translate \? xfGroupBits\('pos'\) : 0\)/.test(reg)
+    && /\(ch\.rotate \? xfGroupBits\('rot'\) : 0\)/.test(reg)
+    && /\(ch\.scale \? xfGroupBits\('scale'\) : 0\)/.test(reg),
+  'an unrecorded group must get no key, so its curve is left exactly as it was');
+check('...and BOTH capture paths key through that rule',
+  /if \(this\.isRecording\) bits = this\._recordBits\(\);/.test(reg)
+    && /\[qx, qy, qz, qw\], \[sx, sy, sz\], this\._recordBits\(\), true\);/.test(reg),
   'the same rule written into each capture path is how the two come to disagree');
-check('...and the all-on case returns untouched, so the default costs nothing',
-  /if \(ch\.translate && ch\.rotate && ch\.scale\) return \{ P, Q, S \};/.test(reg));
+check('punch-in overwrite clears only the recorded groups in the window',
+  /if \(inWindow\(targetTrack\.times\[i\]\) && \(km\[i\] & rb\)\) \{ km\[i\] &= ~rb; any = true; \}/.test(reg),
+  'a rotation-only pass must not wipe the translate keys it flies over');
 
 // The dropdown itself.
 check('the record button has a channel dropdown beside it',
@@ -371,8 +367,8 @@ check('...closing only on a click elsewhere, which still does its own job',
   'no early return on dismissal, so the closing click is not wasted');
 check('...drawn canvas-native like the other menus, so VR gets it too',
   (tl.match(/_drawRecOptMenu\(ctx\)/g) || []).length === 3);
-check('...and the arrow lights only when a channel is OFF',
-  /active: !!_ch && !\(_ch\.translate && _ch\.rotate && _ch\.scale\)/.test(tl),
+check('...and the arrow lights when a channel is OFF or a start trigger is set',
+  /active: \(!!_ch && !\(_ch\.translate && _ch\.rotate && _ch\.scale\)\)/.test(tl),
   'a quiet affordance normally, a warning when a take is about to ignore something');
 check('the two menus are mutually exclusive',
   /case 'recopts':[\s\S]{0,180}?this\._contextMenuOpen = false;/.test(tl));

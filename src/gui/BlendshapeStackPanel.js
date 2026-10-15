@@ -18,7 +18,7 @@
 // setBlendshapeWeight, deleteBlendshape, renameBlendshape, enter/exit edit mode)
 // against the active mesh (main.getMesh()).
 
-import { arkitByRegion, arkitEntry, arkitUnifiedFor } from '../editing/ArkitBlendshapes.js';
+import { arkitByRegion, arkitEntry, lrPairFor } from '../editing/ArkitBlendshapes.js';
 import { Theme } from './theme.js';
 import BlendshapePad, { PAD_HEADER_H } from './BlendshapePad.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -35,12 +35,18 @@ const FA = {
   split:    '\uf337', // fa-arrows-left-right (split symmetric shape into L/R)
   combine:  '\uf387', // fa-code-merge (combine L/R halves back into one symmetric shape)
   grip:     '\uf7a4', // fa-grip-lines (drag handle for reordering layers)
+  reset:    '\uf2ea', // fa-rotate-left (reset the active layer's slider range to 0..1)
   pen:      '\uf304', // fa-pen (rename \u2014 VR-friendly alternative to double-tap)
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
 const PAD       = 10;
-const TOOLBAR_H = 38;
+const TOOLBAR_BTN_H = 38;
+// Fold bar for the layer list, under the buttons and immediately above the rows it governs — the
+// same strip the XY pad carries (PAD_HEADER_H). On a rig with all the ARKit shapes the list is
+// taller than the panel and pushes the pad out of reach.
+const LAYERS_HEADER_H = 34;
+const TOOLBAR_H = TOOLBAR_BTN_H + LAYERS_HEADER_H;
 const ROW_H     = 46;
 const BASE_H    = 30;
 const TRACK_H   = 6;
@@ -75,7 +81,7 @@ export default class BlendshapeStackPanel {
     this._ctx    = null;
     this._cssW   = 280;
     this._cssH   = 200;
-    this._dpr    = window.devicePixelRatio || 1;
+    this._dpr    = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
 
     // Row layout cache rebuilt every draw(): array of hit-test rects.
     this._rows = [];        // { name, top, isBase, trackX0, trackX1, dotCx, dotCy }
@@ -102,6 +108,14 @@ export default class BlendshapeStackPanel {
 
     // Hovered element { name, part } for hover highlights ('row'|'eye'|'lock'|'slider').
     this._hover = null;
+
+    // Layer list folded away (persisted, like the pad's fold).
+    this._layersCollapsed = !!getOptionsURL().blendLayersCollapsed;
+    // VR only: the canvas is a fixed size, so the layer list scrolls inside the space above the
+    // pad (desktop's canvas grows with the list and the sidebar scrolls instead).
+    this._scrollY = 0;
+    this._scrollMax = 0;
+    this._sbDrag = false;
 
     // ARKit name picker overlay (null = closed). When open it captures all input.
     this._picker = null;
@@ -135,6 +149,22 @@ export default class BlendshapeStackPanel {
     this._canvas.style.width   = '100%';
     // Block iPadOS Scribble / system gestures (same as GuiTimeline).
     this._canvas.style.touchAction = 'none';
+    // STICKY TOOLBAR. The buttons live in this same canvas, which scrolls with the tab panel, so
+    // on a rig with every ARKit shape they scrolled away. A second canvas pinned to the top of the
+    // scroll area redraws the toolbar band over the top of the first; its own hits map to the
+    // same toolbar-local coordinates as the original at rest.
+    // top:-10px = the wa-tab-panel base's 10px padding (Gui.js): sticky pins to the CONTENT edge, so
+    // top:0 left a 10px strip above the bar where scrolled rows showed through.
+    this._tbCanvas = document.createElement('canvas');
+    Object.assign(this._tbCanvas.style, {
+      display: 'block', width: '100%', position: 'sticky', top: '-10px', zIndex: '2',
+      marginBottom: (-TOOLBAR_H) + 'px', touchAction: 'none',
+    });
+    this._tbCtx = this._tbCanvas.getContext('2d');
+    this._tbCanvas.addEventListener('pointerdown', (e) => this._onDown(e));
+    this._tbCanvas.addEventListener('pointerleave', () => this.clearHover());
+    this._tbCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    host.appendChild(this._tbCanvas);
     host.appendChild(this._canvas);
 
     this._ctx = this._canvas.getContext('2d');
@@ -157,6 +187,7 @@ export default class BlendshapeStackPanel {
     }, { passive: false });
 
     // Re-layout when the sidebar/panel changes width.
+    window.addEventListener('sxr-uiscale', () => this._relayout());
     this._ro = new ResizeObserver(() => this._relayout());
     this._ro.observe(host);
 
@@ -251,7 +282,7 @@ export default class BlendshapeStackPanel {
   _stateSignature() {
     const track = this._track();
     if (!track) return 'none';
-    let s = (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
+    let s = (window._animAutoKey ? 'A' : 'a') + (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
           + (track.blendshapes?.size || 0) + '|';
     track.blendshapes?.forEach((d, n) => {
       s += n + ':' + this._weightOf(n).toFixed(4) + (track.blendshapeMuted?.has(n) ? 'm' : '') + ';';
@@ -264,6 +295,7 @@ export default class BlendshapeStackPanel {
   _contentHeight() {
     const track = this._track();
     const n = track?.blendshapes?.size || 0;
+    if (this._layersCollapsed) return TOOLBAR_H + PAD;
     return TOOLBAR_H + n * ROW_H + BASE_H + PAD;
   }
 
@@ -275,8 +307,14 @@ export default class BlendshapeStackPanel {
 
   _applyCanvasSize(cssH) {
     this._cssH = cssH;
-    this._dpr  = window.devicePixelRatio || 1;
+    this._dpr  = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
     this._canvas.style.height = cssH + 'px';
+    if (this._tbCanvas) {
+      this._tbCanvas.style.height = TOOLBAR_H + 'px';
+      this._tbCanvas.width  = Math.round(this._cssW * this._dpr);
+      this._tbCanvas.height = Math.round(TOOLBAR_H * this._dpr);
+      this._tbCtx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
+    }
     this._canvas.width  = Math.round(this._cssW * this._dpr);
     this._canvas.height = Math.round(this._cssH * this._dpr);
     this._ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
@@ -330,7 +368,7 @@ export default class BlendshapeStackPanel {
     if (!this._padOwned || !this._pad) return;
     const track = this._track();
     const nRows = track?.blendshapes ? track.blendshapes.size : 0;
-    const rowsWant = TOOLBAR_H + nRows * ROW_H + BASE_H;
+    const rowsWant = this._layersCollapsed ? TOOLBAR_H : TOOLBAR_H + nRows * ROW_H + BASE_H;
     const left = this._cssH - rowsWant;
 
     // A SHARE, NOT LEFTOVERS — and that distinction is the whole balance of this panel.
@@ -375,6 +413,19 @@ export default class BlendshapeStackPanel {
     if (this._padOwned) this._layoutPad();
 
     this._drawToolbar(ctx, W);
+    if (this._tbCanvas) {
+      // Second copy for the sticky overlay; its rects duplicate the ones just pushed, so keep the
+      // originals. Hidden while the picker is open (it draws over the toolbar band itself).
+      this._tbCanvas.style.display = this._picker ? 'none' : 'block';
+      if (!this._picker) {
+        const keep = this._toolbarBtns;
+        this._toolbarBtns = [];
+        const t = this._tbCtx;
+        t.clearRect(0, 0, W, TOOLBAR_H);
+        this._drawToolbar(t, W);
+        this._toolbarBtns = keep;
+      }
+    }
 
     const mesh = this._mesh();
     if (!mesh) {
@@ -392,22 +443,32 @@ export default class BlendshapeStackPanel {
     // CLIPPED to the space above the pad. Without this the rows draw underneath it and the pad
     // paints over them — which is not "hidden", it is a row you can still HIT but cannot SEE.
     if (this._padOwned) {
+      // Below the toolbar too, now that rows can be scrolled up under it.
       ctx.save();
       ctx.beginPath();
-      ctx.rect(0, 0, W, H - this._padReserve);
+      ctx.rect(0, TOOLBAR_H, W, H - this._padReserve - TOOLBAR_H);
       ctx.clip();
     }
-    let y = TOOLBAR_H;
-    for (const name of names) {
-      this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
-      y += ROW_H;
+    const viewH = H - this._padReserve - TOOLBAR_H;
+    this._scrollMax = (this._padOwned && !this._layersCollapsed)
+      ? Math.max(0, names.length * ROW_H + BASE_H - viewH) : 0;
+    this._scrollY = Math.max(0, Math.min(this._scrollMax, this._scrollY));
+    if (this._layersCollapsed) {
+      if (this._padOwned) ctx.restore();
+    } else {
+      let y = TOOLBAR_H - this._scrollY;
+      for (const name of names) {
+        this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
+        y += ROW_H;
+      }
+
+      // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
+      this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
+
+      if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
+      if (this._scrollMax > 0) this._drawScrollbar(ctx, W, TOOLBAR_H, viewH);
+      if (this._padOwned) ctx.restore();
     }
-
-    // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
-    this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
-
-    if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
-    if (this._padOwned) ctx.restore();
 
     // The pad last, so it draws over the rows if a very long stack would otherwise run into it —
     // it is a fixed reservation at the bottom and the list is the thing that has to give.
@@ -426,22 +487,78 @@ export default class BlendshapeStackPanel {
     if (this._picker) this._drawPicker(ctx, W, H);
   }
 
+  // Scrollbar track geometry, shared by draw and hit-test so the two cannot drift.
+  _sbGeom() {
+    const top = TOOLBAR_H, h = this._cssH - this._padReserve - TOOLBAR_H;
+    const thumbH = Math.max(40, h * h / (h + this._scrollMax));
+    const thumbY = top + (h - thumbH) * (this._scrollY / this._scrollMax);
+    return { top, h, thumbH, thumbY, x: this._cssW - 14, w: 14 };
+  }
+
+  _drawScrollbar(ctx, W) {
+    const g = this._sbGeom();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(g.x, g.top, g.w, g.h);
+    ctx.fillStyle = this._sbDrag ? Theme.blue : Theme.overlay0;
+    this._roundRect(ctx, g.x + 3, g.thumbY, g.w - 6, g.thumbH, 4);
+    ctx.fill();
+  }
+
   _drawToolbar(ctx, W) {
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(0, 0, W, TOOLBAR_H);
     ctx.strokeStyle = Theme.surface0;
     ctx.beginPath();
+    ctx.moveTo(0, TOOLBAR_BTN_H - 0.5); ctx.lineTo(W, TOOLBAR_BTN_H - 0.5);
     ctx.moveTo(0, TOOLBAR_H - 0.5); ctx.lineTo(W, TOOLBAR_H - 0.5);
     ctx.stroke();
 
-    const bw = 34, bh = 26, by = (TOOLBAR_H - bh) / 2;
+    // Fold bar: caret + label, drawn like BlendshapePad._drawHeader.
+    const cx = 16, cy = TOOLBAR_BTN_H + LAYERS_HEADER_H / 2, r = 6;
+    this._toolbarBtns.push({ id: 'fold', x: 0, y: TOOLBAR_BTN_H, w: W, h: LAYERS_HEADER_H });
+    const foldHov = this._hover?.btn === 'fold';
+    if (foldHov) { ctx.fillStyle = Theme.surface0; ctx.fillRect(0, TOOLBAR_BTN_H, W, LAYERS_HEADER_H - 1); }
+    ctx.fillStyle = foldHov ? Theme.text : (Theme.subtext0 || '#a6adc8');
+    ctx.beginPath();
+    if (this._layersCollapsed) { ctx.moveTo(cx - r, cy + r / 2); ctx.lineTo(cx + r, cy + r / 2); ctx.lineTo(cx, cy - r / 2 - 2); }
+    else                       { ctx.moveTo(cx - r, cy - r / 2); ctx.lineTo(cx + r, cy - r / 2); ctx.lineTo(cx, cy + r / 2 + 2); }
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = '14px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Blendshape Layers', 32, cy + 0.5);
+
+    const bw = 34, bh = 26, by = (TOOLBAR_BTN_H - bh) / 2;
     const newBtn = { id: 'new', x: PAD, y: by, w: bw, h: bh };
     const delBtn = { id: 'del', x: PAD + bw + 6, y: by, w: bw, h: bh };
-    this._toolbarBtns.push(newBtn, delBtn);
+    // Split the selected layer into Left/Right halves — any layer, not only the ARKit names
+    // whose rows carry their own split icon.
+    const splitBtn = { id: 'split', x: PAD + (bw + 6) * 2, y: by, w: bw, h: bh };
+    const resetBtn = { id: 'rrange', x: PAD + (bw + 6) * 3, y: by, w: bw, h: bh };
+    // Auto-key: the same global the graph editor's Auto button flips. Off, slider moves are
+    // previews only; on, they key at the playhead.
+    const autoBtn = { id: 'autokey', x: PAD + (bw + 6) * 4 + 10 + (bh + 4) * 4 + 4, y: by, w: 40, h: bh };
+    this._toolbarBtns.push(newBtn, delBtn, splitBtn, resetBtn, autoBtn);
 
     this._drawIconBtn(ctx, newBtn, FA.plus,  Theme.blue, this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
     this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : Theme.surface2, this._hover?.btn === 'del');
+    this._drawIconBtn(ctx, splitBtn, FA.split, canDel ? Theme.text : Theme.surface2, this._hover?.btn === 'split');
+    const actName = this._track()?.editingBlendshape;
+    const ar = actName ? this._rangeOf(actName) : null;
+    const stretched = !!ar && (ar.min !== 0 || ar.max !== 1);
+    this._drawIconBtn(ctx, resetBtn, FA.reset, stretched ? Theme.text : Theme.surface2, this._hover?.btn === 'rrange');
+
+    {
+      const on = !!window._animAutoKey, hot = this._hover?.btn === 'autokey';
+      ctx.fillStyle = on ? Theme.blue : (hot ? Theme.surface1 : Theme.surface0);
+      this._roundRect(ctx, autoBtn.x, autoBtn.y, autoBtn.w, autoBtn.h, 4); ctx.fill();
+      ctx.fillStyle = on ? Theme.crust : Theme.subtext;
+      ctx.font = '600 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('Auto', autoBtn.x + autoBtn.w / 2, autoBtn.y + autoBtn.h / 2 + 0.5);
+      ctx.textAlign = 'left';
+    }
 
     // ── THE FOUR PAD SLOTS ────────────────────────────────────────────────────────────
     //
@@ -457,7 +574,7 @@ export default class BlendshapeStackPanel {
     // WHICH side without needing a word for it.
     if (this._pad) {
       const selected = this._track()?.editingBlendshape || null;
-      let sx = PAD + (bw + 6) * 2 + 10;
+      let sx = PAD + (bw + 6) * 4 + 10;
       for (const slot of ['left', 'right', 'up', 'down']) {
         const b = { id: 'slot_' + slot, slot, x: sx, y: by, w: bh, h: bh };
         this._toolbarBtns.push(b);
@@ -577,7 +694,11 @@ export default class BlendshapeStackPanel {
     ctx.fillStyle = isBase ? (locked ? Theme.subtext : Theme.subtext)
                           : (muted ? Theme.overlay0 : (isActive || nameHot ? Theme.text : Theme.text));
     ctx.font = (isActive ? '600 ' : '') + '12px sans-serif';
-    const valW = isBase ? PAD : 36;
+    const sym  = !isBase && arkitEntry(name)?.category === 'symmetric';
+    const bs   = this._track()?.blendshapes;
+    const half = !isBase && !sym && bs ? lrPairFor(name, (n) => bs.has(n)) : null;
+    // Readout always shows now (tap it for the numpad); split/combine icons sit to its right.
+    const valW = isBase ? PAD : ((sym || half) ? 80 : 44);
     const nameMaxX = W - PAD - valW;
     // Non-base rows reserve ~20px at the name's right edge for the rename pencil.
     const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart - (isBase ? 0 : 20));
@@ -605,10 +726,9 @@ export default class BlendshapeStackPanel {
     if (isBase) { this._rows.push(r); return; }
 
     // Right slot: symmetric ARKit shapes get a split button (→ L/R); a recognised L/R
-    // half gets a combine button (→ back to one symmetric shape); everything else keeps
-    // the numeric readout (the weight is already shown by the slider).
-    const sym  = arkitEntry(name)?.category === 'symmetric';
-    const half = !sym ? arkitUnifiedFor(name) : null;
+    // half (ARKit, or a '<x>Left'/'<x>Right' pair from the toolbar split) gets a combine
+    // button (→ back to one shape); everything else keeps the numeric readout (the weight
+    // is already shown by the slider). Any layer can be split from the toolbar.
     const sx = W - PAD - 10;
     if (sym) {
       const hot = hov === 'split';
@@ -624,23 +744,42 @@ export default class BlendshapeStackPanel {
       ctx.fillText(FA.combine, sx, top + 16 + 0.5);
       ctx.textAlign = 'left';
       r.combine = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
-    } else {
-      ctx.fillStyle = muted ? Theme.overlay0 : Theme.overlay1;
-      ctx.font = '11px ui-monospace, monospace';
+    }
+    // Numeric readout, every layer. Tap → numpad; a value outside 0..1 widens the slider range.
+    {
+      const rx = (sym || half) ? W - PAD - 38 : W - PAD;
+      const vHot = hov === 'value';
+      if (vHot) {
+        ctx.fillStyle = Theme.surface0;
+        this._roundRect(ctx, rx - 46, top + 4, 50, 22, 4); ctx.fill();
+      }
+      ctx.fillStyle = vHot ? Theme.text : (muted ? Theme.overlay0 : Theme.overlay1);
+      ctx.font = '12px ui-monospace, monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(weight.toFixed(2), W - PAD, top + 16);
+      ctx.fillText(weight.toFixed(2), rx, top + 16);
       ctx.textAlign = 'left';
+      r.value = { x0: rx - 46, x1: rx + 4, y0: top, y1: top + 28 };
     }
 
     // Slider (second line) — thicker/white thumb on hover.
     const trackX0 = TRACK_X0, trackX1 = W - PAD, trackY = top + 33;
     const tw = trackX1 - trackX0;
-    const w01 = Math.max(0, Math.min(1, weight));
+    const rng = this._rangeOf(name);
+    const w01 = Math.max(0, Math.min(1, (weight - rng.min) / (rng.max - rng.min)));
     const sliderHot = hov === 'slider';
     ctx.fillStyle = sliderHot ? Theme.surface1 : Theme.surface0;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw, TRACK_H, TRACK_H / 2); ctx.fill();
     ctx.fillStyle = Theme.blue;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw * w01, TRACK_H, TRACK_H / 2); ctx.fill();
+    // Tick marks for 0 and 1 once the range is stretched past them, so the sculptable 1.0
+    // detent can be found by eye.
+    if (rng.min < 0 || rng.max > 1) {
+      ctx.fillStyle = Theme.overlay1;
+      for (const d of [0, 1]) {
+        const tx = trackX0 + tw * (d - rng.min) / (rng.max - rng.min);
+        ctx.fillRect(tx - 1, trackY - 7, 2, 14);
+      }
+    }
     const hx = trackX0 + tw * w01;
     ctx.beginPath(); ctx.arc(hx, trackY, sliderHot ? 8 : 7, 0, Math.PI * 2);
     ctx.fillStyle = sliderHot ? Theme.text : Theme.text; ctx.fill();
@@ -661,6 +800,7 @@ export default class BlendshapeStackPanel {
     if (inRect(row.split))   return { row, part: 'split' };
     if (inRect(row.combine)) return { row, part: 'combine' };
     if (inRect(row.rename))  return { row, part: 'rename' };
+    if (inRect(row.value))   return { row, part: 'value' };
     if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
       return { row, part: 'slider' };
     return { row, part: 'row' };
@@ -672,8 +812,10 @@ export default class BlendshapeStackPanel {
 
   // ── Pointer handling ─────────────────────────────────────────────────────────
   _local(e) {
-    const rect = this._canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const c = (this._tbCanvas && e.target === this._tbCanvas) ? this._tbCanvas : this._canvas;
+    const rect = c.getBoundingClientRect();
+    const z = window._uiScale || 1;
+    return { x: (e.clientX - rect.left) / z, y: (e.clientY - rect.top) / z };
   }
 
   _hitToolbar(p) {
@@ -682,13 +824,15 @@ export default class BlendshapeStackPanel {
   }
 
   _hitRow(p) {
+    // Rows scrolled under the toolbar or the pad are not hittable.
+    if (this._padOwned && (p.y < TOOLBAR_H || p.y >= this._cssH - this._padReserve)) return null;
     return this._rows.find(r => p.y >= r.top && p.y < r.top + r.h) || null;
   }
 
   // ── DOM event wrappers ───────────────────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
-    try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
     this._pointerDown(this._local(e), e.altKey);
   }
   _onMove(e) { this._pointerMove(this._local(e)); }
@@ -709,6 +853,15 @@ export default class BlendshapeStackPanel {
     if (this._padOwned && this._pad.hits(p.x, p.y)) { this._padActive = true; this._pad.pointerDown(p.x, p.y); return; }
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
+    if (this._scrollMax > 0) {
+      const g = this._sbGeom();
+      if (p.x >= g.x && p.y >= g.top && p.y <= g.top + g.h) {
+        this._sbDrag = true;
+        this._sbGrab = (p.y >= g.thumbY && p.y <= g.thumbY + g.thumbH) ? p.y - g.thumbY : g.thumbH / 2;
+        this._sbSet(p.y);
+        return;
+      }
+    }
 
     const { row, part } = this._classifyHit(p);
     if (!row) return;
@@ -733,6 +886,9 @@ export default class BlendshapeStackPanel {
     // Eye (non-base): plain → mute/unmute; modifier (Alt / secondary trigger) → solo.
     if (part === 'eye' && !row.isBase) {
       if (mesh) (solo ? reg.toggleBlendshapeSolo : reg.toggleBlendshapeMute).call(reg, mesh, row.name);
+      // A plain press starts a paint stroke: every other eye the ray crosses before release is set
+      // to the state this one just took, so many layers go on/off in one gesture.
+      if (mesh && !solo) this._eyePaint = { muted: reg.isBlendshapeMuted(mesh, row.name), lastY: p.y };
       this.draw();
       return;
     }
@@ -762,6 +918,7 @@ export default class BlendshapeStackPanel {
       this._applyWeightFromX(row, p.x);
       return;
     }
+    if (part === 'value' && !row.isBase) { this._editValue(row); return; }
     // Pencil → rename (VR-friendly; double-tap still works too).
     if (part === 'rename' && !row.isBase) { this._beginRename(row); return; }
     // Row body → make it the active sculpt layer (Base deactivates). Double-tap → rename.
@@ -769,8 +926,32 @@ export default class BlendshapeStackPanel {
     this._handleTapForRename(row);
   }
 
+  _sbSet(y) {
+    const g = this._sbGeom();
+    const f = (y - this._sbGrab - g.top) / (g.h - g.thumbH);
+    this._scrollY = Math.max(0, Math.min(this._scrollMax, f * this._scrollMax));
+    this.draw();
+  }
+
   _pointerMove(p) {
     if (this._picker) { this._pickerMove(p); return; }
+    if (this._sbDrag) { this._sbSet(p.y); return; }
+    if (this._eyePaint) {
+      // PAINT EVERY ROW BETWEEN THE LAST SAMPLE AND THIS ONE, not just the row under the pointer.
+      // Pointer events are sparse in a fast stroke (a mouse flick, or a ray swept across the
+      // panel), so hit-testing only the current point skipped whatever fell between samples.
+      const mesh = this._mesh(), reg = window._animationRegistry;
+      const y0 = Math.min(this._eyePaint.lastY, p.y), y1 = Math.max(this._eyePaint.lastY, p.y);
+      this._eyePaint.lastY = p.y;
+      let changed = false;
+      if (mesh) for (const r of this._rows) {
+        if (r.isBase || r.top + r.h <= y0 || r.top > y1) continue;
+        if (this._padOwned && (r.top + r.h <= TOOLBAR_H || r.top >= this._cssH - this._padReserve)) continue;
+        if (reg.isBlendshapeMuted(mesh, r.name) !== this._eyePaint.muted) { reg.toggleBlendshapeMute(mesh, r.name); changed = true; }
+      }
+      if (changed) this.draw();
+      return;
+    }
     // LATCHED on the press, not re-hit-tested: a drag that starts on the pad has to keep going
     // when the ray wanders off it, exactly as the weight sliders above do.
     if (this._padActive) { this._pad.pointerMove(p.x, p.y); return; }
@@ -791,6 +972,7 @@ export default class BlendshapeStackPanel {
       return;
     }
     // Not dragging → hover feedback. Redraw only when the hovered element changes.
+    if (this._padOwned) this._pad.hoverAt(p.x, p.y);
     let h;
     const btn = this._hitToolbar(p);
     if (btn) {
@@ -813,9 +995,14 @@ export default class BlendshapeStackPanel {
   }
 
   // Clear hover (DOM pointerleave, or VR ray leaving the panel — called by Scene).
-  clearHover() { if (this._hover) { this._hover = null; this.draw(); } }
+  clearHover() {
+    this._pad?.hoverAt(null);
+    if (this._hover) { this._hover = null; this.draw(); }
+  }
 
   _pointerUp() {
+    if (this._sbDrag) { this._sbDrag = false; this.draw(); return; }
+    if (this._eyePaint) { this._eyePaint = null; return; }
     if (this._padActive) { this._padActive = false; this._pad.pointerUp(); return; }
     if (this._picker) { this._pickerUp(); return; }
     if (this._reorderName) {
@@ -833,11 +1020,22 @@ export default class BlendshapeStackPanel {
     if (!this._dragName) return;
     const name = this._dragName;
     const oldW = this._dragStartW;
-    const newW = this._weightOf(name);
     this._dragName = null;
+    // Release: Auto on writes the key at the playhead and drops the hold; Auto off leaves the
+    // value standing as a preview (like the pad -- the pad's Key button or playback ends it).
+    const track = this._track(), rmesh = this._mesh();
+    const keyed = !!window._animAutoKey;
+    track?.blendshapeDragHold?.delete(name);
+    if (!keyed && track) this._holdAtPlayhead(track, name);
+    if (keyed) {
+      track?.blendshapePreview?.delete(name);
+      if (rmesh && this._dragW != null) window._animationRegistry.setBlendshapeWeight(rmesh, name, this._dragW);
+    }
+    this._dragW = null;
+    const newW = this._weightOf(name);
 
     // Push a single undo step for the whole drag if the value actually changed.
-    if (this._dragMoved && oldW !== newW && window.app?.getStateManager) {
+    if (keyed && this._dragMoved && oldW !== newW && window.app?.getStateManager) {
       const mesh = this._mesh();
       window.app.getStateManager().pushStateCustom(
         () => { window._animationRegistry.setBlendshapeWeight(mesh, name, oldW); this.draw(); },
@@ -854,7 +1052,7 @@ export default class BlendshapeStackPanel {
     const names = this._layerNames();
     const from  = names.indexOf(name);
     if (from < 0) { this.draw(); return; }
-    let to = Math.floor((dropY - TOOLBAR_H) / ROW_H);
+    let to = Math.floor((dropY - TOOLBAR_H + this._scrollY) / ROW_H);
     to = Math.max(0, Math.min(names.length - 1, to));
     if (to === from) { this.draw(); return; }
 
@@ -881,10 +1079,10 @@ export default class BlendshapeStackPanel {
   // Insertion line + floating label shown while a row is being dragged to reorder.
   _drawReorderHint(ctx, W, names) {
     const n = names.length;
-    let to = Math.floor((this._reorderCurY - TOOLBAR_H) / ROW_H);
+    let to = Math.floor((this._reorderCurY - TOOLBAR_H + this._scrollY) / ROW_H);
     to = Math.max(0, Math.min(n - 1, to));
 
-    const lineY = TOOLBAR_H + to * ROW_H;
+    const lineY = TOOLBAR_H + to * ROW_H - this._scrollY;
     ctx.strokeStyle = Theme.blue; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, lineY); ctx.lineTo(W, lineY); ctx.stroke();
     ctx.lineWidth = 1;
@@ -899,16 +1097,118 @@ export default class BlendshapeStackPanel {
     ctx.fillText(this._ellipsize(ctx, this._reorderName, W - PAD * 2 - 12), PAD + 6, ty);
   }
 
+  // The slider's range for a layer: 0..1 unless widened by a numpad entry or by keys already
+  // beyond it (a loaded file). Materialised on first look so the key scan runs once.
+  _rangeOf(name) {
+    const track = this._track();
+    if (!track) return { min: 0, max: 1 };
+    if (!track.blendshapeRange) track.blendshapeRange = new Map();
+    let r = track.blendshapeRange.get(name);
+    if (!r) {
+      r = { min: 0, max: 1 };
+      for (const v of track.blendshapeTracks?.get(name)?.values || []) {
+        if (v < r.min) r.min = v;
+        if (v > r.max) r.max = v;
+      }
+      track.blendshapeRange.set(name, r);
+    }
+    return r;
+  }
+
+  _editValue(row) {
+    const mesh = this._mesh();
+    const reg = window._animationRegistry;
+    const np = window._vrNumpad;
+    if (!mesh || !np) return;
+    const name = row.name;
+    const oldW = this._weightOf(name);
+    const oldR = { ...this._rangeOf(name) };
+    // Two decimals is all the slider means; the raw float showed ~8 digits in the numpad.
+    np.open(Math.round(oldW * 100) / 100, { label: name + ' weight' }, (v) => {
+      if (!Number.isFinite(v)) return;
+      v = Math.round(v * 100) / 100;
+      const r = this._rangeOf(name);
+      if (v < r.min) r.min = v;
+      if (v > r.max) r.max = v;
+      if (!window._animAutoKey) {
+        reg.setBlendshapePreview(mesh, name, v);
+        this._holdAtPlayhead(this._track(), name);
+        reg.applyBlendshapes(mesh);
+        this.draw();
+        return;
+      }
+      reg.setBlendshapeWeight(mesh, name, v);
+      const newR = { ...r };
+      window.app?.getStateManager?.()?.pushStateCustom(
+        () => { Object.assign(this._rangeOf(name), oldR); reg.setBlendshapeWeight(mesh, name, oldW); this.draw(); },
+        () => { Object.assign(this._rangeOf(name), newR); reg.setBlendshapeWeight(mesh, name, v); this.draw(); },
+        false, 'Set Blendshape Weight');
+      this.draw();
+    }, null, null, this._vrMesh);
+  }
+
+  // Back to 0..1 for the active layer; its current weight is pulled inside so the thumb is not
+  // left pegged beyond the end of the track.
+  _resetRange() {
+    const mesh = this._mesh();
+    const name = this._track()?.editingBlendshape;
+    if (!mesh || !name) { this.flash(); return; }
+    const r = this._rangeOf(name);
+    r.min = 0; r.max = 1;
+    const w = this._weightOf(name);
+    if (w < 0 || w > 1) window._animationRegistry.setBlendshapeWeight(mesh, name, Math.max(0, Math.min(1, w)));
+    this.draw();
+  }
+
+  // Tie an Auto-off override to the current playhead; the registry frees it when the playhead moves.
+  _holdAtPlayhead(track, name) {
+    if (!track) return;
+    (track.blendshapeHoldT || (track.blendshapeHoldT = new Map())).set(name, track.playbackTime || 0);
+  }
+
   _applyWeightFromX(row, x) {
     const tw = row.trackX1 - row.trackX0;
-    const w = Math.max(0, Math.min(1, (x - row.trackX0) / tw));
-    const mesh = this._mesh();
-    if (mesh) window._animationRegistry.setBlendshapeWeight(mesh, row.name, w);
+    const r = this._rangeOf(row.name);
+    const span = r.max - r.min;
+    let w = r.min + Math.max(0, Math.min(1, (x - row.trackX0) / tw)) * span;
+    // The ends are SNAPPED. A VR ray stops reporting once it leaves the panel, and the track ends
+    // a margin short of the panel edge, so a hard pull to the right used to stall at 0.98 -- which
+    // is locked out of sculpting by design. Resizing "fixed" it only by shrinking the margin.
+    const SNAP = 12;
+    if (x >= row.trackX1 - SNAP) w = r.max;
+    else if (x <= row.trackX0 + SNAP) w = r.min;
+    // Detents at 0 and 1 for a stretched range, where 1.0 would otherwise be a pixel-perfect aim.
+    else for (const d of [0, 1]) if (d > r.min && d < r.max && Math.abs(w - d) < span * 0.015) w = d;
+    // HELD AS A PREVIEW, KEYED ON RELEASE (only with Auto on). Writing a key per move meant that during playback the
+    // curve overwrote the slider a frame later, so on a keyframed layer it looked disabled. A
+    // preview outranks the curve for as long as the slider is held (same mechanism as the pad).
+    const mesh = this._mesh(), track = this._track();
+    if (mesh && track) {
+      (track.blendshapePreview || (track.blendshapePreview = new Map())).set(row.name, w);
+      (track.blendshapeDragHold || (track.blendshapeDragHold = new Set())).add(row.name);
+      this._dragW = w;
+      window._animationRegistry.applyBlendshapes(mesh);
+    }
     this.draw();
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────────
   _onToolbar(id) {
+    if (id === 'fold') {
+      this._layersCollapsed = !this._layersCollapsed;
+      getOptionsURL.saveOption('blendLayersCollapsed', this._layersCollapsed);
+      // _relayout is desktop-only (it bails with no DOM host), so in VR nothing redrew until the
+      // sync loop next saw state change -- the fold only showed after a jiggle.
+      if (this._vrMode) this.draw(); else this._relayout();
+      return;
+    }
+    if (id === 'rrange') { this._resetRange(); return; }
+    if (id === 'autokey') {
+      window._animAutoKey = !window._animAutoKey;
+      document.querySelector('#acp-autokey-btn')?.classList.toggle('active', !!window._animAutoKey);
+      this.draw();
+      return;
+    }
     const mesh = this._mesh();
     if (!mesh) return;
     const reg = window._animationRegistry;
@@ -940,6 +1240,10 @@ export default class BlendshapeStackPanel {
       if (!name) return;
       reg.deleteBlendshape(mesh, name);
       this._afterStructureChange();
+    } else if (id === 'split') {
+      const name = track_editing(reg, mesh);
+      if (name && reg.splitBlendshapeLR(mesh, name)) this._afterStructureChange();
+      else this.flash();
     }
   }
 
@@ -981,7 +1285,12 @@ export default class BlendshapeStackPanel {
   // picker overlay's internal scroll when open (matches the mouse-wheel path).
   onVRScroll(delta) {
     const pk = this._picker;
-    if (!pk) return;
+    if (!pk) {
+      if (this._scrollMax <= 0) return;
+      this._scrollY = Math.max(0, Math.min(this._scrollMax, this._scrollY + delta));
+      this.draw();
+      return;
+    }
     pk.scroll = Math.max(0, Math.min(pk.maxScroll, pk.scroll + delta));
     this.draw();
   }

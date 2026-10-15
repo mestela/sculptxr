@@ -49,6 +49,7 @@ function grabChannelHTML() {
   const ch = GrabChannels.channels();
   return `
         <div class="mp-toggles">
+          <button class="mp-toggle-btn${GrabChannels.auto() ? ' active' : ''}" id="mp-grab-auto" title="Pins: full. Bones: FK turn. Hold the non-dominant hand's Y: IK.">Auto</button>
           <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-grab-translate">Translate</button>
           <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-grab-rotate">Rotate</button>
         </div>`;
@@ -640,7 +641,7 @@ export class MiniPanel extends HTMLVRPanel {
     }
 
     const sm  = main.getSculptManager?.();
-    const idx = sm?.getToolIndex?.() ?? -1;
+    const idx = main.effectiveToolIndex?.() ?? sm?.getToolIndex?.() ?? -1;
 
     // Collapsible groups emitted by the shared bone panel (ui reorg mockup).
     // noteContentResized, not markDirty: a section opening changes this panel's HEIGHT, and the
@@ -708,6 +709,10 @@ export class MiniPanel extends HTMLVRPanel {
       };
       grabBtn('#mp-grab-translate', 'translate');
       grabBtn('#mp-grab-rotate', 'rotate');
+      extras.querySelector('#mp-grab-auto')?.addEventListener('click', () => {
+        GrabChannels.setAuto(!GrabChannels.auto());
+        this.syncFromState();
+      });
       // Same entry point the main menu uses, so the two cannot drift: press to arm, press again
       // to cancel, and the viewport completes it.
       // `extras`, not `extrasEl`. This function's local is `extras`; `extrasEl` is the PARAMETER
@@ -742,10 +747,10 @@ export class MiniPanel extends HTMLVRPanel {
         const preserveBtn = extras.querySelector('#mp-preserve');
         if (preserveBtn) {
           preserveBtn.addEventListener('click', () => {
-            const t = sm?.getCurrentTool?.();
+            const t = main.effectiveTool?.() ?? sm?.getCurrentTool?.();
             if (t) {
               t._preserveVolume = !t._preserveVolume;
-              getOptionsURL.saveOption(`tool_${sm.getToolIndex()}_preserveVolume`, t._preserveVolume);
+              getOptionsURL.saveOption(`tool_${main.effectiveToolIndex?.() ?? sm.getToolIndex()}_preserveVolume`, t._preserveVolume);
               main.render?.();
             }
             this.syncFromState();
@@ -754,7 +759,7 @@ export class MiniPanel extends HTMLVRPanel {
         const sharpenBtn = extras.querySelector('#mp-sharpen');
         if (sharpenBtn) {
           sharpenBtn.addEventListener('click', () => {
-            const t = sm?.getCurrentTool?.();
+            const t = main.effectiveTool?.() ?? sm?.getCurrentTool?.();
             if (t) { t._negative = !t._negative; main.render?.(); }
             this.syncFromState();
           });
@@ -975,6 +980,7 @@ export class MiniPanel extends HTMLVRPanel {
       // it -- matt: "they don't even pretend to disable visually."
       if (idx === Enums.Tools.GRAB) {
         const gch = GrabChannels.channels();
+        extrasEl.querySelector('#mp-grab-auto')?.classList.toggle('active', GrabChannels.auto());
         extrasEl.querySelector('#mp-grab-translate')?.classList.toggle('active', gch.translate);
         extrasEl.querySelector('#mp-grab-rotate')?.classList.toggle('active', gch.rotate);
       }
@@ -1085,7 +1091,7 @@ export class MiniPanel extends HTMLVRPanel {
 
     // ── Smooth / Relax ─────────────────────────────────────────────────────
     if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
-      const t       = sm.getCurrentTool?.();
+      const t       = this._main?.effectiveTool?.() ?? sm.getCurrentTool?.();
       const tangent = !!(t?._tangent);
       const sharpen = idx === Enums.Tools.SMOOTH && !!(t?._negative);
       return `
@@ -1336,7 +1342,7 @@ export class MiniPanel extends HTMLVRPanel {
       // sculpt selection changed, which is the per-sync churn the note above is about.
       const selKey = (main.getSelectedMeshes?.() || [])
         .filter((m) => m && m._isBone).map((m) => m.getID()).join(',');
-      const extrasKey = idx + '|' + selKey;
+      const extrasKey = effIdx + '|' + selKey; // effective: Smooth's extras show while the alt trigger is held
       // The bisection switch that used to gate this (window._mpNoRebuild) is GONE, and its
       // settings entry with it. It answered its question in v3.30.39 -- the rebuild WAS the
       // cause, by nulling material.map and forcing a shader recompile -- and then stayed in the
@@ -1347,8 +1353,8 @@ export class MiniPanel extends HTMLVRPanel {
       if (this._lastExtrasKey !== extrasKey) {
         // Tool or bone selection changed: rebuild the whole block and re-wire.
         this._lastExtrasKey = extrasKey;
-        this._lastExtrasIdx = idx;
-        extrasEl.innerHTML  = this._buildExtrasHTML(sm, idx);
+        this._lastExtrasIdx = effIdx;
+        extrasEl.innerHTML  = this._buildExtrasHTML(sm, effIdx);
         this._wireExtras(main);
         // Defer geometry resize until _onPaint fires with the fresh texture.
         this._needsResize = true;
@@ -1356,8 +1362,7 @@ export class MiniPanel extends HTMLVRPanel {
         // Same tool: only update active-class states in place; never touch innerHTML. Asked of
         // the SELECTED tool, to match the block that is actually rendered -- `tool` above may be
         // Smooth right now because the off-hand trigger is down.
-        const selTool = main.selectedTool?.() ?? sm?.getCurrentTool?.();
-        if (selTool) this._syncExtrasActive(extrasEl, sm, idx, selTool);
+        if (tool) this._syncExtrasActive(extrasEl, sm, effIdx, tool);
       }
     }
 

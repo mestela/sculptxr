@@ -28,7 +28,8 @@ const body = grab('function envelopeT2', '// Laplacian smoothing over the weight
 
 const SKEL_SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 const skelBits = ['Skeleton.jointRadius = function', 'Skeleton.jointScale = function',
-  'Skeleton.jointOffset = function', 'Skeleton.jointHalf = function']
+  'Skeleton.jointOffset = function', 'Skeleton.jointHalf = function',
+  'Skeleton.jointRot = function', 'Skeleton.jointRotIsSet = function', 'Skeleton.jointQuat = function']
   .map((sig) => {
     const i = SKEL_SRC.indexOf(sig);
     return SKEL_SRC.slice(i, SKEL_SRC.indexOf('\n};', i) + 3);
@@ -39,6 +40,7 @@ import * as THREE from '${path.join(REPO, 'node_modules/three/build/three.module
 const MAX_INFLUENCES = 4;
 const UNIT_SCALE = [1, 1, 1];
 const ZERO_OFF = [0, 0, 0];
+const IDENT_ROT = [0, 0, 0, 1];
 const Skeleton = {};
 ${skelBits}
 const _mMesh = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
@@ -93,6 +95,21 @@ const build = (tweak) => {
   check('a joint squashed in z claims sideways but not front-to-back',
     t2x < 1 && t2z > 1, 'x ' + t2x.toFixed(2) + ' vs z ' + t2z.toFixed(2)
     + ' — a round measure cannot tell those two points apart');
+}
+
+// ── AND WHICH WAY IT FACES ────────────────────────────────────────────────────────────
+//
+// The same flat joint turned a quarter about y: its thin axis now runs along world x, so the
+// territory swaps. The bind has to measure the shape the skin was built on, turned included.
+{
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+  const turned = build((a, b) => {
+    b._jointRadius = 3; b._jointScale = [1, 1, 0.2]; b._jointRot = [q.x, q.y, q.z, q.w];
+  });
+  const t2x = Math.min(...turned.segs.map((s) => M.envelopeT2(2, 0, 0, s)));
+  const t2z = Math.min(...turned.segs.map((s) => M.envelopeT2(0, 0, 2, s)));
+  check('turned a quarter, the flat joint claims front-to-back and not sideways',
+    t2z < 1 && t2x > 1, 'x ' + t2x.toFixed(2) + ' vs z ' + t2z.toFixed(2));
 }
 
 // ── AND ITS OFFSET ────────────────────────────────────────────────────────────────────

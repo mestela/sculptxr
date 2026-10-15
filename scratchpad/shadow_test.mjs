@@ -84,8 +84,8 @@ if (inject === 'alphablend') {
 } else if (inject === 'nosaveflag') {
   swap('        | (m._isShadowCatcher ? 256 : 0) | (m._isShadowLight ? 512 : 0),', ',', inject, 'skel');
 } else if (inject === 'nosaverow') {
-  swap('    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow) return;',
-       '    if (!parented && !m._isBone && !m._selectLocked && !hidden) return;', inject, 'skel');
+  swap('    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow && !light) return;',
+       '    if (!parented && !m._isBone && !m._selectLocked && !hidden && !light) return;', inject, 'skel');
 }
 
 let failures = 0;
@@ -233,7 +233,10 @@ check('...the two bits are written, above every existing flag',
   'so an older build reads neither and gets the pre-feature scene rather than a broken one');
 check('...a catcher or light earns a row even when it is nothing else',
   /const shadow = !!\(m\._isShadowCatcher \|\| m\._isShadowLight\);/.test(SKEL)
-    && /!hidden && !shadow\) return;/.test(SKEL),
+    // NOT anchored on `!shadow)` being the END of the condition. Adding another kind of mesh
+    // that earns a row -- v18 did exactly that for lights -- is the correct change, and pinning
+    // the closing paren turns it into a red test. What matters is that `shadow` is IN the guard.
+    && /if \(!parented &&(?:[^)]*?)!shadow\b/.test(SKEL),
   'neither is necessarily parented, a bone, locked or hidden — without this the flag has '
     + 'nowhere to be written');
 check('...and both are restored, behind a version guard',

@@ -3,6 +3,7 @@ import Skeleton from './Skeleton.js';
 import WeightCage from './WeightCage.js';
 import { adjacencyFromFaces } from './Geodesic.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 
 // [Rigging POC#2 — phase 2a] Bind + linear blend skinning.
 //
@@ -64,18 +65,79 @@ function label(mesh) {
 // It has to be this and not raw proximity for the same reason as before: a thick torso and a
 // thin finger otherwise compete on absolute distance and the thin one wins territory it has no
 // business owning, purely by being close to the surface.
+// 'relative' (window._skinMetric) restores the old distance-as-a-multiple-of-own-radius measure
+// for A/B; anything else is the absolute surface distance. Read once per solve.
+let _surfaceMetric = true;
+let _atStart = false;   // set by envelopeT2: the nearest point on the segment is its START joint
+let _tRaw = 0;   // set by envelopeCore: the axial parameter before clamping
+// BONE VOLUMES are FLAT-ENDED cylinders (sg.flat, with sg.len the axis length): the section is measured
+// across the axis at the unclamped parameter, the ends are planes, and the two combine like a
+// cylinder's signed distance -- so there is no rounded cap reaching past the end to overlap a neighbour.
 function envelopeT2(px, py, pz, sg) {
+  const d = envelopeCore(px, py, pz, sg);
+  if (!sg.flat) return d;
+  const dAx = (Math.abs(_tRaw - 0.5) - 0.5) * sg.len;   // negative between the end planes
+  return (d > 0 || dAx > 0) ? Math.hypot(Math.max(d, 0), Math.max(dAx, 0)) : Math.max(d, dAx);
+}
+
+function envelopeCore(px, py, pz, sg) {
   const ax = sg.a.x, ay = sg.a.y, az = sg.a.z;
   const dx = sg.b.x - ax, dy = sg.b.y - ay, dz = sg.b.z - az;
   const len2 = dx * dx + dy * dy + dz * dz;
   let t = len2 > 1e-12 ? ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / len2 : 0;
+  _tRaw = t;
+  _atStart = t <= 0;
   if (t < 0) t = 0; else if (t > 1) t = 1;
-  const cx = px - (ax + dx * t), cy = py - (ay + dy * t), cz = pz - (az + dz * t);
+  const tc = sg.flat ? _tRaw : t;   // a flat end measures across the axis wherever the point is along it
+  let cx = px - (ax + dx * tc), cy = py - (ay + dy * tc), cz = pz - (az + dz * tc);
+  // A TURNED JOINT IS MEASURED IN ITS OWN FRAME, the same blend the skin's relax uses (see
+  // SkinMesh capsuleTarget), so the weights follow the shape that was built. `ri` holds both
+  // ends' inverse rotations, already mesh-local and in one hemisphere; null for an unturned pair.
+  const ri = sg.ri;
+  if (ri) {
+    let qx = ri[0] + (ri[4] - ri[0]) * t, qy = ri[1] + (ri[5] - ri[1]) * t;
+    let qz = ri[2] + (ri[6] - ri[2]) * t, qw = ri[3] + (ri[7] - ri[3]) * t;
+    const ql = Math.hypot(qx, qy, qz, qw) || 1;
+    qx /= ql; qy /= ql; qz /= ql; qw /= ql;
+    const tx = 2 * (qy * cz - qz * cy), ty = 2 * (qz * cx - qx * cz), tz = 2 * (qx * cy - qy * cx);
+    const rx = cx + qw * tx + (qy * tz - qz * ty);
+    const ry = cy + qw * ty + (qz * tx - qx * tz);
+    const rz = cz + qw * tz + (qx * ty - qy * tx);
+    cx = rx; cy = ry; cz = rz;
+  }
   const hx = sg.ha[0] + (sg.hb[0] - sg.ha[0]) * t;
   const hy = sg.ha[1] + (sg.hb[1] - sg.ha[1]) * t;
   const hz = sg.ha[2] + (sg.hb[2] - sg.ha[2]) * t;
   const ux = cx / hx, uy = cy / hy, uz = cz / hz;
-  return ux * ux + uy * uy + uz * uz;
+  // ROUNDNESS: the joint's superellipsoid exponent (2 = ellipsoid, up to 12 = a soft box), blended
+  // along the bone like the extents. The drawn capsule and Make Skin have always honoured it; the
+  // bind measured an ellipsoid whatever the slider said. Level set |u|_p = 1, with f = |u|_p taking
+  // the place of the ellipsoid's |u|, so t2 = f^2 and the surface distance is (f - 1) / |grad f|.
+  const pe = sg.pe;
+  if (pe) {
+    const pw = pe[0] + (pe[1] - pe[0]) * t;
+    if (pw > 2.0001) {
+      const ax = Math.abs(ux), ay = Math.abs(uy), az = Math.abs(uz);
+      const f = Math.pow(Math.pow(ax, pw) + Math.pow(ay, pw) + Math.pow(az, pw), 1 / pw);
+      if (!_surfaceMetric) return f * f;
+      if (f < 1e-9) return -Math.min(hx, hy, hz);
+      const k = Math.pow(f, 1 - pw), q = pw - 1;
+      const gx = k * Math.pow(ax, q) / hx, gy = k * Math.pow(ay, q) / hy, gz = k * Math.pow(az, q) / hz;
+      return (f - 1) / Math.sqrt(gx * gx + gy * gy + gz * gz);
+    }
+  }
+  const t2 = ux * ux + uy * uy + uz * uz;
+  if (!_surfaceMetric) return t2;
+  // ABSOLUTE DISTANCE TO THE ENVELOPE'S SURFACE, signed (negative inside), in mesh-local units.
+  // First-order distance to the level set |u| = 1: (|u| - 1) / |grad |u||, which is exact for a
+  // sphere and a good estimate for an ellipsoid. The taper along the bone is ignored. A vertex
+  // then belongs to the capsule whose SURFACE it is nearest (deepest inside, if it is inside
+  // several), which is the Voronoi-of-the-shapes an artist expects -- unlike t, where a fat
+  // capsule outbids a thin one that is closer in absolute terms.
+  const len = Math.sqrt(t2);
+  if (len < 1e-9) return -Math.min(hx, hy, hz);
+  const gx = cx / (hx * hx), gy = cy / (hy * hy), gz = cz / (hz * hz);
+  return (len - 1) * len / Math.sqrt(gx * gx + gy * gy + gz * gz);
 }
 
 // Joint positions in MESH-LOCAL space, as they are RIGHT NOW.
@@ -108,6 +170,8 @@ function jointPositionsAtBind(invBind) {
 // to the wrist. The vertex colours looked correct throughout — the assignment WAS what the
 // colours said — but every capsule was labelled with the joint one step too far down the
 // chain. Weights bound before this need a rebind.
+const _vD = new THREE.Vector3(), _vUp = new THREE.Vector3(), _vE1 = new THREE.Vector3(), _vE3 = new THREE.Vector3();
+const _mBasisV = new THREE.Matrix4(), _qV = new THREE.Quaternion();
 function boneSegments(mesh, joints, pos) {
   _mMesh.fromArray(mesh.getModelSpaceMatrix());
   const scale = Math.hypot(_mMesh.elements[0], _mMesh.elements[1], _mMesh.elements[2]) || 1;
@@ -131,10 +195,91 @@ function boneSegments(mesh, joints, pos) {
     return _vSeg.copy(at).add(_vOff).clone();
   };
 
+  // THE SHAPES' ROTATIONS, INTO MESH-LOCAL AND INVERTED. A joint's rotation is model space and
+  // the segments are mesh-local, so each is taken through the mesh's own rotation first:
+  // (M^-1 q)^-1 = q^-1 M. Null when neither end is turned, which is every rig made before
+  // rotation existed, so their binds measure exactly as they did.
+  let meshQ = null;
+  const segRotations = (p, j) => {
+    if (!Skeleton.jointRotIsSet(p) && !Skeleton.jointRotIsSet(j)) return null;
+    if (!meshQ) {
+      meshQ = new THREE.Quaternion();
+      _mMesh.decompose(new THREE.Vector3(), meshQ, new THREE.Vector3());
+    }
+    const ia = Skeleton.jointQuat(p).invert().multiply(meshQ);
+    const ib = Skeleton.jointQuat(j).invert().multiply(meshQ);
+    if (ia.dot(ib) < 0) ib.set(-ib.x, -ib.y, -ib.z, -ib.w);
+    return new Float64Array([ia.x, ia.y, ia.z, ia.w, ib.x, ib.y, ib.z, ib.w]);
+  };
+
+  // BONE VOLUMES (experimental, Skeleton display flag `volumes`): the Voodoo / Rhythm & Hues model.
+  // One CONSTANT-section capsule per bone, its section the bone's own end joint's (radius, scale and
+  // turn), run from the joint positions and pulled in by a small gap at each end so that no two
+  // volumes touch. There are no shared joint balls, no planes and no chain-end rules: a vertex
+  // belongs to the volume whose surface it is nearest, and the middle of the gap between two bones is
+  // where the split falls. Everything the shared-ball model needed arbitration for simply does not
+  // arise. Drawn the same way (Skeleton.updateVisuals), so the picture is the bind.
+  if (Skeleton.displayFlag('volumes')) {
+    const out = [];
+    joints.forEach((j, i) => {
+      const p = j._parentMesh;
+      if (!index.has(p) || !Skeleton.boneHasCapsule(j)) return;
+      const pi = index.get(p);
+      const A = pos[pi], B = pos[i];
+      const dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, len = Math.hypot(dx, dy, dz);
+      if (len < 1e-9) return;
+      // The section: the bone's own uniform radius times its width / height, in the bone's own frame
+      // (the same one the drawing builds, Skeleton.volumeFrame), carried into mesh-local space.
+      const r = Math.max((j._boneRadius || 0) / scale, 1e-4);
+      const sec = Skeleton.volumeSection(j);
+      const h = [Math.max(r * sec[0], 1e-4), r, Math.max(r * sec[1], 1e-4)];
+      _vD.set(dx, dy, dz).divideScalar(len);
+      _vUp.set(0, 1, 0).applyMatrix3(_m3Inv).normalize();
+      if (Math.abs(_vD.dot(_vUp)) > 0.95) _vUp.set(0, 0, 1).applyMatrix3(_m3Inv).normalize();
+      _vE1.crossVectors(_vUp, _vD).normalize();
+      _vE3.crossVectors(_vE1, _vD).normalize();
+      // The twist, exactly as Skeleton.volumeFrame turns it.
+      const tw = Skeleton.volumeTwist(j);
+      if (tw) {
+        const c = Math.cos(tw), sn = Math.sin(tw);
+        _vUp.copy(_vE1);
+        _vE1.multiplyScalar(c).addScaledVector(_vE3, sn);
+        _vE3.multiplyScalar(c).addScaledVector(_vUp, -sn);
+      }
+      _mBasisV.makeBasis(_vE1, _vD, _vE3);
+      _qV.setFromRotationMatrix(_mBasisV).invert();
+      const ri = new Float64Array([_qV.x, _qV.y, _qV.z, _qV.w, _qV.x, _qV.y, _qV.z, _qV.w]);
+      // Cylinders: flat ends inset by the GAP alone, as the drawing does (Skeleton.volumeInset).
+      const g = Math.max(0, Skeleton.volumeInset(len)) / len;
+      // The section's centre, off the bone by its offset (Skeleton.volumeOffset), in the same frame.
+      const off = Skeleton.volumeOffset(j);
+      const ox = (_vE1.x * off[0] + _vE3.x * off[1]) * r, oy = (_vE1.y * off[0] + _vE3.y * off[1]) * r,
+        oz = (_vE1.z * off[0] + _vE3.z * off[1]) * r;
+      // The two ends along the bone, as Skeleton.volumeFrame places them (t0 / t1, as fractions here).
+      const en = Skeleton.volumeEnds(j);
+      const t0 = g - en[0], t1 = Math.max(1 - g + en[1], t0 + 0.05);
+      out.push({
+        joint: pi, end: i, pa: A, pb: B,
+        a: new THREE.Vector3(A.x + dx * t0 + ox, A.y + dy * t0 + oy, A.z + dz * t0 + oz),
+        b: new THREE.Vector3(A.x + dx * t1 + ox, A.y + dy * t1 + oy, A.z + dz * t1 + oz),
+        ha: h, hb: h, ri: ri,
+        // The section's sharpness (Skeleton.volumeRound): a rounded-rectangle volume weighs as one.
+        pe: [Skeleton.volumeRound(j), Skeleton.volumeRound(j)],
+        flat: true, len: len * (t1 - t0),
+      });
+    });
+    return out;
+  }
+
   const segs = [];
   joints.forEach((j, i) => {
     const p = j._parentMesh;
     if (!index.has(p)) return;
+    // A bone that gets no capsule is not a segment either -- the draw and the cages agree on this
+    // (Skeleton.boneHasCapsule), and a weight coming from a capsule you cannot see is the confusion.
+    // ...and one with no radius is not drawn, so it must not weigh: a zero-radius bone is a LINE, and
+    // under an absolute surface distance a line competes like any shape (under t it never could win).
+    if (!Skeleton.boneHasCapsule(j)) return;
     // The bone's own radius is the fallback at both ends, as everywhere else — a joint that has
     // never been sized keeps exactly the shape it had.
     const rb = Math.max((j._boneRadius || 0) / scale, 1e-4);
@@ -145,11 +290,102 @@ function boneSegments(mesh, joints, pos) {
     segs.push({
       // The radius still lives on the CHILD joint (that is the joint that created the bone and
       // the one whose radius you drag), but the bone moves with the PARENT.
-      joint: index.get(p),
+      joint: index.get(p), end: i, pa: pos[index.get(p)], pb: pos[i],
+      pe: [Skeleton.jointRound(p), Skeleton.jointRound(j)],
       a: centre(p, pos[index.get(p)]), b: centre(j, pos[i]),
       ha: half(p), hb: half(j),
+      ri: segRotations(p, j),
     });
   });
+
+  // THE BALL AT THE END OF A CHAIN IS ITS OWN JOINT'S. A bone moves with its parent, so the ball
+  // drawn at a chain's last joint (head_01 with its big extents, a toe, a fingertip) is the far
+  // end of the bone INTO it and turned with the parent: rotating head_01 moved nothing, because
+  // no bone STARTS there (its child, head_02, is a pivot with Shapes Skin off). Give such a joint
+  // a zero-length segment of its own ball. It measures identically to the parent bone's end cap,
+  // so it only takes what the tie-break above gives it -- the region beyond the end of the chain.
+  const owners = new Set(segs.map((sg) => sg.joint));
+  const leaves = new Set();   // joint indices that got a ball of their own
+  joints.forEach((j, i) => {
+    if (owners.has(i) || !index.has(j._parentMesh) || !Skeleton.boneHasCapsule(j)) return;
+    // A TRUE TIP (no child joint at all) CARRIES NO WEIGHT. It is the end marker that gives the last
+    // bone its length and aim, and nothing moves with it: a fingertip, a toe, the head's top joint.
+    // Giving it a ball of its own made it claim skin (and keep claiming it with a zero radius, since
+    // a joint radius of 0 means "unset", or pulled away with Tweak Joint). Only a joint whose
+    // children are all HIDDEN pivots (head_01 over a Shapes-Skin-off head_02) still has something to
+    // turn, so only that joint gets a ball.
+    if (!joints.some((k) => k._parentMesh === j)) return;
+    leaves.add(i);
+    const rb = Math.max((j._boneRadius || 0) / scale, 1e-4);
+    const h = Skeleton.jointHalf(j, rb * scale, [0, 0, 0]);
+    const at = centre(j, pos[i]);
+    segs.push({
+      joint: i, end: i, leaf: true, pa: pos[i], pb: pos[i], a: at, b: at,
+      pe: [Skeleton.jointRound(j), Skeleton.jointRound(j)],
+      ha: [Math.max(h[0] / scale, 1e-4), Math.max(h[1] / scale, 1e-4), Math.max(h[2] / scale, 1e-4)],
+      hb: [Math.max(h[0] / scale, 1e-4), Math.max(h[1] / scale, 1e-4), Math.max(h[2] / scale, 1e-4)],
+      ri: segRotations(j, j),
+    });
+  });
+
+  // A CLEAN CUT AT EVERY JOINT, the same one the cages make (WeightCage.jointPlane). Two bones
+  // that meet at a joint both reach into the joint's ball, and the radius of that ball moved both
+  // reaches at once -- there was no side of the joint that was simply the parent's and no side that
+  // was simply the child's. So each segment is clipped by a plane through the joint:
+  //   - ONE bone continuing from the joint: the BISECTING plane, shared by the two, so the half
+  //     of the joint toward the parent belongs to the parent's bone and the half toward the child
+  //     to the child's, whatever the bend;
+  //   - a BRANCH (hips, the chest where the arms and neck leave): the parent's bone ends square on
+  //     its own axis, and each child's starts square on its own;
+  //   - the END of a chain: the parent's bone ends square, and the joint's own ball (the leaf
+  //     segment above) is what lies beyond the plane.
+  // The plane runs through the JOINT, not the ball's offset centre, so a radius or an offset can
+  // reshape what each side reaches but never where the split is. window._skinSplit = false turns
+  // it off for A/B.
+  const unit = (a, b) => {
+    const x = b.x - a.x, y = b.y - a.y, z = b.z - a.z, l = Math.hypot(x, y, z);
+    return l > 1e-12 ? [x / l, y / l, z / l] : null;
+  };
+  const sum = (u, v) => {
+    const x = u[0] + v[0], y = u[1] + v[1], z = u[2] + v[2], l = Math.hypot(x, y, z);
+    return l > 1e-6 ? [x / l, y / l, z / l] : v;   // a hairpin has no bisector: use the child's axis
+  };
+  const incoming = new Map(), leaving = new Map();
+  for (const sg of segs) {
+    if (sg.leaf) continue;
+    incoming.set(sg.end, sg);
+    if (!leaving.has(sg.joint)) leaving.set(sg.joint, []);
+    leaving.get(sg.joint).push(sg);
+  }
+  const plane = (at, n) => [at.x, at.y, at.z, n[0], n[1], n[2]];
+  for (const sg of segs) {
+    if (sg.leaf) {
+      const inc = incoming.get(sg.joint), u = inc && unit(inc.pa, inc.pb);
+      if (u) sg.sp = plane(sg.pa, u);
+      continue;
+    }
+    const v = unit(sg.pa, sg.pb);
+    if (!v) continue;
+    const inc = incoming.get(sg.joint);
+    if (inc) {
+      const u = unit(inc.pa, inc.pb);
+      if (u) sg.sp = plane(sg.pa, leaving.get(sg.joint).length === 1 ? sum(u, v) : v);
+    }
+    const kids = leaving.get(sg.end) || [];
+    const w = kids.length === 1 ? unit(kids[0].pa, kids[0].pb) : null;
+    // A true tip has no ball of its own beyond it, so there is nothing to cut against: the bone just ends.
+    if (kids.length || leaves.has(sg.end)) sg.ep = plane(sg.pb, w ? sum(v, w) : v);
+  }
+  // WHO IS ACROSS EACH PLANE: the segments that start at a bone's end joint (its children, or the
+  // joint's own ball) and the bone that arrives at its start joint. The cut is only ever a decision
+  // BETWEEN these -- see nearestCapsuleWeights.
+  const idxOf = new Map(segs.map((sg, k) => [sg, k]));
+  const startingAt = (ji) => segs.map((sg, k) => (sg.joint === ji && (!sg.leaf || sg.pa === sg.pb) ? k : -1)).filter((k) => k >= 0);
+  for (const sg of segs) {
+    if (!sg.leaf) sg.pEnd = startingAt(sg.end).filter((k) => segs[k] !== sg);
+    const inc = incoming.get(sg.joint);
+    sg.pStart = inc && inc !== sg ? [idxOf.get(inc)] : [];
+  }
   return segs;
 }
 
@@ -174,18 +410,93 @@ function nearestCapsuleWeights(verts, nbV, segs) {
   const idx = new Int32Array(nbV * MAX_INFLUENCES).fill(-1);
   const wts = new Float32Array(nbV * MAX_INFLUENCES);
   let outside = 0;
+  const volumes = Skeleton.displayFlag('volumes');
+  const soft = volumes && Skeleton.displayFlag('volSoft');
+  _surfaceMetric = volumes || window._skinMetric !== 'relative';
+  const OUT = _surfaceMetric ? 0 : 1;
+  const split = window._skinSplit !== false;   // the joint planes of boneSegments; false for A/B
+  const vals = new Float64Array(segs.length);
+  const sj = new Int32Array(segs.length + 1), sw = new Float64Array(segs.length + 1);   // soft-gap scratch   // a vertex is outside every envelope when its best value exceeds this
 
   for (let i = 0; i < nbV; i++) {
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
-    let bestJoint = -1, bestT2 = Infinity;
+    let bestK = -1, bestT2 = Infinity, bestStart = false;
 
     for (let s = 0; s < segs.length; s++) {
       const t2 = envelopeT2(px, py, pz, segs[s]);
-      if (t2 < bestT2) { bestT2 = t2; bestJoint = segs[s].joint; }
+      vals[s] = t2;
+      // A TIE GOES TO THE JOINT THAT OWNS THE BALL. Where a vertex is nearest to a shared joint
+      // (the heel behind an ankle, the back of a skull behind head_01, an elbow tip) the bone
+      // ending there and the bone starting there measure the IDENTICAL distance -- the same centre
+      // and the same extents -- and `<` then handed the whole wedge to whichever segment happened
+      // to come first in the list, which is the parent more often than not. A joint's ball is its
+      // own shape (its radius lives on it), so when it is the nearest point of the bone that
+      // STARTS at it, that bone wins the tie: the heel turns with the foot, the skull with the head.
+      const eps = bestT2 === Infinity ? 0 : 1e-9 * (1 + Math.abs(bestT2));
+      if (t2 < bestT2 - eps || (t2 <= bestT2 + eps && _atStart && !bestStart)) {
+        bestT2 = t2; bestK = s; bestStart = _atStart;
+      }
     }
 
+    // THE JOINT PLANE IS A DECISION BETWEEN THE TWO BONES THAT MEET THERE, NOT A WALL. If the nearest
+    // bone is on the wrong side of a plane at one of its ends, the vertex belongs across that plane
+    // -- but only to a bone that actually reaches it (inside its envelope, or no further than the
+    // bone it would replace). Otherwise the plane stays a suggestion: a vertex far beyond a bone's
+    // end is still nearest to that bone, and handing it to a child only because the plane forbids
+    // the parent made the child own territory it was nowhere near, which no radius could take back
+    // (the clavicle taking the chest). Then equal-reach vertices -- the shared ball itself -- still
+    // split cleanly down the plane.
+    if (split && bestK >= 0) {
+      const sg = segs[bestK];
+      let across = null;
+      const sp = sg.sp, ep = sg.ep;
+      if (ep && (px - ep[0]) * ep[3] + (py - ep[1]) * ep[4] + (pz - ep[2]) * ep[5] > 0) across = sg.pEnd;
+      else if (sp && (px - sp[0]) * sp[3] + (py - sp[1]) * sp[4] + (pz - sp[2]) * sp[5] < 0) across = sg.pStart;
+      if (across && across.length) {
+        const reach = Math.max(bestT2, OUT) + 1e-9 * (1 + Math.abs(bestT2));
+        let ck = -1, cv = Infinity, cs = false;
+        for (const c of across) {
+          if (vals[c] > reach) continue;
+          const q = segs[c], qs = q.sp, qe = q.ep;
+          if (qs && (px - qs[0]) * qs[3] + (py - qs[1]) * qs[4] + (pz - qs[2]) * qs[5] < 0) continue;
+          if (qe && (px - qe[0]) * qe[3] + (py - qe[1]) * qe[4] + (pz - qe[2]) * qe[5] > 0) continue;
+          if (vals[c] < cv) { cv = vals[c]; ck = c; }
+        }
+        if (ck >= 0) { bestK = ck; bestT2 = vals[ck]; }
+      }
+    }
+    const bestJoint = bestK >= 0 ? segs[bestK].joint : -1;
+
     if (bestJoint < 0) continue;
-    if (bestT2 > 1) outside++;
+    if (bestT2 > OUT) outside++;
+    // SOFT GAPS (Bone Volumes): inside any volume a vertex is that bone's alone. OUTSIDE every volume
+    // -- the gap at a joint, and anywhere the volumes do not reach -- it takes weight from every bone
+    // within twice its nearest distance, in proportion to 1/d^2, so the transition across a joint is
+    // a blend of the bones that actually flank the vertex and nothing has to be arbitrated. The same
+    // bone owning several volumes (a branch) is one influence.
+    if (soft && bestT2 > 0) {
+      let n = 0;
+      const lim = bestT2 * 2 + 1e-9;
+      for (let s2 = 0; s2 < segs.length; s2++) {
+        const d = vals[s2];
+        if (d > lim) continue;
+        const w = 1 / (Math.max(d, 1e-6) * Math.max(d, 1e-6));
+        const jn = segs[s2].joint;
+        let k2 = 0;
+        for (; k2 < n; k2++) if (sj[k2] === jn) break;
+        if (k2 === n) { sj[n] = jn; sw[n] = 0; n++; }
+        sw[k2] += w;
+      }
+      // the strongest MAX_INFLUENCES, normalised
+      for (let a2 = 0; a2 < n - 1; a2++) for (let b2 = a2 + 1; b2 < n; b2++) if (sw[b2] > sw[a2]) { const tj = sj[a2], tw = sw[a2]; sj[a2] = sj[b2]; sw[a2] = sw[b2]; sj[b2] = tj; sw[b2] = tw; }
+      const m = Math.min(n, MAX_INFLUENCES);
+      let tot = 0;
+      for (let k2 = 0; k2 < m; k2++) tot += sw[k2];
+      if (tot > 0) {
+        for (let k2 = 0; k2 < m; k2++) { idx[i * MAX_INFLUENCES + k2] = sj[k2]; wts[i * MAX_INFLUENCES + k2] = sw[k2] / tot; }
+        continue;
+      }
+    }
     idx[i * MAX_INFLUENCES] = bestJoint;
     wts[i * MAX_INFLUENCES] = 1;
   }
@@ -269,7 +580,7 @@ function solveSmoothing(level, raw, nbJoints) {
 
 // ---- delta mush ------------------------------------------------------------------
 //
-// The pass that makes a RIGID capsule bind usable: Blue Sky's answer to "one bone per
+// The pass that makes a RIGID capsule bind usable: Rhythm & Hues' answer (Mancewicz, Derksen, Wilson 2014; in all R&H rigs since 2010) to "one bone per
 // vertex creases at every boundary". It does not touch the weights at all — it is a
 // post-process on the deformed positions, so the capsules go on stating exactly which bone
 // owns which vertex (which is what makes editing a radius legible) while the SHAPE across a
@@ -371,14 +682,35 @@ Skinning.applySkinOpacity = function (main) {
     const tm = mesh.getThreeMesh?.();
     const mat = tm && tm.material;
     if (mat) {
-      if (!mat.userData || !mat.userData._skinPrivate) {
-        const own = mat.clone();
-        own.userData = Object.assign({}, mat.userData, { _skinPrivate: true });
-        tm.material = own;
+      // NO CLONE ON THE NODE PATH, and the reason is that a clone comes back BLACK.
+      //
+      // Material.clone() does not carry `envMap`, and on this renderer the IBL lives on each
+      // material's own envMap rather than on scene.environment (see Scene._syncThreeLights).
+      // A cloned PBR material is therefore lit by nothing at all, and it is outside
+      // NodeMaterials.allPBR() so the per-frame env sync never finds it to repair. Measured:
+      // the shared material renders 183,187,191 and its clone 3,3,3, identical in every
+      // respect but that one flag. matt: "if i make a skin from the skeleton, the surface
+      // renders black. if i unbind it returns to normal shading" -- unbinding puts the shared
+      // material back.
+      //
+      // setOpacity above has already done the work: a mesh below 1.0 gets its OWN variant from
+      // NodeMaterials.getFor, which inherits the envMap and is kept in step by that same sync.
+      // So there is nothing to clone -- only the depth rules to set on what it returned.
+      if (NodeMaterials.isActive && NodeMaterials.isActive()) {
+        const own = tm.material;
+        own.transparent = true;
+        own.depthWrite = clear;
+      } else {
+        if (!mat.userData || !mat.userData._skinPrivate) {
+          const own = mat.clone();
+          own.userData = Object.assign({}, mat.userData, { _skinPrivate: true });
+          tm.material = own;
+        }
+        tm.material.transparent = true;
+        tm.material.depthWrite = clear;
+        tm.material.needsUpdate = true;
       }
-      tm.material.transparent = true;
-      tm.material.depthWrite = clear;
-      tm.material.needsUpdate = true;
+      // The x-ray skin blends OVER the capsules inside it; order 2 is what makes that true.
       tm.renderOrder = clear ? 0 : 2;
     }
     n++;
@@ -477,17 +809,30 @@ function mushScratch(mesh, n) {
 // `_skinRest`, so a blendshape's detail is preserved rather than being read as deformation
 // and smoothed away.
 function buildMush(mesh, level, iters, step) {
-  const src = mesh._skinSrc;
+  const r = mushFrom(mesh, level, mesh._skinSrc, iters, step);
+  mesh._skinMushPair = r.pair;
+  mesh._skinMushDelta = r.delta;
+  mesh._skinMushIters = iters;
+  mesh._skinMushStep = step;
+  mesh._skinMushDirty = false;
+}
+// The deltas of `src` against its own smoothed surface. Returns the smoothed positions too, which
+// live in the mesh's scratch and are only valid until the next smoothing.
+function mushFrom(mesh, level, src, iters, step) {
   const nbV = (src.length / 3) | 0;
   if (!mesh._skinAdj || mesh._skinAdj.off.length !== nbV + 1) mesh._skinAdj = flatAdjacency(level);
   const off = mesh._skinAdj.off, nb = mesh._skinAdj.nb;
 
   const sc = mushScratch(mesh, src.length);
   const sm = smoothPositions(src, sc.a, sc.b, off, nb, iters, step);
-
-  const pair = new Int32Array(nbV * 2);
-  const delta = new Float32Array(nbV * 3);
-  const f = sc.f;
+  const r = mushDeltas(src, sm, off, nb, new Int32Array(nbV * 2), new Float32Array(nbV * 3), sc.f);
+  r.sm = sm;
+  return r;
+}
+// Per vertex: the best-spread neighbour pair on the smoothed surface `sm`, and the offset of `src`
+// from it in that pair's frame. Written into `pair`/`delta`.
+function mushDeltas(src, sm, off, nb, pair, delta, f) {
+  const nbV = (src.length / 3) | 0;
 
   for (let i = 0; i < nbV; i++) {
     const s = off[i], e = off[i + 1];
@@ -529,11 +874,56 @@ function buildMush(mesh, level, iters, step) {
     }
   }
 
+  return { pair, delta };
+}
+
+// THE REST-POSE MUSH OF A BLENDSHAPE COMPOSITE, WITHOUT REBUILDING IT. Playback recomposes the
+// rest pose every frame, and a full buildMush (smooth + a best-pair search per vertex) was ~8.5ms
+// of a GalaxyXR frame on the wrestler's 12k body at 10 iterations (2026-10-14).
+//
+// smoothPositions is LINEAR (a fixed-step neighbour average), so for rest = base + sum(w * shape)
+//   S(rest) = S(base) + sum(w * S(shape))      -- exactly
+// and each S() is built once. Pairs, frames and deltas are then rebuilt from that exact S(rest)
+// by the same pass as a full build (mushDeltas), so the result IS buildMush's; only the smoothing
+// iterations are skipped. Reusing the base's PAIRS instead was measured 0.85% of the diagonal off
+// on a posed frame, and rotating precomputed per-shape deltas by the base's frames 3.4% off: the
+// wrestler's shapes move vertices ~20% of its size.
+//
+// Keyed on the base and shape ARRAYS (replacing one is how most edits land) plus `rev`, which the
+// in-place writers bump (the sculpt intercept in Mesh.updateGeometry, bsRestore, freeze).
+function composeMush(mesh, level, iters, step) {
+  const bs = mesh._skinMushBS;
+  const src = mesh._skinSrc, n = src.length;
+  if (!bs || bs.base.length < n) return false;
+  for (const [d] of bs.shapes) if (d.length < n) return false;
+  let c = mesh._skinMushCache;
+  if (!c || c.base !== bs.base || c.rev !== bs.rev || c.iters !== iters || c.step !== step || c.n !== n) {
+    const r = mushFrom(mesh, level, bs.base.subarray(0, n), iters, step);
+    c = mesh._skinMushCache = { base: bs.base, rev: bs.rev, iters, step, n,
+      smBase: new Float32Array(r.sm.subarray(0, n)), smShape: new Map(),
+      sm: new Float32Array(n), pair: new Int32Array(r.pair.length), delta: new Float32Array(n) };
+  }
+  const sm = c.sm;
+  sm.set(c.smBase);
+  for (const [d, w] of bs.shapes) {
+    let ss = c.smShape.get(d);
+    if (!ss) {
+      const sc = mushScratch(mesh, n);
+      ss = new Float32Array(smoothPositions(d.subarray(0, n), sc.a, sc.b,
+        mesh._skinAdj.off, mesh._skinAdj.nb, iters, step).subarray(0, n));
+      c.smShape.set(d, ss);
+    }
+    for (let i = 0; i < n; i++) sm[i] += ss[i] * w;
+  }
+  // The same per-vertex pass as a full build, against the composed smooth surface.
+  const { pair, delta } = mushDeltas(src, sm, mesh._skinAdj.off, mesh._skinAdj.nb, c.pair, c.delta,
+    mushScratch(mesh, n).f);
   mesh._skinMushPair = pair;
   mesh._skinMushDelta = delta;
   mesh._skinMushIters = iters;
   mesh._skinMushStep = step;
   mesh._skinMushDirty = false;
+  return true;
 }
 
 // Smooth the DEFORMED positions in `out` and put the stored detail back on top, in place.
@@ -548,7 +938,9 @@ function applyMush(mesh, level, out, nbV) {
 
   if (!mesh._skinMushDelta || mesh._skinMushDelta.length !== nbV * 3 ||
       mesh._skinMushIters !== iters || mesh._skinMushStep !== step || mesh._skinMushDirty) {
-    buildMush(mesh, level, iters, step);
+    // Composed only when a blendshape capture is the ONLY reason it is stale: every other writer
+    // of `_skinSrc` (bind, the sculpt write-back, restores) sets the flag to true, which wins.
+    if (mesh._skinMushDirty !== 'bs' || !composeMush(mesh, level, iters, step)) buildMush(mesh, level, iters, step);
   }
 
   // The pass is O(vertices x iterations) and runs on every frame a joint moves, so it is the
@@ -663,7 +1055,17 @@ Skinning.bind = function (main, mesh) {
   // the visible sculpt. Do this directly on the resolution objects rather than changing
   // selection: Bind must not unexpectedly drop the user's viewport to the lowest level.
   if (mesh._meshes?.length) {
-    for (let i = mesh._sel || 0; i > 0; i--) mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+    // EACH LEVEL'S NORMALS ARE REFRESHED AS IT IS ANALYSED, as stepping down by hand does (setSelection ->
+    // updateResolution). The detail frames are built from the upper level's normals, and the level just
+    // written by the copy still carried the ones from before it, so the cage came out of the next step
+    // with frames that no longer matched its vertices and the synthesis that follows rebuilt a different
+    // surface -- 181,000 of a Nomad body's 195,000 vertices moved, some by a third of its height ("it
+    // looks really corrupted after binding"), while binding from level 0 first, which has nothing to
+    // analyse, was fine.
+    for (let i = mesh._sel || 0; i > 0; i--) {
+      mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+      mesh._meshes[i - 1].updateGeometry();
+    }
   }
   mesh._skinLevel = 0;
   mesh._skinSizeWarned = false;
@@ -705,6 +1107,7 @@ Skinning.bind = function (main, mesh) {
 
   const nbV = level.getNbVertices();
   mesh._skinJoints = joints.map((j) => j.getID());
+  mesh._skinJointSig = jointSig(joints);
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   // The PRE-SMOOTHING assignment, kept because a partial re-solve amends it and re-smooths;
@@ -781,17 +1184,26 @@ Skinning.resolveWeights = function (main, mesh, touched) {
   // inverse bind matrix, so this stays right with the character posed. The rest vertices are
   // bind-pose too, and comparing a posed cage against them is what would make the weights jump
   // the moment you moved an arm.
+  const _r0 = performance.now();
   const prepared = prepareCages(main, joints,
     (ji) => new THREE.Matrix4().copy(mesh._skinInvBind[ji]).invert());
+  const _r1 = performance.now();
   let raw;
   if (prepared.length) {
     raw = resolveCagesRaw(mesh, prepared, nbV, touched);
   } else {
     const segs = boneSegments(mesh, joints, jointPositionsAtBind(mesh._skinInvBind));
-    if (!segs.length) return false;
-    raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
+    // NO CAPSULE LEFT (every radius 0, or Shapes Skin off everywhere) MEANS NO WEIGHTS. This used
+    // to return false and leave the PREVIOUS weights standing, so zeroing every radius changed
+    // nothing on screen and the skin kept deforming from capsules that no longer existed. An
+    // unweighted vertex is held at its rest position, which is the honest picture.
+    raw = segs.length
+      ? nearestCapsuleWeights(mesh._skinRest, nbV, segs)
+      : { idx: new Int32Array(nbV * MAX_INFLUENCES).fill(-1), wts: new Float32Array(nbV * MAX_INFLUENCES), outside: nbV };
   }
+  const _r2 = performance.now();
   const w = solveSmoothing(lvl, raw, joints.length);
+  const _r3 = performance.now();
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   mesh._skinRaw = rawSnapshot(raw);
@@ -800,6 +1212,12 @@ Skinning.resolveWeights = function (main, mesh, touched) {
   // "what changed" when there is none. With smoothing on, repaint everything.
   Skinning.refreshWeightColors(main, mesh,
     Skinning.mushSmoothIterations() > 0 ? null : raw.changed || null);
+  // Where this mesh's time went, summed over every bound mesh in a re-solve (see onCageEdited).
+  const _t = Skinning._stageMs || (Skinning._stageMs = {});
+  _t.prepare = (_t.prepare || 0) + (_r1 - _r0);
+  _t.measure = (_t.measure || 0) + (_r2 - _r1);
+  _t.smooth = (_t.smooth || 0) + (_r3 - _r2);
+  _t.colors = (_t.colors || 0) + (performance.now() - _r3);
   return true;
 };
 
@@ -826,7 +1244,9 @@ function resolveCagesRaw(mesh, prepared, nbV, touched) {
   const seen = new Set();
   for (const c of list) {
     const ji = mesh._skinJoints.indexOf(c._cageJointId);
-    const p = prepared.find((q) => q.joint === ji);
+    // THE CAGE ITSELF, not the first one on the same joint: a branching joint owns one cage per child
+    // bone, and sculpting the second would otherwise re-measure the first's neighbourhood.
+    const p = prepared.find((q) => q.mesh === c);
     if (ji < 0 || !p) return full();   // a capsule we cannot place: measure everything
     for (const i of WeightCage.candidates(V, nbV, p, base, MAX_INFLUENCES)) seen.add(i);
   }
@@ -884,13 +1304,23 @@ Skinning.onCageEdited = function (main, cage) {
   // MIRROR FIRST, THEN MEASURE. The twin capsule is part of the shape being weighted, so
   // re-solving before it moves would weight the skin against a half-finished edit and leave the
   // other side of the character a stroke behind.
-  const mir = WeightCage.mirrorEdit(main, cage);
-  // A mirrored twin is a second capsule that moved, and the vertices it can have changed are
-  // not the ones the touched capsule can. Passing only one of them would leave the other side's
-  // weights stale until something else happened to re-solve them.
-  const touched = (mir && mir.ok && mir.twinCage && mir.twinCage !== cage)
-    ? [cage, mir.twinCage] : [cage];
+  //
+  // GLUED NEIGHBOURS FIRST (see WeightCage.glueEdit): the stroke has already carried them along, so
+  // this is the catch-up for an undo and the list of who moved, and each of them is mirrored too.
+  WeightCage.glueEdit(main, cage);
+  const edited = [cage];
+  for (const g of WeightCage.takeGlued(main)) if (!edited.includes(g)) edited.push(g);
+  const touched = [cage];
+  for (const c of edited) {
+    const mir = WeightCage.mirrorEdit(main, c);
+    // A mirrored twin is a second capsule that moved, and the vertices it can have changed are
+    // not the ones the touched capsule can. Passing only one of them would leave the other side's
+    // weights stale until something else happened to re-solve them.
+    if (c !== cage && !touched.includes(c)) touched.push(c);
+    if (mir && mir.ok && mir.twinCage && !touched.includes(mir.twinCage)) touched.push(mir.twinCage);
+  }
   const _t1 = performance.now();
+  Skinning._stageMs = {};
   const n = Skinning.resolveWeightsAll(main, touched);
   const _t2 = performance.now();
   const p = window._skinPerfLast = {
@@ -901,6 +1331,7 @@ Skinning.onCageEdited = function (main, cage) {
     colored: Skinning._lastColored | 0,
     of: Skinning._lastVerts | 0,
     meshes: n,
+    stages: Object.fromEntries(Object.entries(Skinning._stageMs || {}).map(([k, v]) => [k, Math.round(v)])),
   };
   if (window._skinPerf) {
     console.log('[skin] stroke ' + p.total + 'ms  (mirror ' + p.mirror + ', resolve ' + p.resolve
@@ -932,7 +1363,10 @@ Skinning.showWeightColors = function (main, mesh, only) {
 
   const joints = resolveJoints(main, mesh);
   // sRGB components: these go into SculptGL vertex colours, not into a three material.
-  const cols = joints.map((j) => (j ? Skeleton.boneColorSRGB(main, j).clone() : null));
+  // SOLO: every bone outside the set paints black, so one joint's territory is the only lit thing.
+  const solo = Skinning._solo;
+  const dark = { r: 0.03, g: 0.03, b: 0.03 };
+  const cols = joints.map((j) => (j ? (solo && !solo.has(j.getID()) ? dark : Skeleton.boneColorSRGB(main, j).clone()) : null));
   const idx = mesh._skinIdx, wts = mesh._skinW;
 
   // ONLY THE VERTICES THAT CHANGED, when the caller knows which. A cage stroke moves a few
@@ -965,6 +1399,14 @@ Skinning.showWeightColors = function (main, mesh, only) {
   mesh.updateDuplicateColorsAndMaterials(partial ? only : undefined);
   mesh.updateColorBuffer();
   return true;
+};
+
+// Light only these joints' vertices (a Set of joint ids), or everything again with null.
+Skinning._solo = null;
+Skinning.setSolo = function (main, ids) {
+  Skinning._solo = ids && ids.size ? ids : null;
+  Skinning.refreshWeightColorsAll(main);
+  main.render?.();
 };
 
 Skinning.restoreColors = function (mesh) {
@@ -1049,6 +1491,57 @@ Skinning.anyBound = function (main) {
   return (main.getMeshes() || []).some(Skinning.isBound);
 };
 
+// MOVE A SKIN DOWN TO THE LOWEST LEVEL. matt: "we should ONLY bind at the lowest level." The skin goes to
+// its bind pose, is unbound there (which writes the bind-pose shape back into the level it was on),
+// that shape is carried down the stack to level 0 by the same analysis Bind runs, and it is bound again
+// -- at level 0, from the bone volumes, exactly as a fresh Bind would. The pose the joints were in is
+// put back afterwards. Returns true when it moved anything. Not undoable: it is a one-way repair.
+Skinning.rebaseToLowest = function (main, mesh) {
+  if (!Skinning.isBound(mesh) || !mesh._meshes || mesh._meshes.length < 2) return false;
+  const lvl = boundLevel(mesh);
+  const idx = lvl ? mesh._meshes.indexOf(lvl) : -1;
+  if (idx <= 0) return false;
+  const joints = Skeleton.joints(main);
+  const saved = joints.map((j) => [j, Float32Array.from(j.getMatrix())]);
+  const before = mesh._skinRest.length / 3;
+  // THE WEIGHTS COME DOWN WITH IT, not re-solved: a lower level's vertices are the FIRST vertices of
+  // the level above (subdivision appends), so the old map's first n entries are exactly the low
+  // level's weights. Re-solving would quietly change how the character deforms -- whatever the
+  // weights were made with is what the file was posed against. Verified against the positions below.
+  const oldIdx = mesh._skinIdx, oldW = mesh._skinW, oldRest = mesh._skinRest;
+  Skinning.goToBindPose(main, mesh);
+  Skinning.unbind(mesh);
+  for (let i = idx; i > 0; i--) {
+    mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+    mesh._meshes[i - 1].updateGeometry();
+  }
+  const r = Skinning.bind(main, mesh);
+  let kept = false;
+  if (!(r && r.ok === false) && mesh._skinRest) {
+    const n = mesh._skinRest.length / 3;
+    let ext = 0, diff = 0;
+    for (let k = 0; k < n * 3; k++) {
+      ext = Math.max(ext, Math.abs(oldRest[k]));
+      diff = Math.max(diff, Math.abs(oldRest[k] - mesh._skinRest[k]));
+    }
+    if (oldIdx.length >= n * MAX_INFLUENCES && diff <= 1e-4 * Math.max(ext, 1e-6)) {
+      mesh._skinIdx = new Int32Array(oldIdx.subarray(0, n * MAX_INFLUENCES));
+      mesh._skinW = new Float32Array(oldW.subarray(0, n * MAX_INFLUENCES));
+      mesh._skinRaw = rawSnapshot({ idx: mesh._skinIdx, wts: mesh._skinW });
+      mesh._skinMushDirty = true;
+      Skinning.refreshWeightColors(main, mesh);
+      kept = true;
+    }
+  }
+  for (const [j, m] of saved) { j.getMatrix().set(m); Skeleton.syncThree(j); }
+  Skinning.markDirtyAll(main);
+  main.render?.();
+  console.log('[skin] ' + (mesh._permanentStaticLabel || mesh.getName?.() || 'mesh') + ': moved the skin from level '
+    + idx + ' (' + before + ' verts) to level 0 (' + (mesh._skinRest ? mesh._skinRest.length / 3 : '?') + ' verts)'
+    + (r && r.ok === false ? ' -- bind refused: ' + r.why : (kept ? ', weights kept' : ', weights re-solved (levels did not nest)')));
+  return !(r && r.ok === false);
+};
+
 Skinning.unbind = function (mesh) {
   if (!mesh) return;
   Skinning.restoreColors(mesh);
@@ -1084,21 +1577,29 @@ Skinning.unbind = function (mesh) {
 // Called by applyBlendshapes once it has composited base + deltas: that composite IS the
 // rest-space pose skinning should transform. Without this the two systems fight — the
 // skin pass would keep re-transforming its own output.
-Skinning.captureSource = function (mesh) {
-  if (!mesh || !mesh._skinSrc) return;
+// Returns true when it captured, which means the next skin pass WILL refresh the mesh (geometry,
+// normals, buffers) -- so the caller's own refresh is redundant and can be skipped.
+// `bs` is { base, shapes: [[delta, weight]...], rev } -- what the composite was made of, so the
+// mush can be composed rather than rebuilt (composeMush). Omitted, the mush rebuilds as before.
+Skinning.captureSource = function (mesh, bs) {
+  if (!mesh || !mesh._skinSrc) return false;
   // Read the bound level, and only when it still matches: the source array is the rest space
   // the skin pass transforms, and filling it from a different level would feed the deformation
   // vertices that are not the ones it is weighted for.
   const lvl = boundLevel(mesh);
-  if (!lvl) return;
+  if (!lvl) return false;
   const v = lvl.getVertices();
-  if (v.length < mesh._skinSrc.length) return;
+  if (v.length < mesh._skinSrc.length) return false;
   mesh._skinSrc.set(v.subarray(0, mesh._skinSrc.length));
+  // Only when the bound level IS the composited array: on another level the shapes are not
+  // what `_skinSrc` was filled from.
+  mesh._skinMushBS = bs && v === mesh.getVertices() ? bs : null;
   mesh._skinDirty = true; // the rest pose changed, so re-skin even if no joint moved
   // The mush deltas are DEFINED against that rest pose, so they are stale too. Rebuilt
   // lazily on the next skin pass rather than here: a blendshape being scrubbed fires this
   // every frame, and only the frames that actually deform need the rebuild.
-  mesh._skinMushDirty = true;
+  if (mesh._skinMushDirty !== true) mesh._skinMushDirty = 'bs';
+  return !window._skinPause;
 };
 
 // ---- rest-space write-back ------------------------------------------------------
@@ -1382,6 +1883,57 @@ function analyseDown(mesh, level) {
 // was written by the skin pass and copied byte for byte into `_skinPosed`, so a vertex the
 // brush did not reach is bit-identical -- and on a 20k mesh a fifty-vertex stroke then costs
 // fifty matrix inversions instead of twenty thousand.
+// THE REST-SHAPE JOURNAL, so that undo is EXACT.
+//
+// A stroke on a posed skin is carried into rest space by inverting the LINEAR blend of the joints, and the
+// skin pass then draws mush(blend(rest)), which is not the same surface (up to twice the stroke across a hard
+// weight seam, measured). Undo used to restore the posed vertices and run the same inversion back, and a
+// round trip through two different operators does not return: one smoothing stroke across a seam and three
+// undos took the rest shape from 2.5 to 6, 14 and 33 units away -- "each time I tried to undo it got worse".
+// So the commit records, for every vertex it changed, the rest/src values before and after, hangs the record
+// on the stroke's undo state, and undo/redo write those values back verbatim.
+// Only when the stroke was at the bound level itself: above it, analyseDown has also changed the levels below.
+function restJournal(mesh) {
+  Skinning._lastRestEntry = null;
+  const stack = mesh._meshes;
+  if (stack && stack.length && (mesh._sel | 0) !== stack.indexOf(boundLevel(mesh))) return null;
+  const e = { mesh: mesh, idx: [], oldRest: [], oldSrc: [], newRest: [], newSrc: [] };
+  let at = -1;
+  Skinning._lastRestEntry = e;
+  return {
+    before(i, src, rest) {
+      at = e.idx.length; e.idx.push(i);
+      e.oldRest.push(rest[i * 3], rest[i * 3 + 1], rest[i * 3 + 2]);
+      e.oldSrc.push(src[i * 3], src[i * 3 + 1], src[i * 3 + 2]);
+    },
+    after(src, rest) {
+      const i = e.idx[at] * 3;
+      e.newRest.push(rest[i], rest[i + 1], rest[i + 2]);
+      e.newSrc.push(src[i], src[i + 1], src[i + 2]);
+    },
+    afterValues(x, y, z) { e.newRest.push(x, y, z); e.newSrc.push(x, y, z); },
+    drop() {                                   // a vertex that was recorded and then not committed
+      e.idx.length = at; e.oldRest.length = at * 3; e.oldSrc.length = at * 3;
+    },
+  };
+}
+
+// Put a recorded commit back (`which` = 'undo' or 'redo'), vertex for vertex. False when it does not apply.
+Skinning.applyRestEntry = function (entry, which) {
+  const m = entry && entry.mesh;
+  if (!m || !Skinning.isBound(m) || !m._skinRest || !m._skinSrc) return false;
+  const rest = which === 'undo' ? entry.oldRest : entry.newRest, src = which === 'undo' ? entry.oldSrc : entry.newSrc;
+  for (let k = 0; k < entry.idx.length; k++) {
+    const i = entry.idx[k] * 3, j = k * 3;
+    if (i + 2 >= m._skinRest.length) continue;
+    m._skinRest[i] = rest[j]; m._skinRest[i + 1] = rest[j + 1]; m._skinRest[i + 2] = rest[j + 2];
+    m._skinSrc[i] = src[j]; m._skinSrc[i + 1] = src[j + 1]; m._skinSrc[i + 2] = src[j + 2];
+  }
+  m._skinMushDirty = true;      // the mush deltas are defined against the rest pose
+  m._skinDirty = true;          // the pass redraws from the restored rest
+  return true;
+};
+
 function commitPosed(main, mesh, level, nbV) {
   const ref = mesh._skinPosed;
   if (!ref || ref.length !== nbV * 3) {
@@ -1394,10 +1946,12 @@ function commitPosed(main, mesh, level, nbV) {
   const idx = mesh._skinIdx, wts = mesh._skinW;
 
   let moved = 0, singular = 0;
+  const jr = restJournal(mesh);   // what this commit changes, so undo can put it back EXACTLY (see applyRestEntry)
   for (let i = 0; i < nbV; i++) {
     const i3 = i * 3;
     const dx = out[i3] - ref[i3], dy = out[i3 + 1] - ref[i3 + 1], dz = out[i3 + 2] - ref[i3 + 2];
     if (dx === 0 && dy === 0 && dz === 0) continue;
+    if (jr) jr.before(i, src, rest);
 
     // The blended basis, weighted exactly as apply() weights it.
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0, total = 0;
@@ -1422,6 +1976,7 @@ function commitPosed(main, mesh, level, nbV) {
     if (total <= 1e-6) {
       src[i3] += dx; src[i3 + 1] += dy; src[i3 + 2] += dz;
       rest[i3] += dx; rest[i3 + 1] += dy; rest[i3 + 2] += dz;
+      if (jr) jr.after(src, rest);
       moved++;
       continue;
     }
@@ -1431,7 +1986,7 @@ function commitPosed(main, mesh, level, nbV) {
     // part of a stroke, writing a garbage inverse loses the model.
     const c0 = b4 * b8 - b5 * b7, c1 = b5 * b6 - b3 * b8, c2 = b3 * b7 - b4 * b6;
     const det = b0 * c0 + b1 * c1 + b2 * c2;
-    if (!(Math.abs(det) > 1e-12)) { singular++; continue; }
+    if (!(Math.abs(det) > 1e-12)) { singular++; if (jr) jr.drop(); continue; }
     const id = 1 / det;
     const i0 = c0 * id, i1 = (b2 * b7 - b1 * b8) * id, i2 = (b1 * b5 - b2 * b4) * id;
     const i3a = c1 * id, i4 = (b0 * b8 - b2 * b6) * id, i5 = (b2 * b3 - b0 * b5) * id;
@@ -1442,6 +1997,7 @@ function commitPosed(main, mesh, level, nbV) {
     const rz = i6 * dx + i7 * dy + i8 * dz;
     src[i3] += rx; src[i3 + 1] += ry; src[i3 + 2] += rz;
     rest[i3] += rx; rest[i3 + 1] += ry; rest[i3 + 2] += rz;
+    if (jr) jr.after(src, rest);
     moved++;
   }
 
@@ -1450,6 +2006,19 @@ function commitPosed(main, mesh, level, nbV) {
       + 'committed', singular);
   }
   if (!moved) return false;
+
+  // THE INVERSION ABOVE IS OF THE LINEAR BLEND ONLY, and the skin pass then adds delta mush, so with mush on
+  // the pass does not redraw exactly what was sculpted: at a hard weight seam it moves the surface by up to
+  // twice the stroke (three smoothing strokes across one: rest 0.17, 0.54, 1.3 units off, the display snapping
+  // by 0.27, 0.59, 1.28 when the pass ran). Refining the commit against the real pass was tried -- re-draw,
+  // measure, push the residual back through the inverse -- and DIVERGES at every gain (0.2 to 1.0: several units
+  // after one stroke), because mush recomputes its detail against the new rest. Undo is made exact instead (the
+  // journal above) and the artist is told where the edit is not: sculpt at the bind pose (Hold Bind Pose) to
+  // keep it exact.
+  if (Skinning.mushIterations() > 0 && !mesh._skinPosedWarned && window.screenLog) {
+    mesh._skinPosedWarned = true;
+    window.screenLog('Sculpting while posed is approximate with Delta Mush on -- use Hold Bind Pose for exact edits (undo is exact either way)', '#f9e2af');
+  }
 
   // The reference has to move with the stroke: a second stroke can land before the next skin
   // pass, and measuring it against a stale reference would commit the FIRST stroke twice.
@@ -1495,6 +2064,16 @@ Skinning.commitToRest = function (main, mesh) {
   if (!Skinning.atBindPose(main, mesh)) return commitPosed(main, mesh, level, nbV);
 
   const v = level.getVertices();
+  const jb = restJournal(mesh);
+  if (jb) {
+    for (let i = 0; i < nbV; i++) {
+      const i3 = i * 3;
+      if (v[i3] === mesh._skinRest[i3] && v[i3 + 1] === mesh._skinRest[i3 + 1] && v[i3 + 2] === mesh._skinRest[i3 + 2]
+          && v[i3] === mesh._skinSrc[i3] && v[i3 + 1] === mesh._skinSrc[i3 + 1] && v[i3 + 2] === mesh._skinSrc[i3 + 2]) continue;
+      jb.before(i, mesh._skinSrc, mesh._skinRest);
+      jb.afterValues(v[i3], v[i3 + 1], v[i3 + 2]);
+    }
+  }
   mesh._skinSrc.set(v.subarray(0, nbV * 3));
   // THE BIND SHAPE ITSELF MOVED, so `_skinRest` follows. It is what weights are re-solved from
   // when a joint radius changes and what unbind puts back -- leaving it on the pre-sculpt shape
@@ -1832,13 +2411,24 @@ Skinning.apply = function (main, mesh) {
   // one bound mesh the last one to run was overwriting everyone else's breakdown and the trace
   // was quietly reporting it as theirs. Cleared here and snapshotted below, per mesh.
   if (window._skinTrace) window._skinPhase = null;
+  // THE SKIN PASS'S OWN REFRESH IS NOT A SCULPT. Mesh.updateGeometry rebases a blendshape
+  // track's baseShape from whatever is on screen, so without this guard the POSED vertices
+  // became the rest-space base; playback's applyBlendshapes then fed base+deltas back into
+  // `_skinSrc` via captureSource, and the next pass posed the already-posed shape -- a
+  // feedback loop that grew every frame. Wrestler example: press play, the arms explode.
+  const _bsTrack = window._animationRegistry?.tracks?.get(mesh.getID());
+  if (_bsTrack) _bsTrack._applyingBS = true;
   // SKIP THE OCTREE. A posed frame is not a picked frame: the tree is rebuilt by the first
   // query that needs it, which is the next brush stroke or ray, not the next frame of a drag.
-  if (_synth) {
-    mesh.updateResolution(true);
-  } else {
-    mesh.updateGeometry(undefined, undefined, true);
-    if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+  try {
+    if (_synth) {
+      mesh.updateResolution(true);
+    } else {
+      mesh.updateGeometry(undefined, undefined, true);
+      if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+    }
+  } finally {
+    if (_bsTrack) _bsTrack._applyingBS = false;
   }
 
   // HAND THE NUMBERS UP, do not print them here. One bound mesh made a line per mesh the whole
@@ -1882,10 +2472,92 @@ Skinning.apply = function (main, mesh) {
 // entire reason this line exists; do not replace it with a total.
 let _passTraceAt = 0;
 
+// A BIND THAT FOLLOWS RIG EDITS. The bind used to be frozen to the joints that existed when you
+// pressed it: a joint drawn afterwards never got a vertex, and deleting or dissolving a bound
+// joint made every re-solve refuse ("rebinding is the fix") — and rebinding from scratch takes
+// the CURRENT mesh as the bind shape, which collapses a posed character. matt: "ensure we can add
+// and remove/dissolve joints after the skin has been made, and the weighting updates without
+// fuss or collapsing."
+//
+// So when the joint set changes, the bind is carried over rather than redone:
+//   - a joint that survives keeps its inverse bind, so nothing already bound moves;
+//   - a NEW joint's bind frame is its nearest bound ancestor's bind frame times where the new
+//     joint sits relative to that ancestor NOW. At the bind pose that is simply where it is; on
+//     a posed rig it is where it would have been, so a jaw drawn on a posed head binds right;
+//   - a removed joint just drops out;
+// and the weights are then re-solved over the new set at the BIND pose, against the rest shape —
+// never the posed mesh, which is the collapse.
+// ORDER-FREE: the mesh list can be reordered without the rig changing, and that must not re-solve.
+function jointSig(joints) {
+  let h = joints.length;
+  for (const j of joints) h = (h + Math.imul(j.getID() + 1, 0x9E3779B1)) | 0;
+  return h;
+}
+Skinning.syncJoints = function (main, mesh, joints) {
+  if (!Skinning.isBound(mesh)) return false;
+  joints = joints || Skeleton.joints(main);
+  const oldIds = mesh._skinJoints;
+  const oldSet = new Set(oldIds);
+  if (oldIds.length === joints.length && joints.every((j) => oldSet.has(j.getID()))) {
+    mesh._skinJointSig = jointSig(joints);
+    return false;
+  }
+  const oldAt = new Map();
+  oldIds.forEach((id, i) => oldAt.set(id, i));
+  _mMesh.fromArray(mesh.getModelSpaceMatrix());
+  _mInv.copy(_mMesh).invert();
+  const nowLocal = (j) => new THREE.Matrix4().multiplyMatrices(_mInv, new THREE.Matrix4().fromArray(j.getModelSpaceMatrix()));
+  const invBind = joints.map((j) => {
+    const at = oldAt.get(j.getID());
+    if (at !== undefined) return mesh._skinInvBind[at];
+    let a = j._parentMesh;
+    while (a && !oldAt.has(a.getID ? a.getID() : -1)) a = a._parentMesh;
+    if (!a) return nowLocal(j).invert();
+    const bindA = new THREE.Matrix4().copy(mesh._skinInvBind[oldAt.get(a.getID())]).invert();
+    const rel = nowLocal(a).invert().multiply(nowLocal(j));
+    return bindA.multiply(rel).invert();
+  });
+  mesh._skinJoints = joints.map((j) => j.getID());
+  mesh._skinInvBind = invBind;
+  // Everything indexed by joint position is stale: the raw assignment (a partial re-solve would
+  // amend it in the old numbering) and the pose stamp (sized to the old joint count).
+  mesh._skinRaw = null;
+  mesh._skinStampBuf = null;
+  mesh._skinMushDirty = true;
+  mesh._skinDirty = true;
+  mesh._skinJointSig = jointSig(joints);
+  Skinning.resolveWeights(main, mesh);
+  return true;
+};
+
 Skinning.update = function (main) {
   if (window._skinPause) return;
   const meshes = main.getMeshes();
   if (!meshes) return;
+
+  // A SKIN ON ANY LEVEL BUT THE LOWEST IS MOVED DOWN, once per mesh (see rebaseToLowest). Bind has
+  // always bound at level 0; a skin ends up higher when levels are created BELOW it afterwards (Reverse
+  // on an already-bound mesh), and files saved like that carry the dense level's weights for good.
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    if (m._skinRebaseTried || !Skinning.isBound(m) || !m._meshes || m._meshes.length < 2) continue;
+    m._skinRebaseTried = true;
+    const lvl = boundLevel(m);
+    if (lvl && m._meshes.indexOf(lvl) > 0) Skinning.rebaseToLowest(main, m);
+  }
+
+  // Did the rig gain or lose a joint? A count and an id sum, once a frame, so an unchanged rig
+  // pays for one filter over the mesh list and nothing else.
+  if (Skinning.anyBound(main)) {
+    const joints = Skeleton.joints(main);
+    const sig = jointSig(joints);
+    for (let i = 0; i < meshes.length; i++) {
+      const m = meshes[i];
+      if (!Skinning.isBound(m)) continue;
+      if (m._skinJointSig === undefined) m._skinJointSig = jointSig(resolveJoints(main, m).filter(Boolean));
+      if (m._skinJointSig !== sig) Skinning.syncJoints(main, m, joints);
+    }
+  }
 
   const trace = !!window._skinTrace;
   const t0 = trace ? performance.now() : 0;
@@ -1944,6 +2616,8 @@ Skinning.update = function (main) {
   }
   console.log(out);
 };
+
+WeightCage.onChanged = (main) => Skinning.resolveWeightsAll(main);
 
 export default Skinning;
 export { MAX_INFLUENCES };

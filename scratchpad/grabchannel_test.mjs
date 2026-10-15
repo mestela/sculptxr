@@ -185,7 +185,7 @@ check('the flag is set per grabbed object, from the channel state',
   const branch = at < 0 ? '' : GRAB.slice(at, GRAB.indexOf('\n            for (let i = 0', at));
   check('the bone branch was found', branch.length > 0);
   check('the bone branch asks which channels are on',
-    /const _ch = GrabChannels\.channels\(\);/.test(branch),
+    /GrabChannels\.forGesture\(this\._gestureKind\)/.test(branch),
     'the pin path is not the only way to grab something');
   check('...rotation-only writes the joint directly and never calls solve',
     /if \(!_ch\.translate\) \{[\s\S]{0,1200}?setModelSpaceMatrix\(_grabM\.elements\)/.test(branch)
@@ -239,7 +239,7 @@ check('...and they light to match the current state',
   const at = PANEL.indexOf('_syncExtrasActive');
   const chain = at < 0 ? '' : PANEL.slice(at, PANEL.indexOf('\n  _buildExtrasHTML', at));
   const arms = (chain.match(/(?:\} else )?if \(idx === Enums\.Tools\.GRAB\)/g) || []).length;
-  const inBone = /idx === Enums\.Tools\.BONE_DRAW \|\| idx === Enums\.Tools\.GRAB\) \{[\s\S]{0,600}?#mp-grab-translate/.test(chain);
+  const inBone = /idx === Enums\.Tools\.BONE_DRAW \|\| idx === Enums\.Tools\.GRAB\) \{[\s\S]{0,600}?#mp-grab-translate/.test(chain.replace(/\s+/g, ' ')) || /BONE_DRAW \|\| idx === Enums\.Tools\.GRAB\) \{[\s\S]{0,900}?#mp-grab-translate/.test(chain);
   check('the grab buttons repaint in the arm the tool actually reaches',
     inBone,
     'GRAB matches the BONE_DRAW arm first; anything later in the chain is dead code');

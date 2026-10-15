@@ -101,8 +101,13 @@ export default class ViewportMenu {
   }
 
   close() {
+    const wasOpen = this.isOpen();
     if (this._el) this._el.style.display = 'none';
     this._closeSub();
+    // One-shot: whoever opened the menu can undo what it did for it (Scene lights the target joint).
+    const cb = this.onClose;
+    this.onClose = null;
+    if (wasOpen && cb) { try { cb(); } catch (e) { console.warn('[ViewportMenu] onClose', e); } }
   }
 
   _closeSub() {

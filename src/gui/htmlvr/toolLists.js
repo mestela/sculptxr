@@ -58,6 +58,10 @@ export const TOOL_LABELS = {
   [Enums.Tools.PAINT_GROUP]:      'Groups',
   [Enums.Tools.BONE_DRAW]:        'Bones',
   [Enums.Tools.SELECT]:           'Select',
+  [Enums.Tools.SEL_LOOP]:         'Sel Loop',
+  [Enums.Tools.CUT_LOOP]:         'Cut Loop',
+  [Enums.Tools.BEVEL]:            'Bevel',
+  [Enums.Tools.SEL_EDGE]:         'Sel Edge',
 };
 
 // The fallback still exists, because a name is not worth throwing over — but it now means "a
@@ -107,8 +111,15 @@ export const SCULPT_TOOLS = [
   entry(Enums.Tools.MASKING),
 ];
 
+// Tools that move a whole object/rig, not vertices. Shown apart from the sculpt brushes.
+export const XFORM_TOOL_IDS = [Enums.Tools.SELECT, Enums.Tools.GRAB, Enums.Tools.BONE_DRAW, Enums.Tools.TRANSFORM_VR];
+
 export const MESH_TOOLS = [
   entry(Enums.Tools.CUT_TOOL),
+  entry(Enums.Tools.SEL_EDGE),
+  entry(Enums.Tools.SEL_LOOP),
+  entry(Enums.Tools.CUT_LOOP),
+  entry(Enums.Tools.BEVEL),
   entry(Enums.Tools.EXTRUDE),
   entry(Enums.Tools.INSET),
   entry(Enums.Tools.DELETE_FACE),

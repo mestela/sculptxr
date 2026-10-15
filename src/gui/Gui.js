@@ -1,5 +1,5 @@
 import TR from './GuiTR.js';
-import { TAB_ICONS } from './tabIcons.js';
+import { TAB_ICONS, ICON_PIN } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
 import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen, hoistGroupsToTop } from './htmlvr/uiTokens.js';
 
@@ -143,6 +143,22 @@ class Gui {
     this._ctrls = [];
   }
 
+  getUiScale() { return this._uiScale || 1; }
+
+  // OVERALL UI SCALE (Settings > UI Scale). CSS zoom on the sidebar and top bar only -- they are
+  // the two fixed chrome elements, sized in CSS px, so zooming both by the same factor keeps
+  // their relative offsets right. The canvas is NOT zoomed: it fills what they leave, which is
+  // why onCanvasResize reads their RENDERED rects rather than their CSS sizes.
+  applyUiScale(z, silent) {
+    z = Math.min(1.5, Math.max(0.5, Number(z) || 1));
+    this._uiScale = z;
+    window._uiScale = z;   // read by the canvas-drawn panels (timeline, blendshape) for hit-testing
+    if (this._sidebarEl) this._sidebarEl.style.zoom = z === 1 ? '' : String(z);
+    if (this._topbarEl) this._topbarEl.style.zoom = z === 1 ? '' : String(z);
+    if (!silent) this._main?.onCanvasResize?.();
+    window.dispatchEvent(new CustomEvent('sxr-uiscale', { detail: z }));
+  }
+
   initGui() {
     this.deleteGui();
 
@@ -252,13 +268,13 @@ class Gui {
     let _resizeRafPending = false;
     sidebarHandle.addEventListener('pointerdown', (e) => {
       _resizeStartX = e.clientX;
-      _resizingW = sidebarEl.offsetWidth;
+      _resizingW = parseFloat(sidebarEl.style.width) || SIDEBAR_WIDTH; // CSS px (pre-zoom)
       sidebarHandle.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
     sidebarHandle.addEventListener('pointermove', (e) => {
       if (!_resizingW) return;
-      const newW = Math.max(240, Math.min(700, _resizingW - (e.clientX - _resizeStartX)));
+      const newW = Math.max(240, Math.min(700, _resizingW - (e.clientX - _resizeStartX) / this.getUiScale()));
       sidebarEl.style.width = newW + 'px';
       if (this._topbarEl) this._topbarEl.style.right = newW + 'px';
       if (!_resizeRafPending) {
@@ -690,10 +706,12 @@ class Gui {
       display: 'flex', alignItems: 'center', gap: '2px',
       padding: '0 8px',
       zIndex: '1100',
+      touchAction: 'none',   // the bar never scrolls; stops a double-tap on its blank area zooming the page on iPad
       fontFamily: 'system-ui, -apple-system, sans-serif',
       boxSizing: 'border-box'
     });
     document.body.appendChild(topbarEl);
+    this.applyUiScale(getOptionsURL().uiScale ?? 1, true);
 
     // Dropdown menu definitions
     const menuDefs = [
@@ -738,7 +756,7 @@ class Gui {
                // with no home in the app at all. This is a layout preference of ONE menu, so it
                // is fixed in that menu: the builder keeps its contract, the sidebar tab is
                // untouched, and nothing else has to be re-tested.
-               hoistGroupsToTop(el, ['Shader', 'Rig Display']);
+               hoistGroupsToTop(el, ['Shading', 'Display']);
              } }]
         : [
           { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
@@ -841,7 +859,9 @@ class Gui {
         box-sizing: border-box;
         max-height: 80vh;
         overflow-y: auto;
-        z-index: 1200;
+        /* ABOVE EVERY FLOATING PANEL: .dfp raises itself with a counter that starts at 3000 and
+           only grows, so a menu has to sit well over it (and under the 99999+ modal overlays). */
+        z-index: 90000;
       }
     `;
     document.head.appendChild(style);
@@ -869,8 +889,37 @@ class Gui {
       // Wired AFTER the builder's own pass, and covering both kinds of heading: the ones
       // groupSectionTitles just created and the ones a builder emitted itself (View).
       wireGroups(dd, () => {});
+      // TEAR-OFF, the desktop twin of the VR panel's float button. Added last so no builder or
+      // wire pass ever sees it, and it is the same header markup the sidebar sections use.
+      dd.insertAdjacentHTML('afterbegin',
+        `<div class="mm-section-header"><span class="mm-section-header-title">${def.label.replace(/\s*▾$/, '')}</span>`
+        + `<button class="mm-section-pin-btn" id="mm-menu-tear-btn" title="Float panel">${ICON_PIN}</button></div>`);
+      dd.querySelector('#mm-menu-tear-btn')?.addEventListener('click', () => {
+        this._closeAllDropdowns();
+        this.floatMenu(def);
+      });
     };
     rebuild();
+  }
+
+  // A top-bar menu floating over the canvas. Same panel as a pinned sidebar section, built from
+  // the menu's own builder and wiring; not persisted, since menus are reached from the bar.
+  floatMenu(def) {
+    if (!this._menuFloats) this._menuFloats = new Map();
+    if (this._menuFloats.has(def.id)) { this._menuFloats.get(def.id).raise(); return; }
+    injectFloatCSS();
+    const main = this._main;
+    const n = this._menuFloats.size;
+    const panel = new DesktopFloatPanel({
+      sectionId: def.id,
+      title: def.label.replace(/\s*▾$/, ''),
+      dockTitle: 'Close',
+      groupOpts: { defaultOpen: pageDefaultOpen(def.id) },
+      build: () => def.buildFn(main),
+      wire: (el, rb) => { def.wireFn(el, main, rb, ...(def.extraArgs ?? [])); fixSliderDrag(el); },
+      onRedock: (id) => { panel.dispose(); this._menuFloats.delete(id); },
+    }).mount(140 + n * 24, 90 + n * 24);
+    this._menuFloats.set(def.id, panel);
   }
 
   _closeAllDropdowns() {
@@ -1451,6 +1500,16 @@ class WebAwesomeFolderMock {
     labelRow.appendChild(labelSpan);
     labelRow.appendChild(valSpan);
     row.appendChild(labelRow);
+    valSpan.style.cursor = 'pointer';
+    valSpan.addEventListener('click', () => {
+      const np = window._vrNumpad;
+      if (!np || np.isBlockingOpen || slider.hasAttribute('disabled')) return;
+      const lo = parseFloat(min), hi = parseFloat(max);
+      np.open(parseFloat(slider.value), { label: name, min: lo, max: hi, integer: Number(step) >= 1 }, (val) => {
+        slider.value = Math.min(hi, Math.max(lo, val));
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      }, valSpan, null);
+    });
 
     const slider = document.createElement('wa-slider');
     slider.setAttribute('min', min.toString());

@@ -1,5 +1,7 @@
+import { rotSync, maskSync } from '../editing/xfChannel.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
 import TextureIO from './TextureIO.js';
+import MediaRef from './MediaRef.js';
 import Skeleton from '../editing/Skeleton.js';
 
 var Export = {};
@@ -17,7 +19,28 @@ var Export = {};
 // 12 per-face group ids (_facesGroups; steers guided quad remesh)
 // 13 animation playback range (master duration, start, end)
 // 15 project range START (the range slider's outer left handle; the end is the master duration)
-Export.VERSION = 15;
+// 16 SPARSE transform keys: per-slot key mask (9 channel bits), unwrapped eulers, and ONLY the
+//    tangent overrides that exist, as a list. Up to v15 every key was written with baked default
+//    tangents, so every loaded key looked hand-tangented -- frozen auto tangents, and Simplify
+//    refusing to touch any of them.
+Export.VERSION = 16;
+
+var TAN_KINDS = ['right_dt', 'left_dt', 'right_dv', 'left_dv', 'tied'];
+var TAN_GROUPS = ['pos', 'rot', 'scale'];
+// A track's tangent overrides as [slot, group, kind, channel, value] rows.
+function tangentRows(track) {
+  var rows = [];
+  var to = track.tangentOffsets || {};
+  Object.keys(to).forEach(function (k) {
+    var m = /^trans_(?:(pos|rot|scale)_)?(\d+)_(right_dt|left_dt|tied|right_dv|left_dv)(?:_(\d))?$/.exec(k);
+    if (!m) return;
+    var g = TAN_GROUPS.indexOf(m[1] || 'pos');
+    var kind = TAN_KINDS.indexOf(m[3]);
+    var v = to[k];
+    rows.push([+m[2], g, kind, m[4] !== undefined ? +m[4] : 0, typeof v === 'boolean' ? (v ? 1 : 0) : v]);
+  });
+  return rows;
+}
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -85,7 +108,9 @@ Export.exportSGL = function (meshes, main) {
       nbBytes += nbTransKeys * 12; // pos
       nbBytes += nbTransKeys * 16; // quat
       nbBytes += nbTransKeys * 12; // scale
-      nbBytes += nbTransKeys * 36; // tangents (9 floats per key)
+      nbBytes += nbTransKeys * 12; // eulers
+      nbBytes += nbTransKeys * 4;  // key mask
+      nbBytes += 4 + tangentRows(track).length * 20; // tangent override rows
 
       nbBytes += 12 + 16 + 12; // rest pos/quat/scale
     }
@@ -359,31 +384,18 @@ Export.exportSGL = function (meshes, main) {
           f32a[off++] = track.scales[k];
         }
         
-        // Write Tangents (9 floats per key)
-        for (var k = 0; k < nbTransKeys; ++k) {
-          const dt = (k < nbTransKeys - 1) ? track.times[k+1] - track.times[k] : 0.2;
-          
-          const rDt = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_right_dt`] : undefined;
-          const lDt = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_left_dt`] : undefined;
-          const tied = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_tied`] !== false : true;
+        // v16: eulers (winding), the key mask, and the tangent overrides that exist.
+        var _eul = rotSync(track) || [];
+        for (var k = 0; k < nbTransKeys * 3; ++k) f32a[off++] = _eul[k] || 0;
+        var _mask = maskSync(track);
+        for (var k = 0; k < nbTransKeys; ++k) u32a[off++] = _mask[k];
+        var _rows = tangentRows(track);
+        u32a[off++] = _rows.length;
+        _rows.forEach(function (r) {
+          u32a[off++] = r[0]; u32a[off++] = r[1]; u32a[off++] = r[2]; u32a[off++] = r[3];
+          f32a[off++] = r[4];
+        });
 
-          f32a[off++] = rDt !== undefined ? rDt : dt * 0.33;
-          for (let c = 0; c < 3; c++) {
-            const rDv = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_right_dv_${c}`] : undefined;
-            const slope = window._animationRegistry ? window._animationRegistry.getCurveSlope(track, k, c) : 0;
-            f32a[off++] = rDv !== undefined ? rDv : slope * (rDt !== undefined ? rDt : dt * 0.33);
-          }
-
-          f32a[off++] = lDt !== undefined ? lDt : -dt * 0.33;
-          for (let c = 0; c < 3; c++) {
-            const lDv = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_left_dv_${c}`] : undefined;
-            const slope = window._animationRegistry ? window._animationRegistry.getCurveSlope(track, k, c) : 0;
-            f32a[off++] = lDv !== undefined ? lDv : slope * (lDt !== undefined ? lDt : -dt * 0.33);
-          }
-
-          f32a[off++] = tied ? 1.0 : 0.0;
-        }
-        
         // Write rest pose safely
         var rP = track.restPos || [0,0,0];
         var rQ = track.restQuat || [0,0,0,1];
@@ -516,6 +528,14 @@ Export.exportSGL = function (meshes, main) {
     // Frame-by-frame (cel) animation: append an independent, footer-located block
     // after the mesh data. Old importers stop after the mesh data and ignore it.
     var parts = [data];
+    // The video/audio clips, as a reference (name, offset, switches). FIRST of the footer blocks:
+    // see MediaRef for why that position is safe for every other reader.
+    try {
+      var mdiaBuf = MediaRef.serialize(main);
+      if (mdiaBuf && mdiaBuf.byteLength) parts.push(mdiaBuf);
+    } catch (e) {
+      console.error('[MediaRef] export append failed', e);
+    }
     // Textures: the images and material scalars, appended footer block. FIRST of the three, for
     // the same reason the comment below gives -- FrameGroup's reader only inspects the final 8
     // bytes, so its block has to stay last, and SKEL's finder walks past whatever is after it.

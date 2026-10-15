@@ -45,4 +45,35 @@ GrabChannels.setChannel = function (which, on) {
   return next;
 };
 
+// AUTO: the per-target rule that replaces swapping Translate on and off while posing (matt,
+// 2026-10-09: "pins behave in their best mode. bones default to rotate. if alt trigger is pressed,
+// it goes into IK mode").
+//
+//   a PIN         -> the whole 6DOF gesture, always ('pin')
+//   a BONE/JOINT  -> a plain FK turn by default ('fk'), and an IK effector drag while the
+//                    OFF-HAND trigger is held as the gesture starts, or where FK is impossible --
+//                    a joint the pins own is rewritten by the solver, so a turn would be thrown
+//                    away ('ik')
+//
+// On by default. With Auto off the Translate / Rotate switches above apply to everything, as
+// they always did.
+GrabChannels.auto = function () {
+  if (window._grabAuto != null) return !!window._grabAuto;
+  const opts = getOptionsURL();
+  return opts.grabAuto == null ? true : !!opts.grabAuto;
+};
+
+GrabChannels.setAuto = function (on) {
+  window._grabAuto = !!on;
+  getOptionsURL.saveOption?.('grabAuto', !!on, 0);
+  return !!on;
+};
+
+// The channels for one gesture of `kind` ('pin' | 'fk' | 'ik'). With Auto off the switches rule.
+GrabChannels.forGesture = function (kind) {
+  if (!GrabChannels.auto()) return GrabChannels.channels();
+  if (kind === 'fk') return { translate: false, rotate: true };
+  return { translate: true, rotate: true };   // 'pin' and 'ik': the whole gesture
+};
+
 export default GrabChannels;

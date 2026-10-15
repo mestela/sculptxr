@@ -39,7 +39,8 @@ import PanelTrace from '../../misc/PanelTrace.js';
 import { toolTextTint } from './toolTints.js';
 import { ColorWheel, buildColorWheelHTML } from './ColorWheel.js';
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
-import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
+import Mesh from '../../mesh/Mesh.js';
+import { SCULPT_TOOLS, MESH_TOOLS, XFORM_TOOL_IDS, toolLabel } from './toolLists.js';
 import {
   buildBoneSectionHTML,
   buildBonePoseHTML,
@@ -48,16 +49,19 @@ import {
   wireBoneSection,
 } from '../bonePanel.js';
 import { buildTransformSectionHTML, wireTransformSection } from '../transformPanel.js';
+import { GIZMO_MUL_MIN, GIZMO_MUL_MAX } from '../../editing/GizmoVR.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
 import { faIcon, setFaIcon } from './faIcons.js';
-import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen, resetUIDefaults } from './uiTokens.js';
+import { collapsibleHTML, wireGroups, uiReorg, applyUISweep, groupSectionTitles, pageDefaultOpen, resetUIDefaults, hoistGroupsToTop } from './uiTokens.js';
 import Skeleton from '../../editing/Skeleton.js';
 import releaseText from '../../../docs/releases.md?raw';
 import {
+
+
   injectAnimCSS,
   buildAnimationSectionHTML,
   wireAnimationSection,
@@ -65,11 +69,36 @@ import {
   refreshBlendshapesDOM,
 } from './AnimationControlPanel.js';
 
+// LIGHT INTENSITY IS A LOG SLIDER, because a linear one is unusable.
+//
+// Scene._syncThreeLights sets the three.js intensity to slider x ref^2, where ref is half the
+// scene diagonal -- about 29 units for the default sphere, so ref^2 is about 870. Slider 1
+// therefore means "irradiance 1 at 29 units away". In VR you place a light far nearer than
+// that, and irradiance goes as 1/d^2: at 10 units, slider 1 is already 8x over and every
+// surface facing the light clips to flat white. Measured in a session: slider ~2 -> three.js
+// intensity 1762, and matt could not drag below ~0.23, which still clips.
+//
+// So the whole useful span lived in the bottom ~1% of a 0..20 linear track. The mapping is now
+// logarithmic over 0.001..20, which puts 1.0 near the middle and makes the low end reachable.
+// The stored value is unchanged -- this is the track's shape only, not the light's meaning.
+const LIGHT_INT_MIN = 0.001;
+// 100, not 20. The ceiling only ever needed to be low while the track was LINEAR -- every unit
+// of range there was range stolen from the bottom, which is where the useful settings live. A
+// log track does not have that trade: 0.001..100 still puts 1.0 at 60% of the way along and
+// keeps the same resolution near zero. matt (#78) wanted "much wider"; this is 5x.
+const LIGHT_INT_MAX = 100;
+const lightIntFromSlider = (v) => (v <= 0 ? 0
+  : LIGHT_INT_MIN * Math.pow(LIGHT_INT_MAX / LIGHT_INT_MIN, v / 1000));
+const lightIntToSlider = (x) => (!x || x <= 0 ? 0
+  : Math.round(1000 * Math.log(Math.max(LIGHT_INT_MIN, x) / LIGHT_INT_MIN)
+      / Math.log(LIGHT_INT_MAX / LIGHT_INT_MIN)));
+
+
 // ONE HEADER, both platforms. The row carries the section's name and its float/pin button, and
 // it is the same markup and the same CSS in the VR panel and in the desktop sidebar -- so a
 // change to how pinning looks or is labelled cannot land on one and not the other.
 export const SECTION_LABELS = {
-  scene: 'Scene', rendering: 'Rendering', camera: 'Camera', topology: 'Topology',
+  scene: 'Scene', rendering: 'View', camera: 'Camera', topology: 'Topology',
   sculpting: 'Tools', properties: 'Properties', animation: 'Animation',
 };
 
@@ -135,7 +164,8 @@ const MM_UNDO_H    = 38;
 // opt-out it lost on specificity to the :has() rules and changed nothing, which is the sort of
 // silent no-op this file has produced twice already.
 const AUTHORED_ROWS = ':not(.mm-add-row, .mm-rig-btn-row, .mm-btn-pair, .mm-choice-grid, '
-  + '.mm-toolbar, .mm-xform-row, .mm-check-pair, .acp-transport, .acp-btn-grid, .acp-frame-grid)';
+  + '.mm-toolbar, .mm-xform-row, .mm-check-pair, .mm-storage-toolbar, .acp-transport, '
+  + '.acp-btn-grid, .acp-frame-grid)';
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -505,6 +535,11 @@ const CSS = `
    (no backticks in here, and no double-dash: this is inside a template literal and it is also
    serialised as XML by the rasteriser. panelxml_test checks both.) */
 .mm-dense,
+/* A COLUMN OF COMMANDS IS SCANNED DOWN ITS FIRST WORD, so the Scene section left-justifies
+   rather than centring. Buttons that are FORMATS (glb/obj/ply/stl) stay centred -- they are
+   read as a set, not a list. */
+.mm-action-btn.mm-left { justify-content: flex-start; text-align: left; }
+
 .mm-dense *:has(> .mm-row, > .mm-toggle, > .mm-action-btn)${AUTHORED_ROWS} {
   display: flex;
   flex-wrap: wrap;
@@ -731,6 +766,9 @@ const CSS = `
    NOTE: this whole block is a JS TEMPLATE LITERAL. No backticks anywhere, comments included. */
 .mm-toggle.mm-tick.active::before { content: '✓ '; }
 
+/* Between groups of chips, as the wrist tool picker's divider. */
+.mm-divider { border: none; border-top: 1px solid #313244; margin: 8px 0; }
+
 /* Choice grid (combobox replacement) */
 .mm-choice-grid {
   display: grid;
@@ -855,6 +893,18 @@ const CSS = `
 .mm-select-opt:hover, .mm-select-opt.hover { background: #313244; color: #cdd6f4; }
 .mm-select-opt.active { color: #89b4fa; background: rgba(137,180,250,0.08); }
 
+/* The add-object popup: same list styling as a select's options, closed with a border on all
+   four sides (a select's list only needs three -- it sits directly under its own trigger, which
+   supplies the top edge; this one floats between the toolbar and the outliner, with no trigger
+   immediately above it to borrow an edge from). */
+.mm-add-menu {
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  background: #1e1e2e;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
 /* Outliner item (scene tab) */
 /* Bordered object list — tall enough for ~8 rows, then FLOWS (grows) rather than
    making its own scroll container. A nested scrollable fought the panel's own scroll
@@ -888,7 +938,7 @@ const CSS = `
      One fixed height, always: it scrolls when there is more and shows empty space when there is
      less, and nothing below it ever moves. It also takes the panel's own height out of the
      equation, which is what the resize machinery in HTMLVRPanel spends its time chasing. */
-  height: ${Math.round(MM_BODY_H * 0.44)}px;
+  height: ${Math.round(MM_BODY_H * 0.30)}px;
   min-height: 52px;
   /* ...AND A CEILING, because the other end became the problem. A rig has dozens of joints,
      and at content height the list grew to the full panel and pushed everything below it out
@@ -899,7 +949,15 @@ const CSS = `
      the transform fields and the parenting buttons are the reason you open this panel with a rig
      selected, and reaching them meant scrolling the whole skeleton first. matt: "the outliner
      takes up too much vertical space still in that menu, its hard to scroll past it to get to
-     the transform matrix controls and set parent buttons. make it 1/3 less rows." */
+     the transform matrix controls and set parent buttons. make it 1/3 less rows."
+     0.44 -> 0.30, alongside the row shrink above: matt, VR against desktop side by side --
+     "this shows all the UI, i feel we can fit this into VR ... maybe we'll lose a few lines from
+     the outliner tree view assuming we'll make that text a little smaller." He is trading rows
+     for reach again, but the row shrink means the trade is close to free: at the OLD 30px row
+     height, 0.44 showed about 6.7 rows; at the NEW 8px/22px row, 0.30 shows about 6.2 -- nearly
+     the same list, in roughly two thirds the panel height, with room left for Transform, Set
+     Parent and Primitives to stop being cropped off the bottom of a panel that cannot scroll as
+     a whole (it is a fixed-size mesh -- see MM_BODY_H). */
   max-height: ${Math.round(MM_BODY_H * 0.44)}px;
   overflow-y: auto;
   overscroll-behavior: contain;   /* stop a flick inside the list from scrolling the panel too */
@@ -994,8 +1052,18 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   flex: 1; min-width: 0;
   background: #11111b; color: #cdd6f4;
   border: 1px solid #89b4fa; border-radius: 4px;
-  font-size: 8px; padding: 2px 4px; outline: none;   /* matches .mm-mesh-btn, or the row jumps height on rename */
+  font-size: 13px; padding: 3px 5px; outline: none;
+  /* The panel root is user-select:none, and an editable field inherits that. iOS refuses to put the
+     caret (and so the keyboard) in a field whose used user-select is none: that was the iPad
+     rename that did nothing. */
+  -webkit-user-select: text; user-select: text;
 }
+/* 16px on touch: iOS zooms the page on focus of anything smaller, and the page cannot zoom back. */
+@media (hover: none) and (pointer: coarse) { .mm-rename-input { font-size: 16px; } }
+.mm-outliner-row.drag-src { opacity: 0.5; }
+.mm-outliner-row.drop-before { box-shadow: inset 0 2px 0 #89b4fa; }
+.mm-outliner-row.drop-after  { box-shadow: inset 0 -2px 0 #89b4fa; }
+.mm-outliner-row.drop-into   { background: rgba(137,180,250,0.22); box-shadow: inset 0 0 0 1px #89b4fa; }
 .mm-mesh-btn:hover, .mm-mesh-btn.hover { background: #313244; color: #cdd6f4; }
 .mm-mesh-btn.active { color: #89b4fa; background: rgba(137,180,250,0.1); }
 .mm-node-icon { display: inline-block; width: 10px; font-size: 8px; text-align: center; margin-right: 4px; color: #6c7086; }
@@ -1035,7 +1103,9 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 }
 .mm-xf-bake:hover, .mm-xf-bake.hover { background: #313244; color: #f9e2af; }
 /* Outliner toolbar — icon-only copy/delete buttons. */
-.mm-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+/* WRAPS to a second row when the panel is too narrow for every button (an iPad sidebar, the VR panel):
+   the buttons are fixed-size and do not shrink, so they spilled out of the panel instead. */
+.mm-toolbar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .mm-tool-btn {
   width: 32px; height: 28px; flex-shrink: 0;
   border: 1px solid #45475a; border-radius: 5px;
@@ -1088,7 +1158,11 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   overscroll-behavior: contain;   /* a flick inside the list must not scroll the panel too */
   scrollbar-width: none;          /* the rasteriser does not paint native scrollbars */
   padding-right: 16px;            /* room for the track, which overlays the right edge */
-  margin-bottom: 6px;
+  /* NO margin-bottom ON A SCROLL CONTAINER: the rasteriser drops it, so the toolbar below drew
+     6px higher than the DOM put it and the VR hover highlight on Open sat 6px low (measured on
+     the GXR 2026-10-09: texture button 405-436 vs DOM 412-442; the gap now lives on the
+     toolbar's margin-top and the two agree). */
+  margin-bottom: 0;
   box-sizing: border-box;
 }
 .mm-storage-list::-webkit-scrollbar { display: none; }
@@ -1104,7 +1178,7 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
 }
 .mm-storage-item img,
 .mm-storage-item .mm-storage-noimg {
-  width: 34px; height: 34px; flex-shrink: 0;
+  width: 41px; height: 41px; flex-shrink: 0;
   border-radius: 3px;
   object-fit: cover;
   background: #313244;
@@ -1131,12 +1205,17 @@ wa-tab-panel .mm-outliner-grip:hover { filter: brightness(1.6); }
   border-color: #89b4fa;
   background: #1e1e2e;
 }
+/* PAGER, PAGE COUNT, then the three named actions sharing what is left equally. The arrows and
+   the count take only the width they need (auto), which is what lets six controls sit on the one
+   line a three-column grid used to spend on three. */
 .mm-storage-toolbar {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: auto auto auto 1fr 1fr 1fr;
   gap: 5px;
+  margin-top: 6px;
   margin-bottom: 6px;
 }
+.mm-storage-toolbar .mm-storage-pg { padding: 0 9px; }
 .mm-storage-page {
   display: flex;
   align-items: center;
@@ -1391,6 +1470,28 @@ function buildShellHTML() {
 // XML forbids "--" inside a comment -- so one prose dash blanked the whole panel with nothing
 // but "SVG image failed to load". It renders fine on desktop, whose HTML parser is lenient,
 // which is exactly what makes it worth a rule rather than care.
+// EXAMPLE SCENES are .sxr files shipped in public/examples, listed by examples.json so a new one
+// needs no code. The list expands inline under New rather than being a menu of its own, which
+// keeps it working in both hosts of this markup (the VR panel and the desktop overlay) with
+// nothing but the rebuild callback they already pass. Fetched on first open, then cached.
+let _examples = null;
+// WHILE AN EXAMPLE LOADS, its button says what is happening: the megabytes as they arrive, then
+// "Building scene". The files are several MB and the click otherwise looked like it did nothing.
+// Drawn by the builder rather than poked into the DOM, so the VR panel shows it too.
+let _exampleLoad = null;   // { i, text }
+const examplesURL = (f) => new URL('examples/' + f, document.baseURI).href;
+function buildExamplesHTML() {
+  if (!_examples) return '<div class="mm-info">Loading examples…</div>';
+  if (!_examples.length) return '<div class="mm-info">No examples</div>';
+  return _examples.map((e, i) => {
+    const busy = _exampleLoad && _exampleLoad.i === i;
+    const label = busy ? _exampleLoad.text : e.name;
+    return `
+    <button class="mm-action-btn mm-left${busy ? ' active' : ''}" data-example="${i}"${_exampleLoad ? ' disabled' : ''} title="${String(e.desc || '').replace(/"/g, '&quot;')}">${
+      String(label).replace(/[&<>]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]))}</button>`;
+  }).join('');
+}
+
 export function buildMenuHTML_files(main) {
   const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
   // SAVE OVERWRITES, SAVE AS MAKES ANOTHER ONE -- the pair every other application has. The name
@@ -1415,25 +1516,55 @@ export function buildMenuHTML_files(main) {
           repeated verb is also the reason these buttons each claim a full row -- trimming the
           labels is what lets the density rules pack them at all. The format list moves to the
           tooltip, where it is available and not in the way. */ ''}
-    <div class="mm-section-title">Open</div>
-    <button class="mm-action-btn" id="mm-open-scene" title="Open a scene from disk">Scene…</button>
-    <button class="mm-action-btn" id="mm-browser-saves" title="Open a scene saved in this browser">Browser saves…</button>
-    <button class="mm-action-btn${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
-      title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New…'}</button>
-
-    <div class="mm-section-title">Save</div>
-    ${/* The button names the FILE it would land on rather than saying Save again, which is the
-          thing the original comment here was protecting: with Save you want to be certain what
-          it is about to overwrite. Under a heading that already says Save, the filename alone
-          says it better than "Save (filename)" did. */ ''}
-    <button class="mm-action-btn" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
-      title="${curSave ? 'Save back over ' + curSave : 'Nothing open yet — use As…'}">${curSave || 'Nothing open yet'}</button>
-    <button class="mm-action-btn" id="mm-browser-save-quick" title="Save as a new browser save">As…</button>
-    <button class="mm-action-btn" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">To disk (.sxr)</button>
+    ${/* ONE SECTION, NOT TWO, AND THE VERB IS BACK ON THE BUTTON.
+          The previous pass took the repeated-verb rule too far: heading Save over buttons
+          reading the filename, "As…" and "To disk (.sxr)" left you reading the heading to
+          parse the button. matt: "earlier during the big UI rewrite i insisted on simplifying
+          the button names in this dialog. i think i went too far."
+          Export keeps the short-label treatment because glb/obj/ply/stl are formats, not
+          commands -- the distinction the first pass missed. These are commands, and a command
+          reads as a verb phrase. Left-justified for the same reason: a column of verbs is
+          scanned down its first word. */ ''}
+    <div class="mm-section-title">Scene</div>
+    ${/* PAIRED BY WHAT THEY DO, not packed to fill the width. Open sits with Open and Save
+          with Save, so the column reads as three pairs and the eye picks the row first and
+          the side second. New keeps a row to itself because it is the one destructive command
+          here and should not sit a few pixels from Open; half width so it still reads as one
+          item rather than a banner. */ ''}
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
+        title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
+      <button class="mm-action-btn mm-left" id="mm-new-example"
+        title="Replace the scene with an example">New from example…</button>
+    </div>
+    ${main._examplesOpen ? buildExamplesHTML() : ''}
+    ${/* BROWSER IS THE FIRST COLUMN because it is the one used most; disk is the occasional
+          trip out of the app. The left column is where the eye lands, so it belongs to the
+          everyday command in every one of these rows. */ ''}
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-browser-saves" title="Open a scene saved in this browser">Open from browser</button>
+      <button class="mm-action-btn mm-left" id="mm-open-scene" title="Open a scene from disk">Open from disk</button>
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-browser-save-quick" title="Save as a new browser save">Save to browser</button>
+      <button class="mm-action-btn mm-left" id="mm-export-sxr" title="Save the scene to disk as a .sxr file">Save to disk</button>
+    </div>
+    ${/* The quick save names the file it lands on, because it is the one command that acts
+          without asking anything. Incremental does NOT name its target: it is always "the next
+          one", the number is derived rather than chosen, and putting it on the button invited
+          reading it as a thing to check rather than a thing to press. */ ''}
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-browser-save-incr"
+        title="Save a NEW browser save at the next free version of ${curSave || 'scene'}"
+        >Save incremental to browser</button>
+      <button class="mm-action-btn mm-left" id="mm-browser-save-over"${curSave ? '' : ' disabled'}
+        title="${curSave ? 'Save straight back over ' + curSave : 'Nothing open yet — use Save to browser'}"
+        >${curSave ? 'Save quick "' + curSave + '"' : 'Save quick — nothing open'}</button>
+    </div>
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj"
-      title="Import a mesh or audio file — obj, sgl, ply, stl, glb, mp3, wav">Mesh or audio…</button>
+      title="Import a mesh, audio or video file — obj, sgl, ply, stl, glb, mp3, wav, mp4, webm">Mesh / audio / video…</button>
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
@@ -1443,6 +1574,7 @@ export function buildMenuHTML_files(main) {
     <div class="mm-section-title">Export</div>
     <div class="mm-choice-grid cols-4">
       <button class="mm-choice" id="mm-export-glb">glb</button>
+      <button class="mm-choice" id="mm-export-nom">nom</button>
       <button class="mm-choice" id="mm-export-obj">obj</button>
       <button class="mm-choice" id="mm-export-ply">ply</button>
       <button class="mm-choice" id="mm-export-stl">stl</button>
@@ -1761,10 +1893,40 @@ export function buildAudioSectionHTML(renderToggle) {
       <span class="mm-val" id="${g.id}-val">${ms}ms</span>
     </div>`;
   }).join('\n    ');
+  const metRows = METRONOME_SLIDERS.map((m) => {
+    const v = Number.isFinite(window[m.win]) ? window[m.win] : (opts[m.opt] ?? m.dflt);
+    const shown = Math.round(v * m.k);
+    return `<div class="mm-row">
+      <span class="mm-lbl">${m.label}</span>
+      <input type="range" id="${m.id}" min="${m.min}" max="${m.max}" step="${m.step}" value="${shown}">
+      <span class="mm-val" id="${m.id}-val">${shown}${m.unit}</span>
+    </div>`;
+  }).join('\n    ');
+  const metOn = window._metronomeOn !== undefined ? !!window._metronomeOn : !!opts.metronome;
+  const wg = Number.isFinite(window._audioWaveGain) ? window._audioWaveGain : (opts.audioWaveGain ?? 1);
+  const wgPct = Math.round(wg * 100);
   return `<div class="mm-section-title">Audio Scrub</div>
     ${renderToggle('mm-audio-scrub', 'Scrub audio', on)}
-    ${rows}`;
+    ${rows}
+    <div class="mm-row">
+      <span class="mm-lbl">Waveform gain</span>
+      <input type="range" id="mm-audio-wavegain" min="25" max="800" step="25" value="${wgPct}">
+      <span class="mm-val" id="mm-audio-wavegain-val">${wgPct}%</span>
+    </div>
+    <div class="mm-section-title">Metronome</div>
+    ${renderToggle('mm-metronome', 'Metronome (also counts in recording)', metOn)}
+    ${metRows}`;
 }
+
+// Metronome tempo / bar length / level. Stored as-is (bpm, beats) except volume, shown x100.
+const METRONOME_SLIDERS = [
+  { id: 'mm-met-bpm',   label: 'BPM',            win: '_metronomeBpm',   opt: 'metronomeBpm',
+    min: 40, max: 240, step: 1, dflt: 120, k: 1,   unit: '' },
+  { id: 'mm-met-beats', label: 'Beats per bar',  win: '_metronomeBeats', opt: 'metronomeBeats',
+    min: 1,  max: 12,  step: 1, dflt: 4,   k: 1,   unit: '' },
+  { id: 'mm-met-vol',   label: 'Click volume',   win: '_metronomeVol',   opt: 'metronomeVol',
+    min: 5,  max: 100, step: 5, dflt: 0.5, k: 100, unit: '%' },
+];
 
 // `slide` is passed in because the two panels wire sliders differently: the VR panel needs a
 // dirty hook so the rasteriser repaints the texture, the desktop sidebar is live DOM and needs
@@ -1787,6 +1949,31 @@ export function wireAudioSection(q, slide, paint) {
       });
     }
   }
+  const met = q('#mm-metronome');
+  if (met) {
+    const set = (on) => window._metronome?.setEnabled(on);
+    if (met.tagName === 'INPUT') {
+      met.addEventListener('change', (e) => { set(e.target.checked); paint?.(); });
+    } else {
+      met.addEventListener('click', () => {
+        set(!window._metronomeOn);
+        met.classList.toggle('active', !!window._metronomeOn);
+        paint?.();
+      });
+    }
+  }
+  for (const m of METRONOME_SLIDERS) {
+    slide(q('#' + m.id), q('#' + m.id + '-val'), (v) => {
+      window[m.win] = v / m.k;
+      getOptionsURL.saveOption(m.opt, v / m.k, 300);
+    }, (v) => `${Math.round(v)}${m.unit}`);
+  }
+  // Waveform height multiplier, on top of the per-clip normalisation (AudioTrack.peaks).
+  slide(q('#mm-audio-wavegain'), q('#mm-audio-wavegain-val'), (pct) => {
+    window._audioWaveGain = pct / 100;
+    getOptionsURL.saveOption('audioWaveGain', pct / 100, 300);
+    window.app?.getGui?.()?._ctrlTimeline?.draw?.();
+  }, (v) => `${Math.round(v)}%`);
   for (const g of AUDIO_GRAINS) {
     slide(q('#' + g.id), q('#' + g.id + '-val'), (ms) => {
       window[g.win] = ms / 1000;
@@ -1819,6 +2006,7 @@ function isAncestorOf(a, b) {
 
 let _wfPickerOpen = false;
 let _litPickerOpen = false;   // the selected light's colour wheel
+let _bgPickerOpen  = false;   // the background colour wheel
 // The paint wheel needs neither an open flag nor a revision: it is always there, so its markup
 // never changes and there is nothing for the rebuild cache to miss. Both existed briefly, for the
 // swatch-and-OK version this replaced.
@@ -1998,6 +2186,14 @@ export function buildSharedSettingsHTML(main) {
   const gridOccOpacity = main.getGridOccludedOpacity?.() ?? 0.2;
   const exposure       = main.getExposure?.() ?? 1.0;
   const curTM          = main.getToneMapping?.() ?? 0;
+  // THE RIG SCALE. Read from the live Skeleton value rather than the options snapshot, because
+  // the slider writes through Skeleton.setSceneUnitMul and the options object is only refreshed
+  // on load — reading options here would show a stale number after a drag.
+  const rigScale       = Skeleton.sceneUnitMul ?? 1;
+  // Same rule as the line above: the live value, not the options snapshot, or the slider jumps
+  // back to the stored number the next time the panel repaints mid-drag.
+  const pinScale       = Skeleton.pinSizeMul ?? 1;
+  const labelScale     = Skeleton.labelSizeMul ?? 1;
   const tmBtns = [
     { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
     { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
@@ -2017,6 +2213,27 @@ export function buildSharedSettingsHTML(main) {
       <span class="mm-lbl">Curvature</span>
       <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature*20)}">
       <span class="mm-val" id="mm-curvature-val">${Math.round(curvature*20)}</span>
+    </div>
+
+    <div class="mm-section-title">Rig</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Rig Scale</span>
+      <input type="range" id="mm-rig-scale" min="25" max="400" step="5" value="${Math.round(rigScale*100)}">
+      <span class="mm-val" id="mm-rig-scale-val">${rigScale.toFixed(2)}x</span>
+    </div>
+    ${/* PIN SIZE and LABEL SIZE sit HERE, beside Rig Scale, because that is where you are when
+         you notice one of them is wrong -- and because all three answer the same question in
+         different units. Rig Scale moves everything the rig draws; these two move one marker
+         each, as a multiple of the JOINT it belongs to. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Pin Size</span>
+      <input type="range" id="mm-pin-scale" min="25" max="400" step="5" value="${Math.round(pinScale*100)}">
+      <span class="mm-val" id="mm-pin-scale-val">${pinScale.toFixed(2)}x</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Label Size</span>
+      <input type="range" id="mm-label-scale" min="25" max="400" step="5" value="${Math.round(labelScale*100)}">
+      <span class="mm-val" id="mm-label-scale-val">${labelScale.toFixed(2)}x</span>
     </div>
 
     <div class="mm-section-title">Ground Plane</div>
@@ -2039,6 +2256,25 @@ export function buildSharedSettingsHTML(main) {
   `;
 }
 
+// A MULTIPLIER SLIDER THAT CAN LAND ON 1.00x. Three things, because a ray cannot hold a thumb to
+// one step in five: it SNAPS to 1.00x within a few steps either side (a detent), clicking the
+// number opens the VR numpad (NumberTap does that for every slider). matt, 2026-10-09:
+// "its really hard to reset it back to 1.0x, it always wants to jump to .95x or 1.05x ... i also
+// tried to click on the value itself to bring up the numpad, it didn't appear."
+const SCALE_DETENT = 7;   // percent either side of 100 that snaps to 100
+function wireScaleSlider(el, sliderEl, valEl, label, apply, paint) {
+  if (!sliderEl) return;
+  // The numpad on the readout is the shared NumberTap handler; a value typed there is exact, so
+  // it skips the detent (window.__sliderTyped).
+  const set = (v) => {
+    if (window.__sliderTyped) return v;
+    const snapped = Math.abs(v - 100) <= SCALE_DETENT ? 100 : v;
+    if (snapped !== v) sliderEl.value = String(snapped);
+    return snapped;
+  };
+  wireSlider(sliderEl, valEl, (v) => apply(set(v)), (v) => (set(v) / 100).toFixed(2) + 'x', paint);
+}
+
 // The matching wiring, so neither page can gain a control the other cannot operate.
 export function wireSharedSettings(el, main, paint) {
   const q = (id) => el.querySelector(id);
@@ -2046,6 +2282,38 @@ export function wireSharedSettings(el, main, paint) {
     const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [main.getMesh?.()];
     ms?.forEach((m) => m?.setCurvature?.(v / 20)); main.render?.();
   }, null, paint);
+  // THE RIG SCALE. Writes the live multiplier AND persists it, then REBUILDS THE RIG and repaints
+  // so it redraws at the new size on the frame you are looking at — the whole point is to judge it
+  // by eye, so it cannot wait for a reload.
+  //
+  // updateVisuals IS THE POINT, not an extra. Every marker's size — the joint dot, the bone body,
+  // the pin triad, the length labels, the snap radii — is computed INSIDE updateVisuals from
+  // Skeleton.sceneUnit(main), and the rig is drawn as INSTANCED batches whose per-instance scale
+  // is written there. Calling render() alone just re-draws the batches with the scales they
+  // already hold, so the slider moved the number and nothing on screen changed. Every other
+  // rig-affecting control in the app calls updateVisuals before render for exactly this reason.
+  // `paint` is the VR rasteriser's markDirty; on desktop it is a no-op and the DOM redraws itself.
+  wireScaleSlider(el, q('#mm-rig-scale'), q('#mm-rig-scale-val'), 'Rig Scale', (v) => {
+    const mul = Skeleton.setSceneUnitMul(v / 100);
+    getOptionsURL.saveOption('rigScale', mul, 250);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }, paint);
+  // updateVisuals for the same reason Rig Scale needs it: the sizes are written into the
+  // instanced batches inside that call, and render() alone redraws them at the scale they already
+  // hold. A label is a sprite rather than a batch, but it is written in the same pass.
+  wireScaleSlider(el, q('#mm-pin-scale'), q('#mm-pin-scale-val'), 'Pin Size', (v) => {
+    const mul = Skeleton.setPinSizeMul(v / 100);
+    getOptionsURL.saveOption('pinScale', mul, 250);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }, paint);
+  wireScaleSlider(el, q('#mm-label-scale'), q('#mm-label-scale-val'), 'Label Size', (v) => {
+    const mul = Skeleton.setLabelSizeMul(v / 100);
+    getOptionsURL.saveOption('labelScale', mul, 250);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }, paint);
   wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
     main.setGridOpacity?.(v / 100);
   }, (v) => (v / 100).toFixed(2), paint);
@@ -2129,6 +2397,13 @@ function buildMenuHTML_settings(main) {
   return `
     <button class="mm-action-btn" id="mm-show-ctrl-guide">Show Controller Guide</button>
     <div class="mm-section-title">Input</div>
+    ${/* A "put it down for a minute" switch, not a change of stance on hands. A runtime that
+         offers hand tracking alongside controllers hands us BOTH, and typing on a real keyboard
+         looks enough like a grip gesture to drive the world grip. matt: "when testing and i drop
+         the controls to type, its annoying that it starts to track my hands, interprets my typing
+         hands as a fist, and starts moving the world all over the place." */ ''}
+    <button class="mm-toggle${window._handTracking === false ? '' : ' active'}" id="mm-hand-track"
+      title="Off ignores hand input sources entirely, so resting or typing hands cannot grab the world. Controllers are unaffected.">Hand tracking</button>
     <button class="mm-toggle${isLeft    ? ' active' : ''}" id="mm-left-hand">Left Hand Mode</button>
     <button class="mm-toggle${isRaycast ? ' active' : ''}" id="mm-raycast">Aim Picking (Raycast)</button>
     <button class="mm-toggle${isAmbi    ? ' active' : ''}" id="mm-ambi">Ambidextrous Cursors</button>
@@ -2210,9 +2485,22 @@ function buildMenuHTML_settings(main) {
       <input type="range" id="mm-stylus-tilt" min="-45" max="45" step="1" value="${Math.round(stylusTilt)}">
       <span class="mm-val" id="mm-stylus-tilt-val">${Math.round(stylusTilt)}°</span>
     </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-toggle${opts.surfaceRing !== false ? ' active' : ''}" id="mm-surface-ring"
+        title="The flat circle the brush draws on the surface. The sphere's intersection line stays either way.">Surface Circle</button>
+      <button class="mm-toggle${opts.contactShade !== false ? ' active' : ''}" id="mm-contact-shade"
+        title="Darken the surface within about 1.5 cm of the spike tip, so contact reads without stereo">Contact Shade</button>
+    </div>
+
+    ${/* ITS OWN SECTION, not the tail of "Controller spike". The gizmo is not part of the stylus
+         and nobody looking for its size was ever going to find it between the spike's Z-Shift and
+         its Tilt. The Transform tool's wrist panel and menu section carry the same slider now
+         (gui/transformPanel.js) -- this copy stays because Settings is where you look for a
+         preference, and both write the one number, so they cannot disagree. */ ''}
+    <div class="mm-section-title">Transform gizmo</div>
     <div class="mm-row">
       <span class="mm-lbl">Gizmo size</span>
-      <input type="range" id="mm-gizmo-mul" min="25" max="200" step="5" value="${Math.round(gizmoSizeMul*100)}">
+      <input type="range" id="mm-gizmo-mul" min="${Math.round(GIZMO_MUL_MIN*100)}" max="${Math.round(GIZMO_MUL_MAX*100)}" step="5" value="${Math.round(gizmoSizeMul*100)}">
       <span class="mm-val" id="mm-gizmo-mul-val">${gizmoSizeMul.toFixed(2)}x</span>
     </div>
 
@@ -2289,7 +2577,7 @@ export function buildMenuHTML_view(main) {
   //
   // Rendering opens because it is the one with the controls you actually reach for (shader,
   // opacity, the rig display flags); the other three are set once.
-  return collapsibleHTML('view-rendering', 'Rendering', buildSectionHTML_rendering(main))
+  return buildSectionHTML_rendering(main)
     + collapsibleHTML('view-camera', 'Camera', buildSectionHTML_camera(main), false)
     + collapsibleHTML('view-background', 'Background', buildMenuHTML_background(main), false)
     + collapsibleHTML('view-reference', 'Reference', buildMenuHTML_reference(), false);
@@ -2335,6 +2623,45 @@ export function wireMenuAbout(el) {
 
 // ── Section content builders ─────────────────────────────────────────────────
 
+// A row's place in the list. The creation id until the user moves it; a move only ever
+// permutes the keys its siblings already hold, so keys stay unique and a mesh created later
+// (always a larger id) still lands at the end. Saved by rank in the SKEL block (v21).
+export function outlinerKey(m) { return m._outlinerKey !== undefined ? m._outlinerKey : m.getID(); }
+
+// Move `mesh` one place up (-1) or down (+1) among its siblings (same parent). Returns whether
+// anything moved.
+export function moveOutlinerRow(main, mesh, dir) {
+  const sibs = (main.getMeshes?.() ?? []).filter((m) => !m._isVoxelChunk && (m._parentMesh || null) === (mesh._parentMesh || null));
+  sibs.sort((a, b) => outlinerKey(a) - outlinerKey(b));
+  const i = sibs.indexOf(mesh), j = i + dir;
+  if (i < 0 || j < 0 || j >= sibs.length) return false;
+  const keys = sibs.map(outlinerKey);
+  [sibs[i], sibs[j]] = [sibs[j], sibs[i]];
+  sibs.forEach((m, k) => { m._outlinerKey = keys[k]; });
+  return true;
+}
+
+// ROWS CAN BE DRAGGED everywhere except VR (no pointer to drag with): a mouse drags natively, touch and
+// pen by a long press (see the pointer path in the wiring). The up/down buttons are the VR way to reorder.
+export function outlinerDragEnabled() {
+  return !window.app?._renderer?.xr?.isPresenting;
+}
+
+// Put `mesh` directly before/after `target` among target's siblings, under target's parent
+// (the caller reparents first). Keys are reassigned as a permutation of the ones the new sibling
+// set already holds, exactly as moveOutlinerRow does.
+export function placeOutlinerRow(main, mesh, target, after) {
+  const par = target._parentMesh || null;
+  const sibs = (main.getMeshes?.() ?? []).filter((m) => !m._isVoxelChunk && (m._parentMesh || null) === par);
+  const keys = sibs.map(outlinerKey).sort((a, b) => a - b);
+  const rest = sibs.filter((m) => m !== mesh).sort((a, b) => outlinerKey(a) - outlinerKey(b));
+  const at = rest.indexOf(target);
+  if (at < 0 || !sibs.includes(mesh)) return false;
+  rest.splice(at + (after ? 1 : 0), 0, mesh);
+  rest.forEach((m, k) => { m._outlinerKey = keys[k]; });
+  return true;
+}
+
 export function buildSectionHTML_scene(main) {
   const meshes   = main.getMeshes?.() ?? [];
   const selected = main.getSelectedMeshes?.() ?? [];
@@ -2355,9 +2682,10 @@ export function buildSectionHTML_scene(main) {
     nodes.push(m);
   }
 
-  // Stable outliner order: sort by creation id (getID is monotonic). This keeps
-  // rows from shuffling when selection state changes — only parenting nests them.
-  nodes.sort((a, b) => a.getID() - b.getID());
+  // Stable outliner order: sort by creation id (getID is monotonic) unless the user has moved
+  // the row (_outlinerKey, see moveOutlinerRow). This keeps rows from shuffling when selection
+  // state changes — only parenting nests them.
+  nodes.sort((a, b) => outlinerKey(a) - outlinerKey(b));
 
   // Two-step rig assignment state (lives on main so it survives panel rebuilds):
   //   _rigPendingMode = 'parent' | 'lookat' | null,  _rigPendingSubject = mesh id
@@ -2418,11 +2746,14 @@ export function buildSectionHTML_scene(main) {
   let meshRows = renderTree(null, 0);
   if (!meshRows) meshRows = '<div class="mm-info">No meshes in scene</div>';
 
-  // ── Rig section — shown when exactly one node is selected ──────────────────
+  // ── Rig section — ALWAYS shown. With anything but exactly one node selected, the controls that
+  // act on "the selection" (transform fields, Mirror Eye, Saccades) are dimmed and disabled, but
+  // Set parent / Aim at stay live: they name their own child, so they need no selection.
   let rigHTML = '';
-  if (selected.length === 1) {
-    const sel    = selected[0];
-    const selId  = sel.getID();
+  {
+    const sel    = selected.length === 1 ? selected[0] : null;
+    const selOff = sel ? '' : ' disabled';
+    const selId  = sel ? sel.getID() : -1;
     const lookAtId = main.getLookAt?.(selId) ?? null;
     const parent   = main.getParentMesh?.(selId) ?? null;
     const lookTgt  = (lookAtId != null) ? nodes.find((m) => m.getID() === lookAtId) : null;
@@ -2432,7 +2763,7 @@ export function buildSectionHTML_scene(main) {
     const sacSpeed = main.getSaccadeSpeed?.(selId) ?? 1;
     const sacSmooth = +(main.getSaccadeSmooth?.(selId) ?? 0).toFixed(2);
 
-    const trs = main.getTransformTRS?.(selId) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
+    const trs = (sel && main.getTransformTRS?.(selId)) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
     const _f = (n) => (Math.round(n * 1000) / 1000);
     // Per-row bake button (freezes that component into the geometry, right next to its values).
     const _bake = { t: ['mm-bake-t', 'Bake translation into geometry (position → 0)'],
@@ -2455,9 +2786,11 @@ export function buildSectionHTML_scene(main) {
         <button class="mm-xf-bake" id="${_clear[type][0]}" title="${_clear[type][1]}">C</button>
       </div>`;
     rigHTML = `
+      <div style="${sel ? '' : 'opacity:.4;pointer-events:none'}">
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
       ${_xfRow('r', 'Rot', trs.r, '1')}
       ${_xfRow('s', 'Scale', trs.s, '0.01')}
+      </div>
 
       <div class="mm-rig-btn-row">
         <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
@@ -2474,13 +2807,13 @@ export function buildSectionHTML_scene(main) {
              a live eye-rig constraint: a render-only twin that reflects POSITION and then aims
              itself at the source's look-at target, so the pair converges. It ignores rotation
              on purpose. The toolbar's Mirror makes real reflected COPIES, rotation and all. -->
-        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Eye rig: live twin reflected across X that re-aims itself at the same target (rotation is NOT copied). For real mirrored copies use Mirror in the toolbar.">Mirror Eye</button>
+        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror"${selOff} title="Eye rig: live twin reflected across X that re-aims itself at the same target (rotation is NOT copied). For real mirrored copies use Mirror in the toolbar.">Mirror Eye</button>
         <!-- SACCADES JOINS THE ROW. It is a constraint like the other three — something the node
              does on its own once switched on — and it sat alone on a full-width line below them
              for no reason but the order it was written in. Its two sliders stay underneath and
              still appear only when it is on. matt: "so there'll be 4 constraint buttons in a row;
              set parent, aim at, mirror x, saccades." -->
-        <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades">Saccades</button>
+        <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades"${selOff}>Saccades</button>
       </div>
       ${parent ? `<button class="mm-action-btn" data-rig="clear-parent">Clear parent</button>` : ''}
       ${lookTgt ? `<button class="mm-action-btn" data-rig="clear-aim">Clear aim</button>` : ''}
@@ -2536,8 +2869,8 @@ export function buildSectionHTML_scene(main) {
     </div>
     <div class="mm-row">
       <span class="mm-lbl">Intensity</span>
-      <input type="range" id="mm-light-int" min="0" max="2000" step="1" value="${Math.round((_lit._lightIntensity ?? 1) * 100)}">
-      <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(2)}</span>
+      <input type="range" id="mm-light-int" min="0" max="1000" step="1" value="${lightIntToSlider(_lit._lightIntensity ?? 1)}">
+      <span class="mm-val" id="mm-light-int-val">${(_lit._lightIntensity ?? 1).toFixed(3)}</span>
     </div>
     ${/* FALLOFF, not "range": it is the distance at which the light is half as bright, not a
          hard cutoff -- the attenuation in ShaderPBR never reaches zero. Sized from the scene
@@ -2551,9 +2884,13 @@ export function buildSectionHTML_scene(main) {
     ${(_lit._lightType || 0) === 1 ? `
     <div class="mm-row">
       <span class="mm-lbl">Cone</span>
-      <input type="range" id="mm-light-cone" min="5" max="89" step="1" value="${Math.round(_lit._lightConeDeg ?? 35)}">
-      <span class="mm-val" id="mm-light-cone-val">${Math.round(_lit._lightConeDeg ?? 35)}&deg;</span>
+      <input type="range" id="mm-light-cone" min="10" max="178" step="1" value="${Math.round((_lit._lightConeDeg ?? 35) * 2)}">
+      <span class="mm-val" id="mm-light-cone-val">${Math.round((_lit._lightConeDeg ?? 35) * 2)}&deg;</span>
     </div>` : ''}
+    ${/* COLOUR SITS ABOVE THE SHADOW BLOCK, deliberately. matt: "ensure the colour swatch
+         stays near the top, it shouldn't be pushed after shadows, as then it looks like it's
+         a control for shadow tint." The shadow rows are a variable-length group -- they only
+         exist when casting is on -- so anything after them reads as belonging to them. */ ''}
     ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches: it is the only
          colour control in this app that survives being rasterised into a VR panel, and the
          Scene section renders there too. Swatch opens it, OK closes it. */ ''}
@@ -2568,6 +2905,72 @@ export function buildSectionHTML_scene(main) {
       ${buildColorWheelHTML({ prefix: 'mm-light-cw', size: 150 })}
     </div>
     <button class="mm-action-btn" id="mm-light-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
+    ${/* SHADOWS, per light, because every one of these depends on the scene's scale and on
+         the look being aimed for -- there is no value that is right for a 34-unit sculpt and
+         a 3-unit one at the same time.
+
+         Bias is normalBias, and it RUNS NEGATIVE: -1 to 1. Positive pushes the lookup out
+         along the surface normal, which clears acne; negative pulls it in, which closes a
+         contact gap at the risk of acne elsewhere. matt: "sh bias at 0 still has a light
+         leak. it might need to support negative values too". Zero is not a floor here,
+         it is the middle of the useful range.
+
+         Softness is shadow.radius, and it is a UNIFORM blur -- see the note in
+         _syncThreeLights about why it does not harden at the contact point. Worth knowing
+         while chasing a leak: a wide radius blurs the penumbra across the contact point too,
+         so a gap that persists at bias 0 may be softness rather than bias. */ ''}
+    ${/* NOT OFFERED ON A POINT LIGHT. A point light's shadow map is a CUBE rendered along
+         fixed WORLD axes and sampled by a world-space direction, so rotating the world
+         invalidates its contents and the map has to be re-rendered mid-gesture -- which is
+         visible as shimmer. A spot or a sun rotates WITH the world once the shadow camera's up
+         follows it, so their maps are invariant under any rigid grip and never need that.
+         A point light is also six renders against one. matt: "i think we just don't allow
+         point lights to cast shadows." */ ''}
+    ${(_lit._lightType || 0) !== 0 ? `
+    <div class="mm-row">
+      <span class="mm-lbl">Shadow</span>
+      <button class="mm-choice${(_lit._castShadow !== false) ? ' active' : ''}" id="mm-light-shadow">${(_lit._castShadow !== false) ? 'On' : 'Off'}</button>
+      <span class="mm-val"></span>
+    </div>` : ''}
+    ${((_lit._lightType || 0) !== 0 && _lit._castShadow !== false) ? `
+    <div class="mm-row">
+      <span class="mm-lbl">Sh. opacity</span>
+      <input type="range" id="mm-light-shopacity" min="0" max="100" step="1" value="${Math.round((_lit._shadowIntensity ?? 1) * 100)}">
+      <span class="mm-val" id="mm-light-shopacity-val">${Math.round((_lit._shadowIntensity ?? 1) * 100)}%</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Sh. softness</span>
+      <input type="range" id="mm-light-shsoft" min="0" max="100" step="1" value="${Math.round(_lit._shadowRadius ?? 4)}">
+      <span class="mm-val" id="mm-light-shsoft-val">${Math.round(_lit._shadowRadius ?? 4)}</span>
+    </div>
+    ${/* RESOLUTION. A bigger map is sharper and costs a bigger render; 512 is three's default
+          and what the other shadow numbers here were chosen against. The softness slider is
+          scaled by this in _syncThreeLights, so changing resolution sharpens the EDGE without
+          also undoing whatever softness was dialled in. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Sh Res</span>
+      <span class="mm-val"></span>
+    </div>
+    <div class="mm-choice-grid cols-4">
+      ${[256, 512, 1024, 2048].map((n) => `
+      <button class="mm-choice${(_lit._shadowMapSize ?? 512) === n ? ' active' : ''}"
+        data-shadow-res="${n}">${n}</button>`).join('')}
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Sh. bias</span>
+      <input type="range" id="mm-light-shbias" min="-100" max="100" step="1" value="${Math.round((_lit._shadowNormalBias ?? 0.15) * 100)}">
+      <span class="mm-val" id="mm-light-shbias-val">${(_lit._shadowNormalBias ?? 0.15).toFixed(2)}</span>
+    </div>
+    ${/* SHADOW NEAR, as a PERCENTAGE OF THE FAR PLANE, because that ratio IS the precision.
+         The far plane cannot be offered here: three re-pins it to light.distance, so it is
+         the Falloff slider whether we like it or not. Raising near tightens the depth range
+         onto the model and is the practical way to find a usable shadow without fighting
+         Falloff. 0 = auto, which fits the range to the scene. */ ''}
+    <div class="mm-row">
+      <span class="mm-lbl">Sh Near</span>
+      <input type="range" id="mm-light-shnear" min="0" max="500" step="1" value="${Math.round((_lit._shadowNear ?? 0.01) * 1000)}">
+      <span class="mm-val" id="mm-light-shnear-val">${(_lit._shadowNear ?? 0.01) > 0 ? ((_lit._shadowNear ?? 0.01) * 100).toFixed(1) + '%' : 'auto'}</span>
+    </div>` : ''}
 `;
 
   return `
@@ -2579,14 +2982,48 @@ export function buildSectionHTML_scene(main) {
          groupSectionTitles over every sidebar section, so a heading is all that is needed. */ ''}
     <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
+      ${/* ADD, NOT A "PRIMITIVES" SECTION AT THE BOTTOM OF THE PANEL. matt, comparing the fixed-
+           height VR panel against the freely-scrolling desktop one: "still feels like the text
+           in the outliner could be a little smaller, so then we can fit the primitives section
+           at the bottom. or actually, lets put a + button at the top in the toolbar, and that
+           can show a combobox menu for the primitives, that's a better use of space." A row of
+           seven buttons was one screenful of a panel that cannot scroll as a whole (a fixed-size
+           VR mesh -- see MM_BODY_H); one icon that opens onto the same seven, closed unless it
+           is needed, buys that space back outright rather than fighting over it a font-size at a
+           time.
+           REUSES .mm-select-opts/.mm-select-opt, the existing VR-safe dropdown styling (built
+           once for exactly this: a list that opens as a plain block, no native <select>, so it
+           survives the panel rasteriser) -- not wireSelect() itself, because that persists the
+           chosen option's label on the trigger, which is right for "which shader" and wrong for
+           an action you fire once and forget: the trigger stays a plain "+", never a primitive's
+           name. */ ''}
+      <button class="mm-tool-btn" id="mm-add-primitive" title="Add an object">${faIcon('plus')}</button>
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}>${faIcon('copy')}</button>
       <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}>${faIcon('link')}</button>
       <button class="mm-tool-btn" id="mm-mirror-sel" title="Mirror selected across X — new copies, position AND rotation reflected"${hasSel ? '' : ' disabled'}>${faIcon('right-left')}</button>
       <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}>${faIcon('link-slash')}</button>
       <button class="mm-tool-btn${selVisKeyed ? ' keyed' : ''}" id="mm-vis-toggle" title="${selVisKeyed ? 'Visibility is keyframe-driven (timeline controls it)' : (selAnyVisible ? 'Hide selected' : 'Show selected')}"${hasSel ? '' : ' disabled'}>${faIcon(selAnyVisible ? 'eye' : 'eye-slash')}</button>
       <button class="mm-tool-btn" id="mm-rename-sel" title="Rename selected"${singleSel ? '' : ' disabled'}>${faIcon('pen')}</button>
+      ${outlinerDragEnabled() ? '' : `<button class="mm-tool-btn" id="mm-move-up" title="Move up in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-up')}</button>
+      <button class="mm-tool-btn" id="mm-move-down" title="Move down in the list"${singleSel ? '' : ' disabled'}>${faIcon('chevron-down')}</button>`}
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}>${faIcon('trash')}</button>
       <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}>${faIcon(tbLocked ? 'lock' : 'lock-open')}</button>
+    </div>
+    ${/* SIBLING OF THE TOOLBAR, NOT ABSOLUTELY POSITIONED. A floating popup risks the same trap
+         the earlier note about this panel keeps recording -- content is rasterised by
+         serialising the DOM into an SVG, and CSS positioning that has not actually been tried
+         through that path is not something to trust on the strength of "it should work". A
+         plain block, toggled the way wireSelect's own option list already is, needs nothing new
+         from the rasteriser: it pushes the outliner down while it is open and out of the way the
+         moment something is picked or picked from. */ ''}
+    <div class="mm-add-menu" id="mm-add-menu" style="display:none">
+      <button class="mm-select-opt" id="mm-add-cube">Cube</button>
+      <button class="mm-select-opt" id="mm-add-sphere">Sphere</button>
+      <button class="mm-select-opt" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cylinder</button>
+      <button class="mm-select-opt" id="mm-add-null">Null</button>
+      <button class="mm-select-opt" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
+      <button class="mm-select-opt" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
+      <button class="mm-select-opt" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
     </div>
     <div class="mm-outliner-wrap">
       <div class="mm-outliner-list">${meshRows}</div>
@@ -2602,16 +3039,6 @@ export function buildSectionHTML_scene(main) {
     </div>
     ${rigHTML ? `<div class="mm-section-title">Transform</div>${rigHTML}` : ''}
     ${lightHTML}
-    <div class="mm-section-title">Primitives</div>
-    <div class="mm-add-row">
-      <button class="mm-action-btn" id="mm-add-cube">Cube</button>
-      <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
-      <button class="mm-action-btn" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cyl</button>
-      <button class="mm-action-btn" id="mm-add-null">Null</button>
-      <button class="mm-action-btn" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
-      <button class="mm-action-btn" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
-      <button class="mm-action-btn" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
-    </div>
   `;
 }
 
@@ -2621,6 +3048,10 @@ export function buildSectionHTML_topology(main) {
   const isDyn   = !!(mesh?.isDynamic);
   const numLvl  = isMulti ? mesh._meshes.length : 0;
   const curLvl  = isMulti ? mesh._sel : 0;
+  // A MULTI-SELECTION steps every multires mesh in it, so the buttons are live if any of them can move.
+  const mres = (main.getSelectedMeshes?.() || []).filter((m) => m && m._meshes);
+  const canDown = (isMulti && curLvl > 0) || mres.some((m) => m._sel > 0);
+  const canUp = (isMulti && curLvl < numLvl - 1) || mres.some((m) => m._sel < m._meshes.length - 1);
 
   const res = Remesh.RESOLUTION;
 
@@ -2641,8 +3072,8 @@ export function buildSectionHTML_topology(main) {
     <div class="mm-section-title">Multiresolution</div>
     ${multiInfo}
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-level-down" ${isMulti && curLvl > 0 ? '' : 'disabled'}>Level −</button>
-      <button class="mm-action-btn" id="mm-level-up"   ${isMulti && curLvl < numLvl - 1 ? '' : 'disabled'}>Level +</button>
+      <button class="mm-action-btn" id="mm-level-down" ${canDown ? '' : 'disabled'}>Level −</button>
+      <button class="mm-action-btn" id="mm-level-up"   ${canUp ? '' : 'disabled'}>Level +</button>
     </div>
     <div class="mm-btn-pair">
       <button class="mm-action-btn" id="mm-subdivide" ${mesh ? '' : 'disabled'}>Subdivide</button>
@@ -2743,7 +3174,7 @@ export function buildSectionHTML_rendering(main) {
   const shadowLive  = main.isShadowActive?.() ?? false;
   const isCatcher   = main.getShadowCatcher?.() ?? false;
   const curvature   = mesh?.getCurvature?.() ?? 0;
-  const opacity     = mesh?.getOpacity?.() ?? 1;
+  const opacity     = (sceneMeshes(main)[0] || mesh)?.getOpacity?.() ?? 1;
   const isFlat      = getOptionsURL().flatshading;
   const isWire      = getOptionsURL().wireframe;
   const isSolid     = mesh?._renderData?._threeMesh?.material?.visible ?? true;
@@ -2762,7 +3193,20 @@ export function buildSectionHTML_rendering(main) {
   // spectator modes — a trigger button and a hidden list of buttons, no <select> element — which
   // is what makes it work in the headset, where a native dropdown has no way to open. matt: "you
   // seemed to work out how to do dropown menus that work on both vr and desktop earlier."
-  const envOpts = (ShaderPBR?.environments ?? []).map((env, i) => ({ val: i, label: env.name }));
+  // ONLY THE ENVIRONMENTS THIS RENDERER CAN ACTUALLY LOAD.
+  //
+  // The two paths read different assets and neither can read the other's: the legacy
+  // renderer samples the LogLUV octahedral atlas (`path`) and has no HDR decoder, while the
+  // node renderer takes an equirect `hdr` through RGBELoader and PMREM and cannot decode the
+  // atlas. Listing all of them would offer four choices that do nothing, silently, depending
+  // on which renderer you happen to be running.
+  //
+  // Filtered AFTER the map so `val` stays the real index into ShaderPBR.environments --
+  // everything downstream, including the saved option, is that index.
+  const _isNode = !!(main && main._isNodeRenderer);
+  const envOpts = (ShaderPBR?.environments ?? [])
+    .map((env, i) => ({ val: i, label: env.name, _ok: _isNode ? !!env.hdr : !!env.path }))
+    .filter((o) => o._ok);
   // IMPORT IS AN OPTION, NOT A BUTTON BESIDE THE LIST. Choosing a matcap and adding one are the
   // same decision — "which matcap" — so they belong in the same control; a button next to the
   // dropdown was a second thing to look at for a case that comes up once in a while. matt: "make
@@ -2784,7 +3228,7 @@ export function buildSectionHTML_rendering(main) {
   // Camera
   const camera  = main.getCamera?.() ?? main._camera;
   const proj    = camera?.getProjectionType?.() ?? 0;
-  const fov     = camera?.getFov?.() ?? 45;
+  const fov     = camera?.getFov?.() ?? 50;
   const mode    = camera?.getMode?.() ?? 0;
   const pivot   = camera?.getUsePivot?.() ?? false;
   const vmode   = main._spectatorViewMode ?? 0;
@@ -2800,15 +3244,14 @@ export function buildSectionHTML_rendering(main) {
   // there and used only here, so deleting it from this section strands the rig display flags, the
   // capsule slider, Attach and Hide All with no home in the app at all. bonepanel_test says so
   // outright ("Rendering owns the rig display block"), which is what the check is for.
-  const rigDisplay = buildBoneDisplayHTML(main, 'mm');
+  const rigDisplay = buildBoneDisplayHTML(main, 'mm',
+    `<button class="mm-choice${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>`);
   return `
     <div id="mm-render-root" class="${shaderClass}">
       <!-- NO 'Scene Display' HEADING. It sat above one button, so it was a heading that announced
            a group of one — which is the thing that made this panel read as bitsy. -->
-      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
-
       <fieldset class="mm-disabled-group"${meshDisabled}>
-      <div class="mm-section-title">Shader</div>
+      <div class="mm-section-title">Shading</div>
       <div class="mm-choice-grid cols-5">${shaderBtns}</div>
 
       <!-- ONE ROW, AND ONLY THE ONE THAT APPLIES. Environment belongs to PBR and Matcap to
@@ -2903,7 +3346,7 @@ export function buildSectionHTML_rendering(main) {
 export function buildSectionHTML_camera(main) {
   const camera  = main.getCamera?.() ?? main._camera;
   const proj    = camera?.getProjectionType?.() ?? 0;
-  const fov     = camera?.getFov?.() ?? 45;
+  const fov     = camera?.getFov?.() ?? 50;
   const mode    = camera?.getMode?.() ?? 0;
   const pivot   = camera?.getUsePivot?.() ?? false;
   const vmode   = main._spectatorViewMode ?? 0;
@@ -2964,7 +3407,21 @@ export function buildSectionHTML_camera(main) {
         { val: 1, label: 'Mirror (headset)' },
         { val: 2, label: 'Desktop free camera' },
         { val: 3, label: 'Spectator (coupled)' },
+        { val: 4, label: 'Desk sculpt (headset on desk)' },
       ], vmode)}
+      <fieldset class="mm-disabled-group" id="mm-desk-group"${vmode !== 4 ? ' disabled' : ''}>
+      <div class="mm-choice-grid cols-2">
+        <button class="mm-toggle${main._isCalibratingSpectator ? ' active' : ''}" id="mm-desk-moveme"
+          title="Grips move the desk camera (and everything on the monitor with it) instead of the world. Key: C">Move Me (C)</button>
+        <button class="mm-toggle${main._deskMapOn?.() ? ' active' : ''}" id="mm-desk-map"
+          title="Top-down plan of the headset, desk camera, controllers and sculpt">Map</button>
+      </div>
+      <div class="mm-row" title="Desk camera field of view. Lower stretches the sides less; about 30 matches a monitor seen from arm's length.">
+        <span class="mm-lbl">Desk FOV</span>
+        <input type="range" id="mm-desk-fov" min="15" max="70" step="1" value="${main.getDeskFov?.() ?? 40}">
+        <span class="mm-val" id="mm-desk-fov-val">${Math.round(main.getDeskFov?.() ?? 40)}\u00b0</span>
+      </div>
+      </fieldset>
 
       <div class="mm-field-lbl">Spectator FPS</div>
       ${buildSelectHTML('mm-spectator-fps', [
@@ -3012,9 +3469,13 @@ function buildSculptingHTML(main, part) {
   // Mesh/sculpt tools don't apply to a voxel object — dim the inactive ones when the Voxel
   // tool is active so the live set (the Voxel-mode grid below) is obvious.
   const dimForVoxel = (cur === Enums.Tools.VOXEL) ? ' mm-dim' : '';
-  const sculptBtns = SCULPT_TOOLS.map(t =>
-    `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
-  ).join('');
+  // Grab/Select/Bones/Transform were four names for "move something" scattered through Sculpt;
+  // they get their own section. SCULPT_TOOLS itself is untouched (the VR wrist picker reads it).
+  const XFORM_IDS = XFORM_TOOL_IDS;
+  const toolBtn = t =>
+    `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`;
+  const sculptBtns = SCULPT_TOOLS.filter(t => !XFORM_IDS.includes(t.id)).map(toolBtn).join('');
+  const xformBtns = XFORM_IDS.map(id => toolBtn({ id, label: toolLabel(id) })).join('');
   const meshBtns = MESH_TOOLS.map(t =>
     `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
@@ -3026,12 +3487,16 @@ function buildSculptingHTML(main, part) {
     if (uiReorg()) {
       return collapsibleHTML('tools-sculpt', 'Sculpt',
                `<div class="mm-choice-grid cols-3">${sculptBtns}</div>`)
+           + collapsibleHTML('tools-xform', 'Transform & Anim',
+               `<div class="mm-choice-grid cols-3">${xformBtns}</div>`)
            + collapsibleHTML('tools-mesh', 'Mesh Edit',
                `<div class="mm-choice-grid cols-3">${meshBtns}</div>`, false);
     }
     return `
     <div class="mm-section-title">Sculpt</div>
     <div class="mm-choice-grid cols-3">${sculptBtns}</div>
+    <div class="mm-section-title">Transform &amp; Anim</div>
+    <div class="mm-choice-grid cols-3">${xformBtns}</div>
     <div class="mm-section-title">Mesh Edit</div>
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
   `;
@@ -3161,7 +3626,8 @@ function buildSculptingHTML(main, part) {
     if (isGrab) {
       const gch = GrabChannels.channels();
       brushHTML += collapsibleHTML('grab-channels', 'Grab', `
-        <div class="mm-choice-grid cols-2">
+        <div class="mm-choice-grid cols-3">
+          <button class="mm-choice${GrabChannels.auto() ? ' active' : ''}" id="mm-grab-auto" title="Pins: full. Bones: FK turn. Hold the non-dominant hand's Y: IK.">Auto</button>
           <button class="mm-choice${gch.translate ? ' active' : ''}" id="mm-grab-translate">Translate</button>
           <button class="mm-choice${gch.rotate ? ' active' : ''}" id="mm-grab-rotate">Rotate</button>
         </div>`, false);
@@ -3175,6 +3641,7 @@ function buildSculptingHTML(main, part) {
         <div class="mm-row">
           <span class="mm-lbl">Active Group</span>
           <input type="range" id="mm-group-active" min="1" max="8" step="1" value="${grp}">
+          <span id="mm-group-swatch" style="display:inline-block;width:14px;height:14px;border-radius:3px;flex-shrink:0;background:${groupSwatchCss(grp)}"></span>
           <span class="mm-val" id="mm-group-active-val">${grp}</span>
         </div>
         <button class="mm-toggle${showGroups ? ' active' : ''}" id="mm-group-show">Show Groups</button>`;
@@ -3664,10 +4131,15 @@ export class MainMenuPanel extends HTMLVRPanel {
       // (same section, same mesh count) and the rebuild below is skipped, so the panel keeps
       // showing the old names until something unrelated forces it. See Skeleton.refreshOutliner.
       : `sec:${this._activeSection}:${shaderType}:${meshCount}:${curTool}:${symOn}:${contOn}:${uiReorg() ? 1 : 0}`
-        + `:${this._main._outlinerRev | 0}`;
+        + `:${this._main._outlinerRev | 0}:${outlinerDragEnabled() ? 1 : 0}`;
 
     this._applyReorgClass();
     if (key === this._lastContentKey) return;
+    // A RENAME IN PROGRESS IS NOT REBUILT AWAY. The first click of a double-click selects the row,
+    // which bumps _outlinerRev, and that rebuild lands AFTER the second click has already swapped
+    // the row's label for the input -- so the field appeared and was wiped in the same breath, and
+    // double-click never renamed. The key is left unset, so the rebuild runs when the rename commits.
+    if (this._element.querySelector('.mm-rename-input')) return;
     this._lastContentKey = key;
 
     // Update top menubar active state
@@ -3803,9 +4275,13 @@ export class MainMenuPanel extends HTMLVRPanel {
     const paint = () => this.markDirty();
 
     if (menu === 'files') {
+      // _rebuildContent, not _refreshContent -- there has never been a method by that name, so
+      // every Save/Load press in the Files menu threw out of the VR dispatch. It did not look
+      // like a broken button: the throw happens inside handleXRInput, so the frame's remaining
+      // input work is skipped too, which reads as the whole panel hiccuping.
       const rebuildFiles = () => {
         this._lastContentKey = '';
-        this._refreshContent();
+        this._rebuildContent();
       };
       wireMenuFiles(el, main, rebuildFiles, () => {
         const guiFiles = main.getGui?.()._ctrlFiles ?? null;
@@ -3816,8 +4292,8 @@ export class MainMenuPanel extends HTMLVRPanel {
         const guiFiles = main.getGui?.()._ctrlFiles ?? null;
         await guiFiles?.prepareBrowserSavePage?.();
         this._lastContentKey = '';
-        this._refreshContent();
-      }, paint);
+        this._rebuildContent();
+      }, paint, () => this.closeMenu());
       q('#mm-back-to-files')?.addEventListener('click', () => this._setMenu('files'));
 
     } else if (menu === 'history') {
@@ -3827,7 +4303,28 @@ export class MainMenuPanel extends HTMLVRPanel {
       // null for everything else, so there is no second copy of any of them to drift.
       const fullRepaint = () => { this._lastContentKey = ''; this._rebuildContent(); };
       wireSectionRendering(el, main, fullRepaint, paint, paint);
-      wireMenuBackground(el, main, paint);
+      wireMenuBackground(el, main, fullRepaint);
+      // SHADER AND RIG DISPLAY COME UP TO THE TOP LEVEL, the same hoist Gui.js applies to this
+      // same menu on desktop -- buildMenuHTML_view wraps buildSectionHTML_rendering's whole
+      // output in one 'Rendering' collapsible, which buries both a chevron deep. I fixed the
+      // WRONG mount the first time: this panel also renders 'rendering' as a Tools-tab SECTION
+      // (_activeSection === 'rendering'), and I hoisted there -- but that path has no outer
+      // 'Rendering' wrapper to begin with (sectionHeaderHTML is a title bar, not a collapsible),
+      // so the call was a no-op and the actual View menu, which the report named outright, was
+      // never touched. matt: "in vr those menus are still sub-sections of 'rendering'." Moved
+      // to where desktop's own fix already lives, on the identical menu.
+      //
+      // SCOPED TO #mm-content, NOT `el`. `el` here is `this._element`, the WHOLE panel --
+      // header, tab strip and all -- because every other lookup in this function only ever
+      // reads through it (`q = el.querySelector`), which does not care how far up the tree `el`
+      // sits. hoistGroupsToTop does care: it walks a hoisted section up to whichever ancestor is
+      // a direct child of the root it is given, then reinserts it as a sibling AT THAT ROOT. Pass
+      // the whole panel and the walk stops several levels above the scrollable content, so
+      // "Shader" and "Rig Display" landed as siblings of the content div itself -- outside the
+      // area that is actually shown, which is a subtler failure than not hoisting at all: they
+      // were not nested and not visible. Desktop's own call does not have this trap because its
+      // `el` (`dd`) IS the dropdown's content container already, nothing more.
+      hoistGroupsToTop(q('#mm-content'), ['Shading', 'Display']);
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
       q('#mm-ref-show')?.addEventListener('click', () => {
@@ -3836,7 +4333,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
 
     } else if (menu === 'background') {
-      wireMenuBackground(el, main, paint);
+      wireMenuBackground(el, main, () => { this._lastContentKey = ''; this._rebuildContent(); });
     } else if (menu === 'reference') {
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
@@ -3893,6 +4390,21 @@ export class MainMenuPanel extends HTMLVRPanel {
       main._vrUseVolumeIntersect = !main._vrUseVolumeIntersect;
       opts.saveOption('aimPickingMode', !main._vrUseVolumeIntersect);
       q('#mm-raycast')?.classList.toggle('active', !main._vrUseVolumeIntersect);
+      paint();
+    });
+    // WIRED HERE BECAUSE THE BUTTON LIVES HERE. This listener used to be registered in
+    // wireSectionTopology, which is handed the topology section's element -- the query found
+    // nothing, `?.` swallowed it, and the toggle was inert for every press ever made on it.
+    // matt: "is the setting for 'hand tracking' in settings meant to be a toggle? I cant turn
+    // it off." Confirmed on device: no `handTracking` key had ever reached the saved settings.
+    q('#mm-hand-track')?.addEventListener('click', () => {
+      const on = window._handTracking === false;      // currently OFF -> turn it back on
+      window._handTracking = on;
+      q('#mm-hand-track')?.classList.toggle('active', on);
+      // Persisted, because the reason to switch it off is a working session at a desk with a
+      // keyboard, and having to find it again every time is most of the annoyance.
+      opts.saveOption('handTracking', on, 0);
+      if (window.screenLog) window.screenLog('Hand tracking ' + (on ? 'ON' : 'OFF'), 'cyan');
       paint();
     });
     // A SETTING, NOT AN ENV VAR. This lived only on `window`, which meant a console -- and there
@@ -3969,6 +4481,14 @@ export class MainMenuPanel extends HTMLVRPanel {
       main.updateStylusOffset?.(f);
       opts.saveOption('stylusOffset', f, 500);
     });
+    for (const [id, key] of [['#mm-surface-ring', 'surfaceRing'], ['#mm-contact-shade', 'contactShade']]) {
+      q(id)?.addEventListener('click', (e) => {
+        const on = opts()[key] === false;   // opts is getOptionsURL itself here
+        opts.saveOption(key, on, 0);
+        e.currentTarget.classList.toggle('active', on);
+        this.markDirty?.();
+      });
+    }
     this._wireSlider(q('#mm-stylus-tilt'), q('#mm-stylus-tilt-val'), (v) => {
       main.updateStylusTilt?.(v);
       opts.saveOption('stylusTilt', v, 500);
@@ -4281,6 +4801,12 @@ export function wireVRScrollbar(scrollEl, trackEl, thumbEl, dirtyFn) {
  * Wire an input[type=range] to a value-display span and a callback.
  * dirtyFn is called after each input event (pass markDirty for VR, or a rebuild fn for desktop).
  */
+// CSS colour of a face group, from the same palette the overlay paints with.
+const groupSwatchCss = (g) => {
+  const c = Mesh.prototype.getFaceGroupColor(g, [0, 0, 0]);
+  return `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+};
+
 export function wireSlider(sliderEl, valEl, cb, formatFn, dirtyFn) {
   if (!sliderEl) return;
   const fmt = formatFn ?? String;
@@ -4380,17 +4906,59 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     };
     wireSlider(el.querySelector('#mm-light-int'), el.querySelector('#mm-light-int-val'), (v) => {
       const L = _litSel(); if (!L) return;
-      L._lightIntensity = v / 100;
+      L._lightIntensity = lightIntFromSlider(v);
       main.render?.();
-    }, (v) => (v / 100).toFixed(2), null);
+    }, (v) => lightIntFromSlider(v).toFixed(3), null);
     wireSlider(el.querySelector('#mm-light-range'), el.querySelector('#mm-light-range-val'), (v) => {
       const L = _litSel(); if (!L) return;
       L._lightRange = v;
       main.render?.();
     }, (v) => String(v), null);
+    el.querySelector('#mm-light-shadow')?.addEventListener('click', () => {
+      const L = _litSel(); if (!L) return;
+      L._castShadow = (L._castShadow === false);
+      // repaintFn, not lightRepaintFn: this is wireSectionScene, which has no such parameter.
+      // `lightRepaintFn?.()` looks safe and is not -- optional CALL does not protect an
+      // undefined IDENTIFIER, so the shadow toggle threw a ReferenceError out of the VR
+      // dispatch every time it was pressed. The toggle changes the button's MARKUP, so it
+      // needs the full repaint anyway.
+      repaintFn?.();
+      main.render?.();
+    });
+    wireSlider(el.querySelector('#mm-light-shopacity'), el.querySelector('#mm-light-shopacity-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowIntensity = v / 100;
+      main.render?.();
+    }, (v) => v + '%', null);
+    wireSlider(el.querySelector('#mm-light-shnear'), el.querySelector('#mm-light-shnear-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowNear = v / 1000;            // 0 = auto, else a fraction of the far plane
+      main.render?.();
+    }, (v) => (v > 0 ? (v / 10).toFixed(1) + '%' : 'auto'), null);
+    el.querySelectorAll('[data-shadow-res]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const L = _litSel(); if (!L) return;
+        L._shadowMapSize = parseInt(b.getAttribute('data-shadow-res'), 10);
+        repaintFn?.();          // the active state is markup, so this is a rebuild not a repaint
+        main.render?.();
+      });
+    });
+    wireSlider(el.querySelector('#mm-light-shsoft'), el.querySelector('#mm-light-shsoft-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowRadius = v;
+      main.render?.();
+    }, (v) => String(v), null);
+    wireSlider(el.querySelector('#mm-light-shbias'), el.querySelector('#mm-light-shbias-val'), (v) => {
+      const L = _litSel(); if (!L) return;
+      L._shadowNormalBias = v / 100;
+      main.render?.();
+    }, (v) => (v / 100).toFixed(2), null);
     wireSlider(el.querySelector('#mm-light-cone'), el.querySelector('#mm-light-cone-val'), (v) => {
       const L = _litSel(); if (!L) return;
-      L._lightConeDeg = v;
+      // THE CONTROL IS THE FULL CONE ANGLE (diameter); `_lightConeDeg` stays the half-angle the
+      // shader, the gizmo and saved scenes already use. Nomad and Blender both measure the full
+      // angle, so that is what a number typed here means to anyone moving a scene between them.
+      L._lightConeDeg = v / 2;
       // The cone handle IS the angle, so it has to be rebuilt as the slider moves or it starts
       // lying. Cheap enough to do per input event: ~60 line segments.
       main.decorateLight?.(L);
@@ -4491,7 +5059,15 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     btn.replaceChildren(input);
     // Focusing the input is what triggers the Quest's native keyboard — skip it in VR so
     // only our on-screen keyboard shows.
-    if (!_useVrKb) { input.focus(); input.select(); }
+    // Focused (and given its blur-to-commit) a beat LATER, not inside the click: the second click
+    // of a double-click is followed by the browser's own dblclick handling, which took the focus
+    // back and fired the blur, committing the rename the instant it opened.
+    if (!_useVrKb) {
+      setTimeout(() => {
+        input.focus(); input.select();
+        input.addEventListener('blur', () => commit(true));
+      }, 60);
+    }
     let done = false;
     const commit = (save) => {
       if (done) return; done = true;
@@ -4515,14 +5091,208 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         if (v) input.value = v;
         commit(!!v);
       }, input, vrPanel);
-    } else {
-      input.addEventListener('blur', () => commit(true));
     }
   };
 
   // Toolbar pencil → rename the selected mesh (double-click a row still works, but it's awkward
   // in VR). Single selection only — the button is disabled otherwise, since one name cannot be
   // typed into six meshes.
+  for (const [id, dir] of [['#mm-move-up', -1], ['#mm-move-down', 1]]) {
+    el.querySelector(id)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sel = main.getSelectedMeshes?.() ?? [];
+      if (sel.length !== 1) return;
+      const before = main.snapshotOutlinerKeys?.();
+      if (moveOutlinerRow(main, sel[0], dir)) {
+        main.pushOutlinerOrderUndo?.(before, main.snapshotOutlinerKeys?.());
+        repaintFn();
+      }
+    });
+  }
+
+  // DRAG AND DROP (everywhere but VR). Over a row's top or bottom quarter the drop INSERTS before/after
+  // it; over the middle it PARENTS to it; over empty space below the rows it moves the node OUT to the
+  // top level, last. (A quarter, not a sliver: a row is ~16px tall and a few percent of that is under a
+  // pixel.) Order comes from the sibling keys, parenting from main.setMeshParent, which keeps its world
+  // transform, refuses cycles and has its own undo.
+  //
+  // A MOUSE drags natively (HTML5 drag events). TOUCH and PEN use a pointer-event drag started by a
+  // LONG PRESS, so an ordinary swipe still scrolls the list and a tap still selects.
+  if (outlinerDragEnabled()) {
+    const meshOfRow = (r) => findMesh(r?.querySelector('[data-action="select"]')?.dataset.meshId);
+    const clear = () => el.querySelectorAll('.drop-before,.drop-after,.drop-into,.drag-src').forEach((r) => r.classList.remove('drop-before', 'drop-after', 'drop-into', 'drag-src'));
+    const inside = (a, root) => { for (let p = a; p; p = p._parentMesh) if (p === root) return true; return false; };
+    const zoneOf = (y, r) => {
+      const b = r.getBoundingClientRect(), f = (y - b.top) / b.height;
+      return f < 0.25 ? 'before' : f > 0.75 ? 'after' : 'into';
+    };
+    // the two things a drop does, shared by the mouse and the touch path
+    const dropOnRow = (node, target, z) => {
+      if (!node || !target || target === node) return;
+      if (inside(z === 'into' ? target : target._parentMesh, node)) return;
+      if (z === 'into') {
+        main.setMeshParent(node.getID(), target.getID());
+        target._outlinerCollapsed = false;
+      } else {
+        const par = target._parentMesh || null;
+        const order = { before: main.snapshotOutlinerKeys?.() };
+        const reparent = (node._parentMesh || null) !== par;
+        if (reparent) main.setMeshParent(node.getID(), par ? par.getID() : null, { order });
+        placeOutlinerRow(main, node, target, z === 'after');
+        order.after = main.snapshotOutlinerKeys?.();
+        if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
+      }
+      repaintFn();
+    };
+    const dropOut = (node) => {
+      if (!node) return;
+      const order = { before: main.snapshotOutlinerKeys?.() };
+      const reparent = !!node._parentMesh;
+      if (reparent) main.setMeshParent(node.getID(), null, { order });
+      const tops = (main.getMeshes?.() ?? []).filter((m) => m !== node && !m._isVoxelChunk && !m._parentMesh);
+      const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
+      if (last) placeOutlinerRow(main, node, last, true);
+      order.after = main.snapshotOutlinerKeys?.();
+      if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
+      repaintFn();
+    };
+    const canMouse = !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
+    let dragged = null;
+    const list = el.querySelector('.mm-outliner-list');
+
+    // ── mouse: native drag ──
+    if (list && canMouse) {
+      list.addEventListener('dragover', (e) => {
+        if (!dragged || e.target.closest('.mm-outliner-row')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        clear();
+        list.lastElementChild?.classList.add('drop-after');
+      });
+      list.addEventListener('dragleave', (e) => { if (!list.contains(e.relatedTarget)) clear(); });
+      list.addEventListener('drop', (e) => {
+        if (e.target.closest('.mm-outliner-row')) return;
+        const node = dragged;
+        clear(); dragged = null;
+        if (!node) return;
+        e.preventDefault();
+        dropOut(node);
+      });
+    }
+    el.querySelectorAll('.mm-outliner-row').forEach((row) => {
+      if (canMouse) {
+        row.draggable = true;
+        row.addEventListener('dragstart', (e) => {
+          if (e.target?.tagName === 'INPUT') { e.preventDefault(); return; }   // renaming
+          dragged = meshOfRow(row);
+          if (!dragged) { e.preventDefault(); return; }
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', dragged._permanentStaticLabel || '');
+        });
+        row.addEventListener('dragend', () => { dragged = null; clear(); });
+        row.addEventListener('dragover', (e) => {
+          const target = meshOfRow(row);
+          if (!dragged || !target || target === dragged) return;
+          const z = zoneOf(e.clientY, row);
+          // can't drop a node into (or beside, which parents it to) its own subtree
+          if (inside(z === 'into' ? target : target._parentMesh, dragged)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          clear();
+          row.classList.add('drop-' + z);
+        });
+        row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) row.classList.remove('drop-before', 'drop-after', 'drop-into'); });
+        row.addEventListener('drop', (e) => {
+          const target = meshOfRow(row);
+          const node = dragged;
+          clear(); dragged = null;
+          if (!node || !target || target === node) return;
+          e.preventDefault();
+          dropOnRow(node, target, zoneOf(e.clientY, row));
+        });
+      }
+
+      // ── touch / pen: long-press, then drag with the finger ──
+      row.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' || e.button > 0 || e.target?.tagName === 'INPUT') return;
+        const node = meshOfRow(row);
+        if (!node) return;
+        row.draggable = false;                         // the system's own long-press drag would fight this
+        let x0 = e.clientX, y0 = e.clientY, x = x0, y = y0, active = false, scroller = 0;
+        const pid = e.pointerId;
+        const hit = () => {
+          const t = document.elementFromPoint(x, y);
+          const r = t && t.closest && t.closest('.mm-outliner-row');
+          if (r && el.contains(r)) {
+            const target = meshOfRow(r);
+            if (!target || target === node) return { none: true };
+            const z = zoneOf(y, r);
+            if (inside(z === 'into' ? target : target._parentMesh, node)) return { none: true };
+            return { row: r, target, z };
+          }
+          const lr = list && list.getBoundingClientRect();
+          if (lr && x >= lr.left && x <= lr.right && y >= lr.top && y <= lr.bottom) return { out: true };
+          return { none: true };
+        };
+        const show = () => {
+          clear();
+          row.classList.add('drag-src');
+          const h = hit();
+          if (h.row) h.row.classList.add('drop-' + h.z);
+          else if (h.out) list.lastElementChild?.classList.add('drop-after');
+        };
+        const cleanup = () => {
+          clearTimeout(timer); clearInterval(scroller);
+          window.removeEventListener('pointermove', move, true);
+          window.removeEventListener('pointerup', up, true);
+          window.removeEventListener('pointercancel', cancel, true);
+          list && list.removeEventListener('touchmove', block);
+          clear();
+          if (canMouse) row.draggable = true;
+        };
+        const block = (ev) => { if (active) ev.preventDefault(); };
+        const start = () => {
+          active = true;
+          list && list.addEventListener('touchmove', block, { passive: false });
+          // edge auto-scroll while the finger is held near the top or bottom of the list
+          scroller = setInterval(() => {
+            const lr = list && list.getBoundingClientRect();
+            if (!lr) return;
+            if (y < lr.top + 28) list.scrollTop -= 8; else if (y > lr.bottom - 28) list.scrollTop += 8;
+            show();
+          }, 40);
+          if (navigator.vibrate) { try { navigator.vibrate(12); } catch (_) {} }
+          show();
+        };
+        const move = (ev) => {
+          if (ev.pointerId !== pid) return;
+          x = ev.clientX; y = ev.clientY;
+          if (!active) { if (Math.hypot(x - x0, y - y0) > 8) cleanup(); return; }   // a swipe: let it scroll
+          ev.preventDefault();
+          show();
+        };
+        const swallowClick = () => {
+          const eat = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+          window.addEventListener('click', eat, true);
+          setTimeout(() => window.removeEventListener('click', eat, true), 350);
+        };
+        const up = (ev) => {
+          if (ev.pointerId !== pid) return;
+          const was = active, h = was ? hit() : null;
+          cleanup();
+          if (!was) return;
+          swallowClick();                              // the lift is not a tap on a row
+          if (h.row) dropOnRow(node, h.target, h.z); else if (h.out) dropOut(node);
+        };
+        const cancel = (ev) => { if (ev.pointerId === pid) cleanup(); };
+        const timer = setTimeout(start, e.pointerType === 'pen' ? 220 : 380);
+        window.addEventListener('pointermove', move, true);
+        window.addEventListener('pointerup', up, true);
+        window.addEventListener('pointercancel', cancel, true);
+      });
+    });
+  }
+
   el.querySelector('#mm-rename-sel')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const sel = main.getSelectedMeshes?.() ?? [];
@@ -4602,7 +5372,10 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // A click that landed inside a row is that row's business and is left alone: its own listener
   // has already run, and a deselect here would immediately undo the select it just made.
   el.querySelector('.mm-outliner-list')?.addEventListener('click', (e) => {
-    if (e.target.closest && e.target.closest('.mm-outliner-row')) return;
+    // composedPath, not target.closest: the row's own handler may already have REPLACED the
+    // clicked label (a double-click swaps it for the rename field), and a detached target has no
+    // row above it -- so the rename was read as a click on empty space and deselected itself.
+    if (e.composedPath().some((n) => n.classList && n.classList.contains('mm-outliner-row'))) return;
     cancelPending();          // an armed set-parent/aim is asking you to click a NODE
     main.setOrUnsetMesh?.(null);
     main.render?.(); repaintFn();
@@ -4655,6 +5428,24 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
 
   // Any scene-add action cancels an in-progress pick to avoid a stale subject.
   const cancelPending = () => RigPending.cancel(main);
+
+  // OPEN/CLOSE, not a persisted selection: unlike wireSelect's trigger, the + button's own label
+  // never changes -- there is no "current primitive", only the next one you are about to add.
+  //
+  // NOT repaintFn() -- that is the FULL rebuild every other handler in this function calls
+  // (fullRepaint / rebuild at the two call sites), and a full rebuild replaces #mm-content's
+  // innerHTML wholesale from the same source markup that hardcodes `display:none` on this menu.
+  // Call it right after opening the menu and the rebuild undoes the open before anyone can read
+  // it, let alone click an option -- the exact trap the View menu's own select dropdowns hit for
+  // the same reason (see the wireFn note in Gui.js). Desktop needs nothing more: a plain style
+  // change on real DOM is already on screen. VR is a rasterised texture and needs telling to
+  // redraw, which is what markDirty (not a rebuild) is for.
+  const addMenu = el.querySelector('#mm-add-menu');
+  el.querySelector('#mm-add-primitive')?.addEventListener('click', () => {
+    if (!addMenu) return;
+    addMenu.style.display = addMenu.style.display === 'none' ? '' : 'none';
+    vrPanel?.markDirty?.();
+  });
 
   // When an SR frame group is the active context, a newly-added primitive is adopted
   // as the frame at the playhead (fills a blank "New" slot) instead of a stray object.
@@ -4842,6 +5633,14 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
 }
 
+// THE MESHES A GLOBAL SETTING APPLIES TO: everything that is geometry in the scene, and none of
+// the furniture. Joints, pins and lights are not "meshes" to the person moving a slider, and the
+// weight capsules answer to the capsule opacity slider instead.
+function sceneMeshes(main) {
+  return (main.getMeshes?.() ?? []).filter((m) => !m._isBone && !m._isNull && !m._isLight
+    && !m._isWeightCage && !m._isPinTarget);
+}
+
 export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = fullRepaintFn, sliderDirtyFn = null) {
   const mesh   = main.getMesh?.();
   const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : (mesh ? [mesh] : []);
@@ -4941,8 +5740,14 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   // UP to make the mesh disappear — which is the opposite of every other opacity in the app,
   // including the capsule slider right below it. Now 0 is see-through, 100 is solid, and 100 is
   // where a mesh starts. Curvature moved to Settings.
+  // GLOBAL, NOT THE SELECTION. This acted on whatever was selected, and while rigging the
+  // selection is whatever you last sculpted -- so reaching for the skin's opacity dimmed the
+  // capsule you happened to be holding. matt: "these opacity sliders should be global, not per
+  // selection." Every real mesh; the rig and the weight capsules have their own opacity sliders.
   wireSlider(el.querySelector('#mm-opacity'), el.querySelector('#mm-opacity-val'), (v) => {
-    meshes?.forEach(m => m.setOpacity?.(v / 100)); main.render?.();
+    sceneMeshes(main).forEach(m => m.setOpacity?.(v / 100));
+    Skeleton.updateVisuals(main);   // the volumes' xray follows the skin's opacity (tuneCapsuleBatches)
+    main.render?.();
   }, (v) => `${v}%`, sliderDirtyFn);
 
   el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {
@@ -5007,9 +5812,24 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   const skipMap = [0, 1, 3, 7];
   wireSelect(el, 'mm-spectator-mode', (v) => {
     main._spectatorViewMode = parseInt(v, 10); main._spectatorN = 0;
+    const g = el.querySelector('#mm-desk-group');
+    if (g) g.disabled = main._spectatorViewMode !== 4;
   }, lightRepaintFn);
+  el.querySelector('#mm-desk-moveme')?.addEventListener('click', (e) => {
+    main._isCalibratingSpectator = !main._isCalibratingSpectator;
+    e.currentTarget.classList.toggle('active', main._isCalibratingSpectator);
+    lightRepaintFn?.();
+  });
+  wireSlider(el.querySelector('#mm-desk-fov'), el.querySelector('#mm-desk-fov-val'),
+    (v) => main.setDeskFov?.(v), (v) => Math.round(v) + '\u00b0', sliderDirtyFn);
+  el.querySelector('#mm-desk-map')?.addEventListener('click', (e) => {
+    main.setDeskMap?.(!main._deskMapOn?.());
+    e.currentTarget.classList.toggle('active', main._deskMapOn?.());
+    lightRepaintFn?.();
+  });
   wireSelect(el, 'mm-spectator-fps', (v) => {
     main._spectatorFrameSkip = skipMap[parseInt(v, 10)] ?? 3; main._spectatorN = 0;
+    getOptionsURL.saveOption('spectatorFrameSkip', main._spectatorFrameSkip, 0);
   }, lightRepaintFn);
 }
 
@@ -5031,16 +5851,36 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
     if (bound) { main.setMesh?.(bound); repaintFn(); }
   };
 
-  el.querySelector('#mm-level-down')?.addEventListener('click', () => {
+  // LEVEL -/+ STEP EVERY SELECTED MULTIRES MESH, each from its own level -- a character in several
+  // pieces is several multires meshes, and stepping them one at a time was the only way. One mesh goes
+  // through the topology GUI as before; several are one undo step together.
+  const stepLevels = (dir) => {
     retarget();
-    const m = main.getMesh?.();
-    if (m?._meshes && m._sel > 0) { topo?.onResolutionChanged?.(m._sel); main.render?.(); repaintFn(); }
-  });
-  el.querySelector('#mm-level-up')?.addEventListener('click', () => {
-    retarget();
-    const m = main.getMesh?.();
-    if (m?._meshes && m._sel < m._meshes.length - 1) { topo?.onResolutionChanged?.(m._sel + 2); main.render?.(); repaintFn(); }
-  });
+    const cur = main.getMesh?.();
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => m && m._meshes);
+    if (cur?._meshes && !sel.includes(cur)) sel.push(cur);
+    const moving = sel.filter((m) => (dir < 0 ? m._sel > 0 : m._sel < m._meshes.length - 1));
+    if (!moving.length) return;
+    if (moving.length === 1 && moving[0] === cur) {
+      topo?.onResolutionChanged?.(cur._sel + 1 + dir);
+    } else {
+      const before = moving.map((m) => [m, m.getCurrentMesh()]);
+      for (const m of moving) m.selectResolution(m._sel + dir);
+      const after = moving.map((m) => [m, m.getCurrentMesh()]);
+      const apply = (rows) => {
+        for (const [m, sub] of rows) m.selectMesh(sub);
+        main.getGui?.()?.updateMesh?.();
+        main.render?.();
+        repaintFn();
+      };
+      main.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Multires Level');
+      main.getGui?.()?.updateMesh?.();
+    }
+    main.render?.();
+    repaintFn();
+  };
+  el.querySelector('#mm-level-down')?.addEventListener('click', () => stepLevels(-1));
+  el.querySelector('#mm-level-up')?.addEventListener('click', () => stepLevels(1));
   el.querySelector('#mm-subdivide')?.addEventListener('click',   () => { retarget(); topo?.subdivide?.();    main.render?.(); repaintFn(); });
   el.querySelector('#mm-reverse')?.addEventListener('click',     () => { retarget(); topo?.reverse?.();      main.render?.(); repaintFn(); });
   el.querySelector('#mm-del-lower')?.addEventListener('click',   () => { retarget(); topo?.deleteLower?.();  main.render?.(); repaintFn(); });
@@ -5109,7 +5949,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   // Both callbacks repaint: this panel has no in-place state sync, so a rebuild is how a
   // toggle shows that it toggled.
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
-  wireTransformSection(el, main, { refresh: repaintFn });
+  wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
     window._sculptLocked = !window._sculptLocked;
@@ -5165,7 +6005,11 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     // Face-group paint controls (only present when the Groups tool is active)
     wireSlider(
       el.querySelector('#mm-group-active'), el.querySelector('#mm-group-active-val'),
-      (v) => { if (tool.setGroup) tool.setGroup(v); }, null, sliderDirtyFn
+      (v) => {
+        if (tool.setGroup) tool.setGroup(v);
+        const sw = el.querySelector('#mm-group-swatch');
+        if (sw) sw.style.background = groupSwatchCss(v);
+      }, null, sliderDirtyFn
     );
     el.querySelector('#mm-group-show')?.addEventListener('click', (e) => {
       const mesh = main.getMesh?.();
@@ -5214,6 +6058,10 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     };
     grabChannel('#mm-grab-translate', 'translate');
     grabChannel('#mm-grab-rotate', 'rotate');
+    el.querySelector('#mm-grab-auto')?.addEventListener('click', (e) => {
+      e.currentTarget.classList.toggle('active', GrabChannels.setAuto(!GrabChannels.auto()));
+      lightRepaintFn();
+    });
 
     el.querySelector('#mm-brush-clay')?.addEventListener('click', (e) => {
       tool._clay = !tool._clay;
@@ -5483,26 +6331,55 @@ export function buildMenuHTML_browserSaves(main) {
       <div class="mm-storage-list" id="mm-storage-grid">${thumbs}</div>
       <div class="mm-scrollbar-track mm-storage-sbar"><div class="mm-scrollbar-thumb"></div></div>
     </div>
+    ${/* ONE ROW, NOT THREE. matt: "it should just be a single row for delete, import, open ...
+         the previous/next buttons are also on their own separate rows, thats stupid. wherever
+         possible we should be trying to avoid scrolling with the mainpanel."
+         They WERE authored as two three-column grids, and they still are on the desktop
+         overlay -- what broke them is .mm-dense, the sweep that reflows a panel's rows to fit
+         its width: it replaces the grid with a wrapping flex box and gives every .mm-action-btn
+         a 170px flex-basis, so in the main panel each row broke into one button per line. The
+         fix for that is the AUTHORED_ROWS exemption at the top of this file; this markup then
+         goes one better and spends the row it saved, folding the pager into the same line.
+         PAGING IS TWO ARROWS, not two words: "Previous" and "Next" earned a full column each
+         for a control you use only when a library outgrows a page, and shrinking them is what
+         pays for Delete / Import / Open keeping theirs. The three named buttons take equal
+         shares of what is left, with Open at the right-hand end -- the confirm corner -- and
+         Delete at the other, so the one that loads and the one that erases never touch. */ ''}
     <div class="mm-storage-toolbar">
-      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Open</button>
-      <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
+      <button class="mm-action-btn mm-storage-pg" id="mm-storage-prev" title="Previous page" ${page <= 0 ? 'disabled' : ''}>${faIcon('chevron-left')}</button>
+      <span class="mm-storage-page">${page + 1}/${pageCount}</span>
+      <button class="mm-action-btn mm-storage-pg" id="mm-storage-next" title="Next page" ${page >= pageCount - 1 ? 'disabled' : ''}>${faIcon('chevron-right')}</button>
       <button class="mm-action-btn danger" id="mm-storage-delete" ${disabled}>Delete</button>
-    </div>
-    <div class="mm-storage-toolbar">
-      <button class="mm-action-btn" id="mm-storage-prev" ${page <= 0 ? 'disabled' : ''}>Previous</button>
-      <span class="mm-storage-page">${page + 1} / ${pageCount}</span>
-      <button class="mm-action-btn" id="mm-storage-next" ${page >= pageCount - 1 ? 'disabled' : ''}>Next</button>
+      <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
+      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Open</button>
     </div>
   `;
 }
 
-export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn) {
+// `closeFn` closes whatever is showing this panel -- the desktop overlay's backdrop, or the VR
+// menu. Optional: a caller with nothing to close simply passes none and Open stays put.
+export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn, closeFn = null) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
 
+  // OPEN = REPLACE THE SCENE, and it is the one action that ends the visit: you asked for a file,
+  // you got it, so the dialog has nothing left to say and closes itself. Both ways in (the Open
+  // button and a double click on a thumbnail) go through here so they cannot drift apart.
+  // `closeFn` is whatever is showing this panel; a caller with nothing to close -- a bare test --
+  // simply passes none.
+  const openSave = (key) => {
+    if (!key) return;
+    if (guiFiles) guiFiles._selectedSaveKey = key;
+    guiFiles?.loadSpecificBrowserSave?.(key, true);
+    closeFn?.();
+  };
+
   q('#mm-browser-save')?.addEventListener('click', () => {
-    warnVoxelThenSave(main, () => promptSaveName('Save scene as', 'scene', (n) => {
+    // Same free-name prefill as the Files menu: this is the browser-saves panel's own Save
+    // button, and it was the other place a library filled up with identical names.
+    warnVoxelThenSave(main, () => promptSaveName('Save scene as',
+      guiFiles?.uniqueSaveName?.('scene') ?? 'scene', (n) => {
       guiFiles?.saveToBrowserStorage?.(n);
       setTimeout(() => {
         guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
@@ -5527,8 +6404,12 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn)
     rebuildFn();
   });
 
-  // Select a save by clicking its thumbnail; the toolbar acts on the selection.
+  // Select a save by clicking its thumbnail; the toolbar acts on the selection. A DOUBLE click
+  // is the shortcut past the toolbar: it opens the save outright, the way a file browser does.
+  // matt: "double clicking an entry in the browser open dialog should load that file and close
+  // the dialog."
   el.querySelectorAll('.mm-storage-item').forEach(item => {
+    item.addEventListener('dblclick', () => openSave(item.dataset.saveKey));
     item.addEventListener('click', () => {
       if (guiFiles) guiFiles._selectedSaveKey = item.dataset.saveKey;
       el.querySelectorAll('.mm-storage-item').forEach(card =>
@@ -5541,10 +6422,7 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn)
   });
 
   // Load = replace the current scene; Import = append to it.
-  q('#mm-storage-load')?.addEventListener('click', () => {
-    const key = selKey();
-    if (key) guiFiles?.loadSpecificBrowserSave?.(key, true);
-  });
+  q('#mm-storage-load')?.addEventListener('click', () => openSave(selKey()));
   q('#mm-storage-import')?.addEventListener('click', () => {
     const key = selKey();
     if (key) guiFiles?.loadSpecificBrowserSave?.(key, false);
@@ -5622,6 +6500,70 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     });
   }
 
+  q('#mm-new-example')?.addEventListener('click', async () => {
+    main._examplesOpen = !main._examplesOpen;
+    if (main._examplesOpen && !_examples) {
+      rebuildFn();
+      try {
+        const r = await fetch(examplesURL('examples.json'));
+        _examples = r.ok ? await r.json() : [];
+      } catch (_) { _examples = []; }
+    }
+    rebuildFn();
+  });
+  el.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', async () => {
+    const i = +b.dataset.example;
+    const ex = _examples?.[i];
+    if (!ex || _exampleLoad) return;
+    let painted = 0;
+    const status = (text, now) => {
+      _exampleLoad = { i, text };
+      const t = performance.now();
+      if (now || t - painted > 250) { painted = t; rebuildFn(); }   // a VR repaint is not free
+    };
+    const mb = (n) => (n / 1048576).toFixed(1);
+    try {
+      status('Downloading\u2026', true);
+      const r = await fetch(examplesURL(ex.file));
+      if (!r.ok) throw new Error(r.status);
+      // Content-Length is the COMPRESSED size when the server gzips, so it is only shown while
+      // the count is still under it.
+      const total = +r.headers.get('content-length') || 0;
+      let buf;
+      if (r.body?.getReader) {
+        const reader = r.body.getReader(), chunks = [];
+        let got = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value); got += value.length;
+          status(total >= got ? `Downloading ${mb(got)} / ${mb(total)} MB` : `Downloading ${mb(got)} MB`);
+        }
+        const all = new Uint8Array(got);
+        let o = 0;
+        for (const c of chunks) { all.set(c, o); o += c.length; }
+        buf = all.buffer;
+      } else {
+        buf = await r.arrayBuffer();
+      }
+      // Paint "Building" BEFORE the parse, which holds the main thread. A timeout, NOT
+      // requestAnimationFrame: the window's rAF does not run during an immersive session (nor in
+      // a hidden tab), so waiting on it hung the load at "Building". 60 ms is a few XR frames.
+      status('Building scene\u2026', true);
+      await new Promise((res) => setTimeout(res, 60));
+      main.clearScene();
+      if (guiFiles) guiFiles._currentSaveKey = null;   // not a file of yours: Save must not land over anything
+      main.loadScene(buf, 'sgl');
+      _exampleLoad = null;
+      main._examplesOpen = false;
+      main.render?.(); rebuildFn();
+    } catch (err) {
+      console.error('[examples] load failed:', err);
+      status('Load failed', true);
+      setTimeout(() => { _exampleLoad = null; rebuildFn(); }, 2500);
+    }
+  }));
+
   q('#mm-clear-scene')?.addEventListener('click', () => {
     if (!main._clearSceneConfirm) {
       main._clearSceneConfirm = true;
@@ -5650,12 +6592,21 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   });
   // The same browser save the Browser Saves panel offers, reachable without going into it --
   // saving is the thing you do most often and it was two clicks deep.
+  // THE PREFILL IS THE FREE NAME, not a constant. The keyboard pops up with it already in
+  // place and it gets accepted as-is most of the time, so offering a name that is already
+  // taken is what fills a library with saves all called the same thing.
   q('#mm-browser-save-quick')?.addEventListener('click', () => {
-    promptSaveName('Save As', 'sculpt', (n) => guiFiles?.saveToBrowserStorage?.(n));
+    promptSaveName('Save to browser', guiFiles?.uniqueSaveName?.('scene') ?? 'scene',
+      (n) => guiFiles?.saveToBrowserStorage?.(n)?.then(() => rebuildFn()));
+  });
+  // Incremental asks nothing: the whole point is the next version without a conversation.
+  q('#mm-browser-save-incr')?.addEventListener('click', () => {
+    const n = guiFiles?.nextIncrementalName?.();
+    if (n) guiFiles.saveToBrowserStorage(n)?.then(() => rebuildFn());
   });
   // No prompt: Save is the command you press without being asked anything.
   q('#mm-browser-save-over')?.addEventListener('click', () => {
-    guiFiles?.saveToBrowserStorage?.(null, { overwrite: true });
+    guiFiles?.saveToBrowserStorage?.(null, { overwrite: true })?.then(() => rebuildFn());
   });
   q('#mm-import-scale')?.addEventListener('change', (e) => {
     main._autoMatrix = e.target.checked;
@@ -5667,11 +6618,16 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   q('#mm-export-all')?.addEventListener('change', (e) => {
     if (guiFiles) guiFiles._exportAll = e.target.checked;
   });
-  q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save .sxr as', 'sculpt', n => guiFiles?.saveFileAsSGL?.(n))));
-  q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', 'sculpt', n => guiFiles?.saveFileAsGLB?.(n)));
-  q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', 'sculpt', n => guiFiles?.saveFileAsOBJ?.(n)));
-  q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', 'sculpt', n => guiFiles?.saveFileAsPLY?.(n)));
-  q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', 'sculpt', n => guiFiles?.saveFileAsSTL?.(n)));
+  // EVERY name prompt starts from the scene you are actually in, not the word "sculpt". A file
+  // on disk cannot be checked for collisions from here, but taking the open scene's name means
+  // an export sits next to its source instead of being the fourth sculpt.obj in Downloads.
+  const fileName = () => guiFiles?.currentSaveNameForFile?.() ?? 'scene';
+  q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save to disk (.sxr)', fileName(), n => guiFiles?.saveFileAsSGL?.(n))));
+  q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', fileName(), n => guiFiles?.saveFileAsGLB?.(n)));
+  q('#mm-export-nom')?.addEventListener('click', () => promptSaveName('Save .nom as', fileName(), n => guiFiles?.saveFileAsNOM?.(n)));
+  q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', fileName(), n => guiFiles?.saveFileAsOBJ?.(n)));
+  q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', fileName(), n => guiFiles?.saveFileAsPLY?.(n)));
+  q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', fileName(), n => guiFiles?.saveFileAsSTL?.(n)));
   q('#mm-export-objseq')?.addEventListener('click', () => promptSaveName('OBJ sequence name', 'anim', n => guiFiles?.saveObjSequence?.(n)));
 
   q('#mm-obj-zbrush')?.addEventListener('change', (e) => {
@@ -5771,30 +6727,65 @@ export function wireMenuReference(el, main, repaintFn) {
 
 export function buildMenuHTML_background(main) {
   const bg   = main.getBackground?.();
-  const type = bg?._type ?? 0;
+  const type = bg?._type ?? 3;
   const blur = bg?._blur ?? 0;
+  const expo = bg?._exposure ?? 1;
   const fill = bg?._fill ?? false;
+  const col  = bg?._color ?? [0.196, 0.196, 0.196];
+  const colHex = '#' + [0, 1, 2].map((i) =>
+    Math.max(0, Math.min(255, Math.round(col[i] * 255))).toString(16).padStart(2, '0')).join('');
+  // NO SUB-HEADINGS: every .mm-section-title becomes its own fold, which nested Type and Image
+  // a level below Background. One flat list; each type's controls stay in place and DIM (a
+  // disabled fieldset) when another type is picked, so the panel never changes shape.
   return `
-    <div class="mm-section-title">Type</div>
+    ${/* COLOUR FIRST because it is the default -- the list reads top-down as "the plain one, then
+         the three that need something imported or selected". */ ''}
     ${buildSelectHTML('mm-bg-type', [
+      { val: 3, label: 'Colour' },
       { val: 0, label: 'Image' },
       { val: 1, label: 'Environment' },
-      { val: 2, label: 'Ambient env' },
     ], type)}
-    <div class="mm-row" id="mm-blur-row"${type!==1?' style="display:none"':''}>
+    ${/* THE COLOUR WHEEL, not an <input type=color> and not preset swatches -- the same reason
+         the light's colour uses it: it is the only colour control in this app that survives
+         being rasterised into a VR panel, and this menu renders there. Swatch opens it, OK
+         closes it. The swatch, the wheel and the OK share one wrapper so the type select can
+         show and hide all three with a single inline style write -- a rebuild here would throw
+         away the open options list, see the note on the desktop View wiring in Gui.js. */ ''}
+    <fieldset class="mm-disabled-group" id="mm-bg-color-row"${type!==3?' disabled':''}>
+      <div class="mm-row">
+        <span class="mm-lbl">Colour</span>
+        <button id="mm-bg-swatch" title="Background colour"
+          style="width:44px;height:22px;padding:0;border-radius:4px;cursor:pointer;flex-shrink:0;background:${colHex};border:1px solid #45475a"></button>
+        <span class="mm-val"></span>
+      </div>
+      ${_bgPickerOpen ? `
+      <div class="mm-row" style="justify-content:center">
+        ${buildColorWheelHTML({ prefix: 'mm-bg-cw', size: 150 })}
+      </div>
+      <button class="mm-action-btn" id="mm-bg-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
+    </fieldset>
+    <fieldset class="mm-disabled-group" id="mm-bg-env-group"${type!==1?' disabled':''}>
+    <div class="mm-row" id="mm-blur-row">
       <span class="mm-lbl">Blur</span>
       <input type="range" id="mm-bg-blur" min="0" max="1" step="0.01" value="${blur}">
       <span class="mm-val" id="mm-bg-blur-val">${blur.toFixed(2)}</span>
     </div>
-    <div class="mm-section-title">Image</div>
+    <div class="mm-row" id="mm-bg-exp-row">
+      <span class="mm-lbl">Exposure</span>
+      <input type="range" id="mm-bg-exp" min="0" max="3" step="0.01" value="${expo}">
+      <span class="mm-val" id="mm-bg-exp-val">${expo.toFixed(2)}</span>
+    </div>
+    </fieldset>
     ${/* The lone Fill toggle was costing a second line for one four-letter word. It joins the
          two actions: the sweep gives a toggle and an action the same shape, so the only thing
          that distinguishes them is the active state, which is the one that should. */ ''}
+    <fieldset class="mm-disabled-group" id="mm-bg-image-group"${type!==0?' disabled':''}>
     <div class="mm-choice-grid cols-3">
       <button class="mm-action-btn" id="mm-bg-reset">Reset</button>
       <button class="mm-action-btn" id="mm-bg-import">Import…</button>
       <button class="mm-toggle${fill?' active':''}" id="mm-bg-fill">Fill</button>
     </div>
+    </fieldset>
   `;
 }
 
@@ -5807,12 +6798,19 @@ export function wireMenuBackground(el, main, repaintFn) {
     bg?.setType?.(n);
     main.onCanvasResize?.();
     main.render?.();
-    const blurRow = q('#mm-blur-row');
-    if (blurRow) blurRow.style.display = n === 1 ? '' : 'none';
+    // A property write, not a rebuild: a rebuild would throw away the open options list.
+    for (const [id, t] of [['#mm-bg-color-row', 3], ['#mm-bg-env-group', 1], ['#mm-bg-image-group', 0]]) {
+      const g = q(id);
+      if (g) g.disabled = n !== t;
+    }
   });
 
   wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),
     (v) => { if (bg) { bg._blur = v; bg._applyBackground?.(); } main.render?.(); },
+    v => v.toFixed(2));
+
+  wireSlider(q('#mm-bg-exp'), q('#mm-bg-exp-val'),
+    (v) => { if (bg) { bg._exposure = v; bg._applyBackground?.(); } main.render?.(); },
     v => v.toFixed(2));
 
   q('#mm-bg-reset')?.addEventListener('click',  () => { bg?.deleteTexture?.(); main.render?.(); });
@@ -5823,6 +6821,31 @@ export function wireMenuBackground(el, main, repaintFn) {
     e.currentTarget.classList.toggle('active', bg?._fill ?? false);
     main.onCanvasResize?.();
   });
+
+  // THE COLOUR WHEEL. `repaintFn` here has to be a REBUILD, not a repaint: opening the wheel
+  // changes the markup, and the VR panel's rasteriser only re-photographs the DOM it already
+  // has. Both mounts in MainMenuPanel pass a rebuild for exactly this; the desktop dropdown's
+  // `repaint` already rebuilds its innerHTML.
+  q('#mm-bg-swatch')?.addEventListener('click', () => { _bgPickerOpen = true;  repaintFn?.(); });
+  q('#mm-bg-cw-ok')?.addEventListener('click',   () => { _bgPickerOpen = false; repaintFn?.(); });
+  const bgCw = q('#mm-bg-cw');
+  if (bgCw) {
+    // Disposed first: this menu rebuilds on every repaint, and an old wheel keeps
+    // document-level pointermove/pointerup listeners that would otherwise pile up.
+    el._bgWheel?.dispose?.();
+    el._bgWheel = new ColorWheel(bgCw, {
+      prefix: 'mm-bg-cw', size: 150,
+      get: () => (bg?._color ?? [0.196, 0.196, 0.196]).slice(0, 3),
+      set: (rgb) => {
+        bg?.setColor?.(rgb);
+        const sw = q('#mm-bg-swatch');
+        if (sw) sw.style.background = '#' + [0, 1, 2].map((i) =>
+          Math.max(0, Math.min(255, Math.round(rgb[i] * 255))).toString(16).padStart(2, '0')).join('');
+        main.render?.();
+      },
+      render: () => main.render?.(),
+    });
+  }
 
   fixSliderDrag(el);
 }
@@ -5865,7 +6888,8 @@ export function buildMenuHTML_desktopSettings(main) {
 
   const isIpad = /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const chk = (id, checked) => `<label class="mm-check-row"><span>${id}</span><input type="checkbox" id="mm-${id.toLowerCase().replace(/\s+/g,'-')}"${checked ? ' checked' : ''}><span class="mm-checkmark"></span></label>`;
-  const ipadSection = isIpad ? `
+  // A pen seen on the canvas (SculptGL.onPointer) is enough: a Wacom on a Mac wants the same routing options.
+  const ipadSection = (isIpad || window._penSeen) ? `
     <div class="mm-section-title">Multitouch</div>
     ${chk('Fingers control view',  opts.ipadFingerView)}
     ${chk('Fingers sculpt',        opts.ipadFingerSculpt)}
@@ -5894,6 +6918,12 @@ export function buildMenuHTML_desktopSettings(main) {
     ${buildSharedSettingsHTML(main)}
     <div class="mm-section-title">Numeric Input</div>
     ${chk('Always show numpad', opts.alwaysNumpad)}
+    <div class="mm-section-title">UI Scale</div>
+    <div class="mm-row">
+      <span class="mm-lbl">UI Scale</span>
+      <input type="range" id="mm-ui-scale" min="50" max="150" step="5" value="${Math.round((opts.uiScale ?? 1) * 100)}">
+      <span class="mm-val" id="mm-ui-scale-val">${Math.round((opts.uiScale ?? 1) * 100)}%</span>
+    </div>
     <div class="mm-section-title">Pen Pressure</div>
     <div class="mm-row">
       <span class="mm-lbl">Radius factor</span>
@@ -5912,6 +6942,7 @@ export function buildMenuHTML_desktopSettings(main) {
     <label class="mm-check-row"><span>Show debug log</span><input type="checkbox" id="mm-debug-log"${debugActive ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <label class="mm-check-row"><span>Show Eruda console</span><input type="checkbox" id="mm-eruda-console"><span class="mm-checkmark"></span></label>
     <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
+    ${window._sxrInstall ? '<button class="mm-action-btn" id="mm-install-app">Install app</button>' : ''}
   `;
   // Language selector hidden: the legacy TR(key) translations only cover the old
   // yagui UI, while the current HTML panels are hardcoded English and don't consult
@@ -5948,6 +6979,32 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireCheck('#mm-stylus-sculpts',        'ipadStylusSculpt', '_ipadStylusSculpt');
   wireCheck('#mm-always-show-numpad',    'alwaysNumpad',     '_alwaysNumpad');
 
+  // UI SCALE applies on RELEASE ('change'), not while dragging: zooming the sidebar moves the
+  // very slider being dragged out from under the pointer. 'input' only updates the readout.
+  // The release is detected on the DOCUMENT, not just by the slider's own 'change': on iPad the
+  // panel can be rebuilt under the pointer mid-drag, which destroys the input before its
+  // 'change' ever fires (and the value silently reverted to 100 on reopen). The pending value is
+  // held here, applied on the first pointer/touch release anywhere, with an idle timer as backstop.
+  let uiPending = null, uiTimer = 0;
+  const uiApply = () => {
+    clearTimeout(uiTimer);
+    if (uiPending == null) return;
+    const z = uiPending; uiPending = null;
+    getOptionsURL.saveOption('uiScale', z, 0);
+    main.getGui?.()?.applyUiScale?.(z);
+  };
+  const uiS = q('#mm-ui-scale'), uiV = q('#mm-ui-scale-val');
+  uiS?.addEventListener('input', () => {
+    if (uiV) uiV.textContent = uiS.value + '%';
+    uiPending = parseFloat(uiS.value) / 100;
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(uiApply, 1200);
+    for (const t of ['pointerup', 'touchend', 'mouseup'])
+      document.addEventListener(t, uiApply, { once: true, capture: true });
+  });
+  uiS?.addEventListener('change', uiApply);
+
+
   // The same list the VR panel wires, from the same place. These settings are owned by their
   // modules (PhysicsBones, PanelTrace), which persist them, rather than by a bare window write.
   wireDevToggles(q, repaintFn);
@@ -5960,6 +7017,8 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireSlider(q('#mm-tablet-intensity'), q('#mm-tablet-intensity-val'),
     (v) => { Tablet.intensityFactor = v; getOptionsURL.saveOption('tabletIntensityFactor', v, 300); }, v => v.toFixed(2));
   fixSliderDrag(el);
+
+  q('#mm-install-app')?.addEventListener('click', () => window._sxrInstall?.());
 
   q('#mm-debug-log')?.addEventListener('change', (e) => {
     const next = e.target.checked;

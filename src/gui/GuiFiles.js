@@ -66,7 +66,7 @@ class GuiFiles {
           try {
             // Matched to the capture size, or the downscale here undoes it: a 256 thumbnail
             // squeezed back to 128 at quality 0.45 is exactly the mush this was raising.
-            const GALLERY_THUMB = 128;
+            const GALLERY_THUMB = 154;
             if (img.naturalWidth <= GALLERY_THUMB && img.naturalHeight <= GALLERY_THUMB) {
               value.galleryThumb = value.thumb;
             } else {
@@ -118,9 +118,13 @@ class GuiFiles {
   saveTextureMetalness() { return this.saveMetalness(); }
 
   _getExportMeshes() {
-    if (this._exportAll) return this._main.getMeshes();
-    var selected = this._main.getSelectedMeshes();
-    return selected.length ? selected : undefined;
+    // THE VIDEO PLANE IS NOT SCENE CONTENT. The clip is saved as a reference (MediaRef), and
+    // loading it again builds a fresh plane -- so a plane saved here came back as a stale extra
+    // "reference image" next to the new one, and relinking looked like it had made a copy.
+    var vm = this._main._referenceManager && this._main._referenceManager._videoMesh;
+    var meshes = this._exportAll ? this._main.getMeshes() : this._main.getSelectedMeshes();
+    if (vm) meshes = meshes.filter(function (m) { return m !== vm; });
+    return (this._exportAll || meshes.length) ? meshes : undefined;
   }
 
   _extractTexture(gl, width, height) {
@@ -287,7 +291,7 @@ class GuiFiles {
         // JPEG quality 0.25 -- and the saves list is a COLUMN of small rows, so the pixels were
         // never needed. matt: "if anything the images can be smaller, but of higher quality."
         // 128 at 0.88 is both crisper than the 256 at 0.72 it replaces and smaller on disk.
-        const THUMB = 128;
+        const THUMB = 154;
 
         // 1. Pick camera position and auto-frame toward the sculpt bounding box
         //
@@ -301,8 +305,33 @@ class GuiFiles {
         // The margin is the ratio of the frame to the subject, so the subject fills 1/margin of
         // it: 1.3 filled 77%, 1.2 filled 83%, and 1.08 fills 93%. matt: "can they fill the frame
         // a little more? i think there's too much padding at the borders."
-        const FRAME_MARGIN = 1.08;
+        const FRAME_MARGIN = 1.0;
+        // Fit by projecting the box's eight corners through the camera, not by the span at the
+        // centre's distance: the span rule ignores perspective and the box's depth, so it always
+        // left a dead border. The corners are the true extent, so the margin can be 1.
         const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 1000);
+        // THE BOX COMES FROM THE MESHES' OWN WORLD BOUNDS, not Box3.setFromObject: that reads each
+        // geometry's cached boundingBox, stale once sculpted/posed, so the subject poked out of the
+        // "fitted" frame (cut off at the bottom). Falls back to it when there are no real meshes.
+        const subjectBox = () => {
+          this._main._worldGroup.updateMatrixWorld(true);
+          const real = (this._main._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+          const b = real.length ? this._main.computeBoundingBoxMeshes(real) : null;
+          return b && Number.isFinite(b[0]) && Number.isFinite(b[3])
+            ? new THREE.Box3(new THREE.Vector3(b[0], b[1], b[2]), new THREE.Vector3(b[3], b[4], b[5]))
+              .applyMatrix4(this._main._worldGroup.matrixWorld)
+            : new THREE.Box3().setFromObject(this._main._worldGroup);
+        };
+        const fitFov = (cam, box) => {
+          cam.updateMatrixWorld(true);
+          let t = 0;
+          for (let i = 0; i < 8; i++) {
+            const c = new THREE.Vector3(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y,
+              i & 4 ? box.max.z : box.min.z).applyMatrix4(cam.matrixWorldInverse);
+            if (-c.z > 0.01) t = Math.max(t, Math.abs(c.x) / -c.z, Math.abs(c.y) / -c.z);
+          }
+          return 2 * Math.atan(t) * (180 / Math.PI) * FRAME_MARGIN;
+        };
         if (renderer.xr.isPresenting) {
           // VR: start from head pose — user is naturally close to the sculpt.
           const vrCam = renderer.xr.getCamera(this._main._camera._threeCamera);
@@ -310,15 +339,14 @@ class GuiFiles {
           snapCam.quaternion.copy(vrCam.quaternion);
           snapCam.updateMatrixWorld(true);
           if (this._main._worldGroup) {
-            const box    = new THREE.Box3().setFromObject(this._main._worldGroup);
+            const box    = subjectBox();
             const center = box.getCenter(new THREE.Vector3());
             const vs     = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(vs.x, vs.y, vs.z);   // the axis, not the diagonal — see above
             snapCam.lookAt(center);
             const dist = snapCam.position.distanceTo(center);
             if (dist > 0.01 && maxDim > 0.01) {
-              const fov = 2 * Math.atan(maxDim / (2 * dist)) * (180 / Math.PI);
-              snapCam.fov = Math.min(70, Math.max(5, fov * FRAME_MARGIN));
+              snapCam.fov = Math.min(70, Math.max(5, fitFov(snapCam, box)));
             }
             snapCam.updateProjectionMatrix();
             snapCam.updateMatrixWorld(true);
@@ -327,17 +355,22 @@ class GuiFiles {
           // Desktop: derive position from the bounding box so the result is
           // independent of where the user has orbited/zoomed the viewport.
           if (this._main._worldGroup) {
-            const box  = new THREE.Box3().setFromObject(this._main._worldGroup);
+            const box  = subjectBox();
             const center = box.getCenter(new THREE.Vector3());
             const size = box.getSize(new THREE.Vector3());
             // Use the largest single axis — avoids the 3D diagonal overestimate
             // that makes the sculpt appear tiny in the thumbnail.
             const span = Math.max(size.x, size.y, size.z);
-            const snapDist = span * 1.2;
-            snapCam.position.set(center.x, center.y + span * 0.1, center.z + snapDist);
+            const snapDist = span * 1.6;
+            // The user's current view DIRECTION, backed off from the subject centre: same angle
+            // they were looking from, but centred and fitted regardless of their zoom/pan.
+            const dc = this._main._camera._threeCamera;
+            dc.updateMatrixWorld(true);
+            const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(dc.getWorldQuaternion(new THREE.Quaternion()));
+            snapCam.position.copy(center).addScaledVector(fwd, -snapDist);
             snapCam.lookAt(center);
             const dist = snapCam.position.distanceTo(center);
-            const fov = 2 * Math.atan(span / (2 * dist)) * (180 / Math.PI) * FRAME_MARGIN;
+            const fov = fitFov(snapCam, box);
             // The floor was 20 degrees, which is itself padding: a small sculpt computes a
             // narrower angle than that and got widened back out to it, putting the border
             // straight back. 12 still keeps a distant camera from a keyhole projection.
@@ -364,21 +397,58 @@ class GuiFiles {
         // 4. Render into a square off-screen RenderTarget — never touches the main canvas
         const wasXREnabled = renderer.xr.enabled;
         renderer.xr.enabled = false;
-        const rt = new THREE.WebGLRenderTarget(THUMB, THUMB);
+        // The node renderer has no WebGLRenderTarget; use its own RenderTarget class on that
+        // path rather than relying on the two three builds duck-typing.
+        const _GPU = this._main._THREE_GPU;
+        // HALF FLOAT: a render target is written linear and un-tonemapped (three only tone-maps
+        // the screen), so the old capture was the raw buffer and looked dark. Keep it
+        // linear-HDR here and tone-map + sRGB-encode below, as the screen would.
+        const rtOpts = { type: THREE.HalfFloatType };
+        const rt = (this._main._isNodeRenderer && _GPU)
+          ? new _GPU.RenderTarget(THUMB, THUMB, rtOpts)
+          : new THREE.WebGLRenderTarget(THUMB, THUMB, rtOpts);
         renderer.setRenderTarget(rt);
         renderer.render(this._main._scene, snapCam);
         renderer.setRenderTarget(null);
         renderer.xr.enabled = wasXREnabled;
 
         // 5. Read pixels back (WebGL origin is bottom-left, flip Y)
-        const pixels = new Uint8Array(THUMB * THUMB * 4);
-        renderer.readRenderTargetPixels(rt, 0, 0, THUMB, THUMB, pixels);
+        //
+        // WebGPURenderer HAS NO readRenderTargetPixels -- only the async form -- so a browser
+        // save threw "renderer.readRenderTargetPixels is not a function" on the flagged path
+        // and lost the thumbnail. saveToBrowserStorage is already async, so awaiting is free.
+        let pixels;
+        if (typeof renderer.readRenderTargetPixelsAsync === 'function') {
+          pixels = await renderer.readRenderTargetPixelsAsync(rt, 0, 0, THUMB, THUMB);
+        } else {
+          pixels = new Uint8Array(THUMB * THUMB * 4);
+          renderer.readRenderTargetPixels(rt, 0, 0, THUMB, THUMB, pixels);
+        }
         rt.dispose();
 
+        // Linear HDR -> what the screen shows: exposure, the renderer's tone curve, sRGB.
+        const half = (h) => {
+          const e = (h >> 10) & 31, m = h & 1023, sg = h & 0x8000 ? -1 : 1;
+          return e === 0 ? sg * m * 5.960464477539063e-8 : e === 31 ? sg * 65504 : sg * (1 + m / 1024) * 2 ** (e - 15);
+        };
+        const tm = renderer.toneMapping, ex = renderer.toneMappingExposure ?? 1;
+        const aces = (x) => { const a = x * (x + 0.0245786) - 0.000090537, b = x * (0.983729 * x + 0.4329510) + 0.238081; return a / b; };
+        const curve = (v) => {
+          v *= ex;
+          if (tm === THREE.ReinhardToneMapping) v = v / (1 + v);
+          else if (tm === THREE.ACESFilmicToneMapping) v = aces(v / 0.6);
+          return Math.min(1, Math.max(0, v));
+        };
+        const enc = (v) => { v = curve(v); return 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055); };
+        const isHalf = pixels instanceof Uint16Array;
         const flipped = new Uint8ClampedArray(THUMB * THUMB * 4);
         for (let row = 0; row < THUMB; row++) {
           const src = (THUMB - 1 - row) * THUMB * 4;
-          flipped.set(pixels.subarray(src, src + THUMB * 4), row * THUMB * 4);
+          for (let i = 0; i < THUMB * 4; i++) {
+            const o = row * THUMB * 4 + i;
+            flipped[o] = (i & 3) === 3 ? 255
+              : isHalf ? enc(half(pixels[src + i])) : pixels instanceof Float32Array ? enc(pixels[src + i]) : pixels[src + i];
+          }
         }
 
         // 6. Write raw pixels to an intermediate canvas, then apply colour correction
@@ -389,7 +459,6 @@ class GuiFiles {
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = THUMB; tempCanvas.height = THUMB;
         const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.filter = 'contrast(1.4) brightness(0.8) saturate(1.2)';
         tempCtx.drawImage(rawCanvas, 0, 0);
 
         thumb = tempCanvas.toDataURL('image/jpeg', 0.88);
@@ -408,7 +477,7 @@ class GuiFiles {
     }
     for (const [o, p] of detached) p.add(o); // no renderer: nothing captured, still restore
 
-    StorageDB.set(key, { 
+    return StorageDB.set(key, { 
       blob: blob, 
       thumb: thumb, 
       // Overwriting keeps the name it already had unless a new one is typed: a Save should not
@@ -423,7 +492,7 @@ class GuiFiles {
       if (window.screenLog) {
         window.screenLog(reuse ? `SUCCESS: Saved over ${key}` : `SUCCESS: Stashed sculpt ${key}`, 'lime');
       }
-      this.refreshBrowserSaves(); // Refresh internal list
+      return this.refreshBrowserSaves(); // returned so callers can rebuild once the list is fresh
     }).catch(err => {
       if (window.screenLog) window.screenLog(`ERROR: Stash failed: ${err}`, 'red');
     });
@@ -435,9 +504,50 @@ class GuiFiles {
     return (rec && rec.value && rec.value.name) || '';
   }
 
+  // ── NAMES THAT DO NOT COLLIDE ────────────────────────────────────────────────────────
+  //
+  // matt: "many times i don't change the name, so its just 'scene', which is confusing."
+  // The keyboard pops up prefilled, the prefill gets accepted, and the library fills with
+  // saves all called the same thing -- so the prefill itself has to be the name that is
+  // actually free. `scene` taken becomes `scene_v01`, and an existing `_vNN` counts UP from
+  // itself rather than gaining a second suffix, so `scene_v03` becomes `scene_v04` and never
+  // `scene_v03_v01`.
+  //
+  // Compared case-insensitively: two saves differing only in case are the same confusion this
+  // is here to remove.
+  uniqueSaveName(base) {
+    const want = ((base || '').trim()) || 'scene';
+    const taken = new Set((this._browserSaves || [])
+      .map((sv) => ((sv.value && sv.value.name) || '').trim().toLowerCase())
+      .filter(Boolean));
+    if (!taken.has(want.toLowerCase())) return want;
+
+    const m = /^(.*?)[_-]v(\d+)$/i.exec(want);
+    const stem = m ? m[1] : want;
+    const from = m ? (parseInt(m[2], 10) + 1) : 1;
+    for (let n = from; n < 1000; n++) {
+      const cand = stem + '_v' + String(n).padStart(2, '0');
+      if (!taken.has(cand.toLowerCase())) return cand;
+    }
+    return want + '_' + Date.now();
+  }
+
+  // The name Save Incremental would land on: the current file, moved to its next free version.
+  // With nothing open it behaves like a first save.
+  nextIncrementalName() {
+    return this.uniqueSaveName(this.currentSaveName() || 'scene');
+  }
+
   // Is there a file to save back over? The menu asks so it can offer Save or fall back to Save As.
   currentSaveName() {
     return this._currentSaveKey ? (this._nameOfSave(this._currentSaveKey) || 'current file') : '';
+  }
+
+  // The same thing, but safe to use AS a name: 'current file' is a label for a button, not
+  // something anyone wants a .sxr called.
+  currentSaveNameForFile() {
+    const n = this._currentSaveKey ? this._nameOfSave(this._currentSaveKey) : '';
+    return (n || '').trim() || 'scene';
   }
 
   loadFromBrowserStorage() {
@@ -492,6 +602,21 @@ class GuiFiles {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
     this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation, main: this._main }), this._exportFileName(baseName, 'glb'));
+  }
+
+  // Back to Nomad: the .nom the scene was loaded from, with only the moved objects' transforms
+  // changed. Needs a .nom import to work from -- there is nothing to patch otherwise.
+  saveFileAsNOM(baseName) {
+    var meshes = this._getExportMeshes();
+    if (!meshes) return;
+    var res = Export.exportNOM(meshes);
+    if (!res) {
+      if (window.screenLog) window.screenLog('Export .nom: nothing here came from a .nom file', 'yellow');
+      return;
+    }
+    if (window.screenLog) window.screenLog('.nom: ' + res.moved + ' moved, ' + res.reshaped + ' reshaped'
+      + (res.mismatched ? ', ' + res.mismatched + ' skipped (topology changed)' : '') + ', the rest copied as-is', 'lime');
+    this._save(new Blob([res.bytes], { type: 'application/octet-stream' }), this._exportFileName(baseName, 'nom'));
   }
 
   saveFileAsOBJ(baseName) {

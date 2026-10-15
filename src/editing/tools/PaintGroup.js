@@ -54,15 +54,15 @@ class PaintGroup extends SculptBase {
     for (var i = 0, n = iFaces.length; i < n; ++i)
       groups[iFaces[i]] = g;
 
-    // Rebuild the crisp group-colour overlay from the updated _facesGroups.
-    mesh.updateGroupOverlay();
+    // Only these faces' colours changed; positions did not move during a paint stroke.
+    mesh.updateGroupOverlayFaces(iFaces);
   }
 
-  // Group painting only changes the overlay, not the base mesh geometry/colours.
+  // Group painting only changes the overlay, not the base mesh geometry/colours, and stroke()
+  // has already recoloured the touched faces -- so no overlay rebuild here.
   updateMeshBuffers() {
     var mesh = this.getMesh();
     if (!mesh) return;
-    mesh.updateGroupOverlay();
     this._main.refreshLinkedSiblings?.(mesh);
   }
 

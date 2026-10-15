@@ -8,7 +8,7 @@
     "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js"
   },
   "name": "sculptxr",
-  "version": "3.53.0",
+  "version": "4.1.51",
   "description": "WebXR Sculpting",
   "main": "main.js",
   "directories": {
@@ -17,8 +17,10 @@
   },
   "scripts": {
     "dev": "vite",
+    "postinstall": "node scripts/patch-three-html-render.mjs",
     "build": "vite build",
     "preview": "vite preview",
+    "pwa:preview": "bash scripts/pwa-preview.sh",
     "bump:patch": "node bump.mjs patch",
     "bump:minor": "node bump.mjs minor",
     "bump:major": "node bump.mjs major",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.0.1",
+    "spectorjs": "^0.9.33",
     "vite": "^5.0.10"
   },
   "repository": {
@@ -45,8 +48,9 @@
     "@fortawesome/fontawesome-free": "^6.7.2",
     "gl-matrix": "^3.4.4",
     "manifold-3d": "^3.4.1",
+    "mediabunny": "^1.61.1",
     "modern-screenshot": "^4.7.0",
-    "three": "^0.183.2",
+    "three": "^0.186.0",
     "three-html-render": "^0.1.2"
   }
 }

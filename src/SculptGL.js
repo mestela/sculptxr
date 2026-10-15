@@ -1,6 +1,7 @@
 import './misc/Polyfill.js';
 import { VERSION } from './Version.js';
 import { vec3, mat4, quat, mat3 } from 'gl-matrix';
+import * as THREE from 'three';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
 import getOptionsURL from './misc/getOptionsURL.js';
@@ -10,6 +11,7 @@ import Scene from './Scene.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import SecondaryAction from './editing/SecondaryAction.js';
 import RigPending from './editing/RigPending.js';
+import { installNumberTap } from './gui/NumberTap.js';
 
 // Pixels a right press may travel and still count as a click rather than an orbit.
 const RIGHT_CLICK_SLOP = 4;
@@ -25,6 +27,8 @@ var LONGPRESS_SLOP = 12;   // CSS px
 
 import ReferenceManager from './editing/ReferenceManager.js';
 import AudioTrack from './editing/AudioTrack.js';
+import VideoTrack from './editing/VideoTrack.js';
+import Metronome from './editing/Metronome.js';
 import { FrameGroup } from './editing/FrameGroup.js';
 
 // Manage events
@@ -118,6 +122,17 @@ class SculptGL extends Scene {
     if (window._ipadStylusView   === undefined) window._ipadStylusView   = _ipadOpts.ipadStylusView   ?? false;
     if (window._ipadStylusSculpt === undefined) window._ipadStylusSculpt = _ipadOpts.ipadStylusSculpt ?? true;
 
+    // THE RIG SCALE, seeded from the saved preference. The slider writes Skeleton.sceneUnitMul
+    // live, but nothing read the stored value back on load — so a rig scale dialled in last
+    // session was silently forgotten and every marker came back at 1x. Seeded here with the
+    // other persisted view flags, before any rig is built, so the first marker drawn is already
+    // at the saved size. See Skeleton.setSceneUnitMul.
+    if (Number.isFinite(_ipadOpts.rigScale)) Skeleton.setSceneUnitMul(_ipadOpts.rigScale);
+    // The pin and label multipliers seed the same way and for the same reason -- a size dialled
+    // in on a headset last night has to be the size the first marker is drawn at this morning.
+    if (Number.isFinite(_ipadOpts.pinScale)) Skeleton.setPinSizeMul(_ipadOpts.pinScale);
+    if (Number.isFinite(_ipadOpts.labelScale)) Skeleton.setLabelSizeMul(_ipadOpts.labelScale);
+
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;
     window.app = this; // Ensure 'app' is also set globally
@@ -133,6 +148,15 @@ class SculptGL extends Scene {
     // Re-anchor the head to your current hand pose (call if it drifts off).
     window.recenterPuppet = () => { this._puppetAnchor = null; if (window.screenLog) window.screenLog('🧦 Puppet re-centered', 'lime'); };
     this._referenceManager = new ReferenceManager(this);
+    installNumberTap();
+    // One video clip against the timeline, same contract as the audio track above: a property of
+    // the transport, driven from Scene's render loop. Shown as a reference plane.
+    this._videoTrack = new VideoTrack();
+    window._videoTrack = this._videoTrack;
+    this._videoTrack.onClipChange = (has) => {
+      if (has) this._referenceManager.addVideo(this._videoTrack);
+      else this._referenceManager.clearVideo();
+    };
 
     // One audio clip against the timeline, for lipsync and timing reference. Global because
     // it is a property of the TRANSPORT, not of this instance: the timeline draws its
@@ -140,6 +164,8 @@ class SculptGL extends Scene {
     // callers with no other reason to know about SculptGL.
     this._audioTrack = new AudioTrack();
     window._audioTrack = this._audioTrack;
+    // Click track on the same transport; shares the audio track's AudioContext.
+    window._metronome = new Metronome();
 
     // Frame-by-frame animation as real outliner objects + keyframed visibility (voxel
     // frames own worker distance-field slots). Replaced the old FrameAnimation cel system.
@@ -676,7 +702,12 @@ class SculptGL extends Scene {
         // started. On some iPadOS versions touchstart arrives AFTER pointerdown — if we
         // unconditionally reset here, the touch fallback sees ptrHandled:false and fires
         // a second onMouseDown, producing double extrudes/operations.
-        if (this._action !== Enums.Action.SCULPT_EDIT) {
+        // "Already sculpting" is judged by whether a pointerdown JUST landed, not by _action:
+        // a suppressed pointerup leaves _action stuck at SCULPT_EDIT, and the stale
+        // ptrHandled=true from the previous stroke then blocks the fallback for this one
+        // (every second stroke lost).
+        const _justDown = (performance.now() - (this._lastPenDownMs || 0)) < 60;
+        if (!_justDown) {
           this._ptrDownHandledThisTouch = false;
           if (window.screenLog) window.screenLog(`[dbl] touchstart stylus — ptrHandled→false (not sculpting)`, '#89dceb');
         } else {
@@ -800,13 +831,19 @@ class SculptGL extends Scene {
     Tablet.pressure = event.pressure;
 
     if (event.pointerType === 'pen') {
+      window._penSeen = true;
       if (this._fingerPointers.size > 0 && event.pressure < 0.05) {
         event.preventDefault();
         return;
       }
       event.preventDefault();
+      // A PEN EVENT ON THE CANVAS MEANS THE POINTER IS OVER THE CANVAS. Safari sends a compat
+      // `mouseout` when the pencil leaves hover range, which sets _focusGui (onMouseOut), and
+      // does not reliably send a pointerover when it comes back -- so _focusGui stays true and
+      // onDeviceDown drops every stroke. Clear it here.
+      if (this._focusGui && (event.type === 'pointerdown' || event.pressure > 0)) this._focusGui = false;
       if (event.type === 'pointerdown') {
-        // Debounce: reject any pen pointerdown that arrives within 300ms of the
+        // Debounce: reject any pen pointerdown that arrives within 100ms of the
         // previous accepted one. This catches:
         //   - True simultaneous duplicates (0ms apart)
         //   - Pen-tip bounce sequences (pointerdown→pointerup→pointerdown in <5ms)
@@ -816,12 +853,12 @@ class SculptGL extends Scene {
         //     We synthesise a stroke-start from the pressure crossing; the real
         //     pointerdown arriving 15–80ms later must be treated as a duplicate,
         //     otherwise it force-ends and restarts the stroke (double extrude, double
-        //     collapse, etc). 300ms matches the SculptManager single-action debounce
-        //     and is safe because intentional rapid re-presses are > 300ms apart.
+        //     collapse, etc). Every duplicate seen is <=80ms; 100ms must stay well under
+        //     the interval of genuine rapid strokes (3-5/sec) or every 2nd is dropped.
         const msSinceLastDown = performance.now() - (this._lastPenDownMs || 0);
         if (window.screenLog) window.screenLog(`[dbl] pen pointerdown ms:${Math.round(msSinceLastDown)} ptrHandled:${this._ptrDownHandledThisTouch} action:${this._action}`, '#cba6f7');
-        if (msSinceLastDown < 300) {
-          if (window.screenLog) window.screenLog(`[dbl] pen pointerdown DEBOUNCED (${Math.round(msSinceLastDown)}ms<300)`, '#f9e2af');
+        if (msSinceLastDown < 100) {
+          if (window.screenLog) window.screenLog(`[dbl] pen pointerdown DEBOUNCED (${Math.round(msSinceLastDown)}ms<100)`, '#f9e2af');
           return;
         }
         this._lastPenDownMs = performance.now();
@@ -851,6 +888,11 @@ class SculptGL extends Scene {
         this._lastPenMoveMs = performance.now();
 
         if (event.pressure === 0) {
+          // A HOVER MOVE MEANS THE NIB IS UP, so a stroke still marked active lost its
+          // pointerup (Safari drops it when the pencil is held still). While _action is stuck
+          // at SCULPT_EDIT, onDeviceMove feeds hover to sculpt.update() instead of the pick,
+          // so the brush cursor freezes in place. End the stroke to unstick it.
+          if (this._action === Enums.Action.SCULPT_EDIT && !this._vrSculpting && event.buttons === 0) this.onDeviceUp();
           const rect = this._canvas.getBoundingClientRect();
           this._penHoverMouseX = this._pixelRatio * (event.clientX - rect.left);
           this._penHoverMouseY = this._pixelRatio * (event.clientY - rect.top);
@@ -862,8 +904,11 @@ class SculptGL extends Scene {
         const PRESSURE_THRESHOLD = 0.02;
         const prevPressure = this._lastPenPressure || 0;
         this._lastPenPressure = event.pressure;
+        // TIP CONTACT ONLY (buttons bit 0). A barrel button mapped to middle click (Wacom) arrives
+        // as buttons=4 with a NONZERO pressure once a mouse has been used, which fired this and
+        // replaced the pan the real pointerdown had just started with a left press -> orbit.
         if (event.pressure >= PRESSURE_THRESHOLD && prevPressure < PRESSURE_THRESHOLD
-            && this._action !== Enums.Action.SCULPT_EDIT) {
+            && (event.buttons & 1) && this._action !== Enums.Action.SCULPT_EDIT) {
           // Treat this like a real pointerdown: set the bounce timestamp so any
           // real pointerdown that arrives late is ignored as a duplicate.
           // Also set _ptrDownHandledThisTouch so the touchmove fallback knows the
@@ -993,7 +1038,18 @@ class SculptGL extends Scene {
         const py = this._pixelRatio * (at.y - rect.top);
         const picking = this.getPicking && this.getPicking();
         let node = null;
-        if (picking && picking.intersectionMouseMeshes(this.getMeshes(), px, py, false, true)) {
+        // THE BONE TOOL'S OWN PICK FIRST. Its preselect (what a pencil hover or a mouse lights)
+        // is the nearest joint, or the root of the bone, in SCREEN pixels within a pick radius.
+        // The raycast below is a different test -- it needs the ray to pass through the joint's
+        // small cone -- so a finger that was "on" a lit joint could miss it, fall through to the
+        // stale selection, and pin the wrong joint. Ask the tool's question at the press point;
+        // the raycast stays as the fallback for what the screen pick cannot see (pins).
+        const tool = this._sculptManager?.getCurrentTool?.();
+        if (tool && tool._pickRigNodeScreen) {
+          this._mouseX = px; this._mouseY = py;
+          node = tool._pickRigNodeScreen() || null;
+        }
+        if (!node && picking && picking.intersectionMouseMeshes(this.getMeshes(), px, py, false, true)) {
           const hit = picking.getMesh();
           if (hit && (hit._isBone || hit._isPinTarget)) node = hit;
         }
@@ -1319,12 +1375,23 @@ class SculptGL extends Scene {
     event.preventDefault();
   }
 
+  // THESE USED TO BE alert()s ("Oops... / Wow... Context is restored"), which are modal, flash past
+  // and say nothing useful. The browser CAN restore a lost context, but three's WebGPURenderer marks
+  // itself device-lost for good (Renderer._isDeviceLost) and skips every draw after that, so a
+  // "restored" context is still a blank viewport with a working UI. The scene is still in memory and
+  // a save to disk does not touch the GPU, so say that.
   onContextLost() {
-    (window._vrAlert || window.alert)('Oops... WebGL context lost.');
+    const msg = 'Graphics context lost -- the viewport will go blank. Your scene is still in memory: '
+      + 'use Files > Save to disk, then reload the page.';
+    console.error('[gl] ' + msg);
+    if (window.screenLog) window.screenLog(msg, '#f38ba8');
   }
 
   onContextRestored() {
-    (window._vrAlert || window.alert)('Wow... Context is restored.');
+    const msg = 'Graphics context was restored, but the renderer cannot resume from it. '
+      + 'Use Files > Save to disk, then reload the page.';
+    console.error('[gl] ' + msg);
+    if (window.screenLog) window.screenLog(msg, '#f9e2af');
   }
 
   ////////////////
@@ -1333,6 +1400,7 @@ class SculptGL extends Scene {
   onKeyDown(e) {
     this._shiftKey = e.shiftKey;
     this._altKey = e.altKey;
+    this._modifierButton?.refresh?.(); // lights the Select button while Shift is held
 
     // TYPING WINS. Every shortcut below this line — and everything callFunc fans out to — is
     // bound to a bare key, so a focused text field could not receive its own characters:
@@ -1386,8 +1454,11 @@ class SculptGL extends Scene {
     if (!_typing && (e.ctrlKey || e.metaKey)) {
       const _tl = this._gui?._ctrlTimeline;
       const _kc = (e.key || '').toLowerCase();
-      if (_tl && _kc === 'c' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.copySelectedKeys(); return; }
-      if (_tl && _kc === 'x' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.cutSelectedKeys(); return; }
+      // With keys selected this is the key clipboard anywhere; with none it is the POSE clipboard,
+      // but only while the pointer is over the timeline, so Ctrl-C elsewhere is left alone.
+      const _tlOver = !!(_tl && _tl._visible && _tl.isMouseOver());
+      if (_tl && _kc === 'c' && (window._animSelectedKeys?.length || _tlOver)) { e.preventDefault(); _tl.copyKeysSmart(); return; }
+      if (_tl && _kc === 'x' && (window._animSelectedKeys?.length || _tlOver)) { e.preventDefault(); _tl.cutKeysSmart(); return; }
       if (_tl && _kc === 'v' && window._animKeyClipboard?.keys?.length) { e.preventDefault(); _tl.pasteKeys(e.shiftKey); return; }
     }
     // Delete/Backspace removes the selected timeline key(s) when the timeline is open and
@@ -1422,11 +1493,10 @@ class SculptGL extends Scene {
 
     // [CALIBRATION] Toggle Calibration Mode
     if (e.which === 67 && !e.ctrlKey && !e.metaKey) { // 'C' (bare — Ctrl+C is key-copy)
-      if (this._spectatorMode !== Enums.SpectatorMode.STATIONARY) {
-        if (window.screenLog) window.screenLog(`Calibration requires STATIONARY mode.`, "orange");
-      } else {
+      // Desk Sculpt's Move Me: grips move the desk camera instead of the world. The map says so.
+      if (this.deskViewer?.()) {
         this._isCalibratingSpectator = !this._isCalibratingSpectator;
-        if (window.screenLog) window.screenLog(this._isCalibratingSpectator ? `Calibration: ENABLED` : `Calibration: DISABLED`, "lime");
+        console.log('[desk] Move Me ' + (this._isCalibratingSpectator ? 'on' : 'off'));
       }
     }
 
@@ -1436,6 +1506,7 @@ class SculptGL extends Scene {
   onKeyUp(e) {
     this._shiftKey = e.shiftKey;
     this._altKey = e.altKey;
+    this._modifierButton?.refresh?.();
     if (Utils.isTypingTarget(e)) return;
     this._gui.callFunc('onKeyUp', e);
   }
@@ -1464,6 +1535,7 @@ class SculptGL extends Scene {
     var cam = this._camera;
     var pivot = [0.0, 0.0, 0.0];
     if (!res) {
+      if (this._frameSelectedJoints()) return;
       return this.resetCameraMeshes();
     }
 
@@ -1487,6 +1559,51 @@ class SculptGL extends Scene {
   onDoubleTap2Fingers() {
     if (this._focusGui) return;
     this.resetCameraMeshes();
+  }
+
+  // DOUBLE-CLICK ON EMPTY SPACE IN THE BONES TOOL FRAMES THE SELECTED JOINTS, not the scene. matt: "in
+  // tweak mode, if i have a bone selected, double clicking in empty space to frame the view should
+  // frame the selected bone." With Bone Volumes on, each joint's box is the volume it is editing (the
+  // one its handles are on); otherwise the joint and the bone arriving at it. False when there is
+  // nothing to frame, so the caller falls back to the whole scene.
+  _frameSelectedJoints() {
+    if (this._isImmersiveAR || (this.isInVR && this.isInVR())) return false;
+    if (this.getSculptManager?.()?.getToolIndex?.() !== Enums.Tools.BONE_DRAW) return false;
+    const sel = (this.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (!sel.length) return false;
+    const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    const grow = (x, y, z, r) => {
+      box[0] = Math.min(box[0], x - r); box[1] = Math.min(box[1], y - r); box[2] = Math.min(box[2], z - r);
+      box[3] = Math.max(box[3], x + r); box[4] = Math.max(box[4], y + r); box[5] = Math.max(box[5], z + r);
+    };
+    const f = this._frameJointF || (this._frameJointF = {});
+    for (const j of sel) {
+      const bone = Skeleton.displayFlag('volumes') ? Skeleton.volumeActive(this, j) : null;
+      if (bone) {
+        Skeleton.volumeFrame(this, bone, f);
+        const r = f.r * Math.max(f.W, f.H) + f.r * Math.hypot(f.o1, f.o3);
+        grow(f.C0.x, f.C0.y, f.C0.z, r);
+        grow(f.C1.x, f.C1.y, f.C1.z, r);
+      } else {
+        const r = Skeleton.boneRadiusOf ? Skeleton.boneRadiusOf(this, j) || 0 : 0;
+        const p = Skeleton.jointPos(j, this._frameJointP || (this._frameJointP = new THREE.Vector3()));
+        grow(p.x, p.y, p.z, r);
+        if (Skeleton.isJoint(j._parentMesh)) {
+          Skeleton.jointPos(j._parentMesh, p);
+          grow(p.x, p.y, p.z, r);
+        }
+      }
+    }
+    if (!Number.isFinite(box[0])) return false;
+    const pivot = [(box[0] + box[3]) * 0.5, (box[1] + box[4]) * 0.5, (box[2] + box[5]) * 0.5];
+    // At least a little room: a single joint with no radius is a point, and a zero zoom is inside it.
+    const zoom = Math.max(this.computeRadiusFromBoundingBox(box), Skeleton.sceneUnit(this) * 0.05)
+      * this._camera.computeFrustumFit();
+    const spectatorTransform = this.getSpectatorTransform();
+    if (spectatorTransform) vec3.transformMat4(pivot, pivot, spectatorTransform);
+    this._camera.setAndFocusOnPivot(pivot, zoom);
+    this.render();
+    return true;
   }
 
   resetCameraMeshes(meshes) {
@@ -1525,6 +1642,7 @@ class SculptGL extends Scene {
     if (lower.includes('.stl')) return 'stl';
     if (lower.includes('.ply')) return 'ply';
     if (lower.includes('.glb')) return 'glb';
+    if (lower.endsWith('.nom')) return 'nom';
     // .gltf answered nothing while loadScene had a branch for it — the JSON flavour was
     // unreachable rather than unsupported.
     if (lower.includes('.gltf')) return 'gltf';
@@ -1545,6 +1663,10 @@ class SculptGL extends Scene {
     return /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|aif|aiff)$/i.test(name || '');
   }
 
+  static isVideoFile(name) {
+    return /\.(mp4|m4v|mov|webm|mkv)$/i.test(name || '');
+  }
+
   loadFiles(event) {
     event.stopPropagation();
     event.preventDefault();
@@ -1557,7 +1679,7 @@ class SculptGL extends Scene {
     // would otherwise clear the scene and give you a waveform in exchange for your work.
     var anyModel = false;
     for (var k = 0; k < files.length; ++k) {
-      if (!SculptGL.isAudioFile(files[k].name)) { anyModel = true; break; }
+      if (!SculptGL.isAudioFile(files[k].name) && !SculptGL.isVideoFile(files[k].name)) { anyModel = true; break; }
     }
     // OPEN REPLACES, IMPORT ADDS. This path has always appended, which is Import's behaviour --
     // there was simply no Open, so a menu offering one button could not say which it was. The
@@ -1588,10 +1710,28 @@ class SculptGL extends Scene {
         if (_fo) _fo.value = '';
         continue;
       }
+      if (SculptGL.isVideoFile(file.name)) {
+        if (window.screenLog) window.screenLog(`Video: ${file.name}`, 'cyan');
+        this._loadVideoFile(file);
+        var _fv = document.getElementById('fileopen');
+        if (_fv) _fv.value = '';
+        continue;
+      }
       var fileType = this.getFileType(file.name);
       if (window.screenLog) window.screenLog(`Reading: ${file.name} (${fileType})`, "yellow");
       this.readFile(file, fileType);
     }
+  }
+
+  // A video file carries its own soundtrack, and the two share an origin on the timeline, so
+  // take the audio from it too -- unless a clip is already loaded, which is a deliberate choice
+  // (the dialogue take) that a reference video must not silently replace.
+  _loadVideoFile(file) {
+    const vt = this._videoTrack, at = window._audioTrack;
+    vt.loadFile(file).then((ok) => {
+      if (!ok) { if (window.screenLog) window.screenLog(`Video load failed: ${file.name}`, 'red'); return; }
+      if (at && !at.hasClip()) at.loadFile(file).then((a) => { if (a) at.unlock(); });
+    });
   }
 
   readFile(file, ftype) {
@@ -1789,87 +1929,10 @@ class SculptGL extends Scene {
           }
         }
 
-        const tMat = keyMesh.getMatrix();
-        const pos = [tMat[12], tMat[13], tMat[14]];
-        
-        const sx = Math.hypot(tMat[0], tMat[1], tMat[2]);
-        const sy = Math.hypot(tMat[4], tMat[5], tMat[6]);
-        const sz = Math.hypot(tMat[8], tMat[9], tMat[10]);
-        
-        const m = mat3.fromValues(
-          tMat[0]/sx, tMat[1]/sx, tMat[2]/sx,
-          tMat[4]/sy, tMat[5]/sy, tMat[6]/sy,
-          tMat[8]/sz, tMat[9]/sz, tMat[10]/sz
-        );
-        const q = quat.create();
-        quat.fromMat3(q, m);
-
-        let keyIdx = -1;
-        if (track.times) {
-          for (let i = 0; i < track.times.length; i++) {
-            if (Math.abs(track.times[i] - targetTime) < 0.005) {
-              keyIdx = i;
-              break;
-            }
-          }
-        }
-
-        const wasUpdate = keyIdx >= 0;
-        let oldData = null;
-        if (wasUpdate) {
-          oldData = {
-            pos: track.positions.slice(keyIdx * 3, keyIdx * 3 + 3),
-            q: track.quaternions.slice(keyIdx * 4, keyIdx * 4 + 4),
-            s: track.scales.slice(keyIdx * 3, keyIdx * 3 + 3)
-          };
-        }
-
+        // addTransformKey pushes its own snapshot undo. This used to push a SECOND, command-replay
+        // undo on top of it -- one autokey cost two undo steps, and the replay re-spliced lockstep
+        // slots, which sparse keys (per-channel masks) cannot survive.
         window._animationRegistry.addTransformKey(keyMesh, targetTime);
-        
-        const newData = {
-          pos: [...pos],
-          q: [q[0], q[1], q[2], q[3]],
-          s: [sx, sy, sz]
-        };
-
-        if (this._stateManager) {
-          this._stateManager.pushStateCustom(
-            () => { // UNDO
-              const tr = window._animationRegistry.tracks.get(meshId);
-              if (!tr) return;
-              if (wasUpdate) {
-                let idx = 0;
-                while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
-                if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
-                  tr.positions.splice(idx*3, 3, ...oldData.pos);
-                  tr.quaternions.splice(idx*4, 4, ...oldData.q);
-                  tr.scales.splice(idx*3, 3, ...oldData.s);
-                }
-              } else {
-                window._animationRegistry.deleteTransformKey(keyMesh, targetTime);
-              }
-              window._animationRegistry.update(keyMesh, true);
-            },
-            () => { // REDO
-              const tr = window._animationRegistry.tracks.get(meshId);
-              if (!tr) return;
-              let idx = 0;
-              while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
-              
-              if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
-                tr.positions.splice(idx*3, 3, ...newData.pos);
-                tr.quaternions.splice(idx*4, 4, ...newData.q);
-                tr.scales.splice(idx*3, 3, ...newData.s);
-              } else {
-                tr.times.splice(idx, 0, targetTime);
-                tr.positions.splice(idx*3, 0, ...newData.pos);
-                tr.quaternions.splice(idx*4, 0, ...newData.q);
-                tr.scales.splice(idx*3, 0, ...newData.s);
-              }
-              window._animationRegistry.update(keyMesh, true);
-            }
-          );
-        }
       } else if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
         // Shape AutoKey
         if (!window._animationRegistry.tracks.has(meshId)) {
@@ -1956,7 +2019,7 @@ class SculptGL extends Scene {
     }
     // In VR mirror mode, mousewheel zooms the mirror FOV instead of the desktop camera.
     if (this._renderer?.xr?.isPresenting && this._spectatorViewMode === 1) {
-      this._mirrorFovScale = Math.max(0.1, Math.min(1.0, (this._mirrorFovScale ?? 0.5) - dir * 0.05));
+      this._mirrorFovScale = Math.max(0.1, Math.min(1.0, (this._mirrorFovScale ?? 1.0) - dir * 0.05));
       return;
     }
     this._camera.zoom(dir * 0.02);
@@ -2004,6 +2067,7 @@ class SculptGL extends Scene {
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;
 
+
     // AN ARMED RIG ASSIGNMENT takes the click first, and takes it whole. "Set parent" and
     // "Aim at" are armed from the outliner and used to be finishable only from an outliner
     // ROW; this is the other half, so the target can be the thing you are looking at. Pointing
@@ -2032,11 +2096,11 @@ class SculptGL extends Scene {
     // orbits the camera — so this only becomes an action if the pointer never moved. Decided
     // on release, the same way Bone Draw's tap distinguishes itself from a drag.
     //
-    // MOUSE ONLY. On iPad a second finger is dispatched as MOUSE_RIGHT to mean PAN (see the
+    // MOUSE (or a pen on a touchless desktop, whose barrel button is a real right button). On iPad a second finger is dispatched as MOUSE_RIGHT to mean PAN (see the
     // gesture table above), so a pan that happened to start and end on the same spot would
     // fire this. Pen and touch reach the secondary action through the on-screen modifier,
     // which is the whole reason that button exists.
-    if (button === MOUSE_RIGHT && event.pointerType !== 'pen' && event.pointerType !== 'touch') {
+    if (button === MOUSE_RIGHT && event.pointerType !== 'touch' && (event.pointerType !== 'pen' || !navigator.maxTouchPoints)) {
       this._rightClickX = mouseX;
       this._rightClickY = mouseY;
       this._rightMoved = false;
@@ -2046,8 +2110,10 @@ class SculptGL extends Scene {
       this._rightClientY = event.clientY;
     }
 
+    // DESK SCULPT: the mouse only steers the desk camera. A left-drag would otherwise sculpt by
+    // the DESKTOP camera's picking, which is not the view on screen; here it orbits instead.
     var canEdit = false;
-    if (button === MOUSE_LEFT && this._sculptManager) {
+    if (button === MOUSE_LEFT && this._sculptManager && !this.deskViewer?.()) {
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
     }
 
@@ -2068,10 +2134,10 @@ class SculptGL extends Scene {
       this._action = Enums.Action.MASK_EDIT;
     } else if ((!canEdit || button === MOUSE_RIGHT) && event.altKey)
       this._action = Enums.Action.CAMERA_PAN_ZOOM_ALT;
-    else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit && (event.pointerType !== 'pen' || window._ipadStylusView)))
+    else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit && (event.pointerType !== 'pen' || window._ipadStylusView || !navigator.maxTouchPoints)))
       this._action = Enums.Action.CAMERA_ROTATE;
     else if (button === MOUSE_LEFT && !canEdit && event.pointerType === 'pen')
-      this._action = Enums.Action.NOTHING; // pen missed mesh — cursor tracks freely, no camera rotate
+      this._action = Enums.Action.NOTHING; // pen missed mesh on a touch device (iPad) — fingers own the camera there; a touchless desktop pen orbits above
     else
       this._action = Enums.Action.SCULPT_EDIT;
 
@@ -2208,6 +2274,10 @@ class SculptGL extends Scene {
         }
       }
 
+      // THE VOID STARTS HERE, at the button press -- not in enterXR, which only runs once the
+      // runtime has already handed a session back. Timed from this point so the grey lobby can be
+      // itemised rather than guessed at; Scene prints the breakdown on the first frame.
+      window._xrMarks = [['press', performance.now()]];
       const session = session0 || await navigator.xr.requestSession(mode, {
         // NOTE: do NOT add 'layers' here. Requesting the XRLayers feature causes
         // Three.js to use XRProjectionLayer instead of XRWebGLLayer, which triggers
@@ -2218,6 +2288,7 @@ class SculptGL extends Scene {
         optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
       });
 
+      if (window._xrMarks) window._xrMarks.push(['requestSession', performance.now()]);
       await this.enterXR(session);
       this._currentXRMode = mode;
       // console.log(`Started XR Session: ${mode}`);

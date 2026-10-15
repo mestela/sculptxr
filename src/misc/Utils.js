@@ -327,9 +327,35 @@ Utils.rgb2hsv = function (r, g, b, hsv) {
 // Both the event target and the active element are checked: the target is right for a
 // bubbling event, and activeElement covers a listener bound on window during the capture
 // phase, or a synthetic event with no useful target.
+// A SLIDER IS NOT A TEXT FIELD.
+//
+// This used to call every INPUT a typing target, which killed every bare-key shortcut for as
+// long as a range input kept focus -- and a slider keeps focus after you drag it. So touching
+// the brush radius, the voxel depth rail or Env Intensity silently disabled f / l / t / o until
+// you happened to click the viewport and focus fell back to the body. matt: "they often stop
+// working for reasons I don't understand, then start working again for reasons i don't
+// understand." That was it.
+//
+// A non-text control still needs the keys it actually consumes -- arrows nudge a range, space
+// and enter activate a button -- so those are still suppressed. Letters are not among them, and
+// letters are what the shortcuts are.
+const _NAV_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Home', 'End', 'PageUp', 'PageDown', ' ', 'Spacebar', 'Enter']);
+const _TEXT_INPUT = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number']);
+
 Utils.isTypingTarget = function (e) {
-  const typing = (n) => !!n && (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA'
-    || n.tagName === 'SELECT' || n.isContentEditable);
+  const typing = (n) => {
+    if (!n) return false;
+    if (n.tagName === 'TEXTAREA' || n.isContentEditable) return true;
+    // A <select> swallows letters too -- they jump to the matching option -- so it stays a
+    // typing target outright.
+    if (n.tagName === 'SELECT') return true;
+    if (n.tagName !== 'INPUT') return false;
+    // An <input> with no type attribute is a text field.
+    const t = (n.type || 'text').toLowerCase();
+    if (_TEXT_INPUT.has(t)) return true;
+    return _NAV_KEYS.has(e && e.key);
+  };
   return typing(e && e.target) || typing(document.activeElement);
 };
 

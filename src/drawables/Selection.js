@@ -1,10 +1,15 @@
 import { mat3, mat4, vec3 } from 'gl-matrix';
 import Buffer from '../render/Buffer.js';
 import ShaderLib from '../render/ShaderLib.js';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
+import { stripGeometry } from '../render/lineStrip.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
 import MotionPathEdit from '../editing/MotionPathEdit.js';
 import Skeleton from '../editing/Skeleton.js';
+import WeightCage from '../editing/WeightCage.js';
+
+const _symTmp = [0, 0, 0];
 
 var _TMP_MATPV = mat4.create();
 var _TMP_MAT = mat4.create();
@@ -203,22 +208,34 @@ class Selection {
     }
 
     if (!this._threeCircle) {
-      // LineLoop gives a true 1-px-wide circle outline, matching the original GL line look.
-      // RingGeometry creates a filled disk that appears too thick at large radii.
+      // A true 1-px-wide circle outline, matching the original GL line look. RingGeometry
+      // creates a filled disk that appears too thick at large radii.
+      //
+      // Line, NOT LineLoop: WebGPURenderer does not support LineLoop at all -- it logs
+      // "Objects of type THREE.LineLoop are not supported" once per frame and draws nothing,
+      // so the brush cursor silently vanishes on the flagged path. The loop below runs to
+      // i <= 64, so the first point is already repeated at the end and the ring closes
+      // itself; LineLoop's implicit closing segment was drawing on top of a segment that
+      // existed anyway. Identical output on both renderers.
       const pts = [];
       for (let i = 0; i <= 64; i++) {
         const a = (i / 64) * Math.PI * 2;
         pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0));
       }
-      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      // Segment pairs, not a strip: THREE.Line is the primitive WebGPURenderer fails on.
+      const lineGeo = stripGeometry(pts);
       const lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2, depthTest: false, depthWrite: false, transparent: true });
-      this._threeCircle = new THREE.LineLoop(lineGeo, lineMat);
+      this._threeCircle = new THREE.LineSegments(lineGeo, lineMat);
       this._threeCircle.renderOrder = 10000;
 
       const dotGeo = new THREE.SphereGeometry(0.005, 8, 8);
       const dotMat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true });
       this._threeDot = new THREE.Mesh(dotGeo, dotMat);
       this._threeDot.renderOrder = 10000;
+      // Mirrored-stroke centre: a dot only (no ring/sphere), as in SculptGL. Marks that
+      // symmetry is on and where the plane is without drawing it.
+      this._threeSymDot = new THREE.Mesh(dotGeo, dotMat);
+      this._threeSymDot.renderOrder = 10000;
     }
 
     // Voxel brush is a 3D volume, so it gets a translucent sphere (radius 1, scaled
@@ -227,7 +244,9 @@ class Selection {
     if (!this._threeVoxelSphere) {
       const vsGeo = new THREE.SphereGeometry(1, 24, 16);
       // Fresnel "xray" material — same look as the VR volume cursor (additive rim glow).
-      const vsMat = new THREE.ShaderMaterial({
+      // The node build first: WebGPURenderer cannot draw a ShaderMaterial, so on the flagged
+      // path this cursor was hidden entirely.
+      const vsMat = NodeMaterials.fresnelGlow(0x4488ff) || new THREE.ShaderMaterial({
         uniforms: { color: { value: new THREE.Color(0x4488ff) } },
         vertexShader: `
           varying vec3 vNormal;
@@ -269,6 +288,7 @@ class Selection {
       if (this._depthRail) this._depthRail.style.display = 'none';
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot) this._threeDot.visible = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
       return;
     }
 
@@ -306,6 +326,7 @@ class Selection {
 
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
       return;
     }
     if (this._threeVoxelSphere) this._threeVoxelSphere.visible = false;
@@ -322,6 +343,7 @@ class Selection {
         threeMesh.add(this._threeCircle);
         threeMesh.add(this._threeDot);
       }
+      if (this._threeSymDot.parent !== threeMesh) threeMesh.add(this._threeSymDot);
 
       var worldRadius = Math.sqrt(picking.computeWorldRadius2(true)); // Ignore pressure for indicator
       const m = threeMesh.matrixWorld.elements;
@@ -352,6 +374,24 @@ class Selection {
 
       this._threeDot.visible = !inEditMode; // hide centre dot during radius drag
 
+      const pickingSym = main.getPickingSymmetry();
+      // THE MIRRORED-STROKE DOT IS OFF IN GRAB. With a posed or asymmetric rig the mirror of the point
+      // under the cursor is computed in a space that has nothing to do with where the body is now,
+      // so hovering an arm drew the dot on the leg. Other tools keep it; posed symmetry gets its own
+      // pass, and `window._showSymmetryDot = true` forces it back on in Grab meanwhile.
+      const symOn = (curIdx !== Enums.Tools.GRAB || window._showSymmetryDot === true)
+        // a capsule's marker is placed by mirrorLocalPoint, so it needs no hit from the mirror pick
+        // (which has none on a left/right capsule: the mirror of the cursor is on the OTHER capsule)
+        && !!(sm && sm.getSymmetry() && (WeightCage.isCage(mesh) || (pickingSym && pickingSym.getMesh() === mesh)));
+      if (symOn) {
+        const _sp = pickingSym.getIntersectionPoint();
+        // a capsule's mirror is across the rig plane, in this capsule's frame (see mirrorLocalPoint)
+        if (WeightCage.isCage(mesh) && WeightCage.mirrorLocalPoint(mesh, interPoint, _symTmp)) this._threeSymDot.position.fromArray(_symTmp);
+        else this._threeSymDot.position.fromArray(_sp);
+        this._threeSymDot.scale.set(dotLocalRadius, dotLocalRadius, dotLocalRadius);
+      }
+      this._threeSymDot.visible = symOn && !inEditMode;
+
       // Cache position/radius so the circle can stay visible when cursor leaves the mesh
       this._lastLocalRadius  = localRadius;
       this._lastScreenRadius = sm ? sm.getCurrentTool().getScreenRadius() : localRadius;
@@ -370,6 +410,7 @@ class Selection {
       }
       this._threeCircle.visible = true;
       this._threeDot.visible = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
 
     } else if (this._showPathCircle(main, sm)) {
       // handled there
@@ -377,6 +418,7 @@ class Selection {
     } else {
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
+      if (this._threeSymDot) this._threeSymDot.visible = false;
     }
     // _isEditMode is managed by GuiSculpting — do NOT reset it here
   }
@@ -445,6 +487,7 @@ class Selection {
       ? camera.getThreeCamera().quaternion : this._threeCircle.quaternion);
     this._threeCircle.visible = true;
     this._threeDot.visible = false;
+    if (this._threeSymDot) this._threeSymDot.visible = false;
     return true;
   }
 

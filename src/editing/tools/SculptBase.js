@@ -4,6 +4,7 @@ import Geometry from '../../math3d/Geometry.js';
 import { vec3, mat4 } from 'gl-matrix';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
 import Mesh from '../../mesh/Mesh.js';
+import WeightCage from '../WeightCage.js';
 
 // Overview sculpt :
 // start (check if we hit the mesh, start state stack) -> startSculpt
@@ -182,6 +183,11 @@ class SculptBase {
       materials: mesh.getMaterials() ? new Float32Array(mesh.getMaterials().subarray(0, mesh.getNbVertices() * 3)) : null,
       facesTexCoord: mesh.getFacesTexCoord() ? new Uint32Array(mesh.getFacesTexCoord().subarray(0, mesh.getNbFaces() * 4)) : null,
       groups: mesh.getFacesGroups() ? new Int32Array(mesh.getFacesGroups().subarray(0, mesh.getNbFaces())) : null,
+      // The uv array and its seam-duplicate table: facesTexCoord indexes the first and the
+      // second says which vertex each duplicate copies, so restoring faces without them
+      // scrambles the texture on undo.
+      texCoords: mesh.hasUV() ? new Float32Array(mesh.getTexCoords()) : null,
+      dupStartCount: mesh.hasUV() && mesh.getVerticesDuplicateStartCount() ? new Uint32Array(mesh.getVerticesDuplicateStartCount()) : null,
       nbFaces: mesh.getNbFaces(),
       nbVertices: mesh.getNbVertices()
     };
@@ -206,6 +212,8 @@ class SculptBase {
     if (snapshot.facesTexCoord) {
       mesh.setFacesTexCoord(snapshot.facesTexCoord);
     }
+    if (snapshot.texCoords) mesh.setTexCoords(snapshot.texCoords);
+    if (snapshot.dupStartCount) mesh.setVerticesDuplicateStartCount(snapshot.dupStartCount);
     
     mesh.allocateArrays();
     // Restore group ids after allocateArrays (which reallocates the face arrays).
@@ -283,8 +291,20 @@ class SculptBase {
     }
 
     var mesh = picking.getMesh();
-    if (mesh && main.getSculptManager().getSymmetry())
+    if (mesh && main.getSculptManager().getSymmetry()) {
+      // A CENTRELINE CAPSULE'S MIRROR PLANE IS THE WORLD ONE, and the stroke only pointed it there
+      // on press -- so the hover marker mirrored across the capsule's own stale x until you touched
+      // it. Pointed here too, while hovering. (Pairing first: only a paired capsule knows it is a
+      // centreline one.)
+      if (WeightCage.isCage(mesh)) {
+        WeightCage.ensurePaired(main, mesh);
+        // EVERY capsule, not only the centreline ones: a left/right capsule's twin is mirrored across
+        // the world plane too, and the marker is drawn in the hovered capsule's own frame, so its own
+        // x axis put the dot 90 degrees off until the first stroke pointed the plane.
+        WeightCage.alignSymmetryPlane(mesh);
+      }
       main.getPickingSymmetry().intersectionMouseMesh(mesh);
+    }
   }
 
   update(continuous) {
@@ -628,6 +648,29 @@ class SculptBase {
     // old per-frame behavior for A/B comparison.
     if (window._vrStrokeThrottle !== false && dist <= minSpacing && !this._forceNextStroke) {
       return;
+    }
+
+    // DAB RATE CAP. The distance gate above only stops dabbing at rest; while moving, every frame
+    // clears it, so dabs/second == framerate and a 90Hz device builds a stroke 1.5x faster than a
+    // 60Hz one (matt: AVP brush "massive even at light intensity", GalaxyXR/desktop measured).
+    // Cap the dab rate in TIME so it stops depending on the display. Accumulator, not a plain
+    // last-dab timestamp, so a 60Hz frame that lands 1ms early is not dropped (that would halve
+    // the rate). window._vrDabHz tunes it, 0 = uncapped (old behaviour) for A/B.
+    var dabHz = (typeof window._vrDabHz === 'number') ? window._vrDabHz : 60;
+    var now = performance.now();
+    if (dabHz > 0) {
+      var iv = 1000 / dabHz;
+      var due = this._nextDabT || 0;
+      if (!this._forceNextStroke && now + 2 < due) return;
+      this._nextDabT = this._forceNextStroke ? now + iv : Math.max(due + iv, now - 0.5 * iv);
+    }
+    if (window._vrDabTrace) {
+      if (now - (this._dabTraceT || 0) > 1000) {
+        if (this._dabTraceT) console.log('[dab] ' + this._dabCount + ' dabs/s (cap ' + dabHz + ')');
+        this._dabTraceT = now;
+        this._dabCount = 0;
+      }
+      this._dabCount++;
     }
 
     this._forceNextStroke = false;

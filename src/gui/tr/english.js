@@ -30,7 +30,7 @@ var TR = {
   // file
   fileTitle: 'Files (import/export)',
   fileImportTitle: 'Import',
-  fileAdd: 'Import file...',
+  fileAdd: 'Import mesh / audio / video...',
   fileAutoMatrix: 'Scale and center',
   fileVertexSRGB: 'sRGB vertex color',
   fileExportSceneTitle: 'Export Scene',
@@ -145,6 +145,10 @@ var TR = {
   sculptSplitEdge: 'Split Edge',
   sculptEdgeCreate: 'Edge Create',
   sculptSpinEdge: 'Spin Edge',
+  sculptSelLoop: 'Sel Loop',
+  sculptCutLoop: 'Cut Loop',
+  sculptBevel: 'Bevel',
+  sculptSelEdge: 'Sel Edge',
   sculptWeld: 'Weld',
   sculptSnapWeldCenter: 'Snap & Weld to Center',
   sculptExtrude: 'Extrude',
@@ -197,7 +201,7 @@ var TR = {
   pressureIntensity: 'Pressure intensity',
 
   // rendering
-  renderingTitle: 'Rendering',
+  renderingTitle: 'View',
   renderingGrid: 'Show grid',
   renderingSymmetryLine: 'Show mirror line',
   renderingMatcap: 'Matcap',
@@ -207,7 +211,7 @@ var TR = {
   renderingTransparency: 'Transparency',
   renderingNormal: 'Normal shader',
   renderingUV: 'UV shader',
-  renderingShader: 'Shader',
+  renderingShader: 'Shading',
   renderingMaterial: 'Material',
   renderingImportUV: 'Import (jpg, png...)',
   renderingImportMatcap: 'Import (jpg, png...)',

@@ -17,6 +17,7 @@ import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import { faIcon } from './faIcons.js';
 import { uiReorg, groupSectionTitles, wireGroups, applyUISweep, tagReorgRoot } from './uiTokens.js';
 import TimelineHelper from '../TimelineHelper.js';
+import { maskSync, xfBit, xfRefreshDerived } from '../../editing/xfChannel.js';
 import IKSolver from '../../editing/IKSolver.js';
 import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
 
@@ -594,9 +595,6 @@ export function buildAnimationSectionHTML(main, style) {
           <button id="acp-to-end"     title="Jump to end">${faIcon('forward-step')}</button>
           <button id="acp-record"     title="Record">${faIcon('circle', { style: 'color:#f38ba8' })}</button>
         </div>
-        <button class="acp-btn-full" id="acp-close-loop"
-          title="Make the last key of each selected take match its first, so the take loops without a pop. Undoable.">Close loop on selected takes</button>
-        <button class="acp-btn-clear" id="acp-clear-all">Delete animation from selected objects</button>
         <button class="acp-btn-full" id="acp-bake-voxel" style="display:none"
           title="Voxel frame animations can't be saved to .sxr (the voxel field is runtime-only). Bake to a plain mesh-frame animation that saves and reloads. Undoable.">Bake voxel anim &rarr; mesh frames</button>
       </div>
@@ -1303,22 +1301,6 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     _sync();
   });
 
-  el.querySelector('#acp-close-loop')?.addEventListener('click', () => {
-    const res = window._animationRegistry?.closeLoop?.();
-    if (window.screenLog) {
-      window.screenLog(res && res.closed
-        ? `Animation: closed the loop on ${res.closed} take(s)`
-        : `Animation: nothing to close — ${(res && res.reason) || 'no selection'}`,
-        res && res.closed ? 'cyan' : '#f38ba8');
-    }
-    _sync();
-  });
-
-  el.querySelector('#acp-clear-all')?.addEventListener('click', () => {
-    main.getGui?.()?._ctrlTimeline?.deleteAnimationFromSelectedObjects?.();
-    _sync();
-  });
-
   // ── Record ─────────────────────────────────────────────────────────────────
 
   // Persist both keys on either toggle (they're mutually exclusive, so save the pair).
@@ -1396,6 +1378,13 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const r = reg(); const target = _getTargetMesh();
     if (!r || !target) return;
     const t = window._animCurrentTime || 0;
+    // EVERYTHING SELECTED gets a key, not just the first selected object.
+    const _selAll = main.getSelectedMeshes?.() || [];
+    if (_selAll.length > 1) {
+      r.addKeysForMeshes(_selAll, t, window._animKeyMode);
+      repaint();
+      return;
+    }
     if (window._animKeyMode === 'shape') r.addShapeKey(target, t);
     else if (window._animKeyMode === 'blendshape') {
       // Key ALL blendshapes at their current evaluated weight (including weight=0)
@@ -1412,35 +1401,20 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     repaint();
   });
 
-  const _copyKeys = () => {
-    const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
-    const t = window._animCurrentTime || 0;
-    if (window._animKeyMode === 'shape') r.copyShapeKey?.(target, t);
-    else r.copyTransformKey?.(target, t);
-  };
+  // COPY / PASTE / CUT go through the TIMELINE's clipboard, the same one the shortcuts and the
+  // dopesheet / graph use: keys selected -> those keys, none -> the selected objects' pose.
+  const _tl = () => main.getGui?.()?._ctrlTimeline;
+  const _copyKeys = () => { _tl()?.copyKeysSmart?.(); };
 
   el.querySelector('#acp-copy-key')?.addEventListener('click', _copyKeys);
 
   el.querySelector('#acp-paste-key')?.addEventListener('click', () => {
-    const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
-    const t = window._animCurrentTime || 0;
-    if (window._animKeyMode === 'shape' && r.clipboardShape) {
-      r.pasteShapeKey?.(target, t); r.update(target, true);
-    } else if (r.clipboardTransform) {
-      r.pasteTransformKey?.(target, t); r.update(target, true);
-    }
+    _tl()?.pasteKeys?.(false);
     repaint();
   });
 
   el.querySelector('#acp-cut-key')?.addEventListener('click', () => {
-    _copyKeys();
-    const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
-    const t = window._animCurrentTime || 0;
-    if (window._animKeyMode === 'shape') r.deleteShapeKey?.(target, t);
-    else r.deleteTransformKey?.(target, t);
+    _tl()?.cutKeysSmart?.();
     repaint();
   });
 
@@ -1578,8 +1552,12 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       if (k.type === 'transform' && track.positions) {
         const cur = track.positions[kIdx * 3 + ch] ?? 0;
         const nv  = _parseExpr(rawVal, cur);
-        if (nv != null && kIdx * 3 + ch < track.positions.length)
+        if (nv != null && kIdx * 3 + ch < track.positions.length) {
           track.positions[kIdx * 3 + ch] = nv;
+          // Typing a value IS keying that channel; unkeyed it would be re-derived away (sparse keys).
+          maskSync(track)[kIdx] |= xfBit('pos', ch);
+          xfRefreshDerived(track);
+        }
       } else if (k.type === 'blendshape' && k.name && ch === 0) {
         const bt = track.blendshapeTracks?.get(k.name);
         const cur = bt?.values?.[kIdx] ?? 0;
@@ -1934,32 +1912,18 @@ export class AnimationControlPanel extends HTMLVRPanel {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
-    const beforeState = new Map();
-    reg.tracks.forEach((track, meshId) => beforeState.set(meshId, TimelineHelper.cloneTrack(track)));
-
-    let actionName = '';
+    // ONE undo step, and it is the registry's: every branch below ends in deleteSelectedKeys,
+    // which snapshots and pushes its own. This used to push a second, clone-based step around it,
+    // so a single Delete took two undos to get back.
     if (window._animSelectedKeys?.length > 0) {
       reg.deleteSelectedKeys(window._animSelectedKeys);
-      actionName = 'delete selected keys';
     } else {
       const t = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
-        reg.deleteShapeKey(mesh, t); actionName = 'delete shape key';
-      } else {
-        reg.deleteTransformKey(mesh, t); actionName = 'delete transform key';
-      }
+      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) reg.deleteShapeKey(mesh, t);
+      else reg.deleteTransformKey(mesh, t);
     }
     reg.update(mesh, true);
-
-    const afterState = new Map();
-    reg.tracks.forEach((track, meshId) => afterState.set(meshId, TimelineHelper.cloneTrack(track)));
-
-    const timeline = window.app?.getGui?.()?._ctrlTimeline;
-    this._main.getStateManager().pushStateCustom(
-      () => { beforeState.forEach((t, id) => reg.tracks.set(id, TimelineHelper.cloneTrack(t))); this._main.render(); timeline?.draw(); },
-      () => { afterState.forEach((t, id)  => reg.tracks.set(id, TimelineHelper.cloneTrack(t))); this._main.render(); timeline?.draw(); },
-      false, actionName
-    );
+    window.app?.getGui?.()?._ctrlTimeline?.draw?.();
   }
 
   _onMeshCreated(_scene) {

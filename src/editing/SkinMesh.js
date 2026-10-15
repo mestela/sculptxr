@@ -33,6 +33,11 @@ import Skeleton from './Skeleton.js';
 // near it. And every claim is the same 2x2 block, so every bridge loop is eight vertices and
 // no two ends of a bone ever have to negotiate a shape.
 //
+// EXCEPT WHEN THE USER TURNS ONE (Tweak Joint rings, `_jointRot`). The default stays world-aligned
+// for every reason above; a turn is an authored edge-flow choice — a finger curl, a tail — and
+// its shear is the one that was asked for. The box is built in the joint's own frame (boxAt
+// takes the bone directions into it) and the relax measures the ellipsoid there too.
+//
 // What came before, in order, and why none of it is here: a tube per CHAIN (could not express
 // a branch at all — two tubes leaving a spine capped themselves off inside each other); one
 // face per bone on an oriented box (bridges sheared with the draw angle); rectangles of an
@@ -96,13 +101,17 @@ const SYM_AXIS = 0;
 // Skeleton topology
 // -----------------------------------------------------------------------------------------
 
-function adjacency(joints) {
+// `skip` holds the joints that deform but do not shape the skin (Skeleton.jointShapesSkin). They
+// are absent from `joints`, and a joint whose parent is one of them hangs from the nearest
+// ancestor that is not — so a jaw leaves no trace and a twist bone mid-forearm leaves one bone.
+function adjacency(joints, skip) {
   const set = new Set(joints);
   const adj = new Map();
   const bones = [];
   for (const j of joints) adj.set(j, []);
   for (const j of joints) {
-    const p = j._parentMesh;
+    let p = j._parentMesh;
+    while (p && skip && skip.has(p)) p = p._parentMesh;
     if (!set.has(p)) continue;
     if (Skeleton.jointPos(j).distanceTo(Skeleton.jointPos(p)) < 1e-9) continue; // no direction
     adj.get(j).push(p);
@@ -114,9 +123,15 @@ function adjacency(joints) {
 
 // The radius of the bone between two joints. It is stored on the CHILD joint of the pair,
 // which is why this cannot just read one of them.
+// Through any joints that do not shape the skin, since adjacency joins across them.
+function hangsFrom(c, p) {
+  let q = c._parentMesh;
+  while (q && q !== p && q._noSkinShape) q = q._parentMesh;
+  return q === p;
+}
 function boneRadius(a, b) {
-  if (b._parentMesh === a) return b._boneRadius || 0;
-  if (a._parentMesh === b) return a._boneRadius || 0;
+  if (hangsFrom(b, a)) return b._boneRadius || 0;
+  if (hangsFrom(a, b)) return a._boneRadius || 0;
   return Math.max(a._boneRadius || 0, b._boneRadius || 0);
 }
 
@@ -658,6 +673,29 @@ function ensureCapsScratch(n) {
   _ny = new Float64Array(n); _nz = new Float64Array(n);
   _order = new Int32Array(n);
 }
+// THE TWO ENDS' ROTATIONS, INVERTED, for measuring a point in the frame its extents belong to.
+// Null when neither joint is rotated, which is the path every rig took before rotation existed.
+// The second is put in the first's hemisphere so a blend between them takes the short way round
+// — and since a reflection leaves the dot product alone, a mirrored pair makes the same choice.
+function capRotations(p, j) {
+  if (!Skeleton.jointRotIsSet(p) && !Skeleton.jointRotIsSet(j)) return null;
+  const a = Skeleton.jointRot(p), b = Skeleton.jointRot(j);
+  const ia = [-a[0], -a[1], -a[2], a[3]];
+  let ib = [-b[0], -b[1], -b[2], b[3]];
+  if (ia[0] * ib[0] + ia[1] * ib[1] + ia[2] * ib[2] + ia[3] * ib[3] < 0) ib = ib.map((v) => -v);
+  return new Float64Array([ia[0], ia[1], ia[2], ia[3], ib[0], ib[1], ib[2], ib[3]]);
+}
+
+// v rotated by the unit quaternion (qx, qy, qz, qw), into `out` — inline, no allocation, since
+// this runs per vertex per capsule per relax pass.
+function rotInto(qx, qy, qz, qw, vx, vy, vz, out) {
+  const tx = 2 * (qy * vz - qz * vy), ty = 2 * (qz * vx - qx * vz), tz = 2 * (qx * vy - qy * vx);
+  out[0] = vx + qw * tx + (qy * tz - qz * ty);
+  out[1] = vy + qw * ty + (qz * tx - qx * tz);
+  out[2] = vz + qw * tz + (qx * ty - qy * tx);
+}
+const _loc = new Float64Array(3);
+
 function capsuleTarget(p, caps, out) {
   // Pass one: each capsule's signed distance and outward direction at p.
   ensureCapsScratch(caps.length);
@@ -688,9 +726,25 @@ function capsuleTarget(p, caps, out) {
     // always at least the true (perpendicular) distance and — the part that matters — is zero
     // exactly on the surface and changes sign across it. The relax steps along this same ray,
     // so the two agree and it lands ON the surface rather than near it.
-    const ux = _to.x / Math.max(hx, 1e-9);
-    const uy = _to.y / Math.max(hy, 1e-9);
-    const uz = _to.z / Math.max(hz, 1e-9);
+    // A ROTATED END MEASURES IN ITS OWN FRAME: the extents run along the joint's axes, so the
+    // offset is taken into that frame first. Blended between the two ends' frames by the same t
+    // the extents use (a normalised lerp — t is monotone along the shaft and the two are already
+    // in one hemisphere), so a turned palm twists into an unturned finger rather than snapping.
+    // A rotation keeps length, so `l` below is still the distance and only the direction's
+    // components change.
+    let lx = _to.x, ly = _to.y, lz = _to.z;
+    const ri = c.ri;
+    if (ri) {
+      let qx = ri[0] + (ri[4] - ri[0]) * t, qy = ri[1] + (ri[5] - ri[1]) * t;
+      let qz = ri[2] + (ri[6] - ri[2]) * t, qw = ri[3] + (ri[7] - ri[3]) * t;
+      const ql = Math.hypot(qx, qy, qz, qw) || 1;
+      qx /= ql; qy /= ql; qz /= ql; qw /= ql;
+      rotInto(qx, qy, qz, qw, lx, ly, lz, _loc);
+      lx = _loc[0]; ly = _loc[1]; lz = _loc[2];
+    }
+    const ux = lx / Math.max(hx, 1e-9);
+    const uy = ly / Math.max(hy, 1e-9);
+    const uz = lz / Math.max(hz, 1e-9);
     // THE NORM'S EXPONENT IS THE SHAPE. |x|^p + |y|^p + |z|^p = 1 is an ellipsoid at p = 2 and
     // approaches a box as p grows — every squircle in between, from one number. Lerped along the
     // bone like the half-extents are, so a boxy palm blends into a round finger rather than
@@ -846,20 +900,112 @@ function relax(verts, faces, caps) {
 // joint volumes drifted from the thing they claimed to describe: four consumers, each re-deriving
 // the shape, agreeing at first and diverging on the cases that mattered. There is one answer
 // here, and the preview shows it rather than a picture of it.
+// WHERE A JOINT'S CAGE BOX IS BUILT, which is its shape's centre unless that centre is BURIED in
+// its parent's shape.
+//
+// A shoulder drawn inside a wide chest is the case: the chest's shape reaches past the shoulder
+// joint, so the shoulder's box sits half inside the chest, the relax pushes those inside vertices
+// out onto the chest's surface, and they fold into a crease down the shoulder. matt, on biped2:
+// "i have scaled the chest wide, its getting the pinching i was talking about at the shoulders."
+// Measured there: arm_01_L sits at 0.95 of the chest's own radius in that direction.
+//
+// So a buried joint's box is built just OUTSIDE the parent's surface instead, moved the way its
+// LIMB CONTINUES — towards its own children — until it clears, plus half its own extent that way
+// so the box starts at the surface rather than straddling it. Not along the bone from the parent:
+// a hip buried in a pelvis would then be pushed out SIDEWAYS, and the leg would leave the body as
+// a shelf; the thigh comes out of the bottom of the pelvis. Never more than 60% of the way to its
+// child, so a short limb keeps a bone to bridge. Only
+// the CAGE moves: the capsules the relax wraps onto are still the shapes where they were drawn.
+// A LEAF is left alone: nothing continues from it, so there is no limb direction to move it along.
+//
+// window._boneSkinEmbed = false turns it off, for the A/B.
+let _cageAt = null;
+function extentAlong(j, dir, fallback) {
+  const half = Skeleton.jointHalf(j, fallback);
+  let x = dir.x, y = dir.y, z = dir.z;
+  if (Skeleton.jointRotIsSet(j)) {
+    const r = Skeleton.jointRot(j);
+    rotInto(-r[0], -r[1], -r[2], r[3], x, y, z, _loc);
+    x = _loc[0]; y = _loc[1]; z = _loc[2];
+  }
+  const ux = x / Math.max(half[0], 1e-9), uy = y / Math.max(half[1], 1e-9), uz = z / Math.max(half[2], 1e-9);
+  const pw = Skeleton.jointRound(j);
+  const n = (pw <= 2.0001) ? Math.hypot(ux, uy, uz)
+    : Math.pow(Math.pow(Math.abs(ux), pw) + Math.pow(Math.abs(uy), pw) + Math.pow(Math.abs(uz), pw), 1 / pw);
+  return n > 1e-12 ? 1 / n : 0;
+}
+// Is `x` inside p's shape? The same measure the relax uses: the p-norm of the offset in p's own
+// frame, in units of its half-extents.
+const _inV = new THREE.Vector3();
+function insideShape(p, cp, x, rb) {
+  _inV.subVectors(x, cp);
+  const e = extentAlong(p, _inV.lengthSq() > 1e-18 ? _inV.clone().normalize() : _inV.set(0, 1, 0), rb);
+  return x.distanceTo(cp) < e;
+}
+function layoutCages(joints, topo) {
+  _cageAt = null;
+  if (window._boneSkinEmbed === false) return;
+  const map = new Map();
+  for (const [p, j] of topo.bones) {
+    const nbs = topo.adj.get(j);
+    if (nbs.length < 2) continue;                       // a leaf: no limb to follow out
+    const rb = boneRadius(p, j);
+    const cp = Skeleton.jointCentre(p), cj = Skeleton.jointCentre(j);
+    if (!insideShape(p, cp, cj, rb)) continue;          // not buried
+    // Which way the limb continues: the mean direction to its children.
+    const e = new THREE.Vector3();
+    let near = Infinity;
+    for (const k of nbs) {
+      if (k === p) continue;
+      const d = new THREE.Vector3().subVectors(Skeleton.jointCentre(k), cj);
+      near = Math.min(near, d.length());
+      e.add(d.normalize());
+    }
+    if (!(e.lengthSq() > 1e-12) || !(near < Infinity)) continue;
+    e.normalize();
+    // March out until the point clears the parent's shape, then bisect the crossing.
+    let lo = 0, hi = near * 0.6;
+    if (insideShape(p, cp, _inV.copy(cj).addScaledVector(e, hi).clone(), rb)) {
+      map.set(j, cj.clone().addScaledVector(e, hi));
+      continue;
+    }
+    for (let it = 0; it < 24; it++) {
+      const mid = (lo + hi) / 2;
+      if (insideShape(p, cp, cj.clone().addScaledVector(e, mid), rb)) lo = mid; else hi = mid;
+    }
+    const out = Math.min(hi + 0.5 * extentAlong(j, e, rb), near * 0.6);
+    map.set(j, cj.clone().addScaledVector(e, out));
+  }
+  _cageAt = map.size ? map : null;
+}
+function cageCentre(j) {
+  const c = _cageAt && _cageAt.get(j);
+  return c ? c.clone() : Skeleton.jointCentre(j);
+}
+
 function boxAt(j, nbs) {
   // THE BLOCK SITS ON THE SHAPE, and the bones are aimed between SHAPES. Both follow from the
   // envelope being the hull of the shapes rather than of the joints: leave the block on the
   // joint and a tweaked joint gets a cage in one place and a capsule in another, with the
   // bridges stretched between them.
-  const c = Skeleton.jointCentre(j);
+  const c = cageCentre(j);
+  // A ROTATED JOINT'S BOX IS THE SAME BOX, TURNED. Everything below — which side a bone points
+  // at, how a side divides, the per-axis counts, the clamp's support — is worked out in the box's
+  // OWN frame, so the bone directions are taken into that frame here and none of it changes.
+  // Only where the lattice lands in the world does (latticePoint). Unrotated stays null, and the
+  // arithmetic is then exactly what it was.
+  const q = Skeleton.jointRotIsSet(j) ? Skeleton.jointQuat(j) : null;
+  const qi = q ? q.clone().invert() : null;
   let r = 0;
   const dirs = [];
   const lens = [];
   for (const nb of nbs) {
-    const d = new THREE.Vector3().subVectors(Skeleton.jointCentre(nb), c);
+    const d = new THREE.Vector3().subVectors(cageCentre(nb), c);
     lens.push(d.length());
     r = Math.max(r, boneRadius(j, nb));
-    dirs.push(d.normalize());
+    d.normalize();
+    if (qi) d.applyQuaternion(qi);
+    dirs.push(d);
   }
   // THE JOINT'S OWN RADIUS SIZES ITS BLOCK. The widest bone touching it is the fallback, not
   // the rule — that is what made a head the width of a neck, and a hand the width of a
@@ -958,7 +1104,18 @@ function boxAt(j, nbs) {
   const box = boxOf(levelsFor(dirs, h));
   const claims = claimSides(box, dirs);
   if (!claims) return null;
-  return { c: c, h: h, dirs: dirs, claims: claims, box: box };
+  // `q` is null for an unrotated joint, so every consumer can take its old path verbatim.
+  return { c: c, h: h, dirs: dirs, claims: claims, box: box, q: q };
+}
+
+// WHERE ONE LATTICE POINT OF A BOX LANDS, in model space. The one placement for the builder and the
+// attach preview both, so the patch the preview colours is the patch the skin is cut from.
+const _lp = new THREE.Vector3();
+function latticePoint(bx, l, out) {
+  const n = bx.box.n, h = bx.h;
+  _lp.set((h[0] * l[0]) / n[0], (h[1] * l[1]) / n[1], (h[2] * l[2]) / n[2]);
+  if (bx.q) _lp.applyQuaternion(bx.q);
+  return out.copy(bx.c).add(_lp);
 }
 
 // SETTLE ONE BONE'S TWO ENDS on a single loop length. A bone has to meet the same perimeter at
@@ -980,6 +1137,7 @@ function settleEnds(nEnd, fEnd, nBox, fBox) {
 
 function buildArrays(joints, topo) {
   const adj = topo.adj;
+  layoutCages(joints, topo);
   const verts = [];
   const boxes = new Map();
 
@@ -989,15 +1147,17 @@ function buildArrays(joints, topo) {
     if (!nbs.length) continue;
     const bx = boxAt(j, nbs);
     if (!bx) continue;
-    const c = bx.c, h = bx.h, dirs = bx.dirs, claims = bx.claims, BX = bx.box, N = BX.n;
+    const dirs = bx.dirs, claims = bx.claims, BX = bx.box;
 
-    // No rotation anywhere: the lattice goes straight to world, scaled and offset. That one
-    // line is the whole reason bridges cannot shear against each other.
+    // No rotation unless the user asked for one: the lattice goes straight to world, scaled and
+    // offset, and that is the whole reason bridges cannot shear against each other. A rotated
+    // joint shears its bridges by exactly the turn it was given — which is the edge flow asked
+    // for, and matchLoop rolls each bridge to the pairing that twists least.
     const base = verts.length / 3;
+    const _v = new THREE.Vector3();
     for (const l of BX.lat) {
-      verts.push(c.x + (h[0] * l[0]) / N[0],
-                 c.y + (h[1] * l[1]) / N[1],
-                 c.z + (h[2] * l[2]) / N[2]);
+      latticePoint(bx, l, _v);
+      verts.push(_v.x, _v.y, _v.z);
     }
 
     const byNeighbour = new Map();
@@ -1140,7 +1300,8 @@ function buildArrays(joints, topo) {
     // SHAPES. Reading the joints here would leave the skin behind wherever a joint was tweaked.
     caps.push({ a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
       ha: guard(Skeleton.jointHalf(p, rj)), hb: guard(Skeleton.jointHalf(j, rj)),
-      pa: Skeleton.jointRound(p), pb: Skeleton.jointRound(j) });
+      pa: Skeleton.jointRound(p), pb: Skeleton.jointRound(j),
+      ri: capRotations(p, j) });
     bones++;
   }
 
@@ -1188,10 +1349,12 @@ function buildArrays(joints, topo) {
 // lands exactly on the skeleton it came from. No normalizeSize() — the whole point is that the
 // proportions are the ones already drawn.
 SkinMesh.build = function (main) {
-  const joints = Skeleton.joints(main);
+  const all = Skeleton.joints(main);
+  const skip = new Set(all.filter((j) => !Skeleton.jointShapesSkin(j)));
+  const joints = skip.size ? all.filter((j) => !skip.has(j)) : all;
   if (!joints.length) return { ok: false, why: 'draw a bone chain first' };
 
-  const topo = adjacency(joints);
+  const topo = adjacency(joints, skip);
   if (!topo.bones.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
   const t0 = performance.now();
@@ -1235,10 +1398,13 @@ SkinMesh.build = function (main) {
 //     a whole face is 16. That is the flat, ribboned root, and it is not a bug — it is the face
 //     being divided as far as it goes.
 SkinMesh.attachments = function (main) {
-  const joints = Skeleton.joints(main);
+  const all = Skeleton.joints(main);
+  const skip = new Set(all.filter((j) => !Skeleton.jointShapesSkin(j)));
+  const joints = skip.size ? all.filter((j) => !skip.has(j)) : all;
   if (!joints.length) return null;
-  const topo = adjacency(joints);
+  const topo = adjacency(joints, skip);
   if (!topo.bones.length) return null;
+  layoutCages(joints, topo);
 
   const boxes = new Map();
   for (const j of joints) {
@@ -1252,7 +1418,7 @@ SkinMesh.attachments = function (main) {
     // reach into its neighbour's — and `half` is the joint's own shape, unclamped, which is what
     // the user tweaked and what the capsule draws at. The preview wants the second: a picture at
     // 45% of the size of the thing you are shaping does not read as that thing.
-    boxes.set(j, { joint: j, c: bx.c, h: bx.h, box: bx.box,
+    boxes.set(j, { joint: j, c: bx.c, h: bx.h, box: bx.box, q: bx.q,
                    half: Skeleton.jointHalf(j, Skeleton.boneRadiusOf(main, j)),
                    by: by, sides: new Set() });
   }
@@ -1312,12 +1478,7 @@ SkinMesh.attachments = function (main) {
 
   // Model-space position of one lattice vertex on one box — the SAME arithmetic buildArrays uses
   // to place its vertices, so a patch drawn here sits exactly where the skin will be built.
-  const at = (box, id, out) => {
-    const l = box.box.lat[id], n = box.box.n;
-    return out.set(box.c.x + (box.h[0] * l[0]) / n[0],
-                   box.c.y + (box.h[1] * l[1]) / n[1],
-                   box.c.z + (box.h[2] * l[2]) / n[2]);
-  };
+  const at = (box, id, out) => latticePoint(box, box.box.lat[id], out);
 
   // THE SAME LATTICE POINT, PUSHED OUT ONTO THE JOINT'S OWN SURFACE, AT THE JOINT'S OWN SIZE.
   //
@@ -1343,9 +1504,9 @@ SkinMesh.attachments = function (main) {
                + Math.pow(Math.abs(uz), pw), 1 / pw);
     const k = nrm > 1e-9 ? 1 / nrm : 1;
     const hf = box.half;
-    return out.set(box.c.x + hf[0] * ux * k,
-                   box.c.y + hf[1] * uy * k,
-                   box.c.z + hf[2] * uz * k);
+    out.set(hf[0] * ux * k, hf[1] * uy * k, hf[2] * uz * k);
+    if (box.q) out.applyQuaternion(box.q);
+    return out.add(box.c);
   };
 
   return { boxes: Array.from(boxes.values()), ends: ends, pairs: pair, at: at, round: round };

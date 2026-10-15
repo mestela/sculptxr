@@ -100,26 +100,26 @@ ShaderMatcap.fragment = [
   '}'
 ].join('\n');
 
-ShaderMatcap.updateUniforms = function (mesh, main) {
-  var gl = mesh.getGL();
-  var uniforms = this.uniforms;
-
-  var matIndex = mesh.getMatcap();
-  var tex = ShaderMatcap.textures[matIndex];
-
-  if (!window.loggedTextureState) {
-    // console.log("MatCap Debug - Index: " + matIndex + " Texture:", tex);
-    // if (window.screenLog) window.screenLog("MatCap Debug: idx=" + matIndex, "cyan");
-
-    window.loggedTextureState = true;
-  }
-
-  gl.uniform1i(uniforms.uFlat, mesh.getFlatShading()); // Pass Flat Flag
-
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, tex || this.getOrCreateTexture0(gl, 'app/resources/matcaps/matcapFV.jpg', main));
-  gl.uniform1i(uniforms.uTexture0, 0);
-
+/**
+ * THE BILLBOARD STABILISATION MATRIX, as its own function because there are now two shader
+ * paths that need it and one copy is the only way they stay the same. It transforms a
+ * VIEW-space normal into a stabilised basis aimed at the viewer's position with roll and
+ * pitch removed, which is what stops the matcap highlight swimming when you tilt your head.
+ *
+ * IT IS ALSO WHAT MAKES MATCAP WORK IN STEREO, which is not obvious from the name. `view` here
+ * is the HEAD-CENTRE view matrix, one per frame, so both eyes look the matcap up at the same
+ * UV and the shading carries no binocular disparity. Three's stock matcap node uses the raw
+ * per-eye view normal instead: each eye lands the highlight in a slightly different place and
+ * the brain fuses that as depth -- often opposite in sign to the geometry, so a sphere reads
+ * as hollow. matt, on the unported node matcap: "either too much stereo separation between the
+ * eyes, or possibly even inverted... regular matcap before this TSL migration didn't have this
+ * odd depth perception issue".
+ *
+ * @param {Float32Array} view  head-centre view matrix (mat4)
+ * @param {Float32Array} [out] mat3 to write into; one is cached if omitted
+ * @return {Float32Array} mat3 correction
+ */
+ShaderMatcap.computeRotCorrection = function (view, out) {
   // --- Compute Billboard Stabilization Matrix ---
   // Goal: Aim Matcap at the viewer's POSITION, ignoring Head Rotation.
   // This ensures the lighting "Look" vector follows the viewer (yaw) but doesn't roll/pitch with the head.
@@ -133,7 +133,6 @@ ShaderMatcap.updateUniforms = function (mesh, main) {
     };
   }
   const mats = this._cacheMats;
-  const view = main.getCamera().getView();
 
   // 1. Get Camera World Matrix (Inverse View)
   mat4.invert(mats.viewInv, view);
@@ -207,6 +206,32 @@ ShaderMatcap.updateUniforms = function (mesh, main) {
   // Correction = Transpose(S) * C
   mat3.transpose(S, S); // Invert S
   mat3.mul(mats.corrMat, S, C);
+  if (out) { for (let i = 0; i < 9; i++) out[i] = mats.corrMat[i]; return out; }
+  return mats.corrMat;
+};
+
+ShaderMatcap.updateUniforms = function (mesh, main) {
+  var gl = mesh.getGL();
+  var uniforms = this.uniforms;
+
+  var matIndex = mesh.getMatcap();
+  var tex = ShaderMatcap.textures[matIndex];
+
+  if (!window.loggedTextureState) {
+    // console.log("MatCap Debug - Index: " + matIndex + " Texture:", tex);
+    // if (window.screenLog) window.screenLog("MatCap Debug: idx=" + matIndex, "cyan");
+
+    window.loggedTextureState = true;
+  }
+
+  gl.uniform1i(uniforms.uFlat, mesh.getFlatShading()); // Pass Flat Flag
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex || this.getOrCreateTexture0(gl, 'app/resources/matcaps/matcapFV.jpg', main));
+  gl.uniform1i(uniforms.uTexture0, 0);
+
+  ShaderMatcap.computeRotCorrection(main.getCamera().getView());
+  const mats = this._cacheMats;
 
   gl.uniformMatrix3fv(uniforms.uRotCorrection, false, mats.corrMat);
 

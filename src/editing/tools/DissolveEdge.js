@@ -4,6 +4,8 @@ import SculptBase from './SculptBase.js';
 import Geometry from '../../math3d/Geometry.js';
 import { vec3 } from 'gl-matrix';
 
+import { addEdgeHover } from '../EdgeSelection.js';
+
 class DissolveEdge extends SculptBase {
   constructor(main) {
     super(main);
@@ -263,5 +265,7 @@ class DissolveEdge extends SculptBase {
     // No-op for continuous stroke
   }
 }
+
+addEdgeHover(DissolveEdge);
 
 export default DissolveEdge;

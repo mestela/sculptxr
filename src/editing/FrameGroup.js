@@ -628,7 +628,7 @@ export class FrameGroup {
         group._isFrameGroup = true;
         group._isNull = true;               // it's a null/locator → gnomon icon, not a cube
         group._typeName = 'FrameGroup';
-        group._outlinerCollapsed = true;
+        if (group._outlinerCollapsed === undefined) group._outlinerCollapsed = true;   // a saved fold state (SKEL v22) wins
         if (gname) group._permanentStaticLabel = gname;
         group.getMatrix().set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
         const gtm = group.getThreeMesh && group.getThreeMesh();

@@ -1,6 +1,13 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
+import { guardedError } from './misc/LogGuard.js';
 import * as THREE from 'three';
 const XF_SETTLE_MS = 250;
+// TIME TO STEADY STATE -- see _tickSteadyState. Quiet for this long means the app has stopped
+// building pipelines; a frame this long is a hitch the user felt; and the ceiling makes a
+// session that never settles report anyway rather than staying silent.
+const SS_QUIET_MS = 1000;
+const SS_HITCH_MS = 40;
+const SS_CEILING_MS = 30000;
 import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
 
 // The ghost's opacity where the sculpt is in front of the grid. ABSOLUTE, not a fraction of the
@@ -34,6 +41,11 @@ import Background from './drawables/Background.js';
 import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
+import { GIZMO_MUL_MIN, GIZMO_MUL_MAX } from './editing/GizmoVR.js';
+import { renderPassToCanvas, exportRenderPass, autoRange } from './render/RenderPassExport.js';
+import { fixXRLayerSize } from './render/nodes/ThreeXRPatches.js';
+import BootOverlay from './gui/BootOverlay.js';
+import DeskMap from './gui/DeskMap.js';
 import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
@@ -56,7 +68,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { registerGradeMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
+import { HTMLVRPanel, makeCanvasPanelMaterial, wristPanelY, wristPanelYaw, VR_PANEL_RENDER_ORDER, wristPanelPitch} from './gui/htmlvr/HTMLVRPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
@@ -64,6 +76,7 @@ import { TornOffPanel           } from './gui/htmlvr/TornOffPanel.js';
 import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 import BlendshapeStackPanel from './gui/BlendshapeStackPanel.js';
+import MediaRef from './files/MediaRef.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 import { VrKeyboard             } from './gui/htmlvr/VrKeyboard.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
@@ -77,6 +90,10 @@ import MotionTrail from './editing/MotionTrail.js';
 import SceneShadow from './render/SceneShadow.js';
 import scanPhantoms from './misc/PhantomScan.js';
 import probeXRLighting from './misc/XRLightProbe.js';
+import NodeMaterials from './render/nodes/NodeMaterials.js';
+import { stripGeometry } from './render/lineStrip.js';
+import { installEnvironment } from './render/nodes/EnvIBL.js';
+import { applyXRBackendPatches, makePCFFilter } from './render/nodes/ThreeXRPatches.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -151,6 +168,12 @@ function _wristReach(gripWorld, headWorld) {
 }
 
 class Scene {
+
+  // THE WORLD GROUP'S RESTING SCALE. Model space -> three-world. The VR two-grip gesture drives
+  // _worldGroup.scale away from this, and light falloff is calibrated relative to it -- see the
+  // wscale note in _syncThreeLights.
+  static WORLD_SCALE_DEFAULT = 0.701;
+
 
   constructor() {
     this._gl = null; // webgl context
@@ -251,17 +274,32 @@ class Scene {
     this._isCalibratingSpectator = false; // "Move Me" Mode
     this._spectatorMode = Enums.SpectatorMode.DECOUPLED;
 
-    // Desktop canvas mode while VR is active.
-    // 0=blank  1=mirror  2=desktop free camera
-    // PC VR: default to spectator (rotation-coupled) — stable desktop view that
-    // tracks which face of the sculpt the VR user is working on.
-    // Standalone (mobile): blank to conserve the mobile GPU.
-    this._spectatorViewMode = this._isQuestStandalone ? 0 : 3;
+    // BLANK EVERYWHERE, AND NOT DECIDED FROM THE USER AGENT.
+    //
+    // 0=blank  1=mirror  2=desktop free camera  3=spectator (rotation-coupled)
+    //
+    // This used to be `_isQuestStandalone ? 0 : 3`, i.e. /OculusBrowser/ -- so a GalaxyXR took
+    // the PC VR branch and rendered the WHOLE SCENE a second time, with a desktop
+    // PerspectiveCamera, EVERY frame, to a canvas nobody can see, while the headset was already
+    // drawing the same scene per eye.
+    //
+    // The frame cost is the obvious half. The other half is why it took a compile trace to find:
+    // a pipeline is keyed per render object and the camera shape is in that key, so every object
+    // needs a SECOND pipeline for the desktop camera, compiled the moment the spectator pass
+    // first reaches it -- scattered through the session, one object at a time. That is the whole
+    // PerspectiveCamera half of matt's report, taken inside a session.
+    //
+    // The first fix broadened the sniff to /Android/. matt's GalaxyXR reports
+    //   Mozilla/5.0 (X11; Linux x86_64) ... Chrome/153
+    // so that missed it too, and there is no honest way to ask a user agent whether a headset is
+    // plugged into a monitor. So it does not ask: blank by default everywhere, and a PC VR user
+    // who wants a desktop view calls setSpectatorMode(3). A spectator view is a nicety; paying
+    // for it on a standalone headset is not.
+    this._spectatorViewMode = 0;
 
-    // How many VR frames to skip between spectator renders.
-    // 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th.
-    // PC VR: full rate (desktop GPU has headroom). Standalone: every 4th.
-    this._spectatorFrameSkip = this._isQuestStandalone ? 3 : 0;
+    // How many VR frames to skip between spectator renders, once one is turned on.
+    // 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th. Saved (Settings / View > Camera).
+    this._spectatorFrameSkip = getOptionsURL().spectatorFrameSkip ?? 3;
 
     // STATIONARY Mode variables
     this._desktopOffset = vec3.create();
@@ -310,6 +348,9 @@ class Scene {
     // Initial World Offset (Camera pulled back 55cm, Lifted 1.2m)
     // Fix: Y=0 put it on the floor. Y=1.2 should be chest/head height.
     this._xrWorldOffset = new XRRigidTransform({ x: 0, y: 1.2, z: -0.55 });
+
+    console.log('[Spectator] blank (mode 0) — setSpectatorMode(1..3) for a desktop view. '
+      + 'A spectator render costs a second full scene pass AND a second pipeline per object.');
 
     // Desktop spectator view control — usable from the browser console:
     //   window.setSpectatorMode(0)  → blank canvas (default)
@@ -411,7 +452,7 @@ class Scene {
     this._vrSmoothOverride = false;
   }
 
-  start() {
+  async start() {
 
     // [Step 1] Hand Swap Helper
     window.setDominantHand = (hand) => {
@@ -453,7 +494,7 @@ class Scene {
       return msg;
     };
 
-    this.initWebGL();
+    await this.initWebGL();
     if (!this._gl)
       return;
 
@@ -957,6 +998,15 @@ class Scene {
     // created at most once.  Paying the ~300ms cost here means VR entry is instant.
     this.initVRControllers();
 
+    // WHAT COUNTS AS ACTIVITY, for the idle throttle in applyRender. Anything the person does at the window.
+    this._lastActivityT = performance.now();
+    this._lastDrawT = 0;
+    const _bump = () => { this._lastActivityT = performance.now(); };
+    for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup',
+      'touchstart', 'touchmove', 'dragover', 'drop']) {
+      window.addEventListener(ev, _bump, { capture: true, passive: true });
+    }
+
     // Start Three.js continuous render loop
     // This replaces manual window.requestAnimationFrame and session.requestAnimationFrame calls
     if (this._renderer) {
@@ -1368,6 +1418,28 @@ class Scene {
 
   render() {
     this._drawFullScene = true;
+    this._lastActivityT = performance.now();
+  }
+
+  // THE IDLE THROTTLE. `_drawFullScene` is set and never cleared, so the whole scene was redrawn on every
+  // display frame for ever -- including with nobody touching anything, which on a rigged character is a
+  // few thousand GPU buffer writes a second. That is what ran Chrome's GPU process out of GPU resources
+  // (macOS: "likely leaking IOGPUResource", then a GPU process crash and a blank, unrecoverable viewport;
+  // see ThreeXRPatches.installInPlaceUniformUpdate). So a still window refreshes at IDLE_FPS instead, and
+  // anything that could be changing the picture keeps full rate: input, an open stroke, playing or
+  // recording animation, a running physics chain, a headset, or `window._idleThrottle = false`.
+  _idleSkipFrame() {
+    if (window._idleThrottle === false) return false;
+    if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) return false;
+    const now = performance.now();
+    const sm = this._sculptManager;
+    const busy = (now - this._lastActivityT) < 1500
+      || window._animPlaying || (window._animationRegistry && window._animationRegistry.isRecording)
+      || (sm && sm._strokeActive) || PhysicsBones.isMoving();
+    if (busy) { this._lastDrawT = now; return false; }
+    if (now - this._lastDrawT < 250) return true;      // 4 fps
+    this._lastDrawT = now;
+    return false;
   }
 
   // One line a second: how many frames arrived, how long our own work took, and how much of the
@@ -1389,7 +1461,7 @@ class Scene {
   }
 
   _mark(label) {
-    if (!window._xrPerf) return;
+    if (!window._xrPerf && !window._boneTrace) return;
     const p = this._xrPerfState();
     const now = performance.now();
     if (p._markAt && p._markLabel) {
@@ -1403,6 +1475,104 @@ class Scene {
     }
     p._markAt = label ? now : 0;
     p._markLabel = label;
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // boneTrace() -- WHAT THE FRAME AFTER A NEW JOINT ACTUALLY PAYS FOR.
+  //
+  // xrPerf() averages, and an average is the wrong shape for this: the stutter is ONE frame,
+  // the one where a joint first appears, and it is gone by the time a per-second line is
+  // printed. This arms a recorder instead. Each time a joint is created it captures that
+  // creation's own CPU cost and then the next few frames in full -- section timings, and the
+  // renderer's internal caches before and after the draw.
+  //
+  // Those caches are the point. Guessing at "a compile" from a frame time is how the last two
+  // attempts at this went; three counts the real thing and will say so:
+  //   pipelines  renderer._pipelines.caches      -- render pipelines built
+  //   vs / fs    renderer._pipelines.programs    -- shader programs compiled, per stage
+  //   graphs     renderer._nodes.nodeBuilderCache -- TSL node graphs built
+  //   geo / tex  renderer.info.memory            -- GPU uploads
+  // A frame that builds nothing and is still slow is a different bug from one that builds five
+  // pipelines, and until now there was no way to tell those apart from the console.
+  _boneTraceSnap() {
+    const r = this._renderer;
+    if (!r) return null;
+    const pl = r._pipelines, nd = r._nodes, pr = pl && pl.programs;
+    const size = (x) => (x && typeof x.size === 'number' ? x.size : 0);
+    return {
+      pipelines: size(pl && pl.caches),
+      vs: size(pr && pr.vertex),
+      fs: size(pr && pr.fragment),
+      graphs: size(nd && nd.nodeBuilderCache),
+      geo: (r.info && r.info.memory) ? r.info.memory.geometries : 0,
+      tex: (r.info && r.info.memory) ? r.info.memory.textures : 0,
+      draws: (r.info && r.info.render) ? r.info.render.drawCalls : 0,
+    };
+  }
+
+  // Called by Skeleton.createJoint with its own cost, which is the half of the bill that does
+  // not appear in any frame timing.
+  _boneTraceJoint(createMs, nJoints) {
+    const t = window._boneTrace;
+    if (!t || t.left <= 0) return;
+    // A capture still open means the frames it was waiting for never came -- the tab was in the
+    // background, or the joints arrived faster than the renderer. Print what it has rather than
+    // dropping it: a capture with no frames in it is itself the finding.
+    if (t.pend) this._boneTracePrint(t.pend);
+    t.left--;
+    t.pend = { createMs: createMs, joints: nJoints, frames: [], conv: [] };
+  }
+
+  // Every material the sweep converts while a capture is open, named well enough to act on --
+  // and flagged NEW or reused, which is the whole question. convertBasic caches per source
+  // material, so it is called for every object every frame and mostly hands back something it
+  // already had; only a NEW line costs a node graph and a pipeline. Logging the call rather
+  // than the build reads as "a conversion per joint" even when nothing was built.
+  _boneTraceConv(o, m, conv) {
+    const t = window._boneTrace;
+    if (!t || !t.pend || t.pend.conv.length >= 12) return;
+    const fresh = conv && !conv.userData.__btSeen;
+    if (conv) conv.userData.__btSeen = true;
+    if (!fresh) return;
+    const path = [];
+    for (let p = o; p && path.length < 4; p = p.parent) path.unshift(p.name || p.type);
+    t.pend.conv.push('NEW ' + m.type + ' -> ' + conv.type + ' on ' + path.join('/'));
+  }
+
+  _boneTraceFrame(workMs) {
+    const t = window._boneTrace;
+    if (!t) return;
+    const p = t.pend;
+    if (!p) { t.base = this._boneTraceSnap(); return; }
+    const now = this._boneTraceSnap();
+    const b = t.base || now;
+    const d = {};
+    for (const k in now) if (now[k] !== b[k]) d[k] = '+' + (now[k] - b[k]);
+    const sec = this._xrPerf && this._xrPerf.frame;
+    const where = [];
+    if (sec) {
+      for (const k in sec) if (sec[k] > 0.4) where.push(k + ' ' + sec[k].toFixed(1));
+      where.sort((x, y) => parseFloat(y.split(' ')[1]) - parseFloat(x.split(' ')[1]));
+    }
+    p.frames.push({ ms: workMs, built: d, where: where.slice(0, 5) });
+    t.base = now;
+    if (p.frames.length < (t.depth || 3)) return;
+    this._boneTracePrint(p);
+    t.pend = null;
+    if (t.left <= 0) console.log('[boneTrace] done — boneTrace() again for more');
+  }
+
+  _boneTracePrint(p) {
+    console.log('[boneTrace] joint ' + p.joints + ': createJoint ' + p.createMs.toFixed(1) + 'ms');
+    if (!p.frames.length) console.log('[boneTrace]   (no frames rendered before the next joint)');
+    for (let i = 0; i < p.frames.length; i++) {
+      const f = p.frames[i];
+      const built = Object.keys(f.built).length
+        ? '  built ' + Object.keys(f.built).map(k => k + f.built[k]).join(' ') : '';
+      console.log('[boneTrace]   frame +' + i + '  ' + f.ms.toFixed(1) + 'ms' + built
+        + (f.where.length ? '  | ' + f.where.join(', ') : ''));
+    }
+    for (const c of p.conv) console.log('[boneTrace]   ' + c);
   }
 
   _xrPerfSample(time, workMs) {
@@ -1445,13 +1615,26 @@ class Scene {
     const geoGrew = p.geo ? (geo - p.geo) : 0;
     p.objs = objs; p.geo = geo;
 
-    console.log('[xrPerf] ' + p.n + ' frames/s | our work ' + (p.work / p.n).toFixed(2) +
+    // DRAW CALLS ARE NAMED DIFFERENTLY ON THE TWO RENDERERS -- `calls` on WebGLRenderer,
+    // `drawCalls` on WebGPURenderer -- so a straight read reports 0 on the flagged path and
+    // the comparison silently becomes "one of these draws nothing". Triangles are here for
+    // the same reason: a perf comparison is only a comparison if both sides are carrying the
+    // same load, and that has to be shown, not assumed.
+    const _r = info ? info.render : null;
+    // drawCalls FIRST. Both fields exist on WebGPURenderer, but they are not the same thing:
+    // measured live, drawCalls was 4 while `calls` read 2640 -- `calls` is not the per-frame
+    // count there. Preferring it would have put a meaningless number next to WebGL's real one
+    // and made the whole comparison junk. WebGLRenderer has no drawCalls, so it falls through.
+    const _calls = _r ? (_r.drawCalls !== undefined ? _r.drawCalls : _r.calls) : 0;
+    const _tris = _r ? (_r.triangles || 0) : 0;
+    console.log('[xrPerf] ' + (this._isNodeRenderer ? 'WebGPU(WebGL) ' : 'WebGL ')
+      + p.n + ' frames/s | our work ' + (p.work / p.n).toFixed(2) +
       'ms avg, ' + p.worst.toFixed(1) + 'ms worst | frame gap ' + med.toFixed(1) +
       'ms median, ' + p95.toFixed(1) + 'ms p95 | ' + p.late + ' late' +
       ' | scene ' + objs + (grew ? ' (' + (grew > 0 ? '+' : '') + grew + ')' : '') +
       ', geom ' + geo + (geoGrew ? ' (' + (geoGrew > 0 ? '+' : '') + geoGrew + ')' : '') +
       ', tex ' + (info ? info.memory.textures : 0) +
-      ', calls ' + (info ? info.render.calls : 0) +
+      ', calls ' + _calls + ', tris ' + _tris +
       ' | panel paints ' + (window._panelPaints | 0) +
       ' | skeleton refreshes ' + ((window._skelVisCalls | 0) / Math.max(1, p.n)).toFixed(1) + '/frame');
     window._panelPaints = 0;
@@ -1481,7 +1664,14 @@ class Scene {
   applyRender(arg, xrFrame = null) {
     var targetFBO = (arg && typeof arg === 'object') ? arg : null;
     this._preventRender = false;
+    // boneTrace starts its clock HERE rather than in the XR frame callback, because this is the
+    // one entry both paths share -- the desktop is where an instrument gets debugged, the headset
+    // is where the answer is. It is stopped in _drawScene, several calls down, so the start time
+    // goes on `this` and not in a local: the first version of this put it in a local and read it
+    // from the other function, which never ran at all and read as "no frames rendered".
+    this._btAt = window._boneTrace ? performance.now() : 0;
     this._mark('matrices');
+    this._sizeSpotCones();
     this.updateMatricesAndSort();
     // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.
     this._mark('xr-setup');
@@ -1494,11 +1684,54 @@ class Scene {
       if (!frame) return;
       const refSpace = this._renderer.xr.getReferenceSpace();
 
+      // BEFORE ANYTHING IS DRAWN THIS FRAME. See fixXRLayerSize: on Safari the session is sized
+      // 1x1 at setSession and stays that way, so every frame lands in one pixel.
+      if (this._isNodeRenderer) fixXRLayerSize(this._renderer);
+
       if (!window._firstXRFrameLogged) {
         window._firstXRFrameLogged = true;
+        // THE SECOND VOID STARTS HERE, and nothing could see it. The itemised timing below stops
+        // at this line, so a session that enters in 43ms and then compiles for 2.2 seconds --
+        // one frame of it 392ms, long enough for the compositor to take the session away and
+        // show the lobby -- logged an untroubled "grey void 353ms" and said no more. matt saw a
+        // grey void on a run whose entry metric was identical to a run where he saw none.
+        this._armSteadyState();
         const elapsed = window._xrSessionStartT ? Math.round(performance.now() - window._xrSessionStartT) : '?';
         if (window.screenLog) window.screenLog(`[XR] First frame rendered (+${elapsed}ms from session start)`, "cyan");
         console.log(`[XR Timing] First frame at +${elapsed}ms`);
+        // THE VOID, ITEMISED. Everything between the button press and this line is grey lobby,
+        // and "it is still long" is not something anyone can act on. Each step is printed with
+        // what it cost, so the next round argues about a number instead of a guess.
+        try {
+          if (window._xrMarks) {
+            window._xrMarks.push(['first frame', performance.now()]);
+            const m = window._xrMarks;
+            const total = Math.round(m[m.length - 1][1] - m[0][1]);
+            const parts = [];
+            for (let i = 1; i < m.length; i++) parts.push(m[i][0] + ' ' + Math.round(m[i][1] - m[i - 1][1]));
+            console.log('[XR Timing] grey void ' + total + 'ms = ' + parts.join(', ') + ' (ms)');
+            window._xrMarks = null;
+          }
+        } catch (e) { /* a probe never costs a frame */ }
+        // The session warm is armed here and runs on the NEXT frame -- see below. This block is
+        // still inside the first frame's work, before anything has been submitted, so warming
+        // here would land inside the grey void it is meant to stay out of.
+        // (the session warm is gone -- see _startRevealWarm)
+        // THE AUTHORITATIVE LAYER READING, TAKEN HERE AND NOT AT setSession.
+        //
+        // updateRenderState is asynchronous -- it applies at the start of the next frame -- so
+        // the probe that runs the moment setSession resolves reads renderState.baseLayer as
+        // null whatever three chose, and reports "projectionLayer" every time. It said exactly
+        // that in matt's log on a build where the patch had already logged that it forced
+        // XRWebGLLayer. A diagnostic that cannot be wrong about the thing it measures is worse
+        // than none: this one is read on a frame that has actually been composited.
+        try {
+          const _s = this._renderer.xr.getSession && this._renderer.xr.getSession();
+          const _bl = _s && _s.renderState && _s.renderState.baseLayer;
+          const _layer = _bl ? 'baseLayer (XRWebGLLayer)' : 'projectionLayer';
+          if (window._xrComposite) window._xrComposite.layer = _layer;
+          console.log('[XR] layer in use: ' + _layer);
+        } catch (e) { /* a probe never costs a frame */ }
         // initVRControllers is deferred via Promise.resolve() below so this frame
         // is submitted to the compositor before we block for 200+ms.
       }
@@ -1695,6 +1928,28 @@ class Scene {
         _reg && _reg.playbackDirection !== undefined ? _reg.playbackDirection : 1);
     }
 
+    // VIDEO: the same level-triggered follow, but with nothing to start or stop -- the frame
+    // shown is a pure function of the transport time. See VideoTrack.sync.
+    if (window._videoTrack && window._videoTrack.hasClip()) {
+      const _vreg = window._animationRegistry;
+      window._videoTrack.sync(_vreg && Number.isFinite(_vreg.globalPlaybackTime)
+        ? _vreg.globalPlaybackTime : (window._animCurrentTime || 0),
+        !!window._animPlaying,
+        _vreg && _vreg.playbackDirection !== undefined ? _vreg.playbackDirection : 1);
+    }
+
+    // METRONOME: same level-triggered reconcile as the audio above, and independent of whether a
+    // clip is loaded (a click track is most useful with no audio at all).
+    if (window._metronome) {
+      const _mreg = window._animationRegistry;
+      window._metronome.sync(
+        _mreg && Number.isFinite(_mreg.globalPlaybackTime)
+          ? _mreg.globalPlaybackTime : (window._animCurrentTime || 0),
+        !!window._animPlaying,
+        window._animPlaybackSpeed !== undefined ? window._animPlaybackSpeed : 1.0,
+        _mreg && _mreg.playbackDirection !== undefined ? _mreg.playbackDirection : 1);
+    }
+
     // PHYSICS BONES, on the pose playback just wrote and before the pins are re-seated.
     //
     // LIVE ALL THE TIME, not only during playback. matt: "they should live sim in general grab
@@ -1833,7 +2088,15 @@ class Scene {
       // VR panels are 3D meshes; desktop uses DOM overlays, so their meshes must never
       // render on desktop. Some (MiniPanel, radial) aren't _startHidden, so they'd show at
       // the world origin. Hide them whenever we're not presenting (no effect in VR).
-      if (!this._renderer?.xr?.isPresenting) {
+      // window._vrPanelsOnDesktop = 1 KEEPS THEM ON OUTSIDE A SESSION.
+      //
+      // The panels exist in the scene on the desktop -- matt: "i've frequently zoomed into the
+      // centre of the world on desktop and found tiny vr menus visible there" -- they are just
+      // force-hidden here. That makes them the one VR-only symptom that CAN be reproduced on a
+      // desktop, which matters because "menus do not draw under WebGPURenderer" has now cost
+      // several headset trips. window._showVrPanels() sets this and parks one in front of the
+      // camera; _hideVrPanels() puts it back.
+      if (!this._renderer?.xr?.isPresenting && !window._vrPanelsOnDesktop) {
         const _vrPanels = [this._miniPanel, this._mainMenuPanel,
           this._toolPickerPanel, this._vrRadial, this._vrRadialMenu, this._vrConfirm,
           this._vrNumpad, this._vrKeyboard];
@@ -1852,7 +2115,7 @@ class Scene {
 
     this._mark('draw');
     if (this._drawFullScene || (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
-      this._drawScene();
+      if (!this._idleSkipFrame()) this._drawScene();
     } else {
        if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) {
            console.log("WARNING: isPresenting is true but not rendering!");
@@ -1907,8 +2170,22 @@ class Scene {
       }
     }
 
-    // Only alter global GL state if not in WebXR
-    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+    // Only alter global GL state if not in WebXR -- and never on the node path.
+    //
+    // This raw disable is a leftover of the legacy GL pipeline, which drew its own overlays
+    // after three and wanted depth off. WebGLRenderer recovered from it because the app
+    // called resetState() afterwards, which invalidates three's state cache. The node
+    // backend has no resetState and CACHES state (setDepthTest only touches the context when
+    // its cached value changes), so this disable sticks for the whole frame: three believes
+    // DEPTH_TEST is on -- its cache literally holds `2929: true` -- while the context has it
+    // off, and every mesh is then drawn with no depth test.
+    //
+    // Measured: DEPTH_TEST read false at the moment each sculpt mesh was drawn, with a
+    // 24-bit depth buffer and depthMask true, so two opaque meshes resolved by submission
+    // order instead. matt: "2 objects aren't proper depth tested against each other" -- a
+    // 28-unit cube inside a 34-unit sphere was drawn in front of it.
+    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)
+        && !this._isNodeRenderer) {
         gl.disable(gl.DEPTH_TEST);
     }
 
@@ -2056,6 +2333,19 @@ class Scene {
   updateStylusOffset(val) {
     // Negative to shift forward, Positive to shift backward.
     this._eachSpike((spike) => { spike.position.z = -val; });
+    // THE RAY PIVOTS WHERE THE SPIKE DOES. The visual ray used to sit at the controller
+    // origin while the spike sat at -offset, both tilted by the same angle about their own
+    // origins -- two PARALLEL lines separated by offset * sin(tilt). At 9 degrees and a 30mm
+    // offset that is 4.7mm, and low, which is exactly what matt saw once the laser became
+    // visible again: "the laser pointer and the spike are misaligned by maybe 5mm".
+    //
+    // -offset is also where _controllerRay puts the PICKING ray's origin, so this makes the
+    // drawn ray agree with the one that actually does the picking, rather than merely with
+    // the spike.
+    for (const ctrl of [this._vrControllerLeft, this._vrControllerRight]) {
+      const rayRoot = ctrl && ctrl.getObjectByName('pointer_ray_root');
+      if (rayRoot) rayRoot.position.z = -val;
+    }
   }
 
   // PINCH DISTANCE — the skin-to-skin gap at which the fingers count as closed.
@@ -2178,6 +2468,11 @@ class Scene {
     // never positioned, so they'd just sit (full size) at the world origin — the
     // blue xray sphere that flashed at startup before the sculpt rendered over it.
     // Keep them hidden on desktop.
+    // BEFORE ANY EARLY RETURN. This lived in the main render block, which every
+    // _vrMinimalTest level returns before -- so during the very test meant to produce an
+    // empty frame, nothing was being re-tagged and every late arrival reported as `unknown`.
+    if (this._uboTag) this._uboTag();
+
     const isVRPresenting = this._renderer && this._renderer.xr && this._renderer.xr.isPresenting;
     if (!isVRPresenting) {
       if (this._vrCursorLeft) this._vrCursorLeft.visible = false;
@@ -2192,17 +2487,94 @@ class Scene {
     //   window._vrMinimalTest = 0  → normal rendering (default)
     //   window._vrMinimalTest = 1  → hide meshes + cursors + menus + controllers
     //   window._vrMinimalTest = 2  → skip renderer.render() entirely (raw empty frames)
+    //   window._vrMinimalTest = 3  → render ONE node-material sphere and nothing else
+    //
+    // LEVEL 3 EXISTS TO SPLIT ONE QUESTION IN HALF. The TSL spike renders correct stereo on
+    // this device; the app, same renderer, does not -- "as if a single view is just being
+    // spread across the 2 displays". Every explanation for that has been eliminated against
+    // device output (see spike/tsl/FINDINGS.md), so the remaining move is to bisect rather
+    // than theorise again.
+    //
+    // This renders the spike's scene through the APP's renderer, canvas, pixel ratio and XR
+    // session. Correct stereo here means the renderer setup is sound and the fault is in what
+    // the app draws or the state it leaves behind. Broken stereo here means the fault is in
+    // the setup itself -- canvas, size, pixel ratio, or how the session was entered -- and the
+    // scene contents are irrelevant.
+    // Undo whatever a previous level hid, the moment the flag goes back to 0.
+    if (!window._vrMinimalTest && this._minimalHidden) {
+      for (const [o, v] of this._minimalHidden) o.visible = v;
+      this._minimalHidden = null;
+      this._minimalSeen = null;
+      console.log('[vrMinimalTest] restored');
+    }
     if (window._vrMinimalTest && isVRPresenting) {
       const lvl = window._vrMinimalTest;
       if (lvl >= 2) {
         // Level 2: submit nothing at all — let the XR compositor decide what to show
         return;
       }
-      // Level 1: hide every scene object, render only clear colour
+      if (lvl === 3) {
+        this._renderer.setClearColor(0x101018, 1);
+        this._renderer.render(this._stereoTestScene, this._camera.getThreeCamera());
+        return;
+      }
+      // Level 1: hide every scene object, render only clear colour.
+      // SAVED, so the flag is reversible. The first version set visible=false and never
+      // recorded what it had changed, so window._vrMinimalTest = 0 restored the render path
+      // and left the whole scene invisible -- a debug switch you cannot switch back is a
+      // session lost, and it cost matt one.
       if (this._scene) {
-        this._scene.traverse(o => { if (o.isMesh || o.isLine || o.isPoints) o.visible = false; });
+        // ONE RECORDING PATH. There used to be a first-frame block here as well as the
+        // per-frame traverse below, and between them every object was recorded TWICE: once
+        // with its real visibility, then again -- by the traverse, moments later -- reading
+        // the false the first block had just written. _bisectUBO applies the list in order,
+        // so the false copy always won and revealing all 194 entries drew exactly one object.
+        // That is the "no errors with EVERYTHING revealed" result, and it was measuring an
+        // empty frame.
+        if (!this._minimalHidden) { this._minimalHidden = []; this._minimalSeen = new Set(); }
+        // A FULL TRAVERSE EVERY FRAME, not a replay of the saved list. Two things escape
+        // a one-shot sweep: the cursors, which _updateVRCursors re-shows before every
+        // _drawScene, and anything ADDED to the scene after the sweep ran -- which is what
+        // the last trace's `obj=unknown` almost certainly was. A minimal test that is not
+        // minimal is worse than none, because its quiet console means nothing.
+        this._scene.traverse(o => {
+          if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          if (!this._minimalSeen) this._minimalSeen = new Set();
+          if (!this._minimalSeen.has(o)) { this._minimalSeen.add(o); this._minimalHidden.push([o, o.visible]); }
+          o.visible = false;
+        });
+        // _bisectUBO reveals a PREFIX of the list; everything else stays hidden. Restoring the
+        // object's original visibility, not forcing true, so revealing something that was
+        // already hidden in normal use does not change what the frame draws.
+        const rv = this._minimalReveal | 0;
+        for (let i = 0; i < rv && i < this._minimalHidden.length; i++) {
+          this._minimalHidden[i][0].visible = this._minimalHidden[i][1];
+        }
+        // ONE OBJECT HELD VISIBLE THROUGH THE HIDE, for the panel ladder: an empty frame plus
+        // exactly the thing under test. Set after the sweep, because the sweep runs every
+        // frame and would otherwise hide it again.
+        if (this._minimalForceVisible) {
+          for (let o = this._minimalForceVisible; o && o !== this._scene; o = o.parent) o.visible = true;
+        }
+      }
+      // WHAT STILL DRAWS. The stack says _renderObjectDirect, i.e. a real object on the
+      // ordinary path -- so something survives the hide, and counting is the only way to know
+      // rather than assume. Once a second, because this is a headset and the console is the
+      // only way anything gets out.
+      {
+        const r = this._renderer.info && this._renderer.info.render;
+        const now = performance.now();
+        if (r && (!this._minLogT || now - this._minLogT > 1000)) {
+          this._minLogT = now;
+          console.log('[vrMinimalTest] level 1 drawCalls=' + r.drawCalls + ' tris=' + r.triangles
+            + ' hidden=' + (this._minimalHidden ? this._minimalHidden.length : 0));
+        }
       }
       this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
+      // Its own expression, NOT the _renderCam below: that is declared in the main render
+      // block further down, and this branch returns before reaching it. Referencing it here
+      // is a temporal dead zone throw on every frame, which is the same trap `_hand` set in
+      // this file once already -- and every static check passes right up until it runs.
       this._renderer.render(this._scene, this._camera.getThreeCamera());
       this._renderer.setClearColor(0x000000, 0);
       return;
@@ -2213,14 +2585,1210 @@ class Scene {
     // Instead of looping through custom meshes, we tell Three.js to render the scene
     if (this._renderer && this._scene && this._camera.getThreeCamera()) {
       const isVR = this._renderer.xr && this._renderer.xr.isPresenting;
+
+      // RAW ShaderMaterials CANNOT BE DRAWN BY THIS RENDERER AT ALL -- its library registers
+      // only the built-in material types, so each one throws `THREE.NodeMaterial: Material
+      // "ShaderMaterial" is not compatible.` out of build(), every object, every frame. Five
+      // sites still make them directly (the volume cube/sphere, the selection box, the voxel
+      // density overlay, the line material) rather than going through ShaderManager, which is
+      // already routed to NodeMaterials. Hiding them keeps the flagged path legible while
+      // they are ported; without it the console flood makes every other signal unreadable and
+      // the throw-per-draw dominates the frame.
+      // The matcap's stabilisation uniform, refreshed from the head-centre view before the
+      // draw -- see NodeMaterials.updateFrame.
+      if (this._isNodeRenderer) NodeMaterials.updateFrame(this);
+      // SHADOW MAPS ARE OFF INSIDE AN XR SESSION, for now.
+      //
+      // A shadow map is an extra render target, and an extra render target inside an XR
+      // frame is the exact thing that has broken this renderer twice already (the spectator
+      // canvas did it, and it is what "GL_INVALID_FRAMEBUFFER_OPERATION: Framebuffer is
+      // incomplete: Attachments are not all the same size" reports -- a 2048x2048 shadow map
+      // against the XR framebuffer). With shadows on, menus and controller models vanish and
+      // the UBO flood returns: matt, first headset run after the shadow work, "menus and
+      // controllers are missing again".
+      //
+      // This was the known risk before any of it was written -- "verify shadow-map passes
+      // under WebGPURenderer IN XR, extra render targets are the risk item, check it early"
+      // -- and it was not checked early. Desktop shadows are unaffected and stay on.
+      //
+      // window._xrShadows = 1 turns them back on in a session, to confirm the cause and to
+      // retest once the framebuffer interaction is understood.
+      //
+      // DEFAULT ON IN A SESSION as of 2026-09-21. The workaround above outlived its evidence:
+      // shadows have been exercised in a headset across the whole lights/shadows body of work
+      // and the menus-and-controllers failure has not come back. Leaving a workaround switched
+      // on by default is how it stops being retested at all, and matt has to remember a flag to
+      // see the feature he asked for. `?xrshadows=0`, or window._xrShadows = false, restores it.
+      // THE SESSION WARM, ON THE SECOND FRAME. By now one frame has been composited, so the
+      // headset is showing the scene rather than the void, and xr.getCamera() carries its two
+      // views -- warming at setSession compiles an ArrayCamera[0] set that nothing ever draws
+      // with, and warming during the first frame just lengthens the void.
+      //
+      // It makes that one frame long. That is the deliberate trade: one hitch just after the
+      // scene appears, instead of a compile every time something new is first drawn.
+      // (no session warm; the first draw of each object compiles it, once)
+      this._stepRevealWarm();
+      if (this._isNodeRenderer) {
+        if (/[?&]xrshadows=0/.test(window.location.search)) window._xrShadows = false;
+        const want = isVR ? (window._xrShadows !== false) : true;
+        if (this._renderer.shadowMap.enabled !== want) {
+          this._renderer.shadowMap.enabled = want;
+          console.log('[shadows] ' + (want ? 'on' : 'off (XR)'));
+        }
+      }
+      // window._noThreeLights = 1 stops mirroring real three lights entirely, so a session
+      // can be run with no Light objects in the scene at all. Between this and ?pbrbisect=,
+      // the whole "PBR moved onto three's lighting" change can be bisected in ONE session
+      // rather than one trip per question.
+      if (this._isNodeRenderer && !window._noThreeLights) this._syncThreeLights();
+      // CAST AND RECEIVE, set on the meshes rather than globally: three reads these per
+      // object, and a light entity's own gizmo geometry casting a shadow of itself into the
+      // scene is not something anyone wants to see.
+      if (this._isNodeRenderer) {
+        for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+          const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+          if (!tm || mesh._isLight) continue;
+          // Both flags, checked independently. The old form was
+          //     if (!tm.castShadow) { tm.castShadow = true; tm.receiveShadow = true; }
+          // which silently does nothing to receiveShadow for any mesh whose castShadow was
+          // already set by something else -- SceneShadow.js does exactly that for the AR
+          // catcher work -- leaving it unable to receive a shadow for good.
+          //
+          // And NOT while a session owns the graph: receiveShadow is in the render object's
+          // cache key, so flipping it mid-session recompiles that object in the wrong camera
+          // layout. Meshes get both flags at birth now (Mesh.js), so this is only a sweep for
+          // anything predating that.
+          if (!this._xrGraphFrozen && (!tm.castShadow || !tm.receiveShadow)) {
+            tm.castShadow = true;
+            tm.receiveShadow = true;
+          }
+        }
+      }
+
+      // (The controller models used to be force-swapped to a flat material here. That was a
+      // guess made before the cause was known -- their GLTF materials are MeshStandardMaterial,
+      // which converts to MeshStandardNodeMaterial and measured ZERO errors on the ladder, so
+      // they were never the problem and the swap only cost their real appearance.)
+
+      if (!window._showVrPanels) {
+        window._showVrPanels = (which) => {
+          window._vrPanelsOnDesktop = 1;
+          const cam = this._camera.getThreeCamera();
+          cam.updateMatrixWorld(true);
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh) continue;
+            const want = !which || p.constructor.name.toLowerCase().includes(String(which).toLowerCase());
+            p.mesh.visible = want;
+            if (want) {
+              // Parked half a metre in front of the camera, facing it, at a size the desktop
+              // frustum can actually see -- their VR placement is wrist-relative and ends up
+              // as a speck at the origin.
+              p.mesh.position.set(0, 0, -0.5).applyMatrix4(cam.matrixWorld);
+              p.mesh.quaternion.copy(cam.quaternion);
+              p.mesh.scale.set(1, -1, 1);
+              p.markDirty?.();
+              n++;
+            }
+          }
+          this._drawFullScene = true;
+          this.render?.();
+          console.log('[showVrPanels] showing ' + n);
+          return n;
+        };
+        window._hideVrPanels = () => {
+          window._vrPanelsOnDesktop = 0;
+          for (const p of HTMLVRPanel._live) if (p.mesh) p.mesh.visible = false;
+          this._drawFullScene = true; this.render?.();
+        };
+      }
+      // window._drawInfo() — is the panel draw being ISSUED or issued-and-discarded?
+      //
+      // The panel is visible, in-scene, repainting, and absent from the headset. Those two
+      // cases need opposite fixes and look identical from the outside, so count the draws:
+      // if pbr issues one fewer draw call than matcap, the renderer is rejecting the object
+      // before it reaches the GPU (a pipeline/material problem); if the counts match, it is
+      // being drawn into something the compositor never shows (a framebuffer problem).
+      // THE SCENE BACKGROUND / ENVIRONMENT, which are three's own and not our env quad.
+      //
+      // _panelDrawDelta says the panel IS drawn (delta 4) and the pixels go nowhere, and the
+      // GL error is on glDrawArrays -- the panel draws INDEXED geometry, so that error belongs
+      // to a fullscreen quad. three draws scene.background as exactly that, and
+      // scene.environment makes it run PMREM into a chain of differently-sized render
+      // targets, which is what "Attachments are not all the same size" describes.
+      //
+      // Runnable from inside the session so it costs no restart: _killSceneBg() nulls both and
+      // the next frame shows whether the menus come back. _restoreSceneBg() puts them back.
+      if (!window._sceneBgProbe) {
+        window._sceneBgProbe = () => {
+          const b = this._scene.background, e = this._scene.environment;
+          const d = (x) => !x ? null : (x.isTexture ? ('Texture ' + (x.image ? x.image.width + 'x' + x.image.height : '?')) : (x.isColor ? 'Color' : x.type || typeof x));
+          const out = { background: d(b), environment: d(e) };
+          console.log('[sceneBg] ' + JSON.stringify(out));
+          return out;
+        };
+        window._killSceneBg = () => {
+          this._savedBg = this._scene.background;
+          this._savedEnv = this._scene.environment;
+          this._scene.background = null;
+          this._scene.environment = null;
+          console.log('[sceneBg] cleared — look at the menus now');
+        };
+        window._restoreSceneBg = () => {
+          this._scene.background = this._savedBg || null;
+          this._scene.environment = this._savedEnv || null;
+          console.log('[sceneBg] restored');
+        };
+      }
+
+      // window._bisectUBO() — which of the 198 objects starts the errors?
+      //
+      // An empty frame is silent: drawCalls=0 for seconds on end with no errors, while the
+      // full scene floods. So the fault is in the CONTENT, and with the frame now genuinely
+      // empty the list can be bisected instead of guessed at. 198 objects is ~8 rounds, and
+      // asking a person to do 8 rounds by hand in a headset is not reasonable, so it runs
+      // itself: reveal a prefix, wait for the errors to settle, read the counter, halve.
+      //
+      // Requires _traceUBO() and _vrMinimalTest = 1 first -- the counter comes from the
+      // tracer and the hidden list from level 1.
+      if (!window._bisectUBO) window._bisectUBO = async () => {
+        if (!this._minimalHidden || !this._minimalHidden.length) {
+          console.log('[bisectUBO] run window._traceUBO() then window._vrMinimalTest = 1 first');
+          return null;
+        }
+        if (window.__uboErrCount === undefined) { console.log('[bisectUBO] tracer is not on'); return null; }
+        const list = this._minimalHidden.map(([o]) => o);
+        // WALL TIME, not requestAnimationFrame. Inside an immersive session the frame loop is
+        // the XRSession's, and window.rAF is not it -- the first version of this ran all eight
+        // rounds in 43ms and measured nothing, because every await resolved without a frame
+        // ever being drawn. Sleeping real milliseconds is crude and it is correct.
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // Reveal the first k, let it settle, then count errors over a fixed window.
+        const test = async (k) => {
+          this._minimalReveal = k;
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          return window.__uboErrCount - before;
+        };
+        if (await test(0) > 0) {
+          console.log('[bisectUBO] errors with NOTHING revealed — not scene content after all');
+          this._minimalReveal = 0;
+          return null;
+        }
+        const allErrs = await test(list.length);
+        const allDc = this._renderer.info && this._renderer.info.render.drawCalls;
+        if (allErrs === 0) {
+          console.log('[bisectUBO] no errors with EVERYTHING revealed (drawCalls=' + allDc
+            + ') — if that count is 0, nothing was actually drawn and the run is void');
+          this._minimalReveal = 0;
+          return null;
+        }
+        let lo = 0, hi = list.length;          // lo is known-clean, hi is known-dirty
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          const errs = await test(mid);
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          console.log('[bisectUBO] first ' + mid + ' revealed -> ' + errs + ' errors, drawCalls=' + dc);
+          if (errs > 0) hi = mid; else lo = mid;
+        }
+        const o = list[hi - 1];
+        // A PARENT GETS THE BLAME FOR ITS CHILDREN. Revealing an object lets its whole
+        // subtree draw, so the bisection attributes to the ancestor -- stylus_spike has a
+        // child, stylus_spike_ghost, with an unusual GreaterDepth mode. Hide the descendants
+        // one at a time and see whether the parent is innocent.
+        const kids = [];
+        o.traverse((c) => { if (c !== o && (c.isMesh || c.isLine || c.isPoints || c.isSprite)) kids.push(c); });
+        {
+          // MEASURED TWICE, TAKING THE WORST. The first version gated the whole refinement on
+          // a single re-measure at the boundary -- and that re-measure came back 0 while the
+          // binary search had just seen errors there, so nothing ran and the round was
+          // wasted. The flood is not steady (the driver stops reporting after a few hundred,
+          // and the errors come in bursts), so one sample is not enough to call a state clean.
+          const probe = async () => Math.max(await test(hi), await test(hi));
+          const base = await probe();
+          console.log('[bisectUBO]   baseline at the boundary -> ' + base + ' errors');
+          {
+            for (const c of (kids || [])) {
+              const was = c.visible;
+              c.visible = false;
+              const errs = await probe();
+              c.visible = was;
+              console.log('[bisectUBO]   without child ' + (c.name || c.type) + ' -> ' + errs + ' errors');
+              if (errs === 0) {
+                console.log('[bisectUBO] REAL CULPRIT is the child: ' + (c.name || c.type)
+                  + ' mat=' + (c.material && c.material.type)
+                  + ' depthFunc=' + (c.material && c.material.depthFunc)
+                  + ' transparent=' + (c.material && c.material.transparent)
+                  + ' order=' + c.renderOrder);
+                this._minimalReveal = 0;
+                return c;
+              }
+            }
+            console.log('[bisectUBO]   no single child explains it — the parent itself draws badly');
+            // TWO VARIABLES LEFT ON THIS OBJECT: its geometry and its material. Swap each for
+            // something known-good and re-measure, so the answer is one of them rather than
+            // another round of guessing. The spike is a CONE -- CylinderGeometry with
+            // radiusTop 0 -- which is the kind of degenerate-at-the-tip shape worth suspecting
+            // before anything subtler.
+            const origGeo = o.geometry, origMat = o.material;
+            if (!this._bisectBoxGeo) this._bisectBoxGeo = new THREE.BoxGeometry(0.01, 0.01, 0.05);
+            o.geometry = this._bisectBoxGeo;
+            const geoErrs = await probe();
+            o.geometry = origGeo;
+            console.log('[bisectUBO]   with a plain box geometry -> ' + geoErrs + ' errors');
+
+            let matErrs = -1;
+            if (NodeMaterials._solid) {
+              o.material = NodeMaterials._solid;
+              matErrs = await probe();
+              o.material = origMat;
+              console.log('[bisectUBO]   with the known-good solid material -> ' + matErrs + ' errors');
+            }
+            console.log('[bisectUBO]   => '
+              + (geoErrs === 0 ? 'THE GEOMETRY'
+                : matErrs === 0 ? 'THE MATERIAL'
+                : 'NEITHER swap helped — it is the object or its place in the graph'));
+          }
+        }
+        console.log('[bisectUBO] CULPRIT #' + (hi - 1) + ': ' + (o.name || o.type)
+          + ' mat=' + (o.material && o.material.type)
+          + ' order=' + o.renderOrder
+          + ' geom=' + (o.geometry && o.geometry.type)
+          + ' indexed=' + !!(o.geometry && o.geometry.index)
+          + ' verts=' + (o.geometry && o.geometry.attributes.position
+            ? o.geometry.attributes.position.count : '?'));
+        this._minimalReveal = 0;
+        return o;
+      };
+
+      // window._dumpShader([name]) — THE GENERATED SHADER, not a guess about it.
+      //
+      // matt: "these errors seem too vague, does three offer any better methods for
+      // debugging than this?" It does, and I should have reached for it far sooner:
+      // renderer.debug.getShaderAsync(scene, camera, object) returns the raw generated
+      // vertex and fragment source for one object, uniform block declarations included.
+      //
+      // "GL_INVALID_OPERATION: uniform buffer that is too small" is a claim about a block
+      // whose contents we have been inferring all evening. This prints it. Run it in a
+      // session with a light placed, on the sculpt, and the block that overflows is
+      // readable rather than deduced.
+      if (!window._dumpShader) window._dumpShader = async (name) => {
+        const cam = (this._renderer.xr && this._renderer.xr.isPresenting)
+          ? this._renderer.xr.getCamera() : this._camera.getThreeCamera();
+        let target = null;
+        if (!name) {
+          // THE SCULPT BY DEFAULT. The first visible mesh in the graph is the ground grid,
+          // whose shader is 1179 characters and says nothing about the problem.
+          const first = (this.getMeshes ? this.getMeshes() : [])
+            .find((m) => !m._isLight && m.getThreeMesh && m.getThreeMesh());
+          target = first && first.getThreeMesh();
+        }
+        if (!target) this._scene.traverse((o) => {
+          if (target || !o.isMesh || !o.visible) return;
+          if (!name || (o.name || '').toLowerCase().includes(String(name).toLowerCase())) target = o;
+        });
+        if (!target) { console.log('[dumpShader] no visible mesh matching ' + name); return null; }
+        const src = await this._renderer.debug.getShaderAsync(this._scene, cam, target);
+        console.log('[dumpShader] ' + (target.name || target.type)
+          + ' mat=' + (target.material && target.material.type));
+        console.log('--- VERTEX ---\n' + (src.vertexShader || '').slice(0, 4000));
+        console.log('--- FRAGMENT ---\n' + (src.fragmentShader || '').slice(0, 8000));
+        window.__lastShader = src;
+        return src;
+      };
+
+      // window._traceUBO() — WHICH object's draw emits the error?
+      //
+      // Every theory I have formed about this has been wrong: the material class, the stock
+      // conversion, the texture, the transform, the framebuffer, pipeline warming, uniform
+      // padding, scene.background. The error message has been sitting there the whole time
+      // naming a specific draw call, so stop inferring and ask the driver directly.
+      //
+      // Wraps drawElements/drawArrays on the real context, calls getError() immediately after
+      // each, and reports the object that was being drawn (captured via onBeforeRender). That
+      // is the one fact nothing so far has established: WHAT is too small for WHAT. Expensive
+      // -- a synchronous getError per draw stalls the pipeline -- so it is opt-in and
+      // self-limiting.
+      if (!window._traceUBO) window._traceUBO = (maxReports) => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        if (!gl) { console.log('[traceUBO] no raw context'); return false; }
+        if (gl.__uboTraced) { console.log('[traceUBO] already on'); return true; }
+        gl.__uboTraced = true;
+        const limit = maxReports || 12;
+        let reports = 0;
+        window.__uboErrCount = 0;
+        const seen = new Set();
+        let cur = null;
+        // Tag every drawable so the wrapper knows what is on the GPU right now.
+        //
+        // RE-TAGGED EVERY FRAME, because tagging once names only what existed at the moment
+        // tracing started. The previous run reported `obj=unknown mat=none` and I read that
+        // as three drawing something anonymous -- but the backend has only four drawArrays
+        // call sites and the object-draw one receives the object, so an untagged object is a
+        // tagging failure, not an anonymous draw. Anything added after _traceUBO() ran was
+        // invisible to it.
+        const tag = (o) => {
+          if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          if (o.userData.__uboTagged) return;
+          o.userData.__uboTagged = true;
+          const prev = o.onBeforeRender;
+          o.onBeforeRender = function (...a) {
+            cur = o;
+            if (prev) prev.apply(this, a);
+          };
+        };
+        this._uboTag = () => this._scene.traverse(tag);
+        this._uboTag();
+        const wrap = (name) => {
+          const orig = gl[name].bind(gl);
+          gl[name] = function (...args) {
+            const r = orig(...args);
+            if (true) {
+              const e = gl.getError();
+              if (e !== 0) {
+                window.__uboErrCount++;
+                const key = (cur && (cur.name || cur.type)) + ':' + e;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  reports++;
+                  const m = cur && cur.material;
+                  console.log('[traceUBO] ' + name + ' err=0x' + e.toString(16)
+                    + ' obj=' + (cur ? (cur.name || cur.type) : 'unknown')
+                    + ' mat=' + (m ? (m.type + (m.userData && m.userData.isNodePanel ? '(panel)' : '')) : 'none')
+                    + ' order=' + (cur ? cur.renderOrder : '?')
+                    + ' visible=' + (cur ? cur.visible : '?'));
+                  // AND THE STACK, when we cannot name the object. `cur` is null means the
+                  // draw happened before any tagged object drew -- so no amount of better
+                  // tagging will name it, and the only thing that can is three's own call
+                  // path. Four frames is enough to see which backend function issued it.
+                  if (!cur) {
+                    const st = (new Error().stack || '').split('\n').slice(1, 6)
+                      .map((l) => l.trim().replace(/^at\s+/, '')).join(' <- ');
+                    console.log('[traceUBO]   via ' + st);
+                  }
+                }
+              }
+            }
+            return r;
+          };
+        };
+        wrap('drawElements');
+        wrap('drawArrays');
+        if (gl.drawElementsInstanced) wrap('drawElementsInstanced');
+        console.log('[traceUBO] on — errors will be reported with the object that caused them');
+        return true;
+      };
+
+      // window._panelVariant(n) — matt's method: start from what WORKS and add features.
+      //
+      // MeshNormalNodeMaterial drew on the panel even while a THREE.Line was poisoning the
+      // frame, so it is immune to whatever this is. Walking forward from it finds the feature
+      // that loses the immunity, which is a far better question than "what is wrong with the
+      // broken material" -- the one the last dozen rounds asked, and got wrong every time.
+      //
+      // Every variant is pre-built and warmed, so the whole ladder can be walked in ONE
+      // session: call it with 0..6 and watch when the panel vanishes and the errors start.
+      //   0 normal material (known good)   4 texture, opaque
+      //   1 flat colour, opaque            5 texture + transparent + alpha
+      //   2 + transparent                  6 the real panel material (adds the grade)
+      //   3 + opacityNode
+      // and, once the ladder showed the break is at 1 -- MeshBasicNodeMaterial itself, with
+      // no texture and no transparency -- the same flat colour on other base classes:
+      //   7 normal + colorNode   8 lambert   9 phong   10 standard   11 matcap
+      // A rung with ZERO errors that still draws is the base the panels should be built on.
+      if (!window._panelVariant) window._panelVariant = (n, meshOnly) => {
+        const vs = NodeMaterials._panelVariants;
+        if (!vs) { console.log('[panelVariant] variants not built'); return null; }
+        const i = Math.max(0, Math.min(vs.length - 1, n | 0));
+        const mat = vs[i];
+        let applied = 0;
+        for (const p of HTMLVRPanel._live) {
+          if (!p.mesh) continue;
+          if (!p.mesh.userData._origVariantMat) p.mesh.userData._origVariantMat = p.mesh.material;
+          if (meshOnly && p.mesh !== meshOnly) continue;
+          if (mat.userData && mat.userData.setMap && p._texture) mat.userData.setMap(p._texture);
+          p.mesh.material = mat;
+          // VISIBLE, which _panelMat did and this did not -- so the first ladder run swapped
+          // materials on eight hidden panels and measured the rest of the scene instead
+          // (drawCalls=47 on every rung, the whole scene, with no panel on screen at all).
+          p.mesh.visible = true;
+          applied++;
+        }
+        const errBefore = window.__uboErrCount;
+        console.log('[panelVariant] ' + i + ' applied to ' + applied
+          + ' panels — watch the panel and the error count'
+          + (errBefore === undefined ? ' (run _traceUBO() first to count errors)' : ''));
+        return i;
+      };
+      if (!window._panelVariantRestore) window._panelVariantRestore = () => {
+        for (const p of HTMLVRPanel._live) {
+          if (p.mesh && p.mesh.userData._origVariantMat) {
+            p.mesh.material = p.mesh.userData._origVariantMat;
+            p.mesh.userData._origVariantMat = null;
+          }
+        }
+      };
+      // And the same walk, automated: step every variant, count errors on each, print a table.
+      if (!window._panelLadder) window._panelLadder = async () => {
+        if (window.__uboErrCount === undefined) { console.log('[panelLadder] run _traceUBO() first'); return null; }
+        const vs = NodeMaterials._panelVariants || [];
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // AN EMPTY FRAME PLUS ONE PANEL. The first run measured the whole scene -- 47 draw
+        // calls and ~120 ambient errors on every rung -- which cannot show a panel-sized
+        // signal. Level 1 empties the frame; _minimalForceVisible holds the one panel under
+        // test through the per-frame sweep.
+        const target = [...HTMLVRPanel._live].find((p) => p.mesh && p._texture) || [...HTMLVRPanel._live][0];
+        if (!target || !target.mesh) { console.log('[panelLadder] no panel to test'); return null; }
+        const restoreLevel = window._vrMinimalTest;
+        window._vrMinimalTest = 1;
+        this._minimalForceVisible = target.mesh;
+        await sleep(600);
+        const idle = await (async () => {
+          const b = window.__uboErrCount; await sleep(400); return window.__uboErrCount - b;
+        })();
+        console.log('[panelLadder] empty frame + no panel material change -> ' + idle
+          + ' errors, drawCalls=' + (this._renderer.info && this._renderer.info.render.drawCalls)
+          + ' (panel: ' + target.constructor.name + ')');
+        const rows = [];
+        for (let i = 0; i < vs.length; i++) {
+          window._panelVariant(i, target.mesh);
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          const errs = window.__uboErrCount - before;
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          rows.push({ variant: i, errors: errs, drawCalls: dc });
+          console.log('[panelLadder] variant ' + i + ' -> ' + errs + ' errors, drawCalls=' + dc);
+        }
+        console.log('[panelLadder] ' + JSON.stringify(rows));
+        this._minimalForceVisible = null;
+        window._vrMinimalTest = restoreLevel || 0;
+        window._panelVariantRestore();
+        return rows;
+      };
+
+      // window._panelMat('normal'|'restore') — the sharpest cut left.
+      //
+      // With 91 objects hidden and the panel alone in the frame, still nothing. So no other
+      // draw is poisoning it: the panel's own draw fails. And the failing set now looks like
+      // a material CLASS rather than a texture:
+      //   MeshBasicNodeMaterial + canvas map   (panels)      invisible
+      //   MeshBasicNodeMaterial, flat magenta, no map        invisible  (_panelSolid)
+      //   MeshBasicNodeMaterial + matcap image (matcap mat)  invisible  (_meshMat matcap)
+      //   MeshNormalNodeMaterial                             DRAWS
+      //   GLTF controller materials                          DRAW
+      // The awkward exception is that our PBR material is ALSO a MeshBasicNodeMaterial and it
+      // draws -- so if the normal material makes the panel appear, the split is real and the
+      // PBR one differs by having a colorNode that replaces the whole basic pipeline.
+      if (!window._panelMat) {
+        window._panelMat = (which) => {
+          const mat = String(which) === 'restore' ? null : NodeMaterials.get(2); // NORMAL
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh) continue;
+            if (mat) {
+              if (!p.mesh.userData._origMat2) p.mesh.userData._origMat2 = p.mesh.material;
+              p.mesh.material = mat;
+              p.mesh.visible = true;
+              n++;
+            } else if (p.mesh.userData._origMat2) {
+              p.mesh.material = p.mesh.userData._origMat2;
+              p.mesh.userData._origMat2 = null;
+            }
+          }
+          console.log('[panelMat] ' + which + ' -> ' + n);
+          return n;
+        };
+      }
+
+      // window._soloPanels() — hide EVERYTHING except the panels. _unsolo() restores.
+      //
+      // Where the evidence now stands, all of it from inside one session: the sculpt is not
+      // the cause (_hideMeshes left the menus gone), and the matcap material -- the very same
+      // object that draws correctly in a matcap session -- DISAPPEARS when assigned here. So
+      // a pbr session comes up in a state where some materials cannot draw at all, and the
+      // panels are in that set while MeshNormalNodeMaterial and the controllers are not.
+      //
+      // Two possibilities left, and they need opposite fixes:
+      //   panels appear alone -> some OTHER draw in the frame poisons them, and the fix is to
+      //                          find which (the UBO error is that draw failing).
+      //   still nothing       -> the panel pipeline itself cannot be built in this session,
+      //                          and warming it on the desktop did not produce the variant XR
+      //                          asks for.
+      if (!window._soloPanels) {
+        window._soloPanels = () => {
+          const panelMeshes = new Set();
+          for (const p of HTMLVRPanel._live) if (p.mesh) panelMeshes.add(p.mesh);
+          this._soloSaved = [];
+          this._scene.traverse((o) => {
+            if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+            let isPanel = false;
+            for (let q = o; q; q = q.parent) if (panelMeshes.has(q)) { isPanel = true; break; }
+            if (isPanel) return;
+            this._soloSaved.push([o, o.visible]);
+            o.visible = false;
+          });
+          // ...and make one panel visible, so there is something to look for.
+          const first = [...panelMeshes][0];
+          if (first) first.visible = true;
+          console.log('[soloPanels] hid ' + this._soloSaved.length + ' — is a panel there now?');
+          return this._soloSaved.length;
+        };
+        window._unsolo = () => {
+          for (const [o, v] of (this._soloSaved || [])) o.visible = v;
+          this._soloSaved = [];
+          console.log('[soloPanels] restored');
+        };
+      }
+
+      // window._meshMat('matcap'|'pbr'|'normal') — swap ONLY the sculpt's material, live.
+      // window._hideMeshes() / _showMeshes()      — take the sculpt out of the frame entirely.
+      //
+      // matt's premise, and the only fact that has held up all the way through: it works in
+      // matcap and fails in pbr. Everything else has been my theorising. So change exactly
+      // that one thing inside ONE session -- same panels, same session, same framebuffer, same
+      // controllers -- and watch the menus and the UBO errors.
+      //   menus return on 'matcap'  -> the sculpt's MATERIAL takes the frame down, and the
+      //                                panels are collateral. The UBO error is the mechanism.
+      //   menus stay gone           -> the mesh material is not the variable either, and what
+      //                                differs between the two sessions is something else the
+      //                                shader id switches on.
+      // Every material here was built at startup and warmed, so nothing is constructed inside
+      // the session -- which is the one thing this renderer must not do.
+      if (!window._meshMat) {
+        window._meshMat = (name) => {
+          const ids = { pbr: 0, flat: 1, normal: 2, matcap: 5 };
+          const id = ids[String(name).toLowerCase()];
+          if (id === undefined) { console.log('[meshMat] use pbr|flat|normal|matcap'); return 0; }
+          const mat = NodeMaterials.get(id);
+          if (!mat) { console.log('[meshMat] no material for ' + name); return 0; }
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.material = mat; n++; }
+          }
+          console.log('[meshMat] ' + name + ' -> ' + n + ' meshes');
+          return n;
+        };
+        window._hideMeshes = () => {
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.visible = false; n++; }
+          }
+          console.log('[hideMeshes] hid ' + n + ' — menus back?');
+          return n;
+        };
+        window._showMeshes = () => {
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) tm.visible = true;
+          }
+        };
+      }
+
+      // window._panelSolid() — is the panel invisible because its TEXTURE never arrived?
+      //
+      // A quad drawn with a texture that failed to upload is fully transparent, which looks
+      // exactly like a quad that was never drawn -- and _panelDrawDelta already proved it IS
+      // drawn. Swapping in a flat magenta material (pre-built at startup, so nothing is
+      // constructed inside the session) tells the two apart:
+      //   magenta rectangle appears -> the geometry and the framebuffer are fine, the TEXTURE
+      //                                is the problem
+      //   still nothing             -> the draw lands somewhere the compositor never shows
+      if (!window._panelSolid) {
+        window._panelSolid = () => {
+          const solid = NodeMaterials._solid;
+          if (!solid) { console.log('[panelSolid] no solid material'); return 0; }
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh || !p.mesh.visible) continue;
+            if (!p.mesh.userData._origMat) p.mesh.userData._origMat = p.mesh.material;
+            p.mesh.material = solid;
+            n++;
+          }
+          console.log('[panelSolid] swapped ' + n + ' — look where the menu should be');
+          return n;
+        };
+        window._panelRestoreMat = () => {
+          for (const p of HTMLVRPanel._live) {
+            if (p.mesh && p.mesh.userData._origMat) {
+              p.mesh.material = p.mesh.userData._origMat;
+              p.mesh.userData._origMat = null;
+            }
+          }
+          console.log('[panelSolid] restored');
+        };
+      }
+
+      // window._bisectUBO() — which of the 198 objects starts the errors?
+      //
+      // An empty frame is silent: drawCalls=0 for seconds on end with no errors, while the
+      // full scene floods. So the fault is in the CONTENT, and with the frame now genuinely
+      // empty the list can be bisected instead of guessed at. 198 objects is ~8 rounds, and
+      // asking a person to do 8 rounds by hand in a headset is not reasonable, so it runs
+      // itself: reveal a prefix, wait for the errors to settle, read the counter, halve.
+      //
+      // Requires _traceUBO() and _vrMinimalTest = 1 first -- the counter comes from the
+      // tracer and the hidden list from level 1.
+      if (!window._bisectUBO) window._bisectUBO = async () => {
+        if (!this._minimalHidden || !this._minimalHidden.length) {
+          console.log('[bisectUBO] run window._traceUBO() then window._vrMinimalTest = 1 first');
+          return null;
+        }
+        if (window.__uboErrCount === undefined) { console.log('[bisectUBO] tracer is not on'); return null; }
+        const list = this._minimalHidden.map(([o]) => o);
+        // WALL TIME, not requestAnimationFrame. Inside an immersive session the frame loop is
+        // the XRSession's, and window.rAF is not it -- the first version of this ran all eight
+        // rounds in 43ms and measured nothing, because every await resolved without a frame
+        // ever being drawn. Sleeping real milliseconds is crude and it is correct.
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // Reveal the first k, let it settle, then count errors over a fixed window.
+        const test = async (k) => {
+          this._minimalReveal = k;
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          return window.__uboErrCount - before;
+        };
+        if (await test(0) > 0) {
+          console.log('[bisectUBO] errors with NOTHING revealed — not scene content after all');
+          this._minimalReveal = 0;
+          return null;
+        }
+        const allErrs = await test(list.length);
+        const allDc = this._renderer.info && this._renderer.info.render.drawCalls;
+        if (allErrs === 0) {
+          console.log('[bisectUBO] no errors with EVERYTHING revealed (drawCalls=' + allDc
+            + ') — if that count is 0, nothing was actually drawn and the run is void');
+          this._minimalReveal = 0;
+          return null;
+        }
+        let lo = 0, hi = list.length;          // lo is known-clean, hi is known-dirty
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          const errs = await test(mid);
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          console.log('[bisectUBO] first ' + mid + ' revealed -> ' + errs + ' errors, drawCalls=' + dc);
+          if (errs > 0) hi = mid; else lo = mid;
+        }
+        const o = list[hi - 1];
+        // A PARENT GETS THE BLAME FOR ITS CHILDREN. Revealing an object lets its whole
+        // subtree draw, so the bisection attributes to the ancestor -- stylus_spike has a
+        // child, stylus_spike_ghost, with an unusual GreaterDepth mode. Hide the descendants
+        // one at a time and see whether the parent is innocent.
+        const kids = [];
+        o.traverse((c) => { if (c !== o && (c.isMesh || c.isLine || c.isPoints || c.isSprite)) kids.push(c); });
+        {
+          // MEASURED TWICE, TAKING THE WORST. The first version gated the whole refinement on
+          // a single re-measure at the boundary -- and that re-measure came back 0 while the
+          // binary search had just seen errors there, so nothing ran and the round was
+          // wasted. The flood is not steady (the driver stops reporting after a few hundred,
+          // and the errors come in bursts), so one sample is not enough to call a state clean.
+          const probe = async () => Math.max(await test(hi), await test(hi));
+          const base = await probe();
+          console.log('[bisectUBO]   baseline at the boundary -> ' + base + ' errors');
+          {
+            for (const c of (kids || [])) {
+              const was = c.visible;
+              c.visible = false;
+              const errs = await probe();
+              c.visible = was;
+              console.log('[bisectUBO]   without child ' + (c.name || c.type) + ' -> ' + errs + ' errors');
+              if (errs === 0) {
+                console.log('[bisectUBO] REAL CULPRIT is the child: ' + (c.name || c.type)
+                  + ' mat=' + (c.material && c.material.type)
+                  + ' depthFunc=' + (c.material && c.material.depthFunc)
+                  + ' transparent=' + (c.material && c.material.transparent)
+                  + ' order=' + c.renderOrder);
+                this._minimalReveal = 0;
+                return c;
+              }
+            }
+            console.log('[bisectUBO]   no single child explains it — the parent itself draws badly');
+            // TWO VARIABLES LEFT ON THIS OBJECT: its geometry and its material. Swap each for
+            // something known-good and re-measure, so the answer is one of them rather than
+            // another round of guessing. The spike is a CONE -- CylinderGeometry with
+            // radiusTop 0 -- which is the kind of degenerate-at-the-tip shape worth suspecting
+            // before anything subtler.
+            const origGeo = o.geometry, origMat = o.material;
+            if (!this._bisectBoxGeo) this._bisectBoxGeo = new THREE.BoxGeometry(0.01, 0.01, 0.05);
+            o.geometry = this._bisectBoxGeo;
+            const geoErrs = await probe();
+            o.geometry = origGeo;
+            console.log('[bisectUBO]   with a plain box geometry -> ' + geoErrs + ' errors');
+
+            let matErrs = -1;
+            if (NodeMaterials._solid) {
+              o.material = NodeMaterials._solid;
+              matErrs = await probe();
+              o.material = origMat;
+              console.log('[bisectUBO]   with the known-good solid material -> ' + matErrs + ' errors');
+            }
+            console.log('[bisectUBO]   => '
+              + (geoErrs === 0 ? 'THE GEOMETRY'
+                : matErrs === 0 ? 'THE MATERIAL'
+                : 'NEITHER swap helped — it is the object or its place in the graph'));
+          }
+        }
+        console.log('[bisectUBO] CULPRIT #' + (hi - 1) + ': ' + (o.name || o.type)
+          + ' mat=' + (o.material && o.material.type)
+          + ' order=' + o.renderOrder
+          + ' geom=' + (o.geometry && o.geometry.type)
+          + ' indexed=' + !!(o.geometry && o.geometry.index)
+          + ' verts=' + (o.geometry && o.geometry.attributes.position
+            ? o.geometry.attributes.position.count : '?'));
+        this._minimalReveal = 0;
+        return o;
+      };
+
+      // window._dumpShader([name]) — THE GENERATED SHADER, not a guess about it.
+      //
+      // matt: "these errors seem too vague, does three offer any better methods for
+      // debugging than this?" It does, and I should have reached for it far sooner:
+      // renderer.debug.getShaderAsync(scene, camera, object) returns the raw generated
+      // vertex and fragment source for one object, uniform block declarations included.
+      //
+      // "GL_INVALID_OPERATION: uniform buffer that is too small" is a claim about a block
+      // whose contents we have been inferring all evening. This prints it. Run it in a
+      // session with a light placed, on the sculpt, and the block that overflows is
+      // readable rather than deduced.
+      if (!window._dumpShader) window._dumpShader = async (name) => {
+        const cam = (this._renderer.xr && this._renderer.xr.isPresenting)
+          ? this._renderer.xr.getCamera() : this._camera.getThreeCamera();
+        let target = null;
+        this._scene.traverse((o) => {
+          if (target || !o.isMesh || !o.visible) return;
+          if (!name || (o.name || '').toLowerCase().includes(String(name).toLowerCase())) target = o;
+        });
+        if (!target) { console.log('[dumpShader] no visible mesh matching ' + name); return null; }
+        const src = await this._renderer.debug.getShaderAsync(this._scene, cam, target);
+        console.log('[dumpShader] ' + (target.name || target.type)
+          + ' mat=' + (target.material && target.material.type));
+        console.log('--- VERTEX ---\n' + (src.vertexShader || '').slice(0, 4000));
+        console.log('--- FRAGMENT ---\n' + (src.fragmentShader || '').slice(0, 8000));
+        window.__lastShader = src;
+        return src;
+      };
+
+      // window._traceUBO() — WHICH object's draw emits the error?
+      //
+      // Every theory I have formed about this has been wrong: the material class, the stock
+      // conversion, the texture, the transform, the framebuffer, pipeline warming, uniform
+      // padding, scene.background. The error message has been sitting there the whole time
+      // naming a specific draw call, so stop inferring and ask the driver directly.
+      //
+      // Wraps drawElements/drawArrays on the real context, calls getError() immediately after
+      // each, and reports the object that was being drawn (captured via onBeforeRender). That
+      // is the one fact nothing so far has established: WHAT is too small for WHAT. Expensive
+      // -- a synchronous getError per draw stalls the pipeline -- so it is opt-in and
+      // self-limiting.
+      if (!window._traceUBO) window._traceUBO = (maxReports) => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        if (!gl) { console.log('[traceUBO] no raw context'); return false; }
+        if (gl.__uboTraced) { console.log('[traceUBO] already on'); return true; }
+        gl.__uboTraced = true;
+        const limit = maxReports || 12;
+        let reports = 0;
+        window.__uboErrCount = 0;
+        const seen = new Set();
+        let cur = null;
+        // Tag every drawable so the wrapper knows what is on the GPU right now.
+        //
+        // RE-TAGGED EVERY FRAME, because tagging once names only what existed at the moment
+        // tracing started. The previous run reported `obj=unknown mat=none` and I read that
+        // as three drawing something anonymous -- but the backend has only four drawArrays
+        // call sites and the object-draw one receives the object, so an untagged object is a
+        // tagging failure, not an anonymous draw. Anything added after _traceUBO() ran was
+        // invisible to it.
+        const tag = (o) => {
+          if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+          if (o.userData.__uboTagged) return;
+          o.userData.__uboTagged = true;
+          const prev = o.onBeforeRender;
+          o.onBeforeRender = function (...a) {
+            cur = o;
+            if (prev) prev.apply(this, a);
+          };
+        };
+        this._uboTag = () => this._scene.traverse(tag);
+        this._uboTag();
+        const wrap = (name) => {
+          const orig = gl[name].bind(gl);
+          gl[name] = function (...args) {
+            const r = orig(...args);
+            if (true) {
+              const e = gl.getError();
+              if (e !== 0) {
+                window.__uboErrCount++;
+                const key = (cur && (cur.name || cur.type)) + ':' + e;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  reports++;
+                  const m = cur && cur.material;
+                  console.log('[traceUBO] ' + name + ' err=0x' + e.toString(16)
+                    + ' obj=' + (cur ? (cur.name || cur.type) : 'unknown')
+                    + ' mat=' + (m ? (m.type + (m.userData && m.userData.isNodePanel ? '(panel)' : '')) : 'none')
+                    + ' order=' + (cur ? cur.renderOrder : '?')
+                    + ' visible=' + (cur ? cur.visible : '?'));
+                  // AND THE STACK, when we cannot name the object. `cur` is null means the
+                  // draw happened before any tagged object drew -- so no amount of better
+                  // tagging will name it, and the only thing that can is three's own call
+                  // path. Four frames is enough to see which backend function issued it.
+                  if (!cur) {
+                    const st = (new Error().stack || '').split('\n').slice(1, 6)
+                      .map((l) => l.trim().replace(/^at\s+/, '')).join(' <- ');
+                    console.log('[traceUBO]   via ' + st);
+                  }
+                }
+              }
+            }
+            return r;
+          };
+        };
+        wrap('drawElements');
+        wrap('drawArrays');
+        if (gl.drawElementsInstanced) wrap('drawElementsInstanced');
+        console.log('[traceUBO] on — errors will be reported with the object that caused them');
+        return true;
+      };
+
+      // window._panelVariant(n) — matt's method: start from what WORKS and add features.
+      //
+      // MeshNormalNodeMaterial drew on the panel even while a THREE.Line was poisoning the
+      // frame, so it is immune to whatever this is. Walking forward from it finds the feature
+      // that loses the immunity, which is a far better question than "what is wrong with the
+      // broken material" -- the one the last dozen rounds asked, and got wrong every time.
+      //
+      // Every variant is pre-built and warmed, so the whole ladder can be walked in ONE
+      // session: call it with 0..6 and watch when the panel vanishes and the errors start.
+      //   0 normal material (known good)   4 texture, opaque
+      //   1 flat colour, opaque            5 texture + transparent + alpha
+      //   2 + transparent                  6 the real panel material (adds the grade)
+      //   3 + opacityNode
+      // and, once the ladder showed the break is at 1 -- MeshBasicNodeMaterial itself, with
+      // no texture and no transparency -- the same flat colour on other base classes:
+      //   7 normal + colorNode   8 lambert   9 phong   10 standard   11 matcap
+      // A rung with ZERO errors that still draws is the base the panels should be built on.
+      if (!window._panelVariant) window._panelVariant = (n, meshOnly) => {
+        const vs = NodeMaterials._panelVariants;
+        if (!vs) { console.log('[panelVariant] variants not built'); return null; }
+        const i = Math.max(0, Math.min(vs.length - 1, n | 0));
+        const mat = vs[i];
+        let applied = 0;
+        for (const p of HTMLVRPanel._live) {
+          if (!p.mesh) continue;
+          if (!p.mesh.userData._origVariantMat) p.mesh.userData._origVariantMat = p.mesh.material;
+          if (meshOnly && p.mesh !== meshOnly) continue;
+          if (mat.userData && mat.userData.setMap && p._texture) mat.userData.setMap(p._texture);
+          p.mesh.material = mat;
+          // VISIBLE, which _panelMat did and this did not -- so the first ladder run swapped
+          // materials on eight hidden panels and measured the rest of the scene instead
+          // (drawCalls=47 on every rung, the whole scene, with no panel on screen at all).
+          p.mesh.visible = true;
+          applied++;
+        }
+        const errBefore = window.__uboErrCount;
+        console.log('[panelVariant] ' + i + ' applied to ' + applied
+          + ' panels — watch the panel and the error count'
+          + (errBefore === undefined ? ' (run _traceUBO() first to count errors)' : ''));
+        return i;
+      };
+      if (!window._panelVariantRestore) window._panelVariantRestore = () => {
+        for (const p of HTMLVRPanel._live) {
+          if (p.mesh && p.mesh.userData._origVariantMat) {
+            p.mesh.material = p.mesh.userData._origVariantMat;
+            p.mesh.userData._origVariantMat = null;
+          }
+        }
+      };
+      // And the same walk, automated: step every variant, count errors on each, print a table.
+      if (!window._panelLadder) window._panelLadder = async () => {
+        if (window.__uboErrCount === undefined) { console.log('[panelLadder] run _traceUBO() first'); return null; }
+        const vs = NodeMaterials._panelVariants || [];
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // AN EMPTY FRAME PLUS ONE PANEL. The first run measured the whole scene -- 47 draw
+        // calls and ~120 ambient errors on every rung -- which cannot show a panel-sized
+        // signal. Level 1 empties the frame; _minimalForceVisible holds the one panel under
+        // test through the per-frame sweep.
+        const target = [...HTMLVRPanel._live].find((p) => p.mesh && p._texture) || [...HTMLVRPanel._live][0];
+        if (!target || !target.mesh) { console.log('[panelLadder] no panel to test'); return null; }
+        const restoreLevel = window._vrMinimalTest;
+        window._vrMinimalTest = 1;
+        this._minimalForceVisible = target.mesh;
+        await sleep(600);
+        const idle = await (async () => {
+          const b = window.__uboErrCount; await sleep(400); return window.__uboErrCount - b;
+        })();
+        console.log('[panelLadder] empty frame + no panel material change -> ' + idle
+          + ' errors, drawCalls=' + (this._renderer.info && this._renderer.info.render.drawCalls)
+          + ' (panel: ' + target.constructor.name + ')');
+        const rows = [];
+        for (let i = 0; i < vs.length; i++) {
+          window._panelVariant(i, target.mesh);
+          await sleep(250);
+          const before = window.__uboErrCount;
+          await sleep(400);
+          const errs = window.__uboErrCount - before;
+          const dc = this._renderer.info && this._renderer.info.render.drawCalls;
+          rows.push({ variant: i, errors: errs, drawCalls: dc });
+          console.log('[panelLadder] variant ' + i + ' -> ' + errs + ' errors, drawCalls=' + dc);
+        }
+        console.log('[panelLadder] ' + JSON.stringify(rows));
+        this._minimalForceVisible = null;
+        window._vrMinimalTest = restoreLevel || 0;
+        window._panelVariantRestore();
+        return rows;
+      };
+
+      // window._panelMat('normal'|'restore') — the sharpest cut left.
+      //
+      // With 91 objects hidden and the panel alone in the frame, still nothing. So no other
+      // draw is poisoning it: the panel's own draw fails. And the failing set now looks like
+      // a material CLASS rather than a texture:
+      //   MeshBasicNodeMaterial + canvas map   (panels)      invisible
+      //   MeshBasicNodeMaterial, flat magenta, no map        invisible  (_panelSolid)
+      //   MeshBasicNodeMaterial + matcap image (matcap mat)  invisible  (_meshMat matcap)
+      //   MeshNormalNodeMaterial                             DRAWS
+      //   GLTF controller materials                          DRAW
+      // The awkward exception is that our PBR material is ALSO a MeshBasicNodeMaterial and it
+      // draws -- so if the normal material makes the panel appear, the split is real and the
+      // PBR one differs by having a colorNode that replaces the whole basic pipeline.
+      if (!window._panelMat) {
+        window._panelMat = (which) => {
+          const mat = String(which) === 'restore' ? null : NodeMaterials.get(2); // NORMAL
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh) continue;
+            if (mat) {
+              if (!p.mesh.userData._origMat2) p.mesh.userData._origMat2 = p.mesh.material;
+              p.mesh.material = mat;
+              p.mesh.visible = true;
+              n++;
+            } else if (p.mesh.userData._origMat2) {
+              p.mesh.material = p.mesh.userData._origMat2;
+              p.mesh.userData._origMat2 = null;
+            }
+          }
+          console.log('[panelMat] ' + which + ' -> ' + n);
+          return n;
+        };
+      }
+
+      // window._soloPanels() — hide EVERYTHING except the panels. _unsolo() restores.
+      //
+      // Where the evidence now stands, all of it from inside one session: the sculpt is not
+      // the cause (_hideMeshes left the menus gone), and the matcap material -- the very same
+      // object that draws correctly in a matcap session -- DISAPPEARS when assigned here. So
+      // a pbr session comes up in a state where some materials cannot draw at all, and the
+      // panels are in that set while MeshNormalNodeMaterial and the controllers are not.
+      //
+      // Two possibilities left, and they need opposite fixes:
+      //   panels appear alone -> some OTHER draw in the frame poisons them, and the fix is to
+      //                          find which (the UBO error is that draw failing).
+      //   still nothing       -> the panel pipeline itself cannot be built in this session,
+      //                          and warming it on the desktop did not produce the variant XR
+      //                          asks for.
+      if (!window._soloPanels) {
+        window._soloPanels = () => {
+          const panelMeshes = new Set();
+          for (const p of HTMLVRPanel._live) if (p.mesh) panelMeshes.add(p.mesh);
+          this._soloSaved = [];
+          this._scene.traverse((o) => {
+            if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) return;
+            let isPanel = false;
+            for (let q = o; q; q = q.parent) if (panelMeshes.has(q)) { isPanel = true; break; }
+            if (isPanel) return;
+            this._soloSaved.push([o, o.visible]);
+            o.visible = false;
+          });
+          // ...and make one panel visible, so there is something to look for.
+          const first = [...panelMeshes][0];
+          if (first) first.visible = true;
+          console.log('[soloPanels] hid ' + this._soloSaved.length + ' — is a panel there now?');
+          return this._soloSaved.length;
+        };
+        window._unsolo = () => {
+          for (const [o, v] of (this._soloSaved || [])) o.visible = v;
+          this._soloSaved = [];
+          console.log('[soloPanels] restored');
+        };
+      }
+
+      // window._meshMat('matcap'|'pbr'|'normal') — swap ONLY the sculpt's material, live.
+      // window._hideMeshes() / _showMeshes()      — take the sculpt out of the frame entirely.
+      //
+      // matt's premise, and the only fact that has held up all the way through: it works in
+      // matcap and fails in pbr. Everything else has been my theorising. So change exactly
+      // that one thing inside ONE session -- same panels, same session, same framebuffer, same
+      // controllers -- and watch the menus and the UBO errors.
+      //   menus return on 'matcap'  -> the sculpt's MATERIAL takes the frame down, and the
+      //                                panels are collateral. The UBO error is the mechanism.
+      //   menus stay gone           -> the mesh material is not the variable either, and what
+      //                                differs between the two sessions is something else the
+      //                                shader id switches on.
+      // Every material here was built at startup and warmed, so nothing is constructed inside
+      // the session -- which is the one thing this renderer must not do.
+      if (!window._meshMat) {
+        window._meshMat = (name) => {
+          const ids = { pbr: 0, flat: 1, normal: 2, matcap: 5 };
+          const id = ids[String(name).toLowerCase()];
+          if (id === undefined) { console.log('[meshMat] use pbr|flat|normal|matcap'); return 0; }
+          const mat = NodeMaterials.get(id);
+          if (!mat) { console.log('[meshMat] no material for ' + name); return 0; }
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.material = mat; n++; }
+          }
+          console.log('[meshMat] ' + name + ' -> ' + n + ' meshes');
+          return n;
+        };
+        window._hideMeshes = () => {
+          let n = 0;
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) { tm.visible = false; n++; }
+          }
+          console.log('[hideMeshes] hid ' + n + ' — menus back?');
+          return n;
+        };
+        window._showMeshes = () => {
+          for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+            const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+            if (tm) tm.visible = true;
+          }
+        };
+      }
+
+      // window._panelSolid() — is the panel invisible because its TEXTURE never arrived?
+      //
+      // A quad drawn with a texture that failed to upload is fully transparent, which looks
+      // exactly like a quad that was never drawn -- and _panelDrawDelta already proved it IS
+      // drawn. Swapping in a flat magenta material (pre-built at startup, so nothing is
+      // constructed inside the session) tells the two apart:
+      //   magenta rectangle appears -> the geometry and the framebuffer are fine, the TEXTURE
+      //                                is the problem
+      //   still nothing             -> the draw lands somewhere the compositor never shows
+      if (!window._panelSolid) {
+        window._panelSolid = () => {
+          const solid = NodeMaterials._solid;
+          if (!solid) { console.log('[panelSolid] no solid material'); return 0; }
+          let n = 0;
+          for (const p of HTMLVRPanel._live) {
+            if (!p.mesh || !p.mesh.visible) continue;
+            if (!p.mesh.userData._origMat) p.mesh.userData._origMat = p.mesh.material;
+            p.mesh.material = solid;
+            n++;
+          }
+          console.log('[panelSolid] swapped ' + n + ' — look where the menu should be');
+          return n;
+        };
+        window._panelRestoreMat = () => {
+          for (const p of HTMLVRPanel._live) {
+            if (p.mesh && p.mesh.userData._origMat) {
+              p.mesh.material = p.mesh.userData._origMat;
+              p.mesh.userData._origMat = null;
+            }
+          }
+          console.log('[panelSolid] restored');
+        };
+      }
+
+      // window._panelDrawDelta() — how many draw calls does the visible panel ACTUALLY cost?
+      //
+      // Comparing total draws between two sessions was confounded: a controller model failed
+      // to load in one of them (XRControllerModelFactory, 'assetUrl' of null), and a
+      // controller model is several meshes and a few thousand triangles -- easily the whole
+      // 27-vs-19 gap. So measure the panel against ITSELF inside one session: read the count,
+      // hide it, read again, restore. A delta of 0 means the renderer never draws it even
+      // though it is visible; a non-zero delta means it IS drawn and the pixels go nowhere.
+      if (!window._panelDrawDelta) window._panelDrawDelta = async () => {
+        const info = () => this._renderer.info.render.drawCalls;
+        const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+        const shown = [];
+        for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.visible) shown.push(p.mesh);
+        if (!shown.length) { console.log('[panelDrawDelta] no visible panel'); return null; }
+        await frame(); await frame();
+        const withPanel = info();
+        for (const m of shown) m.visible = false;
+        await frame(); await frame();
+        const without = info();
+        for (const m of shown) m.visible = true;
+        await frame();
+        const out = { withPanel, without, delta: withPanel - without, panels: shown.length };
+        console.log('[panelDrawDelta] ' + JSON.stringify(out));
+        return out;
+      };
+
+      if (!window._drawInfo) window._drawInfo = () => {
+        const r = this._renderer && this._renderer.info && this._renderer.info.render;
+        let vis = 0, panels = 0;
+        try {
+          for (const p of HTMLVRPanel._live) { if (p.mesh) { panels++; if (p.mesh.visible) vis++; } }
+        } catch (e) { /* registry is a convenience */ }
+        const out = {
+          drawCalls: r && r.drawCalls, triangles: r && r.triangles, frame: r && r.frame,
+          panelsVisible: vis, panelsTotal: panels,
+          xr: !!(this._renderer.xr && this._renderer.xr.isPresenting),
+          shader: this._meshes && this._meshes[0] && this._meshes[0].getShaderType
+            ? this._meshes[0].getShaderType() : null,
+        };
+        console.log('[drawInfo] ' + JSON.stringify(out));
+        return out;
+      };
+      // The rig half of the warm, callable on its own -- this is what runs at session start, and
+      // being able to fire it from the console is what makes it an A/B rather than a reload.
+
+      if (this._isNodeRenderer && !window._warmNow) window._warmNow = () => {
+        const pm = [];
+        for (const p of HTMLVRPanel._live) if (p.mesh && p.mesh.material) pm.push(p.mesh.material);
+        return NodeMaterials.warm(this._renderer, this._camera.getThreeCamera(), pm);
+      };
+      // WHAT THE SCULPT IS ACTUALLY DRAWN WITH. A material that is never fed and a material
+      // that is never used look identical from the outside (a black mesh), so the probe has
+      // to answer both halves.
+      if (!window._meshMatProbe) window._meshMatProbe = () => {
+        const r = [];
+        (this.getMeshes ? this.getMeshes() : []).forEach((mesh) => {
+          const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+          const mt = tm && tm.material;
+          r.push({
+            shaderId: mesh.getShaderType ? mesh.getShaderType() : null,
+            matType: mt && mt.type,
+            isNode: !!(mt && mt.isNodeMaterial),
+            hasColorNode: !!(mt && mt.colorNode),
+            visible: tm && tm.visible,
+            hasColorAttr: !!(tm && tm.geometry && tm.geometry.getAttribute('color')),
+            hasMaterialAttr: !!(tm && tm.geometry && tm.geometry.getAttribute('aMaterial')),
+          });
+        });
+        console.log('[meshMatProbe] ' + JSON.stringify(r));
+        return r;
+      };
+
       
+      // THE FLAT CAMERA, for both renderers. WebGPURenderer substitutes xr.getCamera() itself
+      // exactly as WebGLRenderer does -- the earlier note here claimed otherwise and was
+      // wrong; what it had actually found was this renderer running with xr.enabled unset.
+      // Substituting by hand is worse than unnecessary: updateCamera() sits behind the same
+      // flag, so a hand-passed ArrayCamera arrives without the frame's view matrices.
+      const _renderCam = this._camera.getThreeCamera();
+
       let currentTarget = null;
       if (!isVR) {
         // Force Three.js to forget its cached WebGL state. This prevents 'uniformMatrix4fv: location is not from the associated program'
         // errors caused by legacy raw WebGL passes binding their own shaders just before Three.js renders.
         // CRITICAL FIX: We must save and restore the current Render Target, otherwise resetState() unbinds the WebXR baseLayer!
         currentTarget = this._renderer.getRenderTarget();
-        this._renderer.resetState();
+        // OPTIONAL-CHAINED FOR THE WEBGPU PATH. resetState() is a WebGLRenderer method and
+        // WebGPURenderer has no equivalent: it is how three is told to forget its cached GL
+        // state after the legacy raw-GL passes bind their own shaders behind its back. Under
+        // the node renderer those passes are what the port is removing, so a no-op here is the
+        // right shape -- and if state corruption does appear on that path, it is evidence
+        // about the raw-GL layer rather than a bug in this line.
+        this._renderer.resetState?.();
         this._renderer.setRenderTarget(currentTarget);
       }
       
@@ -2261,6 +3829,11 @@ class Scene {
       // Skeleton visuals are rebuilt from the joints' live model-space matrices rather
       // than parented to them, so posing, gizmo drags, undo and animation playback all
       // keep the bones correct without any of those paths knowing bones exist.
+      // SECTIONED FOR xrPerf(). `draw` used to cover this whole block, which made it useless
+      // for the one question worth asking in a headset -- is the frame going on drawing, or on
+      // CPU work that has nothing to do with drawing. On a 40-joint rig the answer was the
+      // latter, and `draw` could not say so.
+      this._mark('rig-visuals');
       Skeleton.updateVisuals(this);
 
       // The motion trail, when it is switched on. It fingerprints the keys and the pins and
@@ -2300,10 +3873,135 @@ class Scene {
         if (_gT && _gT.visible) _gT.visible = false;
       }
 
-      // Three.js clears depth on its own, so we render over the top
-      this._renderer.render(this._scene, this._camera.getThreeCamera());
+      // THE DESKTOP TRANSFORM GIZMO IS DRIVEN FROM HERE ON THE NODE PATH (#84).
+      //
+      // Transform.postRender() is where it used to be updated, and postRender is part of the
+      // legacy raw-GL tail below -- which does not run on this renderer. So nothing advanced
+      // the gizmo's matrices: measured, zero calls per frame, every handle left at the scale
+      // it was built with. That is the whole of "the desktop gizmo is a tiny speck at the
+      // centre of the mesh", and it was never a sizing bug.
+      if (!isVR && this._sculptManager) {
+        const _dt = this._sculptManager.getCurrentTool?.();
+        const _dg = _dt && _dt._gizmo;
+        // Unconditional: the gizmo decides its own visibility inside update(), and gating the
+        // call on it means that once hidden it can never run again to un-hide itself.
+        if (_dg && _dg._desktop && _dg._group) _dg.update(this.getCamera());
+      }
 
-      if (!isVR) {
+      // THE RAW-ShaderMaterial SWEEP, HERE AND NOT EARLIER.
+      //
+      // It used to run near the top of this block, which is before MotionTrail.update() and
+      // SkinPreview.update() -- and those CREATE objects: LineSegments2 on three's
+      // LineMaterial, which is a ShaderMaterial subclass this renderer cannot draw. Anything
+      // they added during the frame was therefore never swept, and went straight into the
+      // render as "THREE.NodeMaterial: Material LineMaterial is not compatible".
+      //
+      // Immediately before the draw is the only placement that can see everything the frame
+      // built.
+      this._mark('mat-sweep');
+      if (this._isNodeRenderer && this._scene) {
+        this._scene.traverse((o) => {
+          const m = o.material;
+          if (!m || Array.isArray(m)) {
+            if (Array.isArray(m) && m.some(x => x && x.isShaderMaterial && !x.isNodeMaterial)) o.visible = false;
+            return;
+          }
+          // A HIDDEN OBJECT DOES NOT NEED A NODE MATERIAL, because it never draws.
+          //
+          // Converting one costs a node graph and, the first time it IS drawn, a pipeline -- and
+          // the rig creates six pin meshes per joint whether or not that joint is pinned. On a
+          // six-joint rig that is 36 of the 83 converted materials, all of them invisible; on a
+          // full-body rig it is most of what the first draw pays for.
+          //
+          // Safe because this sweep runs every frame and runs AFTER Skeleton.updateVisuals, so it
+          // always sees the current visibility: an object that becomes visible is converted on
+          // the same frame it turns on, before the render. That ordering is the whole reason this
+          // is a deferral and not a hole -- a stock MeshBasicMaterial reaching the renderer would
+          // become MeshBasicNodeMaterial, which is undrawable in XR and poisons the frame.
+          if (o.visible === false && !o.userData._stockMat) return;
+          // ALREADY CONVERTED: push its `.color`/`.opacity` into the uniforms that actually
+          // draw it. Writes to those properties are how the rest of the app changes a colour,
+          // and on the stand-in they reach nothing on their own. See NodeMaterials.syncConverted.
+          if (m.userData && m.userData.sync) { NodeMaterials.syncConverted(m); return; }
+          // CONVERTED, NOT HIDDEN. A stock MeshBasicMaterial becomes a MeshBasicNodeMaterial,
+          // the one class this backend cannot draw in a session, and one of them anywhere in
+          // the scene poisons the frame. Converting here catches every object, including the
+          // ones nobody has thought to port.
+          if ((m.isMeshBasicMaterial || m.isMeshStandardMaterial) && !m.isNodeMaterial) {
+            const conv = NodeMaterials.convertBasic(m);
+            if (conv) {
+              if (window._boneTrace) this._boneTraceConv(o, m, conv);
+              o.userData._stockMat = m; o.material = conv; return;
+            }
+          }
+          // Anything still on a raw ShaderMaterial cannot be drawn at all, so it is hidden
+          // rather than allowed to throw once per object per frame.
+          if (m.isShaderMaterial && !m.isNodeMaterial) o.visible = false;
+        });
+      }
+
+      // THE "COMPILING SHADERS" PLATE, placed before the draw that might show it. Only on the
+      // node renderer: the legacy path compiles on a program cache keyed by shader structure and
+      // does not stall like this. See gui/ShaderBusy.js for what it can and cannot cover.
+      if (this._isNodeRenderer) {
+        // THE STARTUP WARM, kicked off from the frame loop rather than from init: it needs the
+        // VR panels to exist, and they are built asynchronously a second or so in. One frame of
+        // the app having drawn itself is the simplest signal that everything is up.
+        // AFTER THE LIGHT POOL, not just after the panels. The pipeline key is
+        // _nodes.getCacheKey(scene, lightsNode) -- so anything warmed before the pool exists is
+        // keyed to a scene with different lights and gets compiled again the moment the pool
+        // lands. That is the x2 on every rig batch in matt's report: the same material, the same
+        // version, the same camera, two pipelines, one on each side of `[lights] pool built`.
+        // THE COVER GOES UP ON THE FIRST FRAME, before anything has been shown -- matt would
+        // rather wait on a loading screen than watch the scene stutter through its own warm-up.
+        // Only outside a session: in one, the compositor owns what the user sees.
+        if (!this._renderer.xr.isPresenting && getOptionsURL().warm !== false) BootOverlay.show();
+        // NO WARM PASS. See warmEverything, kept only as the note that explains its own removal.
+        // The cover is lifted once the app has drawn a few frames and nothing new has been built
+        // for a while -- which is the same condition as before, minus the warm it used to wait
+        // for. Objects go on appearing through the boot (the env's PMREM, the panels' first
+        // paint) and each compiles when first drawn, so a count is a manifest nobody maintains.
+        if (this._framesDrawn === 3) BootOverlay.setTotal(this._warmableObjects().length);
+        if (this._framesDrawn > 3) {
+          BootOverlay.setProgress(this._renderer._pipelines
+            ? this._renderer._pipelines.caches.size : 0);
+        }
+        BootOverlay.tick(this._renderer, this._framesDrawn > 3);
+        this._framesDrawn = (this._framesDrawn || 0) + 1;
+        // No "compiling shaders" plate (ShaderBusy) anywhere: it was a debug aid, matt never wants it seen.
+        this._tickSteadyState();
+      }
+
+      // Three.js clears depth on its own, so we render over the top
+      this._mark('gl-render');
+      if (this._directPipeline) this._directPipeline.render(this._scene, _renderCam);
+      else this._renderer.render(this._scene, _renderCam);
+      this._mark(null);
+      if (this._btAt) {
+        this._boneTraceFrame(performance.now() - this._btAt);
+        if (this._xrPerf) this._xrPerf.frame = null;
+      }
+
+      // THE LEGACY RAW-GL TAIL DOES NOT RUN ON THE NODE PATH.
+      //
+      // Everything below reaches past three and drives the context directly -- unbinding the
+      // VAO, rebinding the framebuffer, toggling DEPTH_TEST, then the sculpt manager's own
+      // raw passes for the gizmo and cursors. WebGLRenderer coped because resetState() told
+      // it its state cache was stale afterwards. WebGPURenderer has no resetState, so the
+      // optional chaining below silently skips it -- and its backend CACHES state
+      // (setDepthTest only calls gl.enable when its cached value changes), so after a raw
+      // pass leaves DEPTH_TEST off, three believes it is still on and never re-enables it.
+      //
+      // The result is a frame drawn with no depth test at all: measured, gl.DEPTH_TEST came
+      // back false with a 24-bit depth buffer present and depthMask true, and two opaque
+      // meshes then resolved by submission order. matt: "2 objects aren't proper depth tested
+      // against each other" -- the cube is 28 units inside a 34-unit sphere and was drawn in
+      // front of it.
+      //
+      // Known cost: the desktop gizmo and legacy cursor overlays are raw-GL passes and will
+      // not draw under ?renderer=webgpu until they are ported. A missing gizmo is visible and
+      // fixable; a silently broken depth buffer is neither.
+      if (!isVR && !this._isNodeRenderer) {
         // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
         // Three.js leaves the sculpt mesh's VAO bound after rendering. 
         // The legacy raw WebGL passes (Gizmo, Cursors) that run during postRender() do NOT use VAOs.
@@ -2319,13 +4017,20 @@ class Scene {
         
         // Also reset Three.js state tracker so it knows we messed with WebGL underneath it
         const currentTargetPost = this._renderer.getRenderTarget();
-        this._renderer.resetState();
+        this._renderer.resetState?.();   // see the note above — absent on WebGPURenderer
         this._renderer.setRenderTarget(currentTargetPost);
 
         // Draw sculpting gizmo stuffs over Three.js render
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.enable(gl.DEPTH_TEST);
         if (this._sculptManager) this._sculptManager.postRender();
+      }
+
+      // THE OTHER HALF OF THE ABOVE. The node renderer skips the raw-GL postRender wholesale,
+      // which took the brush radius circle with it -- it is three.js geometry and never needed
+      // GL at all. See SculptManager.postRenderNode.
+      if (!isVR && this._isNodeRenderer && this._sculptManager) {
+        this._sculptManager.postRenderNode();
       }
       
       if (isVR) {
@@ -2352,7 +4057,14 @@ class Scene {
             // Per-eye projection for realistic FOV extraction (left eye if available)
             const eyeCam = xrArrayCam.cameras?.[0] ?? xrArrayCam;
             this._spectatorLeftEyeProj.copy(eyeCam.projectionMatrix);
+            // Left eye's rectangle in the XR framebuffer, for the blit mirror.
+            const vp = eyeCam.viewport;
+            if (vp) this._spectatorEyeVP = [vp.x, vp.y, vp.z, vp.w];
+            if (this._spectatorViewMode === 4) this._updateDeskCam(xrArrayCam);
           }
+          // The desktop canvas during the session. On the node renderer nothing here draws to
+          // the canvas through three: Mirror is a raw blit of the left eye, Desktop/Spectator
+          // render offscreen and are blitted (see _renderSpectatorCanvas). Blank by default.
           this._renderSpectatorCanvas();
           // ─────────────────────────────────────────────────────────────────────
 
@@ -2393,10 +4105,459 @@ class Scene {
     }
   }
 
-  initWebGL() {
+  // ASYNC because WebGPURenderer demands it: its render() THROWS if the backend has not been
+  // initialised, so there is no fire-and-forget version of this.
+  async initWebGL() {
     var canvas = document.getElementById('canvas');
-    
-    // Initialize Three.js Renderer
+
+    // THE MIGRATION FLAG (roadmap #2), NOW DEFAULTED ON. The port is all-or-nothing at the
+    // swap, because WebGPURenderer cannot render a THREE.ShaderMaterial and every one of our
+    // shaders is one. A flag lets the two renderers live side by side so master stays
+    // shippable and the new path can be tested on device shader by shader, instead of the app
+    // being broken for the length of the port. As of 2026-09-29 the node renderer is what you
+    // get by default and `?renderer=webgl` is the way BACK to the legacy one — so anything
+    // below that says "under ?renderer=webgpu" now means "normally".
+    //
+    // forceWebGL is not a choice: in three 0.183.2 the WebGPU backend THROWS on entering XR
+    // ("XR is currently not supported with a WebGPU backend"). The spike measured this path at
+    // 72fps to ~1M triangles on a GalaxyXR — see spike/tsl/FINDINGS.md.
+    // DYNAMICALLY IMPORTED, and that is not an optimisation. `three/webgpu` is a SEPARATE
+    // BUILD carrying its own copy of the core -- it exports Mesh, Scene and ShaderMaterial as
+    // well as WebGPURenderer, but NOT WebGLRenderer -- so there is no single copy of three
+    // that can provide both renderers. A flagged parallel path therefore means two copies of
+    // three in memory for the duration of the migration.
+    //
+    // Survivable, because three duck-types on `.isMesh` / `.isBufferGeometry` rather than
+    // instanceof, so objects built by one copy are recognised by the other. The lazy import
+    // used to mean the default path never paid for it; now that webgpu IS the default that
+    // reads the other way round — it is `?renderer=webgl` that skips the second copy of three.
+    const useWebGPU = getOptionsURL().renderer === 'webgpu';
+    if (useWebGPU) {
+      const [WGPU, TSL] = await Promise.all([import('three/webgpu'), import('three/tsl')]);
+      this._renderer = new WGPU.WebGPURenderer({ canvas, antialias: false, forceWebGL: true });
+      // VISION PRO RENDERS THROUGH DirectRenderPipeline, EVERYTHING ELSE DOES NOT.
+      //
+      // three renders the scene to an intermediate target and blits it to the XR layer whenever
+      // the output needs tone mapping OR a colour-space conversion -- `useToneMapping ||
+      // useColorSpace`, and an sRGB output against a linear working space trips the second on
+      // its own, so turning tone mapping off changes nothing. visionOS mishandles that blit:
+      // stereo comes out warped, each object visible in only one eye depending on where it sits.
+      // Reproduced with EIGHTY LINES OF RAW WebGL2 and no library at all -- tokeru.com/xrblit --
+      // so it is a platform bug, not three's and not ours.
+      //
+      // DirectRenderPipeline (r186+) applies the output node INSIDE the material and draws
+      // straight into the layer, so there is no blit to mishandle and colour management still
+      // works. Verified on a Vision Pro and on a GalaxyXR.
+      //
+      // GATED, AND THE GATE IS LOAD-BEARING -- NOT A PRECAUTION.
+      //
+      // MEASURED 2026-09-23: forcing this on with ?direct=1 BREAKS THE GALAXYXR OUTRIGHT. Black
+      // in VR, empty in AR, no controllers and no default mesh. ?direct=0 restores it. So this
+      // is not "safe everywhere, enabled where needed" -- it is actively fatal on the device
+      // that works today, and must never be the default.
+      //
+      // AND THE MINIMAL HARNESS DOES NOT PREDICT THAT. xrmin186.html?direct=1 -- seven opaque
+      // cubes, one material -- renders correctly on the same GalaxyXR. The app does not. Which
+      // is three's caveat coming true: DirectRenderPipeline "changes blending and is not
+      // compatible with materials that sample the framebuffer", and in this app every mesh and
+      // every VR panel is transparent with renderOrder as the only layering lever. A harness
+      // that passes proves the pipeline runs, not that a real scene survives it.
+      //
+      // KEYED ON CAPABILITY AND BROWSER, NOT A MODEL STRING: visionOS Safari is the only WebKit
+      // that exposes navigator.xr at all -- desktop Safari has none -- so this is specific
+      // without naming a device that will be renamed.
+      //
+      // ?direct=1 / ?direct=0 forced it either way while that was being established. The
+      // question is answered -- it is fatal on the GalaxyXR and required on visionOS -- so the
+      // switches are gone and the capability test is the whole of the decision.
+      this._directPipeline = null;
+      {
+        const ua = navigator.userAgent;
+        // NOT KEYED ON THE UA'S PLATFORM TOKEN. A Vision Pro reported "Macintosh" until a visionOS
+        // update made Safari 27 report "iPad; CPU iPhone OS 18_7", and the old test silently went
+        // false -- the warped stereo came back with no other symptom. WebKit with navigator.xr is
+        // the whole signal: iPadOS/macOS Safari expose no WebXR, and every Chromium headset
+        // (Quest, GalaxyXR) says Chrome in its UA.
+        const isVisionOS = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Android/i.test(ua) && ('xr' in navigator);
+        if (isVisionOS && typeof WGPU.DirectRenderPipeline === 'function') {
+          this._directPipeline = new WGPU.DirectRenderPipeline(this._renderer);
+        }
+        console.log('[renderer] DirectRenderPipeline '
+          + (this._directPipeline ? 'ON' : 'off') + ' (visionOS=' + isVisionOS + ')');
+      }
+      await this._renderer.init();
+      // TWO three 0.183.2 BUGS THAT ONLY BITE UNDER AN ArrayCamera, i.e. in a session: uniform
+      // block binding points that collide between render objects, and a `cameraPosition` that
+      // is always zero and throws while building. Between them they are the whole of "a lit
+      // material does not draw in XR". Read ThreeXRPatches.js; reproduce with xrarray.html.
+      // MUST be before any material compiles -- binding points are baked in at link time.
+      applyXRBackendPatches(this._renderer, WGPU, TSL);
+      // THE SAME SETUP THE WebGLRenderer GETS, because this renderer is not self-configuring
+      // and the omission is silent. `xr.enabled` in particular is not a convenience flag: it
+      // is what gates the per-eye path, in three.webgpu.js:
+      //     if ( xr.enabled === true && xr.isPresenting === true ) {
+      //       if ( xr.cameraAutoUpdate === true ) xr.updateCamera( camera );
+      //       camera = xr.getCamera();
+      //     }
+      // With it false a session still starts, setSession still resolves and frames still
+      // present -- so everything looks alive -- but render() takes the ordinary mono path and
+      // paints ONE view across the whole XR framebuffer. matt: "as if a single view is just
+      // being spread across the 2 displays". Handing render() the ArrayCamera by hand does not
+      // rescue it either, because updateCamera() is behind the same gate, so the sub-cameras
+      // are never given the frame's view matrices: "each camera sharing a view in the centre
+      // of their displays". Two symptoms, one missing line.
+      this._renderer.setPixelRatio(window.devicePixelRatio);
+      this._renderer.setSize(window.innerWidth, window.innerHeight);
+      this._renderer.xr.enabled = true;
+      // ?xrlayers=0 -- PUT THE SESSION BACK ON THE CLASSIC XRWebGLLayer FRAMEBUFFER.
+      //
+      // With XRProjectionLayer (three's default when the browser supports it) the XR render
+      // target's colour/depth are EXTERNAL textures handed over by the compositor each frame,
+      // and `_setFramebuffer` re-attaches them with framebufferTexture2D. That is fine as long
+      // as nothing else ever binds a different target mid-frame -- but a shadow map does
+      // exactly that, and restoring the XR target afterwards re-attaches images whose handles
+      // are no longer valid. matt's session, with one shadow pulse and no shadow drawn:
+      //     GL_INVALID_OPERATION: invalid mailbox name
+      //     GL_INVALID_OPERATION: texture is not a shared image
+      //     GL_INVALID_OPERATION: glFramebufferTexture2D: No Texture is bound to the target
+      // "mailbox" and "shared image" are Chrome's names for exactly those compositor images.
+      //
+      // On the XRWebGLLayer path `_hasExternalTextures` stays false and restoring the XR target
+      // is a single bindFramebuffer of a framebuffer we own, which a shadow pass cannot spoil.
+      // _supportsLayers is private and computed once, but it is an ordinary property.
+      // The trade is multiview and layer-based foveation; neither is in use on this path.
+      if (/[?&]xrlayers=0/.test(window.location.search)) {
+        this._renderer.xr._supportsLayers = false;
+        console.log('[xr] XRProjectionLayer disabled — classic XRWebGLLayer framebuffer');
+      }
+      const _fbsGpu = Number.isFinite(window._fbScale)
+        ? window._fbScale
+        : (Number.isFinite(getOptionsURL()['fbscale']) ? getOptionsURL()['fbscale'] : 1.0);
+      this._renderer.xr.setFramebufferScaleFactor(Math.max(0.3, Math.min(2.0, _fbsGpu)));
+      this._renderer.toneMapping = WGPU.LinearToneMapping;
+      this._renderer.toneMappingExposure = 1.0;
+      // SHADOWS. Real lights are mirrored onto our light entities (see _syncThreeLights), so
+      // there is finally something that owns a shadow map. Soft by default: PCF is the cheap
+      // one, and a hard edge on a sculpt reads as an artefact rather than a shadow.
+      this._renderer.shadowMap.enabled = true;
+      // PCF, NOT PCF_SOFT, BECAUSE SOFT IGNORES THE RADIUS.
+      //
+      // Both are in three's node path and only one of them reads shadow.radius:
+      //   PCFShadowFilter      radiusScaled = radius * texelSize.x, 5-tap Vogel disk
+      //   PCFSoftShadowFilter  a fixed texel kernel with bilinear weights, radius unused
+      // So with PCF_SOFT the Softness slider was wired to a value nothing read. matt: "blur
+      // doesn't work at all". SceneShadow.js already picks PCFShadowMap for exactly this
+      // reason and its harness guards the choice with a `pcfsoft` injection; this path simply
+      // disagreed with it.
+      this._renderer.shadowMap.type = WGPU.PCFShadowMap;
+      // The shadow-update mode is read here as well as at the session boundary, so ?xrshadows=
+      // means the same thing on the desktop as it does in a session.
+      const _shq0 = /[?&]xrshadows=(\w+)/.exec(window.location.search);
+      this._xrShadowAlways = !!(_shq0 && _shq0[1] === 'always');
+      const _tapq = /[?&]shadowtaps=(\d+)/.exec(window.location.search);
+      this._shadowTaps = _tapq ? parseInt(_tapq[1], 10) : 16;
+      this._TSL_GPU = TSL;     // the custom shadow filter is built from TSL, not from WGPU
+      this._THREE_GPU = WGPU;   // node materials live here, not on the core THREE
+      this._isNodeRenderer = true;
+      // ONE LINE THAT ANSWERS "why are there no shadows / why is the lighting binary".
+      // Console, not a screen overlay, because that is what can be read off the headset over
+      // remote debugging. window.xrLightReport() -- safe to call any time, in or out of VR.
+      // A TOGGLE, because the boundary read of window._xrShadows depends on setting the flag
+      // before you press Enter VR, and getting that wrong looks identical to the bug it was
+      // meant to test. This re-applies castShadow across the pool and rebuilds, so shadows can
+      // be turned on and off DURING a session. It is a debug instrument: the rebuild is the
+      // very recompile the fixed pool exists to avoid, so expect a hitch and do not ship a UI
+      // control onto it.
+      window.xrSetShadows = (on) => {
+        window._xrShadows = !!on;
+        const pool = this._lightPool;
+        if (!pool) { console.warn('[xrSetShadows] no light pool yet'); return false; }
+        for (const t of [0, 1, 2]) for (const L of pool[t]) L.castShadow = !!on;
+        this._renderer.shadowMap.enabled = !!on;
+        let n = 0;
+        this._scene.traverse((o) => {
+          const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+          for (const m of mats) if (m && m.isMaterial) { m.needsUpdate = true; n++; }
+        });
+        for (const m of (NodeMaterials.all ? NodeMaterials.all() : [])) if (m) { m.needsUpdate = true; n++; }
+        console.log('[xrSetShadows] ' + (on ? 'on' : 'off') + ', rebuilt ' + n + ' materials');
+        return true;
+      };
+      // Pulse every in-use shadow map once. In ?xrshadows=once mode this is the only thing
+      // that renders them, so it is both the refresh button and the diagnostic trigger.
+      // WHICH GL CALL FAILS, AND WHO MADE IT. The mailbox / shared-image errors arrive with no
+      // stack, so they say nothing about which code path produced them. These five entry points
+      // are rare enough to wrap without costing a frame, and each one drains the error queue
+      // first so the error it reports is genuinely its own.
+      // window.xrGlTrace() on, window.xrGlTrace(false) off.
+      window.xrGlTrace = (on = true) => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        if (!gl) { console.warn('[xrGlTrace] no gl'); return false; }
+        gl._xrTraceOrig = gl._xrTraceOrig || {};
+        const names = ['framebufferTexture2D', 'framebufferTextureLayer',
+          'framebufferRenderbuffer', 'bindFramebuffer', 'checkFramebufferStatus'];
+        for (const n of names) {
+          if (!gl[n]) continue;
+          if (on) {
+            gl._xrTraceOrig[n] = gl._xrTraceOrig[n] || gl[n];
+            const orig = gl._xrTraceOrig[n];
+            gl[n] = function () {
+              while (gl.getError() !== gl.NO_ERROR) { /* drain: report only our own */ }
+              const out = orig.apply(gl, arguments);
+              const err = gl.getError();
+              if (err !== gl.NO_ERROR) {
+                console.warn('[xrGlTrace] ' + n + ' -> 0x' + err.toString(16),
+                  Array.prototype.slice.call(arguments), new Error('call site').stack);
+              }
+              return out;
+            };
+          } else if (gl._xrTraceOrig[n]) {
+            gl[n] = gl._xrTraceOrig[n];
+          }
+        }
+        console.log('[xrGlTrace] ' + (on ? 'ON — expect a slower frame' : 'off'));
+        return true;
+      };
+      // WHAT IS ACTUALLY IN THE SHADOW MAP. This is the measurement that cracked the desktop
+      // half: turn the depth comparison OFF, sample the cube as an ordinary samplerCube onto a
+      // small RGBA8 target and read it back. A face of all 255 is cleared-far, i.e. nothing was
+      // rendered into it -- or rendered so close to the far plane that 8 bits cannot separate
+      // it, which is what a bad near/far ratio looks like. A face with a spread of values has
+      // a real occluder in it.
+      //
+      // Raw GL, so three's state cache is briefly out of step; a frame may flicker. Read-only
+      // otherwise, and the texture parameters are put back.
+      window.xrShadowProbe = () => {
+        const gl = this._renderer.backend && this._renderer.backend.gl;
+        const pool = this._lightPool;
+        if (!gl || !pool) { console.warn('[xrShadowProbe] no gl or no pool'); return null; }
+        let L = null;
+        for (const t of [0, 1, 2]) for (const li of pool[t]) if (li.intensity > 0 && li.castShadow) L = L || li;
+        if (!L || !L.shadow || !L.shadow.map) { console.warn('[xrShadowProbe] no casting light with a map'); return null; }
+        const texData = this._renderer.backend.get(L.shadow.map.depthTexture);
+        const texGPU = texData && texData.textureGPU;
+        if (!texGPU) { console.warn('[xrShadowProbe] no GPU texture'); return null; }
+        const isCube = !!L.shadow.map.depthTexture.isCubeTexture;
+
+        const prev = {
+          fb: gl.getParameter(gl.FRAMEBUFFER_BINDING), prog: gl.getParameter(gl.CURRENT_PROGRAM),
+          vao: gl.getParameter(gl.VERTEX_ARRAY_BINDING), active: gl.getParameter(gl.ACTIVE_TEXTURE),
+          vp: gl.getParameter(gl.VIEWPORT), depthTest: gl.getParameter(gl.DEPTH_TEST)
+        };
+        const VS = '#version 300 es\nvoid main(){ vec2 p = vec2(float((gl_VertexID<<1)&2), float(gl_VertexID&2)); gl_Position = vec4(p*2.0-1.0,0.0,1.0); }';
+        const FS = '#version 300 es\nprecision highp float; precision highp samplerCube; precision highp sampler2D;\n'
+          + 'uniform samplerCube uCube; uniform sampler2D uTex2D; uniform vec2 uRes; uniform int uFace; uniform int uIsCube;\n'
+          + 'out vec4 o;\nvoid main(){ vec2 t=(gl_FragCoord.xy/uRes)*2.0-1.0; float v;\n'
+          + ' if(uIsCube==1){ vec3 d;\n'
+          + '  if(uFace==0) d=vec3( 1.0,-t.y,-t.x); else if(uFace==1) d=vec3(-1.0,-t.y, t.x);\n'
+          + '  else if(uFace==2) d=vec3( t.x, 1.0, t.y); else if(uFace==3) d=vec3( t.x,-1.0,-t.y);\n'
+          + '  else if(uFace==4) d=vec3( t.x,-t.y, 1.0); else d=vec3(-t.x,-t.y,-1.0);\n'
+          + '  v=texture(uCube,d).r; } else { v=texture(uTex2D,(t*0.5)+0.5).r; }\n'
+          + ' o=vec4(v,v,v,1.0); }';
+        const mk = (type, src) => {
+          const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh);
+          if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+          return sh;
+        };
+        let out = null;
+        try {
+          const prog = gl.createProgram();
+          gl.attachShader(prog, mk(gl.VERTEX_SHADER, VS));
+          gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FS));
+          gl.linkProgram(prog);
+          if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+          const N = 64;
+          const colTex = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, colTex);
+          gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, N, N);
+          const fbo = gl.createFramebuffer();
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colTex, 0);
+          const target = isCube ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(target, texGPU);
+          gl.texParameteri(target, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+          gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.useProgram(prog); gl.bindVertexArray(null); gl.disable(gl.DEPTH_TEST);
+          gl.viewport(0, 0, N, N);
+          // BOTH samplers must be pointed somewhere, and NOT at the same unit: a samplerCube
+          // and a sampler2D bound to one texture unit is invalid and the draw is silently
+          // dropped, which reads back as a cleared target and looks exactly like an empty
+          // shadow map. That cost one false result.
+          gl.uniform1i(gl.getUniformLocation(prog, 'uCube'), isCube ? 0 : 1);
+          gl.uniform1i(gl.getUniformLocation(prog, 'uTex2D'), isCube ? 1 : 0);
+          gl.uniform1i(gl.getUniformLocation(prog, 'uIsCube'), isCube ? 1 : 0);
+          gl.uniform2f(gl.getUniformLocation(prog, 'uRes'), N, N);
+          const px = new Uint8Array(N * N * 4);
+          const faces = [];
+          for (let f = 0; f < (isCube ? 6 : 1); f++) {
+            gl.uniform1i(gl.getUniformLocation(prog, 'uFace'), f);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+            gl.readPixels(0, 0, N, N, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            let mn = 255, mx = 0, sum = 0, below = 0;
+            for (let i = 0; i < N * N; i++) {
+              const v = px[i * 4];
+              if (v < mn) mn = v; if (v > mx) mx = v; sum += v; if (v < 250) below++;
+            }
+            faces.push({ face: f, min: mn, max: mx, mean: +(sum / (N * N)).toFixed(1), pxBelow250: below });
+          }
+          gl.texParameteri(target, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+          gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.deleteFramebuffer(fbo); gl.deleteTexture(colTex); gl.deleteProgram(prog);
+          out = {
+            lightType: L.type, isCube,
+            shadowCamNear: +L.shadow.camera.near.toFixed(5),
+            shadowCamFar: +L.shadow.camera.far.toFixed(4),
+            ratio: +(L.shadow.camera.far / L.shadow.camera.near).toFixed(1),
+            lightDistance: L.distance,
+            nearFraction: +(L.shadow.camera.near / L.shadow.camera.far).toFixed(4),
+            frustumValid: L.shadow.camera.near < L.shadow.camera.far,
+            faces
+          };
+        } catch (e) {
+          console.warn('[xrShadowProbe] failed: ' + e.message);
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, prev.fb);
+        gl.useProgram(prev.prog); gl.bindVertexArray(prev.vao);
+        gl.activeTexture(prev.active);
+        gl.viewport(prev.vp[0], prev.vp[1], prev.vp[2], prev.vp[3]);
+        if (prev.depthTest) gl.enable(gl.DEPTH_TEST);
+        this._renderer.backend.state && this._renderer.backend.state.reset && this._renderer.backend.state.reset();
+        console.log('[xrShadowProbe]', JSON.stringify(out));
+        return out;
+      };
+      window.xrShadowRefresh = () => {
+        const pool = this._lightPool;
+        if (!pool) return 0;
+        let n = 0;
+        for (const t of [0, 1, 2]) {
+          for (const L of pool[t]) {
+            if (L.castShadow && L.intensity > 0 && L.shadow) { L.shadow.needsUpdate = true; n++; }
+          }
+        }
+        console.log('[xrShadowRefresh] pulsed ' + n + ' shadow map(s)');
+        return n;
+      };
+      window.xrLightReport = () => {
+        const r = this._renderer;
+        const pool = this._lightPool;
+        const rows = [];
+        for (const type of [0, 1, 2]) {
+          for (const L of (pool ? pool[type] : [])) {
+            if (!L.intensity && !L.castShadow) continue;
+            rows.push({ type: L.type, intensity: +L.intensity.toFixed(3), castShadow: L.castShadow,
+              shadowIntensity: L.shadow ? L.shadow.intensity : null,
+              distance: L.distance, decay: L.decay });
+          }
+        }
+        const out = {
+          presenting: !!(r.xr && r.xr.isPresenting),
+          shadowMapEnabled: r.shadowMap.enabled,
+          toneMappingExposure: r.toneMappingExposure,
+          // THE ENVIRONMENT LIVES ON THE PBR MATERIAL, NOT ON THE SCENE (commit 04f1632a), so
+          // reading scene.environment reported "false" while the sculpt was plainly lit by an
+          // IBL -- which sent this hunt off in the wrong direction more than once.
+          environment: !!this._scene.environment,
+          environmentIntensity: this._scene.environmentIntensity,
+          pbrEnvMap: (() => {
+            const m = NodeMaterials.get(Enums.Shader.PBR);
+            return m ? !!m.envMap : null;
+          })(),
+          pbrEnvIntensity: (() => {
+            const m = NodeMaterials.get(Enums.Shader.PBR);
+            return m ? m.envMapIntensity : null;
+          })(),
+          // EFFECTIVE, not truthy. Both are opt-OUT now, so an unset flag means ON -- and
+          // `!!undefined` reported "off" for the default state, which is the instrument
+          // agreeing with the bug rather than with the code.
+          xrEnv: window._xrEnv !== false, xrShadows: window._xrShadows !== false,
+          lights: rows,
+          // WORLD SCALE, because it turns out to explain a lot: it drives light falloff, and a
+          // heavily grip-scaled world makes the model narrower than the 64mm IPD, at which
+          // point correct stereo looks broken.
+          worldScale: this._worldGroup ? this._worldGroup.scale.x : null,
+          worldScaleVsDefault: this._worldGroup
+            ? +(this._worldGroup.scale.x / Scene.WORLD_SCALE_DEFAULT).toFixed(4) : null,
+          // NEAR/FAR AND WHAT SETS THEM. matt has reported three times that making a light
+          // brings on a "near clip is half a metre" feel. optimizeNearFar() is fed
+          // computeBoundingBoxScene(), which folds in EVERY mesh including light hosts and
+          // bones -- unlike the light calibration, which filters _isNull. A light's handle is
+          // sized off _lightRange, whose floor is 200 units, so one light can enlarge the
+          // scene box several-fold. Printing both boxes says whether that is what is happening
+          // instead of another round of guessing.
+          near: this._camera && this._camera._near,
+          far: this._camera && this._camera._far,
+          sceneDiag: (() => {
+            const b = this.computeBoundingBoxScene();
+            return Number.isFinite(b[0])
+              ? +Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]).toFixed(2) : null;
+          })(),
+          realMeshDiag: (() => {
+            const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+            if (!real.length) return null;
+            const b = this.computeBoundingBoxMeshes(real);
+            return Number.isFinite(b[0])
+              ? +Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]).toFixed(2) : null;
+          })(),
+          // DID ?xrlayers=0 ACTUALLY TAKE? _supportsLayers is private and set once in the
+          // XRManager constructor; if forcing it false does not stick, the session is still on
+          // XRProjectionLayer and its render target still holds compositor-owned external
+          // textures -- which is what the mailbox/shared-image errors are about.
+          xrSupportsLayers: this._renderer.xr ? this._renderer.xr._supportsLayers : null,
+          xrSessionUsesLayers: this._renderer.xr ? this._renderer.xr._sessionUsesLayers : null,
+          xrTargetExternalTextures: this._renderer.xr && this._renderer.xr._xrRenderTarget
+            ? this._renderer.xr._xrRenderTarget._hasExternalTextures : null,
+          xrMultiview: this._renderer.xr ? this._renderer.xr._useMultiview : null,
+          // DID THE SHADOW PASS EVEN RUN? On the desktop a casting point light adds 6 draw
+          // calls and ~6x the triangles (its cube map's six faces). If these look the same in
+          // a session with shadows on as with them off, the pass is not running at all --
+          // which is a different problem from the pass running and its output being lost.
+          meshesReceivingShadow: (this.getMeshes ? this.getMeshes() : []).filter((m) => {
+            const tm = m.getThreeMesh && m.getThreeMesh();
+            return tm && !m._isLight && tm.receiveShadow;
+          }).length,
+          meshesTotal: (this.getMeshes ? this.getMeshes() : []).filter((m) => !m._isLight).length,
+          // Is the nested-render guard actually firing? outer counts top-level renders, nested
+          // counts renders that began inside another one (the shadow pass), guarded counts the
+          // ones the guard shielded. nested > 0 with guarded === 0 means the guard is missing
+          // them; nested === 0 means the shadow pass is not going through renderer.render at
+          // all and the guard is looking in the wrong place.
+          nestedRender: this._renderer._xrNestedStats
+            ? Object.assign({}, this._renderer._xrNestedStats) : null,
+          triangles: this._renderer.info.render.triangles,
+          drawCalls: this._renderer.info.render.drawCalls,
+          graphFrozen: !!this._xrGraphFrozen,
+          poolSize: this._lightPool
+            ? this._lightPool[0].length + this._lightPool[1].length + this._lightPool[2].length
+            : 0,
+          poolCasting: this._lightPool
+            ? [0, 1, 2].reduce((n, t) => n + this._lightPool[t].filter((L) => L.castShadow).length, 0)
+            : 0
+        };
+        console.log('[xrLightReport]', JSON.stringify(out));
+        return out;
+      };
+      // BEFORE ANYTHING RENDERS, and before any session: every node material is built now,
+      // because constructing one mid-session is the single real fault this renderer has.
+      NodeMaterials.enable(WGPU, TSL);
+      // The level-3 bisection scene, built HERE so its material exists before any session --
+      // the one hard rule this renderer has. Three spheres at different depths, because a
+      // stereo fault is easiest to see on something with parallax.
+      {
+        const sc = this._stereoTestScene = new WGPU.Scene();
+        const geo = new WGPU.SphereGeometry(0.15, 32, 16);
+        const mat = new WGPU.MeshNormalNodeMaterial();
+        for (const z of [-0.6, -1.2, -2.4]) {
+          const mesh = new WGPU.Mesh(geo, mat);
+          mesh.position.set(z * 0.15, 1.4, z);
+          sc.add(mesh);
+        }
+      }
+      console.log('[renderer] WebGPURenderer, backend='
+        + (this._renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL (forced)'));
+    } else {
     this._renderer = new THREE.WebGLRenderer({
       canvas: canvas,
       antialias: false  // MSAA causes glBlitFramebufferCHROMIUM errors on WebXR session start,
@@ -2432,7 +4593,36 @@ class Scene {
     this._renderer.toneMappingExposure = 1.0;
 
     // Initialize underlying GL context for legacy code compatibility (temporarily)
-    this._gl = this._renderer.getContext();
+    }
+    // THE RAW CONTEXT SURVIVES EITHER WAY. 45 files reach for `_gl` -- WebGLCaps, Rtt, the
+    // Buffer/Attribute wrappers, every Mesh -- and under forceWebGL the WebGL backend still
+    // holds a real context at backend.gl. Keeping them fed is what makes a parallel path
+    // possible at all; they come out later, with the mock gl, not as a precondition.
+    // THE SELECTED ENVIRONMENT MUST BE ONE THIS RENDERER CAN LOAD.
+    //
+    // The two paths read different assets and neither can read the other's: legacy samples
+    // the LogLUV octahedral atlas (`path`), the node renderer takes an equirect `hdr`
+    // through RGBELoader. The default option is a single number shared by both, so moving it
+    // to an HDR environment silently left the legacy renderer -- still the default renderer,
+    // and what prod ships -- with no environment at all. Clamp to the first one that works
+    // rather than leave a mode quietly unlit.
+    {
+      const SPBR = ShaderLib[Enums.Shader.PBR];
+      const wantHdr = !!this._isNodeRenderer;
+      const usable = (e) => (wantHdr ? !!e.hdr : !!e.path);
+      if (SPBR && SPBR.environments[SPBR.idEnv] && !usable(SPBR.environments[SPBR.idEnv])) {
+        const i = SPBR.environments.findIndex(usable);
+        if (i >= 0) {
+          console.log('[env] "' + SPBR.environments[SPBR.idEnv].name + '" has no '
+            + (wantHdr ? 'hdr' : 'atlas') + ' asset for this renderer — using "'
+            + SPBR.environments[i].name + '"');
+          SPBR.idEnv = i;
+          SPBR.exposure = SPBR.environments[i].exposure;
+        }
+      }
+    }
+
+    this._gl = this._renderer.backend ? this._renderer.backend.gl : this._renderer.getContext();
     if (!this._gl) {
       (window._vrAlert || window.alert)('Values: WebGL context could not be retrieved.');
       return;
@@ -2450,17 +4640,25 @@ class Scene {
     this._worldGroup = new THREE.Group();
     this._worldGroup.position.set(0, 0, 0);
     this._worldGroup.quaternion.set(0, 0, 0, 1);
-    this._worldGroup.scale.set(0.701, 0.701, 0.701);
+    this._worldGroup.scale.set(Scene.WORLD_SCALE_DEFAULT, Scene.WORLD_SCALE_DEFAULT, Scene.WORLD_SCALE_DEFAULT);
     this._scene.add(this._worldGroup);
     // Exposed for Mesh.getModelSpaceMatrix() — picking composes the parent chain
     // relative to this group (meshes live under it).
     window._sxrWorldGroup = this._worldGroup;
     
-    // Add basic lighting since we are using MeshStandardMaterial
-    this._scene.add(new THREE.AmbientLight(0x404040, 2.0)); // soft white light
-    var dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    dirLight.position.set(1, 1, 1);
-    this._scene.add(dirLight);
+    // NO DEFAULT LIGHTS. There were two here -- an AmbientLight and a DirectionalLight, added
+    // long ago "since we are using MeshStandardMaterial" -- and until today they lit nothing:
+    // every shader on the legacy path is custom and ignores three's lights entirely, so they
+    // were inert decoration.
+    //
+    // Moving PBR onto MeshPhysicalNodeMaterial woke them up. They became the brightness floor
+    // of every render, with no entity, no outliner row, and no way to select, move or switch
+    // them off. matt: "is there a default light i can't see or edit? if so, remove it."
+    //
+    // KNOWN CONSEQUENCE: the GLTF controller models are MeshStandardMaterial and were being
+    // lit by these. They will render dark under ?renderer=webgpu until they are given their
+    // own lighting or an unlit material -- they are UI furniture, not scene content, so they
+    // should not depend on the user's lighting rig either way.
 
     // Localized Geometry Base Grid (100 units wide, 25 divisions for massive 4-meter visual blocks)
     this._groundGrid = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
@@ -2711,9 +4909,12 @@ class Scene {
     // Force viewport to fill the area excluding top bar and sidebar.
     // Read sidebar width dynamically so resize drag stays in sync.
     const sidebarEl = document.getElementById('gui-sidebar');
-    const sidebarW = sidebarEl ? sidebarEl.offsetWidth : 380;
+    // RENDERED sizes (rects), not CSS sizes: the sidebar and top bar are CSS-zoomed by the UI Scale.
+    const sidebarW = sidebarEl ? sidebarEl.getBoundingClientRect().width : 380;
+    const topbarEl = document.getElementById('gui-topbar');
+    const topbarH = topbarEl ? topbarEl.getBoundingClientRect().height : 36;
     viewport.style.position = 'absolute';
-    viewport.style.top = '36px';
+    viewport.style.top = topbarH + 'px';
     viewport.style.bottom = '0px';
     viewport.style.left = '0px';
     viewport.style.right = sidebarW + 'px';
@@ -2730,20 +4931,9 @@ class Scene {
       
       threeCam.aspect = aspect;
       
-      if (window._forcedAspect) {
-        // If aspect is forced, use a fixed base FOV to avoid compounding effects
-        const baseFov = 45;
-        this._camera.setFov(baseFov);
-        threeCam.fov = baseFov;
-      } else {
-        // Calculate adjusted FOV to maintain constant horizontal FOV
-        const baseFov = 45;
-        const adjFov = 2 * Math.atan(Math.tan(baseFov * Math.PI / 360.0) / aspect) * 360.0 / Math.PI;
-        
-        // Update custom camera FOV (which updates its projection matrix)
-        this._camera.setFov(adjFov);
-        threeCam.fov = adjFov;
-      }
+      // Vertical FOV is the user's (default 50, the camera slider): a resize must not rewrite it.
+      // Holding horizontal FOV constant instead blew a portrait iPad up to ~79 degrees.
+      threeCam.fov = this._camera.getFov();
       
       threeCam.updateProjectionMatrix();
       
@@ -2780,8 +4970,7 @@ class Scene {
     var dz = box[5] - box[2];
     var rad = 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
     if (isNaN(rad)) {
-        console.error("🛑 computeRadiusFromBoundingBox produced NaN! Box:", box);
-        if (window.screenLog) window.screenLog("NaN Radius From BB", "red");
+        guardedError('computeRadiusFromBoundingBox produced NaN', 5000, 'Box:', Array.from(box));
     }
     return rad;
   }
@@ -2802,9 +4991,8 @@ class Scene {
     // DEBUG: NaN Bounding Box Detector
     for(var j=0; j<6; j++) {
        if(isNaN(bound[j])) {
-           console.error("🛑 computeBoundingBoxMeshes produced NaN array! Meshes count:", meshes.length);
-           console.error("- Corrupted Bounds:", bound);
-           if (window.screenLog) window.screenLog("NaN BoundingBoxMeshes", "red");
+           guardedError('computeBoundingBoxMeshes produced NaN', 5000,
+             'meshes:', meshes.length, 'bounds:', Array.from(bound));
            break;
        }
     }
@@ -2928,7 +5116,9 @@ class Scene {
       const pts = new Float32Array([-1,0,0, 1,0,0,  0,-1,0, 0,1,0,  0,0,-1, 0,0,1]);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-      const cross = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x66e0ff, depthWrite: false }));
+      const cross = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x66e0ff }));
+      // depthWrite ON: meshes are transparent and draw after this opaque line, so without it they
+      // painted over a null that was in front of them.
       cross.name = 'null_cruciform';
       cross.frustumCulled = false;
       cross.scale.setScalar(4);
@@ -2973,23 +5163,51 @@ class Scene {
     // keeps the placement, the parenting and the keys. Aim is the locator's local -Z, so the
     // ordinary gizmo aims a spot with no special mode.
     mesh._lightType   = 0;
-    mesh._lightConeDeg = 35;   // outer half-angle; the inner edge is derived in the shader upload
+    mesh._lightConeDeg = 35;   // outer HALF-angle (the control shows 2x: the full angle); the inner edge is derived in the shader upload
     // RANGE FROM THE SCENE, not a constant. Units here are arbitrary and large -- the camel is
     // about 180 across -- so a fixed range would light either nothing or everything depending on
     // the model. Half the scene's diagonal puts the falloff somewhere useful on the first frame,
     // which is the difference between "I added a light" and "I added a light and nothing
     // happened".
     mesh._lightRange = this._lightRangeForScene();
+    // The distance the slider is calibrated against — see the intensity note in
+    // _syncThreeLights. Deliberately NOT derived from _lightRange: that carries a floor of
+    // 200 because it is a falloff CUTOFF and wants to reach past the model, and using it as
+    // a brightness reference is what made slider 1 read as white. This is the scene's own
+    // half-diagonal — roughly where you stand to work on it.
+    mesh._lightRefDist = this._lightRefDistForScene();
     return mesh;
   }
 
+  // A FLOOR OF 200, because half the scene diagonal is not far enough in this app's units.
+  //
+  // matt: "the defautlt fallof should be at least 200 based on the scene units sculptxr
+  // uses". The default sphere is 34 units across, so half its diagonal is about 29 -- a
+  // light placed anywhere sensible to work by is already outside that, and with physical
+  // inverse-square falloff it contributes almost nothing by the time it reaches the sculpt.
+  // The old value predates three's lighting, when the falloff was our own
+  // 1/(1 + d²/r²) and never actually reached zero.
+  //
+  // Still scaled off the scene for anything larger than the floor, so a big import gets a
+  // light that reaches it.
   _lightRangeForScene() {
+    const MIN = 200;
     const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
-    if (!real.length) return 50;
+    if (!real.length) return MIN;
     const box = this.computeBoundingBoxMeshes(real);
-    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return 50;
+    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return MIN;
     const d = vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
-    return d > 1e-6 ? d * 0.5 : 50;
+    return Math.max(MIN, d > 1e-6 ? d * 2 : MIN);
+  }
+
+  /** Half the scene's diagonal: the distance a light's brightness is calibrated against. */
+  _lightRefDistForScene() {
+    const real = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+    if (!real.length) return 20;
+    const box = this.computeBoundingBoxMeshes(real);
+    if (!Number.isFinite(box[0]) || !Number.isFinite(box[3])) return 20;
+    const d = vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+    return Math.max(5, d * 0.5);
   }
 
   // The light's LOOK: a star of rays, in the light's own colour so a scene of several is
@@ -2998,12 +5216,29 @@ class Scene {
   decorateLight(mesh) {
     const tm = mesh.getThreeMesh();
     if (!tm) return mesh;
-    tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+    // SHARED MATERIALS, MADE ONCE. Every material in this app is compiled the first time it
+    // is drawn, and one compiled inside an XR session comes out with the desktop camera
+    // layout -- which is what matt saw as "the light gizmo doubled up in my eyes" and, on a
+    // type switch, as the whole render splitting into wrong left/right eyes. Adding a light
+    // used to mint two fresh materials, and changing its type minted another.
+    //
+    // So neither is per-light any more: the host is one invisible material, and the handle
+    // is one line material reading VERTEX COLOURS, which is how the per-light colour
+    // survives being shared. Geometry is still rebuilt per type; geometry is not compiled.
+    if (!Scene._lightHostMat) {
+      Scene._lightHostMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      // transparent (no blend) puts the handle in the same pass as the meshes, which are all
+      // transparent: an opaque line is drawn FIRST, writes no depth, and every mesh then paints
+      // over it, so it always looked behind. See renderOrder on `rays` below.
+      Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false, transparent: true, blending: THREE.NoBlending });
+    }
+    tm.material = Scene._lightHostMat;
+    tm.castShadow = false;   // Mesh.js sets it at birth; the light's own marker must not shadow its light
 
     // REBUILT, NOT ADDED TO. The handle is type-specific, so changing the type has to replace
     // it; without this every switch left the previous one behind.
     const old = tm.getObjectByName('light_rays');
-    if (old) { tm.remove(old); old.geometry.dispose(); old.material.dispose(); }
+    if (old) { tm.remove(old); old.geometry.dispose(); }   // material is shared, never disposed
 
     // THE HANDLE SAYS WHAT KIND OF LIGHT IT IS, and for the aimed types, WHERE IT POINTS.
     // A point light has no direction, so a symmetric asterisk is the honest shape for it; a
@@ -3052,16 +5287,59 @@ class Scene {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
     const c = mesh._lightColor;
-    const rays = new THREE.LineSegments(geo,
-      new THREE.LineBasicMaterial({ color: new THREE.Color(c[0], c[1], c[2]), depthWrite: false }));
+    const col = new Float32Array(pts.length);
+    for (let i = 0; i < col.length; i += 3) { col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2]; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const rays = new THREE.LineSegments(geo, Scene._lightRayMat);
     rays.name = 'light_rays';
     rays.frustumCulled = false;
+    rays.renderOrder = 150;   // after the meshes (0), so depth TESTING decides what covers it
     // Sized off the scene like the light's own range is, rather than a constant: scene units
     // here are arbitrary and large, so a fixed 4 was invisible in one scene and a nuisance in
     // the next. A twentieth of the range puts it at marker size in whatever it lands in.
-    rays.scale.setScalar(Math.max(0.5, (mesh._lightRange || 50) * 0.05));
+    // A MARKER, NOT A DIAGRAM. A twentieth of the range was chosen so the icon stayed
+    // visible whatever scene it landed in, but range now has a floor of 200, so the default
+    // light arrives as a ten-unit star over a sculpt a few units across. matt: "the ray-star
+    // gizmo is annoying at size; want something simpler/smaller." Scaled off the SCENE rather
+    // than the light's falloff -- the falloff is a lighting decision and has no business
+    // setting how big an icon is -- and capped, so a big import does not bring a big star.
+    const _r = this._lightRefDistForScene ? this._lightRefDistForScene() : 20;
+    rays.scale.setScalar(Math.max(0.35, Math.min(_r * 0.08, 3)));
+    rays.userData.baseScale = rays.scale.x;
     tm.add(rays);
     return mesh;
+  }
+
+  // A SPOT'S CONE IS SHORT UNTIL THE LIGHT IS SELECTED. Full length it sits across the model and
+  // gets in the way. matt: "the cone for spotlights really gets in the way". Uniform scale, so the
+  // angle it shows is unchanged; only the length drops, to a tenth. Once a frame, before matrices.
+  _sizeSpotCones() {
+    const ms = this._meshes;
+    if (!ms) return;
+    let sel = null;
+    for (let i = 0; i < ms.length; i++) {
+      const m = ms[i];
+      if (!m._isLight || (m._lightType || 0) !== 1) continue;
+      const tm = m.getThreeMesh && m.getThreeMesh();
+      const rays = tm && tm.getObjectByName('light_rays');
+      const base = rays && rays.userData.baseScale;
+      if (!base) continue;
+      if (!sel) sel = this.getSelectedMeshes ? this.getSelectedMeshes() : [];
+      const on = sel.includes(m);
+      const want = base * (on ? 1 : 0.1);
+      if (rays.scale.x !== want) rays.scale.setScalar(want);
+      // ...and dimmed to a light grey: the light's colour at 60%, full when selected.
+      const k = on ? 1 : 0.6;
+      const a = rays.geometry.getAttribute('color');
+      const c = m._lightColor;
+      if (a && c && rays.userData.tint !== k) {
+        rays.userData.tint = k;
+        for (let j = 0; j < a.array.length; j += 3) {
+          a.array[j] = c[0] * k; a.array[j + 1] = c[1] * k; a.array[j + 2] = c[2] * k;
+        }
+        a.needsUpdate = true;
+      }
+    }
   }
 
   // Repaint the handle after a colour change, so the gizmo keeps telling the truth.
@@ -3069,10 +5347,649 @@ class Scene {
     const tm = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
     const rays = tm && tm.getObjectByName && tm.getObjectByName('light_rays');
     if (!rays || !mesh._lightColor) return;
-    rays.material.color.setRGB(mesh._lightColor[0], mesh._lightColor[1], mesh._lightColor[2]);
+    // Into the attribute, not the material: the material is shared by every light.
+    const a = rays.geometry.getAttribute('color');
+    if (!a) return;
+    const c = mesh._lightColor;
+    for (let i = 0; i < a.array.length; i += 3) {
+      a.array[i] = c[0]; a.array[i + 1] = c[1]; a.array[i + 2] = c[2];
+    }
+    rays.userData.tint = undefined;   // full colour now; _sizeSpotCones re-dims an unselected spot
+    a.needsUpdate = true;
   }
 
   /** Every light in the scene, for the shader to read. */
+  // REAL three.js LIGHTS, MIRRORED ONTO OUR LIGHT ENTITIES.
+  //
+  // Our lights have always been scene entities whose state we uploaded as uniform arrays and
+  // summed in our own BRDF. three knew nothing about them -- which is exactly why there were
+  // no shadows: a shadow map belongs to a Light object, and there were none.
+  //
+  // Each entity gets a real light PARENTED TO ITS OWN MESH, so it inherits that mesh's world
+  // transform rather than having one copied onto it every frame. The two cannot drift, which
+  // is the failure mode the uniform-array path had in VR (light positions derived from the
+  // desktop camera while the geometry used the per-eye one).
+  //
+  // Type is ours: 0 point, 1 spot, 2 directional. A spot needs a target object; it is a child
+  // at (0,0,-1), so "aim" is the light's own local -Z -- the same convention the gizmo and
+  // the old uLightDir upload used.
+  // A FIXED POOL OF LIGHTS, CREATED BEFORE ANY SESSION.
+  //
+  // matt's reproduction: in VR, adding a light makes the sculpt vanish and the new light's
+  // gizmo render with broken stereo, while everything else stays correct; deleting it brings
+  // the sculpt back; matcap is unaffected. Lights created BEFORE entering VR work fine.
+  //
+  // The trigger is the RECOMPILE. A node material's lighting graph is baked from the lights
+  // present, so adding one rebuilds the shader -- inside the session -- and a material built
+  // in there is what breaks. Matcap escapes it because it has no lights in its graph.
+  //
+  // So the graph must never change. The pool is built once, on the desktop, with a fixed
+  // count of each type; user lights are mapped onto slots and unused slots sit at intensity
+  // zero. Adding, deleting or retyping a light then moves numbers around in a shader that
+  // was compiled once, before the session, and never rebuilt.
+  //
+  // The cost is honest: the shader always evaluates POOL lights, used or not. That is a real
+  // per-fragment cost, and it is the price of a lighting rig that can be edited in VR at all.
+  _ensureLightPool() {
+    if (this._lightPool) return this._lightPool;
+    const T = this._THREE_GPU || THREE;
+    // SIZES ARE A KNOB, because the pool itself is now a suspect. matt: light added, PBR
+    // sphere does not draw in VR at all, while matcap does -- and the pool is the thing that
+    // changed. Seven lights is seven light structs in the bindings of every lit material, on
+    // top of the per-eye camera array an XR session adds, so a limit is a real possibility.
+    //
+    // `?pool=P,S,D` set these counts, for the ladder that found out whether having lights in the
+    // graph AT ALL was what an AR session could not draw. It was not; the fault was three's XR
+    // camera layout. The counts are settled and the switch is gone.
+    const POOL = { point: 4, spot: 2, dir: 1 };
+    const mk = (L) => {
+      L.intensity = 0;
+      L.castShadow = false;
+      if (L.isSpotLight || L.isDirectionalLight) {
+        const t = new T.Object3D();
+        t.position.set(0, 0, -1);
+        L.add(t);
+        L.target = t;
+      }
+      this._scene.add(L);
+      return L;
+    };
+    this._lightPool = {
+      0: Array.from({ length: POOL.point }, () => mk(new T.PointLight(0xffffff, 0))),
+      1: Array.from({ length: POOL.spot }, () => mk(new T.SpotLight(0xffffff, 0))),
+      2: Array.from({ length: POOL.dir }, () => mk(new T.DirectionalLight(0xffffff, 0))),
+    };
+    // AND THE GIZMO MATERIALS ARE WARMED HERE TOO, for the same reason the pool exists: a
+    // material compiles when it is first DRAWN, and if that first draw happens inside an XR
+    // session it comes out wrong. Creating them is not enough -- they have to be drawn on
+    // the desktop. Two degenerate objects do it: the host material writes no colour at all,
+    // and a zero-length line segment covers no pixels, so nothing appears.
+    if (!Scene._lightHostMat) {
+      Scene._lightHostMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+      Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false });
+    }
+    if (!this._lightMatWarm) {
+      const g = new T.BufferGeometry();
+      g.setAttribute('position', new T.BufferAttribute(new Float32Array(6), 3));
+      g.setAttribute('color', new T.BufferAttribute(new Float32Array(6), 3));
+      const w = new T.Group();
+      w.add(new T.LineSegments(g, Scene._lightRayMat));
+      // A REAL BoxGeometry, not a bare position buffer. The host material converts to the
+      // unlit Lambert base, whose graph still reads `normal`, so a geometry carrying only
+      // positions fails to build with "Vertex attribute normal not found" -- the same class
+      // of error the missing `uv` caused. Scaled to nothing, and it writes no colour anyway.
+      const hostWarm = new T.Mesh(new T.BoxGeometry(1, 1, 1), Scene._lightHostMat);
+      hostWarm.scale.setScalar(1e-6);
+      w.add(hostWarm);
+      w.traverse((o) => { o.frustumCulled = false; });
+      this._scene.add(w);
+      this._lightMatWarm = w;
+    }
+    console.log('[lights] pool built: ' + POOL.point + ' point, ' + POOL.spot + ' spot, '
+      + POOL.dir + ' directional');
+    return this._lightPool;
+  }
+
+  _syncThreeLights() {
+    const THREE_ = this._THREE_GPU || THREE;
+    const pool = this._ensureLightPool();
+    const lights = this.getLights ? this.getLights() : [];
+    const used = { 0: 0, 1: 0, 2: 0 };
+    if (!this._lpTmp) {
+      this._lpTmp = { p: new THREE_.Vector3(), q: new THREE_.Quaternion(), s: new THREE_.Vector3() };
+    }
+
+    // THE SCENE'S RADIUS IN WORLD UNITS, for the shadow cameras below. Note this is the RAW
+    // worldGroup scale, not the wscale used for falloff -- that one is normalised against the
+    // default so the exposure does not move, whereas a shadow camera wants true world metres.
+    const _sAbs = (this._worldGroup && this._worldGroup.scale.x) || 1;
+    const _realMeshes = (this._meshes || []).filter((m) => !m._isNull && !m._isBone && m.getNbVertices);
+    let _rWorld = 1;
+    const _cWorld = { x: 0, y: 0, z: 0 };
+    if (_realMeshes.length) {
+      const b = this.computeBoundingBoxMeshes(_realMeshes);
+      if (Number.isFinite(b[0])) {
+        _rWorld = Math.max(1e-4, 0.5 * Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) * _sAbs);
+        _cWorld.x = (b[0] + b[3]) * 0.5 * _sAbs;
+        _cWorld.y = (b[1] + b[4]) * 0.5 * _sAbs;
+        _cWorld.z = (b[2] + b[5]) * 0.5 * _sAbs;
+      }
+    }
+
+    // WHAT THE SHADOW MAPS DEPEND ON, AS ONE KEY. Built once per sync, compared per light.
+    //
+    // The point is which SPACE it is measured in. A single-hand grip translates and rotates
+    // _worldGroup, and the lights live under it too -- so the light and the geometry move
+    // TOGETHER and nothing about the shadow has actually changed. Keying on WORLD positions
+    // said otherwise and re-rendered the map every frame of the gesture, and re-rasterising a
+    // moving light's map makes its texel grid crawl across the geometry: matt, in a session,
+    // "if i move my head the shadows stay static, but they shimmer if i use the world grip
+    // handle like they're being recalculated". They were.
+    //
+    // LOCAL matrices are the relative ones, since everything here is a child of _worldGroup,
+    // so a rigid world move leaves this key untouched. World SCALE is included because the
+    // frustum and normalBias are in world units and genuinely do change with it.
+    //
+    // position.version is three's own BufferAttribute counter and is what catches a sculpt
+    // stroke -- vertex count and matrix both stay put when you only move existing vertices.
+    // World ROTATION goes in the key for one reason only: a point light's shadow cube has
+    // WORLD-AXIS-ALIGNED faces, so turning the world turns the geometry relative to those axes
+    // and the cube's contents really do go stale. A spot or directional light rotates WITH the
+    // world -- its camera is placed and aimed from objects that are also under _worldGroup --
+    // so its map stays valid and it is left out of this.
+    const _wq = this._worldGroup ? this._worldGroup.quaternion : null;
+    const _worldRotKey = _wq
+      ? 'r' + _wq.x.toFixed(3) + ',' + _wq.y.toFixed(3) + ',' + _wq.z.toFixed(3) + ',' + _wq.w.toFixed(3)
+      : 'r0';
+    let _shadowSceneKey = 's' + _sAbs.toFixed(5);
+    for (const m of (this.getMeshes ? this.getMeshes() : [])) {
+      if (m._isLight) continue;
+      const tm = m.getThreeMesh && m.getThreeMesh();
+      if (!tm || !tm.visible) continue;
+      const pa = tm.geometry && tm.geometry.attributes && tm.geometry.attributes.position;
+      const me = tm.matrix.elements;
+      _shadowSceneKey += '|' + tm.id + ',' + (pa ? pa.version + ',' + pa.count : '-')
+        + ',' + me[12].toFixed(2) + ',' + me[13].toFixed(2) + ',' + me[14].toFixed(2)
+        + ',' + me[0].toFixed(3) + ',' + me[5].toFixed(3) + ',' + me[10].toFixed(3)
+        + ',' + me[1].toFixed(3) + ',' + me[2].toFixed(3) + ',' + me[6].toFixed(3);
+    }
+
+    // THE ONE-FRAME LAG. host.updateMatrixWorld(true) refreshes the host and its children, but
+    // it composes against its PARENT's matrixWorld -- and _worldGroup has not been updated yet
+    // this frame, because the renderer does that inside render(), after this runs. So every
+    // light was positioned from the world transform of the PREVIOUS frame, and the shadow
+    // trailed the sculpt by exactly one frame during a fast grip. matt: "why does it feel like
+    // the shadow is on a tight spring rather than being directly parented to the worldspace...
+    // i can see the shadow is lagging by a frame."
+    //
+    // Updating the group first costs one matrix compose; the renderer's own pass right
+    // afterwards then finds nothing to do. (The deeper fix matt is pointing at -- parent the
+    // pool lights instead of copying their transforms every frame -- is a real one, but the
+    // copy exists to keep the host's scale out of the light's matrix, so it is not a one-liner.)
+    if (this._worldGroup) this._worldGroup.updateMatrixWorld();
+
+    for (const e of lights) {
+      const host = e.getThreeMesh && e.getThreeMesh();
+      if (!host) continue;
+      const type = Math.max(0, Math.min(2, e._lightType || 0));
+      const slots = pool[type];
+      if (used[type] >= slots.length) continue;     // more lights than the pool holds
+      const L = slots[used[type]++];
+
+      // Position and orientation copied, never parented: the entity's mesh carries a scale
+      // (measured 2.024) and a scale in a light's world matrix corrupts its shadow camera.
+      host.updateMatrixWorld(true);
+      host.matrixWorld.decompose(this._lpTmp.p, this._lpTmp.q, this._lpTmp.s);
+      L.position.copy(this._lpTmp.p);
+      L.quaternion.copy(this._lpTmp.q);
+      L.scale.set(1, 1, 1);
+      L.updateMatrixWorld(true);
+
+      const c = e._lightColor || [1, 1, 1];
+      L.color.setRGB(c[0], c[1], c[2]);
+      const slider = (e._lightIntensity === undefined ? 1 : e._lightIntensity);
+      // THE WORLD SCALE, because falloff is evaluated where the light ACTUALLY IS.
+      //
+      // Pool lights are added to the root scene and positioned from the host's WORLD matrix,
+      // so they sit in three-world space -- which is model space times _worldGroup.scale
+      // (0.701 by default, and the VR two-grip gesture drives it over a wide range). But
+      // `distance` and the intensity reference below are both in MODEL units, so irradiance
+      // came out as (ref/d_model)^2 / s^2: the same light, the same slider, a different
+      // exposure for every world scale. matt found it from the symptom -- "it's vr scale
+      // dependent, if I grip-scale the world smaller the shading looks correct".
+      //
+      // Converting both to world units makes irradiance at a given MODEL distance invariant:
+      //   intensity/(d_world)^2 = slider*(ref*s)^2 / (s*d_model)^2 = slider*(ref/d_model)^2
+      //
+      // NORMALISED AGAINST THE DEFAULT SCALE, not used raw. The existing calibration was tuned
+      // by eye at s = 0.701, so a raw conversion would be correct in principle and about 2x
+      // darker than everything matt has already judged. Dividing by the default makes the
+      // multiplier 1.0 there -- the look at rest is unchanged, and only the DEPENDENCE on
+      // world scale goes away.
+      const wscale = ((this._worldGroup && this._worldGroup.scale.x) || 1) / Scene.WORLD_SCALE_DEFAULT;
+      if (L.isPointLight || L.isSpotLight) {
+        const range = e._lightRange === undefined ? 50 : e._lightRange;
+        L.distance = range * wscale;
+        L.decay = 2;
+        // SCALED BY THE WORKING DISTANCE, NOT BY THE RANGE.
+        //
+        // With decay 2 the irradiance is intensity/d², so the multiplier has to be d² for
+        // slider 1 to mean "about right". It used to be range², and range defaults to twice
+        // the scene diagonal with a floor of 200 -- so 40000 against an actual light-to-
+        // subject distance nearer 17. That is ~5000x over, and matt saw exactly what that
+        // looks like: white, with a sliver of slider at the bottom that is a flat clipped
+        // grey rather than a shaded sphere.
+        //
+        // The reference is half the scene diagonal, fixed when the light is made, so moving
+        // the light afterwards still falls off physically.
+        const ref = (e._lightRefDist === undefined ? this._lightRefDistForScene() : e._lightRefDist) * wscale;
+        L.intensity = slider * ref * ref;
+      } else {
+        L.intensity = slider;
+      }
+      if (L.isSpotLight) {
+        const deg = e._lightConeDeg === undefined ? 35 : e._lightConeDeg;
+        L.angle = Math.max(0.01, Math.min(1.55, deg * Math.PI / 180));
+        L.penumbra = 0.25;
+      }
+
+      // Shadows stay off inside a session: a shadow map is an extra render target and that
+      // is its own unresolved problem. castShadow also has to go false rather than just
+      // renderer.shadowMap.enabled, because it is castShadow that puts shadow sampling into
+      // the compiled graph -- and the graph is exactly what must not change.
+      //
+      // AND IT IS ONLY EVER WRITTEN OUTSIDE A SESSION. castShadow is itself part of the
+      // graph, so flipping it on a frame inside VR is the same recompile the pool exists to
+      // avoid. The session boundary sets it (see _setPoolShadows in enterXR), and in here it
+      // is left alone while presenting.
+      // THE GUARD IS A LATCH, NOT isPresenting.
+      //
+      // `xr.isPresenting` only becomes true once the session's frame loop has started, and
+      // setSession resolves BEFORE that -- so there are frames after the boundary has set
+      // castShadow where isPresenting still reads false. This loop then ran with the old
+      // answer and put every pool light back to castShadow=false, inside the session, where
+      // the boundary can no longer correct it. Measured: window._xrShadows=1,
+      // shadowMap.enabled true, and every light reporting castShadow false.
+      // POINT LIGHTS DO NOT CAST. Their shadow map is a cube rendered along fixed WORLD axes
+      // and sampled by a world-space direction, so a world rotation invalidates its contents
+      // and forces a re-render mid-gesture -- the shimmer matt chased for two sessions. Spot
+      // and sun rotate WITH the world once the shadow camera's up follows it, so their maps are
+      // invariant and never need re-rendering for a rigid grip. A point light is also six
+      // renders against one. Enforced here as well as hidden in the UI, so a scene saved with a
+      // casting point light does not bring the problem back.
+      const wantCast = (e._castShadow !== false) && (e._lightType || 0) !== 0;
+      if (!this._xrGraphFrozen) {
+        L.castShadow = wantCast;
+      }
+      // WHETHER THE MAP IS RENDERED IS *NOT* GRAPH STATE, so unlike castShadow it can be
+      // changed freely inside a session -- ShadowNode.updateBefore skips the whole shadow pass
+      // when `shadow.autoUpdate` and `shadow.needsUpdate` are both false. That is the lever
+      // that makes shadows affordable here: castShadow stays pinned for the whole session so
+      // the compiled graph never moves, while the COST follows what is actually in use.
+      // ?xrshadows=once -- render each map ON DEMAND instead of every frame. Two reasons.
+      // PERF: a casting point light re-renders its whole cube map every frame even when
+      // nothing has moved, which is six full scene renders per light per frame. DIAGNOSIS: the
+      // shadow pass is a NESTED renderer.render inside the XR frame, which is the exact shape
+      // that broke this renderer before (the spectator canvas did the same and left the canvas
+      // target bound). If the frame is intact with one shadow pass and breaks when they run
+      // every frame, that is the answer. window.xrShadowRefresh() pulses an update.
+      // ON DEMAND BY DEFAULT NOW, not every frame. ?xrshadows=always restores per-frame
+      // rendering if the change detection below ever misses something; window.xrShadowRefresh()
+      // forces a one-off.
+      L.shadow.autoUpdate = wantCast && this._renderer.shadowMap.enabled && this._xrShadowAlways;
+      // A light that is pinned castShadow but should not cast would otherwise sample a stale
+      // map; drop its contribution to nothing instead.
+      L.shadow.intensity = wantCast ? (e._shadowIntensity === undefined ? 1 : e._shadowIntensity) : 0;
+      // ON-DEMAND MEANS SOMETHING HAS TO ASK. The light's own contribution to the key is its
+      // LOCAL matrix -- the host's transform under _worldGroup -- for the same reason as the
+      // scene key: that is the part a world grip does not change.
+      if (wantCast && !this._xrShadowAlways) {
+        const he = host.matrix.elements;
+        const key = _shadowSceneKey + (L.isPointLight ? _worldRotKey : '')
+          // A DirectionalLight has no `distance` at all, so this cannot assume a number --
+          // it threw the moment a sun was allowed to cast.
+          + '#' + type + ',' + (L.distance === undefined ? 0 : L.distance).toFixed(4)
+          + ',' + he[12].toFixed(3) + ',' + he[13].toFixed(3) + ',' + he[14].toFixed(3)
+          + ',' + he[0].toFixed(3) + ',' + he[5].toFixed(3) + ',' + he[10].toFixed(3)
+          + ',' + he[1].toFixed(3) + ',' + he[2].toFixed(3) + ',' + he[6].toFixed(3)
+          + ',' + (e._lightConeDeg === undefined ? 35 : e._lightConeDeg)
+          + ',' + (e._shadowNear === undefined ? 0 : e._shadowNear);
+        if (L.userData._shadowKey !== key) {
+          L.userData._shadowKey = key;
+          L.shadow.needsUpdate = true;
+        }
+      }
+      // THE SHADOW CAMERA'S NEAR PLANE IS 0.5 METRES BY DEFAULT, AND THAT IS WHY THERE WERE NO
+      // SHADOWS. three builds a point light's shadow as PerspectiveCamera(90, 1, 0.5, 500) and
+      // a spot's as PerspectiveCamera(50, 1, 0.5, 500). Those are sane defaults for a
+      // room-sized scene in metres. They are nonsense here: the sculpt is grip-scaled, and
+      // matt's session reported worldScale 0.0041 with the whole view inside far = 1.19m -- so
+      // the ENTIRE model sat inside the shadow camera's near plane and the map came back empty.
+      // It also explains "the near clip feels like at least 50cm", reported three times: 0.5 is
+      // exactly that number.
+      //
+      // So size the shadow frustum off the geometry's own world-space radius, which follows the
+      // grip scale like everything else should. Near is small but not zero -- depth precision is
+      // governed by the far/near RATIO, so this keeps it near 100:1 rather than the default's
+      // 1000:1 over a range nothing occupies.
+      const _sc = L.shadow.camera;
+      if (_sc) {
+        // NEAR IS SET FROM THE LIGHT'S ACTUAL DISTANCE TO THE SCENE, not from a fraction of
+        // its size, because a shadow map's usable precision is governed by the far/near RATIO.
+        //
+        // This was measured, not reasoned: reading the cube depth map back (compare mode off,
+        // sampled as a plain samplerCube) with near 1 / far 1500 gave 255 on every face and
+        // 254 on the one containing the occluder. The sphere WAS in the map -- one 8-bit step
+        // below the cleared background, because a perspective depth at 1500:1 crushes
+        // everything past the near plane into the last fraction of a percent. Nothing can be
+        // separated from nothing, so the comparison never reported an occluder. Tightening to
+        // near 280 / far 460 on the same scene made the shadow appear immediately.
+        //
+        // An earlier version of this code set near = _rWorld * 0.01, which fixed three's
+        // much-too-large 0.5m default and replaced it with a much-too-small one -- a ~300:1
+        // ratio that is exactly this failure.
+        //
+        // far is not really ours: PointShadowNode re-pins camera.far to light.distance on
+        // every face, so the ratio is near vs the light's falloff range.
+        // THE FAR PLANE IS NOT OURS AND MUST BE TREATED AS FIXED. LightShadow.updateMatrices
+        // re-pins camera.far to light.distance on every update, so whatever we write is
+        // overwritten -- and light.distance is the user's Falloff slider.
+        //
+        // Clamping near against a far WE computed, rather than the one three forces back, is
+        // how this produced an INVERTED frustum in matt's session: near 0.948, far 0.516,
+        // because the light sat further from the sculpt than the Falloff reached. Nothing can
+        // be inside near > far, so the map rendered empty and every sweep of bias, opacity,
+        // falloff and world scale did nothing -- there was no frustum to be inside.
+        const _far = Math.max(1e-3, (L.distance > 0 ? L.distance : _rWorld * 4));
+        const _dToScene = Math.hypot(
+          L.position.x - _cWorld.x, L.position.y - _cWorld.y, L.position.z - _cWorld.z);
+        // Start just in front of the nearest thing that can cast, but NEVER past half the far
+        // plane, so near < far holds however the light is placed. The 64:1 floor keeps the
+        // usable depth range wide for a light sitting inside the model, which is where a new
+        // one is created and where there is no safe near plane at all.
+        //
+        // MANUAL OVERRIDE, as a FRACTION of the far plane. The far plane is not ours -- three
+        // re-pins it to light.distance, i.e. the Falloff slider -- so the only knob that can be
+        // handed over safely is near, and expressing it as a fraction is what makes it useful:
+        // shadow map precision is governed by far/near, so this slider IS the precision
+        // control. 0 means auto (the fit below). matt asked for this to get something usable
+        // while the frustum stays married to Falloff.
+        // DEFAULT IS 1% OF THE FAR PLANE, not the geometry fit. matt: "if i set the near clip
+        // for shadow to anything basically non-zero, it seems to fit fine... can we just try a
+        // default of 1%". The auto fit takes `_dToScene - _rWorld * 1.5`, which overshoots past
+        // the caster whenever the light is close to the model and clips it out of the frustum
+        // entirely -- the cliff at the top of the slider. A fixed fraction of far cannot do
+        // that: it is always a 100:1 range ending at the far plane, wherever the light is.
+        // 0 still means the geometry fit, for anyone who wants it.
+        const _nearFrac = e._shadowNear === undefined ? 0.01 : e._shadowNear;
+        const near = _nearFrac > 0
+          ? Math.min(Math.max(_far * _nearFrac, 1e-5), _far * 0.9)
+          : Math.min(
+            Math.max(_far / 64, _dToScene - _rWorld * 1.5, 1e-5),
+            _far * 0.5);
+        const far = _far;
+        // If the Falloff cannot reach past the model, the far plane cuts through it and the
+        // far side simply cannot cast. Say so once rather than leaving it to be discovered.
+        if (_dToScene + _rWorld > _far && !this._warnedShadowReach) {
+          this._warnedShadowReach = true;
+          console.warn('[shadows] Falloff (' + _far.toFixed(3) + ') is shorter than the light\'s'
+            + ' distance to the model (' + (_dToScene + _rWorld).toFixed(3) + ') — the shadow'
+            + ' frustum cuts through the sculpt. Raise Falloff.');
+        }
+        if (_sc.isOrthographicCamera) {
+          const ext = _rWorld * 1.2;
+          _sc.left = -ext; _sc.right = ext; _sc.top = ext; _sc.bottom = -ext;
+        }
+        if (_sc.near !== near || _sc.far !== far) { _sc.near = near; _sc.far = far; }
+        _sc.updateProjectionMatrix();
+      }
+      L.shadow.bias = 0;
+      // normalBias IS IN WORLD UNITS, so it has to follow the grip scale for the same reason
+      // the falloff does. 0.15 was tuned at the default scale, where the model's world radius is
+      // tens of units; at matt's measured 0.6% scale the model is centimetres across and an
+      // unscaled 0.15 would shove every shadow clean off the surface.
+      L.shadow.normalBias = (e._shadowNormalBias === undefined ? 0.15 : e._shadowNormalBias) * wscale;
+      // RESOLUTION. mapSize reaches the shader as a uniform (reference('mapSize','vec2')), not
+      // as compiled-in state, so unlike castShadow this one can change live -- the map is
+      // re-allocated by shadowMap.setSize() on the next render. Pulse the map when it moves,
+      // or the new size holds a stale render.
+      const _mapWant = e._shadowMapSize === undefined ? 512 : e._shadowMapSize;
+      if (L.shadow.mapSize.width !== _mapWant) {
+        L.shadow.mapSize.width = L.shadow.mapSize.height = _mapWant;
+        if (L.shadow.map) { L.shadow.map.dispose(); L.shadow.map = null; }
+        L.shadow.needsUpdate = true;
+      }
+      // SOFTNESS IS IN TEXELS, so the same radius blurs LESS on a bigger map -- raising the
+      // resolution would quietly sharpen every shadow in the scene and look like the slider
+      // had moved. Scale by the map size so the setting means the same thing at any
+      // resolution, with 512 as the reference the numbers were chosen at.
+      const _rad = e._shadowRadius === undefined ? 4 : e._shadowRadius;
+      L.shadow.radius = _rad * (_mapWant / 512);
+      // AND ENOUGH TAPS THAT THE SOFTNESS IS A GRADIENT RATHER THAN A PATTERN. three's own PCF
+      // filter takes five samples on a rotated Vogel disk, which is too few to hide the
+      // rotation: the penumbra comes out as screen-space dither, worse the wider the radius.
+      // filterNode is a supported per-shadow override, so this is not a patch. ?shadowtaps=N
+      // to compare, 0 to fall back to three's five.
+      if (this._shadowTaps !== 0 && !L.shadow.filterNode) {
+        try {
+          L.shadow.filterNode = makePCFFilter(this._TSL_GPU, this._shadowTaps || 16);
+        } catch (err) {
+          console.warn('[shadows] custom PCF filter unavailable, using three\'s 5-tap', err);
+          this._shadowTaps = 0;
+        }
+      }
+      // ...AND IT IS REFRESHED HERE, after near/far and the projection are settled: a spot's
+      // shadow.matrix is derived from its projection, so refreshing it earlier would build the
+      // lookup from the previous frame's frustum.
+      // THE MAP'S CONTENTS AND THE WORLD->LIGHT TRANSFORM ARE TWO DIFFERENT THINGS.
+      //
+      // Suppressing the re-render on a rigid world move is right -- the geometry has not moved
+      // relative to the light, so the depth in the map is still true. But `shadow.matrix` is
+      // the transform the RECEIVER uses to look that depth up, and three only recomputes it
+      // while rendering the map. Leave it alone and it stays pinned to where the light used to
+      // be in world space, so the shadow sits still in the room while the sculpt slides
+      // through it. matt: "the shadows feel stuck in worldspace relative to the 'real' world in
+      // AR, while the single hand grip slides the objects through the shadow." Head movement
+      // never touches _worldGroup, which is why that case always looked right.
+      //
+      // So refresh the lookup transform every frame -- it is matrix maths, not a render -- and
+      // keep the expensive part on the change key.
+      if (wantCast && L.shadow) {
+        if (L.isPointLight) {
+          // A point light's shadow matrix is just the translation to light space; the cube
+          // lookup direction supplies the rest.
+          L.shadow.matrix.makeTranslation(-L.position.x, -L.position.y, -L.position.z);
+        } else {
+          // THE SHADOW CAMERA'S UP VECTOR MUST FOLLOW THE WORLD, or the map is not invariant
+          // under a world rotation and re-rendering is the only thing that hides it.
+          //
+          // SpotLightShadow.updateMatrices does camera.lookAt(target), and lookAt uses the
+          // camera's `up` -- which is world (0,1,0) by default. Position and target both live
+          // under _worldGroup and so rotate with it, but `up` does not, so the camera ROLLS
+          // about the light axis relative to the geometry and the map's edges slide. matt:
+          // "the core shadow felt like it was drifting slightly, but what i assume are the
+          // edges of the shadowmap feel like they're misaligning... i should be able to single
+          // grip rotate the entire world upside down, and the shadow not flicker, and stay
+          // valid." With up rotated by the world, the camera is rigid with the geometry, the
+          // map is genuinely invariant, and no re-render is needed for any rigid grip.
+          // UP COMES FROM THE LIGHT'S OWN BASIS, not from world up.
+          //
+          // The aim is the light's local -Z (the target Object3D sits at (0,0,-1) as its
+          // child), so the light's local +Y is perpendicular to the aim BY CONSTRUCTION and
+          // can never be parallel to it. World up can: a spot rotated -90 on X points straight
+          // down, lookAt then has no defined roll, and the camera spins about its own axis --
+          // the map's orientation flips frame to frame and the shadow glitches while the world
+          // moves. matt hit this immediately by setting the default light rotation to -90 on X:
+          // "i'm guessing there's an N and up issue, probably both of those are pointing the
+          // same way or are aligned with a world axis, and its spinning around its local axis".
+          // Exactly that. Taking up from the light also keeps the rotation-invariance the world
+          // up version was for, since the light is under _worldGroup and turns with it.
+          L.shadow.camera.up.set(0, 1, 0).applyQuaternion(L.quaternion);
+          L.shadow.updateMatrices(L);
+        }
+      }
+    }
+
+    // UNUSED SLOTS GO DARK, they do not leave the scene. Removing one would change the
+    // lighting graph, which is the whole thing this pool exists to prevent.
+    // An unused slot also stops casting, so the renderer is not drawing shadow maps for
+    // seven lights that emit nothing -- but only outside a session, where a recompile costs
+    // nothing but a hitch.
+    for (const type of [0, 1, 2]) {
+      for (let i = used[type]; i < pool[type].length; i++) {
+        const L = pool[type][i];
+        L.intensity = 0;
+        // Same latch as above: intensity is just a number, but castShadow is part of the
+        // compiled graph and must not move while a session owns it.
+        if (!this._xrGraphFrozen) L.castShadow = false;
+        // An UNUSED slot pinned castShadow for the session still renders its shadow map every
+        // frame unless this is off -- and a point light's map is a CUBE, six scene renders. A
+        // 4/2/1 pool all casting is ~27 shadow passes a frame for lights that emit nothing,
+        // which is the real reason shadows looked unaffordable in a session.
+        if (L.shadow) { L.shadow.autoUpdate = false; L.shadow.needsUpdate = false; L.shadow.intensity = 0; }
+      }
+    }
+
+    // NO HIDDEN AMBIENT. There used to be an AmbientLight here, coloured by the
+    // environment's SH average and scaled by the Env Intensity slider, as a stand-in until
+    // scene.environment carries a real IBL. matt: "is there a default light i can't see or
+    // edit? if so, remove it." He is right -- it was the only light in the scene that had no
+    // entity, could not be selected, moved or switched off, and quietly set the floor
+    // brightness of every render.
+    //
+    // The consequence is deliberate and should not be smoothed over: with no lights placed,
+    // PBR now renders black, and the Env Intensity slider does nothing on this path until the
+    // equirect + PMREM swap gives scene.environment something to hold. That is the honest
+    // state of an unlit scene, and it makes the missing piece visible rather than disguised.
+    if (this._nodeAmbient) {
+      this._scene.remove(this._nodeAmbient);
+      this._nodeAmbient.dispose && this._nodeAmbient.dispose();
+      this._nodeAmbient = null;
+    }
+
+    // THE ENVIRONMENT, as a prefiltered IBL rather than a fake ambient. Built once per
+    // environment (see EnvIBL) and re-installed when the selection changes; the Env Intensity
+    // slider is three's own environmentIntensity, which is what that control should always
+    // have been driving.
+    // ?noenv=1 / window._noEnv — no scene.environment at all.
+    //
+    // The bisect put the regression in the environment commits, and the strongest suspect is
+    // simply HAVING one: a2c2c032 made an HDR environment the DEFAULT, so from that commit
+    // on scene.environment is set, PMREM runs, and every lit material compiles an IBL
+    // lookup. Before it, the default was a LogLUV atlas the node renderer cannot read, so
+    // scene.environment stayed null and none of that happened.
+    //
+    // Testing that by checking out old commits is slow and, as this evening proved, easy to
+    // confound. This tests it on the CURRENT build instead: one session with it, one
+    // without.
+    const SPBR = ShaderLib[Enums.Shader.PBR];
+    if (window._noEnv || getOptionsURL().noenv) {
+      if (this._scene.environment) {
+        this._scene.environment = null;
+        console.log('[env] disabled (noenv)');
+      }
+      return;
+    }
+    // THE ENVIRONMENT GOES ON THE PBR MATERIAL, NOT ON THE SCENE.
+    //
+    // scene.environment is GLOBAL: three injects an IBL lookup into every material that
+    // supports one, including the unlit UI materials, which have no use for it. In an XR
+    // session that is fatal -- with it set, matt saw the sculpt and nothing else; setting
+    // window._noEnv live in the same session brought the menus, controllers and cursor
+    // straight back and only blacked out the sculpt. So the sculpt's own env lookup is
+    // fine, and it is the one forced on everything else that breaks.
+    //
+    // envMap on the single material that wants it keeps the UI materials compiling exactly
+    // as they do with no environment at all.
+    const env = SPBR && SPBR.environments[SPBR.idEnv];
+    if (env && this._nodeEnvId !== SPBR.idEnv) {
+      this._nodeEnvId = SPBR.idEnv;
+      // NO PLACEHOLDER ENVIRONMENT, AND THE GAP IS REAL AND STILL OPEN.
+      //
+      // Until this resolves the PBR material has no envMap, and in this app that means no light
+      // source at all -- every sculpt shader is custom and three's lights only cast. So the
+      // sculpt is black for as long as the .hdr takes to fetch and prefilter: about 70ms on a
+      // desktop, a second or so on a headset.
+      //
+      // Filling it with a flat grey PMREM was tried and does not work: once the material has
+      // sampled that texture, swapping in the real one leaves it black PERMANENTLY, with envMap
+      // set, envMapIntensity 1 and the right texture bound. Measured as a same-session A/B --
+      // without it the sphere lights on the third frame, with it it was still black seven frames
+      // later and never recovered. Keeping the PMREMGenerator alive rather than disposing it
+      // changed nothing. See EnvIBL.neutralEnvironment, which is kept and unwired.
+      installEnvironment(this._THREE_GPU, this._renderer, this._scene, env, (tex) => {
+        this._nodeEnvTex = tex;
+        this._background?._applyBackground?.();   // the backdrop shows the same texture
+      });
+    }
+    const ei = getOptionsURL().envIntensity;
+    const gain = Number.isFinite(ei) ? ei : 1.0;
+    // Never on the scene.
+    if (this._scene.environment) this._scene.environment = null;
+    // NO ENVIRONMENT INSIDE AN XR SESSION -- a known, unexplained limitation, not a fix.
+    //
+    // With the PMREM in use, an immersive session draws the sculpt and nothing else: no
+    // menus, no controllers, no cursor, and the UBO flood. Removing it live (window._noEnv)
+    // brings them all back. Moving it off scene.environment and onto the PBR material's own
+    // envMap changed nothing, which rules out the obvious explanation -- that a scene-wide
+    // environment was injecting an IBL lookup into the unlit UI materials. The failing
+    // materials are the ones WITHOUT it; the one that samples it is the only thing that
+    // draws. Something about that texture being bound at all breaks the rest of the frame,
+    // and I have not found what.
+    //
+    // So VR gets lights and no IBL, desktop keeps the environment, and this is written down
+    // rather than left as a mystery for whoever looks next. window._xrEnv = 1 turns it back
+    // on in a session to retest.
+    // EVERY PBR material, not just the shared one. A textured mesh gets its own variant
+    // (NodeMaterials.getFor), and since the IBL lives on the material rather than on
+    // scene.environment, a variant left out of this is lit by nothing at all.
+    const pbrMats = NodeMaterials.allPBR ? NodeMaterials.allPBR() : [];
+    const pbrMat = pbrMats[0] || NodeMaterials.get(Enums.Shader.PBR);
+    const _xrNow = !!(this._renderer.xr && this._renderer.xr.isPresenting);
+    // ?xrenv=1 as well as window._xrEnv, for the same reason as ?xrshadows: a console global
+    // has to be set before the button is pressed, and getting that wrong is indistinguishable
+    // from the workaround still being in place. The env being off in a session IS deliberate --
+    // it is a workaround, not a bug -- and this is how it gets retested.
+    // DEFAULT ON IN A SESSION as of 2026-09-21, for the reason above: a workaround that is on
+    // by default is a workaround nobody retests, and the IBL is most of what makes the PBR
+    // material look like anything. `?xrenv=0`, or window._xrEnv = false, restores it.
+    if (/[?&]xrenv=1/.test(window.location.search)) window._xrEnv = true;
+    if (/[?&]xrenv=0/.test(window.location.search)) window._xrEnv = false;
+    const wantEnv = this._nodeEnvTex && (!_xrNow || window._xrEnv !== false);
+    const nextEnv = wantEnv ? this._nodeEnvTex : null;
+    for (let i = 0; i < pbrMats.length; i++) {
+      const pm = pbrMats[i];
+      if (pm.envMap !== nextEnv) {
+        // CHANGING envMap NEEDS dispose(). NOTHING ELSE WORKS.
+        //
+        // `needsUpdate`, bumping `version`, `envMap.needsUpdate` -- none of them rebuild a node
+        // material or rebind its textures. Only dispose() drops the cached build, and the next
+        // render makes a new one.
+        //
+        // Two separate things both need it, and both were measured live rather than reasoned:
+        //
+        //   null -> texture changes the SHAPE of the graph. NodeMaterial.setupEnvironment only
+        //   emits an IBL branch when envMap is set AT BUILD TIME, and a built graph does not grow
+        //   a branch it was compiled without. The PMREM takes ~70ms to prefilter, so the PBR
+        //   material is ALWAYS built before the environment exists -- it got no IBL branch and
+        //   never regained one, which is why envMapIntensity swinging 0 -> 12 moved no pixels.
+        //
+        //   texture -> texture SHOULD have been free: setupEnvironment reads the map through
+        //   materialReference('envMap','texture'), which is a live reference, and that is what I
+        //   assumed. It is wrong. With the new PMREM assigned and pm.envMap === the new texture
+        //   by uuid, the render did not change at all -- the binding is cached with the build.
+        //
+        // So: dispose on ANY change. That is a shader rebuild per environment swap, which is a
+        // deliberate, occasional user action, and the alternative is a picker that does nothing.
+        pm.envMap = nextEnv;
+        pm.needsUpdate = true;
+        pm.dispose();
+        if (pm === pbrMat) console.log('[env] ' + (nextEnv ? 'on (rebuilt)' : 'off (XR)'));
+      }
+      pm.envMapIntensity = gain;
+    }
+  }
+
   getLights() {
     const out = [];
     const ms = this._meshes || [];
@@ -3608,11 +6525,31 @@ class Scene {
       rest: child._ikRest ? mat4.clone(child._ikRest) : null,
     };
     if (!opts || !opts.silent) {
+      // opts.order = { before, after } (outliner key snapshots, see snapshotOutlinerKeys): a drag
+      // and drop that reparents AND positions is ONE undo step, so the keys ride along.
+      const ord = opts && opts.order;
       this.getStateManager?.()?.pushStateCustom?.(
-        () => apply(before.parent, before.matrix, before.rest),
-        () => apply(after.parent, after.matrix, after.rest),
+        () => { apply(before.parent, before.matrix, before.rest); if (ord) this._restoreOutlinerKeys(ord.before); },
+        () => { apply(after.parent, after.matrix, after.rest); if (ord) this._restoreOutlinerKeys(ord.after); },
         false, 'Set Parent');
     }
+  }
+
+  // OUTLINER ORDER UNDO. The order is `_outlinerKey` on each mesh (see MainMenuPanel.outlinerKey);
+  // a snapshot is mesh -> key (undefined = never moved).
+  snapshotOutlinerKeys() {
+    return new Map(this._meshes.map((m) => [m, m._outlinerKey]));
+  }
+  _restoreOutlinerKeys(snap) {
+    if (!snap) return;
+    snap.forEach((k, m) => { if (k === undefined) delete m._outlinerKey; else m._outlinerKey = k; });
+    Skeleton.refreshOutliner?.(this);
+  }
+  pushOutlinerOrderUndo(before, after) {
+    this.getStateManager?.()?.pushStateCustom?.(
+      () => this._restoreOutlinerKeys(before),
+      () => this._restoreOutlinerKeys(after),
+      false, 'Reorder');
   }
 
   getParentMesh(childId) {
@@ -3793,6 +6730,7 @@ class Scene {
       if (tr) {
         if (tr.baseShape) xformPositions(tr.baseShape);
         if (tr.blendshapes) for (const d of tr.blendshapes.values()) xformVectors(d);
+        tr._bsRev = (tr._bsRev | 0) + 1;   // written in place: see Skinning composeMush
       }
 
       mesh.setMatrix(matElems);
@@ -4101,8 +7039,8 @@ class Scene {
     // (This used to be a refusal: the app EXPORTS glb, so getFileType answered 'glb' for a file
     // nothing could open and the load ended in silence. matt: "i tried loading a glb and obj back
     // into sculptxr, both just silently return nothing, no error on the console.")
-    if (fileType === 'glb' || fileType === 'gltf') {
-      Import.importGLTF(fileData, this._gl, (meshes, stats) => {
+    if (fileType === 'glb' || fileType === 'gltf' || fileType === 'nom') {
+      (fileType === 'nom' ? Import.importNOM : Import.importGLTF)(fileData, this._gl, (meshes, stats) => {
         if (!meshes || !meshes.length) {
           const msg = 'Nothing to import from that ' + fileType.toUpperCase() + ' — no meshes in it.';
           console.warn('[load] ' + msg);
@@ -4132,7 +7070,25 @@ class Scene {
             mat4.multiply(m, S, m);
           }
         }
-        this.addImportedMeshes(meshes);
+        // Read BEFORE the add: addImportedMeshes swaps each entry for its Multimesh wrapper, and
+        // the wrapper's ID is what a blendshape track is keyed on.
+        const morphs = meshes.map((m) => m._importedMorphs);
+        // A .nom keeps the placement AFTER the fit-to-view, which is what the export measures a
+        // move against (see ExportNOM). `beforeCommit` runs once the normalise has been applied.
+        this.addImportedMeshes(meshes, fileType !== 'nom' ? undefined : (added) => {
+          for (const m of added) {
+            if (!m._nomSource) continue;
+            Import.buildNOMLevels(m);
+            m._nomLoadMatrix = Float32Array.from(m.getMatrix());
+          }
+        });
+        const reg = window._animationRegistry;
+        if (reg) for (let i = 0; i < meshes.length; i++) if (morphs[i]) reg.importBlendshapes(meshes[i], morphs[i]);
+        if (fileType === 'nom') {
+          // detail vectors last: see ImportNOM.settleLevels
+          for (const m of meshes) if (m._nomSource) Import.settleNOMLevels(m);
+          stats.lights = Import.addNOMLights(this, stats, meshes);
+        }
         // SAID OUT LOUD, because the interesting part of this import is what it RECOVERED, and
         // none of it is visible by looking: quads restored from a format with no quads, and
         // seam vertices welded back into one surface. Both are silent when they go wrong —
@@ -4150,7 +7106,10 @@ class Scene {
           + (stats.textured ? ', ' + stats.textured + ' with colour maps' : '')
           + (stats.roughMetalMapped ? ', ' + stats.roughMetalMapped + ' with metal/rough maps' : '')
           + (stats.normalMapped ? ', ' + stats.normalMapped + ' with normal maps' : '')
-          + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '');
+          + (stats.transmissive ? ', ' + stats.transmissive + ' transmissive' : '')
+          + (stats.blendshapes ? ', ' + stats.blendshapes + ' blendshapes' : '')
+          + (stats.layers ? ', ' + stats.layers + ' layer channels flattened' : '')
+          + (fileType === 'nom' && stats.lights ? ', ' + stats.lights + ' light(s)' : '');
         console.log('[load] ' + msg);
         if (window.screenLog) window.screenLog(msg, 'lime');
         if (this._showToolToast) this._showToolToast('Imported ' + stats.meshes + ' object(s)');
@@ -4186,6 +7145,10 @@ class Scene {
       // only one that finishes ASYNCHRONOUSLY -- decoding an image is -- so the maps land a
       // frame or two after everything else is already standing.
       if (fileType === 'sgl') TextureIO.deserialize(fileData, added, THREE);
+
+      // The clips: a reference only (name, offset, switches). The timeline shows a "missing"
+      // lane for each until a file of that name is loaded.
+      if (fileType === 'sgl') MediaRef.deserialize(fileData);
 
       if (fileType === 'sgl' && this._frameGroup) {
         try { this._frameGroup.deserialize(fileData, added); }
@@ -4234,6 +7197,8 @@ class Scene {
       if (innerMesh._permanentStaticId) {
         mesh._permanentStaticId = innerMesh._permanentStaticId;
       }
+      // The .nom this came from, for the return trip (see ExportNOM).
+      if (innerMesh._nomSource) mesh._nomSource = innerMesh._nomSource;
 
       if (!this._vertexSRGB && mesh.getColors()) {
         Utils.convertArrayVec3toSRGB(mesh.getColors());
@@ -4562,6 +7527,9 @@ class Scene {
 
   clearScene() {
     this.getStateManager().reset();
+    // The clips belong to the scene: File > New / Open-replace used to leave the video plane's
+    // track and the audio (and their lanes and waveform in the timeline) behind.
+    try { window._videoTrack?.clear?.(); window._audioTrack?.clear?.(); window._pendingMedia = null; } catch (e) { console.error('media clear failed:', e); }
     
     // Through detachMeshThree, so a parented mesh is taken out of its real parent rather than
     // asked to leave a group it was never in.
@@ -4785,19 +7753,31 @@ class Scene {
       var copy = new MeshStatic(mesh.getGL());
       copy.copyData(mesh);
 
-      this.addNewMesh(copy);
-      this._inheritParent(copy, mesh);
       // WHAT KIND OF THING IT IS, which copyData does not carry -- it copies geometry, and a
       // locator's geometry is the least interesting thing about it. Duplicating a light used to
       // hand you a small sphere: a real, sculptable, exportable mesh where a light should be.
       // matt: "i can't use the outliner -> duplicate on lights, it makes a mesh."
       //
+      // BEFORE addNewMesh, not after. The outliner builds its row from what the mesh IS at the
+      // moment it is added, and a copy flagged afterwards has already been filed as ordinary
+      // geometry -- so the duplicate appeared in the scene and never in the outliner. matt:
+      // "duplicating the light works in the 3d scene, but didn't make a new entry in the
+      // outliner." addLight has always flagged first (buildLight sets _isLight before
+      // addNewMesh), which is why it never had this problem. decorateLight needs only the
+      // mesh's own three object, which is created on demand, so nothing here wants the scene.
+      //
       // Rig nodes are absent on purpose. A joint duplicates its CHAIN through RigTopology
       // before this is ever reached, so copying _isBone here would make a second, broken one.
       this._copyEntityKind(copy, mesh);
+
+      this.addNewMesh(copy);
+      this._inheritParent(copy, mesh);
     }
 
     this.setMesh(mesh);
+    // And rebuild the list regardless: the kind decides which SECTION a row belongs to, so
+    // anything cached from before the copy existed is stale either way.
+    Skeleton.refreshOutliner?.(this);
   }
 
   // The flags and decoration that make a copy the same KIND of object as its source.
@@ -4812,10 +7792,28 @@ class Scene {
       // Sliced, not shared: two lights pointing at one colour array means editing either edits
       // both, which is the sort of thing you only notice a week later.
       copy._lightColor     = (src._lightColor || [1, 1, 1]).slice();
+      // _isNull IS THE IMPORTANT ONE. Twenty-nine places ask "is this real geometry" by
+      // checking it -- the exporter, the shadow caster list, skinning, the rendering sweeps --
+      // so a copy without it is half locator and half mesh, and every one of those treats it
+      // as a sphere. It is also what the .sxr writer keys on, so the duplicate would not have
+      // saved as a light either.
+      copy._isNull         = true;
+      copy.isPickable      = src.isPickable;
+      copy._typeName       = src._typeName || 'Light';
       copy._lightIntensity = src._lightIntensity;
       copy._lightRange     = src._lightRange;
       copy._lightType      = src._lightType;
       copy._lightConeDeg   = src._lightConeDeg;
+      copy._lightRefDist   = src._lightRefDist;
+      // The shadow group, all of it. These are hand-tuned values and a duplicate that drops
+      // them is a duplicate you have to re-tune -- the same complaint the .sxr writer was
+      // fixed for one commit ago.
+      copy._castShadow        = src._castShadow;
+      copy._shadowNear        = src._shadowNear;
+      copy._shadowMapSize     = src._shadowMapSize;
+      copy._shadowNormalBias  = src._shadowNormalBias;
+      copy._shadowIntensity   = src._shadowIntensity;
+      copy._shadowRadius      = src._shadowRadius;
       this.decorateLight(copy);
     } else {
       this.decorateNull(copy);
@@ -5052,6 +8050,10 @@ class Scene {
     window._lastLogTime = performance.now();
     // console.log("[Telemetry] WebXR Session entered");
     window._xrSessionStartT = performance.now();
+    window._xrMark = (what) => {
+      if (window._xrMarks) window._xrMarks.push([what, performance.now()]);
+    };
+    window._xrMark('enterXR');
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
@@ -5128,17 +8130,151 @@ class Scene {
     this._worldGroup.updateMatrixWorld(true);
     this._desktopCameraCache.worldGroupMatrix = this._worldGroup.matrixWorld.clone();
 
+    // THE PRE-SESSION WARM IS OFF BY DEFAULT -- it was the cause, not the cure.
+    if (this._isNodeRenderer) {
+      // NO PRE-SESSION WARM. ?warm=1 restores it for comparison.
+      //
+      // PROVEN by dumping the generated shader on both sides. In XR the camera matrices are
+      // per-eye arrays in their own buffers:
+      //   layout( std140 ) uniform cameraIndex { uint u_cameraIndex; };
+      //   uniform NodeBuffer_8229 { mat4 buffer8229[2]; };
+      // Compiled outside a session they are single matrices inside a large shared block:
+      //   layout( std140 ) uniform render { mat4 cameraProjectionMatrix; mat4 cameraViewMatrix; ... };
+      //
+      // Two incompatible layouts for one material. Warming ran BEFORE setSession, so every
+      // material was compiled with the desktop layout, and the session then bound per-eye
+      // buffers to shaders built for single matrices -- "uniform buffer that is too small",
+      // growing with the material, which is why a tiny one survived and the full Physical
+      // material did not.
+      //
+      // Warming was added to avoid building pipelines inside a session, on the strength of
+      // the spike's UBO flood. That flood was most likely THIS, misread: the spike warmed on
+      // the desktop too. The warm was not protecting against the fault, it was causing it.
+      // THE SESSION WARM DOES NOT HAPPEN HERE. It used to, and it was worthless: this runs
+      // BEFORE setSession, and _rebuildAll('session start') a few lines down then discards every
+      // shader it just built. It now runs immediately after that rebuild instead.
+    }
+
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
 
-    this._renderer.resetState();
+    this._renderer.resetState?.();   // see _drawScene — absent on WebGPURenderer
 
     // Call setSession as early as possible — the XR compositor starts its timeout
     // the moment requestSession resolves. Every ms before setSession is called is
     // time the compositor spends showing the default gray void environment.
     const t0 = performance.now();
+    window._xrMark && window._xrMark('pre-session work');
     await this._renderer.xr.setSession(session);
+    window._xrMark && window._xrMark('setSession');
+
+    // REBUILD EVERY MATERIAL AT THE SESSION BOUNDARY.
+    //
+    // A node material's shader is compiled the first time it is DRAWN, and everything in
+    // this app is drawn on the desktop long before anyone enters VR. So every material
+    // already carries the non-XR camera layout -- single cameraProjectionMatrix and
+    // cameraViewMatrix inside the shared `render` block -- while the session binds per-eye
+    // arrays selected by u_cameraIndex. Removing the pre-session warm only stopped ADDING
+    // to that set; it could never fix the materials the desktop had already compiled, which
+    // is why the symptoms kept reshuffling: whichever materials happened to be drawn first
+    // were the ones that broke.
+    //
+    // needsUpdate discards the compiled state, so each one is rebuilt on its next draw --
+    // inside the session, with the layout the session actually uses. Done on the way out
+    // too, for the same reason in reverse.
+    const _rebuildAll = (why) => {
+      let n = 0;
+      const mark = (m) => { if (m && m.isMaterial) { m.needsUpdate = true; n++; } };
+      this._scene.traverse((o) => {
+        if (!o.material) return;
+        if (Array.isArray(o.material)) o.material.forEach(mark); else mark(o.material);
+      });
+      for (const m of NodeMaterials.all ? NodeMaterials.all() : []) mark(m);
+      console.log('[xr] rebuilt ' + n + ' materials (' + why + ')');
+    };
+    // Shadow casting is decided HERE, at the boundary, and not touched again until the next
+    // one -- for the same reason the light pool is fixed: castShadow changes the compiled
+    // graph, and a recompile inside a session is what breaks it.
+    const _setPoolShadows = (on) => {
+      const pool = this._lightPool;
+      if (!pool) return;
+      for (const t of [0, 1, 2]) for (const L of pool[t]) L.castShadow = on;
+    };
+    if (this._isNodeRenderer) {
+      // EVERY MESH GETS ITS SHADOW FLAGS BEFORE THE GRAPH IS FROZEN, not after. receiveShadow
+      // is compiled in, so a mesh entering the session without it can never receive a shadow
+      // no matter what the lights do.
+      for (const mesh of (this.getMeshes ? this.getMeshes() : [])) {
+        const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+        if (!tm || mesh._isLight) continue;
+        tm.castShadow = true;
+        tm.receiveShadow = true;
+      }
+      // Freeze FIRST, then decide. The latch is what stops _syncThreeLights undoing this on
+      // the frames between here and xr.isPresenting going true.
+      this._xrGraphFrozen = true;
+      // THE FLAG IS A URL PARAM AS WELL AS A GLOBAL. window._xrShadows has to be set BEFORE
+      // the button is pressed, and forgetting that looks exactly like the bug it was meant to
+      // test -- it cost a headset session. ?xrshadows=0 cannot be mistimed.
+      //
+      // THIS IS THE AUTHORITATIVE READ, and it is why making shadows the default did not take.
+      // The boundary read here ran `!!window._xrShadows || !!_shq` -- opt-IN -- and then WROTE
+      // the answer back to window._xrShadows. With no flag that stored an explicit `false`, so
+      // the per-frame test I had changed to `!== false` saw a real false from then on and
+      // turned shadows off anyway. Two places decided the same thing and the older one won.
+      // matt: "if i take off the xrshadow=1 flag, i don't get shadows."
+      //
+      // Opt-OUT now, and it agrees with the per-frame read by construction: both ask only
+      // whether the flag has been explicitly set to false.
+      const _shq = /[?&]xrshadows=(\w+)/.exec(window.location.search);
+      this._xrShadowOnce = !!(_shq && _shq[1] === 'once');
+      this._xrShadowAlways = !!(_shq && _shq[1] === 'always');
+      if (_shq && _shq[1] === '0') window._xrShadows = false;
+      const _wantXrShadows = window._xrShadows !== false;
+      window._xrShadows = _wantXrShadows;
+      _setPoolShadows(_wantXrShadows);
+      // THE REBUILD IS SKIPPED ON THIS BRANCH -- see the note above it.
+      //
+      // It discards every compiled shader because the desktop compiled them with the wrong
+      // camera layout. The launch warm now compiles the PER-EYE layout too, against the real
+      // scene, so there should be nothing left to invalidate. That is the experiment this branch
+      // is for: if lit materials draw and the menus appear, this rebuild has been redundant
+      // since the binding-point patch landed and entering VR can be nearly free.
+      //
+      // If they do NOT draw, the rebuild is doing something the stereo warm does not cover, and
+      // this branch dies rather than becoming a flag.
+      window._xrMark && window._xrMark('material rebuild (skipped)');
+      // AND REBUILD THEM IN ONE PLACE, RATHER THAN OVER THE NEXT MINUTE -- BUT NOT HERE.
+      //
+      // The rebuild above discards every compiled shader, and what refills that cache is
+      // whatever happens to be drawn next, one object at a time, whenever it first appears.
+      // That is matt's "compiling shaders warning popping up regularly".
+      //
+      // Warming it back immediately looks right and is not: while a session is presenting, three
+      // substitutes xr.getCamera() for whatever camera is passed to render(), and at this point
+      // no XRFrame has arrived, so that camera is an ArrayCamera with ZERO sub-cameras. The
+      // pipeline key hashes cameras.length, so a warm here compiles a whole third set --
+      // `ArrayCamera[0]` in matt's report -- for a shape nothing will ever draw with again.
+      //
+      // So it waits for the first frame that has real views, which is where the reveal warm runs.
+      // Nothing to warm in-session if the launch warm covered it. Left armed so the reveal pass
+      // still runs and the compile trace can say whether it found anything to do -- if it
+      // reports nothing, that IS the result this branch is testing for.
+
+      if (_wantXrShadows && this._xrShadowOnce) {
+        // A little after the boundary, so the pool has been synced and the sculpt is present.
+        setTimeout(() => { try { window.xrShadowRefresh(); } catch (e) { /* never block VR */ } }, 1500);
+      }
+      session.addEventListener('end', () => {
+        try {
+          this._xrGraphFrozen = false;
+          _setPoolShadows(true);
+          _rebuildAll('session end');
+        } catch (e) { /* never block leaving VR */ }
+      });
+    }
+
     const t1 = performance.now();
     if (window.screenLog) window.screenLog(`[XR] setSession Resolved (+${Math.round(t1 - window._xrSessionStartT)}ms total, setSession took ${Math.round(t1-t0)}ms)`, "lime");
 
@@ -5402,6 +8538,7 @@ class Scene {
   }
 
   onXREnd() {
+    this._ss = null;
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
@@ -5410,6 +8547,19 @@ class Scene {
     // when the headset came off. Cleared, they fall back to the live manager.
     this._smoothMode = null;
     this._smoothModeShown = false;
+    // The next session blanks its canvas afresh and logs its first spectator pass.
+    this._specBlanked = false;
+    this._spectatorPasses = 0;
+    this._deskCommit();
+
+    // The VR timeline shares its canvas with the desktop one. Leaving it "open" left the desktop
+    // timeline stuck at the VR texture size; close it and give the canvas back.
+    try {
+      this._closeVRTimeline();
+      this.getGui()?._ctrlTimeline?.setVisibility(false);
+      document.querySelector('#acp-show-timeline-btn')?.classList.remove('active');
+      window._animTimelineTabEl?.classList.remove('tl-on');
+    } catch (_) {}
 
     // Hide VR floaters (#23 labels, #29 toast) so they don't linger in the scene.
     if (this._toolToast) this._toolToast.mesh.visible = false;
@@ -5576,25 +8726,346 @@ class Scene {
     mat4.perspective(cache.proj, cam._fov * Math.PI / 180.0, aspect, near, far);
   }
 
+  // DESK SCULPT (Desktop Canvas mode 4). The headset rests on the desk facing you as a tracker,
+  // and you sculpt with the controllers while watching the monitor.
+  //
+  // The desk camera lives in the SAME space as the head and controllers -- three's world is the
+  // tracking space, and world grabs move _worldGroup rather than the space -- so controllers,
+  // rays, grips and panels line up on screen with no remapping. That remapping ("optical UI
+  // mapping") is what the old Stationary mode needed and why it needed calibrating.
+  //
+  // THE CAMERA IS A CHILD OF THE HEADSET: pose = the head's level frame (position and heading;
+  // a headset lying on a desk is tilted however it landed) x an offset S. S defaults to matt's
+  // calibrated desk pose (see _deskSavedOffset) -- roughly where your eyes are. Every edit made to the
+  // camera since the last frame (Move Me, the map, the mouse below) is folded back into S, and S
+  // is saved within half a second of changing. It used to be anchored once, when the mode came
+  // on, and saved only on leaving the mode or the session -- so a reload lost it, and choosing
+  // the mode while still wearing the headset anchored it to your head rather than the desk.
+  // matt: "i seem to have to recalibrate substantially each testing round."
+  //
+  // After that it is steered by the ORDINARY desktop orbit/pan/zoom, applied as per-frame
+  // deltas of the desktop camera (Camera.updateView writes cache.view during a session):
+  //   rotation -> the same turn in the desk camera's own frame, about the desktop pivot as it
+  //               sits in VR right now, so orbiting goes round the sculpt;
+  //   pan/zoom -> the change in the eye's offset from the pivot, in the desk camera's frame,
+  //               sculpt units scaled to metres by _vrScale.
+  // Deltas rather than an absolute mapping because the two cameras live in unrelated frames,
+  // and so a world grab (which moves _worldGroup) moves the pivot without moving the camera.
+  _updateDeskCam(xrArrayCam) {
+    const cache = this._desktopCameraCache;
+    let cam = this._deskCam;
+    if (!cam) {
+      cam = this._deskCam = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
+      cam.matrixAutoUpdate = false;
+      cam.matrixWorldAutoUpdate = false;
+    }
+    // The desktop view, decomposed: view = T(-e) * R * T(-pivot), so view * pivot = -e.
+    const V = new THREE.Matrix4().fromArray(cache.view);
+    const pivot = new THREE.Vector3().fromArray(cache.center);
+    const e = pivot.clone().applyMatrix4(V).negate();
+    const q = new THREE.Quaternion().setFromRotationMatrix(V);
+
+    // The head's level frame now. RotationY(a) sends -Z to (-sin a, 0, -cos a).
+    const h = xrArrayCam.matrixWorld.elements;
+    const H = new THREE.Matrix4().makeRotationY(Math.atan2(h[8], h[10])).setPosition(h[12], h[13], h[14]);
+    let S;
+    if (this._deskBase) {
+      cam.matrix.compose(cam.position, cam.quaternion, cam.scale);
+      S = this._deskBase.clone().invert().multiply(cam.matrix);   // last frame's head, today's edits
+    } else {
+      S = this._deskSavedOffset();
+      this._deskPrev = { q, e };
+    }
+    H.clone().multiply(S).decompose(cam.position, cam.quaternion, cam.scale);
+    cam.scale.set(1, 1, 1);   // no drift from the round trip
+    this._deskBase = H;
+    // HOW LONG THE HEADSET HAS BEEN STILL, for the nudge timer (DeskMap.drawTimer). A nudge is
+    // anything past tracking noise: 2 mm, or about half a degree of turn.
+    const hm = xrArrayCam.matrixWorld.elements, st = this._deskStill;
+    if (!st || Math.hypot(hm[12] - st.p[0], hm[13] - st.p[1], hm[14] - st.p[2]) > 0.002
+        || hm[8] * st.f[0] + hm[9] * st.f[1] + hm[10] * st.f[2] < 0.99996) {
+      this._deskStill = { t: performance.now(), p: [hm[12], hm[13], hm[14]], f: [hm[8], hm[9], hm[10]] };
+    }
+
+    const prev = this._deskPrev;
+    // The desktop camera's turn in its own frame. Camera-to-world is the INVERSE view rotation,
+    // so the local delta is prev.q * inverse(q).
+    const L = prev.q.clone().multiply(q.clone().invert());
+    if (1 - Math.abs(L.w) > 1e-9) {
+      const turn = cam.quaternion.clone().multiply(L).multiply(cam.quaternion.clone().invert());
+      const P = pivot.clone().applyMatrix4(this._worldGroup.matrixWorld);
+      cam.position.sub(P).applyQuaternion(turn).add(P);
+      cam.quaternion.premultiply(turn).normalize();
+    }
+    const de = e.clone().sub(prev.e).multiplyScalar(this._vrScale || 0.008);
+    if (de.lengthSq() > 0) cam.position.add(de.applyQuaternion(cam.quaternion));
+    this._deskPrev = { q, e };
+
+    // ALWAYS LEVEL: no roll. Orbiting about tilted axes and Move Me's full hand rotation both
+    // leak roll in, and a monitor view is never meant to have any (matt: "that tilt is always in
+    // the view somehow, about 5 to 10 degrees"). Keep the heading and pitch, rebuild with world up.
+    const fw = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    if (Math.abs(fw.y) < 0.995) {
+      cam.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fw, new THREE.Vector3(0, 1, 0)));
+    }
+
+    cam.matrix.compose(cam.position, cam.quaternion, cam.scale);
+    cam.matrixWorld.copy(cam.matrix);
+    cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+    this._deskSave(false);
+    const cv = this._renderer.domElement;
+    const aspect = cv.width / cv.height || 1;
+    const fov = this.getDeskFov();
+    if (cam.aspect !== aspect || cam.fov !== fov) { cam.aspect = aspect; cam.fov = fov; cam.updateProjectionMatrix(); }
+  }
+
+  // THE DESK CAMERA'S VERTICAL FIELD OF VIEW, saved. A view wider than the monitor really covers
+  // from where you sit stretches whatever is near the sides -- panels read as squashed wide. A
+  // monitor 60 cm wide at 70 cm subtends about 46 degrees across, roughly 27 vertically at 16:9,
+  // so the physically matching value is far below the 50 a camera usually gets.
+  getDeskFov() {
+    if (this._deskFov === undefined) {
+      let v = NaN;
+      try { v = parseFloat(localStorage.getItem('sculptxr.deskFov')); } catch (_) {}
+      this._deskFov = Number.isFinite(v) ? v : 40;   // matt: 40 felt right on a desk
+    }
+    return this._deskFov;
+  }
+
+  setDeskFov(v) {
+    this._deskFov = v;
+    try { localStorage.setItem('sculptxr.deskFov', String(v)); } catch (_) {}
+  }
+
+  _deskSavedOffset() {
+    try {
+      const a = JSON.parse(localStorage.getItem('sculptxr.deskOffset'));
+      if (Array.isArray(a) && a.length === 16) return new THREE.Matrix4().fromArray(a);
+    } catch (_) {}
+    // matt's calibrated sweet spot (2026-10-15, Quest 3 on a desk, FOV 40): 0.91 m in front of the
+    // headset, 5 cm above it, turned to face it and pitched about 12 degrees down. Level (no roll).
+    return new THREE.Matrix4().fromArray([-0.9998, 0, 0.02001, 0, 0.0043, 0.9766, 0.21502, 0,
+      -0.01954, 0.21507, -0.9764, 0, 0.00072, 0.05068, -0.91471, 1]);
+  }
+
+  // Save the camera's offset from the headset when it has changed, at most twice a second
+  // (or now, when `force`).
+  _deskSave(force) {
+    if (!this._deskBase || !this._deskCam) return;
+    const t = performance.now();
+    if (!force && t - (this._deskSavedAt || 0) < 500) return;
+    const S = this._deskBase.clone().invert().multiply(this._deskCam.matrixWorld);
+    const json = JSON.stringify(S.toArray().map((v) => +v.toFixed(5)));
+    if (json === this._deskSavedJson) return;
+    try { localStorage.setItem('sculptxr.deskOffset', json); } catch (_) {}
+    this._deskSavedJson = json;
+    this._deskSavedAt = t;
+  }
+
+  // Leaving the mode or the session: save, and drop the anchor.
+  _deskCommit() {
+    this._deskSave(true);
+    this._deskBase = null;
+    this._isCalibratingSpectator = false;
+    this._deskMap?.hide();
+    this._deskMap?.hideTimer();
+    this._deskMap?.hideArrow();
+    this._deskStill = null;
+    const xrUi = document.getElementById('xr-ui');
+    if (xrUi) xrUi.style.visibility = '';
+  }
+
+  // The plan view (src/gui/DeskMap.js). On by default; the choice is remembered.
+  _deskMapOn() {
+    if (this._deskMapShow === undefined) {
+      try { this._deskMapShow = localStorage.getItem('sculptxr.deskMap') !== '0'; } catch (_) { this._deskMapShow = true; }
+    }
+    return this._deskMapShow;
+  }
+
+  setDeskMap(on) {
+    this._deskMapShow = !!on;
+    try { localStorage.setItem('sculptxr.deskMap', on ? '1' : '0'); } catch (_) {}
+  }
+
+  // What head-facing UI should face: the desk camera in Desk Sculpt, null otherwise, so every
+  // caller keeps its own head source. Panels opening "in front of you", the radial menu, toasts,
+  // labels and the wrist menu's reach test all read this first; without it they would open on
+  // the far side of the headset with their backs to you.
+  deskViewer() {
+    return (this._spectatorViewMode === 4 && this._deskBase && this._renderer?.xr?.isPresenting)
+      ? this._deskCam : null;
+  }
+
+  // Run fn with the GL framebuffer and texture bindings and the scissor test saved, and put them
+  // back exactly after. three's WebGL backend caches those bindings; restoring them by hand keeps
+  // its cache true, where a state reset (or a renderer pass to the canvas) left the headset frame
+  // flashing with the controllers gone.
+  _withGLSaved(gl, fn) {
+    const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+    const prevDraw = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING);
+    const prevTex  = gl.getParameter(gl.TEXTURE_BINDING_2D);
+    const scissorOn = gl.isEnabled(gl.SCISSOR_TEST);
+    try {
+      if (scissorOn) gl.disable(gl.SCISSOR_TEST);
+      fn();
+    } catch (e) {
+      console.warn('[Spectator] blit error:', e);
+    } finally {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDraw);
+      gl.bindTexture(gl.TEXTURE_2D, prevTex);
+      if (scissorOn) gl.enable(gl.SCISSOR_TEST);
+    }
+  }
+
+  // A single-sample RGBA8 texture + framebuffer, cached on this[key] and remade on resize.
+  _specTmpFb(gl, key, w, h) {
+    let t = this[key];
+    if (t && t.w === w && t.h === h) return t;
+    if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return (this[key] = { fb, tex, w, h });
+  }
+
+  // MIRROR on the node renderer: copy the left eye out of the XR framebuffer with raw GL.
+  // Re-drawing the scene inside the XR frame fought three's framebuffer/state caches (headset
+  // flashing, controllers gone) no matter how the pass was bracketed; a copy needs no renderer
+  // state at all. Two blits, because the XR framebuffer may be multisampled and a resolve can
+  // neither scale nor move the rectangle: (1) resolve into a temp the size of the XR framebuffer
+  // with IDENTICAL rectangles, (2) temp -> canvas, cover-fitted and zoomed by _mirrorFovScale.
+  _mirrorBlit(renderer) {
+    const gl = renderer.backend?.gl;
+    const xrFb = renderer.backend?._xrFramebuffer;
+    const vp = this._spectatorEyeVP;
+    if (!gl || !xrFb || !vp) return;
+    const cv = renderer.domElement;
+    const cw = cv.width, ch = cv.height;
+    const [ex, ey, ew, eh] = vp;
+    if (!(cw > 0 && ch > 0 && ew > 0 && eh > 0)) return;
+
+    this._withGLSaved(gl, () => {
+      const t = this._specTmpFb(gl, '_mirrorTmp', ex + ew, ey + eh);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, xrFb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, t.fb);
+      gl.blitFramebuffer(ex, ey, ex + ew, ey + eh, ex, ey, ex + ew, ey + eh, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+
+      const zoom = 1 / (this._mirrorFovScale ?? 1.0);
+      const c = Math.max(cw / ew, ch / eh) * zoom;
+      const sw = Math.min(ew, cw / c), sh = Math.min(eh, ch / c);
+      const sx = ex + (ew - sw) / 2, sy = ey + (eh - sh) / 2;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, t.fb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.blitFramebuffer(sx, sy, sx + sw, sy + sh, 0, 0, cw, ch, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+    });
+  }
+
+  // DESKTOP / SPECTATOR on the node renderer: draw into a target of our own, never the canvas.
+  // To three a target that is not the output target is a plain offscreen pass -- no XR camera, no
+  // XR framebuffer, so nothing to detach, resize or reset, which is what kept breaking the headset.
+  // samples:4 is anti-aliasing AND a different render-context key from the XR target (samples 0):
+  // sharing one made the two passes recompile each other's pipelines every frame.
+  // HALF FLOAT, because this target holds LINEAR colour until the quad encodes it: 8 bits of
+  // linear light bands visibly in the darks (matt saw it switching desktop -> desk view). The
+  // normal desktop path renders through three's own half-float target, which is why it did not.
+  // The quad writes sRGB-encoded values, so `out` stays 8-bit and blits to the canvas as before.
+  // An offscreen pass is written linear with no tone mapping, so a quad applies the renderer's
+  // output transform into a second target, and that one is blitted to the canvas with raw GL.
+  _spectatorOffscreen(renderer, cam) {
+    const W = this._THREE_GPU, T = this._TSL_GPU;
+    const gl = renderer.backend?.gl;
+    if (!W || !T || !gl) return;
+    const cw = renderer.domElement.width, ch = renderer.domElement.height;
+    if (!(cw > 0 && ch > 0)) return;
+
+    let s = this._specOff;
+    if (!s) s = this._specOff = {
+      rt: new W.RenderTarget(cw, ch, { samples: 4, type: W.HalfFloatType }),
+      out: new W.RenderTarget(cw, ch, { depthBuffer: false }),
+      quad: new W.QuadMesh(), tm: null, cs: null, fb: null, tex: null,
+    };
+    if (s.rt.width !== cw || s.rt.height !== ch) { s.rt.setSize(cw, ch); s.out.setSize(cw, ch); }
+    // A node graph is not rebuilt by needsUpdate; a tone-mapping change gets a new material.
+    if (s.tm !== renderer.toneMapping || s.cs !== renderer.outputColorSpace) {
+      s.tm = renderer.toneMapping; s.cs = renderer.outputColorSpace;
+      s.quad.material?.dispose();
+      s.quad.material = new W.NodeMaterial();
+      s.quad.material.fragmentNode = T.renderOutput(T.texture(s.rt.texture), s.tm, s.cs);
+    }
+
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(s.rt);
+    renderer.render(this._scene, cam);
+    renderer.setRenderTarget(s.out);
+    s.quad.render(renderer);
+    renderer.setRenderTarget(prev);
+
+    const tex = renderer.backend.get(s.out.texture)?.textureGPU;
+    if (!tex) return;
+    this._withGLSaved(gl, () => {
+      if (s.tex !== tex) {
+        if (s.fb) gl.deleteFramebuffer(s.fb);
+        s.fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, s.fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        s.tex = tex;
+      }
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, s.fb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.blitFramebuffer(0, 0, cw, ch, 0, 0, cw, ch, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    });
+  }
+
   _renderSpectatorCanvas() {
     const mode = this._spectatorViewMode ?? 0;
 
     const renderer = this._renderer;
     if (!renderer) return;
+    const node = this._isNodeRenderer;
+    if (mode !== 4 && this._deskBase) this._deskCommit();
 
-    // Render modes (1 & 2) are throttled to limit GPU cost on the desktop pass.
+    // BLANK on the node renderer: one raw clear of the canvas, then nothing until the mode
+    // changes. renderer.clear() would go to the XR target, not the canvas.
+    if (node && mode === 0) {
+      const gl = renderer.backend?.gl;
+      if (this._specBlanked || !gl) return;
+      this._specBlanked = true;
+      this._withGLSaved(gl, () => {
+        const cc = gl.getParameter(gl.COLOR_CLEAR_VALUE);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+        gl.clearColor(0.05, 0.05, 0.05, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.clearColor(cc[0], cc[1], cc[2], cc[3]);
+      });
+      return;
+    }
+    this._specBlanked = false;
+
+    // Render modes are throttled to limit GPU cost on the desktop pass.
     // _spectatorFrameSkip: 0=every frame, 3=every 4th (default), etc.
     // BLANK (0) is a single clear — no throttle needed.
-    if (mode >= 1) {
+    // Desk Sculpt is exempt: it is the view you are sculpting through, not a preview.
+    if (mode >= 1 && mode !== 4) {
       const skip = this._spectatorFrameSkip ?? 3;
       this._spectatorN = ((this._spectatorN || 0) + 1);
       if (skip > 0 && (this._spectatorN % (skip + 1)) !== 0) return;
     }
 
+    if (node && mode === 1) { this._mirrorBlit(renderer); return; }
+
+    const draw = (cam) => node ? this._spectatorOffscreen(renderer, cam) : renderer.render(this._scene, cam);
     const wasXR = renderer.xr.enabled;
+    const _t0 = performance.now();
     try {
-      renderer.xr.enabled = false;  // bypass XR layer so we can write to the DOM canvas
-      renderer.setRenderTarget(null);
+      if (!node) {
+        renderer.xr.enabled = false;  // bypass XR layer so we can write to the DOM canvas
+        renderer.setRenderTarget(null);
+      }
 
       if (mode === 0) {
         // ── BLANK: just clear the canvas ──────────────────────────────────
@@ -5617,22 +9088,25 @@ class Scene {
           cam.matrixWorldInverse.copy(this._spectatorLeftEyeMatrix).invert();
           cam.matrix.copy(cam.matrixWorld);
 
-          // Rebuild projection for the CSS display size of the canvas, not the XR
-          // framebuffer resolution (canvas.width/height = per-eye XR resolution ≈ square;
-          // canvas.clientWidth/Height = actual browser window = e.g. 16:9).
-          // elements[5] of a column-major perspective matrix = cot(vFov/2).
-          const m11        = this._spectatorLeftEyeProj.elements[5];
-          const vFovDeg    = 2.0 * Math.atan(1.0 / m11) * (180 / Math.PI);
+          // PROJECTION = THE EYE'S OWN FRUSTUM, re-fitted to the canvas aspect and a zoom.
+          // A symmetric perspective rebuilt from the eye's FOV drops its off-axis offset (the
+          // frustum centre is not the view axis), which shifted the image up; and a default scale
+          // of 0.5 was a built-in 2x zoom. Scale 1 (the default, scroll to zoom in) is what the
+          // headset shows. Column-major: [0]=x focal, [5]=y focal, [8]/[9]=x/y centre offset.
+          const e = this._spectatorLeftEyeProj.elements;
           const dispAspect = (canvas.clientWidth || canvas.width) /
                              (canvas.clientHeight || canvas.height) || 1;
-          if (this._mirrorFovScale === undefined) this._mirrorFovScale = 0.5;
-          cam.fov    = vFovDeg * this._mirrorFovScale;
-          cam.aspect = dispAspect;
-          cam.near   = 0.01;
-          cam.far    = 50;
-          cam.updateProjectionMatrix();
+          if (this._mirrorFovScale === undefined) this._mirrorFovScale = 1.0;
+          const k = 1 / this._mirrorFovScale;
+          const P = cam.projectionMatrix.copy(this._spectatorLeftEyeProj);
+          P.elements[5] = e[5] * k;
+          P.elements[0] = e[5] * k / dispAspect;
+          P.elements[8] = e[8] * (P.elements[0] / e[0]);   // keep the same centre direction
+          P.elements[9] = e[9] * k;
+          cam.projectionMatrixInverse.copy(P).invert();
+          cam.coordinateSystem = renderer.coordinateSystem;
 
-          renderer.render(this._scene, cam);
+          draw(cam);
         }
 
       } else if (mode === 2) {
@@ -5685,7 +9159,7 @@ class Scene {
           this._worldGroup.scale.set(0.701, 0.701, 0.701);
         }
 
-        renderer.render(this._scene, desktopCam);
+        draw(desktopCam);
 
         // Restore VR worldGroup state so the next XR frame is correct.
         this._worldGroup.position.copy(savedPos);
@@ -5713,16 +9187,17 @@ class Scene {
         // wgInvMatrix: VR world → sculpt space.  Read before the worldGroup swap below.
         const wgInvMatrix = this._worldGroup.matrixWorld.clone().invert();
 
-        // Desktop camera position and orbit centre (both in desktop world space).
-        const desktopCamWorldPos = new THREE.Vector3().setFromMatrixPosition(
-          new THREE.Matrix4().fromArray(cache.view).invert()
-        );
         const orbitCenter = new THREE.Vector3(
           cache.center[0], cache.center[1], cache.center[2]
         );
 
-        // Full 3-D orbit distance (replaces the old XZ-only horizRadius).
-        const orbitDist = desktopCamWorldPos.distanceTo(orbitCenter);
+        // THE DESKTOP FRAMING, in the desktop camera's own frame: Camera.updateView builds
+        // view = T(-e) * R * T(-center), so view * center = -e. e.z is the zoom distance and
+        // e.x/e.y the pan. Re-applying e in the spectator's frame gives desktop zoom AND pan,
+        // with only the orbit rotation taken from the headset. (The old 3-D distance to the
+        // pivot folded a pan into the zoom and otherwise threw it away.)
+        const e = orbitCenter.clone().applyMatrix4(new THREE.Matrix4().fromArray(cache.view)).negate();
+        const orbitDist = e.z;
 
         // --- Extract headset forward (-Z) and up (+Y) from the eye matrix ---
         // setFromMatrixColumn(m, n) returns column n = local axis n in world space.
@@ -5757,6 +9232,7 @@ class Scene {
         // lookAt sets rotation only — must set position separately.
         const camToWorld = new THREE.Matrix4().lookAt(camPos, orbitCenter, headUp);
         camToWorld.setPosition(camPos);
+        camToWorld.multiply(new THREE.Matrix4().makeTranslation(e.x, e.y, 0));   // desktop pan
         desktopCam.matrixWorld.copy(camToWorld);
         desktopCam.matrixWorldInverse.copy(camToWorld).invert();
         desktopCam.matrix.copy(camToWorld);
@@ -5785,13 +9261,26 @@ class Scene {
           this._worldGroup.scale.set(0.701, 0.701, 0.701);
         }
 
-        renderer.render(this._scene, desktopCam);
+        draw(desktopCam);
 
         this._worldGroup.position.copy(savedPos3);
         this._worldGroup.quaternion.copy(savedQuat3);
         this._worldGroup.scale.copy(savedScale3);
         this._worldGroup.updateMatrixWorld(true);
         } // end else (spectatorLeftEyeMatrix available)
+      } else if (mode === 4) {
+        // ── DESK SCULPT: the desk camera, nothing swapped -- see _updateDeskCam ──
+        if (this._deskCam && this._deskBase) {
+          draw(this._deskCam);
+          // The Enter VR / AR buttons sit over the map's corner, and you are already in.
+          const xrUi = document.getElementById('xr-ui');
+          if (xrUi) xrUi.style.visibility = 'hidden';
+          const hud = this._deskMap || (this._deskMap = new DeskMap());
+          if (this._deskMapOn()) hud.draw(this, renderer.xr.getCamera(), this._deskCam);
+          else hud.hide();
+          hud.drawTimer((performance.now() - this._deskStill.t) / 1000, this._deskMapOn());
+          hud.drawArrow(this, this._deskCam);
+        }
       }
 
     } catch (e) {
@@ -5799,6 +9288,12 @@ class Scene {
       console.warn('[Spectator] render error:', e);
     } finally {
       renderer.xr.enabled = wasXR;
+      // First pass of each session, or every pass with window._spectatorTrace set.
+      this._spectatorPasses = (this._spectatorPasses || 0) + 1;
+      if (window._spectatorTrace || this._spectatorPasses === 1) {
+        console.log('[spectatorTrace] mode ' + mode + ' cpu ' + (performance.now() - _t0).toFixed(1)
+          + 'ms canvas ' + renderer.domElement.width + 'x' + renderer.domElement.height);
+      }
     }
   }
   // ──────────────────────────────────────────────────────────────────────────
@@ -6143,6 +9638,14 @@ class Scene {
     // of the camera so you can inspect layout without entering VR.
     // Usage: showPanel('mini'|'brush'|'picker'|'main')  /  showPanel() hides all.
     if (!window.showPanel) {
+      // RENDER PASSES (#2a). exportPass('depth'|'normal') saves a PNG; renderPass() hands back a
+      // data URL instead, which is what makes the thing testable without a download dialog.
+      window.exportPass = (mode = 'normal', size = 1024) => exportRenderPass(this, mode, size);
+      window.renderPass = async (mode = 'normal', size = 256) => {
+        const fitted = mode === 'depth' ? await autoRange(this, size) : null;
+        const c = await renderPassToCanvas(this, mode, size, fitted);
+        return c ? c.toDataURL('image/png') : null;
+      };
       window.showPanel = (name) => {
         const panels = {
           mini:   this._miniPanel,
@@ -6157,7 +9660,7 @@ class Scene {
         if (!p?.mesh) { console.warn('[showPanel] panel not ready:', name); return; }
 
         // Float 0.7 m in front of the camera, facing it.
-        const cam = this._camera?.getThreeCamera();
+        const cam = this.deskViewer() || this._camera?.getThreeCamera();
         if (cam) {
           const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
           p.mesh.position.copy(cam.position).addScaledVector(fwd, 0.7);
@@ -6341,7 +9844,9 @@ class Scene {
             const lineGeometry = new THREE.CylinderGeometry(0.001, 0.001, 0.30, 8, 1, true);
             lineGeometry.rotateX(-Math.PI / 2);
             lineGeometry.translate(0, 0, -0.15); // base at z=0, tip at z=-0.30
-            const lineMaterial = new THREE.ShaderMaterial({
+            // Node material first: WebGPURenderer cannot draw a ShaderMaterial, so on the
+            // flagged path the aim laser was hidden -- in every shader mode.
+            const lineMaterial = NodeMaterials.laser() || new THREE.ShaderMaterial({
                 vertexShader: `varying float vFade; void main() { vFade = 1.0 - clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
                 fragmentShader: `varying float vFade; void main() { gl_FragColor = vec4(1.0, 1.0, 1.0, vFade * 0.85); }`,
                 transparent: true, depthTest: true, depthWrite: false,
@@ -6365,7 +9870,10 @@ class Scene {
             spikeGeo.rotateX(-Math.PI / 2);
             spikeGeo.translate(0, 0, -0.05); // Base at 0, Tip at -0.10
             
-            const spikeMat = new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
+            // Node material first: bisection named this exact object as the one that starts
+            // the drawElements flood under ?renderer=webgpu. See NodeMaterials.basic.
+            const spikeMat = NodeMaterials.basic(0x4d4d4d)
+              || new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
             const spikeMesh = new THREE.Mesh(spikeGeo, spikeMat);
             spikeMesh.name = 'stylus_spike';
             controller.add(spikeMesh);
@@ -6391,10 +9899,15 @@ class Scene {
             const spikeGhostGeo = new THREE.CylinderGeometry(0, 0.004, 0.035, 16);
             spikeGhostGeo.rotateX(-Math.PI / 2);
             spikeGhostGeo.translate(0, 0, -0.0825); // top ~1/3, z −0.065 .. −0.10 (tip)
-            const spikeGhostMat = new THREE.MeshBasicMaterial({
+            const spikeGhostMat = NodeMaterials.basic(0x00e5ff, {
+                transparent: true, opacity: 0.6, depthTest: true, depthWrite: false,
+            }) || new THREE.MeshBasicMaterial({
                 color: 0x00e5ff, transparent: true, opacity: 0.6,
                 depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false,
             });
+            // GreaterDepth is the "show me where something is nearer" trick that makes the
+            // ghost read as occluded; it survives the node material, so it is set either way.
+            spikeGhostMat.depthFunc = THREE.GreaterDepth;
             const spikeGhost = new THREE.Mesh(spikeGhostGeo, spikeGhostMat);
             spikeGhost.name = 'stylus_spike_ghost';
             spikeGhost.renderOrder = 9999;
@@ -6411,6 +9924,10 @@ class Scene {
             spikeMesh.position.z = -defOffset;
             spikeMesh.rotation.x = defTilt * Math.PI / 180.0;
             rayRoot.rotation.x = defTilt * Math.PI / 180.0;
+            // Same pivot as the spike and as _controllerRay's picking origin -- see
+            // updateStylusOffset. Without this the two are parallel but offset by
+            // offset * sin(tilt).
+            rayRoot.position.z = -defOffset;
 
             // Keep the 'connected' listener purely for diagnostic logging, 
             // AND robust static mapping!
@@ -6488,7 +10005,11 @@ class Scene {
                 }
             `;
 
-            const volMat = new THREE.ShaderMaterial({
+            // The node build first: this is the VR volume cursor -- the "radius sphere" -- and
+            // it is the raw ShaderMaterial matt saw drawn black under ?renderer=webgpu, with
+            // "THREE.NodeMaterial: Material ShaderMaterial is not compatible" beside it. Same
+            // fresnel as the desktop one in Selection.js, so the same ported material.
+            const volMat = NodeMaterials.fresnelGlow(0x4488ff) || new THREE.ShaderMaterial({
                 uniforms: { color: { value: new THREE.Color(0x4488ff) } },
                 vertexShader: fresnelVertexShader,
                 fragmentShader: fresnelFragmentShader,
@@ -6527,20 +10048,24 @@ class Scene {
                 }
             }
 
-            const geoTop = new THREE.BufferGeometry().setFromPoints(pointsTop);
-            const geoBottomLeft = new THREE.BufferGeometry().setFromPoints(pointsBottomLeft);
-            const geoBottomRight = new THREE.BufferGeometry().setFromPoints(pointsBottomRight);
+            // SEGMENT PAIRS, NOT A STRIP -- see src/render/lineStrip.js. `top` was named by
+            // bisection as the first object whose draw starts the UBO flood under
+            // WebGPURenderer, and it is a non-indexed THREE.Line, which draws with drawArrays:
+            // the call every unexplained error in this hunt was on.
+            const geoTop = stripGeometry(pointsTop);
+            const geoBottomLeft = stripGeometry(pointsBottomLeft);
+            const geoBottomRight = stripGeometry(pointsBottomRight);
 
             // depthWrite OFF with depthTest off -- see the note on the cursor group below.
             const matTop = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
             const matBottomLeft = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
             const matBottomRight = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8, linewidth: 2 });
 
-            const lineTop = new THREE.Line(geoTop, matTop);
+            const lineTop = new THREE.LineSegments(geoTop, matTop);
             lineTop.name = "top";
-            const lineBottomLeft = new THREE.Line(geoBottomLeft, matBottomLeft);
+            const lineBottomLeft = new THREE.LineSegments(geoBottomLeft, matBottomLeft);
             lineBottomLeft.name = "bottom_left";
-            const lineBottomRight = new THREE.Line(geoBottomRight, matBottomRight);
+            const lineBottomRight = new THREE.LineSegments(geoBottomRight, matBottomRight);
             lineBottomRight.name = "bottom_right";
 
             const ringLine = new THREE.Group();
@@ -6550,12 +10075,23 @@ class Scene {
             ringLine.add(lineBottomRight);
             group.add(ringLine);
 
-            const dotGeo = new THREE.BufferGeometry();
-            dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-            const dotMat = new THREE.PointsMaterial({ color: 0x4488ff, size: 2, sizeAttenuation: false, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
-            const centerDot = new THREE.Points(dotGeo, dotMat);
+            // Centre dots are SPHERES, not THREE.Points: WebGPU draws every point at 1px whatever
+            // `size` says. Metres in scene space, so they live on the group, NOT under ringLine
+            // (which is scaled by the brush radius).
+            const DOT_R = 0.0015;
+            const dotGeo = new THREE.SphereGeometry(DOT_R, 12, 8);
+            const centerDot = new THREE.Mesh(dotGeo, new THREE.MeshBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 }));
             centerDot.name = "cursor_dot";
-            ringLine.add(centerDot);
+            centerDot.visible = false;
+            group.add(centerDot);
+
+            // Mirrored-stroke centre: a dot only, like SculptGL. Not a child of ringLine (which
+            // is scaled by the brush radius and hidden in air/voxel/grab).
+            const symDotMat = new THREE.MeshBasicMaterial({ color: 0x4488ff, depthTest: false, depthWrite: false, transparent: true, opacity: 0.8 });
+            const symDot = new THREE.Mesh(dotGeo, symDotMat);
+            symDot.name = "sym_dot";
+            symDot.visible = false;
+            group.add(symDot);
 
             group.visible = false;
             // A MATERIAL THAT REFUSES TO TEST DEPTH MUST NOT WRITE IT.
@@ -6954,7 +10490,7 @@ class Scene {
       // VR: floating 3D panel
       const fp = this._filesPanel;
       if (!fp?.mesh) return;
-      const cam = this._camera?.getThreeCamera();
+      const cam = this.deskViewer() || this._camera?.getThreeCamera();
       if (cam) {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
         fp.mesh.position.copy(cam.position).addScaledVector(fwd, 0.55);
@@ -7010,8 +10546,22 @@ class Scene {
     // on first open and reopen alike.
     const _opts   = window.getOptionsURL?.() || {};
     const _defAsp = 900 / 150;
-    const _worldW = _opts.vrTimelineW > 0 ? _opts.vrTimelineW : 0.90;
-    const _worldH = _opts.vrTimelineH > 0 ? _opts.vrTimelineH : _worldW / _defAsp;
+    // DEFAULT SIZE: as wide as the main panel and the blendshape panel together (the toolbar is
+    // compact enough now that it no longer needs 0.9m), and placed below them -- see the
+    // placement block further down. A saved size outranks it.
+    const _cam0 = this._camera?.getThreeCamera();
+    const _mm0  = this._mainMenuPanel?.mesh;
+    const _bs0  = this._vrBlendMesh?.visible ? this._vrBlendMesh : null;
+    let _span = null;
+    if (_cam0 && _mm0) {
+      const r0 = new THREE.Vector3(1, 0, 0).applyQuaternion(_cam0.quaternion);
+      const a = this._extentAlong(_mm0, r0), b = _bs0 ? this._extentAlong(_bs0, r0) : null;
+      if (a) _span = { min: Math.min(a.min, b ? b.min : Infinity), max: Math.max(a.max, b ? b.max : -Infinity) };
+    }
+    const _spanW  = _span ? _span.max - _span.min : 0;
+    const _worldW = _opts.vrTimelineW > 0 ? _opts.vrTimelineW : (_spanW > 0.2 ? _spanW : 0.90);
+    const _worldH = _opts.vrTimelineH > 0 ? _opts.vrTimelineH
+      : (_spanW > 0.2 && !(_opts.vrTimelineW > 0) ? _worldW / 3.5 : _worldW / _defAsp);
     const _cssW   = Math.round(_worldW * 1500);
     const _cssH   = Math.round(_worldH * 1500);
 
@@ -7036,11 +10586,7 @@ class Scene {
       this._vrTimelineTexture = tex;
 
       const geo = new THREE.PlaneGeometry(_worldW, _worldH);
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex, transparent: true,
-        side: THREE.DoubleSide, depthWrite: true, depthTest: true,
-      });
-      registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
+      const mat = makeCanvasPanelMaterial(tex); // same material + Settings grade as the HTML panels
       this._vrTimelineMesh = new THREE.Mesh(geo, mat);
       this._scene.add(this._vrTimelineMesh);
 
@@ -7091,40 +10637,34 @@ class Scene {
     // Position at the main menu's world location, facing the camera (default
     // placement near the attached panel). Size is persisted; pose is not — a
     // saved world pose tended to reopen far from the user.
-    const cam = this._camera?.getThreeCamera();
+    const cam = this.deskViewer() || this._camera?.getThreeCamera();
     const mm  = this._mainMenuPanel?.mesh;
     // A pose remembered from earlier in this session outranks the first-open placement.
     const _tlRestored = this._restorePanelPose('timeline', this._vrTimelineMesh);
     if (cam && !_tlRestored) {
       if (mm) {
-        // BESIDE THE MENU, NOT ON TOP OF IT. This used to open at the menu's exact world
-        // position — matt: "it appears over where the mainpanel, confusing."
-        //
-        // Placed by EDGES, not by half-widths: put the panel at the menu, face it the same way,
-        // then measure where both actually reach along camera-right and slide this one until its
-        // RIGHT edge clears the menu's LEFT edge by a gap. Nothing here assumes where the pivot
-        // is or that the stored width is the drawn width, which is what the half-width version
-        // got wrong.
-        //
-        // CAMERA-right, not the menu's own right, so "left of the menu" means left from where
-        // you are standing whatever angle the menu is held at.
+        // BELOW THE MENU (and the blendshape panel when open), centred under their combined
+        // span. Placed by EDGES, not half-widths: put the panel at the menu, face it the same
+        // way, then measure along camera-right / camera-up and slide it until it sits centred
+        // with its top edge a gap under the lowest of them. CAMERA axes, so "below" is below
+        // from where you stand whatever angle the menu is held at.
         const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+        const camUp    = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
         const pos = new THREE.Vector3();
         mm.getWorldPosition(pos);
-        this._vrTimelineMesh.position.copy(pos);
-        this._vrTimelineMesh.quaternion.copy(cam.quaternion);
-        const menuExt = this._extentAlong(mm, camRight);
-        const tlExt   = this._extentAlong(this._vrTimelineMesh, camRight);
-        if (menuExt && tlExt) {
-          const GAP = 0.02;   // ~36px at 1800 px/m; matt asked for at least 10
-          this._vrTimelineMesh.position.addScaledVector(
-            camRight, (menuExt.min - GAP) - tlExt.max);
+        const tlm = this._vrTimelineMesh;
+        tlm.position.copy(pos);
+        tlm.quaternion.copy(cam.quaternion);
+        const tlR = this._extentAlong(tlm, camRight), tlU = this._extentAlong(tlm, camUp);
+        const mmU = this._extentAlong(mm, camUp);
+        const bsU = _bs0 ? this._extentAlong(_bs0, camUp) : null;
+        if (_span && tlR && tlU && mmU) {
+          const GAP = 0.02;
+          const lowest = Math.min(mmU.min, bsU ? bsU.min : Infinity);
+          tlm.position.addScaledVector(camRight, (_span.min + _span.max) / 2 - (tlR.min + tlR.max) / 2);
+          tlm.position.addScaledVector(camUp, (lowest - GAP) - tlU.max);
         } else {
-          // No measurable box (a panel whose geometry has not been built yet). Fall back to the
-          // half-width guess rather than dropping the panel on the menu.
-          const menuHalfW = (mm.geometry?.parameters?.width ?? 0.30) * 0.5;
-          this._vrTimelineMesh.position.addScaledVector(
-            camRight, -(menuHalfW + _worldW / 2 + 0.02));
+          tlm.position.addScaledVector(camUp, -0.4);
         }
       } else {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
@@ -7267,11 +10807,7 @@ class Scene {
       this._vrBlendTexture = tex;
 
       const geo = new THREE.PlaneGeometry(_worldW, _worldH);
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex, transparent: true,
-        side: THREE.DoubleSide, depthWrite: true, depthTest: true,
-      });
-      registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
+      const mat = makeCanvasPanelMaterial(tex); // same material + Settings grade as the HTML panels
       this._vrBlendMesh = new THREE.Mesh(geo, mat);
       this._vrBlendPanel._vrMesh = this._vrBlendMesh; // so the panel can anchor the keyboard to itself
       this._scene.add(this._vrBlendMesh);
@@ -7288,7 +10824,7 @@ class Scene {
     // convention differs from a camera-facing plane. Offset along camera-right so
     // it sits next to the menu from the user's viewpoint.
     const mm  = this._mainMenuPanel?.mesh;
-    const cam = this._camera?.getThreeCamera();
+    const cam = this.deskViewer() || this._camera?.getThreeCamera();
     // As with the timeline: a pose remembered this session beats the first-open placement.
     const _bsRestored = this._restorePanelPose('blendshapes', this._vrBlendMesh);
     if (cam && !_bsRestored) {
@@ -7557,7 +11093,7 @@ class Scene {
       const g = new THREE.CylinderGeometry(0.001, 0.001, 1, 8, 1, true);
       g.rotateX(-Math.PI / 2);   // cylinder Y-axis → -Z
       g.translate(0, 0, -0.5);   // base at z=0, tip at z=-1
-      const m = new THREE.ShaderMaterial({
+      const m = NodeMaterials.laser() || new THREE.ShaderMaterial({
         vertexShader: `varying float vFade; void main() { vFade = 1.0 - clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
         fragmentShader: `varying float vFade; void main() { gl_FragColor = vec4(1.0, 1.0, 1.0, vFade * 0.85); }`,
         transparent: true, depthTest: true, depthWrite: false,
@@ -7608,9 +11144,10 @@ class Scene {
     if (!this._vtlZoomActive) {
       // Both controllers must be over usable timeline space to START the gesture.
       if (!tl.isEmptyGraphSpaceAt(pL.cx, pL.cy) || !tl.isEmptyGraphSpaceAt(pR.cx, pR.cy)) return;
-      // Cancel any single-hand pan that may have begun, then capture the anchors.
-      this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
+      // Cancel any single-hand marquee that may have begun, then capture the anchors. The cancel
+      // comes FIRST: releasing a live marquee finalizes it, and an empty one clears the selection.
       tl._cancelActiveAction?.();
+      this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
       tl.beginTwoPointerZoom(pL.cx, pL.cy, pR.cx, pR.cy);
       this._vtlZoomActive = true;
     } else {
@@ -7709,7 +11246,7 @@ class Scene {
 
     const _placeTornPanel = () => {
       if (!panel.mesh) return;
-      const cam = this._camera.getThreeCamera();
+      const cam = this.deskViewer() || this._camera.getThreeCamera();
       // Position: use the main panel's world position so the panel appears
       // right where the user is already looking.
       const mmMesh = this._mainMenuPanel?.mesh;
@@ -8880,8 +12417,16 @@ class Scene {
     const S = this._srcObjs;
     if (!S) return;
     const wantHand = this._handsOnlyMode();
+    // THE FALLBACK IS THE LEAK. Filtering `sources` cannot reach these objects: three poses
+    // xr.getController(i) from session.inputSources itself, and the spike and the laser hang
+    // off that object. With hands off but no controller mapped for this side, the `|| S.hand[h]`
+    // below picked the hand anyway, three kept posing it, and the spike went on tracking the
+    // fingers. matt: "the controller spikes still follow my fingers". Picking nothing leaves it
+    // to the hide loop underneath, which is already the one place that hides what we did not pick.
+    const noHands = window._handTracking === false;
     for (const h of ['left', 'right']) {
-      const pick = (wantHand ? (S.hand[h] || S.ctl[h]) : (S.ctl[h] || S.hand[h])) || null;
+      const pick = (wantHand ? (S.hand[h] || S.ctl[h])
+                             : (S.ctl[h] || (noHands ? null : S.hand[h]))) || null;
       // AND THE ONE NOT CHOSEN IS HIDDEN, because it is not an abstraction — it is a three
       // object with a spike and a pointer ray hanging off it, and the runtime keeps giving it a
       // pose. Both were drawing: the hand's spike carries the hand length and sits within a few
@@ -8907,6 +12452,10 @@ class Scene {
   }
 
   _handsOnlyMode() {
+    // HANDS SWITCHED OFF IS NOT A MODE HANDS CAN WIN. Asked in ten places -- stylus length and
+    // offset, the wrist panel placement, the UI prime -- and every one of them should read the
+    // switch, so it is answered once here rather than at each call.
+    if (window._handTracking === false) return false;
     const srcs = this._xrSession?.inputSources;
     if (!srcs || !srcs.length) return false;
     const now = performance.now();
@@ -9026,7 +12575,7 @@ class Scene {
     // cost four sessions on the motion-path work. The XR camera IS the three-side head, so it
     // needs no conversion and cannot drift from the mesh it positions.
     const xr = this._renderer && this._renderer.xr;
-    const cam = xr && xr.getCamera && xr.getCamera(this._camera?.getThreeCamera?.());
+    const cam = this.deskViewer() || (xr && xr.getCamera && xr.getCamera(this._camera?.getThreeCamera?.()));
     if (!cam) { m.visible = false; return; }
     cam.updateMatrixWorld(true);
     const H = cam.matrixWorld.elements;
@@ -9123,7 +12672,28 @@ class Scene {
     this._panelRayLatch = { left: null, right: null };
 
     const session = frame.session;
-    const sources = session.inputSources;
+    // HANDS CAN BE SWITCHED OFF, and this is the one place worth doing it.
+    //
+    // matt, testing with a keyboard in the headset: "when testing and i drop the controls to
+    // type, its annoying that it starts to track my hands, interprets my typing hands as a fist,
+    // and starts moving the world all over the place." A runtime that offers hand tracking
+    // alongside controllers hands us BOTH, and typing looks enough like a grip gesture to drive
+    // the world grip.
+    //
+    // Filtered out of `sources` rather than gated at the eleven places _isHandSource is asked,
+    // because everything downstream -- grips, pinches, tools, panels, the laser -- reads this one
+    // array. A source that is not in it cannot drive anything, and nothing else has to know.
+    //
+    // Settings > Input > Hand tracking, or window._handTracking = false from the console. ON by
+    // default: this is a "put it down for a minute" switch, not a change of stance on hands.
+    // The saved preference becomes the live flag once, so a console override still wins after.
+    if (window._handTracking === undefined) {
+      window._handTracking = getOptionsURL().handTracking !== false;
+    }
+    const _srcAll = session.inputSources;
+    const sources = (window._handTracking === false)
+      ? Array.prototype.filter.call(_srcAll, (s) => !this._isHandSource(s))
+      : _srcAll;
     window._vrInputSources = sources;
 
     // BEFORE THE UI MOUNT READS uiGrip.matrixWorld, NOT DURING THE INPUT LOOP.
@@ -9306,7 +12876,11 @@ class Scene {
           // So the test is geometric rather than a flag: measure the pose the grip is offering
           // against the head, and if it is further than an arm could be, do not take it.
           const gripOK = !!xrCam && uiGrip.visible !== false
-            && _wristReach(uiGrip.matrixWorld, xrCam.matrixWorld) < 1.0;
+            && _wristReach(uiGrip.matrixWorld, xrCam.matrixWorld) < (this.deskViewer() ? 3.0 : 1.0);
+          // DESK SCULPT: the 'head' is a headset lying on the desk, and you sit back from it, so
+          // an ordinary hand is routinely more than 1 m away. At 1.0 the panel let go of the hand
+          // whenever it left that sphere (matt: "linked to the controller within a bounding box").
+          // 3 m still rejects the metres-off stale poses this test exists for.
           if (gripOK || !this._wristHeadOffset || !xrCam) {
             uiAnchor.matrix.copy(uiGrip.matrixWorld);
             // Remember where that was RELATIVE TO THE HEAD, for the frames that have no pose.
@@ -9745,15 +13319,26 @@ class Scene {
           const isPressedY = Math.abs(valY) > T_PRESS;
           const isPressedX = Math.abs(valX) > T_PRESS;
 
-          // Check Secondary Hand Trigger for slow-modifier
           const nonDomSource = this._dominantHand === 'left' ? right : left;
-          const isSecondaryTriggerPressed = this._vrSecondaryTriggerPressed;
-          const speedModifier = isSecondaryTriggerPressed ? 0.1 : 1.0;
+
+          // ONE SPEED, AND THE OFF-HAND TRIGGER NO LONGER CHANGES IT.
+          //
+          // It used to be 5% per 30ms normally and 0.5% per 15ms with the off-hand trigger held
+          // -- 167%/s against 33%/s, and matt's verdict on both: "too fast in regular mode, and
+          // too slow when the offhand trigger is pressed". STICK_STEP is the geometric middle of
+          // those two rates (sqrt(167 x 33) = 74%/s, which is 2.24% on the 30ms tick), so the
+          // one remaining speed is the one that was missing.
+          //
+          // The modifier had to go regardless of feel: the off-hand trigger is SMOOTH MODE now,
+          // so holding it already changes which tool the stick is tuning. Having it also change
+          // how fast meant the gesture did two things at once, and the slow-down was landing on
+          // whichever tool you had just switched to.
+          const STICK_STEP = 0.0224;
+          const STICK_RATE = 30;
 
           // Timer for Repeat/Debounce
           const now = performance.now();
-          // Dynamic target rate: 30ms normally, 15ms (10x precision visually via speedModifier 0.1) when holding trigger
-          const targetRateY = isSecondaryTriggerPressed ? 15 : 30;
+          const targetRateY = STICK_RATE;
 
           if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY) {
             const isSlowMod = this._padOf(nonDomSource)?.buttons?.[0]?.pressed ?? false;
@@ -9781,13 +13366,16 @@ class Scene {
               // Geometric, not linear: this is a multiplier over an 8x span, so a fixed
               // PERCENTAGE per tick reads the same to the hand at either end. 5% matches the
               // step radius uses.
-              const step = 1.0 + 0.05 * speedModifier;
+              // The gizmo keeps its own 5%: it spans 8x and matt has not complained about it.
+              // It loses the off-hand slow-down with everything else.
+              const step = 1.0 + 0.05;
               const cur = window._gizmoSizeMul != null
                 ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
               const next = valY < -T_PRESS ? cur * step : cur / step; // UP -> bigger
 
-              // Clamped to the same range the settings slider offers, so the two agree.
-              window._gizmoSizeMul = Math.max(0.25, Math.min(2.0, next));
+              // Clamped to the range GizmoVR publishes, which is the same range both sliders
+              // offer -- one definition, so a control cannot promise a size the gizmo clamps away.
+              window._gizmoSizeMul = Math.max(GIZMO_MUL_MIN, Math.min(GIZMO_MUL_MAX, next));
               getOptionsURL.saveOption('gizmoSizeMul', window._gizmoSizeMul, 500);
               this._main ? this._main.render() : this.render();
             }
@@ -9800,11 +13388,12 @@ class Scene {
               // THE TOOL DOING THE WORK, not the one that will be current again a frame from now.
               // See _smoothModeTool: while smooth mode is held, Smooth is what the
               // stick should be tuning.
-              const smoothTool = this._smoothMode?.tool || null;
-              const tools = smoothTool || this._sculptManager.getCurrentTool();
+              // The tool the wrist panel is showing: Smooth while the off-hand trigger is held.
+              const tools = this.effectiveTool();
               const maxRadius = 250.0;
-              if (valY < -T_PRESS) change = maxRadius * 0.05 * speedModifier; // UP -> +5% of max
-              if (valY > T_PRESS) change = -maxRadius * 0.05 * speedModifier; // DOWN -> -5% of max
+              const RADIUS_STEP = STICK_STEP * 0.625; // radius ran too fast at the shared step (0.5 was too slow)
+              if (valY < -T_PRESS) change = maxRadius * RADIUS_STEP;  // UP -> bigger
+              if (valY > T_PRESS) change = -maxRadius * RADIUS_STEP;  // DOWN -> smaller
 
               if (change !== 0 && tools) {
                 const oldVal = tools._radius;
@@ -9812,6 +13401,7 @@ class Scene {
 
 
                 tools.setRadius(newVal);
+                try { this._miniPanel?.syncFromState?.(); } catch (_) {}
                 // AND REMEMBER IT. The panel sliders have always saved; this — the thumbstick,
                 // which is how the radius actually gets set in VR — did not, so every session
                 // started back at the constructor's default no matter what you had dialled in
@@ -9820,7 +13410,7 @@ class Scene {
                 // Under the same key the panels write -- and keyed to the tool that was actually
                 // changed, so a radius dialled in while smoothing is saved as Smooth's.
                 getOptionsURL.saveOption(
-                  `tool_${smoothTool ? this._smoothToolIndex() : this._sculptManager.getToolIndex()}_radius`,
+                  `tool_${this.effectiveToolIndex()}_radius`,
                   newVal, 500);
 
                 // Update GuiXR and GuiMini Sliders if visible
@@ -9838,23 +13428,24 @@ class Scene {
           // INTENSITY CONTROL (X-Axis)
           if (!state.lastIntensityTime) state.lastIntensityTime = 0;
 
-          const targetRateX = isSecondaryTriggerPressed ? 15 : 30;
+          const targetRateX = STICK_RATE;
 
           if (isPressedX) {
             if (now - state.lastIntensityTime > targetRateX) {
               state.lastIntensityTime = now;
 
               let intChange = 0.0;
-              const tools = this._smoothMode?.tool || this._sculptManager.getCurrentTool();
+              const tools = this.effectiveTool();
 
-              if (valX < -T_PRESS) intChange = -0.05 * speedModifier; // Left -> -5%
-              if (valX > T_PRESS) intChange = 0.05 * speedModifier;   // Right -> +5%
+              if (valX < -T_PRESS) intChange = -STICK_STEP; // Left -> weaker
+              if (valX > T_PRESS) intChange = STICK_STEP;   // Right -> stronger
 
               if (intChange !== 0 && tools) {
                 const oldVal = tools._intensity;
                 const newVal = Math.max(0.0, Math.min(1.0, oldVal + intChange));
 
                 tools.setIntensity(newVal);
+                try { this._miniPanel?.syncFromState?.(); } catch (_) {}
 
                 // Update UI Widgets if active
 
@@ -10153,8 +13744,16 @@ class Scene {
           const _ok = _dk === 'L' ? 'R' : 'L';
           const _dg = this._pinchGap?.[_dk], _og = this._pinchGap?.[_ok];
           const _margin = window._sysPinchMargin ?? 0.010;
+          const P_ON_SYS = this.getPinchOn();
           const _otherOwnsIt = Number.isFinite(_dg) && Number.isFinite(_og) && _og < _dg - _margin;
-          if (!_otherOwnsIt) isPinching = true;
+          // ...AND ONLY WHILE OUR OWN GAP IS NEAR THE "Pinch distance" SETTING. visionOS decides
+          // select from a gaze/intent heuristic that fires before the fingers meet and holds
+          // after they part, and this OR bypassed the slider entirely: matt, "detects a pinch too
+          // early, releases too late". The slack keeps the catch-what-we-missed job (a platform
+          // pinch a few mm past our threshold) without letting it override the setting.
+          const _slack = window._sysPinchSlack ?? 0.008;
+          const _tooOpen = Number.isFinite(_dg) && _dg > P_ON_SYS + _slack;
+          if (!_otherOwnsIt && !_tooOpen) isPinching = true;
         }
 
         mockGamepad = {
@@ -11241,7 +14840,9 @@ class Scene {
           // Start: must be pointing at panel. Continue: latch until grip release
           // regardless of _isPointingAtMenu, so dragging over the sculpt doesn't drop the panel.
           const _panelDragBusy = this._hasPanelDragActive(source.handedness);
-          const _worldNavBusy  = this._vrGrip[source.handedness]?.active ?? false;
+          // A grab that STARTED as a world move owns this hand until release (single OR two-handed).
+          // Sweeping the ray across a panel mid-move must not hand the grip to that panel.
+          const _worldNavBusy  = (this._vrGrip[source.handedness]?.active ?? false) || !!this._vrTwoHanded.latch;
           const _hitSrc = source.handedness === 'left' ? this._vrUIHitSourceLeft : this._vrUIHitSourceRight;
           const mmOnPanel  = _hitSrc === 'MainMenuPanel';
 
@@ -11403,7 +15004,7 @@ class Scene {
           // is almost everywhere.
           //
           // window._panelGrabGuard = false restores the old fall-through in-session.
-          if (isGrip && window._panelGrabGuard !== false
+          if (isGrip && !_worldNavBusy && window._panelGrabGuard !== false
               && (this._isPointingAtMenu || this._panelGrabIntent(source.handedness))) {
             if (source.handedness === 'left') { leftGrip = false; }
             else                              { rightGrip = false; }
@@ -11570,9 +15171,9 @@ class Scene {
     if (bothGripped) {
       this._vrTwoHanded.latch = true;
       this.processVRTwoHanded(leftOrigin, rightOrigin);
-    } else if (this._isCalibratingSpectator) {
-      // [CALIBRATION MODE] "Move Me"
-      // World stays still, you move the Spectator Camera.
+    } else if (this._isCalibratingSpectator && this.deskViewer()) {
+      // [CALIBRATION MODE] "Move Me" (Desk Sculpt, C key)
+      // World stays still, you move the desk camera.
       this._vrTwoHanded.active = false;
       // Force Debug Pivot OFF
       if (this.updateDebugPivot) this.updateDebugPivot(null, false);
@@ -11796,7 +15397,7 @@ class Scene {
 
   _updateVrFloaters() {
     if (!this._toolToast && !window._vrShowButtonLabels && !this._btnLabels) return;
-    const cam = this._renderer?.xr?.getCamera?.(this._camera.getThreeCamera());
+    const cam = this.deskViewer() || this._renderer?.xr?.getCamera?.(this._camera.getThreeCamera());
     if (!cam) return;
     const tmp = this._fTmpVec || (this._fTmpVec = new THREE.Vector3());
     const headQ = this._fTmpQuat || (this._fTmpQuat = new THREE.Quaternion());
@@ -11921,7 +15522,63 @@ class Scene {
     return (b.value ?? 0) >= this._triggerThreshold();
   }
 
+  // THE JOINT UNDER THE CURSOR, from every visible joint, in screen space -- ignoring any tool's own
+  // idea of what is pickable. Pin Pose's hover skips joints the pins already control (a knee between a
+  // pinned hip and a pinned ankle), which is right for where its GIZMO goes and wrong for the menu:
+  // adding an Aim pin to exactly that knee is the point of the menu. A joint within ~18 CSS px, else the
+  // nearer end of the volume under the cursor, else the nearest joint within ~60 px.
+  _jointUnderCursor() {
+    const cam = this.getCamera && this.getCamera();
+    const tcam = cam && cam.getThreeCamera && cam.getThreeCamera();
+    const canvas = this._canvas;
+    if (!tcam || !canvas || this._mouseX == null) return null;
+    const pr = this.getPixelRatio ? this.getPixelRatio() : 1;
+    const v = this._menuPickV || (this._menuPickV = new THREE.Vector3());
+    const mx = this._mouseX, my = this._mouseY;
+    const toScreen = (p, out) => {
+      v.copy(p);
+      if (this._worldGroup) this._worldGroup.localToWorld(v);
+      v.project(tcam);
+      if (v.z > 1) return false;
+      out[0] = (v.x * 0.5 + 0.5) * canvas.width; out[1] = (-v.y * 0.5 + 0.5) * canvas.height;
+      return true;
+    };
+    const s = [0, 0], s0 = [0, 0], s1 = [0, 0], s2 = [0, 0];
+    const joints = Skeleton.joints(this).filter((j) => Skeleton.jointVisible(j));
+    // 1. A joint right under the cursor.
+    let best = null, bestD = 18 * pr, far = null, farD = 60 * pr;
+    for (const j of joints) {
+      if (!toScreen(Skeleton.jointPos(j, this._menuPickP || (this._menuPickP = new THREE.Vector3())), s)) continue;
+      const d = Math.hypot(s[0] - mx, s[1] - my);
+      if (d < bestD) { bestD = d; best = j; }
+      if (d < farD) { farD = d; far = j; }
+    }
+    if (best) return best;
+    // 2. A VOLUME under the cursor: the joint at its nearer end. Clicking on the leg just above the knee
+    //    means the knee more often than the hip, and the click is on the shape you can see, not on a dot.
+    let vb = null, vbScore = 1, vbT = 0;
+    const f = this._menuPickF || (this._menuPickF = {});
+    for (const j of joints) {
+      if (!Skeleton.boneHasCapsule(j)) continue;
+      Skeleton.volumeFrame(this, j, f);
+      if (!toScreen(f.C0, s0) || !toScreen(f.C1, s1)) continue;
+      const tmp = this._menuPickQ || (this._menuPickQ = new THREE.Vector3());
+      tmp.copy(f.C0).addScaledVector(f.e1, f.r * Math.max(f.W, f.H));
+      if (!toScreen(tmp, s2)) continue;
+      const half = Math.max(Math.hypot(s2[0] - s0[0], s2[1] - s0[1]), 4 * pr);
+      const dx = s1[0] - s0[0], dy = s1[1] - s0[1], l2 = dx * dx + dy * dy;
+      let t = l2 > 1e-9 ? ((mx - s0[0]) * dx + (my - s0[1]) * dy) / l2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const score = Math.hypot(mx - (s0[0] + dx * t), my - (s0[1] + dy * t)) / half;
+      if (score < vbScore) { vbScore = score; vb = j; vbT = t; }
+    }
+    if (vb) return vbT < 0.5 && Skeleton.isJoint(vb._parentMesh) ? vb._parentMesh : vb;
+    // 3. Failing both, the nearest joint within a generous reach.
+    return far;
+  }
+
   _resolvePinJoint() {
+    if (this._menuJoint) return this._menuJoint;
     const hov = Skeleton.hoveredJoint(this);
     if (hov) return hov;
     const sel = this.getMesh && this.getMesh();
@@ -12019,6 +15676,7 @@ class Scene {
     const tl = () => this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
     const hasKeySel = !!(window._animSelectedKeys && window._animSelectedKeys.length);
     const canPaste  = !!(window._animKeyClipboard && window._animKeyClipboard.keys && window._animKeyClipboard.keys.length);
+    const hasObjSel = !!(this.getSelectedMeshes && this.getSelectedMeshes().length);
     const selMesh   = this.getMesh && this.getMesh();
     const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
     // #34: shape-layer multiselect commands (Combine when 2+ selected) — same source as the
@@ -12060,7 +15718,31 @@ class Scene {
     // Split takes the BONE — the segment you are pointing at, which is a different answer from
     // the joint at its nearer end. Dissolve takes the JOINT. Falling back to nameRoot keeps
     // Split usable from a selection when no bone is under the tip.
-    const splitTarget = this._rigHoverBone || nameRoot;
+    //
+    // A JOINT LIGHTS THE BONE BELOW IT. SPLIT CUTS THE BONE ABOVE ITS TARGET. Those are
+    // opposite hands, and the mismatch is visible to anyone using it: select bone_01_L, it
+    // turns cyan, right-click -> Split bone, and the bone that splits is bone_02 -> bone_01_L,
+    // the one ABOVE the cyan one. matt, 2026-09-23, with screenshots: "this is not intuitive."
+    //
+    // Both conventions are deliberate and both stay -- see the note in Skeleton's bone tint,
+    // which says so outright: a joint at the TOP of a chain owns no bone above it and would be
+    // unable to paint itself, so the highlight looks down; an EDIT names a bone by the joint it
+    // ends at, so a bone has exactly one owner. What was wrong is only that Split read a joint
+    // with the edit hand when the thing the user had just LIT was chosen with the other.
+    //
+    // So a joint resolves to the bone that is lit: its sole child. The two cases with no single
+    // lit bone keep the old answer, because it is the only unambiguous one left and refusing
+    // would remove a verb outright:
+    //   leaf   nothing is lit below; the bone above is the only bone it touches.
+    //   fork   EVERY child bone is lit, so there is no "the" bone below -- and splitting an
+    //          arbitrary one of three fingers is exactly the guess this avoids.
+    // Pointing straight at a segment is unaffected and is still the precise way to say which.
+    const litBelow = (j) => {
+      if (!j) return null;
+      const kids = Skeleton.childJoints(this, j).filter((k) => Skeleton.isJoint(k));
+      return kids.length === 1 ? kids[0] : null;
+    };
+    const splitTarget = this._rigHoverBone || litBelow(nameRoot) || nameRoot;
     const dissolveTarget = nameRoot;
     // TOPOLOGY VERBS BELONG TO THE BONE TOOL. They need bone selection to know which bone you
     // mean, and bone selection is only on in that tool — see BONE_SELECT in Picking for why it
@@ -12156,9 +15838,19 @@ class Scene {
       // "if i preselect any other bone and split, it keeps trying to split the first bone."
       //
       // The whole point of a context menu is that it acts on what you opened it on.
+      // WHICH BONE DID IT PICK, AND WHERE FROM. matt, 2026-09-23, with screenshots: the bone he
+      // had selected was not the bone that split. The resolution above has three possible
+      // sources -- the hovered SEGMENT, a hovered joint, or the selection -- and which one fired
+      // is not recoverable from the result, so it says so. A bone is named by its CHILD end, so
+      // the bone that will be cut is `parent -> target`.
       { label: 'Split bone', icon: 'fa-scissors',
         enabled: inBoneTool && RigTopology.canSplit(this, splitTarget),
-        run: () => { RigTopology.split(this, splitTarget); } },
+        run: () => {
+          const nm = (j) => (j && (j._permanentStaticLabel || j.getID?.())) || String(j);
+          console.log('[rig] split ' + nm(splitTarget && splitTarget._parentMesh) + ' -> ' + nm(splitTarget)
+            + ' (from ' + (this._rigHoverBone ? 'the bone under the cursor' : 'the bone lit below the joint') + ')');
+          RigTopology.split(this, splitTarget);
+        } },
       // Dissolve acts on the JOINT, which nameRoot already froze at open for the same reason.
       { label: 'Dissolve', icon: 'fa-compress',
         enabled: inBoneTool && RigTopology.canDissolve(this, dissolveTarget),
@@ -12186,7 +15878,8 @@ class Scene {
       // ...AND THE SAME FOR THE CLIPBOARD THREE. They are the TIMELINE's clipboard — keys, not
       // objects — which the bare words did not say, so on a rig they read as a general Copy that
       // never did anything. Named for their subject, and only offered where that subject exists.
-      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },
+      // Keys selected: copy those keys. None: copy the selected objects' POSE.
+      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: hasKeySel || hasObjSel, run: () => tl()?.copyKeysSmart?.() },
       { label: 'Paste Keys', icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Linked', icon: 'fa-link',      enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
@@ -12305,6 +15998,157 @@ class Scene {
   // VISIBLE PANELS ONLY. A hidden one re-syncs when it is shown (see _swapHtmlPanels), so
   // syncing it here would be work whose result is thrown away — and torn-off panels are exactly
   // the case that needs this, since they stay visible while you work in another panel.
+  /**
+   * THERE IS NO WARM PASS ANY MORE, AND THAT IS THE FIX.
+   *
+   * Five rounds of this: a blocking warm at session start, a queued one, a stereo-camera one on
+   * a branch, then revealing three hidden objects per frame inside the ordinary draw, then one.
+   * Each was measured and each was an improvement on the last. Measuring against NOT DOING IT
+   * AT ALL is what settled it, on matt's GalaxyXR:
+   *
+   *   warm on    99 distinct, 183 total, 6952ms, median 31.1ms
+   *   ?warm=0    64 distinct, 116 total, 2518ms, median 12.2ms
+   *
+   * The warm was costing four and a half seconds and sixty-seven extra compiles. In Pipelines:
+   *
+   *     pipeline.usedTimes --;
+   *     if ( pipeline.usedTimes === 0 ) this._releasePipeline( pipeline );
+   *
+   * and RenderObject.dispose() runs when a render object is dropped. So revealing an object,
+   * drawing it and hiding it again built a pipeline and then deleted it, programs and all -- and
+   * the real draw later paid full price. Every warm here was a compile thrown away.
+   *
+   * The lesson worth keeping is not about warming. It is that five consecutive measurements can
+   * all show improvement while the whole mechanism is a net loss, because none of them was
+   * against the baseline of doing nothing.
+   */
+  _startRevealWarm() { return 0; }
+
+  _stepRevealWarm() { /* see _startRevealWarm */ }
+
+  /**
+   * EVERY DRAWABLE OBJECT, hidden ones included -- the denominator matt asked for.
+   *
+   * "surely there's a way to tell in advance how many shaders need to be compiled." Not shaders:
+   * how many a given object needs is three's business and some share while others build two. But
+   * the OBJECTS are all knowable up front, and they are the units the work is actually done in.
+   */
+  // TIME TO STEADY STATE: first frame until the app stops building pipelines.
+  //
+  // ONE Map.size READ A FRAME, not four per render object, so this is independent of
+  // window._pipeTrace and survives the trace being silenced -- the entry metric's blind spot is
+  // not worth a second instrument that can itself be switched off. Counting only; nothing is
+  // revealed, drawn or hidden, because an instrument that changes the frame it measures is how
+  // five warm passes each measured better than the last while the whole direction was wrong.
+  //
+  // SETTLED MEANS "NOTHING NEW FOR A WHOLE SECOND". Compiles arrive in bursts a frame or two
+  // apart, so a shorter quiet period would call steady state in the middle of one.
+  _armSteadyState() {
+    const now = performance.now();
+    // installPipelineTrace owns the counter; without it there is nothing to measure.
+    if (typeof window._pipeBuilt !== 'number') return;
+    this._ss = { t0: now, lastGrowth: now, lastTick: now, base: window._pipeBuilt,
+                 msBase: window._pipeBuiltMs || 0, added: 0, worst: 0, hitches: 0 };
+  }
+
+  _tickSteadyState() {
+    const ss = this._ss;
+    if (!ss) return;
+    const now = performance.now();
+    const frameMs = now - ss.lastTick;
+    ss.lastTick = now;
+    if (frameMs > ss.worst) ss.worst = frameMs;
+    if (frameMs >= SS_HITCH_MS) ss.hitches++;
+    const n = window._pipeBuilt;
+    if (n > ss.base) { ss.added += n - ss.base; ss.base = n; ss.lastGrowth = now; }
+    // A CEILING, so a session that never settles still reports something. Borrowed from
+    // BootOverlay, which learned the same lesson: a metric that only fires on success is silent
+    // in exactly the case worth hearing about.
+    const expired = now - ss.t0 >= SS_CEILING_MS;
+    if (now - ss.lastGrowth < SS_QUIET_MS && !expired) return;
+    this._ss = null;
+    const spent = Math.round((window._pipeBuiltMs || 0) - ss.msBase);
+    console.log('[XR Timing] steady state at +' + Math.round(ss.lastGrowth - ss.t0)
+      + 'ms from first frame — ' + ss.added + ' pipelines built in ' + spent
+      + 'ms, worst frame ' + Math.round(ss.worst) + 'ms, ' + ss.hitches
+      + ' frames over ' + SS_HITCH_MS + 'ms'
+      + (expired ? ' — CEILING HIT, still building' : ''));
+  }
+
+  _warmableObjects() {
+    const out = [];
+    const seen = new Set();
+    const add = (o) => { if (o && !seen.has(o)) { seen.add(o); out.push(o); } };
+    try { for (const b of Skeleton.prewarmBatches(this)) add(b); } catch (e) { /* no rig yet */ }
+    try { for (const p of HTMLVRPanel._live) if (p.mesh) add(p.mesh); } catch (e) { /* courtesy */ }
+    if (this._scene) {
+      this._scene.traverse((o) => {
+        if (!o.material) return;
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        // Nothing this renderer cannot draw: a raw ShaderMaterial throws out of build(), and
+        // warming is the one place that throw would be self-inflicted.
+        if (!m || (m.isShaderMaterial && !m.isNodeMaterial)) return;
+        add(o);
+      });
+    }
+    return out;
+  }
+
+  _startRevealWarm() {
+    if (getOptionsURL().warm === false) return 0;
+    const list = [];
+    try { list.push(...Skeleton.prewarmBatches(this)); } catch (e) { /* no rig, no batches */ }
+    try {
+      for (const p of HTMLVRPanel._live) if (p.mesh && !p.mesh.visible) list.push(p.mesh);
+    } catch (e) { /* the registry is a convenience */ }
+    this._revealWarm = list.filter(Boolean);
+    this._revealAt = performance.now();
+    this._revealFrames = 0;
+    console.log('[warm] revealing ' + this._revealWarm.length
+      + ' normally-hidden objects, ONE a frame, inside the ordinary render');
+    return this._revealWarm.length;
+  }
+
+  // PER FRAME. Restores on the NEXT call rather than after the draw, because the compile happens
+  // during the draw -- putting them back first would mean nothing was ever submitted.
+  _stepRevealWarm() {
+    if (this._revealRestore) {
+      for (const r of this._revealRestore) {
+        r.m.visible = r.visible;
+        if (r.m.isInstancedMesh) r.m.count = r.count;
+      }
+      this._revealRestore = null;
+    }
+    const list = this._revealWarm;
+    if (!list || !list.length) return;
+    // ONE PER FRAME, NOT THREE.
+    //
+    // Three was chosen when a compile was assumed to be cheap. Measured on matt's GalaxyXR, one
+    // is 40-120ms and the sculpt's own is 331ms -- so three of them made a 150-350ms frame, and
+    // a compositor fed frames that slowly shows the lobby whatever is being submitted. The total
+    // work is the same either way; what changes is whether it arrives as one hitch or three
+    // stacked into a frame the runtime gives up on. matt: "just got the gray void again".
+    const batch = list.splice(0, 1);
+    const restore = [];
+    for (const m of batch) {
+      restore.push({ m, visible: m.visible, count: m.count });
+      m.visible = true;
+      if (m.isInstancedMesh && !m.count) m.count = 1;
+    }
+    this._revealRestore = restore;
+    if (!list.length) {
+      this._revealWarm = null;
+      const ms = this._revealAt ? Math.round(performance.now() - this._revealAt) : 0;
+      console.log('[warm] reveal pass done in ' + ms + 'ms across ' + (this._revealFrames || 0)
+        + ' frames');
+    }
+    this._revealFrames = (this._revealFrames || 0) + 1;
+  }
+
+  /** Kept as a name the console and old notes reach for; see _startRevealWarm for why the
+   *  warm is gone. `?warm=0` used to turn it off and now turns off only the boot cover. */
+  warmEverything() { return 0; }
+
   syncToolPanels() {
     const shown = (p) => !!p && (!p.mesh || p.mesh.visible);
     const sync = (p) => { if (shown(p)) { try { p.syncFromState?.(); } catch (_) {} } };
@@ -12332,11 +16176,51 @@ class Scene {
   // the gesture mean whatever it meant before.
   openViewportMenu(clientX, clientY) {
     if (!this._viewportMenu) return false;
-    // FROZEN THE SAME WAY THE RING FREEZES. _resolveRadialCommands latches the preselected joint
-    // into the closures it returns, so what the menu acts on is what was under the pointer when
-    // it opened — not whatever the pointer has drifted onto by the time a row is clicked.
+    // WHERE THE CURSOR IS RESOLVES THE AMBIGUITY. matt: "the cursor location should be enough
+    // of a clue ... same applies for the t-junction from the spine to the shoulders, or
+    // branching structures of a hand."
+    //
+    // At a FORK a joint has no single bone below it, so resolving Split from the joint gives
+    // nothing -- and at the ROOT of a rig there is no bone above it either, so both ends of the
+    // fallback chain came up empty and right-clicking the hips offered a Split that could never
+    // run. Which of the three bones was meant is a question only the pointer can answer, and it
+    // is already pointing at one.
+    //
+    // NOTHING PUBLISHES `_rigHoverBone` ON DESKTOP IN THIS TOOL. Its writers are
+    // Skeleton.hoverRigFromMouse -- called by Grab, SelectTool and RigPending, not by
+    // BoneDrawTool -- and the VR ray hover. The bone tool does its own screen picks and never
+    // writes it, so on a flat screen it is simply always null here. `_pickBoneScreen` asks the
+    // question directly: the cursor against every drawn segment, joints ignored entirely.
+    //
+    // RESTORED IMMEDIATELY, and that matters more than it looks. The commands latch their
+    // target in a closure when they are built, so the value only has to be right for the length
+    // of that call. Leaving it set instead was a real bug -- since nothing on this path ever
+    // writes `_rigHoverBone`, nothing ever clears it either, so the menu's pick stuck for good:
+    // the bone stayed lit yellow and kept winning over every later selection. matt: "no matter
+    // what i select elsewhere ... it keeps trying to split that already split hip bone."
+    const _prevHoverBone = this._rigHoverBone;
+    if (!this._rigHoverBone) {
+      const tool = this._sculptManager && this._sculptManager.getCurrentTool
+        && this._sculptManager.getCurrentTool();
+      if (tool && tool._pickBoneScreen) this._rigHoverBone = tool._pickBoneScreen() || null;
+    }
+    // The joint right under the cursor wins over hover and selection for the PIN commands, for the
+    // length of this call only (the commands latch their joint when built). See _jointUnderCursor.
+    this._menuJoint = this._jointUnderCursor();
     const cmds = this._resolveViewportMenuCommands();
-    return this._viewportMenu.open(cmds, clientX, clientY);
+    // WHAT THE MENU WILL ACT ON, LIT for as long as it is open -- otherwise you are choosing a pin
+    // mode for a joint you cannot see named anywhere. matt: "when r.clicked, the nearest bone should
+    // highlight, right now its flying blind." Cleared when the menu closes.
+    const target = this._resolvePinJoint();
+    this._menuJoint = null;
+    this._rigHoverBone = _prevHoverBone;
+    const opened = this._viewportMenu.open(cmds, clientX, clientY);
+    if (opened && target) {
+      Skeleton.setHighlight(this, target);
+      this._viewportMenu.onClose = () => { Skeleton.setHighlight(this, null); this.render?.(); };
+      this.render?.();
+    }
+    return opened;
   }
 
   _quickSwapTool() {
@@ -12513,7 +16397,7 @@ class Scene {
   // mind if they forget between sessions (honestly the state of world tracking in all headset is
   // terrible, i dont trust it)."
   _headPos() {
-    const cam = this._camera && this._camera.getThreeCamera && this._camera.getThreeCamera();
+    const cam = this.deskViewer() || (this._camera && this._camera.getThreeCamera && this._camera.getThreeCamera());
     return cam ? cam.position.clone() : null;
   }
 
@@ -12540,6 +16424,7 @@ class Scene {
   _hasPanelDragActive(handedness) {
     if (this._mmDragActive  && this._mmDragHand  === handedness) return true;
     if (this._vtlDragActive && this._vtlDragHand === handedness) return true;
+    if (this._vbsDragActive && this._vbsDragHand === handedness) return true;
     if (this._tornOffPanels) {
       for (const sectionId of this._tornOffPanels.keys()) {
         if (this['_topDragActive_' + sectionId] && this['_topDragHand_' + sectionId] === handedness) return true;
@@ -12919,8 +16804,35 @@ class Scene {
       this._vrMenuTriggerLatch = false;
     }
 
-    // Only block if we are NOT already busy
-    if ((this._isPointingAtMenu || this._wasPointingAtMenu || this._vrMenuTriggerLatch) && !isSculpting && !isToolActive) {
+    // Only block if we are NOT already busy -- AND NOT WHILE A RIG ASSIGNMENT IS ARMED.
+    //
+    // matt: "i can SEE it turning yellow, the system knows its the closest thing to select, but
+    // set parent doesn't recognise it." The canSculpt fix (a few hundred lines up) was real but
+    // was not this: it stopped Scene's OWN stroke lifecycle from starting Grab while armed, but
+    // this guard runs BEFORE that split even happens, and it forces isPressed FALSE for the
+    // WHOLE rest of the frame -- updateXR included -- whenever the ray was pointing at a menu a
+    // moment ago and the trigger has not been seen fully released since.
+    //
+    // Pressing "Set Parent" IS pointing at a menu and pulling the trigger to press it -- exactly
+    // what sets `_vrMenuTriggerLatch`, and it only clears once the trigger reads back down to
+    // 0.05. Aim at a pin and press again without a clean, complete release in between (the
+    // ordinary way anyone would use this) and the latch is still up: `isPressed` is forced false
+    // for that press too. Hover still lights the pin yellow, because the guarded call below still
+    // reaches updateXR's armed branch and that branch calls Skeleton.hoverRigFromRay regardless
+    // of isPressed -- hover comes along for free, which is exactly why the highlight worked while
+    // the press never did.
+    //
+    // The guard exists to stop a menu click from ALSO starting a SCULPT STROKE through the
+    // viewport -- accidentally deforming geometry is the risk it is written against. Naming a rig
+    // target is not that: updateXR's armed branch touches nothing but a highlight and, on the
+    // press edge, RigPending's own one-press-one-step gesture. So it is exempted here the same
+    // way an already-busy tool already is.
+    if ((this._isPointingAtMenu || this._wasPointingAtMenu || this._vrMenuTriggerLatch)
+        && !isSculpting && !isToolActive
+        // ARMED IS EXEMPT ONLY AWAY FROM A MENU. With the ray ON a panel (the outliner row you are
+        // choosing the child/parent from) the press belongs to the panel; exempting it let the
+        // same press reach updateXR as a scene click on nothing and cancel the assignment.
+        && (!this._rigPendingMode || this._isPointingAtMenu)) {
       // DEBUG: STICKY BRUSH DIAGNOSIS
       if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
         window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${trigger.pressed} Val=${trigger.value.toFixed(2)}`, trigger.pressed ? "lime" : "red");
@@ -13391,7 +17303,29 @@ class Scene {
     // FIX: If tool reports it is "active" (like Grab holding a mesh), we MUST NOT end the stroke.
     // (currentTool and isToolActive defined above at Menu Block)
 
-    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive || this._vrSecondaryTriggerPressed);
+    // NEVER WHILE A RIG ASSIGNMENT IS ARMED. Found from the diagnostic matt asked for on the
+    // third round of this bug -- window.rigPend(true) caught SculptManager.start()'s own
+    // backstop firing on a VR trigger press that never went anywhere near updateXR's
+    // RigPending-aware branch (the one that actually names the child/parent and updates the
+    // panel). This function has its OWN, separate stroke-lifecycle logic -- canSculpt, _vrSculpting,
+    // start()/end() -- that dispatches to the tool before updateXR ever runs later in this same
+    // per-frame call, and it had no idea RigPending existed. The backstop refused the resulting
+    // start() call, correctly, so nothing moved on THAT particular attempt -- but _vrSculpting and
+    // _action still latched into "a stroke is running" for as long as the trigger stayed down,
+    // which is consistent with matt's OTHER report that it "often" moves: whichever of the two
+    // separate dispatch paths reaches the tool first, on a given press, decides the outcome, and
+    // only one of them has ever known to check the rig-pending flag.
+    //
+    // `this._rigPendingMode` directly, not a call into the rig-pending module -- Scene
+    // deliberately does not import it (see the note on the debug panel, a few thousand lines
+    // down); it reads the same flag that module's own armed() reads.
+    //
+    // Read AS FALSE here rather than skipped: with canSculpt false, this frame takes the "else"
+    // branch below (harmless -- nothing was sculpting) and updateXR still runs, unconditionally,
+    // later in this same function -- which is where the correct, existing RigPending handling
+    // already lives and can now actually be reached.
+    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive || this._vrSecondaryTriggerPressed)
+      && !this._rigPendingMode;
 
     // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
     //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");
@@ -13414,30 +17348,11 @@ class Scene {
     }
 
     // A TOOL STILL HOLDING SOMETHING GETS end() EVEN IF NO STROKE WAS EVER OPEN.
-    //
-    // Grab ACQUIRES from the digital triggers inside `controllers[]`, but the stroke lifecycle
-    // that ends it keys off `isTriggerPressed`. Those disagree, so a grab taken on a frame that
-    // was not a stroke has no stroke to end — and `_grabbedMesh` sticks for ever. Because
-    // `_updateXRPinGrabs` returns on its FIRST line when a mesh is held, the pin path then dies
-    // for that hand: preselection still lights up, nothing is grabbable.
-    //
-    // Fixing it inside the tool did not work, and the reason is the point: updateXR is only
-    // dispatched while canSculpt is true, so the tool never gets a frame with the trigger up in
-    // which to notice. The release has to live where it is reached unconditionally, which is
-    // here. matt: "i'm sure this is why i asked you to revert all the bone select code" — and he
-    // was right that the two are connected. Re-enabling BONE_SELECT made Grab's rig-aware pick
-    // return bone capsules, which are big and easy to hit, so the generic path started
-    // swallowing rig nodes far more often. That turned a latent leak into a constant one.
-    if (!canSculpt && !this._vrSculpting) {
-      const _t = this._sculptManager?.getCurrentTool?.();
-      if (_t && _t._grabbedMesh) {
-        if (window._grabTrace) {
-          console.log('[press] orphan release: tool was holding #' + _t._grabbedMesh.getID()
-            + ' with no stroke open — acquired outside the stroke lifecycle');
-        }
-        try { _t.end(); } catch (e) { console.error('[grab] orphan end() failed', e); }
-      }
-    }
+    // Grab owns its own release now (line ~750 in Grab.js: "no trigger down on ANY controller
+    // → end()"), and updateXR is dispatched unconditionally, so the tool always sees the
+    // release frame. The per-source orphan check that used to live here fired on the
+    // non-dominant source's iteration (canSculpt=false because THAT hand's trigger is up),
+    // killing a grab the dominant hand legitimately held.
 
     if (this._lastCanSculpt !== canSculpt || (this._vrSculpting && !canSculpt)) {
       if (window.screenLog) {
@@ -13574,91 +17489,10 @@ class Scene {
               }
             }
 
-            const tMat = keyMesh.getMatrix();
-            const pos = [tMat[12], tMat[13], tMat[14]];
-            
-            const sx = Math.hypot(tMat[0], tMat[1], tMat[2]);
-            const sy = Math.hypot(tMat[4], tMat[5], tMat[6]);
-            const sz = Math.hypot(tMat[8], tMat[9], tMat[10]);
-            
-            const m = mat3.fromValues(
-              tMat[0]/sx, tMat[1]/sx, tMat[2]/sx,
-              tMat[4]/sy, tMat[5]/sy, tMat[6]/sy,
-              tMat[8]/sz, tMat[9]/sz, tMat[10]/sz
-            );
-            const q = quat.create();
-            quat.fromMat3(q, m);
-
-            // Check if keyframe already exists for update vs add
-            let keyIdx = -1;
-            if (track.times) {
-              for (let i = 0; i < track.times.length; i++) {
-                if (Math.abs(track.times[i] - targetTime) < 0.005) {
-                  keyIdx = i;
-                  break;
-                }
-              }
-            }
-
-            const wasUpdate = keyIdx >= 0;
-            let oldData = null;
-            if (wasUpdate) {
-              oldData = {
-                pos: track.positions.slice(keyIdx * 3, keyIdx * 3 + 3),
-                q: track.quaternions.slice(keyIdx * 4, keyIdx * 4 + 4),
-                s: track.scales.slice(keyIdx * 3, keyIdx * 3 + 3)
-              };
-            }
-
-            // Use centralized method to add/update keyframe
+            // addTransformKey pushes its own snapshot undo. This used to push a SECOND, command-replay
+            // undo on top of it -- one autokey cost two undo steps, and the replay re-spliced lockstep
+            // slots, which sparse keys (per-channel masks) cannot survive.
             window._animationRegistry.addTransformKey(keyMesh, targetTime);
-
-            const newData = {
-              pos: [...pos],
-              q: [q[0], q[1], q[2], q[3]],
-              s: [sx, sy, sz]
-            };
-
-            if (this.getStateManager) {
-              this.getStateManager().pushStateCustom(
-                () => { // UNDO
-                  const tr = window._animationRegistry.tracks.get(meshId);
-                  if (!tr) return;
-                  if (wasUpdate) {
-                    // Restore old values
-                    let idx = 0;
-                    while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
-                    if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
-                      tr.positions.splice(idx*3, 3, ...oldData.pos);
-                      tr.quaternions.splice(idx*4, 4, ...oldData.q);
-                      tr.scales.splice(idx*3, 3, ...oldData.s);
-                    }
-                  } else {
-                    // Remove the added key
-                    window._animationRegistry.deleteTransformKey(keyMesh, targetTime);
-                  }
-                  window._animationRegistry.update(keyMesh, true);
-                },
-                () => { // REDO
-                  const tr = window._animationRegistry.tracks.get(meshId);
-                  if (!tr) return;
-                  let idx = 0;
-                  while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
-                  
-                  if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
-                    tr.positions.splice(idx*3, 3, ...newData.pos);
-                    tr.quaternions.splice(idx*4, 4, ...newData.q);
-                    tr.scales.splice(idx*3, 3, ...newData.s);
-                  } else {
-                    tr.times.splice(idx, 0, targetTime);
-                    tr.positions.splice(idx*3, 0, ...newData.pos);
-                    tr.quaternions.splice(idx*4, 0, ...newData.q);
-                    tr.scales.splice(idx*3, 0, ...newData.s);
-                  }
-                  window._animationRegistry.update(keyMesh, true);
-                }
-              );
-            }
           } else if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
             const fps = window._animFPS || 24;
             const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;
@@ -14001,60 +17835,31 @@ class Scene {
     this.render();
   }
 
+  // MOVE ME: a grip drags EVERYTHING on the monitor -- sculpt, panels and the controllers too --
+  // by moving the desk camera the opposite way. The hand's move since last frame (a turn about
+  // the hand, plus a shift) is applied INVERTED to the camera, so the world appears to go with
+  // the hand. The grip origins are in the base local-floor space, which is the space three draws
+  // in, so the delta needs no conversion.
   processSpectatorCalibration(handedness, origin, rotation) {
     const gState = this._vrGrip[handedness];
-
+    const cam = this._deskCam;
+    if (!cam) return;
     if (!gState.active) {
-      // START DRAG
       gState.active = true;
       vec3.copy(gState.startPoint, origin);
       quat.copy(gState.startRotation, rotation);
-    } else {
-      // DRAG (Translation)
-      const delta = vec3.create();
-      vec3.sub(delta, origin, gState.startPoint);
-
-      // DRAG (Rotation)
-      const deltaRot = quat.create();
-      const invStart = quat.create();
-      quat.invert(invStart, gState.startRotation);
-      quat.multiply(deltaRot, rotation, invStart); // diff = current * invStart
-
-      // Normalize deltaRot to avoid drift?
-      quat.normalize(deltaRot, deltaRot);
-
-      // Thresholds
-      const moved = vec3.length(delta) > 0.0001;
-      // Check angle?
-      const angle = quat.getAxisAngle(vec3.create(), deltaRot); // This is expensive/dummy, just check similarity?
-      // Just apply always if active?
-
-      if (moved || Math.abs(angle) > 0.0001) {
-        // Apply Translation
-        this._desktopOffset[0] -= delta[0];
-        this._desktopOffset[1] -= delta[1];
-        this._desktopOffset[2] -= delta[2];
-
-        // Apply Rotation (Accumulate)
-        // Order: View = View * Rot.
-        // We want to Rotate the "Spectator Rig".
-        // If I rotate hand RIGHT, I want World to rotate RIGHT?
-        // Or "Move Me"? If I rotate hand RIGHT (Clockwise), I am "Twisting the world Clockwise".
-        // So the Camera should rotate Clockwise?
-        // Let's try direct multiplication.
-        quat.multiply(this._desktopRotation, this._desktopRotation, deltaRot);
-        quat.normalize(this._desktopRotation, this._desktopRotation);
-
-        // Reset Start Points (Incremental)
-        vec3.copy(gState.startPoint, origin);
-        quat.copy(gState.startRotation, rotation);
-
-        // Force Render (Not needed during VR Frame Loop)
-        // this.render();
-
-
-      }
+      return;
     }
+    const prevP = new THREE.Vector3().fromArray(gState.startPoint);
+    const nowP = new THREE.Vector3().fromArray(origin);
+    const prevQ = new THREE.Quaternion().fromArray(gState.startRotation);
+    const nowQ = new THREE.Quaternion().fromArray(rotation);
+    // Hand delta H: x -> nowP + dR * (x - prevP), dR = now * inverse(prev). Camera <- inverse(H).
+    const dRinv = nowQ.multiply(prevQ.invert()).invert();
+    cam.position.sub(nowP).applyQuaternion(dRinv).add(prevP);
+    cam.quaternion.premultiply(dRinv).normalize();
+    vec3.copy(gState.startPoint, origin);
+    quat.copy(gState.startRotation, rotation);
   }
 
   _updateVRCursors(frame, refSpace, sources) {
@@ -14160,6 +17965,7 @@ class Scene {
             let pickedMesh = null;
             let pNormal = null;
             let wInter = null;
+            let wSym = null; // mirrored stroke centre, scene space (dot only, no ring)
             let sceneNormal = null;
 
             if (uiHitDist === undefined || uiHitDist === Infinity) {
@@ -14239,6 +18045,16 @@ class Scene {
                         vec3.scaleAndAdd(wInter, origin, dir, hitDist); // fallback (no worldGroup)
                     }
 
+                    // Mirror of the contact, through the same helper the stroke uses (rest space
+                    // on a posed character), lifted to scene space like wInter.
+                    if (_wg && (this._main || this).getSculptManager?.().getSymmetry?.()) {
+                        const _sp = vec3.clone(localHit);
+                        this._picking.mirrorLocalPoint(pickedMesh, _sp, pickedMesh.getSymmetryOrigin(), pickedMesh.getSymmetryNormal());
+                        vec3.transformMat4(_sp, _sp, pickedMesh.getModelSpaceMatrix());
+                        const _sh = new THREE.Vector3(_sp[0], _sp[1], _sp[2]).applyMatrix4(_wg.matrixWorld);
+                        wSym = vec3.fromValues(_sh.x, _sh.y, _sh.z);
+                    }
+
                     // // if (doLog) console.log(`  hitDist: ${hitDist.toFixed(3)} wInt: ${wInter.map(x=>x.toFixed(2))}`);
 
                     pNormal = this._picking.computePickedNormal();
@@ -14278,7 +18094,11 @@ class Scene {
                     // uiHitDist is from ray origin (which is offset by getStylusOffset()
                     // from the controller base where the tube starts), so add the offset back.
                     const _stylusOff = this.getStylusOffset?.() ?? 0;
-                    pointerLine.scale.z = (uiHitDist + _stylusOff) / 0.30;
+                    // uiHitDist is measured from the PICKING ray's origin, which is at
+                    // -stylusOffset -- and the ray root now starts there too, so the
+                    // `+ _stylusOff` that used to compensate for it starting at the
+                    // controller origin would now overshoot by exactly that much.
+                    pointerLine.scale.z = uiHitDist / 0.30;
                 }
             }
 
@@ -14320,6 +18140,14 @@ class Scene {
                 // surface.
                 const isGrabTool = tool && tool.constructor && tool.constructor.name === 'Grab';
 
+                const symDot = cursorGroup.getObjectByName("sym_dot");
+                const centerDot = cursorGroup.getObjectByName("cursor_dot");
+                if (symDot) {
+                    const _showSym = !!wSym && !isVoxelTool && !isGrabTool && !isTransformTool
+                      && (uiHitDist === undefined || uiHitDist === Infinity);
+                    symDot.visible = _showSym;
+                    if (_showSym) symDot.position.set(wSym[0], wSym[1], wSym[2]);
+                }
                 if (volumeSphere) volumeSphere.visible = !isCubeShape && !isPicking;
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
                 const activeVol = isCubeShape ? volumeCube : volumeSphere;
@@ -14357,18 +18185,24 @@ class Scene {
                     // // if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
                     
                     if (ringLine) {
-                        ringLine.visible = true;
+                        ringLine.visible = getOptionsURL().surfaceRing !== false;
                         ringLine.position.set(wInter[0], wInter[1], wInter[2]);
                         ringLine.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(sceneNormal[0], sceneNormal[1], sceneNormal[2]));
                         ringLine.scale.set(physicalRadius, physicalRadius, physicalRadius);
                     }
+                    if (centerDot) { centerDot.visible = true; centerDot.position.set(wInter[0], wInter[1], wInter[2]); }
                 } else {
                     // // if (doLog) console.log(`  Mode: AIR/UI, hiding surface ring`);
                     if (ringLine) ringLine.visible = false;
+                    if (centerDot) centerDot.visible = false;
                 }
 
                 // 2. Position Volume Indicator (Fixed at controller tip)
-                if (activeVol && (uiHitDist === undefined || uiHitDist === Infinity)) {
+                // KEPT VISIBLE WHILE A PANEL SLIDER IS BEING DRAGGED: the slider is usually radius or
+                // intensity, and the point is to see the result in context without aiming off the menu.
+                const _sliderDrag = !!this._lastHtmlPanelHit?._sliderDragTarget;
+                if (activeVol && (uiHitDist === undefined || uiHitDist === Infinity || _sliderDrag)) {
+                    activeVol.visible = !isPicking;
                     activeVol.position.set(tipPhys[0], tipPhys[1], tipPhys[2]);
                     
                     if (isCubeShape && tool._alignToController === false) {

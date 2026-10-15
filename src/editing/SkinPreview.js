@@ -126,6 +126,12 @@ function poseHash(main) {
     h = (h * 31 + Math.round(half[0] * 8192)) | 0;
     h = (h * 31 + Math.round(half[1] * 8192)) | 0;
     h = (h * 31 + Math.round(half[2] * 8192)) | 0;
+    // ...and which way the shape faces, for the same reason.
+    const q = Skeleton.jointRot(j);
+    h = (h * 31 + Math.round(q[0] * 8192)) | 0;
+    h = (h * 31 + Math.round(q[1] * 8192)) | 0;
+    h = (h * 31 + Math.round(q[2] * 8192)) | 0;
+    h = (h * 31 + (Skeleton.jointShapesSkin(j) ? 1 : 2)) | 0;
   }
   return h;
 }

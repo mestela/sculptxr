@@ -1,6 +1,8 @@
+import * as THREE from 'three';
 import Utils from '../misc/Utils.js';
 import { quat, mat4, vec3 } from 'gl-matrix';
 import Skeleton from '../editing/Skeleton.js';
+import { xfEval } from '../editing/xfChannel.js';
 import IKSolver from '../editing/IKSolver.js';
 
 var Export = {};
@@ -158,73 +160,15 @@ Export.exportGLB = function (meshes, options = {}) {
     return { sIdx, blend };
   }
 
-  // Helper for transform evaluation
+  // Helper for transform evaluation: the same per-channel sparse curves playback plays.
   function evaluateTransform(track, t) {
     if (!track.times || track.times.length === 0) return null;
-    
-    let frameIdx = 0;
-    while (frameIdx < track.times.length - 1 && track.times[frameIdx + 1] < t) {
-      frameIdx++;
-    }
-    
-    const t1 = track.times[frameIdx];
-    const t2 = track.times[frameIdx + 1];
-    const dt = t2 - t1;
-    let alpha = dt > 0 ? (t - t1) / dt : 0;
-    
-    let px = 0, py = 0, pz = 0;
-    for (let c = 0; c < 3; c++) {
-      const v1 = track.positions[frameIdx * 3 + c];
-      const v2 = track.positions[(frameIdx + 1) * 3 + c];
-      
-      if (track.times.length > 1) {
-        const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dt`] : undefined;
-        const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dv_${c}`] : undefined;
-        const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dt`] : undefined;
-        const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dv_${c}`] : undefined;
-        
-        const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-        const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-        
-        const slope0 = getCurveSlope(track.times, track.positions, frameIdx, c, 3);
-        const slope1 = getCurveSlope(track.times, track.positions, frameIdx + 1, c, 3);
-        
-        const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
-        const dv1 = leftDv !== undefined ? leftDv : slope1 * dt1;
-
-        const p1x = dt0 / dt;
-        const p2x = 1 + dt1 / dt;
-        const t_bez = window._animationRegistry.getBezierT(alpha, p1x, p2x);
-        const omt = 1 - t_bez;
-        const omtSq = omt * omt;
-        const omtCu = omtSq * omt;
-        const tSq = t_bez * t_bez;
-        const tCu = tSq * t_bez;
-        const p1y = v1 + dv0;
-        const p2y = v2 + dv1;
-
-        const val = omtCu * v1 + 3 * omtSq * t_bez * p1y + 3 * omt * tSq * p2y + tCu * v2;
-        if (c === 0) px = val; else if (c === 1) py = val; else if (c === 2) pz = val;
-      } else {
-        const val = v1 + (v2 - v1) * alpha;
-        if (c === 0) px = val; else if (c === 1) py = val; else if (c === 2) pz = val;
-      }
-    }
-    
-    const pIdx1 = frameIdx * 3;
-    const pIdx2 = (frameIdx + 1) * 3;
-    const sx = track.scales[pIdx1] + (track.scales[pIdx2] - track.scales[pIdx1]) * alpha;
-    const sy = track.scales[pIdx1 + 1] + (track.scales[pIdx2 + 1] - track.scales[pIdx1 + 1]) * alpha;
-    const sz = track.scales[pIdx1 + 2] + (track.scales[pIdx2 + 2] - track.scales[pIdx1 + 2]) * alpha;
-    
-    const qIdx1 = frameIdx * 4, qIdx2 = (frameIdx + 1) * 4;
-    const q1 = [track.quaternions[qIdx1], track.quaternions[qIdx1 + 1], track.quaternions[qIdx1 + 2], track.quaternions[qIdx1 + 3]];
-    const q2 = [track.quaternions[qIdx2], track.quaternions[qIdx2 + 1], track.quaternions[qIdx2 + 2], track.quaternions[qIdx2 + 3]];
-    
-    const outQuat = [0, 0, 0, 1];
-    quat.slerp(outQuat, q1, q2, alpha);
-    
-    return { position: [px, py, pz], quaternion: outQuat, scale: [sx, sy, sz] };
+    const ev = (g, c) => xfEval(track, g, c, t);
+    // THREE's 'XYZ', exactly as playback builds it (gl-matrix's fromEuler defaults to another order).
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(ev('rot', 0) * Math.PI / 180,
+      ev('rot', 1) * Math.PI / 180, ev('rot', 2) * Math.PI / 180, 'XYZ'));
+    return { position: [ev('pos', 0), ev('pos', 1), ev('pos', 2)], quaternion: [q.x, q.y, q.z, q.w],
+      scale: [ev('scale', 0), ev('scale', 1), ev('scale', 2)] };
   }
 
   var json = {

@@ -1,6 +1,7 @@
 import Utils from '../../misc/Utils.js';
 import SculptBase from './SculptBase.js';
 import * as THREE from 'three';
+import { stripGeometry } from '../../render/lineStrip.js';
 import { vec3 } from 'gl-matrix';
 
 class CutTool extends SculptBase {
@@ -372,15 +373,16 @@ class CutTool extends SculptBase {
       this._previewMesh.visible = true;
     }
     
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    // SEGMENT PAIRS, NOT A STRIP. THREE.Line is the primitive WebGPURenderer fails on -- it
+    // was bisected down to one in the VR cursor ring, and a single bad line draw poisons the
+    // whole frame (see src/render/lineStrip.js). The colours have to be doubled alongside the
+    // positions, since each interior point now appears in two segments.
+    const geometry = stripGeometry(points);
     const colors = [];
     const isHovering = this._highlightSphere && this._highlightSphere.visible;
-    for (let i = 0; i < points.length; i++) {
-      if (isHovering && i === points.length - 1) {
-        colors.push(1, 1, 0); // Yellow for the hover point
-      } else {
-        colors.push(1, 0, 0); // Red for confirmed points
-      }
+    const colourFor = (i) => (isHovering && i === points.length - 1) ? [1, 1, 0] : [1, 0, 0];
+    for (let i = 0; i + 1 < points.length; i++) {
+      colors.push(...colourFor(i), ...colourFor(i + 1));
     }
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     
@@ -393,7 +395,7 @@ class CutTool extends SculptBase {
         depthWrite: false, 
         opacity: 0.4 
       });
-      this._previewMesh = new THREE.Line(geometry, material);
+      this._previewMesh = new THREE.LineSegments(geometry, material);
       this._previewMesh.renderOrder = 9999;
       this._previewMesh.isPickable = false;
       

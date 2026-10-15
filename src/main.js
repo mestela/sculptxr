@@ -3,8 +3,18 @@ import SculptGL from './SculptGL.js';
 import { installFontReadyRepaint } from './gui/htmlvr/fontReady.js';
 import { VERSION } from './Version.js';
 import './misc/whyNoPick.js'; // registers window._whyNoPick()
+import './misc/Watchdog.js'; // names the operation a frozen main thread is stuck in
+
+// A CONSOLE AND AN EVAL CHANNEL FOR THE DEVICES THAT HAVE NEITHER -- iPad and Vision Pro, where
+// no debugging protocol reaches us. Static import.meta.env.DEV so the whole thing is tree-shaken
+// out of a build; see tools/dev-relay-plugin.mjs.
+if (import.meta.env.DEV) {
+  import('./misc/devRelay.js').then((m) => m.installDevRelay())
+    .catch((e) => console.warn('[devRelay] failed to load', e));
+}
 
 window.SculptGL = SculptGL;
+import './pwa.js';
 
 // Re-rasterise panels once the FontAwesome web-font is loaded so icons don't
 // intermittently bake blank on a cold load.

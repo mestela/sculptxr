@@ -12,7 +12,7 @@
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import Enums from '../../misc/Enums.js';
-import { SCULPT_TOOLS } from './toolLists.js';
+import { SCULPT_TOOLS, XFORM_TOOL_IDS } from './toolLists.js';
 
 // ── Tool data ────────────────────────────────────────────────────────────────
 const TOOL_TINTS = {
@@ -71,6 +71,8 @@ const CSS = `
   gap: 5px;
   margin-bottom: 6px;
 }
+#tp-root .tp-divider { height: 1px; background: #45475a; margin: 2px 0 8px; }
+#tp-root .tp-grid-x { grid-template-columns: repeat(4, 1fr); }
 #tp-root .tp-btn {
   padding: 8px 4px;
   border: 1px solid #45475a;
@@ -99,15 +101,18 @@ function injectCSS() {
 }
 
 function buildHTML() {
-  const btns = SCULPT_TOOLS.map(t =>
-    `<button class="tp-btn" data-tool-id="${t.id}" style="background:${toolTint(t.id)}">${t.label}</button>`
-  ).join('');
+  const btn = t =>
+    `<button class="tp-btn" data-tool-id="${t.id}" style="background:${toolTint(t.id)}">${t.label}</button>`;
+  const btns = SCULPT_TOOLS.filter(t => !XFORM_TOOL_IDS.includes(t.id)).map(btn).join('');
+  const xformBtns = SCULPT_TOOLS.filter(t => XFORM_TOOL_IDS.includes(t.id)).map(btn).join('');
   return `
     <div class="tp-header">
       <span class="tp-title">Select Tool</span>
       <button class="tp-close-btn" id="tp-close">✕</button>
     </div>
     <div class="tp-grid">${btns}</div>
+    <div class="tp-divider"></div>
+    <div class="tp-grid tp-grid-x">${xformBtns}</div>
   `;
 }
 

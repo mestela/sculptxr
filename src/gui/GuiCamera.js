@@ -31,6 +31,7 @@ class GuiCamera {
     // Map combobox index → _spectatorFrameSkip value
     const indexToSkip = [0, 1, 3, 7];
     this._main._spectatorFrameSkip = indexToSkip[parseInt(value, 10)] ?? 3;
+    getOptionsURL.saveOption('spectatorFrameSkip', this._main._spectatorFrameSkip, 0);
     this._main._spectatorN = 0;
   }
 

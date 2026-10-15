@@ -58,6 +58,7 @@ const _qHinge = new THREE.Quaternion();
 const _qPart = new THREE.Quaternion(), _qId = new THREE.Quaternion();
 const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
 const _qPInv = new THREE.Quaternion(), _qLocal = new THREE.Quaternion();
+const _qRest = new THREE.Quaternion(), _mTmp2 = new THREE.Matrix4(), _vTmp2 = new THREE.Vector3(), _sTmp2 = new THREE.Vector3();
 const _qNow = new THREE.Quaternion();
 const _mTmp = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
 const _sOne = new THREE.Vector3(1, 1, 1);
@@ -287,6 +288,29 @@ IKSolver.setPin = function (joint, mode, main) {
     joint._boneIKPinObj = pin;
   }
   joint._boneIKPinPrev = pin;
+
+  // A RESURRECTED PIN KEEPS ITS KEYS, NOT ITS OLD NAME.
+  //
+  // The remembering above is what stops a pin's animation keys being orphaned by a toggle, and it
+  // brings the SAME object back -- including the label it was born with, built from whatever the
+  // joint was called at the time. Rename the bones while the pins are off and the names are stale
+  // the moment they come back. matt: "make skeleton, make skin, make pins. delete pins, name
+  // bones, make pins. at that last stage the arms and legs had 'arm' and 'leg' prefixes, but the
+  // pins were still called bone02_L_pin."
+  //
+  // Skeleton.nameChain renames a joint's pin along with it, so a rename with the pins PRESENT was
+  // always right; this is the path where there was nothing there to rename.
+  //
+  // Only a name this code generated is rewritten. `pin_` is the prefix makePin and nameChain both
+  // use, so anything else is a name somebody typed, and silently overwriting that would be worse
+  // than the stale one.
+  const jointName = joint._permanentStaticLabel;
+  const pinName = pin._permanentStaticLabel;
+  if (jointName && typeof pinName === 'string' && /^pin_/.test(pinName)
+      && pinName !== 'pin_' + jointName) {
+    pin._permanentStaticLabel = 'pin_' + jointName;
+    pin.uiName = pin._permanentStaticLabel;
+  }
   // Cycling 3DOF -> 6DOF must NOT re-place the pin: if the joint has drifted off an
   // unreachable pin, moving it to the joint would shift the pin at the very moment the user
   // asked for a stronger hold.
@@ -1477,6 +1501,13 @@ function fitLocalRotation(n, kids, out) {
   if (p && p.getModelSpaceMatrix) modelQuat(p, _qPInv).invert();
   else _qPInv.identity(); // the root: its own frame IS model space
   Skeleton.jointPos(n.joint, _v2); // where the joint is, now that its parents are written
+  // THE JOINT'S REST ROTATION, relative to its parent. Identity for a joint drawn world-aligned,
+  // which is the case this convention was written for. An ORIENTED joint (JointOrient) has its
+  // axes turned onto its bend, so its child offset below is in THOSE axes and "zero twist" has
+  // to mean zero twist from the REST orientation, not from the parent's axes: carry the offsets
+  // into the parent's frame through the rest rotation, fit there, and put the rest back on.
+  // With an identity rest every line of this reduces to what it was.
+  const hasRest = jointRestQuat(n.joint, _qRest);
   let k = 0;
   for (const c of kids) {
     scratchPair(k);
@@ -1484,10 +1515,23 @@ function fitLocalRotation(n, kids, out) {
     // what makes the result independent of the poses that came before.
     const lm = c.joint.getMatrix();
     _fromBuf[k].set(lm[12], lm[13], lm[14]);
+    if (hasRest) _fromBuf[k].applyQuaternion(_qRest);
     _toBuf[k].subVectors(c.pos, _v2).applyQuaternion(_qPInv);
     k++;
   }
-  return alignVectors(_fromBuf, _toBuf, k, out, window._ikFitPasses || 3);
+  alignVectors(_fromBuf, _toBuf, k, out, window._ikFitPasses || 3);
+  if (hasRest) out.multiply(_qRest);
+  return out;
+}
+
+// The rotation part of a joint's recorded rest (its LOCAL matrix), or false when it is identity
+// or nothing was recorded -- so the common, world-aligned rig pays nothing and changes nothing.
+function jointRestQuat(joint, out) {
+  const r = joint._ikRest;
+  if (!r) return false;
+  _mTmp2.fromArray(r);
+  _mTmp2.decompose(_vTmp2, out, _sTmp2);
+  return Math.abs(out.x) + Math.abs(out.y) + Math.abs(out.z) > 1e-6;
 }
 
 // ── FK ROLL: THE ONE ROTATION THE SOLVE DOES NOT OWN ──────────────────────────────────
@@ -1526,7 +1570,7 @@ function applyFkRoll(n, kids, q) {
 function setLocalRotation(joint, q) {
   _mLocal.fromArray(joint.getMatrix());
   _mLocal.decompose(_vTmp, _qJoint, _sTmp);
-  _mLocal.compose(_vTmp, q, _sTmp);
+  _mLocal.compose(_vTmp, q.normalize(), _sTmp);   // unit q: see rotateJoint
   mat4.copy(joint.getMatrix(), _mLocal.elements);
   Skeleton.syncThree(joint);
 }
@@ -1553,7 +1597,12 @@ function rotateJoint(joint, qModel) {
   }
   _mLocal.fromArray(joint.getMatrix());
   _mLocal.decompose(_vTmp, _qJoint, _sTmp);
-  _qJoint.premultiply(_qStep);
+  // NORMALISED, or the joint's scale is a feedback loop. `decompose` of a float32 matrix with a
+  // hair of shear hands back a quaternion that is not exactly unit, and `compose` turns |q| != 1
+  // into SCALE (|q|^2). The next solve decomposes that scale straight back in and multiplies it
+  // again, so a root held by a pin whose chain is at full reach grew or shrank geometrically until
+  // the whole skin collapsed to a point (matt: moving the hips pin, rigbug.sxr).
+  _qJoint.premultiply(_qStep).normalize();
   _mLocal.compose(_vTmp, _qJoint, _sTmp);
   mat4.copy(joint.getMatrix(), _mLocal.elements);
   Skeleton.syncThree(joint);
@@ -1619,7 +1668,7 @@ function applyRotations(main, nodes, root, rootFixed) {
         _mLocal.fromArray(n.joint.getMatrix());
         _mLocal.decompose(_vTmp, _qJoint, _sTmp);
         if (applyFkRoll(n, kids, _qJoint)) {
-          _mLocal.compose(_vTmp, _qJoint, _sTmp);
+          _mLocal.compose(_vTmp, _qJoint.normalize(), _sTmp);
           mat4.copy(n.joint.getMatrix(), _mLocal.elements);
           Skeleton.syncThree(n.joint);
         }
@@ -1819,6 +1868,114 @@ window.xrPerf = function (on) {
   console.log('[xrPerf] ' + (window._xrPerf ? 'ON' : 'off') + ' — ' + VERSION +
     (window._xrPerf ? '. One line a second: frames, our work, and the gap between frames.' : ''));
   return window._xrPerf;
+};
+
+// The event-triggered one. xrPerf averages; a bone-draw stutter is a single frame and an
+// average cannot see it. boneTrace(n) captures the next n joints one at a time -- what the
+// creation itself cost, then each of the following frames with its section timings and what
+// the renderer BUILT during it (pipelines, shader programs, node graphs, GPU uploads).
+// matt: "still stutters. we need diagnostics."
+window.boneTrace = function (n) {
+  if (n === 0 || n === false) return window.boneTraceOff();
+  const count = (typeof n === 'number' && n > 0) ? n : 6;
+  window._boneTrace = { left: count, depth: 3, pend: null, base: null, conv: [] };
+  if (window.app) window.app._xrPerf = null;
+  console.log('[boneTrace] armed for the next ' + count + ' joints — ' + VERSION +
+    '. Draw a chain; one block per joint. boneTrace(0) or boneTraceOff() to stop.');
+  return true;
+};
+
+// The snap overlays: what each snap decided, and what the gnomon and the flatness disc are
+// actually doing about it. matt, three rounds in: "no, still no plane/disc snap. add
+// diagnostics." One line a quarter second while a bone is being previewed.
+// LIMB PLANES: HOW FAR EACH CHAIN IS FROM BENDING ON ONE AXIS.
+//
+// The convention is X bends and Z runs down the bone, so a chain is clean when its limb plane's
+// normal IS the joint's local X. `bend` is the angle between them: 0 is clean, 90 means rotateX
+// twists the limb instead of bending it.
+//
+// `straight` is how far from straight the run is. A limb drawn dead straight has no bend plane
+// worth the name and its normal is rounding noise -- riggers put a few degrees of bend in on
+// purpose, so a run near 0 is a rig to fix rather than a measurement to trust.
+//
+// WHAT IT MEASURES DEPENDS ON THE SELECTION, because a limb is a run the rigger names and not
+// something a walk over the hierarchy can infer. matt: "wouldn't i need to choose the 3 joints,
+// or at least have them named so you understand where the planes start and end?"
+//
+//   three joints selected   exactly that run, in hierarchy order, whatever their shape --
+//                           which is the only way to measure an elbow that carries a twist
+//                           joint as a second child
+//   some joints selected    the run at each selected joint that has one
+//   nothing selected        every run in the rig, worst first
+//
+// Every line names all three joints, so a report on an unnamed rig is still readable by id.
+//
+// Read-only. Nothing here moves a joint.
+window.rigPlanes = function () {
+  const main = window.app;
+  if (!main) return 0;
+  const L = Skeleton.jointLabel;
+  const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+  const rows = [];
+
+  if (sel.length === 3) {
+    // HIERARCHY ORDER, NOT CLICK ORDER. The middle joint is the one that is a child of one of
+    // the others and a parent of the third -- asking the user to click them in order would be a
+    // rule to remember, and getting it wrong would silently measure the wrong angle.
+    const isAncestor = (a, b) => { for (let p = b; p; p = p._parentMesh) if (p === a) return true; return false; };
+    const mid = sel.find((m) => sel.some((o) => o !== m && isAncestor(o, m))
+                             && sel.some((o) => o !== m && isAncestor(m, o)));
+    if (!mid) {
+      console.log('[planes] those three joints are not one run — one must be an ancestor of the '
+        + 'middle and the middle an ancestor of the third: '
+        + sel.map(L).join(', '));
+      return 0;
+    }
+    const up = sel.find((o) => o !== mid && isAncestor(o, mid));
+    const down = sel.find((o) => o !== mid && isAncestor(mid, o));
+    const lp = Skeleton.limbPlaneOf(up, mid, down);
+    if (lp) rows.push(lp);
+  } else {
+    const pool = sel.length ? sel : Skeleton.joints(main);
+    for (const j of pool) {
+      const lp = Skeleton.limbPlaneAt(main, j);
+      if (lp) rows.push(lp);
+    }
+    if (sel.length && !rows.length) {
+      console.log('[planes] no run at the selected joint(s) — a run needs a parent and exactly '
+        + 'one child. Select the three joints outright to measure across a branch.');
+      return 0;
+    }
+  }
+
+  if (!rows.length) {
+    console.log('[planes] no three-joint runs found');
+    return 0;
+  }
+  rows.sort((a, b) => (b.bendDeg || 0) - (a.bendDeg || 0));
+  console.log('[planes] ' + rows.length + ' limb plane(s), worst bend first. '
+    + 'bend 0 = rotateX bends it cleanly; straight near 0 = no bend drawn in, so no plane.');
+  for (const r of rows) {
+    const b = r.bendDeg === null ? '   --' : r.bendDeg.toFixed(1).padStart(5);
+    console.log('[planes]   bend ' + b + ' deg   straight ' + r.straightDeg.toFixed(1).padStart(5)
+      + ' deg   ' + r.joints.map(L).join(' > ')
+      + (r.straightDeg < 2 ? '   (drawn straight — give it a bend)' : ''));
+  }
+  return rows.length;
+};
+
+window.snapTrace = function (on) {
+  window._snapTrace = on !== false;
+  console.log('[snap] ' + (window._snapTrace ? 'ON' : 'off') + ' — ' + VERSION +
+    (window._snapTrace ? '. Draw a bone; one line a quarter second while the preview is up. '
+      + 'If nothing prints at all, showPreview is not being reached.' : ''));
+  return window._snapTrace;
+};
+
+window.boneTraceOff = function () {
+  window._boneTrace = null;
+  console.log('[boneTrace] off');
+  return false;
 };
 
 window.ikPerf = function (on) {

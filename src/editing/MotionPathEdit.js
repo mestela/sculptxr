@@ -1,3 +1,4 @@
+import { xfRefreshDerived } from './xfChannel.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import Enums from '../misc/Enums.js';
 import IKSolver from './IKSolver.js';
@@ -482,6 +483,8 @@ MotionPathEdit.pushBack = function (track, times, before, after) {
     moved++;
   }
   if (moved) track.eulers = null;   // the registry rebuilds these from the written values
+  // Sparse keys: slots where these channels are not keyed follow their curves, not the push.
+  if (moved) xfRefreshDerived(track);
   return moved;
 };
 
@@ -542,6 +545,8 @@ MotionPathEdit.pushBackQuats = function (track, times, beforeQ, afterQ) {
     turned++;
   }
   if (turned) track.eulers = null;   // the registry rebuilds these from the written values
+  // Sparse keys: slots where these channels are not keyed follow their curves, not the push.
+  if (turned) xfRefreshDerived(track);
   return turned;
 };
 

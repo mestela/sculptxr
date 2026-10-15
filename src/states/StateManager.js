@@ -147,8 +147,12 @@ class StateManager {
     console.log("[Undo] " + (state.name || state.constructor.name));
     var redoState = state.createRedo();
     redoState.squash = state.squash;
+    redoState._restEntry = state._restEntry;
     this._redos.push(redoState);
     state.undo();
+    // A stroke on a bound skin recorded what it changed in the REST shape: put that back verbatim (see
+    // Skinning.applyRestEntry) instead of re-deriving it from the posed vertices, which does not round-trip.
+    var exact = !!(state._restEntry && Skinning.applyRestEntry(state._restEntry, 'undo'));
 
     this._curUndoIndex--;
     if (state.squash === true)
@@ -162,7 +166,7 @@ class StateManager {
     // ...and the rest shape, for the same reason: undo rewrites the level's vertices with no
     // stroke to end, so without this the skin pass would put the undone sculpt straight back on
     // the next pose change.
-    Skinning.commitToRest(this._main, this._main.getMesh?.());
+    if (!exact) Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   redo() {
@@ -172,13 +176,14 @@ class StateManager {
     var state = this._redos[this._redos.length - 1];
     console.log("[Redo] " + (state.name || state.constructor.name));
     state.redo();
+    var exact = !!(state._restEntry && Skinning.applyRestEntry(state._restEntry, 'redo'));
     this._curUndoIndex++;
     this._redos.pop();
     if (this._redos.length && this._redos[this._redos.length - 1].squash === true)
       this.redo();
     this._main.onNomadLocalEdit?.(state);
     Skinning.onCageEdited(this._main, this._main.getMesh?.());
-    Skinning.commitToRest(this._main, this._main.getMesh?.());
+    if (!exact) Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   reset() {

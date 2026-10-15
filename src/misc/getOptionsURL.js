@@ -142,7 +142,16 @@ var getOptionsURL = function () {
   options._rawSaved = localParams; // Expose for dynamic lookups (per-tool)
 
   var getVal = function (key, def) {
-    if (params[key] !== undefined) return params[key];
+    // LOWERCASED ON THE URL SIDE ONLY. readUrlParameters stores every key lowercased, so a
+    // camelCase option -- boneSnapAxis, boneSnapFlat, envIntensity, most of this file -- could
+    // never be set from a URL at all: the lookup used the camelCase spelling and the table held
+    // the lowercase one, so it silently fell through to localStorage or the default. Options
+    // whose names happen to be all lowercase have always worked, which is why this survived.
+    //
+    // localParams keeps its exact spelling: that table is written by saveOption with the key as
+    // given, so lowercasing it here would break every stored setting.
+    var urlKey = key.toLowerCase();
+    if (params[urlKey] !== undefined) return params[urlKey];
     if (localParams[key] !== undefined) return localParams[key];
     return def;
   };
@@ -153,6 +162,19 @@ var getOptionsURL = function () {
   options.nomadHost = getVal('nomadHost', ''); // last Nomad Link address, so a refresh reconnects in one tap
   options.nomadLiveSend = queryBool(getVal('nomadLiveSend'), false);
   options.sculptLocked = queryBool(getVal('sculptLocked'), false); // "do nothing" mode
+  // HAND TRACKING, on by default. Off ignores hand input sources entirely -- see the filter in
+  // Scene's per-frame input handler. Persisted because the reason to switch it off is a working
+  // session at a desk with a keyboard, and having to find the toggle again every time is most of
+  // the annoyance it exists to remove.
+  options.handTracking = queryBool(getVal('handTracking'), true);
+  // The VR brush's flat circle on the surface. Off leaves the sphere/surface intersection line as
+  // the one surface marker -- matt: the two "fight for attention".
+  options.surfaceRing = queryBool(getVal('surfaceRing'), true);
+  // Darken the surface within ~1.5 cm of the controller spike's tip: a contact cue without stereo.
+  options.contactShade = queryBool(getVal('contactShade'), true);
+  // Desktop Canvas (VR) frame skip: 0 every frame, 1, 3, 7. Remembered -- full rate is the right
+  // answer on a PC VR rig and re-picking it every session was a chore.
+  options.spectatorFrameSkip = queryNumber(getVal('spectatorFrameSkip'), 0, 7, 3);
   // Nomad units -> SculptXR units. Half of Utils.SCALE: a whole Nomad scene is
   // roughly one unit, and normalising it to a full 100 arrives too big to work on.
   options.nomadScale = queryNumber(getVal('nomadScale'), 0.01, 10000, 50);
@@ -168,17 +190,53 @@ var getOptionsURL = function () {
   options.projection = getEnum(Enums.Projection, getVal('projection'), Enums.Projection.PERSPECTIVE); // perspective/orthographic
   options.cameramode = getEnum(Enums.CameraMode, getVal('cameramode'), Enums.Projection.ORBIT); // orbit/spherical/plane
   options.pivot = queryBool(getVal('pivot'), true);
-  options.fov = queryNumber(getVal('fov'), 10, 90, 45); // [10-90]
+  options.fov = queryNumber(getVal('fov'), 10, 90, 50); // [10-90]
 
   // rendering
   options.flatshading = queryBool(getVal('flatshading'), false);
   options.wireframe = queryBool(getVal('wireframe'), false);
   options.curvature = queryNumber(getVal('curvature'), 0, 5, 0); // [0-5]
   options.exposure = queryNumber(getVal('exposure'), 0, 5); // [0-5]
-  options.environment = queryInteger(getVal('environment'), 0, Infinity, 2); // [0-inf]
+  // 5 = Ferndale studio 07, the first equirect HDR environment (ShaderPBR.environments).
+  // The default used to be 2, studio_small_01, back when every environment was a LogLUV
+  // octahedral atlas.
+  options.environment = queryInteger(getVal('environment'), 0, Infinity, 5); // [0-inf]
+  // ?noenv=1 — skip scene.environment entirely on the node path. See Scene._syncThreeLights.
+  options.noenv = getVal('noenv') === '1';
+  // ?nowarm=1 — skip the pre-session pipeline warm. See Scene.enterXR.
+  // ?warm=1 — restore the pre-session pipeline warm, which is OFF by default because it
+  // compiles the non-XR camera uniform layout. See Scene.enterXR.
+  // ?warm=0 goes back to compiling pipelines whenever something is first drawn. On by default:
+  // matt, after a session that stuttered five separate times, "i want a long startup when the app
+  // launches, compiling shaders etc there, and no stuttering ... after that point".
+  options.warm = queryBool(getVal('warm'), true);
+  // The rig's instanced batches are warmed on their OWN geometry before the session, because a
+  // pipeline is keyed on geometry as well as material and a plain-plane warm compiles the wrong
+  // one. Default ON; `?rigwarm=0` is the bisection switch if it ever misbehaves.
+  options.rigwarm = queryBool(getVal('rigwarm'), true);
+
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
+  // WebGPURenderer (WebGL backend, TSL materials) is the DEFAULT as of 2026-09-29 — matt, after
+  // the XR lit-material fixes: "i'm getting more confident its working well. and i'm getting
+  // tired of having to add it to the url." `?renderer=webgl` goes back to the legacy renderer,
+  // and is the bisection switch when something looks wrong. URL only, deliberately: neither
+  // renderer is a preference to persist into someone's next session while the port is half done.
+  // SAY SO WHEN IT IS NOT A VALUE WE KNOW.
+  //
+  // `?renderer=webgl?xrlayers=1` -- two question marks -- makes the value the whole string
+  // "webgl?xrlayers=1", which is not 'webgl', so the opt-out quietly does nothing. matt hit
+  // exactly that the other way round and spotted it only from the old environment list and black
+  // controllers: "i don't trust that its using the new code path." A silent fallback to a
+  // different renderer is the worst possible answer to a typo.
+  const _rq = params.renderer;
+  if (_rq !== undefined && _rq !== 'webgpu' && _rq !== 'webgl') {
+    console.warn('[options] ?renderer=' + JSON.stringify(_rq) + ' is not a renderer — using '
+      + 'the default WebGPU renderer. Separate flags with & rather than ?, e.g. '
+      + '?renderer=webgl&xrlayers=1');
+  }
+  options.renderer = _rq === 'webgl' ? 'webgl' : 'webgpu';
   options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 4); // [0-inf]
   options.shader = getEnum(Enums.Shader, getVal('shader'), Enums.Shader.PBR); // pbr/matcap/normal/uv
   options.filmic = queryBool(getVal('filmic'), false);
@@ -268,21 +326,28 @@ var getOptionsURL = function () {
   // Centre handle of the VR gizmo carries the controller's ROTATION as well as its
   // position (6DOF, the way Grab holds a thing). Off = the centre handle translates only.
   options.xfFreeRotate = queryBool(getVal('xfFreeRotate'), false);
+  // Transform's Pin Pose mode: the gizmo follows the cursor onto the nearest pin or free joint.
+  options.xfPinPose = queryBool(getVal('xfPinPose'), false);
 
   // Bone display flags — persisted so the rig looks the way you left it. Capsules and
   // weights default OFF: both are diagnostics drawn over the sculpt. Registry and accessors
   // live in editing/Skeleton.js (Skeleton.DISPLAY_FLAGS); these defaults must match it.
   options.boneSnapPlane = queryBool(getVal('boneSnapPlane'), true);
   options.boneSnapAxis = queryBool(getVal('boneSnapAxis'), true);
+  // Flatten a bone into a world plane when it is already within five degrees of one -- the dual
+  // of the axis snap. On by default; see the note beside snapFlat in Skeleton.DISPLAY_FLAGS.
+  options.boneSnapFlat = queryBool(getVal('boneSnapFlat'), true);
   options.boneShowLengths = queryBool(getVal('boneShowLengths'), false);
   options.boneShowNames = queryBool(getVal('boneShowNames'), false);
   options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
   options.boneShowSkinClaims = queryBool(getVal('boneShowSkinClaims'), false);
+  options.cageGlueSeams = queryBool(getVal('cageGlueSeams'), false);
   options.boneHideDecor = queryBool(getVal('boneHideDecor'), false);
   // The kaospad folded away in the blendshape stack panel. Registered here rather than read
   // straight off _rawSaved so it round-trips through queryBool like every other toggle --
   // a saved 'false' string would otherwise read as truthy.
   options.blendPadCollapsed = queryBool(getVal('blendPadCollapsed'), false);
+  options.blendLayersCollapsed = queryBool(getVal('blendLayersCollapsed'), false);
   // Nav throw strength after releasing a world grab (#19). 0 stops the scene dead, 1 is the
   // shipped feel. A number rather than a toggle because 'less, but not none' is the request.
   options.navThrow = queryNumber(getVal('navThrow'), 0, 1, 1);
@@ -326,9 +391,10 @@ var getOptionsURL = function () {
   options.boneShowWire = queryBool(getVal('boneShowWire'), true);
   options.boneShowJointDots = queryBool(getVal('boneShowJointDots'), true);
   options.boneShowPins = queryBool(getVal('boneShowPins'), true);
-  // Which side the on-screen secondary-action modifier sits on. Off = right, matching the
-  // right-click shorthand; a left-hander swaps it so it is not under the drawing hand.
-  options.modifierLeft = queryBool(getVal('modifierLeft'), false);
+  // Which side the on-screen secondary-action modifier sits on. Default LEFT: the thumb of the
+  // off hand holds it while the drawing hand (right, by default) taps with the Pencil. A
+  // left-hander sets this false to swap it under the other thumb.
+  options.modifierLeft = queryBool(getVal('modifierLeft'), true);
   // Motion path editing: does the brush travel ALONG the strand (default) or straight through
   // space? A path is monotonic in time, so along-the-strand is implicitly a time-ordered
   // falloff; off reaches every pass through a region, which is occasionally what you want.
@@ -357,6 +423,7 @@ var getOptionsURL = function () {
   // turns a grabbed joint from an IK effector into a plain FK rotation.
   options.grabTranslate = queryBool(getVal('grabTranslate'), true);
   options.grabRotate = queryBool(getVal('grabRotate'), true);
+  options.grabAuto = queryBool(getVal('grabAuto'), true);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 
@@ -368,6 +435,12 @@ var getOptionsURL = function () {
   options.audioGrainSec     = queryNumber(getVal('audioGrainSec'),     0.01, 0.5,  0.09);
   options.audioGrainSpacing = queryNumber(getVal('audioGrainSpacing'), 0.01, 0.4,  0.05);
   options.audioGrainFade    = queryNumber(getVal('audioGrainFade'),    0.0,  0.05, 0.004);
+  options.audioWaveGain     = queryNumber(getVal('audioWaveGain'),     0.25, 8,    1);
+  // Metronome: click track on the transport (see Metronome.js).
+  options.metronome         = queryBool(getVal('metronome'), false);
+  options.metronomeBpm      = queryNumber(getVal('metronomeBpm'),   20, 300, 120);
+  options.metronomeBeats    = queryNumber(getVal('metronomeBeats'),  1,  12,   4);
+  options.metronomeVol      = queryNumber(getVal('metronomeVol'),  0.05, 1,  0.5);
 
   options.tabletRadiusFactor    = queryNumber(getVal('tabletRadiusFactor'),    0.0, 1.0,   0.75);
   options.tabletIntensityFactor = queryNumber(getVal('tabletIntensityFactor'), 0.0, 1.0,   0.0);
@@ -423,6 +496,26 @@ var getOptionsURL = function () {
   options.skinOpacity = queryNumber(getVal('skinOpacity'), 0.05, 1.0, 1.0);
   options.cageOpacity = queryNumber(getVal('cageOpacity'), 0.05, 1.0, 1.0);
 
+  // THE RIG SCALE. A view multiplier over the measured scene unit, so every rig marker — joint
+  // dots, bones, pins, length labels, snap radii — can be sized without touching the sculpt or
+  // the rig. Persisted like the other view preferences and never written into a .sxr: the file
+  // means the same real size on any machine, and only the markers move. See Skeleton.sceneUnitMul.
+  // OVERALL UI SCALE for the desktop sidebar + top bar (Settings > UI Scale, 0.5..1.5).
+  options.uiScale = queryNumber(getVal('uiScale'), 0.5, 1.5, 1.0);
+  options.rigScale = queryNumber(getVal('rigScale'), 0.25, 4.0, 1.0);
+
+  // PIN SIZE and LABEL SIZE, each a multiplier over the JOINT the marker belongs to -- not over
+  // the scene unit, and not over the Rig Scale beside them. Both of those constants have been
+  // re-tuned three times, every round costing a headset session to discover the constant was
+  // fine and the unit under it had changed. matt: "this is getting tiresome. give me sliders in
+  // settings next to rig size that are controls for pin size, label size." See
+  // Skeleton.setPinSizeMul / setLabelSizeMul.
+  //
+  // The range is deliberately wide at the top: these exist to be judged by eye on a headset, and
+  // a slider that stops before the answer is another round trip.
+  options.pinScale   = queryNumber(getVal('pinScale'),   0.25, 4.0, 1.0);
+  options.labelScale = queryNumber(getVal('labelScale'), 0.25, 4.0, 1.0);
+
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are
   // stale old-defaults (e.g. saturation 100%). Force 65/55/0 once, then respect user changes.
@@ -442,6 +535,14 @@ var getOptionsURL = function () {
 getOptionsURL._saveTimers = {};
 
 getOptionsURL.saveOption = function (key, value, debounceMs) {
+  // THE LIVE VALUE CHANGES NOW; ONLY THE DISK WRITE WAITS. Debouncing both left every reader on
+  // the old value for debounceMs after a slider moved. The spike slider showed why that matters:
+  // on release the spike mesh is re-applied from getStylusLength(), which still read the OLD
+  // length -- it snapped back -- and half a second later the tip (sphere, surface ring) moved to
+  // the new one while the mesh stayed put. matt: "when i release the slider its half of its
+  // length ... the sphere radius indicator vs the circle ... vs the controller spike itself are
+  // all misaligned."
+  if (options) options[key] = value;
   if (debounceMs) {
     clearTimeout(getOptionsURL._saveTimers[key]);
     getOptionsURL._saveTimers[key] = setTimeout(() => {

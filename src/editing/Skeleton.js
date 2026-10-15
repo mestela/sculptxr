@@ -1,9 +1,8 @@
 import * as THREE from 'three';
+import { restModelMatrices } from './JointFrame.js';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 import RigPending from './RigPending.js';
-import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
-import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { mat4, vec3 } from 'gl-matrix';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Primitives from '../drawables/Primitives.js';
@@ -43,7 +42,7 @@ const HILITE_COLOR = 0xffd733;  // preselection: yellow — "this is what the ne
 // colours to read as "this one" -- and was not vibrant enough to win against them. matt: "the cyan
 // especially isn't very vibrant. lets swap the cyan for the maya highlight colour which is roughly
 // (0,255,170)." Same green Maya uses for a selected component, and it has no neighbour in the
-// chain palette -- see CHAIN_HUE_EXCLUDE.
+// chain palette.
 const SELECT_COLOR = 0x00ffaa;
 // NO PER-HAND COLOURS. The rig used to tint whatever each controller was touching red or
 // green by handedness, which put a third and fourth colour on a surface that already has to say
@@ -55,6 +54,10 @@ const SELECT_COLOR = 0x00ffaa;
 // also reads from across the scene, where a small triad does not.
 const PIN_POS_COLOR = 0x89b4fa;   // 3DOF: held in place, free to rotate
 const PIN_FULL_COLOR = 0xf38ba8;  // 6DOF: position and orientation both held
+// ROTATION-ONLY: orientation held, position free. Purple, because it used to be the
+// 6DOF red box and read as a position pin (matt, 2026-10-09: "the head/neck pin, its a red box
+// implying its a pos+rot pin, but its a rotation pin").
+const PIN_ROT_COLOR = 0xcba6f7;
 // A STEERING GOAL, not a hold — green, and deliberately far from both pin colours, because the
 // one thing that must be legible at a glance is that this marker does not anchor anything. It
 // slides the joint around the freedom the hard pins leave and gives way completely to them.
@@ -65,10 +68,13 @@ const PIN_SOFT_COLOR = 0xa6e3a1;
 const PIN_LINK_COLOR = 0xcba6f7;
 const _pinHSL = { h: 0, s: 0, l: 0 };   // scratch for the pin-weight saturation ramp
 const PLANE_COLOR = 0x89b4fa;
-// The snap-plane cursor's radius, in METRES OF ROOM -- half of the 2cm diameter matt asked for.
-// Deliberately not a fraction of sceneUnit: it is a "can you see it" marker, not a "does it match
-// the bones" one, so it has to be the same size on a thimble and on a building.
-const DISC_RADIUS_M = 0.01;
+// The snap-plane cursor used to have its own radius here, a fixed 0.01m of ROOM -- "can you see
+// it" rather than "does it match the bones", so it would read the same on a thimble and on a
+// building. Removed, and the reason is worth keeping: it REPLACES the joint dot rather than
+// joining it, so the two are one marker, and a constant in the room cannot track a marker
+// measured in the model. It went wrong twice from that -- once against the Rig Scale slider and
+// once against the joint-sized dot -- and both times it read as the cursor GROWING. It now takes
+// the dot's own radius in showPreview.
 const PLANE_HOT = 0xa6e3a1;
 const PIN_COLOR = 0xf38ba8;
 const GHOST_OPACITY = 0.35;
@@ -76,6 +82,10 @@ const GHOST_OPACITY = 0.35;
 const _mTmp = new THREE.Matrix4();
 const _pA = new THREE.Vector3(), _pB = new THREE.Vector3();
 const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+// A direction perpendicular to the bone, for nudging its length label clear of the shaft, and
+// the normalised bone direction the cross is taken against — see the label placement in
+// updateVisuals. `_dir` itself is still the raw, unnormalised difference at that point.
+const _perp = new THREE.Vector3(), _perpDir = new THREE.Vector3();
 const _zAxis = new THREE.Vector3(0, 0, 1);
 // The mirror plane's own axes, and the cursor relative to it — see updatePlane.
 const _vRight = new THREE.Vector3(), _vUp = new THREE.Vector3(), _vRel = new THREE.Vector3();
@@ -260,15 +270,14 @@ function mergeColored(parts) {
   return out;
 }
 
-let _triadGeo = null;
-function triadGeometry() {
-  if (_triadGeo) return _triadGeo;
-  const t = 0.1; // arm thickness; arms run through the joint so the centre reads as a point
-  return (_triadGeo = mergeColored([
-    [new THREE.BoxGeometry(2, t, t), AXIS_COLORS[0]],
-    [new THREE.BoxGeometry(t, 2, t), AXIS_COLORS[1]],
-    [new THREE.BoxGeometry(t, t, 2), AXIS_COLORS[2]],
-  ]));
+// A POSITION OR ORIENTATION PIN IS A SMALL BOX. It used to be an axis triad, with three gimbal rings
+// added for a full pin -- a lot to read on a rig with eight of them, and the orientation it spelled
+// out is now shown by the Transform gizmo that pops up on the pin you point at. A box says "a
+// control is here", the colour says which kind, and nothing about it invites reading an axis.
+let _boxGeo = null;
+function boxGeometry() {
+  if (_boxGeo) return _boxGeo;
+  return (_boxGeo = new THREE.BoxGeometry(1, 1, 1));
 }
 
 // The STEERING goal's marker, and the shape is doing real work. A triad says "this point is
@@ -283,20 +292,6 @@ let _tetraGeo = null;
 function tetraGeometry() {
   if (_tetraGeo) return _tetraGeo;
   return (_tetraGeo = new THREE.TetrahedronGeometry(1.15));
-}
-
-let _gimbalGeo = null;
-function gimbalGeometry() {
-  if (_gimbalGeo) return _gimbalGeo;
-  const r = 0.92, tube = 0.05, seg = 28;
-  // A torus lies in XY and turns about Z; rotate two copies so each ring turns about its own
-  // axis, and colour each ring by the axis it turns ABOUT.
-  const rx = new THREE.TorusGeometry(r, tube, 5, seg); rx.rotateY(Math.PI / 2);
-  const ry = new THREE.TorusGeometry(r, tube, 5, seg); ry.rotateX(Math.PI / 2);
-  const rz = new THREE.TorusGeometry(r, tube, 5, seg);
-  return (_gimbalGeo = mergeColored([
-    [rx, AXIS_COLORS[0]], [ry, AXIS_COLORS[1]], [rz, AXIS_COLORS[2]],
-  ]));
 }
 
 // makePair paints one colour; these carry their colours per vertex instead.
@@ -363,7 +358,9 @@ let _capShaftGeo = null;
 // desktop GPU and is not free on a mobile one. matt: "its starting to feel gluggy on mobilevr."
 //
 // Persisted, so a value found in a headset survives the session it was found in.
-const CAP_SEGMENTS_DEFAULT = 56;
+// 16 BY DEFAULT since 2026-10-14. On GalaxyXR with the wrestler, 56 meant 4368 tris an end cap and
+// 1.6M a frame for capsules alone. matt: "they can be very low res". The slider still goes up.
+const CAP_SEGMENTS_DEFAULT = 16;
 function capsuleSegments() {
   const live = window._boneCapSegments;
   if (typeof live === 'number') return Math.max(8, Math.min(64, Math.round(live)));
@@ -414,6 +411,9 @@ function capsuleEndGeometry() {
 // envelopes read as bloated tubes rather than as limbs, and they swamped the bones they were
 // meant to wrap. This is the number every downstream weight inherits.
 const DEFAULT_RADIUS_FRAC = 0.25;
+// A ROOT HAS NO BONE TO MEASURE, so its default capsule radius is a fraction of the scene unit
+// instead. Named because two places need it to agree: addJoint and Reset Radii.
+const ROOT_RADIUS_FRAC = 0.05;
 // The panel's slider for this was removed -- matt judged the default right and the control was
 // costing more in mis-aimed presses than it was worth. `window._boneRadiusFrac` is kept as the
 // override because it is how the number is tried from the console, which is how it was tuned to
@@ -449,7 +449,45 @@ function boneWidth(len) { return len * 0.12; }
 // mismatched beads — which reads as noise, and as meaning something it does not. A constant
 // is the honest choice: the marker says "a joint is here", and that claim is the same size
 // everywhere. JOINT_R_FRAC is the single knob; bones stay proportional to their own length.
-const JOINT_R_FRAC = 0.03;
+//
+// 0.06, DOUBLED FROM 0.03. The rig-extent fallback used to measure the rig's SPREAD, which ran
+// several times a limb's length, so the markers were drawn against an inflated unit and came out
+// large. Fixing that fallback to a median bone length brought the unit down to a real size and
+// the markers with it — correct, but smaller than the size matt had been working at. matt: "can
+// they be double what they currently are? that should get them back to how they were."
+//
+// WHICH UNIT THAT TUNING WAS DONE AGAINST IS THE POINT, and it is why this file went wrong later.
+// It was the MEDIAN BONE LENGTH — the rig-only fallback, measured with no sculpt in the scene.
+// sceneUnit's other source is the biggest mesh's BOUNDING RADIUS, four times larger on the human
+// base, so every constant here was tuned on one ruler and then silently applied on the other the
+// moment a body was in the scene. The dot survived it because it is capped by its own joint
+// (`jd`); the pins and the labels had no cap and came out four times too big. See
+// the note where sceneUnit is defined. The pin parts and the labels are multiples of `jd` now,
+// not of this, so each is the size of the joint it belongs to rather than of the average one.
+const JOINT_R_FRAC = 0.06;
+
+// HOW FAR A PIN STANDS OUTSIDE THE DOT IT IS PINNED TO, as a multiple of that dot's own radius.
+//
+// AND THEY ARE BACK TO 2.2 AND 1.5, WHICH IS WHERE THEY STARTED. That is the whole lesson of this
+// stretch of work written as two numbers. They were 2.2 and 1.5 as multiples of `jr` -- the
+// whole-rig figure, taken from the biggest MESH's bounding radius -- and every time a marker came
+// out wrong the constants got moved, because the constants are what you can see. They were moved
+// to 1.47 and 1.0 on exactly that reasoning ("pins are 1.5x too big"). Then the RULER was fixed
+// to the joint's own capped radius, matt re-judged them on it with the new slider, and landed on
+// Pin Size 1.5x -- which puts them back within a fifth of a percent of the originals.
+//
+// The proportions were never wrong. The unit underneath them was. If one of these ever looks off
+// again, check what it multiplies before you touch it.
+//
+// Skeleton.pinSizeMul rides on top, so the 2.2 : 1.5 proportion is fixed here and how big the
+// pair is, is a slider. See setPinSizeMul. Judged on the DESKTOP; if a headset wants a different
+// default these split per platform rather than moving again.
+// ...EXCEPT THAT A POSITION/ORIENTATION PIN IS NOW A BOX, and PIN_R_FRAC is its SIDE as a multiple of the
+// joint dot's radius: 2.4 is a box that just encloses the dot, so it reads as a box around the joint
+// rather than a marker standing off it. (It was 2.2 as the half-extent of a triad, i.e. a marker
+// more than twice as big across.)
+const PIN_R_FRAC = 2.4;
+const PIN_SOFT_R_FRAC = 1.5;
 
 // ── BATCHED RIG VISUALS ───────────────────────────────────────────────────────────────────
 //
@@ -513,7 +551,37 @@ function livePin(joint) {
 
 // InstancedMesh does not manage custom attributes, so they are attached to its geometry and
 // resized alongside the matrix buffer whenever the batch grows.
+// THE NODE PATH NEEDS THE INSTANCE TRANSFORM AS DATA.
+//
+// The GLSL these batches used to carry read `instanceMatrix` directly -- it is a built-in
+// attribute in a WebGL program. TSL has no equivalent that a material can reach without binding
+// to one particular InstancedMesh, and these batches are REPLACED on every capacity doubling, so
+// a bound reference would go stale. The orientation, scale and colour are all sitting in the slot
+// at flush time, so they ride along as ordinary instanced attributes instead.
+//
+// Added for both renderers rather than behind a flag: three floats a slot is nothing next to a
+// second code path, and the legacy shaders simply ignore attributes they do not declare.
+function ensureRigInstanceAttrs(mesh, cap) {
+  const g = mesh.geometry;
+  const q = g.getAttribute('aQ');
+  if (q && q.count === cap) return;
+  const quats = new Float32Array(cap * 4);
+  for (let i = 0; i < cap; i++) quats[i * 4 + 3] = 1;      // identity, not a zero quaternion
+  g.setAttribute('aQ', new THREE.InstancedBufferAttribute(quats, 4));
+  g.setAttribute('aS', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3));
+  g.setAttribute('aC', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3));
+  // AND THE TRANSLATION. Rotation and scale alone were enough while the capsule's positionNode
+  // was expected to hand three an object-space point for the instance matrix to place -- which is
+  // what the legacy GLSL does, writing `transformed` at begin_vertex, before project_vertex. The
+  // node path runs the other way round: NodeMaterial applies instancing to positionLocal and THEN
+  // overwrites it with positionNode, so an object-space result is thrown away and every capsule
+  // lands on the origin. The capsule composes the whole transform itself now, and that needs all
+  // three parts of the slot's compose(), not two.
+  g.setAttribute('aT', new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3));
+}
+
 function ensureTaperAttrs(mesh, cap) {
+  ensureRigInstanceAttrs(mesh, cap);
   const g = mesh.geometry;
   const a = g.getAttribute('aHA');
   if (a && a.count === cap) return;
@@ -524,10 +592,16 @@ function ensureTaperAttrs(mesh, cap) {
   // ellipsoid everything was before this existed.
   g.setAttribute('aPA', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
   g.setAttribute('aPB', new THREE.InstancedBufferAttribute(new Float32Array(cap).fill(2), 1));
+  // ...and each end's ROTATION, since a joint's shape may turn. Identity-filled, so an unwritten
+  // slot is the world-aligned shape every capsule was before rotation existed.
+  const ident = (n) => { const a = new Float32Array(n * 4); for (let i = 0; i < n; i++) a[i * 4 + 3] = 1; return a; };
+  g.setAttribute('aRA', new THREE.InstancedBufferAttribute(ident(cap), 4));
+  g.setAttribute('aRB', new THREE.InstancedBufferAttribute(ident(cap), 4));
 }
 
 // The end spheres carry ONE exponent — a cap belongs to a single joint.
 function ensureSharpAttr(mesh, cap) {
+  ensureRigInstanceAttrs(mesh, cap);
   const g = mesh.geometry;
   const a = g.getAttribute('aP');
   if (a && a.count === cap) return;
@@ -541,6 +615,12 @@ function ensureSharpAttr(mesh, cap) {
 // against is the opaque content (the sculpt, and the bone and joint bodies, which are opaque),
 // which is the one thing an xray exists to see through. The solid passes then paint over it.
 const GHOST_ORDER = 9995;
+// Then the solid capsules' depth prepass, then their colour -- see tuneCapsuleBatches.
+const PRE_ORDER = 9996;
+const SOLID_ORDER = 9996.5;
+// ...unless the part is fully solid, when both go BEFORE the sculpt (see tuneCapsuleBatches).
+const UNDER_PRE_ORDER = -10;
+const UNDER_SOLID_ORDER = -9.5;
 
 // NOTHING IN A CAPSULE SHARES A SURFACE WITH ANYTHING ELSE IN A CAPSULE.
 //
@@ -576,30 +656,93 @@ function makeBatch(main, geo, ghost, key) {
   const needsOwnGeo = isShaftKey(key)
     || (typeof key === 'string' && key.startsWith('capEnd'));
   if (needsOwnGeo) geo = geo.clone();
+  const isCapKey = isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'));
   const mat = ghost
-    ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
+    ? new THREE.MeshBasicMaterial({ side: isCapKey ? THREE.FrontSide : THREE.DoubleSide, transparent: true,
         opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
     : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
   const isEnd = (typeof key === 'string' && key.startsWith('capEnd'));
-  if (isShaftKey(key)) taperMaterialInstanced(mat);
-  else if (isEnd) sharpMaterialInstanced(mat);
-  if (isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'))) {
-    shadeMaterial(mat, isShaftKey(key));
+  // THE CAPSULES CARRY THEIR SHAPE AND SHADING IN A SHADER, and on the node renderer that cannot
+  // be an onBeforeCompile -- WebGPURenderer ignores those, which is why the shafts drew as raw
+  // untapered white cylinders there. NodeMaterials.rigCapsule is the same three effects (taper,
+  // sharpness, shading) written as a node graph; the legacy path keeps the injections.
+  let capMat = null;
+  if (NodeMaterials.isActive && NodeMaterials.isActive()) {
+    capMat = (isShaftKey(key) || isEnd)
+      ? NodeMaterials.rigCapsule({ shaft: isShaftKey(key), ghost, key })
+      // The plain batches take a PRE-BUILT node material too, rather than being converted from
+      // the stock one above on the frame the rig appears -- see NodeMaterials.rigBatch for the
+      // 117ms-per-material measurement that makes that distinction worth having.
+      : NodeMaterials.rigBatch({ ghost, key });
   }
-  const m = new THREE.InstancedMesh(geo, mat, 1);
+  if (!capMat) {
+    if (isShaftKey(key)) taperMaterialInstanced(mat);
+    else if (isEnd) sharpMaterialInstanced(mat);
+    if (isShaftKey(key) || isEnd) shadeMaterial(mat, isShaftKey(key));
+  }
+  // A SOLID CAPSULE BATCH GETS A DEPTH PREPASS, drawn by its own mesh -- see syncPrepass.
+  let preMat = null;
+  if (isCapKey && !ghost) {
+    preMat = (NodeMaterials.isActive && NodeMaterials.isActive())
+      ? NodeMaterials.rigCapsule({ shaft: isShaftKey(key), pre: true, key: key + 'Pre' }) : null;
+    if (!preMat) {
+      preMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, colorWrite: false, transparent: true });
+      if (isShaftKey(key)) taperMaterialInstanced(preMat); else sharpMaterialInstanced(preMat);
+    }
+  }
+  const m = new THREE.InstancedMesh(geo, capMat || mat, BATCH_CAP0);
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  if (isShaftKey(key)) ensureTaperAttrs(m, 1);
-  else if (isEnd) ensureSharpAttr(m, 1);
+  if (isShaftKey(key)) ensureTaperAttrs(m, BATCH_CAP0);
+  else if (isEnd) ensureSharpAttr(m, BATCH_CAP0);
+  ensureInstanceColor(m, BATCH_CAP0);
   m.count = 0;
+  // BORN HIDDEN, AND VISIBLE ONLY WHILE IT HAS INSTANCES -- see flushBatches. frustumCulled is
+  // false below, so a zero-instance batch still reaches the render list and still builds a
+  // pipeline to draw nothing at all.
+  m.visible = false;
   m.renderOrder = ghost ? GHOST_ORDER : 0;
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
-  return { mesh: m, cap: 1 };
+  return { mesh: m, cap: BATCH_CAP0, ghost: !!ghost, preMat };
 }
 
-// Grown in powers of two: InstancedMesh cannot be resized, so a rig that gains a joint would
-// otherwise rebuild its buffers on every add.
+// THE PER-INSTANCE COLOUR BUFFER, ALLOCATED UP FRONT AND NOT ON FIRST USE.
+//
+// three's setColorAt creates `instanceColor` lazily, the first time a batch is flushed. That was
+// fine while the batches started at capacity 1 and doubled, because the rebuild that followed
+// replaced the mesh -- and a replacement mesh gets a new RenderObject, which picks the attribute
+// up. Raising the starting capacity so a rig never rebuilds removed those rebuilds, and with
+// them the thing that was quietly repairing this: the pipeline compiled on the first frame, when
+// instanceColor was still null, is now the pipeline that draws forever, and every bone comes out
+// the material's flat base colour. matt: "random bone colours have dropped."
+//
+// The same shape as the gizmo pick overlay: a fix that was only ever working as a side effect of
+// something else, and that disappeared the moment that something else was optimised away.
+function ensureInstanceColor(m, cap) {
+  const c = m.instanceColor;
+  if (c && c.count === cap) return;
+  const a = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
+  a.setUsage(THREE.DynamicDrawUsage);
+  m.instanceColor = a;
+}
+
+// HOW BIG A BATCH STARTS, AND HOW FAST IT GROWS. InstancedMesh cannot be resized, so growing
+// one means building a replacement -- and on the node renderer a replacement mesh is a new
+// RenderObject, which is a new node graph AND a new compiled pipeline. Measured with
+// boneTrace(): a capacity doubling rebuilds all fourteen batches at once, costing 14 pipelines
+// and 14 node graphs in a single frame, and the frame it lands in ran 50-95ms on a desktop.
+//
+// Starting at 1 and doubling put that frame at joint 1, 2, 4, 8, 16, 32 -- which is exactly the
+// shape matt reported: "still stutters when drawing out bone chains", never gone, just rarer as
+// the chain grows. On the old WebGL renderer it was free, because that renderer keys its program
+// cache on shader STRUCTURE and simply reallocated the buffers.
+//
+// So: start at a capacity a whole rig fits inside, and grow in big steps when it does not. The
+// memory is nothing -- about 116 bytes an instance across the matrix, colour, quaternion and
+// scale attributes, so 32 instances in fourteen batches is roughly 50KB -- and it buys silence.
+const BATCH_CAP0 = 32;
+const BATCH_GROW = 4;
 function batchFor(main, key, geoFn, ghost) {
   const all = main._skelBatch || (main._skelBatch = new Map());
   let b = all.get(key);
@@ -628,14 +771,24 @@ function makeLineBatch(main, geo, ghost) {  // named by its caller — see batch
     opacity: ghost ? 0.35 : 0.9,
     ...(ghost ? { depthTest: true, depthFunc: THREE.GreaterDepth } : {}),
   });
-  const m = new THREE.LineSegments(new THREE.BufferGeometry(), mat);
+  // THE DEGENERATE SEGMENT STAYS, BUT THE BATCH NO LONGER DRAWS IT. Seeding one segment so the
+  // pipeline compiled at boot rather than on the first bone worked on the desktop, where it is
+  // paid once. It cannot work for XR: a session needs ArrayCamera[2] pipelines and a desktop
+  // boot only ever builds PerspectiveCamera ones, so the whole set was re-paid on EVERY entry --
+  // inside the startup window, which is the one place the runtime will not tolerate it.
+  // flushLineBatch already sets visible from the segment count; this just starts it off false.
+  const lg = new THREE.BufferGeometry();
+  lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  lg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const m = new THREE.LineSegments(lg, mat);
+  m.visible = false;
   // The wireframe stays on top -- it is a line overlay and being drawn over is the whole point --
   // but its GHOST is an xray like any other and goes with them. See GHOST_ORDER.
   m.renderOrder = ghost ? GHOST_ORDER : 9999;
   m.isPickable = false;
   m.frustumCulled = false;
   Skeleton.overlayGroup(main).add(m);
-  return { mesh: m, cap: 0, line: true, src: geo };
+  return { mesh: m, cap: 0, line: true, src: geo, ghost: !!ghost };
 }
 
 function lineBatchSlot(main, key, geoFn, ghost) {
@@ -685,6 +838,25 @@ function physLineVariant(main, slot, key, geoFn, ghost) {
   return slot;
 }
 
+// THE SHAFT'S OWN OPACITY. The ends say how big each joint is and the shafts say what connects
+// them, and a rig reads differently depending on which you want to see through — solid joints
+// with ghosted links, or the other way round. matt: "a way to control capsule opacity vs
+// connecting cylinder opacity". Unset follows the capsule opacity, so nothing changes for anyone
+// who never touches it.
+function shaftOpacity() {
+  const live = window._boneShaftOpacity;
+  if (typeof live === 'number') return live;
+  const saved = getOptionsURL().boneShaftOpacity;
+  return typeof saved === 'number' ? saved : Skeleton.capsuleOpacity();
+}
+function setShaftOpacity(main, v) {
+  const clamped = Math.max(0, Math.min(1, v));
+  window._boneShaftOpacity = clamped;
+  try { getOptionsURL.saveOption('boneShaftOpacity', clamped, 300); } catch (_) {}
+  if (main) Skeleton.updateVisuals(main);
+  return clamped;
+}
+
 // One pass over every slot, at the end of the frame's visual update.
 // THE CAPSULE BATCHES CARRY WHAT AN INSTANCE CANNOT: opacity, depth-write and render order are
 // material state, so they are set on the batch once a pass rather than per joint. Everything else
@@ -693,15 +865,35 @@ const CAP_HI_MUL = 2.125;   // the ratio preselection has always brightened by (
 function tuneCapsuleBatches(main) {
   const all = main._skelBatch;
   if (!all) return;
-  const base = Skeleton.capsuleOpacity();
+  const endBase = Skeleton.capsuleOpacity();
+  const shaftBase = Skeleton.shaftOpacity();
   const shaded = Skeleton.displayFlag('capsuleShaded');
+  // THE GHOST IS THE VOLUME SEEN THROUGH THE SKIN, so it takes the skin's opacity into account:
+  // what shows of a volume behind a skin at opacity m is (1 - m) of it. The ghost draws after the
+  // skin rather than under it, so this is the composite approximated, not exact -- but it is
+  // the right shape. It used to be a fixed 0.5625 of the capsule opacity whatever the skin was
+  // doing. matt: with Mesh Opacity at 50% "i don't see the volumes underneath, its still
+  // clipping", and at 100% the volumes inside the skin should not show at all. The most opaque
+  // real mesh decides, since the slider is global.
+  let meshOp = 0;
+  for (const ms of (main.getMeshes ? main.getMeshes() : [])) {
+    if (ms._isLight || ms._isBone || ms._isNull || !ms.getOpacity) continue;
+    if (ms.isVisible && !ms.isVisible()) continue;
+    meshOp = Math.max(meshOp, ms.getOpacity() ?? 1);
+  }
   for (const [key, b] of all) {
     if (!key.startsWith('capEnd') && !key.startsWith('capShaft')) continue;
+    const base = key.startsWith('capShaft') ? shaftBase : endBase;
     const m = b.mesh.material;
     const hi = key.endsWith('Hi');
     // capEndG / capEndGHi / capShaftG / capShaftGHi -- the ghost pass ends in G before any Hi
     const ghost = /G(Hi)?$/.test(key);
-    m.opacity = Math.min(1, base * (hi ? CAP_HI_MUL : 1)) * (ghost ? 0.5625 : 1);
+    // A HIGHLIGHT BRIGHTENS BUT NEVER TURNS SOLID: a translucent volume lit up past 1.0 went down
+    // the under-the-skin path alone and drew unlike every other volume. matt, editing in Tweak
+    // Joint with both opacities below 100%: "it starts to shade strangely again".
+    const solid = base >= 0.999;
+    const op = solid ? 1 : (hi ? Math.max(base, Math.min(0.85, base * CAP_HI_MUL)) : base);
+    m.opacity = op * (ghost ? 1 - meshOp : 1);
     // FULLY SOLID SKIPS THE BLEND, BUT NOT THE PASS. matt asked for the skin's rule -- "when the
     // solidity is at 100%, all the xray/transparency code paths in the material should be
     // skipped" -- and taking that literally, by clearing `transparent`, moved the solid capsules
@@ -727,8 +919,24 @@ function tuneCapsuleBatches(main) {
     // nearest capsule wins. The cost is that you no longer see one capsule THROUGH another --
     // only the nearest is blended against what was already in the buffer (the sculpt, the
     // grid), which still shows through it -- and that is the trade the rig wants.
-    m.depthWrite = !ghost;
-    m.depthTest = ghost ? true : m.depthTest;
+    // ...EXCEPT THE FAINTER OF THE TWO PARTS. With the spheres and the cylinders on separate
+    // sliders, a cylinder turned down to 5% was still writing depth, so an all-but-invisible link
+    // punched holes in the spheres and bones behind it. matt: "even at 5% the draw order of things
+    // still goes odd". So the part that is fainter than the other never occludes it; with the two
+    // equal (the default, since the cylinders follow the spheres) both write, exactly as before.
+    const mine = key.startsWith('capShaft') ? shaftBase : endBase;
+    const other = key.startsWith('capShaft') ? endBase : shaftBase;
+    // ...BUT WRITING DEPTH IN THE COLOUR PASS WAS STILL ORDER-DEPENDENT. A far capsule drawn first
+    // blended, then the near one blended over it: two layers where the order went one way, one
+    // where it went the other, and with DoubleSide a capsule's own far wall did the same inside
+    // it. matt: "the volume shapes aren't properly sorted, its all a bit messy and hard to read".
+    // So the depth now goes down FIRST, from a depth-only twin of the batch (syncPrepass), and
+    // the colour pass tests LessEqual against it without writing: exactly the nearest surface of
+    // the whole rig blends, once, whatever order the instances are in. The fainter part still
+    // stays out of the prepass, for the reason above.
+    b.preOn = mine >= other;
+    m.depthWrite = false;
+    m.depthTest = true;
     // THE GHOST DRAWS FIRST, so it can only reveal through the SCULPT. It is a GreaterDepth
     // pass -- "paint me wherever something is nearer" -- so what is already in the depth buffer
     // when it runs decides what it shows through. Sharing 9996 with the solid pass, the solid
@@ -737,7 +945,19 @@ function tuneCapsuleBatches(main) {
     // behind a leg, i can still see the arm fully through the leg." One order earlier, the only
     // depth it can test against is the sculpt's, which is the one thing it exists to show
     // through -- and the solid pass then paints over it.
-    b.mesh.renderOrder = ghost ? GHOST_ORDER : 9996;
+    // A FULLY SOLID PART IS DRAWN UNDER THE SKIN, NOT OVER IT. Before the sculpt, with its depth
+    // written, the skin then composites over it exactly: where the skin is in front it blends over
+    // the volume at its own opacity, where the volume pokes out the skin fails the depth test. No
+    // ghost is needed, so none is drawn -- the ghost is unsorted, and was the double-shaded caps.
+    // Drawn after, the skin's depth cut the volumes even at Mesh Opacity 0. matt: "mesh opacity
+    // 0%, capsule opacity 100% looks weird" and at 50% "still has caps double shading".
+    // Translucent volumes keep the over-the-skin passes: drawn under, their depth would cut the
+    // skin behind them.
+    const under = solid;
+    b.off = ghost && (under || m.opacity < 0.004);
+    b.mesh.renderOrder = ghost ? GHOST_ORDER : (under ? UNDER_SOLID_ORDER : SOLID_ORDER);
+    b.preOrder = under ? UNDER_PRE_ORDER : PRE_ORDER;
+    if (b.pre) { b.pre.visible = b.mesh.visible && b.preOn; b.pre.renderOrder = b.preOrder; }
   }
 }
 
@@ -756,6 +976,10 @@ function flushBatches(main) {
     }
   }
 
+  // `?rigghosts=0` dropped the xray half of every batch, to test whether that blended overlay
+  // was what made a rig cost 60ms a frame on a GalaxyXR. It was not -- the bill was a per-frame
+  // console.error and a material rebuilt every frame (see the colorWrite note in NodeMaterials).
+  // The switch is gone with the theory.
   for (const [key, b] of all) {
     const slots = bySlot.get(key) || [];
     const n = slots.length;
@@ -763,13 +987,14 @@ function flushBatches(main) {
     if (b.line) { flushLineBatch(b, slots, n); continue; }
     if (n > b.cap) {
       // Rebuild at the next power of two, carrying the material and geometry across.
-      let cap = b.cap || 1;
-      while (cap < n) cap *= 2;
+      let cap = b.cap || BATCH_CAP0;
+      while (cap < n) cap *= BATCH_GROW;
       const old = b.mesh;
       const m = new THREE.InstancedMesh(old.geometry, old.material, cap);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       if (isShaftKey(key)) ensureTaperAttrs(m, cap);
       else if (typeof key === 'string' && key.startsWith('capEnd')) ensureSharpAttr(m, cap);
+      ensureInstanceColor(m, cap);
       m.renderOrder = old.renderOrder;
       m.isPickable = false;
       m.frustumCulled = false;
@@ -783,11 +1008,35 @@ function flushBatches(main) {
     const hb = ha ? m.geometry.getAttribute('aHB') : null;
     const pa = ha ? m.geometry.getAttribute('aPA') : null;
     const pb = ha ? m.geometry.getAttribute('aPB') : null;
+  const ra = ha ? m.geometry.getAttribute('aRA') : null;
+  const rb = ha ? m.geometry.getAttribute('aRB') : null;
     const pe = (typeof key === 'string' && key.startsWith('capEnd'))
       ? m.geometry.getAttribute('aP') : null;
-    for (let i = 0; i < n; i++) {
-      const s = slots[i];
-      _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
+    // The instance transform as data, for the node path -- see ensureRigInstanceAttrs.
+    const isCap = ha || pe;
+    const aq = isCap ? m.geometry.getAttribute('aQ') : null;
+    const as = aq ? m.geometry.getAttribute('aS') : null;
+    const at = aq ? m.geometry.getAttribute('aT') : null;
+    const ac = aq ? m.geometry.getAttribute('aC') : null;
+    // A HIDDEN SLOT IS SKIPPED, NOT SCALED TO ZERO.
+    //
+    // This used to write every slot and set `count = n`, hiding one by composing it at zero
+    // scale. A zero-scale instance still goes through the vertex shader, and the capsule end is
+    // a 4368-triangle sphere: with capsules turned OFF, a 40-joint rig was still submitting
+    // 80 x 4368 x 2 = 700k degenerate triangles every frame, which was 76% of everything the
+    // rig drew. It is why the display flags made no difference to the frame time -- matt, on a
+    // GalaxyXR, "tried the various draw modes, so only solid, only wire, only joints, its slow
+    // for all", and measured on the desktop: all flags off changed neither the triangle count
+    // nor the milliseconds.
+    //
+    // Compacting is safe because nothing indexes back into a batch by instance: `bySlot` is
+    // rebuilt from scratch each flush, the batches are unpickable, and a highlight moves a slot
+    // to a different batch key rather than addressing its slot in this one.
+    let i = 0;
+    for (let k = 0; k < n; k++) {
+      const s = slots[k];
+      if (!s.visible) continue;
+      _mSlot.compose(s.position, s.quaternion, s.scale);
       m.setMatrixAt(i, _mSlot);
       if (m.setColorAt) m.setColorAt(i, s.material.color);
       if (ha && s._ha) {
@@ -795,16 +1044,52 @@ function flushBatches(main) {
         hb.setXYZ(i, s._hb[0], s._hb[1], s._hb[2]);
         // 2 when the slot has not said otherwise, so an unwritten instance is the ellipsoid.
         if (pa) { pa.setX(i, s._pa || 2); pb.setX(i, s._pb || 2); }
+        if (ra) {
+          const qa = s._ra || IDENT_ROT, qb = s._rb || IDENT_ROT;
+          ra.setXYZW(i, qa[0], qa[1], qa[2], qa[3]);
+          rb.setXYZW(i, qb[0], qb[1], qb[2], qb[3]);
+        }
       }
       if (pe) pe.setX(i, s._p || 2);
+      if (aq) {
+        aq.setXYZW(i, s.quaternion.x, s.quaternion.y, s.quaternion.z, s.quaternion.w);
+        as.setXYZ(i, s.scale.x, s.scale.y, s.scale.z);
+        at.setXYZ(i, s.position.x, s.position.y, s.position.z);
+        const c = s.material.color;
+        ac.setXYZ(i, c.r, c.g, c.b);
+      }
+      i++;
     }
     if (ha) { ha.needsUpdate = true; hb.needsUpdate = true; }
     if (pa) { pa.needsUpdate = true; pb.needsUpdate = true; }
+    if (ra) { ra.needsUpdate = true; rb.needsUpdate = true; }
     if (pe) pe.needsUpdate = true;
-    m.count = n;
+    if (aq) { aq.needsUpdate = true; as.needsUpdate = true; ac.needsUpdate = true; at.needsUpdate = true; }
+    m.count = i;
+    m.visible = i > 0 && !b.off;
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    if (b.preMat) syncPrepass(b);
   }
+}
+
+// THE DEPTH PREPASS: the same instances as the solid batch, depth only. A twin mesh rather than
+// a second material, because a mesh draws with one. It shares the batch's geometry (so its
+// instanced attributes) and instanceMatrix, and is re-made only when a rebuild replaced those.
+function syncPrepass(b) {
+  const m = b.mesh;
+  let p = b.pre;
+  if (!p || p.geometry !== m.geometry || p.instanceMatrix !== m.instanceMatrix) {
+    if (p) p.parent?.remove(p);
+    p = b.pre = new THREE.InstancedMesh(m.geometry, b.preMat, 1);
+    p.instanceMatrix = m.instanceMatrix;
+    p.isPickable = false;
+    p.frustumCulled = false;
+    m.parent?.add(p);
+  }
+  p.count = m.count;
+  p.visible = m.visible && b.preOn !== false;
+  p.renderOrder = b.preOrder ?? PRE_ORDER;
 }
 
 // Dropped wholesale when the rig is rebuilt: the slots are indexed by creation order, so a
@@ -817,11 +1102,22 @@ function flushLineBatch(b, slots, n) {
   const need = n * verts * 3;
   const g = b.mesh.geometry;
   let pa = g.getAttribute('position');
-  if (!pa || pa.array.length !== need) {
-    // Rebuilt only when the joint count moves — the buffer is written in place otherwise.
-    pa = new THREE.BufferAttribute(new Float32Array(need), 3);
+  // GROWN LIKE THE INSTANCED BATCHES, AND FOR THE SAME REASON.
+  //
+  // This used to reallocate on every change in joint count -- `array.length !== need`, exact fit
+  // -- and on the node renderer a replacement buffer is a new render object, so every size gave
+  // the wire batch a fresh pipeline. matt's compile report caught it four times over in one
+  // session: rigbatch:wire-ghost at BufferGeometry(0v), (2v), (24v) and (480v).
+  //
+  // So it only grows, in the same multiples the instanced batches use, and the draw range below
+  // already decides what is actually drawn. A capacity buffer costs a few kilobytes; a pipeline
+  // costs 30-40ms on a headset.
+  if (!pa || pa.array.length < need) {
+    let cap = Math.max(pa ? pa.array.length : 0, verts * 3 * BATCH_CAP0);
+    while (cap < need) cap *= BATCH_GROW;
+    pa = new THREE.BufferAttribute(new Float32Array(cap), 3);
     g.setAttribute('position', pa);
-    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(need), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cap), 3));
   }
   const P = pa.array;
   const C = g.getAttribute('color').array;
@@ -851,7 +1147,10 @@ function clearBatches(main) {
   for (const b of all.values()) {
     if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
     b.mesh.dispose();
-    b.mesh.material.dispose();
+    // NOT the pre-built node materials: those are CACHED and shared, so disposing one here would
+    // take it away from every future rig as well as this one. They belong to NodeMaterials and
+    // live as long as the renderer does.
+    if (!b.mesh.material.userData.nodeShared) b.mesh.material.dispose();
   }
   main._skelBatch = null;
 }
@@ -1020,7 +1319,11 @@ function shadeMaterial(mat, cylinder) {
 function taperMaterialInstanced(mat) {
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = 'attribute vec3 aHA;\nattribute vec3 aHB;\n'
-      + 'attribute float aPA;\nattribute float aPB;\n' + shader.vertexShader;
+      + 'attribute float aPA;\nattribute float aPB;\n'
+      + 'attribute vec4 aRA;\nattribute vec4 aRB;\n'
+      // v rotated by the unit quaternion q.
+      + 'vec3 _qrot(vec4 q, vec3 v) { vec3 t = 2.0 * cross(q.xyz, v); return v + q.w * t + cross(q.xyz, t); }\n'
+      + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n'
       + 'mat3 _im = mat3(instanceMatrix[0].xyz, instanceMatrix[1].xyz, instanceMatrix[2].xyz);\n'
@@ -1041,17 +1344,21 @@ function taperMaterialInstanced(mat) {
       // so dividing by that norm lands on it: p = 2 leaves the ellipse exactly as it was (the
       // direction is already unit length), and higher p pushes the corners out towards a box.
       // Branched, because pow() three times is not free and almost every joint is round.
+      // A TURNED JOINT: into its frame (blended between the two ends by _t), shaped there, and
+      // back out. Identity at both ends is the world-aligned shape and costs two no-op rotations.
+      + '  vec4 _qj = normalize(mix(aRA, aRB, _t));\n'
+      + '  _w = _qrot(vec4(-_qj.xyz, _qj.w), _w);\n'
       + '  float _p = mix(aPA, aPB, _t);\n'
       + '  if (_p > 2.001) {\n'
       + '    float _n = pow(pow(abs(_w.x), _p) + pow(abs(_w.y), _p) + pow(abs(_w.z), _p), 1.0 / _p);\n'
       + '    if (_n > 1e-6) _w /= _n;\n'
       + '  }\n'
-      + '  vec3 _b = _rotInv * (_w * _h);\n'
+      + '  vec3 _b = _rotInv * _qrot(_qj, _w * _h);\n'
       + '  transformed.x = _b.x;\n'
       + '  transformed.z = _b.z;\n'
       + '}');
   };
-  mat.customProgramCacheKey = () => 'skelTaperInstancedP';
+  mat.customProgramCacheKey = () => 'skelTaperInstancedPR';
   return mat;
 }
 
@@ -1107,6 +1414,31 @@ function makeCapsulePart(geo, taper) {
 const LABEL_FONT = 'bold 34px sans-serif';
 const LABEL_H = 64;      // canvas height; the width is sized to the text, see setLabelText
 const LABEL_PAD = 18;    // room for the stroke outline at both ends
+// HOW TALL A LABEL IS DRAWN, as a fraction of the scene unit, for both the joint name and the
+// bone length. 0.12, doubled from the 0.06 these were: at Rig Scale 1.0x the pins and joints
+// read correctly and the text did not. matt: "if the joint scale in settings is set to 1.0x,
+// the pins and joints look correct, but the text is too small, that should be doubled."
+// One constant for both so a name and the length beside it are never two sizes.
+//
+// AS A MULTIPLE OF THE TYPICAL JOINT'S DRAWN RADIUS -- the median of `jd` across the rig, one
+// height for every label on it. Not per joint (text that changes size down a limb reads as broken
+// labels, not as different joints) and not any scene or rig unit.
+//
+// This number has been re-tuned three times -- 0.06, 0.12, 0.24 -- and each time the constant was
+// fine and the UNIT underneath it had changed: first the rig's spread, then a mesh bounding
+// radius, then the median bone length. Against the joint there is nothing left to change: `jd` is
+// measured per joint and capped by its own bone, and it is the one marker in this file that has
+// never been reported wrong.
+//
+// 2.775 is JUDGED, not converted. The chain of conversions is what put the text at four separate
+// sizes across four versions; this one is matt reading the rig on a desktop with the Label Size
+// slider in his hand and stopping at 1.85x over the 1.5 that was here -- so 1.5 x 1.85. Unlike
+// the pin beside it the text did NOT come back to where it started, which is the honest outcome:
+// its old value was never judged against the joint, only against a succession of scene units.
+//
+// Skeleton.labelSizeMul is the slider on top. Judged on the DESKTOP; a headset default splits per
+// platform rather than moving this again.
+const LABEL_R_FRAC = 2.775;
 
 function makeLabel() {
   const canvas = document.createElement('canvas');
@@ -1165,6 +1497,10 @@ Skeleton.isJoint = function (m) { return !!(m && m._isBone); };
 // Must live BELOW `const Skeleton`: assigning onto it from up beside DEFAULT_RADIUS_FRAC put
 // the write in the const's temporal dead zone and the whole module failed to evaluate.
 Skeleton.defaultRadiusFrac = function () { return DEFAULT_RADIUS_FRAC; };
+// The panel's Reset Joint / Reset Radii read it through here: the button called Skeleton.radiusFraction()
+// for a long while after it stopped existing, so every press threw a TypeError.
+Skeleton.radiusFraction = radiusFrac;
+
 
 // ---- joint radius ------------------------------------------------------------
 //
@@ -1208,6 +1544,9 @@ Skeleton.boneRadiusOf = function (main, j) {
 // wide and shallow and a ribcage can be deep without either of them being round. matt: "lets
 // enable the volume tools for these joint spheres now so i can do nonlinear setups... just keep
 // the bbox controls for width, height, depth."
+//
+// (Since 2026-09-30 the shape may TURN — see jointRot — and these then run along the joint's own
+// axes. The history below is why the default stays world-aligned.)
 //
 // WORLD-AXIS ALIGNED, and no rotation or offset — matt's scope, and for a rig authored in a
 // T-pose the world axes ARE width, height and depth, which is why the box handles read the way
@@ -1323,6 +1662,84 @@ Skeleton.jointHalf = function (j, fallback, out) {
   return out;
 };
 
+// ---- joint rotation -----------------------------------------------------------
+//
+// THE JOINT'S SHAPE MAY TURN. The box Make Skin builds on a joint and the ellipsoid it wraps
+// onto both used to be world-axis aligned with no way out — right for a T-posed torso, wrong for
+// a curled finger or a tail, where the edge flow wants to follow the curl. matt: "allow in tweak
+// mode for the cubes to be rotated. eg to get a natural curl on fingers, or on a tail, or to
+// better align the resultant edge flow."
+//
+// A MODEL-SPACE QUATERNION, [x, y, z, w], and nothing to do with the POSE: a joint's matrix is
+// how the rig is posed, this is which way its shape faces at rest, exactly as `_jointScale` and
+// `_jointOffset` are. Unset is identity, and identity is stored as NOTHING, so a rig that never
+// touched it serialises nothing and every consumer takes its old, unrotated path.
+//
+// The scale is in the ROTATED frame: `jointHalf` is still three half-extents, now along the
+// joint's own three axes rather than the world's. The offset stays in model space — it is a
+// position, and a face drag writes it in whichever direction the face happens to point.
+const IDENT_ROT = [0, 0, 0, 1];
+Skeleton.jointRot = function (j) {
+  const r = j && j._jointRot;
+  return (r && r.length === 4) ? r : IDENT_ROT;
+};
+
+Skeleton.jointRotIsSet = function (j) {
+  const r = j && j._jointRot;
+  return !!(r && r.length === 4 && (r[0] || r[1] || r[2]));
+};
+
+Skeleton.setJointRot = function (j, x, y, z, w) {
+  if (!j) return false;
+  let l = Math.hypot(x, y, z, w);
+  if (!(l > 1e-12)) { delete j._jointRot; return true; }
+  // One hemisphere, w >= 0, so the same rotation is always the same four numbers — the twin is
+  // then an exact reflection of it, and a file round-trips without flipping sign.
+  if (w < 0) l = -l;
+  x /= l; y /= l; z /= l; w /= l;
+  if (Math.abs(x) < 1e-7 && Math.abs(y) < 1e-7 && Math.abs(z) < 1e-7) delete j._jointRot;
+  else j._jointRot = [x, y, z, w];
+  return true;
+};
+
+Skeleton.jointQuat = function (j, out) {
+  const r = Skeleton.jointRot(j);
+  return (out || new THREE.Quaternion()).set(r[0], r[1], r[2], r[3]);
+};
+
+// A ROTATION SEEN IN A MIRROR, across the plane through the origin with normal n. M R M for the
+// reflection M = I - 2nn^T, which on a quaternion is: reflect the vector part, then negate it.
+// For the rig's own mirror (n = x) that is (x, -y, -z, w).
+Skeleton.mirrorRot = function (r, n) {
+  const nx = n ? n.x : 1, ny = n ? n.y : 0, nz = n ? n.z : 0;
+  const d = 2 * (r[0] * nx + r[1] * ny + r[2] * nz);
+  return [-(r[0] - d * nx), -(r[1] - d * ny), -(r[2] - d * nz), r[3]];
+};
+
+// A CENTRELINE JOINT MAY ONLY PITCH. It is its own mirror twin, so the only rotations that leave
+// it symmetric are the ones about the mirror normal: the TWIST about x out of a swing-twist
+// split, which on a quaternion is just (x, 0, 0, w) renormalised.
+Skeleton.centrelineRot = function (r) {
+  const l = Math.hypot(r[0], r[3]);
+  return l > 1e-9 ? [r[0] / l, 0, 0, r[3] / l] : [0, 0, 0, 1];
+};
+
+// ---- does this joint shape the skin? --------------------------------------------
+//
+// A joint can DEFORM the skin without SHAPING it: a jaw drawn inside a head, a twist bone halfway
+// down a forearm. Make Skin skips such a joint — no box, no bridge, no capsule in the surface it
+// wraps — and joins its children to the nearest joint above it that does shape the skin. The
+// bind is untouched: it is still a bone, and still gets weights from its capsule. matt: "define
+// joints that will be used for deformation, but explicitly DON'T affect the skin at all" — the
+// complement of a shaper, which shapes the skin and deforms nothing.
+//
+// Stored only when OFF, so every rig made before it reads as shaping, which is what it did.
+Skeleton.jointShapesSkin = function (j) { return !(j && j._noSkinShape); };
+Skeleton.setJointShapesSkin = function (j, on) {
+  if (!j) return;
+  if (on) delete j._noSkinShape; else j._noSkinShape = true;
+};
+
 // ---- joint scale handles ------------------------------------------------------
 //
 // SIX DOTS, one on each face of the joint's bounding box. A face dot says which axis it changes
@@ -1339,6 +1756,10 @@ Skeleton.jointHalf = function (j, fallback, out) {
 // Drawn for the SELECTED joint only. Handles on every joint at once would be twenty times the
 // clutter and would make the rig unpickable.
 const HANDLE_AXES = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+// Two more dots after the six, for a bone VOLUME only: its root end and its far end, each dragged along
+// the bone (Skeleton.volumeEnds). Hidden and parked out of reach for a joint's box.
+const END_DOTS = 2;
+const RING_BASE = HANDLE_AXES.length + END_DOTS;   // the rings' handle indices follow every dot
 
 function scaleHandleGroup(main) {
   if (main._jointHandles) return main._jointHandles;
@@ -1359,10 +1780,27 @@ function scaleHandleGroup(main) {
     g.add(m);
     return m;
   };
+  // THE ROTATION RINGS, one per axis of the joint's own frame, drawn outside the face dots so
+  // the two kinds of handle never sit on top of each other. A thin torus rather than a line —
+  // lines do not draw on the webgpu renderer — scaled as a whole, so the tube thickens with the
+  // ring; at these sizes that reads as the ring being in proportion rather than as a fault.
+  const ringGeo = new THREE.TorusGeometry(1, 0.018, 6, 72);
+  const mkRing = (color) => {
+    const m = mk(color);
+    m.geometry = ringGeo;
+    return m;
+  };
   main._jointHandles = {
     group: g,
-    faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax])),
-    pos: HANDLE_AXES.map(() => new THREE.Vector3()),
+    faces: HANDLE_AXES.map(([ax]) => mk([0xff6b6b, 0x6bff8f, 0x6bb6ff][ax]))
+      .concat([mk(0x6bff8f), mk(0x6bff8f)]),
+    pos: HANDLE_AXES.map(() => new THREE.Vector3()).concat([new THREE.Vector3(), new THREE.Vector3()]),
+    rings: [0xff6b6b, 0x6bff8f, 0x6bb6ff].map(mkRing),
+    // Each ring's axis in model space and its radius, written with the draw and read by the pick
+    // and the drag — one source, as for the dots.
+    ringAxis: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()],
+    ringOn: [false, false, false],
+    ringR: 0,
     centrePos: new THREE.Vector3(),
     joint: null,
   };
@@ -1378,22 +1816,127 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   if (!j) { h.group.visible = false; return h; }
   h.group.visible = true;
 
-  // World-axis aligned, so there is no frame to build: the extents ARE the offsets to the faces.
+  // BONE VOLUMES: the handles belong to the volume LEAVING this joint, drawn at its root face --
+  // width and height dots on the section's axes, the uniform-scale dot on the rim diagonal, and a dot
+  // at the centre of each END face that slides that end along the bone. The rotation rings are off.
+  if (Skeleton.displayFlag('volumes')) {
+    const bone = Skeleton.volumeActive(main, j);
+    if (!bone) { h.group.visible = false; return h; }
+    const f = Skeleton.volumeFrame(main, bone, main._volHandleFrame || (main._volHandleFrame = {}));
+    const rr = Skeleton.sceneUnit(main) * 0.0225;
+    for (let k = 0; k < 3; k++) { h.ringOn[k] = false; h.rings[k].visible = false; }
+    const w = f.r * f.W, ht = f.r * f.H, dg = 0.7071;
+    // THE TWIST RING, round the bone at the volume's MIDDLE, clear of the end cones and the section dots
+    // at the root. One ring (the bone's own axis, green like the axis it turns about).
+    h.centrePos.copy(f.C0).add(f.C1).multiplyScalar(0.5);
+    h.ringOn[1] = true;
+    h.ringAxis[1].copy(f.d);
+    h.ringR = Math.max(w, ht) * 1.35 + rr * 3;
+    {
+      const ring = h.rings[1];
+      ring.visible = true;
+      ring.quaternion.setFromUnitVectors(_zUp, f.d);
+      ring.position.copy(h.centrePos);
+      ring.scale.setScalar(h.ringR);
+      ring.updateMatrix(); ring.matrixWorldNeedsUpdate = true;
+    }
+    const put = (i, x, y, z) => {
+      h.pos[i].set(x, y, z);
+      h.faces[i].position.copy(h.pos[i]);
+      h.faces[i].scale.setScalar(rr);
+      h.faces[i].visible = true;
+      h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
+    };
+    put(0, f.C0.x + f.e1.x * w, f.C0.y + f.e1.y * w, f.C0.z + f.e1.z * w);
+    put(1, f.C0.x - f.e1.x * w, f.C0.y - f.e1.y * w, f.C0.z - f.e1.z * w);
+    put(4, f.C0.x + f.e3.x * ht, f.C0.y + f.e3.y * ht, f.C0.z + f.e3.z * ht);
+    put(5, f.C0.x - f.e3.x * ht, f.C0.y - f.e3.y * ht, f.C0.z - f.e3.z * ht);
+    // uniform scale: on the rim, between width and height
+    put(2, f.C0.x + (f.e1.x * w + f.e3.x * ht) * dg, f.C0.y + (f.e1.y * w + f.e3.y * ht) * dg,
+           f.C0.z + (f.e1.z * w + f.e3.z * ht) * dg);
+    // the unused y- dot: hidden and parked out of reach so it can never be picked
+    h.faces[3].visible = false;
+    h.pos[3].set(1e9, 1e9, 1e9);
+    // THE TWO ENDS, at the centre of each end face: drag along the bone to lengthen or shorten that end.
+    put(6, f.C0.x, f.C0.y, f.C0.z);
+    put(7, f.C1.x, f.C1.y, f.C1.z);
+    // CONES, NOT DOTS, where a handle moves one way: each end's points out along the bone, and the
+    // uniform-scale one points away from the root face's centre, white so it does not read as an axis.
+    // matt: "can those 2 height controls be cones, so its clear which way they move?"
+    handleCone(h, 6, _vfDir.copy(f.d).negate(), 0x6bff8f);
+    handleCone(h, 7, _vfDir.copy(f.d), 0x6bff8f);
+    handleCone(h, 2, _vfDir.copy(h.pos[2]).sub(f.C0), 0xffffff);
+    return h;
+  }
+  // Back from volumes mode: the box's six dots, round and in their axis colours again.
+  handleDot(h, 2, 0x6bff8f);
+  for (let i = 0; i < h.faces.length; i++) h.faces[i].visible = i < HANDLE_AXES.length;
+  for (let i = HANDLE_AXES.length; i < h.pos.length; i++) h.pos[i].set(1e9, 1e9, 1e9);
+
+  // In the joint's own frame: the extents are the offsets to the faces along its three axes, and
+  // an unturned joint's frame is the world's.
   const half = Skeleton.jointHalf(j, fallbackR || 0, _halfH);
   Skeleton.jointCentre(j, _pJH);   // the SHAPE's centre — a face drag moves it off the joint
+  const turned = Skeleton.jointRotIsSet(j);
+  if (turned) Skeleton.jointQuat(j, _qJH);
 
-  const r = Skeleton.sceneUnit(main) * 0.018;
+  const r = Skeleton.sceneUnit(main) * 0.0225;
   h.centrePos.copy(_pJH);
+  // Outside the largest face dot, with room for the dot itself, so a ring is never picked for a dot.
+  h.ringR = Math.max(half[0], half[1], half[2]) * 1.3 + r * 3;
+  // A CENTRELINE JOINT ONLY GETS THE X RING. Pitch is the only turn that keeps a joint that is its
+  // own mirror twin symmetric, and a ring that is there but refuses to turn is a broken handle.
+  const centreline = Skeleton.jointIsCentreline(main, j);
+  for (let k = 0; k < 3; k++) {
+    const ring = h.rings[k];
+    const on = !centreline || k === 0;
+    h.ringOn[k] = on;
+    ring.visible = on;
+    h.ringAxis[k].set(0, 0, 0).setComponent(k, 1);
+    if (turned) h.ringAxis[k].applyQuaternion(_qJH);
+    // The torus lies in its own xy plane, so it is turned until its z runs along the ring's axis.
+    ring.quaternion.setFromUnitVectors(_zUp, h.ringAxis[k]);
+    ring.position.copy(h.centrePos);
+    ring.scale.setScalar(h.ringR);
+    ring.updateMatrix(); ring.matrixWorldNeedsUpdate = true;
+  }
   for (let i = 0; i < HANDLE_AXES.length; i++) {
     const [ax, sign] = HANDLE_AXES[i];
     _vFace.set(0, 0, 0);
     _vFace.setComponent(ax, sign * half[ax]);
+    if (turned) _vFace.applyQuaternion(_qJH);
     h.pos[i].copy(h.centrePos).add(_vFace);
     h.faces[i].position.copy(h.pos[i]);
     h.faces[i].scale.setScalar(r);
     h.faces[i].updateMatrix(); h.faces[i].matrixWorldNeedsUpdate = true;
   }
   return h;
+};
+
+// A handle drawn as a cone pointing along `dir`, or put back to a round dot. The colour goes in
+// userData.baseColor too, which is what the preselect tint restores.
+const _vfDir = new THREE.Vector3();
+let _handleConeGeo = null;
+function handleCone(h, i, dir, color) {
+  const m = h.faces[i];
+  if (!_handleConeGeo) _handleConeGeo = new THREE.ConeGeometry(0.85, 2.6, 14);
+  if (m.userData.dotGeo === undefined) m.userData.dotGeo = m.geometry;
+  m.geometry = _handleConeGeo;
+  if (dir.lengthSq() > 1e-12) m.quaternion.setFromUnitVectors(_upY, dir.normalize());
+  if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
+  m.updateMatrix(); m.matrixWorldNeedsUpdate = true;
+}
+function handleDot(h, i, color) {
+  const m = h.faces[i];
+  if (m.userData.dotGeo) m.geometry = m.userData.dotGeo;
+  m.quaternion.identity();
+  if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
+}
+
+Skeleton.scaleHandleAxis = function (i) {
+  // A volume's end dot: axis 'end', sign -1 for the root end and +1 for the far end.
+  if (i >= HANDLE_AXES.length) return { axis: 'end', sign: i === HANDLE_AXES.length ? -1 : 1 };
+  return { axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] };
 };
 
 // Which handle is under a point, if any. Generous radius: a dot is small on purpose, and a grab
@@ -1404,10 +1947,26 @@ Skeleton.pickScaleHandle = function (main, p, radius) {
   let best = null, bestD = radius * radius, bestI = -1;
   for (let i = 0; i < h.pos.length; i++) {
     const d = h.pos[i].distanceToSquared(p);
-    if (d < bestD) { bestD = d; bestI = i; best = { kind: 'face', axis: HANDLE_AXES[i][0], sign: HANDLE_AXES[i][1] }; }
+    if (d < bestD) { bestD = d; bestI = i; best = Object.assign({ kind: 'face' }, Skeleton.scaleHandleAxis(i)); }
+  }
+  // A RING, by distance to the circle itself: height above its plane and how far off its radius.
+  // A dot wins a tie — it is the smaller target, and one the hand reaches for on purpose.
+  if (!best && h.rings) {
+    for (let k = 0; k < 3; k++) {
+      if (!h.ringOn[k]) continue;
+      _vFace.subVectors(p, h.centrePos);
+      const up = _vFace.dot(h.ringAxis[k]);
+      const across = Math.sqrt(Math.max(0, _vFace.lengthSq() - up * up)) - h.ringR;
+      const d = up * up + across * across;
+      if (d < bestD) { bestD = d; best = Skeleton.ringHandle(k); bestI = best.index; }
+    }
   }
   return best ? Object.assign(best, { index: bestI }) : null;
 };
+
+// A ring grip, as the pick returns it. Its index follows the six dots so one number can say which
+// handle is lit.
+Skeleton.ringHandle = function (k) { return { kind: 'ring', axis: k, index: RING_BASE + k }; };
 
 // WHICH HANDLE IS UNDER THE HAND, lit. A dot with no hover state gives you no way to know which
 // one you are about to take until you have taken it — and they sit close together on a small
@@ -1416,7 +1975,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
   const h = main._jointHandles;
   if (!h) return;
   const hot = grip ? grip.index : -99;
-  const r = Skeleton.sceneUnit(main) * 0.018;
+  const r = Skeleton.sceneUnit(main) * 0.0225;
   for (let i = 0; i < h.faces.length; i++) {
     const on = hot === i;
     const f = h.faces[i];
@@ -1433,6 +1992,15 @@ Skeleton.highlightScaleHandle = function (main, grip) {
     f.material.opacity = on ? 1 : 0.9;
     f.updateMatrix(); f.matrixWorldNeedsUpdate = true;
   }
+  // The rings light the same way, minus the size bump — a ring is not a small target.
+  if (h.rings) {
+    for (let k = 0; k < 3; k++) {
+      const ring = h.rings[k];
+      const on = hot === RING_BASE + k;
+      ring.material.color.setHex(on ? HILITE_COLOR : ring.userData.baseColor);
+      ring.material.opacity = on ? 1 : 0.9;
+    }
+  }
 };
 
 // ---- bone identity colours -----------------------------------------------------
@@ -1447,11 +2015,15 @@ Skeleton.highlightScaleHandle = function (main, grip) {
 // taking the palette entry furthest in hue from its parent, its grandparent, and the siblings
 // already assigned. A hash spreads colours evenly over the WHOLE rig, which says nothing about
 // whether any particular adjacent pair is distinguishable.
-// EIGHT, not twelve: four went when the green and cyan ends of the range did, and the spacing
-// between the survivors is held at the 0.053 it already had rather than repacking twelve into a
-// smaller arc. A busy rig reuses a colour sooner; the parent/sibling avoidance below is what
-// keeps the ones that TOUCH apart, and that is the case a reuse could actually confuse.
-const BONE_PALETTE_SIZE = 8;
+// TWENTY (was sixteen: 8 slots is a 0.4 step, see assignBoneColors), AROUND THE WHOLE WHEEL. The palette was cut to eight and then confined to one arc so no
+// chain could wear the preselect yellow or the select green, and what it bought was a rig where a
+// run of neighbouring bones all came out the same blue -- which defeats the whole point of the
+// colours, since the boundary between two touching bones is what you are trying to see. matt: "the
+// available colours are too few, so i can't really see the regions ... lets remove that, go back to
+// the full hue range, i suspect it might not be an issue anymore." The state highlights have since
+// grown a size bump and a wire box of their own; the parent/sibling avoidance below is what keeps
+// the pairs that touch apart, and sixteen slots give it room to.
+const BONE_PALETTE_SIZE = 20;
 const _paletteColors = [];
 function paletteColor(i) {
   let c = _paletteColors[i];
@@ -1482,49 +2054,15 @@ function paletteColor(i) {
   return c;
 }
 
-// THE STATE COLOURS ARE NOT AVAILABLE TO THE CHAINS.
-//
-// Preselection is yellow and selection is Maya green, and a random chain landing on either hue
-// means the rig is wearing the colour that is supposed to mean "this one". matt: "if we're going
-// to use yellow and cyan for preselect highlight, can we keep those colours or nearby colours
-// away from the random bone chains? it makes it hard to see what is selected."
-//
-// SKIPPING SLOTS WAS NOT ENOUGH, and the arithmetic says why. Twelve hues on an even grid sit
-// 0.083 apart, so a band only ever catches the single NEAREST slot and its neighbours stay where
-// they were -- 0x1ff9f9 sat 0.056 from the green and 0x1ff91f 0.111, and matt saw both: "i still
-// see a cyan and a green that are too close to the maya highlight colour."
-//
-// So the palette is not a grid any more. Two arcs of hue are reserved outright, and the twelve
-// colours are spread evenly through WHAT IS LEFT -- which keeps all twelve (skipping cost two)
-// and puts the nearest one 0.093 away instead of 0.028. The cost is chain-to-chain spacing,
-// 0.083 -> 0.053, and that is the right thing to spend: two chains a little closer in hue is a
-// smaller problem than a chain wearing the selection colour, and the parent/sibling avoidance
-// below already keeps the ones that TOUCH far apart.
-const CHAIN_HUE_EXCLUDE = [0.134, 0.444];   // 0xffd733 preselect, 0x00ffaa select
-
-// ONE ARC, AND IT STARTS PAST CYAN.
-//
-// A band either side of each state colour left two arcs and twelve colours, and matt cut the
-// first four of them by eye: the two yellow-greens between preselect and select (0x8bf91f,
-// 0x46f91f) and the two cyan-blues just past select (0x1fc8f9, 0x1f83f9). "remove the first 4
-// colours from the usable palette for bones."
-//
-// Which collapses to something simpler than a band: the short arc BETWEEN the two state hues is
-// gone entirely -- there is not enough room between yellow and green for a colour that reads as
-// neither -- so what is left is one run from blue round through purple, magenta and red to
-// orange. Nothing green, nothing cyan, nothing yellow.
-//
-// 0.620 is where the cut lands, not a band measured from 0.444: a hue has to be far enough from
-// the green to read as blue, and that is further than it needs to be from the yellow.
-const CHAIN_ARC = [0.620, CHAIN_HUE_EXCLUDE[0] + 1 - 0.09];   // 0.620 .. 1.044
-// 20% below the 0.55 the palette was authored at -- see the note where it is used.
+// The whole hue wheel. (Two arcs used to be reserved for the preselect and select colours; see the
+// note at BONE_PALETTE_SIZE for why that went.) 20% below the 0.55 the palette was authored at --
+// see the note where it is used.
 const CHAIN_LIGHTNESS = 0.44;
-const CHAIN_ARC_TOTAL = CHAIN_ARC[1] - CHAIN_ARC[0];
 
 // Slot index -> hue. The half-step keeps the first slot off the very edge of the arc, so the
 // worst case is half a step inside it rather than exactly on the boundary.
 function chainHue(i, n) {
-  return (CHAIN_ARC[0] + ((i + 0.5) / n) * CHAIN_ARC_TOTAL) % 1;
+  return (i + 0.5) / n;
 }
 
 function hueGap(a, b) {
@@ -1532,40 +2070,65 @@ function hueGap(a, b) {
   return d > 0.5 ? 1 - d : d;
 }
 
-// Rebuild the id -> palette-slot map. Roots first, so a joint's parent always already has a
-// colour when its own is chosen.
+// Rebuild the id -> palette-slot map.
+//
+// A PURE FUNCTION OF THE TREE, so the same rig has the same colours on every load. It used to be a
+// greedy walk in whatever order the scene listed the joints and tie-broken on how often each slot
+// was already used, so a save/load that reordered the list (or shifted ids) recoloured the rig.
+// Now the only inputs are the parent/child structure and each joint's NAME (id as a last resort),
+// both of which the file keeps.
+//
+// A CHAIN STEPS 8 OF 20 SLOTS (0.4 of the wheel) PER JOINT. Five hues, 72 degrees apart, and any
+// two joints within four steps of each other on a chain differ by at least two of those -- so
+// parent/child differ by 144 degrees, grandparent/child by 72, and the upper and lower arm cannot
+// land on two shades of the same green, which two greedy picks next to a busy hip could.
+// SIBLINGS FAN OUT AROUND THAT STEP (+-4 slots, 72 degrees) so a branch's children differ from
+// each other as well as from the joint they hang from; the lightness tints of capsuleTints separate
+// them further on the capsules.
 function assignBoneColors(main, joints) {
-  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
-  const order = joints.slice().sort((a, b) => depth(a) - depth(b));
-  const slot = new Map();      // joint id -> palette index
-  const used = new Array(BONE_PALETTE_SIZE).fill(0);
-  const kidsDone = new Map();  // parent id -> palette indices already given to its children
-
-  for (const j of order) {
-    const parent = j._parentMesh;
-    const gp = parent && parent._parentMesh;
-    const avoid = [];
-    if (parent && slot.has(parent.getID())) avoid.push(slot.get(parent.getID()));
-    if (gp && slot.has(gp.getID())) avoid.push(slot.get(gp.getID()));
-    const pid = parent ? parent.getID() : -1;
-    for (const s of (kidsDone.get(pid) || [])) avoid.push(s);
-
-    let best = 0, bestScore = -Infinity;
-    for (let i = 0; i < BONE_PALETTE_SIZE; i++) {
-      let near = 1;
-      // REAL HUES, not slot fractions: the slots are no longer evenly spaced (see chainHue), so
-      // comparing indices would measure a distance the colours do not have.
-      for (const a of avoid) near = Math.min(near, hueGap(chainHue(i, BONE_PALETTE_SIZE), chainHue(a, BONE_PALETTE_SIZE)));
-      // Distance from the colours that touch this one comes first; even usage across the rig
-      // is only a tie-break, so a busy rig still cycles rather than clumping.
-      const score = near * 10 - used[i];
-      if (score > bestScore) { bestScore = score; best = i; }
-    }
-    slot.set(j.getID(), best);
-    used[best]++;
-    if (!kidsDone.has(pid)) kidsDone.set(pid, []);
-    kidsDone.get(pid).push(best);
+  const N = BONE_PALETTE_SIZE, STEP = N * 0.4, FAN = N * 0.2;
+  const inSet = new Set(joints);
+  const label = (j) => j._permanentStaticLabel || '';
+  const byName = (a, b) => (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : a.getID() - b.getID());
+  const kids = new Map();
+  const roots = [];
+  for (const j of joints) {
+    const p = j._parentMesh;
+    if (p && inSet.has(p)) {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(j);
+    } else roots.push(j);
   }
+  roots.sort(byName);
+  const slot = new Map();      // joint id -> palette index
+  const gapSlots = (a, b) => { const d = Math.abs(a - b) % N; return Math.min(d, N - d); };
+  // Each child takes the slot that is furthest (min circular distance) from its parent, its
+  // grandparent and the siblings placed before it; ties go to the slot closest to the ideal
+  // parent + STEP (+ fan), so chains keep their regular rhythm and the result never depends on
+  // iteration accidents -- only on the tree and the sort above.
+  const walk = (j, s, up) => {
+    slot.set(j.getID(), s);
+    const ks = kids.get(j);
+    if (!ks) return;
+    ks.sort(byName);
+    const n = ks.length;
+    const placed = [];
+    ks.forEach((k, i) => {
+      const off = n === 1 ? 0 : Math.round(-FAN + (2 * FAN * i) / (n - 1));
+      const ideal = (((s + STEP + off) % N) + N) % N;
+      const avoid = [s, ...up, ...placed];
+      let best = ideal, bestGap = -1;
+      for (let c = 0; c < N; c++) {
+        let g = N;
+        for (const a of avoid) g = Math.min(g, gapSlots(c, a));
+        const better = g > bestGap || (g === bestGap && gapSlots(c, ideal) < gapSlots(best, ideal));
+        if (better) { bestGap = g; best = c; }
+      }
+      placed.push(best);
+      walk(k, best, [s, ...up].slice(0, 1));
+    });
+  };
+  roots.forEach((r, i) => walk(r, (i * 7) % N, []));
   main._skelColorSlots = slot;
   return slot;
 }
@@ -1575,7 +2138,13 @@ function assignBoneColors(main, joints) {
 function colorSlots(main) {
   const joints = Skeleton.joints(main);
   let sig = joints.length;
-  for (const j of joints) sig += j.getID() * 31;
+  for (const j of joints) {
+    sig += j.getID() * 31;
+    // NAMES AND PARENTS ARE INPUTS NOW (assignBoneColors), so a rename or a reparent recolours.
+    const l = j._permanentStaticLabel;
+    if (l) for (let c = 0; c < l.length; c++) sig += l.charCodeAt(c) * (c + 7);
+    if (j._parentMesh) sig += j._parentMesh.getID() * 17;
+  }
   if (main._skelColorSig !== sig || !main._skelColorSlots) {
     main._skelColorSig = sig;
     return assignBoneColors(main, joints);
@@ -1590,6 +2159,8 @@ const _qC = new THREE.Quaternion();
 const _upY = new THREE.Vector3(0, 1, 0);
 const _pJH = new THREE.Vector3();
 const _vFace = new THREE.Vector3();
+const _qJH = new THREE.Quaternion();
+const _zUp = new THREE.Vector3(0, 0, 1);
 const _mRot = new THREE.Matrix4();
 const _fallbackColor = new THREE.Color(0.6, 0.6, 0.6);
 const _wireCol = new THREE.Color();
@@ -1619,6 +2190,244 @@ Skeleton.boneColor = function (main, joint) {
 const _srgbOut = new THREE.Color();
 Skeleton.boneColorSRGB = function (main, joint) {
   return _srgbOut.copy(Skeleton.boneColor(main, joint)).convertLinearToSRGB();
+};
+
+// DOES THE BONE ENDING AT `j` GET A CAPSULE? One definition, read by the draw, the bake and the
+// capsule bind, so they cannot disagree (the cages have always been "exactly where a capsule is
+// drawn"). A bone needs a parent joint and a radius, and its end joint has to SHAPE THE SKIN: switch
+// "Shapes Skin" off on a pivot -- a scapula, a jaw, a twist bone -- and the bone leading to it is no
+// capsule at all. matt: "strictly speaking the first joints of the arms don't need a capsule, they're
+// the scapule, they're really a pivot/rotation offset more than anything." The joint's OWN capsule,
+// the bone leaving it, is unaffected: it still moves with that joint.
+// THE GAP LEFT AT EACH END OF A BONE VOLUME, as a fraction of the bone's length (Bone Volumes mode).
+// ~1cm on a thigh in the Voodoo footage. window._volGap overrides it for tuning.
+Skeleton.volumeGap = function () {
+  const g = window._volGap;
+  return (typeof g === 'number' && g >= 0 && g < 0.45) ? g : 0.04;
+};
+
+// HOW FAR IN FROM EACH JOINT A VOLUME STARTS: just the gap. Volumes are flat-ended cylinders now (they
+// were capsules, whose rounded ends reached a radius past the axis end and still overlapped at every bend),
+// so the clearance is the gap itself along the axis. Clamped so a very short bone keeps a sliver of axis.
+Skeleton.volumeInset = function (len) {
+  return Math.min(len * Skeleton.volumeGap(), len * 0.45);
+};
+
+// ---- bone volumes: section data and frame -----------------------------------------------------
+//
+// A VOLUME BELONGS TO A BONE, and a bone is stored on its END joint (`_boneRadius`, as ever). In this
+// mode that radius is the volume's UNIFORM scale, and `_volW` / `_volH` multiply it into an elliptical
+// cross-section. They are edited from the bone's ROOT, like Voodoo: selecting a joint edits the volume
+// leaving it (Skeleton.volumeActive picks which, when it has several).
+Skeleton.volumeSection = function (j) {
+  return [j && j._volW > 0 ? j._volW : 1, j && j._volH > 0 ? j._volH : 1];
+};
+Skeleton.setVolumeSection = function (j, w, h) {
+  if (!j) return;
+  const c = (v) => Math.max(0.05, Math.min(20, v || 1));
+  if (Math.abs(w - 1) < 1e-6) delete j._volW; else j._volW = c(w);
+  if (Math.abs(h - 1) < 1e-6) delete j._volH; else j._volH = c(h);
+};
+
+// THE SECTION'S CENTRE CAN SIT OFF THE BONE, as multiples of the radius along the section's width
+// (o1) and height (o3) axes: a face drag pins the opposite face, so a head can be deeper in front of
+// the bone than behind it. The mirror twin's width offset is NEGATED (the twin's width axis is the
+// reflection of this one turned round -- see volumeFrame), its height offset is the same.
+Skeleton.volumeOffset = function (j) {
+  return [j && j._volO1 ? j._volO1 : 0, j && j._volO3 ? j._volO3 : 0];
+};
+Skeleton.setVolumeOffset = function (j, o1, o3) {
+  if (!j) return;
+  if (Math.abs(o1) < 1e-6) delete j._volO1; else j._volO1 = o1;
+  if (Math.abs(o3) < 1e-6) delete j._volO3; else j._volO3 = o3;
+};
+
+// THE VOLUME'S TWO ENDS CAN MOVE ALONG THE BONE, as fractions of the bone's length past where they
+// would sit (just inside each joint, by the gap): e0 pushes the root end back behind the root joint,
+// e1 the far end out past the tip; negative pulls them in. matt: a head bone pivots at the base of the
+// skull, but "the capture volume should be longer, the back of the head is further behind the head
+// bone, and the end can extend beyond the tip of the bone". A twin takes the same values.
+// THE VOLUME'S SHARPNESS: the same superellipse exponent a joint shape takes (2 = round, higher = a
+// soft box), applied to the section so a volume can be a rounded rectangle -- a ribcage, a pelvis, a
+// foot. Its own field rather than the end joint's `_jointRound`, which still shapes that joint's
+// capsule when volumes are off. matt: "the sharpness/hardness control, could that be made to work
+// with these new volumes?"
+Skeleton.volumeRound = function (j) {
+  const r = j && j._volP;
+  return (typeof r === 'number' && r >= ROUND_MIN) ? Math.min(r, ROUND_MAX) : ROUND_MIN;
+};
+Skeleton.setVolumeRound = function (j, p) {
+  if (!j) return;
+  const v = Math.max(ROUND_MIN, Math.min(ROUND_MAX, p || ROUND_MIN));
+  if (v <= ROUND_MIN + 1e-6) delete j._volP; else j._volP = v;
+};
+
+// THE VOLUME'S TWIST about its own bone, in radians: turns the section (width, height, offset and
+// sharpness all ride on it). matt: "a single rotate using the long axis of the bone as the axis of
+// rotation". The mirror twin takes the NEGATED angle -- its width axis is the reflection turned round,
+// as for the width offset (see volumeFrame).
+Skeleton.volumeTwist = function (j) { return (j && j._volR) || 0; };
+Skeleton.setVolumeTwist = function (j, a) {
+  if (!j) return;
+  a = Math.atan2(Math.sin(a || 0), Math.cos(a || 0));
+  if (Math.abs(a) < 1e-5) delete j._volR; else j._volR = a;
+};
+
+Skeleton.volumeEnds = function (j) {
+  return [j && j._volE0 ? j._volE0 : 0, j && j._volE1 ? j._volE1 : 0];
+};
+Skeleton.setVolumeEnds = function (j, e0, e1) {
+  if (!j) return;
+  if (Math.abs(e0) < 1e-6) delete j._volE0; else j._volE0 = e0;
+  if (Math.abs(e1) < 1e-6) delete j._volE1; else j._volE1 = e1;
+};
+
+// The volumes leaving a joint, in a fixed order (id), and which one a selection is editing.
+Skeleton.volumeKids = function (main, p) {
+  return Skeleton.joints(main).filter((k) => k._parentMesh === p && Skeleton.boneHasCapsule(k))
+    .sort((a, b) => a.getID() - b.getID());
+};
+Skeleton.volumeActive = function (main, p) {
+  const kids = Skeleton.volumeKids(main, p);
+  if (!kids.length) return null;
+  const at = (main._volActive && main._volActive.get(p.getID())) || 0;
+  return kids[at % kids.length];
+};
+Skeleton.volumeCycle = function (main, p) {
+  const n = Skeleton.volumeKids(main, p).length;
+  if (n < 2) return false;
+  if (!main._volActive) main._volActive = new Map();
+  main._volActive.set(p.getID(), (((main._volActive.get(p.getID()) || 0) + 1) % n));
+  return true;
+};
+
+// THE SECTION FRAME, in model space: y runs along the bone, x is the width (horizontal, from world
+// up), z is the height (the remaining axis). World up is Y, or Z when the bone is nearly vertical.
+// The bind builds the same frame in mesh-local space (Skinning.boneSegments).
+//
+// BUILT AT REST, CARRIED BY THE PARENT JOINT. It used to be built from the joints as they are now,
+// which made it a function of the bone's DIRECTION and nothing else: swing an arm and world up
+// re-derived the width axis, so the section rolled about the bone; cross |d.y| 0.95 and it snapped
+// 90 degrees; twist the joint and nothing moved. matt: "the volumes spin about their axis... they
+// should be essentially parented to their joints." So the frame is built from the REST skeleton
+// (`_ikRest`, the same rest Tweak edits re-record) and then moved rigidly by the parent joint's
+// rest-to-now transform. At rest that transform is the identity and nothing changes.
+const _vfD = new THREE.Vector3(), _vfE1 = new THREE.Vector3(), _vfE3 = new THREE.Vector3();
+const _vfUp = new THREE.Vector3(), _vfM = new THREE.Matrix4();
+const _vfRestP = new THREE.Matrix4(), _vfRestJ = new THREE.Matrix4(), _vfT = new THREE.Matrix4();
+const _vfL = new THREE.Matrix4(), _vfMS = new Float32Array(16), _vfR = new THREE.Matrix3();
+// A joint's REST transform in model space: its own and its joint ancestors' `_ikRest`, on top of
+// whatever non-joint object the chain hangs from as it is now (as JointFrame.restModelMatrices).
+function restModel(j, out) {
+  out.fromArray(j._ikRest || j.getMatrix());
+  let p = j._parentMesh;
+  for (; p && Skeleton.isJoint(p); p = p._parentMesh) out.premultiply(_vfL.fromArray(p._ikRest || p.getMatrix()));
+  if (p && p.getModelSpaceMatrix) out.premultiply(_vfL.fromArray(p.getModelSpaceMatrix(_vfMS)));
+  return out;
+}
+Skeleton.volumeFrame = function (main, j, out) {
+  out = out || {};
+  const p = j._parentMesh;
+  out.P = (out.P || new THREE.Vector3()); out.J = (out.J || new THREE.Vector3());
+  restModel(p, _vfRestP); restModel(j, _vfRestJ);
+  out.P.setFromMatrixPosition(_vfRestP); out.J.setFromMatrixPosition(_vfRestJ);
+  // rest -> now, for the parent joint; the identity when the rig is at rest
+  _vfT.fromArray(p.getModelSpaceMatrix(_vfMS)).multiply(_vfRestP.invert());
+  let moved = false;
+  for (let k = 0; k < 16 && !moved; k++) moved = Math.abs(_vfT.elements[k] - (k % 5 ? 0 : 1)) > 1e-7;
+  _vfD.subVectors(out.J, out.P);
+  out.len = _vfD.length();
+  if (out.len > 1e-9) _vfD.divideScalar(out.len); else _vfD.set(0, -1, 0);
+  _vfUp.set(0, Math.abs(_vfD.y) > 0.95 ? 0 : 1, Math.abs(_vfD.y) > 0.95 ? 1 : 0);
+  _vfE1.crossVectors(_vfUp, _vfD).normalize();
+  _vfE3.crossVectors(_vfE1, _vfD).normalize();
+  // The twist turns the section about the bone: e1' = c e1 + s e3, e3' = c e3 - s e1 (still e1' x d = e3').
+  const tw = Skeleton.volumeTwist(j);
+  if (tw) {
+    const c = Math.cos(tw), sn = Math.sin(tw);
+    _vfUp.copy(_vfE1);
+    _vfE1.multiplyScalar(c).addScaledVector(_vfE3, sn);
+    _vfE3.multiplyScalar(c).addScaledVector(_vfUp, -sn);
+  }
+  out.twist = tw;
+  out.d = (out.d || new THREE.Vector3()).copy(_vfD);
+  out.e1 = (out.e1 || new THREE.Vector3()).copy(_vfE1);
+  out.e3 = (out.e3 || new THREE.Vector3()).copy(_vfE3);
+  _vfM.makeBasis(_vfE1, _vfD, _vfE3);
+  out.Q = (out.Q || new THREE.Quaternion()).setFromRotationMatrix(_vfM);
+  out.r = j._boneRadius || 0;
+  const sec = Skeleton.volumeSection(j);
+  out.W = sec[0]; out.H = sec[1];
+  out.inset = Math.max(0, Skeleton.volumeInset(out.len));
+  const off = Skeleton.volumeOffset(j);
+  out.o1 = off[0]; out.o3 = off[1];
+  // The two ends, as distances along the bone from P (see Skeleton.volumeEnds).
+  const ends = Skeleton.volumeEnds(j);
+  out.end0 = ends[0]; out.end1 = ends[1];
+  out.t0 = out.inset - out.end0 * out.len;
+  out.t1 = Math.max(out.len - out.inset + out.end1 * out.len, out.t0 + out.len * 0.05);
+  // B0 is the root point ON the bone; C0/C1 are the section centres, which an offset moves off it.
+  out.B0 = (out.B0 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.t0);
+  out.C0 = (out.C0 || new THREE.Vector3()).copy(out.B0)
+    .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
+  out.C1 = (out.C1 || new THREE.Vector3()).copy(out.P).addScaledVector(_vfD, out.t1)
+    .addScaledVector(_vfE1, out.o1 * out.r).addScaledVector(_vfE3, out.o3 * out.r);
+  out.axial = out.t1 - out.t0;
+  if (moved) {
+    for (const v of [out.P, out.J, out.B0, out.C0, out.C1]) v.applyMatrix4(_vfT);
+    _vfR.setFromMatrix4(_vfT);
+    out.d.applyMatrix3(_vfR).normalize();
+    out.e1.applyMatrix3(_vfR).normalize();
+    out.e3.applyMatrix3(_vfR).normalize();
+    _vfM.makeBasis(out.e1, out.d, out.e3);
+    out.Q.setFromRotationMatrix(_vfM);
+  }
+  return out;
+};
+
+Skeleton.boneHasCapsule = function (j) {
+  return !!j && Skeleton.isJoint(j._parentMesh) && (j._boneRadius || 0) > 1e-9 && Skeleton.jointShapesSkin(j);
+};
+
+// A BRANCH IS ONE FAMILY OF CAPSULES. A joint with several bones leaving it owns one capsule per
+// bone, all weighted to that one joint and so all in its colour -- three identical orange capsules
+// at the hips, three identical blue ones at the neck, which read as three joints. matt: "this is what
+// i was finding confusing." So siblings keep the owner's HUE (it is what the weight preview paints on
+// the skin, and the skin does not care which of the joint's bones a vertex is near) and step through
+// LIGHTNESS, darkest to lightest, in child-id order. A joint with one capsule is untouched.
+const TINT_SPAN = 0.26;
+Skeleton.capsuleTints = function (main, joints) {
+  const byParent = new Map();
+  for (const j of (joints || Skeleton.joints(main))) {
+    if (!Skeleton.boneHasCapsule(j)) continue;
+    const pid = j._parentMesh.getID();
+    if (!byParent.has(pid)) byParent.set(pid, []);
+    byParent.get(pid).push(j);
+  }
+  const out = new Map();
+  for (const kids of byParent.values()) {
+    kids.sort((a, b) => a.getID() - b.getID());
+    kids.forEach((j, k) => out.set(j.getID(), { k: k, n: kids.length }));
+  }
+  return out;
+};
+
+const _tintHSL = { h: 0, s: 0, l: 0 };
+const _tintOut = new THREE.Color();
+// The colour of the capsule for the bone ending at `j`, in three's working space. `tints` is the
+// per-pass map when the caller has one; without it the map is built here.
+Skeleton.capsuleColor = function (main, j, tints) {
+  const base = Skeleton.boneColor(main, j._parentMesh);
+  const t = (tints || main._capTints || Skeleton.capsuleTints(main)).get(j.getID());
+  if (!t || t.n < 2) return base;
+  base.getHSL(_tintHSL, THREE.SRGBColorSpace);
+  const l = _tintHSL.l + (t.k / (t.n - 1) - 0.5) * TINT_SPAN;
+  return _tintOut.setHSL(_tintHSL.h, _tintHSL.s, Math.max(0.18, Math.min(0.78, l)), THREE.SRGBColorSpace);
+};
+
+// ...and in the unmanaged pipeline's sRGB components, for the baked cages' vertex colours.
+Skeleton.capsuleColorSRGB = function (main, j, tints) {
+  return _srgbOut.copy(Skeleton.capsuleColor(main, j, tints)).convertLinearToSRGB();
 };
 
 Skeleton.joints = function (main) {
@@ -1660,6 +2469,147 @@ Skeleton.jointVisible = function (joint) {
 // on the scene.
 let _lastUnit = 1, _lastUnitFrom = 'never', _lastUnitMeshes = 0, _unitRemeasures = 0;
 
+// THE RIG SCALE PREFERENCE. A single multiplier over the measured scene unit, so the user can
+// size every rig marker — joint dots, bones, pins, length labels, snap radii — without touching
+// the sculpt or the rig itself. It is a VIEW preference, not scene data: it is stored in
+// localStorage with the other settings and never written into a .sxr, so the same file opens at
+// the same real size on any machine and only the markers move.
+//
+// WHY IT EXISTS. The unit is measured from the scene, and that measurement is correct but not
+// always the size you want to work at: a rig drawn on a large sculpt gets markers that are
+// technically in proportion and practically too small to aim at, and the length labels shrink
+// with them. matt: "how can i change the global scene units? i went to show the length option for
+// bones, its now way too small. this should be a preference in the settings pane."
+//
+// Applied at the RETURN, not to the latched `_skelUnit`: the latch is the measurement, and this
+// is a view of it. Keeping them separate means changing the slider does not invalidate the
+// signature or force a re-measure — it just re-reads the same number through a new multiplier.
+Skeleton.sceneUnitMul = 1;
+
+// THE RIG'S DEFAULT SIZE ON A FLAT SCREEN IS HALF WHAT IT IS IN A HEADSET. Every marker, bone
+// width and snap radius is measured from the scene unit, and the unit was tuned against the
+// headset: at the slider's 1x the joints are about twice the size anyone wants on a monitor.
+// matt: "if i bring the joint scale down to 0.5x, that is what the scale should be by default."
+// So the slider still reads 1x -- it is a preference on top of this -- and the platform supplies
+// the other half. Anything that is not a presenting XR session counts as a flat screen.
+const FLAT_SCREEN_RIG_MUL = 0.5;
+// AND THE HEADSET'S OWN DEFAULT IS 0.6 OF THE OLD ONE. matt, 2026-10-09, in the GXR after the
+// hidden-mesh fix: "its better, but still too big. if i set the rig scale down to 0.6 it feels
+// right, can you factor that in?" So the slider's 1.0x now means what 0.6x used to.
+const XR_RIG_MUL = 0.6;
+function unitMul(main) {
+  return Skeleton.sceneUnitMul * (main && main._xrSession ? XR_RIG_MUL : FLAT_SCREEN_RIG_MUL);
+}
+
+Skeleton.setSceneUnitMul = function (mul) {
+  const v = Number(mul);
+  Skeleton.sceneUnitMul = Number.isFinite(v) && v > 0 ? v : 1;
+  return Skeleton.sceneUnitMul;
+};
+
+// PIN SIZE AND LABEL SIZE, AS THINGS YOU CAN TURN.
+//
+// Both of these have now been re-tuned three times, and every one of those rounds cost a headset
+// session to find out that a constant was multiplying the wrong unit. matt: "this is getting
+// tiresome. give me sliders in settings next to rig size that are controls for pin size, label
+// size... i'll set what looks like good values, then you can make them defaults."
+//
+// BOTH ARE MULTIPLIERS OVER THE JOINT, which is matt's call and the thing that stops the next
+// round happening: "I think the text label size and pin size should be multipliers based on joint
+// size." The joint marker is the one thing in the rig that has never been wrong, because it is
+// the one thing measured per joint and capped by its own bone (`jd`). Hanging the pins and the
+// text off it means they cannot be five times out on one rig and right on another -- whatever the
+// joints do, these do, and the slider only decides by how much.
+//
+// View preferences like the Rig Scale beside them: stored in localStorage, never written into a
+// .sxr, so a file opens the same size on any machine and only the markers move.
+Skeleton.pinSizeMul = 1;
+Skeleton.labelSizeMul = 1;
+
+const _posMul = (v, cur) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : cur;
+};
+
+Skeleton.setPinSizeMul = function (mul) {
+  Skeleton.pinSizeMul = _posMul(mul, 1);
+  return Skeleton.pinSizeMul;
+};
+
+Skeleton.setLabelSizeMul = function (mul) {
+  Skeleton.labelSizeMul = _posMul(mul, 1);
+  return Skeleton.labelSizeMul;
+};
+
+// THE MEDIAN BONE LENGTH: how big a LIMB is on this rig.
+//
+// Lifted out of sceneUnit's fallback because two callers need the same number. Median rather
+// than mean so one long bone (a spine, a tail) cannot drag the answer up with it, and median
+// rather than max for the same reason the rig's overall reach was wrong -- a rig does not get
+// bigger limbs because it grew more of them. Returns 0 when there is nothing to measure: a lone
+// joint, or joints with no parent.
+// The median of a list of positive numbers, 0 for an empty one. Its own function because two
+// things need it -- the bone lengths here and the joint radii the label size is taken from -- and
+// a measurement implemented twice is how the rig ended up with rulers that disagreed.
+function median(vals) {
+  if (!vals.length) return 0;
+  vals.sort((a, b) => a - b);
+  const mid = vals.length >> 1;
+  // Even count: the mean of the two middles, so the answer does not jump between the two as an
+  // entry is added or removed.
+  return vals.length % 2 ? vals[mid] : (vals[mid - 1] + vals[mid]) * 0.5;
+}
+
+function medianBoneLength(main) {
+  const lens = [];
+  for (const j of Skeleton.joints(main)) {
+    const len = Skeleton.boneLength(main, j);
+    if (len > 1e-6) lens.push(len);
+  }
+  return median(lens);
+}
+
+// A RIG MARKER IS MEASURED BY ITS OWN JOINT, and that is why there is no second unit here.
+//
+// There used to be a `Skeleton.markerUnit` at this spot: the median bone length, introduced
+// because sceneUnit's two sources are not the same ruler (a mesh bounding radius with a sculpt in
+// the scene, the median bone length without one -- 44.0 against 8.0 on the human base) and every
+// marker constant in this file had been tuned against one and applied against the other. It was
+// the right diagnosis and the wrong cure: it gave the rig a THIRD unit, and the labels hanging
+// off it still answered to something the joints did not.
+//
+// The joint answers it instead. `jd` -- the dot's radius, measured per joint and capped by its
+// own bone -- is the one marker in this file that has never been reported wrong, precisely
+// because it is not measured by the scene at all. The pins and the text are multiples of it now
+// (PIN_R_FRAC, LABEL_R_FRAC), so nothing that is drawn on a limb is measured by the room around
+// it, and there is no second ruler left to drift. `rigUnit()` still prints the median beside the
+// scene unit, because the ratio between them is the history of three wrong tunings.
+// THE MESHES THAT SIZE THE RIG, in order of how little they change: skinned (the rig drives them),
+// else visible, else everything. `all` is every real mesh, for the latch signature.
+// A plane or a card: one bounding-box extent under 3% of the longest.
+function isFlatMesh(m) {
+  const g = m.getThreeMesh && m.getThreeMesh() && m.getThreeMesh().geometry;
+  if (!g) return false;
+  if (!g.boundingBox) g.computeBoundingBox();
+  const b = g.boundingBox;
+  if (!b || b.isEmpty()) return false;
+  const e = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z].sort((a, c) => a - c);
+  return e[2] > 1e-9 && e[0] < e[2] * 0.03;
+}
+
+function unitMeshes(main) {
+  const all = [];
+  for (const m of main.getMeshes() || []) {
+    if (Skeleton.isJoint(m) || m._isNull) continue;
+    all.push(m);
+  }
+  const bound = all.filter((m) => m._skinW);
+  if (bound.length) return { all, use: bound, tier: 1 };
+  const vis = all.filter((m) => !(m.isVisible && !m.isVisible()));
+  if (vis.length) return { all, use: vis, tier: 2 };
+  return { all, use: all, tier: 3 };
+}
+
 Skeleton.sceneUnit = function (main) {
   // RE-MEASURED ONLY WHEN THE SCENE CHANGES STRUCTURALLY, never on a timer.
   //
@@ -1677,7 +2627,13 @@ Skeleton.sceneUnit = function (main) {
   // measure at all — how many joints the fallback has to work with. A pose is none of those,
   // and neither is adding a pin: pins are nulls, and nulls are not the scene's size. That is
   // the whole of it. `window.rigUnit()` prints what it settled on and why.
-  if (main._skelUnit && window._animPlaying) return main._skelUnit;
+  // EVERY RETURN GOES THROUGH THE MULTIPLIER. There are three ways out of this function — the
+  // playback latch, the signature latch, and a fresh measurement — and the multiplier is a VIEW
+  // of the measurement, so it belongs on all three. It was only on the last one, which meant the
+  // slider did nothing after the first frame: the signature latch matched (the slider does not
+  // change the scene) and returned the bare unit, so the number moved and no marker did. The
+  // helper is the single place the multiplier is applied, so a fourth exit cannot forget it.
+  if (main._skelUnit && window._animPlaying) return main._skelUnit * unitMul(main);
 
   let sig = 2166136261 | 0;
   let real = 0;
@@ -1692,16 +2648,33 @@ Skeleton.sceneUnit = function (main) {
     sig = (Math.imul(sig, 16777619) ^ (Math.round(ss * 4096) | 0)) | 0;
   }
   sig = (Math.imul(sig, 16777619) ^ real) | 0;
+  // WHICH MESHES COUNT is part of the signature, or a latched unit outlives the thing that
+  // decided it (see unitMeshes): which meshes are skinned, and -- only when none are -- which
+  // are visible.
+  for (const m of unitMeshes(main).all) sig = (Math.imul(sig, 16777619) ^ (m._skinW ? 3 : 5) ^ (m.isVisible && !m.isVisible() ? 7 : 11)) | 0;
+  sig = (Math.imul(sig, 16777619) ^ unitMeshes(main).tier) | 0;
   // With no sculpt in the scene the unit comes from the rig's own extent, which legitimately
   // grows as a rig is drawn — so the joint COUNT is part of the signature. Their POSITIONS are
   // not, or posing a rig with no mesh bound to it would resize its own markers.
   if (!real) sig = (Math.imul(sig, 16777619) ^ Skeleton.joints(main).length) | 0;
-  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit;
+  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit * unitMul(main);
 
   let best = 0;
   let from = 'mesh';
-  for (const m of main.getMeshes() || []) {
-    if (Skeleton.isJoint(m) || m._isNull) continue;
+  // WHICH MESHES SIZE THE RIG: the ones it drives, else the ones you can see, else all of them.
+  // Hidden meshes must not set the unit -- a stray 4-vertex mesh and a hidden 98k copy had it at
+  // 64 against 25 for the visible character, so pins and labels came out 2.5x too big at every
+  // slider setting (matt, 2026-10-09) -- and the "visible" test alone was not enough, because the
+  // unit is latched and a mesh that was still visible during load locked the wrong number in.
+  // SKINNED comes first because it is the one fact that does not move: hiding the character to
+  // look at its rig must not resize the rig. See unitMeshes.
+  // A FLOOR IS NOT A CHARACTER. A ground quad's bounding sphere is as big as the quad is wide, so
+  // a 450-unit plane under a 140-unit figure set the unit to the plane's 225 and every joint came
+  // out three times too big at the slider's 1.0x. matt: "the joint scale is still an issue ... in
+  // settings the joint scale is at 1.0x." Flat meshes only count when nothing else does.
+  const unitUse = unitMeshes(main).use;
+  const solid = unitUse.filter((m) => !isFlatMesh(m));
+  for (const m of solid.length ? solid : unitUse) {
     const tm = m.getThreeMesh && m.getThreeMesh();
     const g = tm && tm.geometry;
     if (!g) continue;
@@ -1715,18 +2688,26 @@ Skeleton.sceneUnit = function (main) {
     if (Number.isFinite(r) && r > best) best = r;
   }
   // No sculpt in the scene — deleted, or a skeleton built before one exists. Fall back to
-  // the SKELETON's own extent rather than to 1: every marker, snap radius and default bone
+  // the SKELETON's own size rather than to 1: every marker, snap radius and default bone
   // radius is scaled by this, so a rig drawn at scene scale suddenly measured against 1
   // makes its own joints too small to see and its snaps too tight to hit.
+  //
+  // A LOCAL MEASURE, NOT THE RIG'S SPREAD. This used to take the greatest distance from the
+  // joint centroid — the rig's overall reach — and that is not a size, it is how far the rig
+  // happens to extend. It grows with every limb you add, so the same rig drawn as a 7-joint
+  // stub and then loaded as a 17-joint body measured 42.4 and 132.6 respectively: a 3x jump
+  // in every marker, bone and snap radius, with nothing the user did to explain it. matt:
+  // "the pin handle sizes are 4x what they used to be." The unit is recomputed on load, not
+  // saved, which is why it only showed up on a browser save.
+  //
+  // The MEDIAN BONE LENGTH is the size of a limb, and a limb is the same length whether the
+  // rig has two of them or eight. Median rather than mean so one long bone (a spine, a tail)
+  // cannot drag the whole rig's markers up with it, and median rather than max for the same
+  // reason the spread was wrong. A rig with no bones at all — a single joint, or joints with
+  // no parent — has no length to measure and falls through to the camera as before.
   if (best <= 1e-6) {
     from = 'rig';
-    const js = Skeleton.joints(main);
-    if (js.length) {
-      _pA.set(0, 0, 0);
-      for (const j of js) _pA.add(Skeleton.jointPos(j, _pB));
-      _pA.divideScalar(js.length);
-      for (const j of js) best = Math.max(best, _pA.distanceTo(Skeleton.jointPos(j, _pB)));
-    }
+    best = medianBoneLength(main);
   }
   // Empty scene: no sculpt AND no joints yet, so there is no object to take a scale from.
   // Use how far the camera is pulled back — that is the size of what the user is looking at,
@@ -1748,7 +2729,7 @@ Skeleton.sceneUnit = function (main) {
     console.log('[rigUnit] remeasured ' + main._skelUnit.toFixed(4) + ' from ' + from
       + ' (' + real + ' real meshes) — #' + _unitRemeasures);
   }
-  return main._skelUnit;
+  return main._skelUnit * unitMul(main);
 };
 
 // What the rig is sized by, and where that number came from.
@@ -1763,6 +2744,32 @@ window.rigUnit = function (main) {
     + ', measured from ' + _lastUnitFrom + ' (' + _lastUnitMeshes + ' real meshes)'
     + ' | joint dot ' + (_lastUnit * JOINT_R_FRAC).toFixed(4)
     + ' | ' + _unitRemeasures + ' remeasures so far');
+  // BOTH RULERS, ALWAYS, AND THE RATIO BETWEEN THEM.
+  //
+  // It used to print the median only when the median was the SOURCE — which is precisely the case
+  // where nothing is wrong. The failure is the other one: a sculpt in the scene, so the unit is
+  // that mesh's bounding radius, while every marker constant in this file was tuned against the
+  // median. On the human base those are 44.0 and about 8, and the ratio is what the Rig Scale
+  // slider was being used to cancel out. So print the number the markers use and the number the
+  // scene uses side by side, whichever one is in force — a discrepancy nobody can see is a
+  // discrepancy that gets blamed on the slider.
+  //
+  // Through medianBoneLength rather than a second copy of the arithmetic: two implementations of
+  // one measurement is how the two rulers drifted apart to begin with.
+  {
+    const app0 = main || window.app;
+    const med = app0 ? medianBoneLength(app0) : 0;
+    if (med > 1e-6) {
+      console.log('[rigUnit] median bone length ' + med.toFixed(4)
+        + ' | scene unit ' + _lastUnit.toFixed(4)
+        + ' | ratio ' + (_lastUnit / med).toFixed(2) + 'x'
+        + (_lastUnitFrom === 'rig' ? '  (same source — nothing to reconcile)' : '')
+        + '  — markers are NOT measured by either; see jd/PIN_R_FRAC/LABEL_R_FRAC');
+    } else {
+      console.log('[rigUnit] no bones to measure (a lone joint, or roots only)'
+        + ' — markers fall back to the scene ruler');
+    }
+  }
   // THE OTHER CANDIDATE. A joint marker's drawn size is `sceneUnit * JOINT_R_FRAC`, but each
   // joint ALSO carries a scale baked into its own matrix at creation — and a reparent rewrites
   // that matrix to preserve the world transform, which is exactly where a stale three-side
@@ -1805,12 +2812,22 @@ window.rigUnit = function (main) {
 //
 // NOT `visible = false`: that skips the object's whole subtree in three, so anything parented to
 // a joint would be invisible too.
+// ONE SHARED MATERIAL, NOT ONE PER CALL. This runs from updateVisuals for every affected mesh
+// every frame, and the recognise-my-own-work guard below is the only thing that stopped it
+// allocating. A guard is a good idea and a poor guarantee: when it failed -- the node renderer's
+// stand-in did not carry colorWrite, so the test never matched again -- this allocated a material
+// per mesh per frame, and on that renderer a fresh material means a fresh render object and a
+// fresh node graph. Sharing one instance makes the failure mode cheap instead of catastrophic.
+let _noDrawMat = null;
 function noDrawMaterial(tm) {
   if (!tm) return;
   tm.visible = true;
   const m = tm.material;
   if (m && m.colorWrite === false && m.depthWrite === false) return;   // already ours
-  tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  if (!_noDrawMat) {
+    _noDrawMat = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+  }
+  tm.material = _noDrawMat;
 }
 
 Skeleton.syncThree = function (mesh) {
@@ -2247,7 +3264,13 @@ function pickPreserving(picking, fn) {
 // Desktop / iPad: pick from the cursor.
 // `meshes` narrows what may be hovered — the rig assignment passes pins only, so the
 // preselection cannot offer a bone the pick would refuse.
-Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
+//
+// `boneFocus` is for a tool that acts on a BONE and turns the joint at the top of it (Grab,
+// rotate-only): a function (node, bone) -> node | null that says which joint reads as hovered --
+// the one the press will take, instead of whichever end of the bone happened to be nearer the
+// cursor -- or null when nothing there is the tool's to take. The bone itself is lit separately
+// through `_rigHoverBone`. A pin is never passed to it.
+Skeleton.hoverRigFromMouse = function (main, picking, meshes, boneFocus) {
   if (window._grabTrace && (!main || !picking)) {
     console.log('[rigHover] mouse: main=' + !!main + ' picking=' + !!picking);
   }
@@ -2261,7 +3284,15 @@ Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
     main._rigHoverBone = picking._rigHitSegment || null;
     return got;
   });
-  applyRigHover(main, isRigNode(hit) ? hit : null);
+  let node = isRigNode(hit) ? hit : null;
+  // A function, so the tool decides: it is given the node under the cursor and the bone under it
+  // (or null) and returns the node to light, or null for "nothing here is yours".
+  if (typeof boneFocus === 'function' && node && !node._isPinTarget) {
+    node = boneFocus(node, main._rigHoverBone || null);
+    // Nothing here is the tool's to take, so no bone lights either.
+    if (!node) main._rigHoverBone = null;
+  }
+  applyRigHover(main, node);
   applyMeshHover(main, hit);
 };
 
@@ -2365,6 +3396,9 @@ Skeleton.jointPos = function (joint, out) {
 // wrap a whole topology edit in one step (see RigTopology). Two entries for one split would
 // leave the middle press showing a rig nobody built.
 Skeleton.createJoint = function (main, pos, parent, name, opts) {
+  // boneTrace: the CPU half of a new joint, which no frame timing contains -- this runs on the
+  // input event, the frame it costs comes later. See Scene._boneTraceFrame.
+  const _btAt = window._boneTrace ? performance.now() : 0;
   // No normalizeSize() here — it writes a scale into the matrix, and the matrix is set
   // outright below. The primitive's own 0.5 radius is folded into the scale instead.
   const mesh = new Multimesh(Primitives.createSphere(main._gl, 0.5, 8, 8));
@@ -2375,13 +3409,17 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
   mesh.isPickable = false;  // sculpt brushes skip it; VR ray-select still reaches it
   mesh._boneRadius = 0;     // filled in below once the bone length is known
 
-  // Shrink the pick sphere to a small locator. Kept uniform so the flat bone visuals
-  // (which read the joint's model-space translation only) stay truthful.
+  // A JOINT HAS NO SCALE. It used to be sized `unit * 0.036` here, to make the pick sphere about the
+  // size of its marker -- but the rig is picked by proximity to the joint's POSITION, never by that
+  // sphere, so the number bought nothing and cost a great deal: every child's local translation
+  // was in units of 1/s, a part parented under a joint came out at 1/s of the scene, a pin seated
+  // from a joint inherited s, and every reparent that preserved the world transform baked s into
+  // somebody. Scale is something the USER does, with the Transform tool's scale handle or by typing
+  // into the transform panel. Nothing in the rig -- bone lengths, radii, Tweak, reparenting --
+  // reads it, and a joint made here is at 1.
   const unit = Skeleton.sceneUnit(main);
-  const s = unit * 0.036; // × the primitive's 0.5 radius → pick sphere ≈ the drawn marker
   const m = mesh.getMatrix();
   mat4.identity(m);
-  mat4.scale(m, m, [s, s, s]);
   m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 
   if (opts && opts.silent) main.addMeshSilent(mesh);
@@ -2389,9 +3427,15 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
 
   // The locator itself never draws — the flat bone/joint visuals represent it. colorWrite
   // off keeps CPU picking working (it uses geometry, not the material).
+  //
+  // THE SHARED no-draw material, via noDrawMaterial below, and NOT a fresh one here. This line
+  // used to allocate its own MeshBasicMaterial per joint, and noDrawMaterial's "already ours"
+  // guard -- colorWrite false and depthWrite false -- then recognised it and left it alone. So
+  // every joint kept a stock material of its own, the node sweep converted each one separately
+  // (convertBasic caches per SOURCE material), and drawing a chain paid a node graph and a
+  // pipeline per joint. matt: "i still get stutters when drawing out bone chains."
   const tm = mesh.getThreeMesh();
   if (tm) {
-    tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
     // matrixAutoUpdate is cleared by Mesh.js's per-frame sync, which has NOT run yet for a
     // mesh created this frame. Leaving it at Three's default (true) makes updateMatrixWorld
     // recompose tm.matrix from the untouched position/quaternion/scale and discard the
@@ -2427,10 +3471,13 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
     const len = Skeleton.jointPos(parent).distanceTo(Skeleton.jointPos(mesh));
     mesh._boneRadius = len * radiusFrac();
   } else {
-    mesh._boneRadius = unit * 0.05;
+    mesh._boneRadius = unit * ROOT_RADIUS_FRAC;
   }
 
   if (name) mesh._permanentStaticLabel = name;
+  if (_btAt && window.app && window.app._boneTraceJoint) {
+    window.app._boneTraceJoint(performance.now() - _btAt, Skeleton.joints(main).length);
+  }
   return mesh;
 };
 
@@ -2451,6 +3498,61 @@ function skelGroup(main) {
 // can import neither (IKSolver imports Skeleton, and closing that cycle leaves the whole rig
 // undefined at load — see the findings doc).
 Skeleton.overlayGroup = skelGroup;
+
+
+/**
+ * EVERY BATCH A RIG WILL EVER NEED, BUILT BEFORE THERE IS A RIG.
+ *
+ * A pipeline is keyed on the material AND the geometry it is drawn with -- attribute layout,
+ * instancing, the lot. NodeMaterials.warm draws each material once on a plain PlaneGeometry
+ * Mesh, which compiles a pipeline the rig then never asks for: these batches are InstancedMesh
+ * carrying aQ/aS/aC and friends, so the first bone drawn in a session compiled the real ones
+ * from scratch. Measured by matt on a GalaxyXR with boneTrace():
+ *
+ *   joint 1: frame +0  1520.0ms  built pipelines+29 vs+28 fs+7 graphs+30 | gl-render 1467.8
+ *
+ * A second and a half, inside the session, on the first bone. Creating the batches here and
+ * handing the real meshes to the warm pass moves that cost to where the user is already
+ * waiting -- and they are the SAME meshes, so what gets compiled is what gets drawn.
+ *
+ * Idempotent: batchFor returns an existing batch, so calling this after a rig exists is free.
+ * Each batch sits at count 0 and draws nothing until a joint fills it.
+ *
+ * THE TABLE IS THE ONE ensureEntry USES. Listing these keys twice is how the warm pass would
+ * quietly drift out of date -- a key added to a rig and not here is a pipeline compiled in the
+ * session again, which is invisible until someone runs boneTrace on a headset. rigbatch_test
+ * checks the two lists against each other.
+ */
+const PREWARM_BATCHES = [
+  ['capEnd', capsuleEndGeometry, false], ['capEndHi', capsuleEndGeometry, false],
+  ['capEndG', capsuleEndGeometry, true], ['capEndGHi', capsuleEndGeometry, true],
+  ['capShaft', capsuleShaftGeometry, false], ['capShaftHi', capsuleShaftGeometry, false],
+  ['capShaftG', capsuleShaftGeometry, true], ['capShaftGHi', capsuleShaftGeometry, true],
+  ['bone', boneGeometry, false], ['bone-phys', bonePhysGeometry, false],
+  ['bone-ghost', boneGeometry, true], ['bone-phys-ghost', bonePhysGeometry, true],
+  ['joint', jointGeometry, false], ['joint-phys', jointPhysGeometry, false],
+  ['joint-ghost', jointGeometry, true], ['joint-phys-ghost', jointPhysGeometry, true],
+];
+const PREWARM_LINE_BATCHES = [
+  ['wire', boneEdgeGeometry, false], ['wire-phys', bonePhysEdgeGeometry, false],
+  ['wire-ghost', boneEdgeGeometry, true], ['wire-phys-ghost', bonePhysEdgeGeometry, true],
+];
+
+Skeleton.prewarmBatches = function (main) {
+  if (!main) return [];
+  const out = [];
+  for (const [key, geoFn, ghost] of PREWARM_BATCHES) {
+    const b = batchFor(main, key, geoFn, ghost);
+    if (b && b.mesh) out.push(b.mesh);
+  }
+  for (const [key, geoFn, ghost] of PREWARM_LINE_BATCHES) {
+    const all = main._skelBatch || (main._skelBatch = new Map());
+    if (!all.has(key)) lineBatchSlot(main, key, geoFn, ghost);
+    const b = all.get(key);
+    if (b && b.mesh) out.push(b.mesh);
+  }
+  return out;
+};
 
 function ensureEntry(main, id) {
   const g = skelGroup(main);
@@ -2473,7 +3575,11 @@ function ensureEntry(main, id) {
     // rewritten each frame; the dash pattern needs computeLineDistances() after every move.
     const linkGeo = new THREE.BufferGeometry();
     linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-    const link = new THREE.Line(linkGeo, new THREE.LineDashedMaterial({
+    // LineSegments, not Line: two points are one segment either way, so this is identical
+    // here -- and THREE.Line is the primitive WebGPURenderer fails on (see
+    // src/render/lineStrip.js). Changed now so a rig does not reintroduce the fault the
+    // moment one exists; there was no rig in the scene when it was hunted down.
+    const link = new THREE.LineSegments(linkGeo, new THREE.LineDashedMaterial({
       color: PIN_LINK_COLOR, transparent: true, opacity: 0.85, depthWrite: false, depthTest: false,
     }));
     link.renderOrder = 10000;
@@ -2482,9 +3588,11 @@ function ensureEntry(main, id) {
 
     e = {
       pinLink: link,
-      pinT: makePinPart(triadGeometry()),
-      pinG: makePinPart(gimbalGeometry()),
+      pinB: makePinPart(boxGeometry(), false),
       pinS: makePinPart(tetraGeometry(), false),
+      // ROTATION-ONLY: the same box as the position / 6DOF pins (same size), told apart by colour.
+      // An octahedron was tried and read as a rotated cube.
+      pinR: makePinPart(boxGeometry(), false),
       // BATCHED. One instance per bone and one per joint, each drawn twice, which is where the
       // ~185 draw calls came from. Everything else here is still a Mesh of its own — pins exist
       // only on pinned joints, capsules and labels are off by default, so none of them carry
@@ -2502,7 +3610,16 @@ function ensureEntry(main, id) {
           'joint-phys-ghost', jointPhysGeometry, true),
       },
       wire: { solid: wire, ghost: wireGhost },
+      // TWO LABELS, BECAUSE THEY ARE TWO FACTS ABOUT TWO THINGS. This used to be one sprite
+      // reading "shin 1.24" at the bone's midpoint, on the argument that they belong together --
+      // but a NAME belongs to the JOINT and a LENGTH belongs to the BONE, and drawing both on
+      // the bone put every name halfway down a shaft, a full bone away from the thing it names.
+      // matt: "should put the joint labels close to the joints? and then the lengths should
+      // remain on the midpoint of the bones? that will be easier to read anyway."
+      // It also lifts the old limitation that a chain's ROOT carried no name: the name rides the
+      // joint now, and every joint has one of those.
       label: makeLabel(),
+      nameLabel: makeLabel(),
       cap: {
         shaft: makeCapsuleShaftSlots(main),
         // THE ENDS ARE INSTANCED. They carry no taper -- world-axis aligned, with their three
@@ -2518,9 +3635,10 @@ function ensureEntry(main, id) {
                 e.wire.solid, e.wire.ghost,
                 e.cap.shaft.solid, e.cap.shaft.ghost,
                 e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
-    g.add(e.label.sprite, e.pinLink,
-          e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
-          e.pinS.solid, e.pinS.ghost);
+    g.add(e.label.sprite, e.nameLabel.sprite, e.pinLink,
+          e.pinB.solid, e.pinB.ghost,
+          e.pinS.solid, e.pinS.ghost,
+          e.pinR.solid, e.pinR.ghost);
     // Every capsule part is batched now; none of them are scene children.
     main._skelVis.set(id, e);
   }
@@ -2544,7 +3662,7 @@ function disposeEntry(main, id) {
   // entry went away therefore threw here, on the frame after the delete. matt: "i could delete
   // some and it was fine, but then deleted some more and got this error: Cannot read properties
   // of undefined (reading 'vcMat')". Only the pin markers are still real meshes.
-  for (const p of [e.pinT, e.pinG, e.pinS]) {
+  for (const p of [e.pinB, e.pinS, e.pinR]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     // Both materials, not `o.material`: a pin disposed while it was highlighted would leak the
@@ -2554,10 +3672,11 @@ function disposeEntry(main, id) {
       for (const m of mats) m.dispose();
     }
   }
-  if (e.label) {
-    g.remove(e.label.sprite);
-    e.label.sprite.material.dispose();
-    e.label.tex.dispose();
+  for (const lab of [e.label, e.nameLabel]) {
+    if (!lab) continue;
+    g.remove(lab.sprite);
+    lab.sprite.material.dispose();
+    lab.tex.dispose();
   }
   main._skelVis.delete(id);
 }
@@ -2713,22 +3832,25 @@ function pendingLink(main) {
 
   const subject = RigPending.subject(main);
   const target = RigPending.candidate(main);
+  // matt: "the dashed line we used to have to indicate what the parenting operation was going
   if (!_pendLine) {
-    // A FAT line, not a native one: THREE's `Line` is a 1px hardware line that steps between
-    // whole pixels and all but disappears against a busy sculpt. This is the only thing on
-    // screen saying the gesture is live, so it gets a width you cannot miss. Same
-    // LineSegments2 machinery the motion trails use.
-    _pendLine = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
+    // LineSegments + LineDashedMaterial, matching the pin leaders. The original used
+    // LineSegments2 + LineMaterial for a fat 5px dashed line, but LineMaterial is a
+    // ShaderMaterial and the node renderer's sweep hides every ShaderMaterial it finds —
+    // so the line was invisible on the TSL/WebGPU path the headset runs. LineDashedMaterial
+    // is NOT a ShaderMaterial, so the sweep leaves it alone. It draws as a 1px native line
+    // instead of a fat one; a thin line that exists beats a fat one that doesn't.
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    _pendLine = new THREE.LineSegments(geo, new THREE.LineDashedMaterial({
       color: PENDING_COLOR,
-      linewidth: 5,          // SCREEN pixels, since worldUnits is off
-      worldUnits: false,
-      dashed: true,
-      transparent: false,
+      transparent: true,
+      opacity: 0.9,
       depthWrite: false,
-      depthTest: false,      // it is a readout, and being hidden inside the mesh is useless
-      toneMapped: false,     // or a saturated yellow rolls off to pastel under any tone map
+      depthTest: false,
+      toneMapped: false,
     }));
-    _pendLine.renderOrder = 10001;   // over the pin leaders, which is the one thing it can hide
+    _pendLine.renderOrder = 10001;
     _pendLine.isPickable = false;
     _pendLine.raycast = () => {};
     _pendLine.frustumCulled = false;
@@ -2740,21 +3862,13 @@ function pendingLink(main) {
   const a = subject.getModelSpaceMatrix && subject.getModelSpaceMatrix();
   const b = target.getModelSpaceMatrix && target.getModelSpaceMatrix();
   if (!a || !b) { _pendLine.visible = false; return; }
-  // A screen-space width has to know what the screen is, and LineMaterial clones its uniforms
-  // per material — a resolution left at the default 1x1 divides the width by one instead of by
-  // a thousand, which is not a subtle error.
-  const cam = main.getCamera && main.getCamera();
-  const rw = (cam && cam._width) || 1, rh = (cam && cam._height) || 1;
-  if (_pendLine.material.resolution.x !== rw || _pendLine.material.resolution.y !== rh) {
-    _pendLine.material.resolution.set(rw, rh);
-  }
-  _pendLine.geometry.setPositions([a[12], a[13], a[14], b[12], b[13], b[14]]);
-  // Dash size from the span, so the line reads as dashed whether it crosses a finger or a
-  // whole character — a fixed dash is solid at one scale and a row of dots at the other.
+  const pos = _pendLine.geometry.attributes.position;
+  pos.array[0] = a[12]; pos.array[1] = a[13]; pos.array[2] = a[14];
+  pos.array[3] = b[12]; pos.array[4] = b[13]; pos.array[5] = b[14];
+  pos.needsUpdate = true;
   const span = Math.hypot(b[12] - a[12], b[13] - a[13], b[14] - a[14]);
   _pendLine.material.dashSize = span * 0.06;
   _pendLine.material.gapSize = span * 0.04;
-  _pendLine.material.needsUpdate = true;
   _pendLine.computeLineDistances();
   _pendLine.visible = true;
 }
@@ -2883,10 +3997,58 @@ Skeleton.updateVisuals = function (main) {
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
   const hasChildBone = new Set();
+  // Which capsules are siblings, once per pass -- see Skeleton.capsuleTints.
+  const capTints = main._capTints = Skeleton.capsuleTints(main, joints);
+  // THE SHORTEST BONE AT EACH JOINT, for the dot's ceiling below. Built in the same pass that
+  // records which joints have a bone hanging off them.
+  const shortestBone = new Map();
+  const _bp = new THREE.Vector3(), _bq = new THREE.Vector3();
   for (const j of joints) {
     const p = j._parentMesh;
-    if (Skeleton.isJoint(p)) hasChildBone.add(p.getID());
+    if (!Skeleton.isJoint(p)) continue;
+    hasChildBone.add(p.getID());
+    const len = Skeleton.jointPos(j, _bp).distanceTo(Skeleton.jointPos(p, _bq));
+    for (const id of [j.getID(), p.getID()]) {
+      const cur = shortestBone.get(id);
+      if (cur === undefined || len < cur) shortestBone.set(id, len);
+    }
   }
+  // THE DRAWN RADIUS OF A JOINT'S DOT, in one place.
+  //
+  // Two things need it now -- the per-joint markers in the loop below, and the ONE label height
+  // taken across the whole rig -- and this file's recurring bug is a measurement implemented
+  // twice with a fix landing in only one copy.
+  //
+  // ...AND IT IS ONE SIZE, WITH A CEILING THAT IS THE SAME FOR EVERY JOINT. The dot used to follow
+  // its joint's capsule radius, so dots varied down a limb and changed with every radius edit --
+  // two things saying "size" at once. The capsules carry the sizes; the dot is a marker, `jr` (a
+  // fraction of the scene unit) for every joint. The one exception is a joint whose shortest bone
+  // is SHORTER than that radius -- a finger -- where the dot would swallow the very bones it marks:
+  // it shrinks to that bone length and no further. A lone joint, with no bone, takes `jr`.
+  const jointDotRadius = (j) => {
+    const L = shortestBone.get(j.getID());
+    return L > 1e-9 ? Math.min(jr, L) : jr;
+  };
+
+  // ONE LABEL HEIGHT FOR THE WHOLE RIG, and it is deliberately not per joint.
+  //
+  // The markers were moved onto the joint because they are drawn ON a joint and should be the
+  // size of one -- and that is still right for the dot and the pin. It is not right for TEXT.
+  // Sized per joint, the names came out at a different size on every bone, which reads as the
+  // labels being wrong rather than as the joints being different: a name is something you read,
+  // not a marker you aim at, and text that changes size down a limb is just harder to read.
+  // matt, having tried it: "labels should all be the same size, not measured per joint."
+  //
+  // The MEDIAN of the joint radii, not the scene unit and not a unit of its own. That keeps the
+  // ruler matt asked for -- "multipliers based on joint size" -- while giving one answer:  it is
+  // the size of a TYPICAL joint on this rig. Median rather than mean so one fat root or one
+  // hand joint cannot drag every name on the rig with it, and over ALL joints rather than the
+  // visible ones so hiding part of a rig does not resize the text on the rest.
+  //
+  // On a rig whose joints are all the same size -- the common case, since `jr` caps the long
+  // bones -- this is exactly the size it was per joint, so nothing matt judged has moved.
+  const labelH = median(joints.map(jointDotRadius)) * LABEL_R_FRAC * Skeleton.labelSizeMul;
+
   const hideCaps = (e) => {
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) p.solid.visible = p.ghost.visible = false;
   };
@@ -2919,9 +4081,10 @@ Skeleton.updateVisuals = function (main) {
       e.bone.solid.visible = e.bone.ghost.visible = false;
       e.wire.solid.visible = e.wire.ghost.visible = false;
       e.label.sprite.visible = false;
-      e.pinT.solid.visible = e.pinT.ghost.visible = false;
-      e.pinG.solid.visible = e.pinG.ghost.visible = false;
+      e.nameLabel.sprite.visible = false;
+      e.pinB.solid.visible = e.pinB.ghost.visible = false;
       e.pinS.solid.visible = e.pinS.ghost.visible = false;
+      e.pinR.solid.visible = e.pinR.ghost.visible = false;
       e.pinLink.visible = false;
       hideCaps(e);
       continue;
@@ -2975,10 +4138,7 @@ Skeleton.updateVisuals = function (main) {
     // a short bone small without anything having to measure a length here. matt: "it should never
     // be bigger than the joint sphere, and the system should be smart enough to reduce the size
     // of the joint indicators if the joint length gets shorter."
-    const bR = j._boneRadius || 0;
-    const jR = j._jointRadius > 0 ? j._jointRadius : bR;
-    const ownR = (bR && jR) ? Math.min(bR, jR) : (bR || jR);
-    const jd = ownR > 1e-9 ? Math.min(jr, ownR * 0.6) : jr;
+    const jd = jointDotRadius(j);
     // SELECTED BEATS PRESELECTED. Held, then selected, then preselected, then the base colour.
     // Preselect used to be tested first, so pointing at something already selected repainted it
     // yellow and it flicked between the two as the hand moved. matt: "if i select a joint, it
@@ -3120,10 +4280,31 @@ Skeleton.updateVisuals = function (main) {
     // are the rotation half. So a 3DOF pin is lines, a 6DOF pin is lines AND rings, and the
     // rotation-only pin is rings alone. Nothing had to be invented for the fourth mode — it
     // is the half of the 6DOF marker that says what it still does.
+    // SIZED BY THE JOINT IT IS PINNED TO, on `jd` rather than on `jr`.
+    //
+    // A pin sits on a joint, so it is the same kind of marker as the dot and wants the same
+    // ruler: `jd` is the dot's radius, already capped by that joint's own bone (see the note
+    // where it is computed). On `jr` -- one number for the whole rig, taken from the biggest
+    // MESH's bounding radius -- a pin on an ankle came out the same size as one on the spine and
+    // several times the length of the foot it was attached to. matt, rigging the human base in a
+    // headset at Rig Scale 1.0x: "labels and pins are stupidly huge."
+    //
+    // The multipliers are unchanged, so a pin still reads as the marker that stands OUTSIDE the
+    // dot; it now does that on every joint rather than only on the average one. `_pickRadius`
+    // below is taken from these same numbers, so the zone that answers for the pin shrinks with
+    // the drawing and the two cannot disagree.
+    const pinR = jd * PIN_R_FRAC * Skeleton.pinSizeMul;
+    // WHILE A GIZMO DRAG IS RUNNING, NO PIN IS DRAWN -- the one being dragged included. The only
+    // thing on screen that belongs to the drag is the handle you hold, and every marker around it
+    // is clutter, most of all the dragged pin's own, which sits exactly under the gizmo.
+    // `main._gizmoDragPin` is undefined when no drag is running; while one is, it is the dragged
+    // pin's id (or -1 if what is dragged is not a pin). Set by the Transform tool at press,
+    // cleared at release. Only "is it set" matters here.
+    const showPinsHere = showPins && main._gizmoDragPin === undefined;
     const pinParts = [
-      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jr * 2.2],
-      [e.pinG, showPins && (pinMode === 2 || pinMode === 4), jr * 2.2],
-      [e.pinS, showPins && pinMode === 3, jr * 1.5],
+      [e.pinB, showPinsHere && (pinMode === 1 || pinMode === 2), pinR],
+      [e.pinR, showPinsHere && pinMode === 4, pinR],
+      [e.pinS, showPinsHere && pinMode === 3, jd * PIN_SOFT_R_FRAC * Skeleton.pinSizeMul],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
@@ -3134,15 +4315,17 @@ Skeleton.updateVisuals = function (main) {
     // The dash means "the solve has not met this goal"; on a pin that is asking for nothing it
     // just reads as a broken pin. matt: "if the weight is zero, i think that line should be
     // hidden."
-    const gap = showPins && pinMode && pinMode !== 4 && pinW > 0 ? _vPin.distanceTo(_pB) : 0;
-    if (gap > jr * 0.35) {
+    const gap = showPinsHere && pinMode && pinMode !== 4 && pinW > 0 ? _vPin.distanceTo(_pB) : 0;
+    // The leader's threshold and its dashes are the pin's ruler too: on `jr` a foot pin's dashes
+    // were longer than the gap they were drawn across, so the leader read as a solid line.
+    if (gap > pinR * 0.24) {
       const pa = e.pinLink.geometry.getAttribute('position');
       pa.setXYZ(0, _pB.x, _pB.y, _pB.z);
       pa.setXYZ(1, _vPin.x, _vPin.y, _vPin.z);
       pa.needsUpdate = true;
       e.pinLink.geometry.computeBoundingSphere();
-      e.pinLink.material.dashSize = jr * 0.8;
-      e.pinLink.material.gapSize = jr * 0.6;
+      e.pinLink.material.dashSize = pinR * 0.54;
+      e.pinLink.material.gapSize = pinR * 0.41;
       e.pinLink.computeLineDistances();
       e.pinLink.visible = true;
     } else {
@@ -3176,7 +4359,8 @@ Skeleton.updateVisuals = function (main) {
         if (o.material && o.material.color) {
           o.material.color.setHex(pinHeld ? SELECT_COLOR : (pinHot ? HILITE_COLOR
             : (pinMode === 3 ? PIN_SOFT_COLOR
-              : ((pinMode === 2 || pinMode === 4) ? PIN_FULL_COLOR : PIN_POS_COLOR))));
+              : (pinMode === 4 ? PIN_ROT_COLOR
+                : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR)))));
           // SATURATION IS THE WEIGHT. A pin fading in has always looked exactly like one at full
           // strength, so the only way to know what a pin was doing was to find its curve. Now it
           // greys out as it lets go and comes back to full colour as it takes hold. matt: "maybe
@@ -3197,6 +4381,26 @@ Skeleton.updateVisuals = function (main) {
         o.scale.setScalar(size); // sits outside the marker, including its highlight size
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
+    }
+
+    // THE NAME SITS ON THE JOINT IT NAMES, above the marker rather than halfway down a bone.
+    // Offset by the DOT'S OWN RADIUS: the job of the offset is to clear the dot, so the ruler is
+    // whatever the dot was actually drawn at. That used to be `jr`, and the note here said so --
+    // but the dot has been capped to its own joint since the finger-joint work, so on anything
+    // smaller than the average bone the text was pushed several dot-widths clear of a dot that
+    // was no longer there. Reading `jd` keeps the text the same distance off its own marker at
+    // every joint AND at every Rig Scale setting, which is what the offset was always for.
+    //
+    // Drawn BEFORE the bone is considered, so a chain's ROOT gets a name too -- it has no bone
+    // ending at it, which is exactly why it never had one before.
+    if (showNames) {
+      setLabelText(e.nameLabel, j._permanentStaticLabel || ('#' + id));
+      e.nameLabel.sprite.position.copy(_pB).addScaledVector(_up, jd * 2.2);
+      const _nh = labelH;
+      e.nameLabel.sprite.scale.set(_nh * (e.nameLabel.aspect || 2), _nh, 1);
+      e.nameLabel.sprite.visible = true;
+    } else {
+      e.nameLabel.sprite.visible = false;
     }
 
     const parent = j._parentMesh;
@@ -3220,24 +4424,44 @@ Skeleton.updateVisuals = function (main) {
       continue;
     }
 
-    if (showLen || showNames) {
-      // ONE SPRITE, BOTH FACTS. A second label per joint would double the sprite count for
-      // something you read rather than aim at, and the two belong together anyway: "forearm_02
-      // 1.24" is one statement about one bone. Name first, because it is what you are looking
-      // for; the number is the detail.
+    if (showLen) {
+      // THE LENGTH STAYS ON THE BONE, because that is what it measures. The name left this
+      // sprite and went to the joint (see above), so this one says a number and nothing else --
+      // which is also why it can sit right on the midpoint without being a mouthful of text in
+      // the middle of the rig.
+      setLabelText(e.label, len < 10 ? len.toFixed(2) : len.toFixed(1));
+      // A REAL PERPENDICULAR. The previous attempt took the bone's direction and SUBTRACTED ITS
+      // UP COMPONENT, calling the result perpendicular. It is not perpendicular to anything: it
+      // is the bone's own horizontal projection, which points the same way the bone LEANS. So on
+      // a leg with any bend at all the label was pushed out in front of the shin or in behind it
+      // rather than beside it, and because that direction swings with the bone it swung too as
+      // the joint moved. matt: "the bone for the shin (ie between knee and ankle) floats behind
+      // the shin bone, and seems to rotate with the ankle."
       //
-      // The label rides the bone ENDING at this joint, so a chain's ROOT — which no bone ends
-      // at — carries no name. That is the same limitation the length labels have always had,
-      // and the joint dot is still there to aim at.
-      const _nm = showNames ? (j._permanentStaticLabel || ('#' + id)) : '';
-      const _ln = showLen ? (len < 10 ? len.toFixed(2) : len.toFixed(1)) : '';
-      // Sit the label at the bone's midpoint, nudged off the shaft so it does not sit
-      // inside the geometry it is describing.
-      setLabelText(e.label, _nm && _ln ? (_nm + '  ' + _ln) : (_nm || _ln));
-      e.label.sprite.position.copy(_pA).addScaledVector(_dir, 0.5).addScaledVector(_up, jr * 1.6);
+      // A CROSS PRODUCT is the perpendicular. up x dir is square to the bone by construction, and
+      // being square to UP as well it is always a sideways push -- never toward or away from the
+      // viewer of a front view, which is the direction that reads as "floating off the bone".
+      //
+      // A VERTICAL BONE CROSSES AGAINST Z. up x dir is zero for a shin, so the degenerate case
+      // needs a second axis, and the choice of axis is the choice of which side the label lands.
+      // Z gives +X -- beside the leg. X would give Z, which is the front/back the whole fix is
+      // about.
+      //
+      // Sized from boneWidth(len) -- a fraction of the BONE -- so the offset only has to clear
+      // the shaft and does not grow when the Rig Scale slider moves the markers.
+      //
+      // `_dir` is still the RAW `_pB - _pA` here (it is normalised a few lines below), so the
+      // cross is taken against a normalised COPY and `_dir` is left as the code below expects.
+      _perpDir.copy(_dir).divideScalar(len);
+      _perp.crossVectors(_up, _perpDir);
+      if (_perp.lengthSq() < 1e-8) _perp.crossVectors(_zAxis, _perpDir);
+      _perp.normalize();
+      e.label.sprite.position.copy(_pA).addScaledVector(_dir, 0.5)
+        .addScaledVector(_perp, boneWidth(len) * 2.4);
       // Height sets the type size; width follows the canvas aspect, so nothing is stretched.
-      // 0.06 is 0.75 of the 0.08 these used to be — matt's call, they were too big.
-      const _h = unit * 0.06;
+      // The same one number as the name above it, so a name and the length beside it are never
+      // two sizes.
+      const _h = labelH;
       e.label.sprite.scale.set(_h * (e.label.aspect || 2), _h, 1);
       e.label.sprite.visible = true;
     } else {
@@ -3333,8 +4557,9 @@ Skeleton.updateVisuals = function (main) {
     // Same precedence as the joint marker above: selected outranks preselected, so a bone does not
     // flick to yellow when the hand passes over something already chosen.
     const boneTint = (boneHeld || boneSel) ? SELECT_COLOR : (boneHot ? HILITE_COLOR
-      : ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR
-        : (tintMode === 1 ? PIN_POS_COLOR : restTint)));
+      : (tintMode === 4 ? PIN_ROT_COLOR
+        : (tintMode === 2 ? PIN_FULL_COLOR
+          : (tintMode === 1 ? PIN_POS_COLOR : restTint))));
     // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
     // Its whole job is to make the bone's roll and taper legible, and it can only do that by
     // contrasting with the body it sits on — matched exactly, the ridge lines disappear into
@@ -3359,29 +4584,58 @@ Skeleton.updateVisuals = function (main) {
     // batch per taper ratio and an entry rebuild every time you dragged one. The spheres are
     // what say how big a joint is, and the SKIN is tapered exactly (see SkinMesh capsuleTarget).
     const cr = j._boneRadius || 0;
-    if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
+    if (!showCaps || !Skeleton.boneHasCapsule(j)) { hideCaps(e); continue; }
+    const vol = Skeleton.displayFlag('volumes');
     const hA = Skeleton.jointHalf(parent, cr, _halfA);
     const hB = Skeleton.jointHalf(j, cr, _halfB);
-    // The capsule spans the two SHAPES, which a face drag can move off their joints. The skin is
-    // built from the same two points (SkinMesh caps), so the preview and the result agree.
-    Skeleton.jointCentre(parent, _cA);
-    Skeleton.jointCentre(j, _cB);
-    _dirC.subVectors(_cB, _cA);
-    const lenC = _dirC.length();
-    if (lenC > 1e-9) _dirC.divideScalar(lenC);
-    _qC.setFromUnitVectors(_upY, lenC > 1e-9 ? _dirC : _upY);
+    let vf = null;
+    if (vol) {
+      // BONE VOLUMES: a flat-ended cylinder of constant elliptical section, in the bone's own frame
+      // (Skeleton.volumeFrame), inset by the gap at each end -- exactly what the bind measures
+      // (Skinning.boneSegments), so the picture and the weights cannot disagree. Nothing of the joint
+      // balls is used: radius is the bone's, section is the bone's.
+      vf = Skeleton.volumeFrame(main, j, main._volFrameScratch || (main._volFrameScratch = {}));
+      _halfA[0] = _halfB[0] = vf.r * vf.W;
+      _halfA[1] = _halfB[1] = vf.r;
+      _halfA[2] = _halfB[2] = vf.r * vf.H;
+      // A SMALL ROUNDED BEVEL AT EACH END, display only: the shaft stops short by `bevel` and the end
+      // disc becomes a shallow dome of that depth, meeting the wall tangentially at its rim. The
+      // overall length is unchanged, so the gap to the next volume is too. (The bind keeps the flat
+      // ends; the difference is a sliver at the rim.)
+      // Half the section radius deep (was a quarter): matt, "we could soften/bevel the volumes more".
+      vf.bevel = Math.min(0.5 * Math.min(vf.r * vf.W, vf.r * vf.H), 0.3 * vf.axial);
+      _cA.copy(vf.C0).addScaledVector(vf.d, vf.bevel);
+      _cB.copy(vf.C1).addScaledVector(vf.d, -vf.bevel);
+      _dirC.copy(vf.d);
+    } else {
+      // The capsule spans the two SHAPES, which a face drag can move off their joints. The skin is
+      // built from the same two points (SkinMesh caps), so the preview and the result agree.
+      Skeleton.jointCentre(parent, _cA); Skeleton.jointCentre(j, _cB);
+      _dirC.subVectors(_cB, _cA);
+    }
+    let lenC = vol ? Math.max(vf.axial - 2 * vf.bevel, 1e-6) : _dirC.length();
+    if (!vol && lenC > 1e-9) _dirC.divideScalar(lenC);
+    const srcA = j;   // (no longer varies: only the volume branch below reads rotation from the frame)
+    // A volume's shaft wears the section frame itself (its y IS the bone), not the shortest arc from
+    // up: the shortest arc rolls with the bone's direction, and the checker rolled with it.
+    if (vol) _qC.copy(vf.Q);
+    else _qC.setFromUnitVectors(_upY, lenC > 1e-9 ? _dirC : _upY);
     const crMid = ((hA[0] + hA[1] + hA[2]) + (hB[0] + hB[1] + hB[2])) / 6;
     // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
     // which is the same colour the weight preview paints onto the vertices it claims. (The
     // radius still belongs to this joint; ownership and authorship are different things.)
     // Highlighting brightens rather than recolours, so the capsule-to-vertex colour match is
     // never broken by preselection.
-    const capColor = Skeleton.boneColor(main, parent);
+    const capColor = Skeleton.capsuleColor(main, j, capTints);
+    // At zero a part is not drawn at all — not drawn invisibly, which would still write depth.
+    const shaftOn = Skeleton.shaftOpacity() > 0, endsOn = Skeleton.capsuleOpacity() > 0;
     // The base is a setting now, not a constant -- see Skeleton.capsuleOpacity. Highlighting
     // still brightens by about the same ratio it always did, and is capped so a fully opaque
     // capsule cannot be asked for more than solid.
     const capBase = Skeleton.capsuleOpacity();
-    const capOp = (isHi || isSel) ? Math.min(1, capBase * 2.125) : capBase;
+    // In volumes mode a bone lights when its ROOT joint is selected and it is the volume being edited.
+    const volSel = vol && sel.has(parent.getID()) && Skeleton.volumeActive(main, parent) === j;
+    const capOp = (isHi || isSel || volSel) ? Math.min(1, capBase * 2.125) : capBase;
     for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
       o.position.copy(_cA).addScaledVector(_dirC, lenC * 0.5); // cylinder is centre-origin
       o.quaternion.copy(_qC);
@@ -3400,31 +4654,64 @@ Skeleton.updateVisuals = function (main) {
       o._hb[0] = hB[0] * SHAFT_INSET; o._hb[1] = hB[1] * SHAFT_INSET; o._hb[2] = hB[2] * SHAFT_INSET;
       // The shaft spans two joints, so it carries both exponents and the shader blends them —
       // a boxy palm running into a round finger tapers in sharpness as well as in size.
-      o._pa = Skeleton.jointRound(parent); o._pb = Skeleton.jointRound(j);
+      o._pa = vol ? Skeleton.volumeRound(j) : Skeleton.jointRound(parent);
+      o._pb = vol ? Skeleton.volumeRound(j) : Skeleton.jointRound(j);
+      // Each end's rotation, one hemisphere apart so the shader's blend takes the short way
+      // round (the same choice the skin's relax makes). Copied for the reason the extents are.
+      // A volume's section frame IS its rotation: the shader shapes the cross-section in this frame.
+      const rA = vol ? [vf.Q.x, vf.Q.y, vf.Q.z, vf.Q.w] : Skeleton.jointRot(parent);
+      const rB = vol ? rA : Skeleton.jointRot(j);
+      const sg = (rA[0] * rB[0] + rA[1] * rB[1] + rA[2] * rB[2] + rA[3] * rB[3]) < 0 ? -1 : 1;
+      o._ra = o._ra || [0, 0, 0, 1];
+      o._rb = o._rb || [0, 0, 0, 1];
+      o._ra[0] = rA[0]; o._ra[1] = rA[1]; o._ra[2] = rA[2]; o._ra[3] = rA[3];
+      o._rb[0] = sg * rB[0]; o._rb[1] = sg * rB[1]; o._rb[2] = sg * rB[2]; o._rb[3] = sg * rB[3];
       o.scale.set(1, lenC, 1);
-      o.visible = true;
-      o._hi = !!(isHi || isSel);
+      o.visible = shaftOn;
+      o._hi = !!(isHi || isSel || volSel);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
-    // The end caps are world-axis aligned — no rotation on them — so the three extents go
-    // straight into the scale.
+    // The end caps turn with their joint's shape, and the three extents go into the scale, which
+    // compose() applies BEFORE the rotation — so they run along the joint's own axes.
     for (const [part, at, ph, k, pj] of [[e.cap.a, _cA, hA, HEAD_INSET, parent],
                                         [e.cap.b, _cB, hB, 1, j]]) {
       for (const o of [part.solid, part.ghost]) {
         o.position.copy(at);
-        o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
-        // A cap belongs to ONE joint, so it takes that joint's sharpness rather than a blend.
-        o._p = Skeleton.jointRound(pj);
-        o.visible = true;
+        if (vol) {
+          // A VOLUME'S END IS A SHALLOW DOME: the sphere batch squashed to the bevel depth along the bone,
+          // in the section frame, centred where the shaft stops -- so the cylinder is closed (the shaft is
+          // an open tube), its rim is rounded, and a rig of volumes alone reads as solid shapes.
+          o.quaternion.copy(vf.Q);
+          o.scale.set(ph[0] * SHAFT_INSET, Math.max(vf.bevel, 1e-6), ph[2] * SHAFT_INSET);
+          o._p = Skeleton.volumeRound(j);   // the dome's rim is the section, so it takes the same sharpness
+          o.visible = endsOn;
+        } else {
+          Skeleton.jointQuat(pj, o.quaternion);
+          o.scale.set(ph[0] * k, ph[1] * k, ph[2] * k);
+          // A cap belongs to ONE joint, so it takes that joint's sharpness rather than a blend.
+          o._p = Skeleton.jointRound(pj);
+          o.visible = endsOn;
+        }
         // Which of the two batches this end belongs to this frame. The opacity that used to
         // carry the preselection cannot ride on an instance, so it rides on the batch.
-        o._hi = !!(isHi || isSel);
+        // A volume's ends light with its shaft (volSel), or the edited volume drew 85% sides with
+        // 50% caps. matt: "caps look different from sides".
+        o._hi = !!(isHi || isSel || volSel);
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
       }
     }
+    // THE BALL AT A JOINT WEARS THAT JOINT'S COLOUR. The shaft and the parent-end ball belong to
+    // the parent (it moves them); the ball at THIS joint is the joint's own shape -- its radius is
+    // what you drag, and past the joint plane its vertices are weighted to it (see boneSegments) --
+    // so painting it in the parent's colour showed red on the capsule over blue weights. matt: "the
+    // neck bone is red, the head bone is blue. but if i use the radius on the head bone, the joint
+    // capsule is drawn in red, but the weight i see on the skin is blue." The joint's own base hue
+    // is the one the weight preview paints with, so the two agree.
+    const ballColor = vol ? capColor : Skeleton.boneColor(main, j);   // a volume is one bone: one colour
     for (const part of [e.cap.shaft, e.cap.a, e.cap.b]) {
-      part.solid.material.color.copy(capColor);
-      part.ghost.material.color.copy(capColor);
+      const pc = part === e.cap.b ? ballColor : capColor;
+      part.solid.material.color.copy(pc);
+      part.ghost.material.color.copy(pc);
       // Opacity is batch state now (see tuneCapsuleBatches); recorded here and ignored, so this
       // placement code does not have to know which of the two it is.
       part.solid.material.opacity = capOp;
@@ -3489,14 +4776,19 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
     main._skelPreview = { bone: p, dot: d, disc: disc };
   }
   const pv = main._skelPreview;
-  const jr = Skeleton.sceneUnit(main) * JOINT_R_FRAC;
+  const unit = Skeleton.sceneUnit(main);
+  const jr = unit * JOINT_R_FRAC;
 
   // The cursor says which of two things the next trigger will do. Continuing a chain draws it
-  // full size in the joint colour, at the end of the preview bone; with no chain in progress
-  // it is a smaller blue dot — a place to START one. Without that difference, ending a chain
-  // looks exactly like not having ended it, and the only other signal is a log line that is
-  // hidden by default.
+  // in the joint colour at the end of the preview bone; with no chain in progress it is a blue
+  // dot — a place to START one. Without that difference, ending a chain looks exactly like not
+  // having ended it, and the only other signal is a log line that is hidden by default.
   const rooting = !fromPos;
+
+  // THE PREVIEW DOT IS THE JOINT IT PREVIEWS: `jr`, shrunk to the bone it ends if that bone is
+  // shorter -- the same rule as jointDotRadius in updateVisuals.
+  const previewLen = rooting ? 0 : toPos.distanceTo(fromPos);
+  const jd = previewLen > 1e-9 ? Math.min(jr, previewLen) : jr;
 
   // THE DISC REPLACES THE DOT WHILE THE SNAP IS ABOUT TO FIRE, rather than joining it: two
   // markers on one point is two things to read, and the dot is the one carrying less -- a sphere
@@ -3516,25 +4808,80 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
       // Lying IN the plane: CircleGeometry is built in XY with a +Z normal, the same frame the
       // plane fill is built in, so it takes the same rotation. See updatePlane.
       disc.quaternion.setFromUnitVectors(_zAxis, snapPlane.normal);
-      // A FIXED SIZE IN THE ROOM, NOT IN THE MODEL. Everything else the rig draws is scaled by
-      // sceneUnit, which is right for a marker that has to match the bones and wrong for one you
-      // are meant to spot: on a small sculpt it would be a speck. matt asked for "a 2cm diameter
-      // disc", so 1cm of radius, divided back out through the world group's scale -- the rig is
-      // drawn inside a scaled group, so a constant there is not a constant in the room.
-      const ws = g.getWorldScale(_sTmp);
-      const unit = Math.abs(ws.x) > 1e-9 ? ws.x : 1;
-      disc.scale.setScalar(DISC_RADIUS_M / unit);
+      // THE SAME SIZE AS THE DOT IT REPLACES. It does replace it, not join it -- see the
+      // `o.visible = !snapPlane` line below -- so the two are one marker and must be one size.
+      //
+      // This was a FIXED SIZE IN THE ROOM: 1cm of radius, divided back out through the world
+      // group's scale, because matt asked for "a 2cm diameter disc" and a marker you are meant to
+      // spot should not become a speck on a small sculpt. That was right when the dot beside it
+      // was the bare `jr` and the two came out comparable. It stopped being right twice over:
+      // once when the Rig Scale slider arrived (turning it down shrank every other marker and
+      // left this at its full 2cm, so it appeared to GROW as the rig got smaller), and again now
+      // that the dot is sized by the joint it previews and is smaller still.
+      //
+      // A constant in the room cannot track a marker measured in the model, so it stops trying:
+      // `jd` is the dot's radius, which already carries the Rig Scale multiplier and the joint's
+      // own cap. The disc's job is to say which way the snap plane lies, and it does that at any
+      // size -- being BIGGER than the joint it is standing in for was never part of the job.
+      disc.scale.setScalar(jd);
       disc.updateMatrix(); disc.matrixWorldNeedsUpdate = true;
     }
   }
 
   for (const o of [pv.dot.solid, pv.dot.ghost]) {
     o.position.copy(toPos);
-    o.scale.setScalar(rooting ? jr * 0.6 : jr);
+    o.scale.setScalar(jd);
     o.material.color.setHex(rooting ? PLANE_COLOR : JOINT_COLOR);
     o.visible = !snapPlane;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
   }
+
+  // THE AXIS GNOMON RIDES HERE, and not in the tool.
+  //
+  // It first hung off BoneDrawTool.postRender, which does not run on the node renderer at all --
+  // the same trap the desktop gizmo fell into -- and off a `_drag` that only exists on the
+  // desktop, so in a headset there was nothing to hang it on either. matt: "if theres an axis
+  // snap guide, i cant't see it."
+  //
+  // showPreview is the one place BOTH paths already come through, and it is handed exactly what
+  // the gnomon needs: the parent and the RESOLVED candidate. Reading the resolved point is also
+  // what makes the lit arm honest -- once a snap has fired the direction IS the winning axis, so
+  // the overlay cannot disagree with the bone it is drawn next to.
+  if (fromPos && Skeleton.displayFlag('snapAxis')) {
+    const plane = Skeleton.symmetryPlane(main);
+    const onPlane = (p) => !!plane && Math.abs(Skeleton.planeDistance(p, plane)) <= 1e-4;
+    const guard = (plane && Skeleton.displayFlag('snapPlane')
+      && onPlane(toPos) && onPlane(fromPos)) ? plane.normal : null;
+    const info = Skeleton.snapAxisInfo(fromPos, toPos, guard);
+    if (info) {
+      info.guardNormal = guard;
+      Skeleton.updateAxisGnomon(main, fromPos, info.len, info);
+    } else {
+      Skeleton.hideAxisGnomon(main);
+    }
+  } else {
+    Skeleton.hideAxisGnomon(main);
+  }
+
+  // THE FLATNESS DISC, on the same resolved reading as the gnomon. Shown only when a plane has
+  // actually been chosen, unlike the gnomon: the gnomon's job is to show the six candidates and
+  // which one is winning, and there are only ever three planes, drawn on top of each other at
+  // the same origin. Three rings is a smudge, not a diagram -- so this draws the one in force.
+  if (fromPos && Skeleton.displayFlag('snapFlat')) {
+    const fi = Skeleton.snapFlatInfo(fromPos, toPos);
+    if (fi) Skeleton.updateFlatDisc(main, fromPos, fi.len, fi.normal, fi.inBand);
+    else Skeleton.hideFlatDisc(main);
+  } else {
+    Skeleton.hideFlatDisc(main);
+  }
+
+  // snapTrace(): one line a quarter second saying what every snap decided and what each overlay
+  // is actually doing about it. Four rounds of "still no disc" went by on inference -- the button
+  // exists, the maths is right, the desktop shows it -- so this reports the whole chain instead:
+  // the flags, the two decisions, and the live state of both overlays INCLUDING whether anything
+  // above them in the scene graph is hidden. That last part is the one thing none of the earlier
+  // guesses could see.
+  if (window._snapTrace) Skeleton._snapTraceTick(main, fromPos, toPos);
 
   if (!fromPos) { pv.bone.solid.visible = pv.bone.ghost.visible = false; return; }
   _dir.subVectors(toPos, fromPos);
@@ -3549,6 +4896,8 @@ Skeleton.showPreview = function (main, fromPos, toPos, hot) {
 };
 
 Skeleton.hidePreview = function (main) {
+  Skeleton.hideAxisGnomon(main);
+  Skeleton.hideFlatDisc(main);
   const pv = main._skelPreview;
   if (!pv) return;
   for (const o of [pv.bone.solid, pv.bone.ghost, pv.dot.solid, pv.dot.ghost]) o.visible = false;
@@ -3606,7 +4955,7 @@ Skeleton.setRadiusFraction = function (main, frac) {
   const unit = Skeleton.sceneUnit(main);
   for (const j of Skeleton.joints(main)) {
     const len = Skeleton.boneLength(main, j);
-    j._boneRadius = len > 1e-9 ? len * frac : unit * 0.05;
+    j._boneRadius = len > 1e-9 ? len * frac : unit * ROOT_RADIUS_FRAC;
     // A RESET CLEARS THE JOINT SIZES TOO. Leaving them would make the button a half-reset: the
     // bones go back to a proportion of their length and the sized joints stay whatever they
     // were, so the rig comes back neither reset nor as it was.
@@ -3614,18 +4963,62 @@ Skeleton.setRadiusFraction = function (main, frac) {
   }
 };
 
+// RESET ONE JOINT (the bone panel's Reset Joint): its bone radius back to the default proportion of
+// its bone's length, its own size cleared, and every tweak on it (box scale, offset, rotation)
+// removed. Only the joints passed in -- the caller adds mirror twins -- unlike setRadiusFraction,
+// which re-proportions the whole rig.
+Skeleton.resetJoint = function (main, joints, frac) {
+  const unit = Skeleton.sceneUnit(main);
+  for (const j of joints) {
+    const len = Skeleton.boneLength(main, j);
+    j._boneRadius = len > 1e-9 ? len * frac : unit * ROOT_RADIUS_FRAC;
+    j._jointRadius = 0;
+    delete j._jointScale;
+    delete j._jointOffset;
+    delete j._jointRot;
+    delete j._volW;
+    delete j._volH;
+    delete j._volO1;
+    delete j._volO3;
+    delete j._volE0;
+    delete j._volE1;
+    delete j._volP;
+    delete j._volR;
+  }
+};
+
 // Radii of every joint, for undo. Small (one float per joint), so snapshotting all of them
 // is simpler and safer than tracking which ones an edit touched.
 Skeleton.captureRadii = function (main) {
-  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0, j._jointRadius || 0]);
+  // The 4th element is the joint's TWEAK (scale / offset / rotation), copied so a later edit
+  // cannot write through the snapshot. Undefined in older snapshots.
+  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0, j._jointRadius || 0, {
+    s: j._jointScale ? j._jointScale.slice() : null,
+    o: j._jointOffset ? j._jointOffset.slice() : null,
+    q: j._jointRot ? j._jointRot.slice() : null,
+    vw: j._volW, vh: j._volH, vo1: j._volO1, vo3: j._volO3, ve0: j._volE0, ve1: j._volE1, vp: j._volP, vr: j._volR,
+  }]);
 };
 
 Skeleton.restoreRadii = function (snapshot) {
   // The joint size rides along, so one undo of Reset Radii puts back both halves of what it
   // changed. Third element absent means an older snapshot: leave the joint alone.
-  for (const [j, r, jr] of snapshot) {
+  for (const [j, r, jr, tw] of snapshot) {
     j._boneRadius = r;
     if (jr !== undefined) j._jointRadius = jr > 0 ? jr : 0;
+    if (tw) {
+      if (tw.s) j._jointScale = tw.s.slice(); else delete j._jointScale;
+      if (tw.o) j._jointOffset = tw.o.slice(); else delete j._jointOffset;
+      if (tw.q) j._jointRot = tw.q.slice(); else delete j._jointRot;
+      if (tw.vw > 0) j._volW = tw.vw; else delete j._volW;
+      if (tw.vh > 0) j._volH = tw.vh; else delete j._volH;
+      if (tw.vo1) j._volO1 = tw.vo1; else delete j._volO1;
+      if (tw.vo3) j._volO3 = tw.vo3; else delete j._volO3;
+      if (tw.ve0) j._volE0 = tw.ve0; else delete j._volE0;
+      if (tw.ve1) j._volE1 = tw.ve1; else delete j._volE1;
+      if (tw.vp) j._volP = tw.vp; else delete j._volP;
+      if (tw.vr) j._volR = tw.vr; else delete j._volR;
+    }
   }
 };
 
@@ -3635,16 +5028,12 @@ Skeleton.restoreJointRadii = function (snapshot) {
   for (const [j, r] of snapshot) j._jointRadius = r > 0 ? r : 0;
 };
 
-// Symmetry plane of the sculpt being rigged (not of the joints, which have none).
-// Returns { origin, normal } in model space, or null when symmetry is off / no mesh.
-// Cached briefly like sceneUnit — it is read every frame for the plane visual and the snap
-// test. Callers must treat the returned vectors as read-only.
+// Symmetry plane of the RIG. Returns { origin, normal } in model space, or null when symmetry
+// is off. Always the model-space origin, normal +X — see _computeSymmetryPlane.
+// No longer cached: the answer is a constant, so there is nothing to amortise, and the old
+// 250ms cache meant the symmetry toggle took a quarter of a second to show.
 Skeleton.symmetryPlane = function (main) {
-  const now = performance.now();
-  if (main._skelPlaneAt !== undefined && now - main._skelPlaneAt < 250) return main._skelPlane;
-  main._skelPlaneAt = now;
-  main._skelPlane = Skeleton._computeSymmetryPlane(main);
-  return main._skelPlane;
+  return Skeleton._computeSymmetryPlane(main);
 };
 
 // The rig's mirror plane whether or not the current selection is allowed in-stroke symmetry.
@@ -3681,24 +5070,21 @@ Skeleton.rigMirrorPlane = function (main) {
 
 Skeleton._computeSymmetryPlane = function (main, force) {
   if (!force && (!main.getSculptManager || !main.getSculptManager().getSymmetry())) return null;
-  const meshes = (main.getMeshes() || []).filter((m) => !Skeleton.isJoint(m) && !m._isNull);
-  const m = meshes.includes(main.getMesh()) ? main.getMesh() : meshes[0];
-  // The plane is READ off the sculpt, but it does not belong to the sculpt — it is where the
-  // centreline of the thing being rigged is. With no sculpt (deleted, or a skeleton being
-  // built before one exists) the world centreline is still a perfectly good answer, and it
-  // is the only way to draw a symmetric rig without a mesh in the scene. Returning null here
-  // took the plane, the snap and the mirrored joints away all at once.
-  if (!m || !m.getSymmetryOrigin) {
-    return { origin: new THREE.Vector3(0, 0, 0), normal: new THREE.Vector3(1, 0, 0) };
-  }
-  const o = m.getSymmetryOrigin(), n = m.getSymmetryNormal();
-  if (!o || !n) return null;
-  // Both are mesh-local; the joints live in model space, so carry them across.
-  _mTmp.fromArray(m.getModelSpaceMatrix());
-  const origin = new THREE.Vector3(o[0], o[1], o[2]).applyMatrix4(_mTmp);
-  const normal = new THREE.Vector3(n[0], n[1], n[2])
-    .transformDirection(_mTmp).normalize();
-  return { origin: origin, normal: normal };
+  // LOCKED TO THE MODEL-SPACE ORIGIN, NOT TO A MESH.
+  //
+  // This used to be read off the sculpt: `mesh.getSymmetryOrigin()` pushed through that mesh's
+  // model matrix. That makes the rig's centreline follow whichever mesh happened to be current
+  // — move a reference plane sideways and every joint you draw mirrors about the reference
+  // plane instead of the origin, with no control anywhere to put it back. matt hit exactly
+  // that, and there is no user-facing way out of it.
+  //
+  // The rig's own maths already assumes this: SkinMesh's SYM_AXIS is a hard model-space X, and
+  // joint twins are paired by their X sign. So the sculpt-relative plane was never the plane
+  // the rest of the rig was using — only the one it was drawn and snapped with.
+  //
+  // A fresh object each call because callers are not required to treat it as read-only and a
+  // shared constant would stay broken for the session if one of them wrote to it.
+  return { origin: new THREE.Vector3(0, 0, 0), normal: new THREE.Vector3(1, 0, 0) };
 };
 
 // The symmetry plane, drawn. A hip or a spine belongs exactly ON the centreline, and
@@ -3807,20 +5193,394 @@ const AXES = [
 // axis, rather than quietly correcting bones you meant to angle.
 const AXIS_COS = Math.cos(5 * Math.PI / 180);
 
+/**
+ * WHICH AXIS THE SNAP WOULD CHOOSE, and how long the bone is -- without moving anything.
+ *
+ * Split out of snapAxis so the DECISION lives in one place. The gnomon has to light the axis
+ * that is about to win, and working that out a second time in the overlay is how the two would
+ * come to disagree -- the picture saying one thing while the joint lands somewhere else, which
+ * is worse than no picture.
+ *
+ * Returns null when nothing is in range. `guarded` is the count of axes that were in range but
+ * refused because they are too close to the plane normal: the gnomon strikes those through, so
+ * a snap that silently does not fire can be seen not firing.
+ */
+Skeleton.snapAxisInfo = function (from, to, excludeNormal) {
+  _dir.subVectors(to, from);
+  const len = _dir.length();
+  if (len < 1e-9) return null;
+  _dir.divideScalar(len);
+
+  let best = null, bestDot = AXIS_COS, guarded = 0;
+  for (const a of AXES) {
+    const d = _dir.dot(a);
+    if (excludeNormal && Math.abs(a.dot(excludeNormal)) > 0.9) {
+      if (d > AXIS_COS) guarded++;
+      continue;
+    }
+    if (d > bestDot) { bestDot = d; best = a; }
+  }
+  return { axis: best, len: len, dot: bestDot, guarded: guarded };
+};
+
 Skeleton.snapAxis = function (from, to, out, excludeNormal) {
+  const info = Skeleton.snapAxisInfo(from, to, excludeNormal);
+  if (!info || !info.axis) return to;
+  return out.copy(from).addScaledVector(info.axis, info.len);
+};
+
+/**
+ * FLATNESS SNAP: THE DUAL OF THE AXIS SNAP.
+ *
+ * Axis snap constrains the direction TO an axis. This constrains it to be PERPENDICULAR to one,
+ * which is to say it flattens the bone into the plane through the parent with that axis as its
+ * normal. matt's case: "i want to place the toe joint flat relative to the ankle on the ground,
+ * but not at a pure straight-along-z angle." The ankle-to-toe direction is nearly perpendicular
+ * to world Y, so it gets flattened to exactly perpendicular -- the toe lands at the ankle's
+ * height, free in X and Z, with no constraint on which way it points.
+ *
+ * Same anchor, same length preservation and the same AXES list as snapAxis; only the test is
+ * inverted. Being within FLAT_SIN of perpendicular is being within the same 5 degrees of the
+ * plane, so the two bands read the same to the hand.
+ *
+ * ORDER, and it matters: the caller tries the axis first. A direction that is nearly ALONG an
+ * axis is also nearly perpendicular to the other two, so flatness would fire on almost every
+ * axis-snapped bone and quietly take precedence over the tighter, more specific intent.
+ */
+const FLAT_SIN = Math.sin(5 * Math.PI / 180);
+
+Skeleton.snapFlatInfo = function (from, to) {
+  _dir.subVectors(to, from);
+  const len = _dir.length();
+  if (len < 1e-9) return null;
+  _dir.divideScalar(len);
+  // ALWAYS ANSWERS WITH THE NEAREST PLANE, and says separately whether it is in band.
+  //
+  // It used to return null outside the band, so the disc only appeared once the snap was already
+  // firing -- which is the very complaint this whole feature answers. matt: "still no disk snap",
+  // with the toggle on, because he was not within five degrees of level at the time. The gnomon
+  // gets this right by drawing all six arms and lighting the winner; the disc now does the same,
+  // drawn dim at the nearest plane and brightened when it will actually take.
+  //
+  // HORIZONTAL WINS WHEN IT QUALIFIES, rather than whichever plane happens to need the smallest
+  // correction. A bone heading mostly down Z with a few degrees of rise is within the band of
+  // BOTH the X plane and the Y plane, and picking the nearer one picks X -- which holds the
+  // slight rise and flattens the sideways drift instead. That is a legal reading and it is not
+  // the one anyone means: matt's case is "place the toe joint flat relative to the ankle on the
+  // ground", the control is called Snap Flat, and flat means level.
+  //
+  // So Y first, then the smaller of X and Z. The other two still matter -- a bone flattened into
+  // the YZ plane is how you keep a limb off the centreline without pinning its height.
+  const up = AXES[2];                         // +Y
+  const upAbs = Math.abs(_dir.dot(up));
+  if (upAbs < FLAT_SIN) return { normal: up, len: len, sin: upAbs, inBand: true };
+  let best = null, bestAbs = Infinity;
+  // Only the positive axes: a plane and its opposite-facing twin are the same plane, and
+  // offering six would make the winner arbitrary between two identical answers.
+  for (const i of [0, 4]) {                   // +X, +Z
+    const a = AXES[i];
+    const d = Math.abs(_dir.dot(a));
+    if (d < bestAbs) { bestAbs = d; best = a; }
+  }
+  // Y is still the one to OFFER when nothing is in band and it is the closest of the three --
+  // the reading is "level is where this would take you", which is what the control promises.
+  if (upAbs < bestAbs) { best = up; bestAbs = upAbs; }
+  return { normal: best, len: len, sin: bestAbs, inBand: bestAbs < FLAT_SIN };
+};
+
+/** Flatten the bone into the plane through `from` whose normal is `normal`, keeping its LENGTH.
+ *  `out` must not alias `to`. */
+Skeleton.snapFlat = function (from, to, out, normal) {
   _dir.subVectors(to, from);
   const len = _dir.length();
   if (len < 1e-9) return to;
-  _dir.divideScalar(len);
+  _dir.addScaledVector(normal, -_dir.dot(normal));
+  const flat = _dir.length();
+  // A direction that is ENTIRELY along the normal has no projection to normalise, so there is no
+  // flattened direction to choose and the bone is left alone. Unreachable through the band above
+  // -- perpendicular is the opposite of parallel -- but this is also called from load paths.
+  if (flat < 1e-9) return to;
+  return out.copy(from).addScaledVector(_dir.divideScalar(flat), len);
+};
 
-  let best = null, bestDot = AXIS_COS;
-  for (const a of AXES) {
-    if (excludeNormal && Math.abs(a.dot(excludeNormal)) > 0.9) continue;
-    const d = _dir.dot(a);
-    if (d > bestDot) { bestDot = d; best = a; }
+// ---- the axis-snap gnomon ------------------------------------------------------------------
+//
+// SIX ARMS FROM THE PARENT JOINT, NOT A CROSS ON THE CURSOR.
+//
+// matt: "the axis snap for bone creation is handy, but hard to undrestand in context. can we
+// overlay a dim worldspace x/y/z cross that follows the cursor". It follows the PARENT instead,
+// and that difference is the point: snapAxis measures the direction from the parent and keeps
+// the bone's length, so the snap radiates from the joint being extended. A cross on the cursor
+// would draw the one thing that is not true about it, which is a fair guess at why the feature
+// reads as mysterious today.
+//
+// Each arm is the length of the bone being dragged, so the lit one shows exactly where the joint
+// will land rather than merely which way.
+//
+// THREE STATES, and the third is the one that earns this overlay. An axis too close to the
+// symmetry plane's normal is refused (see _resolve in BoneDrawTool: a bone with both ends on the
+// centreline must not snap to the normal and leave the plane), and today that refusal is silent.
+// Struck through, it can be seen refusing.
+const GNOMON_DIM = 0.22;
+const GNOMON_LIT = 1.0;
+const GNOMON_GUARD = 0.10;    // refused: present, clearly not participating
+const GNOMON_ORDER = 9998;    // over the rig and the snap plane, under the pin link at 10000
+const _gnDir = new THREE.Vector3();
+const _gnCol = new THREE.Color();
+
+Skeleton.updateAxisGnomon = function (main, from, len, info) {
+  if (!from || !(len > 1e-9)) { Skeleton.hideAxisGnomon(main); return; }
+  const g = skelGroup(main);
+  if (!main._skelGnomon) {
+    const geo = new THREE.BufferGeometry();
+    // FIXED SIZE, ALLOCATED ONCE. Six segments is twelve vertices whatever the rig does, so
+    // this buffer is never replaced -- which on the node renderer is the difference between one
+    // pipeline and a new one every time it changes. See the wire batch for the version of this
+    // lesson that cost real headset time.
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+    const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9,
+      // Always visible: it is a drawing aid, and one buried inside the sculpt cannot aid
+      // anything. renderOrder rather than depth, as everything else in this overlay does.
+      depthTest: false, depthWrite: false,
+    }));
+    m.renderOrder = GNOMON_ORDER;
+    m.isPickable = false;
+    m.frustumCulled = false;
+    m.name = 'axis_gnomon';
+    g.add(m);
+    main._skelGnomon = m;
   }
-  if (!best) return to;
-  return out.copy(from).addScaledVector(best, len);
+  const mesh = main._skelGnomon;
+  const pos = mesh.geometry.getAttribute('position');
+  const col = mesh.geometry.getAttribute('color');
+  const active = info && info.axis;
+  const guardN = info && info.guardNormal;
+  for (let i = 0; i < AXES.length; i++) {
+    const a = AXES[i];
+    _gnDir.copy(a).multiplyScalar(len);
+    pos.setXYZ(i * 2, from.x, from.y, from.z);
+    pos.setXYZ(i * 2 + 1, from.x + _gnDir.x, from.y + _gnDir.y, from.z + _gnDir.z);
+    // Axis colour by which component is non-zero, so the arms read as X/Y/Z at a glance and
+    // both halves of an axis match -- the sign is read from the direction, not the hue.
+    _gnCol.setRGB(Math.abs(a.x), Math.abs(a.y), Math.abs(a.z));
+    const refused = guardN && Math.abs(a.dot(guardN)) > 0.9;
+    const k = refused ? GNOMON_GUARD : (active && a.equals(active) ? GNOMON_LIT : GNOMON_DIM);
+    for (let e = 0; e < 2; e++) col.setXYZ(i * 2 + e, _gnCol.r * k, _gnCol.g * k, _gnCol.b * k);
+  }
+  pos.needsUpdate = true;
+  col.needsUpdate = true;
+  mesh.visible = true;
+};
+
+Skeleton.hideAxisGnomon = function (main) {
+  if (main._skelGnomon) main._skelGnomon.visible = false;
+};
+
+// ---- limb planes: is this chain built so that one axis bends it? -----------------------------
+//
+// THE RIGGER'S QUESTION, ASKED OF A CHAIN THAT ALREADY EXISTS. matt: "riggers like to place the
+// joints of an arm or a leg so that the preferred angle of rotation is clean, along a plane
+// defined by the shoulder, elbow, wrist ... the idea being that when done, the user should be
+// able to just use xrot=45, and the rotation should be intuitive."
+//
+// Three joints always lie in SOME plane, so "is it planar" is not the question for a two-bone
+// limb -- the question is whether that plane is square to the axis you would rotate about. The
+// convention, matt's call and the one KineFX already uses here: X IS THE BEND AXIS, Z RUNS DOWN
+// THE BONE. So a limb bends cleanly under rotateX exactly when its plane's normal IS the joint's
+// local X, and the angle between them is the whole diagnosis.
+//
+// READ-ONLY, DELIBERATELY. Nothing here moves a joint or rewrites a rest frame; `_ikRest` is a
+// LOCAL matrix and a bad write to it does not fail until the next solve, so the measuring comes
+// first and on its own.
+//
+// FOR CHAINS LONGER THAN THREE JOINTS -- a spine, a finger with four -- the plane is a best fit
+// and the off-plane spread is real information. For exactly three it is zero by construction,
+// and reporting it is still worth it: a zero there tells you the number means what it says.
+const _lpA = new THREE.Vector3(), _lpB = new THREE.Vector3(), _lpC = new THREE.Vector3();
+const _lpN = new THREE.Vector3(), _lpU = new THREE.Vector3(), _lpV = new THREE.Vector3();
+const _lpX = new THREE.Vector3();
+
+/** The joint's own local X in MODEL space -- the axis rotateX turns about. */
+Skeleton.jointBendAxis = function (joint, out) {
+  const m = joint.getModelSpaceMatrix();
+  out = out || new THREE.Vector3();
+  // Column 0, renormalised: a joint carries a scale, and a scaled axis would read as a different
+  // direction to every dot product below.
+  out.set(m[0], m[1], m[2]);
+  const l = out.length();
+  return l > 1e-9 ? out.divideScalar(l) : out.set(1, 0, 0);
+};
+
+/**
+ * Measure the limb plane at `joint` -- the MIDDLE joint of the run, the elbow or the knee.
+ *
+ * Returns null when there is nothing to measure: no parent, or no single child to continue the
+ * run. Otherwise { normal, origin, bendDeg, spread, straightDeg, joints }.
+ *   bendDeg     angle between the limb plane's normal and the joint's local X. 0 is clean.
+ *   spread      worst off-plane distance as a fraction of the mean bone length. 0 for three.
+ *   straightDeg how far from straight the run is. A limb drawn with no bend has no plane worth
+ *               speaking of, and this is what says so rather than returning a confident normal
+ *               derived from numerical noise.
+ */
+/** What to call a joint in a report: its name if it has one, its id if not. */
+Skeleton.jointLabel = function (j) {
+  if (!j) return '?';
+  return j._permanentStaticLabel || ('#' + (j.getID ? j.getID() : '?'));
+};
+
+/**
+ * THE PLANE THROUGH THREE NAMED JOINTS, whatever their hierarchy.
+ *
+ * limbPlaneAt finds runs on its own, which is the wrong shape for the question matt actually
+ * asks of a rig: "wouldn't i need to choose the 3 joints, or at least have them named so you
+ * understand where the planes start and end?" A shoulder/elbow/wrist is a run the RIGGER names,
+ * and an elbow with a second child -- a twist joint, a helper -- would be skipped entirely by a
+ * rule that insists on exactly one child.
+ *
+ * So the measuring is here and takes the three outright; limbPlaneAt is the convenience that
+ * finds them for you.
+ */
+Skeleton.limbPlaneOf = function (a, b, c) {
+  if (!a || !b || !c) return null;
+  Skeleton.jointPos(a, _lpA);
+  Skeleton.jointPos(b, _lpB);
+  Skeleton.jointPos(c, _lpC);
+  return Skeleton._limbPlaneCore(b, [a, b, c]);
+};
+
+Skeleton.limbPlaneAt = function (main, joint) {
+  if (!joint || !joint._parentMesh || !Skeleton.isJoint(joint._parentMesh)) return null;
+  const kids = Skeleton.childJoints(main, joint);
+  if (kids.length !== 1) return null;
+  Skeleton.jointPos(joint._parentMesh, _lpA);
+  Skeleton.jointPos(joint, _lpB);
+  Skeleton.jointPos(kids[0], _lpC);
+  return Skeleton._limbPlaneCore(joint, [joint._parentMesh, joint, kids[0]]);
+};
+
+// The measurement itself, on _lpA/_lpB/_lpC already filled. `joint` supplies the bend axis.
+Skeleton._limbPlaneCore = function (joint, jointsUsed) {
+  _lpU.subVectors(_lpA, _lpB);
+  _lpV.subVectors(_lpC, _lpB);
+  const lu = _lpU.length(), lv = _lpV.length();
+  if (lu < 1e-9 || lv < 1e-9) return null;
+  _lpU.divideScalar(lu); _lpV.divideScalar(lv);
+  // HOW STRAIGHT IS IT. The cross product of two nearly-opposite directions is nearly zero and
+  // its direction is then whatever the rounding says -- so this is reported rather than hidden.
+  // matt, on whether that case matters: "more often people, especially riggers, draw a slight
+  // bend in the knee/elbow to indicate that preferred bend direction. if people don't do that,
+  // they're doing it wrong." So a straight limb is a rig to fix, and this is what names it.
+  const straightDeg = 180 - THREE.MathUtils.radToDeg(Math.acos(
+    THREE.MathUtils.clamp(_lpU.dot(_lpV), -1, 1)));
+  _lpN.crossVectors(_lpU, _lpV);
+  const nl = _lpN.length();
+  if (nl < 1e-6) return { normal: null, origin: _lpB.clone(), bendDeg: null, spread: 0,
+                          straightDeg: straightDeg, joints: jointsUsed };
+  _lpN.divideScalar(nl);
+  Skeleton.jointBendAxis(joint, _lpX);
+  // Unsigned: a plane's normal and its opposite describe the same plane, so 170 degrees off is
+  // 10 degrees off with the axis pointing the other way -- which is a naming question, not a
+  // rigging fault.
+  const bendDeg = THREE.MathUtils.radToDeg(Math.acos(
+    THREE.MathUtils.clamp(Math.abs(_lpN.dot(_lpX)), -1, 1)));
+  return { normal: _lpN.clone(), origin: _lpB.clone(), bendDeg: bendDeg, spread: 0,
+           straightDeg: straightDeg, joints: jointsUsed };
+};
+
+// ---- the flatness disc -----------------------------------------------------------------------
+//
+// THE SAME IDIOM AS THE SYMMETRY PLANE, because it is the same kind of statement: "your joint is
+// being held in this plane". matt, on how to show it: "maybe the disk snap we use for the
+// symmetry plane?" -- so a ring at the parent, normal to the snapped axis, sized to the bone.
+//
+// A RING AND NOT A FILLED DISC. The symmetry plane is a fixed piece of furniture you line things
+// up against, and its faint fill helps read it across the whole sculpt. This one is local,
+// transient, and sits exactly where you are working -- a fill there would grey out the bone it
+// is describing at the moment you most want to see it.
+const FLAT_DISC_SEGS = 48;
+const _fdQ = new THREE.Quaternion();
+
+Skeleton.updateFlatDisc = function (main, from, len, normal, inBand) {
+  if (!from || !normal || !(len > 1e-9)) { Skeleton.hideFlatDisc(main); return; }
+  const g = skelGroup(main);
+  if (!main._skelFlatDisc) {
+    const pts = [];
+    for (let i = 0; i < FLAT_DISC_SEGS; i++) {
+      const a0 = (i / FLAT_DISC_SEGS) * Math.PI * 2, a1 = ((i + 1) / FLAT_DISC_SEGS) * Math.PI * 2;
+      pts.push(Math.cos(a0), Math.sin(a0), 0, Math.cos(a1), Math.sin(a1), 0);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+    const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      color: PLANE_COLOR, transparent: true, opacity: 0.45,
+      depthTest: false, depthWrite: false,
+    }));
+    // A UNIT RING SCALED PER FRAME, so the geometry is built once and never touched again --
+    // the same reason the gnomon's twelve vertices are fixed.
+    m.renderOrder = GNOMON_ORDER;
+    m.isPickable = false;
+    m.frustumCulled = false;
+    m.name = 'flat_disc';
+    g.add(m);
+    main._skelFlatDisc = m;
+  }
+  const d = main._skelFlatDisc;
+  // Dim while it is merely the nearest plane, bright once it will actually take -- the same two
+  // readings the gnomon gives an axis, so the two overlays are read the same way.
+  d.material.opacity = inBand ? 0.55 : 0.16;
+  _fdQ.setFromUnitVectors(_zAxis, normal);
+  d.position.copy(from);
+  d.quaternion.copy(_fdQ);
+  d.scale.setScalar(len);
+  d.updateMatrix();
+  d.matrixWorldNeedsUpdate = true;
+  d.visible = true;
+};
+
+Skeleton.hideFlatDisc = function (main) {
+  if (main._skelFlatDisc) main._skelFlatDisc.visible = false;
+};
+
+// Everything hiding an object, walked upward: three skips a whole subtree for one `visible`
+// false anywhere above, which is the failure mode a check on the object itself cannot see.
+function hiddenBy(o) {
+  for (let p = o; p; p = p.parent) if (p.visible === false) return p.name || p.type;
+  return null;
+}
+
+Skeleton._snapTraceTick = function (main, fromPos, toPos) {
+  const now = performance.now();
+  if (Skeleton._snapTraceAt && now - Skeleton._snapTraceAt < 250) return;
+  Skeleton._snapTraceAt = now;
+  const f = (k) => (Skeleton.displayFlag(k) ? k : '-');
+  const bits = ['[snap] flags ' + [f('snapPlane'), f('snapAxis'), f('snapFlat')].join('/')];
+  if (!fromPos) {
+    bits.push('NO PARENT — nothing to snap from, so no overlay is drawn');
+    console.log(bits.join(' | '));
+    return;
+  }
+  const ai = Skeleton.snapAxisInfo(fromPos, toPos, null);
+  bits.push('len ' + (ai ? ai.len.toFixed(3) : '?'));
+  bits.push('axis ' + (ai && ai.axis ? ai.axis.toArray().join(',') + ' dot ' + ai.dot.toFixed(3)
+    : 'none'));
+  const fi = Skeleton.snapFlatInfo(fromPos, toPos);
+  bits.push('flat ' + (fi ? fi.normal.toArray().join(',') + ' sin ' + fi.sin.toFixed(3)
+    + (fi.inBand ? ' IN BAND' : ' out of band') : 'none'));
+  const say = (label, o) => {
+    if (!o) return label + ' NOT BUILT';
+    const h = hiddenBy(o);
+    return label + ' ' + (o.visible ? 'visible' : 'hidden')
+      + (h && h !== (o.name || o.type) ? ' (hidden by ' + h + ')' : '')
+      + ' scale ' + o.scale.x.toFixed(3)
+      + (o.material && o.material.opacity !== undefined
+        ? ' op ' + o.material.opacity.toFixed(2) : '')
+      + ' order ' + o.renderOrder;
+  };
+  bits.push(say('gnomon', main._skelGnomon));
+  bits.push(say('disc', main._skelFlatDisc));
+  console.log(bits.join(' | '));
 };
 
 Skeleton.mirrorPoint = function (p, plane, out) {
@@ -4087,7 +5847,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 17;  // v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 25;  // v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -4130,7 +5890,21 @@ Skeleton.serialize = function (meshes, main) {
     // ordinary solid and no light at all. matt: "it doesn't seem to be restoring properly, and I
     // had to make another shadowcaster light."
     const shadow = !!(m._isShadowCatcher || m._isShadowLight);
-    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow) return;
+    // A LIGHT EARNS A ROW TOO, for exactly the reason the shadow flags above do. A light is
+    // typically unparented, unlocked, visible and not a bone, so it fell through this guard and
+    // got no entry at all -- and with no entry there is nothing for the v18 light section to
+    // refer to, so every light's settings were dropped on save however carefully v18 wrote
+    // them. matt: "lights aren't being saved/loaded properly to sxr".
+    const light = !!m._isLight;
+    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow && !light) return;
+    // A DELETED PIN IS NO PIN, AND THE FILE MUST SAY SO. Deleting a pin takes its mesh out of the
+    // scene and leaves the joint's `_boneIKPin` mode (and `_boneIKPinObj`) alone on purpose, so
+    // undo can put the same object back. This block then wrote that stale mode with no link --
+    // which the loader reads as an old (pre-v3) file carrying only a MODE, and answers by making
+    // a fresh pin where the joint stands. matt: deleted pin_spine_01, saved, reloaded, it was
+    // back. A joint whose pin object is gone writes mode 0. (A joint with a mode and NO pin
+    // object at all is left alone: that is a rig mid-load, and the migration is for it.)
+    const pinBits = (m._isBone && m._boneIKPinObj && !livePin(m)) ? 0 : (m._boneIKPin | 0);
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
@@ -4162,10 +5936,10 @@ Skeleton.serialize = function (meshes, main) {
       // every existing flag for the same reason each of those was: an older build reads neither
       // bit, and gets the proxy back as an ordinary object and the light back as an ordinary
       // null, which is exactly the pre-feature scene rather than a broken one.
-      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0)
-        | (((m._boneIKPin | 0) & 4) << 2)
+      bone: (m._isBone ? 1 : 0) | ((pinBits & 3) << 1) | (m._selectLocked ? 8 : 0)
+        | ((pinBits & 4) << 2)
         | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)
-        | (((m._boneIKPin | 0) & 8) ? 128 : 0)
+        | ((pinBits & 8) ? 128 : 0)
         | (m._isShadowCatcher ? 256 : 0) | (m._isShadowLight ? 512 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
@@ -4307,6 +6081,36 @@ Skeleton.serialize = function (meshes, main) {
     phys3.push({ i: i, ms: p.mass, sb: p.substeps, it: p.iterations });
   });
 
+  // v18: THE LIGHT PARAMETERS. A light is a locator (`_isLight` + `_isNull`), so the mesh
+  // itself already round-trips through the ordinary path -- but every property that makes it a
+  // LIGHT lived only in memory, and a saved scene came back with a plain sphere where the light
+  // had been. Exactly the shape of the bug v11/v14/v17 kept repeating for PhysicsBones: the
+  // feature works perfectly until you save.
+  //
+  // Whoever adds the next light property: add it HERE. The shadow group in particular has grown
+  // three times in one session (near, bias, softness), and each one is a tuning decision the
+  // user will not enjoy making twice.
+  const lights = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isLight) return;
+    const c = m._lightColor || [1, 1, 1];
+    lights.push({
+      i: i,
+      t: m._lightType || 0,
+      r: c[0], g: c[1], b: c[2],
+      inten: m._lightIntensity === undefined ? 1 : m._lightIntensity,
+      range: m._lightRange === undefined ? 50 : m._lightRange,
+      cone: m._lightConeDeg === undefined ? 35 : m._lightConeDeg,
+      cast: (m._castShadow !== false) ? 1 : 0,
+      shNear: m._shadowNear === undefined ? 0.01 : m._shadowNear,
+      shBias: m._shadowNormalBias === undefined ? 0.15 : m._shadowNormalBias,
+      shInt: m._shadowIntensity === undefined ? 1 : m._shadowIntensity,
+      shRad: m._shadowRadius === undefined ? 4 : m._shadowRadius,
+      shRes: m._shadowMapSize === undefined ? 512 : m._shadowMapSize,
+      ref: m._lightRefDist === undefined ? 0 : m._lightRefDist,
+    });
+  });
+
   // v10: the joint's offset, where a face drag has moved its shape off it. Its own section
   // rather than three more floats on the v9 one, so a file written by a build that had scale and
   // not offset still reads.
@@ -4325,14 +6129,52 @@ Skeleton.serialize = function (meshes, main) {
   meshes.forEach((m, i) => {
     if (m && m._isBone && Skeleton.jointRoundIsSet(m)) rounds.push({ i: i, p: m._jointRound });
   });
+  // v20: the joints that deform but do not shape the skin. Only those are written.
+  const noShape = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && !Skeleton.jointShapesSkin(m)) noShape.push(i); });
+  // v19: which way each joint's shape faces. Only turned joints are written, so a rig that never
+  // turned one costs one count.
+  const rots = [];
+  meshes.forEach((m, i) => {
+    if (m && m._isBone && Skeleton.jointRotIsSet(m)) rots.push({ i: i, q: m._jointRot });
+  });
+
+  // v21: the outliner order the user made, as the mesh index at each rank. Empty (one count)
+  // unless a row was ever moved, so an untouched scene's file is unchanged.
+  const keyOf = (m) => (m ? (m._outlinerKey !== undefined ? m._outlinerKey : m.getID()) : Infinity);
+  const order = meshes.some((m) => m && m._outlinerKey !== undefined)
+    ? meshes.map((m, i) => i).sort((a, b) => keyOf(meshes[a]) - keyOf(meshes[b]) || a - b) : [];
+
+  // v22: expanded/collapsed state of each branch, as [mesh index, collapsed] for every mesh that
+  // has one (unset = the default, expanded).
+  const fold = [];
+  meshes.forEach((m, i) => { if (m && typeof m._outlinerCollapsed === 'boolean') fold.push(i, m._outlinerCollapsed ? 1 : 0); });
 
   const vols = [];
+
+  // v23: each bone volume's shape, where any part of it is set. Width, height and offset were never
+  // written at all, so a shaped rig came back as round cylinders on the bone.
+  const volShape = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._isBone) return;
+    const sec = Skeleton.volumeSection(m), off = Skeleton.volumeOffset(m), en = Skeleton.volumeEnds(m);
+    if (sec[0] !== 1 || sec[1] !== 1 || off[0] || off[1] || en[0] || en[1]) {
+      volShape.push({ i: i, v: [sec[0], sec[1], off[0], off[1], en[0], en[1]] });
+    }
+  });
+
+  // v24: each bone volume's sharpness, where it is not round.
+  const volRound = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && m._volP) volRound.push({ i: i, p: m._volP }); });
+  // v25: each bone volume's twist, where it is turned.
+  const volTwist = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && m._volR) volTwist.push({ i: i, a: m._volR }); });
 
   // ...OR IF ANY NODE CARRIES A CONSTRAINT. This block is skipped entirely when there is no
   // hierarchy and no skin, which was right when it only held bones — but v15 put the aim/saccade/
   // mirror state in here, and a scene can easily have an eye rig and no skeleton at all. Without
   // `rig` in this test that state was built, saved to nothing, and silently absent on reload.
-  if (!entries.length && !skins.length && !rig.length) return null;
+  if (!entries.length && !skins.length && !rig.length && !order.length && !fold.length) return null;
 
   let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
@@ -4348,6 +6190,14 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + phys2.length * 7;   // v14: i + drag, ground, groundY, inertia, maxBend, collide
   slots += 1 + rig.length * 7;     // v15: i + aim, saccades, amp, speed, smooth, mirror
   slots += 1 + phys3.length * 4;   // v17: i + mass, substeps, iterations
+  slots += 1 + lights.length * 14; // v18: i + type, rgb, intensity, range, cone, cast, 4 shadow, res
+  slots += 1 + rots.length * 5;    // v19: i + the shape's rotation quaternion
+  slots += 1 + noShape.length;     // v20: i of each joint that does not shape the skin
+  slots += 1 + order.length;       // v21: mesh index at each outliner rank
+  slots += 1 + fold.length;        // v22: (mesh index, collapsed) pairs
+  slots += 1 + volShape.length * 7; // v23: i + width, height, o1, o3, e0, e1
+  slots += 1 + volRound.length * 2; // v24: i + sharpness
+  slots += 1 + volTwist.length * 2; // v25: i + twist
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -4414,6 +6264,30 @@ Skeleton.serialize = function (meshes, main) {
   u[o++] = phys3.length;
   for (const ph of phys3) { u[o++] = ph.i; f[o++] = ph.ms; u[o++] = ph.sb; u[o++] = ph.it; }
 
+  u[o++] = lights.length;
+  for (const li of lights) {
+    u[o++] = li.i; u[o++] = li.t;
+    f[o++] = li.r; f[o++] = li.g; f[o++] = li.b;
+    f[o++] = li.inten; f[o++] = li.range; f[o++] = li.cone;
+    u[o++] = li.cast;
+    f[o++] = li.shNear; f[o++] = li.shBias; f[o++] = li.shInt; f[o++] = li.shRad;
+    u[o++] = li.shRes;
+  }
+  u[o++] = rots.length;
+  for (const r of rots) { u[o++] = r.i; f[o++] = r.q[0]; f[o++] = r.q[1]; f[o++] = r.q[2]; f[o++] = r.q[3]; }
+  u[o++] = noShape.length;
+  for (const i of noShape) u[o++] = i;
+  u[o++] = order.length;
+  for (const i of order) u[o++] = i;
+  u[o++] = fold.length / 2;
+  for (const w of fold) u[o++] = w;
+  u[o++] = volShape.length;
+  for (const vs of volShape) { u[o++] = vs.i; for (const x of vs.v) f[o++] = x; }
+  u[o++] = volRound.length;
+  for (const vr of volRound) { u[o++] = vr.i; f[o++] = vr.p; }
+  u[o++] = volTwist.length;
+  for (const vt of volTwist) { u[o++] = vt.i; f[o++] = vt.a; }
+
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
 };
@@ -4438,6 +6312,152 @@ function findSkelBlock(buffer) {
 // Pins are joined up at the very END of a load: a migrated pin has to be built where the joint
 // finally stands, not where it stood before the file's matrices were applied.
 const pendingPins = [];
+
+// A PIN HAS NO SCALE OF ITS OWN. Pins made by older builds were seated with their joint's
+// whole model matrix, scale included -- and a joint's scale is the unit the rig was drawn at, so
+// a pin came out at 6.8 (or whatever the rig's bake was) and silently multiplied everything
+// parented under it: a neck pin parented to the hips pin had its offset read in units of 6.8.
+// matt: "i don't like the idea of the pins having scales at all, its an extra variable i would
+// want to avoid. or i want to explicitly set this scale myself for whatever reason."
+//
+// So a pin whose scale is exactly its joint's (the signature of that seating) is put back to unit
+// scale, WORLD-PRESERVING: its position and orientation stay, and everything parented to it keeps
+// its own world transform (a child's local matrix is re-derived, which is the step baking a
+// parent's scale by hand skips -- the child then lands wherever its old local offset now points,
+// which is how a baked hips pin dropped the neck pin next to the hips). A scale set to anything
+// else is a decision and is left alone. Roots first, so a pin under a pin is judged after its
+// parent has already been normalised.
+function _scaleOf(e) {
+  return [Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10])];
+}
+Skeleton.normalizePinScales = function (main) {
+  if (!main) return 0;
+  const all = main.getMeshes() || [];
+  const pins = all.filter((m) => m && m._isPinTarget && m._pinnedJoint && m.getModelSpaceMatrix && m.setModelSpaceMatrix);
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  pins.sort((a, b) => depth(a) - depth(b));
+  const near = (a, b) => Math.abs(a - b) <= 0.01 * Math.max(1, Math.abs(b));
+  // The three-side matrices of a freshly loaded rig are not guaranteed to match the SculptGL ones
+  // yet (a pin's world matrix is read through its parent's), and every model-space read below goes
+  // through them -- so they are brought into line first, roots first.
+  for (const m of all) if (m && (m._isPinTarget || m._isBone)) Skeleton.syncThree(m);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+  let fixed = 0;
+  for (const pin of pins) {
+    const model = pin.getModelSpaceMatrix(mat4.create());
+    const ps = _scaleOf(model), js = _scaleOf(pin._pinnedJoint.getModelSpaceMatrix(mat4.create()));
+    if (ps.every((v) => near(v, 1))) continue;                       // already unit
+    if (!(near(ps[0], js[0]) && near(ps[1], js[1]) && near(ps[2], js[2]))) continue;   // a chosen scale
+    const kids = all.filter((c) => c && c._parentMesh === pin);
+    const kidModels = kids.map((k) => mat4.clone(k.getModelSpaceMatrix(mat4.create())));
+    _mTmp.fromArray(model);
+    _mTmp.decompose(_vTmp, _qPin, _sTmp);
+    _mTmp.compose(_vTmp, _qPin, _sOnePin);
+    pin.setModelSpaceMatrix(_mTmp.elements);
+    Skeleton.syncThree(pin);
+    kids.forEach((k, i) => { k.setModelSpaceMatrix(kidModels[i]); Skeleton.syncThree(k); });
+    fixed++;
+  }
+  return fixed;
+};
+
+// JOINTS CARRIED A SCALE THEY WERE NEVER MEANT TO HAVE. Every joint made by an older build has
+// `unit * 0.036` baked into its matrix (see createJoint), the same number on every joint of a rig.
+// This strips it, world-preserving: a joint keeps its position and orientation, and everything
+// that depends on the joint's frame keeps its place --
+//   * every joint's LOCAL matrix is re-derived from the new parent (so bone offsets are in real
+//     units, not 1/s),
+//   * so is its recorded REST,
+//   * a part parented under a joint (a weight cage) keeps its world transform,
+//   * and a skin bound to the joint is told: J' = J . S^-1, so invBind' = S . invBind and nothing
+//     deforms.
+// Only the RIG'S OWN scale goes: the scale most of the joints share in model space. A joint at a
+// different one is a decision somebody made with the scale handle, and is left as it is. A rig
+// that is keyed is skipped (its keys hold local translations in the old units).
+Skeleton.normalizeJointScales = function (main) {
+  const joints = Skeleton.joints(main).filter(Boolean);
+  if (!joints.length) return 0;
+  const near = (a, b) => Math.abs(a - b) <= 0.01 * Math.max(1e-9, Math.abs(b));
+  // Judged on the MODEL-space scale, because that is what a legacy rig has: the baked `unit *
+  // 0.036` sits on whichever joint was created first (the root), and every descendant inherits it
+  // through a local matrix of scale 1 -- so a per-joint local check sees one joint at 6.8 and
+  // twenty-three at 1, and would call the rig clean.
+  for (const j of joints) Skeleton.syncThree(j);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+  const info = joints.map((j) => {
+    const sc = _scaleOf(j.getModelSpaceMatrix(mat4.create()));
+    return { j, s: sc[0], uniform: near(sc[0], sc[1]) && near(sc[0], sc[2]) };
+  });
+  // The scale most of the rig shares, other than 1.
+  let best = 0, bestN = 0;
+  for (const a of info) {
+    if (!a.uniform || near(a.s, 1)) continue;
+    const n = info.filter((b) => b.uniform && near(b.s, a.s)).length;
+    if (n > bestN) { best = a.s; bestN = n; }
+  }
+  if (!best || bestN * 2 < info.length) return 0;
+  const targets = new Map();
+  for (const a of info) if (a.uniform && near(a.s, best)) targets.set(a.j, a.s);
+
+  const reg = window._animationRegistry;
+  const all = main.getMeshes() || [];
+  const kids = all.filter((c) => c && !Skeleton.isJoint(c) && Skeleton.isJoint(c._parentMesh));
+  if (reg && reg.tracks && reg.tracks.size
+      && joints.concat(kids).some((m) => reg.tracks.has(m.getID()))) {
+    console.log('[Skeleton] joint scale left as it is: the rig is keyed');
+    return 0;
+  }
+
+  // Three-side matrices into line before any model-space read.
+  for (const m of kids) Skeleton.syncThree(m);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  const order = joints.slice().sort((a, b) => depth(a) - depth(b));
+  const restOld = restModelMatrices(Skeleton, joints);
+  const modelOld = new Map(joints.map((j) => [j, j.getModelSpaceMatrix(mat4.create())]));
+  const kidModel = new Map(kids.map((k) => [k, k.getModelSpaceMatrix(mat4.create())]));
+  const strip = (m, s) => mat4.scale(mat4.create(), m, [1 / s, 1 / s, 1 / s]);
+  const modelNew = new Map(), restNew = new Map();
+  for (const j of joints) {
+    const s = targets.get(j);
+    modelNew.set(j, s ? strip(modelOld.get(j), s) : modelOld.get(j));
+    restNew.set(j, s ? strip(restOld.get(j), _scaleOf(restOld.get(j))[0]) : restOld.get(j));
+  }
+  const baseOf = (j, models) => {
+    const p = j._parentMesh;
+    if (!p) return mat4.create();
+    if (Skeleton.isJoint(p)) return models.get(p);
+    return p.getModelSpaceMatrix ? p.getModelSpaceMatrix(mat4.create()) : mat4.create();
+  };
+  main._rigRestEdit = true;
+  for (const j of order) {
+    const inv = (m) => mat4.invert(mat4.create(), m);
+    mat4.copy(j.getMatrix(), mat4.multiply(mat4.create(), inv(baseOf(j, modelNew)), modelNew.get(j)));
+    Skeleton.syncThree(j);
+    if (j._ikRest) j._ikRest = mat4.multiply(mat4.create(), inv(baseOf(j, restNew)), restNew.get(j));
+  }
+  for (const k of kids) {
+    const p = k._parentMesh;
+    mat4.copy(k.getMatrix(), mat4.multiply(mat4.create(), mat4.invert(mat4.create(), modelNew.get(p)), kidModel.get(k)));
+    Skeleton.syncThree(k);
+  }
+  // The skin: J' = J . S^-1, so the inverse bind takes S on the left.
+  for (const m of all) {
+    if (!m || !m._skinW || !m._skinInvBind || !m._skinJoints) continue;
+    m._skinJoints.forEach((id, a) => {
+      const j = joints.find((x) => x.getID() === id);
+      const s = j && targets.get(j);
+      if (s) m._skinInvBind[a].premultiply(new THREE.Matrix4().makeScale(s, s, s));
+    });
+    m._skinDirty = true;
+  }
+  for (const m of joints.concat(kids)) Skeleton.syncThree(m);
+  (main._worldGroup || main._scene)?.updateMatrixWorld?.(true);
+  for (const j of joints) { j._boneBendRef = null; j._ikLastM = mat4.clone(j.getMatrix()); }
+  main._rigRestEdit = false;
+  return targets.size;
+};
 
 Skeleton.deserialize = function (buffer, meshes, main) {
   try {
@@ -4776,6 +6796,111 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       }
     }
 
+    // v18: the light parameters. The flags go on first because decorateLight builds the gizmo
+    // from them, and _lightRefDist is deliberately NOT restored -- it is the brightness
+    // reference latched from the scene when the light was made, and a scene that has grown or
+    // shrunk since wants the current one. _syncThreeLights recomputes it when it is missing.
+    if (ver >= 18) {
+      const ln = u[o++];
+      for (let i = 0; i < ln; i++) {
+        const mi = u[o++], t = u[o++];
+        const r = f[o++], g = f[o++], b = f[o++];
+        const inten = f[o++], range = f[o++], cone = f[o++];
+        const cast = u[o++];
+        const shNear = f[o++], shBias = f[o++], shInt = f[o++], shRad = f[o++];
+        const shRes = u[o++];
+        const m = meshes[mi];
+        if (!m) continue;
+        m._isLight = true;
+        m._isNull = true;
+        m._typeName = m._typeName || 'Light';
+        m._lightType = t;
+        m._lightColor = [r, g, b];
+        m._lightIntensity = inten;
+        m._lightRange = range;
+        m._lightConeDeg = cone;
+        m._castShadow = !!cast;
+        m._shadowNear = shNear;
+        m._shadowNormalBias = shBias;
+        m._shadowIntensity = shInt;
+        m._shadowRadius = shRad;
+        m._shadowMapSize = shRes || 512;
+        try { main.decorateLight && main.decorateLight(m); } catch (e) {
+          console.error('[Skeleton] decorateLight on load failed', e);
+        }
+      }
+    }
+
+    // v19: the joint shapes' rotations.
+    if (ver >= 19) {
+      const rn = u[o++];
+      for (let i = 0; i < rn; i++) {
+        const mi = u[o++];
+        const x = f[o++], y = f[o++], z = f[o++], w = f[o++];
+        if (meshes[mi]) Skeleton.setJointRot(meshes[mi], x, y, z, w);
+      }
+    }
+
+    // v20: the joints that deform without shaping the skin.
+    if (ver >= 20) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const mi = u[o++];
+        if (meshes[mi]) Skeleton.setJointShapesSkin(meshes[mi], false);
+      }
+    }
+
+    // v21: the outliner order. Rank r gets the r-th smallest of the loaded meshes' own ids as its
+    // key, so the keys are ids that already exist and anything created later still sorts last.
+    if (ver >= 21) {
+      const nn = u[o++], at = [];
+      for (let i = 0; i < nn; i++) { const m = meshes[u[o++]]; if (m) at.push(m); }
+      if (at.length) {
+        const ids = at.map((m) => m.getID()).sort((a, b) => a - b);
+        at.forEach((m, r) => { m._outlinerKey = ids[r]; });
+      }
+    }
+
+    // v22: which branches were folded.
+    if (ver >= 22) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const mi = u[o++], c = u[o++];
+        if (meshes[mi]) meshes[mi]._outlinerCollapsed = !!c;
+      }
+    }
+
+    // v23: the bone volumes' shapes.
+    if (ver >= 23) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]];
+        const v = [f[o++], f[o++], f[o++], f[o++], f[o++], f[o++]];
+        if (!m) continue;
+        Skeleton.setVolumeSection(m, v[0], v[1]);
+        Skeleton.setVolumeOffset(m, v[2], v[3]);
+        Skeleton.setVolumeEnds(m, v[4], v[5]);
+      }
+    }
+
+    // v24: the bone volumes' sharpness.
+    if (ver >= 24) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], pv = f[o++];
+        if (m) Skeleton.setVolumeRound(m, pv);
+      }
+    }
+
+    // v25: the bone volumes' twist.
+    if (ver >= 25) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], a = f[o++];
+        if (m) Skeleton.setVolumeTwist(m, a);
+      }
+    }
+
     for (const p of pendingPins) {
       if (p.pin) {
         // v3: the null came back with the file. Re-flag it — _isPinTarget and the mode live on
@@ -4819,6 +6944,12 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     }
     pendingPins.length = 0;
 
+    // Pins carry no scale of their own; older files seated them at their joint's. FIRST, while the
+    // joints still have the scale the pins are compared against.
+    try { Skeleton.normalizePinScales(main); } catch (e) { console.warn('[Skeleton] pin scale normalise failed', e); }
+    // ...and neither do joints: older builds baked `unit * 0.036` into every one.
+    try { if (!window._skipJointScaleMigration) Skeleton.normalizeJointScales(main); } catch (e) { console.warn('[Skeleton] joint scale normalise failed', e); main._rigRestEdit = false; }
+
     Skeleton.updateVisuals(main);
   } catch (e) {
     console.error('[Skeleton] import restore failed', e);
@@ -4838,11 +6969,29 @@ Skeleton.deserialize = function (buffer, meshes, main) {
 const DISPLAY_FLAGS = {
   snapPlane: ['_boneSnapPlane', 'boneSnapPlane', true],
   snapAxis: ['_boneSnapAxis', 'boneSnapAxis', true],
+  // ON by default, and I argued the other way first. The case against: axis snap corrects a bone
+  // you were clearly aiming at an axis, while this corrects a bone aimed ANYWHERE in a plane,
+  // which is most bones at some point in a drag -- it could read as the tool second-guessing
+  // every placement.
+  //
+  // The case that won: matt asked for this feature, and a feature shipped off by default behind
+  // a toggle he has no reason to visit is a feature that does not exist. Snap Axis defaults on,
+  // so that whole row of buttons had never needed pressing -- three rounds went by on "still no
+  // disc" with snapTrace eventually reporting `flags snapPlane/snapAxis/-`, off the entire time.
+  // If it does turn out to be officious in use, this is one word.
+  snapFlat: ['_boneSnapFlat', 'boneSnapFlat', true],
   lengths: ['_boneShowLengths', 'boneShowLengths', false],
   // The joint's NAME, drawn where the length is drawn — off by default for the same reason:
   // it is a label per bone, and a rig full of them is unreadable while you are working.
   names: ['_boneShowNames', 'boneShowNames', false],
   capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
+  // The red dots drawn where two capsules that are not neighbours pass through each other. Off
+  // by default and out of the Display menu since bone volumes, which never overlap. Only the
+  // dots: the overlap test itself still runs.
+  // Glue the seams where two capsules meet (WeightCage.glueEdit). Not a decoration, so Hide All
+  // Decorations leaves it alone: it changes what a stroke does, not what is drawn. Off by default
+  // and out of the Display menu since bone volumes replaced the capsule/cage bind.
+  glueSeams: ['_cageGlueSeams', 'cageGlueSeams', false],
   // WHERE MAKE SKIN WILL ATTACH each bone, drawn on the joint boxes it will build from. Off by
   // default: it is a rig-time diagnostic for the case where a joint has more bones than its box
   // has room for, not something to have on while posing. See SkinPreview.
@@ -4851,6 +7000,18 @@ const DISPLAY_FLAGS = {
   // a far one. The flat look stays a switch away.
   capsuleShaded: ['_boneCapsuleShaded', 'boneCapsuleShaded', true],
   weights: ['_boneShowWeights', 'boneShowWeights', false],
+  // While a radius or a box handle is being dragged, paint every OTHER bone's vertices black so the
+  // edited joint's territory is the only thing lit. Behaviour, not decoration. Off by default.
+  soloRadius: ['_boneSoloRadius', 'boneSoloRadius', false],
+  // BONE VOLUMES (experimental): the Voodoo / Rhythm & Hues model. One constant-section capsule per
+  // bone, sized by the bone's own end joint, shortened by a small gap at each end so neighbours never
+  // overlap; the weights follow those volumes (Skinning.boneSegments). Behaviour, so Hide All
+  // Decorations leaves it alone. `volSoft` blends bones across the gaps by distance instead of
+  // splitting them rigidly.
+  // ON, and the only mode now (the tapered ball-ended capsules are gone from the UI). A NEW KEY on purpose,
+  // so a `false` saved while this was an experiment cannot hide the volumes.
+  volumes: ['_boneVolumesOn', 'boneVolumesOn', true],
+  volSoft: ['_boneVolSoft', 'boneVolSoft', false],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
   // BACK AS A TOGGLE. The dots were removed when the bone became the pick target, and came
@@ -5001,9 +7162,13 @@ Skeleton.capsuleOpacity = function () {
 // Published here rather than at the definitions above, which run before `Skeleton` exists.
 Skeleton.capsuleSegments = capsuleSegments;
 Skeleton.setCapsuleSegments = setCapsuleSegments;
+Skeleton.shaftOpacity = shaftOpacity;
+Skeleton.setShaftOpacity = setShaftOpacity;
 
+// ZERO IS ALLOWED, and means the part is not drawn at all. matt: "the sliders for opacity should
+// let me go down to 0. yes i'll probably forget its there, but then i only have myself to blame."
 Skeleton.setCapsuleOpacity = function (main, v) {
-  const clamped = Math.max(0.05, Math.min(1, v));
+  const clamped = Math.max(0, Math.min(1, v));
   window._boneCapsuleOpacity = clamped;
   try { getOptionsURL.saveOption('boneCapsuleOpacity', clamped, 300); } catch (_) {}
   if (main) Skeleton.updateVisuals(main);
@@ -5036,5 +7201,9 @@ Skeleton.hoveredJoint = function (main) {
   if (id == null || id < 0) return null;
   return Skeleton.joints(main).find((j) => j.getID() === id) || null;
 };
+
+// Console handle, for the harnesses that drive the live module (a dynamic import of this file from a
+// page gets a SECOND copy once the dev server has hot-reloaded it, with its own state).
+if (typeof window !== 'undefined') window._Skeleton = Skeleton;
 
 export default Skeleton;

@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Head with blendshapes",
+    "file": "headblend.sxr",
+    "desc": "Sculpted head with eight keyframed ARKit blendshapes"
+  },
+  {
+    "name": "Skinny",
+    "file": "skinny_v07.sxr",
+    "desc": "Rigged skinny character with pins and physics bones, saved from the headset"
+  },
+  {
+    "name": "Wrestler",
+    "file": "wrestler_example.sxr",
+    "desc": "Rigged wrestler with bone volumes, pins and clothing, skinned at the base level"
+  }
+]

@@ -312,11 +312,11 @@ check('a trace names the hand, the owner, and who moved the joint',
   // The face rule, which is the one that is NOT about twins.
   check('a face drag moves one face and pins the other',
     /const pinned = centre - sign \* half;/.test(SRC)
-    && /off\[axis\] = \(moved \+ pinned\) \/ 2 - jointAt;/.test(SRC),
+    && /setAlong\(\(moved \+ pinned\) \/ 2 - jointAt\);/.test(SRC),
     'matt: "i edit the top, the bottom moves"');
   check('...except x on a centreline joint, which stays symmetric',
     /if \(sc\.centreline && axis === 0\) \{/.test(SRC)
-    && /off\[axis\] = 0;/.test(SRC),
+    && /setAlong\(0\);/.test(SRC),
     'a spine is its own twin; an x offset takes it off the plane the rig is built around');
 
   check('the mode is Tweak Joint',

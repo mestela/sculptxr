@@ -25,6 +25,10 @@ var _TMP_MAT = mat4.create();
 
 var _sq = Math.SQRT1_2;
 var _d = 0.5;
+const _VIEW_FRONT = [0.0, 0.0, 0.0, 1.0], _VIEW_BACK = [0.0, 1.0, 0.0, 0.0];
+const _VIEW_TOP = [Math.SQRT1_2, 0.0, 0.0, Math.SQRT1_2], _VIEW_BOTTOM = [-Math.SQRT1_2, 0.0, 0.0, Math.SQRT1_2];
+const _VIEW_LEFT = [0.0, -Math.SQRT1_2, 0.0, Math.SQRT1_2], _VIEW_RIGHT = [0.0, Math.SQRT1_2, 0.0, Math.SQRT1_2];
+
 var _QUAT_COMP = [
   quat.fromValues(1, 0, 0, 0),
   quat.fromValues(0, 1, 0, 0),
@@ -162,6 +166,18 @@ class Camera {
 
   getUsePivot() {
     return this._usePivot;
+  }
+
+  // MODEL UNITS PER CSS PIXEL at a point `dist` from the eye -- what a screen-constant marker scales
+  // by. Perspective: the visible width at that depth (2 * dist / proj[0]) over the canvas width.
+  // ORTHOGRAPHIC: the frustum's own width (updateOrtho gives mat4.ortho -w..w, w = _width * zoom) over
+  // the canvas width, and NOT the eye distance, which in ortho is a fixed far placement that says
+  // nothing about the size on screen -- the reason the gizmo came out several times too small there.
+  worldPerPixel(dist) {
+    const cw = this._main.getCanvas().clientWidth || 1;
+    if (this._projectionType === Enums.Projection.ORTHOGRAPHIC)
+      return (2 * this._width * this.getOrthoZoom()) / cw;
+    return (2 * dist) / (cw * this._proj[0]);
   }
 
   getConstantScreen() {
@@ -572,22 +588,31 @@ class Camera {
     this.quatDelay([0.0, Math.SQRT1_2, 0.0, Math.SQRT1_2], DELAY_SNAP);
   }
 
-  toggleViewFront() {
-    if (Math.abs(this._quatRot[3]) > 0.99) this.resetViewBack();
-    else this.resetViewFront();
+  // F / T / L: GO TO THE NEARER OF THE PAIR, and only flip to the far side when already on the
+  // near one. The old test only asked "within ~16 degrees of front?", never which side was
+  // closer, so from behind F swung all the way round and from slightly off-front it flipped to
+  // the back. matt: "it feels like random chance as to if it will go to the front or back view."
+  // A second press while the snap is still animating counts as being on that view, so a quick
+  // double-tap flips rather than re-targeting the same side.
+  _toggleViewPair(qa, qb) {
+    const onA = this._snapTo === qa && this._timers.quat;
+    const onB = this._snapTo === qb && this._timers.quat;
+    // "Pure" is the whole rotation (roll included); "nearer" is where the camera is LOOKING,
+    // so a rolled or yawed view still picks the side it is facing.
+    const PURE = 1 - 1e-4;   // ~1 degree: a finished snap lands within float error of the target
+    const look = (q, out) => vec3.transformQuat(out, vec3.set(out, 0, 0, 1), quat.conjugate(_TMP_QUAT, q));
+    const cur = look(this._quatRot, [0, 0, 0]);
+    let to;
+    if (onA || quat.dot(this._quatRot, qa) ** 2 > PURE) to = qb;
+    else if (onB || quat.dot(this._quatRot, qb) ** 2 > PURE) to = qa;
+    else to = vec3.dot(cur, look(qa, [0, 0, 0])) >= vec3.dot(cur, look(qb, [0, 0, 0])) ? qa : qb;
+    this._snapTo = to;
+    this.quatDelay(to, DELAY_SNAP);
   }
 
-  toggleViewTop() {
-    var dot = this._quatRot[0] * Math.SQRT1_2 + this._quatRot[3] * Math.SQRT1_2;
-    if (dot * dot > 0.99) this.resetViewBottom();
-    else this.resetViewTop();
-  }
-
-  toggleViewLeft() {
-    var dot = -this._quatRot[1] * Math.SQRT1_2 + this._quatRot[3] * Math.SQRT1_2;
-    if (dot * dot > 0.99) this.resetViewRight();
-    else this.resetViewLeft();
-  }
+  toggleViewFront() { this._toggleViewPair(_VIEW_FRONT, _VIEW_BACK); }
+  toggleViewTop() { this._toggleViewPair(_VIEW_TOP, _VIEW_BOTTOM); }
+  toggleViewLeft() { this._toggleViewPair(_VIEW_LEFT, _VIEW_RIGHT); }
 
   computeWorldToScreenMatrix(mat) {
     mat = mat || mat4.create();

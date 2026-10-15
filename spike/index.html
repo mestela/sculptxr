@@ -1,0 +1,125 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>video spike</title>
+<style>
+  body { font: 13px/1.4 ui-monospace, monospace; background: #111; color: #ddd; margin: 16px; }
+  canvas { background: #000; max-width: 480px; display: block; margin: 8px 0; }
+  pre { white-space: pre-wrap; }
+  input[type=range] { width: 480px; }
+</style>
+<h3>video spike (mediabunny + WebCodecs)</h3>
+<div>
+  <input type="file" id="file" accept="video/*"> or <code>?clip=video/gop12.mp4</code>
+  <button id="run">run</button>
+</div>
+<canvas id="cv" width="480" height="270"></canvas>
+<input type="range" id="scrub" min="0" value="0">
+<span id="frameLbl"></span>
+<pre id="out"></pre>
+<script type="module">
+import { Input, ALL_FORMATS, UrlSource, BlobSource, VideoSampleSink, EncodedPacketSink }
+  from 'https://cdn.jsdelivr.net/npm/mediabunny/dist/bundles/mediabunny.min.mjs';
+
+const out = document.getElementById('out');
+const log = (...a) => { out.textContent += a.join(' ') + '\n'; };
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const pct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+const f1 = (x) => x.toFixed(1);
+
+async function analyse(source, name) {
+  const res = { name };
+  const input = new Input({ source, formats: ALL_FORMATS });
+  const track = await input.getPrimaryVideoTrack();
+  res.codec = track.codec;
+  res.size = track.displayWidth + 'x' + track.displayHeight;
+  res.canDecode = await track.canDecode();
+  const stats = await track.computePacketStats();
+  res.packets = stats.packetCount;
+  res.avgFps = +stats.averagePacketRate.toFixed(3);
+  res.mbps = +(stats.averageBitrate / 1e6).toFixed(2);
+
+  // Packet structure: decode order. Keyframe spacing, B-frame use, CFR check.
+  const psink = new EncodedPacketSink(track);
+  const keys = [], ts = [];
+  let reorder = 0, prev = -Infinity, i = 0;
+  for await (const p of psink.packets()) {
+    if (p.type === 'key') keys.push(i);
+    if (p.timestamp < prev) reorder++;
+    prev = p.timestamp; ts.push(p.timestamp); i++;
+  }
+  const gaps = keys.slice(1).map((k, j) => k - keys[j]);
+  res.keyframes = keys.length;
+  res.gopMax = gaps.length ? Math.max(...gaps) : res.packets;
+  res.bFrames = reorder > 0;
+  const sorted = [...ts].sort((a, b) => a - b);
+  const d = sorted.slice(1).map((t, j) => t - sorted[j]);
+  const dMin = Math.min(...d), dMax = Math.max(...d);
+  res.cfr = (dMax - dMin) < 1e-3;
+  res.frameDur = +(sorted.length > 1 ? (sorted[sorted.length - 1] - sorted[0]) / (sorted.length - 1) : 0).toFixed(5);
+  const fps = 1 / res.frameDur;
+  const t0 = sorted[0];
+
+  const sink = new VideoSampleSink(track);
+
+  // Sequential decode throughput.
+  let n = 0; const tS = performance.now();
+  for await (const s of sink.samples()) { n++; s.close(); }
+  res.seqFps = Math.round(n / ((performance.now() - tS) / 1000));
+
+  // Random seeks + exactness: returned timestamp must be the frame we asked for.
+  const total = ts.length, N = 60, lat = [], bad = [];
+  for (let k = 0; k < N; k++) {
+    const f = Math.floor(Math.random() * total);
+    const want = sorted[f];
+    const t = performance.now();
+    const s = await sink.getSample(want + res.frameDur * 0.25); // mid-frame query, like a transport time
+    lat.push(performance.now() - t);
+    if (!s || Math.abs(s.timestamp - want) > 1e-4) bad.push(f);
+    s?.close();
+  }
+  res.randomSeekMs = { p50: +f1(pct(lat, .5)), p95: +f1(pct(lat, .95)), max: +f1(Math.max(...lat)) };
+  res.seekMismatches = bad.length;
+
+  // Worst case for long GOP: step back one frame at a time from the end of a GOP.
+  const stepLat = [];
+  const start = Math.min(total - 1, Math.max(res.gopMax, 30));
+  for (let f = start; f > start - 12 && f >= 0; f--) {
+    const t = performance.now();
+    const s = await sink.getSample(sorted[f] + res.frameDur * 0.25);
+    stepLat.push(performance.now() - t); s?.close();
+  }
+  res.stepBackMs = { p50: +f1(pct(stepLat, .5)), max: +f1(Math.max(...stepLat)) };
+
+  // Leave frame 0..N drawable for the slider.
+  window.__sink = sink; window.__ts = sorted; window.__dur = res.frameDur;
+  const sc = document.getElementById('scrub'); sc.max = total - 1;
+  return res;
+}
+
+async function show(f) {
+  const s = await window.__sink.getSample(window.__ts[f] + window.__dur * 0.25);
+  if (!s) return;
+  s.draw(ctx, 0, 0, cv.width, cv.height);
+  document.getElementById('frameLbl').textContent = `frame ${f} ts ${s.timestamp.toFixed(4)}`;
+  s.close();
+}
+document.getElementById('scrub').oninput = (e) => show(+e.target.value);
+
+async function run(source, name) {
+  out.textContent = '';
+  try {
+    const r = await analyse(source, name);
+    window.__result = r;
+    log(JSON.stringify(r, null, 1));
+    await show(Math.floor(window.__ts.length / 2));
+  } catch (e) { window.__result = { name, error: String(e) }; log('ERROR', e.stack || e); }
+}
+window.runClip = (url) => run(new UrlSource(new URL(url, location.href).href), url);
+
+document.getElementById('run').onclick = () => {
+  const f = document.getElementById('file').files[0];
+  if (f) run(new BlobSource(f), f.name);
+};
+const q = new URLSearchParams(location.search).get('clip');
+if (q) window.runClip(q);
+</script>

@@ -18,6 +18,7 @@
 
 import * as THREE from 'three';
 import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintScoped, requestPaintForced, markAllPanelsDirty, notePanelDirty } from './install.js';
+import NodeMaterials from '../../render/nodes/NodeMaterials.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 
 // ── Menu color grade (brightness / saturation) ──────────────────────────────
@@ -63,6 +64,15 @@ let _grade = (() => { const o = getOptionsURL(); return _gradeFactors(o.menuBrig
 // texture sample) and register it so setMenuColorGrade can update it. Used by HTMLVRPanel's own
 // material and by registerGradeMaterial() for external canvas panels (timeline / blendshapes).
 function _installGrade(mat) {
+  // A node panel carries its grade as uniforms, not as a shader patch: onBeforeCompile is
+  // never called by WebGPURenderer.
+  if (mat.userData && mat.userData.grade) {
+    mat.userData.grade.bright.value = _grade.bright;
+    mat.userData.grade.sat.value = _grade.sat;
+    mat.userData.grade.gamma.value = _grade.gamma;
+    _gradeMats.add(mat);
+    return mat;
+  }
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uPanelBright = { value: _grade.bright };
     shader.uniforms.uPanelSat    = { value: _grade.sat };
@@ -90,11 +100,32 @@ export function registerGradeMaterial(mat) {
   return mat;
 }
 
+// Material for a canvas-textured panel (timeline / blendshapes). Same node panel material as an
+// HTMLVRPanel, so the two take the identical colour path: the stock MeshBasicMaterial + the
+// onBeforeCompile grade is ignored by WebGPURenderer, which left these panels ungraded and a
+// different colour from every other menu.
+export function makeCanvasPanelMaterial(tex) {
+  const node = NodeMaterials.panel({ depthWrite: true, depthTest: true });
+  if (node) {
+    node.userData.setMap(tex);
+    return _installGrade(node);
+  }
+  return registerGradeMaterial(new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: true, depthTest: true,
+  }));
+}
+
 // Set the menu brightness/saturation from the Settings sliders (0..1 each).
 let _gradeRecompileTimer = null;
 export function setMenuColorGrade(b01, s01, g01) {
   _grade = _gradeFactors(b01, s01, g01);
   for (const m of _gradeMats) {
+    if (m.userData && m.userData.grade) {
+      m.userData.grade.bright.value = _grade.bright;
+      m.userData.grade.sat.value = _grade.sat;
+      m.userData.grade.gamma.value = _grade.gamma;
+      continue;
+    }
     const sh = m.userData.gradeShader;
     if (sh) {
       sh.uniforms.uPanelBright.value = _grade.bright;
@@ -334,6 +365,12 @@ export function panelPixelSize(el, fallbackW, fallbackH) {
 }
 
 export class HTMLVRPanel {
+  // EVERY LIVE PANEL, so a probe can ask them questions from the console. The panels do not
+  // draw at all under ?renderer=webgpu and there is no desktop preview of them, so the only
+  // way to find out why is to ask on the device -- and per the diagnostics rule that answer
+  // has to land in the console, where it can be copied out of a headset.
+  static _live = new Set();
+
   /**
    * @param {HTMLElement} element   Root DOM element to render.  Not yet in document —
    *                                this constructor appends it to the shared host canvas.
@@ -345,6 +382,7 @@ export class HTMLVRPanel {
 
     // Pointer drag state
     this._sliderDragTarget = null;
+    this._wheelDrag        = null;   // a ColorWheel root while a press that started on it is held
     this._hoveredBtn       = null;
 
     // Texture / dirty flag
@@ -490,12 +528,16 @@ export class HTMLVRPanel {
     // sensibly be occluded by. So for modals only, depth comes off and renderOrder — which is
     // already set to the modal band — becomes the whole of the layering.
     const _modal = !!this._isModalOverlay;
-    const _mat = new THREE.MeshBasicMaterial({
-      side: THREE.DoubleSide,
-      transparent: true,
-      depthWrite: !_modal,  // write depth so the laser and scene geometry are properly
-      depthTest: !_modal,   // z-sorted against the panel — no draw-order tricks
-    });
+    // The node material first: the stock MeshBasicMaterial conversion does not draw under
+    // WebGPURenderer (see NodeMaterials.panel for the measurement), and it also loses the
+    // colour grade, which rides on onBeforeCompile.
+    const _mat = NodeMaterials.panel({ depthWrite: !_modal, depthTest: !_modal })
+      || new THREE.MeshBasicMaterial({
+        side: THREE.DoubleSide,
+        transparent: true,
+        depthWrite: !_modal,  // write depth so the laser and scene geometry are properly
+        depthTest: !_modal,   // z-sorted against the panel — no draw-order tricks
+      });
     _installGrade(_mat); // brightness/saturation/gamma grade from the Settings sliders
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this._meshWidth, meshH), _mat);
     // UI DRAWS AFTER THE WORLD. Depth testing still decides what is in front -- the flags above
@@ -542,6 +584,7 @@ export class HTMLVRPanel {
     if (this._startHidden) this.mesh.visible = false;
 
     scene.add(this.mesh);
+    HTMLVRPanel._live.add(this);
 
     // Trigger first paint
     this.markDirty();
@@ -653,7 +696,8 @@ export class HTMLVRPanel {
         // show a thin repeat strip at the panel edges.
         this._texture.wrapS         = THREE.ClampToEdgeWrapping;
         this._texture.wrapT         = THREE.ClampToEdgeWrapping;
-        this.mesh.material.map      = this._texture;
+        if (this.mesh.material.userData?.setMap) this.mesh.material.userData.setMap(this._texture);
+        else this.mesh.material.map = this._texture;
         this.mesh.material.needsUpdate = true;
       } else {
         this._texture.image      = bitmap;
@@ -749,6 +793,8 @@ export class HTMLVRPanel {
    * that summoned it, and a copy per overlay is a copy per overlay to keep in step.
    */
   _viewerPosition() {
+    const desk = window.app?.deskViewer?.();   // Desk Sculpt: the monitor's camera, not the headset
+    if (desk) return new THREE.Vector3().setFromMatrixPosition(desk.matrixWorld);
     const xr = this._renderer?.xr;
     if (xr?.isPresenting && xr.getCamera) {
       const c = xr.getCamera();
@@ -807,7 +853,7 @@ export class HTMLVRPanel {
     // slider owns the press. Everything else here is hover, which is deliberate — a pointermove
     // into the offscreen DOM activates :hover and costs a full rasterisation — so the scroll
     // drag joins the one existing exception rather than lifting it.
-    if (this._sliderDragTarget || this._dragScroll) {
+    if (this._sliderDragTarget || this._dragScroll || this._wheelDrag) {
       this._vrDispatch('pointermove', uv, 1, true);
       return;
     }
@@ -996,6 +1042,7 @@ export class HTMLVRPanel {
     // suppresses repaint (update() skips paint while dragging) and captures input.
     if (this._sliderDragTarget) { this._sliderDragTarget = null; this.markDirty(); }
     if (this._scrollDrag) this._scrollDrag = null;
+    this._wheelDrag = null;
     // Same for a drag-scroll: a ray that leaves the panel mid-drag must not come back to a
     // scroll still anchored to where it started, which would jump the content on the first move.
     if (this._dragScroll) { this._dragScroll = null; this.markDirty(); }
@@ -1096,9 +1143,27 @@ export class HTMLVRPanel {
    *   relX = uv.x * panelRect.width
    *   relY = uv.y * panelRect.height
    */
+  // THE RECT THE TEXTURE ACTUALLY COVERS: the panel's CONTENT box, in the same screen px as
+  // getBoundingClientRect. The rasteriser and the plane are both sized from clientWidth/Height
+  // (see panelPixelSize), which exclude a border, so uv 0..1 spans the content box. Measuring
+  // uv against the border box instead puts everything off by the border and by the ratio
+  // (client/offset) -- invisible on a borderless panel, and on one with a 2px border it is
+  // 2px at the top and ~0.7% more by the bottom, which is where matt saw the Open button's
+  // highlight drift in the Browser Saves dialog (2026-10-09).
+  _contentRect() {
+    const root = this._element;
+    const r = root.getBoundingClientRect();
+    const sx = r.width  / (root.offsetWidth  || r.width  || 1);
+    const sy = r.height / (root.offsetHeight || r.height || 1);
+    const w = (root.clientWidth  || root.offsetWidth)  * sx;
+    const h = (root.clientHeight || root.offsetHeight) * sy;
+    const left = r.left + root.clientLeft * sx, top = r.top + root.clientTop * sy;
+    return { left, top, right: left + w, bottom: top + h, width: w, height: h };
+  }
+
   _uvToElement(uv) {
     const root      = this._element;
-    const panelRect = root.getBoundingClientRect();
+    const panelRect = this._contentRect();
     const relX = uv.x * panelRect.width;
     const relY = uv.y * panelRect.height;
 
@@ -1240,7 +1305,7 @@ export class HTMLVRPanel {
     this._hoverScrollTop = this._scrollTopOf(target);
     this._hoverEl = target;
 
-    const panelRect = this._element.getBoundingClientRect();
+    const panelRect = this._contentRect();
     const r = target.getBoundingClientRect();
     if (!panelRect.width || !panelRect.height) { q.visible = false; return; }
 
@@ -1397,6 +1462,10 @@ export class HTMLVRPanel {
       let rangeEl = null;
       if (el.tagName === 'INPUT' && el.type === 'range') {
         rangeEl = el;
+      } else if (el.closest?.('.mm-val, button')) {
+        // A press ON the value readout (or any button) in a slider's row is not a miss on the
+        // track. It was caught by the branch below and clamped the slider to its end, so clicking
+        // a value to open the numpad jumped it to maximum (matt, 2026-10-09).
       } else {
         const row = el.closest?.('.mp-row, .mm-row, .acp-row, [data-row]') || null;
         const cand = row ? row.querySelector('input[type=range]') : null;
@@ -1405,12 +1474,26 @@ export class HTMLVRPanel {
           // Generous vertically -- the track is a few px tall and the point of this branch is
           // to catch a press that MISSED it -- but bounded by the row, not by the panel.
           const pad = Math.max(10, r.height);
-          if (absY >= r.top - pad && absY <= r.bottom + pad) rangeEl = cand;
+          // ...and horizontally bounded too: the catch is for a press that missed the track
+          // VERTICALLY. A press to the right of it, on the value readout or the gap beside it,
+          // was grabbing the slider and clamping it to its maximum (matt: a click on a value
+          // "jumps the slider to its maximum", and once to 4.0x).
+          const padX = 14;
+          if (absY >= r.top - pad && absY <= r.bottom + pad
+              && absX >= r.left - padX && absX <= r.right + padX) rangeEl = cand;
         }
       }
       if (rangeEl && !disabledEl(rangeEl)) this._sliderDragTarget = rangeEl;
     }
     if (type === 'pointerup') this._sliderDragTarget = null;
+
+    // A COLOUR WHEEL OWNS THE PRESS THAT STARTED ON IT, the way a slider does. Its ColorWheel
+    // listens for pointermove on the document, but a hover move is never dispatched into the DOM
+    // (see onVRMove), so a held press delivered the down and nothing after: click-to-set worked
+    // and drag did not. Moves are now forwarded while this is set, aimed at the wheel itself so
+    // they keep arriving when the ray strays off it, and the panel does not start a
+    // drag-to-scroll from the same press.
+    if (type === 'pointerdown') this._wheelDrag = el.closest?.('[data-colorwheel]') || null;
 
     const drag = this._sliderDragTarget;
     if (drag && (type === 'pointerdown' || type === 'pointermove')) {
@@ -1460,7 +1543,7 @@ export class HTMLVRPanel {
     // Content follows the finger, as it does on every touch surface: drag down and the content
     // comes down with you, so scrollTop decreases.
     if (window._dragTrace) this._dragTraceOut(type, el, absX, absY);
-    if (type === 'pointerdown' && !this._sliderDragTarget && !this._scrollDrag) {
+    if (type === 'pointerdown' && !this._sliderDragTarget && !this._scrollDrag && !this._wheelDrag) {
       const sc = this._scrollClipEl(el) || this._findScrollable(this._element);
       // Only a container that actually overflows: on a short panel this would otherwise eat
       // every press and give nothing back.
@@ -1519,7 +1602,7 @@ export class HTMLVRPanel {
       if (type === 'pointerup'   && btn) btn.classList.remove('active');
     }
 
-    const target = drag || el;
+    const target = drag || this._wheelDrag || el;
 
     // Skip DOM pointermove dispatch when nothing visual changed and no drag is
     // active.  Dispatching pointermove unconditionally causes the browser to
@@ -1528,13 +1611,14 @@ export class HTMLVRPanel {
     // and responds to by calling requestPaint() from its own internal observer —
     // bypassing our requestPaintOnce dedup and triggering a full rasterisation
     // every XR frame.  pointerdown/pointerup always dispatch so click targets fire.
-    if (type !== 'pointermove' || changed || drag) {
+    if (type !== 'pointermove' || changed || drag || this._wheelDrag) {
       target.dispatchEvent(new PointerEvent(type, {
         bubbles: true, cancelable: true, composed: true,
         pointerId: 1, pointerType: 'mouse',
         clientX: absX, clientY: absY, buttons,
       }));
     }
+    if (type === 'pointerup') this._wheelDrag = null;   // after the dispatch: the wheel's own release listener has to see it
 
     // A TAP IS A CLICK; A DRAG IS A SCROLL. The click used to fire on POINTERDOWN in VR, on the
     // reasoning that the press is the moment you meant it and aim drifts afterwards. That is
@@ -1585,3 +1669,186 @@ export class HTMLVRPanel {
     }
   }
 }
+
+// ── PANEL PROBE ───────────────────────────────────────────────────────────────
+// window._panelProbe() — why is nothing drawing?
+//
+// Reports the facts that distinguish the candidates, rather than one of them at a time:
+//   visible/parent    — is something hiding it (including a sweep of our own)
+//   matType/hasMap    — did the material survive conversion, and is a texture bound
+//   imgKind/imgSize   — did the rasteriser ever produce pixels (ImageBitmap vs nothing)
+//   inScene           — is the mesh still attached to the rendered graph
+//   drawCalls         — did the renderer draw ANYTHING near this count
+// A panel with pixels, visible, in-scene and still not on screen is a renderer problem;
+// one with no image is a rasteriser problem. Those need different fixes.
+window._panelProbe = function () {
+  const out = [];
+  for (const p of HTMLVRPanel._live) {
+    const m = p.mesh;
+    if (!m) { out.push({ name: p.constructor.name, mesh: null }); continue; }
+    let vis = m.visible, o = m.parent, inScene = false, depth = 0;
+    while (o) { if (!o.visible) vis = false; if (o.isScene) inScene = true; o = o.parent; depth++; }
+    const mat = m.material;
+    const img = mat && mat.map && mat.map.image;
+    out.push({
+      name: p.constructor.name,
+      selfVisible: m.visible,
+      visibleChain: vis,
+      inScene, depth,
+      matType: mat && mat.type,
+      // A node panel binds its texture to a NODE, not to material.map, so hasMap alone would
+      // read false on a perfectly healthy one.
+      nodePanel: !!(mat && mat.userData && mat.userData.isNodePanel),
+      nodeMapSet: !!(mat && mat.userData && mat.userData.isNodePanel && p._texture),
+      isNodeMat: !!(mat && mat.isNodeMaterial),
+      hasMap: !!(mat && mat.map),
+      imgKind: img ? (img.constructor && img.constructor.name) : null,
+      imgSize: img ? `${img.width}x${img.height}` : null,
+      mapVersion: mat && mat.map ? mat.map.version : null,
+      // WHERE IT ACTUALLY IS, not where its local transform says. The panel is submitted
+      // (4 draw calls) and an opaque depthTest:false material still shows nothing, so it is
+      // not hidden and not occluded -- it is somewhere the eye is not. A NaN anywhere in the
+      // parent chain makes geometry vanish silently while every flag stays healthy, which is
+      // exactly the shape of this bug.
+      world: (() => {
+        m.updateMatrixWorld(true);
+        const e = m.matrixWorld.elements;
+        const bad = e.some((v) => !Number.isFinite(v));
+        return {
+          pos: [+e[12].toFixed(3), +e[13].toFixed(3), +e[14].toFixed(3)],
+          nan: bad,
+          parent: m.parent ? (m.parent.name || m.parent.type) : null,
+          parentNaN: m.parent ? m.parent.matrixWorld.elements.some((v) => !Number.isFinite(v)) : null,
+          scaleW: [+m.matrixWorld.elements[0].toFixed(3), +m.matrixWorld.elements[5].toFixed(3)],
+        };
+      })(),
+      opacity: mat && mat.opacity,
+      renderOrder: m.renderOrder,
+      pos: m.position.toArray().map(n => +n.toFixed(2)),
+      scale: m.scale.toArray().map(n => +n.toFixed(2)),
+    });
+  }
+  console.log('[panelProbe] ' + JSON.stringify(out, null, 1));
+  return out.length;
+};
+
+// ── PANEL DRIFT ───────────────────────────────────────────────────────────────
+// window._panelDrift() — does the TEXTURE agree with the DOM about where a row is?
+//
+// The hover quad is placed from live DOM rects (getBoundingClientRect), but what you SEE is an
+// SVG rasterisation of a CLONE of that DOM. Those are two different layouts, and nothing in the
+// app checks that they agree. matt: "the highlight is increasingly misaligned the lower down the
+// menu... at the top its more aligned", which is the signature of the rasterised content
+// creeping relative to the DOM rather than of any single wrong number in the quad maths.
+//
+// So this measures the map between them instead of arguing about it. Two magenta bars are put
+// INTO THE FLOW -- one before the first row, one before the last fully visible row -- so they
+// are carried by exactly the same layout the rows are; then the panel is rasterised and the bars
+// are found in the bitmap. Their DOM separation and their TEXTURE separation should be equal:
+//
+//   scale 1.000, drift 0.0    the two layouts agree; the misalignment is somewhere else
+//   scale 0.985, drift -6.2   the texture lays the rows out SHORTER than the DOM does, so the
+//                             quad (correct per the DOM) sits BELOW the row you can see, by
+//                             more the further down you go
+//
+// Magenta, not white: a panel is full of white sliders and labels, and "brightest row" would
+// find one of those. Bars are removed and the panel repainted before this returns.
+window._panelDrift = async function (name) {
+  const live = [...HTMLVRPanel._live];
+  const re = name ? new RegExp(name, 'i') : null;
+  const p = live.find(q => q.mesh && q.mesh.visible && (!re || re.test(q.constructor.name)))
+         || live.find(q => !re || re.test(q.constructor.name));
+  if (!p || !p._element) { console.log('[panelDrift] no panel' + (name ? ' matching ' + name : '')); return null; }
+  const el = p._element;
+
+  // The container that actually holds the rows: the one with the longest run of children
+  // STACKED one under the other. Plain "most children" picks a 3-across button grid on some
+  // hidden tab, and a marker in a grid cell measures a box the rows do not move with.
+  let flow = null, best = 0;
+  for (const n of [el, ...el.querySelectorAll('*')]) {
+    if (n.getBoundingClientRect().height < 80) continue;
+    const kids = [...n.children].filter(c => { const r = c.getBoundingClientRect(); return r.height > 8 && r.width > 40; });
+    let stacked = 0;
+    for (let i = 1; i < kids.length; i++) {
+      if (kids[i].getBoundingClientRect().top >= kids[i - 1].getBoundingClientRect().bottom - 2) stacked++;
+    }
+    if (stacked > best) { best = stacked; flow = n; }
+  }
+  if (!flow) { console.log('[panelDrift] no stacked rows in ' + p.constructor.name); return null; }
+  const mk = () => {
+    const d = document.createElement('div');
+    d.dataset.driftMarker = '1';
+    d.style.cssText = 'height:2px;min-height:2px;width:100%;flex:0 0 100%;background:#ff00ff;';
+    return d;
+  };
+  const kids = [...flow.children].filter(c => { const r = c.getBoundingClientRect(); return r.height > 8 && r.width > 40; });
+  if (kids.length < 2) { console.log('[panelDrift] nothing to measure in ' + p.constructor.name); return null; }
+  const clipBot = el.getBoundingClientRect().bottom;
+  const lastVis = [...kids].reverse().find(c => c.getBoundingClientRect().bottom <= clipBot - 6) || kids[kids.length - 1];
+  const a = mk(), b = mk();
+  flow.insertBefore(a, kids[0]);
+  flow.insertBefore(b, lastVis);
+
+  const frame = () => new Promise(r => requestAnimationFrame(r));
+  let out = null, why = 'no paint: the polyfill only rasterises while something drains its rAF (Scene does, in session)';
+  try {
+    for (let tries = 0; tries < 12 && !out; tries++) {
+      requestPaintForced(getHostCanvas());
+      // The polyfill rasterises on its own rAF, and in an XR session that rAF only runs when
+      // Scene drains it -- so drain it here too, or this waits for a frame that never comes.
+      await frame(); drainRAF(); await frame();
+      await new Promise(r => setTimeout(r, 60));
+      let cv = null;
+      try { cv = getHostCanvas().captureElementImage(el); } catch (e) { why = 'capture: ' + (e?.message || e); continue; }
+      if (!cv || !cv.width) { why = 'capture returned an empty bitmap'; continue; }
+      const W = cv.width, H = cv.height;
+      const x0 = Math.floor(W * 0.35), w = Math.max(4, Math.floor(W * 0.3));
+      const px = cv.getContext('2d').getImageData(x0, 0, w, H).data;
+      // Rows that are magenta across the strip: r and b high, g low.
+      const hit = [];
+      for (let y = 0; y < H; y++) {
+        let n = 0;
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (px[i] > 170 && px[i + 2] > 170 && px[i + 1] < 90) n++;
+        }
+        if (n > w * 0.8) hit.push(y);
+      }
+      if (hit.length < 2) { why = 'markers not in the bitmap (stale capture, or the panel repainted without them)'; continue; }
+      const band = [];                       // consecutive rows -> one bar
+      for (const y of hit) {
+        const last = band[band.length - 1];
+        if (last && y - last.end <= 1) { last.end = y; } else band.push({ start: y, end: y });
+      }
+      if (band.length < 2) { why = 'only one marker band found'; continue; }
+      const first = band[0], lastB = band[band.length - 1];
+      const sy = H / (el.clientHeight || 1);   // bitmap px per CSS px
+      const texA = ((first.start + first.end) / 2 + 0.5) / sy;
+      const texB = ((lastB.start + lastB.end) / 2 + 0.5) / sy;
+      const rt = el.getBoundingClientRect().top;
+      const domA = a.getBoundingClientRect().top - rt + 1;
+      const domB = b.getBoundingClientRect().top - rt + 1;
+      const scale = (texB - texA) / (domB - domA);
+      out = {
+        panel: p.constructor.name,
+        elem: `${el.clientWidth}x${el.clientHeight}`,
+        bitmap: `${W}x${H}`,
+        dpr: +(H / (el.clientHeight || 1)).toFixed(3),
+        domA: +domA.toFixed(2), texA: +texA.toFixed(2),
+        domB: +domB.toFixed(2), texB: +texB.toFixed(2),
+        // 1.000 = the texture and the DOM lay the rows out identically.
+        scale: +scale.toFixed(4),
+        // CSS px the texture has crept by, at the bottom marker. Negative = content sits HIGHER
+        // than the DOM says, so the highlight lands BELOW the row.
+        drift: +(texB - texA - (domB - domA)).toFixed(2),
+        // Where the content starts, relative to where the quad maths assumes it does.
+        offsetAtTop: +(texA - domA).toFixed(2),
+      };
+    }
+  } finally {
+    a.remove(); b.remove();
+    requestPaintForced(getHostCanvas());
+  }
+  console.log('[panelDrift] ' + (out ? JSON.stringify(out) : 'no reading — ' + why));
+  return out;
+};

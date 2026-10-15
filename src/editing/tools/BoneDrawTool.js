@@ -4,7 +4,11 @@ import SculptBase from './SculptBase.js';
 import Skeleton from '../Skeleton.js';
 import Skinning from '../Skinning.js';
 import IKSolver from '../IKSolver.js';
+import RigTopology from '../RigTopology.js';
+import { autoOrient } from '../JointOrient.js';
 import Enums from '../../misc/Enums.js';
+import Utils from '../../misc/Utils.js';
+import Geometry from '../../math3d/Geometry.js';
 
 // Minimum gap between live weight re-solves while dragging a radius. Slow enough that a dense
 // mesh keeps its framerate, fast enough that the recolour still reads as continuous.
@@ -109,12 +113,24 @@ const BONE_PICK_SLACK = 1.5;
 const _vGrab = new THREE.Vector3();
 const _halfDrag = [0, 0, 0];
 const _jpRad = new THREE.Vector3();
+const _axDrag = new THREE.Vector3(), _offDrag = new THREE.Vector3();
+const _rv0 = new THREE.Vector3(), _rv1 = new THREE.Vector3(), _rq = new THREE.Quaternion();
+const _ringP = new THREE.Vector3();
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
 const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
 const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
 const _snapTo = new THREE.Vector3();
-const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2();
+const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2(), _s3 = new THREE.Vector2();
+const _s2 = new THREE.Vector2(), _pickTmp = new THREE.Vector3(), _pickR = new THREE.Vector3();
+// The volume probe's own scratch: a model-space ray, a mesh-space copy of it, and the
+// matrices either way.
+const _vO = new THREE.Vector3(), _vD = new THREE.Vector3();
+const _vP = new THREE.Vector3(), _vMesh = new THREE.Matrix4(), _vInv = new THREE.Matrix4();
+const _vNear = [0, 0, 0], _vDir = [0, 0, 0], _vHit = [0, 0, 0];
+const _vA = [0, 0, 0], _vB = [0, 0, 0], _vC = [0, 0, 0];
+const _vT = [], _vSpans = [];
+const _vUp = new THREE.Vector3(0, 1, 0), _vX = new THREE.Vector3(1, 0, 0);
 
 // Distance in px from (px,py) to the segment a-b. The bone pick is a segment pick, not a
 // joint pick — a capsule is grabbed anywhere along its shaft, which is where you look when
@@ -133,6 +149,7 @@ class BoneDrawTool extends SculptBase {
     this._continuous = false;
 
     this._chainParent = null;       // joint the next click parents to (null = new root)
+    this._volAnchor = null;         // last depth read off the mesh, for the silhouette fallback
     this._chainParentMirror = null; // its mirrored twin, when symmetry is on
     this._chainName = 'bone';
     this._chainIndex = 0;
@@ -308,6 +325,7 @@ class BoneDrawTool extends SculptBase {
 
   _snapEnabled() { return Skeleton.displayFlag('snapPlane'); }
   _axisEnabled() { return Skeleton.displayFlag('snapAxis'); }
+  _flatEnabled() { return Skeleton.displayFlag('snapFlat'); }
 
   _onPlane(p, plane) {
     return !!plane && Math.abs(Skeleton.planeDistance(p, plane)) <= 1e-4;
@@ -322,19 +340,41 @@ class BoneDrawTool extends SculptBase {
     if (this._inSnapBand(at, plane)) {
       at = Skeleton.projectToPlane(at, plane, out);
     }
-    if (parent && this._axisEnabled()) {
+    if (parent && (this._axisEnabled() || this._flatEnabled())) {
       const from = Skeleton.jointPos(parent, _from);
       // Only guard the normal when BOTH ends sit on the plane; otherwise the bone is a
       // side bone and every axis is fair game (an eye pointing down Z, say).
       const guard = (this._onPlane(at, plane) && this._onPlane(from, plane))
         ? plane.normal : null;
-      at = Skeleton.snapAxis(from, at, out, guard);
+      // AXIS FIRST, FLATNESS SECOND, and only if the axis did not fire. A direction nearly ALONG
+      // an axis is also nearly perpendicular to the other two, so letting flatness go first
+      // would have it win on almost every axis-snapped bone -- the looser, less specific intent
+      // overriding the tighter one.
+      let snapped = null;
+      if (this._axisEnabled()) {
+        const ai = Skeleton.snapAxisInfo(from, at, guard);
+        if (ai && ai.axis) snapped = Skeleton.snapAxis(from, at, out, guard);
+      }
+      if (!snapped && this._flatEnabled()) {
+        const fi = Skeleton.snapFlatInfo(from, at);
+        // `inBand`, because snapFlatInfo now ANSWERS for the nearest plane whether or not it is
+        // close enough -- the disc needs the nearest one to draw dim, the snap needs it to be in
+        // band. Reading the object without checking the flag would flatten every bone in the rig.
+        //
+        // The guarded normal is not a legal PLANE either: flattening into it is exactly the move
+        // that would take a centreline bone off the centreline, which is what the guard is for.
+        if (fi && fi.inBand && !(guard && Math.abs(fi.normal.dot(guard)) > 0.9)) {
+          snapped = Skeleton.snapFlat(from, at, out, fi.normal);
+        }
+      }
+      if (snapped) at = snapped;
     }
     return at;
   }
 
   // Place one joint (plus its mirror) and advance the chain.
-  _place(pos) {
+  // `radius` (desktop Bone Draw: _radiusGuess) sizes the new joint and its twin; 0 = default.
+  _place(pos, radius) {
     const main = this._main;
     const parent = this._validParent();
 
@@ -403,6 +443,21 @@ class BoneDrawTool extends SculptBase {
       this._chainParentMirror = joint;
     }
 
+    // The guess rides on the joints themselves, so the one undo step below (which removes and
+    // re-adds them whole) already covers it.
+    //
+    // CAPPED BY THE BONE IT ENDS, and not guessed at all for a chain's first joint. Measured on
+    // matt's hand-fitted wrestler rig, a limb joint's radius is 0.2-0.45 of the bone leading to it. A silhouette cannot tell a shoulder from the torso it
+    // sits in -- it reads the whole mass -- so the length of the bone is the one limit that
+    // knows. A root has no bone, and its radius is a design choice, so it keeps the default.
+    if (radius > 0 && parent && Skeleton.isJoint(parent)) {
+      // Centreline joints (belly, chest, head) are the masses, and matt's own rig puts them at 0.7-1.0
+      // of the bone; the limbs either side sit at 0.2-0.45.
+      const k = offPlane ? 0.45 : 0.9;
+      radius = Math.min(radius, k * Skeleton.jointPos(joint).distanceTo(Skeleton.jointPos(parent)));
+    } else radius = 0;
+    if (radius > 0) for (const m of made) m.mesh._jointRadius = radius;
+
     this._chainParent = joint;
     this._chainIndex++;
     const chainAfter = { parent: this._chainParent, mirror: this._chainParentMirror,
@@ -460,6 +515,9 @@ class BoneDrawTool extends SculptBase {
     // to be in at the first scrub, which is the history the rest pose exists to remove. Filling
     // it here costs one matrix and makes drawing the rig the moment that defines it.
     IKSolver.captureRest(main);
+    // The chain just grew, so some joint's bend (and with it its hinge) is new: turn the joints
+    // that need it onto their frame. Joined to the Draw Bone undo step just pushed.
+    autoOrient(main);
     this._refresh();
 
     // Deep trace (window._boneTrace = true). Logs the requested position next to where the
@@ -476,10 +534,12 @@ class BoneDrawTool extends SculptBase {
 
   // ---- desktop / iPad ------------------------------------------------------------
   //
-  // DRAW places the joint at the picked surface point. It cannot do better — there is no
-  // depth channel on a flat screen, which is exactly the limitation this feature is built to
-  // escape — so treat it as a way to rough a chain in and nudge it afterwards, not as the
-  // real workflow.
+  // DRAW places the joint at the MIDPOINT OF THE VOLUME under the cursor -- see
+  // _volumeSpanT. A flat screen has no depth channel, but the mesh does: it knows how thick
+  // it is under the pointer, and halfway through is where a bone goes. That is a real answer
+  // rather than an invented one, and it is why fitting a rig to an existing sculpt works
+  // here. Off the mesh there is nothing to measure and it falls back to the camera-facing
+  // plane below.
   //
   // The other modes DO have a 2D answer, because none of them is placing a new joint in the
   // volume: they are moving, rotating or sizing something that already has a position. The
@@ -575,6 +635,62 @@ class BoneDrawTool extends SculptBase {
     return true;
   }
 
+  // The handle under the cursor, in SCREEN space. The old desktop pick intersected the cursor ray
+  // with a camera-facing plane through the JOINT and compared that point to each dot's 3D
+  // position — but the near and far face dots sit in front of and behind that plane, so the ray
+  // hit them at a parallax offset and they lit up beside the dot, not on it. Projecting the dots
+  // and comparing pixels picks what is drawn where it is drawn.
+  _pickHandleScreen() {
+    const main = this._main;
+    const h = main._jointHandles;
+    if (!h || !h.group.visible || !h.joint) return null;
+    const mx = main._mouseX, my = main._mouseY;
+    let best = null, bestD = this._pickPx() * 1.3;
+    for (let i = 0; i < h.pos.length; i++) {
+      if (!this._toScreen(h.pos[i], _s0)) continue;
+      const d = Math.hypot(_s0.x - mx, _s0.y - my);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best !== null) return Object.assign({ kind: 'face', index: best }, Skeleton.scaleHandleAxis(best));
+    // THE RINGS, sampled round their circumference and compared in pixels like the dots — what is
+    // drawn where it is drawn. Only when no dot is under the cursor: a dot is the smaller target.
+    let ring = -1;
+    bestD = this._pickPx();
+    for (let k = 0; k < 3; k++) {
+      if (!h.ringOn || !h.ringOn[k]) continue;
+      const a = h.ringAxis[k];
+      _wA.set(Math.abs(a.x) < 0.9 ? 1 : 0, Math.abs(a.x) < 0.9 ? 0 : 1, 0).cross(a).normalize();
+      _wB.crossVectors(a, _wA);
+      for (let n = 0; n < 48; n++) {
+        const t = (n / 48) * Math.PI * 2;
+        _ringP.copy(h.centrePos).addScaledVector(_wA, Math.cos(t) * h.ringR)
+          .addScaledVector(_wB, Math.sin(t) * h.ringR);
+        if (!this._toScreen(_ringP, _s0)) continue;
+        const d = Math.hypot(_s0.x - mx, _s0.y - my);
+        if (d < bestD) { bestD = d; ring = k; }
+      }
+    }
+    return ring < 0 ? null : Skeleton.ringHandle(ring);
+  }
+
+  // Where the cursor meets a ring's own plane, for a rotate drag. A ring seen nearly edge-on has no
+  // useful intersection, so that case falls back to the camera plane through the joint; the drag
+  // then projects onto the ring's plane itself (see _scaleTo), which still turns the right way.
+  _ringPoint(out) {
+    const sc = this._scale;
+    const h = this._main._jointHandles;
+    // A volume's twist ring is on the bone axis at the ring's drawn centre (see updateScaleHandles).
+    const v = this._vol;
+    if ((!sc && !v) || !h || !this._screenRay(_rayO, _rayD)) return false;
+    const a = sc ? sc.ringAxis : v.f.d;
+    const centre = sc ? sc.centre : h.centrePos;
+    const denom = a.dot(_rayD);
+    if (Math.abs(denom) < 0.2) return this._planePoint(h.centrePos, out);
+    const t = a.dot(_wA.copy(centre).sub(_rayO)) / denom;
+    out.copy(_rayO).addScaledVector(_rayD, t);
+    return true;
+  }
+
   _pickJointScreen() {
     const main = this._main;
     const mx = main._mouseX, my = main._mouseY;
@@ -613,9 +729,54 @@ class BoneDrawTool extends SculptBase {
 
   // The screen twin of _pickRigNode: the joint under the cursor, else the ROOT of the bone under
   // it. Same reasoning, same Maya model -- see the note there.
+  // THE VOLUME UNDER THE CURSOR (Bone Volumes): each is a thick line on screen -- its axis from root face
+  // to far face, as wide as its section projects -- so the pick is "on the drawn volume", not "near
+  // its centre line". The most central hit wins. Returns the bone's END joint; `_lastVolHit` keeps it.
+  _pickVolumeScreen() {
+    const main = this._main;
+    const mx = main._mouseX, my = main._mouseY;
+    this._lastVolHit = null;
+    const f = this._pickFrame || (this._pickFrame = {});
+    let best = null, bestScore = 1;
+    for (const j of Skeleton.joints(main)) {
+      if (!Skeleton.boneHasCapsule(j) || !Skeleton.jointVisible(j)) continue;
+      Skeleton.volumeFrame(main, j, f);
+      if (!this._toScreen(f.C0, _s0) || !this._toScreen(f.C1, _s1)) continue;
+      const rr = f.r * Math.max(f.W, f.H);
+      _pickTmp.copy(f.C0).addScaledVector(this._camRight(_pickR), rr);
+      if (!this._toScreen(_pickTmp, _s2)) continue;
+      const half = Math.max(Math.hypot(_s2.x - _s0.x, _s2.y - _s0.y), 4);
+      const d = _distToSegment(mx, my, _s0, _s1);
+      const score = d / half;                       // < 1 means inside the drawn width
+      if (score < bestScore) { bestScore = score; best = j; }
+    }
+    this._lastVolHit = best;
+    return best;
+  }
+
   _pickRigNodeScreen() {
     const j = this._pickJointScreen();
-    if (j) return j;
+    if (j) {
+      this._lastVolHit = null;
+      // A SHORT VOLUME IS ALL JOINT ON SCREEN: the joint pick reaches most of the way along it from both
+      // ends, so the volume pick never ran and the hips' centre volume (to the spine) could not be taken.
+      // matt: "i can't select the center one". So off the dot itself, a volume LEAVING this joint that
+      // is under the cursor says which of its volumes to edit; it selects the same joint either way.
+      // Right on the dot, nothing changes: a tap there still cycles the joint's volumes.
+      if (Skeleton.displayFlag('volumes')) {
+        const main = this._main;
+        Skeleton.jointPos(j, _jp);
+        const onDot = this._toScreen(_jp, _s3)
+          && Math.hypot(_s3.x - main._mouseX, _s3.y - main._mouseY) < this._pickPx() * 0.4;
+        const v = onDot ? null : this._pickVolumeScreen();
+        this._lastVolHit = (v && v._parentMesh === j) ? v : null;
+      }
+      return j;
+    }
+    if (Skeleton.displayFlag('volumes')) {
+      const v = this._pickVolumeScreen();
+      if (v && Skeleton.isJoint(v._parentMesh)) return v._parentMesh;
+    }
     const bone = this._pickBoneScreen();
     const root = bone && bone._parentMesh;
     const main = this._main;
@@ -687,7 +848,19 @@ class BoneDrawTool extends SculptBase {
 
   start() {
     if (this._main._xrSession) return false; // VR drives everything from updateXR
-    if (this._mode === 'grab') return this._grabTool()?.start(...arguments) || false;
+    if (this._mode === 'grab') {
+      const g = this._grabTool();
+      if (!g) return false;
+      if (g.start(...arguments)) return true;
+      // THE PRESELECT AND THE GRAB'S PICK ARE DIFFERENT TESTS. The highlight comes from the
+      // screen pick (a joint, or the root of the bone under the cursor), but Grab's own pick
+      // only lands on a joint's point or a pin -- bone bodies are not pickable in this mode.
+      // So a bone lit yellow could still miss on press, and the press fell through to the
+      // camera (desktop) or did nothing (iPad). Take what is lit.
+      const h = this._hilite;
+      if (h && this._main.getMeshes().includes(h)) { g._forcePick = h; return g.start(...arguments) || false; }
+      return false;
+    }
     if (this._mode === 'draw') return this._startDraw();
     return this._startScreenDrag();
   }
@@ -717,7 +890,10 @@ class BoneDrawTool extends SculptBase {
     if (!parent && !this._onHilitedJoint()
         && this._hasSculpt() && !this._surfacePoint(_surf, true)) return false;
     const anchor = this._drawAnchor(_jp2);
-    if (!anchor || !this._planePoint(anchor, _hit)) return false;
+    // A press starts a fresh reading of the volume: the depth carried over from the last
+    // joint's drag has nothing to say about where this one goes.
+    this._volAnchor = null;
+    if (!anchor || !this._drawTip(anchor, _hit)) return false;
     this._drag = { kind: 'draw', pos: _hit.clone(), anchor: anchor.clone() };
     this._drawFeedback(this._drag.pos);
     return true;
@@ -740,6 +916,11 @@ class BoneDrawTool extends SculptBase {
     // The cursor goes with it: the plane sizes itself to stay clear of where you are drawing.
     Skeleton.updatePlane(main, plane, !!this._hot, this._drag ? this._drag.pos : null);
   }
+
+  // The axis gnomon is NOT driven from here. It lives in Skeleton.showPreview, which both the
+  // desktop and VR paths already call with the parent and the resolved candidate -- see the note
+  // there. Driving it from this tool meant postRender (which the node renderer never calls) and
+  // a `_drag` that does not exist in a headset.
 
   // Model-space centre of the sculpt — the depth a joint gets when there is no plane and no
   // parent to take one from. Its own bounding sphere, carried into model space the same way
@@ -771,7 +952,8 @@ class BoneDrawTool extends SculptBase {
     return out.divideScalar(js.length);
   }
 
-  // Depth for the camera-facing plane the tip rides in:
+  // Depth for the camera-facing plane the tip rides in WHEN THERE IS NO VOLUME UNDER THE
+  // CURSOR -- the fallback, not the usual case; _drawTip prefers the mesh's own midpoint.
   //   mid-chain   the joint you are continuing from
   //   new chain   the middle of the sculpt
   //
@@ -792,11 +974,231 @@ class BoneDrawTool extends SculptBase {
     return this._modelCentre(out);
   }
 
+  // ── THE MIDPOINT OF THE VOLUME UNDER THE CURSOR ────────────────────────────────────────
+  //
+  // matt: "when fitting a skeleton to an existing mesh, it really should select the midpoint
+  // under the mesh ... if its just 2 hits, go to the midpoint."
+  //
+  // This is the one depth a flat screen CAN supply honestly. The camera-facing plane above
+  // invents a depth and hopes; the mesh actually knows how thick it is under the cursor, and
+  // halfway through it is where a bone goes. Pointing at an arm puts the joint inside the arm
+  // rather than on its skin or at the body's mid-depth.
+  //
+  // ALL hits, not the nearest: the nearest one is the surface, which is the wrong answer and
+  // the reason the root used to be taken from the model centre instead. twoSided, because the
+  // far wall of a closed mesh is a BACK face and skipping it leaves every span open.
+  //
+  // THE NEAREST SPAN WINS when the ray crosses several. It is the one you can see, so it is
+  // the one you meant -- pointing at a hand crossing a torso gives the hand. The alternative,
+  // the thickest span, quietly prefers the body from every angle where a limb overlaps it,
+  // which is most of them. Anything behind the nearest span is reached by orbiting, which is
+  // the same answer a screen gives for every other occlusion.
+  _volumeSpanT(o, d) {
+    const meshes = this._main.getMeshes() || [];
+    _vSpans.length = 0;
+    for (const mesh of meshes) {
+      if (!mesh || Skeleton.isJoint(mesh) || mesh._isNull) continue;
+      _vT.length = 0;
+      if (mesh.isVisible && mesh.isVisible() === false) continue;
+      if (!mesh.getModelSpaceMatrix || !mesh.intersectRay) continue;
+      // Model -> mesh local, so the octree and the triangles are asked in their own space.
+      _vMesh.fromArray(mesh.getModelSpaceMatrix());
+      _vInv.copy(_vMesh).invert();
+      _vP.copy(o).applyMatrix4(_vInv);
+      _vNear[0] = _vP.x; _vNear[1] = _vP.y; _vNear[2] = _vP.z;
+      _vP.copy(o).add(d).applyMatrix4(_vInv);
+      _vDir[0] = _vP.x - _vNear[0]; _vDir[1] = _vP.y - _vNear[1]; _vDir[2] = _vP.z - _vNear[2];
+      const dl = Math.hypot(_vDir[0], _vDir[1], _vDir[2]);
+      if (!(dl > 1e-12)) continue;
+      _vDir[0] /= dl; _vDir[1] /= dl; _vDir[2] /= dl;
+
+      const faces = mesh.intersectRay(_vNear, _vDir);
+      if (!faces || !faces.length) continue;
+      const vAr = mesh.getVertices();
+      const fAr = mesh.getFaces();
+      for (let i = 0; i < faces.length; i++) {
+        const f = faces[i] * 4;
+        const i1 = fAr[f] * 3, i2 = fAr[f + 1] * 3, i3 = fAr[f + 2] * 3;
+        _vA[0] = vAr[i1]; _vA[1] = vAr[i1 + 1]; _vA[2] = vAr[i1 + 2];
+        _vB[0] = vAr[i2]; _vB[1] = vAr[i2 + 1]; _vB[2] = vAr[i2 + 2];
+        _vC[0] = vAr[i3]; _vC[1] = vAr[i3 + 1]; _vC[2] = vAr[i3 + 2];
+        let hd = Geometry.intersectionRayTriangle(_vNear, _vDir, _vA, _vB, _vC, _vHit, true);
+        if (hd >= 0.0) this._pushT(o, d, _vHit);
+        // A QUAD IS TWO TRIANGLES AND BOTH CAN BE HIT. Picking takes the second only when the
+        // first misses, because it wants the nearest hit and one of them has it. A span needs
+        // every crossing, so both halves are tested every time -- a ray entering through one
+        // half of a quad and leaving through the other half of another is ordinary.
+        const q = fAr[f + 3];
+        if (q !== Utils.TRI_INDEX) {
+          const i4 = q * 3;
+          _vB[0] = vAr[i4]; _vB[1] = vAr[i4 + 1]; _vB[2] = vAr[i4 + 2];
+          hd = Geometry.intersectionRayTriangle(_vNear, _vDir, _vA, _vC, _vB, _vHit, true);
+          if (hd >= 0.0) this._pushT(o, d, _vHit);
+        }
+      }
+      this._pushSpans();
+    }
+    return this._nearestSpanMid();
+  }
+
+  // One mesh's crossings -> its inside-intervals, paired off in order (in, out, in, out...).
+  // PER MESH, because the pairing is parity and parity only means anything within one closed
+  // surface. Pooled across meshes, a body and the thin clothing shell on it interleave --
+  // body-in, cloth-in, cloth-out, ... -- and the first "pair" is the body's skin and the
+  // cloth's outer face, a sliver on the front of the character. matt: "the 2 joints drawn so
+  // far aren't at the center of the volume ... right on the front of the mesh."
+  _pushSpans() {
+    _vT.sort((a, b) => a - b);
+    // A shared edge is hit by both its triangles: one crossing, reported twice. Collapse those
+    // BEFORE pairing, or the duplicate flips the parity of everything behind it.
+    const eps = this._volumeEps();
+    let n = 0;
+    for (let i = 0; i < _vT.length; i++) {
+      if (n && _vT[i] - _vT[n - 1] <= eps) continue;
+      _vT[n++] = _vT[i];
+    }
+    for (let i = 0; i + 1 < n; i += 2) _vSpans.push(_vT[i], _vT[i + 1]);
+  }
+
+  // The union of every mesh's spans, then the NEAREST merged one, midpoint. Overlap is what
+  // makes a body and the cloth over it one volume; a hand in front of a torso stays two,
+  // because the gap between them is outside both.
+  //
+  // CLOTH SITS A HAIR OFF THE SKIN, so strict overlap is not enough: a singlet 0.02 clear of
+  // the body left two volumes, and the nearest -- the cloth's thin front wall -- won. Spans
+  // closer than GAP merge, and a merged span thinner than GAP is a sliver (a shell, a belt)
+  // that only counts when there is nothing thicker to point at. Measured in the scene's own
+  // unit so it means the same on a thumbnail and on a building.
+  _nearestSpanMid() {
+    const n = _vSpans.length >> 1;
+    if (!n) return null;
+    const gap = 0.03 * (Skeleton.sceneUnit(this._main) || 1);
+    const idx = [];
+    for (let i = 0; i < n; i++) idx.push(i);
+    idx.sort((a, b) => _vSpans[a * 2] - _vSpans[b * 2]);
+    let bestLo = 0, bestHi = 0, found = false;
+    let lo = _vSpans[idx[0] * 2], hi = _vSpans[idx[0] * 2 + 1];
+    const take = () => {
+      if (!found || (hi - lo >= gap && bestHi - bestLo < gap)) { bestLo = lo; bestHi = hi; found = true; }
+    };
+    for (let k = 1; k < n; k++) {
+      const a = _vSpans[idx[k] * 2], b = _vSpans[idx[k] * 2 + 1];
+      if (a <= hi + gap) { if (b > hi) hi = b; continue; }
+      take();
+      lo = a; hi = b;
+    }
+    take();
+    this._spanLo = bestLo; this._spanHi = bestHi;   // for _radiusGuess
+    return (bestLo + bestHi) * 0.5;
+  }
+
+  // A crossing, as a distance along the model-space ray.
+  _pushT(o, d, hitLocal) {
+    _vP.set(hitLocal[0], hitLocal[1], hitLocal[2]).applyMatrix4(_vMesh).sub(o);
+    _vT.push(_vP.dot(d));
+  }
+
+  // How far apart two crossings must be to bound a real span. A fraction of the scene unit,
+  // so it means the same thing on a thumbnail and on a building.
+  _volumeEps() { return 1e-3 * (Skeleton.sceneUnit(this._main) || 1); }
+
+  // THE RADIUS OF THE LIMB UNDER THE CURSOR, guessed from the same mesh the midpoint comes from.
+  //
+  // The width of the SILHOUETTE, not the depth along the view ray: a ray off the middle of a
+  // limb crosses a chord shorter than its diameter, while the silhouette across a limb seen
+  // side-on is the diameter whatever the ray did. So four lines through the cursor (spaced round
+  // the view axis) are each grown outward until the ray no longer finds the same volume, and
+  // the NARROWEST of the four is the cross-section -- the three along the limb run on. "The same
+  // volume" means the span there overlaps the span under the cursor in depth,
+  // which keeps a body behind a limb from reading as part of it. The edge is found
+  // by doubling, then bisection, so a click costs ~100 ray casts.
+  //
+  // Never wider than the view-ray thickness through the middle (see DEPTH CHORD below). Returns 0
+  // when there is nothing to measure, and the caller then leaves the joint at the default.
+  _radiusGuess(ro, rd) {
+    const main = this._main;
+    if (!ro && (main._xrSession || !this._hasSculpt())) return 0;
+    if (!ro && !this._screenRay(_vO, _vD)) return 0;
+    const o = (ro || _vO).clone(), d = (rd || _vD).clone();   // ro/rd: a model-space ray, for tests
+    const t0 = this._volumeSpanT(o, d);
+    if (t0 === null) return 0;
+    const lo0 = this._spanLo, hi0 = this._spanHi, T0 = hi0 - lo0;
+    const unit = Skeleton.sceneUnit(main) || 1;
+    // The cap is how far a search may run before it counts as unbounded. Relative to the thickness
+    // as well as the scene: the unit is a rig measure and a sphere ten times it is a legitimate hit.
+    const cap = Math.max(unit * 0.5, T0 * 2), eps = unit * 0.005;
+    const a = new THREE.Vector3().crossVectors(d, Math.abs(d.y) < 0.9 ? _vUp : _vX).normalize();
+    const b = new THREE.Vector3().crossVectors(d, a).normalize();
+    const dirs = [a, b,
+      a.clone().add(b).normalize(), a.clone().sub(b).normalize()];
+    const p = new THREE.Vector3();
+    const same = (u, k) => {
+      p.copy(o).addScaledVector(u, k);
+      // the same volume = a span that overlaps the one under the cursor in depth. (Comparing
+      // midpoints drifts near a limb's edge, where the span thins and its middle moves.)
+      return this._volumeSpanT(p, d) !== null && this._spanLo <= hi0 && this._spanHi >= lo0;
+    };
+    const reach = (u, sign) => {
+      let lo = 0, hi = eps;
+      while (same(u, sign * hi)) { lo = hi; hi *= 2; if (hi > cap) return cap; }
+      for (let i = 0; i < 8; i++) { const m = (lo + hi) * 0.5; if (same(u, sign * m)) lo = m; else hi = m; }
+      return lo;
+    };
+    // A chord off the middle of a ROUND part (a head, a fist) is shorter than its diameter, and
+    // the narrowest of the four then reads small. Each pass re-centres on the middle of the
+    // LONGEST bounded chord -- through a ball that runs towards its centre -- and measures again;
+    // a limb's straight sides make the shift zero, a ball converges in two or three passes. The
+    // widest pass wins (the narrowest chord only grows towards the diameter).
+    let width = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let best = Infinity, long = -1, shift = 0, longU = null;
+      for (const u of dirs) {
+        const e1 = reach(u, 1), e2 = reach(u, -1), w = e1 + e2;
+        if (w < best) best = w;
+        if (w < 2 * cap && w > long) { long = w; longU = u; shift = (e1 - e2) * 0.5; }
+      }
+      if (best > width) width = best;
+      // Only for a part that is roundish here. When the longest bounded chord is much longer than
+      // the narrowest, this is a limb joined to something (or the joint between two), and
+      // re-centring would walk into the neighbour.
+      if (!longU || Math.abs(shift) < eps || long > best * 1.6) break;
+      o.addScaledVector(longU, shift);
+    }
+    // THE DEPTH CHORD IS THE OTHER CEILING. Where a part touches its neighbours (an arm against a
+    // torso, a head on shoulders) the silhouette merges them and reads as the whole figure; the
+    // depth through the middle of the part is still just that part. Taken at the re-centred spot.
+    width = Math.min(width < 2 * cap ? width : Infinity, T0);
+    return width > 1e-9 ? width * 0.5 : 0;
+  }
+
+  // The midpoint itself, in model space. Null when the cursor is off the mesh.
+  _volumeCentre(out) {
+    if (this._main._xrSession) return false;   // VR has a real depth; it does not need this
+    if (!this._hasSculpt()) return false;
+    if (!this._screenRay(_vO, _vD)) return false;
+    const t = this._volumeSpanT(_vO, _vD);
+    if (t === null) return false;
+    out.copy(_vD).multiplyScalar(t).add(_vO);
+    return true;
+  }
+
+  // The tip, resolved: the volume under the cursor if there is one, otherwise the plane this
+  // tool has always used.
+  //
+  // `_volAnchor` is what stops the depth JUMPING at the silhouette. Once a volume has been
+  // found, the fallback plane runs through the last point that came out of it rather than
+  // through the chain's anchor -- so dragging a joint out past the edge of the arm continues
+  // at the arm's depth instead of snapping back to the parent's or the model centre's.
+  _drawTip(anchor, out) {
+    if (this._volumeCentre(out)) { (this._volAnchor || (this._volAnchor = new THREE.Vector3())).copy(out); return true; }
+    return this._planePoint(this._volAnchor || anchor, out);
+  }
+
   // Where the tip is right now: the cursor ray, met by the camera-facing plane at that depth.
   _drawPoint(out) {
     const anchor = this._drawAnchor(_jp2);
     if (!anchor) return null;
-    return this._planePoint(anchor, out) ? out : null;
+    return this._drawTip(anchor, out) ? out : null;
   }
 
   // The plane snap band, in SCREEN px. It used to be 5% of a scene unit — a hand-width,
@@ -814,6 +1216,12 @@ class BoneDrawTool extends SculptBase {
       return Math.abs(Skeleton.planeDistance(pos, plane)) <= this._planeSnap();
     }
     Skeleton.projectToPlane(pos, plane, _snapTo);
+    // BOTH bands must agree. Px alone is blind to how big the figure is on screen: a character
+    // framed small has a hip-width of a handful of pixels, so 14px swallowed the whole leg and
+    // the chain below it rode the plane (the axis snap carries x down from the parent). The
+    // model-space cap is what a leg offset can never be inside; the px band is what stops a
+    // zoomed-in cursor from being yanked from further than it can see.
+    if (Skeleton.planeDistance(pos, plane) ** 2 > (Skeleton.sceneUnit(this._main) * 0.07) ** 2) return false;
     if (!this._toScreen(pos, _s0) || !this._toScreen(_snapTo, _s1)) return false;
     return Math.hypot(_s0.x - _s1.x, _s0.y - _s1.y) <= this._planeSnapPx();
   }
@@ -861,20 +1269,41 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'joint') {
       const main2 = this._main;
       const hj = main2._jointHandles && main2._jointHandles.joint;
-      let grip = null;
-      if (hj && this._planePoint(Skeleton.jointPos(hj, _jp).clone(), _hit)) {
-        grip = Skeleton.pickScaleHandle(main2, _hit, this._snapDist() * 1.4);
-      }
+      const grip = hj ? this._pickHandleScreen() : null;
       if (grip) {
         this._beginScale(hj, grip, Skeleton.boneRadiusOf(main2, hj));
-        this._drag = { kind: 'joint', joint: hj, anchor: Skeleton.jointPos(hj, _jp).clone(),
+        // THE PLANE GOES THROUGH THE HANDLE, AND THE CLICK'S OFFSET FROM IT IS KEPT. Through the joint,
+        // the first projected point was wherever the cursor ray met a plane the handle is not on, so
+        // the edit snapped to it on the first move. matt: the handles "jump as soon as i start the
+        // drag, rather than staying in place". With both, the first move reproduces the handle exactly.
+        // (A ring measures from where it was taken hold of already, so it keeps the joint plane.)
+        const hp = grip.kind !== 'ring' && main2._jointHandles.pos[grip.index];
+        const anchor = hp ? hp.clone() : Skeleton.jointPos(hj, _jp).clone();
+        const grabOff = (hp && this._planePoint(anchor, _wB)) ? anchor.clone().sub(_wB) : null;
+        this._drag = { kind: 'joint', joint: hj, anchor: anchor, grabOff: grabOff,
           startX: startX, startY: startY };
         this._hilite = hj;
         Skeleton.setHighlight(main2, hj);
         return true;
       }
-      const pick = this._pickJointScreen();
+      // THE SAME PICK THE HOVER USES (joint, else a volume or bone -> its root), so what lights is what a
+      // press takes. A volume or bone selects the joint it leaves and brings its handles up, with that
+      // bone the one being edited.
+      const pick = this._pickRigNodeScreen();
       if (!pick) return false;
+      if (Skeleton.displayFlag('volumes')) {
+        const hit = this._lastVolHit;
+        const kids = Skeleton.volumeKids(main2, pick);
+        if (hit && kids.includes(hit)) {
+          if (!main2._volActive) main2._volActive = new Map();
+          main2._volActive.set(pick.getID(), kids.indexOf(hit));
+        } else if (hj && pick === hj && Skeleton.volumeCycle(main2, pick)) {
+          // Tapping the joint that already has the handles moves them to its next bone.
+          Skeleton.updateVisuals(main2);
+          main2.render?.();
+          return true;
+        }
+      }
       this._selectLater(pick);            // no handle hit: choose the joint to put handles on
       this._hilite = pick;
       Skeleton.setHighlight(main2, pick);
@@ -944,9 +1373,9 @@ class BoneDrawTool extends SculptBase {
     const main = this._main;
 
     if (d.kind === 'draw') {
-      // The anchor is fixed for the whole drag, so the tip rides one plane and follows the
-      // cursor everywhere — off the silhouette included.
-      if (this._planePoint(d.anchor, _hit)) d.pos.copy(_hit);
+      // The anchor is fixed for the whole drag, so the tip follows the cursor everywhere —
+      // off the silhouette included, where it falls back to a plane (see _drawTip).
+      if (this._drawTip(d.anchor, _hit)) d.pos.copy(_hit);
       this._drawFeedback(d.pos);
       return;
     }
@@ -969,7 +1398,12 @@ class BoneDrawTool extends SculptBase {
     }
 
     if (d.kind === 'joint') {
-      if (this._planePoint(d.anchor, _hit)) this._scaleTo(_hit);
+      const ringDrag = (this._scale && this._scale.grip.kind === 'ring')
+        || (this._vol && this._vol.grip.kind === 'ring');
+      if (ringDrag ? this._ringPoint(_hit) : this._planePoint(d.anchor, _hit)) {
+        if (!ringDrag && d.grabOff) _hit.add(d.grabOff);
+        this._scaleTo(_hit);
+      }
       return;
     }
 
@@ -1005,7 +1439,7 @@ class BoneDrawTool extends SculptBase {
         this._refresh();
         return;
       }
-      this._place(d.pos);
+      this._place(d.pos, this._radiusGuess());
       Skeleton.hidePreview(this._main);
       this._refresh();
       return;
@@ -1070,13 +1504,11 @@ class BoneDrawTool extends SculptBase {
     // what lights up is exactly what a press would grab rather than an approximation of it.
     if (this._mode === 'joint') {
       const hj = this._main._jointHandles && this._main._jointHandles.joint;
-      let grip = null;
-      if (hj && !this._drag && this._planePoint(Skeleton.jointPos(hj, _jp).clone(), _hit)) {
-        grip = Skeleton.pickScaleHandle(this._main, _hit, this._snapDist() * 1.4);
-      }
+      const grip = hj && !this._drag ? this._pickHandleScreen() : null;
       // The grip being dragged wins over anything hovered, so a drag keeps its handle lit even
       // as the cursor travels away from it.
-      const lit = this._scale ? this._scale.grip : grip;
+      const held = this._scale || this._vol;
+      const lit = held ? held.grip : grip;
       if ((lit ? lit.index : -1) !== (this._litHandle ?? -1)) {
         this._litHandle = lit ? lit.index : -1;
         Skeleton.highlightScaleHandle(this._main, lit);
@@ -1093,7 +1525,9 @@ class BoneDrawTool extends SculptBase {
     // picked a joint for it. The desktop hover was picking a SEGMENT here (_pickBoneScreen), so it
     // lit the bone and then grabbed whichever joint was nearest, which is a different thing. One
     // pick for every mode now: what lights is what a press takes.
-    const hit = this._drag ? this._drag.joint : this._pickRigNodeScreen();
+    // In Tweak Joint a lit handle owns the preselect: a joint or bone nearby must not light too.
+    const hit = this._drag ? this._drag.joint
+      : (this._mode === 'joint' && this._litHandle >= 0) ? null : this._pickRigNodeScreen();
     if (hit === this._hilite) return;
     this._hilite = hit;
     Skeleton.setHighlight(this._main, hit);
@@ -1175,7 +1609,11 @@ class BoneDrawTool extends SculptBase {
     // one had pins=1.
     main._rigRestEdit = true;
     const tipOffset = tip ? Skeleton.jointPos(joint, _jp2).clone().sub(tip) : null;
-    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot, tipOffset: tipOffset,
+    // The REST of the same joints, so undoing a Tweak puts the rest back with the matrices: they
+    // are one fact, and restoring one without the other leaves a joint whose rest disagrees with
+    // where it stands (which Orient Joints, and the solver's rest seed, both read).
+    const restBefore = snapshot.map(([mesh]) => (mesh._ikRest ? mat4.clone(mesh._ikRest) : null));
+    this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot, restBefore: restBefore, tipOffset: tipOffset,
       // A TAP IS A SELECT; ONLY A DELIBERATE MOVE IS A DRAG.
       //
       // Nothing was wrong with the drag itself — the trace showed the joint tracking the hand
@@ -1208,9 +1646,24 @@ class BoneDrawTool extends SculptBase {
     // contradict its own mirror — but axis snap still applies, which is what keeps a
     // dragged eye joint pointing straight down Z.
     const gp = Skeleton.isJoint(g.joint._parentMesh) ? g.joint._parentMesh : null;
-    const at = g.twin
-      ? (this._axisEnabled() && gp ? Skeleton.snapAxis(Skeleton.jointPos(gp, _from), pos, _eff, null) : pos)
-      : this._resolve(pos, g.plane, _eff, gp);
+    //
+    // ...EXCEPT A PAIR OF TWINS UNDER ONE PARENT (canMergeMirror). A root pair is the Bone Draw
+    // case; the first spine joint drawn off-plane under the hips is the same thing one level down.
+    // Bone Draw mirrors the first joint of a chain when it misses the
+    // plane's snap band, which leaves two parentless twins side by side. Dragging one into the
+    // band pulls it onto the plane (its twin follows to the same spot), and on release the pair
+    // merges into one centreline joint -- see RigTopology.mergeMirror.
+    g.mergeRoot = false;
+    let at;
+    if (g.twin && RigTopology.canMergeMirror(this._main, g.joint)
+        && this._inSnapBand(pos, g.plane)) {
+      g.mergeRoot = true;
+      at = Skeleton.projectToPlane(pos, g.plane, _eff);
+    } else {
+      at = g.twin
+        ? (this._axisEnabled() && gp ? Skeleton.snapAxis(Skeleton.jointPos(gp, _from), pos, _eff, null) : pos)
+        : this._resolve(pos, g.plane, _eff, gp);
+    }
     // ROTATION FIRST, then position. moveJoint writes the model-space TRANSLATION and, in
     // compensate mode, restores each child's model-space transform afterwards — so it has to be
     // the last thing that touches the chain, or the compensation is computed against a parent
@@ -1393,11 +1846,19 @@ class BoneDrawTool extends SculptBase {
     });
     const sm = main.getStateManager && main.getStateManager();
     if (moved && sm && sm.pushStateCustom) {
+      const restBefore = g.restBefore || [];
+      const restAfter = before.map(([mesh]) => (mesh._ikRest ? mat4.clone(mesh._ikRest) : null));
+      const putRest = (list) => before.forEach(([mesh], i) => { mesh._ikRest = list[i] ? mat4.clone(list[i]) : null; });
       sm.pushStateCustom(
-        () => { Skeleton.restoreLocal(before); Skeleton.updateVisuals(main); main.render(); },
-        () => { Skeleton.restoreLocal(after); Skeleton.updateVisuals(main); main.render(); },
+        () => { Skeleton.restoreLocal(before); putRest(restBefore); Skeleton.updateVisuals(main); main.render(); },
+        () => { Skeleton.restoreLocal(after); putRest(restAfter); Skeleton.updateVisuals(main); main.render(); },
         false, 'Tweak Joint');
     }
+    // Where a joint sits is the statement of how its chain bends, so a Tweak can change a hinge.
+    // Joined to the Tweak Joint step above (or alone, if nothing moved and this is a no-op).
+    if (moved) autoOrient(this._main);
+    // Dropped inside the plane's band as one of a root pair: it is one centreline joint now.
+    if (g.mergeRoot && RigTopology.mergeMirror(main, g.joint)) this._refresh();
   }
 
   // ---- pose (FK rotate) ----------------------------------------------------------
@@ -1595,6 +2056,13 @@ class BoneDrawTool extends SculptBase {
   // need to be able to scale joints, not bones."
   _beginRadius(joint) {
     const main = this._main;
+    // BONE VOLUMES: the radius tool is the uniform scale of the volume leaving the picked joint.
+    if (Skeleton.displayFlag('volumes')) {
+      const bones = this._volBones(joint);
+      this._radius = bones ? { joint, vol: bones, before: this._volRows(bones), startPos: null, startRadius: bones[0]._boneRadius || 0 } : null;
+      if (bones) this._soloBegin([joint, joint._boneMirror], true);
+      return;
+    }
     const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
       ? joint._boneMirror : null;
     const before = [[joint, joint._jointRadius || 0]];
@@ -1613,6 +2081,7 @@ class BoneDrawTool extends SculptBase {
     // drag counts from is the number on screen.
     this._radius = { joint: joint, twin: twin, before: before, startPos: null,
       startRadius: Skeleton.jointRadius(joint, Skeleton.boneRadiusOf(this._main, joint)) };
+    this._soloBegin([joint, twin]);
   }
 
   // THE CAMERA'S RIGHT, in model space. Same construction as _camAxis and for the same reason:
@@ -1673,6 +2142,13 @@ class BoneDrawTool extends SculptBase {
     }
     const d = r.startRadius
       + _wRad.copy(pos).sub(r.startPos).dot(this._camRight(_wRight));
+    if (r.vol) {
+      const minV = Math.max(Skeleton.boneLength(this._main, r.vol[0]) * 0.02, 1e-6);
+      for (const j of r.vol) j._boneRadius = Math.max(d, minV);
+      this._liveWeights();
+      this._refresh();
+      return;
+    }
     // A capsule with no thickness has no support at all, so never let a drag collapse one to
     // zero — that would silently unweight everything the bone owned.
     const min = Math.max(Skeleton.boneLength(this._main, r.joint) * 0.02, 1e-6);
@@ -1681,6 +2157,32 @@ class BoneDrawTool extends SculptBase {
     if (r.twin) Skeleton.setJointRadius(r.twin, val); // a mirrored rig stays mirrored
     this._liveWeights();
     this._refresh();
+  }
+
+  // SOLO WHILE EDITING A JOINT'S SIZE (display flag soloRadius). A joint's radius shapes the bone
+  // arriving at it (owned by its parent) and the bone leaving it (owned by the joint itself), so the
+  // lit set is the joint and its parent -- and the twins' -- and everything else paints black. The
+  // weight preview is forced on for the duration and put back after, so the flag works from a rig
+  // whose weights are hidden.
+  _soloBegin(joints, ownersOnly) {
+    if (!Skeleton.displayFlag('soloRadius')) return;
+    const ids = new Set();
+    for (const j of joints) {
+      if (!j) continue;
+      ids.add(j.getID());
+      if (!ownersOnly && Skeleton.isJoint(j._parentMesh)) ids.add(j._parentMesh.getID());
+    }
+    this._soloActive = true;
+    this._soloWeightsWere = Skeleton.displayFlagRaw('weights');
+    Skeleton.setDisplayFlag('weights', true);
+    Skinning.setSolo(this._main, ids);
+  }
+
+  _soloEnd() {
+    if (!this._soloActive) return;
+    this._soloActive = false;
+    Skeleton.setDisplayFlag('weights', this._soloWeightsWere);
+    Skinning.setSolo(this._main, null);
   }
 
   // Re-solve the bound weights mid-drag, so the vertices a capsule owns recolour under your
@@ -1706,8 +2208,142 @@ class BoneDrawTool extends SculptBase {
   // the face goes. No offset and no rotation, which is matt's scope — "just keep the bbox
   // controls for width, height, depth" — so the opposite face moves out to match and the joint
   // stays centred on the joint.
+  // ── BONE VOLUMES: EDITING A BONE'S SECTION FROM ITS ROOT ───────────────────────────────────
+  //
+  // Selecting a joint edits the volume LEAVING it (the one that is lit; tap the joint again to move to
+  // its next bone when it has several), like Voodoo, where the controls sit at the root. Three grips:
+  // the width dots (+-x of the section) and the height dots (+-z) set the ellipse, and the diagonal dot
+  // is the UNIFORM scale -- none of them touches the bone's length. The edit goes to the bone's mirror
+  // twin as well.
+  _volBones(joint) {
+    const main = this._main;
+    const b = Skeleton.volumeActive(main, joint);
+    if (!b) return null;
+    const out = [b];
+    const t = b._boneMirror;
+    if (t && t !== b && main.getMeshes().includes(t) && Skeleton.boneHasCapsule(t)) out.push(t);
+    return out;
+  }
+
+  _volRows(bones) {
+    return bones.map((j) => [j, j._boneRadius || 0, j._volW, j._volH, j._volO1, j._volO3, j._volE0, j._volE1, j._volR]);
+  }
+
+  _volApplyRows(rows) {
+    for (const [j, r, w, h, o1, o3, e0, e1, tw] of rows) {
+      j._boneRadius = r;
+      if (w > 0) j._volW = w; else delete j._volW;
+      if (h > 0) j._volH = h; else delete j._volH;
+      if (o1) j._volO1 = o1; else delete j._volO1;
+      if (o3) j._volO3 = o3; else delete j._volO3;
+      if (e0) j._volE0 = e0; else delete j._volE0;
+      if (e1) j._volE1 = e1; else delete j._volE1;
+      if (tw) j._volR = tw; else delete j._volR;
+    }
+  }
+
+  _beginVolEdit(joint, grip) {
+    const bones = this._volBones(joint);
+    if (!bones) return false;
+    const f = Skeleton.volumeFrame(this._main, bones[0], {});
+    // A CENTRELINE bone keeps its width symmetric (it is its own mirror); everything else, and the
+    // height of every bone, moves one face with the other pinned.
+    const centreline = Skeleton.jointIsCentreline(this._main, bones[0]);
+    this._vol = { joint, bones, grip, before: this._volRows(bones), f, r0: f.r, W0: f.W, H0: f.H,
+      o10: f.o1, o30: f.o3, centreline, startPerp: 0 };
+    this._soloBegin([joint, joint._boneMirror], true);
+    return true;
+  }
+
+  _volTo(pos) {
+    const v = this._vol;
+    if (!v) return;
+    const f = v.f;
+    const dx = pos.x - f.C0.x, dy = pos.y - f.C0.y, dz = pos.z - f.C0.z;
+    const along = dx * f.d.x + dy * f.d.y + dz * f.d.z;
+    const px = dx - f.d.x * along, py = dy - f.d.y * along, pz = dz - f.d.z * along;   // across the axis
+    const w = Math.abs(px * f.e1.x + py * f.e1.y + pz * f.e1.z);
+    const h = Math.abs(px * f.e3.x + py * f.e3.y + pz * f.e3.z);
+    const axis = v.grip.axis;
+    const minR = Math.max(f.len * 0.02, 1e-6);
+    if (v.grip.kind === 'ring') {
+      // THE TWIST RING: the hand's angle round the bone, about the volume's middle, from where it took
+      // hold. The twin turns the other way (Skeleton.volumeTwist).
+      _rv1.copy(f.C0).add(f.C1).multiplyScalar(0.5);
+      _rv1.subVectors(pos, _rv1);
+      _rv1.addScaledVector(f.d, -_rv1.dot(f.d));
+      if (_rv1.lengthSq() < 1e-16) return;
+      if (!v.from) { v.from = _rv1.clone(); return; }
+      // Measured about +d; the twist turns e1 toward e3, which is about -d, hence the minus.
+      const ang = Math.atan2(f.d.dot(_wA.crossVectors(v.from, _rv1)), v.from.dot(_rv1));
+      v.bones.forEach((j, k) => Skeleton.setVolumeTwist(j, (k ? -1 : 1) * (f.twist - ang)));
+    } else if (axis === 'end') {
+      // AN END DOT: the hand's position along the bone (from the root joint P) is where that end goes.
+      // The other end stays put, and the volume never gets shorter than a twentieth of its bone.
+      const t = (pos.x - f.P.x) * f.d.x + (pos.y - f.P.y) * f.d.y + (pos.z - f.P.z) * f.d.z;
+      const L = Math.max(f.len, 1e-9), keep = L * 0.05;
+      let e0 = f.end0, e1 = f.end1;
+      if (v.grip.sign < 0) e0 = (f.inset - Math.min(t, f.t1 - keep)) / L;
+      else e1 = (Math.max(t, f.t0 + keep) - L + f.inset) / L;
+      for (const j of v.bones) Skeleton.setVolumeEnds(j, e0, e1);
+    } else if (axis === 0 || axis === 2) {
+      // Measured from the root point ON the bone (B0), along the grabbed axis, so the hand and the
+      // faces are in the same coordinates as the stored offset.
+      const e = axis === 0 ? f.e1 : f.e3;
+      const bx = pos.x - f.B0.x, by = pos.y - f.B0.y, bz = pos.z - f.B0.z;
+      const m = bx * e.x + by * e.y + bz * e.z;                 // the hand, along the axis
+      const c0 = (axis === 0 ? v.o10 : v.o30) * v.r0;           // the section centre at the grab
+      const h0 = (axis === 0 ? v.W0 : v.H0) * v.r0;             // its half-extent at the grab
+      let half, centre;
+      if (axis === 0 && v.centreline) {
+        half = Math.max(Math.abs(m - c0), minR); centre = c0;   // symmetric about the bone
+      } else {
+        const pinned = c0 - v.grip.sign * h0;                   // the face you did not grab stays put
+        half = Math.max(Math.abs(m - pinned) / 2, minR);
+        centre = pinned + v.grip.sign * half;
+      }
+      for (const j of v.bones) {
+        const mirror = j !== v.bones[0];
+        if (axis === 0) {
+          Skeleton.setVolumeSection(j, half / v.r0, v.H0);
+          Skeleton.setVolumeOffset(j, (mirror ? -1 : 1) * centre / v.r0, v.o30);
+        } else {
+          Skeleton.setVolumeSection(j, v.W0, half / v.r0);
+          Skeleton.setVolumeOffset(j, (mirror ? -1 : 1) * v.o10, centre / v.r0);
+        }
+      }
+    } else {
+      // The first frame only ANCHORS the drag (the dot sits on the rim, so the hand starts there).
+      const perp = Math.hypot(px, py, pz);
+      if (!v.startPerp) { v.startPerp = Math.max(perp, 1e-9); return; }
+      const k = perp / v.startPerp;
+      for (const j of v.bones) j._boneRadius = Math.max(v.r0 * k, minR);
+    }
+    this._liveWeights();
+    this._refresh();
+  }
+
+  _releaseVol() {
+    const v = this._vol;
+    this._vol = null;
+    this._soloEnd();
+    if (!v) return;
+    this._liveWeights(true);
+    const main = this._main;
+    const before = v.before, after = this._volRows(v.bones);
+    const apply = (rows) => {
+      this._volApplyRows(rows);
+      Skinning.resolveWeightsAll(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    main.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Bone Volume');
+  }
+
   _beginScale(joint, grip, fallbackR) {
     const main = this._main;
+    // Bone Volumes edit the bone's section from its root, not the joint's box: see _beginVolEdit.
+    if (Skeleton.displayFlag('volumes') && this._beginVolEdit(joint, grip)) { this._scale = null; return; }
     // THE TWIN GETS THE EDIT, like every other edit in this tool. matt: "mirroring should happen
     // from left hand to right hand, left foot to right foot etc, but the only symmetry WITHIN the
     // tweak joint handles should be for joints on the center line." Two different symmetries, and
@@ -1721,10 +2357,20 @@ class BoneDrawTool extends SculptBase {
     const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
       ? joint._boneMirror : null;
     const snap = (j) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
-      (Skeleton.jointOffset(j) || [0, 0, 0]).slice()];
+      (Skeleton.jointOffset(j) || [0, 0, 0]).slice(), Skeleton.jointRot(j).slice()];
     const before = [snap(joint)];
     if (twin) before.push(snap(twin));
-    this._scale = { joint: joint, twin: twin, grip: grip, before: before,
+    // A RING TURNS THE SHAPE about that ring's axis as it was at the grab, by the angle the hand
+    // sweeps round the joint's centre. Everything is fixed at the grab — the axis, the centre, the
+    // rotation it started from — so a drag is one rotation, not an accumulation of frame deltas.
+    const h = main._jointHandles;
+    const ring = grip.kind === 'ring' && h ? {
+      ringAxis: h.ringAxis[grip.axis].clone(),
+      centre: h.centrePos.clone(),
+      rot0: Skeleton.jointQuat(joint),
+      from: null,
+    } : null;
+    this._scale = { joint: joint, twin: twin, grip: grip, before: before, ...ring,
       // The radius the extents are a multiple OF, fixed at the grab: reading it live would make
       // a drag that changes the radius compound with itself.
       base: Math.max(Skeleton.jointRadius(joint, fallbackR || 0), 1e-6),
@@ -1732,6 +2378,7 @@ class BoneDrawTool extends SculptBase {
       // take it off the plane the rest of the rig is built around. Read once at the grab so the
       // rule cannot change under your hand halfway through a drag.
       centreline: Skeleton.jointIsCentreline(main, joint) };
+    this._soloBegin([joint, twin]);
   }
 
   // ONE FACE MOVES, THE OTHER STAYS. Scaling about the centre was the first version and it made
@@ -1744,26 +2391,42 @@ class BoneDrawTool extends SculptBase {
   // a head is its own mirror twin and sliding it sideways would take it off the plane. There the
   // old centred behaviour is the correct one.
   _scaleTo(pos) {
+    if (this._vol) { this._volTo(pos); return; }
     const sc = this._scale;
     if (!sc) return;
+    if (sc.grip.kind === 'ring') { this._rotateTo(pos); return; }
     const axis = sc.grip.axis;
     const sign = sc.grip.sign;
-    const jointAt = Skeleton.jointPos(sc.joint, _jpRad).getComponent(axis);
+    // THE FACE MOVES ALONG THE JOINT'S OWN AXIS, which is the world's until the shape is turned.
+    // Everything below is measured along that one direction; the offset is a model-space vector,
+    // so only its component along it changes. The unturned path writes the component directly,
+    // exactly as before.
+    const turned = Skeleton.jointRotIsSet(sc.joint);
+    _axDrag.set(0, 0, 0).setComponent(axis, 1);
+    if (turned) _axDrag.applyQuaternion(Skeleton.jointQuat(sc.joint, _rq));
+    const jointAt = Skeleton.jointPos(sc.joint, _jpRad).dot(_axDrag);
     const cur = (Skeleton.jointScale(sc.joint) || [1, 1, 1]).slice();
     const off = (Skeleton.jointOffset(sc.joint) || [0, 0, 0]).slice();
+    const offAlong = _offDrag.fromArray(off).dot(_axDrag);
+    const setAlong = (v) => {
+      if (!turned) { off[axis] = v; return; }
+      _offDrag.addScaledVector(_axDrag, v - offAlong);
+      off[0] = _offDrag.x; off[1] = _offDrag.y; off[2] = _offDrag.z;
+    };
     const clamp = (v) => Math.max(0.05, Math.min(20, v));
 
+    // A centreline joint only ever pitches, so its own x IS the world's and this rule still holds.
     if (sc.centreline && axis === 0) {
-      cur[axis] = clamp(Math.abs(pos.getComponent(axis) - jointAt) / sc.base);
-      off[axis] = 0;
+      cur[axis] = clamp(Math.abs(pos.dot(_axDrag) - jointAt) / sc.base);
+      setAlong(0);
     } else {
       // Where the face you did NOT grab is right now, in world terms — that is what stays put.
       const half = Skeleton.jointHalf(sc.joint, sc.base, _halfDrag)[axis];
-      const centre = jointAt + off[axis];
+      const centre = jointAt + offAlong;
       const pinned = centre - sign * half;
-      const moved = pos.getComponent(axis);
+      const moved = pos.dot(_axDrag);
       cur[axis] = clamp(Math.abs(moved - pinned) / (2 * sc.base));
-      off[axis] = (moved + pinned) / 2 - jointAt;
+      setAlong((moved + pinned) / 2 - jointAt);
     }
     Skeleton.setJointScale(sc.joint, cur[0], cur[1], cur[2]);
     Skeleton.setJointOffset(sc.joint, off[0], off[1], off[2]);
@@ -1776,9 +2439,38 @@ class BoneDrawTool extends SculptBase {
     this._refresh();
   }
 
+  // TURN THE SHAPE by the angle the hand has swept round the ring since the grab. Both points are
+  // flattened onto the ring's plane first, so height above it does nothing and a desktop point
+  // that came off the camera plane (an edge-on ring) still reads as a turn about the right axis.
+  _rotateTo(pos) {
+    const sc = this._scale;
+    const a = sc.ringAxis;
+    _rv1.subVectors(pos, sc.centre);
+    _rv1.addScaledVector(a, -_rv1.dot(a));
+    if (_rv1.lengthSq() < 1e-16) return;
+    // The first usable point is the zero: the turn is measured from where the hand actually took
+    // hold, not from where the ring happened to be drawn.
+    if (!sc.from) { sc.from = _rv1.clone(); return; }
+    _rv0.copy(sc.from);
+    const ang = Math.atan2(a.dot(_wA.crossVectors(_rv0, _rv1)), _rv0.dot(_rv1));
+    _rq.setFromAxisAngle(a, ang).multiply(sc.rot0);
+    let r = [_rq.x, _rq.y, _rq.z, _rq.w];
+    if (sc.centreline) r = Skeleton.centrelineRot(r);
+    Skeleton.setJointRot(sc.joint, r[0], r[1], r[2], r[3]);
+    // The twin turns as its mirror image. SYM_AXIS is x throughout the rig, as for the offset.
+    if (sc.twin) {
+      const m = Skeleton.mirrorRot(Skeleton.jointRot(sc.joint));
+      Skeleton.setJointRot(sc.twin, m[0], m[1], m[2], m[3]);
+    }
+    this._liveWeights();
+    this._refresh();
+  }
+
   _releaseScale() {
+    if (this._vol) { this._releaseVol(); this._grabHand = null; return; }
     const sc = this._scale;
     this._scale = null;
+    this._soloEnd();
     // Hand ownership is released with the drag, exactly as _releaseGrab / _releasePose /
     // _releaseIK do. A stale owner outlives the drag and the next mode's first grab is then
     // arbitrated against a hand that is no longer holding anything.
@@ -1789,26 +2481,42 @@ class BoneDrawTool extends SculptBase {
     const main = this._main;
     const before = sc.before;
     const after = before.map(([j]) => [j, (Skeleton.jointScale(j) || [1, 1, 1]).slice(),
-      (Skeleton.jointOffset(j) || [0, 0, 0]).slice()]);
+      (Skeleton.jointOffset(j) || [0, 0, 0]).slice(), Skeleton.jointRot(j).slice()]);
     const apply = (rows) => {
-      for (const [j, v, o] of rows) {
+      for (const [j, v, o, q] of rows) {
         Skeleton.setJointScale(j, v[0], v[1], v[2]);
         Skeleton.setJointOffset(j, o[0], o[1], o[2]);
+        Skeleton.setJointRot(j, q[0], q[1], q[2], q[3]);
       }
       Skinning.resolveWeightsAll(main);
       Skeleton.updateVisuals(main);
       main.render?.();
     };
     main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(before), () => apply(after), false, 'Joint Scale');
+      () => apply(before), () => apply(after), false,
+      sc.grip.kind === 'ring' ? 'Joint Rotate' : 'Joint Scale');
   }
 
   _releaseRadius() {
     const r = this._radius;
     this._radius = null;
+    this._soloEnd();
     // `before` is missing when the radius drag never actually captured one — which happens when
     // the tool is switched away mid-drag, since setToolIndex calls clearPreview and that lands
     // here. Without this the map below throws and takes the tool switch with it.
+    if (r && r.vol) {
+      this._liveWeights(true);
+      this._selectLater(r.joint);
+      const main = this._main, before = r.before, after = this._volRows(r.vol);
+      const apply = (rows) => {
+        this._volApplyRows(rows);
+        Skinning.resolveWeightsAll(main);
+        Skeleton.updateVisuals(main);
+        main.render?.();
+      };
+      main.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Bone Volume');
+      return;
+    }
     if (!r || !r.before) return;
     this._liveWeights(true); // land on the final radius, not on the last throttled tick
     this._selectLater(r.joint);
@@ -1904,6 +2612,33 @@ class BoneDrawTool extends SculptBase {
   // ---- VR -----------------------------------------------------------------------
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
+
+    // ── GRAB MODE IS THE REAL GRAB TOOL IN VR TOO (#70) ────────────────────────────────
+    //
+    // matt: bone-tool Grab "works on desktop and does nothing in a headset". It was never
+    // half-wired -- it was not wired at all on this side. `start()` delegates to the Grab tool
+    // and then returns false outright in a session because VR drives everything from here, and
+    // here had branches for draw, ik, select, pose, joint, radius and tweak, and none for grab.
+    //
+    // Delegating rather than reimplementing, for the reason the desktop path already gives:
+    // this mode IS grab, including the IK solve on a joint, the pin path, undo and AutoKey.
+    // Grab.updateXR makes no assumption about being the current tool -- it reads
+    // options.controllers and its own state -- so handing it the frame is all it needs.
+    //
+    // The pick side was already right: BONE_SELECT in Picking.js turns bone-capsule selection
+    // off specifically in this mode, because a pickable capsule is large and easy to hit and
+    // the held mesh then short-circuits the pin path -- in the one mode whose whole purpose is
+    // reaching for a pin.
+    //
+    // A is NOT read here first. Grab owns it (IKSolver.pinOnA pins the bone you point at), and
+    // reading it in both places would consume the edge twice. `_wasAPressed` is still tracked
+    // so that leaving grab mode with A held does not fire a stale edge in draw or ik.
+    if (this._mode === 'grab') {
+      this._wasAPressed = this._readButton(options, 4);
+      Skeleton.hidePlane(main);
+      return this._grabTool()?.updateXR(picking, isPressed, origin, dir, options);
+    }
+
     const tip = (options && options.tipOrigin) || origin;
     if (!tip) {
       // An early return here skips the A handling entirely, so a caller passing no tip would
@@ -2039,7 +2774,10 @@ class BoneDrawTool extends SculptBase {
       Skeleton.hidePreview(main);
       Skeleton.hidePlane(main);
       const scHand = (options && options.handedness) || null;
-      if (down && !this._scale) {
+      // A VOLUME edit lives in _vol, not _scale (_beginScale hands off and nulls _scale), so both
+      // count as the drag here -- gating on _scale alone left a volume grab begun and never driven.
+      const live = this._scale || this._vol;
+      if (down && !live) {
         const hj = main._jointHandles && main._jointHandles.joint;
         const grip = hj ? Skeleton.pickScaleHandle(main, _tip, this._snapDist() * 1.2) : null;
         if (grip) {
@@ -2050,14 +2788,16 @@ class BoneDrawTool extends SculptBase {
           if (hit) this._selectLater(hit);   // no handle under the hand: selecting is all it can mean
         }
       }
-      if (this._scale && (!this._grabHand || !scHand || scHand === this._grabHand)) {
+      const drag = this._scale || this._vol;
+      if (drag && (!this._grabHand || !scHand || scHand === this._grabHand)) {
         if (isPressed) this._scaleTo(_tip);
         else this._releaseScale();
       }
+      const held = this._scale || this._vol;
       Skeleton.highlightScaleHandle(main,
-        this._scale ? this._scale.grip
+        held ? held.grip
           : Skeleton.pickScaleHandle(main, _tip, this._snapDist() * 1.2));
-      this._hilite = this._scale ? this._scale.joint : this._pickRigNode(_tip);
+      this._hilite = held ? held.joint : this._pickRigNode(_tip);
       Skeleton.setHighlight(main, this._hilite);
       main._rigHoverBone = this._pickBone(_tip);
       return;

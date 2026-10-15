@@ -33,7 +33,7 @@ check('the synthetic gesture event declares itself touch',
   'a bare {} leaves pointerType undefined, and the right-click gate reads exactly that field');
 
 check('...and the right-click gate is the thing reading it',
-  /button === MOUSE_RIGHT && event\.pointerType !== 'pen' && event\.pointerType !== 'touch'/.test(SGL));
+  /button === MOUSE_RIGHT && event\.pointerType !== 'touch' && \(event\.pointerType !== 'pen' \|\| !navigator\.maxTouchPoints\)/.test(SGL));
 
 // Measured in the browser against the real onDeviceDown: with pointerType undefined the press
 // arms the menu, with 'touch' it does not, and a real mouse still does.

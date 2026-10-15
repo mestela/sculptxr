@@ -333,7 +333,12 @@ function scene(list, picked) {
     start.indexOf('_sculptLocked') < start.indexOf('RigPending.armed'),
     'the existing "do nothing" gate is the precedent and the right neighbour');
 
-  const xr = SM.slice(SM.indexOf('  updateXR('), SM.indexOf('  updateXR(') + 2600);
+  // To the next method rather than a fixed character count: the A-button cancel this window
+  // now also has to cover (RigPending.cancel read off the controller/session directly, since
+  // there is no tool instance to borrow SculptBase._readButton from while one is armed) grew
+  // the function past what 2600 chars used to reach, and a fixed budget silently clipped the
+  // later checks instead of failing loudly about it.
+  const xr = SM.slice(SM.indexOf('  updateXR('), SM.indexOf('  meshToVoxel('));
   check('VR: the armed assignment is handled at the manager, before any tool runs',
     xr.indexOf('RigPending.armed(this._main)') < xr.indexOf('tool.updateXR'),
     'a tool-level hook only works in the tool that happens to be active');

@@ -7,6 +7,7 @@ import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
 import RigTopology from '../editing/RigTopology.js';
+import { orientJoints } from '../editing/JointOrient.js';
 import { collapsibleHTML, uiReorg, squeezeLabel } from './htmlvr/uiTokens.js';
 
 // The Bones tool's controls, in ONE place, for every panel that shows them.
@@ -203,6 +204,7 @@ export function buildBoneAuthoringHTML(main, style) {
   const f     = (k) => Skeleton.displayFlag(k);
   const snap  = f('snapPlane');
   const axis  = f('snapAxis');
+  const flat  = f('snapFlat');
   const bound = Skinning.isBound(main.getMesh?.());
   const hasCages = WeightCage.cages(main).length > 0;
   const anyBound = Skinning.anyBound(main);
@@ -237,10 +239,14 @@ export function buildBoneAuthoringHTML(main, style) {
   //
   // The joint the roundness slider edits: the single selected joint, or nothing.
   const roundSel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-  const roundTarget = roundSel.length === 1 ? roundSel[0] : null;
-  const roundVal = roundTarget ? Skeleton.jointRound(roundTarget) : 2;
+  // With Bone Volumes on it is the VOLUME being edited (the one leaving the selected joint), not the joint.
+  const roundVol = Skeleton.displayFlag('volumes');
+  const roundTarget = roundSel.length !== 1 ? null
+    : (roundVol ? Skeleton.volumeActive(main, roundSel[0]) : roundSel[0]);
+  const roundVal = roundTarget ? (roundVol ? Skeleton.volumeRound(roundTarget) : Skeleton.jointRound(roundTarget)) : 2;
+  // Named by the SELECTED joint either way: a volume is edited from its root, so that is the name you see.
   const roundName = roundTarget
-    ? (roundTarget._permanentStaticLabel || ('joint ' + roundTarget.getID())) : '';
+    ? (roundSel[0]._permanentStaticLabel || ('joint ' + roundSel[0].getID())) : '';
   const physP = physTarget ? PhysicsBones.params(physTarget) : PhysicsBones.DEFAULTS;
   // A SLIDER THAT DOES NOTHING IS WORSE THAN ONE THAT IS NOT THERE -- you drag it, the rig does
   // not change, and you are left wondering which of the two is broken. The constraint solver
@@ -326,7 +332,7 @@ export function buildBoneAuthoringHTML(main, style) {
     // undo.
     const setupBody = `
     <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
+      <button class="${c.action}" id="bone-rad-all">Reset Joint</button>
       <button class="${c.action}" id="bone-skin">Make Skin</button>
     </div>
     <div class="${c.btnRow}">
@@ -342,6 +348,11 @@ export function buildBoneAuthoringHTML(main, style) {
         : 'Bake editable cage geometry you can sculpt to shape the skin weights'}">${
         hasCages ? 'Delete Weight Cages' : 'Bake Weight Cages'}</button>
       <button class="${c.action}" id="bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}${WeightCage.splitAtJoints() ? ' active' : ''}" id="bone-cage-split" title="Split Capsules at Joints. On: baked capsules end in a flat cut at their joints, so neighbours stop sharing a ball of overlap (round caps stay on leaf ends). Off: fully round capsules. Applies to the next Bake or Reset Capsules.">Split Capsules</button>
+      <button class="${c.action}${Skeleton.displayFlagRaw('volSoft') ? ' active' : ''}" id="bone-vol-soft"
+        title="Vertices outside every bone volume blend between the nearest ones instead of snapping to one">Soft Gaps</button>
     </div>
     ${bound ? `<div class="${c.btnRow}">
       <button class="${c.action}" id="bone-unbind">Unbind</button>
@@ -366,6 +377,10 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-select-cages" title="Select every weight cage, so they can be hidden, moved or deleted as a set">Select Cages</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-reset-cages" title="Put the selected capsules (all, if none selected) back to what a fresh bake makes from the rig as it is now. Mirror twins go with them.">Reset Capsules</button>
+      <button class="${c.action}" id="bone-delete-cages" title="Delete the selected capsules (all, if none selected). Mirror twins go with them.">Delete Capsules</button>
     </div>` : ''}
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
@@ -494,12 +509,15 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>` : ''}`;
+    </div>
+    <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin" title="Off: Make Skin leaves this joint out, and the bone leading INTO it gets no capsule (drawn, baked or bound). For pivots like a scapula, a jaw or a twist bone. Its own outgoing bones are unaffected.">Shapes Skin</button>` : ''}`;
 
     const viewBody = buildBoneQuickDisplayHTML(main, style) + `
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
+      ${flagButton(c, 'flat', 'Snap Flat', flat)}
       ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
     </div>`;
 
@@ -563,15 +581,18 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>` : ''}
+    </div>
+    <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin" title="Off: Make Skin leaves this joint out, and the bone leading INTO it gets no capsule (drawn, baked or bound). For pivots like a scapula, a jaw or a twist bone. Its own outgoing bones are unaffected.">Shapes Skin</button>` : ''}
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
+      ${flagButton(c, 'flat', 'Snap Flat', flat)}
       ${flagButton(c, 'sym', 'Symmetry', !!sm?._symmetry)}
     </div>
     ${full ? `
     <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-rad-all">Reset Radii</button>
+      <button class="${c.action}" id="bone-rad-all">Reset Joint</button>
       <button class="${c.action}" id="bone-skin">Make Skin</button>
     </div>
     <div class="${c.btnRow}">
@@ -586,6 +607,8 @@ export function buildBoneAuthoringHTML(main, style) {
         ? 'Delete the baked weight cages; binding returns to the drawn capsules'
         : 'Bake editable cage geometry you can sculpt to shape the skin weights'}">${
         hasCages ? 'Delete Weight Cages' : 'Bake Weight Cages'}</button>
+      <button class="${c.action}${Skeleton.displayFlagRaw('volSoft') ? ' active' : ''}" id="bone-vol-soft"
+        title="Vertices outside every bone volume blend between the nearest ones instead of snapping to one">Soft Gaps</button>
     </div>
     ` : ''}
     <div class="${c.btnRow}">
@@ -691,6 +714,10 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-select-cages" title="Select every weight cage, so they can be hidden, moved or deleted as a set">Select Cages</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-reset-cages" title="Put the selected capsules (all, if none selected) back to what a fresh bake makes from the rig as it is now. Mirror twins go with them.">Reset Capsules</button>
+      <button class="${c.action}" id="bone-delete-cages" title="Delete the selected capsules (all, if none selected). Mirror twins go with them.">Delete Capsules</button>
     </div>` : ''}
     <div class="${c.row}">
       <span class="${c.lbl}">Mush</span>
@@ -727,6 +754,10 @@ export function buildBonePoseHTML(main, style) {
       <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
       <button class="${c.action}" id="bone-restpose"
         title="Put every joint back to the skeleton as it was built. Recorded when you draw a bone and updated by Tweak, so it exists from the first bone \u2014 posing, grabbing and IK never change it.">Rest Pose</button>
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-orient"
+        title="Turn every joint's own axes onto its limb: X down the bone, Z about the bend, worked out from the chain. Nothing moves \u2014 joints, pins, skin and anything parented to a joint stay exactly where they are. Drawing a bone and Tweak do this for you; this is for a rig made before that existed. Refused while the rig has keyframes.">Orient Joints</button>
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
@@ -820,41 +851,58 @@ export function buildBonePoseHTML(main, style) {
   `;
 }
 
-export function buildBoneDisplayHTML(main, style) {
+export function buildBoneDisplayHTML(main, style, extraChips = '') {
   const c = DIALECT[style] || DIALECT.mm;
   return `
-    ${sectionTitle(c, 'Rig Display')}
+    ${sectionTitle(c, 'Display')}
     <!-- ON ITS OWN, ABOVE THE GRID. It governs every chip below it rather than being one of them,
          and sitting in the row made it read as a fourteenth display flag — one that would turn
          something called "All" on. matt: "'hide all' should be a toggle, not part of all the
          buttons." -->
     <button class="${c.wide}${Skeleton.decorationsHidden() ? ' active' : ''}" id="bone-hide-decor">${
       Skeleton.decorationsHidden() ? 'Decorations Hidden' : 'Hide All Decorations'}</button>
+    <!-- THREE GROUPS, DIVIDED: the rig and its weights, then the motion-trail read-outs, then the
+         scene helpers. Overlaps and Glue Seams went with the capsule/cage bind; Soft Gaps is a
+         bind setting, not a display one, and lives in the Bone tool's Setup. -->
     <div class="${c.toggles}">
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlagRaw('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlagRaw('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
-      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
+      ${flagButton(c, 'caps', 'Volumes', Skeleton.displayFlagRaw('capsules'))}
       ${flagButton(c, 'caps-shade', 'Shaded', Skeleton.displayFlagRaw('capsuleShaded'))}
       ${flagButton(c, 'skin-claims', 'Attach', Skeleton.displayFlagRaw('skinClaims'))}
       ${flagButton(c, 'weights', 'Weights', Skeleton.displayFlagRaw('weights'))}
+      ${flagButton(c, 'solo-radius', 'Solo Edit', Skeleton.displayFlagRaw('soloRadius'))}
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlagRaw('lengths'))}
       ${flagButton(c, 'names', 'Names', Skeleton.displayFlagRaw('names'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlagRaw('pins'))}
+    </div>
+    <hr class="${c.divider || 'mm-divider'}">
+    <div class="${c.toggles}">
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlagRaw('trails'))}
       ${flagButton(c, 'gnomons', 'Rotation', Skeleton.displayFlagRaw('gnomons'))}
       ${flagButton(c, 'gnomons-all', 'All Keys', Skeleton.displayFlagRaw('gnomonsAll'))}
+    </div>
+    <hr class="${c.divider || 'mm-divider'}">
+    <div class="${c.toggles}">
       <!-- Not a rig layer, but this is the preselection panel and that is what it is: the wire
            box an ordinary mesh shows, yellow while pointed at and cyan while selected. Hide All
            Decorations deliberately leaves it alone; see the flag's note in Skeleton. The key is
            still meshHover, so nobody's saved setting resets over a rename. -->
       ${flagButton(c, 'mesh-hover', 'Mesh Box', Skeleton.displayFlagRaw('meshHover'))}
+      ${extraChips}
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule Opacity</span>
-      <input type="range" id="bone-cap-op" min="5" max="100" step="5"
+      <input type="range" id="bone-cap-op" min="0" max="100" step="5"
         value="${Math.round(Skeleton.capsuleOpacity() * 100)}">
       <span class="${c.val}" id="bone-cap-op-val">${Math.round(Skeleton.capsuleOpacity() * 100)}</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Cylinder Opacity</span>
+      <input type="range" id="bone-shaft-op" min="0" max="100" step="5"
+        value="${Math.round(Skeleton.shaftOpacity() * 100)}">
+      <span class="${c.val}" id="bone-shaft-op-val">${Math.round(Skeleton.shaftOpacity() * 100)}</span>
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule Detail</span>
@@ -882,7 +930,7 @@ export function buildBoneQuickDisplayHTML(main, style) {
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlagRaw('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlagRaw('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlagRaw('joints'))}
-      ${flagButton(c, 'caps', 'Capsules', Skeleton.displayFlagRaw('capsules'))}
+      ${flagButton(c, 'caps', 'Volumes', Skeleton.displayFlagRaw('capsules'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlagRaw('pins'))}
       ${/* WEIGHTS BELONGS WITH THESE FIVE. It is the display mode you flip most while actually
            rigging -- bind, look at the falloff, sculpt, look again -- and it lived only in the
@@ -913,6 +961,22 @@ export function buildBoneSectionHTML(main, style) {
 // after anything that changes which BUTTONS exist (binding swaps Bind for Rebind/Unbind, and
 // Make Skin changes the selection), since a panel that only syncs classes would keep showing
 // the old set.
+// REST POSE, shared by this panel's button and the Transform section's (transformPanel.js), so the
+// two cannot drift apart.
+export function restPose(main, say) {
+  // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
+  // next physics step pulled the chain straight off it again, toward a target adopted from
+  // whatever last wrote the joint -- an IK drag, typically. Cleared here, the step re-derives
+  // it from _ikRest. See PhysicsBones.clearRest.
+  PhysicsBones.clearRest(main);
+  PhysicsBones.reset(main);
+  const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
+  window._physicsNeedsInit = true;
+  say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
+  Skeleton.updateVisuals(main);
+  main.render?.();
+}
+
 export function wireBoneSection(root, main, opts) {
   // This one wire function services four composable blocks. Bail only when NONE is present;
   // checking #bone-draw made pose/display/animation controls inert outside Bone Draw.
@@ -961,6 +1025,19 @@ export function wireBoneSection(root, main, opts) {
   };
   flag('snap', 'snapPlane');
   flag('axis', 'snapAxis');
+  flag('flat', 'snapFlat');
+  flag('solo-radius', 'soloRadius');
+  // BONE VOLUMES / SOFT GAPS change what the bind measures, so the weights have to follow at once.
+  for (const [id, name] of [['vol-soft', 'volSoft']]) {
+    q(id)?.addEventListener('click', () => {
+      Skeleton.setDisplayFlag(name, !Skeleton.displayFlag(name));
+      Skinning.resolveWeightsAll(main);
+      Skeleton.setDisplayFlag('capsules', true);
+      Skeleton.updateVisuals(main);
+      refresh();
+      main.render?.();
+    });
+  }
   flag('len', 'lengths');
   flag('names', 'names');
   flag('caps', 'capsules');
@@ -983,12 +1060,19 @@ export function wireBoneSection(root, main, opts) {
   // CAPSULE TESSELLATION, next to the other capsule cost. It is the mobile-VR knob — 56 segments
   // are 566k triangles across the solid and ghost passes, 28 are 140k, and the sawtooth the high
   // count buys is mostly gone by 28. Changing it rebuilds the batches, so it is a press-and-see
-  // control rather than a drag: the slider writes on CHANGE, not on input.
+  // control rather than a live drag: it applies once the slider pauses.
   {
     const segIn = q('cap-seg'), segVal = q('cap-seg-val');
-    if (segIn) segIn.addEventListener('change', () => {
-      const v = Skeleton.setCapsuleSegments(main, parseInt(segIn.value, 10));
-      if (segVal) segVal.textContent = String(v);
+    // ON `input`, DEBOUNCED -- NOT `change`. fixSliderDrag (which every desktop mount runs) drives
+    // range inputs by pointer events and dispatches only `input`, so a `change` listener never
+    // fired: the slider moved, the label stayed at 56 and nothing was rebuilt. The debounce keeps
+    // the batch rebuild to one per pause instead of one per pixel of drag.
+    let segTimer = 0;
+    if (segIn) segIn.addEventListener('input', () => {
+      const n = parseInt(segIn.value, 10);
+      if (segVal) segVal.textContent = String(n);
+      clearTimeout(segTimer);
+      segTimer = setTimeout(() => Skeleton.setCapsuleSegments(main, n), 250);
     });
   }
 
@@ -1006,6 +1090,20 @@ export function wireBoneSection(root, main, opts) {
       const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
       if (sel.length !== 1) return;
       const v = parseInt(rIn.value, 10) / 10;
+      // Bone Volumes: the volume being edited and its twin (see roundTarget above).
+      if (Skeleton.displayFlag('volumes')) {
+        const b = Skeleton.volumeActive(main, sel[0]);
+        if (!b) return;
+        Skeleton.setVolumeRound(b, v);
+        const bt = Skeleton.mirrorEdits(main) ? b._boneMirror : null;
+        if (bt && main.getMeshes?.().includes(bt)) Skeleton.setVolumeRound(bt, v);
+        if (rVal) rVal.textContent = v.toFixed(1);
+        Skeleton.updateVisuals(main);
+        const now = performance.now();
+        if (now - (rIn._lastSolve || 0) > 120) { rIn._lastSolve = now; Skinning.resolveWeightsAll(main); }
+        main.render?.();
+        return;
+      }
       Skeleton.setJointRound(sel[0], v);
       // THE TWIN TAKES IT TOO, like every other joint-shape edit. Tweak Joint already writes the
       // twin's scale and offset when it drags a face — sharpness is the same kind of property and
@@ -1021,9 +1119,60 @@ export function wireBoneSection(root, main, opts) {
       if (twin && main.getMeshes?.().includes(twin)) Skeleton.setJointRound(twin, v);
       if (rVal) rVal.textContent = v.toFixed(1);
       Skeleton.updateVisuals(main);
+      // THE WEIGHTS FOLLOW THE SHAPE, as they do for a radius or a box handle. Throttled while the
+      // slider moves (the solve is O(vertices x bones)); the change event lands the final value.
+      const now = performance.now();
+      if (now - (rIn._lastSolve || 0) > 120) { rIn._lastSolve = now; Skinning.resolveWeightsAll(main); }
       main.render?.();
     });
+    rIn?.addEventListener('change', () => { Skinning.resolveWeightsAll(main); main.render?.(); });
   }
+
+  // BACK TO WORLD-ALIGNED, the joint and its twin, as one undo step. Turning a ring back to
+  // exactly zero by hand is not something a hand can do.
+  q('rot-reset')?.addEventListener('click', () => {
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (sel.length !== 1) return;
+    const twin = Skeleton.mirrorEdits(main) ? sel[0]._boneMirror : null;
+    const rows = [sel[0]];
+    if (twin && twin !== sel[0] && main.getMeshes?.().includes(twin)) rows.push(twin);
+    const before = rows.map((j) => [j, Skeleton.jointRot(j).slice()]);
+    const apply = (list) => {
+      for (const [j, r] of list) Skeleton.setJointRot(j, r[0], r[1], r[2], r[3]);
+      Skinning.resolveWeightsAll(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    const after = rows.map((j) => [j, [0, 0, 0, 1]]);
+    apply(after);
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(before), () => apply(after), false, 'Reset Joint Rotation');
+  });
+
+  // WHETHER THIS JOINT SHAPES THE SKIN. Off, Make Skin leaves it out — a jaw inside a head, a twist
+  // bone — while it still deforms like any bone. The twin follows, as every joint-shape edit does.
+  q('shapes-skin')?.addEventListener('click', () => {
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (sel.length !== 1) return;
+    const twin = Skeleton.mirrorEdits(main) ? sel[0]._boneMirror : null;
+    const rows = [sel[0]];
+    if (twin && twin !== sel[0] && main.getMeshes?.().includes(twin)) rows.push(twin);
+    const on = !Skeleton.jointShapesSkin(sel[0]);
+    const apply = (v) => {
+      for (const j of rows) Skeleton.setJointShapesSkin(j, v);
+      q('shapes-skin')?.classList.toggle('active', v);
+      // THE WEIGHTS FOLLOW IT, undo included: the flag decides whether the bone into this joint is a
+      // capsule at all (Skeleton.boneHasCapsule), and the bind reads that, so without a re-solve the
+      // toggle changed the drawing and nothing on the skin until some other edit happened to solve.
+      Skinning.resolveWeightsAll(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    apply(on);
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(!on), () => apply(on), false, on ? 'Joint Shapes Skin' : 'Joint Deform Only');
+    refresh();
+  });
 
   q('sym')?.addEventListener('click', () => {
     const sm = main.getSculptManager?.();
@@ -1356,10 +1505,33 @@ export function wireBoneSection(root, main, opts) {
   // look, judged by watching. Skeleton persists it and rebuilds the batches, so the change lands
   // on the frame you are looking at and survives a reload.
   {
+    // The dedicated Cage Opacity slider (where the panel has one) follows, so it never disagrees.
+    const syncCageSlider = (v) => {
+      const ci = q('cage-op'), cv = q('cage-op-val');
+      const pct = Math.round(Math.max(0.05, v) * 100);
+      if (ci) ci.value = String(pct);
+      if (cv) cv.textContent = pct + '%';
+    };
     const input = q('cap-op'), val = q('cap-op-val');
     input?.addEventListener('input', () => {
       const v = Skeleton.setCapsuleOpacity(main, parseInt(input.value, 10) / 100);
+      // THE BAKED CAPSULES ARE CAPSULES TOO. matt: "if i change sphere or cylinder opacity, that
+      // should change the opacity for all the capsules, both spheres and these converted meshes."
+      WeightCage.setOpacity(main, v);
+      syncCageSlider(v);
       if (val) val.textContent = String(Math.round(v * 100));
+      // A cylinder nobody has set follows the spheres, and its slider should say so as it goes.
+      const si = q('shaft-op'), sv = q('shaft-op-val');
+      if (si) si.value = String(Math.round(Skeleton.shaftOpacity() * 100));
+      if (sv) sv.textContent = String(Math.round(Skeleton.shaftOpacity() * 100));
+      main.render?.();
+    });
+    const sIn = q('shaft-op'), sVal = q('shaft-op-val');
+    sIn?.addEventListener('input', () => {
+      const v = Skeleton.setShaftOpacity(main, parseInt(sIn.value, 10) / 100);
+      WeightCage.setOpacity(main, v);
+      syncCageSlider(v);
+      if (sVal) sVal.textContent = String(Math.round(v * 100));
       main.render?.();
     });
   }
@@ -1426,10 +1598,29 @@ export function wireBoneSection(root, main, opts) {
     refresh();
   });
 
+  // RESET JOINT: the SELECTED joint only (and its mirror twin, like every other joint edit) back to
+  // its default radius with its size and tweaks (box scale / offset / rotation) cleared. It used to
+  // be Reset Radii and re-proportion the whole rig, which threw away every joint you had tuned in
+  // order to fix one.
   q('rad-all')?.addEventListener('click', () => {
-    const before = Skeleton.captureRadii(main);
-    Skeleton.setRadiusFraction(main, Skeleton.radiusFraction());
-    const after = Skeleton.captureRadii(main);
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (!sel.length) { say('Reset Joint: select a joint first', false); return; }
+    const all = new Set(sel);
+    for (const j of sel) {
+      const t = j._boneMirror;
+      if (t && main.getMeshes().includes(t)) all.add(t);
+    }
+    // In Bone Volumes mode a joint's volumes are the bones LEAVING it (that is what its handles edit),
+    // so Reset Joint resets those: radius back to the default proportion, section back to round.
+    let tset = all;
+    if (Skeleton.displayFlag('volumes')) {
+      tset = new Set();
+      for (const j of all) for (const k of Skeleton.volumeKids(main, j)) tset.add(k);
+      if (!tset.size) { say('Reset Joint: that joint has no bone leaving it', false); return; }
+    }
+    const before = Skeleton.captureRadii(main).filter(([j]) => tset.has(j));
+    Skeleton.resetJoint(main, [...tset], Skeleton.radiusFraction());
+    const after = Skeleton.captureRadii(main).filter(([j]) => tset.has(j));
     const apply = (radii) => {
       Skeleton.restoreRadii(radii);
       Skinning.resolveWeightsAll(main);
@@ -1438,7 +1629,7 @@ export function wireBoneSection(root, main, opts) {
     };
     Skinning.resolveWeightsAll(main);
     main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(before), () => apply(after), false, 'Bone Radii');
+      () => apply(before), () => apply(after), false, 'Reset Joint');
     Skeleton.setDisplayFlag('capsules', true); // an invisible edit is indistinguishable from a no-op
     refresh();
     main.render?.();
@@ -1478,6 +1669,28 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
     refresh();
     say('selected ' + cages.length + ' weight cage' + (cages.length === 1 ? '' : 's'));
+  });
+
+  q('cage-split')?.addEventListener('click', () => {
+    const on = !WeightCage.splitAtJoints();
+    WeightCage.setSplit(on);
+    q('cage-split')?.classList.toggle('active', on);
+    say(`Bones: capsules ${on ? 'split at joints' : 'fully round'} -- applies to the next Bake or Reset Capsules`);
+  });
+
+  // RESET AND DELETE: the selected capsules, or all of them when none are selected.
+  const selectedCages = () => (main.getSelectedMeshes?.() || []).filter((m) => WeightCage.isCage(m));
+  q('reset-cages')?.addEventListener('click', () => {
+    const sel = selectedCages();
+    const res = WeightCage.reset(main, sel);
+    say(res.ok ? `Bones: reset ${res.reset} capsule(s) to the rig's current shape` : `Bones: ${res.why}`, res.ok);
+    refresh();
+  });
+  q('delete-cages')?.addEventListener('click', () => {
+    const sel = selectedCages();
+    const n = WeightCage.deleteSome(main, sel.length ? sel : WeightCage.cages(main));
+    say(n ? `Bones: deleted ${n} capsule(s)` : 'Bones: no weight cages to delete', !!n);
+    rebuild();
   });
 
   // Delta mush strength, in smoothing iterations — the radius, in edges, that the smoothing
@@ -1727,19 +1940,15 @@ export function wireBoneSection(root, main, opts) {
     pinCmd('pin-clear', (j) => IKSolver.clearPinWeight(main, j));
   }
 
-  q('restpose')?.addEventListener('click', () => {
-    // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
-    // next physics step pulled the chain straight off it again, toward a target adopted from
-    // whatever last wrote the joint -- an IK drag, typically. Cleared here, the step re-derives
-    // it from _ikRest. See PhysicsBones.clearRest.
-    PhysicsBones.clearRest(main);
-    PhysicsBones.reset(main);
-    const n = IKSolver.resetRigAndPins(main, 'Rest Pose');
-    window._physicsNeedsInit = true;
-    say(n ? `Bones: ${n} joints returned to the rest pose` : 'Bones: no rest pose recorded', !!n);
+  q('orient')?.addEventListener('click', () => {
+    const r = orientJoints(main, { name: 'Orient Joints' });
+    if (!r.ok) say('Bones: not oriented \u2014 ' + r.reason, false);
+    else say(r.changed ? `Bones: ${r.changed} joint${r.changed > 1 ? 's' : ''} oriented to the chain` : 'Bones: joints are already oriented', true);
     Skeleton.updateVisuals(main);
     main.render?.();
   });
+
+  q('restpose')?.addEventListener('click', () => restPose(main, say));
 
   // SCULPT THE BIND SHAPE. Two things the rest of the app has never had: an exact way to REACH
   // the pose the skin was bound in (the rig's rest pose is a different pose and can differ from
@@ -1753,7 +1962,11 @@ export function wireBoneSection(root, main, opts) {
   // on purpose. So this is the way out, and it is also the A/B for the bug that caused it:
   // revert, repeat the stroke, compare.
   q('revert')?.addEventListener('click', () => {
-    const mesh = (main.getMeshes() || []).find((m) => Skinning.isBound(m));
+    // THE SELECTED BOUND MESH, not the first one found: with the body, head and clothes all bound this reverted
+    // whichever of them came first in the scene, so "restore the clothes" quietly restored something else.
+    const sel = (main.getSelectedMeshes && main.getSelectedMeshes()) || [];
+    const mesh = [main.getMesh && main.getMesh(), ...sel].find((m) => m && Skinning.isBound(m))
+      || (main.getMeshes() || []).find((m) => Skinning.isBound(m));
     if (!mesh) { say('Bones: nothing is bound to the skeleton', false); return; }
     // Bounded to the BIND SHAPE's length, not the level's: the level can carry more vertices
     // than the weights cover, and a snapshot longer than `_skinRest` cannot be written back.
@@ -1789,8 +2002,10 @@ export function wireBoneSection(root, main, opts) {
   });
 
   q('bindpose')?.addEventListener('click', () => {
+    // the selected bound mesh first (each bound mesh has its own bind pose), else the first one
     const mesh = Skinning.anyBound(main)
-      ? (main.getMeshes() || []).find((m) => Skinning.isBound(m)) : null;
+      ? ([main.getMesh && main.getMesh(), ...((main.getSelectedMeshes && main.getSelectedMeshes()) || [])].find((m) => m && Skinning.isBound(m))
+          || (main.getMeshes() || []).find((m) => Skinning.isBound(m))) : null;
     if (!mesh) { say('Bones: nothing is bound to the skeleton', false); return; }
     if (Skinning.bindPoseHeld()) {
       Skinning.exitBindPose(main);
@@ -1820,10 +2035,15 @@ export function syncBoneSection(root, main) {
   const setFlag = (id, val) => q(id)?.classList.toggle('active', val);
   setFlag('snap', Skeleton.displayFlagRaw('snapPlane'));
   setFlag('axis', Skeleton.displayFlagRaw('snapAxis'));
+  setFlag('flat', Skeleton.displayFlagRaw('snapFlat'));
   // Not a display flag — the sculpt manager's own `_symmetry`, which the main menu and the wrist
   // panel also write. Synced here so a toggle in either of those is reflected the next time this
   // panel repaints, rather than the three going out of step with each other.
   setFlag('sym', !!main.getSculptManager?.()?._symmetry);
+  {
+    const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
+    if (sel.length === 1) setFlag('shapes-skin', Skeleton.jointShapesSkin(sel[0]));
+  }
   {
     // Label AND state: the button says which way it will go, so it has to be rewritten rather
     // than only re-classed.
@@ -1832,6 +2052,8 @@ export function syncBoneSection(root, main) {
     const b = q('hide-decor');
     if (b) b.textContent = hd ? 'Decorations Hidden' : 'Hide All Decorations';
   }
+  setFlag('solo-radius', Skeleton.displayFlagRaw('soloRadius'));
+  setFlag('vol-soft', Skeleton.displayFlagRaw('volSoft'));
   setFlag('len', Skeleton.displayFlagRaw('lengths'));
   setFlag('names', Skeleton.displayFlagRaw('names'));
   setFlag('caps', Skeleton.displayFlagRaw('capsules'));

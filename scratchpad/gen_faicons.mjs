@@ -3,7 +3,7 @@ const SOLID = 'node_modules/@fortawesome/fontawesome-free/svgs/solid/';
 const NAMES = [
   // panel markup
   'backward-step','backward','play','stop','forward','forward-step','circle',
-  'rotate-left','rotate-right','chevron-right','chevron-down','link','link-slash',
+  'rotate-left','rotate-right','chevron-left','chevron-right','chevron-down','link','link-slash',
   'cake-candles','copy','eye','eye-slash','pen','trash','lock','lock-open','cube',
   'asterisk','arrows-rotate',
   // The outliner's physics-bone marker: a joint that swings, and everything under it.
@@ -16,6 +16,11 @@ const NAMES = [
   // tab + chip icons (resolved from their codepoints)
   'thumbtack','arrow-left','sitemap','photo-film','draw-polygon','toolbox','sliders',
   'film','layer-group','bezier-curve',
+  // The outliner toolbar's own add-primitive button, opening a menu of Cube/Sphere/etc. rather
+  // than a whole "Primitives" section at the bottom of a panel with a fixed, unscrollable height.
+  'plus',
+  // outliner reorder
+  'chevron-up',
 ];
 const out = {};
 for (const n of NAMES) {

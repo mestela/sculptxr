@@ -4,7 +4,7 @@
 # Guarded by IfModule so it's a no-op if mod_headers isn't available (and ignored
 # entirely on non-Apache hosts — set equivalent headers in the server config there).
 <IfModule mod_headers.c>
-  <FilesMatch "(index\.html|version\.json)$">
+  <FilesMatch "(index\.html|version\.json|sw\.js)$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"
     Header set Pragma "no-cache"
     Header set Expires "0"

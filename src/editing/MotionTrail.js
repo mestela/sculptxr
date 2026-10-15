@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import NodeMaterials from '../render/nodes/NodeMaterials.js';
 import { VERSION } from '../Version.js';
 // Fat lines, for the gnomons only. THREE.Line draws hardware 1px lines, which cannot be
 // antialiased and step between whole pixels as the camera moves; LineSegments2 triangulates a
@@ -643,6 +644,7 @@ const _fatVp = new THREE.Vector4();
 const REF_VIEWPORT_W = 1400;
 
 function makeFat(main, px, opacity, order) {
+  if (NodeMaterials.isActive && NodeMaterials.isActive()) return makeThin(main, order);
   const g = Skeleton.overlayGroup(main);
   const seg = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
     linewidth: px,               // SCREEN pixels, because worldUnits is off
@@ -682,6 +684,44 @@ function makeFat(main, px, opacity, order) {
   return seg;
 }
 
+// ── THE NODE RENDERER GETS A THIN LINE, FOR NOW ─────────────────────────────────────────
+//
+// LineMaterial is a ShaderMaterial and this backend cannot compile one, so Scene's sweep hides
+// every fat line outright -- the trails were switched off, not failing to draw. three's node
+// replacement (lines/webgpu/LineSegments2 + Line2NodeMaterial) drew a clean ring once in
+// isolation and could never be made to do it again inside the app: seven approaches measured
+// dead, including building the line complete before it is ever rendered, and a linewidth of 25
+// with the blend and depth test taken out of the picture. See the note in NodeMaterials and the
+// two reverts in the history.
+//
+// So this is the thing that PROVABLY works on this path: a plain LineSegments on a
+// LineBasicMaterial, which the sweep leaves alone -- exactly what the rig wireframe
+// (rigbatch:wire) has been drawing with all along, per-vertex colours and all.
+//
+// The cost is honest and matt knows it: a hardware line is 1px, it will not antialias and it
+// steps between whole pixels. It is a short-term floor so the trails EXIST in a headset, not the
+// finished look; matt, choosing it: "lets try thin lines then, see if thats good enough to work
+// in the short term on gxr/avp".
+function makeThin(main, order) {
+  const g = Skeleton.overlayGroup(main);
+  const seg = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+    vertexColors: true,
+    // Same pass reasoning as the fat line: `transparent` buys the late pass, NoBlending declines
+    // the blend, and depth is off because the overlay is a readout.
+    transparent: true,
+    blending: THREE.NoBlending,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false,
+  }));
+  seg.frustumCulled = false;
+  seg.isPickable = false;
+  seg.renderOrder = order;
+  seg.userData.thinLine = true;
+  g.add(seg);
+  return seg;
+}
+
 function makeGnomons(main) {
   return makeFat(main, GNOMON_PX, 0.95, GNOMON_ORDER);
 }
@@ -710,6 +750,7 @@ function writePairsScaled(src, out, n, k) {
   }
 }
 
+// Returns the object to keep, so a future rebuild path can swap it without touching callers.
 function pushFat(main, obj, state, pos, col, segs) {
   // EVERY fat line needs the viewport, not just the triads. LineMaterial clones its uniforms
   // per material, so a resolution set on one does nothing for the others — and a line whose
@@ -718,6 +759,24 @@ function pushFat(main, obj, state, pos, col, segs) {
   // the only fat line, and the trail inherited the gap when it was converted.
   syncResolution(main, obj.material);
   const g = obj.geometry;
+  // THE THIN LINE TAKES THE SAME PAIRS, unpacked. `pos` and `col` already hold two vertices per
+  // segment, which is exactly what LineSegments wants -- so this is a copy, not a conversion.
+  // Attributes are replaced only when the length moves and written in place otherwise, which is
+  // the shape flushLineBatch uses for the rig wireframe and is known to work on this renderer.
+  if (obj.userData && obj.userData.thinLine) {
+    let pa = g.getAttribute('position');
+    if (!pa || pa.array.length !== pos.length) {
+      pa = new THREE.BufferAttribute(new Float32Array(pos.length), 3);
+      g.setAttribute('position', pa);
+      g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col.length), 3));
+    }
+    pa.array.set(pos);
+    g.getAttribute('color').array.set(col);
+    pa.needsUpdate = true;
+    g.getAttribute('color').needsUpdate = true;
+    g.setDrawRange(0, segs * 2);
+    return obj;
+  }
   if (state.fresh) {
     g.setPositions(pos);
     g.setColors(col);
@@ -731,6 +790,7 @@ function pushFat(main, obj, state, pos, col, segs) {
     }
   }
   g.instanceCount = segs;
+  return obj;
 }
 
 // A screen-space width needs to know what the screen is. Read every FRAME rather than pushed from
@@ -965,7 +1025,7 @@ MotionTrail.drawGnomons = function (main) {
   // the rebuild rule cannot differ between them again.
   v.gnomonState = v.gnomonState || {};
   v.gnomonState.fresh = v.gnomonFresh;
-  pushFat(main, v.gnomons, v.gnomonState, pos, col, verts / 2);
+  v.gnomons = pushFat(main, v.gnomons, v.gnomonState, pos, col, verts / 2);
   v.gnomonFresh = v.gnomonState.fresh;
   v.gnomons.visible = true;
 
@@ -1211,9 +1271,31 @@ window.gnomonDiag = function () {
   return d;
 };
 
+// See the call site: a replaced attribute is invisible to the node renderer, so the buffer is
+// grown only when the point count changes and written in place otherwise.
+function setPointsInPlace(g, pts) {
+  const need = pts.length * 3;
+  let pa = g.getAttribute('position');
+  if (!pa || pa.array.length !== need) {
+    pa = new THREE.BufferAttribute(new Float32Array(need), 3);
+    g.setAttribute('position', pa);
+  }
+  const P = pa.array;
+  for (let i = 0; i < pts.length; i++) {
+    P[i * 3] = pts[i].x; P[i * 3 + 1] = pts[i].y; P[i * 3 + 2] = pts[i].z;
+  }
+  pa.needsUpdate = true;
+  g.setDrawRange(0, pts.length);
+  return pa;
+}
+
 function makeDots(main, sizePx) {
   const g = Skeleton.overlayGroup(main);
-  const pts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
+  // The node renderer cannot draw the cutout below -- alphaTest is what breaks it, for the stock
+  // material and the node one alike. See NodeMaterials.dots for the shape that does work.
+  const nodeDots = (NodeMaterials.isActive && NodeMaterials.isActive())
+    ? NodeMaterials.dots({ size: sizePx }) : null;
+  const pts = new THREE.Points(new THREE.BufferGeometry(), nodeDots || new THREE.PointsMaterial({
     size: sizePx,
     sizeAttenuation: false,   // SCREEN pixels — this is the whole difference from the old wall
     map: dotTexture(),
@@ -1233,6 +1315,22 @@ function makeDots(main, sizePx) {
   pts.frustumCulled = false;
   pts.isPickable = false;
   pts.renderOrder = DOT_ORDER;
+  // A PIXEL IS NOT A CONSTANT ANGULAR SIZE, and the dots never learned what the lines did.
+  // `sizeAttenuation: false` means these are sized in SCREEN pixels, and a GalaxyXR eye buffer is
+  // several times wider than the desktop canvas the 4 and 6 above were chosen against -- so the
+  // same number of pixels covers a fraction of the field of view and the dots all but vanish.
+  // matt, with the trails otherwise working on the GXR: "they're barely visible."
+  //
+  // Same rule the fat lines already use: a fraction of the viewport, anchored to the width these
+  // numbers were tuned at, and NEVER SCALED DOWN -- desktop already looks the way matt signed off
+  // on, so below the reference width this is exactly the old behaviour.
+  // window._trailDotScale is the knob if the multiplier itself needs taste applied.
+  pts.onBeforeRender = function () {
+    const r = viewportSize(main);
+    const w = (r.w > 1) ? r.w : REF_VIEWPORT_W;
+    const k = Math.max(1, w / REF_VIEWPORT_W) * tune('_trailDotScale', 1);
+    this.material.size = sizePx * k;
+  };
   g.add(pts);
   return pts;
 }
@@ -1343,7 +1441,15 @@ MotionTrail.recolor = function (main) {
       if (hp) {
         v.hoverDot.geometry.setFromPoints([hp]);
         setColors(v.hoverDot, new Float32Array(HOVER_COL));
-        v.hoverDot.material.size = (v.slots[hover].key ? KEY_DOT_PX : DOT_PX) * HOVER_GROW;
+        // The hover dot's own size is written here rather than by its onBeforeRender, so it
+        // carries the same viewport scale explicitly or it shrinks back on a headset.
+        {
+          const _r = viewportSize(main);
+          const _k = Math.max(1, ((_r.w > 1) ? _r.w : REF_VIEWPORT_W) / REF_VIEWPORT_W)
+            * tune('_trailDotScale', 1);
+          v.hoverDot.material.size =
+            (v.slots[hover].key ? KEY_DOT_PX : DOT_PX) * HOVER_GROW * _k;
+        }
       }
       v.hoverDot.visible = !!hp;
     }
@@ -1364,6 +1470,13 @@ MotionTrail.recolor = function (main) {
     if (g.attributes.instanceColorStart) {
       g.attributes.instanceColorStart.needsUpdate = true;
       g.attributes.instanceColorEnd.needsUpdate = true;
+    } else if (line.userData && line.userData.thinLine && g.attributes.color) {
+      // THE THIN LINE KEEPS ITS COLOUR IN AN ORDINARY ATTRIBUTE, and this is the only place the
+      // colour is authored -- writeLine deliberately leaves the buffer alone, so a thin line
+      // whose colours are never copied across draws BLACK on a black background and reads as not
+      // drawing at all. Measured: 254 vertices, drawRange 254, every colour 0,0,0.
+      g.attributes.color.array.set(st.col);
+      g.attributes.color.needsUpdate = true;
     }
   });
 };
@@ -1566,8 +1679,14 @@ MotionTrail.drawDots = function (main, weights) {
     }
   }
 
-  v.dots.geometry.setFromPoints(plain);
-  v.keyDots.geometry.setFromPoints(keys);
+  // WRITTEN IN PLACE, NOT REPLACED. setFromPoints builds a NEW position attribute every call,
+  // and the node renderer does not pick a replaced attribute up -- it resolved the geometry once
+  // and goes on drawing what it resolved. That is the same trap the fat lines fell into, and it
+  // is why the key dots could be present, visible and correctly coloured and still not appear.
+  // The attribute is reallocated only when the COUNT moves, exactly as flushLineBatch does for
+  // the rig wireframe, which is the pattern known to work on this path.
+  setPointsInPlace(v.dots.geometry, plain);
+  setPointsInPlace(v.keyDots.geometry, keys);
   v.dots.visible = plain.length > 0;
   v.keyDots.visible = keys.length > 0;
 
@@ -1740,7 +1859,7 @@ MotionTrail.writeLine = function (main, i, pts) {
     flat[k * 3] = pts[k].x; flat[k * 3 + 1] = pts[k].y; flat[k * 3 + 2] = pts[k].z;
   }
   writePairs(flat, st.pos, pts.length);
-  pushFat(main, line, st, st.pos, st.col, segs);
+  v.lines[i] = pushFat(main, line, st, st.pos, st.col, segs);
 };
 
 export default MotionTrail;

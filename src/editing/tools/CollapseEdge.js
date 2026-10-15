@@ -5,6 +5,8 @@ import SculptBase from './SculptBase.js';
 import Geometry from '../../math3d/Geometry.js';
 import { vec3 } from 'gl-matrix';
 
+import { addEdgeHover } from '../EdgeSelection.js';
+
 class CollapseEdge extends SculptBase {
   constructor(main) {
     super(main);
@@ -197,5 +199,7 @@ class CollapseEdge extends SculptBase {
   stroke(picking) {
   }
 }
+
+addEdgeHover(CollapseEdge);
 
 export default CollapseEdge;

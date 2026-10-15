@@ -522,11 +522,35 @@ const SWEEP_CSS = `
 .ui-reorg .mm-section-header + .mm-group-head { margin-top: 0; }
 
 /* The outliner rows were 8px, the only type in the app that small. They keep their own tinted
-   surface, which carries selection state, but take the shared radius and border. */
+   surface, which carries selection state, but take the shared radius and border.
+   FONT AND HEIGHT STAYED THEIR OWN, though -- this used to route both through the shared
+   control tokens along with the radius, which quietly regressed the "only type in the app that
+   small" row back up to the general 11px/24px control size, leaving only the 8px node icon
+   behind at its old size (text, icon and row height no longer agreeing with each other at all).
+   matt asked for this outliner specifically to shrink twice now: "the font size and icons ...
+   too big" and then again "can the outliner panel use a slightly smaller font, it feels overly
+   big ... it would be useful to fit more text here." A denser tree view is the one place in this
+   panel where that trade is worth making, and it is not one the shared tokens should carry --
+   shrinking --ui-ctl-fs/-h-sm would also shrink every ordinary button and slider row that has
+   nothing to do with fitting more of a rig's names on screen. No min-height at all: letting the
+   8px text and its own padding set the row is exactly what made it dense before. */
 .ui-reorg .mm-mesh-btn {
-  font-size: var(--ui-ctl-fs);
-  min-height: var(--ui-ctl-h-sm);
+  font-size: 8px;
   border-radius: var(--ui-ctl-r);
+}
+
+/* THE NUMBER FIELDS ARE NOT BUTTONS. --ui-ctl-h (30px) is sized for "anything pressable" -- a
+   real target you aim a controller ray at -- and Pos/Rot/Scale's nine fields inherited that
+   through the shared sweep along with actual buttons, at three rows of 30px each before a
+   single Transform value was visible. matt, comparing the VR panel against the desktop one:
+   "the number fields for the transform options could be shorter ... this shows all the UI, i
+   feel we can fit this into VR." A number field is read and typed into, not pointed at and
+   pressed, so it can be smaller than a button without becoming harder to use in the headset. */
+.ui-reorg .mm-xf, .ui-reorg .mm-xf-lbl {
+  min-height: 22px;
+}
+.ui-reorg .mm-xf {
+  padding: 0 6px;
 }
 
 /* Compact rows and headings settle on the small height rather than near it: 25, 26 and 27 were

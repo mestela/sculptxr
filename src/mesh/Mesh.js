@@ -7,11 +7,13 @@ import RenderData from './RenderData.js';
 import MeshSymmetry from './MeshSymmetry.js';
 import * as THREE from 'three';
 import ShaderManager from '../render/ShaderManager.js';
+import { guardedError } from '../misc/LogGuard.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
 // Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
 const _MS_INV = mat4.create();
 const _MS_OUT = mat4.create();
+const _MS_ACC = new Float64Array(16); // full-precision accumulator for the local-chain compose
 
 /*
 Basic usage:
@@ -65,6 +67,11 @@ class Mesh {
 
   setVisible(bool) {
     this._isVisible = bool;
+    // Playback skips recompositing a hidden mesh's blendshapes (AnimationRegistry.update), so
+    // showing it again has to catch up, or a paused scene shows the pose from when it was hidden.
+    const reg = bool && window._animationRegistry;
+    const track = reg && reg.tracks.get(this.getID());
+    if (track && track._bsStale) { track._bsStale = false; reg.applyBlendshapes(this); }
   }
 
   setVertices(vAr) {
@@ -390,6 +397,22 @@ class Mesh {
     const tm = this.getThreeMesh();
     const wg = window._sxrWorldGroup;
     if (!tm || !wg || tm.parent === wg) { mat4.copy(out, this._transformData._matrix); return out; }
+    // COMPOSED FROM THE LOCAL MATRICES, NEVER FROM matrixWorld. three only recomputes a node's
+    // world matrix when ITS OWN matrixWorldNeedsUpdate is set, and `updateWorldMatrix(true,false)`
+    // does not push a parent's change down to the node it was called on -- so after the world
+    // group moved (a VR grip) every joint's matrixWorld was stale until the renderer's next full
+    // walk, and `inverse(fresh wg) * stale joint` came out wrong by the distance the world had
+    // moved. Measured on the GXR 2026-10-09: up to 12 model units off for a joint that had not
+    // moved, which is what made physics bones shake. The local chain has no such state.
+    // Falls back to the world-matrix path if the chain does not end at the world group.
+    let ok = false;
+    mat4.copy(_MS_ACC, tm.matrix.elements);
+    for (let o = tm.parent; o; o = o.parent) {
+      if (o === wg) { ok = true; break; }
+      if (o.matrixAutoUpdate) o.updateMatrix();
+      mat4.multiply(_MS_ACC, o.matrix.elements, _MS_ACC);
+    }
+    if (ok) { mat4.copy(out, _MS_ACC); return out; }
     tm.updateWorldMatrix(true, false);
     mat4.invert(_MS_INV, wg.matrixWorld.elements);
     mat4.multiply(out, _MS_INV, tm.matrixWorld.elements);
@@ -511,6 +534,16 @@ class Mesh {
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
+      // SHADOW FLAGS AT BIRTH, because they are GRAPH STATE under the node renderer.
+      // AnalyticLightNode.setup reads `builder.object.receiveShadow` when the material is
+      // BUILT, and RenderObject folds it into the cache key -- so a mesh whose receiveShadow
+      // is false compiles a graph with no shadow sampling at all, and flipping it later forces
+      // a recompile. Inside an XR session that recompile is the one thing the fixed light pool
+      // exists to prevent, and it is how a box added mid-session ended up unable to receive a
+      // shadow while the pass itself ran perfectly. Setting them here means they are never
+      // false and nothing ever has to change them.
+      this._renderData._threeMesh.castShadow = true;
+      this._renderData._threeMesh.receiveShadow = true;
       
 
 
@@ -573,19 +606,30 @@ class Mesh {
         return;
       }
       const _v    = this.getVertices();
+      // THE DELTA IS THE SIZE OF THE BASE SHAPE, NOT THE VERTEX BUFFER. The buffer is allocated
+      // with spare capacity (here 75,075 floats for 73,734 in use), and sizing the delta to it
+      // (a) made every layer fail the length check on its first stroke and be re-allocated at
+      // capacity, and (b) filled the spare tail with NaN (baseShape[j] is undefined out there).
+      // The NaN then went back into the mesh through applyBlendshapes, and three logged
+      // "computeBoundingSphere: radius is NaN" on every geometry update -- ~140ms each on the
+      // headset, which is what made sculpting a new layer crawl.
+      const _n = _track.baseShape.length;
       let _delta  = _track.blendshapes?.get(_name);
-      if (!_delta || _delta.length !== _v.length) {
-        _delta = new Float32Array(_v.length);
+      if (!_delta || _delta.length !== _n) {
+        const _old = _delta;
+        _delta = new Float32Array(_n);
+        if (_old) _delta.set(_old.subarray(0, Math.min(_n, _old.length)));
         _track.blendshapes.set(_name, _delta);
       }
       const _others = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, _name) : null;
       if (_others) {
-        for (let _j = 0; _j < _v.length; _j++)
+        for (let _j = 0; _j < _n; _j++)
           _delta[_j] = _v[_j] - _track.baseShape[_j] - _others[_j];
       } else {
-        for (let _j = 0; _j < _v.length; _j++)
+        for (let _j = 0; _j < _n; _j++)
           _delta[_j] = _v[_j] - _track.baseShape[_j];
       }
+      _track._bsRev = (_track._bsRev | 0) + 1;   // written in place: see Skinning composeMush
     } else if (_track?.baseShape && !_track._applyingBS) {
       // Base layer active: rebase baseShape to the new neutral.
       //
@@ -607,6 +651,7 @@ class Mesh {
       } else {
         _track.baseShape.set(_v);
       }
+      _track._bsRev = (_track._bsRev | 0) + 1;
     }
 
     // Phase times for the skin trace. Split here because "the refresh is slow" was never
@@ -1983,12 +2028,14 @@ class Mesh {
       }
     }
     
-    for(var k=0; k<6; k++) {
-        if(isNaN(worldb[k])) {
-            console.error("🛑 computeWorldBound produced NaN! LocalBounds:", localb, "Matrix:", mat);
-            if(window.screenLog) window.screenLog("NaN WorldBound", "red");
-            break;
-        }
+    // REPORTED ONCE, NOT ONCE PER MESH PER FRAME -- see misc/LogGuard.js for why that
+    // distinction is a performance fix and not tidiness.
+    for (var k = 0; k < 6; k++) {
+      if (isNaN(worldb[k])) {
+        guardedError('computeWorldBound produced NaN', 5000,
+          'LocalBounds:', Array.from(localb), 'Matrix:', Array.from(mat));
+        break;
+      }
     }
 
     return worldb;
@@ -2260,6 +2307,31 @@ class Mesh {
 
   setOpacity(alpha) {
     this._renderData._alpha = alpha;
+    // The node path keeps opacity on the MATERIAL (the legacy path has a uniform of its own),
+    // and the shared sculpt material is opaque on purpose. So a mesh crossing 1.0 has to
+    // re-query -- it is gaining or losing a material of its own -- while a drag inside the
+    // translucent range only moves the number, which keeps a slider from building a material
+    // per frame.
+    const tm = this._renderData && this._renderData._threeMesh;
+    const mat = tm && tm.material;
+    if (!mat || !mat.userData) return;
+    // Every non-PBR mode: crossing 1.0 swaps between the shared material and this mesh's own
+    // (NodeMaterials.getFor); inside the translucent range only the number moves.
+    if (!mat.userData.isPhysicalPBR) {
+      if (mat.userData.sculptShaderId === undefined) return;
+      // Variants are SHARED by opacity step (NodeMaterials.getFor), so the number can never be
+      // moved in place -- that would move every mesh on the same step. Re-query instead; it is a
+      // cache lookup.
+      if (alpha < 1 || mat.userData.sculptOpacityVariant) {
+        tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+      }
+      return;
+    }
+    if ((alpha < 1) !== !!mat.transparent) {
+      tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+    } else if (alpha < 1) {
+      mat.opacity = alpha;
+    }
   }
 
   setTexture0(tex) {
@@ -2410,6 +2482,7 @@ class Mesh {
     var col = new Float32Array(nbTris * 9);
     var gcol = [0.0, 0.0, 0.0];
     var t = 0;
+    var faceTri = new Uint32Array(nbFaces + 1); // first overlay triangle of each face
     var writeTri = (ia, ib, ic) => {
       var o = t * 9;
       var a = ia * 3, b = ib * 3, c = ic * 3;
@@ -2423,9 +2496,12 @@ class Mesh {
       this.getFaceGroupColor(groups[i], gcol);
       var id = i * 4;
       var a = fAr[id], b = fAr[id + 1], c = fAr[id + 2], d = fAr[id + 3];
+      faceTri[i] = t;
       writeTri(a, b, c);
       if (d !== Utils.TRI_INDEX) writeTri(a, c, d);
     }
+    faceTri[nbFaces] = t;
+    rd._groupOverlayFaceTri = faceTri;
 
     if (!rd._groupOverlayMesh) {
       // depthWrite:false so the (decorative, camera-pulled) overlay polygon doesn't write
@@ -2451,6 +2527,33 @@ class Mesh {
       var colAttr = geom.getAttribute('color'); colAttr.array.set(col); colAttr.needsUpdate = true;
     }
     rd._groupOverlayMesh.visible = true;
+  }
+
+  // Paint-stroke fast path: positions have not moved, only these faces' group changed, so
+  // rewrite just their colour entries (no allocation, no position copy). The upload is a
+  // needsUpdate flag, so three sends it once per render however many dabs landed in the frame.
+  // Falls back to the full rebuild whenever the cached layout no longer matches the mesh.
+  updateGroupOverlayFaces(iFaces) {
+    var rd = this._renderData;
+    var ov = rd._groupOverlayMesh;
+    var faceTri = rd._groupOverlayFaceTri;
+    var groups = this._meshData._facesGroups;
+    var colAttr = ov && ov.geometry.getAttribute('color');
+    if (!ov || !faceTri || !groups || !colAttr || !this.getShowFacesGroups() ||
+        faceTri.length !== this.getNbFaces() + 1 ||
+        colAttr.array.length !== faceTri[faceTri.length - 1] * 9) {
+      this.updateGroupOverlay();
+      return;
+    }
+    var col = colAttr.array;
+    var gcol = [0.0, 0.0, 0.0];
+    for (var k = 0, n = iFaces.length; k < n; ++k) {
+      var f = iFaces[k];
+      this.getFaceGroupColor(groups[f], gcol);
+      var lo = faceTri[f] * 9, hi = faceTri[f + 1] * 9;
+      for (var o = lo; o < hi; o += 3) { col[o] = gcol[0]; col[o + 1] = gcol[1]; col[o + 2] = gcol[2]; }
+    }
+    colAttr.needsUpdate = true;
   }
 
   // Deterministic palette for group ids. Group 0 (unpainted) reads as neutral light gray;
@@ -2692,9 +2795,24 @@ class Mesh {
       attr.array.set(vertices);
       attr.needsUpdate = true;
 
+      // ONE PASS, AND THE SPHERE FROM THE BOX. three's computeBoundingBox + computeBoundingSphere
+      // walk the attribute three times through per-vertex Vector3 reads: ~3.5ms a frame for the
+      // wrestler's 12k body on GalaxyXR (2026-10-14), every frame the skin pass refreshes it. The
+      // bounds only feed frustum culling and three's raycast early-out, so a sphere around the box
+      // (looser, never smaller) does both jobs.
       if (geom) {
-        geom.computeBoundingSphere();
-        geom.computeBoundingBox();
+        let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+        for (let i = 0; i < vertices.length; i += 3) {
+          const x = vertices[i], y = vertices[i + 1], z = vertices[i + 2];
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+          if (z < z0) z0 = z; if (z > z1) z1 = z;
+        }
+        const box = geom.boundingBox || (geom.boundingBox = new THREE.Box3());
+        const sph = geom.boundingSphere || (geom.boundingSphere = new THREE.Sphere());
+        box.min.set(x0, y0, z0); box.max.set(x1, y1, z1);
+        box.getCenter(sph.center);
+        sph.radius = 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0);
       }
     }
   }

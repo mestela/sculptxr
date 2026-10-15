@@ -60,6 +60,10 @@ const BY_TOOL = {
   [Enums.Tools.TRANSFORM]: PIN,
   [Enums.Tools.TRANSFORM_VR]: PIN,
   [Enums.Tools.BONE_DRAW]: PIN,
+  // A LATCH, NOT A SHOT: it stays on until tapped again. It is the flat-screen stand-in for
+  // Shift (desktop) / the off-hand trigger (VR) while picking faces, which needs to hold across
+  // many taps and drags. It never consumes a click itself -- Extrude reads `latched`.
+  [Enums.Tools.EXTRUDE]: { label: 'Select', latch: true, run: () => false },
 };
 
 // The active tool's secondary action, or null when it has none — which is also what tells the
@@ -76,7 +80,14 @@ SecondaryAction.label = function (main) {
 };
 
 SecondaryAction.armed = function (main) {
-  return !!(main && main._secondaryArmed && SecondaryAction.of(main));
+  const a = SecondaryAction.of(main);
+  return !!(main && main._secondaryArmed && a && !a.latch);
+};
+
+// The latched kind: the same flag, but read by the tool rather than consumed by a click.
+SecondaryAction.latched = function (main) {
+  const a = SecondaryAction.of(main);
+  return !!(main && main._secondaryArmed && a && a.latch);
 };
 
 SecondaryAction.disarm = function (main) {
@@ -92,7 +103,7 @@ SecondaryAction.disarm = function (main) {
 SecondaryAction.toggle = function (main) {
   if (!main) return false;
   main._secondaryArmed = !main._secondaryArmed;
-  return SecondaryAction.armed(main);
+  return SecondaryAction.armed(main) || SecondaryAction.latched(main);
 };
 
 // Fire it. Disarms either way: a click that found nothing has still been spent, and leaving the

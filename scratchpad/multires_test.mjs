@@ -33,8 +33,19 @@ function lift(name) {
     else if (SRC[k] === '}') { depth--; if (depth === 0) { end = k + 1; break; } }
   }
   const body = SRC.slice(SRC.indexOf('(', at), end);
+  // the module-level helper the lifted method calls (tangentNeighbour), lifted the same way
+  let helper = '';
+  const hAt = SRC.indexOf('function tangentNeighbour(');
+  if (hAt >= 0) {
+    let d = 0, hEnd = -1;
+    for (let k = SRC.indexOf('{', hAt); k < SRC.length; k++) {
+      if (SRC[k] === '{') d++;
+      else if (SRC[k] === '}') { d--; if (d === 0) { hEnd = k + 1; break; } }
+    }
+    helper = SRC.slice(hAt, hEnd) + '\n';
+  }
   // eslint-disable-next-line no-new-func
-  return new Function('Subdivision', 'return function ' + body + ';')(SubdivisionStub);
+  return new Function('Subdivision', helper + 'return function ' + body + ';')(SubdivisionStub);
 }
 
 // partialSubdivision writes the whole of every array it is given -- lifting it too would drag
@@ -122,8 +133,12 @@ for (const mapped of [false, true]) {
     'fresh ' + Array.from(fresh).join(',') + '  reused ' + Array.from(self._detailsXYZ).join(','));
 
   const deg = [3, 4, 5, 6, 7, 8];   // vertices 1 and 2: both skip the detail write
-  check('details: the skipped vertices are zeroed, not left holding the last stroke',
-    deg.every((i) => self._detailsXYZ[i] === 0),
+  // A degenerate frame (no normal / a neighbour straight up the normal) keeps its detail as an OBJECT-SPACE
+  // offset, vertex minus its subdivision -- it used to be zeroed, which threw the detail away and made every
+  // analysis/synthesis round trip move the vertex. Either way, nothing of the last stroke (999) may survive.
+  const want = [-1, 0, -0.5, 0, 0, 0];
+  check('details: a degenerate frame keeps an object-space offset, with nothing left from the last stroke',
+    deg.every((i, k) => self._detailsXYZ[i] === want[k]),
     Array.from(self._detailsXYZ).join(','));
   check('details: an ordinary vertex still gets a detail',
     self._detailsXYZ[0] !== 0 || self._detailsXYZ[1] !== 0 || self._detailsXYZ[2] !== 0,

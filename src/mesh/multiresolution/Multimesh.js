@@ -414,6 +414,14 @@ class Multimesh extends Mesh {
       var wOpts = optionsObj;
       if (Number.isFinite(wOpts.wireframeAlpha)) rawAlpha = wOpts.wireframeAlpha;
       if (Number.isFinite(wOpts.wireframeBias)) rawBias = wOpts.wireframeBias;
+      // A WEIGHT CAPSULE'S WIRE HAS TO BE READABLE: it is how you see what a stroke did to the shape, and at the
+      // shared 25% a dark edge on a bright opaque capsule is nearly invisible (and on a large capsule the
+      // 0.001 bias leaves it z-fighting with its own fill). So capsules get a firmer wire and a bias
+      // that scales with the capsule instead of a fixed 0.001.
+      if (this._isWeightCage) {
+        rawAlpha = Math.max(rawAlpha, 0.85);
+        rawBias = Math.max(rawBias, 0.03);
+      }
       var useSurface = wOpts.wireframeSurface ?? true;
       if (useSurface === false) {
         var hx = wOpts.wireframeColor || '#000000';
@@ -498,7 +506,24 @@ class Multimesh extends Mesh {
         }
 
         // Always update both index and positions to keep up with live sculpting!
-        this._renderData._wireframeMesh.geometry.setAttribute('position', new THREE.BufferAttribute(biasedVerts, 3));
+        //
+        // IN PLACE, NOT A NEW ATTRIBUTE PER CALL. This ran every frame for every mesh with its wire on --
+        // which is every baked weight capsule -- and each `new THREE.BufferAttribute` meant three allocated
+        // three more GPU buffers (position, colour, index) and a vertex-array object, never releasing the
+        // old ones: 234 buffers and 78 VAOs a frame on a 26-capsule rig, measured. At display rate that is
+        // thousands of GPU resources a second, and the Apple GPU stops a process at 500,000 ("likely
+        // leaking IOGPUResource", then a GPU process crash and a blank viewport that never recovers). The
+        // attribute is made once and then only has its data refreshed.
+        var wfGeom = this._renderData._wireframeMesh.geometry;
+        var posAttr = wfGeom.getAttribute('position');
+        if (posAttr && posAttr.array === biasedVerts) {
+          posAttr.needsUpdate = true;
+        } else if (posAttr && posAttr.array.length === biasedVerts.length) {
+          posAttr.array.set(biasedVerts);
+          posAttr.needsUpdate = true;
+        } else {
+          wfGeom.setAttribute('position', new THREE.BufferAttribute(biasedVerts, 3));
+        }
         // ...and the colours with them, so the wire carries whatever the surface is showing —
         // the weight preview included. DARKENED, so an edge still reads as an edge against the
         // face it sits on rather than disappearing into it.
@@ -517,9 +542,13 @@ class Multimesh extends Mesh {
             wireCols = this._renderData._wireCols = new Float32Array(activeVerts.length);
           }
           for (var ci = 0; ci < activeVerts.length; ci++) wireCols[ci] = srcColors[ci] * 0.45;
-          this._renderData._wireframeMesh.geometry.setAttribute('color', new THREE.BufferAttribute(wireCols, 3));
+          var colAttr = wfGeom.getAttribute('color');
+          if (colAttr && colAttr.array === wireCols) colAttr.needsUpdate = true;
+          else wfGeom.setAttribute('color', new THREE.BufferAttribute(wireCols, 3));
         }
-        this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        // The index only changes with the topology, so a same array is left alone.
+        var idxAttr = wfGeom.getIndex();
+        if (!idxAttr || idxAttr.array !== indices) wfGeom.setIndex(new THREE.BufferAttribute(indices, 1));
         this._renderData._wireframeMesh.geometry.computeBoundingSphere();
         this._renderData._wireframeMesh.geometry.computeBoundingBox();
         this._renderData._wireframeMesh.visible = true;

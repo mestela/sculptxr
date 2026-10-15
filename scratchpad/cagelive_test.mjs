@@ -251,10 +251,10 @@ for (const [label, before, after] of [
     /Skeleton\.rigMirrorPlane = function/.test(SKEL) &&
     /getSymmetryFlag\?\.\(\)/.test(SKEL));
   check('the twin is the rig\'s own mirror link, not a name match',
-    /const twinJoint = joint\._boneMirror \|\| joint;/.test(CAGE),
+    /const twinBone = bone\._boneMirror \|\| bone;/.test(CAGE),
     '_boneMirror is maintained as the chain is drawn and survives a save');
   check('...a centreline bone mirrors onto itself',
-    /const twin = twinJoint === joint \? c :/.test(CAGE));
+    /const twin = twinBone === bone \? c :/.test(CAGE));
   check('the pairing is built at BAKE time, not on the first mirror',
     /WeightCage\.pairMirrors = function/.test(CAGE) &&
     /const pairs = WeightCage\.pairMirrors\(main\);/.test(CAGE),
@@ -291,6 +291,7 @@ for (const [label, before, after] of [
   const mk = (id, jointId, model, verts) => ({
     _isWeightCage: true,
     _cageJointId: jointId,
+    _cageBoneId: jointId,   // in these mocks a cage's bone is the joint it is keyed on
     _id: id,
     getID() { return this._id; },
     _model: model,

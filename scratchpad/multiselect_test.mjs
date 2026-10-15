@@ -48,7 +48,7 @@ let PANEL = R('src/gui/htmlvr/MainMenuPanel.js');
 let TL = R('src/gui/GuiTimeline.js');
 let GVR = R('src/editing/GizmoVR.js');
 let SM = R('src/editing/SculptManager.js');
-let GZ = R('src/editing/Gizmo.js');
+
 let SEL = R('src/editing/tools/SelectTool.js');
 const ENUMS = R('src/misc/Enums.js');
 const TOOLS = R('src/editing/tools/Tools.js');
@@ -185,9 +185,14 @@ check('...and so does the dopesheet, captured on pointer down',
 // skeleton off its pins — matt: "the skeleton started doing an ik solve and drifting away from
 // the pins." Desktop Ctrl-click still works there, because a keyboard modifier does not collide
 // with a second hand.
-check('Grab does NOT consult the VR modifier',
+// Grab is AMBIDEXTROUS (either hand takes a pin or a bone), so the off-hand trigger can never be
+// a modifier here. Its IK modifier (matt, 2026-10-09: pins best mode, bones FK, IK on a button) is
+// the Y button of the NON-DOMINANT hand, read once at the press of a joint.
+check('Grab does NOT consult the VR trigger modifier',
   !/multiSelectHeld/.test(code(GRAB)),
   'the secondary trigger is the other hand’s grab in this tool');
+check('...its IK modifier is the non-dominant hand’s Y button',
+  /c\.handedness !== dom && !!c\.buttons\?\.\[5\]\?\.pressed/.test(GRAB));
 check('...but desktop Ctrl-click still multi-selects there',
   /setOrUnsetMesh\(mesh, ctrl\)/.test(GRAB),
   'a keyboard modifier does not collide with the second hand');
@@ -216,8 +221,8 @@ check('the transform tools already act on the whole selection',
 // read the same accessor or the indices go one out -- which is why this counts them rather than
 // finding one.
 check('...and so does the gizmo',
-  (R('src/editing/Gizmo.js').match(/this\._main\.getTransformableMeshes\(\)/g) || []).length >= 5
-    && !/this\._main\.getSelectedMeshes\(\)/.test(R('src/editing/Gizmo.js')),
+  (GVR.match(/this\._main\.getTransformableMeshes\(\)/g) || []).length >= 5
+    && !/this\._main\.getSelectedMeshes\(\)/.test(GVR),
   'one site left on the unfiltered selection puts every parallel index out by one');
 
 
@@ -400,8 +405,8 @@ check('...and so does the gizmo',
     'a lock that stopped Grab would break the very workflow the lock exists for');
 
   check('the gizmo will not show with nothing it could move',
-    /const _movable = this\._main\.getTransformableMeshes\(\)\.length > 0/.test(GZ)
-      && /if \(this\._group\) this\._group\.visible = _movable;/.test(GZ),
+    /const _movable = this\._main\.getTransformableMeshes\(\)\.length > 0/.test(GVR)
+      && /if \(this\._group\) this\._group\.visible = _movable;/.test(GVR),
     'a gizmo at the world origin over nothing is an offer to drag something that is not there');
   check('...and a selection change re-answers that, since postRender cannot',
     /syncTransformGizmoVisibility\(toolId = this\._toolIndex\) \{/.test(SM)
@@ -449,9 +454,13 @@ check('...and so does the gizmo',
   for (const [what, near] of [['duplicate', 'copy.copyData(mesh);'],
                               ['instance', 'inst.shareData(mesh);'],
                               ['mirror', 'this._reflectMatrix(copy.getMatrix(), axis);']]) {
+    // A WIDE WINDOW ON PURPOSE. This is a proximity heuristic, not a property -- it only asks
+    // "is _inheritParent somewhere in this routine" -- and a 400-character window measures
+    // comment length as much as code. Adding a paragraph explaining WHY the copy is flagged
+    // before it is added pushed duplicate's call out of range and failed a test about parenting.
     const i = SCENE.indexOf(near);
     check('...and ' + what + ' uses it',
-      i > 0 && /_inheritParent\(/.test(SCENE.slice(Math.max(0, i - 400), i + 400)),
+      i > 0 && /_inheritParent\(/.test(SCENE.slice(Math.max(0, i - 1500), i + 1500)),
       'every route that copies a mesh carries the same local matrix and the same hazard');
   }
 }

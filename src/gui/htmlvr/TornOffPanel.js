@@ -29,7 +29,7 @@ const HEADER_H = 36; // px
 
 const SECTION_LABELS = {
   scene:     'Scene',
-  rendering: 'Rendering',
+  rendering: 'View',
   topology:  'Topology',
   sculpting: 'Sculpting',
   animation: 'Animation',

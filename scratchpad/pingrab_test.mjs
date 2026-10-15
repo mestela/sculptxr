@@ -473,24 +473,61 @@ const makePin = (m) => {
 }
 
 
-// ── THE ORPHAN RELEASE LIVES WHERE IT IS ALWAYS REACHED ─────────────────────
+// ── GRAB OWNS ITS OWN RELEASE ───────────────────────────────────────────────
 //
-// The first attempt put this inside Grab.updateXR, and it could never fire: updateXR is only
-// dispatched while canSculpt is true, so the tool never gets a frame with the trigger UP in
-// which to notice it is still holding something. The release has to sit in Scene, on the path
-// taken when no stroke is open.
+// updateXR is dispatched unconditionally now, so the tool sees every frame — including the
+// one where all triggers go up. The per-source orphan check that used to live in Scene fired
+// on the non-dominant source's iteration (canSculpt=false because THAT hand's trigger is up)
+// and killed grabs the dominant hand legitimately held. Grab's own all-controllers-up check
+// is correct because it tests all controllers, not just the current source.
 {
-  const SC = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
-  check('Scene ends a tool that is still holding something with no stroke open',
-    /if \(!canSculpt && !this\._vrSculpting\) \{[\s\S]{0,400}?_t\._grabbedMesh/.test(SC),
-    'the tool cannot do this itself — it is not dispatched on those frames');
-  check('...through the tool’s own end(), so the undo entry is pushed once',
-    /try \{ _t\.end\(\); \}/.test(SC));
-  check('...and says so, because a silent orphan is how this survived six rounds',
-    /orphan release: tool was holding/.test(SC));
-  check('...guarded, since end() runs undo and picking code',
-    /catch \(e\) \{ console\.error\('\[grab\] orphan end\(\) failed', e\); \}/.test(SC),
-    'a throw here would take down the frame loop on every release');
+  check('Grab releases a held mesh when no controller trigger is down',
+    /this\._grabbedMesh && !controllers\.some\(/.test(GRAB),
+    'without this, a grab taken outside the stroke lifecycle sticks forever');
+  check('...through end(), so the undo entry is pushed once',
+    /this\.end\(\)/.test(GRAB));
+  const SC2 = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('Scene does NOT have a per-source orphan release',
+    !/if \(!canSculpt && !this\._vrSculpting\) \{[\s\S]{0,400}?_t\._grabbedMesh/.test(SC2),
+    'per-source orphan check kills grabs on the non-dominant iteration');
+  check('...because updateXR is dispatched unconditionally',
+    /this\._sculptManager\.updateXR\(/.test(SC2));
+}
+
+
+// ── THE DESKTOP ACQUISITION PATH MUST NOT RUN IN XR ─────────────────────────
+//
+// Grab.start() picks with `intersectionMouseMeshes` against `_mouseX/_mouseY`, which are only
+// written from a DOM pointer event. In a headset there is no pointer event, so it picks against
+// wherever the desktop cursor was left — and Scene calls it anyway, because Grab sets
+// `_allowAir = true` and canSculpt is `isTriggerPressed && (picked || ... || allowAir || ...)`.
+// Every VR trigger press therefore ran the stroke lifecycle, ~475 lines BEFORE Scene dispatches
+// updateXR in the same per-source pass, so a stale-cursor pick claimed `_grabbedMesh` first and
+// _updateXRPinGrabs returned on its first line: the pin gesture was never asked. Preselection is
+// a separate, stateless path, so it stayed perfect — "I can see it highlighted and the trigger
+// does nothing".
+//
+// Latent until the pin's desktop cone stopped being gated behind BONE_SELECT and became the drawn
+// gnomon's radius: a pick that used to miss started landing on a pin on most presses.
+{
+  const startBody = GRAB.slice(GRAB.indexOf('  start(ctrl) {'),
+    GRAB.indexOf('  update() {'));
+  check('Grab.start() bails in an XR session',
+    /if \(main\._xrSession\) return false;/.test(startBody),
+    'the desktop mouse pick claims _grabbedMesh from a stale cursor and kills the pin path');
+  check('...before it picks anything',
+    startBody.indexOf('if (main._xrSession) return false;')
+      < startBody.indexOf('picking.intersectionMouseMeshes('),
+    'a pick that has already run has already set the picking state');
+  check('...and VR acquisition still sets everything start() would',
+    /this\._grabbedMesh = mesh;/.test(GRAB) && /this\._undoMatrix = mat4\.clone\(mesh\.getMatrix\(\)\);/.test(GRAB)
+      && /this\._grabIsJoint = Skeleton\.isJoint\(mesh\);/.test(GRAB),
+    'the guard is only safe because updateXR owns the whole VR acquire');
+  const SC3 = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('...and Scene still runs the stroke lifecycle before updateXR, which is why it matters',
+    SC3.indexOf('this._sculptManager.start(false);')
+      < SC3.lastIndexOf('this._sculptManager.updateXR('),
+    'if this ever reverses, the reasoning above needs re-deriving rather than trusting');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

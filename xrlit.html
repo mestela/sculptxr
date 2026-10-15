@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<!--
+  MINIMAL REPRO: a lit node material does not draw inside an XR session.
+
+  Two boxes, identical in every way except ONE BOOLEAN:
+    left  — MeshLambertNodeMaterial, lights = false   (expected: draws)
+    right — MeshLambertNodeMaterial, lights = true    (expected: does NOT draw in session)
+
+  One point light. WebGPURenderer on the WebGL backend (forceWebGL), which is what an XR
+  session requires in three 0.183.x — the WebGPU backend throws on XR.
+
+  Both boxes draw on the desktop. Enter the session and compare.
+  ?lights=0 removes the light entirely, to confirm the right box comes back.
+-->
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XR lit-material repro</title>
+<style>body{margin:0;background:#111;color:#ddd;font:14px monospace}#log{position:fixed;top:0;left:0;padding:8px;white-space:pre}</style>
+</head>
+<body>
+<div id="log">starting…</div>
+<script type="module">
+import * as THREE from 'three/webgpu';
+import * as TSL from 'three/tsl';
+import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
+import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
+
+const log = (s) => { document.getElementById('log').textContent += '\n' + s; };
+const q = new URLSearchParams(location.search);
+
+const renderer = new THREE.WebGPURenderer({ forceWebGL: true, antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+camera.position.z = 1;
+
+const geo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+
+// THE ONLY DIFFERENCE BETWEEN THESE TWO IS `lights`.
+const matUnlit = new THREE.MeshLambertNodeMaterial({ color: 0x3388ff });
+matUnlit.lights = false;
+const matLit = new THREE.MeshLambertNodeMaterial({ color: 0xff8833 });
+matLit.lights = true;
+
+// THE THIRD BOX SEPARATES TWO EXPLANATIONS.
+//
+// The lit shader's only structural difference from the unlit one is that it declares the
+// shared `render` uniform block (which holds the light's colour, distance, decay and its
+// VIEW-SPACE position). Either (1) the lighting node is at fault, or (2) the `render` block
+// simply is not bound in an XR session and the lit material fails only because it is the
+// one that touches it.
+//
+// This box is UNLIT — lights = false, no lighting node anywhere in its graph — but its
+// colour reads `cameraPosition`, which also lives in the `render` group. So:
+//   green draws, orange does not  -> the render group is fine; the lighting node is at fault
+//   green and orange both missing -> the `render` block is unbound in XR. Much smaller bug,
+//                                    nothing to do with lighting, and easy to file.
+const matRenderGroup = new THREE.MeshLambertNodeMaterial({ color: 0x33ff66 });
+matRenderGroup.lights = false;
+// fract() keeps it visible wherever the head is; the point is only that it READS the uniform.
+// Scaled to nothing so it stays visibly green; the point is only that it READS the uniform.
+matRenderGroup.colorNode = TSL.vec3(0.2, 1.0, 0.4).add(TSL.cameraPosition.mul(0.0001));
+
+const a = new THREE.Mesh(geo, matUnlit);       a.position.set(-0.3, 0, -0.5); scene.add(a);
+const b = new THREE.Mesh(geo, matLit);         b.position.set( 0.0, 0, -0.5); scene.add(b);
+const c = new THREE.Mesh(geo, matRenderGroup); c.position.set( 0.3, 0, -0.5); scene.add(c);
+
+const nLights = q.get('lights') === '0' ? 0 : 1;
+if (nLights) {
+  const L = new THREE.PointLight(0xffffff, 2, 10, 2);
+  L.position.set(0.3, 0.4, 0.0);
+  scene.add(L);
+}
+log('lights in scene: ' + nLights);
+log('blue = lights:false | orange = lights:true | green = unlit but reads cameraPosition');
+
+// AR if the device offers it (passthrough makes "missing" unambiguous), else VR.
+navigator.xr?.isSessionSupported('immersive-ar').then((ok) => {
+  document.body.appendChild(ok ? ARButton.createButton(renderer) : VRButton.createButton(renderer));
+  log('session type: ' + (ok ? 'immersive-ar' : 'immersive-vr'));
+});
+
+// ── IS IT A UNIFORM BLOCK LIMIT? ─────────────────────────────────────────────────────
+// WebGL2 guarantees only 12 uniform blocks per fragment stage. A session adds cameraIndex
+// and NodeBuffer{mat4[2]} on top of the usual ones, and the lighting node adds its own — and
+// a flood of GL_INVALID_OPERATION is what blowing that limit looks like. Count them.
+const blocks = (src) => (src.match(/^\s*(layout[^;]*\)\s*)?uniform\s+\w+\s*\{/gm) || []).length;
+
+async function report(tag) {
+  const gl = renderer.backend && renderer.backend.gl;
+  if (gl) {
+    log(tag + ' LIMITS frag_blocks=' + gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_BLOCKS)
+      + ' vert_blocks=' + gl.getParameter(gl.MAX_VERTEX_UNIFORM_BLOCKS)
+      + ' combined=' + gl.getParameter(gl.MAX_COMBINED_UNIFORM_BLOCKS));
+  } else { log(tag + ' no gl handle on backend'); }
+  const cam = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  for (const [name, obj] of [['unlit', a], ['LIT', b], ['rendergroup', c]]) {
+    try {
+      const sh = await renderer.debug.getShaderAsync(scene, cam, obj);
+      log(tag + ' ' + name + ': vs blocks=' + blocks(sh.vertexShader)
+        + '  fs blocks=' + blocks(sh.fragmentShader));
+      console.log('=== ' + tag + ' ' + name + ' FRAGMENT ===\n' + sh.fragmentShader);
+      console.log('=== ' + tag + ' ' + name + ' VERTEX ===\n' + sh.vertexShader);
+    } catch (e) { log(tag + ' ' + name + ': getShaderAsync failed ' + e.message); }
+  }
+}
+
+renderer.xr.addEventListener('sessionstart', () => {
+  log('SESSION START');
+  // A few frames in, so the session's own layout is what gets built.
+  let n = 0;
+  const t = setInterval(() => { if (++n > 30) { clearInterval(t); report('[xr]'); } }, 16);
+});
+setTimeout(() => report('[desktop]'), 1500);
+renderer.setAnimationLoop(() => {
+  a.rotation.y += 0.01; b.rotation.y += 0.01; c.rotation.y += 0.01;
+  renderer.render(scene, camera);
+});
+window.addEventListener('error', (e) => log('ERR ' + e.message));
+</script>
+</body>
+</html>

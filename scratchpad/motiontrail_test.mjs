@@ -151,6 +151,11 @@ const Skeleton = {
   sceneUnit: () => 1,
   overlayGroup: () => ({ add() {} }),
 };
+// The renderer split. MotionTrail asks whether the node renderer is running before choosing
+// between a fat line and the thin fallback -- see makeFat. This harness models the LEGACY path,
+// where fat lines work, so isActive is false; the thin line is a three.js behaviour verified in
+// a browser rather than here.
+const NodeMaterials = { isActive: () => false, fatLine: () => null };
 const IKSolver = {
   pinnedJoints: (main) => main.getMeshes().filter((m) => m._pin),
   pinObject: (j) => j._pin || null,

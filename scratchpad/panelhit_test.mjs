@@ -94,7 +94,7 @@ const px = (block, prop) => {
     'searching the hit element\'s subtree finds the FIRST slider in the panel when the walk '
     + 'returns an ancestor -- which it does for any press that lands in padding');
   check('...and the slider it finds has to be under the ray',
-    /if \(absY >= r\.top - pad && absY <= r\.bottom \+ pad\) rangeEl = cand;/.test(dispatch),
+    /if \(absY >= r\.top - pad && absY <= r\.bottom \+ pad\s*&& absX >= r\.left - padX && absX <= r\.right \+ padX\) rangeEl = cand;/.test(dispatch),
     'a row limit alone still grabs a slider the press was nowhere near vertically');
   check('...with the tolerance taken from the slider, not from the panel',
     /const pad = Math\.max\(10, r\.height\);/.test(dispatch),
@@ -119,7 +119,7 @@ const px = (block, prop) => {
     /const DEFAULT_RADIUS_FRAC = 0\.25;/.test(
       fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8')));
   check('...and the button that pushed it now reads as the reset it is',
-    /id="bone-rad-all">Reset Radii</.test(BONE),
+    /id="bone-rad-all">Reset Joint</.test(BONE),
     '"Apply To All" names a value the panel no longer has');
 }
 

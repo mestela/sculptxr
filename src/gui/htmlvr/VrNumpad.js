@@ -49,10 +49,14 @@ const CSS = `
   font-weight: 600;
   text-align: right;
   padding: 8px 12px;
-  min-height: 46px;
+  height: 46px;
+  box-sizing: border-box;
   margin-bottom: 12px;
   letter-spacing: 1px;
-  word-break: break-all;
+  /* One line, fixed height. A long value used to wrap onto a second line, growing the panel;
+     clearing then shrank it again and left a doubled strip at the bottom of the VR panel. */
+  white-space: nowrap;
+  overflow: hidden;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -680,6 +684,13 @@ export class VrNumpad extends HTMLVRPanel {
     }
 
     // ── Place numpad beside the field, in front of the panel ─────────────────
+    // `config.centerOnPanel`: dead centre of the parent panel instead of beside the field. matt,
+    // 2026-10-09, on the Rig Scale readout: "it should appear in the center of the parent panel,
+    // not off to the left".
+    if (this._config && this._config.centerOnPanel) {
+      xFromFieldCentre = -(numW / 2 + GAP);   // cancels the beside-the-field offset below
+      yOffset = 0;
+    }
     this.mesh.position
       .copy(panelWorldPos)
       .addScaledVector(right,  xFromFieldCentre + numW / 2 + GAP)

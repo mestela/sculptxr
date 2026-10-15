@@ -54,6 +54,53 @@ ShaderPBR.environments = [{
   sph: [0.560145, 0.554695, 0.513523, -0.213105, -0.155190, -0.063568, 0.135182, 0.114211, 0.069349, 0.172852, 0.151820, 0.105477, 0.065753, 0.064050, 0.052622, 0.096352, 0.086557, 0.063826, 0.021830, 0.016560, 0.008804, 0.186193, 0.163720, 0.119627, 0.025363, 0.022278, 0.014461],
   exposure: 0.5,
   name: 'Winter river'
+}, {
+  // THE FIRST EQUIRECT HDR, and the shape every environment should take from here.
+  // https://polyhaven.com/a/ferndale_studio_07
+  //
+  // No `path`: there is no LogLUV octahedral PNG for this one and there will not be. The
+  // node renderer loads `hdr` through RGBELoader and prefilters it with PMREM (see
+  // EnvIBL.js), which is strictly better than the packed atlas -- real roughness
+  // prefiltering and hardware filtering instead of five hand-packed levels and a manual
+  // lerp. .hdr rather than .exr on purpose: RGBE is 32 bits/pixel with a shared exponent
+  // against EXR's 48+, and the extra precision is invisible once PMREM has blurred it --
+  // 1.5MB against 5MB for the same result.
+  //
+  // `sph` is a neutral grey rather than this environment's real coefficients. It feeds the
+  // LEGACY renderer's ambient only, and computing real SH needs the panorama on the CPU.
+  // Flat grey is honest there; the node path ignores sph entirely and uses the PMREM.
+  // 1k, NOT the 512 downsample. PMREM's base is 256px PER CUBE FACE, not 256 total -- four
+  // faces around the horizon is roughly 1024px of azimuth, so a 1024x512 equirect is what
+  // fills it. three sizes the chain from the source: 1024 wide gives cubeSize 256 (a
+  // 768x1024 cubeUV), 512 wide gives cubeSize 128, and matt saw the difference immediately:
+  // "its quite blurry compared to the original hdrs".
+  //
+  // The old LogLUV atlas looked sharp because its level 0 was the full-resolution panorama
+  // sampled directly, with prefiltering only at higher roughness. Matching that needs the
+  // resolution, not a cleverer filter. 2k would give cubeSize 512 if mirror-sharp
+  // reflections are ever wanted; 1k is the point where a sculpt stops looking soft.
+  hdr: texPath + 'ferndale_studio_07_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Ferndale studio 07'
+}, {
+  // https://polyhaven.com/a/canary_wharf
+  hdr: texPath + 'canary_wharf_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Canary Wharf'
+}, {
+  // https://polyhaven.com/a/lauter_waterfall
+  hdr: texPath + 'lauter_waterfall_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Lauter waterfall'
+}, {
+  // https://polyhaven.com/a/artist_workshop
+  hdr: texPath + 'artist_workshop_1k.hdr',
+  sph: [0.45, 0.45, 0.45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  exposure: 1.0,
+  name: 'Artist workshop'
 }];
 
 var opts = getOptionsURL();
@@ -332,6 +379,11 @@ var _lightCount = 0;
 
 ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   if (env.texture !== undefined) return env.texture;
+  // An equirect-only environment has no packed atlas for this renderer to sample. Rather
+  // than let TextureLoader fetch `undefined`, return null and let the caller bind nothing --
+  // the legacy path then shows the SH ambient alone, which is the most it can do with an
+  // asset it cannot read.
+  if (!env.path) { env.texture = null; return null; }
 
   env.texture = new THREE.TextureLoader().load(env.path, function (tex) {
     // uEnvSize IS THE PANORAMA'S DIMENSIONS, and the specular lookup needs them to pick a mip
@@ -344,37 +396,18 @@ ShaderPBR.getOrCreateEnvironment = function (gl, main, env) {
   return env.texture;
 };
 
-ShaderPBR.updateUniforms = function (mesh, main) {
-  var gl = mesh.getGL();
-  var uniforms = this.uniforms;
-
-  gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
-  gl.uniform1f(uniforms.uRoughness, mesh.getRoughness());
-  gl.uniform1f(uniforms.uMetallic, mesh.getMetallic());
-  gl.uniform1f(uniforms.uExposure, ShaderPBR.exposure);
-  // Read live rather than cached: the slider writes the option and the next frame picks it up.
-  var _envI = getOptionsURL().envIntensity;
-  gl.uniform1f(uniforms.uEnvIntensity, Number.isFinite(_envI) ? _envI : 1.0);
-
-  var env = ShaderPBR.environments[ShaderPBR.idEnv];
-  gl.uniform3fv(uniforms.uSPH, env.sph);
-  if (env.size) gl.uniform2fv(uniforms.uEnvSize, env.size);
-
-  // THE SCENE'S LIGHTS, IN WORLD SPACE. The shader moves them to view space with three's own
-  // `viewMatrix`, and that indirection is the entire point.
-  //
-  // IT USED TO BE DONE HERE, on the CPU, with `main.getCamera().getView()` -- cheaper, and
-  // correct with exactly one camera. VR HAS TWO. ShaderManager rewrites `uMV` to three's
-  // `modelViewMatrix`, so vVertex lands in the real per-eye view space while the light landed
-  // in the desktop camera's, and the gap between them rotated with the head: lighting swam
-  // across surfaces as you looked around. matt: "i rotate my head, lighting shifts on
-  // surfaces... not just spec, diffuse too" -- and diffuse moving is the tell, because NdL
-  // depends on where the light IS, not on where you are looking from.
-  //
-  // Read off the three-side `matrixWorld`, not the app-side model matrix: meshes hang under
-  // _worldGroup (which carries a scale the app's own camera knows nothing about), so that is
-  // the space vVertex is actually in. Taking it from three keeps the two in step by
-  // construction instead of by agreement.
+/**
+ * THE SCENE'S LIGHTS, IN WORLD SPACE, computed at most once a frame and shared.
+ *
+ * Extracted so the node/TSL path feeds from the SAME arithmetic as the GLSL path rather than
+ * a second transcription of it. Two copies of this would drift the first time a light gained
+ * a property -- which is a thing that has already happened repeatedly to the physics-bone
+ * save path -- and the failure would be "lighting differs between renderers", which is
+ * miserable to chase.
+ *
+ * Returns the scratch arrays themselves, not copies: callers upload and must not retain them.
+ */
+ShaderPBR.getLightState = function (main) {
   var _fr = main._renderer && main._renderer.info && main._renderer.info.render
     ? main._renderer.info.render.frame : -1;
   // -1 means we could not read a frame number; recompute rather than serve something stale.
@@ -427,6 +460,45 @@ ShaderPBR.updateUniforms = function (mesh, main) {
     uLightDirTmp[lz * 3] = 0; uLightDirTmp[lz * 3 + 1] = 0; uLightDirTmp[lz * 3 + 2] = -1;
   }
   }
+  return {
+    count: _lightCount,
+    pos: uLightPosTmp, col: uLightColTmp, range: uLightRangeTmp,
+    dir: uLightDirTmp, cone: uLightConeTmp, type: uLightTypeTmp,
+  };
+};
+
+ShaderPBR.updateUniforms = function (mesh, main) {
+  var gl = mesh.getGL();
+  var uniforms = this.uniforms;
+
+  gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
+  gl.uniform1f(uniforms.uRoughness, mesh.getRoughness());
+  gl.uniform1f(uniforms.uMetallic, mesh.getMetallic());
+  gl.uniform1f(uniforms.uExposure, ShaderPBR.exposure);
+  // Read live rather than cached: the slider writes the option and the next frame picks it up.
+  var _envI = getOptionsURL().envIntensity;
+  gl.uniform1f(uniforms.uEnvIntensity, Number.isFinite(_envI) ? _envI : 1.0);
+
+  var env = ShaderPBR.environments[ShaderPBR.idEnv];
+  gl.uniform3fv(uniforms.uSPH, env.sph);
+  if (env.size) gl.uniform2fv(uniforms.uEnvSize, env.size);
+
+  // THE SCENE'S LIGHTS, IN WORLD SPACE. The shader moves them to view space with three's own
+  // `viewMatrix`, and that indirection is the entire point.
+  //
+  // IT USED TO BE DONE HERE, on the CPU, with `main.getCamera().getView()` -- cheaper, and
+  // correct with exactly one camera. VR HAS TWO. ShaderManager rewrites `uMV` to three's
+  // `modelViewMatrix`, so vVertex lands in the real per-eye view space while the light landed
+  // in the desktop camera's, and the gap between them rotated with the head: lighting swam
+  // across surfaces as you looked around. matt: "i rotate my head, lighting shifts on
+  // surfaces... not just spec, diffuse too" -- and diffuse moving is the tell, because NdL
+  // depends on where the light IS, not on where you are looking from.
+  //
+  // Read off the three-side `matrixWorld`, not the app-side model matrix: meshes hang under
+  // _worldGroup (which carries a scale the app's own camera knows nothing about), so that is
+  // the space vVertex is actually in. Taking it from three keeps the two in step by
+  // construction instead of by agreement.
+  ShaderPBR.getLightState(main);
   // The UPLOAD still happens for every mesh -- each one is a separate draw with its own
   // uniforms. It is only the arithmetic above that is shared.
   gl.uniform1i(uniforms.uNbLights, _lightCount);

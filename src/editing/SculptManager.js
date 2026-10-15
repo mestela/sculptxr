@@ -13,6 +13,31 @@ import RigPlacing from './RigPlacing.js';
 import Skeleton from './Skeleton.js';
 import WeightCage from './WeightCage.js';
 
+// A COPY OF SculptBase._readButton, not a call into it — that method reads `this._main` off a
+// tool instance, and there is deliberately no tool instance to ask while an assignment is armed
+// (the branch that reads this switches every tool off). Same two-level fallback: the options
+// object first, then the raw session, because the options a caller passed can be a thinner one
+// than the session actually has (see SculptBase's own note on this).
+function readFaceButtonA(main, options) {
+  const hand = (options && options.handedness) || main._dominantHand;
+  const ctrls = options && options.controllers;
+  if (ctrls) {
+    for (let i = 0; i < ctrls.length; i++) {
+      const c = ctrls[i];
+      if (c.handedness === hand && c.buttons && c.buttons[4]) return !!c.buttons[4].pressed;
+    }
+  }
+  const session = main._xrSession;
+  if (session && session.inputSources) {
+    for (const src of session.inputSources) {
+      if (src.handedness === hand && src.gamepad && src.gamepad.buttons && src.gamepad.buttons[4]) {
+        return !!src.gamepad.buttons[4].pressed;
+      }
+    }
+  }
+  return false;
+}
+
 // Tools that change the vertex count (or the mesh object), which a per-vertex skin weight
 // map cannot survive. Voxel is included because it replaces the surface wholesale.
 const TOPOLOGY_TOOLS = new Set([
@@ -20,7 +45,7 @@ const TOPOLOGY_TOOLS = new Set([
   Enums.Tools.DELETE_FACE, Enums.Tools.FILL_HOLE, Enums.Tools.DISSOLVE_EDGE,
   Enums.Tools.SPLIT_FACE, Enums.Tools.COLLAPSE_EDGE, Enums.Tools.DISSOLVE_VERTEX,
   Enums.Tools.WELD, Enums.Tools.SNAP_WELD_CENTER, Enums.Tools.SPLIT_EDGE,
-  Enums.Tools.EDGE_CREATE,
+  Enums.Tools.EDGE_CREATE, Enums.Tools.CUT_LOOP, Enums.Tools.BEVEL,
 ]);
 
 // TOOLS THAT FIND THEIR OWN TARGET on the press, rather than acting on whatever is selected.
@@ -142,6 +167,7 @@ class SculptManager {
     // state on leaving. (W still toggles it manually while the tool is active.)
     {
       const wantsWire = (id >= Enums.Tools.DELETE_FACE && id <= Enums.Tools.INSET)
+                        || id === Enums.Tools.SEL_EDGE || id === Enums.Tools.SEL_LOOP || id === Enums.Tools.CUT_LOOP || id === Enums.Tools.BEVEL
                         || id === Enums.Tools.PAINT_GROUP;
       const meshes = this._main.getMeshes?.() ?? [];
       if (wantsWire && !this._wfForcedByEdit) {
@@ -203,6 +229,10 @@ class SculptManager {
         Skeleton.setDisplayFlag('solid', true);
       }
     }
+
+    // The counterpart of clearPreview: a tool whose overlay outlives it (Sel Loop's edge
+    // selection belongs to the mesh) puts it back up when it becomes the tool again.
+    if (toolChanged) this.getCurrentTool()?.onActivate?.();
 
     // LAST, and only on a real change. Last because the panels read the state this method has
     // been setting — wireframe, group view, which gizmo is up — and a sync run partway through
@@ -374,7 +404,36 @@ class SculptManager {
     //
     // Here for the same reason as the two gates below it: start() is the one place every input
     // route passes through, and nothing has begun yet, so there is nothing to undo.
-    const _active = this._main.getMesh && this._main.getMesh();
+    let _active = this._main.getMesh && this._main.getMesh();
+    // A PRESS ON A CAPSULE SELECTS THAT CAPSULE. Sculpting acts on the selection, so with the
+    // skin locked and still selected the press hit the lock gate below and fell through to an
+    // orbit -- "every time I try, I move the camera" -- and with one capsule selected, reaching
+    // the next one along meant going back to the outliner. Only when the selection is a locked
+    // mesh or another capsule, so a plain sculpt on an unlocked skin is never taken over.
+    // ...OR HIDDEN. With the skin hidden to work on the capsules the selection is still whatever
+    // was picked last (a hidden floor, in matt's scene): the press then started a stroke on
+    // something nobody can see, missed it, and fell through to an orbit -- "it always rotates the
+    // camera no matter where i start the click", with the symmetry marker on the wrong plane.
+    const _hiddenSel = !!(_active && _active.isVisible && _active.isVisible() === false);
+    if (_active && (_active._isWeightCage || _active._selectLocked || _hiddenSel)
+        && !SELF_TARGETING_TOOLS.has(this._toolIndex) && !this._main._vrSculpting) {
+      const cages = WeightCage.cages(this._main);
+      const picking = this._main.getPicking && this._main.getPicking();
+      if (cages.length && picking && picking.intersectionMouseMeshes(cages)) {
+        const hit = picking.getMesh();
+        if (hit && hit._isWeightCage && hit !== _active) {
+          this._main.setMesh(hit);
+          _active = hit;
+        }
+      }
+    }
+    // A CENTRELINE CAPSULE MIRRORS ABOUT THE WORLD PLANE, whatever way its bone happens to face -- see
+    // WeightCage.alignSymmetryPlane. Capsules with a twin on the other side are mirrored onto it at stroke end.
+    if (this._symmetry && _active) WeightCage.ensurePaired(this._main, _active);
+    if (_active) WeightCage.seamBegin(this._main, _active);
+    if (this._symmetry && _active && WeightCage.isCage(_active) && _active._cageMirror && _active._cageMirror.self) {
+      WeightCage.alignSymmetryPlane(_active);
+    }
     if (_active && _active._selectLocked && !SELF_TARGETING_TOOLS.has(this._toolIndex)) {
       // SAID OUT LOUD. A tool that quietly does nothing reads as a broken tool -- the whole
       // reason the lock was confusing in the first place was that it never announced itself.
@@ -390,6 +449,7 @@ class SculptManager {
     // tool that also acts on those clicks moves the very thing being named — which is what
     // made the selection appear to come and go halfway through.
     //
+
     // Gated HERE, beside the sculpt lock, for the reason written above it: start() is the one
     // place every input route passes through, and nothing has begun yet so there is nothing to
     // undo. The click itself is consumed earlier, in onDeviceDown; this is the backstop for
@@ -553,7 +613,15 @@ class SculptManager {
     // ...AND A STROKE ON A BOUND MESH IS AN EDIT TO ITS REST SHAPE. The skin pass rebuilds the
     // bound level from `_skinSrc` on every pose change, so a stroke that never reaches it is
     // reverted the moment the rig next moves -- silently, which is the failure this closes.
+    Skinning._lastRestEntry = null;
     Skinning.commitToRest(this._main, this._main.getMesh?.());
+    // what that commit changed in the rest shape rides on the stroke's undo state, so undo can put it back exactly
+    const _re = Skinning._lastRestEntry;
+    Skinning._lastRestEntry = null;
+    if (_re && _re.idx.length) {
+      const _cs = this._main.getStateManager?.()?.getCurrentState?.();
+      if (_cs) _cs._restEntry = _re;
+    }
   }
 
   preUpdate() {
@@ -564,6 +632,24 @@ class SculptManager {
     if (this.isUsingContinuous())
       return;
     this.getCurrentTool().update();
+    this._mirrorCageLive();
+  }
+
+  // A LEFT/RIGHT CAPSULE'S TWIN FOLLOWS DURING THE STROKE, not on release. The copy is only the
+  // capsule's own few hundred vertices (the skin is re-solved at the end, not here), so it is cheap
+  // enough for every update. A centreline capsule has no twin to copy to -- its in-stroke mirror does
+  // that -- and mirrorEdit declines it.
+  //
+  // GLUED SEAMS come first (WeightCage.glueEdit): a neighbour's ring follows this capsule's, and the
+  // neighbour is then mirrored to ITS twin as well, so the whole chain stays in step.
+  _mirrorCageLive() {
+    if (!this._strokeActive) return;
+    const m = this._main.getMesh && this._main.getMesh();
+    if (!m || !WeightCage.isCage(m)) return;
+    const glued = WeightCage.glueEdit(this._main, m);
+    for (const c of [m, ...glued]) {
+      if (c._cageMirror && !c._cageMirror.self) WeightCage.mirrorEdit(this._main, c);
+    }
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
@@ -588,6 +674,12 @@ class SculptManager {
     //
     // On the press EDGE: one press is one step of the gesture, and a held trigger at 90Hz
     // would otherwise name the child and the parent in consecutive frames.
+    // THE PRESS THAT ARMED IT IS NOT A CLICK ON THE SCENE. The trigger that pressed the menu's
+    // "Set parent" button is still down on the first armed frame; seen as a fresh press edge it
+    // was taken as a pick of nothing (or of whatever the ray crossed), which cancelled -- the
+    // mode started and exited at once. Require a release first.
+    if (!RigPending.armed(this._main)) this._rigPendWasArmed = false;
+    else if (!this._rigPendWasArmed) { this._rigPendWasArmed = true; this._rigPendPressed = !!isPressed; }
     if (RigPending.armed(this._main)) {
       // AND KEEP THE PRESELECTION ALIVE, because switching the tool off switched off the thing
       // that was driving it. Grab and the transforms are what maintain the rig highlight in
@@ -603,6 +695,19 @@ class SculptManager {
         Skeleton.hoverRigFromRay(this._main, picking, tip, dir,
           RigPending.targets(this._main));
       }
+      // A CANCELS. matt: "i can't escape out of parentin[g]... pressing the 'set parent'
+      // button again midway through the operation should cancel it and reset the button
+      // state, as should the A button." The button already does (RigPending.toggle re-arming
+      // the same mode calls cancel) — this is the other half, the one the tool would normally
+      // own but never gets to here because the branch above switches every tool off while
+      // armed. Read the same way BoneDrawTool reads it (SculptBase._readButton), but standalone:
+      // there is no tool instance to borrow the method from while one is deliberately not running.
+      const aPressed = readFaceButtonA(this._main, options);
+      if (aPressed && !this._rigPendAWas) {
+        RigPending.cancel(this._main);
+        this._main.render?.();
+      }
+      this._rigPendAWas = aPressed;
       if (isPressed && !this._rigPendPressed) {
         this._rigPendPressed = true;
         const main = this._main;
@@ -2102,6 +2207,29 @@ class SculptManager {
     this._main.getStateManager().pushStateCustom(undoOp, redoOp);
 
     
+  }
+
+  /**
+   * THE TOOL'S OWN postRender, for the node renderer.
+   *
+   * The raw-GL postRender() below is skipped wholesale under ?renderer=webgpu -- see the guard
+   * in Scene. That was a deliberate trade when the port landed ("a missing gizmo is visible and
+   * fixable; a silently broken depth buffer is neither"), and #84 paid off the gizmo half. This
+   * is the other half: the brush radius circle vanished with it. matt: "the radius circle
+   * indicator is missing" -- spotted on the iPad, but it was gone everywhere on the flagged path.
+   *
+   * DELEGATES RATHER THAN DRAWING. Calling Selection.render() directly restores the circle but
+   * overrides the tools that deliberately refuse one: GeodesicPoseTool's postRender is empty,
+   * and BoneDrawTool's syncs its plane instead. Going through the tool honours both, and gets
+   * syncPlane running again on this path as a bonus.
+   *
+   * Safe because every tool postRender is now scene-graph work: Transform's gizmo went
+   * three-native with #84, and SculptVoxel's only raw pass is gated behind _xrSession, which
+   * cannot be true here.
+   */
+  postRenderNode() {
+    const tool = this.getCurrentTool();
+    if (tool && tool.postRender) tool.postRender(this._selection);
   }
 
   postRender() {

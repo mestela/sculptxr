@@ -93,6 +93,8 @@ const Skeleton = {
   setDisplayFlag: (n, v) => { const r = FLAG_ROWS[n]; if (r) window[r[0]] = !!v; },
   DISPLAY_FLAGS: FLAG_ROWS,
   isJoint: (m) => !!(m && m._isBone),
+  // No bone has a volume in this fixture: the picks under test are the joint and bone-line ones.
+  boneHasCapsule: () => false,
   joints: (main) => main.getMeshes().filter((m) => m._isBone),
   jointVisible: (j) => j._hidden !== true,
   jointPos(j, out) {
@@ -136,6 +138,28 @@ const Skeleton = {
   hidePreview(main) { if (main) main._preview = null; },
   updatePlane(main, plane, hot) { main._planeVis = plane ? { hot: !!hot } : null; },
   hidePlane(main) { if (main) main._planeVis = null; },
+  // The axis gnomon draws from the PARENT joint and is only up while a bone is being dragged,
+  // so from this harness's point of view it is furniture that must not throw. Recorded rather
+  // than ignored: _gnomonVis is what a later check would assert against.
+  snapAxisInfo(from, to) {
+    const d = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const len = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    return len < 1e-9 ? null : { axis: null, len: len, dot: 0, guarded: 0 };
+  },
+  updateAxisGnomon(main, from, len) { main._gnomonVis = { len: len }; },
+  hideAxisGnomon(main) { if (main) main._gnomonVis = null; },
+  // The flatness snap, likewise: it defaults ON, so every preview reaches it and the mock has to
+  // answer. Reports the nearest plane and whether it is in band, the same shape the real one has.
+  snapFlatInfo(from, to) {
+    const d = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z };
+    const len = Math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (len < 1e-9) return null;
+    return { normal: { x: 0, y: 1, z: 0, dot: () => 0, toArray: () => [0, 1, 0] },
+             len: len, sin: Math.abs(d.y) / len, inBand: Math.abs(d.y) / len < 0.0872 };
+  },
+  snapFlat: (from, to) => to,
+  updateFlatDisc(main, from, len, normal, inBand) { main._flatDiscVis = { len: len, inBand: !!inBand }; },
+  hideFlatDisc(main) { if (main) main._flatDiscVis = null; },
 };
 
 const Skinning = { resolveWeightsAll: () => 0, restoreColorsAll() {}, isBound: () => false };

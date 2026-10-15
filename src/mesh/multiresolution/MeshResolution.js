@@ -5,6 +5,30 @@ import createMeshData from '../MeshData.js';
 import MeshSymmetry from '../MeshSymmetry.js';
 
 // v0.7.459: Force Reload
+// WHICH NEIGHBOUR GIVES A VERTEX ITS TANGENT. The detail frame is (normal, tangent, binormal) and the tangent is
+// the direction to a neighbour projected onto the normal's plane. It used to be the FIRST ring vertex, always --
+// but where that neighbour lies nearly along the normal (a fold, a thin sheet, a sharp crest) the projection is a
+// few ULPs of noise, the normalised tangent points anywhere, and analysis and synthesis, whose subdivided
+// positions differ by float rounding, pick DIFFERENT frames for it: the vertex comes back displaced by its whole
+// detail (a Nomad body: ten such vertices at the cage, 136 by level 2, spikes up to two units on a three-unit
+// body after a bind). So the first neighbour is kept when it is usable (every ordinary vertex -- unchanged), and
+// otherwise the neighbour with the most tangential reach is taken. Both ends run this on the same inputs.
+function tangentNeighbour(ringStartCount, ringVert, i, pos, j, nx, ny, nz) {
+  var s = ringStartCount[i * 2], c = ringStartCount[i * 2 + 1];
+  var best = ringVert[s], bestT = -1;
+  for (var r = 0; r < c; r++) {
+    var k = ringVert[s + r] * 3;
+    var ex = pos[k] - pos[j], ey = pos[k + 1] - pos[j + 1], ez = pos[k + 2] - pos[j + 2];
+    var e2 = ex * ex + ey * ey + ez * ez;
+    if (e2 === 0.0) continue;
+    var d = ex * nx + ey * ny + ez * nz;
+    var t = (e2 - d * d) / e2;                 // sin^2 of the angle to the normal
+    if (r === 0 && t > 0.01) return ringVert[s];
+    if (t > bestT) { bestT = t; best = ringVert[s + r]; }
+  }
+  return best;
+}
+
 class MeshResolution extends Mesh {
 
   constructor(mesh, keepMesh) {
@@ -218,8 +242,15 @@ class MeshResolution extends Mesh {
       var nz = nArUp[j + 2];
       // normalize vector
       var len = nx * nx + ny * ny + nz * nz;
-      if (len === 0.0)
+      // A DEGENERATE FRAME (no normal, or a neighbour straight along it) used to `continue` here, leaving the
+      // vertex on the plain subdivision with its detail thrown away -- and computeDetails zeroed it to match,
+      // so every analysis/synthesis round trip quietly moved those vertices (a handful per level, up to a
+      // body's width on a Nomad import). The detail is now kept as an object-space offset for them, which
+      // needs no frame; computeDetails makes the same two tests on the same inputs.
+      if (len < 1e-20) {
+        vArUp[j] = vx + dAr[j]; vArUp[j + 1] = vy + dAr[j + 1]; vArUp[j + 2] = vz + dAr[j + 2];
         continue;
+      }
 
       len = 1.0 / Math.sqrt(len);
       nx *= len;
@@ -227,7 +258,7 @@ class MeshResolution extends Mesh {
       nz *= len;
 
       // tangent vec (vertex neighbor - vertex)
-      var k = vertRingVertUp[vrvStartCountUp[i * 2]] * 3;
+      var k = tangentNeighbour(vrvStartCountUp, vertRingVertUp, i, vArTemp, j, nx, ny, nz) * 3;
       var tx = vArTemp[k] - vx;
       var ty = vArTemp[k + 1] - vy;
       var tz = vArTemp[k + 2] - vz;
@@ -239,8 +270,10 @@ class MeshResolution extends Mesh {
       tz -= nz * len;
       // normalize vector
       len = tx * tx + ty * ty + tz * tz;
-      if (len === 0.0)
+      if (len < 1e-20) {
+        vArUp[j] = vx + dAr[j]; vArUp[j + 1] = vy + dAr[j + 1]; vArUp[j + 2] = vz + dAr[j + 2];
         continue;
+      }
 
       len = 1.0 / Math.sqrt(len);
       tx *= len;
@@ -307,8 +340,8 @@ class MeshResolution extends Mesh {
       var nz = nArUp[j + 2];
       // normalize vector
       var len = nx * nx + ny * ny + nz * nz;
-      if (len === 0.0) {
-        dAr[j] = dAr[j + 1] = dAr[j + 2] = 0.0;
+      if (len < 1e-20) {                       // degenerate frame: keep the offset in object space (see applyDetails)
+        dAr[j] = vArUp[j] - subdVerts[j]; dAr[j + 1] = vArUp[j + 1] - subdVerts[j + 1]; dAr[j + 2] = vArUp[j + 2] - subdVerts[j + 2];
         continue;
       }
       len = 1.0 / Math.sqrt(len);
@@ -317,7 +350,7 @@ class MeshResolution extends Mesh {
       nz *= len;
 
       // tangent vec (vertex neighbor - vertex)
-      var k = vertRingVertUp[vrvStartCountUp[i * 2]] * 3;
+      var k = tangentNeighbour(vrvStartCountUp, vertRingVertUp, i, subdVerts, j, nx, ny, nz) * 3;
       var tx = subdVerts[k] - subdVerts[j];
       var ty = subdVerts[k + 1] - subdVerts[j + 1];
       var tz = subdVerts[k + 2] - subdVerts[j + 2];
@@ -329,8 +362,8 @@ class MeshResolution extends Mesh {
       tz -= nz * len;
       // normalize vector
       len = tx * tx + ty * ty + tz * tz;
-      if (len === 0.0) {
-        dAr[j] = dAr[j + 1] = dAr[j + 2] = 0.0;
+      if (len < 1e-20) {
+        dAr[j] = vArUp[j] - subdVerts[j]; dAr[j + 1] = vArUp[j + 1] - subdVerts[j + 1]; dAr[j + 2] = vArUp[j + 2] - subdVerts[j + 2];
         continue;
       }
       len = 1.0 / Math.sqrt(len);

@@ -5,15 +5,17 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v3.53.0</title>
+    <title>SculptXR v4.1.51</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v3.53.0
+                                                              VERSION: v4.1.51
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
     <meta property="og:title" content="SculptXR v2.0.3">
+    <link rel='manifest' href='manifest.webmanifest' />
+    <meta name='theme-color' content='#1e1e2e' />
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -22,6 +24,8 @@
             background: #333;
         }
 
+        /* iPadOS ignores user-scalable=no: without this a double-tap on any panel zooms the page. */
+        html, body, * { touch-action: manipulation; }
         canvas {
             width: 100%;
             height: 100%;
@@ -157,6 +161,16 @@
       // "grey bar at the bottom" + broken fixed-width layout). The 3D viewport
       // handles its own 2-finger camera via Pointer Events (not these Gesture
       // events), so blocking them doesn't affect camera control.
+      // iPadOS still double-tap-zooms on blank (non-interactive) space despite touch-action, e.g.
+      // the gaps in a menu bar. Swallow the second tap's touchend there only, so rapid taps on
+      // buttons/inputs/canvases (which call preventDefault themselves or need the click) are untouched.
+      let _lastTap = 0;
+      document.addEventListener('touchend', e => {
+        const now = Date.now(), dbl = now - _lastTap < 350;
+        _lastTap = now;
+        if (dbl && !e.target.closest?.('button,a,input,textarea,select,label,canvas,[role=button],[contenteditable]')) e.preventDefault();
+      }, { passive: false, capture: true });
+
       ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
         document.addEventListener(t, e => e.preventDefault(), { passive: false }));
     </script>
@@ -164,7 +178,7 @@
 
 <body>
     <div id="xr-ui">
-        <button id="vr-button" class="xr-button">Enter VR</button>
+        <button id="vr-button" class="xr-button" style="display: none;">Enter VR</button>
         <button id="ar-button" class="xr-button" style="display: none;">Enter AR</button>
     </div>
 
@@ -196,6 +210,7 @@
     <input type='file' id='textureopen' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
     <input type='file' id='matcapopen' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
     <input type='file' id='referenceopen' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
+    <input type='file' id='videoopen' accept='video/*' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
     <input type='file' id='audioopen' accept='audio/*' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
 
     <script type="module">
@@ -430,8 +445,12 @@
                 const SculptGL = module.default;
 
                 const app = new SculptGL();
-                app.start();
-                window.app = app; // For debugging
+                window.app = app; // For debugging — set BEFORE the await, so a failed start
+                                  // still leaves something to inspect in the console.
+                // AWAITED: start() is async now because WebGPURenderer's init is, and its
+                // render() throws if called first. Everything below here is DOM wiring that
+                // does not touch the app, so the wait costs nothing.
+                await app.start();
                 // console.log("SculptGL started successfully.");
             } catch (e) {
                 console.error("CRITICAL: Failed to load SculptGL module:", e);
@@ -480,6 +499,7 @@
                 navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
                     if (supported) {
                         btnVR.textContent = 'Enter VR';
+                        btnVR.style.display = ''; // hidden until app.start() has finished and XR is supported
                         btnVR.addEventListener('click', () => onEnterVR('immersive-vr'));
                     } else {
                         btnVR.style.display = 'none';

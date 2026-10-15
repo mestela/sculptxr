@@ -481,7 +481,7 @@ const label = (m) => m._permanentStaticLabel;
   const SK2 = SK_PATCH(SK_RAW);
   const GR = GR_PATCH(fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8'));
   check('the desktop hover keeps the non-rig answer instead of dropping it',
-    /applyRigHover\(main, isRigNode\(hit\) \? hit : null\);\s*\n\s*applyMeshHover\(main, hit\);/.test(SK2),
+    /applyRigHover\(main, (?:isRigNode\(hit\) \? hit : null|node)\);\s*\n\s*applyMeshHover\(main, hit\);/.test(SK2),
     'every hover route already computed it and then threw it away unless it was a rig node');
   check('...and the VR grab ray does the same',
     /Skeleton\.applyMeshHover\(this\._main, node \? null : mesh\);/.test(GR),
@@ -659,9 +659,14 @@ const label = (m) => m._permanentStaticLabel;
 
 // ── BONE NAMES AS A DISPLAY LAYER ────────────────────────────────────────────
 //
-// Same shape as the length labels, and sharing their sprite: a second label per joint would
-// double the sprite count for something you read rather than aim at, and "forearm_02  1.24" is
-// one statement about one bone anyway.
+// A SPRITE OF ITS OWN, ON THE JOINT. These used to share the length label's sprite at the bone's
+// midpoint, on the budget argument -- one sprite per joint, and "forearm_02  1.24" reads as one
+// statement. It is not one statement: a NAME belongs to the joint and a LENGTH belongs to the
+// bone, and sharing put every name half a bone away from the thing it names. matt: "should put
+// the joint labels close to the joints? and then the lengths should remain on the midpoint of
+// the bones? that will be easier to read anyway."
+// The split also buys the root its name back -- the shared label rode the bone ENDING at a
+// joint, so a chain's root, which no bone ends at, was silently nameless.
 {
   // SRC, not a fresh read: a check that re-reads the file cannot see an injected defect, so it
   // passes against the very thing it exists to catch.
@@ -669,19 +674,77 @@ const label = (m) => m._permanentStaticLabel;
   check('there is a names display flag, off by default',
     /names: \['_boneShowNames', 'boneShowNames', false\]/.test(SK2),
     'a rig full of labels is unreadable while you work');
-  check('it shares the length label rather than adding a sprite',
-    /if \(showLen \|\| showNames\) \{/.test(SK2),
-    'one sprite per joint is already the budget');
-  check('...name first, number second', /_nm \+ '  ' \+ _ln/.test(SK2));
-  check('...and either alone still shows', /\(_nm \|\| _ln\)/.test(SK2));
+  check('the name has a sprite of its own, built and torn down with the entry',
+    /nameLabel: makeLabel\(\),/.test(SK2)
+      && /g\.add\(e\.label\.sprite, e\.nameLabel\.sprite,/.test(SK2)
+      && /for \(const lab of \[e\.label, e\.nameLabel\]\)/.test(SK2),
+    'a sprite added per entry and not disposed per entry is a leak per joint');
+  check('...and the two labels are switched by their own flags',
+    /if \(showNames\) \{[\s\S]{0,600}?setLabelText\(e\.nameLabel/.test(SK2)
+      && /if \(showLen\) \{[\s\S]{0,1600}?setLabelText\(e\.label, len </.test(SK2),
+    'Lengths and Names are two buttons and must not switch each other');
+  // OFFSET BY THE DOT'S OWN RADIUS, `jd`, and not by `jr`. The job of the offset is to clear the
+  // marker, so the ruler has to be whatever the marker was actually drawn at -- and the dot has
+  // been capped to its own joint since the finger-joint work. On `jr` (one number for the whole
+  // rig, and on a scene with a sculpt in it that number is the MESH's bounding radius) the text
+  // floated several dot-widths above a dot that was no longer anywhere near that big.
+  check('...the name is placed on the JOINT, offset by the radius the dot was drawn at',
+    /e\.nameLabel\.sprite\.position\.copy\(_pB\)\.addScaledVector\(_up, jd \* [\d.]+\)/.test(SK2),
+    'half a bone away from the joint it names is where this started');
+  check('...and drawn before the bone is considered, so a chain root gets one too',
+    SK2.indexOf('setLabelText(e.nameLabel') < SK2.indexOf('const hasBone = Skeleton.isJoint(parent)'),
+    'the root has no bone ending at it, which is exactly why it had no name');
+  check('...the length stays on the bone midpoint',
+    /e\.label\.sprite\.position\.copy\(_pA\)\.addScaledVector\(_dir, 0\.5\)/.test(SK2));
+  // THE NUDGE OFF THE SHAFT IS A CROSS PRODUCT. An earlier pass subtracted the direction's UP
+  // COMPONENT and called the result perpendicular; it is the bone's own horizontal projection,
+  // so on a leaning bone the nudge ran ALONG the shaft and on a vertical one (a shin) it
+  // collapsed to zero and fell through to a raw +X push. matt: "the bone for the shin ... floats
+  // behind the shin bone."
+  check('...nudged off it by a real perpendicular, with a fallback for a vertical bone',
+    /_perp\.crossVectors\(_up, _perpDir\);/.test(SK2)
+      && /if \(_perp\.lengthSq\(\) < 1e-8\) _perp\.crossVectors\(_zAxis, _perpDir\);/.test(SK2)
+      && !/_perp\.addScaledVector\(_up, -_up\.dot\(_perp\)\)/.test(SK2),
+    'subtracting the up component leaves a vector along the bone, not across it');
+  check('...sized from the bone, so the Rig Scale slider does not push it away',
+    /addScaledVector\(_perp, boneWidth\(len\) \* [\d.]+\)/.test(SK2),
+    'an offset in scene units drifts off its own bone every time the slider moves');
+  // Lifted and RUN against a vertical bone -- the case that produced the report.
+  {
+    const V = (x, y, z) => ({ x, y, z });
+    const cross = (a, b) => V(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    const len = (v) => Math.hypot(v.x, v.y, v.z);
+    const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+    const up = V(0, 1, 0), zAxis = V(0, 0, 1);
+    const perpOf = (dir) => {
+      const d = V(dir.x / len(dir), dir.y / len(dir), dir.z / len(dir));
+      let p = cross(up, d);
+      if (len(p) ** 2 < 1e-8) p = cross(zAxis, d);
+      return V(p.x / len(p), p.y / len(p), p.z / len(p));
+    };
+    // A shin: knee straight above the ankle.
+    const shin = perpOf(V(0, -40, 0));
+    // Square to the bone AND sideways rather than front-to-back: crossing the fallback against X
+    // would give +/-Z, which in the default front view is directly behind the leg.
+    check('a vertical bone is labelled BESIDE itself, not in front of or behind it',
+      Math.abs(dot(shin, V(0, -1, 0))) < 1e-9 && Math.abs(len(shin) - 1) < 1e-9
+        && Math.abs(Math.abs(shin.x) - 1) < 1e-9,
+      'got ' + JSON.stringify(shin));
+    // A thigh running down and forward, the ordinary case.
+    const thigh = perpOf(V(0, -30, 12));
+    check('...and so does a leaning one',
+      Math.abs(dot(thigh, V(0, -30, 12))) < 1e-6 && Math.abs(len(thigh) - 1) < 1e-9,
+      'got ' + JSON.stringify(thigh));
+  }
   // THE PLATE IS SIZED TO ITS TEXT. A fixed 128px canvas clips a name at both ends — you see
   // the middle of the word — and widening the SPRITE to compensate only stretches the same
   // clipped pixels. matt: "stretched horizontally, and clipped to the center of their names."
   check('the canvas is measured against the text',
     /Math\.ceil\(ctx\.measureText\(text\)\.width\) \+ LABEL_PAD \* 2/.test(SK2),
     'a fixed width clips anything longer than a number');
-  check('...and the sprite takes its aspect from the canvas',
-    /_h \* \(e\.label\.aspect \|\| 2\), _h, 1/.test(SK2),
+  check('...and BOTH sprites take their aspect from their own canvas',
+    /_h \* \(e\.label\.aspect \|\| 2\), _h, 1/.test(SK2)
+      && /_nh \* \(e\.nameLabel\.aspect \|\| 2\), _nh, 1/.test(SK2),
     'a width chosen independently of the canvas IS the stretch');
   check('...with the texture reallocated when the canvas resizes',
     /lab\.tex\.dispose\(\);/.test(SK2),
@@ -690,10 +753,32 @@ const label = (m) => m._permanentStaticLabel;
     /c\.width = want;[\s\S]{0,400}?ctx\.font = LABEL_FONT;/.test(SK2));
 
   // Lifted and RUN: the geometry of "how big and what shape" is worth checking as numbers.
-  const m = /const _h = unit \* ([\d.]+);/.exec(SK2);
-  check('the label height is liftable', !!m);
-  check('...and is 0.75 of what it was', m && Math.abs(parseFloat(m[1]) - 0.08 * 0.75) < 1e-9,
-    'got ' + (m && m[1]) + ', was 0.08');
+  // Lifted and RUN: the geometry of "how big and what shape" is worth checking as numbers.
+  const m = /const LABEL_R_FRAC = ([\d.]+);/.exec(SK2);
+  check('the label height is liftable', !!m, 'LABEL_SIZE became LABEL_R_FRAC — see below');
+  // RE-TUNED THREE TIMES (0.06, 0.12, 0.24) and every time the constant was fine and the UNIT
+  // under it had changed: the rig's spread, then a mesh bounding radius, then the median bone
+  // length. It is a multiple of the JOINT's own drawn radius now -- `jd`, measured per joint and
+  // capped by its own bone, which is the one marker in this file that has never been reported
+  // wrong, because it is the one thing not measured by the scene at all. There is no unit left to
+  // change underneath it. The exact figure is matt's to set from the Label Size slider, so what
+  // is pinned here is the SHAPE of the rule and not the number.
+  // Comments stripped: the notes in Skeleton.js name the old constant on purpose, to say what it
+  // used to be and why it moved. A test that cannot tell code from commentary reads the
+  // explanation of the fix as the bug.
+  const SK2CODE = SK2.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  check('the label height is a multiple of the joint radius, not of a scene unit',
+    m && parseFloat(m[1]) > 0 && !/LABEL_SIZE/.test(SK2CODE),
+    'got ' + (m && m[1]));
+  // ONE number for both sprites AND for every joint on the rig. Per-joint text was tried and
+  // rejected by eye: a name is something you read, and text that changes size down a limb reads
+  // as broken labels rather than as different joints. matt: "labels should all be the same size,
+  // not measured per joint." Still a multiple of a joint radius -- the median one -- so the ruler
+  // is the joint and not a scene unit.
+  check('...and ONE number sizes every label, so no two ever differ',
+    (SK2.match(/const _n?h = labelH;/g) || []).length === 2
+      && /const labelH = median\(joints\.map\(jointDotRadius\)\) \* LABEL_R_FRAC \* Skeleton\.labelSizeMul;/.test(SK2),
+    'two sprites reading one rig at two type sizes');
 
   const BP = fs.readFileSync(path.join(REPO, 'src/gui/bonePanel.js'), 'utf8');
   // displayFlagRAW, and that is the correct call rather than a slip: the panel must show what

@@ -57,11 +57,45 @@ const SCENE = read('src/Scene.js');
   check('...read back under a version gate, merged onto what v11/v14 built',
     /if \(ver >= 17\)/.test(SKEL) && /cur\.mass = ms; cur\.substeps = sb; cur\.iterations = it3;/.test(SKEL),
     'replacing rather than merging would drop the parameters the older sections carry');
+  // AT LEAST 17, not exactly 17. Pinning the literal means the next person to add a section
+  // gets a red test for doing the right thing -- which is how this file made v18 look like a
+  // regression. The property that matters is that the version never goes BACKWARDS.
   check('...with the block version raised so old files still read',
-    /const SKEL_VERSION = 17;/.test(SKEL));
+    (() => { const m = /const SKEL_VERSION = (\d+);/.exec(SKEL); return !!m && +m[1] >= 17; })());
   // Counts are integers and go through the u32 view; a float view would read them as denormals.
   check('...and the two COUNTS written as integers, not floats',
     /u\[o\+\+\] = ph\.i; f\[o\+\+\] = ph\.ms; u\[o\+\+\] = ph\.sb; u\[o\+\+\] = ph\.it;/.test(SKEL));
+  // v18: THE LIGHT PARAMETERS. Same failure mode as v11/v14/v17 and the texture block before
+  // them -- the feature works until you save. matt: "lights aren't being saved/loaded properly
+  // to sxr". Every property that makes a light a light, not just the mesh it rides on.
+  check('a light saves its type, colour, intensity, range and cone',
+    /lights\.push\(\{/.test(SKEL) && /t: m\._lightType/.test(SKEL)
+      && /inten: m\._lightIntensity/.test(SKEL) && /range: m\._lightRange/.test(SKEL)
+      && /cone: m\._lightConeDeg/.test(SKEL),
+    'a saved light came back as a plain sphere without these');
+  check('...and the whole shadow group, which is three tuning decisions',
+    /cast: \(m\._castShadow !== false\)/.test(SKEL) && /shNear: m\._shadowNear/.test(SKEL)
+      && /shBias: m\._shadowNormalBias/.test(SKEL) && /shInt: m\._shadowIntensity/.test(SKEL)
+      && /shRad: m\._shadowRadius/.test(SKEL),
+    'near, bias and softness are all hand-tuned; losing them on save wastes that session');
+  check('...read back under a version gate that also restores the flags',
+    /if \(ver >= 18\)/.test(SKEL) && /m\._isLight = true;/.test(SKEL) && /m\._isNull = true;/.test(SKEL),
+    'without _isLight/_isNull the mesh reloads as ordinary geometry');
+  check('...and the gizmo is rebuilt, since it is not serialized',
+    /main\.decorateLight && main\.decorateLight\(m\)/.test(SKEL));
+  // DERIVED, NOT PINNED. Asserting `* 13` means adding a field -- the correct change -- fails
+  // here, which is the same literal-pinning trap that made v18 itself look like a regression.
+  // The invariant is that the slot count EQUALS what the writer actually writes, so count it.
+  {
+    const body = (SKEL.match(/u\[o\+\+\] = lights\.length;([\s\S]*?)\n  \}/) || [])[1] || '';
+    const written = (body.match(/[ufi32]+\[o\+\+\]/g) || []).length;
+    const declared = Number((SKEL.match(/slots \+= 1 \+ lights\.length \* (\d+);/) || [, 0])[1]);
+    check('...with the light section sized to exactly what it writes',
+      written > 0 && written === declared,
+      'writes ' + written + ' per light, reserves ' + declared
+        + ' — a wrong slot count corrupts every block written after it');
+  }
+
   check('...with the section sized in the slot count',
     /slots \+= 1 \+ phys3\.length \* 4;/.test(SKEL),
     'an unsized section writes past the buffer');
