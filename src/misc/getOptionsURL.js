@@ -167,6 +167,14 @@ var getOptionsURL = function () {
   // session at a desk with a keyboard, and having to find the toggle again every time is most of
   // the annoyance it exists to remove.
   options.handTracking = queryBool(getVal('handTracking'), true);
+  // The VR brush's flat circle on the surface. Off leaves the sphere/surface intersection line as
+  // the one surface marker -- matt: the two "fight for attention".
+  options.surfaceRing = queryBool(getVal('surfaceRing'), true);
+  // Darken the surface within ~1.5 cm of the controller spike's tip: a contact cue without stereo.
+  options.contactShade = queryBool(getVal('contactShade'), true);
+  // Desktop Canvas (VR) frame skip: 0 every frame, 1, 3, 7. Remembered -- full rate is the right
+  // answer on a PC VR rig and re-picking it every session was a chore.
+  options.spectatorFrameSkip = queryNumber(getVal('spectatorFrameSkip'), 0, 7, 3);
   // Nomad units -> SculptXR units. Half of Utils.SCALE: a whole Nomad scene is
   // roughly one unit, and normalising it to a full 100 arrives too big to work on.
   options.nomadScale = queryNumber(getVal('nomadScale'), 0.01, 10000, 50);

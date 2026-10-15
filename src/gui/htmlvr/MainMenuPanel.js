@@ -2485,6 +2485,12 @@ function buildMenuHTML_settings(main) {
       <input type="range" id="mm-stylus-tilt" min="-45" max="45" step="1" value="${Math.round(stylusTilt)}">
       <span class="mm-val" id="mm-stylus-tilt-val">${Math.round(stylusTilt)}°</span>
     </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-toggle${opts.surfaceRing !== false ? ' active' : ''}" id="mm-surface-ring"
+        title="The flat circle the brush draws on the surface. The sphere's intersection line stays either way.">Surface Circle</button>
+      <button class="mm-toggle${opts.contactShade !== false ? ' active' : ''}" id="mm-contact-shade"
+        title="Darken the surface within about 1.5 cm of the spike tip, so contact reads without stereo">Contact Shade</button>
+    </div>
 
     ${/* ITS OWN SECTION, not the tail of "Controller spike". The gizmo is not part of the stylus
          and nobody looking for its size was ever going to find it between the spike's Z-Shift and
@@ -4475,6 +4481,14 @@ export class MainMenuPanel extends HTMLVRPanel {
       main.updateStylusOffset?.(f);
       opts.saveOption('stylusOffset', f, 500);
     });
+    for (const [id, key] of [['#mm-surface-ring', 'surfaceRing'], ['#mm-contact-shade', 'contactShade']]) {
+      q(id)?.addEventListener('click', (e) => {
+        const on = opts()[key] === false;   // opts is getOptionsURL itself here
+        opts.saveOption(key, on, 0);
+        e.currentTarget.classList.toggle('active', on);
+        this.markDirty?.();
+      });
+    }
     this._wireSlider(q('#mm-stylus-tilt'), q('#mm-stylus-tilt-val'), (v) => {
       main.updateStylusTilt?.(v);
       opts.saveOption('stylusTilt', v, 500);
@@ -5815,6 +5829,7 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   });
   wireSelect(el, 'mm-spectator-fps', (v) => {
     main._spectatorFrameSkip = skipMap[parseInt(v, 10)] ?? 3; main._spectatorN = 0;
+    getOptionsURL.saveOption('spectatorFrameSkip', main._spectatorFrameSkip, 0);
   }, lightRepaintFn);
 }
 

@@ -14,6 +14,7 @@
 // spike/tsl/FINDINGS.md. This is exactly the trap the legacy cache would walk into: it also
 // caches one material per shader id, but LAZILY, so the first switch to a mode builds one.
 import Enums from '../../misc/Enums.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 import ShaderMatcap from '../shaders/ShaderMatcap.js';
 import { makePBR } from './NodePBR.js';
 import { makePhysical } from './NodePhysical.js';
@@ -526,23 +527,31 @@ function matcapTexture(index) {
 // surface, and a low-saturation blue vanishes against a light matcap. matt: "if the volume sphere
 // is under the surface of the mesh, i can't see its intersection at all." So every sculpt
 // material draws the intersection itself: a ~2px line where the surface is at the sphere's
-// radius from its centre, and a faint tint on the surface inside it.
+// radius from its centre.
 //
 // One signed distance and one fwidth per fragment; four shared uniforms, driven per frame from
 // the visible cursor sphere (updateCursorRing). Off (alpha 0) outside a session.
 function cursorRingNodes() {
   if (cursorRing) return cursorRing;
-  const { uniform, positionWorld, fwidth, smoothstep, float, abs, max, step } = tsl;
+  const { uniform, positionWorld, fwidth, smoothstep, float, abs } = tsl;
+  // CONTACT SHADE: the surface darkens within TIP_R of the spike tip -- an implicit sphere at the
+  // tip, the cheapest possible occlusion. matt: "an implicit sphere, sdf focused at the controller
+  // spike, that darkens slightly within 1cm of the surface". Metres, i.e. VR world units.
+  const tip = uniform(new gpu.Vector3());
+  const tipOn = uniform(0);
+  const TIP_R = 0.015;
+  const shade = float(1).sub(float(1).sub(smoothstep(0, TIP_R, positionWorld.sub(tip).length())).mul(0.35).mul(tipOn));
   const center = uniform(new gpu.Vector3());
   const radius = uniform(0);
   const color = uniform(new gpu.Color(0x4488ff));
   const on = uniform(0);
   const d = positionWorld.sub(center).length().sub(radius);   // < 0 inside the sphere
   const w = fwidth(d).max(1e-6);
+  // Half strength, no tint inside the sphere ("too milky and obscures the mesh"); the original
+  // ~2 px width, which matt asked back for once the opacity was down.
   const line = float(1).sub(smoothstep(w, w.mul(2.5), abs(d)));
-  const inside = float(1).sub(step(0, d)).mul(0.12);
-  const alpha = max(line, inside).mul(on);
-  cursorRing = { center, radius, color, on, alpha };
+  const alpha = line.mul(0.5).mul(on);
+  cursorRing = { center, radius, color, on, alpha, tip, tipOn, shade };
   return cursorRing;
 }
 
@@ -555,9 +564,9 @@ function withCursorRing(m) {
   const r = cursorRingNodes();
   const col = vec3(r.color);
   if (m.lights === false) {
-    m.emissiveNode = mix(m.emissiveNode || vec3(0, 0, 0), col, r.alpha);
+    m.emissiveNode = mix((m.emissiveNode || vec3(0, 0, 0)).mul(r.shade), col, r.alpha);
   } else {
-    if (m.colorNode) m.colorNode = m.colorNode.mul(float(1).sub(r.alpha));
+    if (m.colorNode) m.colorNode = m.colorNode.mul(r.shade).mul(float(1).sub(r.alpha));
     m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(col.mul(r.alpha));
   }
   return m;
@@ -957,7 +966,16 @@ NodeMaterials.convertBasic = function (src) {
     // currently using, they're overexposed." Dividing the exposure back out leaves them at their
     // albedo in both the headset and the desk view (whose output pass applies the same exposure),
     // and 0.6 takes white to a light grey rather than a clipped one.
-    if (src.isMeshStandardMaterial) rgb = rgb.mul(0.6).div(tsl.toneMappingExposure);
+    //
+    // PLUS A LITTLE FORM. Unlit, a model whose texture carries no baked shading -- the Quest
+    // Touch Plus is flat white -- reads as a grey silhouette (matt: "clipped to gray"); the
+    // Galaxy XR texture has its shading baked in, which is why it looked fine. A headlight term
+    // from the view normal gives shape without touching the scene's lights, which these must
+    // never respond to. 0.55..1.0, so facing surfaces keep the albedo and edges fall off.
+    if (src.isMeshStandardMaterial) {
+      const facing = tsl.normalView.z.max(0);
+      rgb = rgb.mul(0.6).mul(facing.mul(0.45).add(0.55)).div(tsl.toneMappingExposure);
+    }
     // DIFFUSE, NOT EMISSIVE, AND THAT IS WHAT CARRIES PER-INSTANCE COLOUR.
     //
     // three applies an InstancedMesh's `instanceColor` to the DIFFUSE colour -- its InstanceNode
@@ -1422,6 +1440,21 @@ NodeMaterials.updateFrame = function (main) {
   return NodeMaterials._updateFrameRest(main);
 };
 
+// The dominant controller's spike tip, while its spike is showing in a session. The spike mesh's
+// geometry runs base 0 -> tip -0.10 in its own space, so the tip is that point through its world
+// matrix -- length, offset and tilt all included.
+function updateContactShade(main) {
+  const on = main._renderer?.xr?.isPresenting && getOptionsURL().contactShade !== false;
+  const ctrl = main._dominantHand === 'left' ? main._vrControllerLeft : main._vrControllerRight;
+  const spike = on && ctrl?.getObjectByName?.('stylus_spike');
+  let shown = !!spike;
+  for (let o = spike; shown && o; o = o.parent) if (o.visible === false) shown = false;
+  if (!shown) { cursorRing.tipOn.value = 0; return; }
+  spike.updateWorldMatrix(true, false);
+  cursorRing.tip.value.set(0, 0, -0.10).applyMatrix4(spike.matrixWorld);
+  cursorRing.tipOn.value = 1;
+}
+
 // The ring follows whichever VR volume sphere is showing -- the dominant hand's first -- and
 // takes its colour at full strength, so blue/red still says add/subtract.
 function updateCursorRing(main) {
@@ -1440,6 +1473,7 @@ function updateCursorRing(main) {
       }
     }
   }
+  updateContactShade(main);
   if (!sph) { cursorRing.on.value = 0; return; }
   sph.updateWorldMatrix(true, false);
   const e = sph.matrixWorld.elements;

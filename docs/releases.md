@@ -1,3 +1,11 @@
+# v4.1.51
+- **Contact shade**: the surface darkens slightly within about 1.5 cm of the controller spike's tip, so contact reads without stereo (every shading mode, in a session). Toggle: Settings > Controller spike > Contact Shade.
+- **Surface Circle toggle** (same place): hide the brush's flat circle and keep only the sphere/surface intersection line.
+- **Intersection line**: half opacity, no tint inside the sphere, original width.
+- **Controller models** get a little view-based shading, so the flat-white Quest Touch Plus has form instead of a grey silhouette.
+- **Desk view** renders through a half-float target (less banding than the 8-bit one).
+- **Spectator FPS is remembered** (Full rate stays Full rate).
+
 # v4.1.50
 - **Desktop Canvas (VR) works on the WebGPU renderer again.** Mirror is a raw copy of the left eye; Desktop and Spectator render offscreen and are copied to the canvas, so nothing touches the headset frame (no flashing, controllers stay). Blank clears once. Spectator now follows desktop pan as well as zoom.
 - **Desk Sculpt** (new Desktop Canvas mode): put the headset on the desk facing you and sculpt with the controllers while watching the monitor. The view is a camera attached to the headset, offset to roughly where your eyes are, always level; controllers, rays, grips and panels line up with no calibration step. Adjust with the mouse (orbit / pan / zoom), **C = Move Me** (grips move the camera instead of the world), and a **Map** overlay: top-down plan of headset, camera and field of view, controllers and sculpt that you can drag to move the camera, turn it, move the sculpt, and scroll for height; a height gauge, and an arrow pointing to the sculpt when it is off screen. Desk FOV slider (default 40). Settings are saved continuously. A headset-stillness timer (amber 15 s, red 25 s). Head-facing UI (panels, radial menu, toasts, labels) faces the desk camera; the wrist panel no longer lets go of the hand beyond 1 m.

@@ -298,8 +298,8 @@ class Scene {
     this._spectatorViewMode = 0;
 
     // How many VR frames to skip between spectator renders, once one is turned on.
-    // 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th.
-    this._spectatorFrameSkip = 3;
+    // 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th. Saved (Settings / View > Camera).
+    this._spectatorFrameSkip = getOptionsURL().spectatorFrameSkip ?? 3;
 
     // STATIONARY Mode variables
     this._desktopOffset = vec3.create();
@@ -8970,6 +8970,10 @@ class Scene {
   // XR framebuffer, so nothing to detach, resize or reset, which is what kept breaking the headset.
   // samples:4 is anti-aliasing AND a different render-context key from the XR target (samples 0):
   // sharing one made the two passes recompile each other's pipelines every frame.
+  // HALF FLOAT, because this target holds LINEAR colour until the quad encodes it: 8 bits of
+  // linear light bands visibly in the darks (matt saw it switching desktop -> desk view). The
+  // normal desktop path renders through three's own half-float target, which is why it did not.
+  // The quad writes sRGB-encoded values, so `out` stays 8-bit and blits to the canvas as before.
   // An offscreen pass is written linear with no tone mapping, so a quad applies the renderer's
   // output transform into a second target, and that one is blitted to the canvas with raw GL.
   _spectatorOffscreen(renderer, cam) {
@@ -8981,7 +8985,7 @@ class Scene {
 
     let s = this._specOff;
     if (!s) s = this._specOff = {
-      rt: new W.RenderTarget(cw, ch, { samples: 4 }),
+      rt: new W.RenderTarget(cw, ch, { samples: 4, type: W.HalfFloatType }),
       out: new W.RenderTarget(cw, ch, { depthBuffer: false }),
       quad: new W.QuadMesh(), tm: null, cs: null, fb: null, tex: null,
     };
@@ -18181,7 +18185,7 @@ class Scene {
                     // // if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
                     
                     if (ringLine) {
-                        ringLine.visible = true;
+                        ringLine.visible = getOptionsURL().surfaceRing !== false;
                         ringLine.position.set(wInter[0], wInter[1], wInter[2]);
                         ringLine.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(sceneNormal[0], sceneNormal[1], sceneNormal[2]));
                         ringLine.scale.set(physicalRadius, physicalRadius, physicalRadius);
