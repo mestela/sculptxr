@@ -1475,13 +1475,21 @@ function buildShellHTML() {
 // keeps it working in both hosts of this markup (the VR panel and the desktop overlay) with
 // nothing but the rebuild callback they already pass. Fetched on first open, then cached.
 let _examples = null;
+// WHILE AN EXAMPLE LOADS, its button says what is happening: the megabytes as they arrive, then
+// "Building scene". The files are several MB and the click otherwise looked like it did nothing.
+// Drawn by the builder rather than poked into the DOM, so the VR panel shows it too.
+let _exampleLoad = null;   // { i, text }
 const examplesURL = (f) => new URL('examples/' + f, document.baseURI).href;
 function buildExamplesHTML() {
   if (!_examples) return '<div class="mm-info">Loading examples…</div>';
   if (!_examples.length) return '<div class="mm-info">No examples</div>';
-  return _examples.map((e, i) => `
-    <button class="mm-action-btn mm-left" data-example="${i}" title="${String(e.desc || '').replace(/"/g, '&quot;')}">${
-      String(e.name).replace(/[&<>]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]))}</button>`).join('');
+  return _examples.map((e, i) => {
+    const busy = _exampleLoad && _exampleLoad.i === i;
+    const label = busy ? _exampleLoad.text : e.name;
+    return `
+    <button class="mm-action-btn mm-left${busy ? ' active' : ''}" data-example="${i}"${_exampleLoad ? ' disabled' : ''} title="${String(e.desc || '').replace(/"/g, '&quot;')}">${
+      String(label).replace(/[&<>]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]))}</button>`;
+  }).join('');
 }
 
 export function buildMenuHTML_files(main) {
@@ -3393,7 +3401,21 @@ export function buildSectionHTML_camera(main) {
         { val: 1, label: 'Mirror (headset)' },
         { val: 2, label: 'Desktop free camera' },
         { val: 3, label: 'Spectator (coupled)' },
+        { val: 4, label: 'Desk sculpt (headset on desk)' },
       ], vmode)}
+      <fieldset class="mm-disabled-group" id="mm-desk-group"${vmode !== 4 ? ' disabled' : ''}>
+      <div class="mm-choice-grid cols-2">
+        <button class="mm-toggle${main._isCalibratingSpectator ? ' active' : ''}" id="mm-desk-moveme"
+          title="Grips move the desk camera (and everything on the monitor with it) instead of the world. Key: C">Move Me (C)</button>
+        <button class="mm-toggle${main._deskMapOn?.() ? ' active' : ''}" id="mm-desk-map"
+          title="Top-down plan of the headset, desk camera, controllers and sculpt">Map</button>
+      </div>
+      <div class="mm-row" title="Desk camera field of view. Lower stretches the sides less; about 30 matches a monitor seen from arm's length.">
+        <span class="mm-lbl">Desk FOV</span>
+        <input type="range" id="mm-desk-fov" min="15" max="70" step="1" value="${main.getDeskFov?.() ?? 40}">
+        <span class="mm-val" id="mm-desk-fov-val">${Math.round(main.getDeskFov?.() ?? 40)}\u00b0</span>
+      </div>
+      </fieldset>
 
       <div class="mm-field-lbl">Spectator FPS</div>
       ${buildSelectHTML('mm-spectator-fps', [
@@ -5776,7 +5798,21 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   const skipMap = [0, 1, 3, 7];
   wireSelect(el, 'mm-spectator-mode', (v) => {
     main._spectatorViewMode = parseInt(v, 10); main._spectatorN = 0;
+    const g = el.querySelector('#mm-desk-group');
+    if (g) g.disabled = main._spectatorViewMode !== 4;
   }, lightRepaintFn);
+  el.querySelector('#mm-desk-moveme')?.addEventListener('click', (e) => {
+    main._isCalibratingSpectator = !main._isCalibratingSpectator;
+    e.currentTarget.classList.toggle('active', main._isCalibratingSpectator);
+    lightRepaintFn?.();
+  });
+  wireSlider(el.querySelector('#mm-desk-fov'), el.querySelector('#mm-desk-fov-val'),
+    (v) => main.setDeskFov?.(v), (v) => Math.round(v) + '\u00b0', sliderDirtyFn);
+  el.querySelector('#mm-desk-map')?.addEventListener('click', (e) => {
+    main.setDeskMap?.(!main._deskMapOn?.());
+    e.currentTarget.classList.toggle('active', main._deskMapOn?.());
+    lightRepaintFn?.();
+  });
   wireSelect(el, 'mm-spectator-fps', (v) => {
     main._spectatorFrameSkip = skipMap[parseInt(v, 10)] ?? 3; main._spectatorN = 0;
   }, lightRepaintFn);
@@ -6461,19 +6497,55 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     rebuildFn();
   });
   el.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', async () => {
-    const ex = _examples?.[+b.dataset.example];
-    if (!ex) return;
+    const i = +b.dataset.example;
+    const ex = _examples?.[i];
+    if (!ex || _exampleLoad) return;
+    let painted = 0;
+    const status = (text, now) => {
+      _exampleLoad = { i, text };
+      const t = performance.now();
+      if (now || t - painted > 250) { painted = t; rebuildFn(); }   // a VR repaint is not free
+    };
+    const mb = (n) => (n / 1048576).toFixed(1);
     try {
+      status('Downloading\u2026', true);
       const r = await fetch(examplesURL(ex.file));
       if (!r.ok) throw new Error(r.status);
-      const buf = await r.arrayBuffer();
+      // Content-Length is the COMPRESSED size when the server gzips, so it is only shown while
+      // the count is still under it.
+      const total = +r.headers.get('content-length') || 0;
+      let buf;
+      if (r.body?.getReader) {
+        const reader = r.body.getReader(), chunks = [];
+        let got = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value); got += value.length;
+          status(total >= got ? `Downloading ${mb(got)} / ${mb(total)} MB` : `Downloading ${mb(got)} MB`);
+        }
+        const all = new Uint8Array(got);
+        let o = 0;
+        for (const c of chunks) { all.set(c, o); o += c.length; }
+        buf = all.buffer;
+      } else {
+        buf = await r.arrayBuffer();
+      }
+      // Paint "Building" BEFORE the parse, which holds the main thread. A timeout, NOT
+      // requestAnimationFrame: the window's rAF does not run during an immersive session (nor in
+      // a hidden tab), so waiting on it hung the load at "Building". 60 ms is a few XR frames.
+      status('Building scene\u2026', true);
+      await new Promise((res) => setTimeout(res, 60));
       main.clearScene();
       if (guiFiles) guiFiles._currentSaveKey = null;   // not a file of yours: Save must not land over anything
       main.loadScene(buf, 'sgl');
+      _exampleLoad = null;
       main._examplesOpen = false;
       main.render?.(); rebuildFn();
     } catch (err) {
       console.error('[examples] load failed:', err);
+      status('Load failed', true);
+      setTimeout(() => { _exampleLoad = null; rebuildFn(); }, 2500);
     }
   }));
 
@@ -6647,8 +6719,10 @@ export function buildMenuHTML_background(main) {
   const col  = bg?._color ?? [0.196, 0.196, 0.196];
   const colHex = '#' + [0, 1, 2].map((i) =>
     Math.max(0, Math.min(255, Math.round(col[i] * 255))).toString(16).padStart(2, '0')).join('');
+  // NO SUB-HEADINGS: every .mm-section-title becomes its own fold, which nested Type and Image
+  // a level below Background. One flat list; each type's controls stay in place and DIM (a
+  // disabled fieldset) when another type is picked, so the panel never changes shape.
   return `
-    <div class="mm-section-title">Type</div>
     ${/* COLOUR FIRST because it is the default -- the list reads top-down as "the plain one, then
          the three that need something imported or selected". */ ''}
     ${buildSelectHTML('mm-bg-type', [
@@ -6662,7 +6736,7 @@ export function buildMenuHTML_background(main) {
          closes it. The swatch, the wheel and the OK share one wrapper so the type select can
          show and hide all three with a single inline style write -- a rebuild here would throw
          away the open options list, see the note on the desktop View wiring in Gui.js. */ ''}
-    <div id="mm-bg-color-row"${type!==3?' style="display:none"':''}>
+    <fieldset class="mm-disabled-group" id="mm-bg-color-row"${type!==3?' disabled':''}>
       <div class="mm-row">
         <span class="mm-lbl">Colour</span>
         <button id="mm-bg-swatch" title="Background colour"
@@ -6674,26 +6748,29 @@ export function buildMenuHTML_background(main) {
         ${buildColorWheelHTML({ prefix: 'mm-bg-cw', size: 150 })}
       </div>
       <button class="mm-action-btn" id="mm-bg-cw-ok" style="margin-bottom:3px">OK</button>` : ''}
-    </div>
-    <div class="mm-row" id="mm-blur-row"${type!==1?' style="display:none"':''}>
+    </fieldset>
+    <fieldset class="mm-disabled-group" id="mm-bg-env-group"${type!==1?' disabled':''}>
+    <div class="mm-row" id="mm-blur-row">
       <span class="mm-lbl">Blur</span>
       <input type="range" id="mm-bg-blur" min="0" max="1" step="0.01" value="${blur}">
       <span class="mm-val" id="mm-bg-blur-val">${blur.toFixed(2)}</span>
     </div>
-    <div class="mm-row" id="mm-bg-exp-row"${type!==1?' style="display:none"':''}>
+    <div class="mm-row" id="mm-bg-exp-row">
       <span class="mm-lbl">Exposure</span>
       <input type="range" id="mm-bg-exp" min="0" max="3" step="0.01" value="${expo}">
       <span class="mm-val" id="mm-bg-exp-val">${expo.toFixed(2)}</span>
     </div>
-    <div class="mm-section-title">Image</div>
+    </fieldset>
     ${/* The lone Fill toggle was costing a second line for one four-letter word. It joins the
          two actions: the sweep gives a toggle and an action the same shape, so the only thing
          that distinguishes them is the active state, which is the one that should. */ ''}
+    <fieldset class="mm-disabled-group" id="mm-bg-image-group"${type!==0?' disabled':''}>
     <div class="mm-choice-grid cols-3">
       <button class="mm-action-btn" id="mm-bg-reset">Reset</button>
       <button class="mm-action-btn" id="mm-bg-import">Import…</button>
       <button class="mm-toggle${fill?' active':''}" id="mm-bg-fill">Fill</button>
     </div>
+    </fieldset>
   `;
 }
 
@@ -6706,12 +6783,11 @@ export function wireMenuBackground(el, main, repaintFn) {
     bg?.setType?.(n);
     main.onCanvasResize?.();
     main.render?.();
-    const blurRow = q('#mm-blur-row');
-    if (blurRow) blurRow.style.display = n === 1 ? '' : 'none';
-    const expRow = q('#mm-bg-exp-row');
-    if (expRow) expRow.style.display = n === 1 ? '' : 'none';
-    const colRow = q('#mm-bg-color-row');
-    if (colRow) colRow.style.display = n === 3 ? '' : 'none';
+    // A property write, not a rebuild: a rebuild would throw away the open options list.
+    for (const [id, t] of [['#mm-bg-color-row', 3], ['#mm-bg-env-group', 1], ['#mm-bg-image-group', 0]]) {
+      const g = q(id);
+      if (g) g.disabled = n !== t;
+    }
   });
 
   wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),

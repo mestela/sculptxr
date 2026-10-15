@@ -64,6 +64,11 @@ class Background {
     // was imported, so the backdrop everyone actually sees was a fallback inside the Image
     // branch with no control on it. It is its own type now, with the swatch that implies.
     this._color = BG_GREY_RGB.slice();
+    // The colour you picked last time, so a black passthrough backdrop survives a reload.
+    try {
+      const c = JSON.parse(localStorage.getItem('sculptxr.bgColor'));
+      if (Array.isArray(c) && c.length === 3 && c.every(Number.isFinite)) this._color = c;
+    } catch (_) {}
 
     this.init();
 
@@ -151,6 +156,7 @@ class Background {
 
   setColor(rgb) {
     this._color = [rgb[0], rgb[1], rgb[2]];
+    try { localStorage.setItem('sculptxr.bgColor', JSON.stringify(this._color)); } catch (_) {}
     this._applyBackground();
   }
 

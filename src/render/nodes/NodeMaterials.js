@@ -23,6 +23,7 @@ const NodeMaterials = {};
 let gpu = null;              // the `three/webgpu` module — a SEPARATE build from the core three
 let tsl = null;              // the `three/tsl` module — node expression helpers
 let rotCorrectionUniform = null;  // mat3, head-centre, shared by every matcap mesh
+let cursorRing = null;           // uniforms for the VR volume sphere's line on the surface
 let _MAT3_VIEW = null;           // scratch, desktop matcap correction
 let _MAT4_VIEW = null;
 let cache = null;            // shaderId -> material, built up front
@@ -265,7 +266,7 @@ NodeMaterials.getFor = function (mesh, shaderId) {
   // with. Re-apply it, or a mesh taken to 1.0 and back comes back at its OLD opacity -- the
   // slider moves and nothing on screen changes.
   if (hit) { applyOpacity(hit, mesh); return hit; }
-  const m = makePhysical(gpu, tsl, mesh);
+  const m = withCursorRing(makePhysical(gpu, tsl, mesh));
   // Inherit the IBL immediately. _syncThreeLights will keep it in step from the next frame,
   // but the variant is handed straight to the mesh and would draw one unlit frame without it.
   const base = cache[Enums.Shader.PBR];
@@ -518,7 +519,58 @@ function matcapTexture(index) {
   return tex;
 }
 
+// WHERE THE VOLUME SPHERE MEETS THE SURFACE, DRAWN ON THE SURFACE.
+//
+// Without stereo -- the desk view, a recording -- there is no telling how deep the VR brush
+// sphere sits in the sculpt: its fresnel is dimmest at the centre, exactly where it crosses the
+// surface, and a low-saturation blue vanishes against a light matcap. matt: "if the volume sphere
+// is under the surface of the mesh, i can't see its intersection at all." So every sculpt
+// material draws the intersection itself: a ~2px line where the surface is at the sphere's
+// radius from its centre, and a faint tint on the surface inside it.
+//
+// One signed distance and one fwidth per fragment; four shared uniforms, driven per frame from
+// the visible cursor sphere (updateCursorRing). Off (alpha 0) outside a session.
+function cursorRingNodes() {
+  if (cursorRing) return cursorRing;
+  const { uniform, positionWorld, fwidth, smoothstep, float, abs, max, step } = tsl;
+  const center = uniform(new gpu.Vector3());
+  const radius = uniform(0);
+  const color = uniform(new gpu.Color(0x4488ff));
+  const on = uniform(0);
+  const d = positionWorld.sub(center).length().sub(radius);   // < 0 inside the sphere
+  const w = fwidth(d).max(1e-6);
+  const line = float(1).sub(smoothstep(w, w.mul(2.5), abs(d)));
+  const inside = float(1).sub(step(0, d)).mul(0.12);
+  const alpha = max(line, inside).mul(on);
+  cursorRing = { center, radius, color, on, alpha };
+  return cursorRing;
+}
+
+// Unlit modes carry their colour on emissiveNode: blend toward the ring colour. A lit material
+// takes its albedo down where the line is and emits the colour instead, so it reads the same on
+// a white surface as on a dark one (an emissive ADD alone vanishes against white).
+function withCursorRing(m) {
+  if (!m || m.userData.placeholder) return m;
+  const { vec3, mix, float } = tsl;
+  const r = cursorRingNodes();
+  const col = vec3(r.color);
+  if (m.lights === false) {
+    m.emissiveNode = mix(m.emissiveNode || vec3(0, 0, 0), col, r.alpha);
+  } else {
+    if (m.colorNode) m.colorNode = m.colorNode.mul(float(1).sub(r.alpha));
+    m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(col.mul(r.alpha));
+  }
+  return m;
+}
+
 function build(shaderId) {
+  return withCursorRing(buildBase(shaderId));
+}
+
+// For a console check of the ring outside a session (its uniforms are otherwise private).
+NodeMaterials.cursorRing = () => cursorRing;
+
+function buildBase(shaderId) {
   if (shaderId === Enums.Shader.MATCAP) {
     // NOT MeshMatcapNodeMaterial. The stock node takes its UV from the raw per-eye view
     // normal, and in a headset that is a bug you can see: the two eyes look the matcap up at
@@ -899,6 +951,13 @@ NodeMaterials.convertBasic = function (src) {
       mapNode = texture(src.map);
       rgb = rgb.mul(mapNode.rgb);
     }
+    // THE CONTROLLER MODELS HOLD THEIR OWN BRIGHTNESS. Unlit, they still went through the view
+    // exposure like the sculpt does, so the Quest controllers' white plastic clipped whenever the
+    // exposure was up (the mid-grey Galaxy XR model hid it). matt: "whatever exposure they're
+    // currently using, they're overexposed." Dividing the exposure back out leaves them at their
+    // albedo in both the headset and the desk view (whose output pass applies the same exposure),
+    // and 0.6 takes white to a light grey rather than a clipped one.
+    if (src.isMeshStandardMaterial) rgb = rgb.mul(0.6).div(tsl.toneMappingExposure);
     // DIFFUSE, NOT EMISSIVE, AND THAT IS WHAT CARRIES PER-INSTANCE COLOUR.
     //
     // three applies an InstancedMesh's `instanceColor` to the DIFFUSE colour -- its InstanceNode
@@ -1359,8 +1418,40 @@ NodeMaterials.updateFrame = function (main) {
   const corr = ShaderMatcap.computeRotCorrection(view);
   const v = _MAT3_VIEW.setFromMatrix4(_MAT4_VIEW.fromArray(view));
   rotCorrectionUniform.value.fromArray(corr).multiply(v);
+  updateCursorRing(main);
   return NodeMaterials._updateFrameRest(main);
 };
+
+// The ring follows whichever VR volume sphere is showing -- the dominant hand's first -- and
+// takes its colour at full strength, so blue/red still says add/subtract.
+function updateCursorRing(main) {
+  if (!cursorRing) return;
+  let sph = null;
+  if (main._renderer?.xr?.isPresenting) {
+    const order = main._dominantHand === 'left'
+      ? [main._vrCursorLeft, main._vrCursorRight] : [main._vrCursorRight, main._vrCursorLeft];
+    for (const cur of order) {
+      const s = cur?.visible !== false && cur?.getObjectByName?.('volume_sphere');
+      if (s && s.visible) {
+        // visible all the way up -- a hidden parent group hides the sphere too
+        let o = s, shown = true;
+        while (o) { if (o.visible === false) { shown = false; break; } o = o.parent; }
+        if (shown) { sph = s; break; }
+      }
+    }
+  }
+  if (!sph) { cursorRing.on.value = 0; return; }
+  sph.updateWorldMatrix(true, false);
+  const e = sph.matrixWorld.elements;
+  cursorRing.center.value.set(e[12], e[13], e[14]);
+  cursorRing.radius.value = Math.hypot(e[0], e[1], e[2]);   // unit sphere geometry
+  const c = sph.material?.uniforms?.color?.value || sph.material?.color;
+  if (c) {
+    const m = Math.max(c.r, c.g, c.b, 1e-6);
+    cursorRing.color.value.setRGB(c.r / m, c.g / m, c.b / m);   // full strength, same hue
+  }
+  cursorRing.on.value = 1;
+}
 
 /** Each material that needs per-frame state says so by hanging updateFrame on userData,
  *  rather than this file knowing what every shader wants. */

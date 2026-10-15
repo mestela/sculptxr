@@ -1493,11 +1493,10 @@ class SculptGL extends Scene {
 
     // [CALIBRATION] Toggle Calibration Mode
     if (e.which === 67 && !e.ctrlKey && !e.metaKey) { // 'C' (bare — Ctrl+C is key-copy)
-      if (this._spectatorMode !== Enums.SpectatorMode.STATIONARY) {
-        if (window.screenLog) window.screenLog(`Calibration requires STATIONARY mode.`, "orange");
-      } else {
+      // Desk Sculpt's Move Me: grips move the desk camera instead of the world. The map says so.
+      if (this.deskViewer?.()) {
         this._isCalibratingSpectator = !this._isCalibratingSpectator;
-        if (window.screenLog) window.screenLog(this._isCalibratingSpectator ? `Calibration: ENABLED` : `Calibration: DISABLED`, "lime");
+        console.log('[desk] Move Me ' + (this._isCalibratingSpectator ? 'on' : 'off'));
       }
     }
 
@@ -2020,7 +2019,7 @@ class SculptGL extends Scene {
     }
     // In VR mirror mode, mousewheel zooms the mirror FOV instead of the desktop camera.
     if (this._renderer?.xr?.isPresenting && this._spectatorViewMode === 1) {
-      this._mirrorFovScale = Math.max(0.1, Math.min(1.0, (this._mirrorFovScale ?? 0.5) - dir * 0.05));
+      this._mirrorFovScale = Math.max(0.1, Math.min(1.0, (this._mirrorFovScale ?? 1.0) - dir * 0.05));
       return;
     }
     this._camera.zoom(dir * 0.02);
@@ -2111,8 +2110,10 @@ class SculptGL extends Scene {
       this._rightClientY = event.clientY;
     }
 
+    // DESK SCULPT: the mouse only steers the desk camera. A left-drag would otherwise sculpt by
+    // the DESKTOP camera's picking, which is not the view on screen; here it orbits instead.
     var canEdit = false;
-    if (button === MOUSE_LEFT && this._sculptManager) {
+    if (button === MOUSE_LEFT && this._sculptManager && !this.deskViewer?.()) {
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
     }
 

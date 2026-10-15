@@ -527,6 +527,14 @@ var getOptionsURL = function () {
 getOptionsURL._saveTimers = {};
 
 getOptionsURL.saveOption = function (key, value, debounceMs) {
+  // THE LIVE VALUE CHANGES NOW; ONLY THE DISK WRITE WAITS. Debouncing both left every reader on
+  // the old value for debounceMs after a slider moved. The spike slider showed why that matters:
+  // on release the spike mesh is re-applied from getStylusLength(), which still read the OLD
+  // length -- it snapped back -- and half a second later the tip (sphere, surface ring) moved to
+  // the new one while the mesh stayed put. matt: "when i release the slider its half of its
+  // length ... the sphere radius indicator vs the circle ... vs the controller spike itself are
+  // all misaligned."
+  if (options) options[key] = value;
   if (debounceMs) {
     clearTimeout(getOptionsURL._saveTimers[key]);
     getOptionsURL._saveTimers[key] = setTimeout(() => {

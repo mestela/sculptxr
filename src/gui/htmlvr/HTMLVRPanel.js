@@ -793,6 +793,8 @@ export class HTMLVRPanel {
    * that summoned it, and a copy per overlay is a copy per overlay to keep in step.
    */
   _viewerPosition() {
+    const desk = window.app?.deskViewer?.();   // Desk Sculpt: the monitor's camera, not the headset
+    if (desk) return new THREE.Vector3().setFromMatrixPosition(desk.matrixWorld);
     const xr = this._renderer?.xr;
     if (xr?.isPresenting && xr.getCamera) {
       const c = xr.getCamera();

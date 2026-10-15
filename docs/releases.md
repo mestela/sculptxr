@@ -1,3 +1,12 @@
+# v4.1.50
+- **Desktop Canvas (VR) works on the WebGPU renderer again.** Mirror is a raw copy of the left eye; Desktop and Spectator render offscreen and are copied to the canvas, so nothing touches the headset frame (no flashing, controllers stay). Blank clears once. Spectator now follows desktop pan as well as zoom.
+- **Desk Sculpt** (new Desktop Canvas mode): put the headset on the desk facing you and sculpt with the controllers while watching the monitor. The view is a camera attached to the headset, offset to roughly where your eyes are, always level; controllers, rays, grips and panels line up with no calibration step. Adjust with the mouse (orbit / pan / zoom), **C = Move Me** (grips move the camera instead of the world), and a **Map** overlay: top-down plan of headset, camera and field of view, controllers and sculpt that you can drag to move the camera, turn it, move the sculpt, and scroll for height; a height gauge, and an arrow pointing to the sculpt when it is off screen. Desk FOV slider (default 40). Settings are saved continuously. A headset-stillness timer (amber 15 s, red 25 s). Head-facing UI (panels, radial menu, toasts, labels) faces the desk camera; the wrist panel no longer lets go of the hand beyond 1 m.
+- **Where the brush sphere meets the surface is drawn on the surface**: a thin line in the brush colour plus a faint tint inside, in every shading mode, so depth reads without stereo.
+- **Controller models no longer overexpose**: they hold their own brightness regardless of view exposure.
+- **Settings sliders take effect immediately** (only the save is debounced). Fixes the controller spike snapping back on release and drifting away from the sphere and surface ring.
+- **View > Background** is one flat section; controls for the other types dim instead of hiding. The background colour is remembered.
+- **Examples show download progress** ("Downloading 1.1 / 5.9 MB", then "Building scene") and can't be double-clicked.
+
 # v4.1.27
 - **Skins live on the lowest multires level only.** A skin that ended up on a higher level (Reverse run on an already-bound mesh puts new levels below it) is moved down to level 0 automatically -- after Reverse, and once when such a file is loaded -- with its weights carried down unchanged, so the pose is identical. Del Higher on a bound mesh is then safe, which is what makes heavy files shrink.
 - **New example: Wrestler** (5.9 MB) -- rigged, pinned, clothed, skinned at the base level.

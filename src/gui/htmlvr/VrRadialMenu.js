@@ -179,6 +179,8 @@ export class VrRadialMenu {
   // away from me to the right." The XR camera is the head.
   _viewCamera() {
     const app = window.app;
+    const desk = app?.deskViewer?.();   // Desk Sculpt: face the monitor's camera, not the headset
+    if (desk) return desk;
     const xr = app?._renderer?.xr;
     if (app?._xrSession && xr?.getCamera) {
       const c = xr.getCamera(app._camera?.getThreeCamera?.());

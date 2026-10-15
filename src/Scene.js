@@ -45,6 +45,7 @@ import { GIZMO_MUL_MIN, GIZMO_MUL_MAX } from './editing/GizmoVR.js';
 import { renderPassToCanvas, exportRenderPass, autoRange } from './render/RenderPassExport.js';
 import { fixXRLayerSize } from './render/nodes/ThreeXRPatches.js';
 import BootOverlay from './gui/BootOverlay.js';
+import DeskMap from './gui/DeskMap.js';
 import TextureIO from './files/TextureIO.js';
 import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
@@ -4056,18 +4057,15 @@ class Scene {
             // Per-eye projection for realistic FOV extraction (left eye if available)
             const eyeCam = xrArrayCam.cameras?.[0] ?? xrArrayCam;
             this._spectatorLeftEyeProj.copy(eyeCam.projectionMatrix);
+            // Left eye's rectangle in the XR framebuffer, for the blit mirror.
+            const vp = eyeCam.viewport;
+            if (vp) this._spectatorEyeVP = [vp.x, vp.y, vp.z, vp.w];
+            if (this._spectatorViewMode === 4) this._updateDeskCam(xrArrayCam);
           }
-          // NOT UNDER THE NODE RENDERER. This is a SECOND full renderer.render() inside the
-          // XR frame: it flips xr.enabled off, draws the scene mono to the same canvas, and
-          // restores the flag in a finally. WebGLRenderer tolerates that -- the canvas and the
-          // XR baseLayer are different framebuffers and it rebinds on the next frame.
-          // WebGPURenderer does not: it comes back with the canvas target still bound at the
-          // wrong size, which is what "GL_INVALID_FRAMEBUFFER_OPERATION: Framebuffer is
-          // incomplete: Attachments are not all the same size" is reporting, once per frame.
-          // It also doubles the scene cost inside an XR frame, which is most of "very slow".
-          // Porting the spectator view is its own job; until then the flagged path goes
-          // without it rather than corrupting every frame it draws.
-          if (!this._isNodeRenderer) this._renderSpectatorCanvas();
+          // The desktop canvas during the session. On the node renderer nothing here draws to
+          // the canvas through three: Mirror is a raw blit of the left eye, Desktop/Spectator
+          // render offscreen and are blitted (see _renderSpectatorCanvas). Blank by default.
+          this._renderSpectatorCanvas();
           // ─────────────────────────────────────────────────────────────────────
 
           // --- CRITICAL ISOLATION FOR WEBXR ---
@@ -8546,6 +8544,14 @@ class Scene {
     this._preventRender = false;
     // The smooth-mode latch is only refreshed inside the XR frame loop, so leaving it set would
     // have every effectiveTool()/selectedTool() read on desktop answering with whatever was true
+    // when the headset came off. Cleared, they fall back to the live manager.
+    this._smoothMode = null;
+    this._smoothModeShown = false;
+    // The next session blanks its canvas afresh and logs its first spectator pass.
+    this._specBlanked = false;
+    this._spectatorPasses = 0;
+    this._deskCommit();
+
     // The VR timeline shares its canvas with the desktop one. Leaving it "open" left the desktop
     // timeline stuck at the VR texture size; close it and give the canvas back.
     try {
@@ -8554,10 +8560,6 @@ class Scene {
       document.querySelector('#acp-show-timeline-btn')?.classList.remove('active');
       window._animTimelineTabEl?.classList.remove('tl-on');
     } catch (_) {}
-
-    // when the headset came off. Cleared, they fall back to the live manager.
-    this._smoothMode = null;
-    this._smoothModeShown = false;
 
     // Hide VR floaters (#23 labels, #29 toast) so they don't linger in the scene.
     if (this._toolToast) this._toolToast.mesh.visible = false;
@@ -8724,25 +8726,342 @@ class Scene {
     mat4.perspective(cache.proj, cam._fov * Math.PI / 180.0, aspect, near, far);
   }
 
+  // DESK SCULPT (Desktop Canvas mode 4). The headset rests on the desk facing you as a tracker,
+  // and you sculpt with the controllers while watching the monitor.
+  //
+  // The desk camera lives in the SAME space as the head and controllers -- three's world is the
+  // tracking space, and world grabs move _worldGroup rather than the space -- so controllers,
+  // rays, grips and panels line up on screen with no remapping. That remapping ("optical UI
+  // mapping") is what the old Stationary mode needed and why it needed calibrating.
+  //
+  // THE CAMERA IS A CHILD OF THE HEADSET: pose = the head's level frame (position and heading;
+  // a headset lying on a desk is tilted however it landed) x an offset S. S defaults to matt's
+  // calibrated desk pose (see _deskSavedOffset) -- roughly where your eyes are. Every edit made to the
+  // camera since the last frame (Move Me, the map, the mouse below) is folded back into S, and S
+  // is saved within half a second of changing. It used to be anchored once, when the mode came
+  // on, and saved only on leaving the mode or the session -- so a reload lost it, and choosing
+  // the mode while still wearing the headset anchored it to your head rather than the desk.
+  // matt: "i seem to have to recalibrate substantially each testing round."
+  //
+  // After that it is steered by the ORDINARY desktop orbit/pan/zoom, applied as per-frame
+  // deltas of the desktop camera (Camera.updateView writes cache.view during a session):
+  //   rotation -> the same turn in the desk camera's own frame, about the desktop pivot as it
+  //               sits in VR right now, so orbiting goes round the sculpt;
+  //   pan/zoom -> the change in the eye's offset from the pivot, in the desk camera's frame,
+  //               sculpt units scaled to metres by _vrScale.
+  // Deltas rather than an absolute mapping because the two cameras live in unrelated frames,
+  // and so a world grab (which moves _worldGroup) moves the pivot without moving the camera.
+  _updateDeskCam(xrArrayCam) {
+    const cache = this._desktopCameraCache;
+    let cam = this._deskCam;
+    if (!cam) {
+      cam = this._deskCam = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
+      cam.matrixAutoUpdate = false;
+      cam.matrixWorldAutoUpdate = false;
+    }
+    // The desktop view, decomposed: view = T(-e) * R * T(-pivot), so view * pivot = -e.
+    const V = new THREE.Matrix4().fromArray(cache.view);
+    const pivot = new THREE.Vector3().fromArray(cache.center);
+    const e = pivot.clone().applyMatrix4(V).negate();
+    const q = new THREE.Quaternion().setFromRotationMatrix(V);
+
+    // The head's level frame now. RotationY(a) sends -Z to (-sin a, 0, -cos a).
+    const h = xrArrayCam.matrixWorld.elements;
+    const H = new THREE.Matrix4().makeRotationY(Math.atan2(h[8], h[10])).setPosition(h[12], h[13], h[14]);
+    let S;
+    if (this._deskBase) {
+      cam.matrix.compose(cam.position, cam.quaternion, cam.scale);
+      S = this._deskBase.clone().invert().multiply(cam.matrix);   // last frame's head, today's edits
+    } else {
+      S = this._deskSavedOffset();
+      this._deskPrev = { q, e };
+    }
+    H.clone().multiply(S).decompose(cam.position, cam.quaternion, cam.scale);
+    cam.scale.set(1, 1, 1);   // no drift from the round trip
+    this._deskBase = H;
+    // HOW LONG THE HEADSET HAS BEEN STILL, for the nudge timer (DeskMap.drawTimer). A nudge is
+    // anything past tracking noise: 2 mm, or about half a degree of turn.
+    const hm = xrArrayCam.matrixWorld.elements, st = this._deskStill;
+    if (!st || Math.hypot(hm[12] - st.p[0], hm[13] - st.p[1], hm[14] - st.p[2]) > 0.002
+        || hm[8] * st.f[0] + hm[9] * st.f[1] + hm[10] * st.f[2] < 0.99996) {
+      this._deskStill = { t: performance.now(), p: [hm[12], hm[13], hm[14]], f: [hm[8], hm[9], hm[10]] };
+    }
+
+    const prev = this._deskPrev;
+    // The desktop camera's turn in its own frame. Camera-to-world is the INVERSE view rotation,
+    // so the local delta is prev.q * inverse(q).
+    const L = prev.q.clone().multiply(q.clone().invert());
+    if (1 - Math.abs(L.w) > 1e-9) {
+      const turn = cam.quaternion.clone().multiply(L).multiply(cam.quaternion.clone().invert());
+      const P = pivot.clone().applyMatrix4(this._worldGroup.matrixWorld);
+      cam.position.sub(P).applyQuaternion(turn).add(P);
+      cam.quaternion.premultiply(turn).normalize();
+    }
+    const de = e.clone().sub(prev.e).multiplyScalar(this._vrScale || 0.008);
+    if (de.lengthSq() > 0) cam.position.add(de.applyQuaternion(cam.quaternion));
+    this._deskPrev = { q, e };
+
+    // ALWAYS LEVEL: no roll. Orbiting about tilted axes and Move Me's full hand rotation both
+    // leak roll in, and a monitor view is never meant to have any (matt: "that tilt is always in
+    // the view somehow, about 5 to 10 degrees"). Keep the heading and pitch, rebuild with world up.
+    const fw = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    if (Math.abs(fw.y) < 0.995) {
+      cam.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fw, new THREE.Vector3(0, 1, 0)));
+    }
+
+    cam.matrix.compose(cam.position, cam.quaternion, cam.scale);
+    cam.matrixWorld.copy(cam.matrix);
+    cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+    this._deskSave(false);
+    const cv = this._renderer.domElement;
+    const aspect = cv.width / cv.height || 1;
+    const fov = this.getDeskFov();
+    if (cam.aspect !== aspect || cam.fov !== fov) { cam.aspect = aspect; cam.fov = fov; cam.updateProjectionMatrix(); }
+  }
+
+  // THE DESK CAMERA'S VERTICAL FIELD OF VIEW, saved. A view wider than the monitor really covers
+  // from where you sit stretches whatever is near the sides -- panels read as squashed wide. A
+  // monitor 60 cm wide at 70 cm subtends about 46 degrees across, roughly 27 vertically at 16:9,
+  // so the physically matching value is far below the 50 a camera usually gets.
+  getDeskFov() {
+    if (this._deskFov === undefined) {
+      let v = NaN;
+      try { v = parseFloat(localStorage.getItem('sculptxr.deskFov')); } catch (_) {}
+      this._deskFov = Number.isFinite(v) ? v : 40;   // matt: 40 felt right on a desk
+    }
+    return this._deskFov;
+  }
+
+  setDeskFov(v) {
+    this._deskFov = v;
+    try { localStorage.setItem('sculptxr.deskFov', String(v)); } catch (_) {}
+  }
+
+  _deskSavedOffset() {
+    try {
+      const a = JSON.parse(localStorage.getItem('sculptxr.deskOffset'));
+      if (Array.isArray(a) && a.length === 16) return new THREE.Matrix4().fromArray(a);
+    } catch (_) {}
+    // matt's calibrated sweet spot (2026-10-15, Quest 3 on a desk, FOV 40): 0.91 m in front of the
+    // headset, 5 cm above it, turned to face it and pitched about 12 degrees down. Level (no roll).
+    return new THREE.Matrix4().fromArray([-0.9998, 0, 0.02001, 0, 0.0043, 0.9766, 0.21502, 0,
+      -0.01954, 0.21507, -0.9764, 0, 0.00072, 0.05068, -0.91471, 1]);
+  }
+
+  // Save the camera's offset from the headset when it has changed, at most twice a second
+  // (or now, when `force`).
+  _deskSave(force) {
+    if (!this._deskBase || !this._deskCam) return;
+    const t = performance.now();
+    if (!force && t - (this._deskSavedAt || 0) < 500) return;
+    const S = this._deskBase.clone().invert().multiply(this._deskCam.matrixWorld);
+    const json = JSON.stringify(S.toArray().map((v) => +v.toFixed(5)));
+    if (json === this._deskSavedJson) return;
+    try { localStorage.setItem('sculptxr.deskOffset', json); } catch (_) {}
+    this._deskSavedJson = json;
+    this._deskSavedAt = t;
+  }
+
+  // Leaving the mode or the session: save, and drop the anchor.
+  _deskCommit() {
+    this._deskSave(true);
+    this._deskBase = null;
+    this._isCalibratingSpectator = false;
+    this._deskMap?.hide();
+    this._deskMap?.hideTimer();
+    this._deskMap?.hideArrow();
+    this._deskStill = null;
+    const xrUi = document.getElementById('xr-ui');
+    if (xrUi) xrUi.style.visibility = '';
+  }
+
+  // The plan view (src/gui/DeskMap.js). On by default; the choice is remembered.
+  _deskMapOn() {
+    if (this._deskMapShow === undefined) {
+      try { this._deskMapShow = localStorage.getItem('sculptxr.deskMap') !== '0'; } catch (_) { this._deskMapShow = true; }
+    }
+    return this._deskMapShow;
+  }
+
+  setDeskMap(on) {
+    this._deskMapShow = !!on;
+    try { localStorage.setItem('sculptxr.deskMap', on ? '1' : '0'); } catch (_) {}
+  }
+
+  // What head-facing UI should face: the desk camera in Desk Sculpt, null otherwise, so every
+  // caller keeps its own head source. Panels opening "in front of you", the radial menu, toasts,
+  // labels and the wrist menu's reach test all read this first; without it they would open on
+  // the far side of the headset with their backs to you.
+  deskViewer() {
+    return (this._spectatorViewMode === 4 && this._deskBase && this._renderer?.xr?.isPresenting)
+      ? this._deskCam : null;
+  }
+
+  // Run fn with the GL framebuffer and texture bindings and the scissor test saved, and put them
+  // back exactly after. three's WebGL backend caches those bindings; restoring them by hand keeps
+  // its cache true, where a state reset (or a renderer pass to the canvas) left the headset frame
+  // flashing with the controllers gone.
+  _withGLSaved(gl, fn) {
+    const prevRead = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+    const prevDraw = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING);
+    const prevTex  = gl.getParameter(gl.TEXTURE_BINDING_2D);
+    const scissorOn = gl.isEnabled(gl.SCISSOR_TEST);
+    try {
+      if (scissorOn) gl.disable(gl.SCISSOR_TEST);
+      fn();
+    } catch (e) {
+      console.warn('[Spectator] blit error:', e);
+    } finally {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevRead);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, prevDraw);
+      gl.bindTexture(gl.TEXTURE_2D, prevTex);
+      if (scissorOn) gl.enable(gl.SCISSOR_TEST);
+    }
+  }
+
+  // A single-sample RGBA8 texture + framebuffer, cached on this[key] and remade on resize.
+  _specTmpFb(gl, key, w, h) {
+    let t = this[key];
+    if (t && t.w === w && t.h === h) return t;
+    if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return (this[key] = { fb, tex, w, h });
+  }
+
+  // MIRROR on the node renderer: copy the left eye out of the XR framebuffer with raw GL.
+  // Re-drawing the scene inside the XR frame fought three's framebuffer/state caches (headset
+  // flashing, controllers gone) no matter how the pass was bracketed; a copy needs no renderer
+  // state at all. Two blits, because the XR framebuffer may be multisampled and a resolve can
+  // neither scale nor move the rectangle: (1) resolve into a temp the size of the XR framebuffer
+  // with IDENTICAL rectangles, (2) temp -> canvas, cover-fitted and zoomed by _mirrorFovScale.
+  _mirrorBlit(renderer) {
+    const gl = renderer.backend?.gl;
+    const xrFb = renderer.backend?._xrFramebuffer;
+    const vp = this._spectatorEyeVP;
+    if (!gl || !xrFb || !vp) return;
+    const cv = renderer.domElement;
+    const cw = cv.width, ch = cv.height;
+    const [ex, ey, ew, eh] = vp;
+    if (!(cw > 0 && ch > 0 && ew > 0 && eh > 0)) return;
+
+    this._withGLSaved(gl, () => {
+      const t = this._specTmpFb(gl, '_mirrorTmp', ex + ew, ey + eh);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, xrFb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, t.fb);
+      gl.blitFramebuffer(ex, ey, ex + ew, ey + eh, ex, ey, ex + ew, ey + eh, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+
+      const zoom = 1 / (this._mirrorFovScale ?? 1.0);
+      const c = Math.max(cw / ew, ch / eh) * zoom;
+      const sw = Math.min(ew, cw / c), sh = Math.min(eh, ch / c);
+      const sx = ex + (ew - sw) / 2, sy = ey + (eh - sh) / 2;
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, t.fb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.blitFramebuffer(sx, sy, sx + sw, sy + sh, 0, 0, cw, ch, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+    });
+  }
+
+  // DESKTOP / SPECTATOR on the node renderer: draw into a target of our own, never the canvas.
+  // To three a target that is not the output target is a plain offscreen pass -- no XR camera, no
+  // XR framebuffer, so nothing to detach, resize or reset, which is what kept breaking the headset.
+  // samples:4 is anti-aliasing AND a different render-context key from the XR target (samples 0):
+  // sharing one made the two passes recompile each other's pipelines every frame.
+  // An offscreen pass is written linear with no tone mapping, so a quad applies the renderer's
+  // output transform into a second target, and that one is blitted to the canvas with raw GL.
+  _spectatorOffscreen(renderer, cam) {
+    const W = this._THREE_GPU, T = this._TSL_GPU;
+    const gl = renderer.backend?.gl;
+    if (!W || !T || !gl) return;
+    const cw = renderer.domElement.width, ch = renderer.domElement.height;
+    if (!(cw > 0 && ch > 0)) return;
+
+    let s = this._specOff;
+    if (!s) s = this._specOff = {
+      rt: new W.RenderTarget(cw, ch, { samples: 4 }),
+      out: new W.RenderTarget(cw, ch, { depthBuffer: false }),
+      quad: new W.QuadMesh(), tm: null, cs: null, fb: null, tex: null,
+    };
+    if (s.rt.width !== cw || s.rt.height !== ch) { s.rt.setSize(cw, ch); s.out.setSize(cw, ch); }
+    // A node graph is not rebuilt by needsUpdate; a tone-mapping change gets a new material.
+    if (s.tm !== renderer.toneMapping || s.cs !== renderer.outputColorSpace) {
+      s.tm = renderer.toneMapping; s.cs = renderer.outputColorSpace;
+      s.quad.material?.dispose();
+      s.quad.material = new W.NodeMaterial();
+      s.quad.material.fragmentNode = T.renderOutput(T.texture(s.rt.texture), s.tm, s.cs);
+    }
+
+    const prev = renderer.getRenderTarget();
+    renderer.setRenderTarget(s.rt);
+    renderer.render(this._scene, cam);
+    renderer.setRenderTarget(s.out);
+    s.quad.render(renderer);
+    renderer.setRenderTarget(prev);
+
+    const tex = renderer.backend.get(s.out.texture)?.textureGPU;
+    if (!tex) return;
+    this._withGLSaved(gl, () => {
+      if (s.tex !== tex) {
+        if (s.fb) gl.deleteFramebuffer(s.fb);
+        s.fb = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, s.fb);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        s.tex = tex;
+      }
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, s.fb);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.blitFramebuffer(0, 0, cw, ch, 0, 0, cw, ch, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    });
+  }
+
   _renderSpectatorCanvas() {
     const mode = this._spectatorViewMode ?? 0;
 
     const renderer = this._renderer;
     if (!renderer) return;
+    const node = this._isNodeRenderer;
+    if (mode !== 4 && this._deskBase) this._deskCommit();
 
-    // Render modes (1 & 2) are throttled to limit GPU cost on the desktop pass.
+    // BLANK on the node renderer: one raw clear of the canvas, then nothing until the mode
+    // changes. renderer.clear() would go to the XR target, not the canvas.
+    if (node && mode === 0) {
+      const gl = renderer.backend?.gl;
+      if (this._specBlanked || !gl) return;
+      this._specBlanked = true;
+      this._withGLSaved(gl, () => {
+        const cc = gl.getParameter(gl.COLOR_CLEAR_VALUE);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+        gl.clearColor(0.05, 0.05, 0.05, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.clearColor(cc[0], cc[1], cc[2], cc[3]);
+      });
+      return;
+    }
+    this._specBlanked = false;
+
+    // Render modes are throttled to limit GPU cost on the desktop pass.
     // _spectatorFrameSkip: 0=every frame, 3=every 4th (default), etc.
     // BLANK (0) is a single clear — no throttle needed.
-    if (mode >= 1) {
+    // Desk Sculpt is exempt: it is the view you are sculpting through, not a preview.
+    if (mode >= 1 && mode !== 4) {
       const skip = this._spectatorFrameSkip ?? 3;
       this._spectatorN = ((this._spectatorN || 0) + 1);
       if (skip > 0 && (this._spectatorN % (skip + 1)) !== 0) return;
     }
 
+    if (node && mode === 1) { this._mirrorBlit(renderer); return; }
+
+    const draw = (cam) => node ? this._spectatorOffscreen(renderer, cam) : renderer.render(this._scene, cam);
     const wasXR = renderer.xr.enabled;
+    const _t0 = performance.now();
     try {
-      renderer.xr.enabled = false;  // bypass XR layer so we can write to the DOM canvas
-      renderer.setRenderTarget(null);
+      if (!node) {
+        renderer.xr.enabled = false;  // bypass XR layer so we can write to the DOM canvas
+        renderer.setRenderTarget(null);
+      }
 
       if (mode === 0) {
         // ── BLANK: just clear the canvas ──────────────────────────────────
@@ -8765,22 +9084,25 @@ class Scene {
           cam.matrixWorldInverse.copy(this._spectatorLeftEyeMatrix).invert();
           cam.matrix.copy(cam.matrixWorld);
 
-          // Rebuild projection for the CSS display size of the canvas, not the XR
-          // framebuffer resolution (canvas.width/height = per-eye XR resolution ≈ square;
-          // canvas.clientWidth/Height = actual browser window = e.g. 16:9).
-          // elements[5] of a column-major perspective matrix = cot(vFov/2).
-          const m11        = this._spectatorLeftEyeProj.elements[5];
-          const vFovDeg    = 2.0 * Math.atan(1.0 / m11) * (180 / Math.PI);
+          // PROJECTION = THE EYE'S OWN FRUSTUM, re-fitted to the canvas aspect and a zoom.
+          // A symmetric perspective rebuilt from the eye's FOV drops its off-axis offset (the
+          // frustum centre is not the view axis), which shifted the image up; and a default scale
+          // of 0.5 was a built-in 2x zoom. Scale 1 (the default, scroll to zoom in) is what the
+          // headset shows. Column-major: [0]=x focal, [5]=y focal, [8]/[9]=x/y centre offset.
+          const e = this._spectatorLeftEyeProj.elements;
           const dispAspect = (canvas.clientWidth || canvas.width) /
                              (canvas.clientHeight || canvas.height) || 1;
-          if (this._mirrorFovScale === undefined) this._mirrorFovScale = 0.5;
-          cam.fov    = vFovDeg * this._mirrorFovScale;
-          cam.aspect = dispAspect;
-          cam.near   = 0.01;
-          cam.far    = 50;
-          cam.updateProjectionMatrix();
+          if (this._mirrorFovScale === undefined) this._mirrorFovScale = 1.0;
+          const k = 1 / this._mirrorFovScale;
+          const P = cam.projectionMatrix.copy(this._spectatorLeftEyeProj);
+          P.elements[5] = e[5] * k;
+          P.elements[0] = e[5] * k / dispAspect;
+          P.elements[8] = e[8] * (P.elements[0] / e[0]);   // keep the same centre direction
+          P.elements[9] = e[9] * k;
+          cam.projectionMatrixInverse.copy(P).invert();
+          cam.coordinateSystem = renderer.coordinateSystem;
 
-          renderer.render(this._scene, cam);
+          draw(cam);
         }
 
       } else if (mode === 2) {
@@ -8833,7 +9155,7 @@ class Scene {
           this._worldGroup.scale.set(0.701, 0.701, 0.701);
         }
 
-        renderer.render(this._scene, desktopCam);
+        draw(desktopCam);
 
         // Restore VR worldGroup state so the next XR frame is correct.
         this._worldGroup.position.copy(savedPos);
@@ -8861,16 +9183,17 @@ class Scene {
         // wgInvMatrix: VR world → sculpt space.  Read before the worldGroup swap below.
         const wgInvMatrix = this._worldGroup.matrixWorld.clone().invert();
 
-        // Desktop camera position and orbit centre (both in desktop world space).
-        const desktopCamWorldPos = new THREE.Vector3().setFromMatrixPosition(
-          new THREE.Matrix4().fromArray(cache.view).invert()
-        );
         const orbitCenter = new THREE.Vector3(
           cache.center[0], cache.center[1], cache.center[2]
         );
 
-        // Full 3-D orbit distance (replaces the old XZ-only horizRadius).
-        const orbitDist = desktopCamWorldPos.distanceTo(orbitCenter);
+        // THE DESKTOP FRAMING, in the desktop camera's own frame: Camera.updateView builds
+        // view = T(-e) * R * T(-center), so view * center = -e. e.z is the zoom distance and
+        // e.x/e.y the pan. Re-applying e in the spectator's frame gives desktop zoom AND pan,
+        // with only the orbit rotation taken from the headset. (The old 3-D distance to the
+        // pivot folded a pan into the zoom and otherwise threw it away.)
+        const e = orbitCenter.clone().applyMatrix4(new THREE.Matrix4().fromArray(cache.view)).negate();
+        const orbitDist = e.z;
 
         // --- Extract headset forward (-Z) and up (+Y) from the eye matrix ---
         // setFromMatrixColumn(m, n) returns column n = local axis n in world space.
@@ -8905,6 +9228,7 @@ class Scene {
         // lookAt sets rotation only — must set position separately.
         const camToWorld = new THREE.Matrix4().lookAt(camPos, orbitCenter, headUp);
         camToWorld.setPosition(camPos);
+        camToWorld.multiply(new THREE.Matrix4().makeTranslation(e.x, e.y, 0));   // desktop pan
         desktopCam.matrixWorld.copy(camToWorld);
         desktopCam.matrixWorldInverse.copy(camToWorld).invert();
         desktopCam.matrix.copy(camToWorld);
@@ -8933,13 +9257,26 @@ class Scene {
           this._worldGroup.scale.set(0.701, 0.701, 0.701);
         }
 
-        renderer.render(this._scene, desktopCam);
+        draw(desktopCam);
 
         this._worldGroup.position.copy(savedPos3);
         this._worldGroup.quaternion.copy(savedQuat3);
         this._worldGroup.scale.copy(savedScale3);
         this._worldGroup.updateMatrixWorld(true);
         } // end else (spectatorLeftEyeMatrix available)
+      } else if (mode === 4) {
+        // ── DESK SCULPT: the desk camera, nothing swapped -- see _updateDeskCam ──
+        if (this._deskCam && this._deskBase) {
+          draw(this._deskCam);
+          // The Enter VR / AR buttons sit over the map's corner, and you are already in.
+          const xrUi = document.getElementById('xr-ui');
+          if (xrUi) xrUi.style.visibility = 'hidden';
+          const hud = this._deskMap || (this._deskMap = new DeskMap());
+          if (this._deskMapOn()) hud.draw(this, renderer.xr.getCamera(), this._deskCam);
+          else hud.hide();
+          hud.drawTimer((performance.now() - this._deskStill.t) / 1000, this._deskMapOn());
+          hud.drawArrow(this, this._deskCam);
+        }
       }
 
     } catch (e) {
@@ -8947,6 +9284,12 @@ class Scene {
       console.warn('[Spectator] render error:', e);
     } finally {
       renderer.xr.enabled = wasXR;
+      // First pass of each session, or every pass with window._spectatorTrace set.
+      this._spectatorPasses = (this._spectatorPasses || 0) + 1;
+      if (window._spectatorTrace || this._spectatorPasses === 1) {
+        console.log('[spectatorTrace] mode ' + mode + ' cpu ' + (performance.now() - _t0).toFixed(1)
+          + 'ms canvas ' + renderer.domElement.width + 'x' + renderer.domElement.height);
+      }
     }
   }
   // ──────────────────────────────────────────────────────────────────────────
@@ -9313,7 +9656,7 @@ class Scene {
         if (!p?.mesh) { console.warn('[showPanel] panel not ready:', name); return; }
 
         // Float 0.7 m in front of the camera, facing it.
-        const cam = this._camera?.getThreeCamera();
+        const cam = this.deskViewer() || this._camera?.getThreeCamera();
         if (cam) {
           const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
           p.mesh.position.copy(cam.position).addScaledVector(fwd, 0.7);
@@ -10143,7 +10486,7 @@ class Scene {
       // VR: floating 3D panel
       const fp = this._filesPanel;
       if (!fp?.mesh) return;
-      const cam = this._camera?.getThreeCamera();
+      const cam = this.deskViewer() || this._camera?.getThreeCamera();
       if (cam) {
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
         fp.mesh.position.copy(cam.position).addScaledVector(fwd, 0.55);
@@ -10290,7 +10633,7 @@ class Scene {
     // Position at the main menu's world location, facing the camera (default
     // placement near the attached panel). Size is persisted; pose is not — a
     // saved world pose tended to reopen far from the user.
-    const cam = this._camera?.getThreeCamera();
+    const cam = this.deskViewer() || this._camera?.getThreeCamera();
     const mm  = this._mainMenuPanel?.mesh;
     // A pose remembered from earlier in this session outranks the first-open placement.
     const _tlRestored = this._restorePanelPose('timeline', this._vrTimelineMesh);
@@ -10477,7 +10820,7 @@ class Scene {
     // convention differs from a camera-facing plane. Offset along camera-right so
     // it sits next to the menu from the user's viewpoint.
     const mm  = this._mainMenuPanel?.mesh;
-    const cam = this._camera?.getThreeCamera();
+    const cam = this.deskViewer() || this._camera?.getThreeCamera();
     // As with the timeline: a pose remembered this session beats the first-open placement.
     const _bsRestored = this._restorePanelPose('blendshapes', this._vrBlendMesh);
     if (cam && !_bsRestored) {
@@ -10899,7 +11242,7 @@ class Scene {
 
     const _placeTornPanel = () => {
       if (!panel.mesh) return;
-      const cam = this._camera.getThreeCamera();
+      const cam = this.deskViewer() || this._camera.getThreeCamera();
       // Position: use the main panel's world position so the panel appears
       // right where the user is already looking.
       const mmMesh = this._mainMenuPanel?.mesh;
@@ -12228,7 +12571,7 @@ class Scene {
     // cost four sessions on the motion-path work. The XR camera IS the three-side head, so it
     // needs no conversion and cannot drift from the mesh it positions.
     const xr = this._renderer && this._renderer.xr;
-    const cam = xr && xr.getCamera && xr.getCamera(this._camera?.getThreeCamera?.());
+    const cam = this.deskViewer() || (xr && xr.getCamera && xr.getCamera(this._camera?.getThreeCamera?.()));
     if (!cam) { m.visible = false; return; }
     cam.updateMatrixWorld(true);
     const H = cam.matrixWorld.elements;
@@ -12529,7 +12872,11 @@ class Scene {
           // So the test is geometric rather than a flag: measure the pose the grip is offering
           // against the head, and if it is further than an arm could be, do not take it.
           const gripOK = !!xrCam && uiGrip.visible !== false
-            && _wristReach(uiGrip.matrixWorld, xrCam.matrixWorld) < 1.0;
+            && _wristReach(uiGrip.matrixWorld, xrCam.matrixWorld) < (this.deskViewer() ? 3.0 : 1.0);
+          // DESK SCULPT: the 'head' is a headset lying on the desk, and you sit back from it, so
+          // an ordinary hand is routinely more than 1 m away. At 1.0 the panel let go of the hand
+          // whenever it left that sphere (matt: "linked to the controller within a bounding box").
+          // 3 m still rejects the metres-off stale poses this test exists for.
           if (gripOK || !this._wristHeadOffset || !xrCam) {
             uiAnchor.matrix.copy(uiGrip.matrixWorld);
             // Remember where that was RELATIVE TO THE HEAD, for the frames that have no pose.
@@ -14820,9 +15167,9 @@ class Scene {
     if (bothGripped) {
       this._vrTwoHanded.latch = true;
       this.processVRTwoHanded(leftOrigin, rightOrigin);
-    } else if (this._isCalibratingSpectator) {
-      // [CALIBRATION MODE] "Move Me"
-      // World stays still, you move the Spectator Camera.
+    } else if (this._isCalibratingSpectator && this.deskViewer()) {
+      // [CALIBRATION MODE] "Move Me" (Desk Sculpt, C key)
+      // World stays still, you move the desk camera.
       this._vrTwoHanded.active = false;
       // Force Debug Pivot OFF
       if (this.updateDebugPivot) this.updateDebugPivot(null, false);
@@ -15046,7 +15393,7 @@ class Scene {
 
   _updateVrFloaters() {
     if (!this._toolToast && !window._vrShowButtonLabels && !this._btnLabels) return;
-    const cam = this._renderer?.xr?.getCamera?.(this._camera.getThreeCamera());
+    const cam = this.deskViewer() || this._renderer?.xr?.getCamera?.(this._camera.getThreeCamera());
     if (!cam) return;
     const tmp = this._fTmpVec || (this._fTmpVec = new THREE.Vector3());
     const headQ = this._fTmpQuat || (this._fTmpQuat = new THREE.Quaternion());
@@ -16046,7 +16393,7 @@ class Scene {
   // mind if they forget between sessions (honestly the state of world tracking in all headset is
   // terrible, i dont trust it)."
   _headPos() {
-    const cam = this._camera && this._camera.getThreeCamera && this._camera.getThreeCamera();
+    const cam = this.deskViewer() || (this._camera && this._camera.getThreeCamera && this._camera.getThreeCamera());
     return cam ? cam.position.clone() : null;
   }
 
@@ -17484,60 +17831,31 @@ class Scene {
     this.render();
   }
 
+  // MOVE ME: a grip drags EVERYTHING on the monitor -- sculpt, panels and the controllers too --
+  // by moving the desk camera the opposite way. The hand's move since last frame (a turn about
+  // the hand, plus a shift) is applied INVERTED to the camera, so the world appears to go with
+  // the hand. The grip origins are in the base local-floor space, which is the space three draws
+  // in, so the delta needs no conversion.
   processSpectatorCalibration(handedness, origin, rotation) {
     const gState = this._vrGrip[handedness];
-
+    const cam = this._deskCam;
+    if (!cam) return;
     if (!gState.active) {
-      // START DRAG
       gState.active = true;
       vec3.copy(gState.startPoint, origin);
       quat.copy(gState.startRotation, rotation);
-    } else {
-      // DRAG (Translation)
-      const delta = vec3.create();
-      vec3.sub(delta, origin, gState.startPoint);
-
-      // DRAG (Rotation)
-      const deltaRot = quat.create();
-      const invStart = quat.create();
-      quat.invert(invStart, gState.startRotation);
-      quat.multiply(deltaRot, rotation, invStart); // diff = current * invStart
-
-      // Normalize deltaRot to avoid drift?
-      quat.normalize(deltaRot, deltaRot);
-
-      // Thresholds
-      const moved = vec3.length(delta) > 0.0001;
-      // Check angle?
-      const angle = quat.getAxisAngle(vec3.create(), deltaRot); // This is expensive/dummy, just check similarity?
-      // Just apply always if active?
-
-      if (moved || Math.abs(angle) > 0.0001) {
-        // Apply Translation
-        this._desktopOffset[0] -= delta[0];
-        this._desktopOffset[1] -= delta[1];
-        this._desktopOffset[2] -= delta[2];
-
-        // Apply Rotation (Accumulate)
-        // Order: View = View * Rot.
-        // We want to Rotate the "Spectator Rig".
-        // If I rotate hand RIGHT, I want World to rotate RIGHT?
-        // Or "Move Me"? If I rotate hand RIGHT (Clockwise), I am "Twisting the world Clockwise".
-        // So the Camera should rotate Clockwise?
-        // Let's try direct multiplication.
-        quat.multiply(this._desktopRotation, this._desktopRotation, deltaRot);
-        quat.normalize(this._desktopRotation, this._desktopRotation);
-
-        // Reset Start Points (Incremental)
-        vec3.copy(gState.startPoint, origin);
-        quat.copy(gState.startRotation, rotation);
-
-        // Force Render (Not needed during VR Frame Loop)
-        // this.render();
-
-
-      }
+      return;
     }
+    const prevP = new THREE.Vector3().fromArray(gState.startPoint);
+    const nowP = new THREE.Vector3().fromArray(origin);
+    const prevQ = new THREE.Quaternion().fromArray(gState.startRotation);
+    const nowQ = new THREE.Quaternion().fromArray(rotation);
+    // Hand delta H: x -> nowP + dR * (x - prevP), dR = now * inverse(prev). Camera <- inverse(H).
+    const dRinv = nowQ.multiply(prevQ.invert()).invert();
+    cam.position.sub(nowP).applyQuaternion(dRinv).add(prevP);
+    cam.quaternion.premultiply(dRinv).normalize();
+    vec3.copy(gState.startPoint, origin);
+    quat.copy(gState.startRotation, rotation);
   }
 
   _updateVRCursors(frame, refSpace, sources) {
