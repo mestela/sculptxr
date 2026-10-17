@@ -268,6 +268,7 @@ function boneSegments(mesh, joints, pos) {
         flat: true, len: len * (t1 - t0),
       });
     });
+    out.parents = joints.map((j) => (index.has(j._parentMesh) ? index.get(j._parentMesh) : -1));   // islandBoneMask walks these
     return out;
   }
 
@@ -406,7 +407,7 @@ function boneSegments(mesh, joints, pos) {
 // to the surface. In these units a vertex inside a capsule has t < 1, so `outside` — the count
 // of vertices no capsule actually contains — is a real diagnostic: it means capsules are too
 // small, and those vertices were assigned by nearest rather than by containment.
-function nearestCapsuleWeights(verts, nbV, segs) {
+function nearestCapsuleWeights(verts, nbV, segs, mask) {
   const idx = new Int32Array(nbV * MAX_INFLUENCES).fill(-1);
   const wts = new Float32Array(nbV * MAX_INFLUENCES);
   let outside = 0;
@@ -422,7 +423,9 @@ function nearestCapsuleWeights(verts, nbV, segs) {
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
     let bestK = -1, bestT2 = Infinity, bestStart = false;
 
+    const allow = mask ? mask.sets[mask.island[i]] : null;
     for (let s = 0; s < segs.length; s++) {
+      if (allow && !allow[segs[s].joint]) { vals[s] = Infinity; continue; }
       const t2 = envelopeT2(px, py, pz, segs[s]);
       vals[s] = t2;
       // A TIE GOES TO THE JOINT THAT OWNS THE BALL. Where a vertex is nearest to a shared joint
@@ -501,6 +504,82 @@ function nearestCapsuleWeights(verts, nbV, segs) {
     wts[i * MAX_INFLUENCES] = 1;
   }
   return { idx: idx, wts: wts, outside: outside };
+}
+
+// A SEPARATE PIECE ONLY TAKES BONES CONNECTED TO ITS OWN. An in-pose sculpt has its forearm lying on
+// the chest; split into an arm mesh and a torso mesh, the split already says which skin is which, but
+// nearest-volume ignores it -- the arm's underside sat inside the spine volume and went to the spine,
+// its fingers went to the OTHER hand where both grip the bat. Per connected island of the level:
+// start from the bone owning most of it and walk the skeleton (parent and children) through bones
+// that own any of the island in the plain solve -- a joint with no volume is walked through -- keeping
+// those that own at least ISLAND_MIN and the bones on the way to them. The arm mesh never reaches the
+// spine because the chest between them owns none of it. On one fused mesh every bone connects, so nothing changes; the
+// volumes still decide everything among the bones an island keeps. window._islandBones = false
+// switches it off for A/B.
+const ISLAND_MIN = 0.03;
+function islandBoneMask(level, raw, segs, nbV) {
+  const parents = segs.parents;
+  if (!parents || window._islandBones === false || level.getNbVertices() !== nbV) return null;
+  const nbJ = parents.length;
+  const fAr = level.getFaces(), nbF = level.getNbFaces();
+  const root = new Int32Array(nbV);
+  for (let i = 0; i < nbV; i++) root[i] = i;
+  const find = (x) => { while (root[x] !== x) { root[x] = root[root[x]]; x = root[x]; } return x; };
+  const join = (a, b) => { a = find(a); b = find(b); if (a !== b) root[a] = b; };
+  for (let f = 0; f < nbF; f++) {
+    const o = f * 4;
+    join(fAr[o], fAr[o + 1]); join(fAr[o + 1], fAr[o + 2]);
+    if (fAr[o + 3] < nbV) join(fAr[o + 2], fAr[o + 3]);
+  }
+  const island = new Int32Array(nbV), ids = new Map(), counts = [], sizes = [];
+  for (let i = 0; i < nbV; i++) {
+    const r = find(i);
+    let k = ids.get(r);
+    if (k === undefined) { k = counts.length; ids.set(r, k); counts.push(new Int32Array(nbJ)); sizes.push(0); }
+    island[i] = k; sizes[k]++;
+    const j = raw.idx[i * MAX_INFLUENCES];
+    if (j >= 0) counts[k][j]++;
+  }
+  const hasVol = new Uint8Array(nbJ);
+  for (const sg of segs) hasVol[sg.joint] = 1;
+  const kids = Array.from({ length: nbJ }, () => []);
+  parents.forEach((p, i) => { if (p >= 0) kids[p].push(i); });
+  let dropped = 0;
+  const sets = counts.map((cnt, k) => {
+    let seed = 0;
+    for (let j = 1; j < nbJ; j++) if (cnt[j] > cnt[seed]) seed = j;
+    const keep = new Uint8Array(nbJ), from = new Int32Array(nbJ).fill(-2);
+    const min = ISLAND_MIN * sizes[k];
+    const queue = [seed];
+    from[seed] = -1;
+    while (queue.length) {
+      const b = queue.pop();
+      for (const c of parents[b] >= 0 ? [parents[b], ...kids[b]] : kids[b]) {
+        if (from[c] !== -2 || (hasVol[c] && !cnt[c])) continue;
+        from[c] = b;
+        queue.push(c);
+      }
+    }
+    // A bone owning ISLAND_MIN is kept, and so is every bone on the way to it: a short clavicle owns
+    // little of a torso but the upper arm past it owns its shoulder.
+    for (let j = 0; j < nbJ; j++) {
+      if (from[j] === -2 || cnt[j] < min) continue;
+      for (let b = j; b >= 0 && !keep[b]; b = from[b]) if (hasVol[b] || b === seed) keep[b] = 1;
+    }
+    keep[seed] = 1;
+    for (let j = 0; j < nbJ; j++) if (cnt[j] && !keep[j]) dropped += cnt[j];
+    return keep;
+  });
+  return dropped ? { island, sets, dropped } : null;
+}
+
+// The rigid capsule solve, then again restricted to each island's connected bones if that excludes any.
+function capsuleWeights(level, verts, nbV, segs) {
+  const raw = nearestCapsuleWeights(verts, nbV, segs);
+  const mask = islandBoneMask(level, raw, segs, nbV);
+  if (!mask) return raw;
+  console.log(`[bind] island bones: ${mask.dropped} of ${nbV} vertices kept off bones not connected to their piece`);
+  return nearestCapsuleWeights(verts, nbV, segs, mask);
 }
 
 // Laplacian smoothing over the weight field: average each vertex's weights with its
@@ -1094,7 +1173,7 @@ Skinning.bind = function (main, mesh) {
     raw = cageWeights(prepared, level.getVertices(), level.getNbVertices());
     usedCages = prepared.length;
   }
-  if (!raw) raw = nearestCapsuleWeights(level.getVertices(), level.getNbVertices(), segs);
+  if (!raw) raw = capsuleWeights(level, level.getVertices(), level.getNbVertices(), segs);
   const w = solveSmoothing(level, raw, joints.length);
 
   // Inverse bind matrices, in mesh-local space.
@@ -1198,7 +1277,7 @@ Skinning.resolveWeights = function (main, mesh, touched) {
     // nothing on screen and the skin kept deforming from capsules that no longer existed. An
     // unweighted vertex is held at its rest position, which is the honest picture.
     raw = segs.length
-      ? nearestCapsuleWeights(mesh._skinRest, nbV, segs)
+      ? capsuleWeights(lvl, mesh._skinRest, nbV, segs)
       : { idx: new Int32Array(nbV * MAX_INFLUENCES).fill(-1), wts: new Float32Array(nbV * MAX_INFLUENCES), outside: nbV };
   }
   const _r2 = performance.now();

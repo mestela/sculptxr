@@ -288,7 +288,7 @@ check('one bone per vertex, weight 1', (() => {
     /const prepared = prepareCages\(main, joints,/.test(SK)
       && /raw = cageWeights\(prepared, level\.getVertices\(\), level\.getNbVertices\(\)\);/.test(SK));
   check('...and falls back to capsules when there are none',
-    /if \(!raw\) raw = nearestCapsuleWeights\(level\.getVertices\(\), level\.getNbVertices\(\), segs\);/.test(SK),
+    /if \(!raw\) raw = capsuleWeights\(level, level\.getVertices\(\), level\.getNbVertices\(\), segs\);/.test(SK),
     'an existing rig must bind exactly as it did');
   check('...skipping a cage whose joint has gone',
     /if \(ji === undefined\) continue;/.test(SK),
