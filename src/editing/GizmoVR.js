@@ -50,6 +50,23 @@ const GIZMO_SIZE_M = 0.125;
 export const GIZMO_MUL_MIN = 0.25;
 export const GIZMO_MUL_MAX = 2.0;
 
+// THE USER'S OPACITY MULTIPLIER, over every handle's own opacity (1 = as designed). For turning the
+// gizmo down when it is in the way of a pose. Applied by sweeping the materials (applyGizmoOpacity):
+// they are shared module-wide, and each remembers the opacity it was built with as `baseOpacity`.
+export const GIZMO_OPACITY_MIN = 0.1;
+export function gizmoOpacityMul() {
+  const v = window._gizmoOpacityMul != null ? window._gizmoOpacityMul : getOptionsURL().gizmoOpacityMul;
+  return Math.max(GIZMO_OPACITY_MIN, Math.min(1, Number.isFinite(v) ? v : 1));
+}
+let _appliedOpacityMul = 1;
+function gizmoMaterials() { return [_gizmoMatS, _gizmoMatD, ..._gizmoMats.values()].filter(Boolean); }
+function applyGizmoOpacity() {
+  const k = gizmoOpacityMul();
+  if (k === _appliedOpacityMul) return;
+  _appliedOpacityMul = k;
+  for (const m of gizmoMaterials()) m.opacity = m.userData.baseOpacity * k;
+}
+
 export function gizmoSizeMul() {
   const v = window._gizmoSizeMul != null ? window._gizmoSizeMul : getOptionsURL().gizmoSizeMul;
   return Number.isFinite(v) && v > 0 ? v : 1.0;
@@ -113,8 +130,9 @@ function gizmoMaterial(doubleSided) {
     depthWrite: false,
     side,
   });
-  if (doubleSided) return (_gizmoMatD = _gizmoMatD || mk(THREE.DoubleSide));
-  return (_gizmoMatS = _gizmoMatS || mk(THREE.FrontSide));
+  const done = (m) => { m.userData.baseOpacity = 0.8; m.opacity = 0.8 * _appliedOpacityMul; return m; };
+  if (doubleSided) return (_gizmoMatD = _gizmoMatD || done(mk(THREE.DoubleSide)));
+  return (_gizmoMatS = _gizmoMatS || done(mk(THREE.FrontSide)));
 }
 
 // GIZMO MATERIALS FOR THE RIBBONS AND FOR A HELD HANDLE, built on demand and cached by what makes them
@@ -124,8 +142,9 @@ function gizmoMat(side, opacity, tint = 0xffffff) {
   const key = side + '|' + opacity.toFixed(4) + '|' + tint;
   let m = _gizmoMats.get(key);
   if (!m) {
-    m = new THREE.MeshBasicMaterial({ vertexColors: true, color: tint, transparent: true, opacity,
-      depthTest: false, depthWrite: false, side });
+    m = new THREE.MeshBasicMaterial({ vertexColors: true, color: tint, transparent: true,
+      opacity: opacity * _appliedOpacityMul, depthTest: false, depthWrite: false, side });
+    m.userData.baseOpacity = opacity;
     _gizmoMats.set(key, m);
   }
   return m;
@@ -143,7 +162,7 @@ const RIBBON_BACK_TINT = 0x6a6a6a;       // multiplies the vertex colours down t
 // A HANDLE THAT IS BEING DRAGGED goes to this fraction of its own opacity: still there to read, but not
 // in front of the pose it is being used to change.
 const HELD_OPACITY_MUL = 0.25;
-function heldOf(m) { return gizmoMat(m.side, m.opacity * HELD_OPACITY_MUL, m.color.getHex()); }
+function heldOf(m) { return gizmoMat(m.side, m.userData.baseOpacity * HELD_OPACITY_MUL, m.color.getHex()); }
 
 // How wide the ribbon is along the ring's own axis, as a fraction of ROT_RADIUS. A band rather than a
 // wire, but a slim one: it should not fill the gizmo or obscure what is behind it.
@@ -598,6 +617,7 @@ class GizmoVR {
       mat4.scale(baseMat, baseMat, [k, k, k]);
     }
 
+    applyGizmoOpacity();
     // Update all components
     const components = [
       this._transX, this._transY, this._transZ,
@@ -618,7 +638,9 @@ class GizmoVR {
         // WHILE A HANDLE IS HELD, ONLY THAT HANDLE IS DRAWN. The rest of the gizmo is in the way of
         // watching what the one you are dragging does, and comes back the moment you let go.
         // (Dragging the interior trackball, which has no drawn handle, leaves nothing showing.)
-        const _held = this._desktop && this._isEditing && this._selected;
+        // ...unless the tool says the whole gizmo IS the thing being edited (Transform's Edit Axes:
+        // the rings show the orientation being laid out, so none of them may go).
+        const _held = this._desktop && this._isEditing && this._selected && !(this._keepAllFn && this._keepAllFn());
         if (components[i] !== this._rotBall) {
           threeMesh.visible = !!(this._activatedType & components[i]._type) && (!_held || components[i] === this._selected);
         }
@@ -935,8 +957,11 @@ class GizmoVR {
     for (let i = 0; i < meshes.length; ++i) {
       if (!this._startLocal[i]) continue;
       const em = meshes[i].getEditMatrix();
-      mat4.mul(tmp, this._startLocal[i], em);
-      meshes[i].setMatrix(tmp);
+      // A tool may take the write over (Transform's IK-drag joints in Pose mode).
+      if (!(this._liveWriteFn && this._liveWriteFn(meshes[i], i, em))) {
+        mat4.mul(tmp, this._startLocal[i], em);
+        meshes[i].setMatrix(tmp);
+      }
       mat4.identity(em);
     }
   }

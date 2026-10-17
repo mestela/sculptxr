@@ -29,10 +29,12 @@ check('a press re-evaluates the handle under the cursor first (the gizmo may hav
   /if \(this\._pinPoseActive\(\) && !this\._gizmo\._isEditing\) this\._gizmo\.onMouseOver\(\);/.test(XF)
   && XF.lastIndexOf('this._gizmo.onMouseOver();') < XF.indexOf('this._gizmo.onMouseDown()'));
 check('a press in the mode takes a handle or does nothing', /if \(this\._pinPoseActive\(\)\) return false;/.test(XF) && XF.indexOf('if (this._pinPoseActive()) return false;') > XF.indexOf('this._gizmo.onMouseDown()'));
-check('only pins and FK-turnable joints are candidates (no skin, no solver-owned joints)', /fkCandidates\(main, owned, true\)/.test(XF) && /fkTarget\(node, bone, owned\)\.joint/.test(XF));
-check('a free joint offers rotate only', /Skeleton\.isJoint\(m\) && this\._pinPoseActive\(\)\) return GIZMO_SETS\.TURN;/.test(XF));
+check('candidates are pins, every joint and keyed props (no skin)', /poseCandidates\(main\)/.test(XF) && /poseTarget\(node, bone, owned\)/.test(XF) && /isPoseProp\(main, hit\)/.test(XF));
+check('a free joint offers rotate only; an owned joint moves (IK drag)', /return this\._owned\(\)\.has\(m\.getID\(\)\) \? GIZMO_SETS\.MOVE : GIZMO_SETS\.TURN;/.test(XF));
+check('an owned joint\'s drag is an IK solve with one rig undo', /IKSolver\.solve\(this\._main, mesh, new THREE\.Vector3/.test(XF) && /_liveWriteFn = \(mesh, i, em\) => this\._axesWrite\(mesh, i, em\) \|\| this\._ikDragWrite/.test(XF) && /'Pose'\);/.test(XF));
+check('Edit Axes: the rings turn the joint\'s axes, stored as its hand-laid frame', /if \(this\._editAxesOn\(m\)\) return GIZMO_SETS\.TURN;/.test(XF) && /Skeleton\.setAxisOverride\(mesh, quat\.normalize\(q, q\)\)/.test(XF));
 check('the old target\'s handle does not survive onto a new target', /sg\._isSelected = false; this\._gizmo\._selected = null;/.test(XF));
-check('it only drops a selection it made itself, and only once the cursor leaves the gizmo', /if \(this\._ppAuto && sel\.length === 1 && sel\[0\] === this\._ppAuto && !this\._cursorNearGizmo\(\)\)/.test(XF));
+check('it only drops a selection it made itself, and only once the cursor leaves the gizmo', /if \(this\._ppAuto && sel\.length === 1 && sel\[0\] === this\._ppAuto && !this\._cursorNearGizmo\(\)( && !window\._xfEditAxes)?\)/.test(XF));
 check('selection changes keep the tool (no tool-context switch)', /main\.setMesh\(node, true\)/.test(XF) && /main\.setMesh\(null, true\)/.test(XF));
 
 const PK = strip(read('src/math3d/Picking.js'));
@@ -43,7 +45,7 @@ check('Grab and Transform share one FK pick rule', /export function fkCandidates
   && /from '\.\.\/fkPick\.js'/.test(strip(read('src/editing/tools/Grab.js'))) && /from '\.\.\/fkPick\.js'/.test(XF));
 
 const PN = read('src/gui/transformPanel.js');
-check('the panel has a Pin Pose toggle, wired and kept in sync', /id="xf-pinpose"/.test(PN) && /_xfPinPose = next/.test(PN) && /saveOption\('xfPinPose'/.test(PN) && /Pin Pose \$\{pp \? 'On' : 'Off'\}/.test(PN));
+check('the panel has a Pose Mode toggle, wired and kept in sync', /id="xf-pinpose"/.test(PN) && /_xfPinPose = next/.test(PN) && /saveOption\('xfPinPose'/.test(PN) && /Pose Mode \$\{pp \? 'On' : 'Off'\}/.test(PN));
 check('the option is declared (off by default)', /options\.xfPinPose = queryBool\(getVal\('xfPinPose'\), false\);/.test(read('src/misc/getOptionsURL.js')));
 check('the mode is a leaf module', !/^import .*from '\.\.?\/(Skeleton|IKSolver|Scene)/m.test(read('src/editing/pinPoseMode.js')));
 

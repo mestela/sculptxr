@@ -12,6 +12,7 @@ import RigPending from './RigPending.js';
 import RigPlacing from './RigPlacing.js';
 import Skeleton from './Skeleton.js';
 import WeightCage from './WeightCage.js';
+import { updateAxisTripod } from './AxisTripod.js';
 
 // A COPY OF SculptBase._readButton, not a call into it — that method reads `this._main` off a
 // tool instance, and there is deliberately no tool instance to ask while an assignment is armed
@@ -2230,6 +2231,14 @@ class SculptManager {
   postRenderNode() {
     const tool = this.getCurrentTool();
     if (tool && tool.postRender) tool.postRender(this._selection);
+    this._axisSticks();
+  }
+
+  // The joint-axis sticks of Transform's Edit Axes (AxisTripod): drawn there only, hidden by any
+  // other tool, which is why they are driven from here and not from the tool.
+  _axisSticks() {
+    const on = this._toolIndex === Enums.Tools.TRANSFORM && !!window._xfEditAxes;
+    updateAxisTripod(this._main, on, on ? this.getCurrentTool()._gizmo : null);
   }
 
   postRender() {
@@ -2254,6 +2263,7 @@ class SculptManager {
     if (tool && tool.postRender) {
       tool.postRender(this._selection);
     }
+    this._axisSticks();
   }
   addSculptToScene(scene) {
     return this.getCurrentTool().addSculptToScene(scene);

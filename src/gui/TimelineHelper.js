@@ -622,6 +622,7 @@ export default class TimelineHelper {
       // the mask comes back all-keyed; without eulers it loses winding.
       keyMask: track.keyMask ? [...track.keyMask] : null,
       eulers: track.eulers ? [...track.eulers] : null,
+      eulerRef: track.eulerRef ? [...track.eulerRef] : null,
       shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
       shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
       shapeOutputTimes: track.shapeOutputTimes ? [...track.shapeOutputTimes] : [],

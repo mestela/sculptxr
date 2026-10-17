@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { quat, mat4 } from 'gl-matrix';
-import { rotSync, xfWrite, xfTanGet, maskSync, xfEval, xfKeyedSlots, xfBit, xfGroupBits, XF_ALL, xfRefreshDerived, xfRemoveSlots, xfPruneEmpty, xfInsertSlot, xfSlotAt, eulerFromQuat, rotSetEuler, xfSlope } from './xfChannel.js';
+import { rotSync, xfWrite, xfTanGet, maskSync, xfEval, xfKeyedSlots, xfBit, xfGroupBits, XF_ALL, xfRefreshDerived, xfRemoveSlots, xfPruneEmpty, xfInsertSlot, xfSlotAt, eulerFromQuat, rotSetEuler, xfSlope, channelsToQuat, setEulerRef } from './xfChannel.js';
 import { decimateKeys } from './curveSimplify.js';
 import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
@@ -78,6 +78,7 @@ class AnimationRegistry {
       positions:        track.positions        ? track.positions.slice()                          : [],
       quaternions:      track.quaternions      ? track.quaternions.slice()                        : [],
       eulers:           track.eulers           ? track.eulers.slice()                             : [],
+      eulerRef:         track.eulerRef         ? track.eulerRef.slice()                           : null,
       keyMask:          track.keyMask          ? track.keyMask.slice()                            : null,
       scales:           track.scales           ? track.scales.slice()                             : [],
       shapeTimes:       track.shapeTimes       ? track.shapeTimes.slice()                         : [],
@@ -112,6 +113,7 @@ class AnimationRegistry {
     track.positions        = snap.positions.slice();
     track.quaternions      = snap.quaternions.slice();
     track.eulers           = snap.eulers ? snap.eulers.slice() : null;
+    if ('eulerRef' in snap) track.eulerRef = snap.eulerRef ? snap.eulerRef.slice() : null;
     track.keyMask          = snap.keyMask ? snap.keyMask.slice() : null;
     track.scales           = snap.scales.slice();
     track.shapeTimes       = snap.shapeTimes.slice();
@@ -1345,7 +1347,7 @@ class AnimationRegistry {
       tr.times = (snap.times || []).slice();
       tr.positions = (snap.positions || []).slice();
       tr.quaternions = (snap.quaternions || []).slice();
-      tr.eulers = snap.eulers ? snap.eulers.slice() : null;
+      tr.eulers = snap.eulers && !tr.eulerRef ? snap.eulers.slice() : null;   // see syncEulerRef
       tr.keyMask = snap.keyMask ? snap.keyMask.slice() : null;
       tr.scales = (snap.scales || []).slice();
       this.sortTrack(tr);
@@ -2802,6 +2804,7 @@ class AnimationRegistry {
     if (!mesh) return;
     const id = mesh.getID();
     const track = this._ensureTransformTrack(id);
+    this.syncEulerRef(mesh);
 
     // Extract TRS from matrix safely
     const m = mesh.getMatrix ? mesh.getMatrix() : [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -2836,9 +2839,7 @@ class AnimationRegistry {
       if (Math.abs(xfEval(track, 'pos', c, time) - P[c]) > EPS_P) bits |= xfGroupBits('pos');
       if (Math.abs(xfEval(track, 'scale', c, time) - S[c]) > EPS_S) bits |= xfGroupBits('scale');
     }
-    const e = [xfEval(track, 'rot', 0, time), xfEval(track, 'rot', 1, time), xfEval(track, 'rot', 2, time)];
-    _regEuler.set(e[0] * Math.PI / 180, e[1] * Math.PI / 180, e[2] * Math.PI / 180, 'XYZ');
-    _regQuat.setFromEuler(_regEuler);
+    channelsToQuat(track, xfEval(track, 'rot', 0, time), xfEval(track, 'rot', 1, time), xfEval(track, 'rot', 2, time), _regQuat);
     const dot = Math.abs(_regQuat.x * Q[0] + _regQuat.y * Q[1] + _regQuat.z * Q[2] + _regQuat.w * Q[3]);
     if (2 * Math.acos(Math.min(1, dot)) * 180 / Math.PI > EPS_R) bits |= xfGroupBits('rot');
     return bits || XF_ALL;
@@ -3129,8 +3130,9 @@ class AnimationRegistry {
   // those channels -- the graph passes what is on screen, and hidden channels are untouched.
   simplifyTransformTrack(track, { mode = 'tolerance', tolerance = 0.02, ratio = 0.25, indices = null, judge = null } = {}) {
     const n = track?.times?.length || 0;
-    if (n < 3) return { before: n, after: n, keysBefore: 0, keysAfter: 0 };
+    if (n < 3) return { before: n, after: n, keysBefore: 0, keysAfter: 0, channels: 0 };
     const m = maskSync(track);
+    let channels = 0;   // channels with enough keys to simplify at all
     const eul = rotSync(track);
     const count = () => m.reduce((a, b) => { let c = 0; for (let x = b; x; x >>= 1) c += x & 1; return a + c; }, 0);
     const keysBefore = count();
@@ -3141,6 +3143,7 @@ class AnimationRegistry {
         if (judge && !judge[g]?.[c]) continue;
         const ks = xfKeyedSlots(track, g, c);
         if (ks.length < 3) continue;
+        channels++;
         const T = ks.map((i) => track.times[i]);
         const v = ks.map((i) => arr[i * 3 + c]);
         let lo = Infinity, hi = -Infinity;
@@ -3163,7 +3166,7 @@ class AnimationRegistry {
     }
     xfPruneEmpty(track);
     xfRefreshDerived(track);
-    return { before: n, after: track.times.length, keysBefore, keysAfter: count() };
+    return { before: n, after: track.times.length, keysBefore, keysAfter: count(), channels };
   }
 
 
@@ -3313,7 +3316,22 @@ class AnimationRegistry {
     return t;
   }
 
+  // A JOINT TRACK'S CHANNELS READ AGAINST THE JOINT'S REST ROTATION (see xfChannel, "A JOINT'S
+  // CHANNELS ARE THE TURN AWAY FROM ITS REST"). The rest is the rig's rest pose (`_ikRest`), so
+  // re-orienting a joint or editing its rest re-points the channels on the next sync; a non-joint
+  // has no reference. Cheap (a compare) when nothing changed, so it is called wherever a track is
+  // about to be read or written: evaluation, keying, the graph.
+  syncEulerRef(mesh) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track) return false;
+    if (!mesh._isBone) return track.eulerRef ? setEulerRef(track, null) : false;
+    const q = this._trsOfMatrix(mesh._ikRest || mesh.getMatrix()).quat;
+    const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+    return setEulerRef(track, [q[0] / l, q[1] / l, q[2] / l, q[3] / l]);
+  }
+
   update(mesh, forceScrub = false) {
+    this.syncEulerRef(mesh);
 
     if (!mesh || (!window._animPlaying && !forceScrub)) return;
 
@@ -3549,9 +3567,7 @@ class AnimationRegistry {
     // between the slots either side, so it ignores sparse rotation keys.
     const rotMode = track.rotInterp || window._animRotInterp || 'euler';
     if (rotMode === 'euler') {
-      _regEuler.set(xfEval(track, 'rot', 0, T) * Math.PI / 180, xfEval(track, 'rot', 1, T) * Math.PI / 180,
-        xfEval(track, 'rot', 2, T) * Math.PI / 180, 'XYZ');
-      _regQuat.setFromEuler(_regEuler);
+      channelsToQuat(track, xfEval(track, 'rot', 0, T), xfEval(track, 'rot', 1, T), xfEval(track, 'rot', 2, T), _regQuat);
       outQuat[0] = _regQuat.x; outQuat[1] = _regQuat.y;
       outQuat[2] = _regQuat.z; outQuat[3] = _regQuat.w;
     } else {

@@ -6531,8 +6531,9 @@ class Scene {
       this.getStateManager?.()?.pushStateCustom?.(
         () => { apply(before.parent, before.matrix, before.rest); if (ord) this._restoreOutlinerKeys(ord.before); },
         () => { apply(after.parent, after.matrix, after.rest); if (ord) this._restoreOutlinerKeys(ord.after); },
-        false, 'Set Parent');
+        !!(opts && opts.squash), 'Set Parent');   // squash: joins the step before (a multi-object drop)
     }
+    return true;   // it moved (the early returns above did not)
   }
 
   // OUTLINER ORDER UNDO. The order is `_outlinerKey` on each mesh (see MainMenuPanel.outlinerKey);
@@ -6545,11 +6546,11 @@ class Scene {
     snap.forEach((k, m) => { if (k === undefined) delete m._outlinerKey; else m._outlinerKey = k; });
     Skeleton.refreshOutliner?.(this);
   }
-  pushOutlinerOrderUndo(before, after) {
+  pushOutlinerOrderUndo(before, after, squash = false) {
     this.getStateManager?.()?.pushStateCustom?.(
       () => this._restoreOutlinerKeys(before),
       () => this._restoreOutlinerKeys(after),
-      false, 'Reorder');
+      squash, 'Reorder');
   }
 
   getParentMesh(childId) {
@@ -6559,12 +6560,26 @@ class Scene {
 
   // ── Outliner transform fields (LOCAL transform, relative to parent) ──────────
   // Returns the selected object's local Translate / Rotate(°) / Scale, or null.
+  // A JOINT'S ROTATION READS AGAINST ITS REST, like its animation channels (xfChannel eulerRef):
+  // 0,0,0 IS the rest pose, so zeroing the rotation of every joint is pressing Rest Pose. The raw
+  // local rotation includes the joint's fixed angle to its parent, and 0,0,0 of THAT meant nothing
+  // (matt: "i need to be able to set the local rotation to (0,0,0)... that should be the same as
+  // clicking the 'rest pose' button"). Position and scale stay the plain local values.
+  _jointRestQuat(m) {
+    if (!m || !m._isBone || !m._ikRest) return null;
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    new THREE.Matrix4().fromArray(m._ikRest).decompose(p, q, s);
+    return q.normalize();
+  }
+
   getTransformTRS(id) {
     const m = this._meshes.find((x) => x.getID() === id);
     if (!m) return null;
     const M = new THREE.Matrix4().fromArray(m.getMatrix());
     const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     M.decompose(p, q, s);
+    const rq = this._jointRestQuat(m);
+    if (rq) q.premultiply(rq.invert());
     const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
     const R2D = 180 / Math.PI;
     return { t: [p.x, p.y, p.z], r: [e.x * R2D, e.y * R2D, e.z * R2D], s: [s.x, s.y, s.z] };
@@ -6579,7 +6594,7 @@ class Scene {
     const inputs = document.querySelectorAll('.mm-xf');
     if (!inputs.length) return;
     const sel = this.getSelectedMeshes ? this.getSelectedMeshes() : [];
-    if (sel.length !== 1) return;
+    if (!sel.length) return;   // a multi-selection shows the first one's values (see the panel)
     const trs = this.getTransformTRS(sel[0].getID());
     if (!trs) return;
     let changed = false;
@@ -6616,30 +6631,59 @@ class Scene {
   // Set one local-transform component. type: 't'|'r'|'s', axis: 0|1|2.
   setTransformComponent(id, type, axis, value) {
     const m = this._meshes.find((x) => x.getID() === id);
-    if (!m) return;
-    const trs = this.getTransformTRS(id);
-    if (!trs) return;
-    if (!(type in trs) || axis < 0 || axis > 2 || !Number.isFinite(value)) return;
-    const Mold = m.getMatrix().slice(); // snapshot for undo before mutating
-    trs[type][axis] = value;
-    const D2R = Math.PI / 180;
-    const p = new THREE.Vector3(trs.t[0], trs.t[1], trs.t[2]);
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(trs.r[0] * D2R, trs.r[1] * D2R, trs.r[2] * D2R, 'XYZ'));
-    const sx = trs.s[0] || 1e-4, sy = trs.s[1] || 1e-4, sz = trs.s[2] || 1e-4; // avoid zero scale (degenerate matrix)
-    const M = new THREE.Matrix4().compose(p, q, new THREE.Vector3(sx, sy, sz));
-    const Mnew = M.elements.slice();
-    m.setMatrix(M.elements);
-    m.updateMatrices(this._camera);
-    this.render();
+    if (m) this.setTransformOn([m], type, [[axis, value]]);
+  }
 
-    // Typed-field (and VR numpad) edits weren't undoable — push a matrix snapshot. The outliner
-    // fields re-sync from the matrix each frame (_syncOutlinerTransformFields), so undo/redo also
-    // refreshes the displayed values.
-    const sm = this.getStateManager && this.getStateManager();
-    if (sm && sm.pushStateCustom) {
-      const applyM = (elems) => { m.setMatrix(elems); m.updateMatrices(this._camera); this.render(); };
-      sm.pushStateCustom(() => applyM(Mold), () => applyM(Mnew));
+  // Set components of one transform group on SEVERAL objects -- the outliner fields and their
+  // Clear buttons act on the whole selection -- as one undo step. `edits` is [[axis, value]...].
+  // A joint's rotation is relative to its rest (see getTransformTRS), and because a pin would
+  // pull a moved joint straight back, every pin on a joint this moves (it, or anything below it)
+  // is re-seated on its joint, exactly as Rest Pose does.
+  setTransformOn(meshes, type, edits) {
+    meshes = (meshes || []).filter(Boolean);
+    if (!meshes.length || !['t', 'r', 's'].includes(type)) return;
+    edits = edits.filter(([a, v]) => a >= 0 && a <= 2 && Number.isFinite(v));
+    if (!edits.length) return;
+    const moved = new Set(meshes);
+    const under = (j) => { for (let p = j; p; p = p._parentMesh) if (moved.has(p)) return true; return false; };
+    const pins = type === 's' ? [] : IKSolver.pinnedJoints(this).filter(under)
+      .map((j) => [j, IKSolver.pinObject(j)]).filter(([, p]) => !!p);
+    const objects = meshes.concat(pins.map(([, p]) => p));
+    const before = objects.map((o) => [o, mat4.clone(o.getMatrix())]);
+    const D2R = Math.PI / 180;
+    let joints = false;
+    for (const m of meshes) {
+      const trs = this.getTransformTRS(m.getID());
+      if (!trs) continue;
+      for (const [a, v] of edits) trs[type][a] = v;
+      const p = new THREE.Vector3(trs.t[0], trs.t[1], trs.t[2]);
+      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(trs.r[0] * D2R, trs.r[1] * D2R, trs.r[2] * D2R, 'XYZ'));
+      const rq = this._jointRestQuat(m);
+      if (rq) q.premultiply(rq);
+      const sx = trs.s[0] || 1e-4, sy = trs.s[1] || 1e-4, sz = trs.s[2] || 1e-4; // avoid zero scale (degenerate matrix)
+      m.setMatrix(new THREE.Matrix4().compose(p, q, new THREE.Vector3(sx, sy, sz)).elements);
+      if (m._isBone || m._isPinTarget) { Skeleton.syncThree(m); joints = true; }
+      m.updateMatrices(this._camera);
     }
+    const settle = () => {
+      if (!joints && !pins.length) return;
+      IKSolver.syncJointCache(this);
+      IKSolver.syncPinCache(this);
+      Skeleton.updateVisuals?.(this);
+    };
+    for (const [j, pin] of pins) { pin.setModelSpaceMatrix(j.getModelSpaceMatrix()); Skeleton.syncThree(pin); }
+    settle();
+    this.render();
+    // Undoable, as one step for the lot. The outliner fields re-sync from the matrices each frame
+    // (_syncOutlinerTransformFields), so undo/redo also refreshes the displayed values.
+    const after = objects.map((o) => [o, mat4.clone(o.getMatrix())]);
+    const apply = (snap) => {
+      Skeleton.restoreLocal(snap);
+      for (const [o] of snap) o.updateMatrices?.(this._camera);
+      settle();
+      this.render();
+    };
+    this.getStateManager?.()?.pushStateCustom?.(() => apply(before), () => apply(after), false, 'Transform');
   }
 
   // Bake (freeze) the LOCAL scale into the geometry: the mesh looks identical but its
@@ -7584,6 +7628,7 @@ class Scene {
     this.notifyNomadDeleted?.(toRemove);
     this.removeMeshes(toRemove);
     this._stateManager.pushStateRemove(toRemove.slice());
+    this._unbindOrphanedSkins(toRemove);
     this._selectMeshes = (this._selectMeshes || []).filter((m) => !toRemove.includes(m));
     if (toRemove.includes(this._mesh)) {
       this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
@@ -7604,11 +7649,37 @@ class Scene {
     this.notifyNomadDeleted(toRemove);
     this.removeMeshes(toRemove);
     this._stateManager.pushStateRemove(toRemove.slice());
+    this._unbindOrphanedSkins(toRemove);
     this._selectMeshes.length = 0;
     // Re-select a remaining mesh so the outliner keeps showing its transform/rig controls —
     // an empty selection blanks most of the panel (those only render for a single selection).
     // Null when the scene is now empty.
     this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
+  }
+
+  // A SKIN WHOSE SKELETON IS GONE IS UNBOUND WITH IT (matt: "if i delete a skeleton, then the
+  // skin should have all its binding information removed"). Only when NONE of its joints is left:
+  // deleting one finger must not throw away a character's weights. Joined to the delete's undo
+  // step, which brings the joints back -- and the bind with them, every `_skin*` field as it was.
+  _unbindOrphanedSkins(removed) {
+    const gone = new Set(removed.filter((m) => m && m._isBone).map((m) => m.getID()));
+    if (!gone.size) return;
+    const orphans = this._meshes.filter((m) => Skinning.isBound(m) && m._skinJoints?.length
+      && m._skinJoints.every((id) => gone.has(id)));
+    if (!orphans.length) return;
+    const snaps = orphans.map((m) => [m, Object.fromEntries(Object.keys(m).filter((k) => k.startsWith('_skin')).map((k) => [k, m[k]]))]);
+    const unbind = () => { for (const m of orphans) Skinning.unbind(m); Skeleton.updateVisuals(this); this.render(); };
+    const rebind = () => {
+      for (const [m, snap] of snaps) { Object.assign(m, snap); m._skinDirty = true; }
+      Skinning.applySkinOpacity?.(this);
+      Skinning.markDirtyAll?.(this);
+      Skeleton.updateVisuals(this);
+      this.render();
+    };
+    unbind();
+    this._stateManager.pushStateCustom(rebind, unbind, true, 'Unbind');
+    const names = orphans.map((m) => m._permanentStaticLabel || m.uiName || 'mesh').join(', ');
+    window.screenLog?.('Unbound ' + names + ': its skeleton was deleted', '#f9e2af');
   }
 
   // Expand a removal list so deleting a FrameGroup (or any parent) also removes its

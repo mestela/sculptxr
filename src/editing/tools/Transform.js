@@ -1,9 +1,12 @@
-import { vec3, mat4 } from 'gl-matrix';
+import * as THREE from 'three';
+import { vec3, mat4, quat } from 'gl-matrix';
 import GizmoVR, { GIZMO_SETS, GIZMO_TYPE } from '../GizmoVR.js';
 import IKSolver from '../IKSolver.js';
 import Skeleton from '../Skeleton.js';
-import { gizmoFrameFor } from '../JointFrame.js';
-import { ownedIds, fkTarget, fkCandidates } from '../fkPick.js';
+import { gizmoFrameFor, restFrameQuat, restModelMatrices } from '../JointFrame.js';
+import { gizmoBasis } from '../gizmoMath.js';
+import { orientJoints } from '../JointOrient.js';
+import { ownedIds, poseTarget, poseCandidates, isPoseProp } from '../fkPick.js';
 import { pinPoseOn } from '../pinPoseMode.js';
 import SculptBase from './SculptBase.js';
 
@@ -33,6 +36,8 @@ class Transform extends SculptBase {
       return this._handleSet();
     };
     this._gizmo._frameFn = (mesh) => this._frameFor(mesh);
+    this._gizmo._keepAllFn = () => !!this._axesDrag;
+    this._gizmo._liveWriteFn = (mesh, i, em) => this._axesWrite(mesh, i, em) || this._ikDragWrite(mesh, i, em);
 
     window.debugGizmoDesktop = () => {
       const g = this._gizmo;
@@ -82,8 +87,13 @@ class Transform extends SculptBase {
   _handleSet() {
     const sel = this._main.getSelectedMeshes();
     const m = sel.length === 1 ? sel[0] : null;
-    // A free joint, in Pin Pose, is FK: it turns about its own origin and nothing else.
-    if (m && Skeleton.isJoint(m) && this._pinPoseActive()) return GIZMO_SETS.TURN;
+    // EDIT AXES: the rings turn the joint's own axes, not the joint (see _axesWrite).
+    if (this._editAxesOn(m)) return GIZMO_SETS.TURN;
+    // A free joint, in Pose mode, is FK: it turns about its own origin and nothing else. A joint
+    // the pins own is an IK drag instead: it moves, and the solve turns everything around it.
+    if (m && Skeleton.isJoint(m) && this._pinPoseActive()) {
+      return this._owned().has(m.getID()) ? GIZMO_SETS.MOVE : GIZMO_SETS.TURN;
+    }
     if (!m || !m._isPinTarget || !m._pinnedJoint) return GIZMO_SETS.ALL;
     switch (IKSolver.pinMode(m._pinnedJoint)) {
       case IKSolver.PIN_ROT: return GIZMO_SETS.TURN;
@@ -99,13 +109,82 @@ class Transform extends SculptBase {
   // Anything else (null) keeps its own model-space orientation.
   _frameFor(mesh) {
     if (!mesh) return null;
-    if (mesh._isPinTarget && mesh._pinnedJoint && this._handleSet() === GIZMO_SETS.MOVE) return mat4.create();
+    if ((mesh._isPinTarget && mesh._pinnedJoint || this._isIkDragJoint(mesh)) && this._handleSet() === GIZMO_SETS.MOVE) return mat4.create();
     return gizmoFrameFor(this._main, mesh, Skeleton);
   }
 
   // ---- Pin Pose (see editing/pinPoseMode.js) --------------------------------------------
 
   _pinPoseActive() { return pinPoseOn() && !this._main._xrSession; }
+
+  // ---- Edit Axes -------------------------------------------------------------------------
+  //
+  // A joint's local axes are guessed from the chain (JointFrame), and on an asymmetric character
+  // the guess cannot be right; stepping them about by buttons was no way to lay them out (matt:
+  // "just give me a rotation gizmo"). So with Edit Axes on, the rotate rings sit on the joint's
+  // axes as usual, but a drag turns the AXES: the result is stored as the joint's hand-laid frame
+  // (`_axisQuat`, rest model space), the joint and the pose do not move, and on an unkeyed rig the
+  // joint's real axes are re-oriented to match when the drag ends (Orient Joints).
+  _editAxesOn(m) { return !!window._xfEditAxes && !!m && Skeleton.isJoint(m); }
+
+  // The rotation the gizmo has applied so far, in model space, carried from the posed frame back
+  // to rest: q' = Rrest * Cur^-1 * R * Cur * Rrest^-1 * q0, all fixed at the press except R.
+  _axesWrite(mesh, i, em) {
+    const d = this._axesDrag;
+    if (!d || d.joint !== mesh) return false;
+    const R = mat4.mul(mat4.create(), mat4.mul(mat4.create(), this._gizmo._editLocal[i], em), this._gizmo._editLocalInv[i]);
+    const qR = quat.normalize(quat.create(), mat4.getRotation(quat.create(), gizmoBasis(R)));
+    const q = quat.multiply(quat.create(), d.toRest, qR);
+    quat.multiply(q, q, d.toPosed);
+    Skeleton.setAxisOverride(mesh, quat.normalize(q, q));
+    return true;
+  }
+
+  _beginAxesDrag(joint) {
+    const main = this._main;
+    const q0 = restFrameQuat(main, joint, Skeleton);
+    const rest = restModelMatrices(Skeleton, Skeleton.joints(main).filter(Boolean)).get(joint);
+    const qRest = mat4.getRotation(quat.create(), gizmoBasis(rest));
+    const qCur = mat4.getRotation(quat.create(), gizmoBasis(joint.getModelSpaceMatrix()));
+    const toRest = quat.multiply(quat.create(), qRest, quat.invert(quat.create(), qCur));
+    const toPosed = quat.multiply(quat.create(), quat.multiply(quat.create(), qCur, quat.invert(quat.create(), qRest)), q0);
+    this._axesDrag = { joint, before: joint._axisQuat ? joint._axisQuat.slice() : null, toRest, toPosed };
+  }
+
+  _endAxesDrag() {
+    const d = this._axesDrag, main = this._main;
+    this._axesDrag = null;
+    const after = d.joint._axisQuat ? d.joint._axisQuat.slice() : null;
+    // The re-orient below joins this step (squash), so undo puts the joint back as well.
+    const put = (v) => { Skeleton.setAxisOverride(d.joint, v); Skeleton.updateVisuals(main); main.render(); };
+    main.getStateManager().pushStateCustom(() => put(d.before), () => put(after), false, 'Joint Axes');
+    const r = orientJoints(main, { squash: true, name: 'Joint Axes' });
+    // SAY SO. A refusal used to be silent, leaving the gizmo on the new axes and the keys on the old.
+    if (!r.ok) {
+      const msg = 'Edit Axes: the gizmo uses the new axes, but the joint was not re-oriented \u2014 ' + r.reason;
+      console.warn('[axes] ' + msg);
+      window.screenLog?.(msg, '#f9e2af');
+    }
+    Skeleton.updateVisuals(main);
+    main.render();
+  }
+
+  // A joint whose gizmo is an IK drag (Pose mode, owned by the pins).
+  _isIkDragJoint(mesh) {
+    return !!mesh && Skeleton.isJoint(mesh) && this._pinPoseActive() && this._owned().has(mesh.getID());
+  }
+
+  // THE GIZMO'S LIVE WRITE, for an IK-drag joint: the handle states where the joint should be and
+  // the solver does the rest, as in Grab. The target is the drag-start MODEL matrix times the
+  // gizmo's local delta -- not the joint's current parent, which the solve itself keeps moving.
+  // Returns false for anything else, which the gizmo then writes as usual.
+  _ikDragWrite(mesh, i, em) {
+    if (!this._ikDragUndo || !this._isIkDragJoint(mesh)) return false;
+    const m = mat4.mul(mat4.create(), this._gizmo._editLocal[i], em);
+    IKSolver.solve(this._main, mesh, new THREE.Vector3(m[12], m[13], m[14]));
+    Skeleton.updateVisuals(this._main);
+    return true;
+  }
 
   _owned() {
     const now = performance.now();
@@ -134,10 +213,12 @@ class Transform extends SculptBase {
     // Over a handle of a live gizmo the target never changes, and neither does the highlight.
     if (overHandle && main.getSelectedMeshes().length === 1) { this._ppCand = null; return; }
     const owned = this._owned();
-    Skeleton.hoverRigFromMouse(main, main.getPicking?.(), fkCandidates(main, owned, true),
-      (node, bone) => fkTarget(node, bone, owned).joint);
+    Skeleton.hoverRigFromMouse(main, main.getPicking?.(), poseCandidates(main),
+      (node, bone) => poseTarget(node, bone, owned));
     const id = (main._pinHighlightId ?? -1) >= 0 ? main._pinHighlightId : (main._skelHighlightId ?? -1);
-    const node = id >= 0 ? main.getMeshes().find((m) => m.getID() === id) : null;
+    const hit = main._rigHoverHit;
+    const node = id >= 0 ? main.getMeshes().find((m) => m.getID() === id)
+      : (isPoseProp(main, hit) ? hit : null);
     const sel = main.getSelectedMeshes();
     if (node) {
       if (sel.length === 1 && sel[0] === node) this._ppCand = null;
@@ -159,7 +240,8 @@ class Transform extends SculptBase {
       }
     } else {
       this._ppCand = null;
-      if (this._ppAuto && sel.length === 1 && sel[0] === this._ppAuto && !this._cursorNearGizmo()) {
+      // Edit Axes keeps its joint: the gizmo is the orientation being laid out, so it does not go.
+      if (this._ppAuto && sel.length === 1 && sel[0] === this._ppAuto && !this._cursorNearGizmo() && !window._xfEditAxes) {
         this._ppAuto = null;
         main.setMesh(null, true);
       }
@@ -200,6 +282,10 @@ class Transform extends SculptBase {
       picking._mesh = mesh;
       // Every other pin hides for the length of the drag (see Skeleton.updateVisuals).
       const dragged = main.getSelectedMeshes()[0];
+      // An IK drag moves the whole chain, so the undo is the whole rig (see end()).
+      this._ikDragUndo = null; this._axesDrag = null;
+      if (this._editAxesOn(dragged)) this._beginAxesDrag(dragged);
+      else if (this._isIkDragJoint(dragged)) this._ikDragUndo = IKSolver.captureAll(main);
       main._gizmoDragPin = dragged && dragged._isPinTarget ? dragged.getID() : -1;
       // "Start on click" recording: armed-and-waiting → begin the take when the gizmo
       // drag starts (desktop equivalent of grabbing the object in VR).
@@ -246,6 +332,18 @@ class Transform extends SculptBase {
     var meshes = this._main.getSelectedMeshes();
     const main = this._main;
     window._animationRegistry?.endInteraction?.(meshes[0] || this.getMesh());
+    if (this._axesDrag) { this._endAxesDrag(); return; }
+    if (this._ikDragUndo) {
+      const before = this._ikDragUndo, after = IKSolver.captureAll(main);
+      this._ikDragUndo = null;
+      const put = (snap) => {
+        for (const [j, m] of snap) { mat4.copy(j.getMatrix(), m); Skeleton.syncThree(j); }
+        Skeleton.updateVisuals(main); main.render();
+      };
+      main.getStateManager().pushStateCustom(() => put(before), () => put(after), false, 'Pose');
+      main.render();
+      return;
+    }
     // The gizmo wrote the real _matrix live during the drag (editMatrix stays
     // identity). Undo/redo therefore compares the drag-start snapshot (_startLocal)
     // against the current, already-moved matrix.

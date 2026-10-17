@@ -37,6 +37,17 @@ const rotZ = (v, a) => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin
   const turned = vec3.transformQuat([0, 0, 0], a, [0, 0, Math.sin(Math.PI / 8) * f.z[2], Math.cos(Math.PI / 8)]);
   check('bend: a positive turn bends further the way the chain bends', vec3.dot(turned, b) > vec3.dot(a, b));
 }
+// 1b. THE USER'S OWN AXES: a quaternion replaces the guess outright (X need not follow the bone).
+{
+  const pts = [[0, 0, 0], [0, -1, 0], [1, -2, 0]], par = { 1: 0, 2: 1, };
+  const s2 = Math.SQRT1_2;
+  const t = { ...mk(pts, par), override: (i) => (i === 1 ? [0, 0, s2, s2] : null) };   // 90 deg about world Z
+  const f = jointFrame(t, 1);
+  check('override: the frame IS the quaternion', near(f.x, [0, 1, 0]) && near(f.y, [-1, 0, 0]) && near(f.z, [0, 0, 1]) && f.source === 'user');
+  check('override: right-handed and orthonormal', orthonormal(f));
+  const leaf = jointFrame(t, 2);
+  check('override: a leaf below carries the hand-laid hinge', near(leaf.z, [0, 0, 1]) || near(leaf.z, [0, 0, -1]));
+}
 // 2. the mirrored limb: same bend, other side, hinge flips so "positive = more bend" still holds
 {
   const L = jointFrame(mk([[0, 0, 0], [0, -1, 0], [1, -2, 0]], { 1: 0, 2: 1 }), 1);

@@ -5,7 +5,7 @@
 // implemented twice with a fix landing in only one copy. One builder, one wiring function,
 // two dialects of class name.
 import getOptionsURL from '../misc/getOptionsURL.js';
-import { gizmoSizeMul, GIZMO_MUL_MIN, GIZMO_MUL_MAX } from '../editing/GizmoVR.js';
+import { gizmoSizeMul, GIZMO_MUL_MIN, GIZMO_MUL_MAX, gizmoOpacityMul, GIZMO_OPACITY_MIN } from '../editing/GizmoVR.js';
 import { pinPoseOn } from '../editing/pinPoseMode.js';
 import Enums from '../misc/Enums.js';
 import Skeleton from '../editing/Skeleton.js';
@@ -79,8 +79,12 @@ export function buildTransformSectionHTML(main, style) {
         Free rotate ${on ? 'On' : 'Off'}
       </button>
       <button class="${c.toggle}${pp ? ' active' : ''}" id="xf-pinpose"
-        title="Pose a rig directly. The gizmo follows the cursor onto the nearest pin or free (FK) joint \u2014 no click to select \u2014 and offers only what that thing can do: position pins translate, rotation pins rotate, full pins do both, FK joints rotate. The skinned body and joints the pins already control are not selectable. Desktop only.">
-        Pin Pose ${pp ? 'On' : 'Off'}
+        title="Pose a rig directly. The gizmo follows the cursor onto the nearest pin or free (FK) joint \u2014 no click to select \u2014 and offers only what that thing can do: position pins translate, rotation pins rotate, full pins do both, FK joints rotate, joints the pins control move (an IK drag, pins holding), and animated props (anything with keys that is not the skinned body) get the full gizmo. Desktop only.">
+        Pose Mode ${pp ? 'On' : 'Off'}
+      </button>
+      <button class="${c.toggle}${window._xfEditAxes ? ' active' : ''}" id="xf-editaxes"
+        title="Rotate a joint's own local axes instead of the joint: the rings sit on the axes and a drag turns them. The pose does not move. On a rig without keys the joint is re-oriented to match when you let go; on a keyed rig only the rotate handles use the new axes. Auto in the Bones panel's Axes section goes back to the guess.">
+        Edit Axes ${window._xfEditAxes ? 'On' : 'Off'}
       </button>
     </div>
     <div class="${c.row}">
@@ -89,6 +93,13 @@ export function buildTransformSectionHTML(main, style) {
         max="${Math.round(GIZMO_MUL_MAX * 100)}" step="5" value="${Math.round(mul * 100)}"
         title="How big the transform gizmo is drawn. Same number the thumbstick moves while Transform is active.">
       <span class="${c.val}" id="xf-gizmo-mul-val">${mul.toFixed(2)}x</span>
+    </div>
+    <div class="${c.row}">
+      <span class="${c.lbl}">Gizmo opacity</span>
+      <input type="range" id="xf-gizmo-op" min="${Math.round(GIZMO_OPACITY_MIN * 100)}" max="100" step="5"
+        value="${Math.round(gizmoOpacityMul() * 100)}"
+        title="How solid the transform gizmo is drawn. Turn it down when the handles get in the way of the pose.">
+      <span class="${c.val}" id="xf-gizmo-op-val">${Math.round(gizmoOpacityMul() * 100)}%</span>
     </div>
     ${restBtn}
   `;
@@ -131,11 +142,33 @@ export function wireTransformSection(root, main, opts) {
     });
   }
 
+  // Opacity: same pattern as the size slider above (GizmoVR re-reads it every frame).
+  {
+    const oIn = root.querySelector('#xf-gizmo-op');
+    const oVal = root.querySelector('#xf-gizmo-op-val');
+    oIn?.addEventListener('input', () => {
+      const f = Math.max(GIZMO_OPACITY_MIN, Math.min(1, (parseInt(oIn.value, 10) || 100) / 100));
+      window._gizmoOpacityMul = f;
+      getOptionsURL.saveOption('gizmoOpacityMul', f, 500);
+      if (oVal) oVal.textContent = Math.round(f * 100) + '%';
+      const tool = main.getSculptManager?.()?.getCurrentTool?.();
+      if (tool && tool.showForSizing) tool.showForSizing();
+      else main.render?.();
+      onSlider?.();
+    });
+  }
+
   root.querySelector('#xf-restpose')?.addEventListener('click', () => {
     restPose(main, (msg, ok) => {
       console.log('[transform] ' + msg);
       if (window.screenLog) window.screenLog(msg, ok === false ? '#f38ba8' : 'cyan');
     });
+    refresh();
+  });
+
+  root.querySelector('#xf-editaxes')?.addEventListener('click', () => {
+    window._xfEditAxes = !window._xfEditAxes;
+    main.render?.();
     refresh();
   });
 
@@ -166,7 +199,12 @@ export function syncTransformSection(root, main) {
   if (ppBtn) {
     const pp = pinPoseOn();
     ppBtn.classList.toggle('active', pp);
-    ppBtn.textContent = `Pin Pose ${pp ? 'On' : 'Off'}`;
+    ppBtn.textContent = `Pose Mode ${pp ? 'On' : 'Off'}`;
+  }
+  const eaBtn = root.querySelector('#xf-editaxes');
+  if (eaBtn) {
+    eaBtn.classList.toggle('active', !!window._xfEditAxes);
+    eaBtn.textContent = `Edit Axes ${window._xfEditAxes ? 'On' : 'Off'}`;
   }
 
   // The thumbstick writes the same number, so the slider has to follow it -- otherwise the panel

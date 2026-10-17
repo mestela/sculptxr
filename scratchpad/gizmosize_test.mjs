@@ -80,8 +80,11 @@ check('the settings slider is built from the shared constants',
 // the menu whenever the gizmo is the thing in your hand. matt asked for exactly that.
 check('the Transform section carries a size slider', /id="xf-gizmo-mul"/.test(XFPANEL));
 check('the Transform slider is built from the shared constants',
-  /GIZMO_MUL_MIN, GIZMO_MUL_MAX \} from '\.\.\/editing\/GizmoVR\.js'/.test(XFPANEL)
+  /GIZMO_MUL_MIN, GIZMO_MUL_MAX[^}]*\} from '\.\.\/editing\/GizmoVR\.js'/.test(XFPANEL)
     && /min="\$\{Math\.round\(GIZMO_MUL_MIN \* 100\)\}"/.test(XFPANEL));
+check('an opacity slider sits beside it, live and persisted (1 = as designed)',
+  /id="xf-gizmo-op"/.test(XFPANEL) && /window\._gizmoOpacityMul = f;/.test(XFPANEL)
+    && /saveOption\('gizmoOpacityMul', f/.test(XFPANEL));
 check('the Transform slider writes the live value and persists it',
   /window\._gizmoSizeMul = f;/.test(XFPANEL) && /saveOption\('gizmoSizeMul', f/.test(XFPANEL));
 // The thumbstick writes the same number, so the panel has to be able to follow it — a slider

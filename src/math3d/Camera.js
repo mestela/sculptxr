@@ -462,6 +462,22 @@ class Camera {
     this.translateDelay(delta, DELAY_TRANSLATE);
   }
 
+  // Scale the distance to the pivot by k (<1 in, >1 out) -- the touch pinch. The eye sits at
+  // (tx-ox, ty-oy, Tz-oz) from the pivot (see updateView), so scaling THAT vector moves the camera
+  // straight along the line to the pivot and the pivot stays on the same pixel. (Tz is trans z
+  // with the fov factor taken out; orthographic scales its size, which also lives in trans z.)
+  zoomBy(k) {
+    const t = this._trans, o = this._offset;
+    const persp = this._projectionType === Enums.Projection.PERSPECTIVE;
+    const depth = persp ? this.getTransZ() - o[2] : t[2];
+    const min = this._speed * 0.01;
+    k = Math.max(0.5, Math.min(2, k));
+    if (k < 1 && depth * k < min) k = depth > min ? min / depth : 1;   // never onto the pivot itself
+    if (k > 1 && depth < min) return this.setTrans([t[0], t[1], persp ? (o[2] + min) * this._fov / 45 : min]);
+    const z = persp ? (o[2] + k * depth) * this._fov / 45 : t[2] * k;
+    this.setTrans([o[0] + k * (t[0] - o[0]), o[1] + k * (t[1] - o[1]), z]);
+  }
+
   setAndFocusOnPivot(pivot, zoom) {
     this.setPivot(pivot);
     this.moveToDelay(this._offset[0], this._offset[1], this._offset[2] + zoom);

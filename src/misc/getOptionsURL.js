@@ -322,6 +322,7 @@ var getOptionsURL = function () {
   // options above are written camelCase and quietly work for saved settings only.
   options.requireHands = queryBool(getVal('requirehands'), false);
   options.gizmoScale = queryNumber(getVal('gizmoScale'), 5.0, 100.0, 15.625); // [5-100], default 15.625 (0.5 of 31.25)
+  options.gizmoOpacityMul = queryNumber(getVal('gizmoOpacityMul'), 0.1, 1.0, 1.0); // user opacity multiplier for the transform gizmo
   options.gizmoSizeMul = queryNumber(getVal('gizmoSizeMul'), 0.25, 2.0, 1.0); // user size multiplier for the VR transform gizmo
   // Centre handle of the VR gizmo carries the controller's ROTATION as well as its
   // position (6DOF, the way Grab holds a thing). Off = the centre handle translates only.
@@ -515,6 +516,10 @@ var getOptionsURL = function () {
   // a slider that stops before the answer is another round trip.
   options.pinScale   = queryNumber(getVal('pinScale'),   0.25, 4.0, 1.0);
   options.labelScale = queryNumber(getVal('labelScale'), 0.25, 4.0, 1.0);
+  // Rig display multipliers (Skeleton.setRigBrightness / setRigOpacity / setWireOpacity).
+  options.rigBright  = queryNumber(getVal('rigBright'),  0.25, 3.0, 1.0);
+  options.rigOpacity = queryNumber(getVal('rigOpacity'), 0.1, 3.0, 1.0);
+  options.wireOpacity = queryNumber(getVal('wireOpacity'), 0.1, 3.0, 1.0);
 
   // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are

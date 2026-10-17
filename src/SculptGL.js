@@ -131,6 +131,9 @@ class SculptGL extends Scene {
     // The pin and label multipliers seed the same way and for the same reason -- a size dialled
     // in on a headset last night has to be the size the first marker is drawn at this morning.
     if (Number.isFinite(_ipadOpts.pinScale)) Skeleton.setPinSizeMul(_ipadOpts.pinScale);
+    if (Number.isFinite(_ipadOpts.rigBright)) Skeleton.setRigBrightness(_ipadOpts.rigBright);
+    if (Number.isFinite(_ipadOpts.rigOpacity)) Skeleton.setRigOpacity(_ipadOpts.rigOpacity);
+    if (Number.isFinite(_ipadOpts.wireOpacity)) Skeleton.setWireOpacity(_ipadOpts.wireOpacity);
     if (Number.isFinite(_ipadOpts.labelScale)) Skeleton.setLabelSizeMul(_ipadOpts.labelScale);
 
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
@@ -1122,6 +1125,18 @@ class SculptGL extends Scene {
       // so divide out the DPR to get a CSS-height-based speed that is consistent
       // regardless of device pixel ratio. The ×2 tuning factor brings touch pan
       // up to roughly 1:1 finger tracking (matches Nomad-style feel).
+      // PAN ONLY ONCE IT IS A PAN. The fingers' midpoint wanders during any pinch, and panning by
+      // that drift slid what you were zooming into off the screen -- matt: "zoom i keep losing what
+      // i'm focusing on". So the pan waits until the midpoint has travelled further than the
+      // fingers have spread or closed (and at least PAN_START px); from then on it tracks as before.
+      if (!this._gesturePanning) {
+        const PAN_START = 40;
+        const drift = Math.hypot(center.x - this._gestureStartCenter.x, center.y - this._gestureStartCenter.y);
+        const spread = Math.abs(this._fingerPinchDist() - this._gesturePinchInitDist);
+        if (drift > PAN_START && drift > spread) this._gesturePanning = true;
+        this._gesturePanLastX = center.x;
+        this._gesturePanLastY = center.y;
+      }
       const dx = center.x - this._gesturePanLastX;
       const dy = center.y - this._gesturePanLastY;
       this._gesturePanLastX = center.x;
@@ -1146,10 +1161,13 @@ class SculptGL extends Scene {
         this._gesturePinchSmoothed =
           this._gesturePinchSmoothed * (1 - alpha) + rawDist * alpha;
         const distChange = this._gesturePinchSmoothed - this._gesturePinchLastDist;
-        this._gesturePinchLastDist = this._gesturePinchSmoothed;
         if (Math.abs(distChange) >= 0.5) {
-          const zoom = (distChange / this._gesturePinchInitDist) * 25 * 0.015;
-          this._camera.zoom(zoom);
+          // BY RATIO: spreading the fingers to twice their distance halves the distance to the
+          // pivot, like a photo pinch. The old step was ~1x the remaining distance per unit of
+          // spread (relative to the START spread, and compounding), so a modest pinch flew the
+          // camera all the way in -- "2 finger zoom on ipad is too fast".
+          this._camera.zoomBy(this._gesturePinchLastDist / this._gesturePinchSmoothed);
+          this._gesturePinchLastDist = this._gesturePinchSmoothed;
           dirty = true;
         }
       }
@@ -1277,6 +1295,16 @@ class SculptGL extends Scene {
       this._focusGui = false;
       this._gesturePanLastX = center.x;
       this._gesturePanLastY = center.y;
+      this._gesturePanning = false;   // see PAN ONLY ONCE IT IS A PAN, in _onTouchMove
+      // ZOOM INTO WHAT IS BETWEEN THE FINGERS. zoomBy scales the distance to the pivot, which keeps
+      // the PIVOT fixed on screen -- but the pivot was wherever the last orbit started, so what you
+      // were pinching slid away from it. Re-picked once here (not per move: that was the old jitter);
+      // a pinch over empty space keeps the old pivot.
+      const ev = this._eventProxy;
+      ev.clientX = center.x;
+      ev.clientY = center.y;
+      this.setMousePosition(ev);
+      this._camera.start(this._mouseX, this._mouseY);
       const d = this._fingerPinchDist();
       this._gesturePinchInitDist = d;
       this._gesturePinchLastDist = d;

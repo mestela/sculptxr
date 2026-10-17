@@ -961,6 +961,25 @@ function tuneCapsuleBatches(main) {
   }
 }
 
+const _cTint = new THREE.Color();
+
+// The rig/wire opacity multipliers onto a batch's material, against the opacity it was BUILT with
+// (kept in userData, since bone and joint batches share one material). A solid material goes
+// transparent only while it is faded, and back -- toggling `transparent` recompiles, so it is done
+// only on the crossing. Capsules are left to their own X-Ray control (tuneCapsuleBatches).
+function applyRigOpacity(key, b) {
+  if (isShaftKey(key) || (typeof key === 'string' && key.startsWith('capEnd'))) return;
+  const mat = b.mesh && b.mesh.material;
+  if (!mat) return;
+  const ud = mat.userData;
+  if (ud.rigBaseOpacity === undefined) { ud.rigBaseOpacity = mat.opacity; ud.rigBaseTransparent = mat.transparent; }
+  const k = b.line ? Skeleton.wireOpacity : Skeleton.rigOpacity;
+  const op = Math.min(1, ud.rigBaseOpacity * k);
+  if (mat.opacity !== op) mat.opacity = op;
+  const tr = ud.rigBaseTransparent || op < 1;
+  if (mat.transparent !== tr) { mat.transparent = tr; mat.needsUpdate = true; }
+}
+
 function flushBatches(main) {
   const all = main._skelBatch;
   if (!all || !main._skelVis) return;
@@ -984,7 +1003,8 @@ function flushBatches(main) {
     const slots = bySlot.get(key) || [];
     const n = slots.length;
 
-    if (b.line) { flushLineBatch(b, slots, n); continue; }
+    if (b.line) { flushLineBatch(b, slots, n); applyRigOpacity(key, b); continue; }
+    applyRigOpacity(key, b);
     if (n > b.cap) {
       // Rebuild at the next power of two, carrying the material and geometry across.
       let cap = b.cap || BATCH_CAP0;
@@ -1038,7 +1058,8 @@ function flushBatches(main) {
       if (!s.visible) continue;
       _mSlot.compose(s.position, s.quaternion, s.scale);
       m.setMatrixAt(i, _mSlot);
-      if (m.setColorAt) m.setColorAt(i, s.material.color);
+      const tint = _cTint.copy(s.material.color).multiplyScalar(Skeleton.rigBrightness);
+      if (m.setColorAt) m.setColorAt(i, tint);
       if (ha && s._ha) {
         ha.setXYZ(i, s._ha[0], s._ha[1], s._ha[2]);
         hb.setXYZ(i, s._hb[0], s._hb[1], s._hb[2]);
@@ -1055,8 +1076,7 @@ function flushBatches(main) {
         aq.setXYZW(i, s.quaternion.x, s.quaternion.y, s.quaternion.z, s.quaternion.w);
         as.setXYZ(i, s.scale.x, s.scale.y, s.scale.z);
         at.setXYZ(i, s.position.x, s.position.y, s.position.z);
-        const c = s.material.color;
-        ac.setXYZ(i, c.r, c.g, c.b);
+        ac.setXYZ(i, tint.r, tint.g, tint.b);
       }
       i++;
     }
@@ -1125,11 +1145,11 @@ function flushLineBatch(b, slots, n) {
   for (let i = 0; i < n; i++) {
     const s = slots[i];
     _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
-    const c = s.material.color;
+    const c = s.material.color, k = Skeleton.rigBrightness;
     for (let v = 0; v < verts; v++) {
       _vLine.fromBufferAttribute(srcPos, v).applyMatrix4(_mSlot);
       P[o] = _vLine.x; P[o + 1] = _vLine.y; P[o + 2] = _vLine.z;
-      C[o] = c.r; C[o + 1] = c.g; C[o + 2] = c.b;
+      C[o] = c.r * k; C[o + 1] = c.g * k; C[o + 2] = c.b * k;
       o += 3;
     }
   }
@@ -2267,6 +2287,13 @@ Skeleton.setVolumeRound = function (j, p) {
 // rotation". The mirror twin takes the NEGATED angle -- its width axis is the reflection turned round,
 // as for the width offset (see volumeFrame).
 Skeleton.volumeTwist = function (j) { return (j && j._volR) || 0; };
+
+// A JOINT'S HAND-LAID AXES (JointFrame): a quaternion in rest model space that replaces the guess.
+// Null is "use the guess", stored as nothing.
+Skeleton.setAxisOverride = function (j, q) {
+  if (!j) return;
+  if (q) j._axisQuat = [q[0], q[1], q[2], q[3]]; else delete j._axisQuat;
+};
 Skeleton.setVolumeTwist = function (j, a) {
   if (!j) return;
   a = Math.atan2(Math.sin(a || 0), Math.cos(a || 0));
@@ -2535,6 +2562,20 @@ Skeleton.setPinSizeMul = function (mul) {
   Skeleton.pinSizeMul = _posMul(mul, 1);
   return Skeleton.pinSizeMul;
 };
+
+// HOW THE RIG READS AGAINST THE MODEL: three display multipliers, all 1 = as designed.
+// Grey bones on a grey character, and hairline wires on an iPad, were hard to see (matt).
+//   rigBrightness  scales every bone, joint and wire colour (so grey can go to white)
+//   rigOpacity     the bone and joint bodies, and their x-ray halves; above 1 it strengthens the
+//                  x-ray, below 1 it fades the solid too. Capsules keep their own X-Ray slider.
+//   wireOpacity    the bone wireframes, front and x-ray
+// Applied where the batches are written (flushBatches), so a change needs updateVisuals.
+Skeleton.rigBrightness = 1;
+Skeleton.rigOpacity = 1;
+Skeleton.wireOpacity = 1;
+Skeleton.setRigBrightness = function (mul) { return (Skeleton.rigBrightness = _posMul(mul, 1)); };
+Skeleton.setRigOpacity = function (mul) { return (Skeleton.rigOpacity = _posMul(mul, 1)); };
+Skeleton.setWireOpacity = function (mul) { return (Skeleton.wireOpacity = _posMul(mul, 1)); };
 
 Skeleton.setLabelSizeMul = function (mul) {
   Skeleton.labelSizeMul = _posMul(mul, 1);
@@ -3294,6 +3335,8 @@ Skeleton.hoverRigFromMouse = function (main, picking, meshes, boneFocus) {
   }
   applyRigHover(main, node);
   applyMeshHover(main, hit);
+  // Whatever was under the cursor, rig or not, for a tool that takes more than rig nodes (Pose mode).
+  main._rigHoverHit = hit;
 };
 
 // VR: pick from the controller ray Scene supplies. NOT derived from the controller matrix —
@@ -5847,7 +5890,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 25;  // v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 26;  // v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6169,6 +6212,8 @@ Skeleton.serialize = function (meshes, main) {
   // v25: each bone volume's twist, where it is turned.
   const volTwist = [];
   meshes.forEach((m, i) => { if (m && m._isBone && m._volR) volTwist.push({ i: i, a: m._volR }); });
+  const axes = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && m._axisQuat) axes.push({ i: i, q: m._axisQuat }); });
 
   // ...OR IF ANY NODE CARRIES A CONSTRAINT. This block is skipped entirely when there is no
   // hierarchy and no skin, which was right when it only held bones — but v15 put the aim/saccade/
@@ -6198,6 +6243,7 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + volShape.length * 7; // v23: i + width, height, o1, o3, e0, e1
   slots += 1 + volRound.length * 2; // v24: i + sharpness
   slots += 1 + volTwist.length * 2; // v25: i + twist
+  slots += 1 + axes.length * 5;     // v26: i + the hand-laid axes quaternion
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6287,6 +6333,8 @@ Skeleton.serialize = function (meshes, main) {
   for (const vr of volRound) { u[o++] = vr.i; f[o++] = vr.p; }
   u[o++] = volTwist.length;
   for (const vt of volTwist) { u[o++] = vt.i; f[o++] = vt.a; }
+  u[o++] = axes.length;
+  for (const ax of axes) { u[o++] = ax.i; f[o++] = ax.q[0]; f[o++] = ax.q[1]; f[o++] = ax.q[2]; f[o++] = ax.q[3]; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6898,6 +6946,13 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       for (let i = 0; i < nn; i++) {
         const m = meshes[u[o++]], a = f[o++];
         if (m) Skeleton.setVolumeTwist(m, a);
+      }
+    }
+    if (ver >= 26) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], q = [f[o++], f[o++], f[o++], f[o++]];
+        if (m) Skeleton.setAxisOverride(m, q);
       }
     }
 

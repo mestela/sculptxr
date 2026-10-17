@@ -337,6 +337,12 @@ Import.importSGL = function (buffer, gl, main) {
           trackObj.restQuat = rQ;
           trackObj.restScale = rS;
 
+          if (version >= 17) {
+            var hasRef = u32a[off++];
+            var eR = [f32a[off++], f32a[off++], f32a[off++], f32a[off++]];
+            if (hasRef) trackObj.eulerRef = eR;
+          }
+
           if (trackObj.times.length > 0) {
              var lastT = trackObj.times[trackObj.times.length - 1];
              if (lastT > maxTime) maxTime = lastT;

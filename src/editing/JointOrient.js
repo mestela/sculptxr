@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import Skeleton from './Skeleton.js';
 import Skinning from './Skinning.js';
 import IKSolver from './IKSolver.js';
-import { jointFrame, frameToMat4, restModelMatrices } from './JointFrame.js';
+import { jointFrame, frameToMat4, restModelMatrices, axisOverride } from './JointFrame.js';
 import { gizmoBasis } from './gizmoMath.js';
 
 // ORIENT JOINTS: make each joint's ACTUAL rotation the frame JointFrame guesses from the chain
@@ -42,11 +42,21 @@ const inv = (m) => mat4.invert(mat4.create(), m);
 const mul = (a, b) => mat4.multiply(mat4.create(), a, b);
 const live = (m) => !!(m && m.getThreeMesh && m.getThreeMesh() && m.getThreeMesh().parent);
 
+// KEYED MEANS HAS KEYS, not "has a track object". Deleting every key can leave an empty track
+// behind, and counting that refused the re-orient for good -- silently, from the drag that set
+// the axes -- so a joint with no animation at all kept its old axes under its new gizmo (matt).
+function hasKeys(t) {
+  if (!t) return false;
+  if (t.times?.length || t.shapeTimes?.length) return true;
+  const any = (c) => c && [...(c instanceof Map ? c.values() : Object.values(c))].some((x) => x?.times?.length);
+  return any(t.blendshapeTracks) || any(t.scalarTracks);
+}
+
 function keyedMeshes(main, joints, extra) {
   const reg = window._animationRegistry;
   if (!reg || !reg.tracks || !reg.tracks.size) return [];
   const out = [];
-  for (const m of joints.concat(extra)) if (m && reg.tracks.has(m.getID())) out.push(m);
+  for (const m of joints.concat(extra)) if (m && hasKeys(reg.tracks.get(m.getID()))) out.push(m);
   return out;
 }
 
@@ -60,6 +70,7 @@ export function planOrientation(main) {
     pos: (j) => { const m = restM.get(j); return [m[12], m[13], m[14]]; },
     parent: (j) => (j._parentMesh && set.has(j._parentMesh) ? j._parentMesh : null),
     children: (j) => joints.filter((c) => c._parentMesh === j),
+    override: axisOverride,
   };
   const memo = new Map();
   const plan = new Map();

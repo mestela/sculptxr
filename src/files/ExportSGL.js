@@ -23,7 +23,10 @@ var Export = {};
 //    tangent overrides that exist, as a list. Up to v15 every key was written with baked default
 //    tangents, so every loaded key looked hand-tangented -- frozen auto tangents, and Simplify
 //    refusing to touch any of them.
-Export.VERSION = 16;
+// 17 each transform track's EULER REFERENCE (a joint's rest rotation; its rotation channels are the
+//    turn away from it -- see xfChannel). Older files have none: their joint tracks are re-spelled
+//    from the quaternions on first use.
+Export.VERSION = 17;
 
 var TAN_KINDS = ['right_dt', 'left_dt', 'right_dv', 'left_dv', 'tied'];
 var TAN_GROUPS = ['pos', 'rot', 'scale'];
@@ -113,6 +116,7 @@ Export.exportSGL = function (meshes, main) {
       nbBytes += 4 + tangentRows(track).length * 20; // tangent override rows
 
       nbBytes += 12 + 16 + 12; // rest pos/quat/scale
+      nbBytes += 4 + 16;       // v17: has euler reference + its quaternion
     }
 
     // Blendshape tracks
@@ -404,6 +408,11 @@ Export.exportSGL = function (meshes, main) {
         f32a[off++] = rP[0]; f32a[off++] = rP[1]; f32a[off++] = rP[2];
         f32a[off++] = rQ[0]; f32a[off++] = rQ[1]; f32a[off++] = rQ[2]; f32a[off++] = rQ[3];
         f32a[off++] = rS[0]; f32a[off++] = rS[1]; f32a[off++] = rS[2];
+
+        // v17: the euler reference the channels above are spelled against.
+        var eR = track.eulerRef;
+        u32a[off++] = eR ? 1 : 0;
+        f32a[off++] = eR ? eR[0] : 0; f32a[off++] = eR ? eR[1] : 0; f32a[off++] = eR ? eR[2] : 0; f32a[off++] = eR ? eR[3] : 1;
       }
 
       // Write blendshape tracks

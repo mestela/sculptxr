@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import Utils from '../misc/Utils.js';
 import { quat, mat4, vec3 } from 'gl-matrix';
 import Skeleton from '../editing/Skeleton.js';
-import { xfEval } from '../editing/xfChannel.js';
+import { xfEval, channelsToQuat } from '../editing/xfChannel.js';
 import IKSolver from '../editing/IKSolver.js';
 
 var Export = {};
@@ -165,8 +165,7 @@ Export.exportGLB = function (meshes, options = {}) {
     if (!track.times || track.times.length === 0) return null;
     const ev = (g, c) => xfEval(track, g, c, t);
     // THREE's 'XYZ', exactly as playback builds it (gl-matrix's fromEuler defaults to another order).
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(ev('rot', 0) * Math.PI / 180,
-      ev('rot', 1) * Math.PI / 180, ev('rot', 2) * Math.PI / 180, 'XYZ'));
+    const q = channelsToQuat(track, ev('rot', 0), ev('rot', 1), ev('rot', 2), new THREE.Quaternion());
     return { position: [ev('pos', 0), ev('pos', 1), ev('pos', 2)], quaternion: [q.x, q.y, q.z, q.w],
       scale: [ev('scale', 0), ev('scale', 1), ev('scale', 2)] };
   }

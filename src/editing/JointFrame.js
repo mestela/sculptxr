@@ -1,4 +1,4 @@
-import { vec3, mat4 } from 'gl-matrix';
+import { vec3, mat4, quat } from 'gl-matrix';
 import { gizmoBasis } from './gizmoMath.js';
 
 // A JOINT'S LOCAL ROTATION FRAME, GUESSED FROM THE CHAIN IT SITS IN.
@@ -24,7 +24,9 @@ export const BEND_MIN = Math.sin(8 * Math.PI / 180);
 const norm = (v) => { const l = vec3.length(v); return l > 1e-12 ? vec3.scale(v, v, 1 / l) : null; };
 const dirTo = (a, b) => norm(vec3.sub(vec3.create(), b, a));
 
-// `tree` is the whole abstraction: { pos(id) -> vec3, parent(id) -> id | null, children(id) -> [id] }.
+// `tree` is the whole abstraction: { pos(id) -> vec3, parent(id) -> id | null, children(id) -> [id] },
+// plus an optional override(id) -> quat | null: a joint whose axes the user has laid out by hand
+// (see "THE USER'S OWN AXES" below).
 // Everything below is a pure function of it, so it is tested without a scene.
 export function jointFrame(tree, id, memo, opts) {
   memo = memo || new Map();
@@ -93,11 +95,28 @@ function frameOf(tree, id, memo, stack, opts) {
     Z = norm(n);
     source = 'reference';
   }
+  // THE USER'S OWN AXES. A guess from the chain cannot know a jaw is a jaw, and on an asymmetric
+  // character nothing derivable lays a joint out the way the animator means it -- matt: "nothing
+  // really makes sense or could be derived here." So a joint may carry a whole orientation, in
+  // rest-pose model space, that replaces the guess outright: X need not follow the bone.
+  const ov = tree.override ? tree.override(id) : null;
+  if (ov) {
+    const q = quat.normalize(quat.create(), ov);
+    const out = {
+      x: vec3.transformQuat(vec3.create(), [1, 0, 0], q),
+      y: vec3.transformQuat(vec3.create(), [0, 1, 0], q),
+      z: vec3.transformQuat(vec3.create(), [0, 0, 1], q), source: 'user' };
+    memo.set(id, out);
+    return out;
+  }
   const Y = vec3.cross(vec3.create(), Z, X);
   const out = { x: vec3.clone(X), y: Y, z: Z, source };
   memo.set(id, out);
   return out;
 }
+
+// A joint's hand-laid axes (a rest model-space quaternion), as tree.override wants them, or null.
+export function axisOverride(j) { return (j && j._axisQuat) || null; }
 
 export function frameToMat4(f, out) {
   out = out || mat4.create();
@@ -135,6 +154,23 @@ export function restModelMatrices(Skeleton, joints) {
 
 // The orientation a rotation handle should be drawn in for `node` (a joint, or a pin on one),
 // as a model-space mat4, or null when the node is not part of a rig.
+// The joint's frame in the REST pose, model space, as a quaternion (hand-laid axes included):
+// where an edit of the axes starts from.
+export function restFrameQuat(main, joint, Skeleton) {
+  const joints = Skeleton.joints(main).filter(Boolean);
+  const set = new Set(joints);
+  const restM = restModelMatrices(Skeleton, joints);
+  const f = jointFrame({
+    pos: (j) => { const m = restM.get(j); return vec3.fromValues(m[12], m[13], m[14]); },
+    parent: (j) => (j._parentMesh && set.has(j._parentMesh) ? j._parentMesh : null),
+    children: (j) => joints.filter((c) => c._parentMesh === j),
+    override: axisOverride,
+  }, joint);
+  if (!f) return null;
+  const m = frameToMat4(f);
+  return quat.normalize(quat.create(), mat4.getRotation(quat.create(), m));
+}
+
 export function gizmoFrameFor(main, node, Skeleton) {
   const joint = node && node._isPinTarget ? node._pinnedJoint : (node && Skeleton.isJoint(node) ? node : null);
   if (!joint || !Skeleton.isJoint(joint)) return null;
@@ -146,6 +182,7 @@ export function gizmoFrameFor(main, node, Skeleton) {
     pos: (j) => { const m = restM.get(j); return vec3.fromValues(m[12], m[13], m[14]); },
     parent: (j) => (j._parentMesh && set.has(j._parentMesh) ? j._parentMesh : null),
     children: (j) => joints.filter((c) => c._parentMesh === j),
+    override: axisOverride,
   };
   const f = jointFrame(tree, joint);
   if (!f) return null;

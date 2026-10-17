@@ -260,6 +260,10 @@ class Gui {
       sidebarHandle.appendChild(dot);
     }
     sidebarEl.appendChild(sidebarHandle);
+    // Hover highlight, held for the whole drag (pointer capture keeps the events coming).
+    const _gripLit = (on) => { for (const d of sidebarHandle.children) d.style.background = on ? '#89b4fa' : '#555'; };
+    sidebarHandle.addEventListener('pointerenter', () => _gripLit(true));
+    sidebarHandle.addEventListener('pointerleave', () => { if (!_resizingW) _gripLit(false); });
 
     // Drag to resize — pointer events work on desktop and iPad.
     // onResize is throttled via rAF so the canvas stays in sync without thrashing.
@@ -288,6 +292,7 @@ class Gui {
     sidebarHandle.addEventListener('pointerup', () => {
       if (!_resizingW) return;
       _resizingW = 0;
+      if (!sidebarHandle.matches(':hover')) _gripLit(false);
       if (this._main?.onCanvasResize) this._main.onCanvasResize();
     });
 

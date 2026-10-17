@@ -174,12 +174,54 @@ const _rq = new THREE.Quaternion();
 const _re = new THREE.Euler();
 const R2D = 180 / Math.PI, D2R = Math.PI / 180;
 
+// ── A JOINT'S CHANNELS ARE THE TURN AWAY FROM ITS REST ─────────────────────────────────
+//
+// The quaternions are the joint's whole LOCAL rotation, and that includes its resting angle to
+// its parent. Spelled as three Eulers directly, a turn about the joint's own Y moved all three
+// channels -- measured on the baseball jaw, a clean 0/20/40 degree Y turn read (125, 73, -42),
+// (-154, 77, -122), (-117, 61, -156), and matt: "i puppeteer it to only rotate on y, but... theres
+// keys on X, Y, Z". So a track may carry `eulerRef`, the joint's rest rotation, and its channels
+// are then ref^-1 * q: zero at rest, and a turn about the joint's own axis moves one channel
+// (Maya's joint orient). The quaternions are unchanged; only the spelling moves. Tracks without a
+// ref (every non-joint) read exactly as before. See AnimationRegistry.syncEulerRef.
+const _rr = new THREE.Quaternion();
+function refQuat(tr) {
+  const r = tr && tr.eulerRef;
+  return r ? _rr.set(r[0], r[1], r[2], r[3]) : null;
+}
+
+// Channels (degrees) -> the local rotation, through the track's reference. `out` is a
+// THREE.Quaternion. Every place that turns curve values into a rotation goes through here.
+export function channelsToQuat(tr, ex, ey, ez, out) {
+  _re.set(ex * D2R, ey * D2R, ez * D2R, 'XYZ');
+  out.setFromEuler(_re);
+  const r = refQuat(tr);
+  if (r) out.premultiply(r);
+  return out;
+}
+
+// Point a track's channels at a new reference (null = none). Its Eulers are rebuilt from the
+// quaternions against it, and its rotation tangent overrides dropped: they were shaped against
+// the old channels. Returns whether anything changed.
+export function setEulerRef(tr, ref) {
+  const cur = tr.eulerRef || null;
+  if (!cur && !ref) return false;
+  if (cur && ref && Math.abs(cur[0] * ref[0] + cur[1] * ref[1] + cur[2] * ref[2] + cur[3] * ref[3]) > 1 - 1e-9) return false;
+  tr.eulerRef = ref ? [ref[0], ref[1], ref[2], ref[3]] : null;
+  tr.eulers = null;
+  if (tr.tangentOffsets) for (const k of Object.keys(tr.tangentOffsets)) if (/^trans_rot_/.test(k)) delete tr.tangentOffsets[k];
+  if (tr.times) rotRebuild(tr);
+  return true;
+}
+
 // Euler degrees for one key, straight off the quaternion — no winding, range (-180, 180].
 export function eulerFromQuat(tr, i, out) {
   const q = tr.quaternions;
   out = out || [0, 0, 0];
   if (!q || q.length < i * 4 + 4) return out;
   _rq.set(q[i * 4], q[i * 4 + 1], q[i * 4 + 2], q[i * 4 + 3]);
+  const r = refQuat(tr);
+  if (r) _rq.premultiply(r.invert());
   _re.setFromQuaternion(_rq, 'XYZ');
   out[0] = _re.x * R2D; out[1] = _re.y * R2D; out[2] = _re.z * R2D;
   return out;
@@ -242,8 +284,7 @@ export function rotSetEuler(tr, i, channel, deg) {
   const e = rotSync(tr);
   if (!e || e.length < i * 3 + 3) return;
   e[i * 3 + channel] = deg;
-  _re.set(e[i * 3] * D2R, e[i * 3 + 1] * D2R, e[i * 3 + 2] * D2R, 'XYZ');
-  _rq.setFromEuler(_re);
+  channelsToQuat(tr, e[i * 3], e[i * 3 + 1], e[i * 3 + 2], _rq);
   const q = tr.quaternions;
   if (q && q.length >= i * 4 + 4) {
     q[i * 4] = _rq.x; q[i * 4 + 1] = _rq.y; q[i * 4 + 2] = _rq.z; q[i * 4 + 3] = _rq.w;
@@ -464,7 +505,7 @@ export function xfInsertSlot(tr, idx, time, p, q, s, bits) {
   tr.quaternions.splice(idx * 4, 0, ...q);
   tr.scales.splice(idx * 3, 0, ...s);
   m.splice(idx, 0, bits);
-  const e = eulerFromQuat({ quaternions: q }, 0, [0, 0, 0]);
+  const e = eulerFromQuat({ quaternions: q, eulerRef: tr.eulerRef }, 0, [0, 0, 0]);   // the track's own reference
   // Unwrap against the previous slot so a spin stays continuous.
   if (idx > 0) for (let c = 0; c < 3; c++) e[c] = unwrapTo(eul[(idx - 1) * 3 + c], e[c]);
   eul.splice(idx * 3, 0, ...e);

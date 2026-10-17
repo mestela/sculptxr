@@ -565,9 +565,30 @@ export function buildBoneAuthoringHTML(main, style) {
       <button class="${c.toggle}" id="bone-name-chain"${chainAim ? '' : ' disabled'}>Name</button>
     </div>`;
 
+    // ── AXES: a joint's local axes, laid out by hand with the rotate gizmo ─────────────────
+    //
+    // The guess reads the chain, and on an asymmetric character nothing derivable is right. Edit
+    // switches to Transform with Edit Axes on, where the rotate rings turn the joint's axes rather
+    // than the joint (Transform._axesWrite). Auto drops the hand-laid axes for the guess again.
+    const axAim = chainAim;
+    const axSrc = !axAim ? '' : axAim._axisQuat ? 'hand-laid' : 'guessed';
+    const axesBody = `
+    <div class="${c.row}">
+      <span class="${c.val}" id="bone-axes-aim"
+        style="flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${
+          pinTargetLabel(main)}${axSrc ? ' \u2014 ' + axSrc : ''}</span>
+    </div>
+    <div class="${c.toggles}">
+      <button class="${c.toggle}" id="bone-axes-edit"${axAim ? '' : ' disabled'}
+        title="Rotate this joint's axes with the gizmo (Transform, Edit Axes on)">Edit Axes</button>
+      <button class="${c.toggle}" id="bone-axes-auto"${axAim && axAim._axisQuat ? '' : ' disabled'}
+        title="Back to the axes guessed from the chain">Auto</button>
+    </div>`;
+
     return `
     ${collapsibleHTML('bone-mode', 'Mode', modeBody, true)}
     ${collapsibleHTML('bone-chain', 'Chain', chainBody, false)}
+    ${collapsibleHTML('bone-axes', 'Axes', axesBody, false)}
     ${collapsibleHTML('bone-view', 'View and Assist', viewBody, false)}
     ${collapsibleHTML('bone-setup', 'Setup', setupBody, false)}
     ${collapsibleHTML('bone-physics', 'Physics', physButtons + physParams, !!physTarget)}
@@ -1939,6 +1960,28 @@ export function wireBoneSection(root, main, opts) {
     pinCmd('pin-half',  (j) => IKSolver.setPinWeightKey(main, j, 0.5));
     pinCmd('pin-clear', (j) => IKSolver.clearPinWeight(main, j));
   }
+
+  // AXES (see the section's note).
+  q('axes-edit')?.addEventListener('click', () => {
+    const j = rigPanelTarget(main);
+    if (!j) { say('Bones: select one joint first', false); return; }
+    window._xfEditAxes = true;
+    main.getSculptManager().setToolIndex(Enums.Tools.TRANSFORM);
+    main.setMesh(j, true);
+    main.getGui?.()?.updateMesh?.();
+    main.render?.();
+  });
+  q('axes-auto')?.addEventListener('click', () => {
+    const j = rigPanelTarget(main);
+    if (!j || !j._axisQuat) return;
+    const before = j._axisQuat.slice();
+    const put = (v) => { Skeleton.setAxisOverride(j, v); Skeleton.updateVisuals(main); main.render?.(); };
+    put(null);
+    main.getStateManager().pushStateCustom(() => put(before), () => put(null), false, 'Joint Axes');
+    orientJoints(main, { squash: true, name: 'Joint Axes' });
+    rebuild();
+    main.render?.();
+  });
 
   q('orient')?.addEventListener('click', () => {
     const r = orientJoints(main, { name: 'Orient Joints' });

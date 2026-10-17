@@ -2194,6 +2194,9 @@ export function buildSharedSettingsHTML(main) {
   // back to the stored number the next time the panel repaints mid-drag.
   const pinScale       = Skeleton.pinSizeMul ?? 1;
   const labelScale     = Skeleton.labelSizeMul ?? 1;
+  const rigBright      = Skeleton.rigBrightness ?? 1;
+  const rigOpacity     = Skeleton.rigOpacity ?? 1;
+  const wireOpacity    = Skeleton.wireOpacity ?? 1;
   const tmBtns = [
     { id: 0, label: 'None' }, { id: 1, label: 'Linear' }, { id: 2, label: 'Reinhard' },
     { id: 3, label: 'Cineon' }, { id: 4, label: 'ACES' },
@@ -2234,6 +2237,21 @@ export function buildSharedSettingsHTML(main) {
       <span class="mm-lbl">Label Size</span>
       <input type="range" id="mm-label-scale" min="25" max="400" step="5" value="${Math.round(labelScale*100)}">
       <span class="mm-val" id="mm-label-scale-val">${labelScale.toFixed(2)}x</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Rig Brightness</span>
+      <input type="range" id="mm-rig-bright" min="25" max="300" step="5" value="${Math.round(rigBright*100)}">
+      <span class="mm-val" id="mm-rig-bright-val">${rigBright.toFixed(2)}x</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Rig Opacity</span>
+      <input type="range" id="mm-rig-opacity" min="10" max="300" step="5" value="${Math.round(rigOpacity*100)}">
+      <span class="mm-val" id="mm-rig-opacity-val">${rigOpacity.toFixed(2)}x</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Wire Opacity</span>
+      <input type="range" id="mm-wire-opacity" min="10" max="300" step="5" value="${Math.round(wireOpacity*100)}">
+      <span class="mm-val" id="mm-wire-opacity-val">${wireOpacity.toFixed(2)}x</span>
     </div>
 
     <div class="mm-section-title">Ground Plane</div>
@@ -2314,6 +2332,15 @@ export function wireSharedSettings(el, main, paint) {
     Skeleton.updateVisuals(main);
     main.render?.();
   }, paint);
+  // The rig display multipliers: same shape as Pin Size (written into the batches by updateVisuals).
+  for (const [id, set, key] of [['rig-bright', Skeleton.setRigBrightness, 'rigBright'],
+    ['rig-opacity', Skeleton.setRigOpacity, 'rigOpacity'], ['wire-opacity', Skeleton.setWireOpacity, 'wireOpacity']]) {
+    wireScaleSlider(el, q('#mm-' + id), q('#mm-' + id + '-val'), id, (v) => {
+      getOptionsURL.saveOption(key, set(v / 100), 250);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    }, paint);
+  }
   wireSlider(q('#mm-grid-opacity'), q('#mm-grid-opacity-val'), (v) => {
     main.setGridOpacity?.(v / 100);
   }, (v) => (v / 100).toFixed(2), paint);
@@ -2763,7 +2790,10 @@ export function buildSectionHTML_scene(main) {
     const sacSpeed = main.getSaccadeSpeed?.(selId) ?? 1;
     const sacSmooth = +(main.getSaccadeSmooth?.(selId) ?? 0).toFixed(2);
 
-    const trs = (sel && main.getTransformTRS?.(selId)) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
+    // The fields work on a MULTI-selection too (they set the typed value on every selected object,
+    // see setTransformOn); they show the first one's values.
+    const xfSel  = selected[0] || null;
+    const trs = (xfSel && main.getTransformTRS?.(xfSel.getID())) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
     const _f = (n) => (Math.round(n * 1000) / 1000);
     // Per-row bake button (freezes that component into the geometry, right next to its values).
     const _bake = { t: ['mm-bake-t', 'Bake translation into geometry (position → 0)'],
@@ -2774,7 +2804,7 @@ export function buildSectionHTML_scene(main) {
     // object moves. Both end with the same numbers in the fields, which is exactly why they
     // belong next to each other and why the tooltips say which one keeps the shape put.
     const _clear = { t: ['mm-clear-t', 'Clear translation (position → 0; the object moves)'],
-                     r: ['mm-clear-r', 'Clear rotation (rotation → 0; the object turns)'],
+                     r: ['mm-clear-r', 'Clear rotation (rotation → 0; the object turns). On joints, 0 is the rest pose.'],
                      s: ['mm-clear-s', 'Clear scale (scale → 1; the object resizes)'] };
     const _xfRow = (type, label, vals, step) => `
       <div class="mm-xform-row">
@@ -2786,7 +2816,7 @@ export function buildSectionHTML_scene(main) {
         <button class="mm-xf-bake" id="${_clear[type][0]}" title="${_clear[type][1]}">C</button>
       </div>`;
     rigHTML = `
-      <div style="${sel ? '' : 'opacity:.4;pointer-events:none'}">
+      <div style="${xfSel ? '' : 'opacity:.4;pointer-events:none'}">
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
       ${_xfRow('r', 'Rot', trs.r, '1')}
       ${_xfRow('s', 'Scale', trs.s, '0.01')}
@@ -5126,34 +5156,56 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       const b = r.getBoundingClientRect(), f = (y - b.top) / b.height;
       return f < 0.25 ? 'before' : f > 0.75 ? 'after' : 'into';
     };
-    // the two things a drop does, shared by the mouse and the touch path
-    const dropOnRow = (node, target, z) => {
-      if (!node || !target || target === node) return;
-      if (inside(z === 'into' ? target : target._parentMesh, node)) return;
+    // WHAT A DRAG CARRIES: the row grabbed, or -- when that row is part of a multi-selection -- the
+    // whole selection, in outliner order. A selected node whose ancestor is also selected rides
+    // along under it rather than being moved on its own. matt: "if i have many objects selected in
+    // the outliner, then drag, they should all move together, esp if i do a parenting operation".
+    const carried = (node) => {
+      const sel = main.getSelectedMeshes?.() ?? [];
+      if (!node || sel.length < 2 || !sel.includes(node)) return node ? [node] : [];
+      const rows = [...el.querySelectorAll('.mm-outliner-row')].map(meshOfRow);
+      const set = new Set(sel);
+      const underSel = (m) => { for (let p = m._parentMesh; p; p = p._parentMesh) if (set.has(p)) return true; return false; };
+      return rows.filter((m, i) => m && set.has(m) && rows.indexOf(m) === i && !underSel(m));
+    };
+    // Can these land there? Not on one of themselves, and not into one of their own subtrees.
+    const canDrop = (nodes, target, z) => !!target && !nodes.includes(target)
+      && nodes.every((n) => !inside(z === 'into' ? target : target._parentMesh, n));
+    // the two things a drop does, shared by the mouse and the touch path. ONE undo step for the
+    // lot: every reparent after the first joins the one before it, and the order rides last.
+    const dropOnRow = (nodes, target, z) => {
+      if (!nodes.length || !canDrop(nodes, target, z)) return;
+      const before = main.snapshotOutlinerKeys?.();
+      let pushed = false;
+      const parentTo = (n, par) => { if (main.setMeshParent(n.getID(), par ? par.getID() : null, { squash: pushed })) pushed = true; };
       if (z === 'into') {
-        main.setMeshParent(node.getID(), target.getID());
+        for (const n of nodes) parentTo(n, target);
         target._outlinerCollapsed = false;
       } else {
         const par = target._parentMesh || null;
-        const order = { before: main.snapshotOutlinerKeys?.() };
-        const reparent = (node._parentMesh || null) !== par;
-        if (reparent) main.setMeshParent(node.getID(), par ? par.getID() : null, { order });
-        placeOutlinerRow(main, node, target, z === 'after');
-        order.after = main.snapshotOutlinerKeys?.();
-        if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
+        let anchor = target;
+        for (const n of nodes) {
+          if ((n._parentMesh || null) !== par) parentTo(n, par);
+          // 'before': each goes just before the target, so they keep their order; 'after': each
+          // goes after the one placed before it.
+          placeOutlinerRow(main, n, anchor, z === 'after');
+          if (z === 'after') anchor = n;
+        }
+        main.pushOutlinerOrderUndo?.(before, main.snapshotOutlinerKeys?.(), pushed);
       }
       repaintFn();
     };
-    const dropOut = (node) => {
-      if (!node) return;
-      const order = { before: main.snapshotOutlinerKeys?.() };
-      const reparent = !!node._parentMesh;
-      if (reparent) main.setMeshParent(node.getID(), null, { order });
-      const tops = (main.getMeshes?.() ?? []).filter((m) => m !== node && !m._isVoxelChunk && !m._parentMesh);
-      const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
-      if (last) placeOutlinerRow(main, node, last, true);
-      order.after = main.snapshotOutlinerKeys?.();
-      if (!reparent) main.pushOutlinerOrderUndo?.(order.before, order.after);
+    const dropOut = (nodes) => {
+      if (!nodes.length) return;
+      const before = main.snapshotOutlinerKeys?.();
+      let pushed = false;
+      for (const n of nodes) {
+        if (n._parentMesh && main.setMeshParent(n.getID(), null, { squash: pushed })) pushed = true;
+        const tops = (main.getMeshes?.() ?? []).filter((m) => m !== n && !m._isVoxelChunk && !m._parentMesh);
+        const last = tops.sort((a, b) => outlinerKey(a) - outlinerKey(b)).pop();
+        if (last) placeOutlinerRow(main, n, last, true);
+      }
+      main.pushOutlinerOrderUndo?.(before, main.snapshotOutlinerKeys?.(), pushed);
       repaintFn();
     };
     const canMouse = !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches;
@@ -5172,11 +5224,11 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       list.addEventListener('dragleave', (e) => { if (!list.contains(e.relatedTarget)) clear(); });
       list.addEventListener('drop', (e) => {
         if (e.target.closest('.mm-outliner-row')) return;
-        const node = dragged;
+        const nodes = dragged;
         clear(); dragged = null;
-        if (!node) return;
+        if (!nodes) return;
         e.preventDefault();
-        dropOut(node);
+        dropOut(nodes);
       });
     }
     el.querySelectorAll('.mm-outliner-row').forEach((row) => {
@@ -5184,18 +5236,18 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         row.draggable = true;
         row.addEventListener('dragstart', (e) => {
           if (e.target?.tagName === 'INPUT') { e.preventDefault(); return; }   // renaming
-          dragged = meshOfRow(row);
-          if (!dragged) { e.preventDefault(); return; }
+          dragged = carried(meshOfRow(row));
+          if (!dragged.length) { dragged = null; e.preventDefault(); return; }
           e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', dragged._permanentStaticLabel || '');
+          e.dataTransfer.setData('text/plain', dragged.map((m) => m._permanentStaticLabel || '').join(', '));
         });
         row.addEventListener('dragend', () => { dragged = null; clear(); });
         row.addEventListener('dragover', (e) => {
           const target = meshOfRow(row);
-          if (!dragged || !target || target === dragged) return;
+          if (!dragged || !target) return;
           const z = zoneOf(e.clientY, row);
-          // can't drop a node into (or beside, which parents it to) its own subtree
-          if (inside(z === 'into' ? target : target._parentMesh, dragged)) return;
+          // can't drop a node onto itself, or into (or beside, which parents it to) its own subtree
+          if (!canDrop(dragged, target, z)) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
           clear();
@@ -5204,11 +5256,11 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         row.addEventListener('dragleave', (e) => { if (!row.contains(e.relatedTarget)) row.classList.remove('drop-before', 'drop-after', 'drop-into'); });
         row.addEventListener('drop', (e) => {
           const target = meshOfRow(row);
-          const node = dragged;
+          const nodes = dragged;
           clear(); dragged = null;
-          if (!node || !target || target === node) return;
+          if (!nodes || !target) return;
           e.preventDefault();
-          dropOnRow(node, target, zoneOf(e.clientY, row));
+          dropOnRow(nodes, target, zoneOf(e.clientY, row));
         });
       }
 
@@ -5225,9 +5277,8 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
           const r = t && t.closest && t.closest('.mm-outliner-row');
           if (r && el.contains(r)) {
             const target = meshOfRow(r);
-            if (!target || target === node) return { none: true };
             const z = zoneOf(y, r);
-            if (inside(z === 'into' ? target : target._parentMesh, node)) return { none: true };
+            if (!canDrop(carried(node), target, z)) return { none: true };
             return { row: r, target, z };
           }
           const lr = list && list.getBoundingClientRect();
@@ -5282,7 +5333,7 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
           cleanup();
           if (!was) return;
           swallowClick();                              // the lift is not a tap on a row
-          if (h.row) dropOnRow(node, h.target, h.z); else if (h.out) dropOut(node);
+          if (h.row) dropOnRow(carried(node), h.target, h.z); else if (h.out) dropOut(carried(node));
         };
         const cancel = (ev) => { if (ev.pointerId === pid) cleanup(); };
         const timer = setTimeout(start, e.pointerType === 'pen' ? 220 : 380);
@@ -5603,10 +5654,10 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   const _clearTo = { t: 0, r: 0, s: 1 };
   for (const type of ['t', 'r', 's']) {
     el.querySelector(`#mm-clear-${type}`)?.addEventListener('click', () => {
-      const sel = selOne(); if (!sel) return;
-      for (let axis = 0; axis < 3; axis++) {
-        main.setTransformComponent?.(sel.getID(), type, axis, _clearTo[type]);
-      }
+      const all = main.getSelectedMeshes?.() ?? [];
+      if (!all.length) return;
+      // Every selected object, one undo. On joints, Clear rotation IS the rest pose.
+      main.setTransformOn?.(all, type, [0, 1, 2].map((a) => [a, _clearTo[type]]));
       main.render?.(); repaintFn();
     });
   }
@@ -5615,8 +5666,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     const type = input.dataset.xf;
     const axis = parseInt(input.dataset.axis, 10);
     input.addEventListener('change', () => {
-      const sel = selOne(); if (!sel) return;
-      main.setTransformComponent?.(sel.getID(), type, axis, parseFloat(input.value));
+      const all = main.getSelectedMeshes?.() ?? [];
+      if (!all.length) return;
+      main.setTransformOn?.(all, type, [[axis, parseFloat(input.value)]]);
       // no repaint — keep focus; the field already shows the entered value
     });
     input.addEventListener('click', (e) => {

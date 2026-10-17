@@ -44,3 +44,24 @@ export function fkCandidates(main, owned, onlyRig) {
     return boneFree || !owned.has(m.getID());
   });
 }
+
+// POSE MODE takes more than FK can turn. A joint the pins own is still offered -- it was the reason
+// most of a pinned body could not be picked at all (matt: "i can select the wrist pins, bones in the
+// head, but everywhere else doesn't highlight") -- but it MOVES rather than turns: the drag is an IK
+// drag with every pin holding, exactly what Grab does with it. And an animated prop (a bat in the
+// hands) is offered too, so it can be posed and keyed beside the rig without leaving the mode. A
+// prop is an object with transform keys that is not part of the rig and not the skinned body.
+export function isPoseProp(main, m) {
+  if (!m || m._isPinTarget || Skeleton.isJoint(m) || Skinning.isBound(m)) return false;
+  if (m.isVisible && !m.isVisible()) return false;
+  return !!window._animationRegistry?.tracks.get(m.getID())?.times?.length;
+}
+
+export function poseCandidates(main) {
+  return main.getMeshes().filter((m) => m._isPinTarget || Skeleton.isJoint(m) || isPoseProp(main, m));
+}
+
+// The joint a pose-mode hover lights: the FK answer where there is one, else the owned joint itself.
+export function poseTarget(node, bone, owned) {
+  return fkTarget(node, bone, owned).joint || node;
+}

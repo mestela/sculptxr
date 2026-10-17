@@ -252,7 +252,10 @@ export default class GuiTimeline {
     // hover tracking for isMouseOver() (used to block sculpt-canvas scroll while
     // the pointer is inside the timeline).
     this._canvas.addEventListener('pointerenter', () => { this._isMouseOver = true;  });
-    this._canvas.addEventListener('pointerleave', () => { this._isMouseOver = false; });
+    this._canvas.addEventListener('pointerleave', () => {
+      this._isMouseOver = false;
+      if (this._gripHover) { this._gripHover = false; this.draw(); }
+    });
 
     // [Step 1] Trackpad / mouse-wheel scroll: pan time axis (X) and value axis (Y in graph mode).
     // ctrlKey=true is sent by the OS for pinch-to-zoom gestures on trackpad.
@@ -967,9 +970,7 @@ export default class GuiTimeline {
 
   _graphMenuCommands() {
     if (this._mode !== 'graph') return [];
-    const mesh = this._graphMesh();
-    const n = mesh ? window._animationRegistry?.tracks.get(mesh.getID())?.times?.length || 0 : 0;
-    return [{ label: 'Simplify Curves\u2026', enabled: n >= 3, run: () => this._openSimplify() }];
+    return [{ label: 'Simplify Curves\u2026', enabled: this._simplifyMeshes().length > 0, run: () => this._openSimplify() }];
   }
 
   // ── SIMPLIFY CURVES ────────────────────────────────────────────────────────────
@@ -990,39 +991,59 @@ export default class GuiTimeline {
   // Tolerance and Ratio are the two stopping rules of one algorithm (curveSimplify.js):
   // remove the cheapest key, measured against the ORIGINAL curve, until the next one would cost
   // more than the tolerance -- or until only that fraction of keys is left.
+  // EVERY OBJECT THE GRAPH SHOWS, not just the first. The graph draws the last keyed object AND
+  // every other keyed selection, so a bat's curves could be on screen, selectable, while this
+  // simplified a joint behind them -- matt: "the simplify tool said 'nothing to simplify'". When
+  // keys are selected, their owners are the targets; otherwise everything on screen.
+  _simplifyMeshes() {
+    const reg = window._animationRegistry;
+    const shown = this._graphMeshes();
+    const owners = new Set((window._animSelectedKeys || [])
+      .filter((k) => k.type === 'transform' && k.group !== 'weight').map((k) => k.meshId));
+    const picked = owners.size ? shown.filter((m) => owners.has(m.getID())) : [];
+    return (picked.length ? picked : shown).filter((m) => (reg?.tracks.get(m.getID())?.times?.length || 0) >= 3);
+  }
+
   _openSimplify() {
     const reg = window._animationRegistry;
-    const mesh = this._graphMesh();
-    const track = mesh && reg?.tracks.get(mesh.getID());
-    if (!track || !track.times || track.times.length < 3) return;
+    const meshes = this._simplifyMeshes();
+    if (!reg || !meshes.length) return;
     const prefs = this._simplifyPrefs || (this._simplifyPrefs = { mode: 'tolerance', tolerance: 0.02, ratio: 0.25 });
     this._simplify = {
-      meshId: mesh.getID(), track, before: reg._snapshotTrack(track),
-      range: null, selSig: null, prefs, result: null, dragging: false,
+      items: meshes.map((m) => {
+        const track = reg.tracks.get(m.getID());
+        return { meshId: m.getID(), track, before: reg._snapshotTrack(track), range: null, times: null, result: null };
+      }),
+      selSig: null, prefs, result: null, dragging: false,
     };
     this._simplifyReadSelection();
     this._runSimplify();
   }
 
-  // The selected transform keys on this object, as TIMES -- they survive the renumbering.
-  _simplifySelTimes() {
-    const s = this._simplify;
+  // The selected transform keys on one object, as TIMES -- they survive the renumbering.
+  _simplifySelTimes(it) {
     const out = [];
     for (const k of window._animSelectedKeys || []) {
-      if (k.meshId !== s.meshId || k.type !== 'transform' || k.group === 'weight') continue;
-      const t = s.track.times[k.index];
+      if (k.meshId !== it.meshId || k.type !== 'transform' || k.group === 'weight') continue;
+      const t = it.track.times[k.index];
       if (t !== undefined) out.push(t);
     }
     return out;
   }
 
-  // Two or more selected keys make a range; its END keys are fixed so the result joins the
-  // untouched curve either side exactly. Fewer than two means the whole curve.
+  _simplifySelSig() {
+    return this._simplify.items.map((it) => this._simplifySelTimes(it).sort((a, b) => a - b).join(',')).join('|');
+  }
+
+  // Two or more selected keys on an object make a range; its END keys are fixed so the result
+  // joins the untouched curve either side exactly. Fewer than two means that object's whole curve.
   _simplifyReadSelection() {
     const s = this._simplify;
-    const ts = this._simplifySelTimes();
-    s.selSig = ts.slice().sort((a, b) => a - b).join(',');
-    s.range = ts.length >= 2 ? { t0: Math.min(...ts), t1: Math.max(...ts) } : null;
+    for (const it of s.items) {
+      const ts = this._simplifySelTimes(it);
+      it.range = ts.length >= 2 ? { t0: Math.min(...ts), t1: Math.max(...ts) } : null;
+    }
+    s.selSig = this._simplifySelSig();
   }
 
   // The channels to simplify: the ones on screen. Hidden ones are not touched. Nothing
@@ -1049,21 +1070,22 @@ export default class GuiTimeline {
   _simplifyAfterPointer() {
     const s = this._simplifyLive();
     if (!s || s.dragging) return;
-    const sig = this._simplifySelTimes().sort((a, b) => a - b).join(',');
+    const sig = this._simplifySelSig();
     const judgeSig = JSON.stringify(this._simplifyJudge());
     if (sig === s.selSig && judgeSig === JSON.stringify(s.judge)) return;
     if (sig !== s.selSig) this._simplifyReadSelection();
     this._runSimplify();
   }
 
-  // The track must still be the one this panel is editing. Anything else that rewrites it --
+  // Every track must still be the one this panel is editing. Anything else that rewrites one --
   // an undo from the keyboard while the panel is open -- replaces its arrays, and applying on
   // top of that would write a stale snapshot over the user's undo.
   _simplifyLive() {
     const s = this._simplify;
     const reg = window._animationRegistry;
-    if (!s || reg?.tracks.get(s.meshId) !== s.track || (s.times && s.track.times !== s.times)
-        || (s.result && s.track.times.length !== s.result.after)) {
+    const stale = (it) => reg?.tracks.get(it.meshId) !== it.track || (it.times && it.track.times !== it.times)
+      || (it.result && it.track.times.length !== it.result.after);
+    if (!s || s.items.some(stale)) {
       this._simplify = null;
       return null;
     }
@@ -1074,31 +1096,41 @@ export default class GuiTimeline {
     const s = this._simplifyLive();
     if (!s) return;
     const reg = window._animationRegistry;
-    const mesh = this._main._meshes?.find(m => m.getID() === s.meshId);
-    const mine = (k) => k.meshId === s.meshId && k.type === 'transform' && k.group !== 'weight';
-    const sel = (window._animSelectedKeys || []).map((k) => (mine(k) ? { k, t: s.track.times[k.index] } : { k }));
-    reg._restoreTrack(s.track, s.before, null);
-    let indices = null;
-    if (s.range) {
-      indices = new Set();
-      s.track.times.forEach((t, i) => { if (t > s.range.t0 && t < s.range.t1) indices.add(i); });
-    }
+    const ids = new Set(s.items.map((it) => it.meshId));
+    const mine = (k) => ids.has(k.meshId) && k.type === 'transform' && k.group !== 'weight';
+    const trackOf = new Map(s.items.map((it) => [it.meshId, it.track]));
+    const sel = (window._animSelectedKeys || []).map((k) => (mine(k) ? { k, t: trackOf.get(k.meshId).times[k.index] } : { k }));
     s.judge = this._simplifyJudge();
-    s.result = reg.simplifyTransformTrack(s.track, { ...s.prefs, indices, judge: s.judge });
-    s.times = s.track.times;
+    s.result = { keysBefore: 0, keysAfter: 0, channels: 0 };
+    for (const it of s.items) {
+      reg._restoreTrack(it.track, it.before, null);
+      let indices = null;
+      if (it.range) {
+        indices = new Set();
+        it.track.times.forEach((t, i) => { if (t > it.range.t0 && t < it.range.t1) indices.add(i); });
+      }
+      it.result = reg.simplifyTransformTrack(it.track, { ...s.prefs, indices, judge: s.judge });
+      it.times = it.track.times;
+      s.result.keysBefore += it.result.keysBefore;
+      s.result.keysAfter += it.result.keysAfter;
+      s.result.channels += it.result.channels;
+    }
     // Re-point the selection at the same keys by time; a key the preview removed drops out.
     // Exact equality is safe: simplifying copies times, it never recomputes them.
-    const idxOf = new Map(s.track.times.map((t, i) => [t, i]));
+    const idxOf = new Map(s.items.map((it) => [it.meshId, new Map(it.track.times.map((t, i) => [t, i]))]));
     window._animSelectedKeys = sel.flatMap(({ k, t }) => {
       if (!mine(k)) return [k];
-      const i = idxOf.get(t);
+      const i = idxOf.get(k.meshId).get(t);
       return i === undefined ? [] : [{ ...k, index: i }];
     });
     window._animTransformBox = null;
     // The selection just shrank by whatever the preview removed; that is not the user
     // re-selecting, so it must not count as a change (the range ends always survive anyway).
-    s.selSig = this._simplifySelTimes().sort((a, b) => a - b).join(',');
-    if (mesh) reg.update(mesh, true);
+    s.selSig = this._simplifySelSig();
+    for (const it of s.items) {
+      const mesh = this._main._meshes?.find(m => m.getID() === it.meshId);
+      if (mesh) reg.update(mesh, true);
+    }
     window.app?.render?.();
     this.draw();
   }
@@ -1117,14 +1149,16 @@ export default class GuiTimeline {
     this._simplify = null;
     if (!s || !s.result || s.result.keysAfter === s.result.keysBefore) { this.draw(); return; }
     const reg = window._animationRegistry;
-    const before = s.before, after = reg._snapshotTrack(s.track);
-    const put = (snap) => {
-      const tr = reg.tracks.get(s.meshId);
-      if (tr) reg._restoreTrack(tr, snap, this._main._meshes?.find(m => m.getID() === s.meshId));
+    const snaps = s.items.map((it) => ({ id: it.meshId, before: it.before, after: reg._snapshotTrack(it.track) }));
+    const put = (which) => {
+      for (const sn of snaps) {
+        const tr = reg.tracks.get(sn.id);
+        if (tr) reg._restoreTrack(tr, sn[which], this._main._meshes?.find(m => m.getID() === sn.id));
+      }
       window._animSelectedKeys = [];
       this.draw();
     };
-    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Simplify Curves');
+    window.app?.getStateManager?.()?.pushStateCustom(() => put('before'), () => put('after'), false, 'Simplify Curves');
     window._animStatusText = `Simplified: ${s.result.keysBefore} -> ${s.result.keysAfter} keys`;
     this.draw();
   }
@@ -1134,7 +1168,7 @@ export default class GuiTimeline {
     this._simplify = null;
     if (s) {
       const reg = window._animationRegistry;
-      reg._restoreTrack(s.track, s.before, this._main._meshes?.find(m => m.getID() === s.meshId));
+      for (const it of s.items) reg._restoreTrack(it.track, it.before, this._main._meshes?.find(m => m.getID() === it.meshId));
     }
     this.draw();
   }
@@ -1241,9 +1275,10 @@ export default class GuiTimeline {
     ctx.fillText(`Simplifies ${this._simplifyJudgeLabel(s.judge)}${s.judge ? '; hidden channels untouched' : ''}`,
       L.judge.x, L.judge.y + L.judge.h / 2, L.judge.w);
 
-    // Say so when there is nothing to do, rather than leaving Apply to silently do nothing.
+    // Say so when there is nothing to do, and WHY: no shown channel has the three keys a simplify
+    // needs, or the curve is already within the tolerance (raise it, or show other channels).
     const idle = s.result && s.result.keysAfter === s.result.keysBefore;
-    button(L.apply, idle ? 'Nothing to remove' : 'Apply', false);
+    button(L.apply, !idle ? 'Apply' : s.result.channels ? 'Raise tolerance' : 'Too few keys', false);
     button(L.cancel, 'Cancel', false);
     ctx.restore();
   }
@@ -1442,7 +1477,9 @@ export default class GuiTimeline {
       live.quaternions      = snap.quaternions      ? [...snap.quaternions]      : [];
       live.scales           = snap.scales           ? [...snap.scales]           : [];
       live.keyMask          = snap.keyMask          ? [...snap.keyMask]          : null;
-      live.eulers           = snap.eulers           ? [...snap.eulers]           : null;
+      // A joint track's Eulers are spelled against its rest (eulerRef), which this snapshot does not
+      // carry: rebuilt from the quaternions instead, which is right whatever the reference is now.
+      live.eulers           = snap.eulers && !live.eulerRef ? [...snap.eulers] : null;
       live.shapeTimes       = snap.shapeTimes       ? [...snap.shapeTimes]       : [];
       live.shapes           = snap.shapes           ? snap.shapes.map(s => new Float32Array(s)) : [];
       live.shapeOutputTimes = snap.shapeOutputTimes ? [...snap.shapeOutputTimes] : [];
@@ -1748,7 +1785,10 @@ export default class GuiTimeline {
     if (!reg) return;
     this._pruneMutedSelection();
     if (window._animSelectedKeys?.length) { this.copySelectedKeys(); return; }
-    const objs = this._selectedAnimatable();
+    let objs = this._selectedAnimatable();
+    // Pose mode drops its hover selection the moment the cursor leaves the object, so with nothing
+    // selected the pose copied is that of the object the graph is holding (_graphMesh).
+    if (!objs.length) { const g = this._graphMesh(); if (g) objs = [g]; }
     if (!objs.length) { window.screenLog?.('Nothing selected to copy', '#f9e2af'); return; }
     window._animKeyClipboard = {
       mode: 'pose', anchor: 0,
@@ -4262,12 +4302,14 @@ export default class GuiTimeline {
   _graphMeshes() {
     const reg = window._animationRegistry;
     const target = this._graphMesh();
+    // What the graph draws is read against each joint's rest; bring that up to date first.
+    if (target) reg?.syncEulerRef?.(target);
     const out = [];
     const has = (m) => { const t = reg?.tracks.get(m.getID()); return !!(t && t.times && t.times.length >= 1); };
     if (target) out.push(target);
     for (const m of (this._main.getSelectedMeshes?.() || [])) {
       if (m === target || out.includes(m)) continue;
-      if (has(m)) out.push(m);
+      if (has(m)) { reg?.syncEulerRef?.(m); out.push(m); }
     }
     return out;
   }
@@ -6491,11 +6533,12 @@ export default class GuiTimeline {
       this._tooltip.style.display = 'none';
     }
 
-    if (ry < 5 && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isZoomingGraph) {
-      this._canvas.style.cursor = 'ns-resize';
-    } else {
-      this._canvas.style.cursor = 'default';
-    }
+    // ON THE CANVAS: this listener is on the window, so "ry < 5" alone is everywhere above the panel.
+    const overGrip = ry >= 0 && ry < 5 && rx >= 0 && rx <= rect.width && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isZoomingGraph;
+    this._canvas.style.cursor = overGrip ? 'ns-resize' : 'default';
+    // The grip lights while it is the thing a press would take, and for the whole resize.
+    const gripHover = overGrip || !!this._isResizingPanel;
+    if (gripHover !== !!this._gripHover) { this._gripHover = gripHover; this.draw(); }
 
     if (this._isResizingPanel) {
       const dy = (e._rawY ?? e.clientY) - this._resizeStartScreenY;
@@ -7701,7 +7744,7 @@ export default class GuiTimeline {
     // Resize grip — 3 dots centred at top edge. Desktop only: in VR it sits under the
     // transport bar and wedges the timeline if grabbed (VR resizes via _vrResizeHandle).
     if (!this._main?._renderer?.xr?.isPresenting) {
-      ctx.fillStyle = Theme.surface1;
+      ctx.fillStyle = this._gripHover ? Theme.blue : Theme.surface1;
       for (let i = -1; i <= 1; i++) {
         ctx.beginPath();
         ctx.arc(w.w / 2 + i * 8, 3, 2, 0, Math.PI * 2);
