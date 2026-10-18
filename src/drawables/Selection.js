@@ -200,7 +200,11 @@ class Selection {
     // sculpting, so the draw cursor must stay visible (#30).
     const sm = main.getSculptManager();
     const curIdx = sm ? sm.getToolIndex() : -1;
-    const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
+    // The Select tool has no brush either: its click left the joint it picked in `picking`, and the
+    // brush ring and dot stayed drawn on it (matt, 2026-10-19: "red dots on the mesh when i select
+    // joints").
+    const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR
+      || curIdx === Enums.Tools.SELECT;
     const shapeRecording = window._animationRegistry?.isRecording && window._animKeyMode === 'shape';
 
     if ((window._animPlaying && !shapeRecording) || isTransform) {
