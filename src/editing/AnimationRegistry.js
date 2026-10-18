@@ -153,7 +153,7 @@ class AnimationRegistry {
   _resolveTargetMesh() {
     const app = window.app;
     if (!app) return null;
-    return app._selectMeshes?.[0] || app._mesh || app.getMeshes?.()?.[0] || null;
+    return app.getKeyTargets?.()[0] || app._mesh || app.getMeshes?.()?.[0] || null;
   }
 
   toggleRecord(mesh) {
@@ -3324,7 +3324,10 @@ class AnimationRegistry {
   syncEulerRef(mesh) {
     const track = mesh && this.tracks.get(mesh.getID());
     if (!track) return false;
-    if (!mesh._isBone) return track.eulerRef ? setEulerRef(track, null) : false;
+    if (!mesh._isBone) {
+      track.posRef = mesh._pivotRef ? mesh._pivotRef.slice() : null;   // an object's pivot offset (xfRead)
+      return setEulerRef(track, mesh._axisOrient || null);             // ...and its axis orient
+    }
     const q = this._trsOfMatrix(mesh._ikRest || mesh.getMatrix()).quat;
     const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
     return setEulerRef(track, [q[0] / l, q[1] / l, q[2] / l, q[3] / l]);

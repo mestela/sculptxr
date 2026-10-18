@@ -2238,7 +2238,7 @@ class SculptManager {
   // other tool, which is why they are driven from here and not from the tool.
   _axisSticks() {
     const on = this._toolIndex === Enums.Tools.TRANSFORM && !!window._xfEditAxes;
-    updateAxisTripod(this._main, on, on ? this.getCurrentTool()._gizmo : null);
+    updateAxisTripod(this._main, on, on ? this.getCurrentTool() : null);
   }
 
   postRender() {

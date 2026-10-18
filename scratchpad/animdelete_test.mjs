@@ -213,7 +213,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   const body = TLW.slice(TLW.indexOf('\n', i), TLW.indexOf('break;', i));
   const run = (keys) => {
     const did = [];
-    const self = { deleteSelectedKeys: () => did.push('keys'),
+    const self = { _dropStaleKeySelection: () => {}, deleteSelectedKeys: () => did.push('keys'),
       deleteAnimationFromSelectedObjects: () => did.push('track') };
     new Function('window', body).call(self, { _animSelectedKeys: new Array(keys).fill({}) });
     return did[0];

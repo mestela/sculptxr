@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { vec3 } from 'gl-matrix';
 import Skeleton from './Skeleton.js';
 import { gizmoFrameFor } from './JointFrame.js';
+import { gizmoBasis } from './gizmoMath.js';
 
-// THE SELECTED JOINT'S AXES AS STICKS: X red, Y green, Z blue. Drawn while Transform's Edit Axes is
+// THE SELECTED JOINT'S (OR OBJECT'S) AXES AS STICKS: X red, Y green, Z blue. Drawn while Transform's Edit Axes is
 // on, so what the rings are turning is on screen as the thing itself, live through the drag.
 //
 // Solid saturated bars, a little longer than the gizmo's rings so their tips show past them, and
@@ -40,17 +41,22 @@ function build() {
   return g;
 }
 
-// `gizmo` is the Transform tool's GizmoVR, whose ring radius sets the length.
-export function updateAxisTripod(main, show, gizmo) {
+// `tool` is the Transform tool: its gizmo's ring radius sets the length, and it says which nodes
+// have axes to edit -- an object as well as a joint (matt, 2026-10-18). An object's sticks sit on
+// its pivot, where the gizmo is too (Transform._pivotAt), in the frame the gizmo is drawn in, live
+// through the drag (Transform._frameFor).
+export function updateAxisTripod(main, show, tool) {
   const sel = main.getSelectedMeshes?.() || [];
-  const joint = sel.length === 1 && Skeleton.isJoint(sel[0]) ? sel[0] : null;
-  if (!(show && joint && !main._xrSession)) { if (_tripod) _tripod.visible = false; return; }
+  const node = sel.length === 1 && tool?._editAxesOn?.(sel[0]) ? sel[0] : null;
+  if (!(show && node && !main._xrSession)) { if (_tripod) _tripod.visible = false; return; }
+  const gizmo = tool._gizmo;
   const parent = main._worldGroup || main._scene;
   if (!_tripod) _tripod = build();
   if (_tripod.parent !== parent) parent.add(_tripod);
-  const F = gizmoFrameFor(main, joint, Skeleton);
-  const M = joint.getModelSpaceMatrix();
-  const P = [M[12], M[13], M[14]];
+  const M = node.getModelSpaceMatrix();
+  const F = Skeleton.isJoint(node) ? gizmoFrameFor(main, node, Skeleton)
+    : (tool._frameFor(node) || gizmoBasis(M));
+  const P = Skeleton.isJoint(node) ? [M[12], M[13], M[14]] : gizmo._computeCenterGizmo();
   // Pixels -> model units by the transform gizmo's own rule (GizmoVR.update).
   const cam = main.getCamera();
   const d = vec3.dist(cam.computePosition(), P);

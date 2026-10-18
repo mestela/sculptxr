@@ -3,6 +3,7 @@ import { vec3, mat4, quat } from 'gl-matrix';
 import GizmoVR, { GIZMO_SETS, GIZMO_TYPE } from '../GizmoVR.js';
 import IKSolver from '../IKSolver.js';
 import Skeleton from '../Skeleton.js';
+import Skinning from '../Skinning.js';
 import { gizmoFrameFor, restFrameQuat, restModelMatrices } from '../JointFrame.js';
 import { gizmoBasis } from '../gizmoMath.js';
 import { orientJoints } from '../JointOrient.js';
@@ -36,6 +37,7 @@ class Transform extends SculptBase {
       return this._handleSet();
     };
     this._gizmo._frameFn = (mesh) => this._frameFor(mesh);
+    this._gizmo._centerFn = (mesh) => this._pivotAt(mesh);
     this._gizmo._keepAllFn = () => !!this._axesDrag;
     this._gizmo._liveWriteFn = (mesh, i, em) => this._axesWrite(mesh, i, em) || this._ikDragWrite(mesh, i, em);
 
@@ -87,8 +89,9 @@ class Transform extends SculptBase {
   _handleSet() {
     const sel = this._main.getSelectedMeshes();
     const m = sel.length === 1 ? sel[0] : null;
-    // EDIT AXES: the rings turn the joint's own axes, not the joint (see _axesWrite).
-    if (this._editAxesOn(m)) return GIZMO_SETS.TURN;
+    // ADJUST PIVOT: the rings turn the joint's own axes, not the joint (see _axesWrite); an object's
+    // pivot also moves.
+    if (this._editAxesOn(m)) return Skeleton.isJoint(m) ? GIZMO_SETS.TURN : GIZMO_SETS.MOVE_TURN;
     // A free joint, in Pose mode, is FK: it turns about its own origin and nothing else. A joint
     // the pins own is an IK drag instead: it moves, and the solve turns everything around it.
     if (m && Skeleton.isJoint(m) && this._pinPoseActive()) {
@@ -109,6 +112,11 @@ class Transform extends SculptBase {
   // Anything else (null) keeps its own model-space orientation.
   _frameFor(mesh) {
     if (!mesh) return null;
+    const d = this._axesDrag;
+    if (d && d.object === mesh) {
+      const R = mat4.clone(d.D); R[12] = R[13] = R[14] = 0;
+      return mat4.multiply(mat4.create(), R, gizmoBasis(mesh.getModelSpaceMatrix()));
+    }
     if ((mesh._isPinTarget && mesh._pinnedJoint || this._isIkDragJoint(mesh)) && this._handleSet() === GIZMO_SETS.MOVE) return mat4.create();
     return gizmoFrameFor(this._main, mesh, Skeleton);
   }
@@ -125,15 +133,29 @@ class Transform extends SculptBase {
   // axes as usual, but a drag turns the AXES: the result is stored as the joint's hand-laid frame
   // (`_axisQuat`, rest model space), the joint and the pose do not move, and on an unkeyed rig the
   // joint's real axes are re-oriented to match when the drag ends (Orient Joints).
-  _editAxesOn(m) { return !!window._xfEditAxes && !!m && Skeleton.isJoint(m); }
+  //
+  // AN OBJECT'S AXES too (matt, 2026-10-18): the drag turns only the gizmo, and on release the
+  // object's rotation becomes the new axes with the geometry baked back to where it was -- its
+  // children and keys compensated (Scene._bakeTransform). Not a pin (its axes are its joint's) and
+  // not a skinned body, whose geometry is the bind.
+  _editAxesOn(m) {
+    return !!window._xfEditAxes && !!m && (Skeleton.isJoint(m) || this._isAxesObject(m));
+  }
+
+  _isAxesObject(m) { return !m._isPinTarget && !Skeleton.isJoint(m) && !Skinning.isBound(m) && !m._isFrameGroup; }
 
   // The rotation the gizmo has applied so far, in model space, carried from the posed frame back
   // to rest: q' = Rrest * Cur^-1 * R * Cur * Rrest^-1 * q0, all fixed at the press except R.
   _axesWrite(mesh, i, em) {
     const d = this._axesDrag;
-    if (!d || d.joint !== mesh) return false;
+    if (!d || (d.joint !== mesh && d.object !== mesh)) return false;
     const R = mat4.mul(mat4.create(), mat4.mul(mat4.create(), this._gizmo._editLocal[i], em), this._gizmo._editLocalInv[i]);
     const qR = quat.normalize(quat.create(), mat4.getRotation(quat.create(), gizmoBasis(R)));
+    if (d.object) {
+      d.D = mat4.fromQuat(mat4.create(), qR);
+      d.D[12] = R[12]; d.D[13] = R[13]; d.D[14] = R[14];
+      return true;
+    }
     const q = quat.multiply(quat.create(), d.toRest, qR);
     quat.multiply(q, q, d.toPosed);
     Skeleton.setAxisOverride(mesh, quat.normalize(q, q));
@@ -142,6 +164,7 @@ class Transform extends SculptBase {
 
   _beginAxesDrag(joint) {
     const main = this._main;
+    if (!Skeleton.isJoint(joint)) { this._axesDrag = { object: joint, D: mat4.create() }; return; }
     const q0 = restFrameQuat(main, joint, Skeleton);
     const rest = restModelMatrices(Skeleton, Skeleton.joints(main).filter(Boolean)).get(joint);
     const qRest = mat4.getRotation(quat.create(), gizmoBasis(rest));
@@ -154,6 +177,7 @@ class Transform extends SculptBase {
   _endAxesDrag() {
     const d = this._axesDrag, main = this._main;
     this._axesDrag = null;
+    if (d.object) { this._bakeObjectAxes(d.object, d.D); return; }
     const after = d.joint._axisQuat ? d.joint._axisQuat.slice() : null;
     // The re-orient below joins this step (squash), so undo puts the joint back as well.
     const put = (v) => { Skeleton.setAxisOverride(d.joint, v); Skeleton.updateVisuals(main); main.render(); };
@@ -167,6 +191,62 @@ class Transform extends SculptBase {
     }
     Skeleton.updateVisuals(main);
     main.render();
+  }
+
+  // WHERE THE PIVOT IS: an object's origin, carried along by the drag in progress. The gizmo and the
+  // axis sticks sit on it -- Adjust Pivot is moving exactly that point. Null for anything else.
+  // NOT ONLY WHILE ADJUSTING: an object's gizmo always sits on, and turns about, its pivot (matt:
+  // "jump out of adjust pivot mode, the pivot jumps... i've explicitly set the pivot where i want").
+  _pivotAt(mesh) {
+    if (!mesh || !this._isAxesObject(mesh)) return null;
+    const p = mat4.getTranslation(vec3.create(), mesh.getModelSpaceMatrix());
+    const d = this._axesDrag;
+    return d && d.object === mesh ? vec3.transformMat4(p, p, d.D) : p;
+  }
+
+  // CENTRE PIVOT: the pivot to the middle of the object's bounds, axes unchanged -- a pivot move like
+  // any other (_bakeObjectAxes), so nothing moves and no value changes. Returns whether it applied.
+  centrePivot(mesh) {
+    if (!mesh || !this._isAxesObject(mesh)) return false;
+    const W = mesh.getModelSpaceMatrix();
+    const c = vec3.transformMat4(vec3.create(), mesh.getCenter(), W);
+    const D = mat4.fromTranslation(mat4.create(), [c[0] - W[12], c[1] - W[13], c[2] - W[14]]);
+    this._bakeObjectAxes(mesh, D);
+    return true;
+  }
+
+  // The pivot moved and turned by D (model space, rigid): the object's model matrix becomes
+  // W' = D·W, as a LOCAL matrix K = M·W⁻¹·W'; the bake puts B = K⁻¹·M into the geometry, so the
+  // object, its children and its keys stay where they are (Scene._bakeTransform).
+  _bakeObjectAxes(mesh, D) {
+    if (mat4.equals(D, mat4.create())) return;
+    const M = mesh.getMatrix(), W = mesh.getModelSpaceMatrix();
+    const W2 = mat4.multiply(mat4.create(), D, W);
+    const K = mat4.multiply(mat4.create(), mat4.multiply(mat4.create(), M, mat4.invert(mat4.create(), W)), W2);
+    const Km = new THREE.Matrix4().fromArray(K);
+    const B = Km.clone().invert().multiply(new THREE.Matrix4().fromArray(M));
+    // THE CHANNELS DO NOT CHANGE: the turn goes into the object's hidden AXIS ORIENT (read by
+    // Scene._jointRestQuat and the track's eulerRef). Channels E = O⁻¹·q before; after, q' is the
+    // new rotation, so O' = q'·E⁻¹ keeps E.
+    const _p = new THREE.Vector3(), _s = new THREE.Vector3();
+    const q0 = new THREE.Quaternion(), q1 = new THREE.Quaternion();
+    new THREE.Matrix4().fromArray(M).decompose(_p, q0, _s);
+    Km.decompose(_p, q1, _s);
+    const before = mesh._axisOrient ? mesh._axisOrient.slice() : null;
+    const E = before ? new THREE.Quaternion().fromArray(before).invert().multiply(q0) : q0.clone();
+    const qa = q1.multiply(E.invert()).normalize();
+    const after = Math.abs(qa.w) > 1 - 1e-9 ? null : qa.toArray();   // no turn, no orient
+    // ...AND THE TRANSLATE VALUES DO NOT CHANGE EITHER: the origin's move goes into the pivot offset.
+    const pBefore = mesh._pivotRef ? mesh._pivotRef.slice() : null;
+    const pr = [0, 1, 2].map((c) => (pBefore ? pBefore[c] : 0) + K[12 + c] - M[12 + c]);
+    const pAfter = Math.hypot(pr[0], pr[1], pr[2]) < 1e-9 ? null : pr;
+    this._main._bakeTransform(mesh, B, Km);
+    const put = (o, p) => {
+      if (o) mesh._axisOrient = o.slice(); else delete mesh._axisOrient;
+      if (p) mesh._pivotRef = p.slice(); else delete mesh._pivotRef;
+    };
+    put(after, pAfter);
+    this._main.getStateManager().pushStateCustom(() => put(before, pBefore), () => put(after, pAfter), true, 'Object Pivot');
   }
 
   // A joint whose gizmo is an IK drag (Pose mode, owned by the pins).
@@ -219,6 +299,7 @@ class Transform extends SculptBase {
     const hit = main._rigHoverHit;
     const node = id >= 0 ? main.getMeshes().find((m) => m.getID() === id)
       : (isPoseProp(main, hit) ? hit : null);
+    this._noteRest(node);
     const sel = main.getSelectedMeshes();
     if (node) {
       if (sel.length === 1 && sel[0] === node) this._ppCand = null;
@@ -246,6 +327,31 @@ class Transform extends SculptBase {
         main.setMesh(null, true);
       }
     }
+  }
+
+  // THE KEY TARGET IN POSE MODE. Pose Mode selects by hover and lets go when the cursor leaves, and
+  // the way to the Add Key / Record / Copy buttons crosses the rest of the rig -- so by the time a
+  // button was pressed the selection was empty, or a joint brushed past on the way out, and the key
+  // went to a bone or nowhere (matt, 2026-10-18: "if i select the bat and try to set keys, it
+  // occasionally refuses"). The key tools take what the cursor RESTED on, or last dragged, instead.
+  // A selection the user made themselves, and any multi-selection, is left as it is.
+  poseKeyTargets() {
+    if (!this._pinPoseActive()) return null;
+    const main = this._main, sel = main.getSelectedMeshes();
+    if (sel.length > 1 || (sel.length === 1 && sel[0] !== this._ppAuto)) return null;
+    const live = this._restOn && performance.now() - this._restSince >= PIN_POSE_DWELL_MS ? this._restOn : null;
+    const t = live || this._poseKeyTarget;
+    return t && main.getMeshes().includes(t) ? [t] : null;
+  }
+
+  // Where the cursor is resting: a target it stayed on for PIN_POSE_DWELL_MS becomes the key target
+  // when the cursor moves on.
+  _noteRest(node) {
+    if (node === this._restOn) return;
+    const now = performance.now();
+    if (this._restOn && now - this._restSince >= PIN_POSE_DWELL_MS) this._poseKeyTarget = this._restOn;
+    this._restOn = node;
+    this._restSince = now;
   }
 
   preUpdate() {
@@ -282,6 +388,7 @@ class Transform extends SculptBase {
       picking._mesh = mesh;
       // Every other pin hides for the length of the drag (see Skeleton.updateVisuals).
       const dragged = main.getSelectedMeshes()[0];
+      if (dragged && this._pinPoseActive()) this._poseKeyTarget = dragged;
       // An IK drag moves the whole chain, so the undo is the whole rig (see end()).
       this._ikDragUndo = null; this._axesDrag = null;
       if (this._editAxesOn(dragged)) this._beginAxesDrag(dragged);

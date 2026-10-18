@@ -83,8 +83,12 @@ export function buildTransformSectionHTML(main, style) {
         Pose Mode ${pp ? 'On' : 'Off'}
       </button>
       <button class="${c.toggle}${window._xfEditAxes ? ' active' : ''}" id="xf-editaxes"
-        title="Rotate a joint's own local axes instead of the joint: the rings sit on the axes and a drag turns them. The pose does not move. On a rig without keys the joint is re-oriented to match when you let go; on a keyed rig only the rotate handles use the new axes. Auto in the Bones panel's Axes section goes back to the guess.">
-        Edit Axes ${window._xfEditAxes ? 'On' : 'Off'}
+        title="Adjust the selected thing's pivot instead of moving the thing. On an OBJECT: move and turn its pivot and axes; the object, its children and its keys stay where they are, and its rotation values do not change (a hidden axis orient holds the turn). On a JOINT: rotate its local axes; the pose does not move, and on a rig without keys the joint is re-oriented to match when you let go. Auto in the Bones panel's Axes section goes back to the guess.">
+        Adjust Pivot ${window._xfEditAxes ? 'On' : 'Off'}
+      </button>
+      <button class="${c.toggle}" id="xf-centrepivot"
+        title="Put the selected object's pivot at the middle of its bounds. Nothing moves and no value changes, as with Adjust Pivot.">
+        Centre Pivot
       </button>
     </div>
     <div class="${c.row}">
@@ -172,6 +176,13 @@ export function wireTransformSection(root, main, opts) {
     refresh();
   });
 
+  root.querySelector('#xf-centrepivot')?.addEventListener('click', () => {
+    const xf = main.getSculptManager?.()?.getTool?.(Enums.Tools.TRANSFORM);
+    const n = (main.getSelectedMeshes?.() || []).filter((m) => xf?.centrePivot?.(m)).length;
+    window.screenLog?.(n ? `Centred the pivot of ${n} object${n > 1 ? 's' : ''}` : 'Select an object to centre its pivot', n ? 'cyan' : '#f9e2af');
+    main.render?.();
+  });
+
   root.querySelector('#xf-pinpose')?.addEventListener('click', () => {
     const next = !pinPoseOn();
     window._xfPinPose = next;
@@ -204,7 +215,7 @@ export function syncTransformSection(root, main) {
   const eaBtn = root.querySelector('#xf-editaxes');
   if (eaBtn) {
     eaBtn.classList.toggle('active', !!window._xfEditAxes);
-    eaBtn.textContent = `Edit Axes ${window._xfEditAxes ? 'On' : 'Off'}`;
+    eaBtn.textContent = `Adjust Pivot ${window._xfEditAxes ? 'On' : 'Off'}`;
   }
 
   // The thumbstick writes the same number, so the slider has to follow it -- otherwise the panel

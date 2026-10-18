@@ -87,6 +87,7 @@ import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder
 import ViewportMenu from './gui/ViewportMenu.js';
 import SkinPreview from './editing/SkinPreview.js';
 import MotionTrail from './editing/MotionTrail.js';
+import { rotRebuild } from './editing/xfChannel.js';
 import SceneShadow from './render/SceneShadow.js';
 import scanPhantoms from './misc/PhantomScan.js';
 import probeXRLighting from './misc/XRLightProbe.js';
@@ -1094,6 +1095,17 @@ class Scene {
 
   getSelectedMeshes() {
     return this._selectMeshes;
+  }
+
+  // WHAT THE KEY TOOLS ACT ON (Add / Delete Key, Record, Copy / Paste / Cut, the graph): the
+  // selection, except in Pose Mode, whose hover selection is gone by the time a button is pressed
+  // (Transform.poseKeyTargets).
+  getKeyTargets() {
+    return this._sculptManager?.getCurrentTool?.()?.poseKeyTargets?.() || this._selectMeshes;
+  }
+
+  getKeyTarget() {
+    return this._sculptManager?.getCurrentTool?.()?.poseKeyTargets?.()?.[0] || this._mesh;
   }
 
   getPicking() {
@@ -6565,7 +6577,11 @@ class Scene {
   // local rotation includes the joint's fixed angle to its parent, and 0,0,0 of THAT meant nothing
   // (matt: "i need to be able to set the local rotation to (0,0,0)... that should be the same as
   // clicking the 'rest pose' button"). Position and scale stay the plain local values.
+  // AN OBJECT'S reads against its AXIS ORIENT the same way: the hidden pre-rotation Edit Axes lays
+  // down (Transform._bakeObjectAxes), so turning its axes leaves its rotation at 0,0,0 -- matt,
+  // 2026-10-18: "the actual rotation values should NOT change. there should be a hidden prerotation".
   _jointRestQuat(m) {
+    if (m && !m._isBone && m._axisOrient) return new THREE.Quaternion().fromArray(m._axisOrient).normalize();
     if (!m || !m._isBone || !m._ikRest) return null;
     const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     new THREE.Matrix4().fromArray(m._ikRest).decompose(p, q, s);
@@ -6580,6 +6596,7 @@ class Scene {
     M.decompose(p, q, s);
     const rq = this._jointRestQuat(m);
     if (rq) q.premultiply(rq.invert());
+    if (!m._isBone && m._pivotRef) p.sub(new THREE.Vector3().fromArray(m._pivotRef));   // pivot offset
     const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
     const R2D = 180 / Math.PI;
     return { t: [p.x, p.y, p.z], r: [e.x * R2D, e.y * R2D, e.z * R2D], s: [s.x, s.y, s.z] };
@@ -6657,6 +6674,7 @@ class Scene {
       if (!trs) continue;
       for (const [a, v] of edits) trs[type][a] = v;
       const p = new THREE.Vector3(trs.t[0], trs.t[1], trs.t[2]);
+      if (!m._isBone && m._pivotRef) p.add(new THREE.Vector3().fromArray(m._pivotRef));   // back to raw
       const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(trs.r[0] * D2R, trs.r[1] * D2R, trs.r[2] * D2R, 'XYZ'));
       const rq = this._jointRestQuat(m);
       if (rq) q.premultiply(rq);
@@ -6702,9 +6720,21 @@ class Scene {
   // Bake (freeze) the LOCAL translation into the geometry: the mesh looks identical but its
   // local position becomes 0 (rotation + scale kept). General rule: keep matrix K (the kept
   // components), bake B = K⁻¹·M into the verts so K·B == M (unchanged appearance).
+  //
+  // AN OBJECT KEEPS ITS PIVOT (matt, 2026-10-18: "the adjust gizmo jumps to the origin. why? it
+  // should stay where it is"): its values go to 0 by taking the translation as its hidden pivot
+  // offset (_pivotRef, read by getTransformTRS and xfRead), and nothing moves. Joints keep the bake.
   bakeTranslate(id) {
     const mesh = this._meshes.find((x) => x.getID() === id);
     if (!mesh) return;
+    if (!mesh._isBone && !mesh._isPinTarget) {
+      const M = mesh.getMatrix(), before = mesh._pivotRef ? mesh._pivotRef.slice() : null;
+      const after = Math.hypot(M[12], M[13], M[14]) < 1e-9 ? null : [M[12], M[13], M[14]];
+      const put = (v) => { if (v) mesh._pivotRef = v.slice(); else delete mesh._pivotRef; this.render(); };
+      put(after);
+      this.getStateManager().pushStateCustom(() => put(before), () => put(after), false, 'Bake Translate');
+      return;
+    }
     const M = new THREE.Matrix4().fromArray(mesh.getMatrix());
     const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     M.decompose(t, q, s);
@@ -6723,8 +6753,10 @@ class Scene {
     const M = new THREE.Matrix4().fromArray(mesh.getMatrix());
     const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
     M.decompose(t, q, s);
-    if (Math.abs(q.x) < 1e-7 && Math.abs(q.y) < 1e-7 && Math.abs(q.z) < 1e-7) return; // ~identity rotation
-    const K = new THREE.Matrix4().compose(t, new THREE.Quaternion(), s); // drop rotation
+    // An object with an axis orient bakes its CHANNELS to 0: the rotation it keeps is the orient.
+    const keep = mesh._isBone || !mesh._axisOrient ? new THREE.Quaternion() : new THREE.Quaternion().fromArray(mesh._axisOrient);
+    if (Math.abs(Math.abs(q.dot(keep)) - 1) < 1e-12) return; // channels already ~0
+    const K = new THREE.Matrix4().compose(t, keep, s); // drop the channel rotation
     const B = new THREE.Matrix4().copy(K).invert().multiply(M);          // K⁻¹·M
     this._bakeTransform(mesh, B, K);
   }
@@ -6739,6 +6771,13 @@ class Scene {
     const ident = new THREE.Matrix4();
     if (B.equals(ident)) return;
     this._bakeTransform(mesh, B, ident);
+    // Identity is the object's own frame, so there is no orient or pivot offset left to read against.
+    const orient = mesh._axisOrient, pref = mesh._pivotRef;
+    if (orient || pref) {
+      delete mesh._axisOrient; delete mesh._pivotRef;
+      this.getStateManager().pushStateCustom(() => { if (orient) mesh._axisOrient = orient; if (pref) mesh._pivotRef = pref; },
+        () => { delete mesh._axisOrient; delete mesh._pivotRef; }, true);
+    }
   }
 
   // Bake matrix B into the geometry (all multires levels + blendshape base/deltas) and
@@ -6748,6 +6787,43 @@ class Scene {
     const Mold = mesh.getMatrix().slice();
     const Binv = new THREE.Matrix4().copy(B).invert();
     const cam = this._camera;
+
+    // THE CHILDREN AND THE KEYS STAY WHERE THEY ARE. A child's matrix is local to this one, so
+    // when M becomes K every child moved by K·M⁻¹ -- the wrist pins in the bat jumped across the
+    // scene (matt, 2026-10-18). Since K·B == M, a child keeps its place as B·C, and each of this
+    // object's own keys keeps its place as Mt·B⁻¹. Worked out once here; undo/redo swap states.
+    const reg = window._animationRegistry;
+    const kids = this._meshes.filter((m) => m._parentMesh === mesh);
+    const kidMats = kids.map((c) => {
+      const before = c.getMatrix().slice();
+      return [before, new THREE.Matrix4().fromArray(before).premultiply(B).elements.slice()];
+    });
+    const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _m = new THREE.Matrix4();
+    const rekey = (tr, pre, post) => {
+      const one = (P, Q, S, i) => {
+        _m.compose(_p.fromArray(P, i * 3), _q.fromArray(Q, i * 4), _s.fromArray(S, i * 3));
+        if (pre) _m.premultiply(pre);
+        if (post) _m.multiply(post);
+        _m.decompose(_p, _q, _s);
+        _p.toArray(P, i * 3); _q.toArray(Q, i * 4); _s.toArray(S, i * 3);
+      };
+      for (let i = 0; i < tr.times.length; i++) one(tr.positions, tr.quaternions, tr.scales, i);
+      if (tr.restPos && tr.restQuat && tr.restScale) one(tr.restPos, tr.restQuat, tr.restScale, 0);
+      rotRebuild(tr);
+    };
+    const tracks = [];   // [track, before, after]
+    for (const [m, pre, post] of [[mesh, null, Binv], ...kids.map((c) => [c, B, null])]) {
+      const tr = reg?.tracks.get(m.getID());
+      if (!tr?.times?.length) continue;
+      const before = reg._snapshotTrack(tr);
+      rekey(tr, pre, post);
+      tracks.push([tr, before, reg._snapshotTrack(tr)]);
+      reg._restoreTrack(tr, before, null);
+    }
+    const setRelated = (after) => {
+      kids.forEach((c, i) => { c.setMatrix(kidMats[i][after ? 1 : 0]); c.updateMatrices?.(cam); });
+      for (const [tr, before, aft] of tracks) reg._restoreTrack(tr, after ? aft : before, null);
+    };
 
     const apply = (Bmat, matElems) => {
       const lin = new THREE.Matrix3().setFromMatrix4(Bmat); // linear part (for delta VECTORS)
@@ -6794,13 +6870,14 @@ class Scene {
     };
 
     apply(B, K.elements);
+    setRelated(true);
     this.render();
 
     const sm = this.getStateManager && this.getStateManager();
     if (sm && sm.pushStateCustom) {
       sm.pushStateCustom(
-        () => { apply(Binv, Mold); this.render(); },
-        () => { apply(B, K.elements); this.render(); }
+        () => { apply(Binv, Mold); setRelated(false); this.render(); },
+        () => { apply(B, K.elements); setRelated(true); this.render(); }
       );
     }
   }

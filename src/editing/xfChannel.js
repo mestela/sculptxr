@@ -104,6 +104,13 @@ export function xfTanGet(tr, suffix, group) {
   return g === 'pos' ? to['trans_' + suffix] : undefined;
 }
 
+// AN OBJECT'S POSITION CHANNELS READ AGAINST ITS PIVOT OFFSET (`posRef`, set from the object's
+// `_pivotRef` by AnimationRegistry.syncEulerRef), as its rotation reads against its axis orient:
+// Bake Translate zeroes the values without moving the pivot. Keys stay RAW -- playback (xfEval)
+// never sees this -- so it applies only where a value is shown or typed: xfRead / xfWrite, and the
+// graph's curve drawing (posRef below).
+export function posRef(tr, c) { return (tr && tr.posRef && tr.posRef[c]) || 0; }
+
 // `group` is explicit so a key can be read in ITS OWN group while several are on screen.
 // Defaulted rather than required, because every existing caller means "the active one".
 export function xfRead(tr, index, channel, group) {
@@ -111,7 +118,7 @@ export function xfRead(tr, index, channel, group) {
   const g = group || xfGroup();
   if (g === 'weight') return undefined;   // not a transform channel; see xfWeightTrack
   if (g === 'scale') return tr.scales?.[index * 3 + channel];
-  if (g !== 'rot') return tr.positions?.[index * 3 + channel];
+  if (g !== 'rot') { const v = tr.positions?.[index * 3 + channel]; return v === undefined ? v : v - posRef(tr, channel); }
   const e = rotSync(tr);
   return e ? e[index * 3 + channel] : undefined;
 }
@@ -121,7 +128,7 @@ export function xfWrite(tr, index, channel, v, group) {
   const g = group || xfGroup();
   if (g === 'weight') { xfWeightWrite(tr, index, v); return; }
   if (g === 'scale') { if (tr.scales) tr.scales[index * 3 + channel] = v; return; }
-  if (g !== 'rot') { if (tr.positions) tr.positions[index * 3 + channel] = v; return; }
+  if (g !== 'rot') { if (tr.positions) tr.positions[index * 3 + channel] = v + posRef(tr, channel); return; }
   rotSetEuler(tr, index, channel, v);
 }
 

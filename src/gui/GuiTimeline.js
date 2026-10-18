@@ -2,8 +2,8 @@ import TimelineHelper from './TimelineHelper.js';
 import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
          XF_GROUPS, xfVisible, xfIsVisible, xfToggleVisible,
          xfWeightTrack, xfChanVisible, xfSetChanVisible,
-         xfTimes, xfKeyed, xfKeyedSlots, xfSegEval, xfEval, xfBit, maskSync, XF_ALL,
-         xfPruneEmpty, xfRefreshDerived } from '../editing/xfChannel.js';
+         xfTimes, xfKeyed, xfKeyedSlots, xfSegEval, xfEval, xfBit, xfGroupBits, maskSync, XF_ALL,
+         xfPruneEmpty, xfRefreshDerived, posRef } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
 import PhysicsBones from '../editing/PhysicsBones.js';
@@ -1752,9 +1752,28 @@ export default class GuiTimeline {
   //
   // Muted objects and channels are skipped throughout, and the clipboard is the SAME for the
   // dopesheet, the graph, the animation panel and the shortcuts (there used to be three).
+  // A KEY SELECTION LEFT ON ANOTHER OBJECT IS STALE. Clicking a key selects its object, so when
+  // the selected object owns none of the selected keys, those keys were left behind -- and copy,
+  // cut and paste went on acting on them: with the bat selected, Ctrl-C took a bone's old key and
+  // paste put it back on the bone (matt, 2026-10-18). The last click wins, as for Delete's target.
+  // Keys of an object that is gone (a scene loaded over them) are dropped too.
+  _dropStaleKeySelection() {
+    const reg = window._animationRegistry;
+    let keys = window._animSelectedKeys;
+    if (!keys?.length) return;
+    keys = window._animSelectedKeys = keys.filter((k) => k.childId != null || reg?.tracks.has(k.meshId));
+    const sel = this._main.getKeyTargets();
+    if (!keys.length || !sel.length) return;
+    const ids = new Set(sel.map((m) => m.getID()));
+    if (!keys.some((k) => ids.has(k.meshId) || ids.has(k.childId))) {
+      window._animSelectedKeys = [];
+      window._animTransformBox = null;
+    }
+  }
+
   _selectedAnimatable() {
     const reg = window._animationRegistry;
-    return (this._main.getSelectedMeshes?.() || [])
+    return this._main.getKeyTargets()
       .filter((m) => m && m.getID && !m._isFrameGroup && !reg?.tracks.get(m.getID())?.muted);
   }
 
@@ -1784,6 +1803,7 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
     this._pruneMutedSelection();
+    this._dropStaleKeySelection();
     if (window._animSelectedKeys?.length) { this.copySelectedKeys(); return; }
     let objs = this._selectedAnimatable();
     // Pose mode drops its hover selection the moment the cursor leaves the object, so with nothing
@@ -1801,6 +1821,7 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
     this._pruneMutedSelection();
+    this._dropStaleKeySelection();
     if (window._animSelectedKeys?.length) { this.cutSelectedKeys(); return; }
     // Pose mode: copy the pose, then delete the keys that sit exactly on the playhead.
     this.copyKeysSmart();
@@ -1824,6 +1845,7 @@ export default class GuiTimeline {
     const clip = window._animKeyClipboard;
     if (!reg || !clip?.keys?.length) return;
     this._pruneMutedSelection();
+    this._dropStaleKeySelection();
     const playhead = window._animCurrentTime || 0;
     const fps = window._animFPS || 24;
     const snap = (t) => (window._animSnapToFrame !== false) ? Math.round(t * fps) / fps : t;
@@ -1897,8 +1919,12 @@ export default class GuiTimeline {
         landed.push({ meshId: tid, type: k.type, name: k.name, layer: k.layer, time });
       };
 
-      if (entries.length === 1 && entries[0].type !== 'sr' && selKeys.length) {
-        // ONE key on the clipboard, keys selected: stamp it on EVERY selected key.
+      // ONE key on the clipboard, keys selected: stamp it on EVERY selected key -- unless that
+      // changes nothing. The key just copied (or just pasted) is still selected, so a paste at a
+      // new time stamped the key onto itself and nothing happened; matt, 2026-10-18: "surely if
+      // the selected key has the same values as the paste ... paste at the current playhead".
+      const stampIsNoop = selKeys.length && selKeys.every((sk) => this._keyHolds(sk, entries[0]));
+      if (entries.length === 1 && entries[0].type !== 'sr' && selKeys.length && !stampIsNoop) {
         const k = entries[0];
         for (const sk of selKeys) {
           if (sk.type !== k.type) { skipped++; continue; }
@@ -1957,6 +1983,36 @@ export default class GuiTimeline {
         + (skipped ? `  (${skipped} skipped: muted, no match, or not compatible)` : ''),
       n === 0 ? '#f9e2af' : '#a6e3a1');
     if (window._keyclipTrace) console.log('[keyclip] paste', { keyMode, anchorTime, tgtIds, landed: landed.length, skipped, selKeys: selKeys.length, clip: clip.keys.length });
+  }
+
+  // Does selected key `sk` already hold clipboard key `k`'s values (only the channels it keys)?
+  _keyHolds(sk, k) {
+    const tr = window._animationRegistry?.tracks.get(sk.meshId);
+    if (!tr || sk.type !== k.type) return false;
+    const near = (a, b) => Math.abs(a - b) < 1e-5;
+    const i = sk.index, P = k.payload;
+    if (k.type === 'transform') {
+      if (tr.times?.[i] === undefined) return false;
+      const bits = P.bits || XF_ALL;
+      for (let c = 0; c < 3; c++) {
+        if ((bits & xfBit('pos', c)) && !near(tr.positions[i * 3 + c], P.pos[c])) return false;
+        if ((bits & xfBit('scale', c)) && !near(tr.scales[i * 3 + c], P.scale[c])) return false;
+      }
+      if (bits & xfGroupBits('rot')) {
+        let d = 0;
+        for (let c = 0; c < 4; c++) d += tr.quaternions[i * 4 + c] * P.quat[c];
+        if (Math.abs(d) < 1 - 1e-6) return false;
+      }
+      return true;
+    }
+    if (k.type === 'blendshape') {
+      const v = tr.blendshapeTracks?.get(sk.name)?.values?.[i];
+      return sk.name === k.name && v !== undefined && near(v, P.value);
+    }
+    const verts = k.type === 'shape' ? tr.shapes?.[i] : tr.shapeLayers?.[sk.layer]?.shapes?.[i];
+    if (!verts || verts.length !== P.verts.length || (k.type === 'shapeLayer' && sk.layer !== k.layer)) return false;
+    for (let j = 0; j < verts.length; j++) if (verts[j] !== P.verts[j]) return false;
+    return true;
   }
 
   // Insert a key with EXPLICIT copied values (not captured from the live mesh), replacing
@@ -2351,12 +2407,16 @@ export default class GuiTimeline {
                      && this._lastMouseY >= capStartY && this._lastMouseY <= this._cssHeight;
       const phColor = phHovered ? '#88bbff' : TL_ACCENT;
 
+      // SEE-THROUGH over the lanes. A key is added AT the playhead, and the solid line covered
+      // most of it -- matt, 2026-10-18: "i press + to add a key, i don't see a key appear".
       ctx.strokeStyle = phColor;
       ctx.lineWidth = phHovered ? 2.5 : 2;
+      ctx.globalAlpha = 0.4;
       ctx.beginPath();
       ctx.moveTo(playheadX, headerH);
       ctx.lineTo(playheadX, this._cssHeight);
       ctx.stroke();
+      ctx.globalAlpha = 1;
 
       ctx.fillStyle = phColor;
       ctx.beginPath();
@@ -2865,7 +2925,7 @@ export default class GuiTimeline {
             const steps = 20;
             for (let st = 0; st <= steps; st++) {
               const time = t1 + (t2 - t1) * (st / steps);
-              const val = xfSegEval(track, grp, channel, a, ap, b, bn, time);
+              const val = xfSegEval(track, grp, channel, a, ap, b, bn, time) - (grp === 'pos' ? posRef(track, channel) : 0);
               const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
               const y = this._valY(val, grp, normR);
               if (k === 0 && st === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
@@ -4327,7 +4387,7 @@ export default class GuiTimeline {
     // the transform tool itself deselects". Selecting something else that HAS keys switches it.
     const reg = window._animationRegistry;
     const keyed = (m) => !!reg?.tracks.get(m.getID())?.times?.length;
-    const sel = this._main.getMesh();
+    const sel = this._main.getKeyTarget();
     if (sel && keyed(sel)) { this._graphLastKeyedId = sel.getID(); return sel; }
     const last = this._graphLastKeyedId != null
       && this._main._meshes?.find((x) => x.getID() === this._graphLastKeyedId);
@@ -5204,7 +5264,7 @@ export default class GuiTimeline {
       case 'record':
         // Same toggle lifecycle as the ACP Record button (start/stop + arm/disarm),
         // so the two record controls agree instead of doing different things.
-        window._animationRegistry?.toggleRecord?.(this._main?.getMesh?.());
+        window._animationRegistry?.toggleRecord?.(this._main?.getKeyTarget?.());
         break;
       case 'loop':
         window._animLoopEnabled = window._animLoopEnabled === false;
@@ -5482,7 +5542,10 @@ export default class GuiTimeline {
     const _tlW = this._cssWidth - 220;
     // The range lane sits in the top RANGE_H of this band and answers first; the playhead drag
     // below must not also claim those pixels, or grabbing a range handle scrubs instead.
-    if (ry >= TOOLBAR_BOTTOM && ry < TOOLBAR_BOTTOM + RANGE_H) {
+    // Right of the gutter only: the gutter's + / delete buttons and the XF..SR strips reach down
+    // into this band, and their lower part was dead -- presses there were swallowed here (matt,
+    // 2026-10-18: "press the delete button, nothing happens" -- every miss was below y 55).
+    if (ry >= TOOLBAR_BOTTOM && ry < TOOLBAR_BOTTOM + RANGE_H && rx >= 196) {
       if (this._rangeBarDown(rx, ry)) return;
       return;   // the lane's own dead zones are still the lane's, not the playhead's
     }
@@ -5530,12 +5593,13 @@ export default class GuiTimeline {
               window._frameGroup?.deleteFrame?.();
               this.draw();
               return;
-            case 'addkey':
+            case 'addkey': {
+              const mesh = this._main.getKeyTarget();
               if (reg && mesh) {
                 const km = window._animKeyMode || 'transform';
                 // EVERYTHING SELECTED, not just the graph target (matt, 2026-10-09: "it only
                 // added a key for a single selection, not everything i selected").
-                const _selAll = this._main.getSelectedMeshes?.() || [];
+                const _selAll = this._main.getKeyTargets();
                 if (_selAll.length > 1) {
                   reg.addKeysForMeshes(_selAll, t, km);
                 } else if (km === 'shape') {
@@ -5551,11 +5615,13 @@ export default class GuiTimeline {
                 }
               }
               break;
+            }
             case 'delkey':
               // Keys first: a key selection is the narrower statement, and the other way round
               // wipes a whole object's animation while keys are selected. The track case only
               // runs when there are no keys — deleteAnimationFromSelectedObjects pushes its own
               // undo entry, so redo comes with it.
+              this._dropStaleKeySelection();
               if (window._animSelectedKeys?.length) this.deleteSelectedKeys();
               else this.deleteAnimationFromSelectedObjects();
               break;

@@ -5890,7 +5890,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 26;  // v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 28;  // v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6214,12 +6214,16 @@ Skeleton.serialize = function (meshes, main) {
   meshes.forEach((m, i) => { if (m && m._isBone && m._volR) volTwist.push({ i: i, a: m._volR }); });
   const axes = [];
   meshes.forEach((m, i) => { if (m && m._isBone && m._axisQuat) axes.push({ i: i, q: m._axisQuat }); });
+  const orients = [];
+  meshes.forEach((m, i) => { if (m && !m._isBone && m._axisOrient) orients.push({ i: i, q: m._axisOrient }); });
+  const pivots = [];
+  meshes.forEach((m, i) => { if (m && !m._isBone && m._pivotRef) pivots.push({ i: i, p: m._pivotRef }); });
 
   // ...OR IF ANY NODE CARRIES A CONSTRAINT. This block is skipped entirely when there is no
   // hierarchy and no skin, which was right when it only held bones — but v15 put the aim/saccade/
   // mirror state in here, and a scene can easily have an eye rig and no skeleton at all. Without
   // `rig` in this test that state was built, saved to nothing, and silently absent on reload.
-  if (!entries.length && !skins.length && !rig.length && !order.length && !fold.length) return null;
+  if (!entries.length && !skins.length && !rig.length && !order.length && !fold.length && !orients.length && !pivots.length) return null;
 
   let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
@@ -6244,6 +6248,8 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + volRound.length * 2; // v24: i + sharpness
   slots += 1 + volTwist.length * 2; // v25: i + twist
   slots += 1 + axes.length * 5;     // v26: i + the hand-laid axes quaternion
+  slots += 1 + orients.length * 5;  // v27: i + an object's axis orient quaternion
+  slots += 1 + pivots.length * 4;   // v28: i + an object's pivot offset
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6335,6 +6341,10 @@ Skeleton.serialize = function (meshes, main) {
   for (const vt of volTwist) { u[o++] = vt.i; f[o++] = vt.a; }
   u[o++] = axes.length;
   for (const ax of axes) { u[o++] = ax.i; f[o++] = ax.q[0]; f[o++] = ax.q[1]; f[o++] = ax.q[2]; f[o++] = ax.q[3]; }
+  u[o++] = orients.length;
+  for (const ax of orients) { u[o++] = ax.i; f[o++] = ax.q[0]; f[o++] = ax.q[1]; f[o++] = ax.q[2]; f[o++] = ax.q[3]; }
+  u[o++] = pivots.length;
+  for (const pv of pivots) { u[o++] = pv.i; f[o++] = pv.p[0]; f[o++] = pv.p[1]; f[o++] = pv.p[2]; }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6953,6 +6963,20 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       for (let i = 0; i < nn; i++) {
         const m = meshes[u[o++]], q = [f[o++], f[o++], f[o++], f[o++]];
         if (m) Skeleton.setAxisOverride(m, q);
+      }
+    }
+    if (ver >= 27) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], q = [f[o++], f[o++], f[o++], f[o++]];
+        if (m) m._axisOrient = q;
+      }
+    }
+    if (ver >= 28) {
+      const nn = u[o++];
+      for (let i = 0; i < nn; i++) {
+        const m = meshes[u[o++]], p = [f[o++], f[o++], f[o++]];
+        if (m) m._pivotRef = p;
       }
     }
 

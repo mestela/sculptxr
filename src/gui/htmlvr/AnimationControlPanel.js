@@ -1142,7 +1142,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   }
 
   const _getTargetMesh = () => {
-    const sel = main._selectMeshes;
+    const sel = main.getKeyTargets();
     if (sel?.length > 0) return sel[0];
     if (main._mesh) return main._mesh;
     const all = main.getMeshes?.();
@@ -1379,7 +1379,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     if (!r || !target) return;
     const t = window._animCurrentTime || 0;
     // EVERYTHING SELECTED gets a key, not just the first selected object.
-    const _selAll = main.getSelectedMeshes?.() || [];
+    const _selAll = main.getKeyTargets();
     if (_selAll.length > 1) {
       r.addKeysForMeshes(_selAll, t, window._animKeyMode);
       repaint();

@@ -580,7 +580,7 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.toggles}">
       <button class="${c.toggle}" id="bone-axes-edit"${axAim ? '' : ' disabled'}
-        title="Rotate this joint's axes with the gizmo (Transform, Edit Axes on)">Edit Axes</button>
+        title="Rotate this joint's axes with the gizmo (Transform, Adjust Pivot on)">Edit Axes</button>
       <button class="${c.toggle}" id="bone-axes-auto"${axAim && axAim._axisQuat ? '' : ' disabled'}
         title="Back to the axes guessed from the chain">Auto</button>
     </div>`;

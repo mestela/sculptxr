@@ -32,7 +32,7 @@ check('a press in the mode takes a handle or does nothing', /if \(this\._pinPose
 check('candidates are pins, every joint and keyed props (no skin)', /poseCandidates\(main\)/.test(XF) && /poseTarget\(node, bone, owned\)/.test(XF) && /isPoseProp\(main, hit\)/.test(XF));
 check('a free joint offers rotate only; an owned joint moves (IK drag)', /return this\._owned\(\)\.has\(m\.getID\(\)\) \? GIZMO_SETS\.MOVE : GIZMO_SETS\.TURN;/.test(XF));
 check('an owned joint\'s drag is an IK solve with one rig undo', /IKSolver\.solve\(this\._main, mesh, new THREE\.Vector3/.test(XF) && /_liveWriteFn = \(mesh, i, em\) => this\._axesWrite\(mesh, i, em\) \|\| this\._ikDragWrite/.test(XF) && /'Pose'\);/.test(XF));
-check('Edit Axes: the rings turn the joint\'s axes, stored as its hand-laid frame', /if \(this\._editAxesOn\(m\)\) return GIZMO_SETS\.TURN;/.test(XF) && /Skeleton\.setAxisOverride\(mesh, quat\.normalize\(q, q\)\)/.test(XF));
+check('Edit Axes: the rings turn the joint\'s axes, stored as its hand-laid frame', /if \(this\._editAxesOn\(m\)\) return Skeleton\.isJoint\(m\) \? GIZMO_SETS\.TURN : GIZMO_SETS\.MOVE_TURN;/.test(XF) && /Skeleton\.setAxisOverride\(mesh, quat\.normalize\(q, q\)\)/.test(XF));
 check('the old target\'s handle does not survive onto a new target', /sg\._isSelected = false; this\._gizmo\._selected = null;/.test(XF));
 check('it only drops a selection it made itself, and only once the cursor leaves the gizmo', /if \(this\._ppAuto && sel\.length === 1 && sel\[0\] === this\._ppAuto && !this\._cursorNearGizmo\(\)( && !window\._xfEditAxes)?\)/.test(XF));
 check('selection changes keep the tool (no tool-context switch)', /main\.setMesh\(node, true\)/.test(XF) && /main\.setMesh\(null, true\)/.test(XF));

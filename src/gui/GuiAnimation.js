@@ -401,7 +401,7 @@ class GuiAnimation {
   }
 
   record() {
-    window._animationRegistry?.toggleRecord?.(this._main.getMesh());
+    window._animationRegistry?.toggleRecord?.(this._main.getKeyTarget());
   }
 
   clearAll() {
@@ -421,7 +421,7 @@ class GuiAnimation {
 
   addKeyframe() {
     if (!window._animationRegistry) return;
-    let targetMesh = this._main.getMesh();
+    let targetMesh = this._main.getKeyTarget();
     if (!targetMesh) return;
     
     const reg = window._animationRegistry;
@@ -459,7 +459,7 @@ class GuiAnimation {
     } else {
       // Everything selected, as ONE key set (its undo is the whole-registry snapshot pair below,
       // so the per-set undo is suppressed).
-      const _selAll = this._main.getSelectedMeshes?.() || [];
+      const _selAll = this._main.getKeyTargets();
       if (_selAll.length > 1) {
         const n = window._animationRegistry.addKeysForMeshes(_selAll, targetTime, 'transform', false);
         actionName = 'add transform keys';
@@ -505,7 +505,7 @@ class GuiAnimation {
 
   deleteKey() {
     if (!window._animationRegistry) return;
-    let targetMesh = this._main.getMesh();
+    let targetMesh = this._main.getKeyTarget();
     if (!targetMesh) return;
 
     // ONE undo step, and it is the registry's: every branch ends in deleteSelectedKeys, which

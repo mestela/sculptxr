@@ -18,11 +18,12 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 check('there is a resolver', /_graphMesh\(\) \{/.test(code));
 check('and a setter', /_setGraphTarget\(meshId\) \{/.test(code));
 
-// EXACTLY ONE getMesh() may survive: the fallback inside the resolver. Any other is a graph
-// path still reading the scene selection, which is the bug — and it would be invisible, since
-// the two agree whenever you happen to have the right object selected.
+// NO getMesh() may survive: the resolver's fallback reads the KEY TARGET (the selection, or in
+// Pose Mode what the cursor rested on). Any getMesh() is a graph path still reading the scene
+// selection, which is the bug — and it would be invisible, since the two agree whenever you
+// happen to have the right object selected.
 const direct = (code.match(/this\._main\.getMesh\(\)/g) || []).length;
-check('only the resolver still reads the scene selection', direct === 1,
+check('only the resolver still reads the scene selection', direct === 0,
   `${direct} direct reads; every graph path must go through _graphMesh()`);
 // A MINIMUM, not an exact count. Pinned at exactly 8 this broke the moment a legitimate new
 // caller was added (the graph's own name label) — a test asserting a tally rather than the

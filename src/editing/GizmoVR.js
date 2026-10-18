@@ -460,18 +460,10 @@ class GizmoVR {
     const center = [0.0, 0.0, 0.0];
 
     if (meshes.length > 0) {
-      const acc = [0.0, 0.0, 0.0];
-      const icenter = [0.0, 0.0, 0.0];
-      for (let i = 0; i < meshes.length; ++i) {
-        const mesh = meshes[i];
-        vec3.transformMat4(icenter, mesh.getCenter(), mesh.getEditMatrix());
-        // Anchor in MODEL space (== getMatrix() for a top-level mesh) so the gizmo
-        // sits on a parented child instead of landing tiny near the world origin.
-        const _mm = mesh.getModelSpaceMatrix ? mesh.getModelSpaceMatrix() : mesh.getMatrix();
-        vec3.transformMat4(icenter, icenter, _mm);
-        vec3.add(acc, acc, icenter);
-      }
-      vec3.scale(center, acc, 1.0 / meshes.length);
+      // THE SAME CENTRE THE DRAGS ARE MEASURED FROM. This was a copy of _computeCenterGizmo, so a
+      // tool's centre (Adjust Pivot's pivot) moved the drag and the axis sticks but not the drawn
+      // gizmo: the arrows sat on the bounding box and a pivot move looked like it did nothing.
+      this._computeCenterGizmo(center);
     } else if (window.debugGizmoAttach === 'controller') {
       // Controller Attach Mode
       const main = this._main;
@@ -881,6 +873,9 @@ class GizmoVR {
     if (meshes.length === 0 && this._main.getMesh() && !this._main.getMesh()._selectLocked) {
       meshes = [this._main.getMesh()];
     }
+    // A tool may put the gizmo elsewhere for one node (Transform's Adjust Pivot: on the pivot).
+    const at = meshes.length === 1 && this._centerFn ? this._centerFn(meshes[0]) : null;
+    if (at) return vec3.copy(center, at);
     const acc = [0.0, 0.0, 0.0];
     const icenter = [0.0, 0.0, 0.0];
     for (let i = 0; i < meshes.length; ++i) {

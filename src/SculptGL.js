@@ -1817,6 +1817,8 @@ class SculptGL extends Scene {
 
   onMouseOut(event) {
     this._focusGui = true;
+    // Leaving the canvas is moving on: a joint the cursor exited across must not count as rested on.
+    this._sculptManager?.getCurrentTool?.()?._noteRest?.(null);
     this._gui.callFunc('onMouseOut', event);
     this.onMouseUp(event);
   }
