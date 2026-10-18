@@ -1,5 +1,6 @@
 import TR from './GuiTR.js';
 import Enums from '../misc/Enums.js';
+import { isUndo, isRedo } from '../misc/cmdKey.js';
 import StateManager from '../states/StateManager.js';
 
 class GuiTablet {
@@ -47,10 +48,10 @@ class GuiTablet {
       event.preventDefault();
 
     var key = event.which;
-    if (event.ctrlKey && key === 90) { // z key
+    if (isUndo(event)) {
       this.onUndo();
       event.handled = true;
-    } else if (event.ctrlKey && key === 89) { // y key
+    } else if (isRedo(event)) {
       this.onRedo();
       event.handled = true;
     }

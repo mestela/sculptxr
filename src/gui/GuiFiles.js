@@ -12,6 +12,7 @@ import Rtt from '../drawables/Rtt.js';
 import ShaderPaintUV from '../render/shaders/ShaderPaintUV.js';
 import ShaderBlur from '../render/shaders/ShaderBlur.js';
 import Enums from '../misc/Enums.js';
+import { cmdKey } from '../misc/cmdKey.js';
 
 class GuiFiles {
 
@@ -741,15 +742,15 @@ class GuiFiles {
       event.preventDefault();
 
     var key = event.which;
-    if (event.ctrlKey && event.altKey && key === 78) { // N
+    if (cmdKey(event) && event.altKey && key === 78) { // N
       this._main.clearScene();
       event.handled = true;
 
-    } else if (event.ctrlKey && (key === 79 || key === 73)) { // O or I
+    } else if (cmdKey(event) && (key === 79 || key === 73)) { // O or I
       this.addFile();
       event.handled = true;
 
-    } else if (event.ctrlKey && key === 69) { // E
+    } else if (cmdKey(event) && key === 69) { // E
       this.saveFileAsOBJ();
       event.handled = true;
     }

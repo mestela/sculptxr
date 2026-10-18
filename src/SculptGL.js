@@ -7,6 +7,7 @@ import Enums from './misc/Enums.js';
 import getOptionsURL from './misc/getOptionsURL.js';
 import Skeleton from './editing/Skeleton.js';
 import Utils from './misc/Utils.js';
+import { cmdKey } from './misc/cmdKey.js';
 import Scene from './Scene.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import SecondaryAction from './editing/SecondaryAction.js';
@@ -1479,7 +1480,7 @@ class SculptGL extends Scene {
     // Timeline key clipboard (desktop): Ctrl/Cmd+C copy selected key(s), Ctrl/Cmd+V paste
     // at the playhead, +Shift = paste-linked (reserved for frame keys). Skipped while
     // typing in a field so it doesn't hijack normal text copy/paste.
-    if (!_typing && (e.ctrlKey || e.metaKey)) {
+    if (!_typing && cmdKey(e)) {
       const _tl = this._gui?._ctrlTimeline;
       const _kc = (e.key || '').toLowerCase();
       // With keys selected this is the key clipboard anywhere; with none it is the POSE clipboard,
@@ -1512,7 +1513,7 @@ class SculptGL extends Scene {
     }
 
     // [SPECTATOR MATRIX] Cycle Modes
-    if (e.which === 68) { // 'D'
+    if (e.which === 68 && !e.ctrlKey && !e.metaKey) { // 'D' (bare -- Cmd/Ctrl+D duplicates)
       this._spectatorMode = (this._spectatorMode + 1) % 4;
       const modeNames = ["VR View (Mirror)", "DESKTOP", "TRACKED", "STATIONARY (Desktop 6DOF)"];
       if (window.screenLog) window.screenLog(`Spectator Mode: ${modeNames[this._spectatorMode]}`, "lime");

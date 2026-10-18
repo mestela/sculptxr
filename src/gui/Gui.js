@@ -15,6 +15,7 @@ import BlendshapePad from './BlendshapePad.js';
 import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
+import { cmdKey, isUndo, isRedo } from '../misc/cmdKey.js';
 import {
   buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_camera, buildSectionHTML_topology, buildSectionHTML_sculpting,
   buildSectionHTML_properties, sectionHeaderHTML, SECTION_LABELS,
@@ -181,7 +182,7 @@ class Gui {
         event.stopPropagation();
         if (!main._focusGui) event.preventDefault();
 
-        if (event.which === 73 && !event.ctrlKey) {               // I — isolate toggle
+        if (event.which === 73 && !event.ctrlKey && !event.metaKey) { // I — isolate toggle
           event.handled = true;
           const meshes = main.getMeshes?.() ?? [];
           const hasHidden = meshes.some(m => !m.isVisible?.());
@@ -206,7 +207,7 @@ class Gui {
           if (gui._desktopSceneEl) gui._buildDesktopScene(gui._desktopSceneEl);
           gui.refreshFloatingSections?.();
 
-        } else if (event.which === 68 && event.ctrlKey) {         // Ctrl+D — duplicate
+        } else if (event.which === 68 && cmdKey(event)) {         // Cmd/Ctrl+D — duplicate
           event.handled = true;
           main.duplicateSelection?.();
         }
@@ -220,11 +221,11 @@ class Gui {
         event.stopPropagation();
         if (!main._focusGui) event.preventDefault();
         const key = event.which;
-        if (event.ctrlKey && key === 90) {                        // Ctrl+Z — undo
+        if (isUndo(event)) {                                      // Cmd/Ctrl+Z — undo
           event.handled = true;
           main._action = Enums.Action.NOTHING;
           main.undo?.();
-        } else if (event.ctrlKey && key === 89) {                 // Ctrl+Y — redo
+        } else if (isRedo(event)) {                               // Cmd/Ctrl+Y, Cmd/Ctrl+Shift+Z — redo
           event.handled = true;
           main.redo?.();
         }
@@ -678,7 +679,7 @@ class Gui {
     // Wireframe keyboard shortcut
     ctrls[idc++] = {
       onKeyUp(event) {
-        if (getOptionsURL.getShortKey(event.which) === Enums.KeyAction.WIREFRAME && !event.ctrlKey) {
+        if (getOptionsURL.getShortKey(event.which) === Enums.KeyAction.WIREFRAME && !event.ctrlKey && !event.metaKey) {
           const mesh = main.getMesh();
           if (!mesh) return;
           const next = !mesh.getShowWireframe?.();
