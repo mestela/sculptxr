@@ -31,9 +31,9 @@ export const XF_GROUPS = ['pos', 'rot', 'scale', 'weight'];
 export function xfVisible() {
   const v = window._animXfVisible;
   if (Array.isArray(v) && v.length) return v.filter((g) => XF_GROUPS.includes(g));
-  // Nothing chosen yet: whatever the old single-group setting said, so an existing session and
-  // an existing saved layout both open on the group they were last left on.
-  return [xfGroup()];
+  // Nothing chosen yet: translate, rotate and scale (matt, 2026-10-19: "the TRS buttons ... should
+  // be enabled by default"). Weight stays off -- it is only a pin's.
+  return ['pos', 'rot', 'scale'];
 }
 
 export function xfIsVisible(g) { return xfVisible().indexOf(g) >= 0; }

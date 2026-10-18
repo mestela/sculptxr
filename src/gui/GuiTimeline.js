@@ -2,7 +2,7 @@ import TimelineHelper from './TimelineHelper.js';
 import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
          XF_GROUPS, xfVisible, xfIsVisible, xfToggleVisible,
          xfWeightTrack, xfChanVisible, xfSetChanVisible,
-         xfTimes, xfKeyed, xfKeyedSlots, xfSegEval, xfEval, xfBit, xfGroupBits, maskSync, XF_ALL,
+         xfTimes, xfKeyed, xfKeyedSlots, xfSlope, xfSegEval, xfEval, xfBit, xfGroupBits, maskSync, XF_ALL,
          xfPruneEmpty, xfRefreshDerived, posRef } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
@@ -3033,77 +3033,32 @@ export default class GuiTimeline {
           }
         }
 
-        // Draw Tangent Handles for Position Keys
+        // TANGENT HANDLES on every key of every curve the graph is showing (matt, 2026-10-19: "i
+        // have to keep selecting and deselecting keys to see all the tangents appear"). It used to
+        // draw one channel's handles on every track -- the channel of whatever single key was
+        // selected, even on another object -- so they hung on hidden curves or went missing. Where
+        // they sit is _xfHandles, shared with the pick.
         if (window._animShowTangents) {
-          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
-
-          ctx.strokeStyle = Theme.subtext; // Revert to gray!
+          ctx.strokeStyle = Theme.subtext;
           ctx.lineWidth = 1.5;
-
-          // Handles belong to the SELECTED key's group -- reading them ungrouped is the bug
-          // that put a translation tangent on the scale curve.
-          const selGrp = (singleSelected && singleSelected.group) || xfGroup();
-          const _tks = xfKeyedSlots(track, selGrp, selChannel);
-          for (let _k = 0; _k < _tks.length; _k++) {
-            const i = _tks[_k];
-            const t = track.times[i];
-            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-            const _prevT = _k > 0 ? track.times[_tks[_k - 1]] : null;
-            const _nextT = _k < _tks.length - 1 ? track.times[_tks[_k + 1]] : null;
-            const val = xfRead(track, i, selChannel, selGrp);
-            const ky = this.valueToY(val);
-
-            const rightDt = xfTanGet(track, `${i}_right_dt`, selGrp);
-            const rightDv = xfTanGet(track, `${i}_right_dv_${selChannel}`, selGrp);
-            const leftDt = xfTanGet(track, `${i}_left_dt`, selGrp);
-            const leftDv = xfTanGet(track, `${i}_left_dv_${selChannel}`, selGrp);
-
-            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel, selGrp) : 0;
-            const dt_right = _nextT !== null ? _nextT - t : 0.2;
-            const dt_left = _prevT !== null ? t - _prevT : 0.2;
-
-            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
-            const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * this._zoomY;
-            
-            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
-            const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * this._zoomY;
-
-            // Draw right handle
-            if (_nextT !== null) {
+          for (const k of this._xfHandleKeys(track, id)) {
+            const h = this._xfHandles(track, k, normR, tlX, tlW, loopStart, visibleDuration);
+            if (!h) continue;
+            for (const side of ['right', 'left']) {
+              const p = h[side];
+              if (!p) continue;
               ctx.beginPath();
-              ctx.moveTo(kx, ky);
-              ctx.lineTo(kx + rightXOff, ky + rightYOff);
+              ctx.moveTo(h.key[0], h.key[1]);
+              ctx.lineTo(p[0], p[1]);
               ctx.stroke();
-              
-              const isRightHovered = TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, this._lastMouseX, this._lastMouseY, 10);
-              const isRightActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'right';
-
-              if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
-              else if (isRightHovered) ctx.fillStyle = '#00ffff'; // Cyan
-              else ctx.fillStyle = Theme.subtext; // Gray
-              
+              const active = this._isDraggingTangent && this._activeTangentType === 'transform'
+                && this._activeTangentTrack === track && this._activeTangentIndex === h.i
+                && this._activeTangentSide === side && this._activeTangentKey?.group === h.grp
+                && this._activeTangentKey?.channel === h.c;
+              ctx.fillStyle = active ? '#ffff00'
+                : (TimelineHelper.isKeyHovered(p[0], p[1], this._lastMouseX, this._lastMouseY, 10) ? '#00ffff' : Theme.subtext);
               ctx.beginPath();
-              ctx.arc(kx + rightXOff, ky + rightYOff, 2.5, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            
-            // Draw left handle
-            if (_prevT !== null) {
-              ctx.beginPath();
-              ctx.moveTo(kx, ky);
-              ctx.lineTo(kx + leftXOff, ky + leftYOff);
-              ctx.stroke();
-              
-              const isLeftHovered = TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, this._lastMouseX, this._lastMouseY, 10);
-              const isLeftActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'left';
-
-              if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
-              else if (isLeftHovered) ctx.fillStyle = '#00ffff'; // Cyan
-              else ctx.fillStyle = Theme.subtext; // Gray
-              
-              ctx.beginPath();
-              ctx.arc(kx + leftXOff, ky + leftYOff, 2.5, 0, Math.PI * 2);
+              ctx.arc(p[0], p[1], 2.5, 0, Math.PI * 2);
               ctx.fill();
             }
           }
@@ -4066,67 +4021,29 @@ export default class GuiTimeline {
       if (found) return;
     }
 
-    // Check Position Key Tangents
-    if (track.times && window._animShowTangents) {
-      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-      const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
-
-      const _selGrp2 = (window._animSelectedKeys && window._animSelectedKeys.length === 1
-        && window._animSelectedKeys[0].group) || xfGroup();
-      const _tks = xfKeyedSlots(track, _selGrp2, selChannel);
-      for (let _k = 0; _k < _tks.length; _k++) {
-        const i = _tks[_k];
-        const t = track.times[i];
-        const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-        const _prevT = _k > 0 ? track.times[_tks[_k - 1]] : null;
-        const _nextT = _k < _tks.length - 1 ? track.times[_tks[_k + 1]] : null;
-        const val = xfRead(track, i, selChannel, _selGrp2);
-        const ky = this.valueToY(val);
-
-        // Both sides grouped, as the draw reads them. The left side used to read the legacy
-        // ungrouped key, so it could only be picked where the old key had put it.
-        const rightDt = xfTanGet(track, `${i}_right_dt`, _selGrp2);
-        const rightDv = xfTanGet(track, `${i}_right_dv_${selChannel}`, _selGrp2);
-        const leftDt = xfTanGet(track, `${i}_left_dt`, _selGrp2);
-        const leftDv = xfTanGet(track, `${i}_left_dv_${selChannel}`, _selGrp2);
-
-        const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel, _selGrp2) : 0;
-        const dt_right = _nextT !== null ? _nextT - t : 0.2;
-        const dt_left = _prevT !== null ? t - _prevT : 0.2;
-
-        const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
-        const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * this._zoomY;
-        
-        const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
-        const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * this._zoomY;
-
-        // Check right handle
-        if (_nextT !== null) {
-          if (TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 10)) {
-            this._isDraggingTangent = true;
-            this._activeTangentTrack = track;
-            this._activeTangentIndex = i;
-            this._activeTangentSide = 'right';
-            this._activeTangentKx = kx;
-            this._activeTangentKy = ky;
-            this._activeTangentType = 'transform';
-            return;
-          }
+    // Check Position Key Tangents: every handle the draw shows, on every object in the graph.
+    if (window._animShowTangents) {
+      for (const m of this._graphMeshes()) {
+       const tr = reg.tracks.get(m.getID());
+       if (!tr || tr.muted) continue;
+       const normR = this._xfNormRanges(tr);
+       for (const k of this._xfHandleKeys(tr, m.getID())) {
+        const h = this._xfHandles(tr, k, normR, tlX, tlW, loopStart, visibleDuration);
+        if (!h) continue;
+        for (const side of ['right', 'left']) {
+          const p = h[side];
+          if (!p || !TimelineHelper.isKeyHovered(p[0], p[1], rx, ry, 10)) continue;
+          this._isDraggingTangent = true;
+          this._activeTangentTrack = tr;
+          this._activeTangentIndex = h.i;
+          this._activeTangentSide = side;
+          this._activeTangentKx = h.key[0];
+          this._activeTangentKy = h.key[1];
+          this._activeTangentType = 'transform';
+          this._activeTangentKey = { type: 'transform', group: h.grp, channel: h.c, norm: this._xfNorm() ? normR?.[h.grp] : null };
+          return;
         }
-        
-        // Check left handle
-        if (_prevT !== null) {
-          if (TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 10)) {
-            this._isDraggingTangent = true;
-            this._activeTangentTrack = track;
-            this._activeTangentIndex = i;
-            this._activeTangentSide = 'left';
-            this._activeTangentKx = kx;
-            this._activeTangentKy = ky;
-            this._activeTangentType = 'transform';
-            return;
-          }
-        }
+       }
       }
     }
 
@@ -4374,7 +4291,52 @@ export default class GuiTimeline {
     return out;
   }
 
+  // Every key of every transform curve the graph is showing on object `id`, as graph keys.
+  _xfHandleKeys(track, id) {
+    const out = [];
+    for (const g of ['pos', 'rot', 'scale']) {
+      if (!xfIsVisible(g)) continue;
+      for (let c = 0; c < 3; c++) {
+        if (!xfChanVisible(g, c)) continue;
+        for (const i of xfKeyedSlots(track, g, c)) out.push({ meshId: id, type: 'transform', index: i, group: g, channel: c });
+      }
+    }
+    return out;
+  }
+
+  // WHERE A TRANSFORM KEY'S TANGENT HANDLES ARE, for the draw and the pick alike: each end is the
+  // curve's own Bezier control point -- the override if there is one, else the slope and a third
+  // of the interval that xfSegEval uses -- mapped as the curves are (_valY, Normalise included).
+  // The draw used to put an untouched handle 25px out with a height from a time-based slope, so it
+  // pointed off the curve until a drag wrote a real override and it "jumped" into place.
+  _xfHandles(track, k, normR, tlX, tlW, loopStart, visibleDuration) {
+    const grp = k.group || 'pos', c = k.channel ?? 0, i = k.index;
+    const ks = xfKeyedSlots(track, grp, c), at = ks.indexOf(i);
+    if (at < 0) return null;
+    const T = track.times, t = T[i], val = xfRead(track, i, c, grp), s = xfSlope(track, grp, c, i);
+    const X = (tt) => tlX + ((tt - loopStart) / visibleDuration) * tlW;
+    const end = (side, nb) => {
+      if (nb < 0) return null;
+      const dtO = xfTanGet(track, `${i}_${side}_dt`, grp), dvO = xfTanGet(track, `${i}_${side}_dv_${c}`, grp);
+      const dt = dtO !== undefined ? dtO : (T[nb] - t) * 0.33;
+      const dv = dvO !== undefined ? dvO : s * dt;
+      return [X(t + dt), this._valY(val + dv, grp, normR)];
+    };
+    return { grp, c, i, key: [X(t), this._valY(val, grp, normR)],
+      right: end('right', at < ks.length - 1 ? ks[at + 1] : -1), left: end('left', at > 0 ? ks[at - 1] : -1) };
+  }
+
   _graphMesh() {
+    // A NEW SELECTION MADE ELSEWHERE RETARGETS THE GRAPH. The id pinned by a row or curve click
+    // otherwise outlived it: matt, 2026-10-19: "i select the jaw bone, the graph editor doesn't
+    // update; i have to go to the dopesheet, select the jaw, then back". A row click selects the
+    // same object it pins, so it is unaffected.
+    const _sel = this._main.getKeyTarget();
+    const _selId = _sel ? _sel.getID() : null;
+    if (_selId !== this._graphSeenSelId) {
+      this._graphSeenSelId = _selId;
+      if (_selId != null && this._graphMeshId != null && _selId !== this._graphMeshId) this._graphMeshId = null;
+    }
     const id = this._graphMeshId;
     if (id != null) {
       const m = this._main._meshes?.find((x) => x.getID() === id);
@@ -6828,8 +6790,11 @@ export default class GuiTimeline {
         index: this._activeTangentIndex
       };
       const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-      
-      TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, this._zoomY, singleSelected);
+      // A transform handle is its OWN key's group and channel, and with Normalise on the screen is
+      // in -1..1 units: a pixel is half-range / zoomY of the raw value.
+      const ak = activeTangent.type === 'transform' ? this._activeTangentKey : null;
+      const zY = ak?.norm ? this._zoomY / ak.norm.half : this._zoomY;
+      TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, zY, ak || singleSelected);
       
       this.draw();
     } else if (this._activeTransformHandle === 'top' || this._activeTransformHandle === 'bottom') {
