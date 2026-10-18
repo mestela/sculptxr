@@ -4376,9 +4376,10 @@ export default class GuiTimeline {
     if (track.times && track.times.length > 0) {
       for (const grp of xfVisible()) {
         if (grp === 'weight') continue;
-        for (let i = 0; i < track.times.length; i++) {
-          for (let c = 0; c < 3; c++) {
-            if (!xfChanVisible(grp, c)) continue;
+        for (let c = 0; c < 3; c++) {
+          if (!xfChanVisible(grp, c)) continue;
+          // Its KEYS only: an unkeyed slot holds a value derived for another channel's key.
+          for (const i of xfKeyedSlots(track, grp, c)) {
             const val = xfRead(track, i, c, grp);
             if (typeof val !== 'number' || !isFinite(val)) continue;
             if (val < minVal) minVal = val;
@@ -4438,44 +4439,41 @@ export default class GuiTimeline {
       this._panY = -midVal * this._zoomY;
     }
 
-    // Horizontal Auto-Fit
+    // HORIZONTAL: the keys of the curves on show, and only those (matt, 2026-10-19: "only the
+    // rotateY channel visible, keyframed on a subset of the scene time, it should be expanded
+    // horizontally to fill the graph"). It took every slot of the object and then widened the view
+    // to the whole loop range, so it could never zoom in.
     let minT = Infinity;
     let maxT = -Infinity;
-    
-    const anyTransformVisible = channelsVisible[0] || channelsVisible[1] || channelsVisible[2];
-    
+    const span = (times) => { for (const t of times) { if (t < minT) minT = t; if (t > maxT) maxT = t; } };
     for (const track of _tracks) {
-    if (anyTransformVisible && track.times && track.times.length > 0) {
-      minT = Math.min(minT, track.times[0]);
-      maxT = Math.max(maxT, track.times[track.times.length - 1]);
-    }
-    
-    if (channelsVisible[3] && track.shapeTimes && track.shapeTimes.length > 0) {
-      minT = Math.min(minT, track.shapeTimes[0]);
-      maxT = Math.max(maxT, track.shapeTimes[track.shapeTimes.length - 1]);
-    }
-
-    if (track.blendshapeTracks) {
-      track.blendshapeTracks.forEach((bTrack) => {
-        if (bTrack.times && bTrack.times.length > 0) {
-          minT = Math.min(minT, bTrack.times[0]);
-          maxT = Math.max(maxT, bTrack.times[bTrack.times.length - 1]);
+      if (track.times && track.times.length > 0) {
+        for (const grp of xfVisible()) {
+          if (grp === 'weight') continue;
+          for (let c = 0; c < 3; c++) {
+            if (xfChanVisible(grp, c)) span(xfKeyedSlots(track, grp, c).map((i) => track.times[i]));
+          }
         }
-      });
+      }
+      if (xfIsVisible('weight')) { const wT = xfWeightTrack(track); if (wT) span(wT.times); }
+      if (channelsVisible[3] && track.shapeTimes && track.shapeTimes.length > 0) span(track.shapeTimes);
+      if (track.blendshapeTracks) {
+        track.blendshapeTracks.forEach((bTrack, name) => {
+          if (window._animBsChannelVisible?.[name] !== false && bTrack.times) span(bTrack.times);
+        });
+      }
     }
 
+    if (minT !== Infinity) {
+      // A margin either side; one key (or keys a frame apart) gets a few frames around it.
+      const fps = window._animFPS || 24;
+      const duration = Math.max(maxT - minT, 4 / fps);
+      const mid = (minT + maxT) / 2;
+      this._viewDuration = duration * 1.2;
+      this._viewStart = mid - this._viewDuration / 2;
+      return true;
     }
-
-    if (minT !== Infinity && maxT !== Infinity) {
-      const duration = maxT - minT;
-      const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-      const ls = window._animLoopStart ?? 0;
-      const le = window._animLoopEnd ?? mDur;
-      this._viewStart    = Math.min(ls, Math.max(0, minT - duration * 0.1));
-      // Never show less than 1s or the loop range — prevents "stuck at frames 1-2"
-      // when all keys are tightly clustered near t=0.
-      this._viewDuration = Math.max(le - ls, duration * 1.2, 1.0);
-    }
+    return false;
   }
 
   setVisibility(visible) {
@@ -4801,8 +4799,11 @@ export default class GuiTimeline {
   //
   // Auto-fits Y to the value range and X to the loop range. The one-second floor stops a tiny
   // loop range, or tightly clustered keys, zooming the view in to two frames.
+  // In the graph, the keys of the curves on show (autoFitGraph); the whole loop range only in the
+  // dopesheet, or when there are no keys to frame. It always overwrote the graph's time range
+  // with the loop range, so Fit All fitted the values and never the time.
   fitAll() {
-    this.autoFitGraph();
+    if (this.autoFitGraph() && this._mode === 'graph') return;
     const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
     const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
     const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
