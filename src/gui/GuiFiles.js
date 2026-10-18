@@ -240,6 +240,7 @@ class GuiFiles {
     // Pull voxel-frame fields out of the worker (compressed) so exportSGL can embed them.
     if (this._main._frameGroup) await this._main._frameGroup.prepareFieldsForSave(meshes);
     this._save(Export.exportSGL(meshes, this._main), this._exportFileName(baseName, 'sxr'));
+    this._main.getStateManager().markSaved();
     this._main._frameGroup?.clearSaveFields?.();
   }
 
@@ -257,6 +258,7 @@ class GuiFiles {
 
     if (this._main._frameGroup) await this._main._frameGroup.prepareFieldsForSave(meshes);
     const blob = Export.exportSGL(meshes, this._main);
+    this._main.getStateManager().markSaved();
     const timestamp = Date.now();
     const reuse = overwrite && this._currentSaveKey
       && (this._browserSaves || []).some((sv) => (sv.key ?? sv.id) === this._currentSaveKey)

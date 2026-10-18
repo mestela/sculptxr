@@ -16,6 +16,10 @@ class StateManager {
     this._undos = []; // undo actions
     this._redos = []; // redo actions
     this._curUndoIndex = -1; // current index in undo
+    this._savedState = undefined; // the undo entry current at the last save/load (undefined = empty stack)
+    // Closing the tab with unsaved edits asks first, like any other editor. "Unsaved" = the undo
+    // position moved since the last save or load, so undoing back to the saved state counts as clean.
+    window.addEventListener('beforeunload', (e) => { if (this.isDirty()) e.preventDefault(); });
     const defaultLimit = /OculusBrowser/.test(navigator.userAgent) ? 15 : 50;
     try { const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}'); this.limit = s.maxUndo || defaultLimit; } catch (_) { this.limit = defaultLimit; }
   }
@@ -190,7 +194,11 @@ class StateManager {
     this._undos.length = 0;
     this._redos.length = 0;
     this._curUndoIndex = -1;
+    this._savedState = undefined;
   }
+
+  markSaved() { this._savedState = this.getCurrentState(); }
+  isDirty() { return this.getCurrentState() !== this._savedState; }
 
   cleanNoop() {
     while (this._curUndoIndex >= 0 && this.getCurrentState().isNoop()) {
