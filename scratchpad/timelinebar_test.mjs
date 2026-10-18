@@ -55,7 +55,7 @@ function defs({ width = 900, mode = 'dope', audio = false, muted = false }) {
     _audioTrack: audio ? { hasClip: () => true, isMuted: () => muted } : undefined,
     _animLoopEnabled: true, _animFPS: 24, _animPlaybackSpeed: 1,
   };
-  return build.call({ _mode: mode, _cssWidth: width });
+  return build.call({ _mode: mode, _cssWidth: width, _tieKeys: () => [] });
 }
 
 // --- cases ---------------------------------------------------------------------------------

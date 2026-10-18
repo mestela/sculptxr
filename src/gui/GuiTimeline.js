@@ -2969,7 +2969,7 @@ export default class GuiTimeline {
             else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
             else ctx.fillStyle = Theme.subtext; // Gray
 
-            const isTied = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_tied`] !== false : true;
+            const isTied = xfTanGet(track, `${i}_tied`, grp) !== false;   // this group's flag
             ctx.beginPath();
             if (isTied) {
               ctx.arc(x, y, KEY_R, 0, Math.PI * 2);
@@ -3055,11 +3055,19 @@ export default class GuiTimeline {
                 && this._activeTangentTrack === track && this._activeTangentIndex === h.i
                 && this._activeTangentSide === side && this._activeTangentKey?.group === h.grp
                 && this._activeTangentKey?.channel === h.c;
-              ctx.fillStyle = active ? '#ffff00'
+              const col = active ? '#ffff00'
                 : (TimelineHelper.isKeyHovered(p[0], p[1], this._lastMouseX, this._lastMouseY, 10) ? '#00ffff' : Theme.subtext);
-              ctx.beginPath();
-              ctx.arc(p[0], p[1], 2.5, 0, Math.PI * 2);
-              ctx.fill();
+              // BROKEN: a small hollow square; tied: a filled dot.
+              if (xfTanGet(track, `${h.i}_tied`, h.grp) === false) {
+                ctx.strokeStyle = col;
+                ctx.strokeRect(p[0] - 3, p[1] - 3, 6, 6);
+                ctx.strokeStyle = Theme.subtext;
+              } else {
+                ctx.fillStyle = col;
+                ctx.beginPath();
+                ctx.arc(p[0], p[1], 2.5, 0, Math.PI * 2);
+                ctx.fill();
+              }
             }
           }
         }
@@ -4291,6 +4299,22 @@ export default class GuiTimeline {
     return out;
   }
 
+  // The selected keys' tie flags, one per key (a graph key's group and slot, or a shape/blendshape
+  // key's index), deduped -- a dopesheet key and its graph keys share one flag.
+  _tieKeys() {
+    const reg = window._animationRegistry, seen = new Set(), out = [];
+    for (const k of (window._animSelectedKeys || [])) {
+      const tr = reg?.tracks.get(k.meshId);
+      if (!tr || k.index === undefined || k.type === 'sr') continue;
+      const flag = `${k.type === 'transform' ? xfTanPrefix(k.group) : ''}${k.index}_tied`;
+      const id = k.meshId + '|' + (k.type === 'blendshape' ? k.name : k.type) + '|' + flag;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ tr, flag });
+    }
+    return out;
+  }
+
   // Every key of every transform curve the graph is showing on object `id`, as graph keys.
   _xfHandleKeys(track, id) {
     const out = [];
@@ -4947,15 +4971,9 @@ export default class GuiTimeline {
     const snapOn = window._animSnapToFrame !== false;
     const reg = window._animationRegistry;
     const sel = window._animSelectedKeys;
-    const single = sel && sel.length === 1 ? sel[0] : null;
-    let isTied = true;
-    if (single && reg) {
-      const tr = reg.tracks.get(single.meshId);
-      if (tr?.tangentOffsets) {
-        const pfx = single.type === 'transform' ? xfTanPrefix(single.group) : '';
-        isTied = tr.tangentOffsets[`${pfx}${single.index}_tied`] !== false;
-      }
-    }
+    const tieKeys = reg ? this._tieKeys() : [];
+    const single = tieKeys.length > 0;   // the button needs a key, one or many
+    const isTied = !single || tieKeys.some((k) => k.tr.tangentOffsets?.[k.flag] !== false);
     const btns = [];
     let bx = 4;
     // Mode toggle — two FA icons
@@ -5128,18 +5146,20 @@ export default class GuiTimeline {
         break;
       }
       case 'tangents-tied': {
-        const reg = window._animationRegistry;
-        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-        if (singleSelected) {
-          const track = reg.tracks.get(singleSelected.meshId);
-          if (track) {
-            if (!track.tangentOffsets) track.tangentOffsets = {};
-            const prefix = singleSelected.type === 'transform' ? xfTanPrefix(singleSelected.group) : '';
-            const key = `${prefix}${singleSelected.index}_tied`;
-            const cur = track.tangentOffsets[key] !== false;
-            track.tangentOffsets[key] = !cur;
-          }
+        // EVERY SELECTED KEY, not just a lone one (matt, 2026-10-19). Any still tied -> break
+        // them all; all broken -> tie them all. One undo step.
+        const keys = this._tieKeys();
+        if (!keys.length) break;
+        const before = this._snapshotTracks();
+        const breakThem = keys.some((k) => k.tr.tangentOffsets?.[k.flag] !== false);
+        for (const k of keys) {
+          if (!k.tr.tangentOffsets) k.tr.tangentOffsets = {};
+          k.tr.tangentOffsets[k.flag] = !breakThem;
         }
+        const after = this._snapshotTracks();
+        this._main.getStateManager().pushStateCustom(
+          () => this._restoreTracksInPlace(before), () => this._restoreTracksInPlace(after),
+          false, breakThem ? 'Break Tangents' : 'Tie Tangents');
         break;
       }
       case 'fit':
