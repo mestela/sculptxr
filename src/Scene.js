@@ -15825,7 +15825,16 @@ class Scene {
     const tl = () => this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
     const hasKeySel = !!(window._animSelectedKeys && window._animSelectedKeys.length);
     const canPaste  = !!(window._animKeyClipboard && window._animKeyClipboard.keys && window._animKeyClipboard.keys.length);
-    const hasObjSel = !!(this.getSelectedMeshes && this.getSelectedMeshes().length);
+    // Does the thing the key commands act on (Timeline: the key target) have any keys at all?
+    const _keyedTrack = (m) => {
+      const tr = window._animationRegistry?.tracks.get(m.getID());
+      if (!tr) return false;
+      if (tr.times?.length || tr.shapeTimes?.length || tr.visTimes?.length) return true;
+      if (tr.shapeLayers?.some((L) => L?.shapeTimes?.length)) return true;
+      return !!tr.blendshapeTracks && [...tr.blendshapeTracks.values()].some((b) => b?.times?.length);
+    };
+    const targetKeyed = (this.getKeyTargets?.() || []).some(_keyedTrack);
+    const clipHasFrames = !!window._animKeyClipboard?.keys?.some((k) => k.type === 'sr');
     const selMesh   = this.getMesh && this.getMesh();
     const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
     // #34: shape-layer multiselect commands (Combine when 2+ selected) — same source as the
@@ -15856,6 +15865,9 @@ class Scene {
     // It does not COMMIT the selection. Opening a menu is not a pick, and `getMesh()` is also
     // the animation target — reselecting as a side effect of pressing B would retarget the
     // timeline without anyone asking.
+    // ONLY THE RIG TOOLS ACT ON BONES (matt, 2026-10-19: in the Brush, right-clicking a bone gave
+    // the whole bone menu, every item dead). Sculpting gets the object commands alone.
+    const rigTool = this._menuIsRigTool();
     const hoveredRoot = Skeleton.hoveredJoint(this);
     const nameRoot = hoveredRoot
       || (selMesh && selMesh._isPinTarget && selMesh._pinnedJoint)
@@ -15892,7 +15904,7 @@ class Scene {
       return kids.length === 1 ? kids[0] : null;
     };
     const splitTarget = this._rigHoverBone || litBelow(nameRoot) || nameRoot;
-    const dissolveTarget = nameRoot;
+    const dissolveTarget = rigTool ? nameRoot : null;   // so Duplicate means the mesh when sculpting
     // TOPOLOGY VERBS BELONG TO THE BONE TOOL. They need bone selection to know which bone you
     // mean, and bone selection is only on in that tool — see BONE_SELECT in Picking for why it
     // cannot be on in Grab. Offering them elsewhere would enable a command whose target the
@@ -15969,7 +15981,7 @@ class Scene {
       // NO ELLIPSIS on anything with a submenu: the chevrons at its rim already say there is
       // more behind it, and saying it twice in two languages is noise. The keyboard wedge does
       // not need dots either -- it is named for what it opens.
-      { label: 'Name chain', icon: 'fa-tag', enabled: !!nameRoot,
+      { label: 'Name chain', icon: 'fa-tag', enabled: !!nameRoot, rig: true,
         sub: () => nameCmds(), run: () => {} },
       // SPLIT AND DISSOLVE act on the joint under the controller first, the selection second —
       // the same rule Name chain uses, because in the headset you are already pointing at the
@@ -15992,7 +16004,7 @@ class Scene {
       // sources -- the hovered SEGMENT, a hovered joint, or the selection -- and which one fired
       // is not recoverable from the result, so it says so. A bone is named by its CHILD end, so
       // the bone that will be cut is `parent -> target`.
-      { label: 'Split bone', icon: 'fa-scissors',
+      { label: 'Split bone', icon: 'fa-scissors', rig: true, boneTool: true,
         enabled: inBoneTool && RigTopology.canSplit(this, splitTarget),
         run: () => {
           const nm = (j) => (j && (j._permanentStaticLabel || j.getID?.())) || String(j);
@@ -16001,7 +16013,7 @@ class Scene {
           RigTopology.split(this, splitTarget);
         } },
       // Dissolve acts on the JOINT, which nameRoot already froze at open for the same reason.
-      { label: 'Dissolve', icon: 'fa-compress',
+      { label: 'Dissolve', icon: 'fa-compress', rig: true, boneTool: true,
         enabled: inBoneTool && RigTopology.canDissolve(this, dissolveTarget),
         run: () => { RigTopology.dissolve(this, dissolveTarget); } },
       // DUPLICATE A CHAIN — draw one finger, duplicate it three times. Acts on the joint under
@@ -16028,10 +16040,12 @@ class Scene {
       // objects — which the bare words did not say, so on a rig they read as a general Copy that
       // never did anything. Named for their subject, and only offered where that subject exists.
       // Keys selected: copy those keys. None: copy the selected objects' POSE.
-      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: hasKeySel || hasObjSel, run: () => tl()?.copyKeysSmart?.() },
-      { label: 'Paste Keys', icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
-      { label: 'Paste Linked', icon: 'fa-link',      enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
-      { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
+      // ONLY WHERE THERE ARE KEYS (matt, 2026-10-19: "they should only appear if the currently
+      // selected mesh/bone has keys"). Like the rig verbs, hidden rather than shown dead.
+      { label: 'Copy Keys',  icon: 'fa-copy',        enabled: true, show: hasKeySel || targetKeyed, run: () => tl()?.copyKeysSmart?.() },
+      { label: 'Paste Keys', icon: 'fa-paste',       enabled: true, show: canPaste && (hasKeySel || targetKeyed), run: () => tl()?.pasteKeys?.(false) },    // at the playhead
+      { label: 'Paste Linked', icon: 'fa-link',      enabled: true, show: canPaste && clipHasFrames && (hasKeySel || targetKeyed), run: () => tl()?.pasteKeys?.(true) },     // linked instance (frame keys)
+      { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: true, show: linked, run: () => this.makeUniqueSelection?.() },// break an instance link
       // DELETE SAYS WHAT IT WILL DELETE. One wedge, but it stood for one thing — selected
       // animation keys — so right-clicking a bone offered a Delete that was about the timeline
       // and, with no keys selected, was simply dead. matt: "if the r.click was on a bone and
@@ -16045,14 +16059,14 @@ class Scene {
       (inBoneTool && dissolveTarget)
         ? { label: 'Delete Bone', icon: 'fa-trash', enabled: true,
             run: () => { this.deleteJointSubtree(dissolveTarget); } }
-        : { label: hasKeySel ? 'Delete Keyframes' : 'Delete', icon: 'fa-trash',
-            enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },
+        : { label: 'Delete Keyframes', icon: 'fa-trash',
+            enabled: true, show: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },
       // Reachable without leaving VR, which is the point: hand tracking grabbing a
       // stroke mid-reach is exactly when you need to switch sculpting off fast.
       // PHYSICS on the joint the menu was opened on, with the last physics settings used (the
       // Bones panel's Physics button, without the panel).
       { label: dissolveTarget && PhysicsBones.isRoot(dissolveTarget) ? 'Physics Off' : 'Physics',
-        icon: 'fa-wind', enabled: !!dissolveTarget,
+        icon: 'fa-wind', enabled: !!dissolveTarget, rig: true,
         run: () => {
           const { on, mirrored } = togglePhysicsBone(this, dissolveTarget, () => this.syncToolPanels?.());
           window.screenLog?.(on ? 'Physics on' + mirrored : 'Physics off' + mirrored, 'cyan');
@@ -16060,7 +16074,9 @@ class Scene {
       { label: window._sculptLocked ? 'Unlock' : 'Sculpt Lock',
         icon: window._sculptLocked ? 'fa-lock' : 'fa-lock-open', enabled: true,
         run: () => { window._sculptLocked = !window._sculptLocked; } },
-    ];
+    // Not shown where they cannot run, rather than shown dead: rig verbs outside the rig tools,
+    // and Split / Dissolve outside the Bones tool (see TOPOLOGY VERBS above).
+    ].filter((c) => (rigTool || !c.rig) && (inBoneTool || !c.boneTool) && c.show !== false);
   }
 
   // DUPLICATE, THEN PLACE IT — one gesture, whatever the subject is. In the headset the copy
@@ -16321,9 +16337,16 @@ class Scene {
   // ONE MENU, NOT TWO. VR has two rings because it has two buttons; a pointer has one gesture, so
   // the second ring becomes a submenu — which is the shape the B ring already uses for Name chain
   // and for pin Weight, so it is a familiar depth rather than a new idea.
+  // The tools whose menu offers the rig: the ones that can pick, pose or edit a bone.
+  _menuIsRigTool() {
+    const i = this._sculptManager?.getToolIndex?.();
+    const T = Enums.Tools;
+    return i === T.BONE_DRAW || i === T.GRAB || i === T.SELECT || i === T.TRANSFORM || i === T.TRANSFORM_VR;
+  }
+
   _resolveViewportMenuCommands() {
     const cmds = this._resolveRadialCommands() || [];
-    const pin = this._resolvePinCommands() || [];
+    const pin = this._menuIsRigTool() ? (this._resolvePinCommands() || []) : [];
     if (!pin.length) return cmds;
     return [{ label: 'Pin', icon: 'fa-thumbtack', enabled: true, sub: () => pin, run: () => {} }]
       .concat(cmds);
@@ -16363,12 +16386,15 @@ class Scene {
     }
     // The joint right under the cursor wins over hover and selection for the PIN commands, for the
     // length of this call only (the commands latch their joint when built). See _jointUnderCursor.
-    this._menuJoint = this._jointUnderCursor();
+    // A sculpting tool's menu is about the mesh, so the joint under the cursor is neither looked
+    // up nor lit (matt, 2026-10-19: in the Brush, right-clicking a bone still highlighted it).
+    const rigTool = this._menuIsRigTool();
+    this._menuJoint = rigTool ? this._jointUnderCursor() : null;
     const cmds = this._resolveViewportMenuCommands();
     // WHAT THE MENU WILL ACT ON, LIT for as long as it is open -- otherwise you are choosing a pin
     // mode for a joint you cannot see named anywhere. matt: "when r.clicked, the nearest bone should
     // highlight, right now its flying blind." Cleared when the menu closes.
-    const target = this._resolvePinJoint();
+    const target = rigTool ? this._resolvePinJoint() : null;
     this._menuJoint = null;
     this._rigHoverBone = _prevHoverBone;
     const opened = this._viewportMenu.open(cmds, clientX, clientY);
