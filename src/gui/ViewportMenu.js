@@ -18,12 +18,19 @@
 // a screen has space to the side and a pointer that can rest on a row without committing to it.
 // matt: "can the submenus open up on hover rather than on click, we have enough space to show
 // them." Clicking a parent opens it too, for anyone who clicks first.
+//
+// THREE MENUS AT MOST. Name chain's set switch ("Limb names" / "Centre names") is a sub inside
+// the sub, and it pops a THIRD menu beside the second instead of swapping the second's contents
+// -- matt: "just pop out a 3rd flying menu." The guessed set stays readable next to the other
+// one. The third menu drops its own parent rows: there the switch would only reopen the set
+// already showing in the second. matt: "we should only need 3 as a max."
+const MAX_DEPTH = 2;   // depth of the last flyout; the root menu is 0
 
 const ID = 'viewport-menu';
 const SUB_ID = 'viewport-menu-sub';
 
 const CSS = `
-#${ID}, #${SUB_ID} {
+#${ID}, .vm-sub {
   /* ABOVE THE PANELS. It was 45, and the sidebar is 1050 with the topbar at 1100 -- so a menu
      opened near the right of the viewport was drawn UNDERNEATH them and simply disappeared.
      matt: "the r.click menu often draws offscreen, under the panel." Above all the chrome and
@@ -36,7 +43,7 @@ const CSS = `
   font: 500 13px/1 system-ui, sans-serif; color: #cdd6f4;
   user-select: none; -webkit-user-select: none;
 }
-#${SUB_ID} { z-index: 1251; }
+.vm-sub { z-index: 1251; }
 .vm-item {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px; border-radius: 5px; cursor: pointer; white-space: nowrap;
@@ -56,7 +63,7 @@ export default class ViewportMenu {
   constructor(main) {
     this._main = main;
     this._el = null;
-    this._sub = null;
+    this._subs = [];   // flyout per depth: [0] beside the root menu, [1] beside that, ...
     this._build();
   }
 
@@ -73,15 +80,22 @@ export default class ViewportMenu {
       return e;
     };
     this._el = mk(ID);
-    // The flyout is a SECOND element sharing the panel styling, so a submenu is never clipped by
+    // Each flyout is its own element sharing the panel styling, so a submenu is never clipped by
     // its parent's box and can be positioned against the window on its own.
-    this._sub = mk(SUB_ID);
+    this._subAt = (i) => {
+      if (!this._subs[i]) {
+        const e = mk(i ? SUB_ID + '-' + i : SUB_ID);
+        e.classList.add('vm-sub');
+        this._subs[i] = e;
+      }
+      return this._subs[i];
+    };
 
     // CLOSE ON ANY PRESS OUTSIDE, captured so it runs before the canvas can start a stroke with
     // the same press — dismissing a menu should not also sculpt.
     document.addEventListener('pointerdown', (e) => {
       if (!this.isOpen()) return;
-      if (this._el.contains(e.target) || this._sub.contains(e.target)) return;
+      if (this._el.contains(e.target) || this._subs.some((s) => s.contains(e.target))) return;
       this.close();
       e.preventDefault();
       e.stopPropagation();
@@ -110,9 +124,11 @@ export default class ViewportMenu {
     if (wasOpen && cb) { try { cb(); } catch (e) { console.warn('[ViewportMenu] onClose', e); } }
   }
 
-  _closeSub() {
-    if (this._sub) this._sub.style.display = 'none';
-    if (this._el) this._el.querySelectorAll('.vm-item.open').forEach((r) => r.classList.remove('open'));
+  // Closes every flyout at `level` and deeper, and unlights the open row in the menu they hang off.
+  _closeSub(level = 0) {
+    for (let i = level; i < this._subs.length; i++) this._subs[i].style.display = 'none';
+    const owner = level ? this._subs[level - 1] : this._el;
+    if (owner) owner.querySelectorAll('.vm-item.open').forEach((r) => r.classList.remove('open'));
   }
 
   // THE ROOM IS THE VIEWPORT, NOT THE WINDOW.
@@ -158,12 +174,11 @@ export default class ViewportMenu {
 
   // Beside its row, flipped to the other side of the PARENT when there is no room — the parent's
   // width is what a flyout has to clear, not the pointer's position.
-  _placeSub(row) {
-    const sub = this._sub;
+  _placeSub(parent, row, sub) {
     sub.style.display = 'block';
     sub.style.left = '0px';
     sub.style.top = '0px';
-    const pr = this._el.getBoundingClientRect();
+    const pr = parent.getBoundingClientRect();
     const rr = row.getBoundingClientRect();
     const sr = sub.getBoundingClientRect();
     const b = this._bounds();
@@ -177,17 +192,21 @@ export default class ViewportMenu {
     sub.style.top = Math.round(top) + 'px';
   }
 
-  _openSub(row, cmds) {
-    if (!cmds || !cmds.length) { this._closeSub(); return; }
-    this._closeSub();
+  // `level` is the depth of the flyout being opened: 0 hangs off the root menu.
+  _openSub(row, cmds, level) {
+    this._closeSub(level);
+    if (!cmds || !cmds.length) return;
     row.classList.add('open');
-    this._render(this._sub, cmds);
-    this._placeSub(row);
+    const sub = this._subAt(level);
+    this._render(sub, cmds, level + 1);
+    this._placeSub(level ? this._subs[level - 1] : this._el, row, sub);
   }
 
-  _render(el, cmds) {
+  // `depth` is the depth of `el`: 0 for the root menu, n for the nth flyout.
+  _render(el, cmds, depth = 0) {
     el.innerHTML = '';
     for (const c of cmds) {
+      if (c.sub && depth >= MAX_DEPTH) continue;
       const row = document.createElement('div');
       row.className = 'vm-item' + (c.enabled === false ? ' disabled' : '');
       const label = document.createElement('span');
@@ -200,19 +219,16 @@ export default class ViewportMenu {
         row.appendChild(chev);
       }
       if (c.enabled !== false) {
-        // HOVER OPENS, AND HOVERING ANY OTHER ROW CLOSES. Root rows only: the command model is
-        // one level deep, and a flyout that spawned its own would have nowhere to put it.
-        if (el === this._el) {
-          row.addEventListener('mouseenter', () => {
-            if (c.sub) this._openSub(row, c.sub());
-            else this._closeSub();
-          });
-        }
+        // HOVER OPENS, AND HOVERING ANY OTHER ROW CLOSES whatever hung off this menu.
+        row.addEventListener('mouseenter', () => {
+          if (c.sub) this._openSub(row, c.sub(), depth);
+          else this._closeSub(depth);
+        });
         row.addEventListener('click', () => {
           // A SUBMENU IS NOT A COMMAND. The radial makes the same distinction: pushing past the
           // rim opens the children and does not run the wedge, so `run` on a parent is a no-op
           // there and must be one here too.
-          if (c.sub) { this._openSub(row, c.sub()); return; }
+          if (c.sub) { this._openSub(row, c.sub(), depth); return; }
           this.close();
           try { c.run?.(); } catch (err) { console.error('[viewport menu] command failed', err); }
         });
