@@ -88,6 +88,26 @@ const XF_SEG_H = 20;
 // grab. matt: "keyframe circles are too big, make them half their current size."
 const KEY_R = 2;
 
+
+// Fritsch-Carlson (Fritsch-Butland weights for uneven spacing): slopes for a monotone-preserving,
+// overshoot-free cubic through (t, v). A key where the curve turns (or that equals a neighbour)
+// gets slope 0; the ends take their one segment's slope.
+function monotoneSlopes(t, v) {
+  const n = t.length;
+  if (n < 2) return new Array(n).fill(0);
+  const h = [], d = [];
+  for (let k = 0; k < n - 1; k++) { h.push(t[k + 1] - t[k]); d.push((v[k + 1] - v[k]) / (h[k] || 1e-9)); }
+  const m = new Array(n);
+  m[0] = d[0];
+  m[n - 1] = d[n - 2];
+  for (let k = 1; k < n - 1; k++) {
+    if (d[k - 1] * d[k] <= 0) { m[k] = 0; continue; }
+    const h0 = h[k - 1], h1 = h[k];
+    m[k] = 3 * (h0 + h1) / ((2 * h1 + h0) / d[k - 1] + (h1 + 2 * h0) / d[k]);
+  }
+  return m;
+}
+
 export default class GuiTimeline {
   constructor(main) {
     this._main = main;
@@ -3055,7 +3075,9 @@ export default class GuiTimeline {
                 && this._activeTangentTrack === track && this._activeTangentIndex === h.i
                 && this._activeTangentSide === side && this._activeTangentKey?.group === h.grp
                 && this._activeTangentKey?.channel === h.c;
-              const col = active ? '#ffff00'
+              const picked = (this._selTangents || []).some((t) => t.meshId === id && t.grp === h.grp
+                && t.c === h.c && t.i === h.i && t.side === side);
+              const col = active || picked ? '#ffff00'
                 : (TimelineHelper.isKeyHovered(p[0], p[1], this._lastMouseX, this._lastMouseY, 10) ? '#00ffff' : Theme.subtext);
               // BROKEN: a small hollow square; tied: a filled dot.
               if (xfTanGet(track, `${h.i}_tied`, h.grp) === false) {
@@ -3820,6 +3842,7 @@ export default class GuiTimeline {
           if (d < bestD) { best = k; bestD = d; bestTrack = kt; }
         }
         if (best) {
+          if (!this._lastModifierDown) this._selTangents = [];   // a key click is a new selection
           this._isDraggingKeyframe = true;
           this._activeKeyframeTrack = bestTrack;
           this._activeMeshId = best.meshId;
@@ -4049,6 +4072,17 @@ export default class GuiTimeline {
           this._activeTangentKy = h.key[1];
           this._activeTangentType = 'transform';
           this._activeTangentKey = { type: 'transform', group: h.grp, channel: h.c, norm: this._xfNorm() ? normR?.[h.grp] : null };
+          this._tanUndoBefore = this._snapshotTracks();
+          this._tanMoved = false;
+          // HANDLES ARE SELECTABLE IN THEIR OWN RIGHT (matt, 2026-10-19): a click selects this one,
+          // Shift / Cmd-Ctrl adds or removes it; a handle already selected keeps the set, so a drag
+          // moves all of them.
+          const me = { meshId: m.getID(), grp: h.grp, c: h.c, i: h.i, side };
+          const sel = this._selTangents || (this._selTangents = []);
+          const at = sel.findIndex((t) => this._sameTan(t, me));
+          if (this._lastModifierDown) { if (at >= 0) sel.splice(at, 1); else sel.push(me); }
+          else if (at < 0) this._selTangents = [me];
+          this._multiTan = this._multiTangentSet(m.getID(), h, side, tlX, tlW, loopStart, visibleDuration);
           return;
         }
        }
@@ -4313,6 +4347,137 @@ export default class GuiTimeline {
       out.push({ tr, flag });
     }
     return out;
+  }
+
+  // SEVERAL HANDLES AT ONCE: grabbing one of the selected handles (or a handle of a selected key,
+  // with other keys selected) moves them all -- horizontally by the grabbed one's RATIO, from each
+  // handle's own key, and vertically by the same screen distance (see _dragMultiTangents).
+  // Captured at the grab; null when it is a lone handle.
+  _sameTan(a, b) { return a.meshId === b.meshId && a.grp === b.grp && a.c === b.c && a.i === b.i && a.side === b.side; }
+
+  _multiTangentSet(meshId, h0, side, tlX, tlW, loopStart, visibleDuration) {
+    const reg = window._animationRegistry;
+    // SELECTED HANDLES, when the grabbed one is among them: each moves on its own side.
+    const hs = this._selTangents || [];
+    const grabbed = { meshId, grp: h0.grp, c: h0.c, i: h0.i, side };
+    if (hs.length > 1 && hs.some((t) => this._sameTan(t, grabbed))) {
+      const out = [];
+      for (const t of hs) {
+        const tr = reg?.tracks.get(t.meshId);
+        if (!tr || tr.muted || !xfIsVisible(t.grp) || !xfChanVisible(t.grp, t.c)) continue;
+        const normR = this._xfNormRanges(tr);
+        const h = this._xfHandles(tr, { index: t.i, group: t.grp, channel: t.c }, normR, tlX, tlW, loopStart, visibleDuration);
+        if (!h || !h[t.side]) continue;
+        out.push({ tr, grp: t.grp, c: t.c, i: t.i, side: t.side, v0: [h[t.side][0] - h.key[0], h[t.side][1] - h.key[1]],
+          half: this._xfNorm() ? (normR?.[t.grp]?.half || 1) : 1, active: this._sameTan(t, grabbed) });
+      }
+      if (out.length > 1 && out.some((e) => e.active)) return out;
+    }
+    // ...else the same-side handles of the selected KEYS.
+    const sel = window._animSelectedKeys || [];
+    const isSel = (id, g, c, i) => sel.some((k) => k.meshId === id && k.type === 'transform'
+      && (k.group || 'pos') === g && k.channel === c && k.index === i);
+    if (!isSel(meshId, h0.grp, h0.c, h0.i)) return null;
+    const out = [];
+    for (const k of sel) {
+      if (k.type !== 'transform' || k.channel === undefined) continue;
+      const g = k.group || 'pos';
+      if (!(g === 'pos' || g === 'rot' || g === 'scale') || !xfIsVisible(g) || !xfChanVisible(g, k.channel)) continue;
+      const tr = reg?.tracks.get(k.meshId);
+      if (!tr || tr.muted) continue;
+      const normR = this._xfNormRanges(tr);
+      const h = this._xfHandles(tr, k, normR, tlX, tlW, loopStart, visibleDuration);
+      if (!h || !h[side]) continue;
+      out.push({ tr, grp: g, c: k.channel, i: k.index, side, v0: [h[side][0] - h.key[0], h[side][1] - h.key[1]],
+        half: this._xfNorm() ? (normR?.[g]?.half || 1) : 1, active: k.meshId === meshId && g === h0.grp && k.channel === h0.c && k.index === h0.i });
+    }
+    return out.length > 1 && out.some((e) => e.active) ? out : null;
+  }
+
+  _dragMultiTangents(rx, ry, tlW, visibleDuration) {
+    const act = this._multiTan.find((e) => e.active);
+    const side = act.side, sgn = side === 'right' ? 1 : -1;
+    let dx = rx - this._activeTangentKx;
+    dx = sgn > 0 ? Math.max(0, dx) : Math.min(0, dx);
+    const dy = ry - this._activeTangentKy;
+    // LEFT/RIGHT IS RELATIVE, UP/DOWN IS ABSOLUTE (matt, 2026-10-19): the horizontal reach scales by
+    // the grabbed handle's ratio, so every handle moves toward or away from its OWN key; the vertical
+    // moves by the same screen distance for all. (A shared turn-and-stretch felt strange to drag.)
+    const sx = Math.abs(act.v0[0]) > 1e-6 ? dx / act.v0[0] : 1;
+    const ddy = dy - act.v0[1];
+    for (const e of this._multiTan) {
+      let x = e.v0[0] * sx;
+      const y = e.v0[1] + ddy;
+      x = e.side === 'right' ? Math.max(0, x) : Math.min(0, x);   // a handle never crosses its key
+      const dt = (x / tlW) * visibleDuration, dv = -y / this._zoomY * e.half;
+      const to = e.tr.tangentOffsets || (e.tr.tangentOffsets = {});
+      const pfx = xfTanPrefix(e.grp);
+      to[`${pfx}${e.i}_${e.side}_dt`] = dt;
+      to[`${pfx}${e.i}_${e.side}_dv_${e.c}`] = dv;
+      if (to[`${pfx}${e.i}_tied`] !== false) {
+        const other = e.side === 'right' ? 'left' : 'right';
+        to[`${pfx}${e.i}_${other}_dt`] = -dt;
+        to[`${pfx}${e.i}_${other}_dv_${e.c}`] = -dv;
+      }
+    }
+  }
+
+  // FLATTEN / AUTO TANGENTS on the selected keys, one undo step (matt, 2026-10-19). A graph key is
+  // its own channel; a dopesheet key is every channel keyed at that slot. Only the SLOPE (dv) is
+  // written, never the handle length (dt): dt is shared by a slot's channels, and each channel's
+  // default length comes from its own neighbours, so writing one would bend the others.
+  //   'flat' -- slope 0 both sides.
+  //   'auto' -- Fritsch-Carlson monotone slopes (the clamped "auto" of animation packages): a peak
+  //             or valley is flat, so the curve never overshoots a key, and elsewhere the slope is
+  //             a spacing-weighted blend of the two neighbouring segments.
+  // Returns how many keys were changed.
+  setSelectedTangents(mode) {
+    const reg = window._animationRegistry;
+    if (!reg) return 0;
+    const jobs = new Map();   // "meshId|grp|c" -> { tr, grp, c, slots:Set }
+    const add = (tr, id, grp, c, i) => {
+      if (!xfKeyedSlots(tr, grp, c).includes(i)) return;
+      const key = id + '|' + grp + '|' + c;
+      if (!jobs.has(key)) jobs.set(key, { tr, grp, c, slots: new Set() });
+      jobs.get(key).slots.add(i);
+    };
+    for (const k of (window._animSelectedKeys || [])) {
+      if (k.type !== 'transform' || k.group === 'weight') continue;
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr || tr.muted || tr.times?.[k.index] === undefined) continue;
+      if (k.channel !== undefined) add(tr, k.meshId, k.group || 'pos', k.channel, k.index);
+      else for (const g of ['pos', 'rot', 'scale']) for (let c = 0; c < 3; c++) add(tr, k.meshId, g, c, k.index);
+    }
+    if (!jobs.size) return 0;
+    const before = this._snapshotTracks();
+    let n = 0;
+    for (const { tr, grp, c, slots } of jobs.values()) {
+      const ks = xfKeyedSlots(tr, grp, c), T = tr.times;
+      const v = (i) => xfRead(tr, i, c, grp);
+      const m = mode === 'auto' ? monotoneSlopes(ks.map((i) => T[i]), ks.map(v)) : null;
+      if (!tr.tangentOffsets) tr.tangentOffsets = {};
+      const pfx = xfTanPrefix(grp);
+      ks.forEach((i, at) => {
+        if (!slots.has(i)) return;
+        const slope = m ? m[at] : 0;
+        for (const [side, nb] of [['right', ks[at + 1]], ['left', ks[at - 1]]]) {
+          if (nb === undefined) continue;
+          const dtO = xfTanGet(tr, `${i}_${side}_dt`, grp);
+          const dt = dtO !== undefined ? dtO : (T[nb] - T[i]) * 0.33;
+          tr.tangentOffsets[`${pfx}${i}_${side}_dv_${c}`] = slope * dt;
+        }
+        n++;
+      });
+    }
+    const after = this._snapshotTracks();
+    this._main.getStateManager().pushStateCustom(
+      () => this._restoreTracksInPlace(before), () => this._restoreTracksInPlace(after),
+      false, mode === 'auto' ? 'Auto Tangents' : 'Flatten Tangents');
+    const ids = new Set([...jobs.keys()].map((k) => +k.split('|')[0]));
+    for (const m of this._main.getMeshes?.() || []) if (ids.has(m.getID())) reg.update?.(m, true);
+    this._main.render?.();
+    this.draw();
+    return n;
   }
 
   // Every key of every transform curve the graph is showing on object `id`, as graph keys.
@@ -6815,7 +6980,9 @@ export default class GuiTimeline {
       // in -1..1 units: a pixel is half-range / zoomY of the raw value.
       const ak = activeTangent.type === 'transform' ? this._activeTangentKey : null;
       const zY = ak?.norm ? this._zoomY / ak.norm.half : this._zoomY;
-      TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, zY, ak || singleSelected);
+      this._tanMoved = true;
+      if (ak && this._multiTan) this._dragMultiTangents(rx, ry, tlW, visibleDuration);
+      else TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, zY, ak || singleSelected);
       
       this.draw();
     } else if (this._activeTransformHandle === 'top' || this._activeTransformHandle === 'bottom') {
@@ -7229,6 +7396,17 @@ export default class GuiTimeline {
       this._activeTangentIndex = undefined;
       this._activeTangentSide = null;
       this._activeTangentKx = 0;
+      this._multiTan = null;
+      // ONE UNDO STEP PER HANDLE DRAG (there was none at all).
+      const before = this._tanMoved ? this._tanUndoBefore : null;
+      this._tanUndoBefore = null;
+      this._tanMoved = false;
+      if (before) {
+        const after = this._snapshotTracks();
+        this._main.getStateManager().pushStateCustom(
+          () => { this._restoreTracksInPlace(before); this.draw(); },
+          () => { this._restoreTracksInPlace(after); this.draw(); }, false, 'Tangent');
+      }
     } else if (this._activeTransformHandle) {
       const reg = window._animationRegistry;
       if (reg) {
@@ -7474,6 +7652,7 @@ export default class GuiTimeline {
     const addMode = e && e.shiftKey;
     if (!addMode) {
       window._animSelectedKeys = [];
+      this._selTangents = [];
     }
     
     const reg = window._animationRegistry;
@@ -7532,6 +7711,24 @@ export default class GuiTimeline {
       }
       if (!addMode) window._animSelectedKeys = [];
       window._animSelectedKeys.push(...newKeys);
+      // ...and the tangent handles whose ends are inside the box.
+      if (window._animShowTangents) {
+        const sel = this._selTangents || (this._selTangents = []);
+        for (const m of this._graphMeshes()) {
+          const id = m.getID(), tr = reg.tracks.get(id);
+          if (!tr || tr.muted) continue;
+          const normR = this._xfNormRanges(tr);
+          for (const k of this._xfHandleKeys(tr, id)) {
+            const h = this._xfHandles(tr, k, normR, tlX, tlW, loopStart, visibleDuration);
+            for (const side of ['left', 'right']) {
+              const p = h && h[side];
+              if (!p || p[0] < x1 || p[0] > x2 || p[1] < y1 || p[1] > y2) continue;
+              const t = { meshId: id, grp: h.grp, c: h.c, i: h.i, side };
+              if (!sel.some((u) => this._sameTan(u, t))) sel.push(t);
+            }
+          }
+        }
+      }
 
       if (window._animSelectedKeys && window._animSelectedKeys.length > 1) {
         let minT = Infinity;

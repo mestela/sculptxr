@@ -15835,6 +15835,7 @@ class Scene {
     };
     const targetKeyed = (this.getKeyTargets?.() || []).some(_keyedTrack);
     const clipHasFrames = !!window._animKeyClipboard?.keys?.some((k) => k.type === 'sr');
+    const hasXfKeySel = !!window._animSelectedKeys?.some((k) => k.type === 'transform' && k.group !== 'weight');
     const selMesh   = this.getMesh && this.getMesh();
     const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
     // #34: shape-layer multiselect commands (Combine when 2+ selected) — same source as the
@@ -16046,6 +16047,9 @@ class Scene {
       { label: 'Paste Keys', icon: 'fa-paste',       enabled: true, show: canPaste && (hasKeySel || targetKeyed), run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Linked', icon: 'fa-link',      enabled: true, show: canPaste && clipHasFrames && (hasKeySel || targetKeyed), run: () => tl()?.pasteKeys?.(true) },     // linked instance (frame keys)
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: true, show: linked, run: () => this.makeUniqueSelection?.() },// break an instance link
+      // TANGENTS of the selected transform keys (GuiTimeline.setSelectedTangents).
+      { label: 'Flatten Tangents', icon: 'fa-minus', enabled: true, show: hasXfKeySel, run: () => tl()?.setSelectedTangents?.('flat') },
+      { label: 'Auto Tangents', icon: 'fa-bezier-curve', enabled: true, show: hasXfKeySel, run: () => tl()?.setSelectedTangents?.('auto') },
       // DELETE SAYS WHAT IT WILL DELETE. One wedge, but it stood for one thing — selected
       // animation keys — so right-clicking a bone offered a Delete that was about the timeline
       // and, with no keys selected, was simply dead. matt: "if the r.click was on a bone and
@@ -16073,7 +16077,10 @@ class Scene {
         } },
       { label: window._sculptLocked ? 'Unlock' : 'Sculpt Lock',
         icon: window._sculptLocked ? 'fa-lock' : 'fa-lock-open', enabled: true,
-        run: () => { window._sculptLocked = !window._sculptLocked; } },
+        run: () => {
+          window._sculptLocked = !window._sculptLocked;
+          getOptionsURL.saveOption?.('sculptLocked', !!window._sculptLocked, 0);   // as the main menu's toggle does
+        } },
     // Not shown where they cannot run, rather than shown dead: rig verbs outside the rig tools,
     // and Split / Dissolve outside the Bones tool (see TOPOLOGY VERBS above).
     ].filter((c) => (rigTool || !c.rig) && (inBoneTool || !c.boneTool) && c.show !== false);
@@ -16345,7 +16352,9 @@ class Scene {
   }
 
   _resolveViewportMenuCommands() {
-    const cmds = this._resolveRadialCommands() || [];
+    // Sculpt Lock is the VR ring's: a mouse cannot start a stray stroke, so on a flat screen it is
+    // only noise (the main menu still has it).
+    const cmds = (this._resolveRadialCommands() || []).filter((c) => !/^(Sculpt Lock|Unlock)$/.test(c.label));
     const pin = this._menuIsRigTool() ? (this._resolvePinCommands() || []) : [];
     if (!pin.length) return cmds;
     return [{ label: 'Pin', icon: 'fa-thumbtack', enabled: true, sub: () => pin, run: () => {} }]
