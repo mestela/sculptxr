@@ -234,6 +234,10 @@ PhysicsBones.setParams = function (j, patch) {
     iterations: Math.round(take('iterations', 1, 16)),
     collide:   !!take('collide'),
   };
+  // THE LAST SETTINGS ARE THE NEXT DEFAULTS: tuning a physics joint also sets what the next one
+  // flagged starts with -- the right-click Physics toggle has no sliders of its own (matt,
+  // 2026-10-19: "just use whatever the last physics settings were").
+  Object.assign(DEFAULTS, j._physicsParams);
   return true;
 };
 

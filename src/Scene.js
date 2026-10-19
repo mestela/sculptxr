@@ -51,6 +51,7 @@ import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
 import IKSolver from './editing/IKSolver.js';
 import PhysicsBones from './editing/PhysicsBones.js';
+import { togglePhysicsBone } from './gui/bonePanel.js';
 import RigTopology from './editing/RigTopology.js';
 import RigPlacing from './editing/RigPlacing.js';
 import HumanBase from './drawables/HumanBase.js';
@@ -16048,6 +16049,14 @@ class Scene {
             enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },
       // Reachable without leaving VR, which is the point: hand tracking grabbing a
       // stroke mid-reach is exactly when you need to switch sculpting off fast.
+      // PHYSICS on the joint the menu was opened on, with the last physics settings used (the
+      // Bones panel's Physics button, without the panel).
+      { label: dissolveTarget && PhysicsBones.isRoot(dissolveTarget) ? 'Physics Off' : 'Physics',
+        icon: 'fa-wind', enabled: !!dissolveTarget,
+        run: () => {
+          const { on, mirrored } = togglePhysicsBone(this, dissolveTarget, () => this.syncToolPanels?.());
+          window.screenLog?.(on ? 'Physics on' + mirrored : 'Physics off' + mirrored, 'cyan');
+        } },
       { label: window._sculptLocked ? 'Unlock' : 'Sculpt Lock',
         icon: window._sculptLocked ? 'fa-lock' : 'fa-lock-open', enabled: true,
         run: () => { window._sculptLocked = !window._sculptLocked; } },

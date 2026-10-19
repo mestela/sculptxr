@@ -984,6 +984,37 @@ export function buildBoneSectionHTML(main, style) {
 // the old set.
 // REST POSE, shared by this panel's button and the Transform section's (transformPanel.js), so the
 // two cannot drift apart.
+// FLAG / UNFLAG A PHYSICS BONE, with its symmetry twin when mirroring is on, as one undo step. A
+// newly flagged joint takes the current defaults, which are the last settings tuned (see
+// PhysicsBones.setParams); one flagged before keeps its own. Shared by the Bones panel's button
+// and the viewport menu's Physics. `onChange` runs after every apply (the panel rebuilds its
+// conditional sliders there). Returns { on, mirrored }.
+export function togglePhysicsBone(main, joint, onChange) {
+  const pair = [joint];
+  const t = joint._boneMirror;
+  if (Skeleton.mirrorEdits(main) && t && main.getMeshes?.().includes(t) && t !== joint) pair.push(t);
+  const on = !PhysicsBones.isRoot(joint);
+  const snap = () => pair.map((j) => [j, !!j._physicsRoot, j._physicsParams ? { ...j._physicsParams } : null]);
+  const before = snap();
+  const apply = (rows) => {
+    for (const [j, root, params] of rows) {
+      if (root) { j._physicsRoot = true; j._physicsParams = params ? { ...params } : { ...PhysicsBones.DEFAULTS }; }
+      else delete j._physicsRoot;
+    }
+    PhysicsBones.reset(main);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+    onChange?.();
+  };
+  for (const j of pair) PhysicsBones.setRoot(main, j, on);
+  const after = snap();
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => apply(before), () => apply(after), false, 'Physics Bone');
+  Skeleton.updateVisuals(main);
+  main.render?.();
+  return { on, mirrored: pair.length > 1 ? ' (mirrored)' : '' };
+}
+
 export function restPose(main, say) {
   // FLUSH THE SPRING TARGET FIRST. Rest Pose put every joint back on its authored rest and the
   // next physics step pulled the chain straight off it again, toward a target adopted from
@@ -1395,25 +1426,7 @@ export function wireBoneSection(root, main, opts) {
   q('phys')?.addEventListener('click', () => {
     const js = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
     if (js.length !== 1) { say('Bones: select ONE joint to flag as a physics bone', false); return; }
-    const pair = withTwin(js[0]);
-    const on = !PhysicsBones.isRoot(js[0]);
-    const snap = () => pair.map((j) => [j, !!j._physicsRoot, j._physicsParams ? { ...j._physicsParams } : null]);
-    const before = snap();
-    const apply = (rows) => {
-      for (const [j, root, params] of rows) {
-        if (root) { j._physicsRoot = true; j._physicsParams = params ? { ...params } : { ...PhysicsBones.DEFAULTS }; }
-        else delete j._physicsRoot;
-      }
-      PhysicsBones.reset(main);
-      Skeleton.updateVisuals(main);
-      main.render?.();
-      rebuild();
-    };
-    for (const j of pair) PhysicsBones.setRoot(main, j, on);
-    const after = snap();
-    main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(before), () => apply(after), false, 'Physics Bone');
-    const mirrored = pair.length > 1 ? ' (mirrored)' : '';
+    const { on, mirrored } = togglePhysicsBone(main, js[0], rebuild);
     say(on
       ? `Bones: physics on${mirrored} — everything below this joint swings and lags`
       : `Bones: physics off${mirrored}`, true);
