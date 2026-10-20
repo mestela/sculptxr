@@ -7281,7 +7281,15 @@ class Scene {
         catch (e) { console.error('[FrameGroup] import restore failed', e); }
       }
       if (fileType === 'sgl') this.getGui?.()?._ctrlTimeline?.framePlaybackRange?.();
-    });
+    // AN .SXR KEEPS ITS TRANSFORMS. Scale-and-centre is for raw geometry (obj/stl/ply), whose
+    // units mean nothing here. A SculptXR scene is already in scene units, and fitting it broke
+    // it twice over: the fit was multiplied into every matrix BEFORE Skeleton.deserialize put
+    // the parent links back, so children took it twice; and animation keys are not fitted at
+    // all, so playback put keyed objects back in the file's units under a rescaled parent.
+    // matt imported a mirror-capture take beside the wrestler and got a headset you had to zoom
+    // in on and a hand "hundreds of metres away". It only looked fine for files whose contents
+    // already filled the normal size, where the fit is nearly the identity.
+    }, { keepTransform: fileType === 'sgl' });
   }
 
   /**

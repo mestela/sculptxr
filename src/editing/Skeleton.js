@@ -5939,7 +5939,12 @@ Skeleton.serialize = function (meshes, main) {
     // refer to, so every light's settings were dropped on save however carefully v18 wrote
     // them. matt: "lights aren't being saved/loaded properly to sxr".
     const light = !!m._isLight;
-    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow && !light) return;
+    // A PLAIN NULL EARNS A ROW AND A BIT (10). Nothing in the file said "this is a null", so a
+    // user's locators came back as the bare placeholder sphere -- small white balls -- with no
+    // cross and pickable as a mesh. matt: saved mirror-capture nulls, imported them, "they just
+    // loaded as small white spheres". Pins, lights and frame groups re-flag themselves.
+    const plainNull = !!(m._isNull && !m._isBone && !m._isLight && !m._isPinTarget && !m._isFrameGroup);
+    if (!parented && !m._isBone && !m._selectLocked && !hidden && !shadow && !light && !plainNull) return;
     // A DELETED PIN IS NO PIN, AND THE FILE MUST SAY SO. Deleting a pin takes its mesh out of the
     // scene and leaves the joint's `_boneIKPin` mode (and `_boneIKPinObj`) alone on purpose, so
     // undo can put the same object back. This block then wrote that stale mode with no link --
@@ -5983,7 +5988,8 @@ Skeleton.serialize = function (meshes, main) {
         | ((pinBits & 4) << 2)
         | (m._isWeightCage ? 32 : 0) | (hidden ? 64 : 0)
         | ((pinBits & 8) ? 128 : 0)
-        | (m._isShadowCatcher ? 256 : 0) | (m._isShadowLight ? 512 : 0),
+        | (m._isShadowCatcher ? 256 : 0) | (m._isShadowLight ? 512 : 0)
+        | (plainNull ? 1024 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
       // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
@@ -6572,6 +6578,21 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         }
       }
     }
+
+    // Bit 10: a plain null. Appended above every other flag, so an older build ignores it and
+    // gets the sphere back exactly as before. Restores the flags buildNull sets and the look
+    // decorateNull gives (the no-draw pick sphere and the cross).
+    for (const row of rows) {
+      if (!(row.bone & 1024) || (row.bone & 1)) continue;
+      const m = row.mesh;
+      m._isNull = true;
+      m._typeName = 'Null';
+      m.isPickable = false;
+      try { main.decorateNull?.(m); } catch (e) { console.error('[Skeleton] decorateNull on load failed', e); }
+    }
+    // Mirror capture's nulls wear their own outlines (see MirrorCapture._decorateNulls).
+    // Next tick: the parent links that size the outlines are restored later in this load.
+    setTimeout(() => window._mirrorCapture?.adoptLoaded?.(main), 0);
 
     // v16: the shadow flags. Set on the mesh only — SceneShadow's per-frame sweep is what turns
     // the flag into a material, so there is nothing to rebuild here and no order to get wrong.

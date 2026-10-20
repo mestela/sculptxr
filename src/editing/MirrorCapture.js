@@ -28,10 +28,12 @@ const MIRROR_W = 0.8, MIRROR_H = 1.2, BAR = 0.02;
 const BTN_R = 0.045, BTN_HIT = 0.07, BTN_REARM = 0.13;
 const GRAB_MARGIN = 0.1;    // metres around the frame that a grip grabs it
 const ORDER_PROXY = 160;
+const NULL_M = 0.1;                       // metres per null unit, fixed when a take's nulls are made
+const LEGACY_NULL_SCALE = Math.sqrt(3);   // buildNull's own scale: a take made before NULL_M
 
 const COL = { idle: 0x8a3a48, armed: 0xfab387, rec: 0xf38ba8, frame: 0xcdd6f4 };
 
-const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _mw = new THREE.Matrix4();
+const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _mw = new THREE.Matrix4(), _m3 = new THREE.Matrix4();
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
 const _n = new THREE.Vector3(), _c = new THREE.Vector3(), _one = new THREE.Vector3(1, 1, 1);
 const _col = new THREE.Color();
@@ -151,7 +153,53 @@ function handProxy(main, hex) {
   const b = boxes(main, [[0.05, 0.05, 0.1, hex], [0.02, 0.02, 0.05, 0xffffff, 0, 0.01, -0.07]]);
   const g = proxy(b);
   g._box = b;
+  // The plane of a tracked hand, palm to fingertips: a unit box placed by handShape (below).
+  const pad = boxes(main, [[1, 1, 1, 0xe6e9ef]]);
+  pad.matrixAutoUpdate = false;
+  pad.visible = false;
+  g.add(pad);
+  g._paddle = pad;
   return g;
+}
+
+// THE HAND'S SHAPE IN ITS GRIP FRAME, measured from the tracked joints: a unit box's transform
+// that covers wrist to middle fingertip and index to pinky knuckle. From the joints, not from a
+// grip-space convention, because there is no single one: on Galaxy XR a tracked hand has NO grip
+// pose and the app stands in the wrist joint, whose axes differ (see _gripSpaceIsWrist in Scene).
+// Kept after tracking stops, so a replay still shows the last hand it saw.
+const handShape = { left: null, right: null };
+const _hv = Array.from({ length: 6 }, () => new THREE.Vector3());
+const _hb = new THREE.Matrix4();
+
+// Line outlines for the performance nulls: one shared material per colour, so no new pipelines.
+const lineMats = new Map();
+function lineMat(hex) {
+  if (!lineMats.has(hex)) lineMats.set(hex, new THREE.LineBasicMaterial({ color: hex }));
+  return lineMats.get(hex);
+}
+function lines(pts, hex) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const l = new THREE.LineSegments(g, lineMat(hex));
+  l.frustumCulled = false;
+  return l;
+}
+// Edges of a w*h*d box centred at (x, y, z), as segment pairs.
+function boxEdges(w, h, d, x = 0, y = 0, z = 0) {
+  const c = [];
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) c.push([x + sx * w / 2, y + sy * h / 2, z + sz * d / 2]);
+  const out = [];
+  // corners indexed by bits (x<<2 | y<<1 | z); an edge joins corners differing in one bit
+  for (let i = 0; i < 8; i++) for (const b of [1, 2, 4]) if (!(i & b)) out.push(...c[i], ...c[i | b]);
+  return out;
+}
+function circleXY(r, x, y, z, n = 16) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2, b = ((i + 1) / n) * Math.PI * 2;
+    out.push(x + r * Math.cos(a), y + r * Math.sin(a), z, x + r * Math.cos(b), y + r * Math.sin(b), z);
+  }
+  return out;
 }
 
 const MirrorCapture = {
@@ -282,6 +330,12 @@ const MirrorCapture = {
       if (m) { P[k].matrix.multiplyMatrices(this._refl, m); P[k].matrixWorldNeedsUpdate = true; }
     }
     if (pose) { this._syncModel(P.left, pose.leftGrip); this._syncModel(P.right, pose.rightGrip); }
+    this._measureHands(main, pose);
+    for (const k of ['left', 'right']) {
+      const pad = P[k]._paddle, shape = handShape[k];
+      pad.visible = !!shape && !P[k]._model;
+      if (shape) { pad.matrix.copy(shape); pad.matrixWorldNeedsUpdate = true; }
+    }
 
     // Through the count-in too, so the nulls are already on you when capture begins.
     if (r && (r.isRecording || r.isCountingIn) && ours) this._driveAll(pose);
@@ -297,6 +351,38 @@ const MirrorCapture = {
     if (pose.head) this._drive(n.head, pose.head);
     if (pose.left) this._drive(n.left, pose.left);
     if (pose.right) this._drive(n.right, pose.right);
+  },
+
+  // Measure each tracked hand's paddle in its grip frame (see handShape).
+  _measureHands(main, pose) {
+    const xr = main._renderer?.xr;
+    const frame = xr?.getFrame?.(), ref = xr?.getReferenceSpace?.();
+    if (!pose || !frame?.getJointPose || !ref) return;
+    for (const k of ['left', 'right']) {
+      const grip = pose[k + 'Grip'], gm = pose[k];
+      const src = grip && (grip._originalInputSource || grip._inputSource);
+      if (!src?.hand || !gm) continue;
+      const names = ['wrist', 'middle-finger-phalanx-proximal', 'middle-finger-tip',
+        'index-finger-phalanx-proximal', 'pinky-finger-phalanx-proximal'];
+      let ok = true;
+      names.forEach((n, i) => {
+        const j = src.hand.get(n), jp = j && frame.getJointPose(j, ref);
+        if (jp) _hv[i].copy(jp.transform.position); else ok = false;
+      });
+      if (!ok) continue;
+      const [W, M, T, I, K] = _hv, dir = _hv[5];
+      dir.subVectors(M, W).normalize();                          // along the hand
+      const len = Math.max(_c.subVectors(T, W).dot(dir), _c.subVectors(M, W).dot(dir)) + 0.01;
+      const a = _p.subVectors(I, K);                             // across the knuckles
+      const width = a.length() + 0.02;
+      a.addScaledVector(dir, -a.dot(dir)).normalize();
+      const nrm = _s.crossVectors(a, dir).normalize();
+      const lat = _c.addVectors(I, K).multiplyScalar(0.5).sub(W).dot(a);
+      _c.copy(W).addScaledVector(dir, len / 2).addScaledVector(a, lat);
+      _hb.makeBasis(a.multiplyScalar(width), dir.multiplyScalar(len), nrm.multiplyScalar(0.015)).setPosition(_c);
+      handShape[k] = (handShape[k] || new THREE.Matrix4()).copy(gm).invert().multiply(_hb);
+      this._nullPaddle(k);
+    }
   },
 
   // Show the runtime's own controller model in the reflection when there is one, so orientation
@@ -344,7 +430,9 @@ const MirrorCapture = {
     if (this.poseHook) return this.poseHook(main);
     const xr = main._renderer?.xr;
     if (!xr?.isPresenting) return null;
-    const grab = (o) => (o && o.visible ? o.matrixWorld.clone() : null);
+    // updateWorldMatrix: three poses the grips before this callback but only walks matrixWorld at
+    // render, so without it the pose is a frame behind the joints the paddle is measured from.
+    const grab = (o) => (o && o.visible ? (o.updateWorldMatrix(true, false), o.matrixWorld.clone()) : null);
     return {
       head: xr.getCamera().matrixWorld.clone(),
       left: grab(main._vrControllerLeftGrip),
@@ -473,8 +561,13 @@ const MirrorCapture = {
   _mirrorWorld(out) {
     return out.multiplyMatrices(this._wgWorld(this._main), this._mirror.matrix);
   },
+  // Walks _parentMesh with getMatrix(), not getModelSpaceMatrix: that one composes three's local
+  // matrices for a child, and a parent three has not synced yet (a fresh null, until the next
+  // render) reads as identity -- which sized an outline sqrt(3) too big.
   _worldOf(main, mesh, out) {
-    return out.fromArray(mesh.getModelSpaceMatrix()).premultiply(this._wgWorld(main));
+    out.fromArray(mesh.getMatrix());
+    for (let p = mesh._parentMesh; p; p = p._parentMesh) out.premultiply(_m3.fromArray(p.getMatrix()));
+    return out.premultiply(this._wgWorld(main));
   },
 
   // Null local = inv(parent world) * pose, keeping the null's own scale: the world group's
@@ -491,6 +584,7 @@ const MirrorCapture = {
     _m2.compose(_p, _q, _s);
     mat4.copy(own, _m2.elements);
     Skeleton.syncThree(mesh);
+    this._sizeOutline(mesh);
   },
 
   // The nulls if they are in the scene: the ones this session made, or a loaded file's, by name.
@@ -501,6 +595,7 @@ const MirrorCapture = {
     const by = (label) => meshes.find((m) => m._isNull && m._permanentStaticLabel === label);
     const found = { root: by('Performance'), head: by('Perf Head'), left: by('Perf Hand L'), right: by('Perf Hand R') };
     this._nulls = (found.root && found.head && found.left && found.right) ? found : null;
+    if (this._nulls) this._decorateNulls(main);
     return this._nulls;
   },
 
@@ -516,11 +611,96 @@ const MirrorCapture = {
     };
     const root = make('Performance');
     const out = { root, head: make('Perf Head'), left: make('Perf Hand L'), right: make('Perf Hand R') };
+    // One null unit = NULL_M metres at TODAY's VR scale, which is what records the take's real
+    // size into the file. Written as the local matrix after parenting, not before: setMeshParent
+    // preserves the world transform through three's matrices, which a just-made null has not
+    // synced yet (see _worldOf).
+    const ra = root.getMatrix(), rootScale = Math.hypot(ra[0], ra[1], ra[2]) || 1;
+    const own = NULL_M / ((main._vrScale || 1) * rootScale);
     for (const k of ['head', 'left', 'right']) {
       main.setMeshParent(out[k].getID(), root.getID(), { silent: true });
+      mat4.fromScaling(out[k].getMatrix(), [own, own, own]);
+      Skeleton.syncThree(out[k]);
     }
     this._nulls = out;
+    this._decorateNulls(main);
     return out;
+  },
+
+  // A loaded file's performance nulls get their outlines without the mirror being on.
+  // EVERY set, not just the one the mirror drives: importing a take into a scene that already
+  // has one leaves two Performance groups, and the second came in plain.
+  adoptLoaded(main) {
+    this._main = main;
+    const kind = { 'Perf Head': 'head', 'Perf Hand L': 'left', 'Perf Hand R': 'right' };
+    for (const m of main.getMeshes()) {
+      const k = m._isNull && kind[m._permanentStaticLabel];
+      if (k) this._decorateOne(m, k);
+    }
+  },
+
+  // DIRECTIONAL LOOKS FOR THE NULLS, so orientation reads at rest: a headset box with two eye
+  // circles on its face, and a hand box with a pointer plus the measured palm. Replaces the
+  // cruciform. Sized in metres at the scale the take was performed (see _sizeOutline).
+  _decorateNulls(main) {
+    const n = this._nulls;
+    for (const k of ['head', 'left', 'right']) this._decorateOne(n[k], k);
+  },
+
+  _decorateOne(mesh, k) {
+    const tm = mesh?.getThreeMesh?.();
+    if (!tm || tm._perfOutline) return;
+    const hand = boxEdges(0.05, 0.05, 0.1).concat([0, 0.01, -0.05, 0, 0.01, -0.12]);
+    const looks = {
+      head: [boxEdges(0.19, 0.11, 0.09, 0, 0, -0.03).concat(
+        circleXY(0.025, -0.045, 0, -0.076), circleXY(0.025, 0.045, 0, -0.076)), 0xcdd6f4],
+      left: [hand, 0x66e0ff],
+      right: [hand, 0xffa060],
+    };
+    const cross = tm.getObjectByName('null_cruciform');
+    if (cross) cross.visible = false;
+    const g = new THREE.Group();
+    g.name = 'perf_outline';
+    g.add(lines(...looks[k]));
+    if (k !== 'head') {
+      const pad = lines(boxEdges(1, 1, 1), looks[k][1]);
+      pad.matrixAutoUpdate = false;
+      pad.visible = false;
+      g.add(pad);
+      g._paddle = pad;
+      if (handShape[k]) { pad.matrix.copy(handShape[k]); pad.visible = true; }
+    }
+    tm.add(g);
+    tm._perfOutline = g;
+    this._sizeOutline(mesh);
+  },
+
+  // The outline is a child of the null, whose world scale is the world group's times its own;
+  // undo that so the outline is metres now, then it scales with the world like the take does.
+  // THE OUTLINE IS THE REAL HEADSET AND HANDS, AT THE SIZE THEY WERE WHEN RECORDED. A take's
+  // nulls are made so that one null unit is NULL_M metres at the recording's VR scale (see
+  // _ensureNulls), and that scale is in the file -- it is the nulls' own matrix and keys. So the
+  // outline is plain metres inside the null and travels with the take: scale the Performance null
+  // and the motion and the outlines go together, which is how a take is fitted to a character.
+  // Nothing about the scene it is viewed in, or the current world scale, enters into it.
+  _sizeOutline(mesh) {
+    const g = mesh.getThreeMesh?.()?._perfOutline;
+    if (!g || !this._main) return;
+    const e = mesh.getMatrix(), own = Math.hypot(e[0], e[1], e[2]) || 1;
+    if (Math.abs(own - LEGACY_NULL_SCALE) > 1e-3) { g.scale.setScalar(1 / NULL_M); return; }
+    // A take from before v4.3.22: its nulls kept buildNull's scale and carry no record size, so
+    // size against the scene's VR scale, the best guess there is.
+    let k = 1;
+    for (let m = mesh; m; m = m._parentMesh) { const a = m.getMatrix(); k *= Math.hypot(a[0], a[1], a[2]) || 1; }
+    g.scale.setScalar(1 / (k * (this._main._vrScale || 1)));
+  },
+
+  _nullPaddle(k) {
+    const g = this._nulls?.[k]?.getThreeMesh?.()?._perfOutline;
+    if (!g?._paddle || !handShape[k]) return;
+    g._paddle.matrix.copy(handShape[k]);
+    g._paddle.matrixWorldNeedsUpdate = true;
+    g._paddle.visible = true;
   },
 };
 
