@@ -60,10 +60,14 @@ check('the legacy desktop Record button uses the shared toggle',
   /record\(\)[\s\S]{0,120}?toggleRecord\?\.\(/.test(desktopPanel));
 check('loop mode gates transform recording wrap',
   /_animLoopEnabled !== false[\s\S]{0,100}?_animMasterDuration/.test(reg));
-check('recording follows playback speed and stops at a non-looping range end',
+check('recording follows playback speed and stops at a non-looping range end unless Unlimited',
   /Number\.isFinite\(this\.globalPlaybackTime\)/.test(reg)
-    && /const stopAtRangeEnd = window\._animLoopEnabled === false/.test(reg)
-    && /if \(stopAtRangeEnd\) this\.stopRecording\(\)/.test(reg));
+    && /const stopAtRangeEnd = window\._animLoopEnabled === false && !window\._animRecUnlimited/.test(reg)
+    && /if \(stopAtRangeEnd\) this\.stopRecording\(\)/.test(reg)
+    && /this\.isRecording && dir > 0 && window\._animRecUnlimited[\s\S]{0,300}?window\._animLoopEnd = this\.globalPlaybackTime/.test(reg));
+check('overdub replaces with loop off too, from the punch-in time',
+  /this\.lastCaptureTime = \(this\.globalPlaybackTime \|\| 0\) - 1e-4/.test(reg)
+    && !/if \(window\._animLoopEnabled !== false && window\._animMasterDuration && window\._animMasterDuration > 0\) \{\s*const rawElapsed/.test(reg));
 check('loop mode gates playback wrap',
   /lEnd > lStart && window\._animLoopEnabled !== false/.test(reg));
 check('discarding a tiny take still clears the recording lifecycle',

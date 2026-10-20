@@ -475,6 +475,7 @@ var getOptionsURL = function () {
   // Count-in OFF (matt uses start-on-click most).
   options.animStartOnClick = queryBool(getVal('animStartOnClick'), true);
   options.animCountIn      = queryBool(getVal('animCountIn'),      false);
+  options.animRecUnlimited = queryBool(getVal('animRecUnlimited'), false);
   options.animLoopEnabled  = queryBool(getVal('animLoopEnabled'),  true);
 
   // Scene

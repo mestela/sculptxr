@@ -345,6 +345,10 @@ class Camera {
           vNear = Math.min(0.08, Math.max(0.02, d - rPhys));             // front edge, hands-safe
           if (vFar < vNear + 0.1) vFar = vNear + 0.1;
         }
+        // Mirror capture: the reflection sits BEHIND the mirror, about twice its distance away,
+        // so a far plane fitted to a small or nearby sculpt cut you out of your own reflection.
+        var mc = window._mirrorCapture;
+        if (mc && mc.active && xrCam) vFar = Math.min(50.0, Math.max(vFar, mc.farReach(xrCam.position)));
         this._near = window._vrNear ?? vNear;
         this._far = window._vrFar ?? vFar;
         if (this._threeCamera) {

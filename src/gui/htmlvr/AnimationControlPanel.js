@@ -19,6 +19,7 @@ import { uiReorg, groupSectionTitles, wireGroups, applyUISweep, tagReorgRoot } f
 import TimelineHelper from '../TimelineHelper.js';
 import { maskSync, xfBit, xfRefreshDerived } from '../../editing/xfChannel.js';
 import IKSolver from '../../editing/IKSolver.js';
+import MirrorCapture from '../../editing/MirrorCapture.js';
 import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
@@ -322,6 +323,7 @@ const CSS = `
 }
 .acp-root .acp-btn-full:hover,
 .acp-root .acp-btn-full.hover { background: var(--ui-ctl-bg-hover); }
+.acp-root .acp-btn-full.active { background: var(--ui-ctl-bg-active); border-color: var(--ui-accent); }
 .acp-root .acp-btn-clear {
   width: 100%;
   padding: 8px;
@@ -607,9 +609,13 @@ export function buildAnimationSectionHTML(main, style) {
         <label class="acp-check-row">
           <input type="checkbox" id="acp-count-in"> Count in
         </label>
+        <label class="acp-check-row" title="Off: a take stops at the end of the range. On: it runs as long as you perform and the range stretches to fit.">
+          <input type="checkbox" id="acp-rec-unlimited"> Unlimited length
+        </label>
         <label class="acp-check-row">
           <input type="checkbox" id="acp-wait-trigger"> Start on click
         </label>
+        <button class="acp-btn-full" id="acp-mirror-capture" title="A mirror in front of you; Record (or poke the ball) captures your headset and hands onto three nulls">Mirror capture</button>
         <button class="acp-btn-full" id="acp-reset-rig">Reset rig + pins</button>
         <div class="acp-stack" style="gap:4px">
           <label style="font-size:10px;color:#6c7086;text-transform:uppercase;letter-spacing:.06em">Capture rate</label>
@@ -925,6 +931,7 @@ export function syncAnimationSection(el, main) {
   el.querySelector('#acp-record')  ?.classList.toggle('recording', rec);
   // Distinct "armed / waiting for a grab" state (amber) vs live "recording" (red).
   el.querySelector('#acp-record')  ?.classList.toggle('armed', !!window._animWaitingForGrab && !rec);
+  el.querySelector('#acp-mirror-capture')?.classList.toggle('active', MirrorCapture.active);
 
   const timeline = main?.getGui?.()._ctrlTimeline;
   const tlVisible = !!(timeline?._visible);
@@ -952,6 +959,8 @@ export function syncAnimationSection(el, main) {
 
   const ci = el.querySelector('#acp-count-in');
   if (ci) ci.checked = !!window._animCountIn;
+  const ul = el.querySelector('#acp-rec-unlimited');
+  if (ul) ul.checked = !!window._animRecUnlimited;
   const wt = el.querySelector('#acp-wait-trigger');
   if (wt) wt.checked = !!window._animWaitForTrigger;
   const loop = el.querySelector('#acp-loop-enabled');
@@ -1118,6 +1127,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   // undefined guard means later rebuilds don't clobber a live toggle). Default: start-on-click.
   const _opt = window.getOptionsURL?.() || {};
   if (window._animCountIn === undefined)        window._animCountIn = !!_opt.animCountIn;
+  if (window._animRecUnlimited === undefined)   window._animRecUnlimited = !!_opt.animRecUnlimited;
   if (window._animWaitForTrigger === undefined) window._animWaitForTrigger = !!_opt.animStartOnClick;
   if (window._animLoopEnabled === undefined)    window._animLoopEnabled = _opt.animLoopEnabled !== false;
 
@@ -1297,7 +1307,9 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   el.querySelector('#acp-record')?.addEventListener('click', () => {
     const r = reg(); if (!r) return;
-    r.toggleRecord(_getTargetMesh()); // start when idle, stop when recording/counting/waiting
+    // In mirror capture the take is the performer, not the selection.
+    if (MirrorCapture.active) MirrorCapture.toggleRecord(main);
+    else r.toggleRecord(_getTargetMesh()); // start when idle, stop when recording/counting/waiting
     _sync();
   });
 
@@ -1308,6 +1320,12 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     window.saveOption?.('animCountIn', !!window._animCountIn);
     window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
   };
+
+  _cbWire('#acp-rec-unlimited', (v) => {
+    window._animRecUnlimited = v;
+    window.saveOption?.('animRecUnlimited', v);
+    _sync();
+  });
 
   _cbWire('#acp-count-in', (v) => {
     window._animCountIn = v;
@@ -1329,6 +1347,11 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     _sync();
   });
 
+
+  el.querySelector('#acp-mirror-capture')?.addEventListener('click', () => {
+    MirrorCapture.toggle(main);
+    _sync();
+  });
 
   el.querySelector('#acp-reset-rig')?.addEventListener('click', () => {
     IKSolver.resetRigAndPins(main);

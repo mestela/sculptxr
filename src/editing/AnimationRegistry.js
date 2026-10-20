@@ -156,6 +156,22 @@ class AnimationRegistry {
     return app.getKeyTargets?.()[0] || app._mesh || app.getMeshes?.()?.[0] || null;
   }
 
+  // PRESSING RECORD TURNS LOOP OFF for the record session, and ending the session puts it back.
+  // matt: "it just seems to get in the way every time" -- a take that wraps punches over its own
+  // start -- and "once i turn off record mode, it should go back into loop mode for playback".
+  // Turning loop on mid-session is an explicit choice and holds until the session ends. Never
+  // saved, so the stored default is untouched.
+  loopOffForRecord() {
+    if (this._loopBeforeRecord === undefined) this._loopBeforeRecord = window._animLoopEnabled !== false;
+    window._animLoopEnabled = false;
+  }
+
+  restoreLoopAfterRecord() {
+    if (this._loopBeforeRecord === undefined) return;
+    window._animLoopEnabled = this._loopBeforeRecord;
+    this._loopBeforeRecord = undefined;
+  }
+
   toggleRecord(mesh) {
     // Active = any part of a record session (armed / waiting / counting-in / recording, or a
     // live timer). Pressing Record in ANY of these turns it off — so it's a true toggle and
@@ -175,6 +191,7 @@ class AnimationRegistry {
       // re-enables play for the "review a real take" case it wants.)
       window._animPlaying = false;
       window._animStatusText = '';
+      this.restoreLoopAfterRecord();
       return false;
     }
     // Resolve the target robustly when the caller didn't hand us one. The timeline record
@@ -184,6 +201,7 @@ class AnimationRegistry {
     // record controls behave identically.
     if (!mesh) mesh = this._resolveTargetMesh();
     if (!mesh) { window.screenLog?.('Select an object to record', 'orange'); return false; }
+    this.loopOffForRecord();
     window._animArmed = true;
     // Wait-for-Trigger (without count-in) arms and defers the capture to the next Grab.
     if (window._animWaitForTrigger && !window._animCountIn) {
@@ -422,6 +440,10 @@ class AnimationRegistry {
     if (existingTrack) {
       existingTrack.punchInTime = this.globalPlaybackTime || 0;
     }
+    // THE FIRST REPLACE WINDOW STARTS AT THE PUNCH-IN, not at the first sample. Otherwise the old
+    // take's keys between pressing Record and the first tick (~40ms) survived in front of the
+    // new ones: the "bad key at frame 0" on every take over an existing one.
+    this.lastCaptureTime = (this.globalPlaybackTime || 0) - 1e-4;
 
     this.captureTimer = setInterval(() => {
       this.captureTick();
@@ -686,9 +708,13 @@ class AnimationRegistry {
     let elapsed = Number.isFinite(this.globalPlaybackTime)
       ? this.globalPlaybackTime
       : (performance.now() - this.startTime) / 1000.0;
+    // UNLIMITED LENGTH (Record option, off by default): with loop off the take runs as long as you
+    // perform and the transport stretches the range to follow it (see update()). matt: "often
+    // i'm mid 'performance' and find the recording has stopped." Otherwise an unlooped take
+    // stops at the range end, as it always did.
     const rangeEnd = window._animLoopEnd ?? window._animMasterDuration ?? Infinity;
-    const stopAtRangeEnd = window._animLoopEnabled === false && Number.isFinite(rangeEnd)
-      && elapsed >= rangeEnd - 1e-4;
+    const stopAtRangeEnd = window._animLoopEnabled === false && !window._animRecUnlimited
+      && Number.isFinite(rangeEnd) && elapsed >= rangeEnd - 1e-4;
     if (stopAtRangeEnd) elapsed = rangeEnd;
 
     // THE ACTIVE KEY MODE DECIDES WHAT A TAKE RECORDS, and this dispatch is exhaustive on
@@ -712,9 +738,12 @@ class AnimationRegistry {
     // is nothing continuous to sample, and the transform keys it used to write were pure damage.
     if (_mode === 'shaperep') return;
 
-    if (window._animLoopEnabled !== false && window._animMasterDuration && window._animMasterDuration > 0) {
-      const rawElapsed = elapsed;
-      elapsed = elapsed % window._animMasterDuration;
+    // OVERDUB REPLACES, LOOPING OR NOT. This used to run only with loop on, so once Record turned
+    // loop off a new take interleaved with the old one instead of replacing it.
+    {
+      if (window._animLoopEnabled !== false && window._animMasterDuration > 0) {
+        elapsed = elapsed % window._animMasterDuration;
+      }
 
       if (this.lastCaptureTime >= 0) {
         const tA = this.lastCaptureTime;
@@ -1384,6 +1413,7 @@ class AnimationRegistry {
       window._animPlaying = false;
       window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
       if (!window._animWaitingForGrab) window._animArmed = false;
+      if (!window._animArmed) this.restoreLoopAfterRecord();
       window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
       return;
     }
@@ -1468,6 +1498,7 @@ class AnimationRegistry {
     // next gesture. Countdown/immediate recording is a one-shot and disarms on completion.
     window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
     if (!window._animWaitingForGrab) window._animArmed = false;
+    if (!window._animArmed) this.restoreLoopAfterRecord();   // before the auto-play check below
     
     window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
     
@@ -3422,6 +3453,12 @@ class AnimationRegistry {
           // be re-initialised against the loop-start pose, which does not exist yet here, so the
           // flag is consumed by PhysicsBones.tick once the animation has written that frame.
           if (wrapped) window._physicsNeedsInit = true;
+        } else if (lEnd > lStart && this.isRecording && dir > 0 && window._animRecUnlimited) {
+          // An unlooped take runs on past the range end and the range follows it.
+          if (this.globalPlaybackTime > lEnd) {
+            if (window._animLoopEnd !== undefined) window._animLoopEnd = this.globalPlaybackTime;
+            if (this.globalPlaybackTime > (window._animMasterDuration || 0)) window._animMasterDuration = this.globalPlaybackTime;
+          }
         } else if (lEnd > lStart) {
           if (this.globalPlaybackTime >= lEnd) {
             this.globalPlaybackTime = lEnd;

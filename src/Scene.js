@@ -88,6 +88,7 @@ import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder
 import ViewportMenu from './gui/ViewportMenu.js';
 import SkinPreview from './editing/SkinPreview.js';
 import MotionTrail from './editing/MotionTrail.js';
+import MirrorCapture from './editing/MirrorCapture.js';
 import { rotRebuild } from './editing/xfChannel.js';
 import SceneShadow from './render/SceneShadow.js';
 import scanPhantoms from './misc/PhantomScan.js';
@@ -3861,6 +3862,9 @@ class Scene {
       } catch (e) {
         console.error('Motion trail failed:', e);
       }
+      // Mirror capture: the mirror's reflected proxies, and the performance nulls while a take
+      // records. One boolean while off; guarded for the same reason as the trail.
+      try { MirrorCapture.update(this); } catch (e) { console.error('Mirror capture failed:', e); }
 
       // Keeps the cast shadow's light fitted to the model and new meshes casting. Reads one
       // boolean and returns while shadows are off.
@@ -15153,6 +15157,11 @@ class Scene {
           // is almost everywhere.
           //
           // window._panelGrabGuard = false restores the old fall-through in-session.
+          // A grip on the mirror-capture frame moves the mirror, not the world.
+          if (MirrorCapture.claimGrip(this, source.handedness, isGrip, !_worldNavBusy && !_panelDragBusy)) {
+            if (source.handedness === 'left') { leftGrip = false; }
+            else                              { rightGrip = false; }
+          }
           if (isGrip && !_worldNavBusy && window._panelGrabGuard !== false
               && (this._isPointingAtMenu || this._panelGrabIntent(source.handedness))) {
             if (source.handedness === 'left') { leftGrip = false; }
