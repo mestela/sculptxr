@@ -1,3 +1,6 @@
+# v4.4.1
+- **Mirror capture no longer clips** with the mirror further away: the view's far plane is fitted to everything the mirror draws, measured from your head. `mirrorDiag()` in the console reports the near/far planes if it ever does.
+
 # v4.4.0
 - **Mirror capture** (Animation > Record > Mirror capture): a wire-frame mirror stands in front of you and shows your headset and controllers reflected (the runtime's own controller models; tracked hands get a box plus a palm paddle measured from the joints). Record, or poke the red ball on the frame's corner, to capture the headset and both hands onto three nulls (Perf Head, Perf Hand L / R) under a Performance null. Grip the frame to move it; it moves and scales with the world. With a take on the timeline the mirror replays it; it shows you live only when nothing is recorded or Record is armed. No hitch on opening.
 - **Performance nulls look like what they are**: a headset box with two eye circles, hand boxes with a pointer and the palm, at the real size you recorded. Scale the Performance null to fit a take to a character.

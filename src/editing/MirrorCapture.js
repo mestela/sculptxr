@@ -310,6 +310,7 @@ const MirrorCapture = {
     this._updateReflection();
 
     const pose = this._readPose(main);
+    if (pose?.head) (this._lastHead || (this._lastHead = new THREE.Vector3())).setFromMatrixPosition(pose.head);
     const r = window._animationRegistry;
     const ours = r && this._isOurTake(r);
 
@@ -414,9 +415,23 @@ const MirrorCapture = {
 
   // How far the view must reach to keep the reflection: everything reflected sits about as far
   // behind the mirror as it is in front of it, plus room for arms and a step back.
+  // Measured from the REAL head (the pose update() read, not xrCam.position, which is not reliably
+  // the head when the far plane is fitted) to everything the mirror draws: each visible reflected
+  // proxy and the frame's corners, plus margin. The geometric estimate stays as a floor.
   farReach(headPos) {
     if (!this._mirror) return 0;
-    return 2 * headPos.distanceTo(_c.setFromMatrixPosition(this._mirrorWorld(_mw))) + 1.0;
+    const head = this._lastHead || headPos;
+    const mw = this._mirrorWorld(_mw);
+    let far = 2 * head.distanceTo(_c.setFromMatrixPosition(mw)) + 1.0;
+    for (const k of ['head', 'left', 'right']) {
+      const g = this._proxies?.[k];
+      if (g?.visible) far = Math.max(far, head.distanceTo(_c.setFromMatrixPosition(g.matrix)) + 0.75);
+    }
+    for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      far = Math.max(far, head.distanceTo(_c.set(x * MIRROR_W / 2, y * MIRROR_H / 2, 0).applyMatrix4(mw)) + 0.25);
+    }
+    this._lastFar = far;
+    return far;
   },
 
   _mirrorScale() {
@@ -707,6 +722,19 @@ const MirrorCapture = {
     g._paddle.matrixWorldNeedsUpdate = true;
     g._paddle.visible = true;
   },
+};
+
+// Clipping diagnosis from the console (or over CDP): what the mirror asked for and what the
+// session actually has.
+window.mirrorDiag = () => {
+  const app = window.app, xr = app?._renderer?.xr, cam = xr?.getCamera?.(), st = xr?.getSession?.()?.renderState;
+  const r = (v) => (v == null ? null : +(+v).toFixed(3));
+  const out = { active: MirrorCapture.active, asked: r(MirrorCapture._lastFar),
+    cameraNearFar: [r(app?._camera?._near), r(app?._camera?._far)],
+    sessionDepth: [r(st?.depthNear), r(st?.depthFar)], xrCamNearFar: [r(cam?.near), r(cam?.far)],
+    head: MirrorCapture._lastHead?.toArray().map(r), xrCamPos: cam?.position?.toArray().map(r) };
+  console.log('[mirrorDiag] ' + JSON.stringify(out));
+  return out;
 };
 
 window._mirrorCapture = MirrorCapture;
