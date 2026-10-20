@@ -880,8 +880,8 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   // except the section headers is a button, so a drag that refuses to start on a control cannot
   // start at all. Which means the VR click can no longer fire on the press.
   check('a VR click waits for the release rather than firing on the press',
-    /this\._pendingClick = \{ target, x: absX, y: absY \};/.test(HVP)
-      && /if \(pc && !drag\) pc\.target\.dispatchEvent\(/.test(HVP),
+    /this\._pendingClick = \{ target: ctl, id: ctl\.id \|\| null, x: absX, y: absY \};/.test(HVP)
+      && /if \(to && !drag\) to\.dispatchEvent\(/.test(HVP),
     'a drag beginning on a button would otherwise have pressed it on the way down');
   // ONE ARBITER. The click had its own threshold, tested independently of whether the scroll had
   // engaged, so any drift past 6px killed the press while nothing scrolled — matt: "its
@@ -901,8 +901,12 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /d\.top0 = d\.el\.scrollTop;\s*\n(\s*\/\/[^\n]*\n)*\s*this\._pendingClick = null;/.test(HVP),
     'measured: the drag scrolled the panel and clicked the button, because the cancel was unreachable');
   check('...firing on the PRESS target, not wherever the release landed',
-    /pc\.target\.dispatchEvent\(/.test(HVP),
+    /let to = pc && pc\.target;/.test(HVP) && /if \(to && !drag\) to\.dispatchEvent\(/.test(HVP),
     'a hand that slips onto the next button between press and release must not press that one');
+  check('...anchored to the CONTROL, so an icon swap between press and release cannot eat it',
+    /target\.closest\('button, a, label, input, select, \[data-action\]'\)/.test(HVP)
+      && /to = pc\.id \? this\._element\.querySelector\('#' \+ CSS\.escape\(pc\.id\)\) : null/.test(HVP),
+    'the eye lost most of its clicks to setFaIcon replacing the <path> the press landed on');
   check('...with the old behaviour reachable in-session if it feels worse',
     /if \(window\._vrClickOnPress === true\) \{/.test(HVP),
     'this changes the feel of every button in VR and must be revertible without a reload');

@@ -1,3 +1,11 @@
+# v4.4.0
+- **Mirror capture** (Animation > Record > Mirror capture): a wire-frame mirror stands in front of you and shows your headset and controllers reflected (the runtime's own controller models; tracked hands get a box plus a palm paddle measured from the joints). Record, or poke the red ball on the frame's corner, to capture the headset and both hands onto three nulls (Perf Head, Perf Hand L / R) under a Performance null. Grip the frame to move it; it moves and scales with the world. With a take on the timeline the mirror replays it; it shows you live only when nothing is recorded or Record is armed. No hitch on opening.
+- **Performance nulls look like what they are**: a headset box with two eye circles, hand boxes with a pointer and the palm, at the real size you recorded. Scale the Performance null to fit a take to a character.
+- **Record**: pressing Record turns Loop off for the take and puts it back after. Overdub replaces from the punch-in (fixes the bad key at frame 0). New **Unlimited length** option (off by default) lets an unlooped take run past the range end.
+- **.sxr**: plain nulls are saved as nulls (they came back as small white spheres); loading an .sxr keeps its saved transforms (importing one could rescale a hierarchy and scatter its animation); the scene's **delta mush** is saved with it.
+- **Rig Brightness / Opacity** now apply to nulls and lights too.
+- **VR panels**: buttons with icons no longer drop clicks (the outliner eye needed several presses); the outliner keeps its scroll position when you select.
+
 # v4.1.51
 - **Contact shade**: the surface darkens slightly within about 1.5 cm of the controller spike's tip, so contact reads without stereo (every shading mode, in a session). Toggle: Settings > Controller spike > Contact Shade.
 - **Surface Circle toggle** (same place): hide the brush's flat circle and keep only the sphere/surface intersection line.

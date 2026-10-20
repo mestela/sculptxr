@@ -4222,13 +4222,14 @@ export class MainMenuPanel extends HTMLVRPanel {
     //
     // Read BEFORE the assignment and written after, by class rather than by identity: the
     // elements are new objects, so the old ones cannot be asked anything once the HTML lands.
+    //
+    // WRITTEN BACK AFTER _wireContent, NOT HERE. The new HTML arrives with every collapsible group
+    // still collapsed (display:none) until wireGroups expands it, and an element that is not
+    // displayed cannot hold a scrollTop: the write was silently dropped, so the fix above stopped
+    // working the day the outliner moved into a collapsible group.
     const scrolls = [];
     contentEl.querySelectorAll('.mm-outliner-list').forEach((el, i) => scrolls.push([i, el.scrollTop]));
     contentEl.innerHTML = html;
-    if (scrolls.length) {
-      const lists = contentEl.querySelectorAll('.mm-outliner-list');
-      for (const [i, top] of scrolls) if (lists[i]) lists[i].scrollTop = top;
-    }
 
     // Wire section header pin button
     const sectionPinBtn = contentEl.querySelector('#mm-section-pin-btn');
@@ -4249,6 +4250,10 @@ export class MainMenuPanel extends HTMLVRPanel {
     if (uiReorg()) groupSectionTitles(contentEl, { defaultOpen: pageDefaultOpen(this._activeMenu) });
 
     this._wireContent();
+    if (scrolls.length) {
+      const lists = contentEl.querySelectorAll('.mm-outliner-list');
+      for (const [k, top] of scrolls) if (lists[k]) lists[k].scrollTop = top;
+    }
 
     // Sync custom scrollbar thumb after content changes
     refreshVRScrollbar(this._element.querySelector('#mm-content'), this._element.querySelector('#mm-sbar-thumb'));

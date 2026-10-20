@@ -2577,6 +2577,41 @@ Skeleton.setRigBrightness = function (mul) { return (Skeleton.rigBrightness = _p
 Skeleton.setRigOpacity = function (mul) { return (Skeleton.rigOpacity = _posMul(mul, 1)); };
 Skeleton.setWireOpacity = function (mul) { return (Skeleton.wireOpacity = _posMul(mul, 1)); };
 
+// THE SAME TWO MULTIPLIERS FOR EVERY LOCATOR: nulls (their cross, mirror-capture outlines), lights
+// (their handle). The rig batches read them in flushBatches; these are ordinary three objects
+// hung under each locator, so they get a pass of their own. Re-run only when the multipliers or
+// the scene's meshes change (`Skeleton._locatorKey = null` forces one, e.g. after decorating),
+// so it costs a string compare per frame. The pick sphere / host material is skipped: it draws
+// nothing. Base colours are remembered on the material the first time it is touched.
+// Opacity below 1 makes the material blend; NoBlending lines (the light handle) switch to normal
+// blending for it -- one pipeline change, made only when the slider actually goes below 1.
+Skeleton._locatorKey = null;
+Skeleton.applyLocatorDisplay = function (main) {
+  const meshes = main.getMeshes?.() || [];
+  const bright = Skeleton.rigBrightness, op = Math.min(1, Skeleton.rigOpacity);
+  const key = bright + '|' + op + '|' + meshes.length;
+  if (key === Skeleton._locatorKey) return;
+  Skeleton._locatorKey = key;
+  for (const m of meshes) {
+    if (!m._isNull || m._isBone || m._isPinTarget) continue;
+    const tm = m.getThreeMesh?.();
+    if (!tm) continue;
+    tm.traverse((o) => {
+      const mat = o === tm ? null : o.material;
+      if (!mat || !mat.color || mat.colorWrite === false) return;
+      const ud = mat.userData;
+      if (!ud._locBase) ud._locBase = { color: mat.color.clone(), blending: mat.blending, transparent: mat.transparent };
+      mat.color.copy(ud._locBase.color).multiplyScalar(bright);
+      mat.opacity = op;
+      const blend = op < 1 && ud._locBase.blending === THREE.NoBlending ? THREE.NormalBlending : ud._locBase.blending;
+      const transparent = ud._locBase.transparent || op < 1;
+      if (mat.blending !== blend || mat.transparent !== transparent) {
+        mat.blending = blend; mat.transparent = transparent; mat.needsUpdate = true;
+      }
+    });
+  }
+};
+
 Skeleton.setLabelSizeMul = function (mul) {
   Skeleton.labelSizeMul = _posMul(mul, 1);
   return Skeleton.labelSizeMul;
@@ -5890,7 +5925,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 28;  // v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 29;  // v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6256,6 +6291,7 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + axes.length * 5;     // v26: i + the hand-laid axes quaternion
   slots += 1 + orients.length * 5;  // v27: i + an object's axis orient quaternion
   slots += 1 + pivots.length * 4;   // v28: i + an object's pivot offset
+  slots += 1;                       // v29: delta mush iterations, or NONE
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6351,6 +6387,10 @@ Skeleton.serialize = function (meshes, main) {
   for (const ax of orients) { u[o++] = ax.i; f[o++] = ax.q[0]; f[o++] = ax.q[1]; f[o++] = ax.q[2]; f[o++] = ax.q[3]; }
   u[o++] = pivots.length;
   for (const pv of pivots) { u[o++] = pv.i; f[o++] = pv.p[0]; f[o++] = pv.p[1]; f[o++] = pv.p[2]; }
+  // Only for a scene that HAS a skin: importing a skin-less file (a mirror-capture take) into a
+  // rig must not reset the rig's mush. Skinning publishes the reader (see the import note above).
+  const mush = skins.length && Skeleton.mushIterations ? Skeleton.mushIterations() : NONE;
+  u[o++] = Number.isFinite(mush) ? mush : NONE;
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6999,6 +7039,12 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         const m = meshes[u[o++]], p = [f[o++], f[o++], f[o++]];
         if (m) m._pivotRef = p;
       }
+    }
+    // v29: the scene's delta mush. Set as the LIVE value (the one Skinning reads first), not the
+    // saved preference, so it belongs to this scene and the device default is left alone.
+    if (ver >= 29) {
+      const mu = u[o++];
+      if (mu !== NONE) window._skinMush = mu;
     }
 
     for (const p of pendingPins) {

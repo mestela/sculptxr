@@ -319,8 +319,12 @@ const MirrorCapture = {
     const armed = r && (r.isRecording || r.isCountingIn || window._animArmed || window._animWaitingForGrab);
     const hasTake = n && (r?.tracks.get(n.head.getID())?.times?.length > 0);
     const replay = hasTake && !armed;
+    // A hidden null hides its reflection too (its own flag or any parent's).
+    const shown = (m) => { for (let p = m; p; p = p._parentMesh) if (p.isVisible && !p.isVisible()) return false; return true; };
     const src = replay
-      ? { head: this._nullPose(n.head), left: this._nullPose(n.left), right: this._nullPose(n.right) }
+      ? { head: shown(n.head) ? this._nullPose(n.head) : null,
+          left: shown(n.left) ? this._nullPose(n.left) : null,
+          right: shown(n.right) ? this._nullPose(n.right) : null }
       : pose;
 
     const P = this._proxies;
@@ -673,6 +677,7 @@ const MirrorCapture = {
     tm.add(g);
     tm._perfOutline = g;
     this._sizeOutline(mesh);
+    Skeleton._locatorKey = null;   // pick up the rig opacity / brightness
   },
 
   // The outline is a child of the null, whose world scale is the world group's times its own;

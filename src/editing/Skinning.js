@@ -694,6 +694,9 @@ Skinning.mushIterations = function () {
   return Number.isFinite(saved) && saved >= 0 ? Math.round(saved) : MUSH_ITERATIONS;
 };
 
+// Skeleton writes the scene's mush into the .sxr (v29) and does not import Skinning.
+Skeleton.mushIterations = () => Skinning.mushIterations();
+
 Skinning.setMushIterations = function (n) {
   window._skinMush = Math.max(0, Math.round(n));
   getOptionsURL.saveOption('boneMush', window._skinMush, 0);

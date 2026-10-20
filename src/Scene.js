@@ -3849,6 +3849,7 @@ class Scene {
       // latter, and `draw` could not say so.
       this._mark('rig-visuals');
       Skeleton.updateVisuals(this);
+      Skeleton.applyLocatorDisplay(this);
 
       // The motion trail, when it is switched on. It fingerprints the keys and the pins and
       // rebuilds only when one of them changes — a rebuild is a full evaluation per sample, so

@@ -68,12 +68,19 @@ export function faIcon(name, opts = {}) {
 
 // Swap the icon inside an element that already has one, for the runtime toggles (eye/eye-slash,
 // lock/lock-open) that used to just rewrite a className.
+// A NO-OP WHEN THE ICON IS ALREADY THE ONE ASKED FOR. State syncs call this routinely with the
+// icon it already shows, and replacing the <svg> regardless detached whatever a VR press had
+// landed on -- the icon's own <path> -- so the click dispatched on release went nowhere. That was
+// most of the outliner eye's lost clicks (CDP on the GXR: targetConnected=false tag=path).
 export function setFaIcon(host, name, opts) {
   if (!host) return;
   const cur = host.querySelector('svg.fa-i');
   const next = faIcon(name, opts);
   if (!next) return;
+  if (cur && cur._faHtml === next) return;
   if (cur) cur.outerHTML = next; else host.insertAdjacentHTML('afterbegin', next);
+  const made = host.querySelector('svg.fa-i');
+  if (made) made._faHtml = next;
 }
 
 export const FA_ICON_NAMES = Object.keys(P);

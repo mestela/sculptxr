@@ -1032,7 +1032,17 @@ export class HTMLVRPanel {
     //
     // A leave with no hand named is a real teardown (panel hidden, session ended) and still
     // clears, so nothing can be left lit by a panel that has gone away.
-    if (hand === undefined || hand === this._hoverHand) this.clearHover();
+    //
+    // AND ONLY THAT HAND MAY CANCEL ITS PRESS. Everything below used to run for EITHER hand, so
+    // the idle hand's every-frame leave wiped `_pendingClick` between the other hand's press and
+    // release: a click survived only when the release happened to be dispatched first in the
+    // frame. Roughly half, and worse in playback where frame timing jitters. Measured over CDP
+    // on the GXR: 9 presses and 9 releases all on #mm-vis-toggle, 4 clicks. matt: "i often have
+    // to click 4 or 5 times before it actually registers". The same reset ended slider drags and
+    // drag-scrolls under the other hand's feet.
+    const mine = hand === undefined || hand === this._hoverHand;
+    if (!mine) return;
+    this.clearHover();
     if (this._hoveredBtn) {
       this._hoveredBtn.classList.remove('hover'); // never strip .active — it may be the selection state
       this._hoveredBtn = null;
@@ -1646,14 +1656,22 @@ export class HTMLVRPanel {
       } else if (window._vrClickOnPress === true) {
         target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
       } else {
-        this._pendingClick = { target, x: absX, y: absY };
+        // THE PRESS BELONGS TO THE CONTROL, not to the icon path or label span the walk landed
+        // on: those are what a state sync replaces, and a click on a detached node bubbles to
+        // nothing. The id lets the release find the control again if the content was rebuilt.
+        const ctl = (target.closest && target.closest('button, a, label, input, select, [data-action]')) || target;
+        this._pendingClick = { target: ctl, id: ctl.id || null, x: absX, y: absY };
       }
     } else if (isVR && type === 'pointerup') {
       const pc = this._pendingClick;
       this._pendingClick = null;
       // The target from the PRESS, not from wherever the release landed: a hand that slips a few
       // pixels onto the next button between press and release must not press that one instead.
-      if (pc && !drag) pc.target.dispatchEvent(
+      let to = pc && pc.target;
+      // Rebuilt between press and release: the same control by id, or nothing -- never whatever
+      // happens to sit there now.
+      if (to && !to.isConnected) to = pc.id ? this._element.querySelector('#' + CSS.escape(pc.id)) : null;
+      if (to && !drag) to.dispatchEvent(
         new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
     } else if (!isVR && type === 'pointerup') {
       target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
