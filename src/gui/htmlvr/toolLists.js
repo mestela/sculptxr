@@ -62,6 +62,7 @@ export const TOOL_LABELS = {
   [Enums.Tools.CUT_LOOP]:         'Cut Loop',
   [Enums.Tools.BEVEL]:            'Bevel',
   [Enums.Tools.SEL_EDGE]:         'Sel Edge',
+  [Enums.Tools.FACE]:             'Face',
 };
 
 // The fallback still exists, because a name is not worth throwing over — but it now means "a
@@ -107,6 +108,7 @@ export const SCULPT_TOOLS = [
   //
   //   entry(Enums.Tools.GEODESIC_POSE),
   entry(Enums.Tools.BONE_DRAW),
+  entry(Enums.Tools.FACE),
   entry(Enums.Tools.TRANSFORM_VR),
   entry(Enums.Tools.MASKING),
 ];

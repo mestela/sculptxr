@@ -58,7 +58,9 @@ Enums.Tools = {
   SEL_LOOP: 36,
   CUT_LOOP: 37,
   BEVEL: 38,
-  SEL_EDGE: 39
+  SEL_EDGE: 39,
+  // Grab the face, the blendshape weights follow — see FacePuppet / DirectBlend.
+  FACE: 40
 };
 
 // display shader type

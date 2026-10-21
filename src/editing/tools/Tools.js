@@ -40,6 +40,7 @@ import GeodesicPoseTool from './GeodesicPoseTool.js';
 import PaintGroup from './PaintGroup.js';
 import BoneDrawTool from './BoneDrawTool.js';
 import SelectTool from './SelectTool.js';
+import FacePuppet from './FacePuppet.js';
 
 var Tools = [];
 
@@ -83,6 +84,7 @@ Tools[Enums.Tools.SEL_LOOP] = SelLoop;
 Tools[Enums.Tools.CUT_LOOP] = CutLoop;
 Tools[Enums.Tools.BEVEL] = Bevel;
 Tools[Enums.Tools.SEL_EDGE] = SelEdge;
+Tools[Enums.Tools.FACE] = FacePuppet;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -124,5 +126,6 @@ Tools[Enums.Tools.SEL_LOOP].uiName = 'sculptSelLoop';
 Tools[Enums.Tools.CUT_LOOP].uiName = 'sculptCutLoop';
 Tools[Enums.Tools.BEVEL].uiName = 'sculptBevel';
 Tools[Enums.Tools.SEL_EDGE].uiName = 'sculptSelEdge';
+Tools[Enums.Tools.FACE].uiName = 'sculptFace';
 
 export default Tools;

@@ -648,6 +648,18 @@ export class MiniPanel extends HTMLVRPanel {
     // plane has to be re-measured or the texture lands on the old one. See HTMLVRPanel.
     wireGroups(extras, () => this.noteContentResized());
 
+    if (idx === Enums.Tools.FACE) {
+      const faceToggle = (id, prop) => {
+        extras.querySelector(id)?.addEventListener('click', () => {
+          const t = sm?.getCurrentTool?.();
+          if (t) { t[prop] = !t[prop]; main.render?.(); }
+          this.syncFromState();
+        });
+      };
+      faceToggle('#mp-face-heat', '_showHeat');
+      faceToggle('#mp-face-rot', '_useRotation');
+    }
+
     // ── Brush extras ───────────────────────────────────────────────────────
     if (idx === Enums.Tools.BRUSH) {
       const makeToolToggle = (id, prop) => {
@@ -1024,6 +1036,9 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-path-rotate')?.classList.toggle('active', ch.rotate);
       extrasEl.querySelector('#mp-connected')
         ?.classList.toggle('active', MotionPathEdit.connected());
+    } else if (idx === Enums.Tools.FACE) {
+      extrasEl.querySelector('#mp-face-heat')?.classList.toggle('active', !!tool._showHeat);
+      extrasEl.querySelector('#mp-face-rot')?.classList.toggle('active', !!tool._useRotation);
     } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
       extrasEl.querySelector('#mp-keep-together')
         ?.classList.toggle('active', !!(window.keepExtrudeFacesTogether ?? true));
@@ -1034,6 +1049,18 @@ export class MiniPanel extends HTMLVRPanel {
 
   _buildExtrasHTML(sm, idx) {
     if (!sm) return '';
+
+    // ── Face: what the grab shows and what it reads from the hand ─────────
+    if (idx === Enums.Tools.FACE) {
+      const t = sm.getCurrentTool?.();
+      return `
+        <hr class="mp-divider">
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${t?._showHeat ? ' active' : ''}" id="mp-face-heat">Heatmap</button>
+          <button class="mp-toggle-btn${t?._useRotation ? ' active' : ''}" id="mp-face-rot">Rotation</button>
+        </div>
+      `;
+    }
 
     // ── Brush ──────────────────────────────────────────────────────────────
     if (idx === Enums.Tools.BRUSH) {

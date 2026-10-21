@@ -1,3 +1,10 @@
+# v4.5.0
+- **Face tool** (Sculpt tools, next to Bones): grab a point on a face that has blendshapes and pull it, and the blendshape weights solve to follow your hand (direct manipulation blendshapes, after Lewis & Anjyo). Grab anywhere: the shapes already know which way they move each point. In VR every hand that holds its trigger is a pin, so one hand can hold the lips still while the other pulls the jaw.
+- **Twist to turn** (VR): a grab holds a small patch the size of the cursor sphere, so rolling the controller turns the skin there and the shapes that turn it answer. Fades in over the first 15 degrees so a wobble does not steer. Toggle: Rotation.
+- **Heatmap** (toggle in the Face section and on the wrist): each shape's zone in its own colour, brighter where it moves the skin further. The cursor takes the same colour heatmap on or off: white where there is nothing to grab, full colour in a shape's strongest region.
+- **Record with the Face tool**: press Record and each grab is a blendshape take; it stays armed between passes, and a pass keys only the shapes that grab moved, so mouth then brow passes layer without overwriting each other.
+- **Delete Animation keeps the blendshapes.** It used to delete the shapes with their keys.
+
 # v4.4.1
 - **Mirror capture no longer clips** with the mirror further away: the view's far plane is fitted to everything the mirror draws, measured from your head. `mirrorDiag()` in the console reports the near/far planes if it ever does.
 

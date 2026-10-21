@@ -73,7 +73,7 @@ check('loop mode gates playback wrap',
 check('discarding a tiny take still clears the recording lifecycle',
   /seqTimes\[count - 1\] < 0\.5[\s\S]{0,1200}?this\.isRecording = false/.test(reg));
 check('start-on-grab returns to a coherent waiting state after each take',
-  /_animWaitingForGrab = !!\(window\._animArmed && window\._animWaitForTrigger\)/.test(reg));
+  /_animWaitingForGrab = !!\(window\._animArmed && \(?window\._animWaitForTrigger/.test(reg));
 
 const header = +(tl.match(/const HEADER_H = (\d+);/)?.[1] || 0);
 check('recording controls use the expanded toolbar area, not the gutter',

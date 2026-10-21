@@ -204,13 +204,22 @@ class AnimationRegistry {
     this.loopOffForRecord();
     window._animArmed = true;
     // Wait-for-Trigger (without count-in) arms and defers the capture to the next Grab.
-    if (window._animWaitForTrigger && !window._animCountIn) {
+    if (this._faceToolActive() || (window._animWaitForTrigger && !window._animCountIn)) {
       window._animWaitingForGrab = true;
       window._animStatusText = 'Grab an object to record';
     } else {
       this.startRecording(mesh);
     }
     return true;
+  }
+
+  // WHETHER RECORD WAITS FOR A GRAB rather than starting on the button. The Face tool always
+  // waits, whatever the option says: a take that starts on Record would record the SELECTION
+  // (often the floor, in Transform mode), and one that disarms after the first pass makes every
+  // layer a second trip to the Record button. matt: "layering multiple passes is unreliable.
+  // sometimes it works, sometimes it doesn't."
+  _faceToolActive() {
+    return window.app?.getSculptManager?.()?.getToolIndex?.() === Enums.Tools.FACE;
   }
 
   // Tools call these at the actual beginning/end of an interaction. Keeping the state
@@ -1411,7 +1420,7 @@ class AnimationRegistry {
       this.recordingTargets = null;
       this._trackStatesBeforeRecording = null;
       window._animPlaying = false;
-      window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
+      window._animWaitingForGrab = !!(window._animArmed && (window._animWaitForTrigger || this._faceToolActive()));
       if (!window._animWaitingForGrab) window._animArmed = false;
       if (!window._animArmed) this.restoreLoopAfterRecord();
       window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
@@ -1496,7 +1505,7 @@ class AnimationRegistry {
     this._trackStatesBeforeRecording = null;
     // Start-on-grab is an armed session, so one released gesture returns to waiting for the
     // next gesture. Countdown/immediate recording is a one-shot and disarms on completion.
-    window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
+    window._animWaitingForGrab = !!(window._animArmed && (window._animWaitForTrigger || this._faceToolActive()));
     if (!window._animWaitingForGrab) window._animArmed = false;
     if (!window._animArmed) this.restoreLoopAfterRecord();   // before the auto-play check below
     
@@ -3078,13 +3087,42 @@ class AnimationRegistry {
     if (!unique.length) return false;
     this.stopRecording(true);
     const removed = new Map(unique.map((id) => [id, this.tracks.get(id)]));
+    // THE TRACK ALSO HOLDS THE BLENDSHAPES THEMSELVES — the sculpted deltas, the base cage, the
+    // layer flags — not only their keys. Deleting the whole track deleted the shapes with the
+    // animation. matt: "if i delete animation in the graph editor/dopesheet, it apparently also
+    // deletes all the blendshapes from the blendshape panel." So a track carrying shapes is
+    // swapped for one with every animation channel emptied and the definitions shared.
+    const stripped = new Map();
+    for (const [id, tr] of removed) {
+      if (!tr.blendshapes || !tr.blendshapes.size) continue;
+      const bt = new Map();
+      for (const name of tr.blendshapes.keys()) bt.set(name, { times: [], values: [] });
+      stripped.set(id, {
+        ...tr,
+        times: [], positions: [], quaternions: [], eulers: null, keyMask: null, scales: [],
+        shapeTimes: [], shapes: [], shapeOutputTimes: [], visTimes: [], visValues: [],
+        tangentOffsets: undefined, scalarTracks: new Map(),
+        blendshapeTracks: bt, blendshapePreview: new Map(),
+      });
+    }
+    const recomposite = () => {
+      for (const id of stripped.keys()) {
+        const m = window.app?.getMeshes?.().find((x) => x.getID() === id);
+        if (m) this.applyBlendshapes(m);
+      }
+    };
     const remove = () => {
-      for (const id of removed.keys()) this.tracks.delete(id);
+      for (const id of removed.keys()) {
+        if (stripped.has(id)) this.tracks.set(id, stripped.get(id));
+        else this.tracks.delete(id);
+      }
+      recomposite();
       if (!this.tracks.size) window._animPlaying = false;
       window.app?.render?.();
     };
     const restore = () => {
       for (const [id, track] of removed) this.tracks.set(id, track);
+      recomposite();
       window.app?.render?.();
     };
     remove();

@@ -159,7 +159,8 @@ window.dumpMeshTopology = function() {
 //
 // By CONSTRUCTOR NAME because that is what the check had, and the names are asserted in
 // multiselect_test so a rename cannot quietly empty this set.
-const NO_SMOOTH_OVERRIDE = new Set(['SculptVoxel', 'Extrude', 'Grab', 'SelectTool']);
+// FacePuppet: the off-hand trigger is its second hand on the face, not a modifier.
+const NO_SMOOTH_OVERRIDE = new Set(['SculptVoxel', 'Extrude', 'Grab', 'SelectTool', 'FacePuppet']);
 
 // controller pose is one a human arm could have produced -- see the wrist anchor. MODULE SCOPE:
 // a class body cannot hold a bare function declaration, and putting it there was a syntax error
@@ -18173,6 +18174,7 @@ class Scene {
 
             let hitDist = 5.0;
             let pickedMesh = null;
+            let cursorFace = -1, cursorLocal = null;   // this hand's hit, for tool.cursorColor
             let pNormal = null;
             let wInter = null;
             let wSym = null; // mirrored stroke centre, scene space (dot only, no ring)
@@ -18236,6 +18238,9 @@ class Scene {
                     
                     // distance in engine space
                     const localHit = this._picking.getIntersectionPoint();
+                    // Kept for the cursor tint below: the picking is restored before it runs.
+                    cursorFace = this._picking.getPickedFace();
+                    cursorLocal = vec3.clone(localHit);
                     const engineHit = vec3.create();
                     vec3.transformMat4(engineHit, localHit, pickedMesh.getModelSpaceMatrix()); // parent-aware
                     hitDist = vec3.distance(originEngine, engineHit) * (this._vrScale || 1.0);
@@ -18474,6 +18479,9 @@ class Scene {
                 } else if (isPaint && tool._color) {
                     const activeLowerColor = this._eyedropperStartColor ? this._eyedropperStartColor : tool._color;
                     color.setRGB(activeLowerColor[0], activeLowerColor[1], activeLowerColor[2]);
+                } else if (tool && tool.cursorColor && pickedMesh
+                           && tool.cursorColor(color, pickedMesh, cursorFace, cursorLocal)) {
+                    // the tool tinted it (Face: the shape a grab here would take)
                 } else {
                     color.setRGB(cMin, cMin, cMax); // Blue
                 }

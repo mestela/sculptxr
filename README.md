@@ -1,4 +1,4 @@
-# SculptXR (v3.69.0)
+# SculptXR (v4.5.0)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v3.69.0**: **Bevel and Sel Edge.** Select edges with Sel Loop or the new Sel Edge (click toggles one edge), then press and drag with Bevel for a one-segment chamfer: width follows the drag (1:1 with the hand in VR), clamped so it can never fold over itself, with capped corners, clean open ends and UVs carried through. One undo step that also restores the selection.
-*   **v3.68.0**: **Edge loops: Sel Loop and Cut Loop.** Tap an edge to select its whole loop (toggle, symmetry-aware, kept on the mesh for the Bevel to come), or to cut a new loop across its ring. Both preselect the edge under the cursor, and Cut Loop previews exactly where it will cut, mirror included. Cuts carry UVs through, one per side of a seam, and undo on a UV mesh now restores its UVs.
-*   **v3.66.0**: **Sparse transform keys and Simplify Curves.** Transform keys are per channel now instead of glTF-style lockstep: moving an object keys translate only, recording keys only the recorded channels, the graph drags and deletes a single channel's key, and rotation/scale play as the curves the graph draws. The graph editor gains **Simplify Curves** (Tolerance or Ratio, live preview, per visible channel, one undo) and a crosshair through a dragged key. .sxr v16 stores the key mask and only real tangent overrides -- older files had baked a default tangent into every key, which is what made Simplify refuse to remove anything.
+*   **v4.5.0**: **Face tool.** Grab a face with blendshapes and pull it; the weights solve to follow your hand, two-handed in VR, with twist-to-turn, an influence heatmap and a cursor tinted by the shape under it. Each grab can record a layered blendshape pass.
+*   **v4.4.0**: **Mirror capture.** A mirror shows your headset and controllers reflected; record them onto Performance nulls.
+*   **v4.1.51**: **Contact shade** near the spike tip, Surface Circle toggle, shaded controller models.
 
 [View Full Release History](docs/releases.md)
 

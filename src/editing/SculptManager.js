@@ -62,6 +62,8 @@ const SELF_TARGETING_TOOLS = new Set([
   // Select most of all: it is the tool you reach for precisely BECAUSE something locked is in
   // the way, and it cannot move anything even if it picks the locked mesh itself.
   Enums.Tools.SELECT,
+  // Face grabs whatever blendshaped mesh is under the pointer, selected or not.
+  Enums.Tools.FACE,
 ]);
 
 class SculptManager {
@@ -478,7 +480,9 @@ class SculptManager {
     // vertex deltas, so a locked/hidden blendshape layer has no bearing on it.
     const _isTransform = this._toolIndex === Enums.Tools.TRANSFORM
                       || this._toolIndex === Enums.Tools.TRANSFORM_VR
-                      || this._toolIndex === Enums.Tools.BONE_DRAW;
+                      || this._toolIndex === Enums.Tools.BONE_DRAW
+                      // FACE drives weights, never vertices, so no layer capture is at stake.
+                      || this._toolIndex === Enums.Tools.FACE;
     if (!_isTransform && !this._canSculptActiveBlendshapeLayer()) {
       window._blendshapeStackPanel?.flash?.();   // desktop panel
       window._blendshapeStackPanelVR?.flash?.(); // VR panel mesh

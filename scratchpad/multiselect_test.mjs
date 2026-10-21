@@ -546,7 +546,7 @@ check('...and so does the gizmo',
   // "i chose the select tool in vr, if i hold down the other trigger, it smooths the meshes i
   // select." Grab was already excluded for the identical reason.
   check('Select is exempt from the offhand smooth override',
-    /const NO_SMOOTH_OVERRIDE = new Set\(\['SculptVoxel', 'Extrude', 'Grab', 'SelectTool'\]\);/.test(SCENE),
+    /const NO_SMOOTH_OVERRIDE = new Set\(\[[^\]]*'SelectTool'[^\]]*\]\);/.test(SCENE),
     'the swap happens before dispatch, so the tool you chose never runs');
   check('...and the check reads that set rather than a chain of !==',
     /!NO_SMOOTH_OVERRIDE\.has\(activeTool\.constructor\.name\)/.test(SCENE),

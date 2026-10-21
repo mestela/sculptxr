@@ -3833,6 +3833,12 @@ function buildSculptingHTML(main, part) {
   return `
     ${brushHTML}
     ${cur === Enums.Tools.BONE_DRAW ? buildBoneSectionHTML(main, 'mm') : ''}
+    ${cur === Enums.Tools.FACE ? `
+    <div class="mm-section-title">Face</div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice${tool._showHeat ? ' active' : ''}" id="mm-face-heat">Heatmap</button>
+      <button class="mm-choice${tool._useRotation ? ' active' : ''}" id="mm-face-rot">Rotation</button>
+    </div>` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
     ${cur === Enums.Tools.TRANSFORM_VR || cur === Enums.Tools.TRANSFORM
@@ -6007,6 +6013,14 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   // toggle shows that it toggled.
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
   wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
+
+  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation']]) {
+    el.querySelector(id)?.addEventListener('click', () => {
+      const t = sm?.getCurrentTool?.();
+      if (t) { t[prop] = !t[prop]; main.render?.(); }
+      repaintFn();
+    });
+  }
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
     window._sculptLocked = !window._sculptLocked;

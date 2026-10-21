@@ -366,6 +366,12 @@ class Selection {
       }
 
       this._threeCircle.visible = true;
+      // A TOOL MAY TINT THE CURSOR by what is under it — Face shows the shape a grab would take.
+      // Red otherwise, as it always was.
+      const _tool = main.getSculptManager().getCurrentTool();
+      const _cc = this._threeCircle.material.color;
+      if (!(_tool && _tool.cursorColor && _tool.cursorColor(_cc, mesh, picking.getPickedFace(), interPoint))) _cc.setHex(0xff0000);
+      this._threeDot.material.color.copy(_cc);
       this._threeDot.position.fromArray(interPoint);
 
       // Keep the dot a fixed screen-space size regardless of zoom level.

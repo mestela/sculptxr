@@ -168,7 +168,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 // already run.
 {
   check('the registry pushes undo for a track delete',
-    /deleteAnimationForIds\(ids\) \{[\s\S]{0,1400}?pushStateCustom\(/.test(REG),
+    /deleteAnimationForIds\(ids\) \{[\s\S]{0,3500}?pushStateCustom\(/.test(REG),
     'without this the track delete is unrecoverable');
   const i = ACP.indexOf("el.querySelector('#acp-del-key')");
   const body = ACP.slice(i, ACP.indexOf('\n  });', i));
