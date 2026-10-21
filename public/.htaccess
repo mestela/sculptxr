@@ -10,3 +10,14 @@
     Header set Expires "0"
   </FilesMatch>
 </IfModule>
+
+# GZIP THE SCENES. .sxr is float arrays with a lot of repetition (unpainted colours, materials
+# and face groups are one value per vertex), and the server sent it raw: the head example was
+# 15 MB over the wire and 3.4 MB gzipped. Browsers decode Content-Encoding transparently, and the
+# example loader already treats Content-Length as the compressed size.
+AddType application/octet-stream .sxr
+<IfModule mod_deflate.c>
+  <FilesMatch "\.sxr$">
+    SetOutputFilter DEFLATE
+  </FilesMatch>
+</IfModule>
