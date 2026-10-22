@@ -210,7 +210,9 @@ function sharePool(prims) {
     const sub = new THREE.BufferGeometry();
     for (const k in merged.attributes) sub.setAttribute(k, merged.attributes[k]);
     sub.morphAttributes = merged.morphAttributes;
-    sub.morphTargetsRelative = merged.morphTargetsRelative;
+    // NOT merged's: mergeGeometries never copies the flag, so every delta read as an absolute
+    // position and every shape pulled the whole head to the origin.
+    sub.morphTargetsRelative = geos[0].morphTargetsRelative;
     sub.setIndex(new THREE.BufferAttribute(merged.index.array.slice(at, at + n), 1));
     at += n;
     prims[p].geometry = sub;

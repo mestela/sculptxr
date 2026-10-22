@@ -18,5 +18,10 @@
     "name": "ICT face (ARKit shapes)",
     "file": "ict_arkit.sxr",
     "desc": "ICT FaceKit head (MIT, USC ICT) with 53 ARKit-style expression shapes, teeth and eyes"
+  },
+  {
+    "name": "GNM head (ARKit shapes)",
+    "file": "gnm_head_arkit.sxr",
+    "desc": "Head with 52 ARKit expression shapes, eyes, teeth and tongue"
   }
 ]
