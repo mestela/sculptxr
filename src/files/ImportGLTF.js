@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { deinterleaveAttribute } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { deinterleaveAttribute, mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Utils from '../misc/Utils.js';
 
@@ -192,6 +192,31 @@ function deinterleave(geo) {
   for (const k in geo.morphAttributes) geo.morphAttributes[k] = geo.morphAttributes[k].map(un);
 }
 
+// PRIMITIVES WITH VERTEX POOLS OF THEIR OWN. Sharing one buffer is what Nomad and Blender's
+// multi-material export write, and what buildMesh reads: every primitive's indices into the
+// FIRST one's vertices. A head whose eyes, teeth and tongue are primitives with their own
+// buffers (matt's gnm_head_arkit.glb: 5 primitives, 52 targets each) had their faces index the
+// head's vertices instead, which is a shower of random triangles. So the pools are concatenated,
+// morph targets included, and each primitive gets its index range of the merged one.
+function sharePool(prims) {
+  const geos = prims.map((o) => o.geometry);
+  if (geos.every((g) => g.attributes.position === geos[0].attributes.position)) return;
+  const indexed = geos.map((g) => (g.index ? g : g.setIndex([...Array(g.attributes.position.count).keys()])));
+  const merged = mergeGeometries(indexed);
+  if (!merged) { console.warn('[glTF] primitives with separate vertices could not be merged'); return; }
+  let at = 0;
+  for (let p = 0; p < prims.length; p++) {
+    const n = indexed[p].index.count;
+    const sub = new THREE.BufferGeometry();
+    for (const k in merged.attributes) sub.setAttribute(k, merged.attributes[k]);
+    sub.morphAttributes = merged.morphAttributes;
+    sub.morphTargetsRelative = merged.morphTargetsRelative;
+    sub.setIndex(new THREE.BufferAttribute(merged.index.array.slice(at, at + n), 1));
+    at += n;
+    prims[p].geometry = sub;
+  }
+}
+
 // ---- 3. one glTF MESH (all its primitives) -> one MeshStatic --------------------------
 //
 // A PRIMITIVE IS NOT AN OBJECT. glTF allows one material per primitive, so an object painted
@@ -205,6 +230,7 @@ function deinterleave(geo) {
 // the material meaningful here at all, since this renderer keeps material PER VERTEX.
 function buildMesh(prims, gl, name, stats) {
   for (let p = 0; p < prims.length; p++) deinterleave(prims[p].geometry);
+  sharePool(prims);
   const first = prims[0];
   const geo0 = first.geometry;
   const posAttr = geo0 && geo0.attributes && geo0.attributes.position;
