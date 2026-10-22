@@ -769,7 +769,8 @@ export default class BlendshapeStackPanel {
     const sliderHot = hov === 'slider';
     ctx.fillStyle = sliderHot ? Theme.surface1 : Theme.surface0;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw, TRACK_H, TRACK_H / 2); ctx.fill();
-    ctx.fillStyle = Theme.blue;
+    const combo = window._animationRegistry?.isBlendshapeCombo?.(this._track(), name);
+    ctx.fillStyle = combo ? Theme.overlay1 : Theme.blue;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw * w01, TRACK_H, TRACK_H / 2); ctx.fill();
     // Tick marks for 0 and 1 once the range is stretched past them, so the sculptable 1.0
     // detent can be found by eye.
@@ -800,6 +801,9 @@ export default class BlendshapeStackPanel {
     if (inRect(row.split))   return { row, part: 'split' };
     if (inRect(row.combine)) return { row, part: 'combine' };
     if (inRect(row.rename))  return { row, part: 'rename' };
+    // A combo's weight is its drivers' product: a readout, not a control.
+    const combo = !row.isBase && window._animationRegistry?.isBlendshapeCombo?.(this._track(), row.name);
+    if (combo) return { row, part: 'row' };
     if (inRect(row.value))   return { row, part: 'value' };
     if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
       return { row, part: 'slider' };

@@ -599,7 +599,10 @@ class Mesh {
       const _bt = _track.blendshapeTracks?.get(_name);
       const _w  = _reg.blendshapePreviewAt ? _reg.blendshapePreviewAt(_track, _name, _bt)
                                            : (_bt ? _reg.evaluateScalarTrack(_bt, _track.playbackTime || 0) : 0);
-      if (Math.abs(_w - 1) > 1e-3 || (_track.blendshapeMuted && _track.blendshapeMuted.has(_name))) {
+      // A COMBO is the exception: sculpted at whatever its drivers make it, divided back to full.
+      const _combo = _reg.isBlendshapeCombo && _reg.isBlendshapeCombo(_track, _name);
+      const _ok = _combo ? _w >= _reg.COMBO_MIN_W : Math.abs(_w - 1) <= 1e-3;
+      if (!_ok || (_track.blendshapeMuted && _track.blendshapeMuted.has(_name))) {
         if (window._blendshapeStackPanel?.flash) window._blendshapeStackPanel.flash();
         if (window._blendshapeStackPanelVR?.flash) window._blendshapeStackPanelVR.flash();
         _reg.applyBlendshapes(this); // discards the transient nudge + does a full geometry update
@@ -622,12 +625,13 @@ class Mesh {
         _track.blendshapes.set(_name, _delta);
       }
       const _others = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, _name) : null;
+      const _g = _combo ? 1 / _w : 1;
       if (_others) {
         for (let _j = 0; _j < _n; _j++)
-          _delta[_j] = _v[_j] - _track.baseShape[_j] - _others[_j];
+          _delta[_j] = (_v[_j] - _track.baseShape[_j] - _others[_j]) * _g;
       } else {
         for (let _j = 0; _j < _n; _j++)
-          _delta[_j] = _v[_j] - _track.baseShape[_j];
+          _delta[_j] = (_v[_j] - _track.baseShape[_j]) * _g;
       }
       _track._bsRev = (_track._bsRev | 0) + 1;   // written in place: see Skinning composeMush
     } else if (_track?.baseShape && !_track._applyingBS) {

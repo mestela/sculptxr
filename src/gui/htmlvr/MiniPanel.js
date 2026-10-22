@@ -661,6 +661,10 @@ export class MiniPanel extends HTMLVRPanel {
       faceToggle('#mp-face-sparse', '_useSparse');
       faceToggle('#mp-face-protect', '_protectKeys');
       faceToggle('#mp-face-limit', '_limitReach');
+      extras.querySelector('#mp-face-combo')?.addEventListener('click', () => {
+        sm?.getCurrentTool?.()?.fixCombo?.();
+        this.syncFromState();
+      });
     }
 
     // ── Brush extras ───────────────────────────────────────────────────────
@@ -1067,6 +1071,7 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-toggle-btn${t?._useSparse ? ' active' : ''}" id="mp-face-sparse">Sparse</button>
           <button class="mp-toggle-btn${t?._protectKeys ? ' active' : ''}" id="mp-face-protect">Protect Keys</button>
           <button class="mp-toggle-btn${t?._limitReach ? ' active' : ''}" id="mp-face-limit">Limit</button>
+          <button class="mp-toggle-btn" id="mp-face-combo">Fix Combo</button>
         </div>
       `;
     }

@@ -3,6 +3,7 @@ import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import { sampleDeltas, averageDeltas, solveWeights } from '../DirectBlend.js';
 import { arkitEntry, lrPairFor } from '../ArkitBlendshapes.js';
+import Enums from '../../misc/Enums.js';
 
 /**
  * FACE — grab the face and pull it; the blendshape weights follow. See DirectBlend.js.
@@ -239,6 +240,7 @@ class FacePuppet extends SculptBase {
     const out = [];
     for (const [name, delta] of track.blendshapes) {
       if (track.blendshapeMuted && track.blendshapeMuted.has(name)) continue;
+      if (track.blendshapeCombos && track.blendshapeCombos.has(name)) continue;  // derived, never solved
       out.push([name, delta]);
     }
     return out;
@@ -328,6 +330,32 @@ class FacePuppet extends SculptBase {
     return len > reach ? [u[0] * reach, u[1] * reach, u[2] * reach] : drag;
   }
 
+  // FIX COMBO: the pose on the face looks wrong, so make it sculptable. Every shape on at 0.2 or
+  // more becomes a driver of a combination layer (or the existing one for the same drivers), that
+  // layer is made active, and the tool goes to Move (matt: "usually the tool of choice to fix shapes"). The pose stays as it is: the layer is
+  // sculpted at the strength it shows and stored at full (AnimationRegistry.createCombo).
+  fixCombo() {
+    const reg = this._reg();
+    const main = this._main;
+    const sel = main.getMesh && main.getMesh();
+    const mesh = sel && this._track(sel) ? sel : this._targets()[0];
+    const name = mesh && reg.createCombo(mesh);
+    if (!name) { console.log('[Face] Fix Combo: dial in at least two shapes first'); return null; }
+    const track = reg.tracks.get(mesh.getID());
+    if (track.editingBlendshape !== name) {
+      if (track.editingBlendshape) reg.exitBlendshapeEditMode(mesh);
+      reg.enterBlendshapeEditMode(mesh, name);
+    }
+    if (main.setMesh && sel !== mesh) main.setMesh(mesh);
+    reg._refreshBlendPanels(mesh);
+    const w = reg.blendshapePreviewAt(track, name, null);
+    if (w < reg.COMBO_MIN_W) console.log(`[Face] Fix Combo: ${name} is at ${w.toFixed(2)}; turn the drivers up to sculpt it (needs ${reg.COMBO_MIN_W})`);
+    main.getSculptManager().setToolIndex(Enums.Tools.MOVE);
+    main.getGui?.()?._ctrlSculpt?.setValue?.(Enums.Tools.MOVE);
+    main.render();
+    return name;
+  }
+
   _keyedNames(track) {
     return [...(track.blendshapeTracks || [])].filter(([, bt]) => bt.times.length > 1).map(([n]) => n);
   }
@@ -392,13 +420,39 @@ class FacePuppet extends SculptBase {
     const corners = this._corners(mesh, face);
     const local = vec3.clone(picking.getIntersectionPoint());
     const patch = this._patch(mesh, corners, local, this._localRadius(mesh, picking));
-    const deltas = patch
-      ? averageDeltas(this._shapes(track), patch.idx, patch.wts, this._minFrac)
-      : sampleDeltas(this._shapes(track), corners, mesh.getVertices(), local, this._minFrac);
+    const sample = (shapes, minFrac) => patch
+      ? averageDeltas(shapes, patch.idx, patch.wts, minFrac)
+      : sampleDeltas(shapes, corners, mesh.getVertices(), local, minFrac);
+    const deltas = sample(this._shapes(track), this._minFrac);
+    this._addCombos(track, deltas, (shapes) => sample(shapes, 0));
     if (!Object.keys(deltas).length) return null;
     const world = vec3.transformMat4(vec3.create(), local, this._toWorld(mesh));
     const twist = this._useRotation ? this._twists(mesh, track, corners, local, Object.keys(deltas)) : null;
     return { deltas, world, anchor: null, now: null, twist, rotAnchor: null, rotNow: null };
+  }
+
+  // COMBOS IN THE SOLVE. A combo's weight is the product of its drivers', so with smile at 0.8, a
+  // little more jawOpen also brings in 0.8 x the smile_jawOpen fix: jawOpen's column at this point
+  // is its own delta plus that. Taken at the grab's starting weights (the Jacobian there), so the
+  // columns stay fixed for the grab and the solve stays linear and path independent.
+  _addCombos(track, deltas, sample) {
+    const combos = track.blendshapeCombos;
+    if (!combos || !combos.size) return;
+    const live = [...combos.keys()].filter((n) => track.blendshapes.has(n) && !track.blendshapeMuted?.has(n));
+    if (!live.length) return;
+    const fix = sample(live.map((n) => [n, track.blendshapes.get(n)]));
+    const reg = this._reg();
+    const w = (n) => reg.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n));
+    for (const [name, f] of Object.entries(fix)) {
+      const drivers = combos.get(name);
+      for (const d of drivers) {
+        let k = 1;
+        for (const o of drivers) if (o !== d) k *= w(o);
+        if (k < 1e-4 || !track.blendshapes.has(d)) continue;
+        const col = deltas[d] || (deltas[d] = [0, 0, 0]);
+        col[0] += k * f[0]; col[1] += k * f[1]; col[2] += k * f[2];
+      }
+    }
   }
 
   // RADIUS = HOW MUCH SKIN A GRAB TAKES: the vertices within the tool radius, walked out over the

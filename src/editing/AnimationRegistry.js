@@ -2282,6 +2282,7 @@ class AnimationRegistry {
     if (!mesh || !name) return;
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes || !track.blendshapes.has(name)) return;
+    if (this.isBlendshapeCombo(track, name)) return;   // derived from its drivers, never keyed
 
     // Quantize to the current FPS grid so keyframes always land on whole-frame
     // boundaries regardless of where the playhead happened to stop.
@@ -2319,10 +2320,66 @@ class AnimationRegistry {
   // and clearing the map returns the shape to whatever the animation says, with nothing to undo.
   // Committing is a separate, explicit act that writes ordinary keys through the ordinary path.
   blendshapePreviewAt(track, name, bTrack) {
+    if (track.blendshapeCombos && track.blendshapeCombos.has(name)) return this.comboWeight(track, name);
     const p = track.blendshapePreview;
     if (p && p.has(name)) return p.get(name);
     if (!bTrack || bTrack.times.length === 0) return 0;
     return this.evaluateScalarTrack(bTrack, track.playbackTime);
+  }
+
+  // COMBINATION SHAPES (Fix Combo). A combo is an ordinary layer whose weight is never keyed or
+  // previewed: it is the PRODUCT of its drivers' weights (Maya's "combination target, multiply";
+  // Valve Source's smile_jawOpen). Fully on only when every driver is, off when any is at 0, so
+  // the single shapes look exactly as they did. Its delta is a correction ON TOP of the plain sum.
+  // A muted or deleted driver turns its combos off. Drivers are never combos themselves.
+  comboWeight(track, name) {
+    let w = 1;
+    for (const d of track.blendshapeCombos.get(name)) {
+      if (!track.blendshapes.has(d) || (track.blendshapeMuted && track.blendshapeMuted.has(d))) return 0;
+      w *= this.blendshapePreviewAt(track, d, track.blendshapeTracks.get(d));
+    }
+    return w;
+  }
+
+  isBlendshapeCombo(track, name) {
+    return !!(track && track.blendshapeCombos && track.blendshapeCombos.has(name));
+  }
+
+  // A plain layer is sculpted only at full strength (the SculptManager gate). A combo is dialled
+  // wherever its drivers happen to look wrong, usually short of 1 and 1, so it is sculpted at the
+  // weight it shows and the capture divides back to full strength. Below this the division mostly
+  // amplifies the brush.
+  get COMBO_MIN_W() { return 0.3; }
+
+  // Fix Combo: a combo of every non-combo shape the mesh is wearing at >= minW, made (or found)
+  // and made the active layer. Returns its name, or null with fewer than two drivers.
+  createCombo(mesh, minW = 0.2) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes) return null;
+    const drivers = [];
+    for (const name of track.blendshapes.keys()) {
+      if (this.isBlendshapeCombo(track, name) || (track.blendshapeMuted && track.blendshapeMuted.has(name))) continue;
+      if (this.blendshapePreviewAt(track, name, track.blendshapeTracks.get(name)) >= minW) drivers.push(name);
+    }
+    if (drivers.length < 2) return null;
+    const key = [...drivers].sort().join('|');
+    for (const [name, ds] of track.blendshapeCombos || []) {
+      if (track.blendshapes.has(name) && [...ds].sort().join('|') === key) return name;
+    }
+    // Names are stored in 32 characters (.sxr); the drivers themselves are kept by index. Both
+    // halves of a pair read as the one shape: smileLeft + smileRight + jawOpen -> mouthSmile_jawOpen.
+    const parts = [];
+    for (const d of drivers) {
+      const m = /^(.+)(Left|Right)$/.exec(d), twin = m && m[1] + (m[2] === 'Left' ? 'Right' : 'Left');
+      const part = m && drivers.includes(twin) ? m[1] : d;
+      if (!parts.includes(part)) parts.push(part);
+    }
+    let base = parts.join('_').slice(0, 30), name = base, i = 2;
+    while (track.blendshapes.has(name)) name = base.slice(0, 28) + '_' + i++;
+    this.createBlendshape(mesh, name);
+    if (!track.blendshapeCombos) track.blendshapeCombos = new Map();
+    track.blendshapeCombos.set(name, drivers);
+    return name;
   }
 
   // TWO WEIGHTS, AND CALLERS MUST PICK ON PURPOSE.
@@ -2350,6 +2407,7 @@ class AnimationRegistry {
   setBlendshapePreview(mesh, name, value) {
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes || !track.blendshapes.has(name)) return false;
+    if (this.isBlendshapeCombo(track, name)) return false;
     if (!track.blendshapePreview) track.blendshapePreview = new Map();
     const p = track.blendshapePreview;
     if (value === null || value === undefined) return p.delete(name);
@@ -2408,7 +2466,7 @@ class AnimationRegistry {
       // contributes nothing — but it also made a never-keyed shape impossible to preview, which
       // is every shape the first time you reach for it on the pad.
       const previewing = track.blendshapePreview && track.blendshapePreview.has(name);
-      if ((!bTrack || bTrack.times.length === 0) && !previewing) return;
+      if ((!bTrack || bTrack.times.length === 0) && !previewing && !this.isBlendshapeCombo(track, name)) return;
       if (muted && muted.has(name)) return;
 
       const weight = this.blendshapePreviewAt(track, name, bTrack);
@@ -2553,7 +2611,7 @@ class AnimationRegistry {
       // and the difference is silently baked into the delta — the shape would absorb whatever
       // the pad happened to be showing at the moment of the stroke.
       const previewingO = track.blendshapePreview && track.blendshapePreview.has(name);
-      if ((!bTrack || bTrack.times.length === 0) && !previewingO) return;
+      if ((!bTrack || bTrack.times.length === 0) && !previewingO && !this.isBlendshapeCombo(track, name)) return;
       const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);
@@ -2749,6 +2807,12 @@ class AnimationRegistry {
       const newBT = new Map();
       track.blendshapeTracks.forEach((bt, n) => newBT.set(n === oldName ? newName : n, bt));
       track.blendshapeTracks = newBT;
+    }
+
+    if (track.blendshapeCombos) {
+      const newC = new Map();
+      track.blendshapeCombos.forEach((ds, n) => newC.set(n === oldName ? newName : n, ds.map((d) => d === oldName ? newName : d)));
+      track.blendshapeCombos = newC;
     }
 
     if (track.editingBlendshape === oldName) track.editingBlendshape = newName;

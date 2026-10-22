@@ -385,6 +385,7 @@ class SculptManager {
     const w = reg.blendshapePreviewAt
       ? reg.blendshapePreviewAt(track, name, track.blendshapeTracks?.get(name))
       : 0;
+    if (reg.isBlendshapeCombo && reg.isBlendshapeCombo(track, name)) return w >= reg.COMBO_MIN_W;
     return Math.abs(w - 1) < 1e-3;
   }
 

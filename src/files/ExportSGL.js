@@ -26,7 +26,20 @@ var Export = {};
 // 17 each transform track's EULER REFERENCE (a joint's rest rotation; its rotation channels are the
 //    turn away from it -- see xfChannel). Older files have none: their joint tracks are re-spelled
 //    from the quaternions on first use.
-Export.VERSION = 17;
+// 18 COMBINATION SHAPES (Fix Combo): per mesh, each combo layer's index and its drivers' indices,
+//    by blendshape insertion order (names are capped at 32 chars, a driver list is not).
+Export.VERSION = 18;
+
+// The combos of a track that still exist, as [comboIdx, [driverIdx...]].
+function comboRows(track) {
+  if (!track || !track.blendshapes || !track.blendshapeCombos) return [];
+  var names = Array.from(track.blendshapes.keys()), rows = [];
+  track.blendshapeCombos.forEach(function (ds, n) {
+    var ci = names.indexOf(n), di = ds.map(function (d) { return names.indexOf(d); });
+    if (ci >= 0 && di.every(function (i) { return i >= 0; })) rows.push([ci, di]);
+  });
+  return rows;
+}
 
 var TAN_KINDS = ['right_dt', 'left_dt', 'right_dv', 'left_dv', 'tied'];
 var TAN_GROUPS = ['pos', 'rot', 'scale'];
@@ -147,6 +160,8 @@ Export.exportSGL = function (meshes, main) {
     if (track && track.scalarTracks) {
       track.scalarTracks.forEach(function (st) { nbBytes += 64 + 4 + st.times.length * 28; });
     }
+    nbBytes += 4;
+    comboRows(track).forEach(function (r) { nbBytes += 8 + r[1].length * 4; });
   }
 
   try {
@@ -530,6 +545,15 @@ Export.exportSGL = function (meshes, main) {
           }
         });
       }
+
+      // v18: combination shapes. Written for every mesh, count first, like the blocks above.
+      var _combos = comboRows(track);
+      u32a[off++] = _combos.length;
+      _combos.forEach(function (r) {
+        u32a[off++] = r[0];
+        u32a[off++] = r[1].length;
+        r[1].forEach(function (i) { u32a[off++] = i; });
+      });
     }
 
     var data = new DataView(buffer, 0, off * 4);

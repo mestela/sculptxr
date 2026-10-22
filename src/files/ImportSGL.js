@@ -505,6 +505,22 @@ Import.importSGL = function (buffer, gl, main) {
         if (nbSKeys > 0) sTrack.scalarTracks.set(sName, _st);
       }
     }
+
+    // v18: combination shapes, by blendshape index.
+    if (version >= 18) {
+      var nbCombos = u32a[off++];
+      var cTrack = AnimationRegistry.tracks.get(finalMesh.getID());
+      var cNames = cTrack && cTrack.blendshapes ? Array.from(cTrack.blendshapes.keys()) : [];
+      for (var _ci = 0; _ci < nbCombos; _ci++) {
+        var cName = cNames[u32a[off++]];
+        var nbDrv = u32a[off++], drv = [];
+        for (var _di = 0; _di < nbDrv; _di++) drv.push(cNames[u32a[off++]]);
+        if (cName && drv.every(Boolean)) {
+          if (!cTrack.blendshapeCombos) cTrack.blendshapeCombos = new Map();
+          cTrack.blendshapeCombos.set(cName, drv);
+        }
+      }
+    }
   }
 
   // NOTE: FrameGroup structure is reconstructed by Scene.loadScene AFTER these meshes are

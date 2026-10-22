@@ -3843,6 +3843,7 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice${tool._useSparse ? ' active' : ''}" id="mm-face-sparse">Sparse</button>
       <button class="mm-choice${tool._protectKeys ? ' active' : ''}" id="mm-face-protect">Protect Keys</button>
       <button class="mm-choice${tool._limitReach ? ' active' : ''}" id="mm-face-limit">Limit</button>
+      <button class="mm-choice" id="mm-face-combo">Fix Combo</button>
     </div>` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
@@ -6026,6 +6027,11 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       repaintFn();
     });
   }
+
+  el.querySelector('#mm-face-combo')?.addEventListener('click', () => {
+    sm?.getCurrentTool?.()?.fixCombo?.();
+    repaintFn();
+  });
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
     window._sculptLocked = !window._sculptLocked;
