@@ -1479,7 +1479,9 @@ let _examples = null;
 // "Building scene". The files are several MB and the click otherwise looked like it did nothing.
 // Drawn by the builder rather than poked into the DOM, so the VR panel shows it too.
 let _exampleLoad = null;   // { i, text }
-const examplesURL = (f) => new URL('examples/' + f, document.baseURI).href;
+// ?v=VERSION: browsers (the headset's too) keep an example under its URL, so a re-exported file
+// at the same name kept loading the old one -- facecap stayed tiny after it was rescaled.
+const examplesURL = (f) => new URL('examples/' + f + '?v=' + encodeURIComponent(VERSION), document.baseURI).href;
 function buildExamplesHTML() {
   if (!_examples) return '<div class="mm-info">Loading examples…</div>';
   if (!_examples.length) return '<div class="mm-info">No examples</div>';
@@ -3838,6 +3840,8 @@ function buildSculptingHTML(main, part) {
     <div class="mm-choice-grid cols-2">
       <button class="mm-choice${tool._showHeat ? ' active' : ''}" id="mm-face-heat">Heatmap</button>
       <button class="mm-choice${tool._useRotation ? ' active' : ''}" id="mm-face-rot">Rotation</button>
+      <button class="mm-choice${tool._useSparse ? ' active' : ''}" id="mm-face-sparse">Sparse</button>
+      <button class="mm-choice${tool._protectKeys ? ' active' : ''}" id="mm-face-protect">Protect Keys</button>
     </div>` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
@@ -6014,7 +6018,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
   wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
 
-  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation']]) {
+  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys']]) {
     el.querySelector(id)?.addEventListener('click', () => {
       const t = sm?.getCurrentTool?.();
       if (t) { t[prop] = !t[prop]; main.render?.(); }
@@ -6624,7 +6628,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
       await new Promise((res) => setTimeout(res, 60));
       main.clearScene();
       if (guiFiles) guiFiles._currentSaveKey = null;   // not a file of yours: Save must not land over anything
-      main.loadScene(buf, 'sgl');
+      main.loadScene(buf, /\.glb$/i.test(ex.file) ? 'glb' : 'sgl');
       _exampleLoad = null;
       main._examplesOpen = false;
       main.render?.(); rebuildFn();

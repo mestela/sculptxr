@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { deinterleaveAttribute } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Utils from '../misc/Utils.js';
 
@@ -85,10 +86,8 @@ function decodePolygons(idx, useNgon) {
 
 // A polygon, as the faces this app can hold: triangles and quads, nothing wider.
 //
-// The fan for a >4 polygon is the one OBJ import already uses -- walk in from both ends, which
-// gives quads and at most one triangle, rather than a fan from one corner which gives a pile of
-// slivers. An n-gon mesh is not what these files carry (Nomad is quads), so this is the safety
-// net rather than the path.
+// A >4 polygon is split back into the fan it was decoded from (see below), not walked in from
+// both ends the way OBJ import does: here the fan IS the source triangulation, so it is lossless.
 function emitFace(poly, fAr, uvAr, map, uvMap) {
   const n = poly.length;
   if (n < 3) return;
@@ -102,12 +101,14 @@ function emitFace(poly, fAr, uvAr, map, uvMap) {
   };
   if (n === 3) { push(poly[0], poly[1], poly[2]); return; }
   if (n === 4) { push(poly[0], poly[1], poly[2], poly[3]); return; }
-  const nbPrim = Math.ceil(n / 2) - 1;
-  for (let j = 0; j < nbPrim; j++) {
-    const i1 = j, i2 = j + 1, i3 = n - 1 - j, i4 = n - j;
-    if (i3 === i2) push(poly[i1], poly[i2], poly[i4 % n]);
-    else push(poly[i1], poly[i2], poly[i3], poly[i4 % n]);
-  }
+  // FAN FROM THE FIRST CORNER, two triangles per quad: exactly the triangles the file holds.
+  // decodePolygons only ever builds a polygon from a fan, and a fan is not always one polygon --
+  // gltfpack's cache-optimised order puts the triangles around a vertex in a run, so the "polygon"
+  // is that vertex plus its one-ring. Walking in from both ends re-triangulated it into faces
+  // that cut across the ring: facecap's head came in speckled with poke-through.
+  let j = 1;
+  for (; j + 2 < n; j += 2) push(poly[0], poly[j], poly[j + 1], poly[j + 2]);
+  if (j + 1 < n) push(poly[0], poly[j], poly[j + 1]);
 }
 
 // ---- 2. seams -------------------------------------------------------------------------
@@ -179,6 +180,18 @@ function buildUVPool(uvAttr, nbOld) {
   return { uv: new Float32Array(out), index: index };
 }
 
+// INTERLEAVED BUFFERS (a bufferView with byteStride: position+normal packed per vertex, as
+// gltfpack and glTF-Transform write) arrive as InterleavedBufferAttribute, whose `.array` is the
+// WHOLE packed buffer. Every read below indexes `.array` by itemSize, so the head came in as
+// spikes. Unpack once, morph targets included -- three's deinterleaveGeometry misses those (it
+// walks the legacy `morphTargets`, not `morphAttributes`).
+function deinterleave(geo) {
+  if (!geo) return;
+  const un = (a) => (a && a.isInterleavedBufferAttribute ? deinterleaveAttribute(a) : a);
+  for (const k in geo.attributes) geo.attributes[k] = un(geo.attributes[k]);
+  for (const k in geo.morphAttributes) geo.morphAttributes[k] = geo.morphAttributes[k].map(un);
+}
+
 // ---- 3. one glTF MESH (all its primitives) -> one MeshStatic --------------------------
 //
 // A PRIMITIVE IS NOT AN OBJECT. glTF allows one material per primitive, so an object painted
@@ -191,6 +204,7 @@ function buildUVPool(uvAttr, nbOld) {
 // material written onto the vertices that primitive actually uses. Which is also what makes
 // the material meaningful here at all, since this renderer keeps material PER VERTEX.
 function buildMesh(prims, gl, name, stats) {
+  for (let p = 0; p < prims.length; p++) deinterleave(prims[p].geometry);
   const first = prims[0];
   const geo0 = first.geometry;
   const posAttr = geo0 && geo0.attributes && geo0.attributes.position;

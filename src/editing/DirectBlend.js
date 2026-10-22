@@ -96,13 +96,34 @@ function solveDense(A, b, n) {
  *          the point has been pulled since the anchor, in the mesh's local space; weight (default
  *          1) scales how hard that pin pulls against the others
  *   w0:    {name: weight} — the pose at the anchor
- *   opts:  { alpha, mu } — RELATIVE to the strongest shape at the pins, so the feel does not
- *          change with the mesh's units or how big the face's shapes are
+ *   opts:  { alpha, mu, sparse, tie, exclude, exclusive, under } — alpha/mu/sparse RELATIVE to the strongest shape at the pins, so the feel
+ *          does not change with the mesh's units or how big the face's shapes are. sparse > 0
+ *          makes few shapes answer a drag instead of many (see SPARSE below)
  * Returns {name: weight} for the shapes that touch a pin. Shapes that touch none are NOT
  * returned: they cannot be solved for (their column is zero), and including them only lets the
  * regulariser nudge them, which reads as the far side of the face drifting while you pull here.
  */
 export function solveWeights(pins, w0, opts = {}) {
+  // TIE [[a, b]]: b follows a (symmetry: eyeBlinkRight follows eyeBlinkLeft). One unknown whose
+  // column is the SUM of the two — at the lip centre both halves move the point, and solving them
+  // apart lets the solver use one and not the other. EXCLUDE: never part of the answer.
+  const tie = opts.tie || [];
+  if (tie.length || opts.exclude) {
+    const drop = new Set(opts.exclude || []);
+    pins = pins.map((pin) => {
+      const d = {};
+      for (const [nm, c] of Object.entries(pin.deltas)) if (!drop.has(nm)) d[nm] = c;
+      for (const [a, b] of tie) {
+        if (!d[b]) continue;
+        const s = d[a] || [0, 0, 0];
+        d[a] = [s[0] + d[b][0], s[1] + d[b][1], s[2] + d[b][2]];
+        delete d[b];
+      }
+      return { ...pin, deltas: d };
+    });
+    w0 = { ...w0 };
+    for (const [a, b] of tie) w0[a] = ((w0[a] || 0) + (w0[b] || 0)) / 2;
+  }
   const names = [];
   const seen = new Set();
   for (const pin of pins) for (const n of Object.keys(pin.deltas)) if (!seen.has(n)) { seen.add(n); names.push(n); }
@@ -143,40 +164,108 @@ export function solveWeights(pins, w0, opts = {}) {
   if (scale <= 0) return {};
   const alpha = (opts.alpha ?? 0.02) * scale;
   const mu = (opts.mu ?? 0) * scale;
+  const ws = names.map((nm) => w0[nm] || 0);
+
+
+  // Per-shape bounds, [0,1] unless a rule below narrows them.
+  const lo = new Float64Array(n), hi = new Float64Array(n).fill(1);
 
   // BOUNDED by an active set: solve, pin the worst offender to its bound, solve the rest again.
   // Clamping an unconstrained answer after the fact is wrong in a way you can see — once jawOpen
   // hits 1 the remaining pull should go to the shapes that can still move, and a clamp just
   // throws that pull away.
-  const fixed = new Map();   // index -> bound value
-  let w = null;
-  for (let iter = 0; iter <= n; iter++) {
-    const free = [];
-    for (let i = 0; i < n; i++) if (!fixed.has(i)) free.push(i);
-    const f = free.length;
-    const A = new Float64Array(f * f);
-    const b = new Float64Array(f);
-    for (let a = 0; a < f; a++) {
-      const i = free[a];
-      b[a] = Atm[i] + alpha * (w0[names[i]] || 0);
-      for (const [k, v] of fixed) b[a] -= AtA[i * n + k] * v;
-      for (let c = 0; c < f; c++) A[a * f + c] = AtA[i * n + free[c]];
-      A[a * f + a] += alpha + mu;
+  const solveBounded = () => {
+    const fixed = new Map();   // index -> bound value
+    let w = null;
+    for (let iter = 0; iter <= n; iter++) {
+      const free = [];
+      for (let i = 0; i < n; i++) if (!fixed.has(i)) free.push(i);
+      const f = free.length;
+      const A = new Float64Array(f * f);
+      const b = new Float64Array(f);
+      for (let a = 0; a < f; a++) {
+        const i = free[a];
+        b[a] = Atm[i] + alpha * ws[i];
+        for (const [k, v] of fixed) b[a] -= AtA[i * n + k] * v;
+        for (let c = 0; c < f; c++) A[a * f + c] = AtA[i * n + free[c]];
+        A[a * f + a] += alpha + mu;
+      }
+      const x = solveDense(A, b, f);
+      w = new Float64Array(n);
+      for (const [k, v] of fixed) w[k] = v;
+      let worst = -1, worstBy = 0;
+      for (let a = 0; a < f; a++) {
+        const i = free[a];
+        w[i] = x[a];
+        const by = x[a] < lo[i] ? lo[i] - x[a] : x[a] > hi[i] ? x[a] - hi[i] : 0;
+        if (by > worstBy) { worstBy = by; worst = a; }
+      }
+      if (worst < 0) break;
+      const i = free[worst];
+      fixed.set(i, x[worst] < lo[i] ? lo[i] : hi[i]);
     }
-    const x = solveDense(A, b, f);
-    w = new Float64Array(n);
-    for (const [k, v] of fixed) w[k] = v;
-    let worst = -1, worstBy = 0;
-    for (let a = 0; a < f; a++) {
-      w[free[a]] = x[a];
-      const by = x[a] < 0 ? -x[a] : x[a] > 1 ? x[a] - 1 : 0;
-      if (by > worstBy) { worstBy = by; worst = a; }
+    return w;
+  };
+
+  // SPARSE: plain least squares spreads a drag across every shape that moves the point — on
+  // ARKit's mouth, 12-15 of them — and the sum overloads into a face nobody made. So each shape
+  // pays `sparse` per unit it CHANGES from w0 (an L1 penalty), which makes one shape doing the
+  // work cheaper than several sharing it. On the change, not on w, so a grab that does not move
+  // leaves the face alone. Solved exactly by coordinate descent from the bounded L2 answer: per
+  // shape, the 1-D minimiser is a soft threshold toward w0, then the box. n is tens.
+  // Deterministic in (drag, w0): path independence holds.
+  const sparse = (opts.sparse ?? 0) * scale;
+  const solveAll = () => {
+    const w = solveBounded();
+    if (sparse <= 0) return w;
+    for (let sweep = 0; sweep < 200; sweep++) {
+      let moved = 0;
+      for (let i = 0; i < n; i++) {
+        const q = AtA[i * n + i] + alpha + mu;
+        let g = Atm[i] + alpha * ws[i];
+        for (let j = 0; j < n; j++) if (j !== i) g -= AtA[i * n + j] * w[j];
+        const z = g / q - ws[i];
+        const shrunk = Math.sign(z) * Math.max(Math.abs(z) - sparse / q, 0);
+        const wi = Math.min(hi[i], Math.max(lo[i], ws[i] + shrunk));
+        moved = Math.max(moved, Math.abs(wi - w[i]));
+        w[i] = wi;
+      }
+      if (moved < 1e-7) break;
     }
-    if (worst < 0) break;
-    fixed.set(free[worst], x[worst] < 0 ? 0 : 1);
+    return w;
+  };
+
+  // RULES between shapes, enforced by narrowing bounds and solving again (a handful of passes):
+  //   exclusive [[a, b]] — opposing poses (mouthLeft/mouthRight) that no face makes at once. A
+  //     straight pull down on facecap's chin answered mouthLeft 0.52 + mouthRight 0.52: their
+  //     sideways halves cancel and their small downward halves add. The weaker one is held off.
+  //   under {a: b} — a corrective that only means anything on top of another: ARKit's
+  //     mouthClose closes the lips AGAINST jawOpen, so it may not exceed it.
+  const idx = new Map(names.map((nm, i) => [nm, i]));
+  let w = solveAll();
+  for (let pass = 0; pass < 8; pass++) {
+    let again = false;
+    for (const [a, b] of opts.exclusive || []) {
+      const ia = idx.get(a), ib = idx.get(b);
+      if (ia === undefined || ib === undefined || w[ia] <= 0.02 || w[ib] <= 0.02) continue;
+      const k = w[ia] < w[ib] ? ia : ib;
+      lo[k] = hi[k] = 0;
+      again = true;
+    }
+    for (const [a, b] of Object.entries(opts.under || {})) {
+      const ia = idx.get(a);
+      if (ia === undefined) continue;
+      const cap = idx.has(b) ? w[idx.get(b)] : (w0[b] || 0);
+      if (w[ia] <= cap + 1e-6) continue;
+      hi[ia] = Math.max(lo[ia], cap);
+      again = true;
+    }
+    if (!again) break;
+    w = solveAll();
   }
 
   const out = {};
   for (let i = 0; i < n; i++) out[names[i]] = Math.min(1, Math.max(0, w[i]));
+  for (const [a, b] of tie) if (a in out) out[b] = out[a];
   return out;
 }

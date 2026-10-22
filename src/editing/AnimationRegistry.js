@@ -341,6 +341,12 @@ class AnimationRegistry {
       };
     }
     this._trackStatesBeforeRecording.set(id, this._trackStateBeforeRecording);
+    // A BLENDSHAPE take's keys live in blendshapeTracks, which the transform snapshot above does
+    // not hold — so a face take pushed no undo at all, and Undo after three takes skipped past
+    // all of them. matt: "if i undo, i would expect that last take of the nose to be undone,
+    // instead it undoes the entire jaw, eyes, nose animation." Snapshot them per take.
+    this._bsKeysBeforeRecording = window._animKeyMode === 'blendshape' && track?.blendshapes
+      ? this._blendKeySnapshot(track) : null;
     
     // If it is the very first track EVER, or we are resetting it:
     if (!this.tracks.has(id)) {
@@ -1499,6 +1505,9 @@ class AnimationRegistry {
       }
     }
 
+    if (!isManualAbort && this._bsKeysBeforeRecording && track) this._pushBlendTakeUndo(track);
+    this._bsKeysBeforeRecording = null;
+
     this.activeRecordingId = -1;
     this.activeMesh = null;
     this.recordingTargets = null;
@@ -2070,6 +2079,35 @@ class AnimationRegistry {
 
   // Undo for split/combine: put back the weight-key objects these layers had, which
   // removeLayer/addLayer would otherwise leave as fresh empty tracks.
+  // Every blendshape's weight keys, deep-copied: a take inserts into the arrays in place.
+  _blendKeySnapshot(track) {
+    const snap = new Map();
+    for (const [name, bt] of track.blendshapeTracks || []) snap.set(name, structuredClone(bt));
+    return snap;
+  }
+
+  // One undo step per face take: the blendshape keys as they were before it and after it.
+  _pushBlendTakeUndo(track) {
+    const before = this._bsKeysBeforeRecording;
+    const after = this._blendKeySnapshot(track);
+    const same = before.size === after.size && [...after].every(([n, bt]) => {
+      const b = before.get(n);
+      return b && b.times.length === bt.times.length
+        && bt.times.every((t, i) => t === b.times[i] && bt.values[i] === b.values[i]);
+    });
+    if (same) return;
+    const meshId = this.activeRecordingId;
+    const put = (snap) => {
+      const tr = this.tracks.get(meshId);
+      if (!tr) return;
+      tr.blendshapeTracks = new Map([...snap].map(([n, bt]) => [n, structuredClone(bt)]));
+      const m = window.app?.getMeshes?.().find((x) => x.getID() === meshId);
+      if (m) { this.applyBlendshapes(m); this._refreshBlendPanels(m); }
+      window.app?.render?.();
+    };
+    window.app?.getStateManager?.()?.pushStateCustom?.(() => put(before), () => put(after), false, 'Record Face Take');
+  }
+
   _keySnapshot(track, names) {
     const saved = names.map((n) => [n, track.blendshapeTracks?.get(n)]);
     return () => { for (const [n, k] of saved) if (k && track.blendshapes.has(n)) track.blendshapeTracks.set(n, k); };

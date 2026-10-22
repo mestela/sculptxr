@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { vec3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import { sampleDeltas, solveWeights } from '../DirectBlend.js';
+import { arkitEntry, lrPairFor } from '../ArkitBlendshapes.js';
 
 /**
  * FACE — grab the face and pull it; the blendshape weights follow. See DirectBlend.js.
@@ -44,6 +45,25 @@ class FacePuppet extends SculptBase {
     // Panel toggles (main menu + wrist).
     this._showHeat = true;
     this._useRotation = true;
+    // Few shapes answer a drag instead of every one that moves the point (DirectBlend SPARSE).
+    // On facecap, a half-shape drag at the smile's own corner: 8 shapes on -> 2 (smile 0.46),
+    // blink/brow/jaw -> 1 each, pucker/puff 7 -> 3-4; the point still lands within ~10%.
+    this._useSparse = true;
+    // LAYERING: a shape that already has keys when the grab starts is left out of the solve, so
+    // its take keeps playing underneath. Without it, a smile pass at the mouth corner re-solved
+    // jawOpen too (it moves the corner) and recorded over the jaw pass. matt: "the happy/sad had
+    // basically totally overwrite the jawopen animation."
+    this._protectKeys = true;
+    this._protected = null;   // names keyed at the start of this grab
+    // SMOOTH: hold the off-hand trigger (Shift on desktop) and the press turns DOWN whatever is on
+    // under it instead of grabbing — matt's instinct after a pose overloads: "wherever i click,
+    // identify the shapes that are active, turn down their sliders." Weight per second, scaled by
+    // how much each shape moves this spot, so the one dominating here falls first.
+    this._smoothRate = 1.5;
+    this._smoothLatch = false;   // VR: the off-hand trigger is held with no pin
+    this._smoother = null;       // the hand (or 'mouse') smoothing
+    this._smoothT = 0;
+    this._sparse = 0.01;
     this._stats = new WeakMap();   // mesh -> {key, best, who, max}: see _statsFor
     // Rotation (see _ringFor): how hard a full twist pulls, and the twist in degrees at which it
     // reaches that — below it the grab is the plain point grab, so a hand that merely wobbles
@@ -222,6 +242,85 @@ class FacePuppet extends SculptBase {
     return out;
   }
 
+  // Rules between shapes, from their NAMES (ARKit's, or any fooLeft/fooRight), for solveWeights.
+  // With symmetry on, the halves of a pair share one weight, and a directional pose (jawLeft,
+  // mouthRight) is left out: tied to its mirror it would cancel itself. Opposing poses are
+  // exclusive; ARKit's mouthClose is a corrective that only closes the lips against jawOpen.
+  _rules(track) {
+    const has = (nm) => track.blendshapes.has(nm);
+    const exclusive = [], tie = [], exclude = [];
+    const seen = new Set();
+    for (const [name] of track.blendshapes) {
+      const e = arkitEntry(name);
+      if (e && e.category === 'directional' && has(e.arkit.opposite) && !seen.has(e.arkit.opposite)) {
+        exclusive.push([name, e.arkit.opposite]);
+        seen.add(name);
+      }
+      const look = /^eyeLook(In|Up)(Left|Right)$/.exec(name);
+      if (look) {
+        const other = 'eyeLook' + (look[1] === 'In' ? 'Out' : 'Down') + look[2];
+        if (has(other)) exclusive.push([name, other]);
+      }
+    }
+    if (this._main.getSculptManager().getSymmetry()) {
+      for (const [name] of track.blendshapes) {
+        const e = arkitEntry(name);
+        if (e && e.category === 'directional') { exclude.push(name); continue; }
+        const pair = lrPairFor(name, has);
+        if (pair && name === pair.left && has(pair.right)) tie.push([pair.left, pair.right]);
+      }
+    }
+    const under = has('mouthClose') && has('jawOpen') ? { mouthClose: 'jawOpen' } : {};
+    return { exclusive, tie, exclude, under };
+  }
+
+  _keyedNames(track) {
+    return [...(track.blendshapeTracks || [])].filter(([, bt]) => bt.times.length > 1).map(([n]) => n);
+  }
+
+  // One frame of smoothing at a picked point: every shape that is ON and moves this spot comes down.
+  _smoothAt(mesh, deltas) {
+    const reg = this._reg();
+    const track = this._track(mesh);
+    if (!reg || !track || !deltas) return;
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - this._smoothT) / 1000);
+    this._smoothT = now;
+    const mag = {};
+    for (const [n, d] of Object.entries(deltas)) mag[n] = Math.hypot(d[0], d[1], d[2]);
+    // With symmetry on, the other half comes down with this one, as it would have gone up with it.
+    for (const [a, b] of this._rules(track).tie) {
+      const m = Math.max(mag[a] || 0, mag[b] || 0);
+      if (m) mag[a] = mag[b] = m;
+    }
+    const max = Math.max(0, ...Object.values(mag));
+    if (!max) return;
+    // NOT Protect Keys: in a take, what is on under the cursor IS the earlier passes, and turning
+    // those down is the whole point of reaching for smooth. It records over them where it is used.
+    const cur = this._currentWeights(track);
+    let changed = false;
+    for (const [n, m] of Object.entries(mag)) {
+      if (!(cur[n] > 0)) continue;
+      const w = Math.max(0, cur[n] - this._smoothRate * dt * m / max);
+      changed = reg.setBlendshapePreview(mesh, n, Math.round(w * 1e4) / 1e4) || changed;
+    }
+    if (changed) { reg.applyBlendshapes(mesh); this._main.render(); }
+  }
+
+  _beginSmooth(who, mesh) {
+    this._smoother = who;
+    this._mesh = mesh;
+    this._smoothT = performance.now();
+    this._beginTake(mesh);
+  }
+
+  _endSmooth() {
+    this._endTake(this._mesh);
+    this._smoother = null;
+    this._mesh = null;
+    this._protected = null;
+  }
+
   _currentWeights(track) {
     const reg = this._reg();
     const w = {};
@@ -354,9 +453,25 @@ class FacePuppet extends SculptBase {
         pins.push({ deltas: r.deltas, drag: [b[0] - a[0], b[1] - a[1], b[2] - a[2]], weight });
       }
     }
-    const w = solveWeights(pins, this._w0, { alpha: this._alpha });
+    const track = reg.tracks.get(mesh.getID());
+    const rules = track ? this._rules(track) : {};
+    if (this._protectKeys && track) {
+      // Taken once per grab, so the keys THIS take is laying down do not lock its own shapes.
+      // Two keys or more: a single key is a held pose (an import writes one per shape for the
+      // file's default weights), not a take to protect — counting it locked all of facecap.
+      if (!this._protected) this._protected = this._keyedNames(track);
+      rules.exclude = [...(rules.exclude || []), ...this._protected];
+      rules.tie = (rules.tie || []).filter(([a, b]) => !this._protected.includes(a) && !this._protected.includes(b));
+    }
+    const w = solveWeights(pins, this._w0, { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, ...rules });
     let changed = false;
+    const previewing = track?.blendshapePreview;
     for (const name of Object.keys(w)) {
+      // ONLY SHAPES THAT MOVE. The solver answers for every shape at the pin, most left where they
+      // were — and a take keys whatever is previewed, so a smile pass on facecap wrote 22 curves,
+      // half of them flat lines at the file's default weights. Once a shape has moved it stays
+      // previewed, so it can come back to where it started.
+      if (Math.abs(w[name] - (this._w0[name] || 0)) < 1e-3 && !previewing?.has(name)) continue;
       // Snapped to a 1e-4 grid so a hand held still does not recomposite the mesh every frame
       // over a change in the sixth decimal place.
       changed = reg.setBlendshapePreview(mesh, name, Math.round(w[name] * 1e4) / 1e4) || changed;
@@ -368,7 +483,7 @@ class FacePuppet extends SculptBase {
   }
 
   // ── Desktop: one pin, under the mouse, dragged in the plane facing the camera ──────────────
-  start() {
+  start(shift) {
     const main = this._main;
     // The headset's presses are handled per hand in updateXR; Scene calls this on the trigger
     // too, against a mouse position nobody is looking at. Same guard as SelectTool.
@@ -379,6 +494,11 @@ class FacePuppet extends SculptBase {
     const track = this._track(mesh);
     const pin = track && this._pinFromPick(picking, mesh, track);
     if (!pin) return false;
+    if (shift) {
+      this._beginSmooth('mouse', mesh);
+      this._smoothAt(mesh, pin.deltas);
+      return true;
+    }
     this._hands.clear();
     this._mesh = mesh;
     pin.now = vec3.clone(pin.world);
@@ -391,16 +511,24 @@ class FacePuppet extends SculptBase {
   }
 
   update() {
+    const main = this._main;
+    if (this._smoother === 'mouse') {
+      const picking = main.getPicking();
+      if (!this._mesh || !picking.intersectionMouseMeshes([this._mesh], main._mouseX, main._mouseY)) return;
+      const track = this._track(this._mesh);
+      this._smoothAt(this._mesh, track && this._pinFromPick(picking, this._mesh, track)?.deltas);
+      return;
+    }
     const pin = this._hands.get('mouse');
     if (!pin) return;
-    const main = this._main;
     pin.now = main.getCamera().unproject(main._mouseX, main._mouseY, this._screenZ);
     this._solve();
   }
 
   end() {
+    if (this._smoother === 'mouse') { this._endSmooth(); return; }
     this._hands.delete('mouse');
-    if (!this._hands.size) { this._endTake(this._mesh); this._mesh = null; }
+    if (!this._hands.size) { this._endTake(this._mesh); this._mesh = null; this._protected = null; }
   }
 
   // ── Recording: a grab IS the take, the way a Grab is for a transform take ───────────────────
@@ -412,6 +540,7 @@ class FacePuppet extends SculptBase {
   // exactly the shapes these pins are solving for.
   _beginTake(mesh) {
     const reg = this._reg();
+    this._gestureBegin(mesh);
     if (!reg || !window._animArmed || reg.isRecording || reg.isCountingIn) return;
     // The take records the SELECTED mesh's track, and the selection is often something else
     // (this tool never needed it). Select the face first, keeping this tool.
@@ -429,10 +558,43 @@ class FacePuppet extends SculptBase {
     window._animCountIn = false;
     reg.beginInteraction(mesh);
     window._animCountIn = countIn;
+    if (this._gesture) this._gesture.take = !!reg.isRecording;
   }
 
   _endTake(mesh) {
     if (mesh) this._reg()?.endInteraction?.(mesh);
+    this._gestureFinish();
+  }
+
+  // ONE UNDO STEP PER GESTURE, first hand on to last hand off (a smooth stroke too). The tool only
+  // ever writes the preview layer, and nothing undid that: matt, "undo doesn't work for this face
+  // tool". A take is left to its own step (AnimationRegistry's "Record Face Take"), which holds the
+  // keys; the preview it leaves behind is cleared when it stops.
+  _gestureBegin(mesh) {
+    if (this._gesture) return;
+    const track = this._track(mesh);
+    if (!track) return;
+    this._gesture = { mesh, take: false, before: new Map(track.blendshapePreview || []) };
+  }
+
+  _gestureFinish() {
+    const g = this._gesture;
+    this._gesture = null;
+    if (!g || g.take) return;
+    const reg = this._reg();
+    const track = this._track(g.mesh);
+    if (!reg || !track) return;
+    const after = new Map(track.blendshapePreview || []);
+    if (after.size === g.before.size && [...after].every(([n, v]) => g.before.get(n) === v)) return;
+    const put = (snap) => {
+      const tr = this._track(g.mesh);
+      if (!tr) return;
+      tr.blendshapePreview = new Map(snap);
+      reg.applyBlendshapes(g.mesh);
+      reg._refreshBlendPanels?.(g.mesh);
+      this._main.render();
+    };
+    this._main.getStateManager().pushStateCustom(() => put(g.before), () => put(after), false, 'Face Pose');
   }
 
   // ── VR: every hand is a pin. Trigger grabs where its ray meets the face; letting go drops it ─
@@ -445,11 +607,28 @@ class FacePuppet extends SculptBase {
       const down = !!(c.buttons && c.buttons[0] && c.buttons[0].pressed);
       const was = !!this._vrTriggerWas[hand];
       this._vrTriggerWas[hand] = down;
+      // Let go of smooth mode BEFORE the pose guard: an off hand released over a panel has no
+      // pose, and skipping its release would leave the mode stuck on.
+      const offHand = hand !== (this._main._dominantHand || 'right');
+      if (offHand && !down && this._smoothLatch) { this._smoothLatch = false; if (this._smoother) this._endSmooth(); continue; }
       // No pose: the ray is on a menu and the press belongs to it. A held pin keeps its last
       // position rather than letting go, so glancing the ray across a panel does not drop the jaw.
       if (!c.matrix || !c.rayOrigin) continue;
       const tip = vec3.clone(c.rayOrigin);
       const rot = mat4.getRotation(quat.create(), c.matrix);
+
+      // SMOOTH MODE, as for every other tool: the off-hand trigger alone is the mode, the dominant
+      // press does the work. Only with no pin held — reaching in with the off hand while the
+      // dominant one holds the face is still the two-hand grab.
+      if (offHand && down && !was && !this._hands.size && !this._smoother) { this._smoothLatch = true; continue; }
+      if (this._smoothLatch && offHand) continue;
+      if (!offHand && this._smoothLatch && down) {
+        const hit = this._grabFromRay(picking, tip, c.rayDirection);
+        if (!this._smoother) { if (hit) this._beginSmooth(hand, this._mesh); }
+        if (hit && this._smoother === hand) this._smoothAt(this._mesh, hit.deltas);
+        continue;
+      }
+      if (!down && was && this._smoother === hand) { this._endSmooth(); continue; }
 
       if (down && !was) {
         const pin = this._grabFromRay(picking, tip, c.rayDirection);
@@ -467,7 +646,7 @@ class FacePuppet extends SculptBase {
         if (pin) { pin.now = tip; pin.rotNow = rot; }
       }
     }
-    if (!this._hands.size) { this._mesh = null; return; }
+    if (!this._hands.size) { if (!this._smoother) { this._mesh = null; this._protected = null; } return; }
     if (pinsChanged) { this._beginTake(this._mesh); this._reanchor(); }
     this._solve();
   }

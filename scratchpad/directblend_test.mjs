@@ -89,5 +89,38 @@ ok('strong' in d4 && !('trace' in d4), 'a shape below the floor at the point is 
   ok(w2.turn > 0.6 && w2.translate < 0.05, 'a twist of the patch picks the shape that turns it, not one that moves it');
 }
 
+// SPARSE: a drag that one shape answers exactly, but two others can also make between them. Plain
+// least squares spreads it across all three (the facecap mouth); sparse lets the one shape take it.
+{
+  const dd = { one: [1, 0, 0], up: [0.7, 0.7, 0], down: [0.7, -0.7, 0] };
+  const plain = solveWeights([{ deltas: dd, drag: [0.5, 0, 0] }], {});
+  const sp = solveWeights([{ deltas: dd, drag: [0.5, 0, 0] }], {}, { sparse: 0.03 });
+  ok(plain.up > 0.05 && plain.down > 0.05, 'without sparse, the drag is spread across every shape that can make it');
+  ok(sp.one > 0.4 && sp.up < 0.03 && sp.down < 0.03, 'with sparse, the one shape takes it and the others stay off');
+  const still = solveWeights([{ deltas: dd, drag: [0, 0, 0] }], { one: 0.6, up: 0.3 }, { sparse: 0.01 });
+  ok(near(still.one, 0.6, 1e-6) && near(still.up, 0.3, 1e-6), 'sparse acts on the CHANGE: a grab that does not move leaves the face alone');
+}
+
+// RULES. TIE (symmetry): the follower gets the leader's weight, even though it does not touch the
+// point. EXCLUDE: never answers. EXCLUSIVE: two opposing shapes whose sideways halves cancel are
+// not both used to make a downward pull. UNDER: a corrective never exceeds what it corrects.
+{
+  const pair = { blinkL: [0, -1, 0], blinkR: [0, 0, 0] };
+  const t = solveWeights([{ deltas: pair, drag: [0, -0.5, 0] }], {}, { tie: [['blinkL', 'blinkR']] });
+  ok(near(t.blinkL, 0.5) && near(t.blinkR, 0.5), 'tied: blinking one eye blinks the other');
+  const ex = solveWeights([{ deltas: { jawLeft: [1, 0, 0], other: [0.5, 0, 0] }, drag: [0.5, 0, 0] }], {}, { exclude: ['jawLeft'] });
+  ok(!('jawLeft' in ex) && ex.other > 0.9, 'excluded: the shape never answers, the drag goes elsewhere');
+  const lr = { left: [1, -0.3, 0], right: [-1, -0.3, 0], down: [0, -1, 0] };
+  const both = solveWeights([{ deltas: lr, drag: [0, -0.3, 0] }], {});
+  const one = solveWeights([{ deltas: lr, drag: [0, -0.3, 0] }], {}, { exclusive: [['left', 'right']] });
+  ok(both.left > 0.05 && both.right > 0.05, 'without the rule, opposing shapes cancel sideways to pull down');
+  ok(!(one.left > 0.02 && one.right > 0.02), 'exclusive: at most one of an opposing pair is on');
+  const cl = { close: [0, 1, 0], jaw: [0, -0.2, 0.5] };
+  const shut = solveWeights([{ deltas: cl, drag: [0, 0.5, 0] }], {}, { under: { close: 'jaw' } });
+  ok((shut.close || 0) <= (shut.jaw || 0) + 1e-6, 'under: mouthClose never exceeds jawOpen');
+  const open = solveWeights([{ deltas: { close: [0, 1, 0] }, drag: [0, 0.3, 0] }], { jaw: 0.8 }, { under: { close: 'jaw' } });
+  ok(near(open.close, 0.3), '...and with the jaw open (not at the pin) it closes the lips freely up to it');
+}
+
 if (fails) { console.log(fails + ' FAILED'); process.exit(1); }
 console.log('all checks passed');
