@@ -620,10 +620,10 @@ export function buildAnimationSectionHTML(main, style) {
         <div class="acp-stack" style="gap:4px">
           <label style="font-size:10px;color:#6c7086;text-transform:uppercase;letter-spacing:.06em">Capture rate</label>
           <div class="acp-select" id="acp-bake-rate-wrap">
-            <button class="acp-select-trigger" id="acp-bake-rate">Standard (~10 fps)</button>
+            <button class="acp-select-trigger" id="acp-bake-rate">Dense (~30 fps)</button>
             <div class="acp-select-opts" style="display:none">
-              <button class="acp-select-opt" data-bakerate="0.033">Dense (~30 fps)</button>
-              <button class="acp-select-opt active" data-bakerate="0.1">Standard (~10 fps)</button>
+              <button class="acp-select-opt active" data-bakerate="0.033">Dense (~30 fps)</button>
+              <button class="acp-select-opt" data-bakerate="0.1">Standard (~10 fps)</button>
               <button class="acp-select-opt" data-bakerate="0.5">Sparse (2 fps)</button>
               <button class="acp-select-opt" data-bakerate="1.0">Step Key (1 fps)</button>
             </div>
@@ -970,7 +970,7 @@ export function syncAnimationSection(el, main) {
   const bakeBtn = el.querySelector('#acp-bake-voxel');
   if (bakeBtn) bakeBtn.style.display = 'none';
 
-  const bakeRate = String(window._animCaptureRate || 0.1);
+  const bakeRate = String(window._animCaptureRate || 0.033);
   el.querySelectorAll('[data-bakerate]').forEach(b => {
     const match = b.dataset.bakerate === bakeRate;
     b.classList.toggle('active', match);
@@ -1370,7 +1370,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   });
   el.querySelectorAll('[data-bakerate]').forEach(btn => {
     btn.addEventListener('click', () => {
-      window._animCaptureRate = parseFloat(btn.dataset.bakerate) || 0.1;
+      window._animCaptureRate = parseFloat(btn.dataset.bakerate) || 0.033;
       if (brTrigger) brTrigger.childNodes[0].textContent = btn.textContent;
       if (brOpts) brOpts.style.display = 'none';
       el.querySelectorAll('[data-bakerate]').forEach(b => b.classList.toggle('active', b === btn));

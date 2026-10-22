@@ -802,7 +802,7 @@ class AnimationRegistry {
       this.lastCaptureTime = elapsed;
     }
 
-    const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+    const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
     if (!stopAtRangeEnd && this.lastCaptureWriteTime !== undefined) {
       if (elapsed >= this.lastCaptureWriteTime && elapsed - this.lastCaptureWriteTime < rate) return;
     }
@@ -4043,7 +4043,7 @@ class AnimationRegistry {
         }
 
         const fps = window._animFPS || 24;
-        const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+        const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
         const frameStep = Math.max(1, Math.round(rate * fps));
         const gridFrame = Math.round((track.playbackTime * fps) / frameStep) * frameStep;
         const activeLayer = this._activeShapeLayer(track);

@@ -33,7 +33,7 @@ class GuiAnimation {
     window._animWaitForTrigger = window._animWaitForTrigger !== undefined ? window._animWaitForTrigger : true;
     window._animShowTangents = window._animShowTangents !== undefined ? window._animShowTangents : false;
     window._animShowTransformBox = false;
-    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
     if (!window._animFPS) {
       try { const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}'); window._animFPS = s.animFPS || 24; } catch (_) { window._animFPS = 24; }
     }
