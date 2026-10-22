@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { vec3, mat4, quat } from 'gl-matrix';
+import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
-import { sampleDeltas, solveWeights } from '../DirectBlend.js';
+import { sampleDeltas, averageDeltas, solveWeights } from '../DirectBlend.js';
 import { arkitEntry, lrPairFor } from '../ArkitBlendshapes.js';
 
 /**
@@ -54,6 +54,7 @@ class FacePuppet extends SculptBase {
     // jawOpen too (it moves the corner) and recorded over the jaw pass. matt: "the happy/sad had
     // basically totally overwrite the jawopen animation."
     this._protectKeys = true;
+    this._limitReach = true;   // Limit toggle: see _clampToReach
     this._protected = null;   // names keyed at the start of this grab
     // SMOOTH: hold the off-hand trigger (Shift on desktop) and the press turns DOWN whatever is on
     // under it instead of grabbing — matt's instinct after a pose overloads: "wherever i click,
@@ -65,10 +66,11 @@ class FacePuppet extends SculptBase {
     this._smoothT = 0;
     this._sparse = 0.01;
     this._stats = new WeakMap();   // mesh -> {key, best, who, max}: see _statsFor
-    // Rotation (see _ringFor): how hard a full twist pulls, and the twist in degrees at which it
+    // Rotation (see _twists): how hard a full twist pulls, and the twist in degrees at which it
     // reaches that — below it the grab is the plain point grab, so a hand that merely wobbles
     // while it pulls does not start steering the shapes.
-    this._rotWeight = 0.5;
+    this._rotWeight = 1;
+    this._twistLoosen = 0.9;
     this._rotRamp = 15;
   }
 
@@ -262,6 +264,11 @@ class FacePuppet extends SculptBase {
         if (has(other)) exclusive.push([name, other]);
       }
     }
+    // A lip rolled IN and a lip flared OUT are opposite turns of the same skin. Untied, twisting a
+    // rolled lip back answered with funnel on top (0.8 roll -> 0.7 roll + 0.39 funnel) instead of
+    // unrolling it — matt: "once [lip roll is] activated, i can only really turn it off again by
+    // using the smooth brush".
+    for (const roll of ['mouthRollLower', 'mouthRollUpper']) if (has(roll) && has('mouthFunnel')) exclusive.push([roll, 'mouthFunnel']);
     if (this._main.getSculptManager().getSymmetry()) {
       for (const [name] of track.blendshapes) {
         const e = arkitEntry(name);
@@ -272,6 +279,53 @@ class FacePuppet extends SculptBase {
     }
     const under = has('mouthClose') && has('jawOpen') ? { mouthClose: 'jawOpen' } : {};
     return { exclusive, tie, exclude, under };
+  }
+
+  // LOCALITY: per shape at these pins, how much it moves the WHOLE face for each unit it moves
+  // the grabbed points, relative to the most local shape there. 1 for the shape this spot belongs
+  // to; tens for jawOpen at the lower lid, which it moves a little while swinging the whole jaw.
+  // matt: "if i pull [the lower lid] too far, the entire lower mouth gets engaged." Region-based
+  // models (Tena et al. 2011) and Cetinaslan's localized descent attack the same failure.
+  _locality(track, pins) {
+    if (!this._totals) this._totals = new WeakMap();
+    const ratio = {};
+    for (const [name, delta] of track.blendshapes) {
+      let local = 0;
+      for (const pin of pins) { const d = pin.deltas[name]; if (d) local = Math.max(local, Math.hypot(d[0], d[1], d[2])); }
+      if (!local) continue;
+      let total = this._totals.get(delta);
+      if (total === undefined) {
+        total = 0;
+        for (let i = 0; i < delta.length; i += 3) total += Math.hypot(delta[i], delta[i + 1], delta[i + 2]);
+        this._totals.set(delta, total);
+      }
+      ratio[name] = total / local;
+    }
+    const best = Math.min(...Object.values(ratio));
+    const cost = {};
+    // Square root: jawOpen at the lid (ratio ~50) is still several times dearer, but pucker
+    // against cheekPuff at the lips (ratio ~2) no longer hands the pucker to the cheek.
+    for (const [name, r] of Object.entries(ratio)) cost[name] = Math.min(10, Math.sqrt(r / best));
+    return cost;
+  }
+
+  // LIMIT: a point cannot be pulled further than the furthest-reaching single shape there could
+  // take it, along the pull. Past that, least squares stacks every shape that closes the gap a
+  // little — matt: "its relatively easy to make implausible, overdriven combinations". Measured on
+  // the ICT head, a pull of twice a shape's reach: lid 10 shapes -> 2, smile 10 -> 2, funnel 5 -> 3;
+  // under its reach nothing changes. (Huber-weighting the pin was tried first and did ~nothing.)
+  // A shape already on can also travel back, so its reach against the pull counts too.
+  _clampToReach(deltas, drag) {
+    const len = Math.hypot(drag[0], drag[1], drag[2]);
+    if (!len) return drag;
+    const u = [drag[0] / len, drag[1] / len, drag[2] / len];
+    let reach = 0;
+    for (const [name, c] of Object.entries(deltas)) {
+      const along = c[0] * u[0] + c[1] * u[1] + c[2] * u[2];
+      const w = this._w0[name] || 0;
+      reach = Math.max(reach, along > 0 ? along * (1 - w) : -along * w);
+    }
+    return len > reach ? [u[0] * reach, u[1] * reach, u[2] * reach] : drag;
   }
 
   _keyedNames(track) {
@@ -301,7 +355,7 @@ class FacePuppet extends SculptBase {
     let changed = false;
     for (const [n, m] of Object.entries(mag)) {
       if (!(cur[n] > 0)) continue;
-      const w = Math.max(0, cur[n] - this._smoothRate * dt * m / max);
+      const w = Math.max(0, cur[n] - this._smoothRate * this._gain() * dt * m / max);
       changed = reg.setBlendshapePreview(mesh, n, Math.round(w * 1e4) / 1e4) || changed;
     }
     if (changed) { reg.applyBlendshapes(mesh); this._main.render(); }
@@ -337,61 +391,107 @@ class FacePuppet extends SculptBase {
     if (face < 0) return null;
     const corners = this._corners(mesh, face);
     const local = vec3.clone(picking.getIntersectionPoint());
-    const deltas = sampleDeltas(this._shapes(track), corners, mesh.getVertices(), local, this._minFrac);
+    const patch = this._patch(mesh, corners, local, this._localRadius(mesh, picking));
+    const deltas = patch
+      ? averageDeltas(this._shapes(track), patch.idx, patch.wts, this._minFrac)
+      : sampleDeltas(this._shapes(track), corners, mesh.getVertices(), local, this._minFrac);
     if (!Object.keys(deltas).length) return null;
     const world = vec3.transformMat4(vec3.create(), local, this._toWorld(mesh));
-    const ring = this._main._xrSession && this._useRotation
-      ? this._ringFor(mesh, track, local, picking.computePickedNormal(), deltas) : null;
-    return { deltas, world, anchor: null, now: null, ring, rotAnchor: null, rotNow: null };
+    const twist = this._useRotation ? this._twists(mesh, track, corners, local, Object.keys(deltas)) : null;
+    return { deltas, world, anchor: null, now: null, twist, rotAnchor: null, rotNow: null };
   }
 
-  // ── Rotation: a grab holds a small rigid PATCH, not a point ─────────────────────────────────
-  //
-  // matt: "would it be possible to map controller rotations onto this? ... otherwise i feel we're
-  // leaving expressivity on the table." A point has no orientation, but a patch does: four points
-  // on a ring round the grab, carried rigidly by the hand. Twist the hand and the ring asks to
-  // turn about the grab point — and turning a patch of skin is just displacement of its points,
-  // which the shapes already know how to answer. Roll a mouth corner and it reaches for smile or
-  // frown; tilt a brow and it splits inner from outer. Nothing authored.
-  //
-  // The ring pins are RELATIVE to the centre (their columns are delta_k - delta_centre), so they
-  // constrain only the patch's turn, never its travel — pulling still behaves exactly as the point
-  // grab did. And they only cover the shapes the centre grabbed, so a twist cannot recruit a shape
-  // from elsewhere into the take. The ring is the cursor sphere: radius from the tool slider.
-  _ringFor(mesh, track, local, normal, centre) {
-    if (!normal) return null;
-    const M = this._toWorld(mesh);
-    const sc = Math.hypot(M[0], M[1], M[2]) || 1;
-    const rScene = (this._radius / 100) * 0.1 / (this._main._vrScale || 1);
-    const rl = rScene / sc;
-    const n = vec3.normalize(vec3.create(), normal);
-    const t1 = vec3.cross(vec3.create(), n, Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]);
-    vec3.normalize(t1, t1);
-    const t2 = vec3.cross(vec3.create(), n, t1);
-    const v = mesh.getVertices(), nv = mesh.getNbVertices();
-    const centreWorld = vec3.transformMat4(vec3.create(), local, M);
-    const ring = [];
-    for (let k = 0; k < 4; k++) {
-      const a = k * Math.PI / 2;
-      const q = [0, 1, 2].map((i) => local[i] + rl * (Math.cos(a) * t1[i] + Math.sin(a) * t2[i]));
-      let best = -1, bd = Infinity;
-      for (let i = 0; i < nv; i++) {
-        const dx = v[i * 3] - q[0], dy = v[i * 3 + 1] - q[1], dz = v[i * 3 + 2] - q[2];
-        const d = dx * dx + dy * dy + dz * dz;
-        if (d < bd) { bd = d; best = i; }
-      }
-      if (best < 0) continue;
-      const deltas = {};
-      for (const name of Object.keys(centre)) {
-        const d = track.blendshapes.get(name);
-        if (!d || best * 3 + 2 >= d.length) continue;
-        const c = centre[name];
-        deltas[name] = [d[best * 3] - c[0], d[best * 3 + 1] - c[1], d[best * 3 + 2] - c[2]];
-      }
-      const pw = vec3.transformMat4(vec3.create(), [v[best * 3], v[best * 3 + 1], v[best * 3 + 2]], M);
-      ring.push({ deltas, off: vec3.sub(pw, pw, centreWorld) });
+  // RADIUS = HOW MUCH SKIN A GRAB TAKES: the vertices within the tool radius, walked out over the
+  // mesh from the picked face (so a lower-lip grab never reaches across the mouth into the upper
+  // lip, as a plain sphere would), weighted toward the centre. Too small to cover a face: null,
+  // and the point under the cursor is sampled instead.
+  _patch(mesh, corners, local, r) {
+    if (!(r > 0)) return null;
+    const pos = mesh.getVertices();
+    const vrv = mesh.getVerticesRingVert(), sc = mesh.getVerticesRingVertStartCount();
+    const ring = (v) => (Array.isArray(vrv) ? vrv[v] : vrv.subarray(sc[v * 2], sc[v * 2] + sc[v * 2 + 1]));
+    const r2 = r * r;
+    const seen = new Set(corners), queue = [...corners], idx = [], wts = [];
+    while (queue.length) {
+      const v = queue.pop();
+      const dx = pos[v * 3] - local[0], dy = pos[v * 3 + 1] - local[1], dz = pos[v * 3 + 2] - local[2];
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > r2) continue;
+      const f = 1 - d2 / r2;
+      idx.push(v); wts.push(f * f);
+      for (const nb of ring(v)) if (!seen.has(nb)) { seen.add(nb); queue.push(nb); }
     }
-    return ring.length ? ring : null;
+    return idx.length >= 3 ? { idx, wts } : null;
+  }
+
+  // The tool radius in the mesh's own units: the cursor sphere in VR, the brush
+  // circle projected at the hit on desktop.
+  _localRadius(mesh, picking) {
+    if (this._main._xrSession) {
+      const M = this._toWorld(mesh);
+      return (this._radius / 100) * 0.1 / (this._main._vrScale || 1) / (Math.hypot(M[0], M[1], M[2]) || 1);
+    }
+    picking.updateLocalAndWorldRadius2();
+    return picking.getLocalRadius();
+  }
+
+  // INTENSITY = GAIN: 50% follows the hand 1:1, 100% twice as far, 25% half — fine control.
+  _gain() {
+    return 2 * this._intensity;
+  }
+
+  // ── Rotation: twist the hand, and the shapes that TURN this patch of skin answer ───────────
+  //
+  // matt: "view the head from the side, click on the lip, and rotate my controllers to see the lips
+  // curl in and out." Each shape is measured for the rotation it applies to a small patch round
+  // the grab: the best-fit small rotation (axis x angle) of the patch's vertices, from its delta.
+  // On the ICT lower lip, mouthRollLower turns that patch 28-36 deg one way about the face's
+  // left-right axis and mouthFunnel ~35 deg the other way; jawOpen only ~10. The hand's twist since
+  // the grab is matched against those, as one more pin: so curl in, curl out, and back again.
+  //
+  // This replaced a ring of four points at the cursor-sphere radius, which in VR came out at a
+  // fifth of the head: it measured the chin and cheek turning, and a lip curl was invisible to it.
+  // The patch here is its own, deliberately small (3% of the mesh), so it never spans the mouth.
+  _twists(mesh, track, corners, local, names) {
+    const bd = mesh.getLocalBound();
+    const r = 0.03 * Math.max(bd[3] - bd[0], bd[4] - bd[1], bd[5] - bd[2]);
+    const patch = this._patch(mesh, corners, local, r);
+    if (!patch) return null;
+    const pos = mesh.getVertices();
+    const { idx, wts } = patch;
+    let W = 0;
+    const c = [0, 0, 0];
+    idx.forEach((v, k) => { W += wts[k]; for (let j = 0; j < 3; j++) c[j] += wts[k] * pos[v * 3 + j]; });
+    for (let j = 0; j < 3; j++) c[j] /= W;
+    // d_k ~ w x p_k for a small rotation w, so w = A^-1 sum(p_k x d_k), A = sum(|p|^2 I - p p^T).
+    const A = new Float32Array(9);
+    const rel = idx.map((v, k) => {
+      const p = [pos[v * 3] - c[0], pos[v * 3 + 1] - c[1], pos[v * 3 + 2] - c[2]];
+      const pp = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) A[i * 3 + j] += wts[k] * ((i === j ? pp : 0) - p[i] * p[j]);
+      return p;
+    });
+    const Ainv = mat3.invert(mat3.create(), A);
+    if (!Ainv) return null;
+    const cols = {};
+    for (const name of names) {
+      const d = track.blendshapes.get(name);
+      if (!d) continue;
+      const m = [0, 0, 0];
+      idx.forEach((v, k) => { for (let j = 0; j < 3; j++) m[j] += wts[k] * d[v * 3 + j]; });
+      for (let j = 0; j < 3; j++) m[j] /= W;
+      const b = [0, 0, 0];
+      idx.forEach((v, k) => {
+        const p = rel[k], q = [d[v * 3] - m[0], d[v * 3 + 1] - m[1], d[v * 3 + 2] - m[2]];
+        b[0] += wts[k] * (p[1] * q[2] - p[2] * q[1]);
+        b[1] += wts[k] * (p[2] * q[0] - p[0] * q[2]);
+        b[2] += wts[k] * (p[0] * q[1] - p[1] * q[0]);
+      });
+      const w = vec3.transformMat3(vec3.create(), b, Ainv);
+      // As arc length at the patch radius, so a twist pin weighs like a pull of the same size.
+      if (vec3.length(w) > 1e-3) cols[name] = [w[0] * r, w[1] * r, w[2] * r];
+    }
+    return Object.keys(cols).length ? { cols, r } : null;
   }
 
   // TWO WORLDS. The controllers arrive in scene space, which is what getModelSpaceMatrix maps
@@ -414,12 +514,7 @@ class FacePuppet extends SculptBase {
     this._w0 = this._currentWeights(track);
     for (const pin of this._hands.values()) {
       if (pin.now) pin.anchor = vec3.clone(pin.now);
-      // The patch keeps the turn it already has: carry the ring round with it, then measure the
-      // next turn from here.
-      if (pin.ring && pin.rotNow && pin.rotAnchor) {
-        const R = quat.multiply(quat.create(), pin.rotNow, quat.invert(quat.create(), pin.rotAnchor));
-        for (const r of pin.ring) vec3.transformQuat(r.off, r.off, R);
-      }
+      // The next twist is measured from here.
       if (pin.rotNow) pin.rotAnchor = quat.clone(pin.rotNow);
     }
   }
@@ -436,22 +531,27 @@ class FacePuppet extends SculptBase {
       if (!pin.anchor || !pin.now) continue;
       vec3.transformMat4(a, pin.anchor, inv);
       vec3.transformMat4(b, pin.now, inv);
-      pins.push({ deltas: pin.deltas, drag: [b[0] - a[0], b[1] - a[1], b[2] - a[2]] });
-      if (!pin.ring || !pin.rotNow || !pin.rotAnchor || !this._useRotation) continue;
-      const R = quat.multiply(quat.create(), pin.rotNow, quat.invert(quat.create(), pin.rotAnchor));
-      const angle = 2 * Math.acos(Math.min(1, Math.abs(R[3]))) * 180 / Math.PI;
-      const weight = this._rotWeight * Math.min(1, angle / this._rotRamp);
+      const g = this._gain();
+      const drag = [(b[0] - a[0]) * g, (b[1] - a[1]) * g, (b[2] - a[2]) * g];
+      const twisting = pin.twist && pin.rotNow && pin.rotAnchor && this._useRotation;
+      const R = twisting ? quat.multiply(quat.create(), pin.rotNow, quat.invert(quat.create(), pin.rotAnchor)) : null;
+      if (R && R[3] < 0) quat.scale(R, R, -1);
+      const angle = R ? 2 * Math.acos(Math.min(1, R[3])) : 0;
+      const ramp = Math.min(1, (angle * 180 / Math.PI) / this._rotRamp);
+      // A TWIST LOOSENS THE HOLD ON THE POINT. Curling a lip moves the very skin you hold, so a
+      // point pinned where it was outvoted the twist (the ICT lower lip reached 0.09 at 40 deg).
+      pins.push({ deltas: pin.deltas, drag: this._limitReach ? this._clampToReach(pin.deltas, drag) : drag,
+        weight: 1 - this._twistLoosen * ramp });
+      if (!twisting) continue;
+      const weight = this._rotWeight * ramp;
       if (weight <= 0) continue;
-      for (const r of pin.ring) {
-        // Where this ring point sits now, relative to the centre, against where it sat: the
-        // rotation's share of its movement, in the mesh's own space.
-        const turned = vec3.transformQuat(vec3.create(), r.off, R);
-        const p0 = vec3.add(vec3.create(), pin.world, r.off);
-        const p1 = vec3.add(vec3.create(), pin.world, turned);
-        vec3.transformMat4(a, p0, inv);
-        vec3.transformMat4(b, p1, inv);
-        pins.push({ deltas: r.deltas, drag: [b[0] - a[0], b[1] - a[1], b[2] - a[2]], weight });
-      }
+      // The axis into the mesh's own frame (a direction: the inverse matrix's rotation part).
+      const ax = vec3.normalize(vec3.create(), [
+        inv[0] * R[0] + inv[4] * R[1] + inv[8] * R[2],
+        inv[1] * R[0] + inv[5] * R[1] + inv[9] * R[2],
+        inv[2] * R[0] + inv[6] * R[1] + inv[10] * R[2]]);
+      const k = angle * pin.twist.r * g;
+      pins.push({ deltas: pin.twist.cols, drag: [ax[0] * k, ax[1] * k, ax[2] * k], weight, twist: true });
     }
     const track = reg.tracks.get(mesh.getID());
     const rules = track ? this._rules(track) : {};
@@ -463,7 +563,8 @@ class FacePuppet extends SculptBase {
       rules.exclude = [...(rules.exclude || []), ...this._protected];
       rules.tie = (rules.tie || []).filter(([a, b]) => !this._protected.includes(a) && !this._protected.includes(b));
     }
-    const w = solveWeights(pins, this._w0, { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, ...rules });
+    const cost = this._useSparse && track ? this._locality(track, pins.filter((p) => !p.twist)) : null;
+    const w = solveWeights(pins, this._w0, { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, cost, ...rules });
     let changed = false;
     const previewing = track?.blendshapePreview;
     for (const name of Object.keys(w)) {

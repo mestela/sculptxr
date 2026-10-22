@@ -3842,6 +3842,7 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice${tool._useRotation ? ' active' : ''}" id="mm-face-rot">Rotation</button>
       <button class="mm-choice${tool._useSparse ? ' active' : ''}" id="mm-face-sparse">Sparse</button>
       <button class="mm-choice${tool._protectKeys ? ' active' : ''}" id="mm-face-protect">Protect Keys</button>
+      <button class="mm-choice${tool._limitReach ? ' active' : ''}" id="mm-face-limit">Limit</button>
     </div>` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
@@ -6018,7 +6019,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
   wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
 
-  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys']]) {
+  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys'], ['#mm-face-limit', '_limitReach']]) {
     el.querySelector(id)?.addEventListener('click', () => {
       const t = sm?.getCurrentTool?.();
       if (t) { t[prop] = !t[prop]; main.render?.(); }

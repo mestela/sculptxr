@@ -660,6 +660,7 @@ export class MiniPanel extends HTMLVRPanel {
       faceToggle('#mp-face-rot', '_useRotation');
       faceToggle('#mp-face-sparse', '_useSparse');
       faceToggle('#mp-face-protect', '_protectKeys');
+      faceToggle('#mp-face-limit', '_limitReach');
     }
 
     // ── Brush extras ───────────────────────────────────────────────────────
@@ -1043,6 +1044,7 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-face-rot')?.classList.toggle('active', !!tool._useRotation);
       extrasEl.querySelector('#mp-face-sparse')?.classList.toggle('active', !!tool._useSparse);
       extrasEl.querySelector('#mp-face-protect')?.classList.toggle('active', !!tool._protectKeys);
+      extrasEl.querySelector('#mp-face-limit')?.classList.toggle('active', !!tool._limitReach);
     } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
       extrasEl.querySelector('#mp-keep-together')
         ?.classList.toggle('active', !!(window.keepExtrudeFacesTogether ?? true));
@@ -1064,6 +1066,7 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-toggle-btn${t?._useRotation ? ' active' : ''}" id="mp-face-rot">Rotation</button>
           <button class="mp-toggle-btn${t?._useSparse ? ' active' : ''}" id="mp-face-sparse">Sparse</button>
           <button class="mp-toggle-btn${t?._protectKeys ? ' active' : ''}" id="mp-face-protect">Protect Keys</button>
+          <button class="mp-toggle-btn${t?._limitReach ? ' active' : ''}" id="mp-face-limit">Limit</button>
         </div>
       `;
     }

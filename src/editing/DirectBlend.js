@@ -32,23 +32,29 @@
 // the take records. So a brow pass took the mouth shapes too, held them at whatever they were on
 // the grab, and wrote that flat line over the mouth pass underneath.
 export function sampleDeltas(shapes, corners, pos, p, minFrac = 0) {
-  const wts = [];
-  let sum = 0;
+  const idx = [], wts = [];
   for (let k = 0; k < corners.length; k++) {
     const i = corners[k] * 3;
     const dx = pos[i] - p[0], dy = pos[i + 1] - p[1], dz = pos[i + 2] - p[2];
     const d2 = dx * dx + dy * dy + dz * dz;
     // On a corner exactly: that vertex alone, or the inverse distance divides by zero.
-    if (d2 < 1e-20) { wts.length = 0; wts.push([corners[k], 1]); sum = 1; break; }
-    const w = 1 / Math.sqrt(d2);
-    wts.push([corners[k], w]);
-    sum += w;
+    if (d2 < 1e-20) return averageDeltas(shapes, [corners[k]], [1], minFrac);
+    idx.push(corners[k]); wts.push(1 / Math.sqrt(d2));
   }
+  return averageDeltas(shapes, idx, wts, minFrac);
+}
+
+// The weighted average delta of every shape over vertices `idx` (weights `wts`): a PATCH of skin
+// rather than a point, so the tool radius sets how much of the face a grab takes hold of. Same
+// return and same floor as sampleDeltas.
+export function averageDeltas(shapes, idx, wts, minFrac = 0) {
+  let sum = 0;
+  for (const w of wts) sum += w;
   const out = {};
   for (const [name, delta] of shapes) {
     let x = 0, y = 0, z = 0;
-    for (const [v, w] of wts) {
-      const i = v * 3;
+    for (let k = 0; k < idx.length; k++) {
+      const i = idx[k] * 3, w = wts[k];
       if (i + 2 >= delta.length) continue;
       x += delta[i] * w; y += delta[i + 1] * w; z += delta[i + 2] * w;
     }
@@ -96,7 +102,7 @@ function solveDense(A, b, n) {
  *          the point has been pulled since the anchor, in the mesh's local space; weight (default
  *          1) scales how hard that pin pulls against the others
  *   w0:    {name: weight} — the pose at the anchor
- *   opts:  { alpha, mu, sparse, tie, exclude, exclusive, under } — alpha/mu/sparse RELATIVE to the strongest shape at the pins, so the feel
+ *   opts:  { alpha, mu, sparse, cost, tie, exclude, exclusive, under } — alpha/mu/sparse RELATIVE to the strongest shape at the pins, so the feel
  *          does not change with the mesh's units or how big the face's shapes are. sparse > 0
  *          makes few shapes answer a drag instead of many (see SPARSE below)
  * Returns {name: weight} for the shapes that touch a pin. Shapes that touch none are NOT
@@ -215,6 +221,9 @@ export function solveWeights(pins, w0, opts = {}) {
   // shape, the 1-D minimiser is a soft threshold toward w0, then the box. n is tens.
   // Deterministic in (drag, w0): path independence holds.
   const sparse = (opts.sparse ?? 0) * scale;
+  // COST per shape multiplies its sparse penalty: a shape that moves the whole lower face but
+  // this lid only a little (jawOpen, grabbed at the lower lid) must not be the cheap answer.
+  const cost = names.map((nm) => (opts.cost && opts.cost[nm]) || 1);
   const solveAll = () => {
     const w = solveBounded();
     if (sparse <= 0) return w;
@@ -225,7 +234,7 @@ export function solveWeights(pins, w0, opts = {}) {
         let g = Atm[i] + alpha * ws[i];
         for (let j = 0; j < n; j++) if (j !== i) g -= AtA[i * n + j] * w[j];
         const z = g / q - ws[i];
-        const shrunk = Math.sign(z) * Math.max(Math.abs(z) - sparse / q, 0);
+        const shrunk = Math.sign(z) * Math.max(Math.abs(z) - sparse * cost[i] / q, 0);
         const wi = Math.min(hi[i], Math.max(lo[i], ws[i] + shrunk));
         moved = Math.max(moved, Math.abs(wi - w[i]));
         w[i] = wi;

@@ -122,5 +122,13 @@ ok('strong' in d4 && !('trace' in d4), 'a shape below the floor at the point is 
   ok(near(open.close, 0.3), '...and with the jaw open (not at the pin) it closes the lips freely up to it');
 }
 
+// COST (locality): two shapes answer the drag equally; the one made dearer (jawOpen at the lower
+// lid, which it moves a little while swinging the whole jaw) is the one left off.
+{
+  const dd = { lid: [0, -1, 0], jaw: [0, -1, 0] };
+  const w = solveWeights([{ deltas: dd, drag: [0, -0.5, 0] }], {}, { sparse: 0.01, cost: { jaw: 8 } });
+  ok(w.lid > 0.4 && w.jaw < 0.02, 'cost: the far-reaching shape does not answer a local pull');
+}
+
 if (fails) { console.log(fails + ' FAILED'); process.exit(1); }
 console.log('all checks passed');
