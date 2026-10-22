@@ -665,6 +665,19 @@ export class MiniPanel extends HTMLVRPanel {
         sm?.getCurrentTool?.()?.fixCombo?.();
         this.syncFromState();
       });
+      // Every previewed shape -> keys at the playhead, as the pad's Key does.
+      extras.querySelector('#mp-face-key')?.addEventListener('click', () => {
+        const reg = window._animationRegistry, sel = main.getMesh?.();
+        for (const m of sel ? [sel] : (sm?.getCurrentTool?.()?._targets?.() || [])) {
+          if (reg?.commitBlendshapePreview(m)) { reg.applyBlendshapes(m); reg._refreshBlendPanels(m); }
+        }
+        main.render?.();
+      });
+      // The selected mesh's shapes, else every face the tool can grab.
+      extras.querySelector('#mp-face-zero')?.addEventListener('click', () => {
+        const reg = window._animationRegistry, sel = main.getMesh?.();
+        if (!reg?.zeroBlendshapes(sel ? [sel] : [])) reg?.zeroBlendshapes(sm?.getCurrentTool?.()?._targets?.() || []);
+      });
     }
 
     // ── Brush extras ───────────────────────────────────────────────────────
@@ -1065,13 +1078,17 @@ export class MiniPanel extends HTMLVRPanel {
       const t = sm.getCurrentTool?.();
       return `
         <hr class="mp-divider">
-        <div class="mp-toggles">
+        <div class="mp-toggles cols-3">
           <button class="mp-toggle-btn${t?._showHeat ? ' active' : ''}" id="mp-face-heat">Heatmap</button>
           <button class="mp-toggle-btn${t?._useRotation ? ' active' : ''}" id="mp-face-rot">Rotation</button>
           <button class="mp-toggle-btn${t?._useSparse ? ' active' : ''}" id="mp-face-sparse">Sparse</button>
           <button class="mp-toggle-btn${t?._protectKeys ? ' active' : ''}" id="mp-face-protect">Protect Keys</button>
           <button class="mp-toggle-btn${t?._limitReach ? ' active' : ''}" id="mp-face-limit">Limit</button>
           <button class="mp-toggle-btn" id="mp-face-combo">Fix Combo</button>
+        </div>
+        <div class="mp-toggles cols-3">
+          <button class="mp-toggle-btn" id="mp-face-key">Key</button>
+          <button class="mp-toggle-btn" id="mp-face-zero">Zero All</button>
         </div>
       `;
     }

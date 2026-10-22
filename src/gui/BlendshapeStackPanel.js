@@ -559,6 +559,19 @@ export default class BlendshapeStackPanel {
       ctx.fillText('Auto', autoBtn.x + autoBtn.w / 2, autoBtn.y + autoBtn.h / 2 + 0.5);
       ctx.textAlign = 'left';
     }
+    // Every shape back to 0 (as a preview; Key commits it). On the fold bar's right end, because
+    // the toolbar row is already full at the sidebar's width. Ahead of 'fold' in the hit list.
+    const zeroBtn = { id: 'zero', x: W - PAD - 48, y: TOOLBAR_BTN_H + (LAYERS_HEADER_H - 24) / 2, w: 48, h: 24 };
+    this._toolbarBtns.unshift(zeroBtn);
+    {
+      const hot = this._hover?.btn === 'zero';
+      ctx.fillStyle = hot ? Theme.surface1 : Theme.surface0;
+      this._roundRect(ctx, zeroBtn.x, zeroBtn.y, zeroBtn.w, zeroBtn.h, 4); ctx.fill();
+      ctx.fillStyle = Theme.subtext;
+      ctx.font = '600 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('Zero', zeroBtn.x + zeroBtn.w / 2, zeroBtn.y + zeroBtn.h / 2 + 0.5);
+      ctx.textAlign = 'left';
+    }
 
     // ── THE FOUR PAD SLOTS ────────────────────────────────────────────────────────────
     //
@@ -1207,6 +1220,7 @@ export default class BlendshapeStackPanel {
       return;
     }
     if (id === 'rrange') { this._resetRange(); return; }
+    if (id === 'zero') { window._animationRegistry?.zeroBlendshapes([this._mesh()]); this.draw(); return; }
     if (id === 'autokey') {
       window._animAutoKey = !window._animAutoKey;
       document.querySelector('#acp-autokey-btn')?.classList.toggle('active', !!window._animAutoKey);

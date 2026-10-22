@@ -534,24 +534,30 @@ function matcapTexture(index) {
 function cursorRingNodes() {
   if (cursorRing) return cursorRing;
   const { uniform, positionWorld, fwidth, smoothstep, float, abs } = tsl;
-  // CONTACT SHADE: the surface darkens within TIP_R of the spike tip -- an implicit sphere at the
-  // tip, the cheapest possible occlusion. matt: "an implicit sphere, sdf focused at the controller
-  // spike, that darkens slightly within 1cm of the surface". Metres, i.e. VR world units.
-  const tip = uniform(new gpu.Vector3());
-  const tipOn = uniform(0);
-  const TIP_R = 0.015;
-  const shade = float(1).sub(float(1).sub(smoothstep(0, TIP_R, positionWorld.sub(tip).length())).mul(0.35).mul(tipOn));
-  const center = uniform(new gpu.Vector3());
-  const radius = uniform(0);
-  const color = uniform(new gpu.Color(0x4488ff));
-  const on = uniform(0);
-  const d = positionWorld.sub(center).length().sub(radius);   // < 0 inside the sphere
-  const w = fwidth(d).max(1e-6);
-  // Half strength, no tint inside the sphere ("too milky and obscures the mesh"); the original
-  // ~2 px width, which matt asked back for once the opacity was down.
-  const line = float(1).sub(smoothstep(w, w.mul(2.5), abs(d)));
-  const alpha = line.mul(0.5).mul(on);
-  cursorRing = { center, radius, color, on, alpha, tip, tipOn, shade };
+  // ONE SET PER HAND. The dominant hand's is the top level (as it always was); `off` is the
+  // other hand's, used only while that hand shows a cursor of its own (the Face tool).
+  const hand = () => {
+    // CONTACT SHADE: the surface darkens within TIP_R of the spike tip -- an implicit sphere at the
+    // tip, the cheapest possible occlusion. matt: "an implicit sphere, sdf focused at the controller
+    // spike, that darkens slightly within 1cm of the surface". Metres, i.e. VR world units.
+    const tip = uniform(new gpu.Vector3());
+    const tipOn = uniform(0);
+    const TIP_R = 0.015;
+    const shade = float(1).sub(float(1).sub(smoothstep(0, TIP_R, positionWorld.sub(tip).length())).mul(0.35).mul(tipOn));
+    const center = uniform(new gpu.Vector3());
+    const radius = uniform(0);
+    const color = uniform(new gpu.Color(0x4488ff));
+    const on = uniform(0);
+    const d = positionWorld.sub(center).length().sub(radius);   // < 0 inside the sphere
+    const w = fwidth(d).max(1e-6);
+    // Half strength, no tint inside the sphere ("too milky and obscures the mesh"); the original
+    // ~2 px width, which matt asked back for once the opacity was down.
+    const line = float(1).sub(smoothstep(w, w.mul(2.5), abs(d)));
+    const alpha = line.mul(0.5).mul(on);
+    return { center, radius, color, on, alpha, tip, tipOn, shade };
+  };
+  cursorRing = hand();
+  cursorRing.off = hand();
   return cursorRing;
 }
 
@@ -561,13 +567,14 @@ function cursorRingNodes() {
 function withCursorRing(m) {
   if (!m || m.userData.placeholder) return m;
   const { vec3, mix, float } = tsl;
-  const r = cursorRingNodes();
-  const col = vec3(r.color);
+  const r = cursorRingNodes(), o = r.off;
+  const col = vec3(r.color), colO = vec3(o.color);
+  const shade = r.shade.mul(o.shade);
   if (m.lights === false) {
-    m.emissiveNode = mix((m.emissiveNode || vec3(0, 0, 0)).mul(r.shade), col, r.alpha);
+    m.emissiveNode = mix(mix((m.emissiveNode || vec3(0, 0, 0)).mul(shade), col, r.alpha), colO, o.alpha);
   } else {
-    if (m.colorNode) m.colorNode = m.colorNode.mul(r.shade).mul(float(1).sub(r.alpha));
-    m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(col.mul(r.alpha));
+    if (m.colorNode) m.colorNode = m.colorNode.mul(shade).mul(float(1).sub(r.alpha)).mul(float(1).sub(o.alpha));
+    m.emissiveNode = (m.emissiveNode || vec3(0, 0, 0)).add(col.mul(r.alpha)).add(colO.mul(o.alpha));
   }
   return m;
 }
@@ -1440,51 +1447,66 @@ NodeMaterials.updateFrame = function (main) {
   return NodeMaterials._updateFrameRest(main);
 };
 
-// The dominant controller's spike tip, while its spike is showing in a session. The spike mesh's
-// geometry runs base 0 -> tip -0.10 in its own space, so the tip is that point through its world
-// matrix -- length, offset and tilt all included.
-function updateContactShade(main) {
+// A controller's spike tip, while its spike is showing in a session. The spike mesh's geometry
+// runs base 0 -> tip -0.10 in its own space, so the tip is that point through its world matrix --
+// length, offset and tilt all included.
+function updateContactShade(main, ctrl, u) {
   const on = main._renderer?.xr?.isPresenting && getOptionsURL().contactShade !== false;
-  const ctrl = main._dominantHand === 'left' ? main._vrControllerLeft : main._vrControllerRight;
   const spike = on && ctrl?.getObjectByName?.('stylus_spike');
   let shown = !!spike;
   for (let o = spike; shown && o; o = o.parent) if (o.visible === false) shown = false;
-  if (!shown) { cursorRing.tipOn.value = 0; return; }
+  if (!shown) { u.tipOn.value = 0; return; }
   spike.updateWorldMatrix(true, false);
-  cursorRing.tip.value.set(0, 0, -0.10).applyMatrix4(spike.matrixWorld);
-  cursorRing.tipOn.value = 1;
+  u.tip.value.set(0, 0, -0.10).applyMatrix4(spike.matrixWorld);
+  u.tipOn.value = 1;
 }
 
-// The ring follows whichever VR volume sphere is showing -- the dominant hand's first -- and
-// takes its colour at full strength, so blue/red still says add/subtract.
-function updateCursorRing(main) {
-  if (!cursorRing) return;
-  let sph = null;
-  if (main._renderer?.xr?.isPresenting) {
-    const order = main._dominantHand === 'left'
-      ? [main._vrCursorLeft, main._vrCursorRight] : [main._vrCursorRight, main._vrCursorLeft];
-    for (const cur of order) {
-      const s = cur?.visible !== false && cur?.getObjectByName?.('volume_sphere');
-      if (s && s.visible) {
-        // visible all the way up -- a hidden parent group hides the sphere too
-        let o = s, shown = true;
-        while (o) { if (o.visible === false) { shown = false; break; } o = o.parent; }
-        if (shown) { sph = s; break; }
-      }
-    }
-  }
-  updateContactShade(main);
-  if (!sph) { cursorRing.on.value = 0; return; }
+// The cursor's volume sphere, if it is visible all the way up -- a hidden parent group hides it too.
+function shownSphere(cur) {
+  const s = cur?.getObjectByName?.('volume_sphere');
+  for (let o = s; o; o = o.parent) if (o.visible === false) return null;
+  return s || null;
+}
+
+// The ring follows the sphere it belongs to and takes its colour at full strength, so blue/red
+// still says add/subtract.
+function setRing(u, sph) {
+  if (!sph) { u.on.value = 0; return; }
   sph.updateWorldMatrix(true, false);
   const e = sph.matrixWorld.elements;
-  cursorRing.center.value.set(e[12], e[13], e[14]);
-  cursorRing.radius.value = Math.hypot(e[0], e[1], e[2]);   // unit sphere geometry
+  u.center.value.set(e[12], e[13], e[14]);
+  u.radius.value = Math.hypot(e[0], e[1], e[2]);   // unit sphere geometry
   const c = sph.material?.uniforms?.color?.value || sph.material?.color;
   if (c) {
     const m = Math.max(c.r, c.g, c.b, 1e-6);
-    cursorRing.color.value.setRGB(c.r / m, c.g / m, c.b / m);   // full strength, same hue
+    u.color.value.setRGB(c.r / m, c.g / m, c.b / m);   // full strength, same hue
   }
-  cursorRing.on.value = 1;
+  u.on.value = 1;
+}
+
+// The ring follows whichever VR volume sphere is showing -- the dominant hand's first. When BOTH
+// show (Face: every hand is a pin), the other hand gets the second ring and its own contact shade;
+// otherwise that hand stays unshaded, as it always was.
+function updateCursorRing(main) {
+  if (!cursorRing) return;
+  const xr = !!main._renderer?.xr?.isPresenting;
+  const leftDom = main._dominantHand === 'left';
+  const dom = { cur: leftDom ? main._vrCursorLeft : main._vrCursorRight,
+                ctrl: leftDom ? main._vrControllerLeft : main._vrControllerRight };
+  const oth = { cur: leftDom ? main._vrCursorRight : main._vrCursorLeft,
+                ctrl: leftDom ? main._vrControllerRight : main._vrControllerLeft };
+  const sD = xr ? shownSphere(dom.cur) : null;
+  const sO = xr ? shownSphere(oth.cur) : null;
+  updateContactShade(main, dom.ctrl, cursorRing);
+  if (sD && sO) {
+    setRing(cursorRing, sD);
+    setRing(cursorRing.off, sO);
+    updateContactShade(main, oth.ctrl, cursorRing.off);
+  } else {
+    setRing(cursorRing, sD || sO);
+    setRing(cursorRing.off, null);
+    cursorRing.off.tipOn.value = 0;
+  }
 }
 
 /** Each material that needs per-frame state says so by hanging updateFrame on userData,

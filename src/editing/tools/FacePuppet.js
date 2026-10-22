@@ -799,10 +799,14 @@ class FacePuppet extends SculptBase {
       const tip = vec3.clone(c.rayOrigin);
       const rot = mat4.getRotation(quat.create(), c.matrix);
 
-      // SMOOTH MODE, as for every other tool: the off-hand trigger alone is the mode, the dominant
-      // press does the work. Only with no pin held — reaching in with the off hand while the
-      // dominant one holds the face is still the two-hand grab.
-      if (offHand && down && !was && !this._hands.size && !this._smoother) { this._smoothLatch = true; continue; }
+      // THE OFF HAND'S PRESS IS DECIDED BY WHERE IT IS. Near the surface (its cursor is showing,
+      // Scene._vrFaceNear) it grabs, with or without the other hand on. Away from it, it is SMOOTH
+      // MODE as for every other tool: the off-hand trigger alone is the mode, the dominant press
+      // does the work -- and while a pin is held, a press away from the face does nothing.
+      if (offHand && down && !was && !this._main._vrFaceNear?.[hand]) {
+        if (!this._hands.size && !this._smoother) this._smoothLatch = true;
+        continue;
+      }
       if (this._smoothLatch && offHand) continue;
       if (!offHand && this._smoothLatch && down) {
         const hit = this._grabFromRay(picking, tip, c.rayDirection);

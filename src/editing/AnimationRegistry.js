@@ -2608,6 +2608,37 @@ class AnimationRegistry {
     return true;
   }
 
+  // ZERO EVERY SHAPE, as a preview: a keyed shape gets a 0 override, an unkeyed one just loses its
+  // preview (its curve already says 0), so the pad's Key afterwards writes only what changed.
+  // Combos follow their drivers. One undo step across all the meshes.
+  zeroBlendshapes(meshes) {
+    const snaps = [];
+    for (const mesh of meshes) {
+      const track = mesh && this.tracks.get(mesh.getID());
+      if (!track || !track.blendshapes || !track.blendshapes.size) continue;
+      snaps.push({ mesh, before: new Map(track.blendshapePreview || []) });
+      for (const name of track.blendshapes.keys()) {
+        if (this.isBlendshapeCombo(track, name)) continue;
+        this.setBlendshapePreview(mesh, name, this.blendshapeCurveWeight(track, name) !== 0 ? 0 : null);
+      }
+      snaps[snaps.length - 1].after = new Map(track.blendshapePreview || []);
+    }
+    if (!snaps.length) return false;
+    const put = (key) => {
+      for (const sn of snaps) {
+        const track = this.tracks.get(sn.mesh.getID());
+        if (!track) continue;
+        track.blendshapePreview = new Map(sn[key]);
+        this.applyBlendshapes(sn.mesh);
+        this._refreshBlendPanels(sn.mesh);
+      }
+      window.app?.render?.();
+    };
+    put('after');
+    window.app?.getStateManager?.()?.pushStateCustom(() => put('before'), () => put('after'), false, 'Zero Blendshapes');
+    return true;
+  }
+
   // Turn whatever is previewed into real keys at the playhead, then drop the override. The keys
   // go through setBlendshapeWeight, so they are quantised, undoable and indistinguishable from
   // keys made any other way.

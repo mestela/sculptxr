@@ -125,6 +125,7 @@ const DEFAULT_OPEN = new Set([
   'sec:multiresolution',             // Topology
   'sec:sculpt',                      // Tools
   'sec:brush', 'sec:symmetry',       // Properties
+  'sec:face',                        // Properties, Face tool
   'sec:frame-range', 'sec:transport' // Animation
 ]);
 

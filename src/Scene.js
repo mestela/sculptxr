@@ -18109,6 +18109,13 @@ class Scene {
 
         const invScale = 1.0 / (this._vrScale || 1.0);
 
+        // FACE: BOTH HANDS ARE PINS, SO BOTH HANDS GET A CURSOR. The off-hand one only appears
+        // NEAR the surface (its pick sphere is OFFHAND_NEAR x the brush radius), so it is not a
+        // second sphere hanging off the hand the rest of the time.
+        const isFaceTool = tool?.constructor?.name === 'FacePuppet';
+        const OFFHAND_NEAR = 2.0;
+        const domHand = this._activeHandedness || this._dominantHand || 'right';
+
         for (let source of sources) {
             if (!source.targetRaySpace) continue;
             const isLeft = source.handedness === 'left';
@@ -18192,7 +18199,8 @@ class Scene {
                 const oldPickedNormal = vec3.clone(this._picking._pickedNormal);
 
                 // Option A: Use fast iterative search while hovering (not sculpting)
-                const pickingRadius = physicalRadius * invScale;
+                const _faceOff = isFaceTool && source.handedness !== domHand;
+                const pickingRadius = physicalRadius * invScale * (_faceOff ? OFFHAND_NEAR : 1);
                 const originTipEngine = vec3.clone(tipPhys);
                 if (this._xrWorldOffset) {
                     vec3.transformMat4(originTipEngine, originTipEngine, this._xrWorldOffset.inverse.matrix);
@@ -18302,6 +18310,10 @@ class Scene {
                 hitDist = uiHitDist;
             }
 
+            // The Face tool reads this: an off-hand press NEAR the surface (its cursor showing)
+            // is a grab, one away from it is smooth mode.
+            if (_handed) (this._vrFaceNear ||= {})[source.handedness] = isFaceTool && !!wInter;
+
             if (pointerLine) {
                 const isUIHit = uiHitDist !== undefined && uiHitDist !== Infinity;
                 pointerLine.visible = isUIHit;
@@ -18331,7 +18343,7 @@ class Scene {
                     isActiveHand = (source.handedness === (this._dominantHand || 'right'));
                 }
 
-                if (!isActiveHand && !this._vrAmbidextrousCursors) {
+                if (!isActiveHand && !this._vrAmbidextrousCursors && !(isFaceTool && wInter)) {
                     cursorGroup.visible = false;
                     continue; // Bypass cursor rendering entirely for the offhand, but continue loop!
                 }
@@ -18479,6 +18491,8 @@ class Scene {
                 } else if (isPaint && tool._color) {
                     const activeLowerColor = this._eyedropperStartColor ? this._eyedropperStartColor : tool._color;
                     color.setRGB(activeLowerColor[0], activeLowerColor[1], activeLowerColor[2]);
+                } else if (isFaceTool && tool._smoothLatch) {
+                    color.setRGB(cMin, cMin, cMax); // Blue: Face smooth mode is latched
                 } else if (tool && tool.cursorColor && pickedMesh
                            && tool.cursorColor(color, pickedMesh, cursorFace, cursorLocal)) {
                     // the tool tinted it (Face: the shape a grab here would take)
