@@ -44,7 +44,7 @@ class FacePuppet extends SculptBase {
     // grabbed at all — see sampleDeltas on why that matters for layering.
     this._minFrac = 0.15;
     // Panel toggles (main menu + wrist).
-    this._showHeat = true;
+    this._showHeat = false;   // matt: useful for debugging, little else
     this._useRotation = true;
     // Few shapes answer a drag instead of every one that moves the point (DirectBlend SPARSE).
     // On facecap, a half-shape drag at the smile's own corner: 8 shapes on -> 2 (smile 0.46),
@@ -189,14 +189,16 @@ class FacePuppet extends SculptBase {
   //
   // matt: "always change its color to match the region under the cursor; be white where its far
   // away, and ramp to maximum saturation when its in the strongest defined region of a
-  // blendshape." Same hue as the heatmap for the shape, at full saturation; the ramp is the
+  // blendshape." Later: "where theres no region, make it go to a midtone gray rather than white".
+  // Same hue as the heatmap for the shape, at full saturation; the ramp (from grey) is the
   // strongest shape's movement at this point over the strongest anywhere on the mesh.
   //
   // `out` is a THREE.Color. Returns true when it set one, so callers keep their own colour
   // otherwise. Called by the desktop cursor (Selection) and per hand by the VR cursor (Scene).
   cursorColor(out, mesh, face, local) {
     const track = this._track(mesh);
-    if (!track || face < 0 || !local) { out.setRGB(1, 1, 1); return true; }
+    const G = 0.5;
+    if (!track || face < 0 || !local) { out.setRGB(G, G, G); return true; }
     const st = this._statsFor(mesh, track);
     const corners = this._corners(mesh, face);
     const d = sampleDeltas(this._shapes(track), corners, mesh.getVertices(), local);
@@ -206,9 +208,9 @@ class FacePuppet extends SculptBase {
       if (m > bestM) { bestM = m; bestName = name; }
     }
     const si = st.names.indexOf(bestName);
-    if (si < 0 || st.max <= 0) { out.setRGB(1, 1, 1); return true; }
+    if (si < 0 || st.max <= 0) { out.setRGB(G, G, G); return true; }
     const t = Math.min(1, bestM / st.max), h = shapeHue(si, 1);
-    out.setRGB(1 + (h[0] - 1) * t, 1 + (h[1] - 1) * t, 1 + (h[2] - 1) * t);
+    out.setRGB(G + (h[0] - G) * t, G + (h[1] - G) * t, G + (h[2] - G) * t);
     return true;
   }
 
@@ -333,7 +335,7 @@ class FacePuppet extends SculptBase {
   // FIX COMBO: the pose on the face looks wrong, so make it sculptable. Every shape on at 0.2 or
   // more becomes a driver of a combination layer (or the existing one for the same drivers), that
   // layer is made active, and the tool goes to Move (matt: "usually the tool of choice to fix shapes"). The pose stays as it is: the layer is
-  // sculpted at the strength it shows and stored at full (AnimationRegistry.createCombo).
+  // sculpted at this pose and stored as an in-between for it (AnimationRegistry.prepareComboSculpt).
   fixCombo() {
     const reg = this._reg();
     const main = this._main;
@@ -348,8 +350,6 @@ class FacePuppet extends SculptBase {
     }
     if (main.setMesh && sel !== mesh) main.setMesh(mesh);
     reg._refreshBlendPanels(mesh);
-    const w = reg.blendshapePreviewAt(track, name, null);
-    if (w < reg.COMBO_MIN_W) console.log(`[Face] Fix Combo: ${name} is at ${w.toFixed(2)}; turn the drivers up to sculpt it (needs ${reg.COMBO_MIN_W})`);
     main.getSculptManager().setToolIndex(Enums.Tools.MOVE);
     main.getGui?.()?._ctrlSculpt?.setValue?.(Enums.Tools.MOVE);
     main.render();
@@ -440,8 +440,10 @@ class FacePuppet extends SculptBase {
     if (!combos || !combos.size) return;
     const live = [...combos.keys()].filter((n) => track.blendshapes.has(n) && !track.blendshapeMuted?.has(n));
     if (!live.length) return;
-    const fix = sample(live.map((n) => [n, track.blendshapes.get(n)]));
     const reg = this._reg();
+    // The fix's rate of change at the combo's current weight: the slope of the in-between segment.
+    const slopes = live.map((n) => [n, reg.comboSlope(track, n, reg.comboWeight(track, n))]).filter(([, d]) => d);
+    const fix = sample(slopes);
     const w = (n) => reg.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n));
     for (const [name, f] of Object.entries(fix)) {
       const drivers = combos.get(name);

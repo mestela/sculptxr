@@ -683,6 +683,7 @@ export default class TimelineHelper {
     if (track.blendshapeMuted)  cloned.blendshapeMuted  = new Set(track.blendshapeMuted);
     if (track.blendshapeLocked) cloned.blendshapeLocked = new Set(track.blendshapeLocked);
     if (track.blendshapeCombos) cloned.blendshapeCombos = new Map(track.blendshapeCombos);
+    if (track.comboSamples) cloned.comboSamples = track.comboSamples;   // by reference, like the deltas
     if (track.blendshapeSolo !== undefined) cloned.blendshapeSolo = track.blendshapeSolo;
     if (track.editingBlendshape !== undefined) cloned.editingBlendshape = track.editingBlendshape;
     if (track.baseLocked !== undefined) cloned.baseLocked = track.baseLocked;

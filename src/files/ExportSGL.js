@@ -28,7 +28,47 @@ var Export = {};
 //    from the quaternions on first use.
 // 18 COMBINATION SHAPES (Fix Combo): per mesh, each combo layer's index and its drivers' indices,
 //    by blendshape insertion order (names are capped at 32 chars, a driver list is not).
-Export.VERSION = 18;
+// 19 COMBO IN-BETWEENS: each combo row also carries its top sample's weight (0 = no samples yet;
+//    the top sample's delta is the layer's own delta above) and its lower samples, weight + delta.
+// 20 SPARSE DELTAS: every blendshape delta and combo sample is written as the vertices it moves
+//    (count, index gaps, xyz) instead of every vertex; combo samples also carry their pose (one
+//    weight per driver) so pruning works after a reload.
+Export.VERSION = 20;
+
+// The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
+// emptied at the start of every export: deltas are sculpted in place between saves.
+var _nzCache = new WeakMap();
+function nonZero(d, nv) {
+  var hit = _nzCache.get(d);
+  if (hit && hit.nv === nv) return hit.idx;
+  var idx = [], n = Math.min(nv, d.length / 3);
+  for (var v = 0; v < n; v++) if (d[v * 3] !== 0 || d[v * 3 + 1] !== 0 || d[v * 3 + 2] !== 0) idx.push(v);
+  _nzCache.set(d, { nv: nv, idx: idx });
+  return idx;
+}
+function deltaBytes(d, nv) { return 4 + nonZero(d, nv).length * 16; }
+Export.writeDelta = function (u32a, f32a, off, d, nv) {
+  var idx = nonZero(d, nv);
+  u32a[off++] = idx.length;
+  // As GAPS from the previous index: mostly 1, which gzip (the server's, for .sxr) takes to nearly
+  // nothing. Plain indices made the gzipped ICT head 27% bigger than the dense file.
+  for (var j = 0; j < idx.length; j++) u32a[off++] = idx[j] - (j ? idx[j - 1] : 0);
+  for (var j = 0; j < idx.length; j++) {
+    var i = idx[j] * 3;
+    f32a[off++] = d[i]; f32a[off++] = d[i + 1]; f32a[off++] = d[i + 2];
+  }
+  return off;
+};
+Export.readDelta = function (u32a, f32a, off, nv) {
+  var d = new Float32Array(nv * 3), count = u32a[off++], at = off, vi = 0;
+  off += count;
+  for (var j = 0; j < count; j++) {
+    vi += u32a[at + j];
+    var i = vi * 3;
+    d[i] = f32a[off++]; d[i + 1] = f32a[off++]; d[i + 2] = f32a[off++];
+  }
+  return [d, off];
+};
 
 // The combos of a track that still exist, as [comboIdx, [driverIdx...]].
 function comboRows(track) {
@@ -36,7 +76,12 @@ function comboRows(track) {
   var names = Array.from(track.blendshapes.keys()), rows = [];
   track.blendshapeCombos.forEach(function (ds, n) {
     var ci = names.indexOf(n), di = ds.map(function (d) { return names.indexOf(d); });
-    if (ci >= 0 && di.every(function (i) { return i >= 0; })) rows.push([ci, di]);
+    // Samples: none recorded means a v18 combo, one sample at 1 (its delta is the layer's).
+    var S = track.comboSamples && track.comboSamples.get(n);
+    var samples = S ? { top: S.length ? S[S.length - 1].s : 0, lower: S.slice(0, -1) } : { top: 1, lower: [] };
+    // v20: every sample's pose (lower ones, then the top), a flag then one weight per driver.
+    samples.poses = S ? S.map(function (p) { return p.pose ? ds.map(function (d) { return p.pose[d] ?? 1; }) : null; }) : [null];
+    if (ci >= 0 && di.every(function (i) { return i >= 0; })) rows.push([ci, di, samples]);
   });
   return rows;
 }
@@ -59,6 +104,7 @@ function tangentRows(track) {
 }
 
 Export.exportSGL = function (meshes, main) {
+  _nzCache = new WeakMap();
   var nbMeshes = meshes.length;
 
   // ...+ 4 for the v13 playback range and the v15 project start, which sit together in the header.
@@ -141,7 +187,7 @@ Export.exportSGL = function (meshes, main) {
       nbBytes += 4; // nbBlendshapes
       track.blendshapes.forEach((delta, name) => {
         nbBytes += 64;                 // name (16 uint32s, 2 chars each)
-        nbBytes += activeVertCount * 12; // delta verts
+        nbBytes += deltaBytes(delta, activeVertCount); // v20: the vertices it moves
         var bTrack = track.blendshapeTracks ? track.blendshapeTracks.get(name) : null;
         var nbBsKeys = bTrack ? bTrack.times.length : 0;
         nbBytes += 4;              // nbKeys
@@ -161,7 +207,11 @@ Export.exportSGL = function (meshes, main) {
       track.scalarTracks.forEach(function (st) { nbBytes += 64 + 4 + st.times.length * 28; });
     }
     nbBytes += 4;
-    comboRows(track).forEach(function (r) { nbBytes += 8 + r[1].length * 4; });
+    comboRows(track).forEach(function (r) {
+      nbBytes += 8 + r[1].length * 4 + 8;
+      r[2].lower.forEach(function (p) { nbBytes += 4 + deltaBytes(p.d, activeVertCount); });
+      nbBytes += r[2].poses.length * (4 + r[1].length * 4);
+    });
   }
 
   try {
@@ -458,14 +508,8 @@ Export.exportSGL = function (meshes, main) {
             u32a[off++] = (c1 << 16) | c2;
           }
 
-          // Delta vertices
-          var dCopy = Math.min(delta.length, activeVertCount * 3);
-          f32a.set(delta.subarray(0, dCopy), off);
-          off += dCopy;
-          if (dCopy < activeVertCount * 3) {
-            f32a.fill(0, off, off + (activeVertCount * 3 - dCopy));
-            off += (activeVertCount * 3 - dCopy);
-          }
+          // Delta vertices: v20, only the ones it moves
+          off = Export.writeDelta(u32a, f32a, off, delta, activeVertCount);
 
           // Weight keyframes
           var bTrack = track.blendshapeTracks ? track.blendshapeTracks.get(name) : null;
@@ -553,6 +597,16 @@ Export.exportSGL = function (meshes, main) {
         u32a[off++] = r[0];
         u32a[off++] = r[1].length;
         r[1].forEach(function (i) { u32a[off++] = i; });
+        f32a[off++] = r[2].top;
+        u32a[off++] = r[2].lower.length;
+        r[2].lower.forEach(function (p) {
+          f32a[off++] = p.s;
+          off = Export.writeDelta(u32a, f32a, off, p.d, activeVertCount);
+        });
+        r[2].poses.forEach(function (pose) {
+          u32a[off++] = pose ? 1 : 0;
+          for (var _pi = 0; _pi < r[1].length; _pi++) f32a[off++] = pose ? pose[_pi] : 0;
+        });
       });
     }
 

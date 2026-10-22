@@ -599,9 +599,10 @@ class Mesh {
       const _bt = _track.blendshapeTracks?.get(_name);
       const _w  = _reg.blendshapePreviewAt ? _reg.blendshapePreviewAt(_track, _name, _bt)
                                            : (_bt ? _reg.evaluateScalarTrack(_bt, _track.playbackTime || 0) : 0);
-      // A COMBO is the exception: sculpted at whatever its drivers make it, divided back to full.
+      // A COMBO is the exception: sculpted at whatever its drivers make it, into the sample for
+      // that pose (AnimationRegistry.prepareComboSculpt, at the stroke's start).
       const _combo = _reg.isBlendshapeCombo && _reg.isBlendshapeCombo(_track, _name);
-      const _ok = _combo ? _w >= _reg.COMBO_MIN_W : Math.abs(_w - 1) <= 1e-3;
+      const _ok = _combo ? !!_track._comboEdit && _w >= _reg.COMBO_MIN_W : Math.abs(_w - 1) <= 1e-3;
       if (!_ok || (_track.blendshapeMuted && _track.blendshapeMuted.has(_name))) {
         if (window._blendshapeStackPanel?.flash) window._blendshapeStackPanel.flash();
         if (window._blendshapeStackPanelVR?.flash) window._blendshapeStackPanelVR.flash();
@@ -618,20 +619,32 @@ class Mesh {
       // headset, which is what made sculpting a new layer crawl.
       const _n = _track.baseShape.length;
       let _delta  = _track.blendshapes?.get(_name);
-      if (!_delta || _delta.length !== _n) {
+      if (!_combo && (!_delta || _delta.length !== _n)) {
         const _old = _delta;
         _delta = new Float32Array(_n);
         if (_old) _delta.set(_old.subarray(0, Math.min(_n, _old.length)));
         _track.blendshapes.set(_name, _delta);
       }
       const _others = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, _name) : null;
-      const _g = _combo ? 1 / _w : 1;
-      if (_others) {
-        for (let _j = 0; _j < _n; _j++)
-          _delta[_j] = (_v[_j] - _track.baseShape[_j] - _others[_j]) * _g;
+      if (_combo) {
+        // What the mesh shows of this layer; the registry solves the edited sample out of it.
+        const _c = new Float32Array(_n);
+        for (let _j = 0; _j < _n; _j++) _c[_j] = _v[_j] - _track.baseShape[_j] - (_others ? _others[_j] : 0);
+        if (!_reg.captureCombo(_track, _name, _c, _v)) { _reg.applyBlendshapes(this); return; }
+      } else if (_others) {
+        // ROUNDING IS NOT SCULPTING. The composite and `_others` sum the same layers in a different
+        // order, so every vertex another layer touches comes back a few float32 ulps off zero --
+        // which made every layer sculpted over a pose dense, and the sparse composite and .sxr
+        // carry all of it. Under 1e-5 of the position is snapped back to nothing.
+        _reg.invalidateSparse?.(_delta);
+        for (let _j = 0; _j < _n; _j++) {
+          const _x = _v[_j] - _track.baseShape[_j] - _others[_j];
+          _delta[_j] = Math.abs(_x) < 1e-5 * Math.abs(_v[_j]) ? 0 : _x;
+        }
       } else {
+        _reg.invalidateSparse?.(_delta);
         for (let _j = 0; _j < _n; _j++)
-          _delta[_j] = (_v[_j] - _track.baseShape[_j]) * _g;
+          _delta[_j] = _v[_j] - _track.baseShape[_j];
       }
       _track._bsRev = (_track._bsRev | 0) + 1;   // written in place: see Skinning composeMush
     } else if (_track?.baseShape && !_track._applyingBS) {

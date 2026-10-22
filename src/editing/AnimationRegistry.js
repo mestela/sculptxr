@@ -2345,11 +2345,92 @@ class AnimationRegistry {
     return !!(track && track.blendshapeCombos && track.blendshapeCombos.has(name));
   }
 
-  // A plain layer is sculpted only at full strength (the SculptManager gate). A combo is dialled
-  // wherever its drivers happen to look wrong, usually short of 1 and 1, so it is sculpted at the
-  // weight it shows and the capture divides back to full strength. Below this the division mostly
-  // amplifies the brush.
-  get COMBO_MIN_W() { return 0.3; }
+  // IN-BETWEENS. A combo is fixed wherever playing finds it looking wrong, which is rarely 1 and 1:
+  // three drivers at 0.6 put it at 0.22. So a fix is stored AT the combo weight it was sculpted
+  // at, as a sample, and the combo blends linearly between samples from (0, nothing), carrying on
+  // along the last segment past the top one -- so a single sample behaves like a full-strength fix
+  // scaled by weight. `track.comboSamples` holds each combo's samples sorted by s; the top one's
+  // delta is also the layer's delta in `blendshapes` (so a file reader that knows nothing of this
+  // still gets the strongest fix). A combo with no entry there is a v18 one: its delta is a
+  // sample at 1.
+  comboSamples(track, name) {
+    const list = track.comboSamples && track.comboSamples.get(name);
+    return list || [{ s: 1, d: track.blendshapes.get(name) }];
+  }
+
+  // The combo's contribution at weight s, as [[delta, coefficient], ...].
+  comboTerms(track, name, s) {
+    const S = this.comboSamples(track, name);
+    if (!(s > 0) || !S.length) return [];
+    let i = S.findIndex((p) => p.s >= s);
+    if (i < 0) i = S.length - 1;
+    const a = i > 0 ? S[i - 1] : null, b = S[i], sa = a ? a.s : 0;
+    const t = (s - sa) / (b.s - sa);
+    return a ? [[b.d, t], [a.d, 1 - t]] : [[b.d, t]];
+  }
+
+  // How the combo's contribution changes per unit of weight at s, as one delta (the Face tool's
+  // column): the slope of the segment s is on.
+  comboSlope(track, name, s) {
+    const S = this.comboSamples(track, name);
+    if (!S.length) return null;
+    let i = S.findIndex((p) => p.s >= s);
+    if (i < 0) i = S.length - 1;
+    const a = i > 0 ? S[i - 1] : null, b = S[i], k = 1 / (b.s - (a ? a.s : 0));
+    const out = new Float32Array(b.d.length);
+    for (let j = 0; j < out.length; j++) out[j] = (b.d[j] - (a ? a.d[j] : 0)) * k;
+    return out;
+  }
+
+  // A combo is sculptable down to here; below it a fix is a fix for almost no pose at all.
+  get COMBO_MIN_W() { return 0.05; }
+  // Within this of an existing sample, a stroke edits that sample instead of adding one.
+  get COMBO_SNAP() { return 0.02; }
+
+  // Called as a stroke starts on a combo: the sample this pose edits, made if there is none near
+  // (holding what the blend already shows there, so nothing jumps). False below COMBO_MIN_W.
+  prepareComboSculpt(track, name) {
+    const s = this.comboWeight(track, name);
+    if (s < this.COMBO_MIN_W) return false;
+    if (!track.comboSamples) track.comboSamples = new Map();
+    let S = track.comboSamples.get(name);
+    if (!S) track.comboSamples.set(name, (S = this.comboSamples(track, name).slice()));
+    let p = S.find((q) => Math.abs(q.s - s) < this.COMBO_SNAP);
+    if (!p) {
+      const d = new Float32Array(track.baseShape.length);
+      for (const [dd, k] of this.comboTerms(track, name, s)) for (let j = 0; j < d.length; j++) d[j] += dd[j] * k;
+      // The pose it is sculpted at, by driver, so pruning can recompute its weight.
+      const pose = {};
+      for (const dn of track.blendshapeCombos.get(name)) pose[dn] = this.blendshapePreviewAt(track, dn, track.blendshapeTracks.get(dn));
+      p = { s, d, pose };
+      S.push(p);
+      S.sort((x, y) => x.s - y.s);
+      track.blendshapes.set(name, S[S.length - 1].d);
+    }
+    track._comboEdit = p;
+    return true;
+  }
+
+  // The capture for a combo stroke: `c` is what the mesh shows of this layer (verts - base -
+  // others). The sample being edited is solved out of the blend: d_k = (c - other terms) / its
+  // coefficient. At the sample's own weight that coefficient is 1 and this is a plain copy.
+  // False when the pose has moved too far from the sample for that to be safe.
+  captureCombo(track, name, c, v) {
+    const p = track._comboEdit;
+    if (!p) return false;
+    const terms = this.comboTerms(track, name, this.comboWeight(track, name));
+    const own = terms.find(([d]) => d === p.d);
+    if (!own || own[1] < 0.5) return false;
+    const k = 1 / own[1], d = p.d;
+    this.invalidateSparse(d);
+    for (let j = 0; j < d.length; j++) {
+      let x = c[j];
+      for (const [dd, w] of terms) if (dd !== d) x -= dd[j] * w;
+      // Rounding residue is not a fix (see the plain capture in Mesh.updateGeometry).
+      d[j] = v && Math.abs(x) < 1e-5 * Math.abs(v[j]) ? 0 : x * k;
+    }
+    return true;
+  }
 
   // Fix Combo: a combo of every non-combo shape the mesh is wearing at >= minW, made (or found)
   // and made the active layer. Returns its name, or null with fewer than two drivers.
@@ -2366,8 +2447,19 @@ class AnimationRegistry {
     for (const [name, ds] of track.blendshapeCombos || []) {
       if (track.blendshapes.has(name) && [...ds].sort().join('|') === key) return name;
     }
-    // Names are stored in 32 characters (.sxr); the drivers themselves are kept by index. Both
-    // halves of a pair read as the one shape: smileLeft + smileRight + jawOpen -> mouthSmile_jawOpen.
+    const name = this._comboName(track, drivers);
+    this.createBlendshape(mesh, name);
+    if (!track.blendshapeCombos) track.blendshapeCombos = new Map();
+    track.blendshapeCombos.set(name, drivers);
+    // No samples yet: the first stroke makes one at whatever pose it is sculpted at.
+    if (!track.comboSamples) track.comboSamples = new Map();
+    track.comboSamples.set(name, []);
+    return name;
+  }
+
+  // Names are stored in 32 characters (.sxr); the drivers themselves are kept by index. Both
+  // halves of a pair read as the one shape: smileLeft + smileRight + jawOpen -> mouthSmile_jawOpen.
+  _comboName(track, drivers, except) {
     const parts = [];
     for (const d of drivers) {
       const m = /^(.+)(Left|Right)$/.exec(d), twin = m && m[1] + (m[2] === 'Left' ? 'Right' : 'Left');
@@ -2375,11 +2467,97 @@ class AnimationRegistry {
       if (!parts.includes(part)) parts.push(part);
     }
     let base = parts.join('_').slice(0, 30), name = base, i = 2;
-    while (track.blendshapes.has(name)) name = base.slice(0, 28) + '_' + i++;
-    this.createBlendshape(mesh, name);
-    if (!track.blendshapeCombos) track.blendshapeCombos = new Map();
-    track.blendshapeCombos.set(name, drivers);
+    while (track.blendshapes.has(name) && name !== except) name = base.slice(0, 28) + '_' + i++;
     return name;
+  }
+
+  // PRUNE THE DRIVERS TO WHAT THE FIX TOUCHES. Fix Combo takes every shape that is on, and a
+  // puppeted pose has five or ten: the fix then shows only at almost exactly that pose and
+  // vanishes when an unrelated brow drops. After each stroke, a driver that barely moves the
+  // sculpted area (its movement there under PRUNE_FRAC of its own peak) is dropped, keeping at
+  // least two. Each sample remembers the drivers' weights it was sculpted at (`pose`), so its
+  // combo weight is recomputed over the drivers that remain. Returns the combo's (new) name.
+  get PRUNE_FRAC() { return 0.1; }
+  pruneComboDrivers(mesh) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    const name = track && track.editingBlendshape;
+    if (!this.isBlendshapeCombo(track, name)) return null;
+    const drivers = track.blendshapeCombos.get(name);
+    if (drivers.length <= 2) return name;
+    const S = this.comboSamples(track, name);
+    const n = track.baseShape.length / 3, foot = new Float32Array(n);
+    let peak = 0;
+    for (const { d } of S) for (let v = 0; v < n; v++) {
+      const m = Math.hypot(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]);
+      if (m > foot[v]) { foot[v] = m; if (m > peak) peak = m; }
+    }
+    if (!peak) return name;
+    const scored = drivers.map((dn) => {
+      const D = track.blendshapes.get(dn);
+      let inside = 0, top = 0;
+      if (D) for (let v = 0; v < n; v++) {
+        const m = Math.hypot(D[v * 3], D[v * 3 + 1], D[v * 3 + 2]);
+        if (m > top) top = m;
+        if (foot[v] > 0.1 * peak && m > inside) inside = m;
+      }
+      return [dn, top ? inside / top : 0];
+    }).sort((a, b) => b[1] - a[1]);
+    const keep = scored.filter(([, f], i) => i < 2 || f >= this.PRUNE_FRAC).map(([dn]) => dn);
+    if (keep.length === drivers.length) return name;
+    const kept = drivers.filter((dn) => keep.includes(dn));   // original order, for the name
+    track.blendshapeCombos.set(name, kept);
+    if (track.comboSamples && track.comboSamples.has(name)) {
+      const out = [];
+      for (const p of S.sort((a, b) => a.s - b.s)) {
+        if (p.pose) p.s = kept.reduce((w, dn) => w * (p.pose[dn] ?? 1), 1);
+        out.push(p);
+      }
+      out.sort((a, b) => a.s - b.s);
+      // Two poses that differ only in a dropped driver are now the same pose: the later wins.
+      const dedup = out.filter((p, i) => !out.slice(i + 1).some((q) => Math.abs(q.s - p.s) < 1e-3));
+      track.comboSamples.set(name, dedup);
+      if (dedup.length) track.blendshapes.set(name, dedup[dedup.length - 1].d);
+    }
+    const newName = this._comboName(track, kept, name);
+    console.log(`[Combo] ${name}: kept ${kept.join(', ')} (dropped ${drivers.filter((d) => !kept.includes(d)).join(', ')})`);
+    if (newName !== name) this.renameBlendshape(mesh, name, newName);
+    this.applyBlendshapes(mesh);
+    this._refreshBlendPanels(mesh);
+    return newName;
+  }
+
+  // SPARSE COMPOSITE. A face shape moves a few thousand of a head's vertices, so adding every delta
+  // over the whole mesh is mostly adding zeros (the ICT head: 53 shapes x 24,591 vertices, most
+  // of each zero), and every combo fix and in-between is one more such pass a frame. Each delta's
+  // moving vertices are listed once and cached on the array. The one in-place writer that can
+  // change which vertices move is a stroke's capture, which drops the entry (invalidateSparse);
+  // the layer being sculpted is added densely so it is not re-listed every frame of a stroke.
+  // A list that is a SUPERSET of the moving vertices is still right, only slower.
+  _sparseIdx(d) {
+    if (!this._sparseCache) this._sparseCache = new WeakMap();
+    let idx = this._sparseCache.get(d);
+    if (!idx) {
+      const tmp = [];
+      for (let v = 0, n = d.length / 3; v < n; v++) {
+        if (d[v * 3] !== 0 || d[v * 3 + 1] !== 0 || d[v * 3 + 2] !== 0) tmp.push(v);
+      }
+      idx = Uint32Array.from(tmp);
+      this._sparseCache.set(d, idx);
+    }
+    return idx;
+  }
+
+  invalidateSparse(d) { if (this._sparseCache && d) this._sparseCache.delete(d); }
+
+  _addScaled(out, d, k, dense) {
+    const n = Math.min(out.length, d.length);
+    if (dense) { for (let i = 0; i < n; i++) out[i] += d[i] * k; return; }
+    const idx = this._sparseIdx(d);
+    for (let j = 0; j < idx.length; j++) {
+      const i = idx[j] * 3;
+      if (i + 2 >= n) break;
+      out[i] += d[i] * k; out[i + 1] += d[i + 1] * k; out[i + 2] += d[i + 2] * k;
+    }
   }
 
   // TWO WEIGHTS, AND CALLERS MUST PICK ON PURPOSE.
@@ -2479,11 +2657,13 @@ class AnimationRegistry {
           d = d.slice(0, track.baseShape.length);
           track.blendshapes.set(name, d);
         }
-        const n = Math.min(v.length, d.length);
-        for (let i = 0; i < n; i++) {
-          v[i] += d[i] * weight;
+        // A combo is a blend of its samples; anything else is one delta at its weight.
+        const terms = this.isBlendshapeCombo(track, name) ? this.comboTerms(track, name, weight) : [[d, weight]];
+        const dense = name === track.editingBlendshape;
+        for (const [dd, k] of terms) {
+          this._addScaled(v, dd, k, dense);
+          used.push([dd, k]);
         }
-        used.push([d, weight]);
       }
     });
 
@@ -2615,7 +2795,8 @@ class AnimationRegistry {
       const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);
-      for (let i = 0; i < out.length; i++) out[i] += delta[i] * weight;
+      const terms = this.isBlendshapeCombo(track, name) ? this.comboTerms(track, name, weight) : [[delta, weight]];
+      for (const [dd, k] of terms) this._addScaled(out, dd, k, false);
     });
     return out;
   }
@@ -2813,6 +2994,10 @@ class AnimationRegistry {
       const newC = new Map();
       track.blendshapeCombos.forEach((ds, n) => newC.set(n === oldName ? newName : n, ds.map((d) => d === oldName ? newName : d)));
       track.blendshapeCombos = newC;
+    }
+    if (track.comboSamples && track.comboSamples.has(oldName)) {
+      track.comboSamples.set(newName, track.comboSamples.get(oldName));
+      track.comboSamples.delete(oldName);
     }
 
     if (track.editingBlendshape === oldName) track.editingBlendshape = newName;
@@ -4122,7 +4307,7 @@ window.bsRestore = () => {
   }
   snap.layers.forEach((d, n) => {
     const cur = track.blendshapes?.get(n);
-    if (cur && cur.length === d.length) cur.set(d);
+    if (cur && cur.length === d.length) { cur.set(d); reg.invalidateSparse(cur); }
     else track.blendshapes?.set(n, new Float32Array(d));
   });
   track._bsRev = (track._bsRev | 0) + 1;   // written in place: the skin's mush cache keys on this

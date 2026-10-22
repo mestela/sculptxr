@@ -396,10 +396,16 @@ Import.importSGL = function (buffer, gl, main) {
             if (c2) bsName += String.fromCharCode(c2);
           }
 
-          // Read delta
-          var delta = new Float32Array(nbVerts * 3);
-          delta.set(f32a.subarray(off, off + nbVerts * 3));
-          off += nbVerts * 3;
+          // Read delta (v20: sparse, the vertices it moves)
+          var delta;
+          if (version >= 20) {
+            var _rd = ExportSGL.readDelta(u32a, f32a, off, nbVerts);
+            delta = _rd[0]; off = _rd[1];
+          } else {
+            delta = new Float32Array(nbVerts * 3);
+            delta.set(f32a.subarray(off, off + nbVerts * 3));
+            off += nbVerts * 3;
+          }
           trackObj.blendshapes.set(bsName, delta);
           _bsNames.push(bsName);
 
@@ -515,9 +521,41 @@ Import.importSGL = function (buffer, gl, main) {
         var cName = cNames[u32a[off++]];
         var nbDrv = u32a[off++], drv = [];
         for (var _di = 0; _di < nbDrv; _di++) drv.push(cNames[u32a[off++]]);
+        // v19: in-between samples (v18 combos have none and read as one sample at 1).
+        var samples = null;
+        if (version >= 19) {
+          var sTop = f32a[off++], nbLower = u32a[off++];
+          samples = [];
+          var nv3 = finalMesh.getNbVertices() * 3;
+          for (var _li = 0; _li < nbLower; _li++) {
+            var sS = f32a[off++], sD;
+            if (version >= 20) {
+              var _rs = ExportSGL.readDelta(u32a, f32a, off, nv3 / 3);
+              sD = _rs[0]; off = _rs[1];
+            } else {
+              sD = new Float32Array(nv3);
+              sD.set(f32a.subarray(off, off + nv3));
+              off += nv3;
+            }
+            samples.push({ s: sS, d: sD });
+          }
+          if (sTop > 0 && cName) samples.push({ s: sTop, d: cTrack.blendshapes.get(cName) });
+          // v20: the pose each sample was sculpted at.
+          if (version >= 20) {
+            for (var _pi = 0, _np = nbLower + (sTop > 0 ? 1 : 0); _pi < _np; _pi++) {
+              var hasPose = u32a[off++], pose = {};
+              for (var _pd = 0; _pd < nbDrv; _pd++) pose[drv[_pd]] = f32a[off++];
+              if (hasPose && samples[_pi]) samples[_pi].pose = pose;
+            }
+          }
+        }
         if (cName && drv.every(Boolean)) {
           if (!cTrack.blendshapeCombos) cTrack.blendshapeCombos = new Map();
           cTrack.blendshapeCombos.set(cName, drv);
+          if (samples) {
+            if (!cTrack.comboSamples) cTrack.comboSamples = new Map();
+            cTrack.comboSamples.set(cName, samples);
+          }
         }
       }
     }

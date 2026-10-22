@@ -385,7 +385,8 @@ class SculptManager {
     const w = reg.blendshapePreviewAt
       ? reg.blendshapePreviewAt(track, name, track.blendshapeTracks?.get(name))
       : 0;
-    if (reg.isBlendshapeCombo && reg.isBlendshapeCombo(track, name)) return w >= reg.COMBO_MIN_W;
+    // A combo is sculpted at whatever pose it is in: the stroke edits (or makes) its sample there.
+    if (reg.isBlendshapeCombo && reg.isBlendshapeCombo(track, name)) return reg.prepareComboSculpt(track, name);
     return Math.abs(w - 1) < 1e-3;
   }
 
@@ -601,6 +602,8 @@ class SculptManager {
     if (!this._strokeActive) return;
     this._strokeActive = false;
     this.getCurrentTool().end();
+    // A stroke on a combination layer: drop the drivers that do not move what it fixes.
+    window._animationRegistry?.pruneComboDrivers?.(this._main.getMesh?.());
 
     // Linked instances share geometry (_meshData); after an edit, re-sync every sibling's
     // GPU buffers so the change shows on all occurrences.
