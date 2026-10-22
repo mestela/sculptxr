@@ -2365,7 +2365,7 @@ class AnimationRegistry {
     let i = S.findIndex((p) => p.s >= s);
     if (i < 0) i = S.length - 1;
     const a = i > 0 ? S[i - 1] : null, b = S[i], sa = a ? a.s : 0;
-    const t = (s - sa) / (b.s - sa);
+    const t = Math.min((s - sa) / (b.s - sa), this.COMBO_EXTRAP);
     return a ? [[b.d, t], [a.d, 1 - t]] : [[b.d, t]];
   }
 
@@ -2377,13 +2377,19 @@ class AnimationRegistry {
     let i = S.findIndex((p) => p.s >= s);
     if (i < 0) i = S.length - 1;
     const a = i > 0 ? S[i - 1] : null, b = S[i], k = 1 / (b.s - (a ? a.s : 0));
+    if ((s - (a ? a.s : 0)) * k >= this.COMBO_EXTRAP) return null;   // past the cap: flat
     const out = new Float32Array(b.d.length);
     for (let j = 0; j < out.length; j++) out[j] = (b.d[j] - (a ? a.d[j] : 0)) * k;
     return out;
   }
 
-  // A combo is sculptable down to here; below it a fix is a fix for almost no pose at all.
-  get COMBO_MIN_W() { return 0.05; }
+  // A combo is sculptable at any pose that has it on at all. It was 0.05, but the weight is a
+  // PRODUCT: five drivers at 0.4 are 0.01, and Fix Combo on a puppeted pose made a layer no stroke
+  // could touch (matt: "something about a non trivial combo made it unsculptable").
+  get COMBO_MIN_W() { return 1e-6; }
+  // Past its top sample a fix carries on along the last segment, but no further than this many
+  // segments' worth: a fix sculpted at 0.01 would otherwise be 100x at full strength.
+  get COMBO_EXTRAP() { return 2; }
   // Within this of an existing sample, a stroke edits that sample instead of adding one.
   get COMBO_SNAP() { return 0.02; }
 

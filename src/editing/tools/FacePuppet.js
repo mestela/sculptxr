@@ -313,6 +313,23 @@ class FacePuppet extends SculptBase {
     return cost;
   }
 
+  // True when a pin has been pulled a tenth of its strongest shape's reach and the answer `w`
+  // follows less than half of it.
+  _stuck(pins, w) {
+    for (const pin of pins) {
+      if (pin.twist || (pin.weight ?? 1) <= 0) continue;
+      const dr = pin.drag, dl2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+      let reach = 0, got = 0;
+      for (const [n, c] of Object.entries(pin.deltas)) {
+        reach = Math.max(reach, Math.hypot(c[0], c[1], c[2]));
+        const k = n in w ? w[n] - (this._w0[n] || 0) : 0;
+        got += k * (c[0] * dr[0] + c[1] * dr[1] + c[2] * dr[2]);
+      }
+      if (dl2 > 0.01 * reach * reach && got < 0.5 * dl2) return true;
+    }
+    return false;
+  }
+
   // LIMIT: a point cannot be pulled further than the furthest-reaching single shape there could
   // take it, along the pull. Past that, least squares stacks every shape that closes the gap a
   // little — matt: "its relatively easy to make implausible, overdriven combinations". Measured on
@@ -450,7 +467,7 @@ class FacePuppet extends SculptBase {
       for (const d of drivers) {
         let k = 1;
         for (const o of drivers) if (o !== d) k *= w(o);
-        if (k < 1e-4 || !track.blendshapes.has(d)) continue;
+        if (!(k > 0) || !track.blendshapes.has(d)) continue;
         const col = deltas[d] || (deltas[d] = [0, 0, 0]);
         col[0] += k * f[0]; col[1] += k * f[1]; col[2] += k * f[2];
       }
@@ -610,17 +627,25 @@ class FacePuppet extends SculptBase {
       pins.push({ deltas: pin.twist.cols, drag: [ax[0] * k, ax[1] * k, ax[2] * k], weight, twist: true });
     }
     const track = reg.tracks.get(mesh.getID());
-    const rules = track ? this._rules(track) : {};
-    if (this._protectKeys && track) {
-      // Taken once per grab, so the keys THIS take is laying down do not lock its own shapes.
-      // Two keys or more: a single key is a held pose (an import writes one per shape for the
-      // file's default weights), not a take to protect — counting it locked all of facecap.
-      if (!this._protected) this._protected = this._keyedNames(track);
-      rules.exclude = [...(rules.exclude || []), ...this._protected];
-      rules.tie = (rules.tie || []).filter(([a, b]) => !this._protected.includes(a) && !this._protected.includes(b));
-    }
+    const base = track ? this._rules(track) : {};
+    // Taken once per grab, so the keys THIS take is laying down do not lock its own shapes.
+    // Two keys or more: a single key is a held pose (an import writes one per shape for the
+    // file's default weights), not a take to protect — counting it locked all of facecap.
+    if (this._protectKeys && track && !this._protected) this._protected = this._keyedNames(track);
+    const prot = this._protected || [];
+    const rules = !prot.length ? base : { ...base, exclude: [...(base.exclude || []), ...prot],
+      tie: (base.tie || []).filter(([a, b]) => !prot.includes(a) && !prot.includes(b)) };
     const cost = this._useSparse && track ? this._locality(track, pins.filter((p) => !p.twist)) : null;
-    const w = solveWeights(pins, this._w0, { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, cost, ...rules });
+    const opts = { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, cost };
+    let w = solveWeights(pins, this._w0, { ...opts, ...rules });
+    // PROTECTION YIELDS WHEN IT LEAVES THE GRAB NOTHING. In a take, grabbing the chin where only
+    // jawOpen moves it, with jawOpen keyed, moved nothing at all — matt: "the jaw would not open".
+    // A grab the unkeyed shapes cannot follow is a grab OF the keyed ones, so for the rest of it
+    // they are free (and recorded over, as any take records what it moves).
+    if (prot.length && this._stuck(pins, w)) {
+      this._protected = [];
+      w = solveWeights(pins, this._w0, { ...opts, ...base });
+    }
     let changed = false;
     const previewing = track?.blendshapePreview;
     for (const name of Object.keys(w)) {
