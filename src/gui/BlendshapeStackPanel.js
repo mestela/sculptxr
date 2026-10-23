@@ -37,6 +37,7 @@ const FA = {
   grip:     '\uf7a4', // fa-grip-lines (drag handle for reordering layers)
   reset:    '\uf2ea', // fa-rotate-left (reset the active layer's slider range to 0..1)
   pen:      '\uf304', // fa-pen (rename \u2014 VR-friendly alternative to double-tap)
+  hand:     '\uf256', // fa-hand (the Face tool may grab this layer; struck through when not)
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
@@ -700,7 +701,26 @@ export default class BlendshapeStackPanel {
                     : { x0: NAME_X + 34, x1: NAME_X + 54, y0: top, y1: top + 26 };
     ctx.textAlign = 'left';
 
-    const nameStart = isBase ? NAME_X + 24 : NAME_X + 58;
+    // Face (non-base) -- dim hand while the Face tool may use the layer, red and struck through
+    // when it is left out (AnimationRegistry.toggleBlendshapeNoFace).
+    if (!isBase) {
+      const off = !!track?.blendshapeNoFace?.has(name);
+      const faceHot = hov === 'face';
+      const cx = NAME_X + 61;
+      ctx.fillStyle = off ? (faceHot ? '#ffb0b0' : '#e06c6c') : (faceHot ? Theme.subtext : Theme.surface1);
+      ctx.font = '900 12px "Font Awesome 6 Free"';
+      ctx.textAlign = 'center';
+      ctx.fillText(FA.hand, cx, iconCy + 0.5);
+      if (off) {
+        ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx - 7, iconCy - 7); ctx.lineTo(cx + 7, iconCy + 7); ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+      ctx.textAlign = 'left';
+      r.face = { x0: NAME_X + 54, x1: NAME_X + 70, y0: top, y1: top + 26 };
+    }
+
+    const nameStart = isBase ? NAME_X + 24 : NAME_X + 76;
 
     // Name (brightens on row hover; dim when muted/locked-base).
     const nameHot = hov === 'row';
@@ -810,6 +830,7 @@ export default class BlendshapeStackPanel {
     const inRect = (z) => z && p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1;
     if (inRect(row.grip))  return { row, part: 'grip' };
     if (inRect(row.lock))  return { row, part: 'lock' };
+    if (inRect(row.face))  return { row, part: 'face' };
     if (inRect(row.eye))   return { row, part: 'eye' };
     if (inRect(row.split))   return { row, part: 'split' };
     if (inRect(row.combine)) return { row, part: 'combine' };
@@ -897,6 +918,11 @@ export default class BlendshapeStackPanel {
     // Lock toggle (all rows incl. Base) — a locked layer/cage can't be sculpted.
     if (part === 'lock') {
       if (mesh) reg.toggleBlendshapeLock(mesh, row.isBase ? 'Base' : row.name);
+      this.draw();
+      return;
+    }
+    if (part === 'face' && !row.isBase) {
+      if (mesh) reg.toggleBlendshapeNoFace(mesh, row.name);
       this.draw();
       return;
     }

@@ -339,8 +339,8 @@ check('Reset clears the override as well as centring the handle',
 // otherLayersOffset SUBTRACTS them back out so a sculpt captures only the layer being edited.
 // If one honours previews and the other does not, the difference is silently baked into the delta.
 check('applyBlendshapes and otherLayersOffset read the SAME weight, previews included',
-  (REG.match(/this\.blendshapePreviewAt\(track, name, bTrack\)/g) || []).length === 2,
-  'found ' + (REG.match(/this\.blendshapePreviewAt\(track, name, bTrack\)/g) || []).length
+  (REG.match(/this\.shownWeight\(track, name, bTrack\)/g) || []).length === 2,
+  'found ' + (REG.match(/this\.shownWeight\(track, name, bTrack\)/g) || []).length
     + ' — a sculpt made while the pad is up would otherwise absorb the previewed weight');
 check('...and a never-keyed shape can still be previewed',
   /if \(\(!bTrack \|\| bTrack\.times\.length === 0\) && !previewing\) return;/.test(REG)

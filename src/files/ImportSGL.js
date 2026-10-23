@@ -580,6 +580,15 @@ Import.importSGL = function (buffer, gl, main) {
           }
         }
       }
+
+      // v22: layers left out of the Face tool.
+      if (version >= 22) {
+        var nbNoFace = u32a[off++];
+        for (var _nf = 0; _nf < nbNoFace; _nf++) {
+          var nfName = cNames[u32a[off++]];
+          if (cTrack && nfName) (cTrack.blendshapeNoFace || (cTrack.blendshapeNoFace = new Set())).add(nfName);
+        }
+      }
     }
   }
 

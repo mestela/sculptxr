@@ -43,6 +43,9 @@ class FacePuppet extends SculptBase {
     // A shape moving the grab point by less than this fraction of the strongest one is not
     // grabbed at all — see sampleDeltas on why that matters for layering.
     this._minFrac = 0.15;
+    // HOME: a shape is grabbed only where it moves the point by at least this much of its OWN
+    // largest movement anywhere (see _home).
+    this._homeFrac = 0.3;
     // Panel toggles (main menu + wrist).
     this._showHeat = false;   // matt: useful for debugging, little else
     this._useRotation = true;
@@ -254,6 +257,7 @@ class FacePuppet extends SculptBase {
     for (const [name, delta] of track.blendshapes) {
       if (track.blendshapeMuted && track.blendshapeMuted.has(name)) continue;
       if (track.blendshapeCombos && track.blendshapeCombos.has(name)) continue;  // derived, never solved
+      if (track.blendshapeNoFace && track.blendshapeNoFace.has(name)) continue;  // the row's hand toggle
       out.push([name, delta]);
     }
     return out;
@@ -289,10 +293,12 @@ class FacePuppet extends SculptBase {
         const e = arkitEntry(name);
         if (e && e.category === 'directional') { exclude.push(name); continue; }
         const pair = lrPairFor(name, has);
-        if (pair && name === pair.left && has(pair.right)) tie.push([pair.left, pair.right]);
+        const off = (nm) => track.blendshapeNoFace?.has(nm);
+        if (pair && name === pair.left && has(pair.right) && !off(pair.left) && !off(pair.right)) tie.push([pair.left, pair.right]);
       }
     }
-    const under = has('mouthClose') && has('jawOpen') ? { mouthClose: 'jawOpen' } : {};
+    const under = {};
+    for (const [name] of track.blendshapes) { const up = this._reg().underOf(track, name); if (up) under[name] = up; }
     return { exclusive, tie, exclude, under };
   }
 
@@ -472,7 +478,7 @@ class FacePuppet extends SculptBase {
     const sample = (shapes, minFrac) => patch
       ? averageDeltas(shapes, patch.idx, patch.wts, minFrac)
       : sampleDeltas(shapes, corners, mesh.getVertices(), local, minFrac);
-    const deltas = this._slopes(mesh, track, (shapes) => sample(shapes, 0), this._minFrac);
+    const deltas = this._home(track, this._slopes(mesh, track, (shapes) => sample(shapes, 0), this._minFrac));
     this._addCombos(track, deltas, (shapes) => sample(shapes, 0));
     if (!Object.keys(deltas).length) return null;
     const world = vec3.transformMat4(vec3.create(), local, this._toWorld(mesh));
@@ -514,6 +520,32 @@ class FacePuppet extends SculptBase {
     return out;
   }
 
+  // HOME REGION. Every shape that moves the grabbed point at all is a column, so once the shapes
+  // that belong there run out (brow at full) a far pull hands the rest to ones that merely touch
+  // it: on the ICT head a brow pulled down brought noseSneer to 0.9, nose and upper lip with it
+  // (matt: "if i drag far enough the jaw and mouth will start being affected"). Measured as the
+  // point's movement over the shape's own peak: shapes that belong at a grab score 0.4-1 there,
+  // the strays 0.1-0.25 (noseSneer at the brow, jawOpen at the cheek). Never empties a pin: the
+  // floor drops to half the best score where nothing is at home.
+  _home(track, deltas) {
+    if (!this._homeFrac) return deltas;
+    if (!this._peaks) this._peaks = new WeakMap();
+    const score = {};
+    for (const [name, c] of Object.entries(deltas)) {
+      const d = track.blendshapes.get(name);
+      let p = d && this._peaks.get(d);
+      if (d && p === undefined) {
+        p = 0;
+        for (let i = 0; i < d.length; i += 3) p = Math.max(p, Math.hypot(d[i], d[i + 1], d[i + 2]));
+        this._peaks.set(d, p);
+      }
+      score[name] = p ? Math.hypot(c[0], c[1], c[2]) / p : 1;
+    }
+    const floor = Math.min(this._homeFrac, 0.5 * Math.max(0, ...Object.values(score)));
+    for (const name of Object.keys(deltas)) if (score[name] < floor) delete deltas[name];
+    return deltas;
+  }
+
   // COMBOS IN THE SOLVE. A combo's weight is the product of its drivers', so with smile at 0.8, a
   // little more jawOpen also brings in 0.8 x the smile_jawOpen fix: jawOpen's column at this point
   // is its own delta plus that. Taken at the grab's starting weights (the Jacobian there), so the
@@ -527,7 +559,7 @@ class FacePuppet extends SculptBase {
     // The fix's rate of change at the combo's current weight: the slope of the in-between segment.
     const slopes = live.map((n) => [n, reg.comboSlope(track, n, reg.comboWeight(track, n))]).filter(([, d]) => d);
     const fix = sample(slopes);
-    const w = (n) => reg.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n));
+    const w = (n) => reg.shownWeight(track, n, track.blendshapeTracks.get(n));
     for (const [name, f] of Object.entries(fix)) {
       const drivers = combos.get(name);
       for (const d of drivers) {

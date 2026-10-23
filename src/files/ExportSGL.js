@@ -33,7 +33,7 @@ var Export = {};
 // 20 SPARSE DELTAS: every blendshape delta and combo sample is written as the vertices it moves
 //    (count, index gaps, xyz) instead of every vertex; combo samples also carry their pose (one
 //    weight per driver) so pruning works after a reload.
-Export.VERSION = 21;
+Export.VERSION = 22;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -81,6 +81,14 @@ function poseRows(track) {
     rows.push([n, ws]);
   });
   return rows;
+}
+
+// v22: the layers left out of the Face tool, as shape indices.
+function noFaceRows(track) {
+  if (!track || !track.blendshapes || !track.blendshapeNoFace) return [];
+  var names = Array.from(track.blendshapes.keys());
+  return names.map(function (n, i) { return track.blendshapeNoFace.has(n) ? i : -1; })
+    .filter(function (i) { return i >= 0; });
 }
 
 function writeName(u32a, off, name) {
@@ -235,6 +243,7 @@ Export.exportSGL = function (meshes, main) {
     });
     nbBytes += 4;
     poseRows(track).forEach(function (r) { nbBytes += 64 + 4 + r[1].length * 8; });
+    nbBytes += 4 + noFaceRows(track).length * 4;
   }
 
   try {
@@ -640,6 +649,11 @@ Export.exportSGL = function (meshes, main) {
         u32a[off++] = r[1].length;
         r[1].forEach(function (e) { u32a[off++] = e[0]; f32a[off++] = e[1]; });
       });
+
+      // v22: layers left out of the Face tool.
+      var _noFace = noFaceRows(track);
+      u32a[off++] = _noFace.length;
+      _noFace.forEach(function (i) { u32a[off++] = i; });
     }
 
     var data = new DataView(buffer, 0, off * 4);

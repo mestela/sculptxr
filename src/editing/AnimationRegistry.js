@@ -2170,6 +2170,7 @@ class AnimationRegistry {
       track.blendshapeTracks?.delete(nm);
       track.blendshapeMuted?.delete(nm);
       track.blendshapeLocked?.delete(nm);
+      track.blendshapeNoFace?.delete(nm);
       if (track.blendshapeSolo === nm) track.blendshapeSolo = null;
       if (track.editingBlendshape === nm) track.editingBlendshape = null;
     };
@@ -2241,6 +2242,7 @@ class AnimationRegistry {
       track.blendshapeTracks?.delete(nm);
       track.blendshapeMuted?.delete(nm);
       track.blendshapeLocked?.delete(nm);
+      track.blendshapeNoFace?.delete(nm);
       if (track.blendshapeSolo === nm) track.blendshapeSolo = null;
       if (track.editingBlendshape === nm) track.editingBlendshape = null;
     };
@@ -2330,6 +2332,21 @@ class AnimationRegistry {
     return this.evaluateScalarTrack(bTrack, track.playbackTime);
   }
 
+  // A CORRECTIVE THAT RIDES ANOTHER SHAPE. ARKit's mouthClose seals the lips AGAINST jawOpen; on
+  // its own it pushes them through each other. Its curve and the jaw's are keyed apart, so between
+  // keys it could run ahead of the jaw (matt: "it shouldn't fire in any other place"). What the
+  // mesh WEARS is capped at the jaw; the stored value is left alone. Not while the layer is being
+  // edited: the sculpt capture assumes the edited layer at exactly its own weight.
+  underOf(track, name) {
+    return name === 'mouthClose' && track.blendshapes.has('jawOpen') ? 'jawOpen' : null;
+  }
+
+  shownWeight(track, name, bTrack) {
+    const w = this.blendshapePreviewAt(track, name, bTrack);
+    const up = name !== track.editingBlendshape && this.underOf(track, name);
+    return up ? Math.min(w, this.blendshapePreviewAt(track, up, track.blendshapeTracks.get(up))) : w;
+  }
+
   // COMBINATION SHAPES (Fix Combo). A combo is an ordinary layer whose weight is never keyed or
   // previewed: it is the PRODUCT of its drivers' weights (Maya's "combination target, multiply";
   // Valve Source's smile_jawOpen). Fully on only when every driver is, off when any is at 0, so
@@ -2339,7 +2356,7 @@ class AnimationRegistry {
     let w = 1;
     for (const d of track.blendshapeCombos.get(name)) {
       if (!track.blendshapes.has(d) || (track.blendshapeMuted && track.blendshapeMuted.has(d))) return 0;
-      w *= this.blendshapePreviewAt(track, d, track.blendshapeTracks.get(d));
+      w *= this.shownWeight(track, d, track.blendshapeTracks.get(d));
     }
     return w;
   }
@@ -2410,7 +2427,7 @@ class AnimationRegistry {
       for (const [dd, k] of this.comboTerms(track, name, s)) for (let j = 0; j < d.length; j++) d[j] += dd[j] * k;
       // The pose it is sculpted at, by driver, so pruning can recompute its weight.
       const pose = {};
-      for (const dn of track.blendshapeCombos.get(name)) pose[dn] = this.blendshapePreviewAt(track, dn, track.blendshapeTracks.get(dn));
+      for (const dn of track.blendshapeCombos.get(name)) pose[dn] = this.shownWeight(track, dn, track.blendshapeTracks.get(dn));
       p = { s, d, pose };
       S.push(p);
       S.sort((x, y) => x.s - y.s);
@@ -2449,7 +2466,7 @@ class AnimationRegistry {
     const drivers = [];
     for (const name of track.blendshapes.keys()) {
       if (this.isBlendshapeCombo(track, name) || (track.blendshapeMuted && track.blendshapeMuted.has(name))) continue;
-      if (this.blendshapePreviewAt(track, name, track.blendshapeTracks.get(name)) >= minW) drivers.push(name);
+      if (this.shownWeight(track, name, track.blendshapeTracks.get(name)) >= minW) drivers.push(name);
     }
     if (drivers.length < 2) return null;
     const key = [...drivers].sort().join('|');
@@ -2857,7 +2874,7 @@ class AnimationRegistry {
       if ((!bTrack || bTrack.times.length === 0) && !previewing && !this.isBlendshapeCombo(track, name)) return;
       if (muted && muted.has(name)) return;
 
-      const weight = this.blendshapePreviewAt(track, name, bTrack);
+      const weight = this.shownWeight(track, name, bTrack);
       if (weight !== 0) {
         // Never past the base shape: a delta longer than it (an older capture sized to the spare
         // vertex capacity) carries NaN in its tail. Repaired in place -- trimmed to the base
@@ -2931,6 +2948,16 @@ class AnimationRegistry {
     else track.blendshapeLocked.add(name);
   }
 
+  // LEFT OUT OF THE FACE TOOL: the layer still plays and keys like any other, but a Face grab
+  // never reaches for it -- for shapes that only make sense in one circumstance (tongue, eye
+  // looks) or that keep sneaking into grabs. Separate from the lock, which is about sculpting.
+  toggleBlendshapeNoFace(mesh, name) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !name || name === 'Base') return;
+    if (!track.blendshapeNoFace) track.blendshapeNoFace = new Set();
+    if (!track.blendshapeNoFace.delete(name)) track.blendshapeNoFace.add(name);
+  }
+
   // Per-layer visibility: a muted layer keeps its stored weight but contributes 0
   // to the composition (applyBlendshapes / otherLayersOffset skip it) and cannot be
   // sculpted into (SculptManager gate). Toggleable, non-destructive.
@@ -3002,7 +3029,7 @@ class AnimationRegistry {
       // the pad happened to be showing at the moment of the stroke.
       const previewingO = track.blendshapePreview && track.blendshapePreview.has(name);
       if ((!bTrack || bTrack.times.length === 0) && !previewingO && !this.isBlendshapeCombo(track, name)) return;
-      const weight = this.blendshapePreviewAt(track, name, bTrack);
+      const weight = this.shownWeight(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);
       const terms = this.shapeTerms(track, name, delta, weight);
@@ -3215,6 +3242,9 @@ class AnimationRegistry {
       }
     }
 
+    for (const set of [track.blendshapeMuted, track.blendshapeLocked, track.blendshapeNoFace]) {
+      if (set && set.delete(oldName)) set.add(newName);
+    }
     if (track.editingBlendshape === oldName) track.editingBlendshape = newName;
   }
 

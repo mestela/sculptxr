@@ -682,6 +682,7 @@ export default class TimelineHelper {
     // dropped them would un-mute and un-lock layers on any key drag.
     if (track.blendshapeMuted)  cloned.blendshapeMuted  = new Set(track.blendshapeMuted);
     if (track.blendshapeLocked) cloned.blendshapeLocked = new Set(track.blendshapeLocked);
+    if (track.blendshapeNoFace) cloned.blendshapeNoFace = new Set(track.blendshapeNoFace);
     if (track.blendshapeCombos) cloned.blendshapeCombos = new Map(track.blendshapeCombos);
     if (track.comboSamples) cloned.comboSamples = track.comboSamples;   // by reference, like the deltas
     if (track.blendshapePoses) cloned.blendshapePoses = track.blendshapePoses;
