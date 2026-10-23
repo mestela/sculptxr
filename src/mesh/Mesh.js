@@ -609,6 +609,8 @@ class Mesh {
         _reg.applyBlendshapes(this); // discards the transient nudge + does a full geometry update
         return;
       }
+      // Sculpted on the NEW neutral: Retarget Shapes must leave it as it is.
+      if (_track.shapeRef) (_track.shapeRefSkip || (_track.shapeRefSkip = new Set())).add(_name);
       const _v    = this.getVertices();
       // THE DELTA IS THE SIZE OF THE BASE SHAPE, NOT THE VERTEX BUFFER. The buffer is allocated
       // with spare capacity (here 75,075 floats for 73,734 in use), and sizing the delta to it
@@ -661,12 +663,26 @@ class Mesh {
       // When nothing contributes (mesh already equals base) the offset is null and
       // this is just the old set() — and an incidental call now recomputes the SAME
       // base instead of poisoning it.
+      // Bounded by the BASE SHAPE, not the vertex buffer (spare capacity, as in case A above):
+      // set() of the whole buffer threw "offset is out of bounds" on every stroke, so unlocking
+      // Base on the example heads still left it unsculptable.
+      const _n   = _track.baseShape.length;
       const _v   = this.getVertices();
       const _all = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, null) : null;
+      // THE NEUTRAL THE SHAPES WERE MADE ON, kept the first time the base really changes, so
+      // Retarget Shapes (AnimationRegistry.retargetShapes) can carry them onto the new one.
+      // Not on an incidental call that recomputes the same base: that would mark every layer
+      // sculpted afterwards as "made on the new neutral" when it was not.
+      const _old = !_track.shapeRef && _track.blendshapes?.size ? _track.baseShape.slice() : null;
       if (_all) {
-        for (let _j = 0; _j < _v.length; _j++) _track.baseShape[_j] = _v[_j] - _all[_j];
+        for (let _j = 0; _j < _n; _j++) _track.baseShape[_j] = _v[_j] - _all[_j];
       } else {
-        _track.baseShape.set(_v);
+        _track.baseShape.set(_v.subarray(0, _n));
+      }
+      if (_old) {
+        for (let _j = 0; _j < _n; _j++) {
+          if (Math.abs(_old[_j] - _track.baseShape[_j]) > 1e-6 * (Math.abs(_old[_j]) + 1)) { _track.shapeRef = _old; break; }
+        }
       }
       _track._bsRev = (_track._bsRev | 0) + 1;
     }

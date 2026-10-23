@@ -6856,6 +6856,7 @@ class Scene {
         && window._animationRegistry.tracks.get(mesh.getID());
       if (tr) {
         if (tr.baseShape) xformPositions(tr.baseShape);
+        if (tr.shapeRef) xformPositions(tr.shapeRef);
         if (tr.blendshapes) for (const d of tr.blendshapes.values()) { xformVectors(d); window._animationRegistry.invalidateSparse(d); }
         tr._bsRev = (tr._bsRev | 0) + 1;   // written in place: see Skinning composeMush
       }

@@ -387,6 +387,11 @@ class FacePuppet extends SculptBase {
     this._reg().zeroBlendshapes(this._poseMeshes());
   }
 
+  // RETARGET SHAPES: every shape rebuilt for the sculpted Base (AnimationRegistry.retargetShapes).
+  retargetAll() {
+    for (const m of this._poseMeshes()) this._reg().retargetShapes(m);
+  }
+
   // FIX COMBO: the pose on the face looks wrong, so make it sculptable. Every shape on at 0.2 or
   // more becomes a driver of a combination layer (or the existing one for the same drivers), that
   // layer is made active, and the tool goes to Move (matt: "usually the tool of choice to fix shapes"). The pose stays as it is: the layer is

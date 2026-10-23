@@ -677,6 +677,8 @@ export default class TimelineHelper {
     // arrays inside are shared.
     if (track.blendshapes) cloned.blendshapes = new Map(track.blendshapes);
     if (track.baseShape) cloned.baseShape = track.baseShape;
+    if (track.shapeRef) cloned.shapeRef = track.shapeRef;
+    if (track.shapeRefSkip) cloned.shapeRefSkip = new Set(track.shapeRefSkip);
     if (track._bsNbVertices) cloned._bsNbVertices = track._bsNbVertices;
     // The per-layer flags are small and are part of "what the stack looks like", so a clone that
     // dropped them would un-mute and un-lock layers on any key drag.

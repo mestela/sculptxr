@@ -589,6 +589,20 @@ Import.importSGL = function (buffer, gl, main) {
           if (cTrack && nfName) (cTrack.blendshapeNoFace || (cTrack.blendshapeNoFace = new Set())).add(nfName);
         }
       }
+
+      // v23: the neutral the shapes were made on (Retarget Shapes), as its offset from the base.
+      if (version >= 23 && u32a[off++]) {
+        var _rd = ExportSGL.readDelta(u32a, f32a, off, finalMesh.getNbVertices());
+        off = _rd[1];
+        var nbSkip = u32a[off++], rSkip = new Set();
+        for (var _rs2 = 0; _rs2 < nbSkip; _rs2++) { var rsName = cNames[u32a[off++]]; if (rsName) rSkip.add(rsName); }
+        if (cTrack && cTrack.baseShape && cTrack.baseShape.length === _rd[0].length) {
+          var rRef = _rd[0];
+          for (var _ri = 0; _ri < rRef.length; _ri++) rRef[_ri] += cTrack.baseShape[_ri];
+          cTrack.shapeRef = rRef;
+          cTrack.shapeRefSkip = rSkip.size ? rSkip : null;
+        }
+      }
     }
   }
 

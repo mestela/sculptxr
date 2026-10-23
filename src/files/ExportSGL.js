@@ -33,7 +33,9 @@ var Export = {};
 // 20 SPARSE DELTAS: every blendshape delta and combo sample is written as the vertices it moves
 //    (count, index gaps, xyz) instead of every vertex; combo samples also carry their pose (one
 //    weight per driver) so pruning works after a reload.
-Export.VERSION = 22;
+// 23 RETARGET SHAPES: the neutral the shapes were made on (once the Base has been sculpted), as its
+//    offset from the base, and the layers sculpted since.
+Export.VERSION = 23;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -81,6 +83,17 @@ function poseRows(track) {
     rows.push([n, ws]);
   });
   return rows;
+}
+
+// v23: [ref - base, skipped shape indices] or null.
+function refRow(track, nv) {
+  if (!track || !track.shapeRef || !track.baseShape || track.shapeRef.length !== nv * 3) return null;
+  var diff = new Float32Array(nv * 3);
+  for (var i = 0; i < diff.length; i++) diff[i] = track.shapeRef[i] - track.baseShape[i];
+  var names = Array.from(track.blendshapes ? track.blendshapes.keys() : []);
+  var skip = track.shapeRefSkip ? names.map(function (n, i) { return track.shapeRefSkip.has(n) ? i : -1; })
+    .filter(function (i) { return i >= 0; }) : [];
+  return [diff, skip];
 }
 
 // v22: the layers left out of the Face tool, as shape indices.
@@ -244,6 +257,8 @@ Export.exportSGL = function (meshes, main) {
     nbBytes += 4;
     poseRows(track).forEach(function (r) { nbBytes += 64 + 4 + r[1].length * 8; });
     nbBytes += 4 + noFaceRows(track).length * 4;
+    var _rr = refRow(track, activeVertCount);
+    nbBytes += 4 + (_rr ? deltaBytes(_rr[0], activeVertCount) + 4 + _rr[1].length * 4 : 0);
   }
 
   try {
@@ -654,6 +669,15 @@ Export.exportSGL = function (meshes, main) {
       var _noFace = noFaceRows(track);
       u32a[off++] = _noFace.length;
       _noFace.forEach(function (i) { u32a[off++] = i; });
+
+      // v23: the neutral the shapes were made on. Every mesh, flag first.
+      var _ref = refRow(track, activeVertCount);
+      u32a[off++] = _ref ? 1 : 0;
+      if (_ref) {
+        off = Export.writeDelta(u32a, f32a, off, _ref[0], activeVertCount);
+        u32a[off++] = _ref[1].length;
+        _ref[1].forEach(function (i) { u32a[off++] = i; });
+      }
     }
 
     var data = new DataView(buffer, 0, off * 4);

@@ -6,6 +6,7 @@ import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
 import { arcBasis } from './ArcBlend.js';
+import { triangles, prepare, retargetDelta } from './ShapeRetarget.js';
 import Skeleton from './Skeleton.js';
 import PhysicsBones from './PhysicsBones.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -2696,6 +2697,55 @@ class AnimationRegistry {
   // Combos follow their drivers. One undo step across all the meshes.
   zeroBlendshapes(meshes) {
     return this._previewPose(meshes, () => 0, 'Zero Blendshapes');
+  }
+
+  // RETARGET SHAPES: the Base has been sculpted, so carry every shape from the neutral it was made
+  // on (track.shapeRef, kept by Mesh.updateGeometry on the first real base change) onto the new
+  // one -- ShapeRetarget.js. Combo samples too. Layers sculpted since the base changed
+  // (track.shapeRefSkip) were made on the new neutral and are left alone. Afterwards the shapes
+  // match the base, so the reference is dropped and the next base edit starts a new one.
+  // One undo step. Returns the number of shapes retargeted, or 0 when there is nothing to do.
+  retargetShapes(mesh) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.size || !track.baseShape || !track.shapeRef) {
+      console.log('[Retarget] nothing to do: the Base has not been sculpted since the shapes were made');
+      return 0;
+    }
+    const base = track.baseShape, ref = track.shapeRef, nv = base.length / 3;
+    if (ref.length !== base.length || mesh.getNbVertices() !== nv) {
+      console.warn('[Retarget] vertex count changed since the shapes were made; cannot retarget');
+      return 0;
+    }
+    const t0 = performance.now();
+    const P = prepare(ref, base, triangles(mesh.getFaces(), mesh.getNbFaces()), nv);
+    const skip = track.shapeRefSkip || new Set();
+    const before = { shapes: new Map(track.blendshapes), samples: track.comboSamples ? new Map(track.comboSamples) : null, ref, skip };
+    const shapes = new Map(track.blendshapes), samples = track.comboSamples ? new Map(track.comboSamples) : null;
+    let done = 0;
+    for (const [name, d] of track.blendshapes) {
+      if (skip.has(name)) continue;
+      const nd = retargetDelta(P, d);
+      shapes.set(name, nd);
+      // A combo's samples: the top one IS the layer's delta, the others are solved like it.
+      const S = samples && samples.get(name);
+      if (S) samples.set(name, S.map((p) => ({ ...p, d: p.d === d ? nd : retargetDelta(P, p.d) })));
+      done++;
+    }
+    const after = { shapes, samples, ref: null, skip: null };
+    const put = (st) => {
+      for (const [n, d] of st.shapes) track.blendshapes.set(n, d);   // in place, order kept
+      if (st.samples) for (const [n, S] of st.samples) track.comboSamples.set(n, S);
+      track.shapeRef = st.ref;
+      track.shapeRefSkip = st.skip ? new Set(st.skip) : null;
+      track._bsRev = (track._bsRev | 0) + 1;
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+      window.app?.render?.();
+    };
+    put(after);
+    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Retarget Shapes');
+    console.log(`[Retarget] ${done} shape(s) in ${(performance.now() - t0).toFixed(0)} ms${skip.size ? `, left ${skip.size} sculpted since: ${[...skip].join(', ')}` : ''}`);
+    return done;
   }
 
   // Every non-combo shape to `weightOf(name)` as a preview, one undo step. A 0 on a shape whose

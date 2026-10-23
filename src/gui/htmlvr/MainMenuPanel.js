@@ -3846,6 +3846,7 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice" id="mm-face-combo">Fix Combo</button>
       <button class="mm-choice" id="mm-face-key">Key</button>
       <button class="mm-choice" id="mm-face-zero">Zero All</button>
+      <button class="mm-choice" id="mm-face-retarget" title="Rebuild every shape for the sculpted Base">Retarget Shapes</button>
     </div>
     ${buildPoseLibraryHTML(main, tool)}` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
@@ -6034,6 +6035,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   wirePoseLibrary(el, main, sm, repaintFn);
   el.querySelector('#mm-face-key')?.addEventListener('click', () => sm?.getCurrentTool?.()?.keyAll?.());
   el.querySelector('#mm-face-zero')?.addEventListener('click', () => sm?.getCurrentTool?.()?.zeroAll?.());
+  el.querySelector('#mm-face-retarget')?.addEventListener('click', () => sm?.getCurrentTool?.()?.retargetAll?.());
 
   el.querySelector('#mm-face-combo')?.addEventListener('click', () => {
     sm?.getCurrentTool?.()?.fixCombo?.();
