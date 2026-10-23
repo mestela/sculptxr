@@ -3847,7 +3847,8 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice" id="mm-face-combo">Fix Combo</button>
       <button class="mm-choice" id="mm-face-key">Key</button>
       <button class="mm-choice" id="mm-face-zero">Zero All</button>
-    </div>` : ''}
+    </div>
+    ${buildPoseLibraryHTML(main, tool)}` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
     ${cur === Enums.Tools.TRANSFORM_VR || cur === Enums.Tools.TRANSFORM
@@ -6031,6 +6032,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     });
   }
 
+  wirePoseLibrary(el, main, sm, repaintFn);
   el.querySelector('#mm-face-key')?.addEventListener('click', () => sm?.getCurrentTool?.()?.keyAll?.());
   el.querySelector('#mm-face-zero')?.addEventListener('click', () => sm?.getCurrentTool?.()?.zeroAll?.());
 
@@ -6526,6 +6528,59 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn,
 
 // Open the keyboard (VR 3D panel, or DOM overlay on desktop) to collect a save name, then
 // run cb(name). Cancel → no save; the field is pre-filled so a bare confirm still saves.
+// THE POSE LIBRARY: named slider settings for the Face tool's face (AnimationRegistry poses).
+// Tap a pose to put it on the sliders; Key then writes it. Delete is a mode, so a stray tap in
+// the headset cannot lose one (and it is undoable anyway).
+const escHTML = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function buildPoseLibraryHTML(main, tool) {
+  const reg = window._animationRegistry;
+  const mesh = tool?.poseMesh?.();
+  const names = mesh && reg ? reg.poseNames(mesh) : [];
+  const del = !!tool?._poseDelete;
+  return `
+    <div class="mm-section-title">Poses</div>
+    <div class="mm-choice-grid cols-3">
+      ${names.map((n, i) => `<button class="mm-choice${del ? ' active' : ''}" id="mm-pose-${i}" data-pose="${escHTML(n)}">${escHTML(n)}</button>`).join('')}
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice" id="mm-pose-save">Save Pose</button>
+      <button class="mm-choice${del ? ' active' : ''}" id="mm-pose-del"${names.length ? '' : ' disabled'}>Delete...</button>
+    </div>`;
+}
+
+function wirePoseLibrary(el, main, sm, repaintFn) {
+  const reg = window._animationRegistry;
+  const tool = () => sm?.getCurrentTool?.();
+  window._refreshPoseLists = repaintFn;
+  el.querySelectorAll('[data-pose]').forEach((btn) => btn.addEventListener('click', () => {
+    const t = tool(), mesh = t?.poseMesh?.();
+    if (!mesh || !reg) return;
+    if (t._poseDelete) {
+      reg.deletePose(mesh, btn.dataset.pose);
+      if (!reg.poseNames(mesh).length) t._poseDelete = false;
+    } else {
+      reg.applyPose(mesh, btn.dataset.pose);
+    }
+    repaintFn();
+  }));
+  el.querySelector('#mm-pose-save')?.addEventListener('click', () => {
+    const mesh = tool()?.poseMesh?.();
+    if (!mesh || !reg) return;
+    // Named poseN with no prompt: a text dialog in the headset is no way to work. Renaming later.
+    const names = reg.poseNames(mesh);
+    let i = names.length + 1;
+    while (names.includes('pose' + i)) i++;
+    reg.savePose(mesh, 'pose' + i);
+    repaintFn();
+  });
+  el.querySelector('#mm-pose-del')?.addEventListener('click', () => {
+    const t = tool();
+    if (t) t._poseDelete = !t._poseDelete;
+    repaintFn();
+  });
+}
+
 function promptSaveName(label, defaultName, cb) {
   // VR → our 3D keyboard; desktop (and anywhere with a real keyboard) → native prompt.
   if (window._vrKeyboard?.shouldUse?.()) {

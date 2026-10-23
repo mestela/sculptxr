@@ -126,6 +126,7 @@ const DEFAULT_OPEN = new Set([
   'sec:sculpt',                      // Tools
   'sec:brush', 'sec:symmetry',       // Properties
   'sec:face',                        // Properties, Face tool
+  'sec:poses',                       // Properties, Face tool's pose library
   'sec:frame-range', 'sec:transport' // Animation
 ]);
 

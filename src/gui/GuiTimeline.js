@@ -5753,11 +5753,9 @@ export default class GuiTimeline {
                 } else if (km === 'shape') {
                   reg.addShapeKey(mesh, t);
                 } else if (km === 'blendshape') {
-                  const tr = reg.tracks.get(mesh.getID());
-                  tr?.blendshapeTracks?.forEach((bTrack, name) => {
-                    const w = reg.evaluateScalarTrack(bTrack, t);
-                    reg.setBlendshapeWeight(mesh, name, w);
-                  });
+                  // The whole face as it SHOWS: a pose tapped in the library is a preview, and
+                  // keying each curve's own value threw it away.
+                  reg.keyWholePose(mesh, t);
                 } else {
                   reg.addTransformKey(mesh, t);
                 }

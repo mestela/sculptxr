@@ -558,6 +558,28 @@ Import.importSGL = function (buffer, gl, main) {
           }
         }
       }
+
+      // v21: poses, as name + [shapeIdx, weight] pairs.
+      if (version >= 21) {
+        var nbPoses = u32a[off++];
+        for (var _po = 0; _po < nbPoses; _po++) {
+          var pName = '';
+          for (var _pn = 0; _pn < 16; _pn++) {
+            var _pv = u32a[off++], _p1 = _pv >>> 16, _p2 = _pv & 0xFFFF;
+            if (_p1) pName += String.fromCharCode(_p1);
+            if (_p2) pName += String.fromCharCode(_p2);
+          }
+          var nbW = u32a[off++], pw = {};
+          for (var _pw = 0; _pw < nbW; _pw++) {
+            var sIdx = u32a[off++], sW = f32a[off++];
+            if (cNames[sIdx]) pw[cNames[sIdx]] = sW;
+          }
+          if (cTrack && pName) {
+            if (!cTrack.blendshapePoses) cTrack.blendshapePoses = new Map();
+            cTrack.blendshapePoses.set(pName, pw);
+          }
+        }
+      }
     }
   }
 

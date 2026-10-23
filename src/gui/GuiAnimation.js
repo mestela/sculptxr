@@ -445,17 +445,10 @@ class GuiAnimation {
       actionName = 'add shape key';
       if (window.screenLog) window.screenLog('◆ Added Shape Key', 'lime');
     } else if (window._animKeyMode === 'blendshape') {
-      const track = reg.tracks.get(targetMesh.getID());
-      const name = track ? track.editingBlendshape : null;
-      if (name) {
-        const weight = reg.evaluateScalarTrack(track.blendshapeTracks.get(name), targetTime);
-        reg.setBlendshapeWeight(targetMesh, name, weight);
-        actionName = 'add blendshape key';
-        if (window.screenLog) window.screenLog(`◆ Added Blendshape Key [${name}]`, 'lime');
-      } else {
-        if (window.screenLog) window.screenLog('◆ No active blendshape to key!', 'orange');
-        return;
-      }
+      // THE WHOLE FACE AS IT SHOWS, every shape, previews included: a pose tapped in the library
+      // is a preview, and keying only the active layer from its curve threw it away.
+      if (!reg.keyWholePose(targetMesh, targetTime, false)) return;
+      actionName = 'add blendshape key';
     } else {
       // Everything selected, as ONE key set (its undo is the whole-registry snapshot pair below,
       // so the per-set undo is suppressed).

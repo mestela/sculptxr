@@ -33,7 +33,7 @@ var Export = {};
 // 20 SPARSE DELTAS: every blendshape delta and combo sample is written as the vertices it moves
 //    (count, index gaps, xyz) instead of every vertex; combo samples also carry their pose (one
 //    weight per driver) so pruning works after a reload.
-Export.VERSION = 20;
+Export.VERSION = 21;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -71,6 +71,27 @@ Export.readDelta = function (u32a, f32a, off, nv) {
 };
 
 // The combos of a track that still exist, as [comboIdx, [driverIdx...]].
+// v21: the track's poses as [name, [[shapeIdx, weight]...]], shapes that still exist only.
+function poseRows(track) {
+  if (!track || !track.blendshapes || !track.blendshapePoses) return [];
+  var names = Array.from(track.blendshapes.keys()), rows = [];
+  track.blendshapePoses.forEach(function (pose, n) {
+    var ws = Object.keys(pose).map(function (s) { return [names.indexOf(s), pose[s]]; })
+      .filter(function (e) { return e[0] >= 0; });
+    rows.push([n, ws]);
+  });
+  return rows;
+}
+
+function writeName(u32a, off, name) {
+  for (var n = 0; n < 16; n++) {
+    var c1 = (n * 2     < name.length) ? name.charCodeAt(n * 2)     : 0;
+    var c2 = (n * 2 + 1 < name.length) ? name.charCodeAt(n * 2 + 1) : 0;
+    u32a[off++] = (c1 << 16) | c2;
+  }
+  return off;
+}
+
 function comboRows(track) {
   if (!track || !track.blendshapes || !track.blendshapeCombos) return [];
   var names = Array.from(track.blendshapes.keys()), rows = [];
@@ -212,6 +233,8 @@ Export.exportSGL = function (meshes, main) {
       r[2].lower.forEach(function (p) { nbBytes += 4 + deltaBytes(p.d, activeVertCount); });
       nbBytes += r[2].poses.length * (4 + r[1].length * 4);
     });
+    nbBytes += 4;
+    poseRows(track).forEach(function (r) { nbBytes += 64 + 4 + r[1].length * 8; });
   }
 
   try {
@@ -607,6 +630,15 @@ Export.exportSGL = function (meshes, main) {
           u32a[off++] = pose ? 1 : 0;
           for (var _pi = 0; _pi < r[1].length; _pi++) f32a[off++] = pose ? pose[_pi] : 0;
         });
+      });
+
+      // v21: poses (named slider settings). Every mesh, count first.
+      var _poses = poseRows(track);
+      u32a[off++] = _poses.length;
+      _poses.forEach(function (r) {
+        off = writeName(u32a, off, r[0]);
+        u32a[off++] = r[1].length;
+        r[1].forEach(function (e) { u32a[off++] = e[0]; f32a[off++] = e[1]; });
       });
     }
 

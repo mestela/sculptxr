@@ -1410,16 +1410,8 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     }
     if (window._animKeyMode === 'shape') r.addShapeKey(target, t);
     else if (window._animKeyMode === 'blendshape') {
-      // Key ALL blendshapes at their current evaluated weight (including weight=0)
-      const track = r.tracks.get(target.getID());
-      if (track?.blendshapeTracks) {
-        track.blendshapeTracks.forEach((bTrack, name) => {
-          const weight = bTrack.times.length > 0
-            ? (r.evaluateScalarTrack?.(bTrack, t) ?? 0)
-            : 0;
-          r.setBlendshapeWeight?.(target, name, weight);
-        });
-      }
+      // Key ALL blendshapes at what they show (including weight=0), previews included.
+      r.keyWholePose(target, t);
     } else r.addTransformKey(target, t);
     repaint();
   });

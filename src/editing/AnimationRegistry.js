@@ -2290,8 +2290,12 @@ class AnimationRegistry {
     // boundaries regardless of where the playhead happened to stop.
     const fps  = window._animFPS || 24;
     const time = Math.round((track.playbackTime || 0) * fps) / fps;
-    const bTrack = track.blendshapeTracks.get(name);
+    this._writeKey(track.blendshapeTracks.get(name), time, value);
+    this.applyBlendshapes(mesh);
+  }
 
+  // One key into a weight curve: replaces a key already on that frame, else inserts in order.
+  _writeKey(bTrack, time, value) {
     // Binary search for insertion point — O(log n) vs O(n) linear scan.
     // Matters when tracks have many keys (e.g. recorded at 60 fps).
     let lo = 0, hi = bTrack.times.length;
@@ -2299,16 +2303,13 @@ class AnimationRegistry {
       const mid = (lo + hi) >>> 1;
       if (bTrack.times[mid] < time) lo = mid + 1; else hi = mid;
     }
-    let idx = lo;
-    
+    const idx = lo;
     if (idx < bTrack.times.length && Math.abs(bTrack.times[idx] - time) < 0.005) {
       bTrack.values[idx] = value;
     } else {
       bTrack.times.splice(idx, 0, time);
       bTrack.values.splice(idx, 0, value);
     }
-    
-    this.applyBlendshapes(mesh);
   }
 
   // A LIVE WEIGHT THAT IS NOT A KEY.
@@ -2677,6 +2678,12 @@ class AnimationRegistry {
   // preview (its curve already says 0), so the pad's Key afterwards writes only what changed.
   // Combos follow their drivers. One undo step across all the meshes.
   zeroBlendshapes(meshes) {
+    return this._previewPose(meshes, () => 0, 'Zero Blendshapes');
+  }
+
+  // Every non-combo shape to `weightOf(name)` as a preview, one undo step. A 0 on a shape whose
+  // curve is already 0 drops its preview instead, so nothing is left overriding it.
+  _previewPose(meshes, weightOf, label) {
     const snaps = [];
     for (const mesh of meshes) {
       const track = mesh && this.tracks.get(mesh.getID());
@@ -2684,7 +2691,8 @@ class AnimationRegistry {
       snaps.push({ mesh, before: new Map(track.blendshapePreview || []) });
       for (const name of track.blendshapes.keys()) {
         if (this.isBlendshapeCombo(track, name)) continue;
-        this.setBlendshapePreview(mesh, name, this.blendshapeCurveWeight(track, name) !== 0 ? 0 : null);
+        const w = weightOf(name);
+        this.setBlendshapePreview(mesh, name, w !== 0 || this.blendshapeCurveWeight(track, name) !== 0 ? w : null);
       }
       snaps[snaps.length - 1].after = new Map(track.blendshapePreview || []);
     }
@@ -2700,8 +2708,89 @@ class AnimationRegistry {
       window.app?.render?.();
     };
     put('after');
-    window.app?.getStateManager?.()?.pushStateCustom(() => put('before'), () => put('after'), false, 'Zero Blendshapes');
+    window.app?.getStateManager?.()?.pushStateCustom(() => put('before'), () => put('after'), false, label);
     return true;
+  }
+
+  // ── POSES: named slider settings ────────────────────────────────────────────────────────
+  //
+  // A pose is a macro over the blendshape sliders, nothing more: { shapeName: weight } for the
+  // shapes it has on (the rest are 0). Applying one sets the sliders, as a preview; keying writes
+  // ordinary keys on each shape's own curve. No keys or curves of its own. Saved in the .sxr (v21).
+  poseNames(mesh) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    return track && track.blendshapePoses ? [...track.blendshapePoses.keys()] : [];
+  }
+
+  savePose(mesh, name) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !name) return false;
+    const pose = {};
+    for (const n of track.blendshapes.keys()) {
+      if (this.isBlendshapeCombo(track, n)) continue;
+      const w = this.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n));
+      if (Math.abs(w) > 1e-4) pose[n] = Math.round(w * 1e4) / 1e4;
+    }
+    this._editPoses(track, (m) => m.set(name, pose), 'Save Pose');
+    return true;
+  }
+
+  deletePose(mesh, name) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapePoses || !track.blendshapePoses.has(name)) return false;
+    this._editPoses(track, (m) => m.delete(name), 'Delete Pose');
+    return true;
+  }
+
+  _editPoses(track, fn, label) {
+    const before = new Map(track.blendshapePoses || []);
+    const after = new Map(before);
+    fn(after);
+    const put = (m) => { track.blendshapePoses = new Map(m); window._refreshPoseLists?.(); };
+    put(after);
+    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, label);
+  }
+
+  applyPose(mesh, name) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    const pose = track && track.blendshapePoses && track.blendshapePoses.get(name);
+    if (!pose) return false;
+    return this._previewPose([mesh], (n) => pose[n] || 0, 'Apply Pose');
+  }
+
+  // KEY THE WHOLE FACE: every shape gets a key at the playhead at what it shows now, the ones at 0
+  // included, so the pose lands exactly and the curves pass from one keyed pose to the next (a
+  // shape keyed only where it was touched keeps whatever an earlier key left it at). Previews
+  // are cleared. One undo step, unless the caller takes its own snapshot (`undo` false). `time`
+  // defaults to the track's playhead.
+  keyWholePose(mesh, time = null, undo = true) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.size) return 0;
+    const names = [...track.blendshapes.keys()].filter((n) => !this.isBlendshapeCombo(track, n) && track.blendshapeTracks.get(n));
+    const copy = (bt) => ({ times: bt.times.slice(), values: bt.values.slice(), tangentOffsets: { ...(bt.tangentOffsets || {}) } });
+    const snap = () => ({ preview: new Map(track.blendshapePreview || []),
+      curves: new Map(names.map((n) => [n, copy(track.blendshapeTracks.get(n))])) });
+    const before = snap();
+    const weights = names.map((n) => this.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n)));
+    const fps = window._animFPS || 24;
+    const t = Math.round((time ?? track.playbackTime ?? 0) * fps) / fps;
+    names.forEach((n, i) => this._writeKey(track.blendshapeTracks.get(n), t, weights[i]));
+    if (track.blendshapePreview) track.blendshapePreview.clear();
+    const after = snap();
+    const put = (st) => {
+      track.blendshapePreview = new Map(st.preview);
+      for (const [n, c] of st.curves) {
+        const bt = track.blendshapeTracks.get(n);
+        if (!bt) continue;
+        bt.times = c.times.slice(); bt.values = c.values.slice(); bt.tangentOffsets = { ...c.tangentOffsets };
+      }
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+      window.app?.render?.();
+    };
+    put(after);
+    if (undo) window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Key Pose');
+    return names.length;
   }
 
   // Turn whatever is previewed into real keys at the playhead, then drop the override. The keys
@@ -3102,6 +3191,11 @@ class AnimationRegistry {
       track.comboSamples.set(newName, track.comboSamples.get(oldName));
       track.comboSamples.delete(oldName);
     }
+    if (track.blendshapePoses) {
+      for (const pose of track.blendshapePoses.values()) {
+        if (oldName in pose) { pose[newName] = pose[oldName]; delete pose[oldName]; }
+      }
+    }
 
     if (track.editingBlendshape === oldName) track.editingBlendshape = newName;
   }
@@ -3395,13 +3489,8 @@ class AnimationRegistry {
     if (mode === 'shape') {
       for (const m of list) this.addShapeKey(m, time);
     } else if (mode === 'blendshape') {
-      for (const m of list) {
-        const tr = this.tracks.get(m.getID());
-        tr?.blendshapeTracks?.forEach((bTrack, name) => {
-          const w = bTrack.times.length > 0 ? (this.evaluateScalarTrack?.(bTrack, time) ?? 0) : 0;
-          this.setBlendshapeWeight?.(m, name, w);
-        });
-      }
+      // The whole face as it shows, previews included (a pose just applied is a preview).
+      for (const m of list) this.keyWholePose(m, time, pushUndo);
     } else if (list.length === 1 && pushUndo) {
       this.addTransformKey(list[0], time);
     } else {

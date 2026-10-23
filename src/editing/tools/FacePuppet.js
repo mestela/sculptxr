@@ -360,19 +360,25 @@ class FacePuppet extends SculptBase {
     return len > reach ? [u[0] * reach, u[1] * reach, u[2] * reach] : drag;
   }
 
-  // KEY: every previewed shape -> keys at the playhead, as the pad's Key does. ZERO ALL: every
-  // shape to 0 as a preview. Both on the selected mesh, else every face the tool can grab.
+  // KEY: the whole face at the playhead, every shape (AnimationRegistry.keyWholePose), so a keyed
+  // pose lands exactly. ZERO ALL: every shape to 0 as a preview. Both on the selected mesh, else
+  // every face the tool can grab.
   keyAll() {
-    const reg = this._reg(), sel = this._main.getMesh?.();
-    for (const m of sel && this._track(sel) ? [sel] : this._targets()) {
-      if (reg.commitBlendshapePreview(m)) { reg.applyBlendshapes(m); reg._refreshBlendPanels(m); }
-    }
-    this._main.render();
+    for (const m of this._poseMeshes()) this._reg().keyWholePose(m);
+  }
+
+  _poseMeshes() {
+    const sel = this._main.getMesh?.();
+    return sel && this._track(sel) ? [sel] : this._targets();
+  }
+
+  // The pose library works on one face: the selected one, else the first the tool can grab.
+  poseMesh() {
+    return this._poseMeshes()[0] || null;
   }
 
   zeroAll() {
-    const sel = this._main.getMesh?.();
-    this._reg().zeroBlendshapes(sel && this._track(sel) ? [sel] : this._targets());
+    this._reg().zeroBlendshapes(this._poseMeshes());
   }
 
   // FIX COMBO: the pose on the face looks wrong, so make it sculptable. Every shape on at 0.2 or
