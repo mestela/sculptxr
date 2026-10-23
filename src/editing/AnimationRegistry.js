@@ -46,7 +46,7 @@ class AnimationRegistry {
     this.recordingTargets = null;
     this._trackStatesBeforeRecording = null;
     this.clipboardShape = null; // Floating clipboard buffer for copy/pasting morph keys
-    this.arcBlend = true;       // shapes that turn the skin blend on arcs (ArcBlend.js)
+    this.arcBlend = false;      // shapes that turn the skin blend on arcs (ArcBlend.js); off and unexposed: artifacts outweighed the gain
     this.isRecording = false;
     this.isCountingIn = false;
     this.startTime = 0;
@@ -2722,7 +2722,7 @@ class AnimationRegistry {
     return track && track.blendshapePoses ? [...track.blendshapePoses.keys()] : [];
   }
 
-  savePose(mesh, name) {
+  savePose(mesh, name, label = 'Save Pose') {
     const track = mesh && this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes || !name) return false;
     const pose = {};
@@ -2731,7 +2731,25 @@ class AnimationRegistry {
       const w = this.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n));
       if (Math.abs(w) > 1e-4) pose[n] = Math.round(w * 1e4) / 1e4;
     }
-    this._editPoses(track, (m) => m.set(name, pose), 'Save Pose');
+    // Map.set on an existing name keeps its place, so an update stays where it was in the list.
+    this._editPoses(track, (m) => m.set(name, pose), label);
+    return true;
+  }
+
+  updatePose(mesh, name) {
+    return this.poseNames(mesh).includes(name) && this.savePose(mesh, name, 'Update Pose');
+  }
+
+  // Rename in place (same position in the list). False for an empty name or one already taken.
+  renamePose(mesh, oldName, newName) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    const poses = track && track.blendshapePoses;
+    if (!poses || !poses.has(oldName) || !newName || poses.has(newName)) return false;
+    this._editPoses(track, (m) => {
+      const entries = [...m.entries()].map(([n, p]) => [n === oldName ? newName : n, p]);
+      m.clear();
+      for (const [n, p] of entries) m.set(n, p);
+    }, 'Rename Pose');
     return true;
   }
 

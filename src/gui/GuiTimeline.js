@@ -3327,7 +3327,8 @@ export default class GuiTimeline {
               const leftYOff  = leftDv  !== undefined ? -leftDv  * this._zoomY : -slope * (leftDt  !== undefined ? leftDt  : -dtL * 0.33) * this._zoomY;
 
               if (i < bTrack.times.length - 1) {
-                const isActive  = this._isDraggingTangent && this._activeTangentBsName === name && this._activeTangentIndex === i && this._activeTangentSide === 'right';
+                const isActive  = (this._isDraggingTangent && this._activeTangentBsName === name && this._activeTangentIndex === i && this._activeTangentSide === 'right')
+                  || (this._selTangents || []).some((u) => u.meshId === id && u.bs === name && u.i === i && u.side === 'right');
                 const isHovered = TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, this._lastMouseX, this._lastMouseY, 10);
                 ctx.strokeStyle = isActive ? '#ffff00' : isHovered ? '#00ffff' : color;
                 ctx.beginPath(); ctx.moveTo(kx, ky); ctx.lineTo(kx + rightXOff, ky + rightYOff); ctx.stroke();
@@ -3335,7 +3336,8 @@ export default class GuiTimeline {
                 ctx.beginPath(); ctx.arc(kx + rightXOff, ky + rightYOff, 3, 0, Math.PI * 2); ctx.fill();
               }
               if (i > 0) {
-                const isActive  = this._isDraggingTangent && this._activeTangentBsName === name && this._activeTangentIndex === i && this._activeTangentSide === 'left';
+                const isActive  = (this._isDraggingTangent && this._activeTangentBsName === name && this._activeTangentIndex === i && this._activeTangentSide === 'left')
+                  || (this._selTangents || []).some((u) => u.meshId === id && u.bs === name && u.i === i && u.side === 'left');
                 const isHovered = TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, this._lastMouseX, this._lastMouseY, 10);
                 ctx.strokeStyle = isActive ? '#ffff00' : isHovered ? '#00ffff' : color;
                 ctx.beginPath(); ctx.moveTo(kx, ky); ctx.lineTo(kx + leftXOff, ky + leftYOff); ctx.stroke();
@@ -4082,7 +4084,7 @@ export default class GuiTimeline {
           const at = sel.findIndex((t) => this._sameTan(t, me));
           if (this._lastModifierDown) { if (at >= 0) sel.splice(at, 1); else sel.push(me); }
           else if (at < 0) this._selTangents = [me];
-          this._multiTan = this._multiTangentSet(m.getID(), h, side, tlX, tlW, loopStart, visibleDuration);
+          this._multiTan = this._multiTangentSet(me, tlX, tlW, loopStart, visibleDuration);
           return;
         }
        }
@@ -4170,28 +4172,27 @@ export default class GuiTimeline {
           const leftXOff  = leftDt  !== undefined ? (leftDt  / visibleDuration) * tlW : -25;
           const leftYOff  = leftDv  !== undefined ? -leftDv  * this._zoomY : -slope * (leftDt  !== undefined ? leftDt  : -dtL * 0.33) * this._zoomY;
 
-          if (i < bTrack.times.length - 1 && TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 10)) {
+          const grab = (side) => {
             this._isDraggingTangent = true;
             this._activeTangentTrack = bTrack;
             this._activeTangentIndex = i;
-            this._activeTangentSide = 'right';
+            this._activeTangentSide = side;
             this._activeTangentKx = kx;
             this._activeTangentKy = ky;
             this._activeTangentType = 'blendshape';
             this._activeTangentBsName = name;
-            return;
-          }
-          if (i > 0 && TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 10)) {
-            this._isDraggingTangent = true;
-            this._activeTangentTrack = bTrack;
-            this._activeTangentIndex = i;
-            this._activeTangentSide = 'left';
-            this._activeTangentKx = kx;
-            this._activeTangentKy = ky;
-            this._activeTangentType = 'blendshape';
-            this._activeTangentBsName = name;
-            return;
-          }
+            this._tanUndoBefore = this._snapshotTracks();
+            this._tanMoved = false;
+            // Selectable and multi-draggable like the transform handles above.
+            const me = { meshId: id, bs: name, i, side };
+            const sel = this._selTangents || (this._selTangents = []);
+            const at = sel.findIndex((t) => this._sameTan(t, me));
+            if (this._lastModifierDown) { if (at >= 0) sel.splice(at, 1); else sel.push(me); }
+            else if (at < 0) this._selTangents = [me];
+            this._multiTan = this._multiTangentSet(me, tlX, tlW, loopStart, visibleDuration);
+          };
+          if (i < bTrack.times.length - 1 && TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 10)) { grab('right'); return; }
+          if (i > 0 && TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 10)) { grab('left'); return; }
         }
       }
     }
@@ -4353,44 +4354,67 @@ export default class GuiTimeline {
   // with other keys selected) moves them all -- horizontally by the grabbed one's RATIO, from each
   // handle's own key, and vertically by the same screen distance (see _dragMultiTangents).
   // Captured at the grab; null when it is a lone handle.
-  _sameTan(a, b) { return a.meshId === b.meshId && a.grp === b.grp && a.c === b.c && a.i === b.i && a.side === b.side; }
+  // A handle is { meshId, grp, c, i, side } on a transform curve, or { meshId, bs, i, side } on a
+  // blendshape weight curve (bs = the shape's name).
+  _sameTan(a, b) { return a.meshId === b.meshId && a.grp === b.grp && a.c === b.c && a.bs === b.bs && a.i === b.i && a.side === b.side; }
 
-  _multiTangentSet(meshId, h0, side, tlX, tlW, loopStart, visibleDuration) {
+  // Where a blendshape key's handles sit on screen, exactly as the draw and the pick place them
+  // (an untouched handle is drawn 25px out). { key, right?, left? } in canvas pixels.
+  _bsHandles(bTrack, i, tlX, tlW, loopStart, visibleDuration) {
     const reg = window._animationRegistry;
+    const T = bTrack.times, n = T.length;
+    if (!T || i < 0 || i >= n || n < 2) return null;
+    const kx = tlX + ((T[i] - loopStart) / visibleDuration) * tlW;
+    const ky = this.valueToY(bTrack.values[i]);
+    const to = bTrack.tangentOffsets;
+    const rDt = to?.[`${i}_right_dt`], rDv = to?.[`${i}_right_dv`];
+    const lDt = to?.[`${i}_left_dt`], lDv = to?.[`${i}_left_dv`];
+    const slope = reg.getBsSlope(bTrack, i);
+    const dtR = i < n - 1 ? T[i + 1] - T[i] : 0.2, dtL = i > 0 ? T[i] - T[i - 1] : 0.2;
+    const out = { key: [kx, ky] };
+    if (i < n - 1) out.right = [kx + (rDt !== undefined ? (rDt / visibleDuration) * tlW : 25),
+      ky + (rDv !== undefined ? -rDv * this._zoomY : -slope * (rDt !== undefined ? rDt : dtR * 0.33) * this._zoomY)];
+    if (i > 0) out.left = [kx + (lDt !== undefined ? (lDt / visibleDuration) * tlW : -25),
+      ky + (lDv !== undefined ? -lDv * this._zoomY : -slope * (lDt !== undefined ? lDt : -dtL * 0.33) * this._zoomY)];
+    return out;
+  }
+
+  // One handle of the multi-drag set, from its descriptor; null if it is not on screen.
+  _tanEntry(t, side, active, tlX, tlW, loopStart, visibleDuration) {
+    const tr = window._animationRegistry?.tracks.get(t.meshId);
+    if (!tr || tr.muted) return null;
+    if (t.bs !== undefined) {
+      const bt = tr.blendshapeTracks?.get(t.bs);
+      if (!bt || window._animBsChannelVisible?.[t.bs] === false) return null;
+      const h = this._bsHandles(bt, t.i, tlX, tlW, loopStart, visibleDuration);
+      if (!h || !h[side]) return null;
+      return { bt, bs: t.bs, i: t.i, side, v0: [h[side][0] - h.key[0], h[side][1] - h.key[1]], half: 1, active };
+    }
+    if (!xfIsVisible(t.grp) || !xfChanVisible(t.grp, t.c)) return null;
+    const normR = this._xfNormRanges(tr);
+    const h = this._xfHandles(tr, { index: t.i, group: t.grp, channel: t.c }, normR, tlX, tlW, loopStart, visibleDuration);
+    if (!h || !h[side]) return null;
+    return { tr, grp: t.grp, c: t.c, i: t.i, side, v0: [h[side][0] - h.key[0], h[side][1] - h.key[1]],
+      half: this._xfNorm() ? (normR?.[t.grp]?.half || 1) : 1, active };
+  }
+
+  // `grabbed` is the handle's descriptor (see _sameTan).
+  _multiTangentSet(grabbed, tlX, tlW, loopStart, visibleDuration) {
+    const side = grabbed.side;
     // SELECTED HANDLES, when the grabbed one is among them: each moves on its own side.
     const hs = this._selTangents || [];
-    const grabbed = { meshId, grp: h0.grp, c: h0.c, i: h0.i, side };
     if (hs.length > 1 && hs.some((t) => this._sameTan(t, grabbed))) {
-      const out = [];
-      for (const t of hs) {
-        const tr = reg?.tracks.get(t.meshId);
-        if (!tr || tr.muted || !xfIsVisible(t.grp) || !xfChanVisible(t.grp, t.c)) continue;
-        const normR = this._xfNormRanges(tr);
-        const h = this._xfHandles(tr, { index: t.i, group: t.grp, channel: t.c }, normR, tlX, tlW, loopStart, visibleDuration);
-        if (!h || !h[t.side]) continue;
-        out.push({ tr, grp: t.grp, c: t.c, i: t.i, side: t.side, v0: [h[t.side][0] - h.key[0], h[t.side][1] - h.key[1]],
-          half: this._xfNorm() ? (normR?.[t.grp]?.half || 1) : 1, active: this._sameTan(t, grabbed) });
-      }
+      const out = hs.map((t) => this._tanEntry(t, t.side, this._sameTan(t, grabbed), tlX, tlW, loopStart, visibleDuration)).filter(Boolean);
       if (out.length > 1 && out.some((e) => e.active)) return out;
     }
-    // ...else the same-side handles of the selected KEYS.
+    // ...else the same-side handles of the selected KEYS (transform channels and blendshape curves).
     const sel = window._animSelectedKeys || [];
-    const isSel = (id, g, c, i) => sel.some((k) => k.meshId === id && k.type === 'transform'
-      && (k.group || 'pos') === g && k.channel === c && k.index === i);
-    if (!isSel(meshId, h0.grp, h0.c, h0.i)) return null;
-    const out = [];
-    for (const k of sel) {
-      if (k.type !== 'transform' || k.channel === undefined) continue;
-      const g = k.group || 'pos';
-      if (!(g === 'pos' || g === 'rot' || g === 'scale') || !xfIsVisible(g) || !xfChanVisible(g, k.channel)) continue;
-      const tr = reg?.tracks.get(k.meshId);
-      if (!tr || tr.muted) continue;
-      const normR = this._xfNormRanges(tr);
-      const h = this._xfHandles(tr, k, normR, tlX, tlW, loopStart, visibleDuration);
-      if (!h || !h[side]) continue;
-      out.push({ tr, grp: g, c: k.channel, i: k.index, side, v0: [h[side][0] - h.key[0], h[side][1] - h.key[1]],
-        half: this._xfNorm() ? (normR?.[g]?.half || 1) : 1, active: k.meshId === meshId && g === h0.grp && k.channel === h0.c && k.index === h0.i });
-    }
+    const desc = (k) => k.type === 'blendshape' ? { meshId: k.meshId, bs: k.name, i: k.index, side }
+      : (k.type === 'transform' && k.channel !== undefined && ['pos', 'rot', 'scale'].includes(k.group || 'pos'))
+        ? { meshId: k.meshId, grp: k.group || 'pos', c: k.channel, i: k.index, side } : null;
+    const ds = sel.map(desc).filter(Boolean);
+    if (!ds.some((d) => this._sameTan(d, grabbed))) return null;
+    const out = ds.map((d) => this._tanEntry(d, side, this._sameTan(d, grabbed), tlX, tlW, loopStart, visibleDuration)).filter(Boolean);
     return out.length > 1 && out.some((e) => e.active) ? out : null;
   }
 
@@ -4410,6 +4434,18 @@ export default class GuiTimeline {
       const y = e.v0[1] + ddy;
       x = e.side === 'right' ? Math.max(0, x) : Math.min(0, x);   // a handle never crosses its key
       const dt = (x / tlW) * visibleDuration, dv = -y / this._zoomY * e.half;
+      if (e.bt) {
+        // A blendshape weight curve: one channel, unprefixed keys (TimelineHelper.updateTangent).
+        const to = e.bt.tangentOffsets || (e.bt.tangentOffsets = {});
+        to[`${e.i}_${e.side}_dt`] = dt;
+        to[`${e.i}_${e.side}_dv`] = dv;
+        if (to[`${e.i}_tied`] !== false) {
+          const other = e.side === 'right' ? 'left' : 'right';
+          to[`${e.i}_${other}_dt`] = -dt;
+          to[`${e.i}_${other}_dv`] = -dv;
+        }
+        continue;
+      }
       const to = e.tr.tangentOffsets || (e.tr.tangentOffsets = {});
       const pfx = xfTanPrefix(e.grp);
       to[`${pfx}${e.i}_${e.side}_dt`] = dt;
@@ -4422,7 +4458,8 @@ export default class GuiTimeline {
     }
   }
 
-  // FLATTEN / AUTO TANGENTS on the selected keys, one undo step (matt, 2026-10-19). A graph key is
+  // FLATTEN / AUTO TANGENTS on the selected keys, one undo step (matt, 2026-10-19; blendshape keys
+  // 2026-10-23, they were skipped and the menu entry hid itself for them). A graph key is
   // its own channel; a dopesheet key is every channel keyed at that slot. Only the SLOPE (dv) is
   // written, never the handle length (dt): dt is shared by a slot's channels, and each channel's
   // default length comes from its own neighbours, so writing one would bend the others.
@@ -4441,6 +4478,17 @@ export default class GuiTimeline {
       if (!jobs.has(key)) jobs.set(key, { tr, grp, c, slots: new Set() });
       jobs.get(key).slots.add(i);
     };
+    // Blendshape weight curves: one curve per shape, scalar tangent keys `${i}_right_dv` etc.
+    const bsJobs = new Map();   // "meshId|name" -> { bt, meshId, slots:Set }
+    for (const k of (window._animSelectedKeys || [])) {
+      if (k.type !== 'blendshape') continue;
+      const tr = reg.tracks.get(k.meshId);
+      const bt = tr && !tr.muted && tr.blendshapeTracks?.get(k.name);
+      if (!bt || bt.times[k.index] === undefined) continue;
+      const key = k.meshId + '|' + k.name;
+      if (!bsJobs.has(key)) bsJobs.set(key, { bt, meshId: k.meshId, slots: new Set() });
+      bsJobs.get(key).slots.add(k.index);
+    }
     for (const k of (window._animSelectedKeys || [])) {
       if (k.type !== 'transform' || k.group === 'weight') continue;
       const tr = reg.tracks.get(k.meshId);
@@ -4448,9 +4496,23 @@ export default class GuiTimeline {
       if (k.channel !== undefined) add(tr, k.meshId, k.group || 'pos', k.channel, k.index);
       else for (const g of ['pos', 'rot', 'scale']) for (let c = 0; c < 3; c++) add(tr, k.meshId, g, c, k.index);
     }
-    if (!jobs.size) return 0;
+    if (!jobs.size && !bsJobs.size) return 0;
     const before = this._snapshotTracks();
     let n = 0;
+    // Same rule as below: the slope (dv) only, at each handle's own length, and the length's
+    // defaults are evaluateScalarTrack's (a third of the segment; the left one negative).
+    for (const { bt, slots } of bsJobs.values()) {
+      const T = bt.times;
+      const m = mode === 'auto' ? monotoneSlopes(T, bt.values) : null;
+      if (!bt.tangentOffsets) bt.tangentOffsets = {};
+      const to = bt.tangentOffsets;
+      for (const i of slots) {
+        const slope = m ? m[i] : 0;
+        if (T[i + 1] !== undefined) to[`${i}_right_dv`] = slope * (to[`${i}_right_dt`] ?? (T[i + 1] - T[i]) * 0.33);
+        if (T[i - 1] !== undefined) to[`${i}_left_dv`] = slope * (to[`${i}_left_dt`] ?? -(T[i] - T[i - 1]) * 0.33);
+        n++;
+      }
+    }
     for (const { tr, grp, c, slots } of jobs.values()) {
       const ks = xfKeyedSlots(tr, grp, c), T = tr.times;
       const v = (i) => xfRead(tr, i, c, grp);
@@ -4473,7 +4535,7 @@ export default class GuiTimeline {
     this._main.getStateManager().pushStateCustom(
       () => this._restoreTracksInPlace(before), () => this._restoreTracksInPlace(after),
       false, mode === 'auto' ? 'Auto Tangents' : 'Flatten Tangents');
-    const ids = new Set([...jobs.keys()].map((k) => +k.split('|')[0]));
+    const ids = new Set([...jobs.keys(), ...bsJobs.keys()].map((k) => +k.split('|')[0]));
     for (const m of this._main.getMeshes?.() || []) if (ids.has(m.getID())) reg.update?.(m, true);
     this._main.render?.();
     this.draw();
@@ -6979,7 +7041,7 @@ export default class GuiTimeline {
       const ak = activeTangent.type === 'transform' ? this._activeTangentKey : null;
       const zY = ak?.norm ? this._zoomY / ak.norm.half : this._zoomY;
       this._tanMoved = true;
-      if (ak && this._multiTan) this._dragMultiTangents(rx, ry, tlW, visibleDuration);
+      if (this._multiTan) this._dragMultiTangents(rx, ry, tlW, visibleDuration);
       else TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, zY, ak || singleSelected);
       
       this.draw();
@@ -7725,6 +7787,18 @@ export default class GuiTimeline {
               if (!sel.some((u) => this._sameTan(u, t))) sel.push(t);
             }
           }
+          tr.blendshapeTracks?.forEach((bt, name) => {
+            if (window._animBsChannelVisible?.[name] === false) return;
+            for (let i = 0; i < bt.times.length; i++) {
+              const h = this._bsHandles(bt, i, tlX, tlW, loopStart, visibleDuration);
+              for (const side of ['left', 'right']) {
+                const p = h && h[side];
+                if (!p || p[0] < x1 || p[0] > x2 || p[1] < y1 || p[1] > y2) continue;
+                const t = { meshId: id, bs: name, i, side };
+                if (!sel.some((u) => this._sameTan(u, t))) sel.push(t);
+              }
+            }
+          });
         }
       }
 

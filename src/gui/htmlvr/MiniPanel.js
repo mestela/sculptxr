@@ -661,7 +661,6 @@ export class MiniPanel extends HTMLVRPanel {
       faceToggle('#mp-face-sparse', '_useSparse');
       faceToggle('#mp-face-protect', '_protectKeys');
       faceToggle('#mp-face-limit', '_limitReach');
-      faceToggle('#mp-face-arcs', '_useArcs');
       extras.querySelector('#mp-face-combo')?.addEventListener('click', () => {
         sm?.getCurrentTool?.()?.fixCombo?.();
         this.syncFromState();
@@ -1052,7 +1051,6 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-face-sparse')?.classList.toggle('active', !!tool._useSparse);
       extrasEl.querySelector('#mp-face-protect')?.classList.toggle('active', !!tool._protectKeys);
       extrasEl.querySelector('#mp-face-limit')?.classList.toggle('active', !!tool._limitReach);
-      extrasEl.querySelector('#mp-face-arcs')?.classList.toggle('active', !!tool._useArcs);
     } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
       extrasEl.querySelector('#mp-keep-together')
         ?.classList.toggle('active', !!(window.keepExtrudeFacesTogether ?? true));
@@ -1080,7 +1078,6 @@ export class MiniPanel extends HTMLVRPanel {
         <div class="mp-toggles cols-3">
           <button class="mp-toggle-btn" id="mp-face-key">Key</button>
           <button class="mp-toggle-btn" id="mp-face-zero">Zero All</button>
-          <button class="mp-toggle-btn${t?._useArcs ? ' active' : ''}" id="mp-face-arcs">Arcs</button>
         </div>
       `;
     }
