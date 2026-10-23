@@ -3843,7 +3843,10 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice${tool._useSparse ? ' active' : ''}" id="mm-face-sparse">Sparse</button>
       <button class="mm-choice${tool._protectKeys ? ' active' : ''}" id="mm-face-protect">Protect Keys</button>
       <button class="mm-choice${tool._limitReach ? ' active' : ''}" id="mm-face-limit">Limit</button>
+      <button class="mm-choice${tool._useArcs ? ' active' : ''}" id="mm-face-arcs">Arcs</button>
       <button class="mm-choice" id="mm-face-combo">Fix Combo</button>
+      <button class="mm-choice" id="mm-face-key">Key</button>
+      <button class="mm-choice" id="mm-face-zero">Zero All</button>
     </div>` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
@@ -6020,13 +6023,16 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
   wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
 
-  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys'], ['#mm-face-limit', '_limitReach']]) {
+  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys'], ['#mm-face-limit', '_limitReach'], ['#mm-face-arcs', '_useArcs']]) {
     el.querySelector(id)?.addEventListener('click', () => {
       const t = sm?.getCurrentTool?.();
       if (t) { t[prop] = !t[prop]; main.render?.(); }
       repaintFn();
     });
   }
+
+  el.querySelector('#mm-face-key')?.addEventListener('click', () => sm?.getCurrentTool?.()?.keyAll?.());
+  el.querySelector('#mm-face-zero')?.addEventListener('click', () => sm?.getCurrentTool?.()?.zeroAll?.());
 
   el.querySelector('#mm-face-combo')?.addEventListener('click', () => {
     sm?.getCurrentTool?.()?.fixCombo?.();

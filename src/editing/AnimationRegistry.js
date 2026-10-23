@@ -5,6 +5,7 @@ import { decimateKeys } from './curveSimplify.js';
 import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
+import { arcBasis } from './ArcBlend.js';
 import Skeleton from './Skeleton.js';
 import PhysicsBones from './PhysicsBones.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -45,6 +46,7 @@ class AnimationRegistry {
     this.recordingTargets = null;
     this._trackStatesBeforeRecording = null;
     this.clipboardShape = null; // Floating clipboard buffer for copy/pasting morph keys
+    this.arcBlend = true;       // shapes that turn the skin blend on arcs (ArcBlend.js)
     this.isRecording = false;
     this.isCountingIn = false;
     this.startTime = 0;
@@ -2553,7 +2555,70 @@ class AnimationRegistry {
     return idx;
   }
 
-  invalidateSparse(d) { if (this._sparseCache && d) this._sparseCache.delete(d); }
+  invalidateSparse(d) {
+    if (this._sparseCache && d) this._sparseCache.delete(d);
+    if (this._arcCache && d) this._arcCache.delete(d);
+  }
+
+  // One shape's part of the composite at `weight`, as [[delta, coefficient], ...]. The composite
+  // and the capture subtraction (otherLayersOffset) both come through here, so they always agree.
+  // A combo is a blend of its samples. A shape that turns the skin is its arc's three cubic
+  // terms -- except the layer being sculpted at weight 1, where they sum to the delta anyway and
+  // a refit per stroke would be wasted.
+  shapeTerms(track, name, d, weight) {
+    if (this.isBlendshapeCombo(track, name)) return this.comboTerms(track, name, weight);
+    const arc = !(name === track.editingBlendshape && weight === 1) && this.arcTerms(track, d);
+    return arc ? [[arc.b1, weight], [arc.b2, weight * weight], [arc.b3, weight * weight * weight]] : [[d, weight]];
+  }
+
+  // The arc basis for delta `d` (ArcBlend.arcBasis), fitted once per delta array and dropped with
+  // its sparse index whenever the delta is written. Null: a straight-line shape, or arcs off.
+  // Fitted against the mesh applyBlendshapes last composited, which is the one this track drives.
+  arcTerms(track, d) {
+    if (!this.arcBlend || !d || !track.baseShape) return null;
+    if (!this._arcCache) this._arcCache = new WeakMap();
+    let a = this._arcCache.get(d);
+    if (a === undefined) {
+      const mesh = track._arcMesh;
+      if (!mesh) return null;
+      const vrv = mesh.getVerticesRingVert(), sc = mesh.getVerticesRingVertStartCount();
+      const ring = Array.isArray(vrv) ? (v) => vrv[v] : (v) => vrv.subarray(sc[v * 2], sc[v * 2] + sc[v * 2 + 1]);
+      a = arcBasis(track.baseShape, d, ring, mesh.getNbVertices());
+      this._arcCache.set(d, a);
+    }
+    return a;
+  }
+
+  // Fit every shape's arc in idle time, one per callback, so the Face tool's first grab (which
+  // reads every shape's tangent) does not pay for them all at once: ~0.6s on the 53-shape ICT
+  // head on desktop. A shape written later refits on its own next use.
+  //
+  // Also called by the Face tool on hover: a scene loaded with every weight at 0 never
+  // composites, and the first grab would otherwise read straight-line columns.
+  warmArcs(mesh, track = this.tracks.get(mesh.getID())) {
+    if (!track || !track.blendshapes) return;
+    track._arcMesh = mesh;
+    if (!this.arcBlend || track._arcWarm) return;
+    track._arcWarm = true;
+    const names = [...track.blendshapes.keys()];
+    // With a timeout: the app draws every frame, so a plain idle callback hardly ever came (10 of
+    // 53 shapes in 11s on desktop).
+    const idle = window.requestIdleCallback ? (f) => requestIdleCallback(f, { timeout: 50 }) : (f) => setTimeout(f, 50);
+    const step = () => {
+      const name = names.shift();
+      if (name === undefined) return;
+      if (!this.isBlendshapeCombo(track, name)) this.arcTerms(track, track.blendshapes.get(name));
+      idle(step);
+    };
+    idle(step);
+  }
+
+  // How a shape moves the skin per unit of weight at `w` (the Face tool's column): the arc's
+  // tangent there, as the three basis arrays and their coefficients; the plain delta when straight.
+  shapeSlopeTerms(track, name, d, w) {
+    const a = this.arcTerms(track, d);
+    return a ? [[a.b1, 1], [a.b2, 2 * w], [a.b3, 3 * w * w]] : [[d, 1]];
+  }
 
   _addScaled(out, d, k, dense) {
     const n = Math.min(out.length, d.length);
@@ -2655,6 +2720,7 @@ class AnimationRegistry {
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes) return;
 
+    this.warmArcs(mesh, track);
     const v = mesh.getVertices();
     if (baseVerts) {
       v.set(baseVerts);
@@ -2695,7 +2761,7 @@ class AnimationRegistry {
           track.blendshapes.set(name, d);
         }
         // A combo is a blend of its samples; anything else is one delta at its weight.
-        const terms = this.isBlendshapeCombo(track, name) ? this.comboTerms(track, name, weight) : [[d, weight]];
+        const terms = this.shapeTerms(track, name, d, weight);
         const dense = name === track.editingBlendshape;
         for (const [dd, k] of terms) {
           this._addScaled(v, dd, k, dense);
@@ -2832,7 +2898,7 @@ class AnimationRegistry {
       const weight = this.blendshapePreviewAt(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);
-      const terms = this.isBlendshapeCombo(track, name) ? this.comboTerms(track, name, weight) : [[delta, weight]];
+      const terms = this.shapeTerms(track, name, delta, weight);
       for (const [dd, k] of terms) this._addScaled(out, dd, k, false);
     });
     return out;

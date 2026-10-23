@@ -199,6 +199,7 @@ class FacePuppet extends SculptBase {
     const track = this._track(mesh);
     const G = 0.5;
     if (!track || face < 0 || !local) { out.setRGB(G, G, G); return true; }
+    this._reg().warmArcs(mesh, track);
     const st = this._statsFor(mesh, track);
     const corners = this._corners(mesh, face);
     const d = sampleDeltas(this._shapes(track), corners, mesh.getVertices(), local);
@@ -226,6 +227,16 @@ class FacePuppet extends SculptBase {
   }
 
   _reg() { return window._animationRegistry; }
+
+  // The Arcs toggle: a registry setting (it is how every shape composites, not just in this tool),
+  // here so the Face panels can flip it like their other toggles.
+  get _useArcs() { return !!this._reg()?.arcBlend; }
+  set _useArcs(v) {
+    const reg = this._reg();
+    if (!reg) return;
+    reg.arcBlend = !!v;
+    for (const m of this._targets()) reg.applyBlendshapes(m);
+  }
 
   _track(mesh) {
     const reg = this._reg();
@@ -349,6 +360,21 @@ class FacePuppet extends SculptBase {
     return len > reach ? [u[0] * reach, u[1] * reach, u[2] * reach] : drag;
   }
 
+  // KEY: every previewed shape -> keys at the playhead, as the pad's Key does. ZERO ALL: every
+  // shape to 0 as a preview. Both on the selected mesh, else every face the tool can grab.
+  keyAll() {
+    const reg = this._reg(), sel = this._main.getMesh?.();
+    for (const m of sel && this._track(sel) ? [sel] : this._targets()) {
+      if (reg.commitBlendshapePreview(m)) { reg.applyBlendshapes(m); reg._refreshBlendPanels(m); }
+    }
+    this._main.render();
+  }
+
+  zeroAll() {
+    const sel = this._main.getMesh?.();
+    this._reg().zeroBlendshapes(sel && this._track(sel) ? [sel] : this._targets());
+  }
+
   // FIX COMBO: the pose on the face looks wrong, so make it sculptable. Every shape on at 0.2 or
   // more becomes a driver of a combination layer (or the existing one for the same drivers), that
   // layer is made active, and the tool goes to Move (matt: "usually the tool of choice to fix shapes"). The pose stays as it is: the layer is
@@ -440,12 +466,46 @@ class FacePuppet extends SculptBase {
     const sample = (shapes, minFrac) => patch
       ? averageDeltas(shapes, patch.idx, patch.wts, minFrac)
       : sampleDeltas(shapes, corners, mesh.getVertices(), local, minFrac);
-    const deltas = sample(this._shapes(track), this._minFrac);
+    const deltas = this._slopes(mesh, track, (shapes) => sample(shapes, 0), this._minFrac);
     this._addCombos(track, deltas, (shapes) => sample(shapes, 0));
     if (!Object.keys(deltas).length) return null;
     const world = vec3.transformMat4(vec3.create(), local, this._toWorld(mesh));
     const twist = this._useRotation ? this._twists(mesh, track, corners, local, Object.keys(deltas)) : null;
     return { deltas, world, anchor: null, now: null, twist, rotAnchor: null, rotNow: null };
+  }
+
+  // ARCS IN THE SOLVE. A shape that turns the skin moves it along its arc (AnimationRegistry
+  // shapeTerms), so its column is the arc's TANGENT at the grab's starting weight, not the chord:
+  // at jawOpen 0 the chin heads straight down, where the chord pointed down and back toward the
+  // hinge and a straight-down pull went to mouthRollLower instead. Sampled per basis term and
+  // summed, then the same floor as averageDeltas.
+  _slopes(mesh, track, sample, minFrac) {
+    const reg = this._reg();
+    reg.warmArcs(mesh, track);
+    const parts = [], coef = [];
+    for (const [name, d] of this._shapes(track)) {
+      const w = reg.blendshapePreviewAt(track, name, track.blendshapeTracks.get(name));
+      reg.shapeSlopeTerms(track, name, d, w).forEach(([dd, k], i) => {
+        parts.push([name + '\u0000' + i, dd]);
+        coef.push(k);
+      });
+    }
+    const got = sample(parts);
+    const out = {};
+    parts.forEach(([key], i) => {
+      const c = got[key];
+      if (!c) return;
+      const name = key.slice(0, key.indexOf('\u0000'));
+      const o = out[name] || (out[name] = [0, 0, 0]);
+      o[0] += c[0] * coef[i]; o[1] += c[1] * coef[i]; o[2] += c[2] * coef[i];
+    });
+    let max = 0;
+    for (const c of Object.values(out)) max = Math.max(max, Math.hypot(c[0], c[1], c[2]));
+    for (const [name, c] of Object.entries(out)) {
+      const m = Math.hypot(c[0], c[1], c[2]);
+      if (m === 0 || m < minFrac * max) delete out[name];
+    }
+    return out;
   }
 
   // COMBOS IN THE SOLVE. A combo's weight is the product of its drivers', so with smile at 0.8, a
