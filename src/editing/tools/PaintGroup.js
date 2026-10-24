@@ -1,4 +1,5 @@
 import SculptBase from './SculptBase.js';
+import Utils from '../../misc/Utils.js';
 
 // Brush that paints a per-face group id onto the mesh. Groups are genuine per-face data
 // (Mesh._facesGroups) and steer the quad remesher along their borders. Painting never
@@ -11,6 +12,8 @@ class PaintGroup extends SculptBase {
     this._group = 1; // active group id being painted (0 = unpainted/neutral)
     this._negative = false; // "Erase" mode: paint group 0 instead of the active group
     this._preGroups = null; // snapshot of groups at stroke start, for undo
+    this._pick = false; // armed: the next click reads the group under it instead of painting
+    this._onPicked = null; // panel callback, to show the picked group
   }
 
   setGroup(id) {
@@ -22,6 +25,7 @@ class PaintGroup extends SculptBase {
   }
 
   start(ctrl) {
+    if (this._pick) return this.pickGroup();
     var res = super.start(ctrl);
     // Make painting visible: force the group-view tint on while this tool is active.
     if (res) {
@@ -94,6 +98,114 @@ class PaintGroup extends SculptBase {
   applyGroups(mesh, groups) {
     mesh.setFacesGroups(new Int32Array(groups));
     mesh.updateGroupOverlay();
+    this._main.render();
+  }
+
+  // One-shot: make the group under the pointer the active group. Never a stroke.
+  pickGroup() {
+    this._pick = false;
+    var picking = this._main.getPicking();
+    if (!this._main._vrSculpting) picking.intersectionMouseMeshes();
+    var mesh = picking.getMesh();
+    var face = picking.getPickedFace();
+    var groups = mesh && mesh.getFacesGroups();
+    if (groups && face >= 0) this._group = groups[face];
+    if (this._onPicked) this._onPicked();
+    return false;
+  }
+
+  // One group per connected piece, numbered by size so the biggest (the skin) is 1.
+  groupsFromIslands() {
+    var mesh = this.getMesh();
+    var groups = mesh && mesh.getFacesGroups();
+    if (!groups) return;
+    var fAr = mesh.getFaces();
+    var nbFaces = mesh.getNbFaces();
+    var parent = new Uint32Array(mesh.getNbVertices());
+    for (var v = 0; v < parent.length; ++v) parent[v] = v;
+    var find = (x) => {
+      while (parent[x] !== x) x = parent[x] = parent[parent[x]];
+      return x;
+    };
+    for (var f = 0; f < nbFaces; ++f) {
+      var a = find(fAr[f * 4]);
+      for (var k = 1; k < 4; ++k) {
+        var id = fAr[f * 4 + k];
+        if (id === Utils.TRI_INDEX) continue;
+        var b = find(id);
+        if (a !== b) parent[b] = a;
+      }
+    }
+    var count = new Map();
+    for (f = 0; f < nbFaces; ++f) {
+      var r = find(fAr[f * 4]);
+      count.set(r, (count.get(r) || 0) + 1);
+    }
+    var ids = new Map();
+    Array.from(count.keys()).sort((x, y) => count.get(y) - count.get(x)).forEach((r, i) => ids.set(r, i + 1));
+
+    var pre = new Int32Array(groups);
+    var post = new Int32Array(nbFaces);
+    for (f = 0; f < nbFaces; ++f) post[f] = ids.get(find(fAr[f * 4]));
+    var self = this;
+    var apply = (g) => { mesh.setHiddenGroups(null); self.applyGroups(mesh, g); };
+    this._main.getStateManager().pushStateCustom(() => apply(pre), () => apply(post));
+    apply(post);
+    mesh.setShowFacesGroups(true);
+  }
+
+  getMaxGroup() {
+    var groups = this.getMesh()?.getFacesGroups();
+    var max = 0;
+    for (var i = 0, n = groups ? this.getMesh().getNbFaces() : 0; i < n; ++i)
+      if (groups[i] > max) max = groups[i];
+    return max;
+  }
+
+  // mode: 'hide' adds the active group, 'isolate' hides every other group, 'show' clears.
+  hideGroups(mode) {
+    var mesh = this.getMesh();
+    var groups = mesh && mesh.getFacesGroups();
+    if (!groups) return;
+    var pre = mesh.getHiddenGroups();
+    var next = new Set(mode === 'hide' && pre ? pre : []);
+    if (mode === 'hide') next.add(this._group);
+    if (mode === 'isolate') {
+      for (var i = 0, n = mesh.getNbFaces(); i < n; ++i) next.add(groups[i]);
+      next.delete(this._group);
+    }
+    var preCopy = pre ? new Set(pre) : null;
+    var main = this._main;
+    var apply = (set) => { mesh.setHiddenGroups(set); main.render(); };
+    main.getStateManager().pushStateCustom(() => apply(preCopy), () => apply(next));
+    apply(next);
+  }
+
+  // others=false masks the active group; others=true masks everything else and frees the group.
+  maskGroup(others) {
+    var mesh = this.getMesh();
+    var groups = mesh && mesh.getFacesGroups();
+    if (!groups) return;
+    var fAr = mesh.getFaces();
+    var mAr = mesh.getMaterials();
+    var g = this._group;
+    var nbVerts = mesh.getNbVertices();
+    var all = new Uint32Array(nbVerts);
+    for (var v = 0; v < nbVerts; ++v) all[v] = v;
+    this._main.getStateManager().pushStateColorAndMaterial(mesh);
+    this._main.getStateManager().pushVertices(all);
+    if (others) for (v = 0; v < nbVerts; ++v) mAr[v * 3 + 2] = 0.0;
+    for (var f = 0, n = mesh.getNbFaces(); f < n; ++f) {
+      if (groups[f] !== g) continue;
+      for (var k = 0; k < 4; ++k) {
+        var id = fAr[f * 4 + k];
+        if (id !== Utils.TRI_INDEX) mAr[id * 3 + 2] = others ? 1.0 : 0.0;
+      }
+    }
+    mesh.updateDuplicateColorsAndMaterials();
+    mesh.updateDrawArrays();
+    if (mesh.isDynamic) mesh.updateBuffers();
+    else mesh.updateMaterialBuffer();
     this._main.render();
   }
 }

@@ -3672,11 +3672,24 @@ function buildSculptingHTML(main, part) {
       brushHTML += `
         <div class="mm-row">
           <span class="mm-lbl">Active Group</span>
-          <input type="range" id="mm-group-active" min="1" max="8" step="1" value="${grp}">
+          <input type="range" id="mm-group-active" min="1" max="${Math.max(8, tool.getMaxGroup?.() ?? 0)}" step="1" value="${grp}">
           <span id="mm-group-swatch" style="display:inline-block;width:14px;height:14px;border-radius:3px;flex-shrink:0;background:${groupSwatchCss(grp)}"></span>
           <span class="mm-val" id="mm-group-active-val">${grp}</span>
         </div>
-        <button class="mm-toggle${showGroups ? ' active' : ''}" id="mm-group-show">Show Groups</button>`;
+        <button class="mm-toggle${showGroups ? ' active' : ''}" id="mm-group-show">Show Groups</button>
+        <div class="mm-choice-grid cols-2">
+          <button class="mm-action-btn" id="mm-group-islands">From Islands</button>
+          <button class="mm-toggle${tool._pick ? ' active' : ''}" id="mm-group-pick">Pick</button>
+        </div>
+        <div class="mm-choice-grid cols-3">
+          <button class="mm-action-btn" id="mm-group-hide">Hide</button>
+          <button class="mm-action-btn" id="mm-group-isolate">Isolate</button>
+          <button class="mm-action-btn" id="mm-group-unhide">Show All</button>
+        </div>
+        <div class="mm-choice-grid cols-2">
+          <button class="mm-action-btn" id="mm-group-mask">Mask</button>
+          <button class="mm-action-btn" id="mm-group-mask-others">Mask Others</button>
+        </div>`;
     }
 
     // ── Voxel-specific controls (ported from the VR MiniPanel; align-to-hand omitted) ──
@@ -6102,6 +6115,15 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         if (sw) sw.style.background = groupSwatchCss(v);
       }, null, sliderDirtyFn
     );
+    if (tool.pickGroup) tool._onPicked = repaintFn;
+    const groupAction = (id, fn) => el.querySelector(id)?.addEventListener('click', () => { fn(); repaintFn(); });
+    groupAction('#mm-group-islands', () => tool.groupsFromIslands());
+    groupAction('#mm-group-pick', () => { tool._pick = !tool._pick; });
+    groupAction('#mm-group-hide', () => tool.hideGroups('hide'));
+    groupAction('#mm-group-isolate', () => tool.hideGroups('isolate'));
+    groupAction('#mm-group-unhide', () => tool.hideGroups('show'));
+    groupAction('#mm-group-mask', () => tool.maskGroup(false));
+    groupAction('#mm-group-mask-others', () => tool.maskGroup(true));
     el.querySelector('#mm-group-show')?.addEventListener('click', (e) => {
       const mesh = main.getMesh?.();
       const on = !(mesh?.getShowFacesGroups?.() ?? false);

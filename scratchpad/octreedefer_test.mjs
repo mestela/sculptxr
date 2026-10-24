@@ -46,6 +46,8 @@ function lift(src, name) {
 const ensureOctree = lift(MESH, 'ensureOctree');
 const intersectRay = lift(MESH, 'intersectRay');
 const intersectSphere = lift(MESH, 'intersectSphere');
+const filterHiddenFaces = lift(MESH, 'filterHiddenFaces');
+const getHiddenFaceTest = lift(MESH, 'getHiddenFaceTest');
 
 function stubMesh(stale) {
   const log = [];
@@ -64,6 +66,8 @@ function stubMesh(stale) {
     ensureOctree: ensureOctree,
     intersectRay: intersectRay,
     intersectSphere: intersectSphere,
+    filterHiddenFaces: filterHiddenFaces,
+    getHiddenFaceTest: getHiddenFaceTest,
   };
 }
 

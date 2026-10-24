@@ -267,6 +267,40 @@ class Mesh {
     this._meshData._facesGroups = groups;
   }
 
+  // FACES ARE HIDDEN BY GROUP. A face is hidden while its group id is in _hiddenGroups, so the
+  // hide has no per-face array of its own to keep in step with topology edits that carry groups.
+  // Hidden faces are not drawn and are not picked, so no brush can reach them.
+  getHiddenGroups() {
+    return this._meshData._hiddenGroups;
+  }
+
+  setHiddenGroups(set) {
+    this._meshData._hiddenGroups = set && set.size ? set : null;
+    var md = this._meshData;
+    md._drawElementsWireframe = md._drawArraysWireframe = null;
+    if (this.isUsingDrawArrays()) this.updateDrawArrays();
+    this.updateBuffers();
+    this.updateGroupOverlay();
+  }
+
+  // Per-face test, or null when nothing is hidden (so the common case costs one check).
+  getHiddenFaceTest() {
+    var hg = this._meshData._hiddenGroups;
+    var groups = this._meshData._facesGroups;
+    if (!hg || !groups) return null;
+    return (f) => hg.has(groups[f]);
+  }
+
+  // Compacts a face list in place, dropping hidden faces.
+  filterHiddenFaces(iFaces) {
+    var hidden = this.getHiddenFaceTest();
+    if (!hidden) return iFaces;
+    var n = 0;
+    for (var i = 0, nb = iFaces.length; i < nb; ++i)
+      if (!hidden(iFaces[i])) iFaces[n++] = iFaces[i];
+    return iFaces.subarray(0, n);
+  }
+
   getFaceEdges() {
     return this._meshData._faceEdges;
   }
@@ -1476,8 +1510,10 @@ class Mesh {
 
     var nbLines = 0;
     var tagEdges = new Uint8Array(nbEdges);
+    var hidden = this.getHiddenFaceTest(); // a hidden face's edges stay 0-0 (degenerate, undrawn)
 
     for (var i = 0; i < nbFaces; ++i) {
+      if (hidden && hidden(i)) continue;
       var id = i * 4;
 
       var iv1, iv2, iv3;
@@ -1926,6 +1962,15 @@ class Mesh {
       cdn[vId + 8] = nAr[id4 + 2];
     }
 
+    // Hidden faces: collapse their triangles to a point so nothing is rasterised.
+    var hidden = this.getHiddenFaceTest();
+    for (var h = 0; hidden && h < nbFaces; ++h) {
+      var hf = full ? h : iFaces[h];
+      if (!hidden(hf)) continue;
+      var hv = (facesToTris ? facesToTris[hf] : hf) * 9;
+      cdv.fill(0, hv, hv + (fAr[hf * 4 + 3] === Utils.TRI_INDEX ? 9 : 18));
+    }
+
     if (this.isUsingTexCoords())
       this.updateDrawArraysTexCoord(iFaces);
   }
@@ -2099,7 +2144,7 @@ class Mesh {
     // Safe guard: Octree might not be initialized
     if (!this._meshData._octree) return [];
     var collectFaces = new Uint32Array(Utils.getMemory(nbFaces * 4), 0, nbFaces);
-    return this._meshData._octree.collectIntersectRay(vNear, eyeDir, collectFaces, collectLeaves ? this._meshData._leavesToUpdate : undefined);
+    return this.filterHiddenFaces(this._meshData._octree.collectIntersectRay(vNear, eyeDir, collectFaces, collectLeaves ? this._meshData._leavesToUpdate : undefined));
   }
 
   /** Return faces inside a sphere */
@@ -2109,7 +2154,7 @@ class Mesh {
     // Safe guard: Octree might not be initialized
     if (!this._meshData._octree) return [];
     var collectFaces = new Uint32Array(Utils.getMemory(nbFaces * 4), 0, nbFaces);
-    return this._meshData._octree.collectIntersectSphere(vert, radiusSquared, collectFaces, collectLeaves ? this._meshData._leavesToUpdate : undefined);
+    return this.filterHiddenFaces(this._meshData._octree.collectIntersectSphere(vert, radiusSquared, collectFaces, collectLeaves ? this._meshData._leavesToUpdate : undefined));
   }
 
 
@@ -2525,16 +2570,19 @@ class Mesh {
       for (var j = 0; j < 9; j += 3) { col[o + j] = gcol[0]; col[o + j + 1] = gcol[1]; col[o + j + 2] = gcol[2]; }
       t++;
     };
+    var hidden = this.getHiddenFaceTest();
     for (var i = 0; i < nbFaces; ++i) {
+      faceTri[i] = t;
+      if (hidden && hidden(i)) continue; // zero triangles in the overlay
       this.getFaceGroupColor(groups[i], gcol);
       var id = i * 4;
       var a = fAr[id], b = fAr[id + 1], c = fAr[id + 2], d = fAr[id + 3];
-      faceTri[i] = t;
       writeTri(a, b, c);
       if (d !== Utils.TRI_INDEX) writeTri(a, c, d);
     }
     faceTri[nbFaces] = t;
     rd._groupOverlayFaceTri = faceTri;
+    if (t < nbTris) { pos = pos.slice(0, t * 9); col = col.slice(0, t * 9); }
 
     if (!rd._groupOverlayMesh) {
       // depthWrite:false so the (decorative, camera-pulled) overlay polygon doesn't write
@@ -2968,7 +3016,25 @@ class Mesh {
     }
 
     if (!triangles) return; // Skip if no valid index data
-    
+
+    // Hidden faces: draw a compacted copy without their triangles (the shared array is untouched).
+    var nbTriIdx = this.getNbTriangles() * 3;
+    var hidden = this._isVoxel ? null : this.getHiddenFaceTest();
+    if (hidden) {
+      var fAr = this.getFaces();
+      var facesToTris = this.hasOnlyTriangles() ? null : this.getFacesToTriangles();
+      var visible = new Uint32Array(nbTriIdx);
+      var n = 0;
+      for (var f = 0, nbF = this.getNbFaces(); f < nbF; ++f) {
+        if (hidden(f)) continue;
+        var t = (facesToTris ? facesToTris[f] : f) * 3;
+        var end = fAr[f * 4 + 3] === Utils.TRI_INDEX ? t + 3 : t + 6;
+        for (; t < end; ++t) visible[n++] = triangles[t];
+      }
+      triangles = visible;
+      nbTriIdx = n;
+    }
+
     // Relax check for index length
     geom.setIndex(null);
     geom.setIndex(new THREE.BufferAttribute(triangles, 1));
@@ -2977,7 +3043,7 @@ class Mesh {
     // Three.js by default renders the FULL capacity array, which contains garbage/out-of-bound indices
     // at the end of the array. We MUST cap the draw range to the actually used faces.
     if (geom.index) {
-        let drawRangeCount = this.getNbTriangles() * 3;
+        let drawRangeCount = nbTriIdx;
         let posAttrCount = geom.attributes.position.count;
         let maxIndex = 0;
         let indexArray = geom.index.array;

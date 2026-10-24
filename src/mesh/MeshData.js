@@ -40,6 +40,7 @@ var MeshData = function () {
 
     _facesTagFlags: null, // triangles tag (<: Utils.TAG_FLAG) (Int32Array)
     _facesGroups: null, // persistent per-face group id, steers quad remesh (Int32Array, default 0)
+    _hiddenGroups: null, // Set of group ids whose faces are hidden (not drawn, not picked), or null
 
     ////////////
     // edge data

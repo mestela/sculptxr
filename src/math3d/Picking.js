@@ -3,6 +3,7 @@ import Geometry from './Geometry.js';
 import PosedSymmetry from '../editing/PosedSymmetry.js';
 import Tablet from '../misc/Tablet.js';
 import Utils from '../misc/Utils.js';
+import Enums from '../misc/Enums.js';
 import TR from '../gui/GuiTR.js';
 import Skeleton from '../editing/Skeleton.js';
 import GrabChannels from '../editing/grabChannels.js';
@@ -288,6 +289,16 @@ var _TMP_DIR_PICK = [0.0, 0.0, 0.0];
 var _TMP_V1 = [0.0, 0.0, 0.0];
 var _TMP_V2 = [0.0, 0.0, 0.0];
 var _TMP_V3 = [0.0, 0.0, 0.0];
+
+// BRUSHES REACH THROUGH FULLY MASKED SURFACE. A face whose every vertex is masked can't be
+// sculpted, so it must not catch the brush (or its preselect) either: mask the skin, turn the
+// opacity down, and the teeth behind it are what you grab. Brushes only -- Masking has to land
+// on masked surface to erase it, Groups to pick it, and the non-brush tools never read the mask.
+const MASK_PASS_TOOLS = new Set([
+  Enums.Tools.BRUSH, Enums.Tools.INFLATE, Enums.Tools.TWIST, Enums.Tools.SMOOTH,
+  Enums.Tools.FLATTEN, Enums.Tools.PINCH, Enums.Tools.CREASE, Enums.Tools.DRAG,
+  Enums.Tools.RELAX, Enums.Tools.PAINT, Enums.Tools.MOVE, Enums.Tools.LOCALSCALE, Enums.Tools.GRAB,
+]);
 
 class Picking {
 
@@ -1166,6 +1177,26 @@ class Picking {
   }
 
   /** Intersection between a ray and a mesh */
+  // Per-face "skip me" test for the ray picks: hidden faces always, fully masked ones while a
+  // brush is active. Null when there is nothing to skip.
+  _skipFaceTest(mesh) {
+    var hidden = mesh.getHiddenFaceTest ? mesh.getHiddenFaceTest() : null;
+    var sm = this._main.getSculptManager && this._main.getSculptManager();
+    if (!sm || !MASK_PASS_TOOLS.has(sm.getToolIndex ? sm.getToolIndex() : sm._toolIndex)) return hidden;
+    var fAr = mesh.getFaces();
+    var mAr = mesh.getMaterials();
+    if (!mAr) return hidden;
+    var masked = (f) => {
+      for (var k = 0; k < 4; ++k) {
+        var v = fAr[f * 4 + k];
+        if (v === Utils.TRI_INDEX) continue;
+        if (mAr[v * 3 + 2] > 0.001) return false;
+      }
+      return true;
+    };
+    return hidden ? (f) => hidden(f) || masked(f) : masked;
+  }
+
   intersectionRayMesh(mesh, vNearOrig, vFarOrig, twoSided = false) {
     // resest picking
     this._mesh = null;
@@ -1199,7 +1230,9 @@ class Picking {
     var iFacesCandidates = mesh.intersectRay(_TMP_NEAR, eyeDir);
     var distance = Infinity;
     var nbFacesCandidates = iFacesCandidates.length;
+    var skip = this._skipFaceTest(mesh);
     for (var i = 0; i < nbFacesCandidates; ++i) {
+      if (skip && skip(iFacesCandidates[i])) continue;
       var indFace = iFacesCandidates[i] * 4;
       var ind1 = fAr[indFace] * 3;
       var ind2 = fAr[indFace + 1] * 3;
@@ -1527,7 +1560,9 @@ class Picking {
     var closestRay = [0.0, 0.0, 0.0];
     var closestEdge = [0.0, 0.0, 0.0];
 
+    var skip = this._skipFaceTest(mesh);
     for (var i = 0; i < nbFaces; ++i) {
+      if (skip && skip(i)) continue;
       var indFace = i * 4;
       var iv1 = fAr[indFace] * 3;
       var iv2 = fAr[indFace + 1] * 3;

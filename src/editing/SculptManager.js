@@ -484,7 +484,9 @@ class SculptManager {
                       || this._toolIndex === Enums.Tools.TRANSFORM_VR
                       || this._toolIndex === Enums.Tools.BONE_DRAW
                       // FACE drives weights, never vertices, so no layer capture is at stake.
-                      || this._toolIndex === Enums.Tools.FACE;
+                      || this._toolIndex === Enums.Tools.FACE
+                      // GROUPS writes face group ids (and picks them), never vertices.
+                      || this._toolIndex === Enums.Tools.PAINT_GROUP;
     if (!_isTransform && !this._canSculptActiveBlendshapeLayer()) {
       window._blendshapeStackPanel?.flash?.();   // desktop panel
       window._blendshapeStackPanelVR?.flash?.(); // VR panel mesh
