@@ -220,3 +220,185 @@ export function retargetDelta(P, d) {
   }
   return out;
 }
+
+// ── FIT PARTS (eyes, teeth, tongue) ─────────────────────────────────────────────────────────
+//
+// An eyeball or a row of teeth has to stay rigid: a Move stroke that pushes the lids wider
+// squashes the eye, and a sculpted lid ring or jaw leaves the part where it was. Run before the
+// retarget, on the Base.
+//
+// The parts are found, not picked: the separate pieces (connected components, the biggest one
+// being the skin) that some shape moves whole, grouped by WHICH shapes move them -- the left
+// eyeball and its cornea cap are one eye (the left eyeLooks), the lower teeth and tongue one jaw
+// (jawOpen and friends). A piece no shape moves -- the upper teeth, fixed to the skull -- is its
+// own part only if it sits against a moved one, so a hat or a prop is never touched.
+//
+// Each part's ring is the skin within PART_REACH of its radius from its surface on the old
+// neutral: the lids, the lips and mouth bag. The part is rebuilt from its ORIGINAL rigid shape by
+// the similarity (turn + uniform scale + move) that best takes the old ring to the new one. If
+// the ring did not move, the fit is to the part's own vertices instead: a placement made with
+// Transform is kept, and only a squash is undone. A deliberately sculpted part (fangs) is made
+// rigid again too -- sculpt those after the retarget.
+//
+// Similarity, not affine: gaze is a rotation about the centre, which an oval eyeball breaks.
+// Returns { base, parts } (base a new array, or null if nothing changed).
+const PART_REACH = 0.2;    // ring reach from the part's surface, in part radii
+const PART_MIN_RING = 6;   // fewer ring vertices than this -> fit to the part itself
+const PART_WHOLE = 0.9;    // fraction of a piece a shape must move to count as moving it whole
+
+// Rotation (row-major 3x3) best taking the centred points `a` onto `b` -- Horn's quaternion,
+// fine with a flat set like a lid ring, where a 3x3 polar breaks down.
+function bestRotation(S) {
+  // S[r*3+c] = sum a_r b_c
+  const [xx, xy, xz, yx, yy, yz, zx, zy, zz] = S;
+  const N = [
+    xx + yy + zz, yz - zy, zx - xz, xy - yx,
+    yz - zy, xx - yy - zz, xy + yx, zx + xz,
+    zx - xz, xy + yx, -xx + yy - zz, yz + zy,
+    xy - yx, zx + xz, yz + zy, -xx - yy + zz];
+  // Jacobi eigen-solve of the symmetric 4x4.
+  const V = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  for (let sweep = 0; sweep < 50; sweep++) {
+    let off = 0;
+    for (let p = 0; p < 4; p++) for (let q = p + 1; q < 4; q++) off += N[p * 4 + q] ** 2;
+    if (off < 1e-24) break;
+    for (let p = 0; p < 4; p++) for (let q = p + 1; q < 4; q++) {
+      const apq = N[p * 4 + q];
+      if (Math.abs(apq) < 1e-30) continue;
+      const th = (N[q * 4 + q] - N[p * 4 + p]) / (2 * apq);
+      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 4; k++) {
+        const akp = N[k * 4 + p], akq = N[k * 4 + q];
+        N[k * 4 + p] = c * akp - s * akq; N[k * 4 + q] = s * akp + c * akq;
+      }
+      for (let k = 0; k < 4; k++) {
+        const apk = N[p * 4 + k], aqk = N[q * 4 + k];
+        N[p * 4 + k] = c * apk - s * aqk; N[q * 4 + k] = s * apk + c * aqk;
+      }
+      for (let k = 0; k < 4; k++) {
+        const vkp = V[k * 4 + p], vkq = V[k * 4 + q];
+        V[k * 4 + p] = c * vkp - s * vkq; V[k * 4 + q] = s * vkp + c * vkq;
+      }
+    }
+  }
+  let m = 0;
+  for (let k = 1; k < 4; k++) if (N[k * 5] > N[m * 5]) m = k;
+  const w = V[m], x = V[4 + m], y = V[8 + m], z = V[12 + m];
+  return [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
+    2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+    2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)];
+}
+
+// Similarity taking the `idx` vertices of `src` onto those of `dst`: p -> s R (p - ms) + md.
+function similarity(src, dst, idx) {
+  const ms = [0, 0, 0], md = [0, 0, 0];
+  for (const v of idx) for (let k = 0; k < 3; k++) { ms[k] += src[v * 3 + k]; md[k] += dst[v * 3 + k]; }
+  for (let k = 0; k < 3; k++) { ms[k] /= idx.length; md[k] /= idx.length; }
+  const S = new Array(9).fill(0);
+  let ss = 0;
+  for (const v of idx) {
+    const a = [src[v * 3] - ms[0], src[v * 3 + 1] - ms[1], src[v * 3 + 2] - ms[2]];
+    const b = [dst[v * 3] - md[0], dst[v * 3 + 1] - md[1], dst[v * 3 + 2] - md[2]];
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) S[r * 3 + c] += a[r] * b[c];
+    ss += a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+  }
+  const R = bestRotation(S);
+  // s = sum b . R a / sum |a|^2 = tr(R S) for this S layout.
+  let tr = 0;
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) tr += R[r * 3 + c] * S[c * 3 + r];
+  return { R, s: ss > 0 ? tr / ss : 1, ms, md };
+}
+
+export function fitParts(ref, target, tris, nv, shapes) {
+  // Connected components; the biggest is the skin.
+  const up = new Int32Array(nv);
+  for (let v = 0; v < nv; v++) up[v] = v;
+  const find = (v) => { while (up[v] !== v) { up[v] = up[up[v]]; v = up[v]; } return v; };
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = find(tris[t]);
+    for (let k = 1; k < 3; k++) { const b = find(tris[t + k]); if (b !== a) up[b] = a; }
+  }
+  const byRoot = new Map();
+  for (let v = 0; v < nv; v++) {
+    const r = find(v);
+    let c = byRoot.get(r);
+    if (!c) byRoot.set(r, c = []);
+    c.push(v);
+  }
+  const comps = [...byRoot.values()].sort((a, b) => b.length - a.length).slice(1);
+  if (!comps.length) return { base: null, parts: [] };
+
+  const bounds = (idx) => {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const v of idx) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], ref[v * 3 + k]); hi[k] = Math.max(hi[k], ref[v * 3 + k]); }
+    return { lo, hi, r: Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2 };
+  };
+
+  // Pieces grouped by the shapes that move them whole; unmoved pieces kept aside.
+  const groups = new Map(), still = [];
+  for (const verts of comps) {
+    const sig = [];
+    for (const [name, d] of shapes) {
+      let moved = 0;
+      for (const v of verts) if (d[v * 3] !== 0 || d[v * 3 + 1] !== 0 || d[v * 3 + 2] !== 0) moved++;
+      if (moved >= PART_WHOLE * verts.length) sig.push(name);
+    }
+    if (!sig.length) { still.push(verts); continue; }
+    const key = sig.join('|');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(...verts);
+  }
+  if (!groups.size) return { base: null, parts: [] };
+  // An unmoved piece against a moved group (its bounds within that group's radius) is a part.
+  const moved = [...groups.values()].map(bounds);
+  still.forEach((verts, i) => {
+    const b = bounds(verts);
+    const near = moved.some((m) => [0, 1, 2].every((k) => b.lo[k] <= m.hi[k] + m.r && b.hi[k] >= m.lo[k] - m.r));
+    if (near) groups.set(`fixed ${i + 1}`, verts);
+  });
+  const inPart = new Uint8Array(nv);
+  for (const E of groups.values()) for (const v of E) inPart[v] = 1;
+
+  const out = Float32Array.from(target);
+  const parts = [];
+  let changed = false;
+  for (const [key, E] of groups) {
+    // Ring: skin within `reach` of the part's surface, by a grid over the part's vertices.
+    const { r } = bounds(E);
+    const reach = PART_REACH * r, cell = new Map(), key3 = (x, y, z) => `${x},${y},${z}`;
+    for (const v of E) {
+      const h = key3(Math.floor(ref[v * 3] / reach), Math.floor(ref[v * 3 + 1] / reach), Math.floor(ref[v * 3 + 2] / reach));
+      let c = cell.get(h);
+      if (!c) cell.set(h, c = []);
+      c.push(v);
+    }
+    const ring = [];
+    for (let v = 0; v < nv; v++) {
+      if (inPart[v]) continue;
+      const x = ref[v * 3], y = ref[v * 3 + 1], z = ref[v * 3 + 2];
+      const cx = Math.floor(x / reach), cy = Math.floor(y / reach), cz = Math.floor(z / reach);
+      let hit = false;
+      for (let i = -1; i <= 1 && !hit; i++) for (let j = -1; j <= 1 && !hit; j++) for (let l = -1; l <= 1 && !hit; l++) {
+        const c = cell.get(key3(cx + i, cy + j, cz + l));
+        if (c) for (const u of c) if (Math.hypot(ref[u * 3] - x, ref[u * 3 + 1] - y, ref[u * 3 + 2] - z) < reach) { hit = true; break; }
+      }
+      if (hit) ring.push(v);
+    }
+    const movedMax = (idx) => {
+      let m = 0;
+      for (const v of idx) m = Math.max(m, Math.hypot(target[v * 3] - ref[v * 3], target[v * 3 + 1] - ref[v * 3 + 1], target[v * 3 + 2] - ref[v * 3 + 2]));
+      return m;
+    };
+    const lidsMoved = ring.length >= PART_MIN_RING && movedMax(ring) > 1e-4 * r;
+    if (!lidsMoved && movedMax(E) <= 1e-6 * r) { parts.push({ key, verts: E.length, ring: ring.length, by: 'unchanged', scale: 1 }); continue; }
+    const { R, s, ms, md } = similarity(ref, target, lidsMoved ? ring : E);
+    for (const v of E) {
+      const a = [ref[v * 3] - ms[0], ref[v * 3 + 1] - ms[1], ref[v * 3 + 2] - ms[2]];
+      for (let k = 0; k < 3; k++) out[v * 3 + k] = s * (R[k * 3] * a[0] + R[k * 3 + 1] * a[1] + R[k * 3 + 2] * a[2]) + md[k];
+    }
+    changed = true;
+    parts.push({ key, verts: E.length, ring: ring.length, by: lidsMoved ? 'ring' : 'self', scale: s });
+  }
+  return { base: changed ? out : null, parts };
+}

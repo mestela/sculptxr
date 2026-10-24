@@ -6,7 +6,7 @@ import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
 import { arcBasis } from './ArcBlend.js';
-import { triangles, prepare, retargetDelta } from './ShapeRetarget.js';
+import { triangles, prepare, retargetDelta, fitParts } from './ShapeRetarget.js';
 import Skeleton from './Skeleton.js';
 import PhysicsBones from './PhysicsBones.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -2717,9 +2717,12 @@ class AnimationRegistry {
       return 0;
     }
     const t0 = performance.now();
-    const P = prepare(ref, base, triangles(mesh.getFaces(), mesh.getNbFaces()), nv);
+    const tris = triangles(mesh.getFaces(), mesh.getNbFaces());
+    // FIT PARTS first: eyes, teeth, tongue rebuilt rigid and seated in the sculpted skin (see fitParts).
+    const fit = fitParts(ref, base, tris, nv, track.blendshapes);
+    const P = prepare(ref, fit.base || base, tris, nv);
     const skip = track.shapeRefSkip || new Set();
-    const before = { shapes: new Map(track.blendshapes), samples: track.comboSamples ? new Map(track.comboSamples) : null, ref, skip };
+    const before = { shapes: new Map(track.blendshapes), samples: track.comboSamples ? new Map(track.comboSamples) : null, ref, skip, base: fit.base && base.slice() };
     const shapes = new Map(track.blendshapes), samples = track.comboSamples ? new Map(track.comboSamples) : null;
     let done = 0;
     for (const [name, d] of track.blendshapes) {
@@ -2731,8 +2734,9 @@ class AnimationRegistry {
       if (S) samples.set(name, S.map((p) => ({ ...p, d: p.d === d ? nd : retargetDelta(P, p.d) })));
       done++;
     }
-    const after = { shapes, samples, ref: null, skip: null };
+    const after = { shapes, samples, ref: null, skip: null, base: fit.base };
     const put = (st) => {
+      if (st.base) track.baseShape.set(st.base);
       for (const [n, d] of st.shapes) track.blendshapes.set(n, d);   // in place, order kept
       if (st.samples) for (const [n, S] of st.samples) track.comboSamples.set(n, S);
       track.shapeRef = st.ref;
@@ -2744,6 +2748,7 @@ class AnimationRegistry {
     };
     put(after);
     window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Retarget Shapes');
+    for (const e of fit.parts) console.log(`[Retarget] part ${e.key}: ${e.verts} verts, ${e.by === 'unchanged' ? 'unchanged' : `fit to ${e.by === 'ring' ? `the skin round it (${e.ring})` : 'itself'}, scale ${e.scale.toFixed(3)}`}`);
     console.log(`[Retarget] ${done} shape(s) in ${(performance.now() - t0).toFixed(0)} ms${skip.size ? `, left ${skip.size} sculpted since: ${[...skip].join(', ')}` : ''}`);
     return done;
   }

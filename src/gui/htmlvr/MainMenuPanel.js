@@ -3846,7 +3846,7 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice" id="mm-face-combo">Fix Combo</button>
       <button class="mm-choice" id="mm-face-key">Key</button>
       <button class="mm-choice" id="mm-face-zero">Zero All</button>
-      <button class="mm-choice" id="mm-face-retarget" title="Rebuild every shape for the sculpted Base">Retarget Shapes</button>
+      <button class="mm-choice" id="mm-face-retarget" title="Rebuild every shape for the sculpted Base, refitting eyes, teeth and tongue to the skin round them">Retarget Shapes</button>
     </div>
     ${buildPoseLibraryHTML(main, tool)}` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
