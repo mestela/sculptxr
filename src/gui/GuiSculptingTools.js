@@ -134,6 +134,14 @@ GuiTools[Enums.Tools.PAINT_GROUP] = {
   }
 };
 
+GuiTools[Enums.Tools.FACE] = {
+  _ctrls: [],
+  init: function (tool, fold, main) {
+    // Radius only: it registers widget._ctrlRadius, which the X modal-radius shortcut needs.
+    this._ctrls.push(addCtrlRadius(tool, fold, this, main));
+  }
+};
+
 GuiTools[Enums.Tools.CREASE] = {
   _ctrls: [],
   init: function (tool, fold, main) {

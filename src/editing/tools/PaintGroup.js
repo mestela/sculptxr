@@ -109,9 +109,29 @@ class PaintGroup extends SculptBase {
     var mesh = picking.getMesh();
     var face = picking.getPickedFace();
     var groups = mesh && mesh.getFacesGroups();
-    if (groups && face >= 0) this._group = groups[face];
+    if (groups && face >= 0) {
+      this._group = groups[face];
+      this.flashGroup(mesh, this._group);
+    }
     if (this._onPicked) this._onPicked();
     return false;
+  }
+
+  // Show what Pick took: the group goes white in the overlay for a moment.
+  flashGroup(mesh, group) {
+    var rd = mesh._renderData;
+    var wasShown = mesh.getShowFacesGroups();
+    clearTimeout(this._flashTimer);
+    rd._flashGroup = group;
+    if (wasShown) mesh.updateGroupOverlay();
+    else mesh.setShowFacesGroups(true);
+    this._main.render();
+    this._flashTimer = setTimeout(() => {
+      rd._flashGroup = undefined;
+      if (wasShown) mesh.updateGroupOverlay();
+      else mesh.setShowFacesGroups(false);
+      this._main.render();
+    }, 400);
   }
 
   // One group per connected piece, numbered by size so the biggest (the skin) is 1.

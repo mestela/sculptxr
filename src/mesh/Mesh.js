@@ -2567,7 +2567,7 @@ class Mesh {
       pos[o] = vAr[a]; pos[o + 1] = vAr[a + 1]; pos[o + 2] = vAr[a + 2];
       pos[o + 3] = vAr[b]; pos[o + 4] = vAr[b + 1]; pos[o + 5] = vAr[b + 2];
       pos[o + 6] = vAr[c]; pos[o + 7] = vAr[c + 1]; pos[o + 8] = vAr[c + 2];
-      for (var j = 0; j < 9; j += 3) { col[o + j] = gcol[0]; col[o + j + 1] = gcol[1]; col[o + j + 2] = gcol[2]; }
+      this._writeOverlayTriColor(col, o, ia, ib, ic, gcol);
       t++;
     };
     var hidden = this.getHiddenFaceTest();
@@ -2628,18 +2628,37 @@ class Mesh {
     }
     var col = colAttr.array;
     var gcol = [0.0, 0.0, 0.0];
+    var fAr = this.getFaces();
     for (var k = 0, n = iFaces.length; k < n; ++k) {
       var f = iFaces[k];
+      var lo = faceTri[f] * 9;
+      if (faceTri[f + 1] === faceTri[f]) continue; // hidden: no overlay triangles
       this.getFaceGroupColor(groups[f], gcol);
-      var lo = faceTri[f] * 9, hi = faceTri[f + 1] * 9;
-      for (var o = lo; o < hi; o += 3) { col[o] = gcol[0]; col[o + 1] = gcol[1]; col[o + 2] = gcol[2]; }
+      var a = fAr[f * 4], b = fAr[f * 4 + 1], c = fAr[f * 4 + 2], d = fAr[f * 4 + 3];
+      this._writeOverlayTriColor(col, lo, a, b, c, gcol);
+      if (d !== Utils.TRI_INDEX) this._writeOverlayTriColor(col, lo + 9, a, c, d, gcol);
     }
     colAttr.needsUpdate = true;
+  }
+
+  // One overlay triangle's colours: the group colour, darkened by the mask the same way the
+  // main shader shades it (0.3 + 0.7 * mask), so masked areas still read under the overlay.
+  _writeOverlayTriColor(col, o, ia, ib, ic, gcol) {
+    var mAr = this.getMaterials();
+    for (var j = 0; j < 3; ++j) {
+      var id = j === 0 ? ia : j === 1 ? ib : ic;
+      var k = mAr ? 0.3 + 0.7 * mAr[id * 3 + 2] : 1.0;
+      col[o + j * 3] = gcol[0] * k; col[o + j * 3 + 1] = gcol[1] * k; col[o + j * 3 + 2] = gcol[2] * k;
+    }
   }
 
   // Deterministic palette for group ids. Group 0 (unpainted) reads as neutral light gray;
   // other ids get distinct hues via the golden-angle sequence. Writes rgb into out.
   getFaceGroupColor(groupId, out) {
+    if (this._renderData && groupId === this._renderData._flashGroup) { // Pick feedback (also called mesh-less, for swatches)
+      out[0] = out[1] = out[2] = 1.0;
+      return out;
+    }
     if (groupId <= 0) {
       out[0] = out[1] = out[2] = 0.85;
       return out;
@@ -2944,6 +2963,7 @@ class Mesh {
   updateMaterialBuffer() {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
     if (!materials) return;   // ditto -- it would have been the next line to throw
+    if (this.getShowFacesGroups()) this.updateGroupOverlay(); // the overlay carries the mask shading
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('aMaterial');
     if (!attr || attr.array.length < materials.length) {

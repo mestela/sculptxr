@@ -350,13 +350,21 @@ export function fitParts(ref, target, tris, nv, shapes) {
     groups.get(key).push(...verts);
   }
   if (!groups.size) return { base: null, parts: [] };
-  // An unmoved piece against a moved group (its bounds within that group's radius) is a part.
+  // An unmoved piece against a moved group (its bounds within that group's radius) is a part --
+  // and every unmoved piece against the SAME group is the same part, fitted once. The upper
+  // teeth are a dozen pieces plus the gum: fitted one by one, each tooth took its own turn and
+  // scale from the few lip vertices near it (or none, and stayed put while the gum moved), and
+  // which of the two a tooth got could differ left to right, so a symmetric face got lopsided teeth.
+  const movedKeys = [...groups.keys()];
   const moved = [...groups.values()].map(bounds);
-  still.forEach((verts, i) => {
+  for (const verts of still) {
     const b = bounds(verts);
-    const near = moved.some((m) => [0, 1, 2].every((k) => b.lo[k] <= m.hi[k] + m.r && b.hi[k] >= m.lo[k] - m.r));
-    if (near) groups.set(`fixed ${i + 1}`, verts);
-  });
+    const g = moved.findIndex((m) => [0, 1, 2].every((k) => b.lo[k] <= m.hi[k] + m.r && b.hi[k] >= m.lo[k] - m.r));
+    if (g < 0) continue;
+    const key = `fixed by ${movedKeys[g]}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(...verts);
+  }
   const inPart = new Uint8Array(nv);
   for (const E of groups.values()) for (const v of E) inPart[v] = 1;
 
