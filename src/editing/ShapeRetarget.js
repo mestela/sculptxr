@@ -291,7 +291,7 @@ function bestRotation(S) {
 }
 
 // Similarity taking the `idx` vertices of `src` onto those of `dst`: p -> s R (p - ms) + md.
-function similarity(src, dst, idx) {
+export function similarity(src, dst, idx) {
   const ms = [0, 0, 0], md = [0, 0, 0];
   for (const v of idx) for (let k = 0; k < 3; k++) { ms[k] += src[v * 3 + k]; md[k] += dst[v * 3 + k]; }
   for (let k = 0; k < 3; k++) { ms[k] /= idx.length; md[k] /= idx.length; }
@@ -310,8 +310,8 @@ function similarity(src, dst, idx) {
   return { R, s: ss > 0 ? tr / ss : 1, ms, md };
 }
 
-export function fitParts(ref, target, tris, nv, shapes) {
-  // Connected components; the biggest is the skin.
+// Connected components (arrays of vertex indices), biggest first: on a head the first is the skin.
+export function components(tris, nv) {
   const up = new Int32Array(nv);
   for (let v = 0; v < nv; v++) up[v] = v;
   const find = (v) => { while (up[v] !== v) { up[v] = up[up[v]]; v = up[v]; } return v; };
@@ -326,7 +326,11 @@ export function fitParts(ref, target, tris, nv, shapes) {
     if (!c) byRoot.set(r, c = []);
     c.push(v);
   }
-  const comps = [...byRoot.values()].sort((a, b) => b.length - a.length).slice(1);
+  return [...byRoot.values()].sort((a, b) => b.length - a.length);
+}
+
+export function fitParts(ref, target, tris, nv, shapes) {
+  const comps = components(tris, nv).slice(1);
   if (!comps.length) return { base: null, parts: [] };
 
   const bounds = (idx) => {

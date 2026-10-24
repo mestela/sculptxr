@@ -7,6 +7,8 @@ import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
 import { arcBasis } from './ArcBlend.js';
 import { triangles, prepare, retargetDelta, fitParts } from './ShapeRetarget.js';
+import { buildEyes, collide, eyeSum, knownLids } from './EyeCollide.js';
+import { jigglePush } from './Jiggle.js';
 import Skeleton from './Skeleton.js';
 import PhysicsBones from './PhysicsBones.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -48,6 +50,7 @@ class AnimationRegistry {
     this._trackStatesBeforeRecording = null;
     this.clipboardShape = null; // Floating clipboard buffer for copy/pasting morph keys
     this.arcBlend = false;      // shapes that turn the skin blend on arcs (ArcBlend.js); off and unexposed: artifacts outweighed the gain
+    this.eyeCollide = false;    // lids pushed out of the eyes after the blend (EyeCollide.js); display only. OFF and unexposed 2026-10-24: matt found it worse than off in play; parked
     this.isRecording = false;
     this.isCountingIn = false;
     this.startTime = 0;
@@ -2949,6 +2952,14 @@ class AnimationRegistry {
       }
     });
 
+    // EYELIDS OUT OF THE EYES, on the rest-space composite so the skin pass carries it. Kept as
+    // a term like any shape, and subtracted again by otherLayersOffset so no capture keeps it.
+    const lid = !baseVerts && this.lidPush(mesh, track, v);
+    if (lid) used.push([lid.d, 1]);
+    // SPRING JIGGLE (Jiggle.js), last: it chases the finished composite. Same contract as the lids.
+    const jig = !baseVerts && jigglePush(mesh, track, v);
+    if (jig) used.push([jig.d, 1]);
+
     // Skinning runs LAST, over this composite: posed = skin(base + Σ deltas), with the
     // deltas in rest space. Hand the composite to the skin pass as its rest-space source
     // before the geometry update, or the two systems fight — skinning would otherwise
@@ -2981,6 +2992,38 @@ class AnimationRegistry {
     if (mesh.updateGeometry) mesh.updateGeometry(undefined, undefined, true);
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
     track._applyingBS = false;
+  }
+
+  // The lid push for this composite (EyeCollide.collide), added into `v` and kept on the track as
+  // `_lidPush` {idx, d} for otherLayersOffset. Null (and nothing kept) when no lid moved, so a face
+  // at rest keeps the no-other-layers fast path. The eyes are rebuilt when the shapes or base change.
+  lidPush(mesh, track, v) {
+    const prev = track._lidPush;
+    track._lidPush = null;
+    if (!this.eyeCollide || !track.baseShape || !track.blendshapes?.size) return null;
+    const base = track.baseShape, n = base.length;
+    // NOT keyed on _bsRev: that moves every frame of a stroke on any layer. Rebuilt for new
+    // topology or shapes, or when the base moves under the eyes or lids (eyeSum).
+    const key = `${n}|${mesh.getNbFaces()}|${[...track.blendshapes.keys()].join(',')}`;
+    const eyes = track._eyes;
+    if (!eyes || eyes.key !== key || (eyes.state && eyes.sum !== eyeSum(eyes.state, base))) {
+      const tris = triangles(mesh.getFaces(), mesh.getNbFaces());
+      const state = buildEyes(base, tris, n / 3, track.blendshapes, knownLids(tris, n / 3));
+      track._eyes = { key, state, sum: state && eyeSum(state, base) };
+    }
+    const state = track._eyes.state;
+    if (!state) return null;
+    const d = prev && prev.d.length === n ? prev.d : new Float32Array(n);
+    if (prev && prev.d === d) for (const i of prev.idx) { d[i * 3] = 0; d[i * 3 + 1] = 0; d[i * 3 + 2] = 0; }
+    if (!collide(state, base, v, d)) return null;
+    const idx = [];
+    for (const eye of state.eyes) for (const i of eye.lids) {
+      if (d[i * 3] === 0 && d[i * 3 + 1] === 0 && d[i * 3 + 2] === 0) continue;
+      idx.push(i);
+      v[i * 3] += d[i * 3]; v[i * 3 + 1] += d[i * 3 + 1]; v[i * 3 + 2] += d[i * 3 + 2];
+    }
+    track._lidPush = { idx, d };
+    return track._lidPush;
   }
 
   // Per-layer LOCK (Photoshop-style): a locked layer (or the Base cage) can't be
@@ -3090,6 +3133,13 @@ class AnimationRegistry {
       const terms = this.shapeTerms(track, name, delta, weight);
       for (const [dd, k] of terms) this._addScaled(out, dd, k, false);
     });
+    // The lid push and the jiggle are on screen too (lidPush, Jiggle.js): out with them, or a
+    // stroke keeps them.
+    for (const post of [track._lidPush, track._jiggle]) {
+      if (!post || !post.idx.length || !track.baseShape) continue;
+      if (!out) out = new Float32Array(track.baseShape.length);
+      for (const i of post.idx) for (let k = 0; k < 3; k++) out[i * 3 + k] += post.d[i * 3 + k];
+    }
     return out;
   }
 

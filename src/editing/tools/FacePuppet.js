@@ -4,6 +4,8 @@ import SculptBase from './SculptBase.js';
 import { sampleDeltas, averageDeltas, solveWeights } from '../DirectBlend.js';
 import { arkitEntry, lrPairFor } from '../ArkitBlendshapes.js';
 import Enums from '../../misc/Enums.js';
+import { regions } from '../GnmRegions.js';
+import { jiggle } from '../Jiggle.js';
 
 /**
  * FACE — grab the face and pull it; the blendshape weights follow. See DirectBlend.js.
@@ -238,6 +240,24 @@ class FacePuppet extends SculptBase {
     const reg = this._reg();
     if (!reg) return;
     reg.arcBlend = !!v;
+    for (const m of this._targets()) reg.applyBlendshapes(m);
+  }
+
+  // The Regions toggle: GNM's face regions coloured on a GNM head (GnmRegions.js). Global, so it
+  // stays on while sculpting the Base with other tools.
+  get _showRegions() { return regions.show; }
+  set _showRegions(v) { regions.show = !!v; this._main.render?.(); }
+
+  // The Jiggle toggle: spring flesh on GNM heads (Jiggle.js). Global, like Regions.
+  get _useJiggle() { return jiggle.on; }
+  set _useJiggle(v) { jiggle.on = !!v; this._main.render?.(); }
+
+  // The Lids toggle: eyelids pushed out of the eyes (EyeCollide.js), a registry setting like Arcs.
+  get _useLids() { return !!this._reg()?.eyeCollide; }
+  set _useLids(v) {
+    const reg = this._reg();
+    if (!reg) return;
+    reg.eyeCollide = !!v;
     for (const m of this._targets()) reg.applyBlendshapes(m);
   }
 
