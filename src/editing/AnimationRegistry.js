@@ -2903,7 +2903,43 @@ class AnimationRegistry {
     if (!track || !track.blendshapes) return;
 
     this.warmArcs(mesh, track);
-    const v = mesh.getVertices();
+    // MULTIRES: the shapes belong to ONE level -- the one with the base shape's vertex count -- and
+    // are composed there, then the stack is rebuilt to the level on screen (below). Composing into
+    // the displayed level wrote the base into the front of a subdivided level's array and zeroed
+    // the rest: every vertex the subdivision added went to the origin and the head vanished the
+    // first time anything recomposited (matt, GNM + multires: "shows for 1 frame then invisible").
+    const stack = mesh._meshes, sel = mesh._sel | 0;
+    let li = -1;
+    if (stack && stack.length > 1 && track.baseShape) {
+      li = stack.findIndex((l) => l.getNbVertices() * 3 === track.baseShape.length);
+      // Sculpting done on a level above it is kept: analyse down to the shapes' level first, so it
+      // is the detail the rebuild puts back on top of the new pose. ONLY WHEN THAT LEVEL CHANGED
+      // since this last rebuilt it (a stroke, a level switch): analysis then synthesis is not an
+      // exact round trip, and doing it every recomposite let the error compound -- a looped jaw on
+      // GNM drifted 8 units in 200 cycles and tore the inside of the mouth apart.
+      if (li >= 0 && li < sel) {
+        const cur = stack[sel].getVertices(), n = stack[sel].getNbVertices() * 3;
+        const last = track._mrLast;
+        let same = !!last && last.sel === sel && last.v.length === n;
+        for (let i = 0; same && i < n; i++) if (cur[i] !== last.v[i]) same = false;
+        if (!same) {
+          track._applyingBS = true;
+          for (let i = sel - 1; i >= li; i--) stack[i].lowerAnalysis(stack[i + 1]);
+          track._applyingBS = false;
+          // The normals the detail was measured against, kept: applyDetails orients the detail by
+          // the level's CURRENT normals, which after a rebuild are the last frame's -- feeding each
+          // recomposite back into the next (two identical recomposites differed by 0.04 on GNM).
+          // Put back before every rebuild, the same pose gives the same surface.
+          track._mrNormals = [];
+          for (let i = li + 1; i <= sel; i++) {
+            const nr = stack[i].getNormals();
+            track._mrNormals[i] = Float32Array.from(nr.subarray(0, stack[i].getNbVertices() * 3));
+          }
+        }
+      }
+    }
+    const geo = li >= 0 ? stack[li] : mesh;   // the vertices (and faces) the shapes index
+    const v = geo.getVertices();
     if (baseVerts) {
       v.set(baseVerts);
     } else if (track.baseShape) {
@@ -2954,10 +2990,10 @@ class AnimationRegistry {
 
     // EYELIDS OUT OF THE EYES, on the rest-space composite so the skin pass carries it. Kept as
     // a term like any shape, and subtracted again by otherLayersOffset so no capture keeps it.
-    const lid = !baseVerts && this.lidPush(mesh, track, v);
+    const lid = !baseVerts && this.lidPush(mesh, track, v, geo);
     if (lid) used.push([lid.d, 1]);
     // SPRING JIGGLE (Jiggle.js), last: it chases the finished composite. Same contract as the lids.
-    const jig = !baseVerts && jigglePush(mesh, track, v);
+    const jig = !baseVerts && jigglePush(mesh, track, v, geo);
     if (jig) used.push([jig.d, 1]);
 
     // Skinning runs LAST, over this composite: posed = skin(base + Σ deltas), with the
@@ -2989,6 +3025,22 @@ class AnimationRegistry {
     // touches topology, so the octree is merely out of date rather than wrong. Marked stale, and
     // the first query that actually needs it rebuilds it (ensureOctree) — which during a
     // performance is no query at all.
+    // Rebuild the stack from the shapes' level to the one on screen: up by synthesis (the stored
+    // detail on top of the new pose), down by analysis. The shapes' level needs its normals first:
+    // the detail is stored in each vertex's local frame.
+    if (li >= 0 && li !== sel) {
+      geo.updateGeometry(undefined, undefined, true);
+      for (let i = li + 1; i <= sel; i++) {
+        const keep = track._mrNormals && track._mrNormals[i];
+        if (keep && keep.length === stack[i].getNbVertices() * 3) stack[i].getNormals().set(keep);
+        stack[i].higherSynthesis(stack[i - 1]);
+      }
+      for (let i = li - 1; i >= sel; i--) stack[i].lowerAnalysis(stack[i + 1]);
+      // What this rebuild left on screen, so the next one can tell whether anything else touched it.
+      const out = stack[sel].getVertices().subarray(0, stack[sel].getNbVertices() * 3);
+      if (!track._mrLast || track._mrLast.v.length !== out.length) track._mrLast = { sel, v: new Float32Array(out.length) };
+      track._mrLast.sel = sel; track._mrLast.v.set(out);
+    }
     if (mesh.updateGeometry) mesh.updateGeometry(undefined, undefined, true);
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
     track._applyingBS = false;
@@ -2997,17 +3049,17 @@ class AnimationRegistry {
   // The lid push for this composite (EyeCollide.collide), added into `v` and kept on the track as
   // `_lidPush` {idx, d} for otherLayersOffset. Null (and nothing kept) when no lid moved, so a face
   // at rest keeps the no-other-layers fast path. The eyes are rebuilt when the shapes or base change.
-  lidPush(mesh, track, v) {
+  lidPush(mesh, track, v, geo = mesh) {
     const prev = track._lidPush;
     track._lidPush = null;
     if (!this.eyeCollide || !track.baseShape || !track.blendshapes?.size) return null;
     const base = track.baseShape, n = base.length;
     // NOT keyed on _bsRev: that moves every frame of a stroke on any layer. Rebuilt for new
     // topology or shapes, or when the base moves under the eyes or lids (eyeSum).
-    const key = `${n}|${mesh.getNbFaces()}|${[...track.blendshapes.keys()].join(',')}`;
+    const key = `${n}|${geo.getNbFaces()}|${[...track.blendshapes.keys()].join(',')}`;
     const eyes = track._eyes;
     if (!eyes || eyes.key !== key || (eyes.state && eyes.sum !== eyeSum(eyes.state, base))) {
-      const tris = triangles(mesh.getFaces(), mesh.getNbFaces());
+      const tris = triangles(geo.getFaces(), geo.getNbFaces());
       const state = buildEyes(base, tris, n / 3, track.blendshapes, knownLids(tris, n / 3));
       track._eyes = { key, state, sum: state && eyeSum(state, base) };
     }

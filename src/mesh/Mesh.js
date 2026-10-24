@@ -610,7 +610,13 @@ class Mesh {
     //  A) A blendshape layer is active: keep its delta live.
     // Both are skipped during applyBlendshapes() recomposition (_applyingBS flag).
     const _reg = window._animationRegistry;
-    const _track = _reg?.tracks?.get(this.getID?.());
+    let _track = _reg?.tracks?.get(this.getID?.());
+    // ONLY ON THE LEVEL THE SHAPES BELONG TO. On a multires level above it the vertex array is a
+    // different mesh -- its first vertices are the subdivision's smoothed copies of the base's -- so
+    // capturing from it wrote those into the Base on every geometry update (0.002 a time on GNM,
+    // accumulating). Sculpting up there is detail instead: AnimationRegistry.applyBlendshapes
+    // analyses it down and puts it back on top of every pose.
+    if (_track?.baseShape && this.getNbVertices() * 3 !== _track.baseShape.length) _track = null;
     if (_track?.editingBlendshape && _track.baseShape && !_track._applyingBS) {
       // Blendshape layer editing. The active layer is held at weight 1 while
       // sculpting (the SculptManager gate blocks strokes otherwise), but the live

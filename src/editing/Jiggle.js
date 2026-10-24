@@ -106,13 +106,15 @@ function looseness(mesh) {
   return w;
 }
 
-function springFor(mesh, v) {
-  const key = mesh.getNbVertices() + '|' + mesh.getNbFaces();
+// `geo`: the mesh (or multires level) whose vertices the composite `v` is -- the spring is kept
+// per mesh, built from that level.
+function springFor(mesh, geo, v) {
+  const key = geo.getNbVertices() + '|' + geo.getNbFaces();
   let s = springs.get(mesh);
   if (!s || s.key !== key) {
     s = { key, spring: null, M: null };
-    if (isGnm(mesh)) {
-      const w = looseness(mesh), idx = [], ws = [];
+    if (isGnm(geo)) {
+      const w = looseness(geo), idx = [], ws = [];
       for (let i = 0; i < w.length; i++) if (w[i] > 0.02) { idx.push(i); ws.push(w[i]); }
       const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
       for (let i = 0; i < w.length; i++) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], v[i * 3 + k]); hi[k] = Math.max(hi[k], v[i * 3 + k]); }
@@ -126,11 +128,11 @@ function springFor(mesh, v) {
 
 // The jiggle for composite `v` (local), added into it and kept on the track as `_jiggle` {idx, d}
 // for otherLayersOffset. Null (nothing kept) when off, not a GNM head, or at rest.
-export function jigglePush(mesh, track, v) {
+export function jigglePush(mesh, track, v, geo = mesh) {
   const prev = track._jiggle;
   track._jiggle = null;
   if (!jiggle.on || !track.baseShape) return null;
-  const s = springFor(mesh, v);
+  const s = springFor(mesh, geo, v);
   if (!s.spring) return null;
   const M = mesh.getMatrix(), sp = s.spring;
   const inv = mat4.invert(mat4.create(), M) || mat4.create();
