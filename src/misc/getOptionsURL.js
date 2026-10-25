@@ -448,7 +448,9 @@ var getOptionsURL = function () {
 
   // iPad multitouch routing (defaults match existing behaviour)
   options.ipadFingerView    = queryBool(getVal('ipadFingerView'),    true);
-  options.ipadFingerSculpt  = queryBool(getVal('ipadFingerSculpt'),  false);
+  // A phone has no pen, so a finger left on view-only could never sculpt; there it sculpts by default.
+  const isPhone = /iPhone|iPod/.test(navigator.userAgent) || /Android.*Mobile/.test(navigator.userAgent);
+  options.ipadFingerSculpt  = queryBool(getVal('ipadFingerSculpt'),  isPhone);
   options.ipadStylusView    = queryBool(getVal('ipadStylusView'),    false);
   options.ipadStylusSculpt  = queryBool(getVal('ipadStylusSculpt'),  true);
 

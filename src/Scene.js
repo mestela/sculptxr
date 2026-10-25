@@ -4933,9 +4933,11 @@ class Scene {
     // Read sidebar width dynamically so resize drag stays in sync.
     const sidebarEl = document.getElementById('gui-sidebar');
     // RENDERED sizes (rects), not CSS sizes: the sidebar and top bar are CSS-zoomed by the UI Scale.
-    const sidebarW = sidebarEl ? sidebarEl.getBoundingClientRect().width : 380;
+    // Compact (phone) layout: both are sheets OVER the canvas, so it takes the whole window.
+    const compact = document.body.classList.contains('ui-compact');
+    const sidebarW = compact ? 0 : sidebarEl ? sidebarEl.getBoundingClientRect().width : 380;
     const topbarEl = document.getElementById('gui-topbar');
-    const topbarH = topbarEl ? topbarEl.getBoundingClientRect().height : 36;
+    const topbarH = compact ? 0 : topbarEl ? topbarEl.getBoundingClientRect().height : 36;
     viewport.style.position = 'absolute';
     viewport.style.top = topbarH + 'px';
     viewport.style.bottom = '0px';

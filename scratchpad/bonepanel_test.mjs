@@ -439,7 +439,7 @@ check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
       'the tab still opens the placeholder that brings the section back; taking the click away '
         + 'would leave it unreachable');
     check('a tab is born dimmed when its section was pinned last session',
-      /if \(\(getOptionsURL\(\)\.desktopPins \|\| \{\}\)\[panelName\]\) tab\.classList\.add\('tab-pinned'\);/.test(GUI),
+      /if \((?:!isCompact\(\) && )?\(getOptionsURL\(\)\.desktopPins \|\| \{\}\)\[panelName\]\) tab\.classList\.add\('tab-pinned'\);/.test(GUI),
       'the restore runs while the sidebar is still being built and the tab strip is not in the '
         + 'document yet -- marking after it finds nothing, and a frame later still did not. '
         + 'Measured: chips appeared and both tabs stayed bright.');

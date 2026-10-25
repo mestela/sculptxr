@@ -30,6 +30,7 @@ import { setJiggle } from '../jiggleSettings.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
 import getOptionsURL, { MENU_GRADE_DEFAULTS } from '../../misc/getOptionsURL.js';
+import { compactPref, refreshCompact } from '../compactUI.js';
 import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
@@ -7129,7 +7130,7 @@ export function buildMenuHTML_desktopSettings(main) {
   const rf    = Tablet.radiusFactor ?? 0.75;
   const ifact = Tablet.intensityFactor ?? 0.0;
 
-  const isIpad = /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isIpad = /iPad|iPhone/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const chk = (id, checked) => `<label class="mm-check-row"><span>${id}</span><input type="checkbox" id="mm-${id.toLowerCase().replace(/\s+/g,'-')}"${checked ? ' checked' : ''}><span class="mm-checkmark"></span></label>`;
   // A pen seen on the canvas (SculptGL.onPointer) is enough: a Wacom on a Mac wants the same routing options.
   const ipadSection = (isIpad || window._penSeen) ? `
@@ -7167,6 +7168,10 @@ export function buildMenuHTML_desktopSettings(main) {
       <input type="range" id="mm-ui-scale" min="50" max="150" step="5" value="${Math.round((opts.uiScale ?? 1) * 100)}">
       <span class="mm-val" id="mm-ui-scale-val">${Math.round((opts.uiScale ?? 1) * 100)}%</span>
     </div>
+    <div class="mm-section-title">Layout</div>
+    <div class="mm-choice-grid cols-3">${[['auto', 'Auto'], ['on', 'Phone'], ['off', 'Desktop']].map(([v, l]) =>
+      `<button class="mm-action-btn${compactPref() === v ? ' active' : ''}" data-compact="${v}" title="${v === 'auto'
+        ? 'Phone layout on small screens, desktop otherwise' : l + ' layout everywhere'}">${l}</button>`).join('')}</div>
     <div class="mm-section-title">Pen Pressure</div>
     <div class="mm-row">
       <span class="mm-lbl">Radius factor</span>
@@ -7246,6 +7251,12 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
       document.addEventListener(t, uiApply, { once: true, capture: true });
   });
   uiS?.addEventListener('change', uiApply);
+
+  el.querySelectorAll('[data-compact]').forEach((b) => b.addEventListener('click', () => {
+    getOptionsURL.saveOption('compactUI', b.dataset.compact, 0);
+    refreshCompact();
+    el.querySelectorAll('[data-compact]').forEach((o) => o.classList.toggle('active', o === b));
+  }));
 
 
   // The same list the VR panel wires, from the same place. These settings are owned by their

@@ -7,6 +7,7 @@ import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
 import PhysicsBones from '../editing/PhysicsBones.js';
+import { dockedSidebarWidth } from './compactUI.js';
 
 // Darker, higher-contrast blue (matches the desktop sidebar sliders) for active buttons
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
@@ -2260,13 +2261,13 @@ export default class GuiTimeline {
     if (this._vrOwned) return;
     const sidebar = document.querySelector('#gui-sidebar');
     if (sidebar) {
-      this._container.style.right = sidebar.getBoundingClientRect().width + 'px';
+      this._container.style.right = dockedSidebarWidth() + 'px';
       this._container.style.width = 'auto';
       
       if (!this._sidebarObserver) {
         this._sidebarObserver = new ResizeObserver(entries => {
           for (let entry of entries) {
-            this._container.style.right = entry.target.getBoundingClientRect().width + 'px';
+            this._container.style.right = dockedSidebarWidth() + 'px';
             this.onResize();
           }
         });
