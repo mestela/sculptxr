@@ -36,6 +36,8 @@ import {
 import { buildTransformSectionHTML, wireTransformSection, syncTransformSection } from '../transformPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle } from '../jiggleSettings.js';
+import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
+import { setIdle } from '../idleSettings.js';
 
 // THE TWO CHANNELS A MOTION-PATH EDIT CAN WRITE, as one markup helper so Move and Smooth cannot
 // drift apart. A 6DOF grab always produces both a translation and a rotation — your hand cannot
@@ -665,12 +667,22 @@ export class MiniPanel extends HTMLVRPanel {
       faceToggle('#mp-face-limit', '_limitReach');
       faceToggle('#mp-face-regions', '_showRegions');
       faceToggle('#mp-face-jiggle', '_useJiggle');
+      faceToggle('#mp-face-idle', '_useIdle');
       for (const d of JIGGLE_SLIDERS) {
         const input = extras.querySelector(`#mp-jiggle-${d.key}`), val = extras.querySelector(`#mp-jiggle-${d.key}-val`);
         input?.addEventListener('input', () => {
           const v = parseFloat(input.value);
           if (val) val.textContent = d.fmt(v);
           setJiggle(d.key, d.to(v));
+          this._requestPaint();
+        });
+      }
+      for (const d of IDLE_SLIDERS) {
+        const input = extras.querySelector(`#mp-idle-${d.key}`), val = extras.querySelector(`#mp-idle-${d.key}-val`);
+        input?.addEventListener('input', () => {
+          const v = parseFloat(input.value);
+          if (val) val.textContent = d.fmt(v);
+          setIdle(d.key, d.to(v));
           this._requestPaint();
         });
       }
@@ -1066,6 +1078,7 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-face-limit')?.classList.toggle('active', !!tool._limitReach);
       extrasEl.querySelector('#mp-face-regions')?.classList.toggle('active', !!tool._showRegions);
       extrasEl.querySelector('#mp-face-jiggle')?.classList.toggle('active', !!tool._useJiggle);
+      extrasEl.querySelector('#mp-face-idle')?.classList.toggle('active', !!tool._useIdle);
     } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
       extrasEl.querySelector('#mp-keep-together')
         ?.classList.toggle('active', !!(window.keepExtrudeFacesTogether ?? true));
@@ -1095,8 +1108,10 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-toggle-btn" id="mp-face-zero">Zero All</button>
           <button class="mp-toggle-btn${t?._showRegions ? ' active' : ''}" id="mp-face-regions">Regions</button>
         </div>
-        <div class="mp-toggles cols-3">
+        ${collapsibleHTML('mp-jiggle-idle', 'Jiggle and Idle', `
+        <div class="mp-toggles cols-2">
           <button class="mp-toggle-btn${t?._useJiggle ? ' active' : ''}" id="mp-face-jiggle">Jiggle</button>
+          <button class="mp-toggle-btn${t?._useIdle ? ' active' : ''}" id="mp-face-idle">Idle</button>
         </div>
         ${jiggle.on ? JIGGLE_SLIDERS.map((d) => `
         <div class="mp-row">
@@ -1104,6 +1119,13 @@ export class MiniPanel extends HTMLVRPanel {
           <input type="range" id="mp-jiggle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(jiggle[d.key])}">
           <span class="mp-val" id="mp-jiggle-${d.key}-val">${d.fmt(d.ui(jiggle[d.key]))}</span>
         </div>`).join('') : ''}
+        ${idle.on ? IDLE_SLIDERS.map((d) => `
+        <div class="mp-row">
+          <span class="mp-lbl">${d.label}</span>
+          <input type="range" id="mp-idle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(idle[d.key])}">
+          <span class="mp-val" id="mp-idle-${d.key}-val">${d.fmt(d.ui(idle[d.key]))}</span>
+        </div>`).join('') : ''}
+        `, false)}
       `;
     }
 
@@ -1416,7 +1438,7 @@ export class MiniPanel extends HTMLVRPanel {
         .filter((m) => m && m._isBone).map((m) => m.getID()).join(',');
       // effective: Smooth's extras show while the alt trigger is held. Face: the jiggle sliders show
       // only while Jiggle is on, so turning it on or off rebuilds the block.
-      const extrasKey = effIdx + '|' + selKey + (effIdx === Enums.Tools.FACE ? '|' + jiggle.on : '');
+      const extrasKey = effIdx + '|' + selKey + (effIdx === Enums.Tools.FACE ? '|' + jiggle.on + idle.on : '');
       // The bisection switch that used to gate this (window._mpNoRebuild) is GONE, and its
       // settings entry with it. It answered its question in v3.30.39 -- the rebuild WAS the
       // cause, by nulling material.map and forcing a shader recompile -- and then stayed in the

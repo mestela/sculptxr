@@ -6,6 +6,7 @@ import { arkitEntry, lrPairFor } from '../ArkitBlendshapes.js';
 import Enums from '../../misc/Enums.js';
 import { regions } from '../GnmRegions.js';
 import { jiggle } from '../Jiggle.js';
+import { idle } from '../IdleFace.js';
 
 /**
  * FACE — grab the face and pull it; the blendshape weights follow. See DirectBlend.js.
@@ -251,6 +252,9 @@ class FacePuppet extends SculptBase {
   // The Jiggle toggle: spring flesh on GNM heads (Jiggle.js). Global, like Regions.
   get _useJiggle() { return jiggle.on; }
   set _useJiggle(v) { jiggle.on = !!v; this._main.render?.(); }
+  // The Idle toggle: blinks and eye darts on any ARKit head (IdleFace.js). Global, like Jiggle.
+  get _useIdle() { return idle.on; }
+  set _useIdle(v) { idle.on = !!v; this._main.render?.(); }
 
   // The Lids toggle: eyelids pushed out of the eyes (EyeCollide.js), a registry setting like Arcs.
   get _useLids() { return !!this._reg()?.eyeCollide; }

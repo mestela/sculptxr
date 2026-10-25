@@ -27,6 +27,8 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle } from '../jiggleSettings.js';
+import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
+import { setIdle } from '../idleSettings.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
 import getOptionsURL, { MENU_GRADE_DEFAULTS } from '../../misc/getOptionsURL.js';
@@ -3888,17 +3890,27 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice${tool._protectKeys ? ' active' : ''}" id="mm-face-protect">Protect Keys</button>
       <button class="mm-choice${tool._limitReach ? ' active' : ''}" id="mm-face-limit">Limit</button>
       <button class="mm-choice${tool._showRegions ? ' active' : ''}" id="mm-face-regions" title="Colour GNM's face regions on a GNM head, to check a resculpt has not dragged the landmarks (stays on with other tools)">Regions</button>
-      <button class="mm-choice${tool._useJiggle ? ' active' : ''}" id="mm-face-jiggle" title="Spring jiggle on the cheeks, jowls and lips of a GNM head (display only; stays on with other tools)">Jiggle</button>
       <button class="mm-choice" id="mm-face-combo">Fix Combo</button>
       <button class="mm-choice" id="mm-face-key">Key</button>
       <button class="mm-choice" id="mm-face-zero">Zero All</button>
       <button class="mm-choice" id="mm-face-retarget" title="Rebuild every shape for the sculpted Base, refitting eyes, teeth and tongue to the skin round them">Retarget Shapes</button>
+    </div>
+    <div class="mm-section-title">Jiggle and Idle</div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice${tool._useJiggle ? ' active' : ''}" id="mm-face-jiggle" title="Spring jiggle on the cheeks, jowls and lips of a GNM head (display only; stays on with other tools)">Jiggle</button>
+      <button class="mm-choice${tool._useIdle ? ' active' : ''}" id="mm-face-idle" title="Idle blinks, eye darts and brow/mouth life on any ARKit head (display only; stays on with other tools)">Idle</button>
     </div>
     ${jiggle.on ? JIGGLE_SLIDERS.map((d) => `
     <div class="mm-row">
       <span class="mm-lbl">${d.label}</span>
       <input type="range" id="mm-jiggle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(jiggle[d.key])}">
       <span class="mm-val" id="mm-jiggle-${d.key}-val">${d.fmt(d.ui(jiggle[d.key]))}</span>
+    </div>`).join('') : ''}
+    ${idle.on ? IDLE_SLIDERS.map((d) => `
+    <div class="mm-row">
+      <span class="mm-lbl">${d.label}</span>
+      <input type="range" id="mm-idle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(idle[d.key])}">
+      <span class="mm-val" id="mm-idle-${d.key}-val">${d.fmt(d.ui(idle[d.key]))}</span>
     </div>`).join('') : ''}
     ${buildPoseLibraryHTML(main, tool)}` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
@@ -6076,7 +6088,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn, panel: el._vrPanel || null });
   wireTransformSection(el, main, { refresh: repaintFn, sliderDirty: sliderDirtyFn });
 
-  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys'], ['#mm-face-limit', '_limitReach'], ['#mm-face-regions', '_showRegions'], ['#mm-face-jiggle', '_useJiggle']]) {
+  for (const [id, prop] of [['#mm-face-heat', '_showHeat'], ['#mm-face-rot', '_useRotation'], ['#mm-face-sparse', '_useSparse'], ['#mm-face-protect', '_protectKeys'], ['#mm-face-limit', '_limitReach'], ['#mm-face-regions', '_showRegions'], ['#mm-face-jiggle', '_useJiggle'], ['#mm-face-idle', '_useIdle']]) {
     el.querySelector(id)?.addEventListener('click', () => {
       const t = sm?.getCurrentTool?.();
       if (t) { t[prop] = !t[prop]; main.render?.(); }
@@ -6087,6 +6099,10 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   for (const d of JIGGLE_SLIDERS) {
     wireSlider(el.querySelector(`#mm-jiggle-${d.key}`), el.querySelector(`#mm-jiggle-${d.key}-val`),
       (v) => setJiggle(d.key, d.to(v)), d.fmt, sliderDirtyFn);
+  }
+  for (const d of IDLE_SLIDERS) {
+    wireSlider(el.querySelector(`#mm-idle-${d.key}`), el.querySelector(`#mm-idle-${d.key}-val`),
+      (v) => setIdle(d.key, d.to(v)), d.fmt, sliderDirtyFn);
   }
   wirePoseLibrary(el, main, sm, repaintFn);
   el.querySelector('#mm-face-key')?.addEventListener('click', () => sm?.getCurrentTool?.()?.keyAll?.());

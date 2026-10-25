@@ -99,6 +99,7 @@ import { installEnvironment } from './render/nodes/EnvIBL.js';
 import { applyXRBackendPatches, makePCFFilter } from './render/nodes/ThreeXRPatches.js';
 import { tickRegions } from './editing/GnmRegions.js';
 import { tickJiggle } from './editing/Jiggle.js';
+import { tickIdle } from './editing/IdleFace.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -1690,6 +1691,7 @@ class Scene {
     this._mark('matrices');
     this._sizeSpotCones();
     tickRegions(this);
+    tickIdle(this);     // before the jiggle, which chases the composite it makes
     tickJiggle(this);
     this.updateMatricesAndSort();
     // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.

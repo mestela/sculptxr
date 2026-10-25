@@ -2347,8 +2347,17 @@ class AnimationRegistry {
 
   shownWeight(track, name, bTrack) {
     const w = this.blendshapePreviewAt(track, name, bTrack);
-    const up = name !== track.editingBlendshape && this.underOf(track, name);
-    return up ? Math.min(w, this.blendshapePreviewAt(track, up, track.blendshapeTracks.get(up))) : w;
+    const edited = name === track.editingBlendshape;
+    const up = !edited && this.underOf(track, name);
+    const shown = up ? Math.min(w, this.blendshapePreviewAt(track, up, track.blendshapeTracks.get(up))) : w;
+    // IDLE FACE (IdleFace.js) rides on top, clamped; never on the layer being edited.
+    const idle = !edited && track._idle && track._idle.get(name);
+    return idle ? Math.min(1, Math.max(0, shown + idle)) : shown;
+  }
+
+  // An unkeyed, unpreviewed shape is skipped by the composite -- unless the idle layer moves it.
+  _idleMoves(track, name) {
+    return !!(track._idle && track._idle.get(name));
   }
 
   // COMBINATION SHAPES (Fix Combo). A combo is an ordinary layer whose weight is never keyed or
@@ -2965,7 +2974,7 @@ class AnimationRegistry {
       // contributes nothing — but it also made a never-keyed shape impossible to preview, which
       // is every shape the first time you reach for it on the pad.
       const previewing = track.blendshapePreview && track.blendshapePreview.has(name);
-      if ((!bTrack || bTrack.times.length === 0) && !previewing && !this.isBlendshapeCombo(track, name)) return;
+      if ((!bTrack || bTrack.times.length === 0) && !previewing && !this.isBlendshapeCombo(track, name) && !this._idleMoves(track, name)) return;
       if (muted && muted.has(name)) return;
 
       const weight = this.shownWeight(track, name, bTrack);
@@ -3178,7 +3187,7 @@ class AnimationRegistry {
       // and the difference is silently baked into the delta — the shape would absorb whatever
       // the pad happened to be showing at the moment of the stroke.
       const previewingO = track.blendshapePreview && track.blendshapePreview.has(name);
-      if ((!bTrack || bTrack.times.length === 0) && !previewingO && !this.isBlendshapeCombo(track, name)) return;
+      if ((!bTrack || bTrack.times.length === 0) && !previewingO && !this.isBlendshapeCombo(track, name) && !this._idleMoves(track, name)) return;
       const weight = this.shownWeight(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);
