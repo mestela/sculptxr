@@ -4,6 +4,7 @@ import TextureIO from './TextureIO.js';
 import MediaRef from './MediaRef.js';
 import Skeleton from '../editing/Skeleton.js';
 import { jiggle } from '../editing/Jiggle.js';
+import { idle } from '../editing/IdleFace.js';
 
 var Export = {};
 
@@ -44,7 +45,9 @@ var Export = {};
 //    with blendshapes. It is one setting for the scene; the reader takes the last one it meets.
 // 26 GLASS GROUPS: the face-group ids drawn with the transmissive coat (Mesh.setGlassGroups),
 //    count + ids after each level's face groups. One setting per object; every level carries it.
-Export.VERSION = 26;
+// 27 IDLE FACE (on, blink rate, gaze range, pace, micro) after the jiggle, same terms: one setting
+//    for the scene, written on every mesh with blendshapes, the last one read wins.
+Export.VERSION = 27;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -271,7 +274,8 @@ Export.exportSGL = function (meshes, main) {
     nbBytes += 4 + noFaceRows(track).length * 4;
     var _rr = refRow(track, activeVertCount);
     nbBytes += 4 + (_rr ? deltaBytes(_rr[0], activeVertCount) + 4 + _rr[1].length * 4 : 0);
-    nbBytes += 20;
+    nbBytes += 20;   // v25 jiggle
+    nbBytes += 20;   // v27 idle
   }
 
   try {
@@ -705,6 +709,10 @@ Export.exportSGL = function (meshes, main) {
       // v25: the jiggle.
       u32a[off++] = jiggle.on ? 1 : 0;
       f32a[off++] = jiggle.gain; f32a[off++] = jiggle.freq; f32a[off++] = jiggle.damp; f32a[off++] = jiggle.max;
+
+      // v27: the idle face.
+      u32a[off++] = idle.on ? 1 : 0;
+      f32a[off++] = idle.rate; f32a[off++] = idle.range; f32a[off++] = idle.pace; f32a[off++] = idle.micro;
     }
 
     var data = new DataView(buffer, 0, off * 4);

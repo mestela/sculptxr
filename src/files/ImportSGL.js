@@ -8,6 +8,7 @@ import MeshResolution from '../mesh/multiresolution/MeshResolution.js';
 import AnimationRegistry from '../editing/AnimationRegistry.js';
 import Mesh from '../mesh/Mesh.js';
 import { jiggle } from '../editing/Jiggle.js';
+import { idle } from '../editing/IdleFace.js';
 
 var Import = {};
 
@@ -628,6 +629,11 @@ Import.importSGL = function (buffer, gl, main) {
       if (version >= 25) {
         jiggle.on = u32a[off++] === 1;
         jiggle.gain = f32a[off++]; jiggle.freq = f32a[off++]; jiggle.damp = f32a[off++]; jiggle.max = f32a[off++];
+      }
+      // v27: the idle face, on the same terms as the jiggle.
+      if (version >= 27) {
+        idle.on = u32a[off++] === 1;
+        idle.rate = f32a[off++]; idle.range = f32a[off++]; idle.pace = f32a[off++]; idle.micro = f32a[off++];
       }
     }
   }

@@ -61,5 +61,17 @@ check('the last 3% creeps', blinkCurve(bk, o0 + bk.open + 0.1) > 0.005);
 const hi = run(240, 40).blinks, lo = run(240, 5).blinks;
 check('higher rate blinks more', hi > lo * 3, `(${lo} -> ${hi})`);
 
+// .sxr v27: the export writes the idle fields in the order the import reads them, and the size
+// pass counts them (a mismatch shifts every field after it on load).
+{
+  const exp = fs.readFileSync(new URL('../src/files/ExportSGL.js', import.meta.url), 'utf8');
+  const imp = fs.readFileSync(new URL('../src/files/ImportSGL.js', import.meta.url), 'utf8');
+  const order = (src, re) => [...src.matchAll(re)].map((m) => m[1]).join(',');
+  const w = order(exp, /f32a\[off\+\+\] = idle\.(\w+)/g), r = order(imp, /idle\.(\w+) = f32a\[off\+\+\]/g);
+  check('.sxr idle fields written and read in one order', w && w === r, `(${w} / ${r})`);
+  check('.sxr idle flag written and read', /u32a\[off\+\+\] = idle\.on/.test(exp) && /idle\.on = u32a\[off\+\+\]/.test(imp));
+  check('.sxr size pass counts the idle block', /nbBytes \+= 20;\s*\/\/ v27 idle/.test(exp));
+}
+
 if (!fails) console.log('all checks passed');
 process.exit(fails ? 1 : 0);
