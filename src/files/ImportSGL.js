@@ -7,6 +7,7 @@ import { installStencils } from './NomMultires.js';
 import MeshResolution from '../mesh/multiresolution/MeshResolution.js';
 import AnimationRegistry from '../editing/AnimationRegistry.js';
 import Mesh from '../mesh/Mesh.js';
+import { jiggle } from '../editing/Jiggle.js';
 
 var Import = {};
 
@@ -418,10 +419,20 @@ Import.importSGL = function (buffer, gl, main) {
             for (var k = 0; k < nbBsKeys; k++) {
               bTrack.times.push(f32a[off++]);
               bTrack.values.push(f32a[off++]);
-              _raw.push([f32a[off++], f32a[off++], f32a[off++], f32a[off++], f32a[off++] > 0.5]);
+              var _t5 = [f32a[off++], f32a[off++], f32a[off++], f32a[off++]], _tf = f32a[off++];
+              _raw.push([_t5[0], _t5[1], _t5[2], _t5[3], (_tf % 2) > 0.5, _tf]);
             }
             for (var k = 0; k < nbBsKeys; k++) {
               var _r = _raw[k];
+              if (version >= 24) {
+                // v24: the tied float carries which values were set (ExportSGL notes); exactly those.
+                var _tf = _r[5], _mask = Math.floor(_tf / 2);
+                var _vals = [_r[0], _r[1], _r[2], _r[3], (_tf - 2 * _mask) > 0.5];
+                ['right_dt', 'right_dv', 'left_dt', 'left_dv', 'tied'].forEach(function (f, bit) {
+                  if (_mask & (1 << bit)) bTrack.tangentOffsets[k + '_' + f] = _vals[bit];
+                });
+                continue;
+              }
               setKeyTangents(bTrack.tangentOffsets, k, bTrack.times[k], bTrack.times[k + 1], _r[0], _r[1], _r[2], _r[3], _r[4]);
             }
           }
@@ -602,6 +613,13 @@ Import.importSGL = function (buffer, gl, main) {
           cTrack.shapeRef = rRef;
           cTrack.shapeRefSkip = rSkip.size ? rSkip : null;
         }
+      }
+
+      // v25: the jiggle. The scene's, not the device's: the live values, and the saved slider
+      // preferences are left alone.
+      if (version >= 25) {
+        jiggle.on = u32a[off++] === 1;
+        jiggle.gain = f32a[off++]; jiggle.freq = f32a[off++]; jiggle.damp = f32a[off++]; jiggle.max = f32a[off++];
       }
     }
   }

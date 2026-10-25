@@ -381,7 +381,8 @@ class FacePuppet extends SculptBase {
     for (const [name, c] of Object.entries(deltas)) {
       const along = c[0] * u[0] + c[1] * u[1] + c[2] * u[2];
       const w = this._w0[name] || 0;
-      reach = Math.max(reach, along > 0 ? along * (1 - w) : -along * w);
+      const r = this._range && this._range[name], hi = r ? Math.max(1, r.max) : 1, lo = r ? Math.min(0, r.min) : 0;
+      reach = Math.max(reach, along > 0 ? along * (hi - w) : -along * (w - lo));
     }
     return len > reach ? [u[0] * reach, u[1] * reach, u[2] * reach] : drag;
   }
@@ -721,6 +722,10 @@ class FacePuppet extends SculptBase {
     if (!mesh || !reg || !this._hands.size) return;
     const inv = mat4.invert(mat4.create(), this._toWorld(mesh));
     if (!inv) return;
+    // Each shape's SLIDER RANGE bounds it (solve and Limit alike), so a jawOpen widened to 2 on a
+    // cartoony resculpt drags to 2 -- it stopped at 1 while a key or a pose could hold 2.
+    const track = reg.tracks.get(mesh.getID());
+    const range = this._range = track?.blendshapeRange ? Object.fromEntries(track.blendshapeRange) : null;
     const a = vec3.create(), b = vec3.create();
     const pins = [];
     for (const pin of this._hands.values()) {
@@ -749,7 +754,6 @@ class FacePuppet extends SculptBase {
       const k = angle * pin.twist.r * g;
       pins.push({ deltas: pin.twist.cols, drag: [ax[0] * k, ax[1] * k, ax[2] * k], weight, twist: true });
     }
-    const track = reg.tracks.get(mesh.getID());
     const base = track ? this._rules(track) : {};
     // Taken once per grab, so the keys THIS take is laying down do not lock its own shapes.
     // Two keys or more: a single key is a held pose (an import writes one per shape for the
@@ -759,7 +763,7 @@ class FacePuppet extends SculptBase {
     const rules = !prot.length ? base : { ...base, exclude: [...(base.exclude || []), ...prot],
       tie: (base.tie || []).filter(([a, b]) => !prot.includes(a) && !prot.includes(b)) };
     const cost = this._useSparse && track ? this._locality(track, pins.filter((p) => !p.twist)) : null;
-    const opts = { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, cost };
+    const opts = { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, cost, range };
     let w = solveWeights(pins, this._w0, { ...opts, ...rules });
     // PROTECTION YIELDS WHEN IT LEAVES THE GRAB NOTHING. In a take, grabbing the chin where only
     // jawOpen moves it, with jawOpen keyed, moved nothing at all — matt: "the jaw would not open".

@@ -3,6 +3,7 @@ import ShaderBase from '../render/shaders/ShaderBase.js';
 import TextureIO from './TextureIO.js';
 import MediaRef from './MediaRef.js';
 import Skeleton from '../editing/Skeleton.js';
+import { jiggle } from '../editing/Jiggle.js';
 
 var Export = {};
 
@@ -35,7 +36,13 @@ var Export = {};
 //    weight per driver) so pruning works after a reload.
 // 23 RETARGET SHAPES: the neutral the shapes were made on (once the Base has been sculpted), as its
 //    offset from the base, and the layers sculpted since.
-Export.VERSION = 23;
+// 24 BLENDSHAPE KEY TANGENTS SAY WHICH VALUES WERE SET: the key's `tied` float carries a mask of
+//    the overrides that exist (tied + 2 * mask, bits right_dt, right_dv, left_dt, left_dv, tied).
+//    Every key's handles are written with the defaults filled in, so a FLATTENED key (slope 0 at
+//    the default length) was byte-identical to an untouched auto one and came back auto.
+// 25 JIGGLE: the Face tool's spring jiggle (on, strength, speed, damping, range) on every mesh
+//    with blendshapes. It is one setting for the scene; the reader takes the last one it meets.
+Export.VERSION = 25;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -259,6 +266,7 @@ Export.exportSGL = function (meshes, main) {
     nbBytes += 4 + noFaceRows(track).length * 4;
     var _rr = refRow(track, activeVertCount);
     nbBytes += 4 + (_rr ? deltaBytes(_rr[0], activeVertCount) + 4 + _rr[1].length * 4 : 0);
+    nbBytes += 20;
   }
 
   try {
@@ -570,6 +578,11 @@ Export.exportSGL = function (meshes, main) {
             var lDt = to && to[`${k}_left_dt`]  !== undefined ? to[`${k}_left_dt`]  : -bsDt * 0.33;
             var lDv = to && to[`${k}_left_dv`]  !== undefined ? to[`${k}_left_dv`]  : 0;
             var tied = (!to || to[`${k}_tied`] !== false) ? 1.0 : 0.0;
+            var mask = 0;
+            if (to) ['right_dt', 'right_dv', 'left_dt', 'left_dv', 'tied'].forEach(function (f, bit) {
+              if (to[`${k}_${f}`] !== undefined) mask |= 1 << bit;
+            });
+            tied += 2 * mask;   // v24, see the version notes
             f32a[off++] = bTrack.times[k];
             f32a[off++] = bTrack.values[k];
             f32a[off++] = rDt;
@@ -678,6 +691,10 @@ Export.exportSGL = function (meshes, main) {
         u32a[off++] = _ref[1].length;
         _ref[1].forEach(function (i) { u32a[off++] = i; });
       }
+
+      // v25: the jiggle.
+      u32a[off++] = jiggle.on ? 1 : 0;
+      f32a[off++] = jiggle.gain; f32a[off++] = jiggle.freq; f32a[off++] = jiggle.damp; f32a[off++] = jiggle.max;
     }
 
     var data = new DataView(buffer, 0, off * 4);

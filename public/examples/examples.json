@@ -23,5 +23,10 @@
     "name": "GNM head (ARKit shapes)",
     "file": "gnm_head_arkit.sxr",
     "desc": "Head with 52 ARKit expression shapes, eyes, teeth and tongue"
+  },
+  {
+    "name": "Lunk",
+    "file": "lunk.sxr",
+    "desc": "Cartoony resculpt of the GNM head, with its ARKit expression shapes"
   }
 ]

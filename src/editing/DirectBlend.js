@@ -102,7 +102,8 @@ function solveDense(A, b, n) {
  *          the point has been pulled since the anchor, in the mesh's local space; weight (default
  *          1) scales how hard that pin pulls against the others
  *   w0:    {name: weight} — the pose at the anchor
- *   opts:  { alpha, mu, sparse, cost, tie, exclude, exclusive, under } — alpha/mu/sparse RELATIVE to the strongest shape at the pins, so the feel
+ *   opts:  { alpha, mu, sparse, cost, tie, exclude, exclusive, under, range } — range {name: {min, max}}
+ *          widens a shape past 0..1 (its slider's range: a cartoon jawOpen at 2); alpha/mu/sparse RELATIVE to the strongest shape at the pins, so the feel
  *          does not change with the mesh's units or how big the face's shapes are. sparse > 0
  *          makes few shapes answer a drag instead of many (see SPARSE below)
  * Returns {name: weight} for the shapes that touch a pin. Shapes that touch none are NOT
@@ -173,8 +174,13 @@ export function solveWeights(pins, w0, opts = {}) {
   const ws = names.map((nm) => w0[nm] || 0);
 
 
-  // Per-shape bounds, [0,1] unless a rule below narrows them.
+  // Per-shape bounds: the slider's range (opts.range, else [0,1]), narrowed by the rules below.
   const lo = new Float64Array(n), hi = new Float64Array(n).fill(1);
+  for (let i = 0; i < n; i++) {
+    const r = opts.range && opts.range[names[i]];
+    if (r) { lo[i] = Math.min(0, r.min); hi[i] = Math.max(1, r.max); }
+  }
+  const lo0 = Float64Array.from(lo), hi0 = Float64Array.from(hi);
 
   // BOUNDED by an active set: solve, pin the worst offender to its bound, solve the rest again.
   // Clamping an unconstrained answer after the fact is wrong in a way you can see — once jawOpen
@@ -274,7 +280,7 @@ export function solveWeights(pins, w0, opts = {}) {
   }
 
   const out = {};
-  for (let i = 0; i < n; i++) out[names[i]] = Math.min(1, Math.max(0, w[i]));
+  for (let i = 0; i < n; i++) out[names[i]] = Math.min(hi0[i], Math.max(lo0[i], w[i]));
   for (const [a, b] of tie) if (a in out) out[b] = out[a];
   return out;
 }

@@ -1496,6 +1496,34 @@ function buildExamplesHTML() {
   }).join('');
 }
 
+// The desktop examples flyout: a second `.desktop-dropdown` (so it shares the menu's look, and
+// a click in it does not count as outside the menu) to the right of the Files menu, its top level
+// with the button. Any press outside it or that button closes it.
+function toggleExamplesFlyout(dd, btn, loadExample) {
+  const old = document.getElementById('mm-examples-flyout');
+  if (old) { old._close(); return; }
+  const fly = document.createElement('div');
+  fly.id = 'mm-examples-flyout';
+  fly.className = 'desktop-dropdown';
+  const d = dd.getBoundingClientRect(), b = btn.getBoundingClientRect();
+  fly.style.cssText = `display:flex;flex-direction:column;gap:4px;left:${Math.round(d.right + 4)}px;top:${Math.round(b.top - 8)}px;`;
+  const paint = () => {
+    fly.innerHTML = buildExamplesHTML();
+    fly.querySelectorAll('[data-example]').forEach((x) => x.addEventListener('click', () => loadExample(+x.dataset.example, paint, close)));
+  };
+  const outside = (e) => { if (!fly.contains(e.target) && !btn.contains(e.target)) close(); };
+  const close = () => { fly.remove(); document.removeEventListener('pointerdown', outside, true); btn.classList.remove('active'); };
+  fly._close = close;
+  document.addEventListener('pointerdown', outside, true);
+  btn.classList.add('active');
+  paint();
+  document.body.appendChild(fly);
+  // Kept on screen: a narrow window puts it under the menu's right edge instead of off it.
+  const f = fly.getBoundingClientRect();
+  if (f.right > innerWidth - 4) fly.style.left = Math.max(4, innerWidth - 4 - f.width) + 'px';
+  if (f.bottom > innerHeight - 4) fly.style.top = Math.max(4, innerHeight - 4 - f.height) + 'px';
+}
+
 export function buildMenuHTML_files(main) {
   const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
   // SAVE OVERWRITES, SAVE AS MAKES ANOTHER ONE -- the pair every other application has. The name
@@ -6691,26 +6719,23 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     });
   }
 
-  q('#mm-new-example')?.addEventListener('click', async () => {
-    main._examplesOpen = !main._examplesOpen;
-    if (main._examplesOpen && !_examples) {
-      rebuildFn();
-      try {
-        const r = await fetch(examplesURL('examples.json'));
-        _examples = r.ok ? await r.json() : [];
-      } catch (_) { _examples = []; }
-    }
-    rebuildFn();
-  });
-  el.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', async () => {
-    const i = +b.dataset.example;
+  const fetchExamples = async () => {
+    if (_examples) return;
+    try {
+      const r = await fetch(examplesURL('examples.json'));
+      _examples = r.ok ? await r.json() : [];
+    } catch (_) { _examples = []; }
+  };
+  // Loads example `i`. `repaint` redraws whatever shows the list (its button carries the
+  // progress), `done` closes it once the scene is in.
+  const loadExample = async (i, repaint, done) => {
     const ex = _examples?.[i];
     if (!ex || _exampleLoad) return;
     let painted = 0;
     const status = (text, now) => {
       _exampleLoad = { i, text };
       const t = performance.now();
-      if (now || t - painted > 250) { painted = t; rebuildFn(); }   // a VR repaint is not free
+      if (now || t - painted > 250) { painted = t; repaint(); }   // a VR repaint is not free
     };
     const mb = (n) => (n / 1048576).toFixed(1);
     try {
@@ -6747,13 +6772,25 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
       main.loadScene(buf, /\.glb$/i.test(ex.file) ? 'glb' : 'sgl');
       _exampleLoad = null;
       main._examplesOpen = false;
-      main.render?.(); rebuildFn();
+      main.render?.(); done?.(); repaint();
     } catch (err) {
       console.error('[examples] load failed:', err);
       status('Load failed', true);
-      setTimeout(() => { _exampleLoad = null; rebuildFn(); }, 2500);
+      setTimeout(() => { _exampleLoad = null; repaint(); }, 2500);
     }
-  }));
+  };
+
+  q('#mm-new-example')?.addEventListener('click', async (e) => {
+    // DESKTOP: a FLYOUT beside the Files menu, not a list pushed in under the button (matt: "the
+    // way they currently appear below the 'new from examples' button is messy"). The VR panel
+    // cannot draw past its own edges, so it (and the saves overlay) keep the inline list.
+    const btn = e.currentTarget, dd = btn.closest('.desktop-dropdown');   // currentTarget is gone after an await
+    if (dd) { await fetchExamples(); toggleExamplesFlyout(dd, btn, loadExample); return; }
+    main._examplesOpen = !main._examplesOpen;
+    if (main._examplesOpen && !_examples) { rebuildFn(); await fetchExamples(); }
+    rebuildFn();
+  });
+  el.querySelectorAll('[data-example]').forEach((b) => b.addEventListener('click', () => loadExample(+b.dataset.example, rebuildFn)));
 
   q('#mm-clear-scene')?.addEventListener('click', () => {
     if (!main._clearSceneConfirm) {
