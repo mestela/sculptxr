@@ -10,6 +10,9 @@ import ShaderManager from '../render/ShaderManager.js';
 import { guardedError } from '../misc/LogGuard.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
+// How see-through a glass group is outside PBR (see _getGlassProxy).
+const GLASS_FLAT_OPACITY = 0.2;
+
 // Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
 const _MS_INV = mat4.create();
 const _MS_OUT = mat4.create();
@@ -332,6 +335,9 @@ class Mesh {
       var self = this;
       this._glassProxy = Object.create(this, {
         getTransmission: { value: () => 1 },
+        // Only PBR has the coat. Every other mode draws glass as the mesh's own shading at low
+        // opacity, through the shared per-step opacity material, so a cornea shows the iris.
+        getOpacity: { value: () => self.getShaderType() === Enums.Shader.PBR ? self.getOpacity() : Math.min(self.getOpacity(), GLASS_FLAT_OPACITY) },
         getThreeMesh: { value: () => self._renderData ? self._renderData._glassMesh || null : null },
         _albedoMaterials: { value: null, writable: true }, // the legacy per-mesh clone cache: its own
         syncGlassMesh: { value: null },

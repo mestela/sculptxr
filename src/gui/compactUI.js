@@ -40,7 +40,11 @@ export function dockedSidebarWidth() {
 function wanted() {
   const p = compactPref();
   if (p !== 'auto') return p === 'on';
-  return Math.min(window.innerWidth, window.innerHeight) < 500 || window.innerWidth < 700;
+  // The SCREEN as well as the window: Android Chrome widens the page to fit the desktop chrome,
+  // so a phone at 833x469 reported a 1243x544 window and stayed on the desktop layout.
+  const w = Math.min(window.innerWidth, screen.width || Infinity);
+  const h = Math.min(window.innerHeight, screen.height || Infinity);
+  return Math.min(w, h) < 500 || w < 700;
 }
 
 export function closeCompactSheets() {
