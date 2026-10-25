@@ -301,6 +301,120 @@ class Mesh {
     return iFaces.subarray(0, n);
   }
 
+  // GLASS IS BY GROUP, the same way hide is. A glass group's faces leave the main draw and go to
+  // a second three object that shares every vertex buffer and differs only in its index and its
+  // material -- the transmissive coat. Glass needs its own DRAW STATE (no depth write, drawn after
+  // the solids), which no per-vertex attribute can carry; a separate index can, and sharing the
+  // vertices keeps blendshapes, skinning and sculpting on one mesh. Kept on the RenderData, which
+  // every resolution of a Multimesh shares, so it is one setting for the whole object.
+  getGlassGroups() {
+    return this._renderData ? this._renderData._glassGroups || null : null;
+  }
+
+  setGlassGroups(set) {
+    if (!this._renderData) return;
+    this._renderData._glassGroups = set && set.size ? set : null;
+    this.updateIndexBuffer();
+  }
+
+  getGlassFaceTest() {
+    var gg = this.getGlassGroups();
+    var groups = this._meshData._facesGroups;
+    if (!gg || !groups || this._isVoxel) return null;
+    return (f) => gg.has(groups[f]);
+  }
+
+  // The glass draw's stand-in for this mesh: everything delegates to the mesh, except that it is
+  // transmissive and its three object is the glass one. That is all ShaderManager needs to give it
+  // the coat material, its uniforms and its draw order, with no glass branch of its own.
+  _getGlassProxy() {
+    if (!this._glassProxy) {
+      var self = this;
+      this._glassProxy = Object.create(this, {
+        getTransmission: { value: () => 1 },
+        getThreeMesh: { value: () => self._renderData ? self._renderData._glassMesh || null : null },
+        _albedoMaterials: { value: null, writable: true }, // the legacy per-mesh clone cache: its own
+        syncGlassMesh: { value: null },
+      });
+    }
+    return this._glassProxy;
+  }
+
+  // index: the glass faces' triangles (into the same vertex buffers as the main draw), or null.
+  _updateGlassMesh(index, n) {
+    var rd = this._renderData;
+    if (!rd) return;
+    var gm = rd._glassMesh;
+    if (!index || !n) {
+      if (gm) gm.visible = false;
+      return;
+    }
+    if (!gm) {
+      gm = rd._glassMesh = new THREE.Mesh(new THREE.BufferGeometry(), undefined);
+      gm.frustumCulled = false;
+      // Constant from birth, as the main mesh's are (see initThreeMesh): they are graph state.
+      // A cornea casting a shadow would darken the iris it covers.
+      gm.castShadow = false;
+      gm.receiveShadow = false;
+      // SHARED ATTRIBUTES, SEPARATE BINDINGS. Disposing the main geometry frees the GL buffers of
+      // attributes this one holds too, while its own cached binding still points at them -- so it
+      // is disposed alongside, and both rebind on the next draw.
+      var glassGeom = gm.geometry;
+      rd._geometry.addEventListener('dispose', () => glassGeom.dispose());
+    }
+    this._syncGlassAttributes();
+    gm.geometry.setIndex(new THREE.BufferAttribute(index, 1));
+    gm.geometry.setDrawRange(0, n);
+    gm.visible = true;
+    this.syncGlassMesh();
+  }
+
+  _syncGlassAttributes() {
+    var rd = this._renderData;
+    var geom = rd._glassMesh.geometry;
+    var src = rd._geometry.attributes, dst = geom.attributes, k;
+    for (k in src) if (dst[k] !== src[k]) geom.setAttribute(k, src[k]);
+    for (k in dst) if (!src[k]) geom.deleteAttribute(k);
+  }
+
+  // Per frame, before render (ShaderManager.updateUniforms): attributes the main geometry has
+  // replaced since, the material for the current shader, and the glass draw's uniforms + order.
+  syncGlassMesh(main) {
+    var gm = this._renderData && this._renderData._glassMesh;
+    if (!gm || !gm.visible) return;
+    var tm = this._renderData._threeMesh;
+    if (tm && gm.parent !== tm) tm.add(gm); // it follows the mesh's transform and visibility
+    this._syncGlassAttributes();
+    var proxy = this._getGlassProxy();
+    var mat = ShaderManager.getMaterialFor(proxy, this.getShaderType());
+    if (mat && gm.material !== mat) gm.material = mat;
+    if (main) ShaderManager.updateUniforms(proxy, main);
+  }
+
+  // One walk over the faces: hidden ones are dropped, glass ones (when glass is given) go to
+  // `glass`, the rest to `main`. triangles null is draw arrays, where index position IS the vertex.
+  _splitIndexByGlass(triangles, glass) {
+    var hidden = this.getHiddenFaceTest();
+    var fAr = this.getFaces();
+    var facesToTris = this.hasOnlyTriangles() ? null : this.getFacesToTriangles();
+    var nbTriIdx = this.getNbTriangles() * 3;
+    var main = new Uint32Array(nbTriIdx);
+    var gl = glass ? new Uint32Array(nbTriIdx) : null;
+    var nm = 0, ng = 0;
+    for (var f = 0, nbF = this.getNbFaces(); f < nbF; ++f) {
+      if (hidden && hidden(f)) continue;
+      var isGlass = glass && glass(f);
+      var t = (facesToTris ? facesToTris[f] : f) * 3;
+      var end = fAr[f * 4 + 3] === Utils.TRI_INDEX ? t + 3 : t + 6;
+      for (; t < end; ++t) {
+        var v = triangles ? triangles[t] : t;
+        if (isGlass) gl[ng++] = v;
+        else main[nm++] = v;
+      }
+    }
+    return { main: main.subarray(0, nm), glass: gl ? gl.subarray(0, ng) : null };
+  }
+
   getFaceEdges() {
     return this._meshData._faceEdges;
   }
@@ -3014,6 +3128,18 @@ class Mesh {
   updateIndexBuffer() {
     var geom = this._renderData._geometry;
     if (this.isUsingDrawArrays()) {
+        // Glass under draw arrays: both draws get an index into the per-triangle vertices
+        // (triangle t is vertices 3t..3t+2), since zeroing the glass triangles out of the shared
+        // positions, as hide does, would zero them for the glass draw as well.
+        var glassDA = this.getGlassFaceTest();
+        if (glassDA) {
+          var splitDA = this._splitIndexByGlass(null, glassDA);
+          geom.setIndex(new THREE.BufferAttribute(splitDA.main, 1));
+          geom.setDrawRange(0, splitDA.main.length);
+          this._updateGlassMesh(splitDA.glass, splitDA.glass.length);
+          return;
+        }
+        this._updateGlassMesh(null, 0);
         if (geom.index) {
             geom.setIndex(null);
             geom.dispose();
@@ -3043,22 +3169,17 @@ class Mesh {
 
     if (!triangles) return; // Skip if no valid index data
 
-    // Hidden faces: draw a compacted copy without their triangles (the shared array is untouched).
+    // Hidden faces leave the index and glass faces move to the glass draw's, in compacted copies
+    // (the shared array is untouched).
     var nbTriIdx = this.getNbTriangles() * 3;
-    var hidden = this._isVoxel ? null : this.getHiddenFaceTest();
-    if (hidden) {
-      var fAr = this.getFaces();
-      var facesToTris = this.hasOnlyTriangles() ? null : this.getFacesToTriangles();
-      var visible = new Uint32Array(nbTriIdx);
-      var n = 0;
-      for (var f = 0, nbF = this.getNbFaces(); f < nbF; ++f) {
-        if (hidden(f)) continue;
-        var t = (facesToTris ? facesToTris[f] : f) * 3;
-        var end = fAr[f * 4 + 3] === Utils.TRI_INDEX ? t + 3 : t + 6;
-        for (; t < end; ++t) visible[n++] = triangles[t];
-      }
-      triangles = visible;
-      nbTriIdx = n;
+    var glass = this._isVoxel ? null : this.getGlassFaceTest();
+    if (glass || (!this._isVoxel && this.getHiddenFaceTest())) {
+      var split = this._splitIndexByGlass(triangles, glass);
+      triangles = split.main;
+      nbTriIdx = triangles.length;
+      this._updateGlassMesh(split.glass, split.glass ? split.glass.length : 0);
+    } else {
+      this._updateGlassMesh(null, 0);
     }
 
     // Relax check for index length
@@ -3227,6 +3348,8 @@ class Mesh {
     this.setTexture0(mesh.getTexture0());
     this.setCurvature(mesh.getCurvature());
     this.setOpacity(mesh.getOpacity());
+    var gg = mesh.getGlassGroups ? mesh.getGlassGroups() : null;
+    if (gg) this.setGlassGroups(new Set(gg));
   }
 
   copyTransformData(mesh) {

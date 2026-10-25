@@ -177,6 +177,13 @@ Import.importSGL = function (buffer, gl, main) {
         off += nbElts;
       }
 
+      // v26: glass group ids, applied to the finished object below (its render data is shared)
+      if (version >= 26) {
+        nbElts = u32a[off++];
+        if (nbElts > 0) baseMesh._parsedGlass = new Set(i32a.subarray(off, off + nbElts));
+        off += nbElts;
+      }
+
       if (version >= 4) {
         let decodedStr = "";
         for (let k = 0; k < 16; k++) {
@@ -256,6 +263,7 @@ Import.importSGL = function (buffer, gl, main) {
     }
 
     var finalMesh = isMulti ? meshes[meshes.length - 1] : baseMesh;
+    if (baseMesh._parsedGlass && finalMesh.setGlassGroups) finalMesh.setGlassGroups(baseMesh._parsedGlass);
     if (baseMesh._permanentStaticLabel) {
       finalMesh._permanentStaticLabel = baseMesh._permanentStaticLabel;
     }

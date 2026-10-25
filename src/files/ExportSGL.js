@@ -42,7 +42,9 @@ var Export = {};
 //    the default length) was byte-identical to an untouched auto one and came back auto.
 // 25 JIGGLE: the Face tool's spring jiggle (on, strength, speed, damping, range) on every mesh
 //    with blendshapes. It is one setting for the scene; the reader takes the last one it meets.
-Export.VERSION = 25;
+// 26 GLASS GROUPS: the face-group ids drawn with the transmissive coat (Mesh.setGlassGroups),
+//    count + ids after each level's face groups. One setting per object; every level carries it.
+Export.VERSION = 26;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -191,6 +193,9 @@ Export.exportSGL = function (meshes, main) {
 
       // v12: per-face group ids (nbGroups u32 + Int32 data)
       nbBytes += 4 + ((lvl.getFacesGroups && lvl.getFacesGroups()) ? lvl.getNbFaces() * 4 : 0);
+      // v26: glass group ids (count u32 + ids)
+      var glassG = mesh.getGlassGroups ? mesh.getGlassGroups() : null;
+      nbBytes += 4 + (glassG ? glassG.size * 4 : 0);
 
       nbBytes += 32;
     }
@@ -436,6 +441,11 @@ Export.exportSGL = function (meshes, main) {
             off += (nbFaces - copyG);
           }
         }
+
+        // v26: glass group ids
+        var glassSet = mesh.getGlassGroups ? mesh.getGlassGroups() : null;
+        u32a[off++] = glassSet ? glassSet.size : 0;
+        if (glassSet) for (var gid of glassSet) u32a[off++] = gid;
 
         // The label lives on the Multimesh (`mesh`), not its levels (`lvl` is a bare
         // MeshResolution) — so read it from `mesh` first or multi-meshes save "Mesh N".

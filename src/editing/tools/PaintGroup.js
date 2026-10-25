@@ -201,6 +201,27 @@ class PaintGroup extends SculptBase {
     apply(next);
   }
 
+  // The active group becomes glass, or stops being glass: a second draw with the transmissive
+  // coat (Mesh.setGlassGroups). For a cornea on a one-object head.
+  toggleGlass() {
+    var mesh = this.getMesh();
+    if (!mesh || !mesh.getFacesGroups()) return;
+    var pre = mesh.getGlassGroups();
+    var next = new Set(pre || []);
+    if (next.has(this._group)) next.delete(this._group);
+    else next.add(this._group);
+    var preCopy = pre ? new Set(pre) : null;
+    var main = this._main;
+    var apply = (set) => { mesh.setGlassGroups(set); main.render(); };
+    main.getStateManager().pushStateCustom(() => apply(preCopy), () => apply(next));
+    apply(next);
+  }
+
+  isGlass() {
+    var gg = this.getMesh()?.getGlassGroups();
+    return !!(gg && gg.has(this._group));
+  }
+
   // others=false masks the active group; others=true masks everything else and frees the group.
   maskGroup(others) {
     var mesh = this.getMesh();

@@ -3719,7 +3719,8 @@ function buildSculptingHTML(main, part) {
         <div class="mm-choice-grid cols-2">
           <button class="mm-action-btn" id="mm-group-mask">Mask</button>
           <button class="mm-action-btn" id="mm-group-mask-others">Mask Others</button>
-        </div>`;
+        </div>
+        <button class="mm-toggle${tool.isGlass?.() ? ' active' : ''}" id="mm-group-glass">Glass</button>`;
     }
 
     // ── Voxel-specific controls (ported from the VR MiniPanel; align-to-hand omitted) ──
@@ -6155,6 +6156,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         if (tool.setGroup) tool.setGroup(v);
         const sw = el.querySelector('#mm-group-swatch');
         if (sw) sw.style.background = groupSwatchCss(v);
+        el.querySelector('#mm-group-glass')?.classList.toggle('active', !!tool.isGlass?.());
       }, null, sliderDirtyFn
     );
     if (tool.pickGroup) tool._onPicked = repaintFn;
@@ -6166,6 +6168,10 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     groupAction('#mm-group-unhide', () => tool.hideGroups('show'));
     groupAction('#mm-group-mask', () => tool.maskGroup(false));
     groupAction('#mm-group-mask-others', () => tool.maskGroup(true));
+    groupAction('#mm-group-glass', () => {
+      tool.toggleGlass();
+      el.querySelector('#mm-group-glass')?.classList.toggle('active', !!tool.isGlass?.());
+    });
     el.querySelector('#mm-group-show')?.addEventListener('click', (e) => {
       const mesh = main.getMesh?.();
       const on = !(mesh?.getShowFacesGroups?.() ?? false);

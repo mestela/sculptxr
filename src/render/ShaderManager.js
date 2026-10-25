@@ -220,6 +220,8 @@ ShaderManager.getMaterialFor = function(mesh, shaderId) {
 ShaderManager.updateUniforms = function(mesh, main) {
   var threeMesh = mesh.getThreeMesh();
   if (!threeMesh || !threeMesh.material) return;
+  // Glass groups' second draw (Mesh.setGlassGroups) comes back through here as its own proxy.
+  if (mesh.syncGlassMesh) mesh.syncGlassMesh(main);
 
   // GLASS DRAWS LAST, BECAUSE SORTING CANNOT DECIDE THIS ONE.
   //
