@@ -1,6 +1,7 @@
 import TR from './GuiTR.js';
 import { TAB_ICONS, ICON_PIN } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
+import { installCompactUI, isCompact, setCompactBarVisible, removeCompactBar } from './compactUI.js';
 import { uiReorg, wireGroups, applyUISweep, groupSectionTitles, pageDefaultOpen, hoistGroupsToTop } from './htmlvr/uiTokens.js';
 
 // The tab the sidebar opens on when nothing has been remembered and nothing is pinned.
@@ -244,9 +245,12 @@ class Gui {
       zIndex: '1050'
     });
     document.body.appendChild(sidebarEl);
+    // Before the tabs are made: they read isCompact() to decide whether saved pins dim them.
+    installCompactUI(this);
 
     // Resize handle — vertical 3-dot grip on the left edge of the sidebar.
     const sidebarHandle = document.createElement('div');
+    sidebarHandle.className = 'gui-sidebar-grip';
     Object.assign(sidebarHandle.style, {
       position: 'absolute', top: '0', left: '0', bottom: '0', width: '14px',
       cursor: 'ew-resize', zIndex: '9999', display: 'flex', touchAction: 'none',
@@ -440,7 +444,7 @@ class Gui {
       // document yet -- marking then finds nothing, and a frame later it still did not. The
       // saved state IS available at this point, so the tab can be born dimmed and
       // _updatePinnedTabStates only has to handle changes made during the session.
-      if ((getOptionsURL().desktopPins || {})[panelName]) tab.classList.add('tab-pinned');
+      if (!isCompact() && (getOptionsURL().desktopPins || {})[panelName]) tab.classList.add('tab-pinned');
       const span = document.createElement('span');
       span.innerHTML = TAB_SVGS[panelName] ?? '';
       tab.appendChild(span);
@@ -1059,9 +1063,11 @@ class Gui {
     this._topbarEl = null;
     this._sidebarEl?.parentNode?.removeChild(this._sidebarEl);
     this._sidebarEl = null;
+    removeCompactBar();
   }
 
   setVisibility(bool) {
+    setCompactBarVisible(bool);
     if (this._topbarEl)  this._topbarEl.style.display  = bool ? '' : 'none';
     if (this._sidebarEl) this._sidebarEl.style.display = bool ? '' : 'none';
   }
@@ -1346,9 +1352,24 @@ class Gui {
   // Restored AFTER the docked sections are built, because floating one rewrites its sidebar
   // tab into the "this section is floating" placeholder -- and a tab that has not been built
   // yet has nothing to rewrite.
+  // COMPACT PUTS THE FLOATS AWAY WITHOUT FORGETTING THEM. A floated section would sit over the
+  // model on a phone, so entering compact docks every panel back -- skipping the save, so the
+  // saved arrangement is still there to restore when the window is wide again.
+  _onCompactChanged(on) {
+    if (!on) { this._restorePinnedSections(); return; }
+    for (const [id, panel] of this._floatPanels ?? []) {
+      panel.dispose();
+      this._floatPanels.delete(id);
+      this._refreshDesktopSection(id);
+    }
+    for (const panel of this._menuFloats?.values() ?? []) panel.dispose();
+    this._menuFloats?.clear();
+    this._updatePinnedTabStates();
+  }
+
   _restorePinnedSections() {
     const saved = getOptionsURL().desktopPins;
-    if (!saved) return;
+    if (!saved || isCompact()) return;
     for (const id of Object.keys(saved)) {
       const at = saved[id];
       if (!this._sectionSpec(id)) continue;   // a section that no longer exists

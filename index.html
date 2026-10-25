@@ -4,12 +4,12 @@
 <head>
     <meta charset='utf-8' />
     <meta name='viewport'
-        content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v4.5.53</title>
+        content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0, viewport-fit=cover'>
+    <title>SculptXR v4.5.58</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v4.5.53
+                                                              VERSION: v4.5.58
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -462,10 +462,12 @@
             const btnVR = document.getElementById('vr-button');
             const btnAR = document.getElementById('ar-button');
 
-            // Quick timeout to warn users if browser hasn't registered WebXR
-            const isIpad = /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            // Quick timeout to warn users if browser hasn't registered WebXR. Not on Apple devices:
+            // an iPhone, iPad or Mac never has a headset to find, so a restart would not help.
+            // (Vision Pro also says Macintosh, but there the Enter VR button shows and this stays quiet.)
+            const isApple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
             setTimeout(() => {
-                if (!isIpad && btnVR && btnVR.style.display === 'none' && btnAR && btnAR.style.display === 'none') {
+                if (!isApple && btnVR && btnVR.style.display === 'none' && btnAR && btnAR.style.display === 'none') {
                     const warning = document.getElementById('xr-warning');
                     if (warning) {
                         warning.style.display = 'block';

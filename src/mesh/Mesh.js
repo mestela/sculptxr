@@ -10,6 +10,9 @@ import ShaderManager from '../render/ShaderManager.js';
 import { guardedError } from '../misc/LogGuard.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
+// How see-through a glass group is outside PBR (see _getGlassProxy).
+const GLASS_FLAT_OPACITY = 0.2;
+
 // Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
 const _MS_INV = mat4.create();
 const _MS_OUT = mat4.create();
@@ -332,6 +335,9 @@ class Mesh {
       var self = this;
       this._glassProxy = Object.create(this, {
         getTransmission: { value: () => 1 },
+        // Only PBR has the coat. Every other mode draws glass as the mesh's own shading at low
+        // opacity, through the shared per-step opacity material, so a cornea shows the iris.
+        getOpacity: { value: () => self.getShaderType() === Enums.Shader.PBR ? self.getOpacity() : Math.min(self.getOpacity(), GLASS_FLAT_OPACITY) },
         getThreeMesh: { value: () => self._renderData ? self._renderData._glassMesh || null : null },
         _albedoMaterials: { value: null, writable: true }, // the legacy per-mesh clone cache: its own
         syncGlassMesh: { value: null },
@@ -2146,7 +2152,38 @@ class Mesh {
   /////////////////
   updateCenter() {
     var box = this.getLocalBound();
-    vec3.set(this._transformData._center, (box[0] + box[3]) * 0.5, (box[1] + box[4]) * 0.5, (box[2] + box[5]) * 0.5);
+    var cen = this._transformData._center;
+    vec3.set(cen, (box[0] + box[3]) * 0.5, (box[1] + box[4]) * 0.5, (box[2] + box[5]) * 0.5);
+    vec3.scaleAndAdd(cen, cen, this._transformData._symmetryNormal, this._seamOffset(cen));
+  }
+
+  // THE MIRROR PLANE GOES THROUGH THE SEAM, NOT THROUGH THE MIDDLE OF THE BOX. The symmetry origin
+  // is this centre, and the box centre is only on the midline while the shape is symmetric. A
+  // user's Quest 3 head (testhead.sxr) had its seam at x = 0 and its box centre at x = 0.515, so
+  // no vertex was on the plane, the topological pairing had nothing to seed from, and Symmetrize
+  // fell back to a loose nearest-point match that tore the mesh; every mirrored stroke landed a
+  // unit off too. A mirror-modelled mesh has a column of vertices sharing one coordinate on its
+  // midline -- the densest such cluster near the box centre IS the plane. No cluster (dyntopo,
+  // voxel, a seam that runs between vertices) keeps the box centre, as before.
+  _seamOffset(cen) {
+    var n = this._transformData._symmetryNormal;
+    var vAr = this.getVertices();
+    var nbVertices = this.getNbVertices();
+    if (!vAr || !nbVertices) return 0;
+    var tol = this.computeLocalRadius() * 0.02;
+    var near = [];
+    for (var i = 0; i < nbVertices; ++i) {
+      var i3 = i * 3;
+      var d = (vAr[i3] - cen[0]) * n[0] + (vAr[i3 + 1] - cen[1]) * n[1] + (vAr[i3 + 2] - cen[2]) * n[2];
+      if (Math.abs(d) < tol) near.push(d);
+    }
+    near.sort(function (a, b) { return a - b; });
+    var best = 0, bestAt = 0;
+    for (var lo = 0, hi = 0; hi < near.length; ++hi) {
+      while (near[hi] - near[lo] > 1e-4) ++lo;
+      if (hi - lo + 1 > best) { best = hi - lo + 1; bestAt = lo; }
+    }
+    return best >= 8 ? near[bestAt + (best >> 1)] : 0;
   }
 
   /** Pre compute mv and mvp matrices as well as the depth center */

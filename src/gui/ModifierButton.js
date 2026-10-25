@@ -101,7 +101,7 @@ export default class ModifierButton {
         this._sbObserver.observe(sb);
       }
     }
-    if (sb.style.display === 'none') return 0;
+    if (sb.style.display === 'none' || document.body.classList.contains('ui-compact')) return 0;
     const r = sb.getBoundingClientRect();
     // Only a sidebar docked on the right edge is in the way of a right-hand button.
     return r.width && r.right >= window.innerWidth - 2 ? r.width : 0;

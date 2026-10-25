@@ -21,6 +21,8 @@ const NAMES = [
   'plus',
   // outliner reorder
   'chevron-up',
+  // compact (phone) layout: the button that opens the top-bar menus
+  'bars',
 ];
 const out = {};
 for (const n of NAMES) {

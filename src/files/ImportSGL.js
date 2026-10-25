@@ -641,6 +641,16 @@ Import.importSGL = function (buffer, gl, main) {
   // NOTE: FrameGroup structure is reconstructed by Scene.loadScene AFTER these meshes are
   // added to the scene — setMeshParent/getMeshes need them in main._meshes first.
 
+  // The saved centre is the symmetry plane's origin, and it is whatever the box centre was at
+  // some earlier save -- so a plane that was off the seam stayed off it through every reload.
+  // Re-seat it on the seam (Mesh._seamOffset); the other two axes stay as saved.
+  for (var s = 0; s < meshes.length; ++s) {
+    var sm = meshes[s];
+    if (!sm._seamOffset || !sm._meshData || !sm._meshData._octree) continue;
+    var sc = sm.getCenter(), sn = sm.getSymmetryNormal(), so = sm._seamOffset(sc);
+    for (var k = 0; k < 3; ++k) sc[k] += sn[k] * so;
+  }
+
   return meshes;
 };
 

@@ -698,6 +698,14 @@ class SculptGL extends Scene {
     let _touchFallbackPending = null; // {x,y,force} saved at touchstart
     let _touchFallbackActive  = false;
 
+    // THE LOUPE. A held finger on the canvas brings up Safari's magnifier even with
+    // user-select:none and touch-callout:none on it; only cancelling the touchstart stops it.
+    // Pointer events still arrive. The native dblclick this also cancels is not needed: the
+    // touch gesture engine does its own double-tap.
+    canvas.addEventListener('touchstart', (e) => {
+      for (const touch of e.changedTouches) if (touch.touchType !== 'stylus') { e.preventDefault(); return; }
+    }, { passive: false });
+
     canvas.addEventListener('touchstart', (e) => {
       for (const touch of e.changedTouches) {
         if (touch.touchType !== 'stylus') continue;
