@@ -504,6 +504,7 @@ class MeshSymmetry {
 
   symmetrize(direction = 0, undoState = null) {
     this.computeSymmetryMap();
+    if (!this._isTopo) { this._symmetrizeBySurface(direction); return; }
 
     const map = this._map;
     const sides = this._sides; // Might be undefined if old version?
@@ -616,10 +617,93 @@ class MeshSymmetry {
     if (mesh.updateResolution) mesh.updateResolution();
   }
 
+  // WITHOUT MIRRORED TOPOLOGY, MIRROR THE SURFACE, NOT THE VERTICES. On a mesh whose two halves
+  // were meshed independently (a quad remesh, a Nomad remesh) no vertex has a partner: on the
+  // user's testhead.sxr only the 74 seam vertices did, and the rest were ~0.7 from the nearest
+  // mirror point with edges of 1.6. The geometric map pairs each one with whatever is near anyway
+  // and copies the partner's mirror over it -- neighbours land on one spot and the half crumples.
+  // So each destination vertex instead moves to the mirror of the closest point on the SOURCE
+  // half's surface: its own topology kept, its shape taken from the other side. A spike pulled
+  // far off the surface comes back onto it, because the closest point is on the surface.
+  _destSign(direction) { return direction === 0 ? 1 : -1; } // L->R writes the d > 0 half
+
+  _symmetrizeBySurface(direction) {
+    const mesh = this._mesh;
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+    const nbVertices = mesh.getNbVertices();
+    const ptPlane = mesh.getSymmetryOrigin();
+    const nPlane = mesh.getSymmetryNormal();
+    const sign = this._destSign(direction);
+    const radius = mesh.computeLocalRadius();
+    const dist = (x, y, z) => (x - ptPlane[0]) * nPlane[0] + (y - ptPlane[1]) * nPlane[1] + (z - ptPlane[2]) * nPlane[2];
+
+    const out = new Float32Array(vAr);
+    const q = [0.0, 0.0, 0.0], cp = [0.0, 0.0, 0.0], best = [0.0, 0.0, 0.0];
+    const v1 = [0.0, 0.0, 0.0], v2 = [0.0, 0.0, 0.0], v3 = [0.0, 0.0, 0.0], v4 = [0.0, 0.0, 0.0];
+    const load = (dst, id) => { dst[0] = vAr[id * 3]; dst[1] = vAr[id * 3 + 1]; dst[2] = vAr[id * 3 + 2]; };
+
+    for (let i = 0; i < nbVertices; ++i) {
+      const i3 = i * 3;
+      const d = dist(vAr[i3], vAr[i3 + 1], vAr[i3 + 2]) * sign;
+      if (d < -1e-4) continue; // source half: left as it is
+      if (d <= 1e-4) { // seam: onto the plane
+        for (let k = 0; k < 3; ++k) out[i3 + k] = vAr[i3 + k] - nPlane[k] * d * sign;
+        continue;
+      }
+      q[0] = vAr[i3]; q[1] = vAr[i3 + 1]; q[2] = vAr[i3 + 2];
+      Geometry.mirrorPoint(q, ptPlane, nPlane);
+
+      // Grow the search until the closest source point found lies inside it -- then nothing
+      // outside can be closer.
+      let found = false;
+      for (let r = radius * 0.02; r < radius * 4 && !found; r *= 2) {
+        const faces = mesh.intersectSphere(q, r * r);
+        let bestSq = r * r;
+        for (let k = 0, nf = faces.length; k < nf; ++k) {
+          const f4 = faces[k] * 4;
+          const a = fAr[f4], b = fAr[f4 + 1], c = fAr[f4 + 2], e = fAr[f4 + 3];
+          const isQuad = e !== Utils.TRI_INDEX;
+          // Only faces on the source half: the destination is what is being replaced.
+          let cx = vAr[a * 3] + vAr[b * 3] + vAr[c * 3], cy = vAr[a * 3 + 1] + vAr[b * 3 + 1] + vAr[c * 3 + 1];
+          let cz = vAr[a * 3 + 2] + vAr[b * 3 + 2] + vAr[c * 3 + 2];
+          if (isQuad) { cx += vAr[e * 3]; cy += vAr[e * 3 + 1]; cz += vAr[e * 3 + 2]; }
+          if (dist(cx / (isQuad ? 4 : 3), cy / (isQuad ? 4 : 3), cz / (isQuad ? 4 : 3)) * sign > 0) continue;
+          load(v1, a); load(v2, b); load(v3, c);
+          let dSq = Geometry.distance2PointTriangle(q, v1, v2, v3, cp);
+          if (dSq < bestSq) { bestSq = dSq; vec3.copy(best, cp); found = true; }
+          if (isQuad) {
+            load(v4, e);
+            dSq = Geometry.distance2PointTriangle(q, v1, v3, v4, cp);
+            if (dSq < bestSq) { bestSq = dSq; vec3.copy(best, cp); found = true; }
+          }
+        }
+      }
+      if (!found) continue;
+      Geometry.mirrorPoint(best, ptPlane, nPlane);
+      out[i3] = best[0]; out[i3 + 1] = best[1]; out[i3 + 2] = best[2];
+    }
+
+    vAr.set(out);
+    mesh.updateGeometry();
+    if (mesh.updateResolution) mesh.updateResolution();
+  }
+
   // New method: getSymmetryDestinations(direction)
   // Returns list of vertex indices that WILL be modified
   getSymmetryDestinations(direction = 0) {
     this.computeSymmetryMap();
+    if (!this._isTopo) {
+      // Everything _symmetrizeBySurface may write: the destination half and the seam.
+      const mesh = this._mesh, vAr = mesh.getVertices();
+      const ptPlane = mesh.getSymmetryOrigin(), nPlane = mesh.getSymmetryNormal();
+      const sign = this._destSign(direction), dests = [];
+      for (let i = 0, nb = mesh.getNbVertices(); i < nb; ++i) {
+        const i3 = i * 3;
+        if (Geometry.pointPlaneDistance([vAr[i3], vAr[i3 + 1], vAr[i3 + 2]], ptPlane, nPlane) * sign >= -1e-4) dests.push(i);
+      }
+      return new Uint32Array(dests);
+    }
 
     const map = this._map;
     const sides = this._sides;

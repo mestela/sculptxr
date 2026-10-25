@@ -3119,6 +3119,8 @@ export function buildSectionHTML_topology(main) {
   const res = Remesh.RESOLUTION;
 
   const topo = main.getGui?.()?._ctrlTopology ?? null;
+  const symDead = !!(mesh && (mesh._isVoxel || mesh.constructor?.name === 'MeshProxy'));
+  const symDeadTip = ' disabled title="Not available on a voxel object: the surface is rebuilt from the voxel field, so a mirrored mesh would not survive the next edit."';
   const topoTarget = topo?._targetFaces ?? 1000;
   const topoSteer  = topo?._steeringWeight ?? 1.0;
 
@@ -3188,6 +3190,15 @@ export function buildSectionHTML_topology(main) {
       <input type="checkbox" id="mm-quad-symmetry">
     </div>
     <button class="mm-action-btn" id="mm-quadremesh" ${mesh ? '' : 'disabled'}>Quadremesh</button>
+
+    ${/* SYMMETRIZE IS A ONE-SHOT MESH OPERATION, so it lives with the others. It sat under the
+         sculpting Sym toggle in the tool properties, which is a brush mode; matt: "it feels like
+         these symmetry tools should be in the topology panel." The toggle stays with the brush. */ ''}
+    <div class="mm-section-title">Symmetrize</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-sym-lr"${symDead ? symDeadTip : (mesh ? '' : ' disabled')}>L→R</button>
+      <button class="mm-action-btn" id="mm-sym-rl"${symDead ? symDeadTip : (mesh ? '' : ' disabled')}>R→L</button>
+    </div>
 
     <div class="mm-section-title">Mesh Health</div>
     <button class="mm-action-btn" id="mm-validate">Validate Manifold</button>
@@ -3929,12 +3940,6 @@ function buildSculptingHTML(main, part) {
     <div class="mm-section-title">Symmetry</div>
     <button class="mm-toggle mm-tick${symOn ? ' active' : ''}${symDead ? ' mm-dim' : ''}" id="mm-sym-toggle"${
       symDead ? ' disabled title="Not available on a voxel object: voxel strokes are not mirrored yet."' : ''}>Sym</button>
-    <div class="mm-row" style="gap:6px">
-      <button class="mm-action-btn${symDead ? ' mm-dim' : ''}" id="mm-sym-lr" style="flex:1"${
-        symDead ? ' disabled title="Not available on a voxel object: the surface is rebuilt from the voxel field, so a mirrored mesh would not survive the next edit."' : ''}>Symmetrize L→R</button>
-      <button class="mm-action-btn${symDead ? ' mm-dim' : ''}" id="mm-sym-rl" style="flex:1"${
-        symDead ? ' disabled title="Not available on a voxel object: the surface is rebuilt from the voxel field, so a mirrored mesh would not survive the next edit."' : ''}>Symmetrize R→L</button>
-    </div>
     <button class="mm-toggle${contOn ? ' active' : ''}" id="mm-continuous" style="margin-top:4px">
       Continuous ${contOn ? '✓ On' : 'Off'}
     </button>
@@ -6057,6 +6062,13 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
   }
   el.querySelector('#mm-quadremesh')?.addEventListener('click', () => { topo?.remeshQuads?.(); });
 
+  el.querySelector('#mm-sym-lr')?.addEventListener('click', () => {
+    main.getGui?.()._ctrlSculpting?.onSymLR?.(); main.render?.();
+  });
+  el.querySelector('#mm-sym-rl')?.addEventListener('click', () => {
+    main.getGui?.()._ctrlSculpting?.onSymRL?.(); main.render?.();
+  });
+
   el.querySelector('#mm-validate')?.addEventListener('click',  () => { topo?.validateMesh?.(); });
   el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {
     el.querySelector('#mm-auto-heal')?.classList.toggle('active');
@@ -6430,13 +6442,6 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       lightRepaintFn();
     });
   }
-
-  el.querySelector('#mm-sym-lr')?.addEventListener('click', () => {
-    main.getGui?.()._ctrlSculpting?.onSymLR?.(); main.render?.();
-  });
-  el.querySelector('#mm-sym-rl')?.addEventListener('click', () => {
-    main.getGui?.()._ctrlSculpting?.onSymRL?.(); main.render?.();
-  });
 
   const contBtn = el.querySelector('#mm-continuous');
   if (contBtn && sm) {

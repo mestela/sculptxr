@@ -137,24 +137,15 @@ ShaderMatcap.computeRotCorrection = function (view, out) {
   // 1. Get Camera World Matrix (Inverse View)
   mat4.invert(mats.viewInv, view);
 
-  // 2. Extract Camera Position (World Space) and use it as Forward Vector
-  // We assume the object is at (0,0,0) (common in SculptGL/VR focus).
-  // Ideally we'd use (CameraPos - ModelPos), but ModelPos varies.
-  // Using CameraPos as the "Look Vector" is a robust approximation for "Billboard aiming".
-  const cx = mats.viewInv[12];
-  const cy = mats.viewInv[13];
-  const cz = mats.viewInv[14];
-
-  // Back Vector = Normalize(CameraPos - Origin)
-  // This aims the Matcap at the viewer's *Position*.
-  let len = Math.sqrt(cx * cx + cy * cy + cz * cz);
-  let bx, by, bz;
-  if (len < 0.001) {
-    // User inside object? Use Camera Back as fallback.
-    bx = mats.viewInv[8]; by = mats.viewInv[9]; bz = mats.viewInv[10];
-  } else {
-    bx = cx / len; by = cy / len; bz = cz / len;
-  }
+  // 2. Back Vector = the camera's own back axis.
+  // THIS USED TO BE THE CAMERA'S POSITION, on the assumption that the model sits at the world
+  // origin -- true of the default sphere, false of an imported model. A user's head
+  // (testhead.sxr) sits ~400 units above the origin, so the aim from the origin pointed 66
+  // degrees up from the real view direction and the matcap lit the face from above; matt: "the
+  // normals look really broken on the face". The orbit camera looks at its pivot, so its back
+  // axis IS camera-minus-pivot, wherever the model is. In a session this view is the frozen
+  // desktop camera (see NodeMaterials), so it is still constant and the head still has no say.
+  const bx = mats.viewInv[8], by = mats.viewInv[9], bz = mats.viewInv[10];
 
   // 3. Construct Stabilized Basis (Billboard)
   // We keep 'Back' (Aim at Viewer), and force 'Right' to be horizontal.
@@ -164,7 +155,7 @@ ShaderMatcap.computeRotCorrection = function (view, out) {
   let srz = -bx;
 
   // Normalize Right
-  len = Math.sqrt(srx * srx + srz * srz);
+  const len = Math.sqrt(srx * srx + srz * srz);
   if (len < 0.001) {
     // Looking from top/bottom. Fallback to Camera Right.
     srx = mats.viewInv[0]; sry = mats.viewInv[1]; srz = mats.viewInv[2];
