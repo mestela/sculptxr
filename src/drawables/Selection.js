@@ -370,8 +370,14 @@ class Selection {
       // Red otherwise, as it always was.
       const _tool = main.getSculptManager().getCurrentTool();
       const _cc = this._threeCircle.material.color;
-      if (!(_tool && _tool.cursorColor && _tool.cursorColor(_cc, mesh, picking.getPickedFace(), interPoint))) _cc.setHex(0xff0000);
+      // A STROKE THE LAYER GATE WOULD REFUSE (locked Base, say) shows a faded grey ring, not the
+      // red one that promises a sculpt.
+      const _blocked = sm && sm.isLayerBlocked && sm.isLayerBlocked();
+      if (_blocked) _cc.setHex(0x8a8a8a);
+      else if (!(_tool && _tool.cursorColor && _tool.cursorColor(_cc, mesh, picking.getPickedFace(), interPoint))) _cc.setHex(0xff0000);
+      this._threeCircle.material.opacity = _blocked ? 0.45 : 1;
       this._threeDot.material.color.copy(_cc);
+      this._threeDot.material.opacity = this._threeCircle.material.opacity;
       this._threeDot.position.fromArray(interPoint);
 
       // Keep the dot a fixed screen-space size regardless of zoom level.

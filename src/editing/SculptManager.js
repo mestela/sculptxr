@@ -357,7 +357,9 @@ class SculptManager {
   // No active layer → always allowed (normal base sculpting is unaffected).
   // Active layer → must be visible (not muted) and at weight 1, so the delta
   // capture in Mesh.updateGeometry stays correct.
-  _canSculptActiveBlendshapeLayer() {
+  // `peek`: answer without side effects (the cursor asks every frame; a combo would otherwise
+  // have its sample prepared just by hovering it), so a combo always reads as sculptable.
+  _canSculptActiveBlendshapeLayer(peek = false) {
     const reg = window._animationRegistry;
     const mesh = this._main.getMesh?.();
     if (!reg || !mesh) return true;
@@ -386,8 +388,22 @@ class SculptManager {
       ? reg.blendshapePreviewAt(track, name, track.blendshapeTracks?.get(name))
       : 0;
     // A combo is sculpted at whatever pose it is in: the stroke edits (or makes) its sample there.
-    if (reg.isBlendshapeCombo && reg.isBlendshapeCombo(track, name)) return reg.prepareComboSculpt(track, name);
+    if (reg.isBlendshapeCombo && reg.isBlendshapeCombo(track, name)) return peek || reg.prepareComboSculpt(track, name);
     return Math.abs(w - 1) < 1e-3;
+  }
+
+  // Tools the layer gate lets through: they move the object's matrix, make joints, drive
+  // weights or write group ids -- never vertex deltas. See the gate in start().
+  _layerGateExempt() {
+    const t = this._toolIndex, T = Enums.Tools;
+    return t === T.TRANSFORM || t === T.TRANSFORM_VR || t === T.BONE_DRAW || t === T.FACE || t === T.PAINT_GROUP;
+  }
+
+  // True when a stroke would be refused by the layer gate (locked Base, locked or hidden layer,
+  // layer not at weight 1). The brush cursor greys out on it: a red ring over a locked Base
+  // promised a stroke that then did nothing (matt kept forgetting why Move would not sculpt).
+  isLayerBlocked() {
+    return !this._layerGateExempt() && !this._canSculptActiveBlendshapeLayer(true);
   }
 
   start(ctrl) {
@@ -480,14 +496,8 @@ class SculptManager {
     // default), which only flashed the palette instead of letting the object move.
     // BONE_DRAW is exempt for the same reason: it creates joint objects, it never writes
     // vertex deltas, so a locked/hidden blendshape layer has no bearing on it.
-    const _isTransform = this._toolIndex === Enums.Tools.TRANSFORM
-                      || this._toolIndex === Enums.Tools.TRANSFORM_VR
-                      || this._toolIndex === Enums.Tools.BONE_DRAW
-                      // FACE drives weights, never vertices, so no layer capture is at stake.
-                      || this._toolIndex === Enums.Tools.FACE
-                      // GROUPS writes face group ids (and picks them), never vertices.
-                      || this._toolIndex === Enums.Tools.PAINT_GROUP;
-    if (!_isTransform && !this._canSculptActiveBlendshapeLayer()) {
+    // FACE drives weights, never vertices, and GROUPS writes face group ids: _layerGateExempt.
+    if (!this._layerGateExempt() && !this._canSculptActiveBlendshapeLayer()) {
       window._blendshapeStackPanel?.flash?.();   // desktop panel
       window._blendshapeStackPanelVR?.flash?.(); // VR panel mesh
       return false;

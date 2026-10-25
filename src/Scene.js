@@ -18492,7 +18492,9 @@ class Scene {
                     hasSampled = true;
                 }
 
-                if (this._vrIsNegative) {
+                if (this._sculptManager?.isLayerBlocked?.()) {
+                    color.setRGB(0.35, 0.35, 0.35); // Grey: the layer gate would refuse a stroke (locked Base)
+                } else if (this._vrIsNegative) {
                     color.setRGB(cMax, cMin, cMin); // Red
                 } else if (isPaint && tool._color) {
                     const activeLowerColor = this._eyedropperStartColor ? this._eyedropperStartColor : tool._color;

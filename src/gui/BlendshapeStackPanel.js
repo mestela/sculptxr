@@ -697,6 +697,12 @@ export default class BlendshapeStackPanel {
     ctx.font = '900 12px "Font Awesome 6 Free"';
     ctx.textAlign = 'center';
     ctx.fillText(locked ? FA.lock : FA.lockOpen, lockCx, iconCy + 0.5);
+    // A blocked stroke on a locked row flashes the padlock too: it is the reason, and the fix.
+    const lfa = locked ? this._flashAlpha(name) : 0;
+    if (lfa > 0) {
+      ctx.save(); ctx.globalAlpha = lfa; ctx.fillStyle = '#ff4d4d';
+      ctx.fillText(FA.lock, lockCx, iconCy + 0.5); ctx.restore();
+    }
     r.lock = isBase ? { x0: 0, x1: NAME_X + 18, y0: top, y1: top + h }
                     : { x0: NAME_X + 34, x1: NAME_X + 54, y0: top, y1: top + 26 };
     ctx.textAlign = 'left';
@@ -737,7 +743,7 @@ export default class BlendshapeStackPanel {
     const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart - (isBase ? 0 : 20));
     const nameY = isBase ? h / 2 + top : top + 16;
     ctx.fillText(nameText, nameStart, nameY);
-    const fa = isBase ? 0 : this._flashAlpha(name);
+    const fa = this._flashAlpha(name);
     if (fa > 0) {
       ctx.save(); ctx.globalAlpha = fa; ctx.fillStyle = '#ff4d4d';
       ctx.fillText(nameText, nameStart, nameY); ctx.restore();
@@ -1551,8 +1557,11 @@ export default class BlendshapeStackPanel {
   // text to translate. Called from the SculptManager gate when a stroke is
   // rejected (and the app reverts to a camera move).
   flash() {
-    this._flashName  = this._track()?.editingBlendshape || null;
-    if (!this._flashName) return;
+    // The Base row is drawn as 'Base'. It returned here before, so a stroke on the locked Base
+    // (the default once shapes exist) flashed NOTHING -- the commonest block of all.
+    const track = this._track();
+    if (!track) return;
+    this._flashName  = track.editingBlendshape || 'Base';
 
     // Desktop only: if the Blendshapes tab isn't the visible panel, the name flash
     // can't be seen — pulse the sidebar tab icon red instead. (In VR the name
