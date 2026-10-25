@@ -1511,7 +1511,9 @@ class Picking {
     vec3.scaleAndAdd(out, out, vField.subarray(iv2, iv2 + 3), len2 * invSum);
     vec3.scaleAndAdd(out, out, vField.subarray(iv3, iv3 + 3), len3 * invSum);
     if (isQuad) vec3.scaleAndAdd(out, out, vField.subarray(iv4, iv4 + 3), len4 * invSum);
-    vec3.normalize(out, out);
+    // NO normalize: this interpolates colours and materials too, and a unit-length colour is a
+    // darker one (white came back 0.58 grey, skin roughness 0.87 as 0.66). The one normal
+    // caller, computePickedNormal, normalizes its own result.
     return out;
   }
 

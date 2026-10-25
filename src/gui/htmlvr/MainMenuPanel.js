@@ -6334,6 +6334,15 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         e.currentTarget.classList.toggle('active', tool._pickColor);
         lightRepaintFn();
       });
+      // A PICK HAS TO SHOW. The eyedropper writes the tool's colour and material on a canvas click
+      // and nothing told this panel, so the wheel, swatch and sliders kept the old colour. One
+      // callback per tool (the panel is rebuilt often) calling the latest repaint; desktop only,
+      // since VR samples on every frame of a hover.
+      if (!tool._mmPickHooked && tool.addPickCallback) {
+        tool._mmPickHooked = true;
+        tool.addPickCallback(() => tool._mmOnPicked?.());
+      }
+      tool._mmOnPicked = () => { if (!main._xrSession) repaintFn(); };
     }
 
     // ── Voxel-specific ────────────────────────────────────────────────────────

@@ -241,7 +241,10 @@ GuiTools[Enums.Tools.PAINT] = {
   onColorPick: function (tool, main, val) {
     tool._pickColor = val;
     main.setCanvasCursor(val ? Utils.cursors.dropper : 'default');
-    main._action = val ? Enums.Action.SCULPT_EDIT : Enums.Action.NOTHING;
+    // No fake stroke here. SculptGL set _action = SCULPT_EDIT so the colour previewed live under a
+    // hovering cursor, but Paint.updatePickColor now exits on the first hit -- so the colour came
+    // from wherever the mouse first crossed the mesh and the click then painted with it. The click
+    // samples on its own (Paint.startSculpt) and end() leaves pick mode.
   },
   init: function (tool, fold, main) {
     this._ctrls.push(addCtrlRadius(tool, fold, this, main));
