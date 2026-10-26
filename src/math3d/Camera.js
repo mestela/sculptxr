@@ -697,6 +697,60 @@ class Camera {
     for (const n in this._timers) if (this._timers[n]) this.clearTimerN(n);
   }
 
+  // Run every pending delayed move to its end NOW, so the camera holds where it was going.
+  flushTimers() {
+    for (const n in this._timers) {
+      if (!this._timers[n]) continue;
+      const fin = this._finish && this._finish[n];
+      this.clearTimerN(n);
+      if (fin) fin();
+    }
+  }
+
+  // ── Animated reframing after a load ───────────────────────────────────────────────────────
+  // A load blocks the main thread while it parses, builds and compiles, and delay() runs on the
+  // wall clock from when it was SCHEDULED -- so the 200 ms framing move was over before the first
+  // frame drew and an import or example "snapped" (matt). A .sxr also restores its saved view by
+  // assignment. Scene.addImportedMeshes therefore lets the load land wherever it lands, then
+  // puts the old view back and glides to the new one with animateTo, whose clock starts at its
+  // first tick and steps over any stall, the way double-clicking empty space looks.
+  getState() {
+    return { quat: this._quatRot.slice(), trans: this._trans.slice(), center: this._center.slice(), offset: this._offset.slice(), rotX: this._rotX, rotY: this._rotY };
+  }
+
+  setState(st) {
+    for (let k = 0; k < 4; k++) this._quatRot[k] = st.quat[k];
+    vec3.copy(this._center, st.center);
+    vec3.copy(this._offset, st.offset);
+    this._rotX = st.rotX; this._rotY = st.rotY;
+    this.setTrans(st.trans);
+  }
+
+  animateTo(to, duration = 450) {
+    const from = this.getState();
+    this.clearTimerN('reframe');
+    let t0 = 0, last = 0;
+    const q = [0, 0, 0, 1], lerp = (a, b, r, o) => { for (let k = 0; k < a.length; k++) o[k] = a[k] + (b[k] - a[k]) * r; return o; };
+    const step = () => {
+      const now = performance.now();
+      if (!t0) t0 = now;
+      else if (now - last > 100) t0 += now - last - 16;   // a stall is not progress
+      last = now;
+      const u = Math.min(1, (now - t0) / duration);
+      const r = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;   // ease in-out
+      quat.slerp(q, from.quat, to.quat, r);
+      for (let k = 0; k < 4; k++) this._quatRot[k] = q[k];
+      lerp(from.center, to.center, r, this._center);
+      lerp(from.offset, to.offset, r, this._offset);
+      this._rotX = from.rotX + (to.rotX - from.rotX) * r;
+      this._rotY = from.rotY + (to.rotY - from.rotY) * r;
+      this.setTrans(lerp(from.trans, to.trans, r, [0, 0, 0]));
+      this._main.render();
+      if (u >= 1) this.clearTimerN('reframe');
+    };
+    this._timers.reframe = window.setInterval(step, 16.6);
+  }
+
   delay(cb, duration, name) {
     var nTimer = name || 'default';
     if (this._timers[nTimer])
@@ -709,6 +763,7 @@ class Camera {
 
     var lastR = 0;
     var tStart = (new Date()).getTime();
+    (this._finish || (this._finish = {}))[nTimer] = () => { cb(1.0 - lastR, 1.0); lastR = 1.0; };   // flushTimers
     this._timers[nTimer] = window.setInterval(function () {
       var r = ((new Date()).getTime() - tStart) / duration;
       r = easeOutQuart(r);

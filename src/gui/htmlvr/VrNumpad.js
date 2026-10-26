@@ -63,6 +63,9 @@ const CSS = `
   justify-content: flex-end;
 }
 .vrn-display.vrn-invalid { color: #f38ba8; }
+/* THE OPENING VALUE IS SELECTED, as in any text field: the first key replaces it (matt typed 2
+   over a 1 and got 12). Right arrow, or a click on the display, drops the selection to append. */
+.vrn-sel { background: #89b4fa; color: #11111b; border-radius: 3px; padding: 0 3px; }
 .vrn-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -225,9 +228,19 @@ function negateStr(s) {
 
 // ── Shared button logic (works on any .vrn-root element) ─────────────────────
 
+// The value, highlighted while it is still the untouched opening value.
+function showValue(disp, text, selected) {
+  disp.textContent = '';
+  const span = document.createElement('span');
+  span.textContent = text;
+  if (selected) span.className = 'vrn-sel';
+  disp.appendChild(span);
+}
+
 function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
   // Relative-sign mode: '' = absolute, '+'/'-' = shift expression (when config.relativeExpr).
   let signMode = '';
+  let fresh = true;   // the opening value is selected: the first key replaces it
   const signRow = el.querySelector('#vrn-signrow');
   if (signRow) signRow.style.display = config.relativeExpr ? 'grid' : 'none';
   const updateSignBtns = () => {
@@ -241,7 +254,7 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
     if (!disp) return;
     const str = getStr();
     const prefix = signMode === '+' ? '+' : signMode === '-' ? '-' : '';
-    disp.textContent = prefix + (str || '0');
+    showValue(disp, prefix + (str || '0'), fresh);
     const val = parseFloat(str);
     const valid = signMode ? true : (!isNaN(val)
       && (config.min === undefined || val >= config.min)
@@ -249,10 +262,13 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
     disp.classList.toggle('vrn-invalid', !valid);
   };
 
-  const setSign = (m) => { signMode = m; setStr('0'); updateSignBtns(); refresh(); };
+  const setSign = (m) => { signMode = m; fresh = false; setStr('0'); updateSignBtns(); refresh(); };
+  const deselect = () => { if (fresh) { fresh = false; refresh(); } };
+  el.querySelector('#vrn-display')?.addEventListener('click', deselect);
 
   const press = (d) => {
-    let s = getStr();
+    let s = fresh ? '' : getStr();
+    fresh = false;
     if (s === '0' || s === '')                 s = d;
     else if (s === '-0' || s === '-')          s = '-' + d;
     else if (s.replace(/[^0-9]/g, '').length < 7) s += d;
@@ -261,7 +277,8 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
 
   const backspace = () => {
     let s = getStr();
-    if (s.length <= 1)  s = '0';
+    if (fresh) { fresh = false; s = '0'; }
+    else if (s.length <= 1)  s = '0';
     else {
       s = s.slice(0, -1);
       if (s === '-')    s = '0';
@@ -292,12 +309,14 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
 
   el.querySelector('#vrn-dot')?.addEventListener('click', () => {
     if (config.integer) return;
-    let s = getStr();
-    if (!s.includes('.')) { if (!s || s === '-') s += '0'; s += '.'; setStr(s); refresh(); }
+    let s = fresh ? '' : getStr();
+    fresh = false;
+    if (!s.includes('.')) { if (!s || s === '-') s += '0'; s += '.'; }
+    setStr(s); refresh();
   });
 
   el.querySelector('#vrn-clear')?.addEventListener('click', () => {
-    setStr('0'); refresh();
+    fresh = false; setStr('0'); refresh();
   });
 
   el.querySelector('#vrn-neg')?.addEventListener('click', () => {
@@ -309,7 +328,7 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
   el.querySelector('#vrn-cancel')?.addEventListener('click', onCancel);
 
   refresh();
-  return { refresh, confirm, backspace };
+  return { refresh, confirm, backspace, deselect };
 }
 
 // ── Class ─────────────────────────────────────────────────────────────────────
@@ -350,7 +369,8 @@ export class VrNumpad extends HTMLVRPanel {
     const el = this._element;
 
     const press = (d) => {
-      let s = this._str;
+      let s = this._fresh ? '' : this._str;
+      this._fresh = false;
       if (s === '0' || s === '')                s = d;
       else if (s === '-0' || s === '-')         s = '-' + d;
       else if (s.replace(/[^0-9]/g, '').length < 7) s += d;
@@ -359,7 +379,8 @@ export class VrNumpad extends HTMLVRPanel {
 
     const backspace = () => {
       let s = this._str;
-      if (s.length <= 1) { s = '0'; }
+      if (this._fresh) { this._fresh = false; s = '0'; }
+      else if (s.length <= 1) { s = '0'; }
       else {
         s = s.slice(0, -1);
         if (s === '-') s = '0';
@@ -387,7 +408,8 @@ export class VrNumpad extends HTMLVRPanel {
       cb?.(val);
     };
 
-    const setSign = (m) => { this._signMode = m; this._str = '0'; this._refreshVR(); };
+    const setSign = (m) => { this._signMode = m; this._fresh = false; this._str = '0'; this._refreshVR(); };
+    el.querySelector('#vrn-display')?.addEventListener('click', () => { if (this._fresh) { this._fresh = false; this._refreshVR(); } });
     el.querySelector('#vrn-plus') ?.addEventListener('click', () => setSign('+'));
     el.querySelector('#vrn-minus')?.addEventListener('click', () => setSign('-'));
     el.querySelector('#vrn-abs')  ?.addEventListener('click', () => setSign(''));
@@ -398,13 +420,14 @@ export class VrNumpad extends HTMLVRPanel {
 
     el.querySelector('#vrn-dot')?.addEventListener('click', () => {
       if (this._config.integer) return;
-      let s = this._str;
+      let s = this._fresh ? '' : this._str;
+      this._fresh = false;
       if (!s.includes('.')) { if (!s || s === '-') s += '0'; s += '.'; }
       this._str = s; this._refreshVR();
     });
 
     el.querySelector('#vrn-clear')?.addEventListener('click', () => {
-      this._str = '0'; this._refreshVR();
+      this._fresh = false; this._str = '0'; this._refreshVR();
     });
 
     el.querySelector('#vrn-neg')?.addEventListener('click', () => {
@@ -421,7 +444,7 @@ export class VrNumpad extends HTMLVRPanel {
     const disp = el.querySelector('#vrn-display');
     if (!disp) return;
     const prefix = this._signMode === '+' ? '+' : this._signMode === '-' ? '-' : '';
-    disp.textContent = prefix + (this._str || '0');
+    showValue(disp, prefix + (this._str || '0'), this._fresh);
     const val = parseFloat(this._str);
     const cfg = this._config;
     const valid = this._signMode ? true : (!isNaN(val)
@@ -488,12 +511,9 @@ export class VrNumpad extends HTMLVRPanel {
     panel.querySelector('#vrn-label').textContent = config.label ?? 'Value';
     panel.querySelector('#vrn-dot')?.classList.toggle('vrn-dim', !!config.integer);
 
-    const dismiss = () => {
-      window.removeEventListener('keydown', onKey, { capture: true });
-      this._closeDesktop();
-    };
+    const dismiss = () => this._closeDesktop();
 
-    const { refresh, confirm, backspace } = wireNumpadEl(
+    const { refresh, confirm, backspace, deselect } = wireNumpadEl(
       panel, config,
       () => str,
       (v) => { str = v; },
@@ -502,8 +522,15 @@ export class VrNumpad extends HTMLVRPanel {
     );
 
     // Keyboard support
+    // WHILE THE PAD IS UP IT OWNS THE KEYBOARD (matt: a Backspace meant for the pad deleted the
+    // selected object). Every key stops here -- immediately, so no other window listener sees it --
+    // except browser/OS combos with Ctrl or Cmd. SculptGL.onKeyDown also refuses while
+    // window._numpadOpen, in case a listener ever runs ahead of this one.
     const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey) return;
+      e.preventDefault(); e.stopImmediatePropagation();
       if (e.key >= '0' && e.key <= '9') { panel.querySelector(`[data-vrn="${e.key}"]`)?.click(); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'End') { deselect(); }
       else if (e.key === 'Backspace')    { backspace(); }
       else if (e.key === 'Enter')        { confirm(); }
       else if (e.key === 'Escape')       { dismiss(); }
@@ -515,10 +542,10 @@ export class VrNumpad extends HTMLVRPanel {
       // after those three deliberately: in relative mode '-' already means "subtract from the
       // current value", which is a different and more specific thing to want.
       else if (e.key === '-')            { panel.querySelector('#vrn-neg')?.click(); }
-      else return;
-      e.preventDefault(); e.stopPropagation();
     };
     window.addEventListener('keydown', onKey, { capture: true });
+    this._deskKey = onKey;
+    window._numpadOpen = true;
 
     // Click anywhere on backdrop (outside panel) dismisses
     backdrop.addEventListener('click', dismiss);
@@ -527,6 +554,9 @@ export class VrNumpad extends HTMLVRPanel {
   }
 
   _closeDesktop() {
+    // Whoever closes it, the keyboard is released (see onKey in _openDesktop).
+    if (this._deskKey) { window.removeEventListener('keydown', this._deskKey, { capture: true }); this._deskKey = null; }
+    window._numpadOpen = false;
     if (this._desktopEl) {
       this._desktopEl.parentNode?.removeChild(this._desktopEl);
       this._desktopEl = null;
@@ -572,6 +602,7 @@ export class VrNumpad extends HTMLVRPanel {
     this._config      = config;
     this._onConfirm   = onConfirm;
     this._str         = _initStr(currentValue, config);
+    this._fresh       = true;   // the opening value is selected (see .vrn-sel)
     this._sourcePanel = sourcePanel;   // stored for per-frame tracking
     this._sourceEl    = sourceEl;
     this._anchorMesh  = anchorMesh;    // plain-mesh anchor (timeline) for per-frame tracking

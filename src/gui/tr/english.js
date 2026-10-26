@@ -150,6 +150,7 @@ var TR = {
   sculptBevel: 'Bevel',
   sculptSelEdge: 'Sel Edge',
   sculptFace: 'Face',
+  sculptRevert: 'Revert',
   sculptWeld: 'Weld',
   sculptSnapWeldCenter: 'Snap & Weld to Center',
   sculptExtrude: 'Extrude',

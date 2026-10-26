@@ -29,6 +29,8 @@ import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle } from '../jiggleSettings.js';
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
+import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
+import { GNM_LANDMARKS } from '../../editing/gnmLandmarks.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
 import getOptionsURL, { MENU_GRADE_DEFAULTS } from '../../misc/getOptionsURL.js';
@@ -1569,10 +1571,7 @@ export function buildMenuHTML_files(main) {
     <div class="mm-choice-grid cols-2">
       <button class="mm-action-btn mm-left${main._clearSceneConfirm ? ' danger' : ''}" id="mm-clear-scene"
         title="Start an empty scene">${main._clearSceneConfirm ? 'Confirm — no undo' : 'New'}</button>
-      <button class="mm-action-btn mm-left" id="mm-new-example"
-        title="Replace the scene with an example">New from example…</button>
     </div>
-    ${main._examplesOpen ? buildExamplesHTML() : ''}
     ${/* BROWSER IS THE FIRST COLUMN because it is the one used most; disk is the occasional
           trip out of the app. The left column is where the eye lands, so it belongs to the
           everyday command in every one of these rows. */ ''}
@@ -1598,8 +1597,15 @@ export function buildMenuHTML_files(main) {
     </div>
 
     <div class="mm-section-title">Import</div>
-    <button class="mm-action-btn" id="mm-import-obj"
-      title="Import a mesh, audio or video file — obj, sgl, ply, stl, glb, mp3, wav, mp4, webm">Mesh / audio / video…</button>
+    ${/* EXAMPLES IMPORT, they do not replace the scene (matt: loading GNM and a head to wrap it
+          onto meant opening one and then had no way to bring in the other). */ ''}
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-action-btn mm-left" id="mm-import-obj"
+        title="Import a mesh, audio or video file — obj, sgl, ply, stl, glb, mp3, wav, mp4, webm">Mesh / audio / video…</button>
+      <button class="mm-action-btn mm-left" id="mm-new-example"
+        title="Add an example to the scene">Import example…</button>
+    </div>
+    ${main._examplesOpen ? buildExamplesHTML() : ''}
     <div class="mm-check-pair">
       <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
@@ -3085,6 +3091,7 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-select-opt" id="mm-add-cube">Cube</button>
       <button class="mm-select-opt" id="mm-add-sphere">Sphere</button>
       <button class="mm-select-opt" id="mm-add-cylinder" title="All-quad cylinder — Reverse walks it back down to a clean low-poly base">Cylinder</button>
+      <button class="mm-select-opt" id="mm-add-plane" title="A flat 8 x 8 quad plane">Plane</button>
       <button class="mm-select-opt" id="mm-add-null">Null</button>
       <button class="mm-select-opt" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
       <button class="mm-select-opt" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
@@ -3924,7 +3931,8 @@ function buildSculptingHTML(main, part) {
       <input type="range" id="mm-idle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(idle[d.key])}">
       <span class="mm-val" id="mm-idle-${d.key}-val">${d.fmt(d.ui(idle[d.key]))}</span>
     </div>`).join('') : ''}
-    ${buildPoseLibraryHTML(main, tool)}` : ''}
+    ${buildPoseLibraryHTML(main, tool)}
+    ${buildTopoHTML(main)}` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
       ? buildBonePoseHTML(main, 'mm') : ''}
     ${cur === Enums.Tools.TRANSFORM_VR || cur === Enums.Tools.TRANSFORM
@@ -5606,6 +5614,7 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   el.querySelector('#mm-add-sphere')?.addEventListener('click', () => addPrimitive(() => main.addSphere?.()));
   el.querySelector('#mm-add-cube')?.addEventListener('click', () => addPrimitive(() => main.addCube?.()));
   el.querySelector('#mm-add-cylinder')?.addEventListener('click', () => addPrimitive(() => main.addCylinder?.()));
+  el.querySelector('#mm-add-plane')?.addEventListener('click', () => addPrimitive(() => main.addPlane8x8?.()));
   // ASYNC, unlike the others: the geometry is a fetched asset. addPrimitive expects `make()` to
   // return the mesh synchronously (it may adopt it into a frame group), so the await happens
   // first and the shared path runs once the mesh exists.
@@ -6118,6 +6127,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       (v) => setIdle(d.key, d.to(v)), d.fmt, sliderDirtyFn);
   }
   wirePoseLibrary(el, main, sm, repaintFn);
+  wireTopo(el, main, repaintFn);
   el.querySelector('#mm-face-key')?.addEventListener('click', () => sm?.getCurrentTool?.()?.keyAll?.());
   el.querySelector('#mm-face-zero')?.addEventListener('click', () => sm?.getCurrentTool?.()?.zeroAll?.());
   el.querySelector('#mm-face-retarget')?.addEventListener('click', () => sm?.getCurrentTool?.()?.retargetAll?.());
@@ -6654,6 +6664,51 @@ function buildPoseLibraryHTML(main, tool) {
     </div>`;
 }
 
+// TOPO TRANSFER (editing/TopoTransfer.js): pick GNM's landmarks on another sculpt, then Wrap.
+// A dot per landmark: green placed, amber guessed, hollow not yet.
+function buildTopoHTML(main) {
+  const t = targetMesh(main), s = sourceMesh(main), dis = t ? '' : ' disabled';
+  // The L and centreline landmarks only: each R follows its L (TopoTransfer: symmetric targets).
+  const rows = GNM_LANDMARKS.map((lm, i) => {
+    if (topoMirrored(lm)) return '';
+    const q = topo.picks.get(lm.key);
+    const col = q ? '#44dd66' : 'transparent';   // green once placed (matt); hollow until then
+    const label = lm.mirror ? lm.label.replace(/ L$/, '') : lm.label;
+    return `<button class="mm-choice${topo.pick && i === topo.cur ? ' active' : ''}" data-topo-lm="${i}" title="${escHTML(label)}${q ? ' (placed)' : ''}${lm.mirror ? ' -- both sides' : ' -- on the centreline'}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:${col};border:1px solid #888"></span>${escHTML(label)}</button>`;
+  }).join('');
+  return `
+    <div class="mm-section-title">Topo Transfer</div>
+    <div class="mm-row"><span class="mm-lbl">GNM</span><span class="mm-val">${escHTML(meshLabel(s))}</span></div>
+    <div class="mm-row"><span class="mm-lbl">Onto</span><span class="mm-val">${escHTML(meshLabel(t))}</span></div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice" id="mm-topo-target" title="Wrap the GNM head in the scene onto the selected sculpt">Use Selected as Target</button>
+      <button class="mm-choice${topo.pick ? ' active' : ''}" id="mm-topo-pick" title="Clicks on the target place the highlighted landmark"${dis}>Pick</button>
+      <button class="mm-choice" id="mm-topo-view" title="Show both heads, the target only, or GNM only (Tab while picking)"${dis}>Show: ${VIEW_LABEL[topo.view]}</button>
+      <button class="mm-choice${topo.lines ? ' active' : ''}" id="mm-topo-lines" title="Dashed lines from each GNM landmark to its pick on the target: a mis-click is the line that crosses the rest"${dis}>Lines</button>
+      <button class="mm-choice${topo.dots ? ' active' : ''}" id="mm-topo-dots" title="Show or hide the landmark dots on both heads"${dis}>Dots</button>
+      <button class="mm-choice" id="mm-topo-wrap" title="Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)"${dis}>Wrap</button>
+      <button class="mm-choice" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>Snap to Surface</button>
+      <button class="mm-choice" id="mm-topo-clear"${dis}>Clear</button>
+    </div>
+    ${t ? `<div class="mm-choice-grid cols-2">${rows}</div>` : ''}`;
+}
+
+function wireTopo(el, main, repaintFn) {
+  // Only the page that holds the section: the Tools and Properties tabs share this wiring, and
+  // whichever was built last would otherwise own the hook and repaint the wrong page.
+  if (!el.querySelector('#mm-topo-target')) return;
+  window._refreshTopo = repaintFn;
+  el.querySelector('#mm-topo-target')?.addEventListener('click', () => setTarget(main));
+  el.querySelector('#mm-topo-pick')?.addEventListener('click', () => topoPick(main, !topo.pick));
+  el.querySelector('#mm-topo-view')?.addEventListener('click', () => topoView(main));
+  el.querySelector('#mm-topo-lines')?.addEventListener('click', () => topoLines(main, !topo.lines));
+  el.querySelector('#mm-topo-dots')?.addEventListener('click', () => topoDots(main, !topo.dots));
+  el.querySelector('#mm-topo-wrap')?.addEventListener('click', () => topoWrap(main));
+  el.querySelector('#mm-topo-snap')?.addEventListener('click', () => topoSnap(main));
+  el.querySelector('#mm-topo-clear')?.addEventListener('click', () => topoClear(main));
+  el.querySelectorAll('[data-topo-lm]').forEach((b) => b.addEventListener('click', () => topoSelect(main, +b.dataset.topoLm)));
+}
+
 function wirePoseLibrary(el, main, sm, repaintFn) {
   const reg = window._animationRegistry;
   const tool = () => sm?.getCurrentTool?.();
@@ -6804,8 +6859,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
       // a hidden tab), so waiting on it hung the load at "Building". 60 ms is a few XR frames.
       status('Building scene\u2026', true);
       await new Promise((res) => setTimeout(res, 60));
-      main.clearScene();
-      if (guiFiles) guiFiles._currentSaveKey = null;   // not a file of yours: Save must not land over anything
+      // ADDED to the scene, like any import; the scene (and the save it came from) stays yours.
       main.loadScene(buf, /\.glb$/i.test(ex.file) ? 'glb' : 'sgl');
       _exampleLoad = null;
       main._examplesOpen = false;

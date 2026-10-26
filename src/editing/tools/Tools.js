@@ -9,6 +9,7 @@ import Crease from './Crease.js';
 import Drag from './Drag.js';
 import Slide from './Slide.js';
 import Relax from './Relax.js';
+import Revert from './Revert.js';
 import Paint from './Paint.js';
 import Move from './Move.js';
 import Masking from './Masking.js';
@@ -85,6 +86,7 @@ Tools[Enums.Tools.CUT_LOOP] = CutLoop;
 Tools[Enums.Tools.BEVEL] = Bevel;
 Tools[Enums.Tools.SEL_EDGE] = SelEdge;
 Tools[Enums.Tools.FACE] = FacePuppet;
+Tools[Enums.Tools.REVERT] = Revert;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -127,5 +129,6 @@ Tools[Enums.Tools.CUT_LOOP].uiName = 'sculptCutLoop';
 Tools[Enums.Tools.BEVEL].uiName = 'sculptBevel';
 Tools[Enums.Tools.SEL_EDGE].uiName = 'sculptSelEdge';
 Tools[Enums.Tools.FACE].uiName = 'sculptFace';
+Tools[Enums.Tools.REVERT].uiName = 'sculptRevert';
 
 export default Tools;

@@ -24,6 +24,53 @@ import { IDENTITY, mul, inv, worldOf } from './NomMath.js';
 var Import = {};
 
 
+// INSIDE-OUT SCULPTS. A file whose faces are wound inward (normals pointing into the head) draws
+// inside out here: front faces are culled and the lighting is reversed. Nomad shows such a mesh
+// normally (it draws both sides), so nobody knows until it arrives -- matt's thatguy.nom: 7.5% of
+// faces faced out, against 78-100% in every other file. Decided once per mesh (insideOut: closed,
+// signed volume about the centroid negative, under a quarter of faces facing out), then EVERY
+// face list the mesh reads -- its own, its UV corners, level 0's, every multires level's -- is
+// read with its corners reversed, so the levels stay one consistent subdivision.
+function insideOut(v, f) {
+  const nv = v.length / 3, c = [0, 0, 0];
+  for (let i = 0; i < nv; i++) for (let k = 0; k < 3; k++) c[k] += v[i * 3 + k] / nv;
+  // ONLY A CLOSED SHAPE has an inside. A floor plane (every wrestler scene has one, 260 open edges
+  // of 8,580) faces "inward" by this measure as easily as outward; flipping it turned the floor
+  // upside down. Under 1% open edges is a head with a neck hole, at most.
+  const edges = new Map();
+  let faces = 0, out = 0, vol = 0;
+  for (let k = 0; k < f.length; k += 4) {
+    if (f[k] < 0 || f[k] >= nv) continue;
+    const q = f[k + 3] >= 0 ? 4 : 3;
+    for (let j = 0; j < q; j++) {
+      const a = f[k + j], b = f[k + (j + 1) % q], key = a < b ? a * nv + b : b * nv + a;
+      edges.set(key, (edges.get(key) || 0) + 1);
+    }
+    // The face's normal (first three corners) against its offset from the centroid.
+    const a = f[k] * 3, b = f[k + 1] * 3, d = f[k + 2] * 3;
+    const ux = v[b] - v[a], uy = v[b + 1] - v[a + 1], uz = v[b + 2] - v[a + 2];
+    const wx = v[d] - v[a], wy = v[d + 1] - v[a + 1], wz = v[d + 2] - v[a + 2];
+    const s = (uy * wz - uz * wy) * (v[a] - c[0]) + (uz * wx - ux * wz) * (v[a + 1] - c[1]) + (ux * wy - uy * wx) * (v[a + 2] - c[2]);
+    vol += s;
+    if (s > 0) out++;
+    faces++;
+  }
+  let open = 0;
+  for (const n of edges.values()) if (n === 1) open++;
+  return faces > 0 && open < 0.01 * edges.size && vol < 0 && out < 0.25 * faces;
+}
+// Corners reversed, face by face: a quad [a,b,c,d] -> [d,c,b,a], a triangle [a,b,c,-1] -> [c,b,a,-1].
+function flipCorners(src) {
+  if (!src) return src;
+  const o = new Int32Array(src.length);
+  for (let k = 0; k < src.length; k += 4) {
+    if (src[k + 3] >= 0) { o[k] = src[k + 3]; o[k + 1] = src[k + 2]; o[k + 2] = src[k + 1]; o[k + 3] = src[k]; }
+    else { o[k] = src[k + 2]; o[k + 1] = src[k + 1]; o[k + 2] = src[k]; o[k + 3] = src[k + 3]; }
+  }
+  return o;
+}
+const facesReader = (nom, flip) => (desc) => (flip ? flipCorners(nom.i32(desc)) : nom.i32(desc));
+
 function decodeMesh(nom, m, name) {
   const nbVertices = m.count_vertex, nbFaces = m.count_face;
   const out = {
@@ -34,9 +81,11 @@ function decodeMesh(nom, m, name) {
     faceGroupDefs: m.groups ? m.groups.slice() : null
   };
   if (!out.vertices || out.vertices.length !== nbVertices * 3) throw new Error('bad vertex array');
+  out.flipped = insideOut(out.vertices, nom.i32(m.faces));
+  const rd = facesReader(nom, out.flipped);
 
   const faceIdx = (desc) => {
-    const src = nom.i32(desc), dst = new Uint32Array(nbFaces * 4);
+    const src = rd(desc), dst = new Uint32Array(nbFaces * 4);
     for (let i = 0; i < nbFaces; i++) {
       const k = i * 4;
       dst[k] = src[k]; dst[k + 1] = src[k + 1]; dst[k + 2] = src[k + 2];
@@ -81,7 +130,7 @@ function decodeMesh(nom, m, name) {
   if (L0 && L0.faces) {
     const n0 = L0.count_vertex, f0 = L0.count_face;
     const fIdx = (desc) => {
-      const src = nom.i32(desc), dst = new Uint32Array(f0 * 4);
+      const src = rd(desc), dst = new Uint32Array(f0 * 4);
       for (let i = 0; i < f0; i++) {
         const k = i * 4;
         dst[k] = src[k]; dst[k + 1] = src[k + 1]; dst[k + 2] = src[k + 2];
@@ -207,7 +256,8 @@ function buildLevelsStencil(mm, src) {
   const levels = md.multires_levels || [];
   const viewed = md.multires_level | 0;
   const TRI = 4294967295;
-  const facesOf = (k) => nom.i32(k === viewed ? md.faces : (levels[k] && levels[k].faces));
+  const rd = facesReader(nom, !!src.flip);   // the same corner order as the base (see insideOut)
+  const facesOf = (k) => rd(k === viewed ? md.faces : (levels[k] && levels[k].faces));
   const toU32 = (a) => { const o = new Uint32Array(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] >= 0 ? a[i] : TRI; return o; };
   const gl = mm.getCurrentMesh().getGL();
   let parent = facesOf(0), built = 0;
@@ -303,7 +353,8 @@ function buildLevelsSxr(mm, src) {
   // The base is Nomad's level 0 (the file's top arrays when it was saved at level 0, else the
   // first N0 vertices of them: see decodeMesh). The VIEWED level's faces live on the mesh itself,
   // every other level's in `multires_levels[k]`.
-  const facesOf = (k) => nom.i32(k === viewed ? md.faces : (levels[k] && levels[k].faces));
+  const rd = facesReader(nom, !!src.flip);   // the same corner order as the base (see insideOut)
+  const facesOf = (k) => rd(k === viewed ? md.faces : (levels[k] && levels[k].faces));
   let nomParent = facesOf(0);
   let pi = null;                           // Nomad id -> SculptXR id at the previous level
   let built = 0;
@@ -490,7 +541,12 @@ Import.importNOM = function (data, gl, onDone, onFail) {
             const mesh = NomadImport.buildMesh(dec, gl);
             mesh.setMatrix(new Float32Array(world));
             mesh._nomSource = { name: node.name, file: nom, path: here, mesh: node.mesh, layerShapes: dec.layerInfo.shapes.map((x) => x.name),
-                                layerDefs: dec.layerInfo.shapes, top: dec.top || null, viewed: m.multires_level | 0, pi: null };
+                                layerDefs: dec.layerInfo.shapes, top: dec.top || null, viewed: m.multires_level | 0, pi: null, flip: dec.flipped };
+            if (dec.flipped) {
+              const msg = `"${node.name || 'Mesh'}" was inside out in the file (faces wound inward); turned the right way out`;
+              console.warn('[nom] ' + msg);
+              window.screenLog?.(msg, 'yellow');
+            }
             // position layers become blendshapes once the mesh is wrapped (Scene reads this)
             if (dec.layerInfo.shapes.length) mesh._importedMorphs = dec.layerInfo.shapes;
             stats.layers += dec.layerInfo.colour + dec.layerInfo.roughness + dec.layerInfo.metalness;

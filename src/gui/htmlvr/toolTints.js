@@ -26,6 +26,7 @@ export const TOOL_TINTS = {
   [Enums.Tools.MASKING]:         '#6b5440',
   [Enums.Tools.SMOOTH]:          '#404d6b',
   [Enums.Tools.RELAX]:           '#404d6b',
+  [Enums.Tools.REVERT]:          '#404d6b',
   [Enums.Tools.MOVE]:            '#406b40',
   [Enums.Tools.GRAB]:            '#406b40',
   [Enums.Tools.DRAG]:            '#406b40',
@@ -63,6 +64,7 @@ export const TOOL_TEXT_TINTS = {
   [Enums.Tools.MASKING]:         '#fab387',  // orange/peach
   [Enums.Tools.SMOOTH]:          '#89b4fa',  // blue
   [Enums.Tools.RELAX]:           '#89b4fa',
+  [Enums.Tools.REVERT]:          '#89b4fa',
   [Enums.Tools.MOVE]:            '#a6e3a1',  // green
   [Enums.Tools.GRAB]:            '#a6e3a1',
   [Enums.Tools.DRAG]:            '#a6e3a1',

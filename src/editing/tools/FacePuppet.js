@@ -7,6 +7,7 @@ import Enums from '../../misc/Enums.js';
 import { regions } from '../GnmRegions.js';
 import { jiggle } from '../Jiggle.js';
 import { idle } from '../IdleFace.js';
+import { topo, targetMesh, pickAt, cycleView } from '../TopoTransfer.js';
 
 /**
  * FACE — grab the face and pull it; the blendshape weights follow. See DirectBlend.js.
@@ -86,7 +87,19 @@ class FacePuppet extends SculptBase {
   addSculptToScene() {}
   // The base hover pick (it is what places the cursor on the desktop), then the heat.
   preUpdate(canBeContinuous) {
-    super.preUpdate(canBeContinuous);
+    // TOPO TRANSFER: while picking landmarks the cursor rides the TARGET, the only mesh a click
+    // places on. Nearest-visible put it on GNM wherever GNM was in front, so the ring showed one
+    // surface and the click landed on another (matt). With the target hidden (GNM-only view, to
+    // see where a landmark sits) it is the ordinary pick.
+    const t = topo.pick && targetMesh(this._main);
+    if (t && t.isVisible() && !this._main._vrSculpting) {
+      this._main.getPicking().intersectionMouseMesh(t);
+      // ...and its mirror dot, as the base hover draws it: on the centreline (nose tip, chin,
+      // bridge) the two dots meet, which is the quickest check that a pick is on it.
+      if (this._main.getSculptManager().getSymmetry()) this._main.getPickingSymmetry().intersectionMouseMesh(t);
+    } else {
+      super.preUpdate(canBeContinuous);
+    }
     this._heatTick();
   }
 
@@ -796,11 +809,21 @@ class FacePuppet extends SculptBase {
   }
 
   // ── Desktop: one pin, under the mouse, dragged in the plane facing the camera ──────────────
+  // TOPO TRANSFER: Tab cycles which head is showing, only while picking landmarks.
+  onKeyDown(e) {
+    if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || !topo.pick || !targetMesh(this._main)) return false;
+    cycleView(this._main);
+    return true;
+  }
+
   start(shift) {
     const main = this._main;
     // The headset's presses are handled per hand in updateXR; Scene calls this on the trigger
     // too, against a mouse position nobody is looking at. Same guard as SelectTool.
     if (main._xrSession) return false;
+    // TOPO TRANSFER: with Pick on, a click places the current landmark on the target sculpt and
+    // is not a grab (false: no stroke to run).
+    if (topo.pick && targetMesh(main)) { pickAt(main); return false; }
     const picking = main.getPicking();
     if (!picking.intersectionMouseMeshes(this._targets(), main._mouseX, main._mouseY)) return false;
     const mesh = picking.getMesh();

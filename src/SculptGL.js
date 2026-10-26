@@ -1446,6 +1446,8 @@ class SculptGL extends Scene {
     // does not stop the user holding shift.
     const _typing = Utils.isTypingTarget(e);
     if (_typing) return;
+    // The numberpad owns the keyboard while it is up (VrNumpad._openDesktop); never act behind it.
+    if (window._numpadOpen) return;
 
     // The active tool gets first refusal. A tool with a modal state of its own — the Bones
     // chain, where Escape/Enter ends the chain and then leaves drawing — needs the key, and

@@ -42,6 +42,26 @@ const FA = {
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
 const PAD       = 10;
+const TIPS = {
+  new: 'New blendshape layer',
+  del: 'Delete the selected layer',
+  split: 'Split the selected layer into Left and Right halves',
+  rrange: "Reset the selected layer's slider range to 0..1",
+  autokey: 'Auto Key: slider moves set keys at the playhead (off: preview only)',
+  zero: 'Set every shape to 0 (preview; Key commits it)',
+  fold: 'Show or hide the layer list',
+  slot: (side) => 'Assign the selected layer to the pad ' + side + ' side',
+};
+const PART_TIPS = {
+  grip: 'Drag to reorder',
+  lock: 'Lock: a locked layer cannot be sculpted',
+  face: 'Face tool: let the Face tool drive this layer',
+  eye: 'Mute or unmute (drag to paint across rows)',
+  split: 'Split into Left and Right halves',
+  combine: 'Combine Left and Right back into one layer',
+  value: 'Type a weight; beyond 0..1 widens the range',
+  rename: 'Double-click to rename',
+};
 const TOOLBAR_BTN_H = 38;
 // Fold bar for the layer list, under the buttons and immediately above the rows it governs — the
 // same strip the XY pad carries (PAD_HEADER_H). On a rig with all the ARKit shapes the list is
@@ -759,7 +779,9 @@ export default class BlendshapeStackPanel {
       ctx.textAlign = 'center';
       ctx.fillText(FA.pen, penCx, iconCy + 0.5);
       ctx.textAlign = 'left';
-      r.rename = { x0: penCx - 11, x1: penCx + 11, y0: top, y1: top + 26 };
+      // Fitted to the glyph: the old 22x26 box reached the readout beside it, and a click meant
+      // for the number started a rename (matt).
+      r.rename = { x0: penCx - 7, x1: penCx + 7, y0: iconCy - 8, y1: iconCy + 8 };
     }
 
     if (isBase) { this._rows.push(r); return; }
@@ -968,8 +990,9 @@ export default class BlendshapeStackPanel {
       return;
     }
     if (part === 'value' && !row.isBase) { this._editValue(row); return; }
-    // Pencil → rename (VR-friendly; double-tap still works too).
-    if (part === 'rename' && !row.isBase) { this._beginRename(row); return; }
+    // Pencil → rename in VR, where a double-tap on a ray is hard. On desktop a single click on it
+    // is just a click on the row; renaming there is a double-click, like the rest of the row.
+    if (part === 'rename' && !row.isBase && this._vrMode) { this._beginRename(row); return; }
     // Row body → make it the active sculpt layer (Base deactivates). Double-tap → rename.
     this._selectLayer(row.isBase ? null : row.name);
     this._handleTapForRename(row);
@@ -1032,6 +1055,10 @@ export default class BlendshapeStackPanel {
     }
     if (!this._vrMode && this._canvas) {
       this._canvas.style.cursor = (h && h.part === 'grip') ? 'grab' : 'default';
+      // Native tooltips: every control here is canvas-drawn, so the canvas carries the title.
+      const tip = (h && (h.btn ? (h.btn.startsWith('slot_') ? TIPS.slot(h.btn.slice(5)) : TIPS[h.btn])
+        : PART_TIPS[h.part])) || '';
+      if (this._canvas.title !== tip) { this._canvas.title = tip; if (this._tbCanvas) this._tbCanvas.title = tip; }
     }
     if (this._hoverChanged(h)) { this._hover = h; this.draw(); }
   }
@@ -1180,10 +1207,22 @@ export default class BlendshapeStackPanel {
       if (v < r.min) r.min = v;
       if (v > r.max) r.max = v;
       if (!window._animAutoKey) {
-        reg.setBlendshapePreview(mesh, name, v);
-        this._holdAtPlayhead(this._track(), name);
-        reg.applyBlendshapes(mesh);
+        // UNDOABLE TOO: a mistyped 12 for a 2 widened the range with no way back but the reset
+        // button. The range and the preview go back together.
+        const track = this._track(), prev = track?.blendshapePreview;
+        const hadP = !!prev?.has(name), oldP = prev?.get(name), newR = { ...r };
+        const putP = (on, val) => {
+          if (on) reg.setBlendshapePreview(mesh, name, val);
+          else track?.blendshapePreview?.delete(name);
+          reg.applyBlendshapes(mesh);
+        };
+        putP(true, v);
+        this._holdAtPlayhead(track, name);
         this.draw();
+        window.app?.getStateManager?.()?.pushStateCustom(
+          () => { Object.assign(this._rangeOf(name), oldR); putP(hadP, oldP); this.draw(); },
+          () => { Object.assign(this._rangeOf(name), newR); putP(true, v); this.draw(); },
+          false, 'Set Blendshape Weight');
         return;
       }
       reg.setBlendshapeWeight(mesh, name, v);

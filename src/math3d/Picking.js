@@ -298,6 +298,7 @@ const MASK_PASS_TOOLS = new Set([
   Enums.Tools.BRUSH, Enums.Tools.INFLATE, Enums.Tools.TWIST, Enums.Tools.SMOOTH,
   Enums.Tools.FLATTEN, Enums.Tools.PINCH, Enums.Tools.CREASE, Enums.Tools.DRAG,
   Enums.Tools.RELAX, Enums.Tools.PAINT, Enums.Tools.MOVE, Enums.Tools.LOCALSCALE, Enums.Tools.GRAB,
+  Enums.Tools.REVERT,
 ]);
 
 class Picking {

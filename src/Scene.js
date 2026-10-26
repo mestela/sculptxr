@@ -100,6 +100,7 @@ import { applyXRBackendPatches, makePCFFilter } from './render/nodes/ThreeXRPatc
 import { tickRegions } from './editing/GnmRegions.js';
 import { tickJiggle } from './editing/Jiggle.js';
 import { tickIdle } from './editing/IdleFace.js';
+import { tickTopo } from './editing/TopoTransfer.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -1692,6 +1693,7 @@ class Scene {
     this._sizeSpotCones();
     tickRegions(this);
     tickIdle(this);     // before the jiggle, which chases the composite it makes
+    tickTopo(this);
     tickJiggle(this);
     this.updateMatricesAndSort();
     // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.
@@ -6940,6 +6942,15 @@ class Scene {
     return added;
   }
 
+  // An 8x8 quad plane, from the Add menu (matt: a floor, a card, a sheet to sculpt from).
+  addPlane8x8() {
+    var mesh = new Multimesh(Primitives.createPlaneGrid(this._gl, 8, 8));
+    mesh.normalizeSize();
+    mesh._typeName = "Plane";
+    mesh.isQuad = true;
+    return this._addPrimitive(mesh);
+  }
+
   addGrid3x3() {
     var mesh = new Multimesh(Primitives.createPlaneGrid(this._gl, 3, 3));
     mesh.normalizeSize();
@@ -7159,6 +7170,8 @@ class Scene {
   }
 
   loadScene(fileData, fileType) {
+    // The view before the load, to glide from once it lands (see Camera.animateTo).
+    this._camBeforeLoad = this._camera?.getState?.() || null;
     // A LOAD DISMISSES THE FILES MENU. Opening a scene is the last thing you want from that menu,
     // and it stayed up over the thing it had just loaded. matt: "if i use the file menu to open a
     // file, it leaves the file menu open after load."
@@ -7397,6 +7410,16 @@ class Scene {
     // moment, and re-framing mid-sculpt lurches the world (badly so in a headset).
     if (this._loadedCameraFraming) this._loadedCameraFraming = false;
     else if (!opts.keepCamera) this.resetCameraMeshes(newMeshes);
+    // GLIDE, don't snap: land on the new framing, then animate there from the view before the
+    // load (desktop only; a headset view is the user's own head).
+    const from = this._camBeforeLoad;
+    this._camBeforeLoad = null;
+    if (from && !opts.keepCamera && !this._isImmersiveAR && !(this.isInVR && this.isInVR())) {
+      this._camera.flushTimers();
+      const to = this._camera.getState();
+      this._camera.setState(from);
+      this._camera.animateTo(to);
+    }
     this._camera.optimizeNearFar(this.computeBoundingBoxScene());
     this._refreshDesktopCameraProjection();
     return newMeshes;
