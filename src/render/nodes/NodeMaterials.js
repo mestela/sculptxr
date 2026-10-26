@@ -624,7 +624,9 @@ function buildBase(shaderId) {
     const n = mat3(rotCorrectionUniform).mul(normalWorld).normalize();
     // normal.xy * 0.5 + 0.5, exactly as the GLSL does it.
     const uvNode = vec2(n.x, n.y).mul(0.5).add(0.5);
-    m.emissiveNode = texture(matcapTexture(0), uvNode).rgb.mul(vertexColor());
+    // MASKING DIMS IT, as the legacy encodeFragColor does for every shader (see FLAT below).
+    const masking = tsl.attribute('aMaterial', 'vec3').z;
+    m.emissiveNode = texture(matcapTexture(0), uvNode).rgb.mul(vertexColor()).mul(masking.mul(0.7).add(0.3));
     m.userData.sculptShaderId = shaderId;
     return m;
   }

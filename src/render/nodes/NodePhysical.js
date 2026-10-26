@@ -88,6 +88,11 @@ export function makePhysical(gpu, tsl, mesh) {
     max(mtl.x, float(0.0001)).sub(max(tsl.getGeometryRoughness(), float(0))), float(0.0001));
   m.roughnessNode = _rough;
   m.metalnessNode = mtl.y;
+  // MASKED AREAS ARE DIMMED, AFTER LIGHTING -- the legacy encodeFragColor's
+  // `col *= 0.3 + 0.7 * vMasking`, which every GLSL shader shares. The port dropped it, so on
+  // WebGPU (the default, and what a Quest runs) a mask was applied but never shown: a user's
+  // "the mask tool isn't working", in PBR on a Quest 3.
+  m.outputNode = tsl.vec4(tsl.output.rgb.mul(mtl.z.mul(0.7).add(0.3)), tsl.output.a);
 
   // ── PER-MESH TEXTURE MAPS ──────────────────────────────────────────────────────────────
   //
