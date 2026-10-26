@@ -118,6 +118,16 @@ export function clear(main) {
   record(main, 'Clear Landmarks', () => { topo.picks.clear(); topo.cur = 0; });
 }
 
+// FILE > NEW. The dot groups hang off the meshes' PARENT (so they show while a mesh is hidden), so
+// emptying the scene left them floating there, along with picks for a target that no longer exists.
+export function resetTopo(main) {
+  for (const g of _groups) g.parent?.remove(g);
+  _groups.clear();
+  drawLines(main, null, null);
+  Object.assign(topo, { pick: false, cur: 0, targetId: null, picks: new Map() });
+  repaint();
+}
+
 export function select(main, i) {
   topo.cur = isMirrored(GNM_LANDMARKS[i]) ? GNM_LANDMARKS.findIndex((l) => l.key === GNM_LANDMARKS[i].mirror) : i;
   setPick(main, true);

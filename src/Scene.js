@@ -100,7 +100,7 @@ import { applyXRBackendPatches, makePCFFilter } from './render/nodes/ThreeXRPatc
 import { tickRegions } from './editing/GnmRegions.js';
 import { tickJiggle } from './editing/Jiggle.js';
 import { tickIdle } from './editing/IdleFace.js';
-import { tickTopo } from './editing/TopoTransfer.js';
+import { tickTopo, resetTopo } from './editing/TopoTransfer.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -7718,6 +7718,7 @@ class Scene {
     this.getCamera().resetView();
     this.setMesh(null);
     this._action = Enums.Action.NOTHING;
+    try { resetTopo(this); } catch (e) { console.error('topo reset on clear failed:', e); }
 
     // THE RIG'S VISUALS ARE NOT MESHES, so emptying `_meshes` does not remove them. Bones,
     // joints, capsules and volumes are batched objects living in the skeleton group, and they
