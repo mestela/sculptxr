@@ -26,7 +26,8 @@
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
-import { setJiggle } from '../jiggleSettings.js';
+import { setJiggle, setTeeth } from '../jiggleSettings.js';
+import { teeth, TEETH_SLIDERS, LIP_SLIDERS } from '../../editing/TeethCollide.js';
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
 import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
@@ -3914,16 +3915,28 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice" id="mm-face-zero">Zero All</button>
       <button class="mm-choice" id="mm-face-retarget" title="Rebuild every shape for the sculpted Base, refitting eyes, teeth and tongue to the skin round them">Retarget Shapes</button>
     </div>
-    <div class="mm-section-title">Jiggle and Idle</div>
+    <div class="mm-section-title">Post FX</div>
     <div class="mm-choice-grid cols-2">
-      <button class="mm-choice${tool._useJiggle ? ' active' : ''}" id="mm-face-jiggle" title="Spring jiggle on the cheeks, jowls and lips of a GNM head (display only; stays on with other tools)">Jiggle</button>
+      <button class="mm-choice${tool._useJiggle ? ' active' : ''}" id="mm-face-jiggle" title="Post effects on a GNM head: spring jiggle on the cheeks, jowls and lips, and lips pushed out of the teeth (display only; stays on with other tools)">Post FX</button>
       <button class="mm-choice${tool._useIdle ? ' active' : ''}" id="mm-face-idle" title="Idle blinks, eye darts and brow/mouth life on any ARKit head (display only; stays on with other tools)">Idle</button>
     </div>
-    ${jiggle.on ? JIGGLE_SLIDERS.map((d) => `
+    ${jiggle.on ? `<div class="mm-field-lbl">Jiggle</div>` + JIGGLE_SLIDERS.map((d) => `
     <div class="mm-row">
       <span class="mm-lbl">${d.label}</span>
       <input type="range" id="mm-jiggle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(jiggle[d.key])}">
       <span class="mm-val" id="mm-jiggle-${d.key}-val">${d.fmt(d.ui(jiggle[d.key]))}</span>
+    </div>`).join('') : ''}
+    ${jiggle.on ? `<div class="mm-field-lbl">Teeth Collision</div>` + TEETH_SLIDERS.map((d) => `
+    <div class="mm-row">
+      <span class="mm-lbl">${d.label}</span>
+      <input type="range" id="mm-teeth-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
+      <span class="mm-val" id="mm-teeth-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
+    </div>`).join('') : ''}
+    ${jiggle.on ? `<div class="mm-field-lbl">Lip Collision</div>` + LIP_SLIDERS.map((d) => `
+    <div class="mm-row">
+      <span class="mm-lbl">${d.label}</span>
+      <input type="range" id="mm-lip-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
+      <span class="mm-val" id="mm-lip-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
     </div>`).join('') : ''}
     ${idle.on ? IDLE_SLIDERS.map((d) => `
     <div class="mm-row">
@@ -6121,6 +6134,14 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   for (const d of JIGGLE_SLIDERS) {
     wireSlider(el.querySelector(`#mm-jiggle-${d.key}`), el.querySelector(`#mm-jiggle-${d.key}-val`),
       (v) => setJiggle(d.key, d.to(v)), d.fmt, sliderDirtyFn);
+  }
+  for (const d of TEETH_SLIDERS) {
+    wireSlider(el.querySelector(`#mm-teeth-${d.key}`), el.querySelector(`#mm-teeth-${d.key}-val`),
+      (v) => setTeeth(d.key, d.to(v)), d.fmt, sliderDirtyFn);
+  }
+  for (const d of LIP_SLIDERS) {
+    wireSlider(el.querySelector(`#mm-lip-${d.key}`), el.querySelector(`#mm-lip-${d.key}-val`),
+      (v) => setTeeth(d.key, d.to(v)), d.fmt, sliderDirtyFn);
   }
   for (const d of IDLE_SLIDERS) {
     wireSlider(el.querySelector(`#mm-idle-${d.key}`), el.querySelector(`#mm-idle-${d.key}-val`),

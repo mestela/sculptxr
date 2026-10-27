@@ -15,6 +15,7 @@
 import { mat4 } from 'gl-matrix';
 import { isGnm, regionCodes } from './GnmRegions.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
+import { teeth } from './TeethCollide.js';
 
 // Hz, damping ratio, 0..1, offset cap (mesh radii). Defaults are matt's, tuned on GNM with the
 // sliders (2026-10-24). At gain 1 and a 15% cap, snapping the jaw open in one frame left the whole
@@ -155,18 +156,24 @@ export function jigglePush(mesh, track, v, geo = mesh) {
 
 // Every frame from Scene.applyRender: recomposite heads whose springs are still moving or whose
 // transform moved since their last step (a head turning with no shape change).
+let wasOn = false, teethRev = -1;
 export function tickJiggle(main) {
   const reg = window._animationRegistry;
   if (!reg) return;
+  // JUST TURNED ON, or a teeth slider moved: recomposite every head now. The teeth push rides on
+  // the jiggle (AnimationRegistry.teethPush) and a head at rest, already seen, was otherwise only
+  // recomposited by the next pose change -- the push waited until you pulled on the face.
+  const kick = jiggle.on && (!wasOn || teeth.rev !== teethRev);
+  wasOn = jiggle.on; teethRev = teeth.rev;
   for (const mesh of main.getMeshes ? main.getMeshes() : []) {
     const s = springs.get(mesh);
     const track = reg.tracks.get(mesh.getID());
     if (!track || !track.blendshapes) continue;
     if (!jiggle.on) {
-      if (track._jiggle) reg.applyBlendshapes(mesh);   // turned off: put the rest pose back
+      if (track._jiggle || track._teethPush) reg.applyBlendshapes(mesh);   // turned off: put the rest pose back (the teeth push goes with it)
       continue;
     }
-    if (!s) { reg.applyBlendshapes(mesh); continue; }   // first sight: builds its spring (or learns it has none)
+    if (!s || kick) { reg.applyBlendshapes(mesh); if (!s) continue; }   // first sight: builds its spring (or learns it has none)
     if (!s.spring) continue;
     const M = mesh.getMatrix();
     if (s.spring.live || !s.M || M.some((x, i) => x !== s.M[i])) reg.applyBlendshapes(mesh);
@@ -174,4 +181,5 @@ export function tickJiggle(main) {
     // and a 250 ms gap mid-wobble is a restart, so the jiggle stopped dead.
     if (s.spring.live) main.render();
   }
+  if (kick) main.render();
 }

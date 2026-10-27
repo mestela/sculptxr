@@ -35,7 +35,8 @@ import {
 } from '../bonePanel.js';
 import { buildTransformSectionHTML, wireTransformSection, syncTransformSection } from '../transformPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
-import { setJiggle } from '../jiggleSettings.js';
+import { setJiggle, setTeeth } from '../jiggleSettings.js';
+import { teeth, TEETH_SLIDERS, LIP_SLIDERS } from '../../editing/TeethCollide.js';
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
 
@@ -677,6 +678,16 @@ export class MiniPanel extends HTMLVRPanel {
           this._requestPaint();
         });
       }
+      for (const d of [...TEETH_SLIDERS, ...LIP_SLIDERS]) {
+        const pre = TEETH_SLIDERS.includes(d) ? 'teeth' : 'lip';
+        const input = extras.querySelector(`#mp-${pre}-${d.key}`), val = extras.querySelector(`#mp-${pre}-${d.key}-val`);
+        input?.addEventListener('input', () => {
+          const v = parseFloat(input.value);
+          if (val) val.textContent = d.fmt(v);
+          setTeeth(d.key, d.to(v));
+          this._requestPaint();
+        });
+      }
       for (const d of IDLE_SLIDERS) {
         const input = extras.querySelector(`#mp-idle-${d.key}`), val = extras.querySelector(`#mp-idle-${d.key}-val`);
         input?.addEventListener('input', () => {
@@ -1108,16 +1119,28 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-toggle-btn" id="mp-face-zero">Zero All</button>
           <button class="mp-toggle-btn${t?._showRegions ? ' active' : ''}" id="mp-face-regions">Regions</button>
         </div>
-        ${collapsibleHTML('mp-jiggle-idle', 'Jiggle and Idle', `
+        ${collapsibleHTML('mp-jiggle-idle', 'Post FX', `
         <div class="mp-toggles cols-2">
-          <button class="mp-toggle-btn${t?._useJiggle ? ' active' : ''}" id="mp-face-jiggle">Jiggle</button>
+          <button class="mp-toggle-btn${t?._useJiggle ? ' active' : ''}" id="mp-face-jiggle">Post FX</button>
           <button class="mp-toggle-btn${t?._useIdle ? ' active' : ''}" id="mp-face-idle">Idle</button>
         </div>
-        ${jiggle.on ? JIGGLE_SLIDERS.map((d) => `
+        ${jiggle.on ? `<div class="mp-lbl" style="margin-top:6px">Jiggle</div>` + JIGGLE_SLIDERS.map((d) => `
         <div class="mp-row">
           <span class="mp-lbl">${d.label}</span>
           <input type="range" id="mp-jiggle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(jiggle[d.key])}">
           <span class="mp-val" id="mp-jiggle-${d.key}-val">${d.fmt(d.ui(jiggle[d.key]))}</span>
+        </div>`).join('') : ''}
+        ${jiggle.on ? `<div class="mp-lbl" style="margin-top:6px">Teeth Collision</div>` + TEETH_SLIDERS.map((d) => `
+        <div class="mp-row">
+          <span class="mp-lbl">${d.label}</span>
+          <input type="range" id="mp-teeth-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
+          <span class="mp-val" id="mp-teeth-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
+        </div>`).join('') : ''}
+        ${jiggle.on ? `<div class="mp-lbl" style="margin-top:6px">Lip Collision</div>` + LIP_SLIDERS.map((d) => `
+        <div class="mp-row">
+          <span class="mp-lbl">${d.label}</span>
+          <input type="range" id="mp-lip-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
+          <span class="mp-val" id="mp-lip-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
         </div>`).join('') : ''}
         ${idle.on ? IDLE_SLIDERS.map((d) => `
         <div class="mp-row">

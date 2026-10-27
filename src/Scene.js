@@ -99,6 +99,7 @@ import { installEnvironment } from './render/nodes/EnvIBL.js';
 import { applyXRBackendPatches, makePCFFilter } from './render/nodes/ThreeXRPatches.js';
 import { tickRegions } from './editing/GnmRegions.js';
 import { tickJiggle } from './editing/Jiggle.js';
+import { tickTeethViz } from './editing/TeethViz.js';
 import { tickIdle } from './editing/IdleFace.js';
 import { tickTopo, resetTopo } from './editing/TopoTransfer.js';
 
@@ -1695,6 +1696,7 @@ class Scene {
     tickIdle(this);     // before the jiggle, which chases the composite it makes
     tickTopo(this);
     tickJiggle(this);
+    tickTeethViz(this);   // after the jiggle's recomposite, which updates each jaw's fit
     this.updateMatricesAndSort();
     // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.
     this._mark('xr-setup');

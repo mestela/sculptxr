@@ -179,6 +179,8 @@ NodeMaterials.buildOverlayVariants = function () {
   // The plain instanced batches. Eight of them -- bone and joint, each with a ghost and a
   // physics variant -- but only two materials, because they differ only in geometry.
   for (const ghost of [false, true]) if (NodeMaterials.rigBatch({ ghost })) n++;
+  // The teeth heels and the lip ribbon: three colours, three passes.
+  for (const jaw of [0, 1, 2]) for (const pass of ['pre', 'solid', 'ghost']) if (NodeMaterials.teethHeel({ jaw, pass })) n++;
   // DOT_PX, KEY_DOT_PX and DOT_PX * HOVER_GROW, from MotionTrail.
   for (const size of [4, 6, 4 * 1.9]) {
     if (NodeMaterials.dots({ size })) n++;
@@ -462,6 +464,50 @@ NodeMaterials.rigCapsule = function (opts = {}) {
   m.userData.checkMix = checkMix;
   m.userData.shadeMix = shadeMix;
   m.userData.rigCapsule = true;
+  m.userData.nodeShared = true;
+  overlay.set(ck, m);
+  return m;
+};
+
+/**
+ * THE TEETH HEELS (TeethViz): drawn like the bone volumes -- the capsules' shading (and its Shaded
+ * toggle, through userData.shadeMix) and their checker, darkening squares to 0.68 -- but on an
+ * ordinary mesh: placed by its own matrix, lit by its own normals, the checker from its uv (in
+ * cells: TeethViz writes uv as arc length and section perimeter over the cell size). One colour
+ * per jaw, baked in, so the set can be built up front with the rest. `pass` is 'pre' (depth only),
+ * 'solid' or 'ghost' (GreaterDepth xray), the capsules' three passes.
+ */
+const HEEL_COLOURS = [[0.4, 0.8, 1.0], [1.0, 0.67, 0.33], [0.55, 0.9, 0.55]];   // upper, lower, lip ribbon -- TeethViz's COLOURS
+NodeMaterials.teethHeel = function (opts = {}) {
+  if (!gpu) return null;
+  overlay = overlay || new Map();
+  const jaw = opts.jaw | 0, pass = opts.pass || 'solid';
+  const ck = 'heel:' + jaw + ':' + pass;
+  const hit = overlay.get(ck);
+  if (hit) return hit;
+  const { vec3, vec4, float, mix, max, uniform, uv, floor, mod, normalLocal, modelWorldMatrix } = tsl;
+  const ghost = pass === 'ghost';
+  const m = unlit({
+    side: ghost ? gpu.FrontSide : gpu.DoubleSide,
+    transparent: true,
+    opacity: ghost ? 0.35 : 1.0,
+    depthTest: true,
+    depthWrite: pass === 'pre',
+    ...(pass === 'pre' ? { colorWrite: false } : {}),
+    ...(ghost ? { depthFunc: gpu.GreaterDepth } : {}),
+  });
+  const c = HEEL_COLOURS[jaw % HEEL_COLOURS.length], col = vec3(c[0], c[1], c[2]);
+  // rigShade's key light, on this mesh's own normal.
+  const world = modelWorldMatrix.mul(vec4(normalLocal, 0.0)).xyz.normalize();
+  const lit = float(0.60).add(float(0.80).mul(world.dot(vec3(0.35, 1.0, 0.45).normalize()).clamp(0, 1)));
+  const shadeMix = uniform(1);
+  const shade = mix(float(1.0), lit, shadeMix);
+  const brightest = Math.max(c[0], c[1], c[2]);
+  const gain = max(shade, float(0)).min(float(1.0 / brightest));
+  const u = uv();
+  const parity = mod(floor(u.x).add(floor(u.y)), float(2.0));
+  m.colorNode = col.mul(gain).mul(mix(float(1.0), float(0.68), parity));
+  m.userData.shadeMix = shadeMix;
   m.userData.nodeShared = true;
   overlay.set(ck, m);
   return m;

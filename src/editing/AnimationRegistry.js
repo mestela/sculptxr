@@ -8,7 +8,11 @@ import Skinning from './Skinning.js';
 import { arcBasis } from './ArcBlend.js';
 import { triangles, prepare, retargetDelta, fitParts } from './ShapeRetarget.js';
 import { buildEyes, collide, eyeSum, knownLids } from './EyeCollide.js';
-import { jigglePush } from './Jiggle.js';
+import { jigglePush, jiggle } from './Jiggle.js';
+import { buildTeeth, collideTeeth, teethSum } from './TeethCollide.js';
+import { isGnm, regionCodes } from './GnmRegions.js';
+import { GNM_REGION_NAMES } from './gnmRegionData.js';
+import { GNM_LANDMARKS } from './gnmLandmarks.js';
 import Skeleton from './Skeleton.js';
 import PhysicsBones from './PhysicsBones.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -3004,6 +3008,10 @@ class AnimationRegistry {
     // SPRING JIGGLE (Jiggle.js), last: it chases the finished composite. Same contract as the lids.
     const jig = !baseVerts && jigglePush(mesh, track, v, geo);
     if (jig) used.push([jig.d, 1]);
+    // LIPS OUT OF THE TEETH (TeethCollide.js), after the jiggle so its swing is caught too. With
+    // the jiggle only, for now. Same contract as the lids.
+    const teeth = !baseVerts && this.teethPush(mesh, track, v, geo);
+    if (teeth) used.push([teeth.d, 1]);
 
     // Skinning runs LAST, over this composite: posed = skin(base + Σ deltas), with the
     // deltas in rest space. Hand the composite to the skin pass as its rest-space source
@@ -3085,6 +3093,44 @@ class AnimationRegistry {
     }
     track._lidPush = { idx, d };
     return track._lidPush;
+  }
+
+  // The teeth push for this composite (TeethCollide.collideTeeth), added into `v` and kept on the
+  // track as `_teethPush` {idx, d} for otherLayersOffset. Null when the jiggle is off or no lip
+  // touched. The jaws are rebuilt like the eyes: new topology or shapes, or the base moved under them.
+  teethPush(mesh, track, v, geo = mesh) {
+    const prev = track._teethPush;
+    track._teethPush = null;
+    if (!jiggle.on || !track.baseShape || !track.blendshapes?.size) return null;
+    const base = track.baseShape, n = base.length;
+    const key = `${n}|${geo.getNbFaces()}|${[...track.blendshapes.keys()].join(',')}`;
+    const t = track._teeth;
+    if (!t || t.key !== key || (t.state && t.sum !== teethSum(t.state, base))) {
+      // The lips and mouth bag (lip thickness) are known on GNM heads only.
+      let lips = null;
+      if (isGnm(geo)) {
+        const codes = regionCodes(), sock = GNM_REGION_NAMES.indexOf('mouth_sock');
+        const up = GNM_REGION_NAMES.indexOf('upper_lip'), lo = GNM_REGION_NAMES.indexOf('lower_lip');
+        lips = { bag: new Uint8Array(n / 3), lip: new Uint8Array(n / 3), upper: new Uint8Array(n / 3), lower: new Uint8Array(n / 3),
+          corners: ['mouthCornerL', 'mouthCornerR'].map((k) => GNM_LANDMARKS.find((l) => l.key === k).v) };
+        for (let i = 0; i < Math.min(n / 3, codes.length); i++) {
+          lips.bag[i] = codes[i] === sock ? 1 : 0;
+          lips.upper[i] = codes[i] === up ? 1 : 0;
+          lips.lower[i] = codes[i] === lo ? 1 : 0;
+          lips.lip[i] = lips.upper[i] || lips.lower[i];
+        }
+      }
+      const state = buildTeeth(base, triangles(geo.getFaces(), geo.getNbFaces()), n / 3, track.blendshapes, lips);
+      track._teeth = { key, state, sum: state && teethSum(state, base) };
+    }
+    const state = track._teeth.state;
+    if (!state) return null;
+    const d = prev && prev.d.length === n ? prev.d : new Float32Array(n);
+    if (prev && prev.d === d) for (const i of prev.idx) { d[i * 3] = 0; d[i * 3 + 1] = 0; d[i * 3 + 2] = 0; }
+    const idx = collideTeeth(state, base, v, d);
+    if (!idx.length) return null;
+    track._teethPush = { idx, d };
+    return track._teethPush;
   }
 
   // Per-layer LOCK (Photoshop-style): a locked layer (or the Base cage) can't be
@@ -3194,9 +3240,9 @@ class AnimationRegistry {
       const terms = this.shapeTerms(track, name, delta, weight);
       for (const [dd, k] of terms) this._addScaled(out, dd, k, false);
     });
-    // The lid push and the jiggle are on screen too (lidPush, Jiggle.js): out with them, or a
-    // stroke keeps them.
-    for (const post of [track._lidPush, track._jiggle]) {
+    // The lid push, the jiggle and the teeth push are on screen too (lidPush, Jiggle.js,
+    // teethPush): out with them, or a stroke keeps them.
+    for (const post of [track._lidPush, track._jiggle, track._teethPush]) {
       if (!post || !post.idx.length || !track.baseShape) continue;
       if (!out) out = new Float32Array(track.baseShape.length);
       for (const i of post.idx) for (let k = 0; k < 3; k++) out[i * 3 + k] += post.d[i * 3 + k];
