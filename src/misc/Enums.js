@@ -133,7 +133,9 @@ Enums.KeyAction = Utils.extend({
   STRIFE_DOWN: acc++,
   WIREFRAME: acc++,
   REMESH: acc++,
-  SWAP_COLORS: acc++
+  SWAP_COLORS: acc++,
+  TOGGLE_TRANSFORM: acc++,
+  PLAY_PAUSE: acc++
 }, Enums.Tools);
 
 export default Enums;

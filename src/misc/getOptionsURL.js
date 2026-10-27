@@ -60,6 +60,7 @@ var readShortcuts = function (str) {
   shortcuts['8'.charCodeAt(0)] = keyAction.DRAG;
   shortcuts['9'.charCodeAt(0)] = keyAction.PAINT;
   shortcuts['E'.charCodeAt(0)] = keyAction.TRANSFORM;
+  shortcuts['T'.charCodeAt(0)] = keyAction.TOGGLE_TRANSFORM;
 
   // sculpting
   shortcuts['C'.charCodeAt(0)] = keyAction.INTENSITY;
@@ -68,12 +69,12 @@ var readShortcuts = function (str) {
   shortcuts['S'.charCodeAt(0)] = keyAction.PICKER;
   shortcuts['V'.charCodeAt(0)] = keyAction.SWAP_COLORS;
   shortcuts[46] = keyAction.DELETE; // DEL
+  shortcuts[8] = keyAction.DELETE; // BACKSPACE: the key a MacBook labels "delete"
 
   // camera
   shortcuts['F'.charCodeAt(0)] = keyAction.CAMERA_FRONT;
-  shortcuts['T'.charCodeAt(0)] = keyAction.CAMERA_TOP;
   shortcuts['L'.charCodeAt(0)] = keyAction.CAMERA_LEFT;
-  shortcuts[32] = keyAction.CAMERA_RESET; // SPACE
+  shortcuts[36] = keyAction.CAMERA_RESET; // HOME (Space is play/pause, as in Blender)
   shortcuts[37] = keyAction.STRIFE_LEFT;
   shortcuts[39] = keyAction.STRIFE_RIGHT;
   shortcuts[38] = keyAction.STRIFE_UP;
@@ -84,6 +85,7 @@ var readShortcuts = function (str) {
 
   // other
   shortcuts['R'.charCodeAt(0)] = keyAction.REMESH;
+  shortcuts[32] = keyAction.PLAY_PAUSE; // SPACE
 
   if (!str)
     return shortcuts;

@@ -736,7 +736,10 @@ class Mesh {
     // capturing from it wrote those into the Base on every geometry update (0.002 a time on GNM,
     // accumulating). Sculpting up there is detail instead: AnimationRegistry.applyBlendshapes
     // analyses it down and puts it back on top of every pose.
-    if (_track?.baseShape && this.getNbVertices() * 3 !== _track.baseShape.length) _track = null;
+    // The base's VERTEX COUNT, not its array length: the array is sized to the buffer's spare
+    // capacity (createBlendshape), so on a mesh made in the app the length never matched and every
+    // layer edit -- strokes, Snap to Surface -- was dropped as if it were on another level.
+    if (_track?.baseShape && this.getNbVertices() !== (_track._bsNbVertices || _track.baseShape.length / 3)) _track = null;
     if (_track?.editingBlendshape && _track.baseShape && !_track._applyingBS) {
       // Blendshape layer editing. The active layer is held at weight 1 while
       // sculpting (the SculptManager gate blocks strokes otherwise), but the live

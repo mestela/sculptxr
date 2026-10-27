@@ -345,6 +345,26 @@ class GuiSculpting {
       case Enums.KeyAction.SWAP_COLORS:
         if (cur.swapColors) cur.swapColors();
         break;
+    case Enums.KeyAction.TOGGLE_TRANSFORM: {
+      // T flips to Transform and back to whatever tool was up before it.
+      const t = this.getSelectedTool();
+      if (t === Enums.Tools.TRANSFORM || t === Enums.Tools.TRANSFORM_VR) {
+        this.onChangeTool(this._preTransformTool ?? Enums.Tools.BRUSH);
+      } else {
+        this._preTransformTool = t;
+        this.onChangeTool(Enums.Tools.TRANSFORM);
+      }
+      break;
+    }
+    case Enums.KeyAction.PLAY_PAUSE: {
+      // Space, as in Blender: the same toggle as the transport's play button.
+      const reg = window._animationRegistry;
+      if (window._animPlaying) { window._animPlaying = false; reg?.stopRecording?.(true); }
+      else reg?.startPlayback?.(1);
+      window._animSyncKeyInspector?.();
+      main.getGui?.()?._ctrlTimeline?.draw?.();
+      break;
+    }
     default:
       event.handled = false;
     }

@@ -3246,6 +3246,13 @@ export default class GuiTimeline {
       // Draw blendshape weight curves (newest-first, shared order)
       if (track && track.blendshapeTracks) {
         let bsIdx = 0;
+        // A FACE RIG IS FIFTY CURVES, and this ran per mouse move: every segment sampled 20 times
+        // (each a 10-step bisection) on screen or not, and every key scanned the whole selection.
+        // Now: off-screen segments and keys are skipped, a segment gets a sample per ~3px of its
+        // width, and the selection is a Set built once.
+        const viewEnd = loopStart + visibleDuration;
+        const selBs = new Set();
+        for (const k of (window._animSelectedKeys || [])) if (k.meshId === id && k.type === 'blendshape') selBs.add(k.name + '\u0000' + k.index);
         TimelineHelper.bsEntries(track).forEach(([name, bTrack]) => {
           const isVisible = window._animBsChannelVisible?.[name] !== false;
           if (!isVisible || !bTrack.times || bTrack.times.length === 0) { bsIdx++; return; }
@@ -3257,8 +3264,10 @@ export default class GuiTimeline {
             ctx.strokeStyle = _hovBs ? this._lightenHex(color) : color;
             ctx.lineWidth = _hovBs ? 3.5 : 2;
             ctx.beginPath();
+            let penDown = false;
             for (let i = 0; i < bTrack.times.length - 1; i++) {
               const t1 = bTrack.times[i], t2 = bTrack.times[i + 1];
+              if (t2 < loopStart || t1 > viewEnd) { penDown = false; continue; }
               const v1 = bTrack.values[i], v2 = bTrack.values[i + 1];
               const dt = t2 - t1;
               const to = bTrack.tangentOffsets;
@@ -3273,15 +3282,15 @@ export default class GuiTimeline {
               const dv0 = rDv !== undefined ? rDv : s0 * dt0;
               const dv1 = lDv !== undefined ? lDv : s1 * dt1;
               const p1x = dt0 / dt, p2x = 1 + dt1 / dt;
-              const steps = 20;
-              for (let s = 0; s <= steps; s++) {
+              const steps = Math.max(2, Math.min(20, Math.ceil((dt / visibleDuration) * tlW / 3)));
+              for (let s = penDown ? 1 : 0; s <= steps; s++) {
                 const alpha = s / steps;
                 const bt = TimelineHelper.getBezierT(alpha, p1x, p2x);
                 const val = TimelineHelper.evaluateBezier(bt, v1, v2, dv0, dv1);
                 const time = t1 + alpha * dt;
                 const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
                 const y = this.valueToY(val);
-                if (i === 0 && s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                if (!penDown) { ctx.moveTo(x, y); penDown = true; } else ctx.lineTo(x, y);
               }
             }
             ctx.stroke();
@@ -3291,9 +3300,9 @@ export default class GuiTimeline {
           for (let i = 0; i < bTrack.times.length; i++) {
             const t = bTrack.times[i];
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            if (x < tlX - 6 || x > tlX + tlW + 6) continue;
             const y = this.valueToY(bTrack.values[i]);
-            const isSelected = window._animSelectedKeys &&
-              window._animSelectedKeys.some(k => k.meshId === id && k.type === 'blendshape' && k.name === name && k.index === i);
+            const isSelected = selBs.has(name + '\u0000' + i);
             const isHovered = TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10);
 
             ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? Theme.text : color);
@@ -3499,7 +3508,7 @@ export default class GuiTimeline {
     const track = reg.tracks.get(mesh.getID());
     if (!track) return null;
     const tlX = 200, tlW = this._cssWidth - 200;
-    if (rx <= tlX || ry <= HEADER_H) return null;
+    if (rx <= tlX || ry <= HEADER_H || rx >= tlX + tlW || ry >= this._cssHeight) return null;
     this._ensureViewInit();
     const loopStart = this._viewStart, visibleDuration = this._viewDuration;
     const xOf = (t) => tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -3512,8 +3521,11 @@ export default class GuiTimeline {
     };
     const test = (pts) => {
       if (pts.length === 1) return Math.hypot(rx - xOf(pts[0].t), ry - this.valueToY(pts[0].v)) <= TH;
-      for (let i = 0; i + 1 < pts.length; i++)
-        if (dSeg(rx, ry, xOf(pts[i].t), this.valueToY(pts[i].v), xOf(pts[i + 1].t), this.valueToY(pts[i + 1].v)) <= TH) return true;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const xa = xOf(pts[i].t), xb = xOf(pts[i + 1].t);
+        if (xb < rx - TH || xa > rx + TH) continue;   // only the segments spanning the pointer
+        if (dSeg(rx, ry, xa, this.valueToY(pts[i].v), xb, this.valueToY(pts[i + 1].v)) <= TH) return true;
+      }
       return false;
     };
     // Every visible group, and the answer NAMES the group -- clicking a rotation curve must
@@ -6096,10 +6108,16 @@ export default class GuiTimeline {
       }
 
       if (this._mode === 'graph') {
-        if (e.button === 1) { // Middle click
-          this._isPanningGraph = true;
-          this._panStartRy = ry;
-          this._panStartOffsetY = this._panY;
+        if (e.button === 1) { // Middle click: pan time AND value, the same grab as the dopesheet's
+          if (this._viewDuration === undefined) {
+            const mD = (window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+            this._viewStart = window._animLoopStart ?? 0.0;
+            this._viewDuration = Math.max(0.1, (window._animLoopEnd ?? mD) - this._viewStart);
+          }
+          this._isPanningGraphXY = true;
+          this._panXYStartRx = rx; this._panXYStartRy = ry;
+          this._panXYStartViewStart = this._viewStart;
+          this._panXYStartPanY = this._panY;
           e.preventDefault();
           return;
         } else if (e.button === 2) { // Right click
@@ -6809,7 +6827,7 @@ export default class GuiTimeline {
     }
 
     // ON THE CANVAS: this listener is on the window, so "ry < 5" alone is everywhere above the panel.
-    const overGrip = ry >= 0 && ry < 5 && rx >= 0 && rx <= rect.width && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isZoomingGraph;
+    const overGrip = ry >= 0 && ry < 5 && rx >= 0 && rx <= rect.width && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isPanningGraphXY && !this._isPanningDope && !this._isZoomingGraph;
     this._canvas.style.cursor = overGrip ? 'ns-resize' : 'default';
     // The grip lights while it is the thing a press would take, and for the whole resize.
     const gripHover = overGrip || !!this._isResizingPanel;

@@ -38,6 +38,7 @@ import getOptionsURL, { MENU_GRADE_DEFAULTS } from '../../misc/getOptionsURL.js'
 import { compactPref, refreshCompact } from '../compactUI.js';
 import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
+import { snapTargetMesh, snapLabel, setSnapTarget, snapSelectedToTarget, canSnap } from '../../editing/SnapToSurface.js';
 import Picking      from '../../math3d/Picking.js';
 import RigPending   from '../../editing/RigPending.js';
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
@@ -3210,6 +3211,13 @@ export function buildSectionHTML_topology(main) {
       <button class="mm-action-btn" id="mm-sym-rl"${symDead ? symDeadTip : (mesh ? '' : ' disabled')}>R→L</button>
     </div>
 
+    <div class="mm-section-title">Snap to Surface</div>
+    <div class="mm-field-lbl">Target: ${escHTML(snapLabel(snapTargetMesh(main)))}</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-snap-target" title="The selected mesh becomes the surface to snap onto"${mesh ? '' : ' disabled'}>Use Selected as Target</button>
+      <button class="mm-action-btn" id="mm-snap-surface" title="Pull the selected mesh(es) onto the target's surface"${canSnap(main) ? '' : ' disabled'}>Snap</button>
+    </div>
+
     <div class="mm-section-title">Mesh Health</div>
     <button class="mm-action-btn" id="mm-validate">Validate Manifold</button>
     <button class="mm-toggle" id="mm-auto-heal">Auto heal on remesh</button>
@@ -6102,6 +6110,9 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
   el.querySelector('#mm-sym-rl')?.addEventListener('click', () => {
     main.getGui?.()._ctrlSculpting?.onSymRL?.(); main.render?.();
   });
+
+  el.querySelector('#mm-snap-target')?.addEventListener('click', () => { setSnapTarget(main); repaintFn(); });
+  el.querySelector('#mm-snap-surface')?.addEventListener('click', () => { snapSelectedToTarget(main); repaintFn(); });
 
   el.querySelector('#mm-validate')?.addEventListener('click',  () => { topo?.validateMesh?.(); });
   el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {

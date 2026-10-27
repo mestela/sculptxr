@@ -343,7 +343,10 @@ export default class BlendshapeStackPanel {
 
   _relayout() {
     if (!this._host) return;
-    this._cssW = this._host.clientWidth || 280;
+    // The CANVAS's width, not the host's: the tab panel's clientWidth counts its 10px padding, so
+    // the toolbar was drawn 20px wider than shown and squeezed to fit, while hits stayed unsqueezed
+    // -- the left of the Zero button landed on the fold bar under it.
+    this._cssW = this._canvas.clientWidth || this._host.clientWidth || 280;
     this._applyCanvasSize(this._picker ? this._pickerCanvasH() : this._contentHeight());
     this.draw();
   }
@@ -901,7 +904,16 @@ export default class BlendshapeStackPanel {
     try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
     this._pointerDown(this._local(e), e.altKey);
   }
-  _onMove(e) { this._pointerMove(this._local(e)); }
+  // Move is on the window so a drag keeps tracking off the canvas; HOVER is only for a pointer
+  // over the panel itself. Without the gate the row at the cursor's height lit up wherever the
+  // mouse was in the viewport.
+  _onMove(e) {
+    const over = e.target === this._canvas || e.target === this._tbCanvas;
+    const held = this._picker?.pressActive || this._sbDrag || this._eyePaint || this._padActive
+      || this._reorderName || this._dragName;
+    if (!over && !held) { if (this._hover || this._pad?._hoverHeader) this.clearHover(); return; }
+    this._pointerMove(this._local(e));
+  }
 
   // VR entry point: canvas-space coords + a `solo` modifier (secondary trigger).
   // phase ∈ 'down' | 'move' | 'up'.

@@ -2924,7 +2924,9 @@ class AnimationRegistry {
     const stack = mesh._meshes, sel = mesh._sel | 0;
     let li = -1;
     if (stack && stack.length > 1 && track.baseShape) {
-      li = stack.findIndex((l) => l.getNbVertices() * 3 === track.baseShape.length);
+      // By vertex count (see Mesh.updateGeometry): the base array carries the buffer's spare capacity.
+      const nb = track._bsNbVertices || track.baseShape.length / 3;
+      li = stack.findIndex((l) => l.getNbVertices() === nb);
       // Sculpting done on a level above it is kept: analyse down to the shapes' level first, so it
       // is the detail the rebuild puts back on top of the new pose. ONLY WHEN THAT LEVEL CHANGED
       // since this last rebuilt it (a stroke, a level switch): analysis then synthesis is not an

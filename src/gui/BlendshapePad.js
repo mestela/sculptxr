@@ -233,7 +233,7 @@ class BlendshapePad {
 
   _relayout() {
     if (!this._host || !this._canvas) return;
-    const w = Math.max(120, this._host.clientWidth || this._cssW);
+    const w = Math.max(120, this._canvas.clientWidth || this._host.clientWidth || this._cssW);   // content width (see BlendshapeStackPanel._relayout)
     this._cssW = w;
     this._cssH = this._collapsed ? PAD_HEADER_H : PAD_HEADER_H + Math.round(w * 0.78);
     this._dpr = (window.devicePixelRatio || 1) * Math.max(1, window._uiScale || 1);
