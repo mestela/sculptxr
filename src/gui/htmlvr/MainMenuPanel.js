@@ -33,6 +33,7 @@ import { teeth, TEETH_SLIDERS, LIP_SLIDERS } from '../../editing/TeethCollide.js
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
 import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
+import { held as topoHeld, holdPose as topoHold, unposeToNeutral as topoUnpose } from '../../editing/TopoPose.js';
 import { GNM_LANDMARKS } from '../../editing/gnmLandmarks.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
@@ -6783,8 +6784,10 @@ function buildTopoHTML(main) {
       <button class="mm-choice" id="mm-topo-view" title="Show both heads, the target only, or GNM only (Tab while picking)"${dis}>Show: ${VIEW_LABEL[topo.view]}</button>
       <button class="mm-choice${topo.lines ? ' active' : ''}" id="mm-topo-lines" title="Dashed lines from each GNM landmark to its pick on the target: a mis-click is the line that crosses the rest"${dis}>Lines</button>
       <button class="mm-choice${topo.dots ? ' active' : ''}" id="mm-topo-dots" title="Show or hide the landmark dots on both heads"${dis}>Dots</button>
+      <button class="mm-choice${topoHeld.pose ? ' active' : ''}" id="mm-topo-hold" title="Sculpt made in an expression? Pose GNM to match it, then Hold Pose before Wrap: the pose goes into the Base so Wrap and Snap fit open mouth to open mouth"${dis}>Hold Pose</button>
       <button class="mm-choice" id="mm-topo-wrap" title="Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)"${dis}>Wrap</button>
       <button class="mm-choice" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>Snap to Surface</button>
+      <button class="mm-choice" id="mm-topo-unpose" title="After Snap: take the held pose back out, leaving the sculpt's own neutral, and put the pose weights back (then Retarget Shapes)"${topoHeld.pose ? '' : ' disabled'}>Un-pose to Neutral</button>
       <button class="mm-choice" id="mm-topo-clear"${dis}>Clear</button>
     </div>
     ${t ? `<div class="mm-choice-grid cols-2">${rows}</div>` : ''}`;
@@ -6802,6 +6805,8 @@ function wireTopo(el, main, repaintFn) {
   el.querySelector('#mm-topo-dots')?.addEventListener('click', () => topoDots(main, !topo.dots));
   el.querySelector('#mm-topo-wrap')?.addEventListener('click', () => topoWrap(main));
   el.querySelector('#mm-topo-snap')?.addEventListener('click', () => topoSnap(main));
+  el.querySelector('#mm-topo-hold')?.addEventListener('click', () => topoHold(main));
+  el.querySelector('#mm-topo-unpose')?.addEventListener('click', () => topoUnpose(main));
   el.querySelector('#mm-topo-clear')?.addEventListener('click', () => topoClear(main));
   el.querySelectorAll('[data-topo-lm]').forEach((b) => b.addEventListener('click', () => topoSelect(main, +b.dataset.topoLm)));
 }
