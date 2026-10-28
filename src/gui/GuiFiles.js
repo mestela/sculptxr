@@ -607,19 +607,27 @@ class GuiFiles {
     this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation, main: this._main }), this._exportFileName(baseName, 'glb'));
   }
 
-  // Back to Nomad: the .nom the scene was loaded from, with only the moved objects' transforms
-  // changed. Needs a .nom import to work from -- there is nothing to patch otherwise.
+  // Back to Nomad. A scene loaded from a .nom is written as that file with only the moved and
+  // reshaped objects changed (layers, multires, materials all kept). Anything else -- or a mix
+  // with meshes made here -- is written as a new .nom of the current levels.
   saveFileAsNOM(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    var res = Export.exportNOM(meshes);
+    var fileName = this._exportFileName(baseName, 'nom');
+    var res = meshes.every(function (m) { return m._nomSource && m._nomLoadMatrix; }) ? Export.exportNOM(meshes) : null;
     if (!res) {
-      if (window.screenLog) window.screenLog('Export .nom: nothing here came from a .nom file', 'yellow');
+      var fresh = Export.writeNOM(meshes, { scale: this._main._nomadScale, name: fileName });
+      if (!fresh) {
+        if (window.screenLog) window.screenLog('Export .nom: no meshes to write', 'yellow');
+        return;
+      }
+      if (window.screenLog) window.screenLog('.nom: ' + fresh.meshes + ' mesh(es) written as a new Nomad scene', 'lime');
+      this._save(new Blob([fresh.bytes], { type: 'application/octet-stream' }), fileName);
       return;
     }
     if (window.screenLog) window.screenLog('.nom: ' + res.moved + ' moved, ' + res.reshaped + ' reshaped'
       + (res.mismatched ? ', ' + res.mismatched + ' skipped (topology changed)' : '') + ', the rest copied as-is', 'lime');
-    this._save(new Blob([res.bytes], { type: 'application/octet-stream' }), this._exportFileName(baseName, 'nom'));
+    this._save(new Blob([res.bytes], { type: 'application/octet-stream' }), fileName);
   }
 
   saveFileAsOBJ(baseName) {

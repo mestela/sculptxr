@@ -259,7 +259,8 @@ ShaderPBR.fragment = [
   // Sampled in sRGB and converted with the same function the vertex colour uses, so the two
   // cannot drift apart.
   '  vec3 baseColor = vAlbedo;',
-  '  if (uHasAlbedo > 0.5) baseColor *= texture2D(uAlbedoMap, vAlbedoUv).rgb;',
+  '  if (uHasAlbedo > 1.5) baseColor = texture2D(uAlbedoMap, vAlbedoUv).rgb;', // a bake replaces the paint
+  '  else if (uHasAlbedo > 0.5) baseColor *= texture2D(uAlbedoMap, vAlbedoUv).rgb;',
   '  vec3 linColor = sRGBToLinear(baseColor);',
   // TRANSMISSION REMOVES THE DIFFUSE AND KEEPS THE REFLECTION, which is the difference between
   // glass and fog. Fading the whole shaded result with opacity would take the highlights down

@@ -242,6 +242,7 @@ NodeMaterials.getFor = function (mesh, shaderId) {
     return own;
   }
   const wantsOwn = (mesh.hasTextureMap && mesh.hasTextureMap())
+    || (mesh.getOcclusion && mesh.getOcclusion())
     || (mesh.getTransmission && mesh.getTransmission() > 0)
     || (mesh.getOpacity && mesh.getOpacity() < 1);
   if (!wantsOwn) return NodeMaterials.get(shaderId);
@@ -249,10 +250,11 @@ NodeMaterials.getFor = function (mesh, shaderId) {
   // Keyed on the maps themselves, not just on the mesh: swapping a texture has to rebuild,
   // and two meshes sharing one set of maps can share one material.
   const key = [
-    mesh.getAlbedoMap && mesh.getAlbedoMap() ? mesh.getAlbedoMap().uuid : '-',
+    mesh.getAlbedoMap && mesh.getAlbedoMap() ? mesh.getAlbedoMap().uuid + (mesh.getAlbedoReplacesPaint() ? 'r' : '') : '-',
     mesh.getRoughMetalMap && mesh.getRoughMetalMap() ? mesh.getRoughMetalMap().uuid : '-',
     mesh.getNormalMap && mesh.getNormalMap() ? mesh.getNormalMap().uuid : '-',
     mesh.getTransmission ? mesh.getTransmission() : 0,
+    mesh.getOcclusion && mesh.getOcclusion() ? 'ao' : '-',
     mesh.getRoughFactor ? mesh.getRoughFactor() : 1,
     mesh.getMetalFactor ? mesh.getMetalFactor() : 1,
     mesh.getNormalScale ? mesh.getNormalScale() : 1,

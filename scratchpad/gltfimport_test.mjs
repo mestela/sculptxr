@@ -333,8 +333,8 @@ check('the tool toast does not run on desktop',
 // modes: in ordinary PBR viewing the geometry carried no `uv` attribute and the index buffer
 // used the UNDUPLICATED triangles, so the seam vertices the app had already built never
 // reached the GPU. A textured mesh needs the same pipeline for the ordinary shader.
-check('a mesh with a texture map runs the uv pipeline',
-  /return !!\(this\.hasTextureMap\(\) && this\.hasUV\(\)\);/.test(MESH),
+check('a mesh with a texture map (its own, or a face group\'s) runs the uv pipeline',
+  /return !!\(\(this\.hasTextureMap\(\) \|\| this\.getGroupMaterials\(\)\) && this\.hasUV\(\)\);/.test(MESH),
   'without this the geometry has no uv attribute and there is nothing to sample');
 check('...and switching it on rebuilds the duplicates and the buffers',
   /if \(this\.hasUV\(\)\) \{ this\.updateDuplicateGeometry\(\); this\.updateDrawArrays\(\); \}/.test(MESH),
@@ -441,7 +441,7 @@ check('...replacing the per-vertex values rather than multiplying them',
   /THE MAP REPLACES the per-vertex values/.test(PBR));
 check('...and any map, not just albedo, turns on the uv pipeline',
   /hasTextureMap\(\) \{ return !!\(this\._albedoMap \|\| this\._roughMetalMap/.test(MESH)
-    && /return !!\(this\.hasTextureMap\(\) && this\.hasUV\(\)\);/.test(MESH));
+    && /return !!\(\(this\.hasTextureMap\(\) \|\| this\.getGroupMaterials\(\)\) && this\.hasUV\(\)\);/.test(MESH));
 
 // THE ENVIRONMENT HAS BEEN UNBOUND SINCE THE THREE.JS PORT. The mocked gl that intercepts the
 // legacy uniform calls had no TEXTURE0 constant, so `gl.TEXTURE0` was undefined, the unit

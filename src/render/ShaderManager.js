@@ -222,6 +222,7 @@ ShaderManager.updateUniforms = function(mesh, main) {
   if (!threeMesh || !threeMesh.material) return;
   // Glass groups' second draw (Mesh.setGlassGroups) comes back through here as its own proxy.
   if (mesh.syncGlassMesh) mesh.syncGlassMesh(main);
+  if (mesh.syncGroupMeshes) mesh.syncGroupMeshes(main);
 
   // GLASS DRAWS LAST, BECAUSE SORTING CANNOT DECIDE THIS ONE.
   //
@@ -421,7 +422,7 @@ ShaderManager.updateUniforms = function(mesh, main) {
         ShaderManager._dummyTex.needsUpdate = true;
       }
       unifs.uAlbedoMap.value = amap || ShaderManager._dummyTex;
-      unifs.uHasAlbedo.value = amap ? 1 : 0;
+      unifs.uHasAlbedo.value = amap ? (mesh.getAlbedoReplacesPaint && mesh.getAlbedoReplacesPaint() ? 2 : 1) : 0;
     }
     if (unifs.uRoughMetalMap) {
       var rmap = mesh.getRoughMetalMap ? mesh.getRoughMetalMap() : null;

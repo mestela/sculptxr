@@ -115,7 +115,9 @@ export function makePhysical(gpu, tsl, mesh) {
     const uvNode = uv();
 
     const albedo = mesh.getAlbedoMap && mesh.getAlbedoMap();
-    if (albedo) m.colorNode = m.colorNode.mul(texture(albedo, uvNode).rgb);
+    if (albedo) m.colorNode = mesh.getAlbedoReplacesPaint && mesh.getAlbedoReplacesPaint()
+      ? texture(albedo, uvNode).rgb                // a bake: the paint is already in it
+      : m.colorNode.mul(texture(albedo, uvNode).rgb);
 
     const rm = mesh.getRoughMetalMap && mesh.getRoughMetalMap();
     if (rm) {
@@ -125,6 +127,11 @@ export function makePhysical(gpu, tsl, mesh) {
       m.roughnessNode = max(rmTex.g.mul(float(rFac)), float(0.0001));
       m.metalnessNode = rmTex.b.mul(float(mFac));
     }
+
+    // BAKED VERTEX AO (editing/VertexAO.js). three's lighting model turns aoNode into Frostbite
+    // specular occlusion on the env reflection, and darkens the env diffuse with it -- so a tongue
+    // stops wearing the sky's fresnel rim. Direct lights are untouched.
+    if (mesh.getOcclusion && mesh.getOcclusion()) m.aoNode = attribute('aOcclusion', 'float');
 
     const nrm = mesh.getNormalMap && mesh.getNormalMap();
     if (nrm) {

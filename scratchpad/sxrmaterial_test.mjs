@@ -120,8 +120,8 @@ const SCENE = read('src/Scene.js');
       && /getTransmission/.test(TIO) && /getRoughFactor/.test(TIO)
       && /getMetalFactor/.test(TIO) && /getNormalScale/.test(TIO));
   // A transmissive surface with no maps is still a material setting that was being lost.
-  check('...and transmission alone is enough to earn a record',
-    /return !!anyMap \|\| !!\(m\.getTransmission && m\.getTransmission\(\) > 0\);/.test(TIO));
+  check('...and transmission alone is enough to earn a record (as is baked AO)',
+    /return !!anyMap \|\| !!\(m\.getTransmission && m\.getTransmission\(\) > 0\)( \|\| !!\(m\.getOcclusion && m\.getOcclusion\(\)\))?;/.test(TIO));
 
   // Re-encoding a JPEG on every save would recompress it every time; the original bytes are a
   // memcpy and are exact.

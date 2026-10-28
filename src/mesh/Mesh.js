@@ -376,9 +376,11 @@ class Mesh {
   }
 
   _syncGlassAttributes() {
-    var rd = this._renderData;
-    var geom = rd._glassMesh.geometry;
-    var src = rd._geometry.attributes, dst = geom.attributes, k;
+    this._syncSharedAttributes(this._renderData._glassMesh.geometry);
+  }
+
+  _syncSharedAttributes(geom) {
+    var src = this._renderData._geometry.attributes, dst = geom.attributes, k;
     for (k in src) if (dst[k] !== src[k]) geom.setAttribute(k, src[k]);
     for (k in dst) if (!src[k]) geom.deleteAttribute(k);
   }
@@ -397,9 +399,109 @@ class Mesh {
     if (main) ShaderManager.updateUniforms(proxy, main);
   }
 
+  // MATERIALS BY GROUP: a face group can carry its own maps, drawn exactly as glass is -- a child
+  // three mesh sharing every vertex buffer, with its own index and a proxy whose maps are the
+  // group's. One head with overlapping UV islands (skin, gums, teeth, tongue, eyes) needs one set
+  // of maps per island, and splitting the object would lose the blendshapes and the rig. Faces of
+  // groups without a material stay in the main draw with the object's own maps (or none).
+  // `mat` is { albedo, roughMetal, normal, roughFactor, metalFactor, normalScale }, any may be absent.
+  // On the RenderData, shared by every resolution of a Multimesh, like glass.
+  getGroupMaterials() {
+    return this._renderData ? this._renderData._groupMats || null : null;
+  }
+
+  setGroupMaterial(gid, mat) {
+    var rd = this._renderData;
+    if (!rd) return;
+    var mats = rd._groupMats || new Map();
+    if (mat) mats.set(gid, mat);
+    else mats.delete(gid);
+    rd._groupMats = mats.size ? mats : null;
+    if (!rd._threeMesh) return;
+    // the UV pipeline may have just switched on or off (isUsingTexCoords), as for setAlbedoMap
+    if (this.hasUV()) { this.updateDuplicateGeometry(); this.updateDrawArrays(); }
+    this.updateBuffers();
+  }
+
+  getGroupMaterialFaceTest() {
+    var mats = this.getGroupMaterials();
+    var groups = this._meshData._facesGroups;
+    if (!mats || !groups || this._isVoxel) return null;
+    return (f) => (mats.has(groups[f]) ? groups[f] : -1);
+  }
+
+  // One per Mesh (not RenderData), as the glass proxy is: it delegates to THIS resolution.
+  _getGroupProxy(gid) {
+    var proxies = this._groupProxies || (this._groupProxies = new Map());
+    var proxy = proxies.get(gid);
+    if (!proxy) {
+      var self = this;
+      var mat = () => (self._renderData._groupMats && self._renderData._groupMats.get(gid)) || {};
+      proxy = Object.create(this, {
+        _albedoMap: { get: () => mat().albedo || null },
+        _roughMetalMap: { get: () => mat().roughMetal || null },
+        _normalMap: { get: () => mat().normal || null },
+        _roughFactor: { get: () => mat().roughFactor },
+        _metalFactor: { get: () => mat().metalFactor },
+        _normalScale: { get: () => mat().normalScale },
+        _albedoReplacesPaint: { get: () => !!mat().replacesPaint },
+        getThreeMesh: { value: () => { var d = self._renderData._groupDraws; return (d && d.get(gid)) || null; } },
+        _albedoMaterials: { value: null, writable: true },
+        syncGlassMesh: { value: null },
+        syncGroupMeshes: { value: null },
+      });
+      proxies.set(gid, proxy);
+    }
+    return proxy;
+  }
+
+  // groups: Map gid -> index (into the shared vertex buffers), or null for none.
+  _updateGroupMeshes(groups) {
+    var rd = this._renderData;
+    if (!rd) return;
+    var draws = rd._groupDraws;
+    if (draws) for (var [g, gm0] of draws) if (!groups || !groups.has(g)) gm0.visible = false;
+    if (!groups) return;
+    draws = rd._groupDraws || (rd._groupDraws = new Map());
+    for (var [gid, index] of groups) {
+      var gm = draws.get(gid);
+      if (!gm) {
+        gm = new THREE.Mesh(new THREE.BufferGeometry(), undefined);
+        gm.frustumCulled = false;
+        var tm = rd._threeMesh;
+        if (tm) { gm.castShadow = tm.castShadow; gm.receiveShadow = tm.receiveShadow; }
+        var geom = gm.geometry;
+        rd._geometry.addEventListener('dispose', () => geom.dispose()); // see _updateGlassMesh
+        draws.set(gid, gm);
+      }
+      this._syncSharedAttributes(gm.geometry);
+      gm.geometry.setIndex(new THREE.BufferAttribute(index, 1));
+      gm.geometry.setDrawRange(0, index.length);
+      gm.visible = index.length > 0;
+    }
+    this.syncGroupMeshes();
+  }
+
+  // Per frame, beside syncGlassMesh.
+  syncGroupMeshes(main) {
+    var draws = this._renderData && this._renderData._groupDraws;
+    if (!draws) return;
+    var tm = this._renderData._threeMesh;
+    for (var [gid, gm] of draws) {
+      if (!gm.visible) continue;
+      if (tm && gm.parent !== tm) tm.add(gm);
+      this._syncSharedAttributes(gm.geometry);
+      var proxy = this._getGroupProxy(gid);
+      var mat = ShaderManager.getMaterialFor(proxy, this.getShaderType());
+      if (mat && gm.material !== mat) gm.material = mat;
+      if (main) ShaderManager.updateUniforms(proxy, main);
+    }
+  }
+
   // One walk over the faces: hidden ones are dropped, glass ones (when glass is given) go to
-  // `glass`, the rest to `main`. triangles null is draw arrays, where index position IS the vertex.
-  _splitIndexByGlass(triangles, glass) {
+  // `glass`, faces of a material group (matTest, see getGroupMaterialFaceTest) to that group's
+  // index, the rest to `main`. triangles null is draw arrays, where index position IS the vertex.
+  _splitIndexByGlass(triangles, glass, matTest) {
     var hidden = this.getHiddenFaceTest();
     var fAr = this.getFaces();
     var facesToTris = this.hasOnlyTriangles() ? null : this.getFacesToTriangles();
@@ -407,18 +509,31 @@ class Mesh {
     var main = new Uint32Array(nbTriIdx);
     var gl = glass ? new Uint32Array(nbTriIdx) : null;
     var nm = 0, ng = 0;
+    var buckets = matTest ? new Map() : null; // gid -> { a, n }
     for (var f = 0, nbF = this.getNbFaces(); f < nbF; ++f) {
       if (hidden && hidden(f)) continue;
       var isGlass = glass && glass(f);
+      var gid = !isGlass && matTest ? matTest(f) : -1;
+      var b = null;
+      if (gid >= 0) {
+        b = buckets.get(gid);
+        if (!b) buckets.set(gid, b = { a: new Uint32Array(nbTriIdx), n: 0 });
+      }
       var t = (facesToTris ? facesToTris[f] : f) * 3;
       var end = fAr[f * 4 + 3] === Utils.TRI_INDEX ? t + 3 : t + 6;
       for (; t < end; ++t) {
         var v = triangles ? triangles[t] : t;
         if (isGlass) gl[ng++] = v;
+        else if (b) b.a[b.n++] = v;
         else main[nm++] = v;
       }
     }
-    return { main: main.subarray(0, nm), glass: gl ? gl.subarray(0, ng) : null };
+    var groups = null;
+    if (buckets) {
+      groups = new Map();
+      for (var [g, bk] of buckets) groups.set(g, bk.a.slice(0, bk.n)); // a copy: the bucket is sized for the whole mesh
+    }
+    return { main: main.subarray(0, nm), glass: gl ? gl.subarray(0, ng) : null, groups: groups };
   }
 
   getFaceEdges() {
@@ -2863,6 +2978,9 @@ class Mesh {
   // because materials are SHARED per shader type (see ShaderManager.getMaterial) -- a texture on
   // the shared one would put the last textured mesh's image on every mesh in the scene.
   getAlbedoMap() { return this._albedoMap || null; }
+  // true when the albedo map already holds the paint (a Nomad bake, see NomTextures): drawn as is,
+  // not multiplied onto the vertex colour
+  getAlbedoReplacesPaint() { return !!(this._albedoMap && this._albedoReplacesPaint); }
 
   // THE METAL/ROUGH MAP, glTF's packed metallicRoughnessTexture: roughness in GREEN, metalness
   // in BLUE, each multiplied by its factor. Linear data, not colour -- see the importer.
@@ -2937,7 +3055,7 @@ class Mesh {
   isUsingTexCoords() {
     var shaderType = this._renderData._shaderType;
     if (shaderType === Enums.Shader.UV || shaderType === Enums.Shader.PAINTUV) return true;
-    return !!(this.hasTextureMap() && this.hasUV());
+    return !!((this.hasTextureMap() || this.getGroupMaterials()) && this.hasUV());
   }
 
   isTransparent() {
@@ -3120,7 +3238,63 @@ class Mesh {
     }
   }
 
+  // AMBIENT OCCLUSION, one value per vertex (editing/VertexAO.js), for specular occlusion: the
+  // node material's aoNode reads it (NodePhysical). Kept on the mesh data, so each multires level
+  // has its own, and dropped by the length check once the topology changes (rebake).
+  getOcclusion() {
+    var ao = this._meshData._ao;
+    return ao && ao.length === this.getNbVertices() ? ao : null;
+  }
+
+  setOcclusion(ao) {
+    this._meshData._ao = ao || null;
+    var tm = this._renderData && this._renderData._threeMesh;
+    if (!tm) return;
+    this.updateOcclusionBuffer();
+    tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
+  }
+
+  // The per-vertex values spread to the RENDER vertices: seam duplicates (uv pipeline) take their
+  // original's, and under draw arrays each triangle corner takes its vertex's.
+  updateOcclusionBuffer() {
+    var geom = this._renderData._geometry;
+    var ao = this._isVoxel ? null : this.getOcclusion();
+    if (!ao) {
+      if (geom.getAttribute('aOcclusion')) { geom.deleteAttribute('aOcclusion'); geom.dispose(); }
+      return;
+    }
+    var nbV = this.getNbVertices();
+    var useTex = this.isUsingTexCoords() && this.hasUV();
+    var perRender = ao;
+    if (useTex) {
+      var sc = this.getVerticesDuplicateStartCount();
+      perRender = new Float32Array(Math.max(this.getNbVertices(), useTex ? this.getNbTexCoords() : 0));
+      perRender.set(ao);
+      for (var i = 0; i < nbV; ++i) {
+        var st = sc[i * 2];
+        if (!st) continue;
+        for (var j = st, e = st + sc[i * 2 + 1]; j < e; ++j) perRender[j] = ao[i];
+      }
+    }
+    var out = perRender;
+    if (this.isUsingDrawArrays()) {
+      var tri = useTex ? this.getTrianglesTexCoord() : this.getTriangles();
+      var nbIdx = this.getNbTriangles() * 3;
+      out = new Float32Array(nbIdx);
+      for (var t = 0; t < nbIdx; ++t) out[t] = perRender[tri[t]];
+    }
+    var attr = geom.getAttribute('aOcclusion');
+    if (!attr || attr.array.length !== out.length) {
+      if (attr) { geom.deleteAttribute('aOcclusion'); geom.dispose(); }
+      geom.setAttribute('aOcclusion', new THREE.BufferAttribute(out, 1));
+    } else {
+      attr.array.set(out);
+      attr.needsUpdate = true;
+    }
+  }
+
   updateMaterialBuffer() {
+    this.updateOcclusionBuffer();
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
     if (!materials) return;   // ditto -- it would have been the next line to throw
     if (this.getShowFacesGroups()) this.updateGroupOverlay(); // the overlay carries the mask shading
@@ -3172,14 +3346,17 @@ class Mesh {
         // (triangle t is vertices 3t..3t+2), since zeroing the glass triangles out of the shared
         // positions, as hide does, would zero them for the glass draw as well.
         var glassDA = this.getGlassFaceTest();
-        if (glassDA) {
-          var splitDA = this._splitIndexByGlass(null, glassDA);
+        var matDA = this.getGroupMaterialFaceTest();
+        if (glassDA || matDA) {
+          var splitDA = this._splitIndexByGlass(null, glassDA, matDA);
           geom.setIndex(new THREE.BufferAttribute(splitDA.main, 1));
           geom.setDrawRange(0, splitDA.main.length);
-          this._updateGlassMesh(splitDA.glass, splitDA.glass.length);
+          this._updateGlassMesh(splitDA.glass, splitDA.glass ? splitDA.glass.length : 0);
+          this._updateGroupMeshes(splitDA.groups);
           return;
         }
         this._updateGlassMesh(null, 0);
+        this._updateGroupMeshes(null);
         if (geom.index) {
             geom.setIndex(null);
             geom.dispose();
@@ -3213,13 +3390,16 @@ class Mesh {
     // (the shared array is untouched).
     var nbTriIdx = this.getNbTriangles() * 3;
     var glass = this._isVoxel ? null : this.getGlassFaceTest();
-    if (glass || (!this._isVoxel && this.getHiddenFaceTest())) {
-      var split = this._splitIndexByGlass(triangles, glass);
+    var matTest = this.getGroupMaterialFaceTest();
+    if (glass || matTest || (!this._isVoxel && this.getHiddenFaceTest())) {
+      var split = this._splitIndexByGlass(triangles, glass, matTest);
       triangles = split.main;
       nbTriIdx = triangles.length;
       this._updateGlassMesh(split.glass, split.glass ? split.glass.length : 0);
+      this._updateGroupMeshes(split.groups);
     } else {
       this._updateGlassMesh(null, 0);
+      this._updateGroupMeshes(null);
     }
 
     // Relax check for index length

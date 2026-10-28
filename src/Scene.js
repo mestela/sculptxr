@@ -47,6 +47,7 @@ import { fixXRLayerSize } from './render/nodes/ThreeXRPatches.js';
 import BootOverlay from './gui/BootOverlay.js';
 import DeskMap from './gui/DeskMap.js';
 import TextureIO from './files/TextureIO.js';
+import NomTextures from './files/NomTextures.js';
 import Skinning from './editing/Skinning.js';
 import PanelTrace from './misc/PanelTrace.js';
 import IKSolver from './editing/IKSolver.js';
@@ -7240,6 +7241,10 @@ class Scene {
           // detail vectors last: see ImportNOM.settleLevels
           for (const m of meshes) if (m._nomSource) Import.settleNOMLevels(m);
           stats.lights = Import.addNOMLights(this, stats, meshes);
+          // textures decode asynchronously and land a frame or two after the meshes
+          NomTextures.applyImported(meshes).then((n) => {
+            if (n) { window.screenLog?.('.nom: textures on ' + n + ' object(s)', 'lime'); this.render(); }
+          }).catch((e) => console.warn('[nom] textures failed', e));
         }
         // SAID OUT LOUD, because the interesting part of this import is what it RECOVERED, and
         // none of it is visible by looking: quads restored from a format with no quads, and

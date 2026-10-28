@@ -24,6 +24,8 @@
  * The panel is fixed height — content scrolls inside the body.
  */
 
+import NomTextures from '../../files/NomTextures.js';
+import { bakeVertexAO } from '../../editing/VertexAO.js';
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle, setTeeth } from '../jiggleSettings.js';
@@ -3377,6 +3379,12 @@ export function buildSectionHTML_rendering(main) {
       <div class="mm-if-uv"${shaderType === Enums.Shader.UV ? '' : ' inert aria-disabled="true"'}>
         <button class="mm-action-btn" id="mm-import-uv">Import UV texture…</button>
       </div>
+      <!-- Baked vertex AO, which the PBR shader uses as specular occlusion (editing/VertexAO.js):
+           stops the env map's fresnel rim on surfaces that cannot see the sky, like a tongue. -->
+      <div class="mm-choice-grid cols-2">
+        <button class="mm-action-btn" id="mm-bake-ao">Bake AO</button>
+        <button class="mm-action-btn" id="mm-clear-ao">Clear AO</button>
+      </div>
 
       <!-- No 'Mesh Display' heading either: what follows is plainly about the mesh, and the
            heading only separated it from the shader controls above, which the Shader heading
@@ -3750,7 +3758,11 @@ function buildSculptingHTML(main, part) {
           <button class="mm-action-btn" id="mm-group-mask">Mask</button>
           <button class="mm-action-btn" id="mm-group-mask-others">Mask Others</button>
         </div>
-        <button class="mm-toggle${tool.isGlass?.() ? ' active' : ''}" id="mm-group-glass">Glass</button>`;
+        <button class="mm-toggle${tool.isGlass?.() ? ' active' : ''}" id="mm-group-glass">Glass</button>
+        <div class="mm-choice-grid cols-2">
+          <button class="mm-action-btn" id="mm-group-load-bake">Load Bake…</button>
+          <button class="mm-action-btn" id="mm-group-clear-maps">Clear Maps</button>
+        </div>`;
     }
 
     // ── Voxel-specific controls (ported from the VR MiniPanel; align-to-hand omitted) ──
@@ -5860,6 +5872,18 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   });
 
   el.querySelector('#mm-import-uv')?.addEventListener('click',     () => document.getElementById('textureopen')?.click());
+  el.querySelector('#mm-bake-ao')?.addEventListener('click', () => {
+    const mesh = main.getMesh?.();
+    if (!mesh) return;
+    const t0 = performance.now();
+    mesh.setOcclusion(bakeVertexAO(mesh));
+    window.screenLog?.('AO baked: ' + mesh.getNbVertices() + ' verts in ' + Math.round(performance.now() - t0) + ' ms', 'lime');
+    main.render?.();
+  });
+  el.querySelector('#mm-clear-ao')?.addEventListener('click', () => {
+    main.getMesh?.()?.setOcclusion(null);
+    main.render?.();
+  });
 
   const gridBtn = el.querySelector('#mm-grid-toggle');
   gridBtn?.addEventListener('click', () => {
@@ -6242,6 +6266,36 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     groupAction('#mm-group-glass', () => {
       tool.toggleGlass();
       el.querySelector('#mm-group-glass')?.classList.toggle('active', !!tool.isGlass?.());
+    });
+    // A .nom baked on pieces of this mesh (split by island in Nomad): each textured piece goes to
+    // the face group it matches (NomTextures.applyBakeToGroups).
+    el.querySelector('#mm-group-load-bake')?.addEventListener('click', () => {
+      const mesh = main.getMesh?.();
+      if (!mesh) return;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.nom';
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        try {
+          const report = await NomTextures.applyBakeToGroups(mesh, await file.arrayBuffer());
+          const hit = report.filter((r) => r.group !== null);
+          const miss = report.filter((r) => r.group === null).map((r) => r.name);
+          window.screenLog?.('Bake: ' + (hit.length ? hit.map((r) => r.name + ' -> ' + (r.group < 0 ? 'whole object' : 'group ' + r.group)).join(', ') : 'nothing matched')
+            + (miss.length ? '; no matching group for ' + miss.join(', ') : ''), hit.length ? 'lime' : 'yellow');
+          main.render?.();
+        } catch (e) {
+          console.error('[bake] load failed', e);
+          window.screenLog?.('Bake load failed: ' + e.message, 'red');
+        }
+      };
+      input.click();
+    });
+    groupAction('#mm-group-clear-maps', () => {
+      const mesh = main.getMesh?.();
+      if (mesh?.getGroupMaterials?.()?.has(tool._group)) mesh.setGroupMaterial(tool._group, null);
+      main.render?.();
     });
     el.querySelector('#mm-group-show')?.addEventListener('click', (e) => {
       const mesh = main.getMesh?.();

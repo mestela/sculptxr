@@ -21,6 +21,8 @@
 // original placement).
 
 import { IDENTITY, mul, inv, locate } from './NomMath.js';
+import NomadCodec from '../link/NomadCodec.js';
+import TEMPLATE from './nomTemplate.json';
 
 var Export = {};
 
@@ -91,6 +93,88 @@ Export.exportNOM = function (meshes) {
     moved++;
   }
   return { bytes: file.serialize(scene, patches), moved, reshaped, mismatched };
+};
+
+// A NEW .nom, for a scene that did not come from one (there is no file to patch). Each mesh's
+// CURRENT level is written as a plain Nomad 'mesh' object, its arrays laid out by the Nomad Link
+// encoder (same conventions: rgbm8 colours, mask 65535 = unmasked, -1 = triangle). Everything
+// Nomad needs around that -- settings, a material, the default light -- comes from a real Nomad
+// file (nomTemplate.json, taken from a fresh sphere scene and a baseball2.nom static mesh).
+// Arrays are stored raw, no lz4, as Nomad itself stores vertices and uvs.
+// `scale` is the app-to-Nomad unit factor (the import's _nomadScale, 50), so a round trip lands
+// at the size it left.
+Export.writeNOM = function (meshes, opts) {
+  opts = opts || {};
+  const s = opts.scale || 50;
+  const chunks = [];
+  let dataLen = 0;
+  const put = (bytes, type, count) => {
+    const offset = dataLen;
+    chunks.push({ offset, bytes });
+    dataLen += (bytes.length + 3) & ~3;                  // keep every array 4-byte aligned
+    return { count, length: bytes.length, offset, type };
+  };
+  const scene = JSON.parse(JSON.stringify({ groups: [TEMPLATE.group], lights: [TEMPLATE.light],
+    materials: [TEMPLATE.material], meshes: [], scene: [], settings: TEMPLATE.settings }));
+  if (opts.name) scene.settings.project_name = opts.name;
+  let written = 0;
+  for (const w of meshes) {
+    if (w._meshes && w._skinW) for (let k = 1; k <= (w._sel | 0); k++) w._meshes[k].higherSynthesis(w._meshes[k - 1]);
+    const m = w.getCurrentMesh ? w.getCurrentMesh() : w;
+    if (!m || !m.getFaces || !m.getNbFaces()) continue;
+    const { header: h, binary: b } = NomadCodec.encodeMesh(m, { faceGroupDefs: w._nomadFaceGroupDefs || m._nomadFaceGroupDefs });
+    const nv = h.vertex_count, nf = h.face_count;
+    const cut = (at, n) => b.subarray(at, at + n);
+    const mesh = JSON.parse(JSON.stringify(TEMPLATE.mesh));
+    mesh.count_vertex = nv; mesh.count_face = nf;
+    mesh.material = 0;
+    mesh.vertices = put(cut(h.position_offset, nv * 12), 'f32vec3', nv);
+    mesh.faces = put(cut(h.face_offset, nf * 16), 'i32vec4', nf);
+    if (h.texcoord_offset !== undefined) {
+      mesh.count_uv = h.texcoord_count;
+      mesh.uvs = put(cut(h.texcoord_offset, h.texcoord_count * 8), 'f32vec2', h.texcoord_count);
+      mesh.faces_uv = put(cut(h.face_uv_offset, nf * 16), 'i32vec4', nf);
+    }
+    if (h.color_offset !== undefined) mesh.colors = Object.assign(put(cut(h.color_offset, nv * 4), 'u8rgbm', nv), { rgbm_scale: 1 });
+    if (h.roughness_offset !== undefined) {
+      mesh.roughness = put(cut(h.roughness_offset, nv), 'u8', nv);
+      mesh.metalness = put(cut(h.metalness_offset, nv), 'u8', nv);
+      mesh.masks = put(cut(h.mask_offset, nv * 2), 'u16', nv);
+    }
+    mesh.opacity = put(new Uint8Array(nv).fill(255), 'u8', nv);
+    // Nomad wants a definition for every group index the faces use
+    const fg = h.face_group_offset !== undefined ? new Uint16Array(b.buffer.slice(h.face_group_offset, h.face_group_offset + nf * 2)) : new Uint16Array(nf);
+    mesh.faces_group = put(new Uint8Array(fg.buffer), 'u16', nf);
+    let top = 0;
+    for (let i = 0; i < nf; i++) if (fg[i] > top) top = fg[i];
+    const defs = h.face_groups || [];
+    mesh.groups = [];
+    for (let i = 0; i <= top; i++) mesh.groups.push(defs[i] || { name: 'Group ' + (i + 1), color: [(i * 0.618 + 0.3) % 1, (i * 0.382 + 0.6) % 1, (i * 0.25 + 0.2) % 1] });
+    mesh.index_group = top;
+    scene.meshes.push(mesh);
+    // world placement in Nomad units: the import's x`s`, undone
+    const S = [1 / s, 0, 0, 0, 0, 1 / s, 0, 0, 0, 0, 1 / s, 0, 0, 0, 0, 1];
+    scene.scene.push(Object.assign(JSON.parse(JSON.stringify(TEMPLATE.node)), {
+      children: [], mesh: scene.meshes.length - 1, name: w._permanentStaticLabel || 'SculptXR ' + scene.meshes.length,
+      matrix: mul(S, Array.from(w.getMatrix())), visible: w.isVisible ? w.isVisible() !== false : true
+    }));
+    written++;
+  }
+  if (!written) return null;
+  scene.scene.push(JSON.parse(JSON.stringify(TEMPLATE.lightsNode)));
+
+  const js = new TextEncoder().encode(JSON.stringify(scene));
+  const thumbW = 128, head = 72, thumb = thumbW * thumbW * 4;
+  const jsonOffset = head + thumb, dataOffset = jsonOffset + js.length;
+  const out = new Uint8Array(dataOffset + dataLen);
+  for (let i = 0; i < 12; i++) out[i] = 'Nomad Sculpt'.charCodeAt(i);
+  const v = new DataView(out.buffer);
+  v.setUint32(12, 7, true);
+  [out.length, jsonOffset, js.length, dataOffset, dataLen, head, thumbW]
+    .forEach((n, i) => v.setBigUint64(0x10 + i * 8, BigInt(n), true));
+  out.set(js, jsonOffset);
+  for (const c of chunks) out.set(c.bytes, dataOffset + c.offset);
+  return { bytes: out, meshes: written };
 };
 
 export default Export;

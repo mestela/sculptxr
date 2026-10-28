@@ -20,5 +20,6 @@ Export.exportSculpteo = ExportSculpteo.exportSculpteo;
 Export.exportMaterialise = ExportMaterialise.exportMaterialise;
 Export.exportGLB = ExportGLTF.exportGLB;
 Export.exportNOM = ExportNOM.exportNOM;
+Export.writeNOM = ExportNOM.writeNOM;
 
 export default Export;

@@ -25,7 +25,8 @@
 // still there before assigning.
 
 const TXTR_MAGIC = 0x54585452;  // 'TXTR'
-const TXTR_VERSION = 1;
+const TXTR_VERSION = 3;   // 2: a group word per record (Mesh.setGroupMaterial), 0 = the object's own maps
+                          // 3: flag 16 = baked vertex AO follows the maps (u32 count, u8 per vertex)
 
 // The other footer blocks, so the finder can walk PAST them. A magic it does not recognise makes
 // it stop rather than guess -- the same rule findSkelBlock follows, and for the same reason: a
@@ -73,7 +74,7 @@ function hasAnything(m) {
   const anyMap = (m.getAlbedoMap && m.getAlbedoMap())
     || (m.getRoughMetalMap && m.getRoughMetalMap())
     || (m.getNormalMap && m.getNormalMap());
-  return !!anyMap || !!(m.getTransmission && m.getTransmission() > 0);
+  return !!anyMap || !!(m.getTransmission && m.getTransmission() > 0) || !!(m.getOcclusion && m.getOcclusion());
 }
 
 TextureIO.serialize = function (meshes) {
@@ -92,14 +93,34 @@ TextureIO.serialize = function (meshes) {
 
     let flags = 0;
     for (let k = 0; k < 3; k++) if (maps[k]) flags |= (1 << k);
+    if (m.getAlbedoReplacesPaint && m.getAlbedoReplacesPaint()) flags |= 8;
+    const aoF = m.getOcclusion && m.getOcclusion();
+    let ao = null;
+    if (aoF) {
+      flags |= 16;
+      ao = new Uint8Array(aoF.length);
+      for (let k = 0; k < aoF.length; k++) ao[k] = Math.round(Math.min(Math.max(aoF[k], 0), 1) * 255);
+    }
 
     records.push({
-      i: i, flags: flags, maps: maps,
+      i: i, g: 0, flags: flags, maps: maps, ao: ao,
       trans: m.getTransmission  ? m.getTransmission()  : 0,
       rough: m.getRoughFactor   ? m.getRoughFactor()   : 1,
       metal: m.getMetalFactor   ? m.getMetalFactor()   : 1,
       nscale: m.getNormalScale  ? m.getNormalScale()   : 1,
     });
+  }
+  for (let i = 0; i < meshes.length; i++) {
+    const gm = meshes[i] && meshes[i].getGroupMaterials && meshes[i].getGroupMaterials();
+    if (gm) for (const [gid, mat] of gm) {
+      const maps = [mat.albedo, mat.roughMetal, mat.normal].map(srcBytesFor);
+      let flags = 0;
+      for (let k = 0; k < 3; k++) if (maps[k]) flags |= (1 << k);
+      if (!flags) continue;
+      if (mat.replacesPaint) flags |= 8;
+      records.push({ i: i, g: gid + 1, flags: flags, maps: maps, trans: 0,
+        rough: mat.roughFactor ?? 1, metal: mat.metalFactor ?? 1, nscale: mat.normalScale ?? 1 });
+    }
   }
   if (!records.length) return null;
 
@@ -108,8 +129,9 @@ TextureIO.serialize = function (meshes) {
   // the u32/f32 views over the block are always legal.
   let body = 3 * 4;
   for (const r of records) {
-    body += 6 * 4;
+    body += 7 * 4;
     for (const mp of r.maps) if (mp) body += 2 * 4 + ((mp.bytes.length + 3) & ~3);
+    if (r.ao) body += 4 + ((r.ao.length + 3) & ~3);
   }
 
   const buf = new ArrayBuffer(body + 8);
@@ -117,7 +139,7 @@ TextureIO.serialize = function (meshes) {
   let o = 0;
   u[o++] = TXTR_MAGIC; u[o++] = TXTR_VERSION; u[o++] = records.length;
   for (const r of records) {
-    u[o++] = r.i; u[o++] = r.flags;
+    u[o++] = r.i; u[o++] = r.g; u[o++] = r.flags;
     f[o++] = r.trans; f[o++] = r.rough; f[o++] = r.metal; f[o++] = r.nscale;
     for (const mp of r.maps) {
       if (!mp) continue;
@@ -126,6 +148,11 @@ TextureIO.serialize = function (meshes) {
       u[o++] = mp.bytes.length;
       u8.set(mp.bytes, o * 4);
       o += ((mp.bytes.length + 3) & ~3) / 4;
+    }
+    if (r.ao) {
+      u[o++] = r.ao.length;
+      u8.set(r.ao, o * 4);
+      o += ((r.ao.length + 3) & ~3) / 4;
     }
   }
   u[o++] = TXTR_MAGIC; u[o++] = body;
@@ -181,12 +208,16 @@ TextureIO.deserialize = function (buffer, meshes, THREE) {
     const n = u[o++];
 
     for (let r = 0; r < n; r++) {
-      const mi = u[o++], flags = u[o++];
+      const mi = u[o++], g = ver >= 2 ? u[o++] : 0, flags = u[o++];
       const trans = f[o++], rough = f[o++], metal = f[o++], nscale = f[o++];
       const m = meshes[mi];
 
       // The SCALARS are synchronous and land immediately; only the images have to wait.
-      if (m && m.setTransmission && trans > 0) m.setTransmission(trans);
+      if (m && m.setTransmission && trans > 0 && !g) m.setTransmission(trans);
+      // A group's maps arrive one by one into the same record object, re-set each time so the
+      // draw picks up every map as it lands.
+      const gmat = g ? { roughFactor: rough, metalFactor: metal, normalScale: nscale, replacesPaint: !!(flags & 8) } : null;
+      if (m && !g && (flags & 8)) m._albedoReplacesPaint = true;
 
       for (let k = 0; k < 3; k++) {
         if (!(flags & (1 << k))) continue;
@@ -201,10 +232,23 @@ TextureIO.deserialize = function (buffer, meshes, THREE) {
           // A load can be superseded while an image decodes, so re-check the mesh is still the
           // one we were asked about rather than writing into a scene that has moved on.
           if (!m || (m.isVisible === undefined && !m.getID)) return;
-          if (k === 0 && m.setAlbedoMap) m.setAlbedoMap(tex);
+          if (gmat) {
+            gmat[['albedo', 'roughMetal', 'normal'][k]] = tex;
+            if (m.setGroupMaterial) m.setGroupMaterial(g - 1, gmat);
+          } else if (k === 0 && m.setAlbedoMap) m.setAlbedoMap(tex);
           else if (k === 1 && m.setRoughMetalMap) m.setRoughMetalMap(tex, rough, metal);
           else if (k === 2 && m.setNormalMap) m.setNormalMap(tex, nscale);
         }).catch((e) => console.warn('[TextureIO] map decode failed for mesh ' + mi, e));
+      }
+      if (flags & 16) {
+        const cnt = u[o++];
+        const b = new Uint8Array(buffer, blk.start + o * 4, cnt);
+        o += ((cnt + 3) & ~3) / 4;
+        if (m && m.setOcclusion) {
+          const ao = new Float32Array(cnt);
+          for (let k = 0; k < cnt; k++) ao[k] = b[k] / 255;
+          m.setOcclusion(ao);
+        }
       }
     }
   } catch (e) {
