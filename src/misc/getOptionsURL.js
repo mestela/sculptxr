@@ -220,6 +220,8 @@ var getOptionsURL = function () {
   // How much the environment map contributes in PBR, independent of exposure — 0 kills the IBL
   // so only the scene's own lights remain, which is how you judge a lamp.
   options.envIntensity = queryNumber(getVal('envIntensity'), 0, 2, 1); // [0-2]
+  // three's tone mapping constant (Settings > Tonemapping: 0 None .. 4 ACES), kept across reloads.
+  options.toneMapping = queryNumber(getVal('toneMapping'), 0, 7, 1);
   // WebGPURenderer (WebGL backend, TSL materials) is the DEFAULT as of 2026-09-29 — matt, after
   // the XR lit-material fixes: "i'm getting more confident its working well. and i'm getting
   // tired of having to add it to the url." `?renderer=webgl` goes back to the legacy renderer,

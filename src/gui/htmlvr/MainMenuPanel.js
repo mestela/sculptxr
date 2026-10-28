@@ -25,7 +25,7 @@
  */
 
 import NomTextures from '../../files/NomTextures.js';
-import { bakeVertexAO } from '../../editing/VertexAO.js';
+import { bakeVertexAO, jawOpenPositions } from '../../editing/VertexAO.js';
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle, setTeeth } from '../jiggleSettings.js';
@@ -3945,30 +3945,10 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice${tool._useJiggle ? ' active' : ''}" id="mm-face-jiggle" title="Post effects on a GNM head: spring jiggle on the cheeks, jowls and lips, and lips pushed out of the teeth (display only; stays on with other tools)">Post FX</button>
       <button class="mm-choice${tool._useIdle ? ' active' : ''}" id="mm-face-idle" title="Idle blinks, eye darts and brow/mouth life on any ARKit head (display only; stays on with other tools)">Idle</button>
     </div>
-    ${jiggle.on ? `<div class="mm-field-lbl">Jiggle</div>` + JIGGLE_SLIDERS.map((d) => `
-    <div class="mm-row">
-      <span class="mm-lbl">${d.label}</span>
-      <input type="range" id="mm-jiggle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(jiggle[d.key])}">
-      <span class="mm-val" id="mm-jiggle-${d.key}-val">${d.fmt(d.ui(jiggle[d.key]))}</span>
-    </div>`).join('') : ''}
-    ${jiggle.on ? `<div class="mm-field-lbl">Teeth Collision</div>` + TEETH_SLIDERS.map((d) => `
-    <div class="mm-row">
-      <span class="mm-lbl">${d.label}</span>
-      <input type="range" id="mm-teeth-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
-      <span class="mm-val" id="mm-teeth-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
-    </div>`).join('') : ''}
-    ${jiggle.on ? `<div class="mm-field-lbl">Lip Collision</div>` + LIP_SLIDERS.map((d) => `
-    <div class="mm-row">
-      <span class="mm-lbl">${d.label}</span>
-      <input type="range" id="mm-lip-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
-      <span class="mm-val" id="mm-lip-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
-    </div>`).join('') : ''}
-    ${idle.on ? IDLE_SLIDERS.map((d) => `
-    <div class="mm-row">
-      <span class="mm-lbl">${d.label}</span>
-      <input type="range" id="mm-idle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(idle[d.key])}">
-      <span class="mm-val" id="mm-idle-${d.key}-val">${d.fmt(d.ui(idle[d.key]))}</span>
-    </div>`).join('') : ''}
+    ${jiggle.on ? collapsibleHTML('face-jiggle', 'Jiggle', faceSliders('jiggle', JIGGLE_SLIDERS, jiggle))
+      + collapsibleHTML('face-teeth', 'Teeth Collision', faceSliders('teeth', TEETH_SLIDERS, teeth))
+      + collapsibleHTML('face-lip', 'Lip Collision', faceSliders('lip', LIP_SLIDERS, teeth)) : ''}
+    ${idle.on ? collapsibleHTML('face-idle', 'Idle', faceSliders('idle', IDLE_SLIDERS, idle)) : ''}
     ${buildPoseLibraryHTML(main, tool)}
     ${buildTopoHTML(main)}` : ''}
     ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
@@ -5881,7 +5861,9 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     const mesh = main.getMesh?.();
     if (!mesh) return;
     const t0 = performance.now();
-    mesh.setOcclusion(bakeVertexAO(mesh));
+    const open = jawOpenPositions(mesh);
+    mesh.setOcclusion(bakeVertexAO(mesh), open && bakeVertexAO(mesh, { positions: open }));
+    window._animationRegistry?.applyBlendshapes?.(mesh);   // picks up the jaw's current weight
     window.screenLog?.('AO baked: ' + mesh.getNbVertices() + ' verts in ' + Math.round(performance.now() - t0) + ' ms', 'lime');
     main.render?.();
   });
@@ -6742,6 +6724,16 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn,
 // clearing out several.
 const escHTML = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const POSE_MODES = [['update', 'Update...'], ['rename', 'Rename...'], ['delete', 'Delete...']];
+
+// One Post FX subsection's slider rows (ids mm-<prefix>-<key>, wired in the Face section).
+function faceSliders(prefix, defs, src) {
+  return defs.map((d) => `
+    <div class="mm-row">
+      <span class="mm-lbl">${d.label}</span>
+      <input type="range" id="mm-${prefix}-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(src[d.key])}">
+      <span class="mm-val" id="mm-${prefix}-${d.key}-val">${d.fmt(d.ui(src[d.key]))}</span>
+    </div>`).join('');
+}
 
 function buildPoseLibraryHTML(main, tool) {
   const reg = window._animationRegistry;

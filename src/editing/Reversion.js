@@ -598,6 +598,13 @@ var copyFacesGroups = function (baseMesh, newMesh, triFaceOrQuadCenter) {
     }
   }
   if (baseMesh.getHiddenGroups()) newMesh._meshData._hiddenGroups = new Set(baseMesh.getHiddenGroups());
+  // baked AO: a lower vertex is the upper one it came from (createVertices' mapping)
+  var aoUp = baseMesh.getOcclusion(), map = newMesh.getVerticesMapping();
+  if (aoUp && map) {
+    var ao = new Float32Array(newMesh.getNbVertices());
+    for (var v = 0; v < ao.length; ++v) ao[v] = aoUp[map[v]];
+    newMesh._meshData._ao = ao;
+  }
 };
 
 export default Reversion;

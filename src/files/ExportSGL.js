@@ -45,9 +45,10 @@ var Export = {};
 //    with blendshapes. It is one setting for the scene; the reader takes the last one it meets.
 // 26 GLASS GROUPS: the face-group ids drawn with the transmissive coat (Mesh.setGlassGroups),
 //    count + ids after each level's face groups. One setting per object; every level carries it.
+// 28 PLAYHEAD: the current time, after the project start, so a load lands on the frame it was saved at
 // 27 IDLE FACE (on, blink rate, gaze range, pace, micro) after the jiggle, same terms: one setting
 //    for the scene, written on every mesh with blendshapes, the last one read wins.
-Export.VERSION = 27;
+Export.VERSION = 28;
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -162,7 +163,7 @@ Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
 
   // ...+ 4 for the v13 playback range and the v15 project start, which sit together in the header.
-  var nbBytes = 4 * (1 + 3 + 4 + 13 + 4 + 1);
+  var nbBytes = 4 * (1 + 3 + 4 + 13 + 4 + 1 + 1);   // + the v28 playhead
 
   for (var i = 0; i < nbMeshes; ++i) {
     var mesh = meshes[i];
@@ -313,6 +314,7 @@ Export.exportSGL = function (meshes, main) {
     // already treats that as an absolute end time — so only the start was missing, and without
     // it the range slider's outer left handle survived a reload only as long as the tab did.
     f32a[off++] = window._animProjectStart ?? 0;
+    f32a[off++] = window._animCurrentTime ?? 0;   // v28
 
     u32a[off++] = nbMeshes;
 

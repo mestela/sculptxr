@@ -3024,6 +3024,12 @@ class AnimationRegistry {
     // sets _skinDirty) and runs updateGeometry + buffers over the posed result, so refreshing the
     // unposed composite here was a full normals pass and upload thrown away every frame of
     // playback: ~14ms/frame on the wrestler on GalaxyXR (2026-10-14), most of post-input.
+    // THE MOUTH'S AO FOLLOWS THE JAW (VertexAO.jawOpenPositions): rest and jaw-open bakes, blended.
+    if (geo === mesh && mesh.getOcclusionOpen && mesh.getOcclusionOpen()) {
+      const jb = track.blendshapeTracks.get('jawOpen');
+      mesh.setOcclusionJaw(track.blendshapes.has('jawOpen') && !(muted && muted.has('jawOpen')) ? this.shownWeight(track, 'jawOpen', jb) : 0);
+    }
+
     const base = baseVerts || track.baseShape;
     if (Skinning.captureSource(mesh, base && { base, shapes: used, rev: track._bsRev | 0 })) return;
 

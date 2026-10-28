@@ -75,6 +75,16 @@ function setParentHTML(main) {
         </div>`;
 }
 
+// One Post FX subsection's slider rows (ids mp-<prefix>-<key>, wired in the FACE branch).
+function mpFaceSliders(prefix, defs, src) {
+  return defs.map((d) => `
+        <div class="mp-row">
+          <span class="mp-lbl">${d.label}</span>
+          <input type="range" id="mp-${prefix}-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(src[d.key])}">
+          <span class="mp-val" id="mp-${prefix}-${d.key}-val">${d.fmt(d.ui(src[d.key]))}</span>
+        </div>`).join('');
+}
+
 // A NAMED, COLLAPSED SECTION. "Path Move" and "Path Rotate" sat loose among the tool's own
 // toggles, so they read as two more brush options -- matt: "it took me a moment to realise this
 // was related to motion paths." Under a heading the prefix is redundant, so the labels lose it.
@@ -1124,30 +1134,10 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-toggle-btn${t?._useJiggle ? ' active' : ''}" id="mp-face-jiggle">Post FX</button>
           <button class="mp-toggle-btn${t?._useIdle ? ' active' : ''}" id="mp-face-idle">Idle</button>
         </div>
-        ${jiggle.on ? `<div class="mp-lbl" style="margin-top:6px">Jiggle</div>` + JIGGLE_SLIDERS.map((d) => `
-        <div class="mp-row">
-          <span class="mp-lbl">${d.label}</span>
-          <input type="range" id="mp-jiggle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(jiggle[d.key])}">
-          <span class="mp-val" id="mp-jiggle-${d.key}-val">${d.fmt(d.ui(jiggle[d.key]))}</span>
-        </div>`).join('') : ''}
-        ${jiggle.on ? `<div class="mp-lbl" style="margin-top:6px">Teeth Collision</div>` + TEETH_SLIDERS.map((d) => `
-        <div class="mp-row">
-          <span class="mp-lbl">${d.label}</span>
-          <input type="range" id="mp-teeth-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
-          <span class="mp-val" id="mp-teeth-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
-        </div>`).join('') : ''}
-        ${jiggle.on ? `<div class="mp-lbl" style="margin-top:6px">Lip Collision</div>` + LIP_SLIDERS.map((d) => `
-        <div class="mp-row">
-          <span class="mp-lbl">${d.label}</span>
-          <input type="range" id="mp-lip-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(teeth[d.key])}">
-          <span class="mp-val" id="mp-lip-${d.key}-val">${d.fmt(d.ui(teeth[d.key]))}</span>
-        </div>`).join('') : ''}
-        ${idle.on ? IDLE_SLIDERS.map((d) => `
-        <div class="mp-row">
-          <span class="mp-lbl">${d.label}</span>
-          <input type="range" id="mp-idle-${d.key}" min="${d.min}" max="${d.max}" step="1" value="${d.ui(idle[d.key])}">
-          <span class="mp-val" id="mp-idle-${d.key}-val">${d.fmt(d.ui(idle[d.key]))}</span>
-        </div>`).join('') : ''}
+        ${jiggle.on ? collapsibleHTML('mp-face-jiggle', 'Jiggle', mpFaceSliders('jiggle', JIGGLE_SLIDERS, jiggle))
+          + collapsibleHTML('mp-face-teeth', 'Teeth Collision', mpFaceSliders('teeth', TEETH_SLIDERS, teeth))
+          + collapsibleHTML('mp-face-lip', 'Lip Collision', mpFaceSliders('lip', LIP_SLIDERS, teeth)) : ''}
+        ${idle.on ? collapsibleHTML('mp-face-idle', 'Idle', mpFaceSliders('idle', IDLE_SLIDERS, idle)) : ''}
         `, false)}
       `;
     }

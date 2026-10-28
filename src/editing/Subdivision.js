@@ -585,6 +585,34 @@ Subdivision.fullSubdivision = function (baseMesh, newMesh) {
     for (var i = 0, nb = baseMesh.getNbFaces(); i < nb; ++i)
       gDown[i * 4] = gDown[i * 4 + 1] = gDown[i * 4 + 2] = gDown[i * 4 + 3] = gUp[i];
   if (baseMesh.getHiddenGroups()) newMesh._meshData._hiddenGroups = new Set(baseMesh.getHiddenGroups());
+  subdivideOcclusion(baseMesh, newMesh);
+};
+
+// Baked AO too (editing/VertexAO.js), so a subdivide does not need a rebake. The old vertices
+// keep their indices and values; each new one (an edge midpoint or a quad centre) takes the mean
+// of the old corners of the child faces around it -- which works out to its edge's two ends or
+// its quad's four corners, for triangles and quads alike, without knowing which it is.
+var subdivideOcclusion = function (baseMesh, newMesh) {
+  var aoUp = baseMesh.getOcclusion();
+  if (!aoUp) return;
+  var nbOld = baseMesh.getNbVertices(), nbNew = newMesh.getNbVertices();
+  var sum = new Float32Array(nbNew), cnt = new Uint16Array(nbNew);
+  var fAr = newMesh.getFaces();
+  for (var f = 0, nb = newMesh.getNbFaces() * 4; f < nb; f += 4) {
+    var n = fAr[f + 3] === Utils.TRI_INDEX ? 3 : 4;
+    for (var k = 0; k < n; ++k) {
+      var o = fAr[f + k];
+      if (o >= nbOld) continue;
+      for (var j = 0; j < n; ++j) {
+        var v = fAr[f + j];
+        if (v >= nbOld) { sum[v] += aoUp[o]; cnt[v]++; }
+      }
+    }
+  }
+  var ao = new Float32Array(nbNew);
+  ao.set(aoUp.subarray(0, nbOld));
+  for (var i = nbOld; i < nbNew; ++i) ao[i] = cnt[i] ? sum[i] / cnt[i] : 1;
+  newMesh._meshData._ao = ao;
 };
 
 /** Apply subdivision without topology computation */

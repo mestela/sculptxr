@@ -25,9 +25,10 @@
 // still there before assigning.
 
 const TXTR_MAGIC = 0x54585452;  // 'TXTR'
-const TXTR_VERSION = 4;   // 2: a group word per record (Mesh.setGroupMaterial), 0 = the object's own maps
+const TXTR_VERSION = 5;   // 2: a group word per record (Mesh.setGroupMaterial), 0 = the object's own maps
                           // 3: flag 16 = baked vertex AO follows the maps (u32 count, u8 per vertex)
                           // 4: the AO block starts with its strength (f32, Mesh.setOcclusionStrength)
+                          // 5: flag 32 = the jaw-open AO follows (u32 count, u8 per vertex)
 
 // The other footer blocks, so the finder can walk PAST them. A magic it does not recognise makes
 // it stop rather than guess -- the same rule findSkelBlock follows, and for the same reason: a
@@ -95,16 +96,16 @@ TextureIO.serialize = function (meshes) {
     let flags = 0;
     for (let k = 0; k < 3; k++) if (maps[k]) flags |= (1 << k);
     if (m.getAlbedoReplacesPaint && m.getAlbedoReplacesPaint()) flags |= 8;
+    const toU8 = (a) => { const o = new Uint8Array(a.length); for (let k = 0; k < a.length; k++) o[k] = Math.round(Math.min(Math.max(a[k], 0), 1) * 255); return o; };
     const aoF = m.getOcclusion && m.getOcclusion();
-    let ao = null;
-    if (aoF) {
-      flags |= 16;
-      ao = new Uint8Array(aoF.length);
-      for (let k = 0; k < aoF.length; k++) ao[k] = Math.round(Math.min(Math.max(aoF[k], 0), 1) * 255);
-    }
+    const ao = aoF ? toU8(aoF) : null;
+    if (ao) flags |= 16;
+    const aoOpenF = aoF && m.getOcclusionOpen && m.getOcclusionOpen();
+    const aoOpen = aoOpenF ? toU8(aoOpenF) : null;
+    if (aoOpen) flags |= 32;
 
     records.push({
-      i: i, g: 0, flags: flags, maps: maps, ao: ao, aoStr: m.getOcclusionStrength ? m.getOcclusionStrength() : 1,
+      i: i, g: 0, flags: flags, maps: maps, ao: ao, aoOpen: aoOpen, aoStr: m.getOcclusionStrength ? m.getOcclusionStrength() : 1,
       trans: m.getTransmission  ? m.getTransmission()  : 0,
       rough: m.getRoughFactor   ? m.getRoughFactor()   : 1,
       metal: m.getMetalFactor   ? m.getMetalFactor()   : 1,
@@ -133,6 +134,7 @@ TextureIO.serialize = function (meshes) {
     body += 7 * 4;
     for (const mp of r.maps) if (mp) body += 2 * 4 + ((mp.bytes.length + 3) & ~3);
     if (r.ao) body += 8 + ((r.ao.length + 3) & ~3);
+    if (r.aoOpen) body += 4 + ((r.aoOpen.length + 3) & ~3);
   }
 
   const buf = new ArrayBuffer(body + 8);
@@ -155,6 +157,11 @@ TextureIO.serialize = function (meshes) {
       u[o++] = r.ao.length;
       u8.set(r.ao, o * 4);
       o += ((r.ao.length + 3) & ~3) / 4;
+    }
+    if (r.aoOpen) {
+      u[o++] = r.aoOpen.length;
+      u8.set(r.aoOpen, o * 4);
+      o += ((r.aoOpen.length + 3) & ~3) / 4;
     }
   }
   u[o++] = TXTR_MAGIC; u[o++] = body;
@@ -244,14 +251,19 @@ TextureIO.deserialize = function (buffer, meshes, THREE) {
       }
       if (flags & 16) {
         const str = ver >= 4 ? f[o++] : 1;
-        const cnt = u[o++];
-        const b = new Uint8Array(buffer, blk.start + o * 4, cnt);
-        o += ((cnt + 3) & ~3) / 4;
+        const readAO = () => {
+          const cnt = u[o++];
+          const b = new Uint8Array(buffer, blk.start + o * 4, cnt);
+          o += ((cnt + 3) & ~3) / 4;
+          const a = new Float32Array(cnt);
+          for (let k = 0; k < cnt; k++) a[k] = b[k] / 255;
+          return a;
+        };
+        const ao = readAO();
+        const aoOpen = (flags & 32) ? readAO() : null;
         if (m && m.setOcclusion) {
-          const ao = new Float32Array(cnt);
-          for (let k = 0; k < cnt; k++) ao[k] = b[k] / 255;
           if (m.setOcclusionStrength) m._aoStrength = str;
-          m.setOcclusion(ao);
+          m.setOcclusion(ao, aoOpen);
         }
       }
     }

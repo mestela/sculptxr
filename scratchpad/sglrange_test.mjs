@@ -50,17 +50,19 @@ console.log('\nthe version and the header size moved together');
   if (!m) throw new Error('the header size expression moved — this harness is testing nothing');
   const terms = m[1].split('+').map((t) => +t.trim());
   const total = terms.reduce((a, b) => a + b, 0);
-  // 1 version + 3 + 4 + 13 camera framing + 4 range fields + 1 mesh count.
-  check('the header reserves a float for the new field', total === 26,
-    `${m[1]} = ${total}; four range floats are written, so the block must be 4 not 3`);
+  // 1 version + 3 + 4 + 13 camera framing + 4 range fields + 1 mesh count + 1 v28 playhead.
+  check('the header reserves a float for the new field', total === 27,
+    `${m[1]} = ${total}; four range floats and the playhead are written, so the block must be 4 + 1`);
 }
 
 console.log('\nwrite order and read order agree');
 {
   const wrote = [...EXP.matchAll(/f32a\[off\+\+\] = window\.(_anim\w+)/g)].map((x) => x[1]);
-  const read  = [...IMP.matchAll(/window\.(_anim\w+) = f32a\[off\+\+\]/g)].map((x) => x[1]);
-  check('the exporter writes four range fields', wrote.length === 4, wrote.join(','));
-  check('the importer reads the same four, in the same order',
+  // the v28 playhead is read into main._loadedPlayhead and sought after the tracks are in
+  const read  = [...IMP.matchAll(/(?:window\.(_anim\w+)|main\.(_loadedPlayhead)) = (?:version >= 28 \? )?f32a\[off\+\+\]/g)]
+    .map((x) => x[1] || '_animCurrentTime');
+  check('the exporter writes four range fields and the playhead', wrote.length === 5 && wrote[4] === '_animCurrentTime', wrote.join(','));
+  check('the importer reads the same five, in the same order',
     read.join(',') === wrote.join(','),
     `wrote [${wrote}] read [${read}] — a binary header that disagrees by one float corrupts everything after it`);
   check('the project start is LAST, so older readers stop before it',

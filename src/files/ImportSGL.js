@@ -95,6 +95,8 @@ Import.importSGL = function (buffer, gl, main) {
       // older file lands exactly where it used to.
       window._animProjectStart = 0;
       if (version >= 15) window._animProjectStart = f32a[off++];
+      // v28: sought once the tracks are in (Scene's load callback), not here
+      main._loadedPlayhead = version >= 28 ? f32a[off++] : null;
     }
   }
 

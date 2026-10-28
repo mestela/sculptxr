@@ -2295,6 +2295,7 @@ class Scene {
     if (this._renderer) {
       this._renderer.toneMapping = val;
     }
+    getOptionsURL.saveOption('toneMapping', val);
     this.render();
   }
 
@@ -4264,7 +4265,7 @@ class Scene {
         ? window._fbScale
         : (Number.isFinite(getOptionsURL()['fbscale']) ? getOptionsURL()['fbscale'] : 1.0);
       this._renderer.xr.setFramebufferScaleFactor(Math.max(0.3, Math.min(2.0, _fbsGpu)));
-      this._renderer.toneMapping = WGPU.LinearToneMapping;
+      this._renderer.toneMapping = getOptionsURL().toneMapping ?? WGPU.LinearToneMapping;
       this._renderer.toneMappingExposure = 1.0;
       // SHADOWS. Real lights are mirrored onto our light entities (see _syncThreeLights), so
       // there is finally something that owns a shadow map. Soft by default: PCF is the cheap
@@ -4619,7 +4620,7 @@ class Scene {
       : (Number.isFinite(getOptionsURL()['fbscale']) ? getOptionsURL()['fbscale'] : 1.0);
     this._renderer.xr.setFramebufferScaleFactor(Math.max(0.3, Math.min(2.0, _fbs)));
     if (_fbs !== 1.0) console.log('[XR] framebuffer scale ' + _fbs);
-    this._renderer.toneMapping = THREE.LinearToneMapping;
+    this._renderer.toneMapping = getOptionsURL().toneMapping ?? THREE.LinearToneMapping;
     this._renderer.toneMappingExposure = 1.0;
 
     // Initialize underlying GL context for legacy code compatibility (temporarily)
@@ -7312,6 +7313,9 @@ class Scene {
         catch (e) { console.error('[FrameGroup] import restore failed', e); }
       }
       if (fileType === 'sgl') this.getGui?.()?._ctrlTimeline?.framePlaybackRange?.();
+      // Back to the frame the file was saved at (v28).
+      if (fileType === 'sgl' && Number.isFinite(this._loadedPlayhead)) window._animationRegistry?.seek(this._loadedPlayhead);
+      this._loadedPlayhead = null;
     // AN .SXR KEEPS ITS TRANSFORMS. Scale-and-centre is for raw geometry (obj/stl/ply), whose
     // units mean nothing here. A SculptXR scene is already in scene units, and fitting it broke
     // it twice over: the fit was multiplied into every matrix BEFORE Skeleton.deserialize put

@@ -3246,8 +3246,23 @@ class Mesh {
     return ao && ao.length === this.getNbVertices() ? ao : null;
   }
 
-  setOcclusion(ao) {
+  // The bake with jawOpen fully on, or null: the composite blends toward it by the jaw's weight
+  // (setOcclusionJaw, from AnimationRegistry.applyBlendshapes), so the mouth darkens shut and
+  // opens up open.
+  getOcclusionOpen() {
+    var ao = this._meshData._aoOpen;
+    return ao && ao.length === this.getNbVertices() ? ao : null;
+  }
+
+  setOcclusionJaw(w) {
+    if (Math.abs(w - (this._aoJaw || 0)) < 0.005) return;
+    this._aoJaw = w;
+    this.updateOcclusionBuffer();
+  }
+
+  setOcclusion(ao, open) {
     this._meshData._ao = ao || null;
+    this._meshData._aoOpen = (ao && open) || null;
     var tm = this._renderData && this._renderData._threeMesh;
     if (!tm) return;
     this.updateOcclusionBuffer();
@@ -3277,21 +3292,29 @@ class Mesh {
     var nbV = this.getNbVertices();
     var useTex = this.isUsingTexCoords() && this.hasUV();
     var perRender = ao;
+    var dupOf = null;
     if (useTex) {
       var sc = this.getVerticesDuplicateStartCount();
       perRender = new Float32Array(Math.max(this.getNbVertices(), useTex ? this.getNbTexCoords() : 0));
       perRender.set(ao);
+      dupOf = new Uint32Array(perRender.length);
       for (var i = 0; i < nbV; ++i) {
         var st = sc[i * 2];
         if (!st) continue;
-        for (var j = st, e = st + sc[i * 2 + 1]; j < e; ++j) perRender[j] = ao[i];
+        for (var j = st, e = st + sc[i * 2 + 1]; j < e; ++j) { perRender[j] = ao[i]; dupOf[j] = i; }
       }
     }
     var str = this.getOcclusionStrength();
-    if (str !== 1) {
+    var open = this.getOcclusionOpen(), jaw = open ? Math.min(1, Math.max(0, this._aoJaw || 0)) : 0;
+    if (str !== 1 || jaw) {
       var src = perRender;
       perRender = new Float32Array(src.length);
-      for (var k = 0; k < src.length; ++k) perRender[k] = Math.pow(src[k], str);
+      for (var k = 0; k < src.length; ++k) {
+        var a = src[k];
+        // perRender's seam duplicates sit past nbV: blend by their original's open value
+        if (jaw) a += (open[k < nbV ? k : dupOf[k]] - ao[k < nbV ? k : dupOf[k]]) * jaw;
+        perRender[k] = str !== 1 ? Math.pow(a, str) : a;
+      }
     }
     var out = perRender;
     if (this.isUsingDrawArrays()) {
@@ -3302,7 +3325,12 @@ class Mesh {
     }
     var attr = geom.getAttribute('aOcclusion');
     if (!attr || attr.array.length !== out.length) {
-      if (attr) { geom.deleteAttribute('aOcclusion'); geom.dispose(); }
+      // DISPOSED EVEN WHEN NEW: a geometry already drawn keeps its old bindings in WebGPU, so an
+      // attribute added after the first frame (AO restored by a .sxr load) was read as garbage by
+      // the draws sharing it -- blown-out eyes until Clear AO's dispose rebuilt them (matt: "too
+      // bright and clippy" after a reload).
+      if (attr) geom.deleteAttribute('aOcclusion');
+      geom.dispose();
       geom.setAttribute('aOcclusion', new THREE.BufferAttribute(out, 1));
     } else {
       attr.array.set(out);
@@ -3339,10 +3367,11 @@ class Mesh {
       var texCoords = this.isUsingDrawArrays() ? this.getTexCoordsDrawArrays() : this.getTexCoords();
       var attr = geom.getAttribute('uv');
       if (!attr || attr.array !== texCoords || attr.array.length !== texCoords.length) {
-        if (attr) {
-            geom.deleteAttribute('uv');
-            geom.dispose();
-        }
+        // Disposed even when new, as aOcclusion is (updateOcclusionBuffer): on a .sxr load the
+        // maps decode after the first frames, so uv arrives on a geometry already bound, and the
+        // stale vertex layout fed the AO garbage (matt: teeth "too bright" at frame 100 until a rebake).
+        if (attr) geom.deleteAttribute('uv');
+        geom.dispose();
         geom.setAttribute('uv', new THREE.BufferAttribute(texCoords, 2));
       } else {
         attr.array.set(texCoords);
