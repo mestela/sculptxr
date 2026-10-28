@@ -3385,6 +3385,11 @@ export function buildSectionHTML_rendering(main) {
         <button class="mm-action-btn" id="mm-bake-ao">Bake AO</button>
         <button class="mm-action-btn" id="mm-clear-ao">Clear AO</button>
       </div>
+      <div class="mm-row">
+        <span class="mm-lbl">AO Strength</span>
+        <input type="range" id="mm-ao-strength" min="0" max="300" step="5" value="${Math.round((mesh?.getOcclusionStrength?.() ?? 1) * 100)}">
+        <span class="mm-val" id="mm-ao-strength-val"></span>
+      </div>
 
       <!-- No 'Mesh Display' heading either: what follows is plainly about the mesh, and the
            heading only separated it from the shader controls above, which the Shader heading
@@ -5880,6 +5885,10 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     window.screenLog?.('AO baked: ' + mesh.getNbVertices() + ' verts in ' + Math.round(performance.now() - t0) + ' ms', 'lime');
     main.render?.();
   });
+  wireSlider(el.querySelector('#mm-ao-strength'), el.querySelector('#mm-ao-strength-val'), (v) => {
+    main.getMesh?.()?.setOcclusionStrength?.(v / 100);
+    main.render?.();
+  }, (v) => `${v}%`, sliderDirtyFn);
   el.querySelector('#mm-clear-ao')?.addEventListener('click', () => {
     main.getMesh?.()?.setOcclusion(null);
     main.render?.();

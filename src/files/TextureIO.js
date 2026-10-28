@@ -25,8 +25,9 @@
 // still there before assigning.
 
 const TXTR_MAGIC = 0x54585452;  // 'TXTR'
-const TXTR_VERSION = 3;   // 2: a group word per record (Mesh.setGroupMaterial), 0 = the object's own maps
+const TXTR_VERSION = 4;   // 2: a group word per record (Mesh.setGroupMaterial), 0 = the object's own maps
                           // 3: flag 16 = baked vertex AO follows the maps (u32 count, u8 per vertex)
+                          // 4: the AO block starts with its strength (f32, Mesh.setOcclusionStrength)
 
 // The other footer blocks, so the finder can walk PAST them. A magic it does not recognise makes
 // it stop rather than guess -- the same rule findSkelBlock follows, and for the same reason: a
@@ -103,7 +104,7 @@ TextureIO.serialize = function (meshes) {
     }
 
     records.push({
-      i: i, g: 0, flags: flags, maps: maps, ao: ao,
+      i: i, g: 0, flags: flags, maps: maps, ao: ao, aoStr: m.getOcclusionStrength ? m.getOcclusionStrength() : 1,
       trans: m.getTransmission  ? m.getTransmission()  : 0,
       rough: m.getRoughFactor   ? m.getRoughFactor()   : 1,
       metal: m.getMetalFactor   ? m.getMetalFactor()   : 1,
@@ -131,7 +132,7 @@ TextureIO.serialize = function (meshes) {
   for (const r of records) {
     body += 7 * 4;
     for (const mp of r.maps) if (mp) body += 2 * 4 + ((mp.bytes.length + 3) & ~3);
-    if (r.ao) body += 4 + ((r.ao.length + 3) & ~3);
+    if (r.ao) body += 8 + ((r.ao.length + 3) & ~3);
   }
 
   const buf = new ArrayBuffer(body + 8);
@@ -150,6 +151,7 @@ TextureIO.serialize = function (meshes) {
       o += ((mp.bytes.length + 3) & ~3) / 4;
     }
     if (r.ao) {
+      f[o++] = r.aoStr;
       u[o++] = r.ao.length;
       u8.set(r.ao, o * 4);
       o += ((r.ao.length + 3) & ~3) / 4;
@@ -241,12 +243,14 @@ TextureIO.deserialize = function (buffer, meshes, THREE) {
         }).catch((e) => console.warn('[TextureIO] map decode failed for mesh ' + mi, e));
       }
       if (flags & 16) {
+        const str = ver >= 4 ? f[o++] : 1;
         const cnt = u[o++];
         const b = new Uint8Array(buffer, blk.start + o * 4, cnt);
         o += ((cnt + 3) & ~3) / 4;
         if (m && m.setOcclusion) {
           const ao = new Float32Array(cnt);
           for (let k = 0; k < cnt; k++) ao[k] = b[k] / 255;
+          if (m.setOcclusionStrength) m._aoStrength = str;
           m.setOcclusion(ao);
         }
       }

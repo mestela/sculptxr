@@ -3254,6 +3254,17 @@ class Mesh {
     tm.material = ShaderManager.getMaterialFor(this, this.getShaderType());
   }
 
+  // STRENGTH is an exponent on the baked value (0 = off, 1 = as baked, >1 deeper), applied when
+  // the attribute is built, so the bake itself is never touched and the slider is free to move.
+  getOcclusionStrength() {
+    return this._aoStrength ?? 1;
+  }
+
+  setOcclusionStrength(s) {
+    this._aoStrength = s;
+    this.updateOcclusionBuffer();
+  }
+
   // The per-vertex values spread to the RENDER vertices: seam duplicates (uv pipeline) take their
   // original's, and under draw arrays each triangle corner takes its vertex's.
   updateOcclusionBuffer() {
@@ -3275,6 +3286,12 @@ class Mesh {
         if (!st) continue;
         for (var j = st, e = st + sc[i * 2 + 1]; j < e; ++j) perRender[j] = ao[i];
       }
+    }
+    var str = this.getOcclusionStrength();
+    if (str !== 1) {
+      var src = perRender;
+      perRender = new Float32Array(src.length);
+      for (var k = 0; k < src.length; ++k) perRender[k] = Math.pow(src[k], str);
     }
     var out = perRender;
     if (this.isUsingDrawArrays()) {

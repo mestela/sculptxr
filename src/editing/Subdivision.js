@@ -577,6 +577,14 @@ Subdivision.fullSubdivision = function (baseMesh, newMesh) {
   if (baseMesh.hasUV())
     computeTexCoords(baseMesh, newMesh, tags);
   newMesh.allocateArrays();
+  // FACE GROUPS RIDE ALONG: face i's children are 4i..4i+3. Glass, group materials and hide are
+  // all keyed on the group, so a level of all-0 groups lost every one of them (matt: "if i change
+  // multires for a gnm head, the materials all break... the cornea goes solid").
+  var gUp = baseMesh.getFacesGroups(), gDown = newMesh.getFacesGroups();
+  if (gUp && gDown)
+    for (var i = 0, nb = baseMesh.getNbFaces(); i < nb; ++i)
+      gDown[i * 4] = gDown[i * 4 + 1] = gDown[i * 4 + 2] = gDown[i * 4 + 3] = gUp[i];
+  if (baseMesh.getHiddenGroups()) newMesh._meshData._hiddenGroups = new Set(baseMesh.getHiddenGroups());
 };
 
 /** Apply subdivision without topology computation */

@@ -581,7 +581,23 @@ Reversion.computeReverse = function (baseMesh, newMesh) {
     computeTexCoords(baseMesh, newMesh, triFaceOrQuadCenter);
 
   newMesh.allocateArrays();
+  copyFacesGroups(baseMesh, newMesh, triFaceOrQuadCenter);
   return true;
+};
+
+// A lower face takes the group of its children (see Subdivision.fullSubdivision): a triangle's
+// is its centre triangle, a quad's any face round its centre vertex.
+var copyFacesGroups = function (baseMesh, newMesh, triFaceOrQuadCenter) {
+  var gUp = baseMesh.getFacesGroups(), gDown = newMesh.getFacesGroups();
+  if (gUp && gDown) {
+    var vrf = baseMesh.getVerticesRingFace();
+    var vrfStartCount = baseMesh.getVerticesRingFaceStartCount();
+    for (var i = 0, nb = newMesh.getNbFaces(); i < nb; ++i) {
+      var c = triFaceOrQuadCenter[i];
+      gDown[i] = gUp[c >= 0 ? c : vrf[vrfStartCount[(-c - 1) * 2]]];
+    }
+  }
+  if (baseMesh.getHiddenGroups()) newMesh._meshData._hiddenGroups = new Set(baseMesh.getHiddenGroups());
 };
 
 export default Reversion;
