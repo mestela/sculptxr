@@ -3246,23 +3246,8 @@ class Mesh {
     return ao && ao.length === this.getNbVertices() ? ao : null;
   }
 
-  // The bake with jawOpen fully on, or null: the composite blends toward it by the jaw's weight
-  // (setOcclusionJaw, from AnimationRegistry.applyBlendshapes), so the mouth darkens shut and
-  // opens up open.
-  getOcclusionOpen() {
-    var ao = this._meshData._aoOpen;
-    return ao && ao.length === this.getNbVertices() ? ao : null;
-  }
-
-  setOcclusionJaw(w) {
-    if (Math.abs(w - (this._aoJaw || 0)) < 0.005) return;
-    this._aoJaw = w;
-    this.updateOcclusionBuffer();
-  }
-
-  setOcclusion(ao, open) {
+  setOcclusion(ao) {
     this._meshData._ao = ao || null;
-    this._meshData._aoOpen = (ao && open) || null;
     var tm = this._renderData && this._renderData._threeMesh;
     if (!tm) return;
     this.updateOcclusionBuffer();
@@ -3292,29 +3277,21 @@ class Mesh {
     var nbV = this.getNbVertices();
     var useTex = this.isUsingTexCoords() && this.hasUV();
     var perRender = ao;
-    var dupOf = null;
     if (useTex) {
       var sc = this.getVerticesDuplicateStartCount();
       perRender = new Float32Array(Math.max(this.getNbVertices(), useTex ? this.getNbTexCoords() : 0));
       perRender.set(ao);
-      dupOf = new Uint32Array(perRender.length);
       for (var i = 0; i < nbV; ++i) {
         var st = sc[i * 2];
         if (!st) continue;
-        for (var j = st, e = st + sc[i * 2 + 1]; j < e; ++j) { perRender[j] = ao[i]; dupOf[j] = i; }
+        for (var j = st, e = st + sc[i * 2 + 1]; j < e; ++j) perRender[j] = ao[i];
       }
     }
     var str = this.getOcclusionStrength();
-    var open = this.getOcclusionOpen(), jaw = open ? Math.min(1, Math.max(0, this._aoJaw || 0)) : 0;
-    if (str !== 1 || jaw) {
+    if (str !== 1) {
       var src = perRender;
       perRender = new Float32Array(src.length);
-      for (var k = 0; k < src.length; ++k) {
-        var a = src[k];
-        // perRender's seam duplicates sit past nbV: blend by their original's open value
-        if (jaw) a += (open[k < nbV ? k : dupOf[k]] - ao[k < nbV ? k : dupOf[k]]) * jaw;
-        perRender[k] = str !== 1 ? Math.pow(a, str) : a;
-      }
+      for (var k = 0; k < src.length; ++k) perRender[k] = Math.pow(src[k], str);
     }
     var out = perRender;
     if (this.isUsingDrawArrays()) {
@@ -3331,7 +3308,10 @@ class Mesh {
       // bright and clippy" after a reload).
       if (attr) geom.deleteAttribute('aOcclusion');
       geom.dispose();
-      geom.setAttribute('aOcclusion', new THREE.BufferAttribute(out, 1));
+      // A COPY when `out` is the bake itself (strength 1, no seams, indexed): an attribute on the
+      // bake's own array had every later strength change pow() the bake in place, compounding
+      // until it was gone (matt: the slider made the AO "instantly disappear").
+      geom.setAttribute('aOcclusion', new THREE.BufferAttribute(out === ao ? ao.slice() : out, 1));
     } else {
       attr.array.set(out);
       attr.needsUpdate = true;

@@ -100,12 +100,9 @@ TextureIO.serialize = function (meshes) {
     const aoF = m.getOcclusion && m.getOcclusion();
     const ao = aoF ? toU8(aoF) : null;
     if (ao) flags |= 16;
-    const aoOpenF = aoF && m.getOcclusionOpen && m.getOcclusionOpen();
-    const aoOpen = aoOpenF ? toU8(aoOpenF) : null;
-    if (aoOpen) flags |= 32;
 
     records.push({
-      i: i, g: 0, flags: flags, maps: maps, ao: ao, aoOpen: aoOpen, aoStr: m.getOcclusionStrength ? m.getOcclusionStrength() : 1,
+      i: i, g: 0, flags: flags, maps: maps, ao: ao, aoStr: m.getOcclusionStrength ? m.getOcclusionStrength() : 1,
       trans: m.getTransmission  ? m.getTransmission()  : 0,
       rough: m.getRoughFactor   ? m.getRoughFactor()   : 1,
       metal: m.getMetalFactor   ? m.getMetalFactor()   : 1,
@@ -134,7 +131,6 @@ TextureIO.serialize = function (meshes) {
     body += 7 * 4;
     for (const mp of r.maps) if (mp) body += 2 * 4 + ((mp.bytes.length + 3) & ~3);
     if (r.ao) body += 8 + ((r.ao.length + 3) & ~3);
-    if (r.aoOpen) body += 4 + ((r.aoOpen.length + 3) & ~3);
   }
 
   const buf = new ArrayBuffer(body + 8);
@@ -157,11 +153,6 @@ TextureIO.serialize = function (meshes) {
       u[o++] = r.ao.length;
       u8.set(r.ao, o * 4);
       o += ((r.ao.length + 3) & ~3) / 4;
-    }
-    if (r.aoOpen) {
-      u[o++] = r.aoOpen.length;
-      u8.set(r.aoOpen, o * 4);
-      o += ((r.aoOpen.length + 3) & ~3) / 4;
     }
   }
   u[o++] = TXTR_MAGIC; u[o++] = body;
@@ -260,10 +251,10 @@ TextureIO.deserialize = function (buffer, meshes, THREE) {
           return a;
         };
         const ao = readAO();
-        const aoOpen = (flags & 32) ? readAO() : null;
+        if (flags & 32) readAO();   // v4.5.68-69 saves: a jaw-open bake, no longer used -- skipped
         if (m && m.setOcclusion) {
           if (m.setOcclusionStrength) m._aoStrength = str;
-          m.setOcclusion(ao, aoOpen);
+          m.setOcclusion(ao);
         }
       }
     }

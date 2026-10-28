@@ -25,7 +25,7 @@
  */
 
 import NomTextures from '../../files/NomTextures.js';
-import { bakeVertexAO, jawOpenPositions } from '../../editing/VertexAO.js';
+import { bakeVertexAO } from '../../editing/VertexAO.js';
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle, setTeeth } from '../jiggleSettings.js';
@@ -5222,6 +5222,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
         const v = input.value.trim();
         if (v) { mesh._permanentStaticLabel = v; mesh.uiName = v; }
       }
+      // Out of the DOM BEFORE the repaint: the panel's rebuild refuses to run while a
+      // .mm-rename-input exists, so leaving it in froze the whole panel after a VR rename.
+      input.remove();
       repaintFn();
     };
     input.addEventListener('keydown', (e) => {
@@ -5233,7 +5236,7 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
     // the blur-commit (opening the keyboard can blur the field and commit the stale value
     // first). Desktop keeps blur-to-commit.
     if (_useVrKb) {
-      window._vrKeyboard.open(input.value, { label: 'Rename mesh', maxLength: 40 }, (text) => {
+      window._vrKeyboard.open(input.value, { label: 'Rename mesh', maxLength: 40, onCancel: () => commit(false) }, (text) => {
         const v = (text ?? '').trim();
         if (v) input.value = v;
         commit(!!v);
@@ -5857,15 +5860,22 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   });
 
   el.querySelector('#mm-import-uv')?.addEventListener('click',     () => document.getElementById('textureopen')?.click());
-  el.querySelector('#mm-bake-ao')?.addEventListener('click', () => {
+  el.querySelector('#mm-bake-ao')?.addEventListener('click', async () => {
     const mesh = main.getMesh?.();
-    if (!mesh) return;
-    const t0 = performance.now();
-    const open = jawOpenPositions(mesh);
-    mesh.setOcclusion(bakeVertexAO(mesh), open && bakeVertexAO(mesh, { positions: open }));
-    window._animationRegistry?.applyBlendshapes?.(mesh);   // picks up the jaw's current weight
-    window.screenLog?.('AO baked: ' + mesh.getNbVertices() + ' verts in ' + Math.round(performance.now() - t0) + ' ms', 'lime');
-    main.render?.();
+    if (!mesh || mesh._aoBaking) return;
+    mesh._aoBaking = true;
+    window.screenLog?.('Baking AO\u2026', 'yellow');
+    const t0 = performance.now(), nbV = mesh.getNbVertices();
+    try {
+      const ao = await bakeVertexAO(mesh);
+      // Topology changed while it ran (multires, remesh): the bake no longer fits.
+      if (mesh.getNbVertices() !== nbV) return window.screenLog?.('AO bake dropped: the mesh changed', 'yellow');
+      mesh.setOcclusion(ao);
+      window.screenLog?.('AO baked: ' + nbV + ' verts in ' + Math.round(performance.now() - t0) + ' ms', 'lime');
+      main.render?.();
+    } finally {
+      mesh._aoBaking = false;
+    }
   });
   wireSlider(el.querySelector('#mm-ao-strength'), el.querySelector('#mm-ao-strength-val'), (v) => {
     main.getMesh?.()?.setOcclusionStrength?.(v / 100);

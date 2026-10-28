@@ -953,6 +953,17 @@ class FacePuppet extends SculptBase {
       const tip = vec3.clone(c.rayOrigin);
       const rot = mat4.getRotation(quat.create(), c.matrix);
 
+      // TOPO TRANSFER: with Pick on, the dominant trigger places the current landmark on the
+      // target, as a desktop click does (start() never runs in the headset). From a little behind
+      // the tip, as _grabFromRay, so a tip resting on the skin still hits the front.
+      if (topo.pick && targetMesh(this._main)) {
+        if (!offHand && down && !was) {
+          const back = vec3.scaleAndAdd(vec3.create(), tip, c.rayDirection, -0.05 / (this._main._vrScale || 1));
+          pickAt(this._main, back, c.rayDirection);
+        }
+        continue;
+      }
+
       // THE OFF HAND'S PRESS IS DECIDED BY WHERE IT IS. Near the surface (its cursor is showing,
       // Scene._vrFaceNear) it grabs, with or without the other hand on. Away from it, it is SMOOTH
       // MODE as for every other tool: the off-hand trigger alone is the mode, the dominant press

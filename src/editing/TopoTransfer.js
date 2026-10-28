@@ -153,13 +153,16 @@ function between(a, b) {
 }
 
 // A click on the target with Pick on (FacePuppet.start). True when it placed a landmark.
-export function pickAt(main) {
+// `origin`/`dir` (world) is a controller ray; without them it is the mouse.
+export function pickAt(main, origin = null, dir = null) {
   const t = targetMesh(main);
   if (!t || !topo.pick) return false;
   // A hidden target is still pickable, and a click "on GNM" would land on it unseen behind.
   if (!t.isVisible()) { say('The target is hidden: Tab to show it', 'yellow'); return false; }
   const picking = main.getPicking();
-  if (!picking.intersectionMouseMesh(t, main._mouseX, main._mouseY)) return false;
+  const hit = origin ? picking.intersectionRayMeshes([t], origin, dir)
+                     : picking.intersectionMouseMesh(t, main._mouseX, main._mouseY);
+  if (!hit) return false;
   const p = Array.from(picking.getIntersectionPoint());
   const lm = GNM_LANDMARKS[topo.cur];
   record(main, 'Place ' + lm.label, () => {
