@@ -2354,9 +2354,13 @@ class AnimationRegistry {
     const edited = name === track.editingBlendshape;
     const up = !edited && this.underOf(track, name);
     const shown = up ? Math.min(w, this.blendshapePreviewAt(track, up, track.blendshapeTracks.get(up))) : w;
-    // IDLE FACE (IdleFace.js) rides on top, clamped; never on the layer being edited.
+    // IDLE FACE (IdleFace.js) rides on top, clamped to the layer's range (a widened jawOpen 0..2
+    // must not be squashed to 1); never on the layer being edited.
     const idle = !edited && track._idle && track._idle.get(name);
-    return idle ? Math.min(1, Math.max(0, shown + idle)) : shown;
+    if (!idle) return shown;
+    const r = track.blendshapeRange && track.blendshapeRange.get(name);
+    const lo = Math.min(r ? r.min : 0, shown), hi = Math.max(r ? r.max : 1, shown);
+    return Math.min(hi, Math.max(lo, shown + idle));
   }
 
   // An unkeyed, unpreviewed shape is skipped by the composite -- unless the idle layer moves it.
