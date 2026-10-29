@@ -221,6 +221,37 @@ export function retargetDelta(P, d) {
   return out;
 }
 
+// UN-POSE (TopoPose.js): the neutral N of a sculpt made in a pose. `ref` is the template's neutral,
+// `D` its pose (one composite offset), `wrapped` the posed template fitted onto the sculpt.
+// First guess: the same transfer run backwards, the template's posed -> neutral change (-D)
+// carried onto `wrapped`. The transfer is not exactly invertible (a turn through an uneven stretch
+// does not undo), so that alone left the worst vertex 16% of the pose off on a test head. Then
+// corrected toward what the app relies on, N + (D retargeted onto N) = `wrapped`: each round adds
+// the round trip's miss to N. 16% -> 0.4% in 6 rounds. KEPT ONLY WHILE THEY HELP: on GNM the first
+// guess already round-trips within 0.05 (head 48 tall) and the rounds then DIVERGE, x4 a round, at
+// the lip seam's sliver triangles (area 7e-4), where a tiny change of N swings the transfer --
+// 66 off by round 6. So the best N so far is kept, and a round that misses by more ends it.
+// Returns { base: N, miss } (miss = the worst round-trip distance left).
+const UNPOSE_ROUNDS = 6;
+export function unpose(ref, D, wrapped, tris, nv) {
+  const posed = ref.map((r, i) => r + D[i]);
+  const first = retargetDelta(prepare(posed, wrapped, tris, nv), D.map((x) => -x));
+  let N = Float32Array.from(wrapped, (w, i) => w + first[i]), best = null, bestMiss = Infinity;
+  for (let k = 0; k <= UNPOSE_ROUNDS; k++) {
+    const a = retargetDelta(prepare(ref, N, tris, nv), D);
+    const r = new Float32Array(N.length);
+    let miss = 0;
+    for (let v = 0; v < nv; v++) {
+      for (let x = 0; x < 3; x++) r[v * 3 + x] = wrapped[v * 3 + x] - N[v * 3 + x] - a[v * 3 + x];
+      miss = Math.max(miss, Math.hypot(r[v * 3], r[v * 3 + 1], r[v * 3 + 2]));
+    }
+    if (miss >= bestMiss) break;
+    best = N; bestMiss = miss;
+    N = N.map((n, i) => n + r[i]);
+  }
+  return { base: best, miss: bestMiss };
+}
+
 // ── FIT PARTS (eyes, teeth, tongue) ─────────────────────────────────────────────────────────
 //
 // An eyeball or a row of teeth has to stay rigid: a Move stroke that pushes the lids wider

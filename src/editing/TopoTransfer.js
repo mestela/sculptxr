@@ -24,9 +24,9 @@
 import * as THREE from 'three';
 import { mat4, vec3 } from 'gl-matrix';
 import { GNM_LANDMARKS } from './gnmLandmarks.js';
-import { closestPoint } from './TopoWrap.js';
+import { closestPoint, neighbours } from './TopoWrap.js';
 import { triangles } from './ShapeRetarget.js';
-import { isGnm, regionCodes } from './GnmRegions.js';
+import { isGnm, regionCodes, lidRegion } from './GnmRegions.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
 import { workerClient } from '../misc/workerClient.js';
 import TopoWorker from '../workers/TopoWorker.js?worker';
@@ -43,7 +43,13 @@ const nextToPick = (from) => {
   return from;
 };
 
-const MIN_PICKS = 4;
+// THE CORE LANDMARKS (gnmLandmarks `core`) gate Wrap. Counted as the user picks them: an L and its
+// mirrored R are one click, so this is clicks done / clicks needed.
+const CORE = GNM_LANDMARKS.filter((lm) => lm.core && !isMirrored(lm));
+export function coreProgress() {
+  const done = CORE.filter((lm) => topo.picks.has(lm.key)).length;
+  return { done, need: CORE.length, ok: done === CORE.length };
+}
 const say = (msg, colour) => { console.log('[Topo] ' + msg); window.screenLog?.(msg, colour); };
 const repaint = () => window._refreshTopo?.();
 const reg = () => window._animationRegistry;
@@ -224,7 +230,7 @@ function apply(main, s, t, out, label) {
 export async function wrap(main) {
   const s = sourceMesh(main), t = targetMesh(main);
   if (!s || !t) return say('Set a target first', 'yellow');
-  if (topo.picks.size < MIN_PICKS) return say(`Place at least ${MIN_PICKS} landmarks first`, 'yellow');
+  if (!coreProgress().ok) return say(`Place the ${CORE.map((lm) => lm.label.replace(/ L$/, '').toLowerCase()).join(', ')} first`, 'yellow');
   const { src, dst } = pairs(main, s);
   const base = reg().tracks.get(s.getID()).baseShape.slice();
   let r;
@@ -246,6 +252,13 @@ export async function wrap(main) {
 // Measured on a caricatured Lunk: lip triangles folded 7 of 464 -> 0, lip error 0.84 -> 0.92.
 // (A first try fitted GNM's identity basis before snapping instead: on a caricature 60
 // components cannot reach the proportions, and the lips came out worse, 17-41 folded.)
+//
+// THE EYELIDS TOO (matt, spork: "they aren't clean loops, they lose volume on the side towards
+// the nose"): the rows round the lid snap onto the sculpt's lids and eyeballs alike and kink the
+// rim -- bend per unit length 0.246 after the snap vs 0.194 on GNM. The socket and LID_RINGS rings
+// round it are re-solved the same way: 0.215, the wrap's own, and the rim's shape round the eye
+// 30% nearer GNM's.
+export const LID_RINGS = 4;   // rings round the eye socket kept in GNM's shape (Snap, and Un-pose)
 export async function snapToSurface(main, onProgress = null) {
   const s = sourceMesh(main), t = targetMesh(main);
   if (!s || !t) return say('Set a target first', 'yellow');
@@ -259,6 +272,7 @@ export async function snapToSurface(main, onProgress = null) {
   const lips = [];
   for (let i = 0; i < Math.min(nv, codes.length); i++) if (lipCodes.has(codes[i])) lips.push(i);
   const tris = triangles(s.getFaces(), s.getNbFaces());
+  for (const i of lidRegion(neighbours(tris, nv), LID_RINGS)) lips.push(i);   // relaxed with the lips
   // Into the target's space and back.
   const toT = between(s, t), toS = between(t, s), v = vec3.create();
   const inT = new Float32Array(nv * 3);

@@ -9,7 +9,7 @@
 // A pending reference that was never relinked is WRITTEN BACK on the next save, so opening a scene
 // and saving it without finding the clip does not quietly forget where the clip was.
 //
-// THE FOOTER BLOCK 'MDIA', written FIRST of the footer chain: [mesh][MDIA][TXTR][SKEL][FGRP].
+// THE FOOTER BLOCK 'MDIA', written before the rest of the chain: [mesh]([TOPO])[MDIA][TXTR][SKEL][FGRP].
 // Every other reader walks back from the end and stops at the block it wants, so one placed
 // before them all is never reached by an older build, and FGRP stays last (its reader only looks
 // at the final 8 bytes). Payload is JSON, so a field can be added without a version bump.

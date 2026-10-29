@@ -2,6 +2,7 @@ import { rotSync, maskSync } from '../editing/xfChannel.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
 import TextureIO from './TextureIO.js';
 import MediaRef from './MediaRef.js';
+import TopoIO from './TopoIO.js';
 import Skeleton from '../editing/Skeleton.js';
 import { jiggle } from '../editing/Jiggle.js';
 import { idle } from '../editing/IdleFace.js';
@@ -722,7 +723,14 @@ Export.exportSGL = function (meshes, main) {
     // Frame-by-frame (cel) animation: append an independent, footer-located block
     // after the mesh data. Old importers stop after the mesh data and ignore it.
     var parts = [data];
-    // The video/audio clips, as a reference (name, offset, switches). FIRST of the footer blocks:
+    // Topo Transfer's picks and held pose. FIRST of all the footer blocks: see TopoIO.
+    try {
+      var topoBuf = TopoIO.serialize(meshes);
+      if (topoBuf && topoBuf.byteLength) parts.push(topoBuf);
+    } catch (e) {
+      console.error('[TopoIO] export append failed', e);
+    }
+    // The video/audio clips, as a reference (name, offset, switches). Next of the footer blocks:
     // see MediaRef for why that position is safe for every other reader.
     try {
       var mdiaBuf = MediaRef.serialize(main);
