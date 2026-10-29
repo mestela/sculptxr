@@ -26,6 +26,7 @@
 
 import NomTextures from '../../files/NomTextures.js';
 import { bakeVertexAO } from '../../editing/VertexAO.js';
+import { runBusy, busyLabel, busyAttr } from '../busy.js';
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade, wristPanelY, wristPanelYaw, wristPanelPitch} from './HTMLVRPanel.js';
 import { jiggle, JIGGLE_SLIDERS } from '../../editing/Jiggle.js';
 import { setJiggle, setTeeth } from '../jiggleSettings.js';
@@ -3382,7 +3383,7 @@ export function buildSectionHTML_rendering(main) {
       <!-- Baked vertex AO, which the PBR shader uses as specular occlusion (editing/VertexAO.js):
            stops the env map's fresnel rim on surfaces that cannot see the sky, like a tongue. -->
       <div class="mm-choice-grid cols-2">
-        <button class="mm-action-btn" id="mm-bake-ao">Bake AO</button>
+        <button class="mm-action-btn${busyAttr('mm-bake-ao')}" id="mm-bake-ao">${busyLabel('mm-bake-ao', 'Bake AO')}</button>
         <button class="mm-action-btn" id="mm-clear-ao">Clear AO</button>
       </div>
       <div class="mm-row">
@@ -5860,22 +5861,18 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   });
 
   el.querySelector('#mm-import-uv')?.addEventListener('click',     () => document.getElementById('textureopen')?.click());
-  el.querySelector('#mm-bake-ao')?.addEventListener('click', async () => {
+  el.querySelector('#mm-bake-ao')?.addEventListener('click', () => {
     const mesh = main.getMesh?.();
-    if (!mesh || mesh._aoBaking) return;
-    mesh._aoBaking = true;
-    window.screenLog?.('Baking AO\u2026', 'yellow');
-    const t0 = performance.now(), nbV = mesh.getNbVertices();
-    try {
-      const ao = await bakeVertexAO(mesh);
+    if (!mesh) return;
+    runBusy('mm-bake-ao', 'Bake AO', 'Baking', async (progress) => {
+      const t0 = performance.now(), nbV = mesh.getNbVertices();
+      const ao = await bakeVertexAO(mesh, progress);
       // Topology changed while it ran (multires, remesh): the bake no longer fits.
       if (mesh.getNbVertices() !== nbV) return window.screenLog?.('AO bake dropped: the mesh changed', 'yellow');
       mesh.setOcclusion(ao);
       window.screenLog?.('AO baked: ' + nbV + ' verts in ' + Math.round(performance.now() - t0) + ' ms', 'lime');
       main.render?.();
-    } finally {
-      mesh._aoBaking = false;
-    }
+    });
   });
   wireSlider(el.querySelector('#mm-ao-strength'), el.querySelector('#mm-ao-strength-val'), (v) => {
     main.getMesh?.()?.setOcclusionStrength?.(v / 100);
@@ -6783,8 +6780,8 @@ function buildTopoHTML(main) {
       <button class="mm-choice" id="mm-topo-view" title="Show both heads, the target only, or GNM only (Tab while picking)"${dis}>Show: ${VIEW_LABEL[topo.view]}</button>
       <button class="mm-choice${topo.lines ? ' active' : ''}" id="mm-topo-lines" title="Dashed lines from each GNM landmark to its pick on the target: a mis-click is the line that crosses the rest"${dis}>Lines</button>
       <button class="mm-choice${topo.dots ? ' active' : ''}" id="mm-topo-dots" title="Show or hide the landmark dots on both heads"${dis}>Dots</button>
-      <button class="mm-choice" id="mm-topo-wrap" title="Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)"${dis}>Wrap</button>
-      <button class="mm-choice" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>Snap to Surface</button>
+      <button class="mm-choice${busyAttr('mm-topo-wrap')}" id="mm-topo-wrap" title="Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)"${dis}>${busyLabel('mm-topo-wrap', 'Wrap')}</button>
+      <button class="mm-choice${busyAttr('mm-topo-snap')}" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>${busyLabel('mm-topo-snap', 'Snap to Surface')}</button>
       <button class="mm-choice" id="mm-topo-clear"${dis}>Clear</button>
     </div>
     ${t ? `<div class="mm-choice-grid cols-2">${rows}</div>` : ''}`;
@@ -6800,8 +6797,8 @@ function wireTopo(el, main, repaintFn) {
   el.querySelector('#mm-topo-view')?.addEventListener('click', () => topoView(main));
   el.querySelector('#mm-topo-lines')?.addEventListener('click', () => topoLines(main, !topo.lines));
   el.querySelector('#mm-topo-dots')?.addEventListener('click', () => topoDots(main, !topo.dots));
-  el.querySelector('#mm-topo-wrap')?.addEventListener('click', () => topoWrap(main));
-  el.querySelector('#mm-topo-snap')?.addEventListener('click', () => topoSnap(main));
+  el.querySelector('#mm-topo-wrap')?.addEventListener('click', () => runBusy('mm-topo-wrap', 'Wrap', 'Wrapping', () => topoWrap(main)));
+  el.querySelector('#mm-topo-snap')?.addEventListener('click', () => runBusy('mm-topo-snap', 'Snap to Surface', 'Snapping', (progress) => topoSnap(main, progress)));
   el.querySelector('#mm-topo-clear')?.addEventListener('click', () => topoClear(main));
   el.querySelectorAll('[data-topo-lm]').forEach((b) => b.addEventListener('click', () => topoSelect(main, +b.dataset.topoLm)));
 }

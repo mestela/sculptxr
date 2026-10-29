@@ -19,37 +19,23 @@
 
 import { isGnm, regionCodes } from './GnmRegions.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
-import { traceAO } from './AOTrace.js';
+import { workerClient } from '../misc/workerClient.js';
 import AOWorker from '../workers/AOWorker.js?worker';
 
-// Float32Array(nbVertices), 1 = unoccluded, of the pose on screen, smoothed. A Promise: traced in a
-// worker (inline if one cannot start). Positions are copied at the call, so posing on while it
-// runs does not touch the bake.
-let worker = null, seq = 0;
-const pending = new Map();
-export function bakeVertexAO(mesh) {
+// Float32Array(nbVertices), 1 = unoccluded, of the pose on screen, smoothed. A Promise, traced in
+// a worker; `onProgress(f)` hears how far it is. Positions are copied at the call, so posing on
+// while it runs does not touch the bake.
+const traceInWorker = workerClient(AOWorker);
+export async function bakeVertexAO(mesh, onProgress = null) {
   const nbV = mesh.getNbVertices(), nbTri = mesh.getNbTriangles();
   const v = Float32Array.from(mesh.getVertices().subarray(0, nbV * 3));
   const n = Float32Array.from(mesh.getNormals().subarray(0, nbV * 3));
   const tris = Uint32Array.from(mesh.getTriangles().subarray(0, nbTri * 3));
   const keep = mouthMask(mesh, v, nbV);
-  const done = (ao) => smooth(mesh, ao, 2);
-  if (!worker) {
-    try {
-      worker = new AOWorker();
-      worker.onmessage = (e) => { const p = pending.get(e.data.id); pending.delete(e.data.id); p?.(e.data.ao); };
-    } catch (err) {
-      console.warn('[VertexAO] no worker, baking inline', err);
-      return Promise.resolve(done(traceAO(v, n, tris, nbTri, nbV, keep)));
-    }
-  }
-  const id = ++seq;
-  return new Promise((res) => {
-    pending.set(id, (ao) => res(done(ao)));
-    const xfer = [v.buffer, n.buffer, tris.buffer];
-    if (keep) xfer.push(keep.buffer);
-    worker.postMessage({ id, v, n, tris, nbTri, nbV, keep }, xfer);
-  });
+  const xfer = [v.buffer, n.buffer, tris.buffer];
+  if (keep) xfer.push(keep.buffer);
+  const { ao } = await traceInWorker({ v, n, tris, nbTri, nbV, keep }, xfer, onProgress);
+  return smooth(mesh, ao, 2);
 }
 
 // GNM HEADS: THE MOUTH ONLY -- lips, mouth bag, and the pieces inside it (teeth, tongue). Baked

@@ -89,14 +89,14 @@ function occluded(bvh, v, tris, ox, oy, oz, dx, dy, dz, tMin, tMax, stack) {
 
 // Float32Array(nbV), 1 = unoccluded; `maxDist` a quarter of the bounding diagonal. `keep`
 // (optional Uint8Array) limits the TRACING to those vertices -- the rest are 1 -- while every
-// triangle still occludes.
+// triangle still occludes. `progress(f)`, if given, hears how far through it is.
 //
 // RAYS IN EACH VERTEX'S OWN HEMISPHERE, cosine distributed (Malley: a Fibonacci disk lifted onto
 // it, so every ray counts once), turned by a per-vertex random angle (VertexAO smooths
 // over the vertex rings after). One fixed sphere of directions for every vertex wasted the half facing
 // inward and put the same gaps in every neighbour's sky, which read as blotches once the strength
 // slider steepened it (matt: "very blotchy").
-export function traceAO(v, n, tris, nbTri, nbV, keep) {
+export function traceAO(v, n, tris, nbTri, nbV, keep, progress = null) {
   let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
   for (let i = 0; i < nbV; i++) {
     const p = i * 3;
@@ -112,6 +112,7 @@ export function traceAO(v, n, tris, nbTri, nbV, keep) {
   const stack = new Uint32Array(256);
   const ao = new Float32Array(nbV);
   for (let i = 0; i < nbV; i++) {
+    if (progress && (i & 1023) === 0) progress(i / nbV);
     if (keep && !keep[i]) { ao[i] = 1; continue; }
     const p = i * 3;
     const nx = n[p], ny = n[p + 1], nz = n[p + 2];

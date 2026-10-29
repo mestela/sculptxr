@@ -24,10 +24,12 @@
 import * as THREE from 'three';
 import { mat4, vec3 } from 'gl-matrix';
 import { GNM_LANDMARKS } from './gnmLandmarks.js';
-import { fitWarp, warpAll, closestPoint, buildGrid, snapSurface, neighbours, relaxRegion } from './TopoWrap.js';
+import { closestPoint } from './TopoWrap.js';
 import { triangles } from './ShapeRetarget.js';
 import { isGnm, regionCodes } from './GnmRegions.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
+import { workerClient } from '../misc/workerClient.js';
+import TopoWorker from '../workers/TopoWorker.js?worker';
 
 export const topo = { pick: false, cur: 0, targetId: null, picks: new Map(), view: 'both', lines: false, dots: true };   // picks: key -> { p }
 
@@ -192,17 +194,18 @@ function pairs(main, space) {
   return { src: Float64Array.from(src), dst: Float64Array.from(dst) };
 }
 
-// Bend GNM's Base onto the target. One undo step.
-export function wrap(main) {
-  const s = sourceMesh(main), t = targetMesh(main);
-  if (!s || !t) return say('Set a target first', 'yellow');
-  if (topo.picks.size < MIN_PICKS) return say(`Place at least ${MIN_PICKS} landmarks first`, 'yellow');
+// WRAP AND SNAP RUN IN A WORKER (workers/TopoWorker.js): both locked a headset up for seconds.
+// Each reads what it needs now and applies the answer as one undo step when it comes back --
+// unless the heads changed meanwhile (target cleared, other head, new topology), when it is dropped.
+const inWorker = workerClient(TopoWorker);
+function apply(main, s, t, out, label) {
   const track = reg().tracks.get(s.getID());
-  let warp;
-  const { src, dst } = pairs(main, s);
-  try { warp = fitWarp(src, dst); } catch (e) { return say(e.message, 'yellow'); }
+  if (sourceMesh(main) !== s || targetMesh(main) !== t || !track || track.baseShape.length !== out.length) {
+    say(`${label} dropped: the heads changed while it ran`, 'yellow');
+    return false;
+  }
   const before = { base: track.baseShape.slice(), ref: track.shapeRef };
-  const after = { base: warpAll(warp, track.baseShape), ref: track.shapeRef || before.base };
+  const after = { base: out, ref: track.shapeRef || before.base };
   const put = (st) => {
     track.baseShape.set(st.base);
     track.shapeRef = st.ref;
@@ -212,10 +215,23 @@ export function wrap(main) {
     main.render();
   };
   put(after);
-  main.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Topo Wrap');
+  main.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, label);
   setPick(main, false);
+  return true;
+}
+
+// Bend GNM's Base onto the target. One undo step.
+export async function wrap(main) {
+  const s = sourceMesh(main), t = targetMesh(main);
+  if (!s || !t) return say('Set a target first', 'yellow');
+  if (topo.picks.size < MIN_PICKS) return say(`Place at least ${MIN_PICKS} landmarks first`, 'yellow');
+  const { src, dst } = pairs(main, s);
+  const base = reg().tracks.get(s.getID()).baseShape.slice();
+  let r;
+  try { r = await inWorker({ op: 'wrap', src, dst, base }, [src.buffer, dst.buffer, base.buffer]); } catch (e) { return say(e.message, 'yellow'); }
+  if (!apply(main, s, t, r.out, 'Topo Wrap')) return;
   setView(main, 'both');
-  say(`Wrapped onto ${topo.picks.size} landmarks (scale ${warp.sim.s.toFixed(3)}). Retarget Shapes next, to rebuild the shapes for the new face`);
+  say(`Wrapped onto ${topo.picks.size} landmarks (scale ${r.scale.toFixed(3)}). Retarget Shapes next, to rebuild the shapes for the new face`);
 }
 
 // STEP 3: SNAP GNM's skin onto the target's surface (TopoWrap.snapSurface), after Wrap has put it
@@ -223,49 +239,41 @@ export function wrap(main) {
 // from GNM's proportions needs the surface itself. Skin only, minus the mouth bag and the eye
 // sockets (they follow the skin round them); eyes, teeth and tongue stay where Wrap left them for
 // Retarget Shapes to reseat. One undo step, and the pre-snap Base is kept the same way as Wrap's.
-let _grid = null;
-export function snapToSurface(main) {
+//
+// LIPS KEEP GNM'S SHAPE (matt: "the lips often get a bit tangled"). The snap pulls neighbouring
+// lip rows toward different parts of a sculpt's fused lips and folds them; the lips and mouth
+// bag are re-solved to their pre-snap local shape, seated in the snapped skin round them.
+// Measured on a caricatured Lunk: lip triangles folded 7 of 464 -> 0, lip error 0.84 -> 0.92.
+// (A first try fitted GNM's identity basis before snapping instead: on a caricature 60
+// components cannot reach the proportions, and the lips came out worse, 17-41 folded.)
+export async function snapToSurface(main, onProgress = null) {
   const s = sourceMesh(main), t = targetMesh(main);
   if (!s || !t) return say('Set a target first', 'yellow');
-  const track = reg().tracks.get(s.getID()), base = track.baseShape, nv = base.length / 3;
+  const base = reg().tracks.get(s.getID()).baseShape, nv = base.length / 3;
   const t0 = performance.now();
-  const gkey = t.getID() + '|' + t.getNbVertices() + '|' + t.getNbFaces();
-  if (!_grid || _grid.key !== gkey) { const sf = surface(t); _grid = { key: gkey, g: buildGrid(sf.tris, Float32Array.from(sf.verts.subarray(0, t.getNbVertices() * 3))) }; }
+  const sf = surface(t);
   const codes = regionCodes(), skip = new Set(['mouth_sock', 'eye_sockets'].map((n) => GNM_REGION_NAMES.indexOf(n)));
   const include = new Uint8Array(nv);
   for (let i = 0; i < Math.min(nv, codes.length); i++) include[i] = skip.has(codes[i]) ? 0 : 1;
+  const lipCodes = new Set(['upper_lip', 'lower_lip', 'mouth_sock'].map((n) => GNM_REGION_NAMES.indexOf(n)));
+  const lips = [];
+  for (let i = 0; i < Math.min(nv, codes.length); i++) if (lipCodes.has(codes[i])) lips.push(i);
   const tris = triangles(s.getFaces(), s.getNbFaces());
   // Into the target's space and back.
   const toT = between(s, t), toS = between(t, s), v = vec3.create();
   const inT = new Float32Array(nv * 3);
   for (let i = 0; i < nv; i++) { vec3.transformMat4(v, base.subarray(i * 3, i * 3 + 3), toT); inT.set(v, i * 3); }
-  const nb = neighbours(tris, nv);
-  let out = snapSurface(inT, tris, nb, include, _grid.g, { maxDist: radiusOf(t) * 0.3 });
-  // LIPS KEEP GNM'S SHAPE (matt: "the lips often get a bit tangled"). The snap pulls neighbouring
-  // lip rows toward different parts of a sculpt's fused lips and folds them; the lips and mouth
-  // bag are re-solved to their pre-snap local shape, seated in the snapped skin round them.
-  // Measured on a caricatured Lunk: lip triangles folded 7 of 464 -> 0, lip error 0.84 -> 0.92.
-  // (A first try fitted GNM's identity basis before snapping instead: on a caricature 60
-  // components cannot reach the proportions, and the lips came out worse, 17-41 folded.)
-  const lipCodes = new Set(['upper_lip', 'lower_lip', 'mouth_sock'].map((n) => GNM_REGION_NAMES.indexOf(n)));
-  const lips = [];
-  for (let i = 0; i < Math.min(nv, codes.length); i++) if (lipCodes.has(codes[i])) lips.push(i);
-  out = relaxRegion(out, inT, nb, lips, 100);
+  let r;
+  try {
+    r = await inWorker({
+      op: 'snap', gkey: t.getID() + '|' + t.getNbVertices() + '|' + t.getNbFaces(),
+      ttris: sf.tris, tverts: Float32Array.from(sf.verts.subarray(0, t.getNbVertices() * 3)),
+      inT, tris, nv, include, lips, maxDist: radiusOf(t) * 0.3,
+    }, [inT.buffer, include.buffer], onProgress);
+  } catch (e) { return say(e.message, 'yellow'); }
   const after = new Float32Array(nv * 3);
-  for (let i = 0; i < nv; i++) { vec3.transformMat4(v, out.subarray(i * 3, i * 3 + 3), toS); after.set(v, i * 3); }
-  const before = { base: base.slice(), ref: track.shapeRef };
-  const st1 = { base: after, ref: track.shapeRef || before.base };
-  const put = (st) => {
-    track.baseShape.set(st.base);
-    track.shapeRef = st.ref;
-    track._bsRev = (track._bsRev | 0) + 1;
-    reg().applyBlendshapes(s);
-    refreshMarkers(main);
-    main.render();
-  };
-  put(st1);
-  main.getStateManager?.()?.pushStateCustom(() => put(before), () => put(st1), false, 'Snap to Surface');
-  setPick(main, false);
+  for (let i = 0; i < nv; i++) { vec3.transformMat4(v, r.out.subarray(i * 3, i * 3 + 3), toS); after.set(v, i * 3); }
+  if (!apply(main, s, t, after, 'Snap to Surface')) return;
   say(`Snapped GNM's skin onto ${meshLabel(t)} in ${(performance.now() - t0).toFixed(0)} ms. Retarget Shapes next`);
 }
 

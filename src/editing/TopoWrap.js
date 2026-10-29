@@ -297,14 +297,15 @@ export function neighbours(tris, nv) {
 // facets stood in for (neck 0.197 -> 0.152, all skin 0.115 -> 0.108). Plain averaging smoothed
 // harder but shrank the fit off the surface (skin 0.115 -> 0.175 at 4 rounds); sliding vertices
 // along the surface (relax + reproject) only took 10-15% off: the zigzag is the facets.
-export function snapSurface(verts, tris, nb, include, grid, { passes = [32, 16, 8, 4, 2, 1, 1], maxDist = Infinity, minDot = 0.3, finish = 8 } = {}) {
+export function snapSurface(verts, tris, nb, include, grid, { passes = [32, 16, 8, 4, 2, 1, 1], maxDist = Infinity, minDot = 0.3, finish = 8, progress = null } = {}) {
   const nv = verts.length / 3, x = Float32Array.from(verts);
   let D = new Float32Array(nv * 3), W = new Float32Array(nv), D2 = new Float32Array(nv * 3), W2 = new Float32Array(nv);
   // Each vertex's last hit seeds its next query, and before it has one the previous vertex's does
   // (index order is mostly neighbours). Speed only: see closestOnGrid's hint.
   const last = new Int32Array(nv).fill(-1);
   let prev = -1;
-  for (const smooth of passes) {
+  for (const [pass, smooth] of passes.entries()) {
+    progress?.(pass / passes.length);
     const N = vertexNormals(tris, x);
     D.fill(0); W.fill(0);
     for (let i = 0; i < nv; i++) {
