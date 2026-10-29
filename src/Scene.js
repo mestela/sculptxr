@@ -79,6 +79,7 @@ import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './g
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 import BlendshapeStackPanel from './gui/BlendshapeStackPanel.js';
 import MediaRef from './files/MediaRef.js';
+import TopoIO from './files/TopoIO.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 import { VrKeyboard             } from './gui/htmlvr/VrKeyboard.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
@@ -7307,6 +7308,9 @@ class Scene {
       // The clips: a reference only (name, offset, switches). The timeline shows a "missing"
       // lane for each until a file of that name is loaded.
       if (fileType === 'sgl') MediaRef.deserialize(fileData);
+
+      // Topo Transfer's landmark picks and held pose (TopoIO).
+      if (fileType === 'sgl') TopoIO.deserialize(fileData, added, this);
 
       if (fileType === 'sgl' && this._frameGroup) {
         try { this._frameGroup.deserialize(fileData, added); }

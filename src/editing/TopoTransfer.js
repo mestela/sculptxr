@@ -26,7 +26,7 @@ import { mat4, vec3 } from 'gl-matrix';
 import { GNM_LANDMARKS } from './gnmLandmarks.js';
 import { fitWarp, warpAll, closestPoint, buildGrid, snapSurface, neighbours, relaxRegion } from './TopoWrap.js';
 import { triangles } from './ShapeRetarget.js';
-import { isGnm, regionCodes } from './GnmRegions.js';
+import { isGnm, regionCodes, lidRegion } from './GnmRegions.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
 
 export const topo = { pick: false, cur: 0, targetId: null, picks: new Map(), view: 'both', lines: false, dots: true };   // picks: key -> { p }
@@ -41,7 +41,13 @@ const nextToPick = (from) => {
   return from;
 };
 
-const MIN_PICKS = 4;
+// THE CORE LANDMARKS (gnmLandmarks `core`) gate Wrap. Counted as the user picks them: an L and its
+// mirrored R are one click, so this is clicks done / clicks needed.
+const CORE = GNM_LANDMARKS.filter((lm) => lm.core && !isMirrored(lm));
+export function coreProgress() {
+  const done = CORE.filter((lm) => topo.picks.has(lm.key)).length;
+  return { done, need: CORE.length, ok: done === CORE.length };
+}
 const say = (msg, colour) => { console.log('[Topo] ' + msg); window.screenLog?.(msg, colour); };
 const repaint = () => window._refreshTopo?.();
 const reg = () => window._animationRegistry;
@@ -196,7 +202,7 @@ function pairs(main, space) {
 export function wrap(main) {
   const s = sourceMesh(main), t = targetMesh(main);
   if (!s || !t) return say('Set a target first', 'yellow');
-  if (topo.picks.size < MIN_PICKS) return say(`Place at least ${MIN_PICKS} landmarks first`, 'yellow');
+  if (!coreProgress().ok) return say(`Place the ${CORE.map((lm) => lm.label.replace(/ L$/, '').toLowerCase()).join(', ')} first`, 'yellow');
   const track = reg().tracks.get(s.getID());
   let warp;
   const { src, dst } = pairs(main, s);
@@ -224,6 +230,7 @@ export function wrap(main) {
 // sockets (they follow the skin round them); eyes, teeth and tongue stay where Wrap left them for
 // Retarget Shapes to reseat. One undo step, and the pre-snap Base is kept the same way as Wrap's.
 let _grid = null;
+export const LID_RINGS = 4;   // rings round the eye socket kept in GNM's shape (Snap, and Un-pose)
 export function snapToSurface(main) {
   const s = sourceMesh(main), t = targetMesh(main);
   if (!s || !t) return say('Set a target first', 'yellow');
@@ -250,7 +257,12 @@ export function snapToSurface(main) {
   const lipCodes = new Set(['upper_lip', 'lower_lip', 'mouth_sock'].map((n) => GNM_REGION_NAMES.indexOf(n)));
   const lips = [];
   for (let i = 0; i < Math.min(nv, codes.length); i++) if (lipCodes.has(codes[i])) lips.push(i);
-  out = relaxRegion(out, inT, nb, lips, 100);
+  // THE EYELIDS TOO (matt, spork: "they aren't clean loops, they lose volume on the side towards
+  // the nose"): the rows round the lid snap onto the sculpt's lids and eyeballs alike and kink the
+  // rim -- bend per unit length 0.246 after the snap vs 0.194 on GNM. The socket and LID_RINGS rings
+  // round it are re-solved the same way: 0.215, the wrap's own, and the rim's shape round the eye
+  // 30% nearer GNM's.
+  out = relaxRegion(out, inT, nb, [...lips, ...lidRegion(nb, LID_RINGS)], 100);
   const after = new Float32Array(nv * 3);
   for (let i = 0; i < nv; i++) { vec3.transformMat4(v, out.subarray(i * 3, i * 3 + 3), toS); after.set(v, i * 3); }
   const before = { base: base.slice(), ref: track.shapeRef };

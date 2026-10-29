@@ -4,6 +4,7 @@ import Tools from '../editing/tools/Tools.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import GuiSculptingTools from './GuiSculptingTools.js';
 import RigTopology from '../editing/RigTopology.js';
+import { toggleSolo } from '../editing/Solo.js';
 
 var GuiTools = GuiSculptingTools.tools;
 
@@ -339,8 +340,10 @@ class GuiSculpting {
       if (cur.toggleNegative) cur.toggleNegative();
       break;
     case Enums.KeyAction.PICKER:
-      var ctrlPicker = cur._ctrlPicker;
+      var ctrlPicker = cur && cur._ctrlPicker;
       if (ctrlPicker && !ctrlPicker.getValue()) ctrlPicker.setValue(true);
+      // S is the colour picker only in a tool that has one (Paint); everywhere else it is SOLO.
+      else if (!ctrlPicker && !event.repeat) toggleSolo(main);
       break;
       case Enums.KeyAction.SWAP_COLORS:
         if (cur.swapColors) cur.swapColors();
@@ -396,7 +399,7 @@ class GuiSculpting {
       break;
     case Enums.KeyAction.PICKER:
       var cur = GuiTools[this.getSelectedTool()];
-      var ctrlPicker = cur._ctrlPicker;
+      var ctrlPicker = cur && cur._ctrlPicker;
       if (ctrlPicker && ctrlPicker.getValue()) ctrlPicker.setValue(false);
       break;
     case Enums.KeyAction.INTENSITY:

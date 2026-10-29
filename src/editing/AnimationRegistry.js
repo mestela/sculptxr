@@ -10,7 +10,7 @@ import { triangles, prepare, retargetDelta, fitParts } from './ShapeRetarget.js'
 import { buildEyes, collide, eyeSum, knownLids } from './EyeCollide.js';
 import { jigglePush, jiggle } from './Jiggle.js';
 import { buildTeeth, collideTeeth, teethSum } from './TeethCollide.js';
-import { isGnm, regionCodes } from './GnmRegions.js';
+import { isGnm, regionCodes, teethToBag } from './GnmRegions.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
 import { GNM_LANDMARKS } from './gnmLandmarks.js';
 import Skeleton from './Skeleton.js';
@@ -2740,6 +2740,9 @@ class AnimationRegistry {
     const tris = triangles(mesh.getFaces(), mesh.getNbFaces());
     // FIT PARTS first: eyes, teeth, tongue rebuilt rigid and seated in the sculpted skin (see fitParts).
     const fit = fitParts(ref, base, tris, nv, track.blendshapes);
+    // ...and on GNM, the teeth no bigger than the mouth bag they sit in (GnmRegions.teethToBag).
+    const inBag = isGnm(mesh) ? teethToBag(ref, fit.base || base, tris, nv, track.blendshapes) : null;
+    if (inBag) fit.base = inBag;
     const P = prepare(ref, fit.base || base, tris, nv);
     const skip = track.shapeRefSkip || new Set();
     const before = { shapes: new Map(track.blendshapes), samples: track.comboSamples ? new Map(track.comboSamples) : null, ref, skip, base: fit.base && base.slice() };

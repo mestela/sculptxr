@@ -3,16 +3,18 @@
 // data (gnmRegionData.js), the lid loops (gnmLids.js) and the midline (+Z forward, +Y up, the
 // left eye at +X): nose tip = most forward midline nose vertex, mouth corner = widest lip vertex,
 // eye corners = the lid loops' ends, and so on. Every L/R pair mirrors to within 0.03 units.
-// `mirror` names the other side's landmark, for symmetric picking.
+// `mirror` names the other side's landmark, for symmetric picking. `core`: the anchors Wrap needs
+// before it runs (TopoTransfer.coreProgress) -- a bare count let two eye-corner clicks (four picks,
+// mirrored) through with the mouth and jaw unpinned.
 export const GNM_LANDMARKS = [
-  { key: 'eyeInnerL', label: 'Inner eye corner L', v: 555, mirror: 'eyeInnerR' },
-  { key: 'eyeInnerR', label: 'Inner eye corner R', v: 6683, mirror: 'eyeInnerL' },
-  { key: 'eyeOuterL', label: 'Outer eye corner L', v: 1041, mirror: 'eyeOuterR' },
-  { key: 'eyeOuterR', label: 'Outer eye corner R', v: 7169, mirror: 'eyeOuterL' },
-  { key: 'noseTip', label: 'Nose tip', v: 12296 },
-  { key: 'mouthCornerL', label: 'Mouth corner L', v: 5155, mirror: 'mouthCornerR' },
-  { key: 'mouthCornerR', label: 'Mouth corner R', v: 11283, mirror: 'mouthCornerL' },
-  { key: 'chin', label: 'Chin', v: 12260 },
+  { key: 'eyeInnerL', label: 'Inner eye corner L', v: 555, mirror: 'eyeInnerR', core: true },
+  { key: 'eyeInnerR', label: 'Inner eye corner R', v: 6683, mirror: 'eyeInnerL', core: true },
+  { key: 'eyeOuterL', label: 'Outer eye corner L', v: 1041, mirror: 'eyeOuterR', core: true },
+  { key: 'eyeOuterR', label: 'Outer eye corner R', v: 7169, mirror: 'eyeOuterL', core: true },
+  { key: 'noseTip', label: 'Nose tip', v: 12296, core: true },
+  { key: 'mouthCornerL', label: 'Mouth corner L', v: 5155, mirror: 'mouthCornerR', core: true },
+  { key: 'mouthCornerR', label: 'Mouth corner R', v: 11283, mirror: 'mouthCornerL', core: true },
+  { key: 'chin', label: 'Chin', v: 12260, core: true },
   { key: 'noseBridge', label: 'Nose bridge', v: 12320 },
   { key: 'subnasale', label: 'Under the nose', v: 12298 },
   { key: 'alarL', label: 'Nostril wing L', v: 5170, mirror: 'alarR' },

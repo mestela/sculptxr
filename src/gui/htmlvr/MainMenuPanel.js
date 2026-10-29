@@ -32,7 +32,7 @@ import { setJiggle, setTeeth } from '../jiggleSettings.js';
 import { teeth, TEETH_SLIDERS, LIP_SLIDERS } from '../../editing/TeethCollide.js';
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
-import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
+import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, coreProgress as topoCore, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
 import { held as topoHeld, holdPose as topoHold, unposeToNeutral as topoUnpose } from '../../editing/TopoPose.js';
 import { GNM_LANDMARKS } from '../../editing/gnmLandmarks.js';
 import Skinning from '../../editing/Skinning.js';
@@ -6763,16 +6763,18 @@ function buildPoseLibraryHTML(main, tool) {
 }
 
 // TOPO TRANSFER (editing/TopoTransfer.js): pick GNM's landmarks on another sculpt, then Wrap.
-// A dot per landmark: green placed, amber guessed, hollow not yet.
+// A dot per landmark (matt): grey not placed, yellow placed, and every placed dot GREEN once the
+// core landmarks are all down -- the point Wrap unlocks.
 function buildTopoHTML(main) {
   const t = targetMesh(main), s = sourceMesh(main), dis = t ? '' : ' disabled';
+  const core = topoCore();
   // The L and centreline landmarks only: each R follows its L (TopoTransfer: symmetric targets).
   const rows = GNM_LANDMARKS.map((lm, i) => {
     if (topoMirrored(lm)) return '';
     const q = topo.picks.get(lm.key);
-    const col = q ? '#44dd66' : 'transparent';   // green once placed (matt); hollow until then
+    const col = !q ? '#666' : core.ok ? '#44dd66' : '#e8c440';
     const label = lm.mirror ? lm.label.replace(/ L$/, '') : lm.label;
-    return `<button class="mm-choice${topo.pick && i === topo.cur ? ' active' : ''}" data-topo-lm="${i}" title="${escHTML(label)}${q ? ' (placed)' : ''}${lm.mirror ? ' -- both sides' : ' -- on the centreline'}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:${col};border:1px solid #888"></span>${escHTML(label)}</button>`;
+    return `<button class="mm-choice${topo.pick && i === topo.cur ? ' active' : ''}" data-topo-lm="${i}" title="${escHTML(label)}${q ? ' (placed)' : ''}${lm.core ? ', needed for Wrap' : ''}${lm.mirror ? ' -- both sides' : ' -- on the centreline'}"><span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:${col};border:1px solid #888"></span>${escHTML(label)}</button>`;
   }).join('');
   return `
     <div class="mm-section-title">Topo Transfer</div>
@@ -6785,7 +6787,7 @@ function buildTopoHTML(main) {
       <button class="mm-choice${topo.lines ? ' active' : ''}" id="mm-topo-lines" title="Dashed lines from each GNM landmark to its pick on the target: a mis-click is the line that crosses the rest"${dis}>Lines</button>
       <button class="mm-choice${topo.dots ? ' active' : ''}" id="mm-topo-dots" title="Show or hide the landmark dots on both heads"${dis}>Dots</button>
       <button class="mm-choice${topoHeld.pose ? ' active' : ''}" id="mm-topo-hold" title="Sculpt made in an expression? Pose GNM to match it, then Hold Pose before Wrap: the pose goes into the Base so Wrap and Snap fit open mouth to open mouth"${dis}>Hold Pose</button>
-      <button class="mm-choice" id="mm-topo-wrap" title="Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)"${dis}>Wrap</button>
+      <button class="mm-choice" id="mm-topo-wrap" title="${core.ok ? "Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)" : `Place the core landmarks first (eye corners, nose tip, mouth corner, chin): ${core.done} of ${core.need}`}"${t && core.ok ? '' : ' disabled'}>${core.ok ? 'Wrap' : `Wrap (${core.done}/${core.need})`}</button>
       <button class="mm-choice" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>Snap to Surface</button>
       <button class="mm-choice" id="mm-topo-unpose" title="After Snap: take the held pose back out, leaving the sculpt's own neutral, and put the pose weights back (then Retarget Shapes)"${topoHeld.pose ? '' : ' disabled'}>Un-pose to Neutral</button>
       <button class="mm-choice" id="mm-topo-clear"${dis}>Clear</button>
