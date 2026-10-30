@@ -98,9 +98,10 @@ function solveDense(A, b, n) {
 
 /**
  * Solve one frame.
- *   pins:  [{ deltas: {name: vec3} (from sampleDeltas), drag: vec3, weight? }]  — drag is how far
- *          the point has been pulled since the anchor, in the mesh's local space; weight (default
- *          1) scales how hard that pin pulls against the others
+ *   pins:  [{ deltas: {name: vec3} (from sampleDeltas), drag: vec3, weight?, free? }]  — drag is
+ *          how far the point has been pulled since the anchor, in the mesh's local space; weight
+ *          (default 1) scales how hard that pin pulls against the others; free (a unit vector) is
+ *          a direction the pin does not hold: a mouse drag says nothing about depth (see FacePuppet)
  *   w0:    {name: weight} — the pose at the anchor
  *   opts:  { alpha, mu, sparse, cost, tie, exclude, exclusive, under, range } — range {name: {min, max}}
  *          widens a shape past 0..1 (its slider's range: a cartoon jawOpen at 2); alpha/mu/sparse RELATIVE to the strongest shape at the pins, so the feel
@@ -144,8 +145,11 @@ export function solveWeights(pins, w0, opts = {}) {
   for (const pin of pins) {
     const pw = pin.weight ?? 1;
     if (pw <= 0) continue;
-    const cols = names.map((nm) => pin.deltas[nm] || null);
-    const m = [pin.drag[0], pin.drag[1], pin.drag[2]];
+    // FREE AXIS: columns and target both with their part along it taken out, so the fit ignores it.
+    const f = pin.free;
+    const flat = (c) => { if (!f) return c; const k = c[0] * f[0] + c[1] * f[1] + c[2] * f[2]; return [c[0] - k * f[0], c[1] - k * f[1], c[2] - k * f[2]]; };
+    const cols = names.map((nm) => (pin.deltas[nm] ? flat(pin.deltas[nm]) : null));
+    const m = flat([pin.drag[0], pin.drag[1], pin.drag[2]]);
     for (let i = 0; i < n; i++) {
       const c = cols[i];
       if (!c) continue;

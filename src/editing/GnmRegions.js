@@ -55,6 +55,75 @@ export function lipSeam(ref) {
   return pairs;
 }
 
+// THE LIP SEAM'S BAND: the seam vertices (lipSeam on `ref`) and `rings` rings round them within
+// the lips and mouth bag, as vertex indices.
+export function seamRegion(ref, nb, rings) {
+  regionCodes();
+  const ok = new Set(['upper_lip', 'lower_lip', 'mouth_sock'].map((n) => GNM_REGION_NAMES.indexOf(n)));
+  const seen = new Set(lipSeam(ref));
+  let front = [...seen];
+  for (let r = 0; r < rings; r++) {
+    const next = [];
+    for (const v of front) for (let e = nb.start[v]; e < nb.start[v + 1]; e++) { const u = nb.list[e]; if (!seen.has(u) && ok.has(codes[u])) { seen.add(u); next.push(u); } }
+    front = next;
+  }
+  return [...seen];
+}
+
+// LIPS MEET AT REST (Un-pose). A sculpt made with its mouth open came back with the lips apart at
+// rest even after Un-pose's top-up: spork's seam 0.27 apart on average (0.59 at most) where GNM's
+// lips touch (0.09) -- matt: "shouldn't it match the rest state of gnm, with the lips touching?"
+// Each seam pair (lipSeam on `ref`) closes to GNM's own gap, half from each lip, and that motion
+// is carried through the lips and the skin round them as a HARMONIC field (the seam held, the
+// outer edge of the lip area held at 0), so it fades out before the cheeks and chin. The mouth bag
+// is re-solved to its own shape behind the moved lips (`relax`, TopoWrap.relaxRegion).
+// Returns a new array, and the mean seam gap before and after.
+export function closeLips(base, ref, nb, relax) {
+  regionCodes();
+  const pairs = lipSeam(ref), nv = base.length / 3;
+  const ids = new Set(['upper_lip', 'lower_lip', 'upper_lip_area', 'lower_lip_area'].map((n) => GNM_REGION_NAMES.indexOf(n)));
+  const sock = GNM_REGION_NAMES.indexOf('mouth_sock');
+  const inR = new Uint8Array(nv), fixed = new Uint8Array(nv), D = new Float32Array(nv * 3);
+  for (let v = 0; v < Math.min(nv, codes.length); v++) if (ids.has(codes[v])) inR[v] = 1;
+  // The region's outer edge holds still (0); the bag is not part of the field.
+  for (let v = 0; v < nv; v++) {
+    if (!inR[v]) continue;
+    for (let e = nb.start[v]; e < nb.start[v + 1]; e++) { const u = nb.list[e]; if (!inR[u] && codes[u] !== sock) { fixed[v] = 1; break; } }
+  }
+  let before = 0, after = 0;
+  for (let i = 0; i < pairs.length; i += 2) {
+    const u = pairs[i], l = pairs[i + 1];
+    // Straight toward each other, by the gap beyond GNM's: closing to GNM's gap VECTOR also slid
+    // the pair sideways on a differently shaped mouth and squashed lip triangles near the corners
+    // (one 0.264 -> 0.034 in quality), which Retarget turned into spikes on pucker.
+    const g = [base[l * 3] - base[u * 3], base[l * 3 + 1] - base[u * 3 + 1], base[l * 3 + 2] - base[u * 3 + 2]];
+    const len = Math.hypot(g[0], g[1], g[2]);
+    const want = Math.hypot(ref[l * 3] - ref[u * 3], ref[l * 3 + 1] - ref[u * 3 + 1], ref[l * 3 + 2] - ref[u * 3 + 2]);
+    const k = len > want ? (len - want) / (2 * len) : 0;
+    for (let c = 0; c < 3; c++) { D[u * 3 + c] = k * g[c]; D[l * 3 + c] = -k * g[c]; }
+    fixed[u] = fixed[l] = 1;
+    before += Math.hypot(base[l * 3] - base[u * 3], base[l * 3 + 1] - base[u * 3 + 1], base[l * 3 + 2] - base[u * 3 + 2]);
+  }
+  if (!pairs.length) return { base: Float32Array.from(base), before: 0, after: 0 };
+  // Gauss-Seidel on the free vertices: each the mean of its region neighbours.
+  const free = [];
+  for (let v = 0; v < nv; v++) if (inR[v] && !fixed[v]) free.push(v);
+  for (let it = 0; it < 400; it++) {
+    for (const v of free) {
+      let n = 0, s0 = 0, s1 = 0, s2 = 0;
+      for (let e = nb.start[v]; e < nb.start[v + 1]; e++) { const u = nb.list[e]; if (!inR[u]) continue; n++; s0 += D[u * 3]; s1 += D[u * 3 + 1]; s2 += D[u * 3 + 2]; }
+      if (n) { D[v * 3] = s0 / n; D[v * 3 + 1] = s1 / n; D[v * 3 + 2] = s2 / n; }
+    }
+  }
+  let out = Float32Array.from(base);
+  for (let v = 0; v < nv; v++) if (inR[v]) for (let c = 0; c < 3; c++) out[v * 3 + c] += D[v * 3 + c];
+  const bag = [];
+  for (let v = 0; v < Math.min(nv, codes.length); v++) if (codes[v] === sock) bag.push(v);
+  out = relax(out, base, nb, bag, 100);
+  for (let i = 0; i < pairs.length; i += 2) { const u = pairs[i], l = pairs[i + 1]; after += Math.hypot(out[l * 3] - out[u * 3], out[l * 3 + 1] - out[u * 3 + 1], out[l * 3 + 2] - out[u * 3 + 2]); }
+  return { base: out, before: before / (pairs.length / 2), after: after / (pairs.length / 2) };
+}
+
 // THE EYELIDS: both sockets and `rings` rings of skin round them, as vertex indices. `nb` is
 // TopoWrap.neighbours. Snap and Un-pose both keep this region in GNM's own shape.
 export function lidRegion(nb, rings) {
@@ -75,18 +144,16 @@ export function lidRegion(nb, rings) {
 // the bag's, about its own centre; a roomier bag leaves it alone. Spork smile: 10 -> 1. Upper jaw =
 // the pieces no shape moves, near the bag; lower = the ones jawOpen moves (teeth and tongue).
 // Returns a new array, or null when nothing needed shrinking.
-export function teethToBag(ref, P, tris, nv, shapes) {
+// THE MOUTH'S PARTS on `ref`: upper = the pieces no shape moves inside the mouth bag's box, lower =
+// the ones jawOpen moves (teeth and tongue). Flat vertex lists; empty without a jawOpen shape.
+export function mouthParts(ref, tris, nv, shapes) {
   regionCodes();
-  const jaw = shapes.get('jawOpen'), sock = GNM_REGION_NAMES.indexOf('mouth_sock');
-  if (!jaw) return null;
-  const bag = [];
-  for (let v = 0; v < Math.min(nv, codes.length); v++) if (codes[v] === sock) bag.push(v);
-  if (bag.length < 3) return null;
-  const bagScale = similarity(ref, P, bag).s;
+  const jaw = shapes.get('jawOpen'), sock = GNM_REGION_NAMES.indexOf('mouth_sock'), upper = [], lower = [];
+  if (!jaw) return { upper, lower };
   const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-  for (const v of bag) for (let k = 0; k < 3; k++) { box[k] = Math.min(box[k], ref[v * 3 + k]); box[k + 3] = Math.max(box[k + 3], ref[v * 3 + k]); }
+  for (let v = 0; v < Math.min(nv, codes.length); v++) if (codes[v] === sock) for (let k = 0; k < 3; k++) { box[k] = Math.min(box[k], ref[v * 3 + k]); box[k + 3] = Math.max(box[k + 3], ref[v * 3 + k]); }
   const moves = (d, v) => d && (d[v * 3] !== 0 || d[v * 3 + 1] !== 0 || d[v * 3 + 2] !== 0);
-  const all = [...shapes.values()], upper = [], lower = [];
+  const all = [...shapes.values()];
   for (const c of components(tris, nv).slice(1)) {
     if (moves(jaw, c[0])) { lower.push(...c); continue; }
     if (all.some((d) => moves(d, c[0]))) continue;   // eyes, anything else a shape moves
@@ -95,6 +162,18 @@ export function teethToBag(ref, P, tris, nv, shapes) {
     cx /= c.length; cy /= c.length; cz /= c.length;
     if (cx >= box[0] && cx <= box[3] && cy >= box[1] && cy <= box[4] && cz >= box[2] && cz <= box[5]) upper.push(...c);
   }
+  return { upper, lower };
+}
+
+export function teethToBag(ref, P, tris, nv, shapes) {
+  regionCodes();
+  const jaw = shapes.get('jawOpen'), sock = GNM_REGION_NAMES.indexOf('mouth_sock');
+  if (!jaw) return null;
+  const bag = [];
+  for (let v = 0; v < Math.min(nv, codes.length); v++) if (codes[v] === sock) bag.push(v);
+  if (bag.length < 3) return null;
+  const bagScale = similarity(ref, P, bag).s;
+  const { upper, lower } = mouthParts(ref, tris, nv, shapes);
   const out = Float32Array.from(P);
   let changed = false;
   for (const part of [upper, lower]) {

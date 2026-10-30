@@ -4,7 +4,7 @@ import SculptBase from './SculptBase.js';
 import { sampleDeltas, averageDeltas, solveWeights } from '../DirectBlend.js';
 import { arkitEntry, lrPairFor } from '../ArkitBlendshapes.js';
 import Enums from '../../misc/Enums.js';
-import { regions } from '../GnmRegions.js';
+import { regions, isGnm } from '../GnmRegions.js';
 import { jiggle } from '../Jiggle.js';
 import { idle } from '../IdleFace.js';
 import { topo, targetMesh, pickAt, cycleView } from '../TopoTransfer.js';
@@ -31,6 +31,8 @@ function shapeHue(i, sat) {
   const f = (n) => v - v * sat * Math.max(0, Math.min(k(n), 4 - k(n), 1));
   return [f(5), f(3), f(1)];
 }
+
+const RELUCTANT = { mouthShrugLower: 4, mouthRollLower: 4 };   // sparse-cost multipliers (see _solve)
 
 class FacePuppet extends SculptBase {
 
@@ -325,6 +327,9 @@ class FacePuppet extends SculptBase {
     // unrolling it — matt: "once [lip roll is] activated, i can only really turn it off again by
     // using the smooth brush".
     for (const roll of ['mouthRollLower', 'mouthRollUpper']) if (has(roll) && has('mouthFunnel')) exclusive.push([roll, 'mouthFunnel']);
+    // A corner pulled UP and DOWN at once: frown was only there to cancel the smile's lift on a
+    // mostly-sideways pull (GNM, front view: smile 0.49 + frown 0.22 + stretch 0.61).
+    for (const side of ['Left', 'Right']) if (has('mouthSmile' + side) && has('mouthFrown' + side)) exclusive.push(['mouthSmile' + side, 'mouthFrown' + side]);
     if (this._main.getSculptManager().getSymmetry()) {
       for (const [name] of track.blendshapes) {
         const e = arkitEntry(name);
@@ -428,6 +433,23 @@ class FacePuppet extends SculptBase {
   // RETARGET SHAPES: every shape rebuilt for the sculpted Base (AnimationRegistry.retargetShapes).
   retargetAll() {
     for (const m of this._poseMeshes()) this._reg().retargetShapes(m);
+  }
+
+  // TEETH CORRECTIVES: shapes and pairs of shapes that put teeth or gums through the skin get eased
+  // and corrective combos (AnimationRegistry.addTeethCorrectives). GNM heads only. NO BUTTON for now
+  // (matt, 2026-10-30: with the lower gums lifted they made it worse overall; may revisit) --
+  // console: sculptgl.getSculptManager().getCurrentTool().teethCorrectives().
+  teethCorrectives() {
+    let n = 0, heads = 0;
+    for (const m of this._poseMeshes()) { if (!isGnm(m)) continue; heads++; n += this._reg().addTeethCorrectives(m); }
+    window.screenLog?.(!heads ? 'Teeth Correctives needs a GNM head' : n ? `Teeth Correctives: ${n} shape(s) and combos (undo to compare)` : 'No shape or pair puts the teeth through the skin');
+  }
+
+  // SMOOTH SHAPES: the active layer, else every shape, a gentle step per press (AnimationRegistry.smoothShapes).
+  smoothShapes() {
+    let n = 0;
+    for (const m of this._poseMeshes()) n += this._reg().smoothShapes(m);
+    window.screenLog?.(n ? `Smoothed ${n} shape${n === 1 ? '' : 's'} (again for more, undo for less)` : 'No shapes to smooth');
   }
 
   // FIX COMBO: the pose on the face looks wrong, so make it sculptable. Every shape on at 0.2 or
@@ -758,8 +780,13 @@ class FacePuppet extends SculptBase {
       const ramp = Math.min(1, (angle * 180 / Math.PI) / this._rotRamp);
       // A TWIST LOOSENS THE HOLD ON THE POINT. Curling a lip moves the very skin you hold, so a
       // point pinned where it was outvoted the twist (the ICT lower lip reached 0.09 at 40 deg).
+      // The view ray into the mesh's frame (a direction: the inverse matrix's rotation part).
+      const vw = pin.viewWorld, free = vw ? vec3.normalize(vec3.create(), [
+        inv[0] * vw[0] + inv[4] * vw[1] + inv[8] * vw[2],
+        inv[1] * vw[0] + inv[5] * vw[1] + inv[9] * vw[2],
+        inv[2] * vw[0] + inv[6] * vw[1] + inv[10] * vw[2]]) : null;
       pins.push({ deltas: pin.deltas, drag: this._limitReach ? this._clampToReach(pin.deltas, drag) : drag,
-        weight: 1 - this._twistLoosen * ramp });
+        weight: 1 - this._twistLoosen * ramp, free });
       if (!twisting) continue;
       const weight = this._rotWeight * ramp;
       if (weight <= 0) continue;
@@ -780,6 +807,17 @@ class FacePuppet extends SculptBase {
     const rules = !prot.length ? base : { ...base, exclude: [...(base.exclude || []), ...prot],
       tie: (base.tie || []).filter(([a, b]) => !prot.includes(a) && !prot.includes(b)) };
     const cost = this._useSparse && track ? this._locality(track, pins.filter((p) => !p.twist)) : null;
+    // RELUCTANT SHAPES (matt: mouthShrugLower is behind 9 in 10 of the faces that go wrong -- its
+    // chin push drives the lower gums through the skin -- "the interactive tool should avoid it";
+    // its slider still drives it). Pushing the lower lip or chin up answered with shrug; shrug alone
+    // made dearer handed it to mouthRollLower at 1.0 instead (lip rolled under), so both cost
+    // RELUCTANT more: up-pushes answer with less shrug and no roll (GNM lower lip up: shrug 0.66 +
+    // roll 0.30 -> shrug 0.39), incidental shrug in other drags goes. Not roll while twisting: a
+    // twist is a deliberate ask for the lip roll.
+    if (cost) {
+      const twisting = pins.some((p) => p.twist);
+      for (const [name, k] of Object.entries(RELUCTANT)) if (cost[name] && !(twisting && name === 'mouthRollLower')) cost[name] *= k;
+    }
     const opts = { alpha: this._alpha, sparse: this._useSparse ? this._sparse : 0, cost, range };
     let w = solveWeights(pins, this._w0, { ...opts, ...rules });
     // PROTECTION YIELDS WHEN IT LEAVES THE GRAB NOTHING. In a take, grabbing the chin where only
@@ -840,6 +878,14 @@ class FacePuppet extends SculptBase {
     pin.now = vec3.clone(pin.world);
     pin.anchor = vec3.clone(pin.world);
     this._screenZ = main.getCamera().project(pin.world)[2];
+    // THE MOUSE SAYS NOTHING ABOUT DEPTH. The drag runs in the plane facing the camera, so its
+    // depth is always 0 -- and held as a target, that 0 meant "keep this point at its depth". At
+    // the mouth corner the smile moves the skin BACK more than up (GNM: back 2.0, up 1.57), so a
+    // front-view smile drag was answered by everything that pushes the corner forward again --
+    // matt: smile 0.55 with funnel 0.83, stretch 0.5, frown 0.33, dimple 0.32. The view ray
+    // through the grab is left free (solveWeights `free`): mouthFunnel 0.67 -> 0 on that drag.
+    const c = main.getCamera(), near = c.unproject(main._mouseX, main._mouseY, 0), far = c.unproject(main._mouseX, main._mouseY, 1);
+    pin.viewWorld = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), far, near));
     this._hands.set('mouse', pin);
     this._beginTake(mesh);
     this._reanchor();

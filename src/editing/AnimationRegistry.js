@@ -6,11 +6,13 @@ import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
 import { arcBasis } from './ArcBlend.js';
-import { triangles, prepare, retargetDelta, fitParts } from './ShapeRetarget.js';
+import { triangles, prepare, retargetDelta, fitParts, components, smoothShape } from './ShapeRetarget.js';
+import { neighbours } from './TopoWrap.js';
 import { buildEyes, collide, eyeSum, knownLids } from './EyeCollide.js';
 import { jigglePush, jiggle } from './Jiggle.js';
 import { buildTeeth, collideTeeth, teethSum } from './TeethCollide.js';
-import { isGnm, regionCodes, teethToBag } from './GnmRegions.js';
+import { isGnm, regionCodes, teethToBag, mouthParts } from './GnmRegions.js';
+import { teethCorrectives, driverKey } from './TeethCombos.js';
 import { GNM_REGION_NAMES } from './gnmRegionData.js';
 import { GNM_LANDMARKS } from './gnmLandmarks.js';
 import Skeleton from './Skeleton.js';
@@ -2739,13 +2741,23 @@ class AnimationRegistry {
     const t0 = performance.now();
     const tris = triangles(mesh.getFaces(), mesh.getNbFaces());
     // FIT PARTS first: eyes, teeth, tongue rebuilt rigid and seated in the sculpted skin (see fitParts).
-    const fit = fitParts(ref, base, tris, nv, track.blendshapes);
+    // Straight after Topo Transfer (Wrap, Snap, Un-pose) they are already seated, so they are not
+    // re-seated by the skin round them: on spork that put the lower teeth through the lip and chin.
+    // The eyes are rebuilt rigid where they are (Wrap and Un-pose bend an eyeball 0.3); the teeth
+    // and tongue stay exactly as the round trip left them -- rebuilt rigid, they came back through
+    // the lip (Match: 0 -> 187 vertices), the round trip having fitted them to a shallow mouth.
+    const seated = !!track.partsSeated;
+    const fit = fitParts(ref, base, tris, nv, track.blendshapes, { self: seated });
+    if (seated && fit.base && isGnm(mesh)) {
+      const { upper, lower } = mouthParts(ref, tris, nv, track.blendshapes);
+      for (const v of [...upper, ...lower]) for (let k = 0; k < 3; k++) fit.base[v * 3 + k] = base[v * 3 + k];
+    }
     // ...and on GNM, the teeth no bigger than the mouth bag they sit in (GnmRegions.teethToBag).
-    const inBag = isGnm(mesh) ? teethToBag(ref, fit.base || base, tris, nv, track.blendshapes) : null;
+    const inBag = isGnm(mesh) && !seated ? teethToBag(ref, fit.base || base, tris, nv, track.blendshapes) : null;
     if (inBag) fit.base = inBag;
     const P = prepare(ref, fit.base || base, tris, nv);
     const skip = track.shapeRefSkip || new Set();
-    const before = { shapes: new Map(track.blendshapes), samples: track.comboSamples ? new Map(track.comboSamples) : null, ref, skip, base: fit.base && base.slice() };
+    const before = { shapes: new Map(track.blendshapes), samples: track.comboSamples ? new Map(track.comboSamples) : null, ref, skip, base: fit.base && base.slice(), seated };
     const shapes = new Map(track.blendshapes), samples = track.comboSamples ? new Map(track.comboSamples) : null;
     let done = 0;
     for (const [name, d] of track.blendshapes) {
@@ -2757,13 +2769,14 @@ class AnimationRegistry {
       if (S) samples.set(name, S.map((p) => ({ ...p, d: p.d === d ? nd : retargetDelta(P, p.d) })));
       done++;
     }
-    const after = { shapes, samples, ref: null, skip: null, base: fit.base };
+    const after = { shapes, samples, ref: null, skip: null, base: fit.base, seated: false };
     const put = (st) => {
       if (st.base) track.baseShape.set(st.base);
       for (const [n, d] of st.shapes) track.blendshapes.set(n, d);   // in place, order kept
       if (st.samples) for (const [n, S] of st.samples) track.comboSamples.set(n, S);
       track.shapeRef = st.ref;
       track.shapeRefSkip = st.skip ? new Set(st.skip) : null;
+      track.partsSeated = st.seated;
       track._bsRev = (track._bsRev | 0) + 1;
       this.applyBlendshapes(mesh);
       this._refreshBlendPanels(mesh);
@@ -2774,6 +2787,92 @@ class AnimationRegistry {
     for (const e of fit.parts) console.log(`[Retarget] part ${e.key}: ${e.verts} verts, ${e.by === 'unchanged' ? 'unchanged' : `fit to ${e.by === 'ring' ? `the skin round it (${e.ring})` : 'itself'}, scale ${e.scale.toFixed(3)}`}`);
     console.log(`[Retarget] ${done} shape(s) in ${(performance.now() - t0).toFixed(0)} ms${skip.size ? `, left ${skip.size} sculpted since: ${[...skip].join(', ')}` : ''}`);
     return done;
+  }
+
+  // SMOOTH SHAPES (ShapeRetarget.smoothShape): the active layer if one is being edited, else every
+  // plain shape, `rounds` of non-shrinking smoothing over the skin each moves. Gentle per press
+  // (pucker's roughest 5%: 7.9% of its peak off its neighbours -> 5.5% at 2 rounds, 4.8% at 4) and
+  // one undo step, because sharp features go with the noise (rollLower's lip crease moved 21% of
+  // its peak at 2 rounds, 30% at 4). Combos are left alone. Returns how many shapes it smoothed.
+  smoothShapes(mesh, rounds = 2) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.size) return 0;
+    const nv = mesh.getNbVertices(), tris = triangles(mesh.getFaces(), mesh.getNbFaces());
+    const skin = components(tris, nv)[0], nb = neighbours(tris, nv);
+    const active = track.editingBlendshape && !this.isBlendshapeCombo(track, track.editingBlendshape) ? track.editingBlendshape : null;
+    const names = active ? [active] : [...track.blendshapes.keys()].filter((n) => !this.isBlendshapeCombo(track, n));
+    const before = new Map(), after = new Map();
+    for (const n of names) {
+      const d = track.blendshapes.get(n), free = new Uint8Array(nv);
+      for (const v of skin) if (d[v * 3] || d[v * 3 + 1] || d[v * 3 + 2]) free[v] = 1;
+      before.set(n, d.slice());
+      after.set(n, smoothShape(d.slice(), nb, free, rounds));
+    }
+    const put = (m) => {
+      for (const [n, d] of m) { const t = track.blendshapes.get(n); if (!t) continue; t.set(d); this.invalidateSparse(t); }
+      track._bsRev = (track._bsRev | 0) + 1;
+      this.applyBlendshapes(mesh);
+      window.app?.render?.();
+    };
+    put(after);
+    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, active ? `Smooth ${active}` : 'Smooth Shapes');
+    console.log(`[Smooth] ${names.length} shape(s), ${rounds} rounds${active ? ` (${active})` : ''}`);
+    return names.length;
+  }
+
+  // TEETH CORRECTIVES (editing/TeethCombos.js): on a GNM head (after Retarget Shapes, say), every
+  // pair of mouth shapes that puts teeth or gums through the skin gets a combo pushing the skin
+  // clear. Its own button and undo step (matt: to test with and without). A combo with in-betweens (sculpted at several weights) is left alone.
+  addTeethCorrectives(mesh) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.baseShape) return 0;
+    const t0 = performance.now(), nv = track.baseShape.length / 3;
+    const combos = track.blendshapeCombos || new Map();
+    const skip = (n) => !!(track.blendshapeMuted && track.blendshapeMuted.has(n));
+    const tris = triangles(mesh.getFaces(), mesh.getNbFaces());
+    const snap = () => ({ shapes: new Map(track.blendshapes), tracks: new Map(track.blendshapeTracks), combos: new Map(combos), samples: new Map(track.comboSamples || []) });
+    const before = snap();
+    const added = [], pushed = new Map(), single = new Map();
+    // Single shapes first, fixed in the shape itself (one crossing a little alone made a pair with
+    // nearly everything), then pairs as combos. A push can leave the pose still crossing (the spread
+    // moves skin the first look did not test), so up to three looks, each after the first only at
+    // what the last one pushed, adding to the same shape or combo.
+    for (const singles of [true, false]) {
+      let only = null;
+      for (let round = 0; round < 3; round++) {
+        const fixes = teethCorrectives(track.baseShape, track.blendshapes, combos, tris, nv, skip, { singles, only })
+          .filter((f) => !f.existing || f.single || !(track.comboSamples && track.comboSamples.get(f.existing)?.length > 1));
+        if (!fixes.length) break;
+        for (const f of fixes) {
+          const name = f.existing || this._comboName(track, f.drivers);
+          (f.single ? single : pushed).set(name, Math.max((f.single ? single : pushed).get(name) || 0, f.push));
+          if (!f.existing) { track.blendshapeTracks.set(name, { times: [], values: [] }); combos.set(name, f.drivers); added.push(name); }
+          this.invalidateSparse(track.blendshapes.get(name) || f.delta);
+          track.blendshapes.set(name, f.delta);
+          if (!f.single) track.comboSamples?.delete(name);   // one sample at full weight: its delta
+        }
+        track.blendshapeCombos = combos;
+        only = new Set(fixes.map((f) => driverKey(f.drivers)));
+      }
+    }
+    if (!pushed.size && !single.size) { console.log('[Teeth] no shape or pair puts the teeth through the skin'); return 0; }
+    const names = [...single, ...pushed].map(([n, p]) => `${n} ${p.toFixed(2)}`);
+    const after = snap();
+    const put = (st) => {
+      for (const n of added) if (!st.shapes.has(n)) { track.blendshapes.delete(n); track.blendshapeTracks.delete(n); }
+      for (const [n, d] of st.shapes) track.blendshapes.set(n, d);
+      for (const [n, b] of st.tracks) track.blendshapeTracks.set(n, b);
+      track.blendshapeCombos = new Map(st.combos);
+      track.comboSamples = new Map(st.samples);
+      track._bsRev = (track._bsRev | 0) + 1;
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+      window.app?.render?.();
+    };
+    put(after);
+    window.app?.getStateManager?.()?.pushStateCustom(() => put(before), () => put(after), false, 'Teeth Correctives');
+    console.log(`[Teeth] ${single.size} shape(s) eased, ${pushed.size} corrective combo(s), in ${(performance.now() - t0).toFixed(0)} ms: ${names.join(', ')}`);
+    return single.size + pushed.size;
   }
 
   // Every non-combo shape to `weightOf(name)` as a preview, one undo step. A 0 on a shape whose
@@ -2869,6 +2968,33 @@ class AnimationRegistry {
     const pose = track && track.blendshapePoses && track.blendshapePoses.get(name);
     if (!pose) return false;
     return this._previewPose([mesh], (n) => pose[n] || 0, 'Apply Pose');
+  }
+
+  // POSE CLIPBOARD: the face one head shows, pasted onto another by shape NAME (matt: swapping in
+  // a new GNM head after matching the old one to a sculpt). Lives for the session, so it survives
+  // deleting the source and loading the replacement. `weights` overrides what the sliders show:
+  // a head holding its pose (Topo Transfer's Hold Pose) has it in its Base and the sliders at 0.
+  copyPose(mesh, weights = null) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes) return 0;
+    const pose = {};
+    if (weights) Object.assign(pose, weights);
+    else for (const n of track.blendshapes.keys()) {
+      if (this.isBlendshapeCombo(track, n)) continue;
+      const w = this.blendshapePreviewAt(track, n, track.blendshapeTracks.get(n));
+      if (Math.abs(w) > 1e-4) pose[n] = Math.round(w * 1e4) / 1e4;
+    }
+    this._poseClip = pose;
+    return Object.keys(pose).length;
+  }
+
+  // Every shape the paste target has goes to the copied weight (0 if not in the copy). Returns how
+  // many copied shapes it found, or -1 with nothing copied.
+  pastePose(mesh) {
+    const clip = this._poseClip, track = mesh && this.tracks.get(mesh.getID());
+    if (!clip || !track || !track.blendshapes) return -1;
+    this._previewPose([mesh], (n) => clip[n] || 0, 'Paste Pose');
+    return Object.keys(clip).filter((n) => track.blendshapes.has(n)).length;
   }
 
   // KEY THE WHOLE FACE: every shape gets a key at the playhead at what it shows now, the ones at 0

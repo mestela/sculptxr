@@ -6,6 +6,17 @@
 // `mirror` names the other side's landmark, for symmetric picking. `core`: the anchors Wrap needs
 // before it runs (TopoTransfer.coreProgress) -- a bare count let two eye-corner clicks (four picks,
 // mirrored) through with the mouth and jaw unpinned.
+//
+// EARS AND NECK EDGE (2026-10-29, spork's elf ears and short capped neck never fitted): 'Ear root
+// top' (2930) is where the rim leaves the head -- it was 'Ear top', and read that way on spork --
+// so the rim itself had no landmark and a long pointed ear stayed GNM-sized with the snap unable
+// to reach it. 'Ear tip' is the rim's top-back corner, where an elf ear grows from, and 'Ear back'
+// the rim's back-most point (the blade between tip and lobe); the tragus pins the ear's front to
+// the cheek so the tip does not drag the root with it. The NECK EDGE landmarks are vertices of
+// GNM's open neck rim: click where the sculpt's neck should end (on a capped neck, where it turns
+// under). Without them the rim kept GNM's long neck and shoulder flare.
+// Measured on spork (matt's 30 picks + these 6): the neck rim 4.9 mean / 13.3 max world off the
+// sculpt -> 0.05 / 0.25; the sculpt's ear to GNM 1.12 / 4.6 -> 0.20 / 1.08.
 export const GNM_LANDMARKS = [
   { key: 'eyeInnerL', label: 'Inner eye corner L', v: 555, mirror: 'eyeInnerR', core: true },
   { key: 'eyeInnerR', label: 'Inner eye corner R', v: 6683, mirror: 'eyeInnerL', core: true },
@@ -31,10 +42,20 @@ export const GNM_LANDMARKS = [
   { key: 'foreheadMid', label: 'Forehead', v: 12335 },
   { key: 'cheekboneL', label: 'Cheekbone L', v: 3880, mirror: 'cheekboneR' },
   { key: 'cheekboneR', label: 'Cheekbone R', v: 10008, mirror: 'cheekboneL' },
-  { key: 'earTopL', label: 'Ear top L', v: 2930, mirror: 'earTopR' },
-  { key: 'earTopR', label: 'Ear top R', v: 9058, mirror: 'earTopL' },
+  { key: 'earTopL', label: 'Ear root top L', v: 2930, mirror: 'earTopR' },
+  { key: 'earTopR', label: 'Ear root top R', v: 9058, mirror: 'earTopL' },
+  { key: 'earTipL', label: 'Ear tip L', v: 2445, mirror: 'earTipR' },
+  { key: 'earTipR', label: 'Ear tip R', v: 8573, mirror: 'earTipL' },
+  { key: 'tragusL', label: 'Tragus L', v: 2989, mirror: 'tragusR' },
+  { key: 'tragusR', label: 'Tragus R', v: 9117, mirror: 'tragusL' },
+  { key: 'earBackL', label: 'Ear back L', v: 2374, mirror: 'earBackR' },
+  { key: 'earBackR', label: 'Ear back R', v: 8502, mirror: 'earBackL' },
   { key: 'earLobeL', label: 'Ear lobe L', v: 2485, mirror: 'earLobeR' },
   { key: 'earLobeR', label: 'Ear lobe R', v: 8613, mirror: 'earLobeL' },
   { key: 'headTop', label: 'Top of head', v: 12398 },
   { key: 'headBack', label: 'Back of head', v: 12460 },
+  { key: 'neckFront', label: 'Neck edge front', v: 12358 },
+  { key: 'neckBack', label: 'Neck edge back', v: 12449 },
+  { key: 'neckSideL', label: 'Neck edge side L', v: 5267, mirror: 'neckSideR' },
+  { key: 'neckSideR', label: 'Neck edge side R', v: 11395, mirror: 'neckSideL' },
 ];

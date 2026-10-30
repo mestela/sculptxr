@@ -34,7 +34,7 @@ import { teeth, TEETH_SLIDERS, LIP_SLIDERS } from '../../editing/TeethCollide.js
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
 import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, coreProgress as topoCore, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
-import { held as topoHeld, holdPose as topoHold, unposeToNeutral as topoUnpose } from '../../editing/TopoPose.js';
+import { held as topoHeld, heldPose as topoHeldPose, holdPose as topoHold, unposeToNeutral as topoUnpose } from '../../editing/TopoPose.js';
 import { GNM_LANDMARKS } from '../../editing/gnmLandmarks.js';
 import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
@@ -3941,6 +3941,7 @@ function buildSculptingHTML(main, part) {
       <button class="mm-choice" id="mm-face-key">Key</button>
       <button class="mm-choice" id="mm-face-zero">Zero All</button>
       <button class="mm-choice" id="mm-face-retarget" title="Rebuild every shape for the sculpted Base, refitting eyes, teeth and tongue to the skin round them">Retarget Shapes</button>
+      <button class="mm-choice" id="mm-face-smooth" title="Smooth the jitter out of the active layer, or every shape when none is active. A gentle step each press: press again for more, undo for less">Smooth Shapes</button>
     </div>
     <div class="mm-section-title">Post FX</div>
     <div class="mm-choice-grid cols-2">
@@ -6186,6 +6187,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   el.querySelector('#mm-face-key')?.addEventListener('click', () => sm?.getCurrentTool?.()?.keyAll?.());
   el.querySelector('#mm-face-zero')?.addEventListener('click', () => sm?.getCurrentTool?.()?.zeroAll?.());
   el.querySelector('#mm-face-retarget')?.addEventListener('click', () => sm?.getCurrentTool?.()?.retargetAll?.());
+  el.querySelector('#mm-face-smooth')?.addEventListener('click', () => sm?.getCurrentTool?.()?.smoothShapes?.());
 
   el.querySelector('#mm-face-combo')?.addEventListener('click', () => {
     sm?.getCurrentTool?.()?.fixCombo?.();
@@ -6755,6 +6757,8 @@ function buildPoseLibraryHTML(main, tool) {
     </div>
     <div class="mm-choice-grid cols-2">
       <button class="mm-choice" id="mm-pose-save">Save Pose</button>
+      <button class="mm-choice" id="mm-pose-copy" title="Copy this head's expression (a held pose included), to paste onto another head"${mesh ? '' : ' disabled'}>Copy Pose</button>
+      <button class="mm-choice" id="mm-pose-paste" title="Set this head's sliders to the copied expression"${mesh && reg?._poseClip ? '' : ' disabled'}>Paste Pose</button>
       ${POSE_MODES.map(([m, label]) => `<button class="mm-choice${mode === m ? ' active' : ''}" id="mm-pose-${m}" data-pose-mode="${m}"${names.length ? '' : ' disabled'}>${label}</button>`).join('')}
     </div>`;
 }
@@ -6783,11 +6787,16 @@ function buildTopoHTML(main) {
       <button class="mm-choice" id="mm-topo-view" title="Show both heads, the target only, or GNM only (Tab while picking)"${dis}>Show: ${VIEW_LABEL[topo.view]}</button>
       <button class="mm-choice${topo.lines ? ' active' : ''}" id="mm-topo-lines" title="Dashed lines from each GNM landmark to its pick on the target: a mis-click is the line that crosses the rest"${dis}>Lines</button>
       <button class="mm-choice${topo.dots ? ' active' : ''}" id="mm-topo-dots" title="Show or hide the landmark dots on both heads"${dis}>Dots</button>
-      <button class="mm-choice${topoHeld.pose ? ' active' : ''}" id="mm-topo-hold" title="Sculpt made in an expression? Pose GNM to match it, then Hold Pose before Wrap: the pose goes into the Base so Wrap and Snap fit open mouth to open mouth"${dis}>Hold Pose</button>
+      <button class="mm-choice${topoHeldPose(main) ? ' active' : ''}" id="mm-topo-hold" title="Sculpt made in an expression? Pose GNM to match it, then Hold Pose before Wrap: the pose goes into the Base so Wrap and Snap fit open mouth to open mouth"${dis}>Hold Pose</button>
       <button class="mm-choice${busyAttr('mm-topo-wrap')}" id="mm-topo-wrap" title="${core.ok ? "Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)" : `Place the core landmarks first (eye corners, nose tip, mouth corner, chin): ${core.done} of ${core.need}`}"${t && core.ok ? '' : ' disabled'}>${core.ok ? busyLabel('mm-topo-wrap', 'Wrap') : `Wrap (${core.done}/${core.need})`}</button>
       <button class="mm-choice${busyAttr('mm-topo-snap')}" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>${busyLabel('mm-topo-snap', 'Snap to Surface')}</button>
-      <button class="mm-choice" id="mm-topo-unpose" title="After Snap: take the held pose back out, leaving the sculpt's own neutral, and put the pose weights back (then Retarget Shapes)"${topoHeld.pose ? '' : ' disabled'}>Un-pose to Neutral</button>
+      <button class="mm-choice" id="mm-topo-unpose" title="After Snap: take the held pose back out, leaving the sculpt's own neutral, and put the pose weights back (then Retarget Shapes)"${topoHeldPose(main) ? '' : ' disabled'}>Un-pose to Neutral</button>
       <button class="mm-choice" id="mm-topo-clear"${dis}>Clear</button>
+    </div>
+    <div class="mm-row" title="How far Snap fits GNM's lips to the sculpt's: 0 keeps GNM's own lip thickness (can stand proud of thin lips), 100% moves them in or out onto the sculpt's surface, keeping GNM's lip layout. Used by the next Snap">
+      <span class="mm-lbl">Lip Fit</span>
+      <input type="range" id="mm-topo-lipfit" min="0" max="100" step="1" value="${Math.round(topo.lipFit * 100)}">
+      <span class="mm-val" id="mm-topo-lipfit-val">${Math.round(topo.lipFit * 100)}%</span>
     </div>
     ${t ? `<div class="mm-choice-grid cols-2">${rows}</div>` : ''}`;
 }
@@ -6802,6 +6811,12 @@ function wireTopo(el, main, repaintFn) {
   el.querySelector('#mm-topo-view')?.addEventListener('click', () => topoView(main));
   el.querySelector('#mm-topo-lines')?.addEventListener('click', () => topoLines(main, !topo.lines));
   el.querySelector('#mm-topo-dots')?.addEventListener('click', () => topoDots(main, !topo.dots));
+  const lipFit = el.querySelector('#mm-topo-lipfit');
+  lipFit?.addEventListener('input', () => {
+    topo.lipFit = Number(lipFit.value) / 100;
+    const val = el.querySelector('#mm-topo-lipfit-val');
+    if (val) val.textContent = lipFit.value + '%';
+  });
   el.querySelector('#mm-topo-wrap')?.addEventListener('click', () => runBusy('mm-topo-wrap', 'Wrap', 'Wrapping', () => topoWrap(main)));
   el.querySelector('#mm-topo-snap')?.addEventListener('click', () => runBusy('mm-topo-snap', 'Snap to Surface', 'Snapping', (progress) => topoSnap(main, progress)));
   el.querySelector('#mm-topo-hold')?.addEventListener('click', () => topoHold(main));
@@ -6841,6 +6856,21 @@ function wirePoseLibrary(el, main, sm, repaintFn) {
     let i = names.length + 1;
     while (names.includes('pose' + i)) i++;
     reg.savePose(mesh, 'pose' + i);
+    repaintFn();
+  });
+  el.querySelector('#mm-pose-copy')?.addEventListener('click', () => {
+    const mesh = tool()?.poseMesh?.();
+    if (!mesh || !reg) return;
+    const h = topoHeld.pose && topoHeld.pose.meshId === mesh.getID() ? topoHeld.pose.weights : null;
+    const n = reg.copyPose(mesh, h);
+    window.screenLog?.(`Copied ${n} shape weight${n === 1 ? '' : 's'}${h ? ' (the held pose)' : ''}`);
+    repaintFn();
+  });
+  el.querySelector('#mm-pose-paste')?.addEventListener('click', () => {
+    const mesh = tool()?.poseMesh?.();
+    if (!mesh || !reg) return;
+    const n = reg.pastePose(mesh);
+    if (n >= 0) window.screenLog?.(`Pasted the pose: ${n} of ${Object.keys(reg._poseClip).length} shapes found on this head`);
     repaintFn();
   });
   el.querySelectorAll('[data-pose-mode]').forEach((btn) => btn.addEventListener('click', () => {

@@ -31,7 +31,7 @@ import { GNM_REGION_NAMES } from './gnmRegionData.js';
 import { workerClient } from '../misc/workerClient.js';
 import TopoWorker from '../workers/TopoWorker.js?worker';
 
-export const topo = { pick: false, cur: 0, targetId: null, picks: new Map(), view: 'both', lines: false, dots: true };   // picks: key -> { p }
+export const topo = { pick: false, cur: 0, targetId: null, picks: new Map(), view: 'both', lines: false, dots: true, lipFit: 1 };   // picks: key -> { p }
 
 // The R half of each pair is never picked: it follows its L partner (see the header).
 export const isMirrored = (lm) => !!lm.mirror && lm.key.endsWith('R');
@@ -210,11 +210,14 @@ function apply(main, s, t, out, label) {
     say(`${label} dropped: the heads changed while it ran`, 'yellow');
     return false;
   }
-  const before = { base: track.baseShape.slice(), ref: track.shapeRef };
-  const after = { base: out, ref: track.shapeRef || before.base };
+  // THE PARTS RIDE ALONG: Wrap moves eyes, teeth and tongue with the skin, so the next Retarget
+  // Shapes keeps them there (rebuilt rigid) instead of re-seating them by the lips (track.partsSeated).
+  const before = { base: track.baseShape.slice(), ref: track.shapeRef, seated: track.partsSeated };
+  const after = { base: out, ref: track.shapeRef || before.base, seated: true };
   const put = (st) => {
     track.baseShape.set(st.base);
     track.shapeRef = st.ref;
+    track.partsSeated = st.seated;
     track._bsRev = (track._bsRev | 0) + 1;
     reg().applyBlendshapes(s);
     refreshMarkers(main);
@@ -271,6 +274,13 @@ export async function snapToSurface(main, onProgress = null) {
   const lipCodes = new Set(['upper_lip', 'lower_lip', 'mouth_sock'].map((n) => GNM_REGION_NAMES.indexOf(n)));
   const lips = [];
   for (let i = 0; i < Math.min(nv, codes.length); i++) if (lipCodes.has(codes[i])) lips.push(i);
+  // LIP FIT (slider, topo.lipFit): the relaxed lips keep GNM's own shape, which stood proud of
+  // spork's thinner lips (lower lip 0.18 median, 0.36 max world, the skin round them on the
+  // surface) -- matt: "lips way too fat". The worker moves them that fraction of the way in or out
+  // to the sculpt's surface (TopoWorker lipFit), keeping GNM's lip layout.
+  const lipSkin = [];
+  const lipOnly = new Set(['upper_lip', 'lower_lip'].map((n) => GNM_REGION_NAMES.indexOf(n)));
+  for (let i = 0; i < Math.min(nv, codes.length); i++) if (lipOnly.has(codes[i])) lipSkin.push(i);
   const tris = triangles(s.getFaces(), s.getNbFaces());
   for (const i of lidRegion(neighbours(tris, nv), LID_RINGS)) lips.push(i);   // relaxed with the lips
   // Into the target's space and back.
@@ -282,7 +292,7 @@ export async function snapToSurface(main, onProgress = null) {
     r = await inWorker({
       op: 'snap', gkey: t.getID() + '|' + t.getNbVertices() + '|' + t.getNbFaces(),
       ttris: sf.tris, tverts: Float32Array.from(sf.verts.subarray(0, t.getNbVertices() * 3)),
-      inT, tris, nv, include, lips, maxDist: radiusOf(t) * 0.3,
+      inT, tris, nv, include, lips, maxDist: radiusOf(t) * 0.3, lipSkin, lipFit: topo.lipFit,
     }, [inT.buffer, include.buffer], onProgress);
   } catch (e) { return say(e.message, 'yellow'); }
   const after = new Float32Array(nv * 3);

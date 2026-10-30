@@ -360,7 +360,9 @@ export function components(tris, nv) {
   return [...byRoot.values()].sort((a, b) => b.length - a.length);
 }
 
-export function fitParts(ref, target, tris, nv, shapes) {
+// `self`: fit every part to its own vertices, never to the ring -- the part stays where it is, only
+// rebuilt rigid (Topo Transfer's Wrap/Snap/Un-pose already placed it, and Un-pose bends an eyeball).
+export function fitParts(ref, target, tris, nv, shapes, { self = false } = {}) {
   const comps = components(tris, nv).slice(1);
   if (!comps.length) return { base: null, parts: [] };
 
@@ -433,7 +435,7 @@ export function fitParts(ref, target, tris, nv, shapes) {
       for (const v of idx) m = Math.max(m, Math.hypot(target[v * 3] - ref[v * 3], target[v * 3 + 1] - ref[v * 3 + 1], target[v * 3 + 2] - ref[v * 3 + 2]));
       return m;
     };
-    const lidsMoved = ring.length >= PART_MIN_RING && movedMax(ring) > 1e-4 * r;
+    const lidsMoved = !self && ring.length >= PART_MIN_RING && movedMax(ring) > 1e-4 * r;
     if (!lidsMoved && movedMax(E) <= 1e-6 * r) { parts.push({ key, verts: E.length, ring: ring.length, by: 'unchanged', scale: 1 }); continue; }
     const { R, s, ms, md } = similarity(ref, target, lidsMoved ? ring : E);
     for (const v of E) {
@@ -445,3 +447,31 @@ export function fitParts(ref, target, tris, nv, shapes) {
   }
   return { base: changed ? out : null, parts };
 }
+
+// SMOOTH A SHAPE: GNM's shapes come with per-vertex jitter (pucker's roughest 5% of vertices sit
+// 7% of its peak off their neighbours' average; funnel and rollLower 10-11%) -- matt: "if i had
+// manually sculpted them i would have run a smooth over most of them". `rounds` of TAUBIN smoothing
+// (lambda/mu, so the shape does not shrink) on the offset `d` (flat xyz, in place), over the
+// vertices in `free` only (Uint8Array): everything else holds, so a shape never spreads past the
+// skin it moved, and rigid parts (eyes, teeth) are left out by the caller. `nb`: TopoWrap.neighbours.
+const SMOOTH_L = 0.5, SMOOTH_M = -0.53;
+export function smoothShape(d, nb, free, rounds) {
+  const idx = [];
+  for (let v = 0; v < free.length; v++) if (free[v]) idx.push(v);
+  const B = new Float32Array(idx.length * 3);
+  for (let r = 0; r < rounds * 2; r++) {
+    const k = r % 2 ? SMOOTH_M : SMOOTH_L;
+    idx.forEach((v, i) => {
+      const a = nb.start[v], b = nb.start[v + 1];
+      for (let c = 0; c < 3; c++) {
+        if (b === a) { B[i * 3 + c] = d[v * 3 + c]; continue; }
+        let s = 0;
+        for (let e = a; e < b; e++) s += d[nb.list[e] * 3 + c];
+        B[i * 3 + c] = d[v * 3 + c] + k * (s / (b - a) - d[v * 3 + c]);
+      }
+    });
+    idx.forEach((v, i) => { d[v * 3] = B[i * 3]; d[v * 3 + 1] = B[i * 3 + 1]; d[v * 3 + 2] = B[i * 3 + 2]; });
+  }
+  return d;
+}
+

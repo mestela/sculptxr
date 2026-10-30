@@ -13,14 +13,24 @@
 // Each one undo step. The held pose is saved in the .sxr (files/TopoIO.js).
 import { triangles, unpose as unposeBase } from './ShapeRetarget.js';
 import { sourceMesh, refreshMarkers, meshLabel, LID_RINGS } from './TopoTransfer.js';
-import { lipSeam, lidRegion } from './GnmRegions.js';
+import { lipSeam, lidRegion, closeLips, seamRegion } from './GnmRegions.js';
 import { neighbours, relaxRegion } from './TopoWrap.js';
 
 // { meshId, ref (the neutral the pose was made on), D (the pose as one offset), preview (the
 // previews as they were), weights ({ shape: shown weight }, as the Match pose) }
 export const held = { pose: null };
 
+// The held pose, if its head is still in the scene. Deleting the head left it "held": Hold Pose
+// lit and refusing a new head ("already held"), Un-pose ignoring it (matt: copied the pose, swapped
+// in a new GNM, pasted, and could not get back to Match). Not cleared here: undoing the delete
+// brings the head back with its pose.
+export function heldPose(main) {
+  const h = held.pose;
+  return h && main.getMeshes().some((m) => m.getID() === h.meshId) ? h : null;
+}
+
 const MATCH = 'Match';   // the pose library entry Hold Pose writes
+const SEAM_RINGS = 2;   // rings round the lip seam re-solved to GNM's neutral (Un-pose)
 const say = (msg, colour) => { console.log('[TopoPose] ' + msg); window.screenLog?.(msg, colour); };
 const reg = () => window._animationRegistry;
 
@@ -50,6 +60,7 @@ function put(main, s, track, st) {
   track.blendshapePreview = new Map(st.preview);
   if (st.poses) { track.blendshapePoses = new Map(st.poses); window._refreshPoseLists?.(); }
   held.pose = st.held;
+  track.partsSeated = !!st.seated;
   track._bsRev = (track._bsRev | 0) + 1;
   reg().applyBlendshapes(s);
   reg()._refreshBlendPanels(s);
@@ -59,7 +70,7 @@ function put(main, s, track, st) {
 }
 
 function step(main, s, track, after, label) {
-  const before = { base: track.baseShape.slice(), ref: track.shapeRef, preview: new Map(track.blendshapePreview || []), poses: new Map(track.blendshapePoses || []), held: held.pose };
+  const before = { base: track.baseShape.slice(), ref: track.shapeRef, preview: new Map(track.blendshapePreview || []), poses: new Map(track.blendshapePoses || []), held: held.pose, seated: track.partsSeated };
   put(main, s, track, after);
   main.getStateManager?.()?.pushStateCustom(() => put(main, s, track, before), () => put(main, s, track, after), false, label);
 }
@@ -67,7 +78,7 @@ function step(main, s, track, after, label) {
 export function holdPose(main) {
   const s = sourceMesh(main), track = s && reg()?.tracks.get(s.getID());
   if (!track) return say('No GNM head in the scene', 'yellow');
-  if (held.pose) return say('A pose is already held: Un-pose first', 'yellow');
+  if (heldPose(main)) return say('A pose is already held: Un-pose first', 'yellow');
   const D = poseOffset(track);
   if (!D) return say('Pose GNM to match the sculpt first (Face tool or the blendshape pad)', 'yellow');
   const ref = (track.shapeRef || track.baseShape).slice();
@@ -142,14 +153,30 @@ export function unposeToNeutral(main) {
   // re-solved to GNM's neutral shape, seated in the un-posed skin round them: 0.195, moving the
   // rim by at most 0.36. The sculpt's own lid shape goes with it: resculpt lids after.
   const nb = neighbours(tris, nv);
-  const base = relaxRegion(un.base, h.ref, nb, lidRegion(nb, LID_RINGS), 100);
+  const lidded0 = relaxRegion(un.base, h.ref, nb, lidRegion(nb, LID_RINGS), 100);
+  // THE LIP LINE THE SAME WAY (matt, spork at rest: "kinks in the lip shape that i know will cause
+  // issues downstream" -- a V in the middle of the upper lip, every pucker and funnel blew it up).
+  // The lip line was clean through Wrap and Snap and kinked here: the pose taken out through the
+  // thin triangles along the seam. The seam and SEAM_RINGS rings round it are re-solved to GNM's
+  // neutral shape, seated in the lips round them, so Lip Fit's thinning further out stays.
+  // Measured against GNM's neutral over that band: median 0.10 -> 0.02, worst 0.85 -> 0.44.
+  const lidded = relaxRegion(lidded0, h.ref, nb, seamRegion(h.ref, nb, SEAM_RINGS), 100);
+  // ...and the lips meet at rest, as GNM's do (GnmRegions.closeLips).
+  const shut = closeLips(lidded, h.ref, nb, relaxRegion), base = shut.base;
   // The shapes were made on h.ref, so that is what Retarget Shapes carries them from. The topped-up
   // weights go back on the sliders and into the Match pose.
   const preview = new Map(h.preview), weights = { ...(h.weights || {}) };
   for (const [name, w] of open.changed) { preview.set(name, w); weights[name] = Math.round(w * 1e4) / 1e4; }
   const poses = new Map(track.blendshapePoses || []);
   if (open.changed.length && poses.has(MATCH)) poses.set(MATCH, weights);
-  step(main, s, track, { base, ref: h.ref, preview, poses, held: null }, 'Un-pose to Neutral');
+  // THE TEETH STAY WHERE THE ROUND TRIP PUT THEM (matt, spork 'Match': lower teeth through the lip
+  // and chin). Wrap carried them with the skin, Un-pose took the pose out of both together, so
+  // they already sit right in the sculpt's mouth; Retarget's Fit Parts would re-seat them by the
+  // ring of lips round them, and spork's lips (1.24x GNM's) put them where the jaw does not
+  // follow. Measured in Match: lower teeth through the lip and chin 247 vertices -> 0, through
+  // the mouth bag 202 -> 52, upper teeth through the lips 31 -> 20. So the next Retarget Shapes
+  // only rebuilds the parts rigid where they are (track.partsSeated).
+  step(main, s, track, { base, ref: h.ref, preview, poses, held: null, seated: true }, 'Un-pose to Neutral');
   const more = open.changed.map(([n, w]) => `${n} ${(h.weights?.[n] || 0).toFixed(2)}->${w.toFixed(2)}`).join(', ');
-  say(`Un-posed to the sculpt's neutral in ${(performance.now() - t0).toFixed(0)} ms (round trip within ${miss.toPrecision(2)})${more ? `; the sculpt's mouth was open a little more than the pose: ${more}` : ''}. Retarget Shapes next, and the pose shows the sculpt again`);
+  say(`Un-posed to the sculpt's neutral in ${(performance.now() - t0).toFixed(0)} ms (round trip within ${miss.toPrecision(2)}; lips closed ${shut.before.toFixed(2)} -> ${shut.after.toFixed(2)} apart)${more ? `; the sculpt's mouth was open a little more than the pose: ${more}` : ''}. Retarget Shapes next, and the pose shows the sculpt again`);
 }

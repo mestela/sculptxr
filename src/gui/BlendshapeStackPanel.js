@@ -67,6 +67,7 @@ const TOOLBAR_BTN_H = 38;
 // same strip the XY pad carries (PAD_HEADER_H). On a rig with all the ARKit shapes the list is
 // taller than the panel and pushes the pad out of reach.
 const LAYERS_HEADER_H = 34;
+const COMBOS_HEADER_H = 30;   // the Combos section's fold row, under the plain layers
 const TOOLBAR_H = TOOLBAR_BTN_H + LAYERS_HEADER_H;
 const ROW_H     = 46;
 const BASE_H    = 30;
@@ -132,6 +133,11 @@ export default class BlendshapeStackPanel {
 
     // Layer list folded away (persisted, like the pad's fold).
     this._layersCollapsed = !!getOptionsURL().blendLayersCollapsed;
+    // COMBOS SECTION folded away (persisted; folded unless opened). Teeth Correctives makes dozens
+    // of combo layers -- matt: "a collapsible section in the blendshape panel to stash all the
+    // combinations". The plain layers stay on top, Base at the bottom.
+    this._combosCollapsed = getOptionsURL().blendCombosCollapsed !== false;
+    this._comboHeader = null;
     // VR only: the canvas is a fixed size, so the layer list scrolls inside the space above the
     // pad (desktop's canvas grows with the list and the sidebar scrolls instead).
     this._scrollY = 0;
@@ -314,10 +320,14 @@ export default class BlendshapeStackPanel {
   // ── Sizing ──────────────────────────────────────────────────────────────────
   // Canvas height tracks content so the wa-tab-panel scrolls naturally.
   _contentHeight() {
-    const track = this._track();
-    const n = track?.blendshapes?.size || 0;
     if (this._layersCollapsed) return TOOLBAR_H + PAD;
-    return TOOLBAR_H + n * ROW_H + BASE_H + PAD;
+    return TOOLBAR_H + this._listH() + BASE_H + PAD;
+  }
+
+  // The rows' height above Base: the plain layers, the Combos fold row when there are combos, and
+  // the combos themselves when it is open.
+  _listH() {
+    return this._layerNames().length * ROW_H + (this._comboNames().length ? COMBOS_HEADER_H : 0);
   }
 
   // Desktop canvas height while the picker overlay is open (it needs room to show the
@@ -363,10 +373,23 @@ export default class BlendshapeStackPanel {
   // (see TimelineHelper.bsNames). Base is drawn separately, pinned at the bottom.
   // Drag-to-reorder rewrites the backing Map order (AnimationRegistry
   // .setBlendshapeOrder), so this reverse() reflects the user's chosen order.
+  // The rows as shown: the plain layers, then the combos if their section is open.
   _layerNames() {
+    return this._combosCollapsed ? this._plainNames() : [...this._plainNames(), ...this._comboNames()];
+  }
+
+  _plainNames() {
     const track = this._track();
     if (!track?.blendshapes) return [];
-    return [...track.blendshapes.keys()].reverse();
+    const reg = window._animationRegistry;
+    return [...track.blendshapes.keys()].reverse().filter((n) => !reg?.isBlendshapeCombo?.(track, n));
+  }
+
+  _comboNames() {
+    const track = this._track();
+    if (!track?.blendshapes || !track.blendshapeCombos?.size) return [];
+    const reg = window._animationRegistry;
+    return [...track.blendshapes.keys()].reverse().filter((n) => reg?.isBlendshapeCombo?.(track, n));
   }
 
   // THE WEIGHT THE MESH IS ACTUALLY WEARING, previews included.
@@ -391,8 +414,7 @@ export default class BlendshapeStackPanel {
   _layoutPad() {
     if (!this._padOwned || !this._pad) return;
     const track = this._track();
-    const nRows = track?.blendshapes ? track.blendshapes.size : 0;
-    const rowsWant = this._layersCollapsed ? TOOLBAR_H : TOOLBAR_H + nRows * ROW_H + BASE_H;
+    const rowsWant = this._layersCollapsed || !track?.blendshapes ? TOOLBAR_H : TOOLBAR_H + this._listH() + BASE_H;
     const left = this._cssH - rowsWant;
 
     // A SHARE, NOT LEFTOVERS — and that distinction is the whole balance of this panel.
@@ -463,7 +485,6 @@ export default class BlendshapeStackPanel {
     const track = this._track();
     const editing = track?.editingBlendshape || null;
 
-    const names = this._layerNames();
     // CLIPPED to the space above the pad. Without this the rows draw underneath it and the pad
     // paints over them — which is not "hidden", it is a row you can still HIT but cannot SEE.
     if (this._padOwned) {
@@ -475,21 +496,32 @@ export default class BlendshapeStackPanel {
     }
     const viewH = H - this._padReserve - TOOLBAR_H;
     this._scrollMax = (this._padOwned && !this._layersCollapsed)
-      ? Math.max(0, names.length * ROW_H + BASE_H - viewH) : 0;
+      ? Math.max(0, this._listH() + BASE_H - viewH) : 0;
     this._scrollY = Math.max(0, Math.min(this._scrollMax, this._scrollY));
     if (this._layersCollapsed) {
       if (this._padOwned) ctx.restore();
     } else {
       let y = TOOLBAR_H - this._scrollY;
-      for (const name of names) {
+      const plain = this._plainNames(), combos = this._comboNames();
+      for (const name of plain) {
         this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
         y += ROW_H;
+      }
+      this._comboHeader = null;
+      if (combos.length) {
+        this._comboHeader = { top: y, h: COMBOS_HEADER_H };
+        this._drawComboHeader(ctx, W, y, combos.length);
+        y += COMBOS_HEADER_H;
+        if (!this._combosCollapsed) for (const name of combos) {
+          this._drawRow(ctx, W, y, name, this._weightOf(name), name === editing, false);
+          y += ROW_H;
+        }
       }
 
       // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
       this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
 
-      if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
+      if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W);
       if (this._scrollMax > 0) this._drawScrollbar(ctx, W, TOOLBAR_H, viewH);
       if (this._padOwned) ctx.restore();
     }
@@ -509,6 +541,20 @@ export default class BlendshapeStackPanel {
     }
 
     if (this._picker) this._drawPicker(ctx, W, H);
+  }
+
+  // The Combos section's fold row: caret, label and count, like the layer list's own fold bar.
+  _drawComboHeader(ctx, W, top, n) {
+    ctx.fillStyle = Theme.mantle;
+    ctx.fillRect(0, top, W, COMBOS_HEADER_H);
+    ctx.strokeStyle = Theme.surface0;
+    ctx.beginPath(); ctx.moveTo(0, top + COMBOS_HEADER_H - 0.5); ctx.lineTo(W, top + COMBOS_HEADER_H - 0.5); ctx.stroke();
+    ctx.fillStyle = Theme.subtext0 || '#a6adc8';
+    ctx.font = '900 11px "Font Awesome 6 Free"';
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(this._combosCollapsed ? '\uf054' : '\uf078', PAD, top + COMBOS_HEADER_H / 2);   // chevron right / down
+    ctx.font = '600 12px sans-serif';
+    ctx.fillText(`Combos (${n})`, PAD + 18, top + COMBOS_HEADER_H / 2);
   }
 
   // Scrollbar track geometry, shared by draw and hit-test so the two cannot drift.
@@ -941,6 +987,13 @@ export default class BlendshapeStackPanel {
       }
     }
 
+    const ch = this._comboHeader;
+    if (ch && p.y >= ch.top && p.y < ch.top + ch.h && !(this._padOwned && (p.y < TOOLBAR_H || p.y >= this._cssH - this._padReserve))) {
+      this._combosCollapsed = !this._combosCollapsed;
+      getOptionsURL.saveOption('blendCombosCollapsed', this._combosCollapsed);
+      if (this._vrMode) this.draw(); else this._relayout();
+      return;
+    }
     const { row, part } = this._classifyHit(p);
     if (!row) return;
     const mesh = this._mesh();
@@ -1137,7 +1190,8 @@ export default class BlendshapeStackPanel {
   // Drop a dragged layer at the slot under `dropY`. Reorders the backing maps via
   // the registry (single undo step) so the panel + timeline + saves all follow.
   _commitReorder(name, dropY) {
-    const names = this._layerNames();
+    // Plain layers only (combos are not dragged); the rest keep their places below them.
+    const names = this._plainNames();
     const from  = names.indexOf(name);
     if (from < 0) { this.draw(); return; }
     let to = Math.floor((dropY - TOOLBAR_H + this._scrollY) / ROW_H);
@@ -1165,8 +1219,8 @@ export default class BlendshapeStackPanel {
   }
 
   // Insertion line + floating label shown while a row is being dragged to reorder.
-  _drawReorderHint(ctx, W, names) {
-    const n = names.length;
+  _drawReorderHint(ctx, W) {
+    const n = this._plainNames().length;
     let to = Math.floor((this._reorderCurY - TOOLBAR_H + this._scrollY) / ROW_H);
     to = Math.max(0, Math.min(n - 1, to));
 
