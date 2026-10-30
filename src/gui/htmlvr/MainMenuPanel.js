@@ -525,6 +525,8 @@ const CSS = `
    the input's own disabled attribute, so the row keeps its height and nothing below it moves when
    the projection changes -- which is the whole reason it is dimmed rather than hidden. */
 .mm-inert { opacity: 0.35; pointer-events: none; }
+/* Exit VR has nothing to exit on the desktop topbar. */
+.desktop-dropdown #mm-exit-vr { display: none; }
 
 /* ── DENSITY (ui reorg mockup) ───────────────────────────────────────────────
    ASK THE STRUCTURAL QUESTION, DO NOT GUESS AT IT. This rule was widened three times before
@@ -1665,8 +1667,8 @@ export function buildMenuHTML_files(main) {
     <label class="mm-check-row"><span>Send edits live</span><input type="checkbox" id="mm-nomad-live"${main._nomadLiveSend ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <div id="mm-nomad-status" style="color:#a6adc8;font-size:11px;margin:3px 0">${main.getNomadLink?.().getMessage() || 'Disconnected'}</div>
 
-
-    <button class="mm-action-btn danger" id="mm-exit-vr">Exit VR</button>
+    ${/* data-ungrouped keeps it out of the Nomad Link fold above (see groupSectionTitles). */ ''}
+    <button class="mm-action-btn danger" id="mm-exit-vr" data-ungrouped>Exit VR</button>
   `;
 }
 
@@ -6660,8 +6662,7 @@ export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn,
   const openSave = (key) => {
     if (!key) return;
     if (guiFiles) guiFiles._selectedSaveKey = key;
-    guiFiles?.loadSpecificBrowserSave?.(key, true);
-    closeFn?.();
+    guiFiles?.loadSpecificBrowserSave?.(key, true, closeFn);
   };
 
   q('#mm-browser-save')?.addEventListener('click', () => {
@@ -7031,12 +7032,14 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
 
   // IMPORT: adds to the scene. Same picker, flag left clear.
   q('#mm-import-obj')?.addEventListener('click', () => {
+    if (main.filePickerBlockedInVR?.()) return;
     window._fileOpenReplace = false;
     document.getElementById('fileopen')?.click();
   });
   // OPEN: replaces it. The flag is read once by SculptGL.loadFiles, before the first file, and
   // cleared there -- so a cancelled picker cannot leave it armed for the next Import.
   q('#mm-open-scene')?.addEventListener('click', () => {
+    if (main.filePickerBlockedInVR?.()) return;
     window._fileOpenReplace = true;
     document.getElementById('fileopen')?.click();
   });

@@ -661,6 +661,7 @@ export default class GuiTimeline {
   // all, and an arm left lying around would open a picker on whatever the user did next, after
   // taking the headset off.
   _openFilePicker(id) {
+    if (window.app?.filePickerBlockedInVR?.()) return;
     const input = document.getElementById(id);
     // Make the input momentarily real before clicking it. The hidden file inputs are parked at
     // opacity 0 with pointer-events none and a negative z-index, and some browsers decline to

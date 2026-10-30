@@ -559,7 +559,15 @@ class GuiFiles {
 
   // replace=true clears the current scene first (Load); replace=false appends the
   // save's meshes to the current scene (Import). loadScene itself always appends.
-  loadSpecificBrowserSave(key, replace = false) {
+  // onGo runs only if the load goes ahead, so a caller can close its menu then: closing the
+  // panel a VrConfirm is anchored to cancels it.
+  loadSpecificBrowserSave(key, replace = false, onGo) {
+    if (replace) { this._main.confirmDiscard(() => { this._loadSpecificBrowserSave(key, true); onGo?.(); }); return; }
+    this._loadSpecificBrowserSave(key, false);
+    onGo?.();
+  }
+
+  _loadSpecificBrowserSave(key, replace) {
     if (window.screenLog) window.screenLog(`${replace ? 'Loading' : 'Importing'} ${key}...`, 'cyan');
     // OPENING a save puts you in that file, so a later Save goes back over it. IMPORTING does
     // not: the scene is now a mixture, and saving it over one of its ingredients would be a
@@ -751,7 +759,7 @@ class GuiFiles {
 
     var key = event.which;
     if (cmdKey(event) && event.altKey && key === 78) { // N
-      this._main.clearScene();
+      this._main.confirmDiscard(() => this._main.clearScene());
       event.handled = true;
 
     } else if (cmdKey(event) && (key === 79 || key === 73)) { // O or I

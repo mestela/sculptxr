@@ -7708,6 +7708,27 @@ class Scene {
     return null;
   }
 
+  // Runs `proceed` once the user agrees to throw away unsaved edits; asks nothing when clean.
+  // Desktop gets the browser's own confirm; in a headset that DOM dialog is invisible (and blocks
+  // the frame loop), so it goes to the in-scene VrConfirm panel instead.
+  confirmDiscard(proceed, onCancel) {
+    if (!this.getStateManager().isDirty()) { proceed(); return; }
+    const msg = 'You have unsaved changes. Discard them?';
+    if (this._renderer?.xr?.isPresenting && window._vrConfirmPanel) window._vrConfirmPanel.open(msg, proceed, onCancel, 'Discard');
+    else if (window.confirm(msg)) proceed();
+    else onCancel?.();
+  }
+
+  // No file picker opens inside an immersive session (Quest and GXR both just do nothing, and
+  // WebXR has no fallback), so a disk command in VR says so and offers the way out instead.
+  // Returns true when it handled the press.
+  filePickerBlockedInVR() {
+    if (!this._renderer?.xr?.isPresenting) return false;
+    window._vrConfirmPanel?.open('Opening files from disk only works in desktop mode.',
+      () => this._xrSession?.end(), null, 'Exit VR');
+    return true;
+  }
+
   clearScene() {
     this.getStateManager().reset();
     // The clips belong to the scene: File > New / Open-replace used to leave the video plane's

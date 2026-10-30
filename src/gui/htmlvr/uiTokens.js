@@ -814,12 +814,14 @@ export function groupSectionTitles(root, opts) {
     used.set(base, n);
     const key = n > 1 ? base + ':' + n : base;
 
-    // Everything up to the next title at this level is this section's body.
+    // Everything up to the next title at this level is this section's body. An element marked
+    // data-ungrouped ends it too, so a page can close with an item that belongs to no section
+    // (Files' Exit VR, which otherwise vanished into Nomad Link).
     const body = document.createElement('div');
     body.className = 'mm-group-body';
     body.dataset.groupBody = key;
     let sib = title.nextElementSibling;
-    while (sib && !sib.matches(sel)) {
+    while (sib && !sib.matches(sel) && !('ungrouped' in sib.dataset)) {
       const next = sib.nextElementSibling;
       body.appendChild(sib);
       sib = next;

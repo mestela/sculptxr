@@ -1709,7 +1709,7 @@ class SculptGL extends Scene {
   loadFiles(event) {
     event.stopPropagation();
     event.preventDefault();
-    var files = event.dataTransfer ? event.dataTransfer.files : event.target.files;
+    var files = Array.from(event.dataTransfer ? event.dataTransfer.files : event.target.files);
     if (window.screenLog) window.screenLog(`Files detected: ${files.length}`, "yellow");
 
     // OPEN MUST NOT WIPE THE SCENE FOR A SOUND. `Open` means "replace what is loaded", and an
@@ -1724,10 +1724,20 @@ class SculptGL extends Scene {
     // there was simply no Open, so a menu offering one button could not say which it was. The
     // flag is set by whichever button was pressed and consumed HERE, once, before the first
     // file: clearing per file would throw away the earlier ones in a multi-select.
+    // Asked AFTER the picker rather than before it: a picker opened from the confirm's OK would
+    // no longer be inside the click's user activation, and in a headset it would not open.
     if (window._fileOpenReplace) {
       window._fileOpenReplace = false;
-      if (anyModel) this.clearScene();
+      if (anyModel) {
+        this.confirmDiscard(() => { this.clearScene(); this._readFiles(files); },
+          () => { var fo = document.getElementById('fileopen'); if (fo) fo.value = ''; });
+        return;
+      }
     }
+    this._readFiles(files);
+  }
+
+  _readFiles(files) {
     for (var i = 0, nb = files.length; i < nb; ++i) {
       var file = files[i];
       if (SculptGL.isAudioFile(file.name)) {
