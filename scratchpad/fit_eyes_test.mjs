@@ -76,7 +76,7 @@ const maxDiff = (A, B, pick = () => true) => { let m = 0; for (let v = 0; v < A.
   check('eyeLook on the fitted eye is the same turn', maxDiff(out, w, isEye) < 0.01 * 1.6 * 0.3, `(${maxDiff(out, w, isEye).toExponential(2)})`);
 }
 
-// 2) Lids turned 30 deg about z (a tilted cartoon eye): the eye turns with them.
+// 2) The whole skin turned 30 deg about z (a tilted head): the eye turns with it.
 {
   const b = 30 * Math.PI / 180, target = Float32Array.from(ref), want = Float32Array.from(ref);
   for (let v = 0; v < nv; v++) {
@@ -85,7 +85,22 @@ const maxDiff = (A, B, pick = () => true) => { let m = 0; for (let v = 0; v < A.
     if (v < skinN) { target[v * 3] = want[v * 3]; target[v * 3 + 1] = want[v * 3 + 1]; }
   }
   const { base } = fitParts(ref, target, tris, nv, shapes);
-  check('eye turns with a turned lid ring', base && maxDiff(base, want, isEye) < 1e-4, `(${base ? maxDiff(base, want, isEye).toExponential(2) : 'no change'})`);
+  check('eye turns with a turned head', base && maxDiff(base, want, isEye) < 1e-4, `(${base ? maxDiff(base, want, isEye).toExponential(2) : 'no change'})`);
+}
+
+// 2b) Only the lids turned 25 deg about y (a socket angled out on a stylised face): the eye keeps
+// looking straight ahead -- the ring's turn made extreme characters wall-eyed.
+{
+  const b = 25 * Math.PI / 180, target = Float32Array.from(ref);
+  for (let v = 0; v < skinN; v++) {
+    const x = ref[v * 3], y = ref[v * 3 + 1];
+    if (Math.hypot(x, y) > 1.3) continue;
+    target[v * 3] = x * Math.cos(b); target[v * 3 + 2] = -x * Math.sin(b);
+  }
+  const { base } = fitParts(ref, target, tris, nv, shapes);
+  // (not 0: the socket is a big share of this toy skin and tips the skin's own turn ~3 deg; the
+  // ring's turn would be 0.49)
+  check('eye ignores an angled socket', base && maxDiff(base, ref, isEye) < 0.1, `(${base ? maxDiff(base, ref, isEye).toExponential(2) : 'no change'})`);
 }
 
 // 3) Lids untouched, eye moved and scaled with Transform: kept.

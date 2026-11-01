@@ -73,6 +73,9 @@ const ROW_H     = 46;
 const BASE_H    = 30;
 const TRACK_H   = 6;
 const NAME_X    = PAD + 4;  // name text left edge
+// A SCROLL STRIP down the right of the rows (matt: the Pencil cannot scroll a list that is
+// controls edge to edge). Drawn as a wide scrollbar; pen and finger there scroll at once. DOM panel only, VR has its own scrollbar.
+const SCROLL_W  = 16;
 const TRACK_X0  = PAD + 4;  // slider track left edge (full row width)
 
 // THE PAD'S SHARE OF THE VR CANVAS — a RANGE, not a number.
@@ -200,8 +203,8 @@ export default class BlendshapeStackPanel {
     // the canvas still tracks.
     this._canvas.addEventListener('pointerdown', (e) => this._onDown(e));
     window.addEventListener('pointermove', (e) => this._onMove(e));
-    window.addEventListener('pointerup',   ()  => this._pointerUp());
-    window.addEventListener('pointercancel', () => this._pointerUp());
+    window.addEventListener('pointerup',   (e) => this._onUp(e));
+    window.addEventListener('pointercancel', (e) => this._onUp(e));
     this._canvas.addEventListener('pointerleave', () => this.clearHover());
     this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     // Mouse wheel scrolls the ARKit picker overlay (otherwise it scrolls the sidebar).
@@ -310,7 +313,7 @@ export default class BlendshapeStackPanel {
     const track = this._track();
     if (!track) return 'none';
     let s = (window._animAutoKey ? 'A' : 'a') + (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
-          + (track.blendshapes?.size || 0) + '|';
+          + (track.blendshapes?.size || 0) + '|' + (this._sc ? this._sc.scrollTop + ',' + this._sc.clientHeight : '') + '|';
     track.blendshapes?.forEach((d, n) => {
       s += n + ':' + this._weightOf(n).toFixed(4) + (track.blendshapeMuted?.has(n) ? 'm' : '') + ';';
     });
@@ -320,8 +323,8 @@ export default class BlendshapeStackPanel {
   // ── Sizing ──────────────────────────────────────────────────────────────────
   // Canvas height tracks content so the wa-tab-panel scrolls naturally.
   _contentHeight() {
-    if (this._layersCollapsed) return TOOLBAR_H + PAD;
-    return TOOLBAR_H + this._listH() + BASE_H + PAD;
+    // Base is outside the fold: folding hides the layers, never the row to sculpt the neutral on.
+    return TOOLBAR_H + (this._layersCollapsed ? 0 : this._listH()) + BASE_H + PAD;
   }
 
   // The rows' height above Base: the plain layers, the Combos fold row when there are combos, and
@@ -414,7 +417,7 @@ export default class BlendshapeStackPanel {
   _layoutPad() {
     if (!this._padOwned || !this._pad) return;
     const track = this._track();
-    const rowsWant = this._layersCollapsed || !track?.blendshapes ? TOOLBAR_H : TOOLBAR_H + this._listH() + BASE_H;
+    const rowsWant = !track?.blendshapes ? TOOLBAR_H : TOOLBAR_H + (this._layersCollapsed ? 0 : this._listH()) + BASE_H;
     const left = this._cssH - rowsWant;
 
     // A SHARE, NOT LEFTOVERS — and that distinction is the whole balance of this panel.
@@ -498,9 +501,15 @@ export default class BlendshapeStackPanel {
     this._scrollMax = (this._padOwned && !this._layersCollapsed)
       ? Math.max(0, this._listH() + BASE_H - viewH) : 0;
     this._scrollY = Math.max(0, Math.min(this._scrollMax, this._scrollY));
-    if (this._layersCollapsed) {
-      if (this._padOwned) ctx.restore();
-    } else {
+    // BASE sits under the last row, but never scrolls off above the pad nor folds away with the
+    // layers; the rows clip at its top so a scrolled list slides under it.
+    const baseTop = this._layersCollapsed ? TOOLBAR_H
+      : Math.min(TOOLBAR_H + this._listH() - this._scrollY, this._padOwned ? H - this._padReserve - BASE_H : Infinity);
+    if (!this._layersCollapsed) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, W, baseTop);
+      ctx.clip();
       let y = TOOLBAR_H - this._scrollY;
       const plain = this._plainNames(), combos = this._comboNames();
       for (const name of plain) {
@@ -518,13 +527,14 @@ export default class BlendshapeStackPanel {
         }
       }
 
-      // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
-      this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
-
       if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W);
-      if (this._scrollMax > 0) this._drawScrollbar(ctx, W, TOOLBAR_H, viewH);
-      if (this._padOwned) ctx.restore();
+      ctx.restore();
     }
+    // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
+    this._drawRow(ctx, W, baseTop, 'Base', 1, editing === null, true);
+    if (!this._layersCollapsed && this._scrollMax > 0) this._drawScrollbar(ctx, W, TOOLBAR_H, viewH);
+    if (!this._padOwned) this._drawScrollStrip(ctx, W, H);
+    if (this._padOwned) ctx.restore();
 
     // The pad last, so it draws over the rows if a very long stack would otherwise run into it —
     // it is a fixed reservation at the bottom and the list is the thing that has to give.
@@ -563,6 +573,29 @@ export default class BlendshapeStackPanel {
     const thumbH = Math.max(40, h * h / (h + this._scrollMax));
     const thumbY = top + (h - thumbH) * (this._scrollY / this._scrollMax);
     return { top, h, thumbH, thumbY, x: this._cssW - 14, w: 14 };
+  }
+
+  // The DOM panel's scroll strip, drawn as a scrollbar: a track the full height of the list and a
+  // bright thumb inside the part of the canvas the tab panel shows. The tab panel scrolls, not the
+  // canvas, so the thumb is placed from its scroller (and _stateSignature redraws on scroll).
+  _drawScrollStrip(ctx, W, H) {
+    const x = this._rightX(W);
+    ctx.save();
+    ctx.fillStyle = Theme.surface0;
+    ctx.fillRect(x, TOOLBAR_H, SCROLL_W, H - TOOLBAR_H);
+    const sc = this._sc = this._scroller();
+    this._thumb = null;
+    if (sc) {
+      const r = this._canvas.getBoundingClientRect(), b = sc.getBoundingClientRect();
+      const top = Math.max(TOOLBAR_H, b.top - r.top + TOOLBAR_H), bot = Math.min(H, b.bottom - r.top);
+      const h = Math.max(30, (bot - top) * sc.clientHeight / sc.scrollHeight);
+      const y = top + (bot - top - h) * sc.scrollTop / (sc.scrollHeight - sc.clientHeight);
+      this._thumb = { y, h, rate: (sc.scrollHeight - sc.clientHeight) / Math.max(1, bot - top - h) };
+      ctx.fillStyle = Theme.subtext;
+      this._roundRect(ctx, x + 3, y, SCROLL_W - 6, h, (SCROLL_W - 6) / 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   _drawScrollbar(ctx, W) {
@@ -807,7 +840,8 @@ export default class BlendshapeStackPanel {
     const half = !isBase && !sym && bs ? lrPairFor(name, (n) => bs.has(n)) : null;
     // Readout always shows now (tap it for the numpad); split/combine icons sit to its right.
     const valW = isBase ? PAD : ((sym || half) ? 80 : 44);
-    const nameMaxX = W - PAD - valW;
+    const RX = this._rightX(W);   // right edge of the controls, left of the scroll strip
+    const nameMaxX = RX - PAD - valW;
     // Non-base rows reserve ~20px at the name's right edge for the rename pencil.
     const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart - (isBase ? 0 : 20));
     const nameY = isBase ? h / 2 + top : top + 16;
@@ -839,25 +873,25 @@ export default class BlendshapeStackPanel {
     // half (ARKit, or a '<x>Left'/'<x>Right' pair from the toolbar split) gets a combine
     // button (→ back to one shape); everything else keeps the numeric readout (the weight
     // is already shown by the slider). Any layer can be split from the toolbar.
-    const sx = W - PAD - 10;
+    const sx = RX - PAD - 10;
     if (sym) {
       const hot = hov === 'split';
       ctx.fillStyle = hot ? '#cfe1ff' : Theme.surface2;
       ctx.font = '900 13px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
       ctx.fillText(FA.split, sx, top + 16 + 0.5);
       ctx.textAlign = 'left';
-      r.split = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
+      r.split = { x0: RX - PAD - 34, x1: RX, y0: top, y1: top + 26 };
     } else if (half) {
       const hot = hov === 'combine';
       ctx.fillStyle = hot ? '#d6ffcf' : '#6b865b';
       ctx.font = '900 13px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
       ctx.fillText(FA.combine, sx, top + 16 + 0.5);
       ctx.textAlign = 'left';
-      r.combine = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
+      r.combine = { x0: RX - PAD - 34, x1: RX, y0: top, y1: top + 26 };
     }
     // Numeric readout, every layer. Tap → numpad; a value outside 0..1 widens the slider range.
     {
-      const rx = (sym || half) ? W - PAD - 38 : W - PAD;
+      const rx = (sym || half) ? RX - PAD - 38 : RX - PAD;
       const vHot = hov === 'value';
       if (vHot) {
         ctx.fillStyle = Theme.surface0;
@@ -872,7 +906,7 @@ export default class BlendshapeStackPanel {
     }
 
     // Slider (second line) — thicker/white thumb on hover.
-    const trackX0 = TRACK_X0, trackX1 = W - PAD, trackY = top + 33;
+    const trackX0 = TRACK_X0, trackX1 = RX - PAD, trackY = top + 33;
     const tw = trackX1 - trackX0;
     const rng = this._rangeOf(name);
     const w01 = Math.max(0, Math.min(1, (weight - rng.min) / (rng.max - rng.min)));
@@ -921,6 +955,8 @@ export default class BlendshapeStackPanel {
     return { row, part: 'row' };
   }
 
+  _rightX(W) { return this._padOwned ? W : W - SCROLL_W; }
+
   _rowRect(name, top, isBase) {
     return { name, top, h: isBase ? BASE_H : ROW_H, isBase };
   }
@@ -941,19 +977,90 @@ export default class BlendshapeStackPanel {
   _hitRow(p) {
     // Rows scrolled under the toolbar or the pad are not hittable.
     if (this._padOwned && (p.y < TOOLBAR_H || p.y >= this._cssH - this._padReserve)) return null;
-    return this._rows.find(r => p.y >= r.top && p.y < r.top + r.h) || null;
+    // Last first: Base is drawn last, over any row scrolled under it.
+    return this._rows.findLast(r => p.y >= r.top && p.y < r.top + r.h) || null;
   }
 
   // ── DOM event wrappers ───────────────────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
+    cancelAnimationFrame(this._flingRaf);
     try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
-    this._pointerDown(this._local(e), e.altKey);
+    const p = this._local(e);
+    // A FINGER SCROLLS THE PANEL. The canvas fills it with touch-action:none (a slider drag must
+    // not scroll), so on iPad nothing scrolled it. A finger on a row's body, name or slider waits for
+    // its first 8 px: vertical scrolls the tab panel, sideways (or a tap) is the press it was.
+    // Grip, eye, lock and the buttons act at once, as before. The SCROLL_W strip is a scrollbar for
+    // any pointer: the thumb follows the drag, and a press off the thumb jumps it there first.
+    if (!this._picker && !this._padOwned && !this._hitToolbar(p)) {
+      const th = this._thumb, sc = this._sc;
+      if (th && sc && p.y >= TOOLBAR_H && p.x >= this._rightX(this._cssW)) {
+        if (p.y < th.y || p.y > th.y + th.h) sc.scrollTop += (p.y - th.y - th.h / 2) * th.rate;
+        this._touchPan = { id: e.pointerId, cx: e.clientX, cy: e.clientY, scroller: sc, top: sc.scrollTop, rate: th.rate, panning: true };
+        return;
+      }
+      const { part } = this._classifyHit(p);
+      const wait = e.pointerType === 'touch' && (part === 'row' || part === 'rename' || part === 'slider');
+      const scroller = wait && this._scroller();
+      if (scroller) {
+        this._touchPan = { id: e.pointerId, p, alt: e.altKey, cx: e.clientX, cy: e.clientY, scroller, top: scroller.scrollTop, rate: -1, panning: false };
+        return;
+      }
+    }
+    this._pointerDown(p, e.altKey);
+  }
+  _onUp(e) {
+    const tp = this._touchPan;
+    if (tp && e.pointerId === tp.id) {
+      this._touchPan = null;
+      if (!tp.panning && e.type === 'pointerup') { this._pointerDown(tp.p, tp.alt); this._pointerUp(); }
+      // A finger dragging the rows coasts on after release (not the scrollbar thumb, which stays put).
+      if (tp.panning && tp.rate < 0 && Math.abs(tp.v || 0) > 0.1 && performance.now() - tp.t < 60) this._fling(tp.scroller, tp.v);
+      return;
+    }
+    this._pointerUp();
+  }
+  _fling(sc, v) {
+    let last = performance.now();
+    const step = (now) => {
+      const dt = now - last; last = now;
+      sc.scrollTop += v * dt;
+      v *= Math.pow(0.95, dt / 16);
+      if (Math.abs(v) > 0.02) this._flingRaf = requestAnimationFrame(step);
+    };
+    this._flingRaf = requestAnimationFrame(step);
+  }
+
+  // The element that scrolls this panel: wa-tab-panel's slot, in its shadow root.
+  _scroller() {
+    for (let el = this._canvas; el; el = el.assignedSlot || el.parentElement || el.getRootNode()?.host) {
+      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight) return el;
+    }
+    return null;
   }
   // Move is on the window so a drag keeps tracking off the canvas; HOVER is only for a pointer
   // over the panel itself. Without the gate the row at the cursor's height lit up wherever the
   // mouse was in the viewport.
   _onMove(e) {
+    const tp = this._touchPan;
+    if (tp && e.pointerId === tp.id) {
+      const dx = e.clientX - tp.cx, dy = e.clientY - tp.cy;
+      if (!tp.panning && Math.abs(dx) > 8 && Math.abs(dx) >= Math.abs(dy)) {
+        this._touchPan = null;
+        this._pointerDown(tp.p, tp.alt);
+        this._pointerMove(this._local(e));
+        return;
+      }
+      if (!tp.panning && Math.abs(dy) > 8) tp.panning = true;
+      if (tp.panning) {
+        // Velocity of the content drag, smoothed, for the fling on release.
+        const now = performance.now(), prev = tp.scroller.scrollTop;
+        tp.scroller.scrollTop = tp.top + dy * tp.rate;
+        if (tp.t) tp.v = 0.6 * (tp.scroller.scrollTop - prev) / Math.max(1, now - tp.t) + 0.4 * (tp.v || 0);
+        tp.t = now;
+      }
+      return;
+    }
     const over = e.target === this._canvas || e.target === this._tbCanvas;
     const held = this._picker?.pressActive || this._sbDrag || this._eyePaint || this._padActive
       || this._reorderName || this._dragName;

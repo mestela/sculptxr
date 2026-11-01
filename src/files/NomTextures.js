@@ -133,7 +133,7 @@ function uvBox(uv, fuv, faces, nbFaces, keep) {
 // alone. Each textured mesh in the .nom is matched to the face group of `target` with the same
 // face count and the same UV bounds, and its maps become that group's material. A piece matching
 // the whole mesh sets the object's own maps instead.
-// Returns [{ name, group }] (group -1 = whole object, null = no match).
+// Returns [{ name, group, why }] (group -1 = whole object, null = no match, `why` says what failed).
 NomTextures.applyBakeToGroups = async function (target, buffer) {
   const nom = new NomFile(buffer);
   const report = [];
@@ -152,7 +152,8 @@ NomTextures.applyBakeToGroups = async function (target, buffer) {
     const def = nom.scene.meshes[i];
     const name = names.get(i) || 'Mesh ' + i;
     const mat = nom.scene.materials[def.material];
-    if (!mat || !mat.textures || !def.uvs || !def.faces_uv) continue;
+    if (!mat || !mat.textures) { report.push({ name, group: null, why: 'no texture maps' }); continue; }
+    if (!def.uvs || !def.faces_uv) { report.push({ name, group: null, why: 'no UVs' }); continue; }
     const nf = def.count_face;
     const sBox = uvBox(nom.f32(def.uvs), nom.i32(def.faces_uv), nom.i32(def.faces), nf);
     const near = (b) => tUV && b.every((x, k) => Math.abs(x - sBox[k]) < 1e-3);
@@ -162,7 +163,13 @@ NomTextures.applyBakeToGroups = async function (target, buffer) {
       if (c !== nf) continue;
       if (near(uvBox(tUV, tFUV, tF, nbF, (f) => groups[f] === g))) { group = g; break; }
     }
-    report.push({ name, group });
+    let why;
+    if (group === null) {
+      const sizes = [...counts.keys()].map((g) => counts.get(g)).concat(nbF);
+      why = !tUV ? 'selected mesh has no UVs'
+        : sizes.includes(nf) ? 'UV bounds differ' : nf + ' faces, no group has that many';
+    }
+    report.push({ name, group, why });
     if (group === null) continue;
     const maps = await NomTextures.loadMaterial(nom, def.material);
     if (!maps) continue;

@@ -7,7 +7,7 @@ import Enums from '../../misc/Enums.js';
 import { regions, isGnm } from '../GnmRegions.js';
 import { jiggle } from '../Jiggle.js';
 import { idle } from '../IdleFace.js';
-import { topo, targetMesh, pickAt, cycleView } from '../TopoTransfer.js';
+import { topo, targetMesh, pickAt, cycleView, hoverGhost } from '../TopoTransfer.js';
 
 /**
  * FACE — grab the face and pull it; the blendshape weights follow. See DirectBlend.js.
@@ -95,11 +95,13 @@ class FacePuppet extends SculptBase {
     // see where a landmark sits) it is the ordinary pick.
     const t = topo.pick && targetMesh(this._main);
     if (t && t.isVisible() && !this._main._vrSculpting) {
-      this._main.getPicking().intersectionMouseMesh(t);
+      const pk = this._main.getPicking();
+      hoverGhost(this._main, pk.intersectionMouseMesh(t) ? Array.from(pk.getIntersectionPoint()) : null);
       // ...and its mirror dot, as the base hover draws it: on the centreline (nose tip, chin,
       // bridge) the two dots meet, which is the quickest check that a pick is on it.
       if (this._main.getSculptManager().getSymmetry()) this._main.getPickingSymmetry().intersectionMouseMesh(t);
     } else {
+      hoverGhost(this._main, null);
       super.preUpdate(canBeContinuous);
     }
     this._heatTick();
@@ -107,6 +109,7 @@ class FacePuppet extends SculptBase {
 
   // Called by the manager when the tool is switched away from.
   clearPreview() {
+    hoverGhost(this._main, null);
     for (const m of this._heated) this._heatOverlay(m, false);
     this._heated.clear();
   }

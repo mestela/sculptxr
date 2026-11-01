@@ -875,6 +875,10 @@ class SculptGL extends Scene {
         }
         this._lastPenDownMs = performance.now();
         this._ptrDownHandledThisTouch = true; // tell touch fallback pointer events are live
+        // The nib is down: without this the first pressed pointermove reads a 0->positive crossing
+        // from the last hover move and the pressure-synth below fires a SECOND down whenever this
+        // one started no stroke (_action still NOTHING) -- a Topo Transfer pick placed two landmarks.
+        this._lastPenPressure = 1;
         if (window.screenLog) window.screenLog(`[dbl] pen pointerdown ACCEPTED — ptrHandled→true`, '#a6e3a1');
         // Safety: if the previous stroke is still marked active (pointerup was suppressed
         // and more than 300ms have passed), end it cleanly so the new stroke can start.

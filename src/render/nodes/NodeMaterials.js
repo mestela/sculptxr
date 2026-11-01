@@ -995,6 +995,12 @@ NodeMaterials.convertBasic = function (src) {
       colorWrite: src.colorWrite,
     });
     m.depthFunc = src.depthFunc;
+    // POLYGON OFFSET CARRIES TOO: the group overlay is the sculpt's own triangles pulled forward by
+    // it, and without it the overlay drew at the skin's exact depth and lost -- Show Groups on, the
+    // overlay "visible", nothing on screen (matt, iPad 2026-11-01).
+    m.polygonOffset = src.polygonOffset;
+    m.polygonOffsetFactor = src.polygonOffsetFactor;
+    m.polygonOffsetUnits = src.polygonOffsetUnits;
     const col = uniform(new gpu.Color().copy(src.color));
     const opac = uniform(src.opacity);
     // A TEXTURE NODE ONLY WHEN THERE IS ACTUALLY A MAP.

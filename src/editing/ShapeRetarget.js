@@ -272,6 +272,7 @@ export function unpose(ref, D, wrapped, tris, nv) {
 // rigid again too -- sculpt those after the retarget.
 //
 // Similarity, not affine: gaze is a rotation about the centre, which an oval eyeball breaks.
+// Eyes take only the ring's place and size; their turn is the whole skin's (see the loop).
 // Returns { base, parts } (base a new array, or null if nothing changed).
 const PART_REACH = 0.2;    // ring reach from the part's surface, in part radii
 const PART_MIN_RING = 6;   // fewer ring vertices than this -> fit to the part itself
@@ -363,8 +364,9 @@ export function components(tris, nv) {
 // `self`: fit every part to its own vertices, never to the ring -- the part stays where it is, only
 // rebuilt rigid (Topo Transfer's Wrap/Snap/Un-pose already placed it, and Un-pose bends an eyeball).
 export function fitParts(ref, target, tris, nv, shapes, { self = false } = {}) {
-  const comps = components(tris, nv).slice(1);
+  const all = components(tris, nv), comps = all.slice(1);
   if (!comps.length) return { base: null, parts: [] };
+  let headR = null;   // the skin's own turn, for eyes (below)
 
   const bounds = (idx) => {
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -437,7 +439,11 @@ export function fitParts(ref, target, tris, nv, shapes, { self = false } = {}) {
     };
     const lidsMoved = !self && ring.length >= PART_MIN_RING && movedMax(ring) > 1e-4 * r;
     if (!lidsMoved && movedMax(E) <= 1e-6 * r) { parts.push({ key, verts: E.length, ring: ring.length, by: 'unchanged', scale: 1 }); continue; }
-    const { R, s, ms, md } = similarity(ref, target, lidsMoved ? ring : E);
+    let { R, s, ms, md } = similarity(ref, target, lidsMoved ? ring : E);
+    // EYES LOOK STRAIGHT AHEAD. A lid ring on a stylised face is angled out (wide-set, slanted
+    // sockets), and its turn made the eyes wall-eyed; an eye takes the whole skin's turn instead,
+    // so it follows the head but not its socket. matt: angled eyes, if wanted, are a later option.
+    if (lidsMoved && key.includes('eyeLook')) R = headR ||= similarity(ref, target, all[0]).R;
     for (const v of E) {
       const a = [ref[v * 3] - ms[0], ref[v * 3 + 1] - ms[1], ref[v * 3 + 2] - ms[2]];
       for (let k = 0; k < 3; k++) out[v * 3 + k] = s * (R[k * 3] * a[0] + R[k * 3 + 1] * a[1] + R[k * 3 + 2] * a[2]) + md[k];

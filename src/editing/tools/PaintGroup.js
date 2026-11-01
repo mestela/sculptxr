@@ -120,18 +120,27 @@ class PaintGroup extends SculptBase {
   // Show what Pick took: the group goes white in the overlay for a moment.
   flashGroup(mesh, group) {
     var rd = mesh._renderData;
-    var wasShown = mesh.getShowFacesGroups();
+    // A flash still running owns the view: a second Pick inside its 400 ms read the flash's own
+    // "shown" as the state to restore, and the groups view stuck on for good. So the first flash's
+    // state is kept, and one on another mesh is ended now rather than dropped.
+    if (this._flashEnd && this._flashMesh !== mesh) this._flashEnd();
+    if (!this._flashEnd) this._flashWasShown = mesh.getShowFacesGroups();
+    var wasShown = this._flashWasShown;
+    this._flashMesh = mesh;
     clearTimeout(this._flashTimer);
     rd._flashGroup = group;
     if (wasShown) mesh.updateGroupOverlay();
     else mesh.setShowFacesGroups(true);
     this._main.render();
-    this._flashTimer = setTimeout(() => {
+    this._flashEnd = () => {
+      clearTimeout(this._flashTimer);
+      this._flashEnd = null;
       rd._flashGroup = undefined;
       if (wasShown) mesh.updateGroupOverlay();
       else mesh.setShowFacesGroups(false);
       this._main.render();
-    }, 400);
+    };
+    this._flashTimer = setTimeout(this._flashEnd, 400);
   }
 
   // One group per connected piece, numbered by size so the biggest (the skin) is 1.

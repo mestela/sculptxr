@@ -6284,13 +6284,17 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         try {
           const report = await NomTextures.applyBakeToGroups(mesh, await file.arrayBuffer());
           const hit = report.filter((r) => r.group !== null);
-          const miss = report.filter((r) => r.group === null).map((r) => r.name);
-          window.screenLog?.('Bake: ' + (hit.length ? hit.map((r) => r.name + ' -> ' + (r.group < 0 ? 'whole object' : 'group ' + r.group)).join(', ') : 'nothing matched')
-            + (miss.length ? '; no matching group for ' + miss.join(', ') : ''), hit.length ? 'lime' : 'yellow');
+          const miss = report.filter((r) => r.group === null).map((r) => r.name + ' (' + r.why + ')');
+          const msg = 'Bake: ' + (hit.length ? hit.map((r) => r.name + ' -> ' + (r.group < 0 ? 'whole object' : 'group ' + r.group)).join(', ') : 'nothing matched')
+            + (miss.length ? '; not applied: ' + miss.join(', ') : '');
+          window.screenLog?.(msg, hit.length ? 'lime' : 'yellow');
+          // screenLog is console-only outside the debug overlay, so a miss went unseen on iPad
+          if (!hit.length || miss.length) window._vrAlert?.(msg);
           main.render?.();
         } catch (e) {
           console.error('[bake] load failed', e);
           window.screenLog?.('Bake load failed: ' + e.message, 'red');
+          window._vrAlert?.('Bake load failed: ' + e.message);
         }
       };
       input.click();

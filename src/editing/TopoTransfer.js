@@ -317,9 +317,9 @@ const BLUE = 0.6, YELLOW = 0.14;
 const COL = {
   srcManual: _hsl(BLUE, 1, 0.55), srcNone: _hsl(BLUE, 0.12, 0.55),
   tgtManual: _hsl(YELLOW, 1, 0.55),
-  current: 0x00e5ff,
+  current: 0x00e5ff, ghost: 0x00e5ff,
 };
-const OPACITY = { srcManual: 0.45, srcNone: 0.45, tgtManual: 0.9, current: 1 };
+const OPACITY = { srcManual: 0.45, srcNone: 0.45, tgtManual: 0.9, current: 1, ghost: 0.55 };
 const SIZE = 0.003;   // dot radius, as a fraction of the mesh's extent
 let _geo = null;
 const _mats = {};
@@ -373,6 +373,32 @@ function fill(g, dots, size) {
     o.scale.setScalar(size * (d.big ? 1.8 : 1));
     o.userData.n = d.big ? null : d.n;   // the current landmark shows from any side
   });
+}
+
+// THE CENTRELINE GHOST (matt): picking a centreline landmark (nose tip, chin...), a click is
+// moved onto X = 0 and snapped, so where it lands is not where the cursor is. A faint dot shows
+// that spot under the hover. `p` = the hover hit in target-local space, or null to hide it.
+let _ghost = null, _ghostKey = '';
+const _gm = new THREE.Matrix4();
+export function hoverGhost(main, p) {
+  const t = targetMesh(main), lm = GNM_LANDMARKS[topo.cur];
+  const tm = t && t.getThreeMesh && t.getThreeMesh();
+  const on = !!(p && tm && tm.parent && topo.pick && topo.dots && !lm.mirror);
+  if (!on) { if (_ghost && _ghost.visible) { _ghost.visible = false; main.render(); } return; }
+  if (!_ghost) {
+    if (!_geo) _geo = new THREE.SphereGeometry(1, 12, 8);
+    _ghost = new THREE.Mesh(_geo, mat('ghost'));
+    _ghost.renderOrder = 1000;
+    _ghost.matrixAutoUpdate = false;
+  }
+  if (_ghost.parent !== tm.parent) tm.parent.add(_ghost);
+  // The snap is a brute-force closest point, so only when the hover has moved on the plane.
+  const size = radiusOf(t) * SIZE * 1.4;
+  const key = Math.round(p[1] / size) + ',' + Math.round(p[2] / size);
+  if (key !== _ghostKey || !_ghost.userData.q) { _ghostKey = key; _ghost.userData.q = snap(t, [0, p[1], p[2]]); }
+  const q = _ghost.userData.q;
+  _ghost.matrix.copy(tm.matrix).multiply(_gm.makeTranslation(q[0], q[1], q[2])).multiply(_gm.makeScale(size, size, size));
+  _ghost.visible = true;
 }
 
 // FAR-SIDE DOTS HIDE (matt: looking at the face, a dot from the back of the head only confuses).
