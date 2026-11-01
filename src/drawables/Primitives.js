@@ -542,6 +542,30 @@ var createPlaneGridArray = function (nx = 3, ny = 3, width = 1.0, height = 1.0) 
   };
 };
 
+// A RING WITH A RECTANGULAR SECTION: `height` along Y, `thick` radially, centred on `radius`. Each of
+// the four sides has its own vertices, so a vertex's normal is its side's normal whether the mesh is
+// drawn indexed or as arrays (the gizmo shades the sides apart by normal, see GizmoVR setGizmoColor).
+var createBandArray = function (radius = 0.5, height = 0.1, thick = 0.05, nbTubular = 64) {
+  var r0 = radius - thick * 0.5, r1 = radius + thick * 0.5, h = height * 0.5;
+  // section corners, walked so each side's quads face outward: outer, top, inner, bottom
+  var sides = [[r1, -h, r1, h], [r1, h, r0, h], [r0, h, r0, -h], [r0, -h, r1, -h]];
+  var vAr = new Float32Array(sides.length * 2 * nbTubular * 3);
+  var fAr = new Uint32Array(sides.length * nbTubular * 4);
+  var k = 0, f = 0;
+  for (var s = 0; s < sides.length; ++s) {
+    var sd = sides[s];
+    var base = s * 2 * nbTubular;
+    for (var i = 0; i < nbTubular; ++i) {
+      var u = i / nbTubular * Math.PI * 2, c = Math.cos(u), sn = Math.sin(u);
+      vAr[k++] = sd[0] * c; vAr[k++] = sd[1]; vAr[k++] = sd[0] * sn;
+      vAr[k++] = sd[2] * c; vAr[k++] = sd[3]; vAr[k++] = sd[2] * sn;
+      var a = base + 2 * i, b = base + 2 * ((i + 1) % nbTubular);
+      fAr[f++] = a; fAr[f++] = a + 1; fAr[f++] = b + 1; fAr[f++] = b;
+    }
+  }
+  return { vertices: vAr, faces: fAr };
+};
+
 var createMesh = function (gl, arr) {
   var mesh = new MeshStatic(gl);
   mesh.setVertices(arr.vertices);
@@ -583,6 +607,10 @@ Primitives.createSphere = function (gl) {
 
 Primitives.createTorus = function (gl) {
   return createMesh(gl, createTorusArray.apply(this, slice.call(arguments, 1)));
+};
+
+Primitives.createBand = function (gl) {
+  return createMesh(gl, createBandArray.apply(this, slice.call(arguments, 1)));
 };
 
 Primitives.createPlane = function (gl) {

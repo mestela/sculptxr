@@ -150,7 +150,7 @@ function gizmoMat(side, opacity, tint = 0xffffff) {
   return m;
 }
 
-// THE DESKTOP ROTATION RINGS ARE OPEN-CYLINDER RIBBONS, and a cylinder seen from the side shows two
+// THE DESKTOP ROTATION RINGS ARE BANDS (createBand), and a band seen from the side shows two
 // surfaces: the OUTSIDE of the near half (front faces) and the INSIDE of the far half (back faces). The
 // front is drawn as a ribbon; the back is drawn with the same geometry and vertex colours, dimmed and
 // more transparent, so which half of a ring is nearer is plain at a glance, and a highlighted ring
@@ -167,6 +167,27 @@ function heldOf(m) { return gizmoMat(m.side, m.userData.baseOpacity * HELD_OPACI
 // How wide the ribbon is along the ring's own axis, as a fraction of ROT_RADIUS. A band rather than a
 // wire, but a slim one: it should not fill the gizmo or obscure what is behind it.
 const RIBBON_FRAC = 0.11;
+// ...and how thick it is radially, as a fraction of that width. A flat ribbon seen edge-on is a line
+// you cannot pick; a band half as thick as it is wide is still a band from every side.
+const RIBBON_THICK = 0.5;
+
+// THE BAND'S SIDES ARE SHADED APART so it reads as a solid with no lighting: the flat faces (normal
+// along the ring's axis, local Y) brightest, the outer wall next, the inner wall darkest. With depth
+// test off, the near half shows its outer wall and the far half its inner one, so the far half still
+// reads dimmer. Classified by normal: createBand gives every side its own vertices.
+const BAND_SHADE_CAP = 1.0, BAND_SHADE_OUT = 0.78, BAND_SHADE_IN = 0.55;
+function bandShadeOf(mesh) {
+  if (!mesh.userData.band) return null;
+  const n = mesh.geometry.getAttribute('normal'), p = mesh.geometry.getAttribute('position');
+  if (!n || !p) return null;
+  const sh = new Float32Array(n.count);
+  for (let i = 0; i < n.count; i++) {
+    const ny = n.getY(i);
+    sh[i] = Math.abs(ny) > 0.7 ? BAND_SHADE_CAP
+      : (n.getX(i) * p.getX(i) + n.getZ(i) * p.getZ(i)) > 0 ? BAND_SHADE_OUT : BAND_SHADE_IN;
+  }
+  return sh;
+}
 
 // Fill a handle's colour buffer. Cached against the last value: this is called for every part
 // every frame, and re-uploading fifteen buffers a frame to write the same numbers is exactly the
@@ -177,7 +198,9 @@ function setGizmoColor(mesh, r, g, b) {
   if (last && last[0] === r && last[1] === g && last[2] === b) return;
   const attr = mesh.geometry && mesh.geometry.getAttribute('color');
   if (!attr) return;
-  for (let i = 0; i < attr.count; i++) attr.setXYZ(i, r, g, b);
+  const shade = mesh.userData.bandShade || (mesh.userData.bandShade = bandShadeOf(mesh));
+  if (shade) for (let i = 0; i < attr.count; i++) attr.setXYZ(i, r * shade[i], g * shade[i], b * shade[i]);
+  else for (let i = 0; i < attr.count; i++) attr.setXYZ(i, r, g, b);
   attr.needsUpdate = true;
   mesh.userData._tint = [r, g, b];
 }
@@ -1549,13 +1572,14 @@ class GizmoVR {
     //
     // So the tolerance goes in the geometry for the desktop and VR keeps the thin torus it was
     // tuned against.
-    // ON THE DESKTOP A RING IS AN OPEN CYLINDER -- a ribbon, not a wire -- so its near and far halves can
-    // be shaded differently (see gizmoMat and RIBBON_BACK_*), and the band you see is the band you can pick.
+    // ON THE DESKTOP A RING IS A BAND WITH A RECTANGULAR SECTION -- not a wire -- so its sides and its
+    // near and far halves can be shaded differently (see bandShadeOf, gizmoMat and RIBBON_BACK_*), it
+    // keeps a pickable width edge-on, and the band you see is the band you can pick.
     // VR keeps its thin half-arc torus, which is what it was tuned against.
     const ribbon = this._desktop;
     const rh = ROT_RADIUS * RIBBON_FRAC * scale;
     rot._pickGeo = ribbon
-      ? Primitives.createCylinder(this._gl, radius * scale, radius * scale, rh, 64, 1, false, false)
+      ? Primitives.createBand(this._gl, radius * scale, rh, rh * RIBBON_THICK, 64)
       : Primitives.createTorus(
         this._gl,
         radius * scale,
@@ -1568,13 +1592,14 @@ class GizmoVR {
     { const _pm = rot._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; }
 
     rot._drawGeo = ribbon
-      ? Primitives.createCylinder(this._gl, radius * scale, radius * scale, rh, 64, 1, false, false)
+      ? Primitives.createBand(this._gl, radius * scale, rh, rh * RIBBON_THICK, 64)
       : Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
     rot._drawGeo.setShaderType(Enums.Shader.FLAT);
 
     const threeMesh = rot._drawGeo.getThreeMesh();
     if (threeMesh) {
       threeMesh.material = ribbon ? gizmoMat(THREE.FrontSide, RIBBON_FRONT_OPACITY) : gizmoMaterial(false);
+      if (ribbon) threeMesh.userData.band = true;
       setGizmoColor(threeMesh, color[0], color[1], color[2]);
       threeMesh.matrixAutoUpdate = false;
       mat4.copy(threeMesh.matrix.elements, rot._baseMatrix);
