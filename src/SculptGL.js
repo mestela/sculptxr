@@ -1094,6 +1094,7 @@ class SculptGL extends Scene {
       // First finger of a new sequence — start the tap clock
       this._tapSeqStartTime  = performance.now();
       this._peakFingerCount  = 1;
+      this._tapSeqPeakCenter = { x: e.clientX, y: e.clientY };
       this._lpSchedule(e.clientX, e.clientY);
     } else if (n > this._peakFingerCount) {
       // Finger count just increased — record center at this new peak
@@ -1259,6 +1260,17 @@ class SculptGL extends Scene {
           this.redo();
           return;
         }
+      }
+      // A ONE-FINGER TAP ON THE SCULPT MOVES THE ORBIT/PINCH PIVOT THERE (matt). The pivot was only
+      // picked as a camera gesture began, and only if the fingers were over the mesh, so it went
+      // stale. camera.start re-picks under the tap and setPivot keeps the view where it is.
+      if (peak === 1 && tapDuration < 300
+          && Math.hypot(center.x - this._tapSeqPeakCenter.x, center.y - this._tapSeqPeakCenter.y) < 15) {
+        const ev = this._eventProxy;
+        ev.clientX = center.x;
+        ev.clientY = center.y;
+        this.setMousePosition(ev);
+        this._camera.start(this._mouseX, this._mouseY);
       }
       this._checkDoubleTap(center, n);
     } else {

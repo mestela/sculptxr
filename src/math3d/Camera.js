@@ -195,7 +195,10 @@ class Camera {
     var picking = main.getPicking();
     picking.intersectionMouseMeshes(main.getMeshes(), mouseX, mouseY);
     if (picking.getMesh()) {
-      vec3.transformMat4(_TMP_VEC3, picking.getIntersectionPoint(), picking.getMesh().getMatrix());
+      // matrixWorld, the space Picking inverted to cast the ray: getMatrix() leaves out _worldGroup's
+      // scale, so at any world scale but 1 the pivot sat off the surface, out along the view ray (matt:
+      // "as if the pivot is 4cm in front of the nose").
+      vec3.transformMat4(_TMP_VEC3, picking.getIntersectionPoint(), picking.getMesh().getThreeMesh().matrixWorld.elements);
 
       // [v0.8.63 Fix] Synchronize Orbit Pivot with the Spectator Visual Offset
       const spectatorTransform = main.getSpectatorTransform();
