@@ -243,6 +243,29 @@ export async function wrap(main) {
   say(`Wrapped onto ${topo.picks.size} landmarks (scale ${r.scale.toFixed(3)}). Retarget Shapes next, to rebuild the shapes for the new face`);
 }
 
+// MATCH 1:1 (matt): a target that IS a GNM head -- same vertices in the same order, such as a
+// retarget saved without its shapes -- needs no landmarks. GNM's Base takes the target's points
+// as they are, eyes and teeth included, and Retarget Shapes rebuilds the shapes on it as after
+// Wrap/Snap. One undo step.
+export function sameTopology(s, t) {
+  if (!s || !t || s.getNbVertices() !== t.getNbVertices() || s.getNbFaces() !== t.getNbFaces()) return false;
+  const a = s.getFaces(), b = t.getFaces();
+  for (let i = 0, n = s.getNbFaces() * 4; i < n; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+export function matchOneToOne(main) {
+  const s = sourceMesh(main), t = targetMesh(main);
+  if (!s || !t) return say('Set a target first', 'yellow');
+  if (!sameTopology(s, t)) return say(`${meshLabel(t)} is not GNM vertex for vertex: use the landmarks and Wrap`, 'yellow');
+  const nv = s.getNbVertices(), src = t.getVertices(), toS = between(t, s), v = vec3.create();
+  const out = new Float32Array(nv * 3);
+  for (let i = 0; i < nv; i++) { vec3.transformMat4(v, src.subarray(i * 3, i * 3 + 3), toS); out.set(v, i * 3); }
+  if (!apply(main, s, t, out, 'Match 1:1')) return;
+  const msg = `${meshLabel(s)}'s Base now matches ${meshLabel(t)} point for point. Retarget Shapes next`;
+  say(msg);
+  window._vrAlert?.(msg);   // say is console-only off the debug overlay
+}
+
 // STEP 3: SNAP GNM's skin onto the target's surface (TopoWrap.snapSurface), after Wrap has put it
 // roughly in place. The landmark wrap only bends space smoothly between ~30 points; a head far
 // from GNM's proportions needs the surface itself. Skin only, minus the mouth bag and the eye

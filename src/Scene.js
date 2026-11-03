@@ -5266,6 +5266,16 @@ class Scene {
       // over it, so it always looked behind. See renderOrder on `rays` below.
       Scene._lightRayMat = new THREE.LineBasicMaterial({ vertexColors: true, depthWrite: false, transparent: true, blending: THREE.NoBlending });
     }
+    // A LIGHT'S LOCATOR KEEPS buildLight's SIZE. Nomad import placed lights with the meshes' load
+    // matrix, unit scale (50) included, so an imported light came in ~17x too big and its sphere
+    // wireframe hung round the head (matt). Shrunk here, which every path runs (add, import, .sxr
+    // load), so scenes saved with it are repaired too. Only a gross oversize: a light scaled up a
+    // little on purpose keeps it.
+    const M = mesh.getMatrix(), s0 = 5 / Math.sqrt(3);   // buildLight: unit sphere normalised, x0.05
+    for (let c = 0; c < 12; c += 4) {
+      const l = Math.hypot(M[c], M[c + 1], M[c + 2]);
+      if (l > 4 * s0) { M[c] *= s0 / l; M[c + 1] *= s0 / l; M[c + 2] *= s0 / l; }
+    }
     tm.material = Scene._lightHostMat;
     tm.castShadow = false;   // Mesh.js sets it at birth; the light's own marker must not shadow its light
 

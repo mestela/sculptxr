@@ -33,7 +33,7 @@ import { setJiggle, setTeeth } from '../jiggleSettings.js';
 import { teeth, TEETH_SLIDERS, LIP_SLIDERS } from '../../editing/TeethCollide.js';
 import { idle, IDLE_SLIDERS } from '../../editing/IdleFace.js';
 import { setIdle } from '../idleSettings.js';
-import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, coreProgress as topoCore, wrap as topoWrap, snapToSurface as topoSnap, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
+import { topo, targetMesh, sourceMesh, meshLabel, setTarget, setPick as topoPick, cycleView as topoView, VIEW_LABEL, clear as topoClear, select as topoSelect, isMirrored as topoMirrored, coreProgress as topoCore, wrap as topoWrap, snapToSurface as topoSnap, sameTopology as topoSame, matchOneToOne as topoMatch, setLines as topoLines, setDots as topoDots } from '../../editing/TopoTransfer.js';
 import { held as topoHeld, heldPose as topoHeldPose, holdPose as topoHold, unposeToNeutral as topoUnpose } from '../../editing/TopoPose.js';
 import { GNM_LANDMARKS } from '../../editing/gnmLandmarks.js';
 import Skinning from '../../editing/Skinning.js';
@@ -6274,12 +6274,17 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
     // the face group it matches (NomTextures.applyBakeToGroups).
     el.querySelector('#mm-group-load-bake')?.addEventListener('click', () => {
       const mesh = main.getMesh?.();
-      if (!mesh) return;
+      if (!mesh) { window._vrAlert?.('Load Bake: select the mesh first'); return; }
+      // IN THE PAGE AND WITH NO accept, like #fileopen: on iPad this detached input with accept='.nom'
+      // never fired change (iOS has no type for .nom), so Load Bake did nothing at all (matt).
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.nom';
+      input.style.cssText = 'position:absolute;opacity:0;pointer-events:none;z-index:-1';
+      document.body.appendChild(input);
+      input.oncancel = () => input.remove();
       input.onchange = async () => {
         const file = input.files && input.files[0];
+        input.remove();
         if (!file) return;
         try {
           const report = await NomTextures.applyBakeToGroups(mesh, await file.arrayBuffer());
@@ -6288,8 +6293,8 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
           const msg = 'Bake: ' + (hit.length ? hit.map((r) => r.name + ' -> ' + (r.group < 0 ? 'whole object' : 'group ' + r.group)).join(', ') : 'nothing matched')
             + (miss.length ? '; not applied: ' + miss.join(', ') : '');
           window.screenLog?.(msg, hit.length ? 'lime' : 'yellow');
-          // screenLog is console-only outside the debug overlay, so a miss went unseen on iPad
-          if (!hit.length || miss.length) window._vrAlert?.(msg);
+          // screenLog is console-only outside the debug overlay, so the result went unseen on iPad
+          window._vrAlert?.(msg);
           main.render?.();
         } catch (e) {
           console.error('[bake] load failed', e);
@@ -6795,6 +6800,7 @@ function buildTopoHTML(main) {
       <button class="mm-choice${topoHeldPose(main) ? ' active' : ''}" id="mm-topo-hold" title="Sculpt made in an expression? Pose GNM to match it, then Hold Pose before Wrap: the pose goes into the Base so Wrap and Snap fit open mouth to open mouth"${dis}>Hold Pose</button>
       <button class="mm-choice${busyAttr('mm-topo-wrap')}" id="mm-topo-wrap" title="${core.ok ? "Bend GNM's Base onto the target through the landmarks (then Retarget Shapes)" : `Place the core landmarks first (eye corners, nose tip, mouth corner, chin): ${core.done} of ${core.need}`}"${t && core.ok ? '' : ' disabled'}>${core.ok ? busyLabel('mm-topo-wrap', 'Wrap') : `Wrap (${core.done}/${core.need})`}</button>
       <button class="mm-choice${busyAttr('mm-topo-snap')}" id="mm-topo-snap" title="After Wrap: pull GNM's skin onto the target's surface (then Retarget Shapes)"${dis}>${busyLabel('mm-topo-snap', 'Snap to Surface')}</button>
+      <button class="mm-choice" id="mm-topo-match" title="The target is already GNM vertex for vertex (an earlier retarget, say): GNM's Base takes its shape directly, no landmarks (then Retarget Shapes)"${topoSame(s, t) ? '' : ' disabled'}>Match 1:1</button>
       <button class="mm-choice" id="mm-topo-unpose" title="After Snap: take the held pose back out, leaving the sculpt's own neutral, and put the pose weights back (then Retarget Shapes)"${topoHeldPose(main) ? '' : ' disabled'}>Un-pose to Neutral</button>
       <button class="mm-choice" id="mm-topo-clear"${dis}>Clear</button>
     </div>
@@ -6823,6 +6829,7 @@ function wireTopo(el, main, repaintFn) {
     if (val) val.textContent = lipFit.value + '%';
   });
   el.querySelector('#mm-topo-wrap')?.addEventListener('click', () => runBusy('mm-topo-wrap', 'Wrap', 'Wrapping', () => topoWrap(main)));
+  el.querySelector('#mm-topo-match')?.addEventListener('click', () => topoMatch(main));
   el.querySelector('#mm-topo-snap')?.addEventListener('click', () => runBusy('mm-topo-snap', 'Snap to Surface', 'Snapping', (progress) => topoSnap(main, progress)));
   el.querySelector('#mm-topo-hold')?.addEventListener('click', () => topoHold(main));
   el.querySelector('#mm-topo-unpose')?.addEventListener('click', () => topoUnpose(main));
