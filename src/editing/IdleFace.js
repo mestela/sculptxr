@@ -5,8 +5,9 @@
 // AN OFFSET ON THE SHOWN WEIGHT, not keys and not previews: AnimationRegistry.shownWeight adds
 // `track._idle` on top of curve/preview and clamps 0..1, so playback, the pad and the Face tool
 // all keep working underneath and a keyed blink at 1 just saturates. shownWeight is also what
-// otherLayersOffset subtracts, so a stroke over an idling face captures only its own layer; the
-// layer being edited never idles (the capture needs its exact weight). While a stroke is active
+// otherLayersOffset subtracts, so a stroke over an idling face captures only its own layer. The
+// layer being edited idles as well (matt), so its capture is off while Idle is on: turn Idle off
+// to sculpt a layer. While a stroke is active
 // the offsets are FROZEN (tickIdle skips), so the two never disagree mid-stroke.
 //
 // REAL TIME, like the jiggle. Not saved in the .sxr; bake to keys is a later step.

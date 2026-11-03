@@ -2357,8 +2357,9 @@ class AnimationRegistry {
     const up = !edited && this.underOf(track, name);
     const shown = up ? Math.min(w, this.blendshapePreviewAt(track, up, track.blendshapeTracks.get(up))) : w;
     // IDLE FACE (IdleFace.js) rides on top, clamped to the layer's range (a widened jawOpen 0..2
-    // must not be squashed to 1); never on the layer being edited.
-    const idle = !edited && track._idle && track._idle.get(name);
+    // must not be squashed to 1). The layer being edited idles too (matt: selecting the blink row
+    // froze that eye, and seeing it blink is the point); sculpting a layer wants Idle off.
+    const idle = track._idle && track._idle.get(name);
     if (!idle) return shown;
     const r = track.blendshapeRange && track.blendshapeRange.get(name);
     const lo = Math.min(r ? r.min : 0, shown), hi = Math.max(r ? r.max : 1, shown);
