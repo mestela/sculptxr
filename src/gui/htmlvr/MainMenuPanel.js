@@ -1497,6 +1497,68 @@ let _exampleLoad = null;   // { i, text }
 // ?v=VERSION: browsers (the headset's too) keep an example under its URL, so a re-exported file
 // at the same name kept loading the old one -- facecap stayed tiny after it was rescaled.
 const examplesURL = (f) => new URL('examples/' + f + '?v=' + encodeURIComponent(VERSION), document.baseURI).href;
+export const fetchExamples = async () => {
+  if (_examples) return _examples;
+  try {
+    const r = await fetch(examplesURL('examples.json'));
+    _examples = r.ok ? await r.json() : [];
+  } catch (_) { _examples = []; }
+  return _examples;
+};
+// Loads example `i`. `repaint` redraws whatever shows the list (its button carries the
+// progress), `done` closes it once the scene is in.
+export const loadExampleInto = async (main, i, repaint = () => {}, done) => {
+  const ex = _examples?.[i];
+  if (!ex || _exampleLoad) return false;
+  let painted = 0;
+  const status = (text, now) => {
+    _exampleLoad = { i, text };
+    const t = performance.now();
+    if (now || t - painted > 250) { painted = t; repaint(); }   // a VR repaint is not free
+  };
+  const mb = (n) => (n / 1048576).toFixed(1);
+  try {
+    status('Downloading\u2026', true);
+    const r = await fetch(examplesURL(ex.file));
+    if (!r.ok) throw new Error(r.status);
+    // Content-Length is the COMPRESSED size when the server gzips, so it is only shown while
+    // the count is still under it.
+    const total = +r.headers.get('content-length') || 0;
+    let buf;
+    if (r.body?.getReader) {
+      const reader = r.body.getReader(), chunks = [];
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length;
+        status(total >= got ? `Downloading ${mb(got)} / ${mb(total)} MB` : `Downloading ${mb(got)} MB`);
+      }
+      const all = new Uint8Array(got);
+      let o = 0;
+      for (const c of chunks) { all.set(c, o); o += c.length; }
+      buf = all.buffer;
+    } else {
+      buf = await r.arrayBuffer();
+    }
+    // Paint "Building" BEFORE the parse, which holds the main thread. A timeout, NOT
+    // requestAnimationFrame: the window's rAF does not run during an immersive session (nor in
+    // a hidden tab), so waiting on it hung the load at "Building". 60 ms is a few XR frames.
+    status('Building scene\u2026', true);
+    await new Promise((res) => setTimeout(res, 60));
+    // ADDED to the scene, like any import; the scene (and the save it came from) stays yours.
+    main.loadScene(buf, /\.glb$/i.test(ex.file) ? 'glb' : 'sgl');
+    _exampleLoad = null;
+    main._examplesOpen = false;
+    main.render?.(); done?.(); repaint();
+    return true;
+  } catch (err) {
+    console.error('[examples] load failed:', err);
+    status('Load failed', true);
+    setTimeout(() => { _exampleLoad = null; repaint(); }, 2500);
+    return false;
+  }
+};
 function buildExamplesHTML() {
   if (!_examples) return '<div class="mm-info">Loading examples…</div>';
   if (!_examples.length) return '<div class="mm-info">No examples</div>';
@@ -6954,65 +7016,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     });
   }
 
-  const fetchExamples = async () => {
-    if (_examples) return;
-    try {
-      const r = await fetch(examplesURL('examples.json'));
-      _examples = r.ok ? await r.json() : [];
-    } catch (_) { _examples = []; }
-  };
-  // Loads example `i`. `repaint` redraws whatever shows the list (its button carries the
-  // progress), `done` closes it once the scene is in.
-  const loadExample = async (i, repaint, done) => {
-    const ex = _examples?.[i];
-    if (!ex || _exampleLoad) return;
-    let painted = 0;
-    const status = (text, now) => {
-      _exampleLoad = { i, text };
-      const t = performance.now();
-      if (now || t - painted > 250) { painted = t; repaint(); }   // a VR repaint is not free
-    };
-    const mb = (n) => (n / 1048576).toFixed(1);
-    try {
-      status('Downloading\u2026', true);
-      const r = await fetch(examplesURL(ex.file));
-      if (!r.ok) throw new Error(r.status);
-      // Content-Length is the COMPRESSED size when the server gzips, so it is only shown while
-      // the count is still under it.
-      const total = +r.headers.get('content-length') || 0;
-      let buf;
-      if (r.body?.getReader) {
-        const reader = r.body.getReader(), chunks = [];
-        let got = 0;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value); got += value.length;
-          status(total >= got ? `Downloading ${mb(got)} / ${mb(total)} MB` : `Downloading ${mb(got)} MB`);
-        }
-        const all = new Uint8Array(got);
-        let o = 0;
-        for (const c of chunks) { all.set(c, o); o += c.length; }
-        buf = all.buffer;
-      } else {
-        buf = await r.arrayBuffer();
-      }
-      // Paint "Building" BEFORE the parse, which holds the main thread. A timeout, NOT
-      // requestAnimationFrame: the window's rAF does not run during an immersive session (nor in
-      // a hidden tab), so waiting on it hung the load at "Building". 60 ms is a few XR frames.
-      status('Building scene\u2026', true);
-      await new Promise((res) => setTimeout(res, 60));
-      // ADDED to the scene, like any import; the scene (and the save it came from) stays yours.
-      main.loadScene(buf, /\.glb$/i.test(ex.file) ? 'glb' : 'sgl');
-      _exampleLoad = null;
-      main._examplesOpen = false;
-      main.render?.(); done?.(); repaint();
-    } catch (err) {
-      console.error('[examples] load failed:', err);
-      status('Load failed', true);
-      setTimeout(() => { _exampleLoad = null; repaint(); }, 2500);
-    }
-  };
+  const loadExample = (i, repaint, done) => loadExampleInto(main, i, repaint, done);
 
   q('#mm-new-example')?.addEventListener('click', async (e) => {
     // DESKTOP: a FLYOUT beside the Files menu, not a list pushed in under the button (matt: "the

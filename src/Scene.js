@@ -26,6 +26,7 @@ const GRID_GHOST_FRACTION = 0.4;
 // half-way setting still reads as a flick.
 const SAC_SMOOTH_TAU_MAX = 0.45;
 import getOptionsURL from './misc/getOptionsURL.js';
+import { openStartupLink } from './misc/StartupLink.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
 import Utils from './misc/Utils.js';
@@ -697,11 +698,14 @@ class Scene {
     if (modelURL) {
       this.addModelURL(modelURL); // async — resets the undo stack itself via loadScene()
     } else {
-      this.addSphere(); // Return default mesh to multires sculpting sphere
-      // The startup mesh must not be undoable: undoing it empties the scene and
-      // breaks sculpting (no mesh → no BVH). Clear the stack so it's the baseline,
-      // mirroring loadScene() which resets after loading.
-      this.getStateManager().reset();
+      // ?lunk&face opens that example in that tool; with no example named, the default sphere.
+      openStartupLink(this, () => {
+        this.addSphere(); // Return default mesh to multires sculpting sphere
+        // The startup mesh must not be undoable: undoing it empties the scene and
+        // breaks sculpting (no mesh → no BVH). Clear the stack so it's the baseline,
+        // mirroring loadScene() which resets after loading.
+        this.getStateManager().reset();
+      });
     }
 
     // [DEBUG] Visualize Sphere Lift Target
