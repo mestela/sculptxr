@@ -30,9 +30,11 @@ there that does not reach `_skinSrc` is deleted by the next frame that deforms.
 
 1. **At bind pose** every skin matrix is the identity, so the level's vertices *are*
    rest-space vertices and the commit is a copy.
-2. **Posed**: the stroke is a **delta**, carried back by the inverse of the per-vertex
-   composite — `src += (Σw·B)⁻¹ · delta`. Delta mush cancels in the difference, which is
-   what makes this tractable; only the linear part survives.
+2. **Posed**: the stroke is a **delta**, carried back by the rotation between the mush's
+   rest and posed frames at that vertex (`mushReturn`), or with mush off by the inverse of
+   the per-vertex composite — `src += (Σw·B)⁻¹ · delta`. What's drawn near a joint is the
+   mush's blend, and a rigid bind has a different inverse either side of a seam, so one
+   bone's inverse tears a stroke across it. See pitfall 11.
 3. **Above the bound level**: `lowerAnalysis` splits the stroke into a coarse part (which
    the commit takes) and detail vectors (which the skin pass already re-adds). No new
    arithmetic — that split already existed, it was only ever reached by stepping down a
@@ -183,6 +185,74 @@ at 49,666 displayed vertices: **29.3 ms → 11.3 ms**, all of it outside the def
 - `lowerAnalysis` and `computePartialSubdivision` allocated fresh arrays per call. The
   second runs per level **per frame** while posing.
 
+### 11. Anything that writes the displayed level without the skin pass is a stroke
+
+`strokeMask` finds what a stroke moved by **exact** comparison against `_skinDisp`, what the
+pass last drew. So any other writer of that level reads as sculpting, and the fold writes the
+difference into the rest shape. A synthesis is not exact against the last one (details orient
+by the level's current normals), so `showWeightColors` carrying colours up moved 7576 of 9522
+verts by 0.03; the next press, stroke or not, moved 1884 **rest** verts by up to 0.22 with
+nothing left on the undo stack. Fixed by `coloursUp`.
+
+**A missing snapshot is the same bug, bigger.** `strokeMask` answers "assume everything", so
+a stroke after subdividing, before any pass, folded the whole surface: a one-vertex edit
+moved all 2382 rest verts. `pushMesh` now queues a pass.
+
+> Symptom: the rest shape changes where nobody sculpted. Compare `_skinSrc` before and after
+> a press **with no stroke**.
+
+### 13. A posed bound mesh is never read back as rest
+
+`Mesh.updateGeometry` rebases a shape track's base from what's on screen, and on a posed bound
+mesh that's the skin pass's output. Guarding only the pass's own refresh left every other
+caller: a level step rebased the base to the posed verts, the next recomposite put that in
+`_skinSrc`, and the skin posed it a second time. A rigged head with shapes, stepped down and
+saved, reloaded off by a whole pose (2.68).
+
+So `updateGeometry` skips the capture when `_skinW && _skinIsPosed` (set true on load until the
+first pass), and `commitPosed` carries the stroke's rest delta into the edited layer or the
+base (`strokeIntoShape`, on the undo entry too). A recomposite no longer analyses a bound mesh:
+strokes are folded at their end, and analysing between a recomposite and its pass measures the
+pose itself as detail.
+
+### 12. A posed fix to a pose's own crease is stored at rest
+
+Smooth a crumple that only exists because of the pose and the write-back does what it should:
+it stores the opposite of the crumple, which at rest is a dent. No inverse can avoid that. The
+surface has one rest shape, so a pose-specific correction needs a corrective shape.
+
+**Correctives (`RigPoses.js`).** On a saved pose, status "fix: name" in the bone panel, a stroke
+goes into a layer `pose:<name>` instead of the rest shape. The layer's weight comes from the rig,
+not a key or slider: the minimum over the joints that pose changes of a smoothstep of how far the
+joint is towards it. Joints the pose leaves alone don't count, so a bent knee doesn't fade a raised
+arm. Anywhere else a stroke goes to rest, as before. Bake to Rest, Clear Fix and Mirror are in the
+pose list's modes.
+
+- The layer has to exist before the commit moves `_skinSrc`, as a mesh with no shapes takes its
+  base from it. The other order leaks the stroke into the base.
+- A layer stroke restores `_skinRest`: `_skinRest` means the shape with no pose, and a pose's fix
+  isn't part of that.
+- Undoing a custom step must not commit (`StateManager`): the pose is on screen and not on the
+  stack, so the commit stored the whole pose in rest.
+- **A fix has details of its own above the bound level.** The layer only has the bound level's
+  vertices, and most of a fine stroke goes in the levels above (Smooth kept .15 of .92 without
+  them). `track.correctiveDetails` is layer -> level -> array; `level._detailsFix` is their
+  weighted sum, added when a level draws (`applyDetails`) and taken off when it measures
+  (`computeDetails`). So `_detailsXYZ` stays free of them through every fold, and nothing drifts.
+- Each stroke re-derives every detail on the level, moving most by a hair, so a change under .1%
+  of the stroke's largest stays out of the fix (7000 vertices of 9500 otherwise, every stroke).
+- A saved level holds what was on screen, fixes included, and the load reads its details from
+  that. So SKEL v31 stores each fix's weight at the save, and the load takes that share out.
+- Mirror can't copy detail numbers across: each is in its own vertex's surface frame, and the
+  frames either side aren't reflections. It builds the levels at rest with and without the fix,
+  reflects the difference, and measures what details would make that.
+- **A level between the bound one and the one on screen keeps stale normals** through every skin
+  pass: only the displayed level gets a refresh, and details are drawn by normals. So a tool that
+  borrows the levels has to put the normals back, not recompute them (.365 across the body).
+  It's a likely cause of a file saved posed coming back .24 off at the bind pose with a level
+  above the first: the load measures with fresh normals what was drawn with stale ones. That
+  happens with no fix at all and isn't fixed.
+
 ---
 
 ## Instrument pitfalls (these cost more time than the bugs)
@@ -201,6 +271,12 @@ at 49,666 displayed vertices: **29.3 ms → 11.3 ms**, all of it outside the def
   conditions disagreed and produced a log with one line where the interesting two should
   have been.
 - A trace that is itself conditional on the thing being asked about cannot answer it.
+- **A hidden Browser pane runs no frames.** The skin pass doesn't run and screenshots go
+  stale: step `Skinning.update(app)` by hand, and pose a joint by writing **both**
+  `getMatrix()` and `getThreeMesh().matrix`.
+- **Compare both sides bone by bone at rest**, pairing each vertex with its mirror. A real
+  stroke, driven by canvas events (the pick scanned for a pixel on the bone, as pins win it),
+  showed in one run which tools mirror and which don't.
 
 ## Testing pitfalls
 
@@ -264,13 +340,13 @@ Do not conflate them:
   posed-space everywhere, including `moveDataSym.dir`.
 - **Crossover at large radius** persists in reduced form: the rest-space prune uses one
   radius for a brush whose two ends sit in different neighbourhoods.
-- **Detail elsewhere smooths away over repeated strokes.** Mechanism **unknown**. The fold
-  is the suspect but the harness could not reproduce it, and delta mush is shape-preserving
-  by construction, so the obvious theory does not hold. `Settings > Freeze Sculpt Fold
-  (bisect)` (`window._skinNoFold`) refuses the fold entirely to test whether it is
-  implicated at all.
-- **`Drag`, `Slide` and `Twist` still mirror in posed space.** Convert them the way `Move`
-  was converted: `pickingSym.mirrorLocalPoint(...)`.
+- **Detail elsewhere smooths away over repeated strokes.** Pitfall 11 fits this (a false mask
+  folds whole limbs on every press) but it hasn't been confirmed as the same report.
+  `Settings > Freeze Sculpt Fold (bisect)` (`window._skinNoFold`) still exists to test it.
+- **`Slide` while posed is unmeasured**: converted, but it barely registered in the test and
+  moves a lot at bind (9.9, snapping 3.5 on release). Its and `Twist`'s rotation/axis mirrors
+  are still plain reflections.
+- **A hard twist still snaps** (Move 1.4 at 1.2 + 1.3 rad on a 3-unit brush).
 - Sculpting **below** the bound level is refused rather than synthesised up.
 - **The three ray-mirror copies** duplicate `Picking.intersectionRayMesh`'s `_xSym` block
   and should just call it.

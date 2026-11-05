@@ -67,6 +67,10 @@ const MeshStatic = class {};
 const Multimesh = class {};
 const Skeleton = {
   joints: () => [],
+  // Off for every fixture that predates volumes, which must not move. The volume fixtures turn it on.
+  displayFlag: (k) => k === 'volumes' && !!globalThis.__skinVolumes,
+  isJoint: (j) => !!(j && j.p),
+  jointShapesSkin: (j) => !(j && j._noSkinShape),
   jointPos: (j, out) => (out || new THREE.Vector3()).set(j.p[0], j.p[1], j.p[2]),
   // A JOINT'S OWN RADIUS, with the real fallback rule: unset means "whatever the bone says".
   // Lifted in spirit rather than by slice — it is three lines and the fixtures set the field
@@ -109,7 +113,11 @@ const Skeleton = {
 // Fill in the real shapePoint before the module is written out.
 const SKEL_SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 const shapeSrc = SKEL_SRC.slice(SKEL_SRC.indexOf('Skeleton.shapePoint = function'),
-  SKEL_SRC.indexOf('Skeleton.mirrorVolumeOffset = function'));
+  SKEL_SRC.indexOf('Skeleton.mirrorVolumeOffset = function'))
+  // The real volume frame, not a copy: it is the shape Make Skin wraps with volumes on.
+  + 'const ROUND_MIN = 2, ROUND_MAX = 12;\n'
+  + SKEL_SRC.slice(SKEL_SRC.indexOf('Skeleton.volumeGap = function'), SKEL_SRC.indexOf('Skeleton.boneHasCapsule = function'))
+  + SKEL_SRC.slice(SKEL_SRC.indexOf('Skeleton.boneHasCapsule = function'), SKEL_SRC.indexOf('// A BRANCH IS ONE FAMILY OF CAPSULES'));
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_skinbox_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + shapeSrc + '\n' + body + '\nexport default SkinMesh;\n');
@@ -428,7 +436,7 @@ function suite(label, joints, opts) {
   if (opts && opts.bones !== undefined) {
     check('every bone bridged (' + opts.bones + ')', arr.bones === opts.bones, 'got ' + arr.bones);
   }
-  console.log('  (' + (arr.vertices.length / 3) + ' verts, ' + fl.length + ' faces'
+  console.log('  (' + xs + ' crossing pairs, ' + (arr.vertices.length / 3) + ' verts, ' + fl.length + ' faces'
     + (arr.boxes !== undefined ? ', ' + arr.boxes + ' boxes, ' + arr.bones + ' bones' : '') + ')');
 }
 
@@ -1154,6 +1162,128 @@ console.log('\njoints that do not shape the skin');
   twisted[2]._noSkinShape = true;
   check('...and one mid-chain is bridged straight past', sameArr(skipBuild(twisted), build(chain(false))),
     'a twist bone switched off should give the chain drawn without it');
+}
+
+// ── WRAPPING THE BONE VOLUMES ─────────────────────────────────────────────────────────────────
+//
+// With the flag on, the shape is the real Skeleton.volumeFrame's. The joints get just enough of an
+// object for it: local and world matrices from their positions.
+{
+  const mat = (x, y, z) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
+  const volumes = (joints) => {
+    for (const j of joints) {
+      const q = j._parentMesh ? j._parentMesh.p : [0, 0, 0];
+      j.getMatrix = () => mat(j.p[0] - q[0], j.p[1] - q[1], j.p[2] - q[2]);
+      j.getModelSpaceMatrix = (out) => { const m = mat(j.p[0], j.p[1], j.p[2]); if (out) { out.set(m); return out; } return m; };
+    }
+    SkinMesh._volumeShapes({}, joints);
+    return joints;
+  };
+  globalThis.__skinVolumes = true;
+  const twoBones = (edit) => {
+    const js = skeleton([['a', null, 0, 0, 0, 0.3], ['b', 'a', 0, 2, 0, 0.3], ['c', 'b', 0, 4, 0, 0.3]]);
+    if (edit) edit(js);
+    return volumes(js);
+  };
+  const extent = (arr, lo, hi) => {     // half-width in x and z, and the centre, of the verts in a band of y
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < arr.vertices.length; i += 3) {
+      const y = arr.vertices[i + 1];
+      if (y < lo || y > hi) continue;
+      x0 = Math.min(x0, arr.vertices[i]); x1 = Math.max(x1, arr.vertices[i]);
+      z0 = Math.min(z0, arr.vertices[i + 2]); z1 = Math.max(z1, arr.vertices[i + 2]);
+    }
+    return { x: (x1 - x0) / 2, z: (z1 - z0) / 2, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2 };
+  };
+  const yMax = (arr) => { let m = -Infinity; for (let i = 1; i < arr.vertices.length; i += 3) m = Math.max(m, arr.vertices[i]); return m; };
+  const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+  suite('volumes: straight chain', volumes(STRAIGHT), { bones: 2 });
+  suite('volumes: bent chain', volumes(BENT), { bones: 2 });
+  suite('volumes: branch (spine + two clavicles + head)', volumes(BRANCH), { bones: 4 });
+  suite('volumes: hand (three fingers off one palm)', volumes(HAND), { bones: 4, relaxOverlaps: 4 });
+  suite('volumes: hips', volumes(HIPS), { bones: 3 });
+  suite('volumes: hand (five fingers off one palm)', volumes(skeleton([
+  ['wrist', null, 0, 0, 0, 0.12],
+  ['palm', 'wrist', 0, 0.5, 0, 0.2],
+  ['f1', 'palm', -0.24, 0.95, 0, 0.05],
+  ['f2', 'palm', -0.12, 1.0, 0, 0.05],
+  ['f3', 'palm', 0, 1.02, 0, 0.05],
+  ['f4', 'palm', 0.12, 1.0, 0, 0.05],
+  ['f5', 'palm', 0.24, 0.95, 0, 0.05],
+])), { bones: 6, rawOverlaps: true, relaxOverlaps: 110 });
+
+  // An ordinary biped. Branches at the chest and hips are where limbs cross without a hub (58 pairs).
+  suite('volumes: biped', volumes(skeleton([['hip', null, 0, 10, 0, 1.6], ['spine', 'hip', 0, 13, 0, 1.5], ['chest', 'spine', 0, 16, 0, 2],
+    ['neck', 'chest', 0, 18, 0, 0.6], ['head', 'neck', 0, 21, 0, 1.3],
+    ['clavL', 'chest', -1.5, 17, 0, 0.8], ['armL', 'clavL', -5, 16.5, 0, 0.7], ['foreL', 'armL', -8.5, 16, 0, 0.55], ['handL', 'foreL', -10, 16, 0, 0.5],
+    ['clavR', 'chest', 1.5, 17, 0, 0.8], ['armR', 'clavR', 5, 16.5, 0, 0.7], ['foreR', 'armR', 8.5, 16, 0, 0.55], ['handR', 'foreR', 10, 16, 0, 0.5],
+    ['legL', 'hip', -1, 9, 0, 1.1], ['kneeL', 'legL', -1.2, 5, 0.2, 0.9], ['footL', 'kneeL', -1.2, 1, 0, 0.7], ['toeL', 'footL', -1.2, 0.2, 1.5, 0.5],
+    ['legR', 'hip', 1, 9, 0, 1.1], ['kneeR', 'legR', 1.2, 5, 0.2, 0.9], ['footR', 'kneeR', 1.2, 1, 0, 0.7], ['toeR', 'footR', 1.2, 0.2, 1.5, 0.5]])), { bones: 20 });
+
+  console.log('\nvolumes shape the skin');
+  const midLo = 0.6, midHi = 1.4;
+  const plain = extent(build(twoBones()), midLo, midHi);
+  check('it wraps the section, just outside', plain.x > 0.3 && near(plain.x, 0.3 * 1.04, 0.02), 'half-width ' + plain.x.toFixed(3));
+  const wide = extent(build(twoBones((js) => { js[1]._volW = 2; })), midLo, midHi);
+  check('a volume\'s width reaches the skin', near(wide.x / plain.x, 2, 0.2) && near(wide.z, plain.z, 0.04),
+    'x ' + wide.x.toFixed(3) + ' z ' + wide.z.toFixed(3));
+  const tall = extent(build(twoBones((js) => { js[1]._volH = 2; })), midLo, midHi);
+  check('...and its height', near(tall.z / plain.z, 2, 0.2) && near(tall.x, plain.x, 0.04), 'x ' + tall.x.toFixed(3) + ' z ' + tall.z.toFixed(3));
+  const off = extent(build(twoBones((js) => { js[1]._volO3 = 1; })), midLo, midHi);
+  check('...and its offset', Math.abs(off.cz) > 0.2 || Math.abs(off.cx) > 0.2, 'centre ' + off.cx.toFixed(3) + ', ' + off.cz.toFixed(3));
+  const turned = extent(build(twoBones((js) => { js[1]._volW = 2; js[1]._volR = Math.PI / 2; })), midLo, midHi);
+  check('...and its twist', near(turned.z, wide.x, 0.06) && near(turned.x, wide.z, 0.06), 'x ' + turned.x.toFixed(3) + ' z ' + turned.z.toFixed(3));
+  const boxy = build(twoBones((js) => { js[1]._volP = 8; }));
+  const roundArr = build(twoBones());
+  const reachOut = (arr) => { let m = 0; for (let i = 0; i < arr.vertices.length; i += 3) { const y = arr.vertices[i + 1]; if (y > midLo && y < midHi) m = Math.max(m, Math.hypot(arr.vertices[i], arr.vertices[i + 2])); } return m; };
+  check('...and its sharpness', reachOut(boxy) > reachOut(roundArr) * 1.1, reachOut(boxy).toFixed(3) + ' vs ' + reachOut(roundArr).toFixed(3));
+  // The box is sized from the volume too. A flat section's short axes drop to two cells (levelsFor), so
+  // the count falls; ignore the section and the cage starts as a cube, and the count doesn't move.
+  const cells = (edit) => build(twoBones(edit)).vertices.length / 3;
+  const flat = cells((js) => { js[1]._volW = 4; js[2]._volW = 4; });
+  check('a volume\'s section sizes the box', flat !== cells(), flat + ' verts vs ' + cells());
+  const tipAt = yMax(build(twoBones()));
+  const longer = yMax(build(twoBones((js) => { js[2]._volE1 = 0.5; })));
+  check('...and its ends: pulled past the tip, the skin goes with it', near(longer - tipAt, 1, 0.1), 'tip moved ' + (longer - tipAt).toFixed(3));
+  check('a free end stops where the volume is drawn', near(tipAt, 4 - 2 * 0.04, 0.05), 'tip at ' + tipAt.toFixed(3));
+
+  // No sausage links: where two like volumes meet, the skin carries on through the joint.
+  const neck = extent(build(twoBones()), 1.95, 2.05);
+  check('the skin does not pinch at a joint', neck.x > plain.x * 0.9, 'at the joint ' + neck.x.toFixed(3) + ', mid-bone ' + plain.x.toFixed(3));
+
+  // A thin neighbour does not carry a fat volume through to its joint.
+  const fatThin = (js) => { js[1]._boneRadius = 0.6; js[2]._boneRadius = 0.1; };
+  const fat = build(twoBones(fatThin));
+  let reachFat = 0;
+  for (let i = 0; i < fat.vertices.length; i += 3) if (Math.hypot(fat.vertices[i], fat.vertices[i + 2]) > 0.4) reachFat = Math.max(reachFat, fat.vertices[i + 1]);
+  check('a fat volume stops short of a thin neighbour\'s joint', reachFat < 2, 'fat out to y=' + reachFat.toFixed(3));
+
+  const noShape = twoBones((js) => { js[1]._volW = 2; });
+  const a1 = build(noShape), a2 = build(noShape);
+  check('deterministic', a1.vertices.every((v, i) => v === a2.vertices[i]));
+
+  // Mirrored volumes make a mirrored skin.
+  const mirrored = volumes(skeleton([
+    ['hip', null, 0, 1, 0, 0.22], ['spine', 'hip', 0, 1.6, 0, 0.2],
+    ['legL', 'hip', -0.35, 0.45, 0.08, 0.14], ['legR', 'hip', 0.35, 0.45, 0.08, 0.14],
+    ['footL', 'legL', -0.35, 0, 0.08, 0.1], ['footR', 'legR', 0.35, 0, 0.08, 0.1]]));
+  const mirr = build(mirrored);
+  let worst = 0;
+  const vs = mirr.vertices;
+  for (let i = 0; i < vs.length; i += 3) {
+    let best = Infinity;
+    for (let k = 0; k < vs.length; k += 3) best = Math.min(best, Math.hypot(vs[k] + vs[i], vs[k + 1] - vs[i + 1], vs[k + 2] - vs[i + 2]));
+    worst = Math.max(worst, best);
+  }
+  check('a mirrored rig makes a mirrored skin', worst < 1e-3, 'worst ' + worst.toExponential(2));
+
+  // A rig with no volumes takes the old path.
+  const none = skeleton([['a', null, 0, 0, 0, 0], ['b', 'a', 0, 2, 0, 0]]);
+  check('no radii, no volumes: the old path', volumes(none) && SkinMesh._volumeShapes({}, none) === null);
+  SkinMesh._volumeShapes({}, []);
+  globalThis.__skinVolumes = false;
+  SkinMesh._volumeShapes({}, []);
 }
 
 console.log('\n' + (failures ? failures + ' FAILURES' : 'all checks passed'));

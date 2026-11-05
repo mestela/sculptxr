@@ -1477,7 +1477,7 @@ Skinning.showWeightColors = function (main, mesh, only) {
   // Same reason as the restore path: the paint lands on the bound level, and if the mesh is
   // being DISPLAYED above it the propagation is what carries it to the visible surface.
   // A no-op unless the levels differ.
-  synthesiseUp(mesh);
+  coloursUp(mesh);
   mesh.updateDuplicateColorsAndMaterials(partial ? only : undefined);
   mesh.updateColorBuffer();
   return true;
@@ -1519,7 +1519,7 @@ Skinning.restoreColors = function (mesh) {
   // synthesiseUp is the existing multires propagation, the same one the skin pass runs every
   // frame, and it returns early when the displayed level IS the bound level -- so this costs
   // nothing in the ordinary case.
-  synthesiseUp(mesh);
+  coloursUp(mesh);
   mesh.updateDuplicateColorsAndMaterials();
   mesh.updateColorBuffer();
 };
@@ -1627,6 +1627,7 @@ Skinning.rebaseToLowest = function (main, mesh) {
 Skinning.unbind = function (mesh) {
   if (!mesh) return;
   Skinning.restoreColors(mesh);
+  for (const lvl of mesh._meshes || []) lvl._detailsFix = null;   // no rig, no pose to fix
   // Put the mesh back in its bind pose rather than leaving it stuck in whatever pose it
   // happened to be in — an unbind that silently freezes a pose is worse than no unbind.
   const level = boundLevel(mesh);
@@ -1978,7 +1979,7 @@ function analyseDown(mesh, level) {
 function restJournal(mesh) {
   Skinning._lastRestEntry = null;
   const stack = mesh._meshes;
-  if (stack && stack.length && (mesh._sel | 0) !== stack.indexOf(boundLevel(mesh))) return null;
+  if (stack && stack.length && (mesh._sel | 0) < stack.indexOf(boundLevel(mesh))) return null;
   const e = { mesh: mesh, idx: [], oldRest: [], oldSrc: [], newRest: [], newSrc: [] };
   let at = -1;
   Skinning._lastRestEntry = e;
@@ -2000,6 +2001,38 @@ function restJournal(mesh) {
   };
 }
 
+// A STROKE ABOVE THE BOUND LEVEL ALSO CHANGED THE DETAILS, and restoring the rest shape without them puts
+// the stroke straight back: the pass rebuilds the displayed level from rest + details, over whatever undo
+// restored there. So what the stroke changed in them goes on the entry too, sparse, as a stroke is usually
+// small. In the surface's frame, so it comes back right even if the pose has moved since.
+function detailsAbove(mesh, level) {
+  const stack = mesh._meshes;
+  if (!stack) return null;
+  const out = [];
+  for (let i = stack.indexOf(level) + 1; i <= (mesh._sel | 0); i++) {
+    out.push([stack[i], stack[i]._detailsXYZ ? stack[i]._detailsXYZ.slice() : null]);
+  }
+  return out.length ? out : null;
+}
+
+function detailEdits(before) {
+  const edits = [];
+  for (const [lvl, old] of before || []) {
+    const cur = lvl._detailsXYZ;
+    if (!cur) continue;
+    const idx = [], was = [], now = [];
+    for (let i = 0; i < cur.length; i += 3) {
+      const a = old ? old[i] : 0, b = old ? old[i + 1] : 0, c = old ? old[i + 2] : 0;
+      if (a === cur[i] && b === cur[i + 1] && c === cur[i + 2]) continue;
+      idx.push(i);
+      was.push(a, b, c);
+      now.push(cur[i], cur[i + 1], cur[i + 2]);
+    }
+    if (idx.length) edits.push({ lvl, idx, was, now });
+  }
+  return edits.length ? edits : null;
+}
+
 // Put a recorded commit back (`which` = 'undo' or 'redo'), vertex for vertex. False when it does not apply.
 Skinning.applyRestEntry = function (entry, which) {
   const m = entry && entry.mesh;
@@ -2011,12 +2044,114 @@ Skinning.applyRestEntry = function (entry, which) {
     m._skinRest[i] = rest[j]; m._skinRest[i + 1] = rest[j + 1]; m._skinRest[i + 2] = rest[j + 2];
     m._skinSrc[i] = src[j]; m._skinSrc[i + 1] = src[j + 1]; m._skinSrc[i + 2] = src[j + 2];
   }
+  if (entry.shape) {
+    const a = entry.shape.arr, sign = which === 'undo' ? -1 : 1;
+    window._animationRegistry?.invalidateSparse?.(a);
+    for (let k = 0; k < entry.idx.length; k++) {
+      const i = entry.idx[k] * 3, j = k * 3;
+      if (i + 2 >= a.length) continue;
+      const c = sign * entry.shape.k;
+      a[i] += c * (entry.newSrc[j] - entry.oldSrc[j]);
+      a[i + 1] += c * (entry.newSrc[j + 1] - entry.oldSrc[j + 1]);
+      a[i + 2] += c * (entry.newSrc[j + 2] - entry.oldSrc[j + 2]);
+    }
+    entry.shape.track._bsRev = (entry.shape.track._bsRev | 0) + 1;
+  }
+  for (const d of entry.details || []) {
+    const to = d.arr || d.lvl._detailsXYZ, from = which === 'undo' ? d.was : d.now;
+    if (!to) continue;
+    for (let k = 0; k < d.idx.length; k++) {
+      const i = d.idx[k];
+      to[i] = from[k * 3]; to[i + 1] = from[k * 3 + 1]; to[i + 2] = from[k * 3 + 2];
+    }
+  }
+  if (entry.details?.[0]?.arr) Skinning.composeFixDetails(m);
   m._skinMushDirty = true;      // the mush deltas are defined against the rest pose
   m._skinDirty = true;          // the pass redraws from the restored rest
   return true;
 };
 
-function commitPosed(main, mesh, level, nbV) {
+// WHICH WAY A STROKE GOES BACK TO REST SPACE. By the rotation between the mush's two frames at that
+// vertex, the one the pass will carry it forward by, and not by its bone's. What's drawn near a joint is
+// the mush's blend of the two bones, so one bone's inverse sends the stroke off at up to the whole joint
+// angle. And with a rigid bind it's a different inverse either side of a seam: a smooth across a twisted
+// shoulder tore apart at rest (neighbouring deltas 1.44 apart, 0.67 this way; snap on release 0.44, 0.14), and
+// a Move there threw the spine 6.7 at rest (2.7 this way). Not exact: where a hard twist crushes the surface
+// the frames are poor too, and the mush recomputes against the new rest, so a release can still snap there.
+// Null with mush off, where the bone's inverse IS what the pass applies.
+function mushReturn(mesh, mats, src, idx, wts, nbV) {
+  const iters = Skinning.mushIterations();
+  const pair = mesh._skinMushPair;
+  if (iters <= 0 || !pair || !mesh._skinAdj) return null;
+  const lbs = new Float32Array(nbV * 3);
+  for (let i = 0; i < nbV; i++) {
+    const sx = src[i * 3], sy = src[i * 3 + 1], sz = src[i * 3 + 2];
+    let ox = 0, oy = 0, oz = 0, total = 0;
+    for (let k = 0; k < MAX_INFLUENCES; k++) {
+      const j = idx[i * MAX_INFLUENCES + k];
+      if (j < 0) continue;
+      const w = wts[i * MAX_INFLUENCES + k];
+      const m = mats[j];
+      if (!m || w <= 0) continue;
+      _v.set(sx, sy, sz).applyMatrix4(m);
+      ox += _v.x * w; oy += _v.y * w; oz += _v.z * w;
+      total += w;
+    }
+    if (total <= 1e-6) { ox = sx; oy = sy; oz = sz; }
+    lbs[i * 3] = ox; lbs[i * 3 + 1] = oy; lbs[i * 3 + 2] = oz;
+  }
+  const off = mesh._skinAdj.off, nb = mesh._skinAdj.nb, step = tune('_skinMushStep', MUSH_STEP);
+  const sc = mushScratch(mesh, nbV * 3);
+  const sp = Float32Array.from(smoothPositions(lbs, sc.a, sc.b, off, nb, iters, step));
+  const sr = Float32Array.from(smoothPositions(src, sc.a, sc.b, off, nb, iters, step));
+  return { pair, sp, sr };
+}
+
+// A POSED STROKE ALSO BELONGS IN THE SHAPE THE REST SURFACE IS COMPOSED FROM, or the next recomposite
+// (`_skinSrc` = base + layers) throws it away. The layer being edited, else the base. Taken from the
+// journal, which holds exactly what the commit changed, so the entry can put this back too.
+function shapeTarget(main, mesh, into) {
+  if (into) {
+    const t = Skinning.ensureCorrective(main, mesh, into);
+    // Divided by the layer's weight, for a rig a hair off the pose: the composite multiplies it back.
+    return t && { track: t.track, arr: t.arr, k: 1 / into.w, layer: true };
+  }
+  const reg = window._animationRegistry;
+  const track = reg && reg.tracks ? reg.tracks.get(mesh.getID()) : null;
+  if (!track || !track.baseShape) return null;
+  const name = track.editingBlendshape;
+  if (!name) return { track, arr: track.baseShape, k: 1 };
+  let arr = track.blendshapes.get(name);
+  if (!arr || arr.length !== track.baseShape.length) {
+    const old = arr;
+    arr = new Float32Array(track.baseShape.length);
+    if (old) arr.set(old.subarray(0, Math.min(arr.length, old.length)));
+    track.blendshapes.set(name, arr);
+  }
+  reg.invalidateSparse?.(arr);
+  return { track, arr, k: 1, layer: true };
+}
+function strokeIntoShape(main, mesh, into) {
+  const e = Skinning._lastRestEntry;
+  const t = e && e.idx.length ? shapeTarget(main, mesh, into) : null;
+  if (!t) return;
+  window._animationRegistry?.invalidateSparse?.(t.arr);
+  const rest = mesh._skinRest;
+  for (let k = 0; k < e.idx.length; k++) {
+    const i = e.idx[k] * 3, j = k * 3;
+    if (i + 2 >= t.arr.length) continue;
+    t.arr[i] += (e.newSrc[j] - e.oldSrc[j]) * t.k;
+    t.arr[i + 1] += (e.newSrc[j + 1] - e.oldSrc[j + 1]) * t.k;
+    t.arr[i + 2] += (e.newSrc[j + 2] - e.oldSrc[j + 2]) * t.k;
+    // A LAYER IS NOT THE REST SHAPE: `_skinRest` is what a load starts from and unbind puts back, so a
+    // stroke left in it would show in every pose.
+    if (t.layer) for (let c = 0; c < 3; c++) { rest[i + c] = e.oldRest[j + c]; e.newRest[j + c] = e.oldRest[j + c]; }
+  }
+  t.track._bsRev = (t.track._bsRev | 0) + 1;
+  e.shape = t;
+}
+
+function commitPosed(main, mesh, level, nbV, into) {
   const ref = mesh._skinPosed;
   if (!ref || ref.length !== nbV * 3) {
     return restRefused(mesh, 'no skinned reference to measure the stroke against');
@@ -2029,11 +2164,30 @@ function commitPosed(main, mesh, level, nbV) {
 
   let moved = 0, singular = 0;
   const jr = restJournal(mesh);   // what this commit changes, so undo can put it back EXACTLY (see applyRestEntry)
+  const back = mushReturn(mesh, mats, src, idx, wts, nbV);
+  const _fr = back && new Float64Array(9), _fp = back && new Float64Array(9);
   for (let i = 0; i < nbV; i++) {
     const i3 = i * 3;
     const dx = out[i3] - ref[i3], dy = out[i3 + 1] - ref[i3 + 1], dz = out[i3 + 2] - ref[i3 + 2];
     if (dx === 0 && dy === 0 && dz === 0) continue;
     if (jr) jr.before(i, src, rest);
+    if (back) {
+      const ia = back.pair[i * 2], ib = back.pair[i * 2 + 1];
+      if (ia >= 0 && frameAt(back.sr, i, ia, ib, _fr) && frameAt(back.sp, i, ia, ib, _fp)) {
+        // into the posed frame's axes, then out along the rest frame's
+        const a = _fp[0] * dx + _fp[1] * dy + _fp[2] * dz;
+        const c = _fp[3] * dx + _fp[4] * dy + _fp[5] * dz;
+        const e = _fp[6] * dx + _fp[7] * dy + _fp[8] * dz;
+        const rx = _fr[0] * a + _fr[3] * c + _fr[6] * e;
+        const ry = _fr[1] * a + _fr[4] * c + _fr[7] * e;
+        const rz = _fr[2] * a + _fr[5] * c + _fr[8] * e;
+        src[i3] += rx; src[i3 + 1] += ry; src[i3 + 2] += rz;
+        rest[i3] += rx; rest[i3 + 1] += ry; rest[i3 + 2] += rz;
+        if (jr) jr.after(src, rest);
+        moved++;
+        continue;
+      }
+    }
 
     // The blended basis, weighted exactly as apply() weights it.
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0, total = 0;
@@ -2088,6 +2242,7 @@ function commitPosed(main, mesh, level, nbV) {
       + 'committed', singular);
   }
   if (!moved) return false;
+  strokeIntoShape(main, mesh, into);
 
   // THE INVERSION ABOVE IS OF THE LINEAR BLEND ONLY, and the skin pass then adds delta mush, so with mush on
   // the pass does not redraw exactly what was sculpted: at a hard weight seam it moves the surface by up to
@@ -2134,16 +2289,45 @@ Skinning.commitToRest = function (main, mesh) {
   // `_skinSrc` through captureSource, so with a layer live this is not our stroke to keep.
   const reg = window._animationRegistry;
   const track = reg && reg.tracks ? reg.tracks.get(mesh.getID()) : null;
-  if (track && track.baseShape && reg.otherLayersOffset && reg.otherLayersOffset(track, null)) {
+  // ...AT THE BIND POSE. Posed, nothing else writes it back (Mesh.updateGeometry won't read a posed
+  // surface), and commitPosed takes the stroke itself, which no layer is mixed into.
+  const atBind = Skinning.atBindPose(main, mesh);
+  if (atBind && track && track.baseShape && reg.otherLayersOffset && reg.otherLayersOffset(track, null)) {
     return false;
+  }
+  // A combo's sample is solved from what it shows at its drivers' weights, which needs the rest surface.
+  if (!atBind && track && track.editingBlendshape && reg.isBlendshapeCombo?.(track, track.editingBlendshape)) {
+    return restRefused(mesh, 'sculpt a combo shape at the bind pose');
   }
 
   // ABOVE THE BOUND LEVEL, SPLIT THE STROKE FIRST. Run it before the commit and both paths
   // below work unchanged: the weighted array now holds the low-frequency half of the stroke,
   // and the high-frequency half is in detail vectors the skin pass re-adds every frame.
+  // ON A SAVED POSE THE STROKE IS THAT POSE'S (RigPoses), unless a layer is being edited on purpose.
+  const into = !atBind && !(track && track.editingBlendshape) && Skinning.correctiveFor ? Skinning.correctiveFor(main, mesh) : null;
+  // Before the commit changes `_skinSrc`: a mesh with no shapes takes its base from it.
+  if (into) Skinning.ensureCorrective(main, mesh, into);
+  const detailsBefore = detailsAbove(mesh, level);
   analyseDown(mesh, level);
+  // The details apply in every pose, so what the fold left in them can't stay or a stroke on this pose
+  // would show in all of them. It goes to the pose's fix, which has details of its own.
+  let details = detailEdits(detailsBefore);
+  if (into) {
+    for (const [lvl, old] of detailsBefore || []) {
+      if (!lvl._detailsXYZ) continue;
+      if (old) lvl._detailsXYZ.set(old); else lvl._detailsXYZ.fill(0);
+    }
+    details = details && Skinning.addFixDetails(mesh, into, details);
+  }
+  const journalled = (result) => {
+    if (details) {
+      Skinning._lastRestEntry = Skinning._lastRestEntry || { mesh, idx: [], oldRest: [], oldSrc: [], newRest: [], newSrc: [] };
+      Skinning._lastRestEntry.details = details;
+    }
+    return result;
+  };
 
-  if (!Skinning.atBindPose(main, mesh)) return commitPosed(main, mesh, level, nbV);
+  if (!atBind) return journalled(commitPosed(main, mesh, level, nbV, into));
 
   const v = level.getVertices();
   const jb = restJournal(mesh);
@@ -2163,7 +2347,7 @@ Skinning.commitToRest = function (main, mesh) {
   mesh._skinRest.set(v.subarray(0, nbV * 3));
   mesh._skinMushDirty = true;   // the mush deltas are defined against the rest pose
   mesh._skinDirty = true;       // re-skin once so mush rebuilds against the new rest
-  return true;
+  return journalled(true);
 };
 
 // GO TO THE POSE THE SKIN WAS BOUND IN. Not the rig's rest pose -- those are two different
@@ -2365,6 +2549,25 @@ function synthesiseUp(mesh) {
   return true;
 }
 
+// THE SAME PROPAGATION FOR COLOURS ALONE, leaving every position as it was. A synthesis is not exact
+// against the last one: details orient by the level's current normals. So carrying weight colours up
+// moved most of the displayed level by a little (0.03 on skinny_v07) without the skin pass knowing, and
+// the next stroke end took all of it for sculpting: strokeMask compares against what the pass last drew,
+// exactly, and the fold wrote the lot into the rest shape. One press with no stroke moved 1884 rest
+// vertices by up to 0.22, on every panel rebuild with weights showing, with nothing left on the undo stack.
+function coloursUp(mesh) {
+  const stack = mesh._meshes;
+  if (!stack || !stack.length) return;
+  const level = boundLevel(mesh);
+  if (!level) return;
+  const to = mesh._sel || 0;
+  for (let i = stack.indexOf(level) + 1; i > 0 && i <= to; i++) {
+    const v = stack[i].getVertices(), keep = v.slice(0, stack[i].getNbVertices() * 3);
+    stack[i].higherSynthesis(stack[i - 1]);
+    v.set(keep);
+  }
+}
+
 // Resolve the bound joints once per pass. Both the change check and the skin matrices
 // need them, and a find() per joint per frame is a needless O(joints × meshes) sweep.
 function resolveJoints(main, mesh) {
@@ -2401,7 +2604,13 @@ Skinning.apply = function (main, mesh) {
   const joints = resolveJoints(main, mesh);
   // `_skinDirty` is set when the rest-space source changes (a blendshape recomposite), so
   // a still skeleton over a moving blendshape still re-skins.
-  if (!poseChanged(mesh, joints) && !mesh._skinDirty) return false;
+  const posedNow = poseChanged(mesh, joints);
+  if (!posedNow && !mesh._skinDirty && !mesh._skinSettle) return false;
+  // ONE MORE PASS WHEN THE CHANGE STOPS, whether a joint or a shape. Details above the bound level are
+  // oriented by that level's normals, which during a pass are still the previous surface's. On a drag
+  // that lag is nothing (0.005), but a jump leaves a sculpt 0.14 off until something next moves; one
+  // pass takes that to 0.01. A shape switched off and on over a sculpted layer came back 0.28 off.
+  mesh._skinSettle = (posedNow || mesh._skinDirty) && !!mesh._meshes && (mesh._sel | 0) > mesh._meshes.indexOf(boundLevel(mesh));
   mesh._skinDirty = false;
 
   // WHERE THE FRAME ACTUALLY GOES. `window._skinTrace = true` prints a breakdown once a second
@@ -2616,6 +2825,7 @@ Skinning.update = function (main) {
   if (window._skinPause) return;
   const meshes = main.getMeshes();
   if (!meshes) return;
+  Skinning.beforePass?.(main);   // correctives' weights, from the pose (RigPoses)
 
   // A SKIN ON ANY LEVEL BUT THE LOWEST IS MOVED DOWN, once per mesh (see rebaseToLowest). Bind has
   // always bound at level 0; a skin ends up higher when levels are created BELOW it afterwards (Reverse

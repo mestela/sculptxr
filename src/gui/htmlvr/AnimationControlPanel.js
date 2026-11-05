@@ -751,7 +751,7 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
   }
 
   // Layers in reverse insertion order (most recent at top), Base at bottom.
-  const layerEntries = [...track.blendshapes.keys()].reverse();
+  const layerEntries = [...track.blendshapes.keys()].reverse().filter((n) => !n.startsWith('pose:'));
   layerEntries.forEach((name) => {
     const bTrack = track.blendshapeTracks?.get(name);
     const weight = bTrack?.times?.length

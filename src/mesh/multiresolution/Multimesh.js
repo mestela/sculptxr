@@ -40,7 +40,24 @@ class Multimesh extends Mesh {
     return this._meshes[this._sel];
   }
 
+  // A new render attribute wraps the array it was made from, which is usually a level's own, and
+  // uploads then copy INTO the attribute's array. So showing a lower level wrote it over the level
+  // the attribute was made from: normals (its details came back in the wrong frame, moving vertices
+  // on every step down and up), colours, materials, and zeros from the spare capacity into positions.
+  // In place, not a new attribute: same size, same GPU buffer.
+  _detachRenderArrays() {
+    var geom = this.getRenderData() && this.getRenderData()._geometry;
+    if (!geom) return;
+    for (var name of ['position', 'normal', 'color', 'aMaterial']) {
+      var attr = geom.getAttribute(name);
+      if (attr && this._meshes.some(function (l) {
+        return attr.array === l.getVertices() || attr.array === l.getNormals() || attr.array === l.getColors() || attr.array === l.getMaterials();
+      })) attr.array = attr.array.slice();
+    }
+  }
+
   setSelection(sel) {
+    this._detachRenderArrays();
     this._sel = sel;
     this.setMeshData(this.getCurrentMesh().getMeshData());
 
@@ -104,7 +121,12 @@ class Multimesh extends Mesh {
     if (this._sel === 0)
       return this._meshes[0];
 
-    this._meshes[this._sel - 1].lowerAnalysis(this.getCurrentMesh());
+    // THE SKIN PASS OWNS THE BOUND LEVEL AND EVERYTHING SYNTHESISED ABOVE IT. Copying the shared
+    // vertices down measured the details against a shape the next pass threw away, so a sculpt above
+    // the bound level moved as soon as a joint did (0.29 off on a 0.3 bump). Left alone, the details
+    // are exactly what's displayed minus the subdivision of what the skin drew, so nothing is lost.
+    var bound = this._boundIndex();
+    this._meshes[this._sel - 1].lowerAnalysis(this.getCurrentMesh(), undefined, bound >= 0 && this._sel - 1 >= bound);
     this.setSelection(this._sel - 1);
     this.updateResolution();
 
@@ -118,8 +140,37 @@ class Multimesh extends Mesh {
     this._meshes[this._sel + 1].higherSynthesis(this.getCurrentMesh());
     this.setSelection(this._sel + 1);
     this.updateResolution();
+    // that used this level's normals from its last pose: redrawn now it has its own (see Skinning.apply)
+    if (this._skinW) this._skinDirty = true;
 
     return this.getCurrentMesh();
+  }
+
+  // The level the skin pass rebuilds, or -1 for an unbound mesh or one whose bound level is gone.
+  _boundIndex() {
+    if (!this._skinW) return -1;
+    return this._skinLevelMesh ? this._meshes.indexOf(this._skinLevelMesh) : this._skinLevel || 0;
+  }
+
+  // A .sxr saved below the top level. Detail vectors aren't in the file, so the levels above the
+  // displayed one carry them as positions: brought up to date for the save (the arrays above are
+  // only ever overwritten by a step up, so nothing is lost by refreshing them early), and turned
+  // back into details on load. Stepping up then rebuilds what was sculpted, not plain subdivision.
+  synthesizeAbove() {
+    for (var i = Math.max(this._sel, this._boundIndex()) + 1; i < this._meshes.length; ++i) {
+      this._meshes[i].higherSynthesis(this._meshes[i - 1]);
+    }
+  }
+
+  // A bound mesh also needs this between its bound level and the displayed one, before the first skin
+  // pass writes plain subdivision over them: see Skeleton.deserialize.
+  analyseAbove(from = this._sel, to = this._meshes.length - 1) {
+    for (var i = to; i > from; --i) {
+      // a loaded level has no normals yet, and they orient its details
+      this._meshes[i].updateFacesAabbAndNormal(undefined, true);
+      this._meshes[i].updateVerticesNormal();
+      this._meshes[i - 1].analyseUp(this._meshes[i]);
+    }
   }
 
   // `poseOnly` says the CAUSE of this refresh was a joint moving. That rules a lot out: posing
@@ -176,6 +227,9 @@ class Multimesh extends Mesh {
     this._meshes.push(mesh);
     this.setSelection(this._meshes.length - 1);
     this.updateResolution();
+    // A bound mesh needs the skin pass's snapshot of the new level before anyone sculpts it. Without one
+    // the commit has to assume the whole surface moved: a one-vertex edit rewrote every rest vertex.
+    if (this._skinW) this._skinDirty = true;
   }
 
   unshiftMesh(mesh) {

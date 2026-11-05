@@ -154,7 +154,7 @@ class BlendshapePad {
     if (!reg || !mesh) return [];
     const track = reg.tracks.get(mesh.getID());
     if (!track || !track.blendshapes) return [];
-    return [...track.blendshapes.keys()].reverse();
+    return [...track.blendshapes.keys()].reverse().filter((n) => !n.startsWith('pose:'));
   }
 
   assign(slot, name) {

@@ -1780,6 +1780,10 @@ const HANDLE_AXES = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
 // the bone (Skeleton.volumeEnds). Hidden and parked out of reach for a joint's box.
 const END_DOTS = 2;
 const RING_BASE = HANDLE_AXES.length + END_DOTS;   // the rings' handle indices follow every dot
+// A volume's handles, against the scene unit: 1.5x a joint box's. matt: at Rig Scale 1 they were too small.
+const VOL_HANDLE_SIZE = 0.03375;
+// The handle a volume's quarter circle takes over, for its lit state. Its old dot's place stays parked.
+const ARC_INDEX = 2;
 
 function scaleHandleGroup(main) {
   if (main._jointHandles) return main._jointHandles;
@@ -1822,6 +1826,12 @@ function scaleHandleGroup(main) {
     ringOn: [false, false, false],
     ringR: 0,
     centrePos: new THREE.Vector3(),
+    // A volume's twist handle, a quarter of a circle round the bone from arcA to arcB.
+    arcOn: false,
+    arcA: new THREE.Vector3(),
+    arcB: new THREE.Vector3(),
+    arcR: 0,
+    arcCentre: new THREE.Vector3(),
     joint: null,
   };
   skelGroup(main).add(g);
@@ -1836,18 +1846,21 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
   if (!j) { h.group.visible = false; return h; }
   h.group.visible = true;
 
-  // BONE VOLUMES: the handles belong to the volume LEAVING this joint, drawn at its root face --
-  // width and height dots on the section's axes, the uniform-scale dot on the rim diagonal, and a dot
-  // at the centre of each END face that slides that end along the bone. The rotation rings are off.
+  // BONE VOLUMES: the handles belong to the volume LEAVING this joint, drawn at its root face -- width
+  // and height dots on the section's axes, a quarter circle outside them that twists it, and a cone at
+  // the centre of each END face that slides that end along the bone. The big ring round the middle is
+  // the uniform scale, as the handle used most gets the biggest target. matt: "i think also the main
+  // handle i want to use ... is not the easist to grab. while the rotation handle is the most prominent
+  // one, but i never really use it."
   if (Skeleton.displayFlag('volumes')) {
     const bone = Skeleton.volumeActive(main, j);
     if (!bone) { h.group.visible = false; return h; }
     const f = Skeleton.volumeFrame(main, bone, main._volHandleFrame || (main._volHandleFrame = {}));
-    const rr = Skeleton.sceneUnit(main) * 0.0225;
+    const rr = Skeleton.sceneUnit(main) * VOL_HANDLE_SIZE;
     for (let k = 0; k < 3; k++) { h.ringOn[k] = false; h.rings[k].visible = false; }
-    const w = f.r * f.W, ht = f.r * f.H, dg = 0.7071;
-    // THE TWIST RING, round the bone at the volume's MIDDLE, clear of the end cones and the section dots
-    // at the root. One ring (the bone's own axis, green like the axis it turns about).
+    const w = f.r * f.W, ht = f.r * f.H;
+    // THE SCALE RING, round the bone at the volume's MIDDLE, clear of the end cones and the section dots
+    // at the root. White, so it doesn't read as an axis.
     h.centrePos.copy(f.C0).add(f.C1).multiplyScalar(0.5);
     h.ringOn[1] = true;
     h.ringAxis[1].copy(f.d);
@@ -1855,6 +1868,7 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
     {
       const ring = h.rings[1];
       ring.visible = true;
+      handleColor(ring, 0xffffff);
       ring.quaternion.setFromUnitVectors(_zUp, f.d);
       ring.position.copy(h.centrePos);
       ring.scale.setScalar(h.ringR);
@@ -1871,24 +1885,30 @@ Skeleton.updateScaleHandles = function (main, j, fallbackR) {
     put(1, f.C0.x - f.e1.x * w, f.C0.y - f.e1.y * w, f.C0.z - f.e1.z * w);
     put(4, f.C0.x + f.e3.x * ht, f.C0.y + f.e3.y * ht, f.C0.z + f.e3.z * ht);
     put(5, f.C0.x - f.e3.x * ht, f.C0.y - f.e3.y * ht, f.C0.z - f.e3.z * ht);
-    // uniform scale: on the rim, between width and height
-    put(2, f.C0.x + (f.e1.x * w + f.e3.x * ht) * dg, f.C0.y + (f.e1.y * w + f.e3.y * ht) * dg,
-           f.C0.z + (f.e1.z * w + f.e3.z * ht) * dg);
+    // THE TWIST ARC, from the width axis round to the height axis, outside both dots. Green like the axis
+    // it turns about, and picked along its length, so its dot's place is parked.
+    h.arcOn = true;
+    h.arcA.copy(f.e1);
+    h.arcB.copy(f.e3);
+    h.arcR = Math.max(w, ht) * 1.15 + rr * 2;
+    h.arcCentre.copy(f.C0);
+    handleArc(h, ARC_INDEX, 0x6bff8f);
+    h.pos[ARC_INDEX].set(1e9, 1e9, 1e9);
     // the unused y- dot: hidden and parked out of reach so it can never be picked
     h.faces[3].visible = false;
     h.pos[3].set(1e9, 1e9, 1e9);
     // THE TWO ENDS, at the centre of each end face: drag along the bone to lengthen or shorten that end.
     put(6, f.C0.x, f.C0.y, f.C0.z);
     put(7, f.C1.x, f.C1.y, f.C1.z);
-    // CONES, NOT DOTS, where a handle moves one way: each end's points out along the bone, and the
-    // uniform-scale one points away from the root face's centre, white so it does not read as an axis.
+    // CONES, NOT DOTS, where a handle moves one way: each end's points out along the bone.
     // matt: "can those 2 height controls be cones, so its clear which way they move?"
     handleCone(h, 6, _vfDir.copy(f.d).negate(), 0x6bff8f);
     handleCone(h, 7, _vfDir.copy(f.d), 0x6bff8f);
-    handleCone(h, 2, _vfDir.copy(h.pos[2]).sub(f.C0), 0xffffff);
     return h;
   }
   // Back from volumes mode: the box's six dots, round and in their axis colours again.
+  h.arcOn = false;
+  handleColor(h.rings[1], 0x6bff8f);
   handleDot(h, 2, 0x6bff8f);
   for (let i = 0; i < h.faces.length; i++) h.faces[i].visible = i < HANDLE_AXES.length;
   for (let i = HANDLE_AXES.length; i < h.pos.length; i++) h.pos[i].set(1e9, 1e9, 1e9);
@@ -1946,11 +1966,30 @@ function handleCone(h, i, dir, color) {
   if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
   m.updateMatrix(); m.matrixWorldNeedsUpdate = true;
 }
+function handleColor(m, color) {
+  if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
+}
+// The torus lies in its own xy plane from +x round to +y, so that's turned onto arcA and arcB. Scaled as a
+// whole like the rings, with a thicker tube: it's a grip rather than a guide.
+let _handleArcGeo = null;
+const _arcBasis = new THREE.Matrix4(), _arcZ = new THREE.Vector3(), _arcP = new THREE.Vector3();
+function handleArc(h, i, color) {
+  const m = h.faces[i];
+  if (!_handleArcGeo) _handleArcGeo = new THREE.TorusGeometry(1, 0.07, 8, 24, Math.PI / 2);
+  if (m.userData.dotGeo === undefined) m.userData.dotGeo = m.geometry;
+  m.geometry = _handleArcGeo;
+  m.quaternion.setFromRotationMatrix(_arcBasis.makeBasis(h.arcA, h.arcB, _arcZ.crossVectors(h.arcA, h.arcB)));
+  m.position.copy(h.arcCentre);
+  m.scale.setScalar(h.arcR);
+  m.visible = true;
+  handleColor(m, color);
+  m.updateMatrix(); m.matrixWorldNeedsUpdate = true;
+}
 function handleDot(h, i, color) {
   const m = h.faces[i];
   if (m.userData.dotGeo) m.geometry = m.userData.dotGeo;
   m.quaternion.identity();
-  if (m.userData.baseColor !== color) { m.userData.baseColor = color; m.material.color.setHex(color); }
+  handleColor(m, color);
 }
 
 Skeleton.scaleHandleAxis = function (i) {
@@ -1968,6 +2007,24 @@ Skeleton.pickScaleHandle = function (main, p, radius) {
   for (let i = 0; i < h.pos.length; i++) {
     const d = h.pos[i].distanceToSquared(p);
     if (d < bestD) { bestD = d; bestI = i; best = Object.assign({ kind: 'face' }, Skeleton.scaleHandleAxis(i)); }
+  }
+  // A VOLUME'S ARC AND RING: the nearest handle wins, as a dot's reach would otherwise take the ring beside
+  // it (see BoneDrawTool._pickHandleScreen). The arc is the same circle with the angle held to its quarter.
+  if (h.arcOn) {
+    const dotD = best ? Math.sqrt(bestD) : Infinity;
+    _vFace.subVectors(p, h.arcCentre);
+    const t = Math.min(Math.PI / 2, Math.max(0, Math.atan2(_vFace.dot(h.arcB), _vFace.dot(h.arcA))));
+    _arcP.copy(h.arcA).multiplyScalar(Math.cos(t) * h.arcR).addScaledVector(h.arcB, Math.sin(t) * h.arcR);
+    const arcD = _vFace.distanceTo(_arcP);
+    _vFace.subVectors(p, h.centrePos);
+    const up = _vFace.dot(h.ringAxis[1]);
+    const ringD = Math.hypot(up, Math.sqrt(Math.max(0, _vFace.lengthSq() - up * up)) - h.ringR);
+    const other = Math.min(arcD, ringD);
+    if (other < radius && other + radius * 0.25 < dotD) {
+      best = arcD <= ringD ? Skeleton.arcHandle() : Skeleton.ringHandle(1);
+      return best;
+    }
+    return best ? Object.assign(best, { index: bestI }) : null;
   }
   // A RING, by distance to the circle itself: height above its plane and how far off its radius.
   // A dot wins a tie — it is the smaller target, and one the hand reaches for on purpose.
@@ -1987,6 +2044,7 @@ Skeleton.pickScaleHandle = function (main, p, radius) {
 // A ring grip, as the pick returns it. Its index follows the six dots so one number can say which
 // handle is lit.
 Skeleton.ringHandle = function (k) { return { kind: 'ring', axis: k, index: RING_BASE + k }; };
+Skeleton.arcHandle = function () { return { kind: 'twist', index: ARC_INDEX }; };
 
 // WHICH HANDLE IS UNDER THE HAND, lit. A dot with no hover state gives you no way to know which
 // one you are about to take until you have taken it — and they sit close together on a small
@@ -1995,7 +2053,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
   const h = main._jointHandles;
   if (!h) return;
   const hot = grip ? grip.index : -99;
-  const r = Skeleton.sceneUnit(main) * 0.0225;
+  const r = Skeleton.sceneUnit(main) * (h.arcOn ? VOL_HANDLE_SIZE : 0.0225);
   for (let i = 0; i < h.faces.length; i++) {
     const on = hot === i;
     const f = h.faces[i];
@@ -2008,7 +2066,7 @@ Skeleton.highlightScaleHandle = function (main, grip) {
     // The size bump stays ON TOP of the colour: these are the smallest targets in the tool and
     // easily misclicked, so the hot one is both yellow AND bigger.
     f.material.color.setHex(on ? HILITE_COLOR : f.userData.baseColor);
-    f.scale.setScalar(on ? r * 1.6 : r);
+    if (!(h.arcOn && i === ARC_INDEX)) f.scale.setScalar(on ? r * 1.6 : r);   // the arc's scale is its radius
     f.material.opacity = on ? 1 : 0.9;
     f.updateMatrix(); f.matrixWorldNeedsUpdate = true;
   }
@@ -5925,7 +5983,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 29;  // v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 31;  // v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6292,6 +6350,32 @@ Skeleton.serialize = function (meshes, main) {
   slots += 1 + orients.length * 5;  // v27: i + an object's axis orient quaternion
   slots += 1 + pivots.length * 4;   // v28: i + an object's pivot offset
   slots += 1;                       // v29: delta mush iterations, or NONE
+  // v30: named rig poses. A pose lists only joints in this save, and is dropped if that leaves none.
+  const rigPoses = [];
+  for (const [name, pose] of (main && main._rigPoses) || []) {
+    const rows = [];
+    for (const [j, rel] of pose) { const i = idxOf(j); if (i >= 0) rows.push({ i, rel }); }
+    if (rows.length) rigPoses.push({ name, rows });
+  }
+  slots += 1;
+  for (const p of rigPoses) slots += 2 + p.name.length + p.rows.length * 17;
+  // v31: a pose fix's details above the bound level, sparse: a stroke is usually small. Its weight too: the
+  // levels hold what was on screen, so a load has to take that much of it back out.
+  const fixDetails = [];
+  for (const m of meshes) {
+    const t = window._animationRegistry?.tracks?.get(m.getID());
+    for (const [key, levels] of (t && t.correctiveDetails) || []) {
+      for (const [lvl, arr] of levels) {
+        const level = m._meshes ? m._meshes.indexOf(lvl) : -1;
+        if (level < 0) continue;
+        const idx = [];
+        for (let i = 0; i < arr.length; i += 3) if (arr[i] || arr[i + 1] || arr[i + 2]) idx.push(i);
+        if (idx.length) fixDetails.push({ i: idxOf(m), level, key, w: Math.max(0, t.correctiveW?.get(key) || 0), arr, idx });
+      }
+    }
+  }
+  slots += 1;
+  for (const d of fixDetails) slots += 5 + d.key.length + d.idx.length * 4;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6391,6 +6475,26 @@ Skeleton.serialize = function (meshes, main) {
   // rig must not reset the rig's mush. Skinning publishes the reader (see the import note above).
   const mush = skins.length && Skeleton.mushIterations ? Skeleton.mushIterations() : NONE;
   u[o++] = Number.isFinite(mush) ? mush : NONE;
+
+  u[o++] = rigPoses.length;
+  for (const p of rigPoses) {
+    u[o++] = p.name.length;
+    for (let k = 0; k < p.name.length; k++) u[o++] = p.name.charCodeAt(k);
+    u[o++] = p.rows.length;
+    for (const r of p.rows) {
+      u[o++] = r.i;
+      for (let k = 0; k < 16; k++) f[o++] = r.rel[k];
+    }
+  }
+
+  u[o++] = fixDetails.length;
+  for (const d of fixDetails) {
+    u[o++] = d.i; u[o++] = d.level; f[o++] = d.w;
+    u[o++] = d.key.length;
+    for (let k = 0; k < d.key.length; k++) u[o++] = d.key.charCodeAt(k);
+    u[o++] = d.idx.length;
+    for (const i of d.idx) { u[o++] = i; f[o++] = d.arr[i]; f[o++] = d.arr[i + 1]; f[o++] = d.arr[i + 2]; }
+  }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6775,6 +6879,11 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         mesh._skinSrc = new Float32Array(rest);
         mesh._skinStampBuf = null;
         mesh._skinDirty = true; // re-skin on the first frame; the saved verts are a pose
+        mesh._skinIsPosed = true; // ...and until that pass says otherwise, nothing may read them as rest
+        // Up to the displayed level the saved arrays agree with each other in every file version,
+        // and the first pass is about to overwrite them: this is the last chance to read the
+        // sculpt above the bound level out of them. Above the displayed level, see ImportSGL.
+        if (stack) mesh.analyseAbove?.(stack.indexOf(level), mesh._sel);
         // A BOUND MESH USED TO COME BACK LOCKED for pre-v4 files, deriving what bind used to
         // set. Bind no longer locks -- the pick priority prefers a pin, then a joint, and
         // reaches the mesh only when neither is there -- so re-deriving it would hand an old
@@ -7045,6 +7154,59 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     if (ver >= 29) {
       const mu = u[o++];
       if (mu !== NONE) window._skinMush = mu;
+    }
+
+    // v30: named rig poses. Importing into a scene with a pose of the same name keeps both.
+    if (ver >= 30) {
+      const pn = u[o++];
+      for (let i = 0; i < pn && o < u.length; i++) {
+        const len = u[o++];
+        if (len > 256) break;   // not a pose name: a damaged block, and the sections before it are fine
+        let name = '';
+        for (let k = 0; k < len; k++) name += String.fromCharCode(u[o++]);
+        const pose = new Map();
+        const rows = u[o++];
+        for (let r = 0; r < rows && o < u.length; r++) {
+          const m = meshes[u[o++]];
+          const rel = new Float32Array(16);
+          for (let k = 0; k < 16; k++) rel[k] = f[o++];
+          if (m) pose.set(m, rel);
+        }
+        if (!pose.size || !main) continue;
+        const lib = main._rigPoses || (main._rigPoses = new Map());
+        let unique = name;
+        for (let k = 2; lib.has(unique); k++) unique = name + ' ' + k;
+        lib.set(unique, pose);
+      }
+    }
+
+    // v31: the levels came back holding what was on screen, the fixes in it: analyseAbove has already read
+    // their details from that, so this weight's worth comes out. The first frame composes the fixes.
+    if (ver >= 31) {
+      const dn = u[o++];
+      for (let i = 0; i < dn && o < u.length; i++) {
+        const m = meshes[u[o++]], lvl = m && m._meshes ? m._meshes[u[o]] : null;
+        o++;
+        const w = f[o++], len = u[o++];
+        if (len > 256) break;   // not a layer name: a damaged block
+        let key = '';
+        for (let k = 0; k < len; k++) key += String.fromCharCode(u[o++]);
+        const nb = u[o++];
+        const t = m && window._animationRegistry?.tracks?.get(m.getID());
+        if (!t || !lvl || !lvl._detailsXYZ) { o += nb * 4; continue; }
+        const all = t.correctiveDetails || (t.correctiveDetails = new Map());
+        if (!all.has(key)) all.set(key, new Map());
+        const arr = new Float32Array(lvl._detailsXYZ.length);
+        for (let r = 0; r < nb; r++) {
+          const at = u[o++];
+          for (let c = 0; c < 3; c++, o++) {
+            if (at + c >= arr.length) continue;
+            arr[at + c] = f[o];
+            lvl._detailsXYZ[at + c] -= w * f[o];
+          }
+        }
+        all.get(key).set(lvl, arr);
+      }
     }
 
     for (const p of pendingPins) {

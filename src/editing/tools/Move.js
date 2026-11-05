@@ -464,7 +464,8 @@ class Move extends SculptBase {
 
 
 
-      if (useSym) {
+      // Not while posed: the plane only means this in rest space, and a limb swung across it isn't crossing.
+      if (useSym && !mesh._skinIsPosed) {
         // Linear Blend to avoid "Bum Crease" (Bulge/Dip at center)
         // We want Weight(Primary) + Weight(Sym) = 1.0 for coincident vertices.
         // Solution: Blend based on "Side of Plane" relative to Brush Center.

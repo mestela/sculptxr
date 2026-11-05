@@ -83,7 +83,7 @@ class Slide extends SculptBase {
       if (symPick) {
         symPick._mesh = mesh;
         vec3.copy(symPick.getIntersectionPoint(), picking.getIntersectionPoint());
-        Geometry.mirrorPoint(symPick.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+        symPick.mirrorLocalPoint(mesh, symPick.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
 
         // CRITICAL BUG FIX: Explicitly mirror the Ray Origin and Eye/Direction vectors
         // so that Alpha Falloff projection does not pull left-side vertices towards the right-side cursor!
@@ -201,15 +201,14 @@ class Slide extends SculptBase {
     // Symmetry
     var pickingSym = main.getPickingSymmetry();
     if (main.getSculptManager().getSymmetry() && pickingSym) {
-      vec3.copy(this._dragDirSym, this._dragDir);
-      Geometry.mirrorPoint(this._dragDirSym, [0, 0, 0], mesh.getSymmetryNormal());
-
       pickingSym._mesh = mesh;
-      vec3.copy(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint());
-      Geometry.mirrorPoint(pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+      vec3.sub(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint(), this._dragDir);
+      pickingSym.mirrorLocalPoint(mesh, pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+      pickingSym.followMirror(picking, mesh, this._dragDirSym);
 
       pickingSym.setLocalRadius2(picking.getLocalRadius2());
       pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+      pickingSym.pruneToMirror(mesh);
       pickingSym.computePickedNormal();
 
       if (picking._negative) {
@@ -256,7 +255,7 @@ class Slide extends SculptBase {
     if (pickingSym) {
       pickingSym._mesh = mesh;
       vec3.copy(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint());
-      Geometry.mirrorPoint(pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+      pickingSym.mirrorLocalPoint(mesh, pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
     }
 
     for (var i = 0.0; i < 1.0; i += step) {
@@ -282,9 +281,10 @@ class Slide extends SculptBase {
       this.stroke(picking, false);
 
     if (pickingSym) {
-      this.updateDragDir(pickingSym, mouseX, mouseY, true);
+      pickingSym.followMirror(picking, mesh, this._dragDirSym);
       pickingSym.setLocalRadius2(picking.getLocalRadius2());
       pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+      pickingSym.pruneToMirror(mesh);
     }
 
     if (!mesh.isDynamic) this.stroke(picking, false);
@@ -416,7 +416,7 @@ class Slide extends SculptBase {
       fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
 
       // Prevent "Bum Crease" crossover tearing on Symmetry Plane
-      var useSymmetry = this._main.getSculptManager().getSymmetry();
+      var useSymmetry = this._main.getSculptManager().getSymmetry() && !mesh._skinIsPosed;
       if (useSymmetry) {
         var ptPlane = mesh.getSymmetryOrigin();
         var nPlane = mesh.getSymmetryNormal();
@@ -609,7 +609,7 @@ class Slide extends SculptBase {
   }
 
   /** Set a few infos that will be needed for the drag function afterwards */
-  updateDragDir(picking, mouseX, mouseY, useSymmetry) {
+  updateDragDir(picking, mouseX, mouseY) {
     var mesh = this.getMesh();
     var vNear = picking.unproject(mouseX, mouseY, 0.0);
     var vFar = picking.unproject(mouseX, mouseY, 0.1);
@@ -618,13 +618,6 @@ class Slide extends SculptBase {
     vec3.transformMat4(vNear, vNear, matInverse);
     vec3.transformMat4(vFar, vFar, matInverse);
     var dir = this._dragDir;
-    if (useSymmetry) {
-      dir = this._dragDirSym;
-      var ptPlane = mesh.getSymmetryOrigin();
-      var nPlane = mesh.getSymmetryNormal();
-      Geometry.mirrorPoint(vNear, ptPlane, nPlane);
-      Geometry.mirrorPoint(vFar, ptPlane, nPlane);
-    }
     var center = picking.getIntersectionPoint();
     picking.setIntersectionPoint(Geometry.vertexOnLine(center, vNear, vFar));
     vec3.sub(dir, picking.getIntersectionPoint(), center);

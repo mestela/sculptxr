@@ -3,6 +3,7 @@ import ShaderBase from '../render/shaders/ShaderBase.js';
 import TextureIO from './TextureIO.js';
 import MediaRef from './MediaRef.js';
 import TopoIO from './TopoIO.js';
+import { shapeVertexCount } from './ShapeLevel.js';
 import Skeleton from '../editing/Skeleton.js';
 import { jiggle } from '../editing/Jiggle.js';
 import { idle } from '../editing/IdleFace.js';
@@ -49,7 +50,16 @@ var Export = {};
 // 28 PLAYHEAD: the current time, after the project start, so a load lands on the frame it was saved at
 // 27 IDLE FACE (on, blink rate, gaze range, pace, micro) after the jiggle, same terms: one setting
 //    for the scene, written on every mesh with blendshapes, the last one read wins.
-Export.VERSION = 28;
+// 29 SHAPES AT THEIR OWN LEVEL: the base, deltas, samples and neutral are sized to the multires level
+//    the shapes belong to, not the displayed one, and that vertex count is written first. See ShapeLevel.
+// 30 LEVELS ABOVE THE DISPLAYED ONE ARE CURRENT: no new data, but the reader can now derive their
+//    details from them (Multimesh.synthesizeAbove / analyseAbove). Before, they could be stale.
+Export.VERSION = 30;
+
+function shapeCount(mesh, track, isMulti) {
+  var counts = isMulti ? mesh._meshes.map(function (l) { return l.getNbVertices(); }) : [];
+  return shapeVertexCount(track, counts, (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices());
+}
 
 // The vertices of the first nv a delta moves. Shared by the size pass and the write pass, and
 // emptied at the start of every export: deltas are sculpted in place between saves.
@@ -239,8 +249,9 @@ Export.exportSGL = function (meshes, main) {
 
     // Blendshape tracks
     nbBytes += 4; // hasBlendshapes flag
-    var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
+    var activeVertCount = shapeCount(mesh, track, isMulti);
     if (track && track.blendshapes && track.blendshapes.size > 0) {
+      nbBytes += 4; // v29 vertex count
       nbBytes += 4; // hasBaseShape flag
       if (track.baseShape) nbBytes += activeVertCount * 12; // baseShape verts
       nbBytes += 4; // nbBlendshapes
@@ -330,6 +341,7 @@ Export.exportSGL = function (meshes, main) {
       if (isMulti) {
         u32a[off++] = levels.length;
         u32a[off++] = mesh._sel !== undefined ? mesh._sel : 0;
+        mesh.synthesizeAbove();
       }
 
       var originalSel = isMulti ? mesh._sel : 0;
@@ -553,11 +565,12 @@ Export.exportSGL = function (meshes, main) {
       }
 
       // Write blendshape tracks
-      var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
+      var activeVertCount = shapeCount(mesh, track, isMulti);
       var hasBlendshapes = track && track.blendshapes && track.blendshapes.size > 0 ? 1 : 0;
       u32a[off++] = hasBlendshapes;
 
       if (hasBlendshapes) {
+        u32a[off++] = activeVertCount;   // v29
         var hasBaseShape = track.baseShape ? 1 : 0;
         u32a[off++] = hasBaseShape;
         if (hasBaseShape) {

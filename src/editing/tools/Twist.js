@@ -162,7 +162,7 @@ class Twist extends SculptBase {
       // Mirror Center
       var ptPlane = mesh.getSymmetryOrigin();
       var nPlane = mesh.getSymmetryNormal();
-      Geometry.mirrorPoint(center, ptPlane, nPlane);
+      picking.mirrorLocalPoint(mesh, center, ptPlane, nPlane);
 
       // Mirror Axis?
       var axisSym = vec3.clone(axis);
@@ -177,6 +177,7 @@ class Twist extends SculptBase {
     // picking.updateLocalAndWorldRadius2(); // If we changed world radius?
     // We assume picking radius is already set by caller (updateXR)
     picking.pickVerticesInSphere(picking.getLocalRadius2());
+    if (isSym) picking.pruneToMirror(mesh);
     picking.computePickedNormal(); // Optional but good for consistency
 
     var iVertsInRadius = picking.getPickedVertices();

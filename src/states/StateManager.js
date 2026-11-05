@@ -170,7 +170,11 @@ class StateManager {
     // ...and the rest shape, for the same reason: undo rewrites the level's vertices with no
     // stroke to end, so without this the skin pass would put the undone sculpt straight back on
     // the next pose change.
-    if (!exact) Skinning.commitToRest(this._main, this._main.getMesh?.());
+    //
+    // ONLY IF IT DID. A custom step (a shape's weight, a pose, a corrective) changes no sculpted vertex,
+    // and if it recomposed, the level holds the rest composite until the next pass: on a posed mesh
+    // the commit then measured the whole pose as a stroke and wrote it into the rest shape.
+    if (!exact && !(state instanceof StCustom)) Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   redo() {
@@ -187,7 +191,7 @@ class StateManager {
       this.redo();
     this._main.onNomadLocalEdit?.(state);
     Skinning.onCageEdited(this._main, this._main.getMesh?.());
-    if (!exact) Skinning.commitToRest(this._main, this._main.getMesh?.());
+    if (!exact && !(state instanceof StCustom)) Skinning.commitToRest(this._main, this._main.getMesh?.());
   }
 
   reset() {

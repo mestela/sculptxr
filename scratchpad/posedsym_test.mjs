@@ -30,6 +30,7 @@ const strip = (src) => src.split('\n')
 
 const prelude = `
 import * as THREE from '${THREE_PATH}';
+const WeightCage = {};
 const Skeleton = { joints: () => [], jointPos: () => new THREE.Vector3() };
 const adjacencyFromFaces = () => [];
 const getOptionsURL = () => ({ boneMush: 0 });
@@ -591,9 +592,9 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
     if (all.length) detail.push(f + ':' + (all.length - d) + 'p/' + d + 'd');
   }
   check('the remaining posed-space mirrors are the ones we know about',
-    points === 11 && dirs === 6,
+    points === 1 && dirs === 4,
     'got ' + points + ' point + ' + dirs + ' direction mirrors (' + detail.join(' ')
-      + '). Expected 11p/6d (Move:0p Drag:4p/1d Slide:5p/1d Twist:1p/1d SculptBase:1p/3d) -- Move fully converted 2026-09-07. Falling is progress and the number should be updated; rising '
+      + '). Expected 1p/4d (Twist:0p/1d SculptBase:1p/3d) -- Move, Drag, Slide converted; was 11p/6d -- Move fully converted 2026-09-07. Falling is progress and the number should be updated; rising '
       + 'means a new copy was written instead of calling Picking.mirrorLocalPoint');
 }
 

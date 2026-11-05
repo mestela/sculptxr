@@ -306,6 +306,60 @@ const roundTrip = (meshes) => {
     !!out && out[1]._hiddenApplied === true);
 }
 
+// ── NAMED RIG POSES (v30) ────────────────────────────────────────────────────────────────
+// By joint index, so they come back on the new objects, and a joint not in this save is left out.
+{
+  const a = mk({ _isBone: true, _boneRadius: 1 }), b = mk({ _isBone: true, _boneRadius: 1 });
+  const elsewhere = mk({ _isBone: true, _boneRadius: 1 });
+  const meshes = [a, b];
+  const relA = new Float32Array(16).map((_, k) => k + 0.5), relB = new Float32Array(16).map((_, k) => 100 + k);
+  const saved = { _rigPoses: new Map([['arms up', new Map([[a, relA], [b, relB]])], ['gone', new Map([[elsewhere, relA]])]]) };
+  const buf = Skeleton.serialize(meshes, saved);
+  const fresh = meshes.map((m) => mk({ _id: m._id }));
+  const main = { _skelAll: new Set(), getMeshes: () => fresh, render() {}, _scene: null, setMeshParent() {}, _rigPoses: new Map([['arms up', new Map()]]) };
+  const err = console.error; console.error = () => {};
+  Skeleton.deserialize(buf, fresh, main);
+  console.error = err;
+  const lib = main._rigPoses;
+  const back = lib.get('arms up 2');
+  check('a rig pose comes back, keeping one already in the scene', !!back && lib.has('arms up'), [...lib.keys()].join());
+  check('...on the new joints, with its matrices', !!back && back.get(fresh[0])?.[3] === 3.5 && back.get(fresh[1])?.[15] === 115);
+  check('...and a pose with no joint in this save is dropped', !lib.has('gone'));
+  // And the reader stops at damage rather than loading it or running out of memory.
+  const bad = new Uint32Array(buf.slice(0));
+  const countAt = bad.length - 2 - 1 - (2 + 'arms up'.length + 2 * 17) - 1;   // -1 for the fix details' count (v31)
+  check('(the pose count is where this test thinks)', bad[countAt] === 1, 'read ' + bad[countAt]);
+  bad[countAt + 1] = 0xdeadbeef;
+  const hurt = meshes.map((m) => mk({ _id: m._id }));
+  const m2 = { _skelAll: new Set(), getMeshes: () => hurt, render() {}, _scene: null, setMeshParent() {} };
+  console.error = () => {};
+  Skeleton.deserialize(bad.buffer, hurt, m2);
+  console.error = err;
+  check('a damaged pose section stops cleanly', !m2._rigPoses || !m2._rigPoses.size);
+
+  // A pose fix's details: sparse in the file, and the weight on screen at the save comes back out of the
+  // level, whose details a load has just read from what was on screen.
+  const levels = () => [{}, { _detailsXYZ: new Float32Array([1, 1, 1, 2, 2, 2]) }];
+  const wasReg = window._animationRegistry;
+  meshes[0]._meshes = levels();
+  const fixArr = new Float32Array([0, 0, 0, 4, 5, 6]);
+  window._animationRegistry = { tracks: new Map([[meshes[0].getID(), { correctiveW: new Map([['pose:a', 0.5]]), correctiveDetails: new Map([['pose:a', new Map([[meshes[0]._meshes[1], fixArr]])]]) }]]) };
+  const withFix = Skeleton.serialize(meshes, saved);
+  const back2 = meshes.map((m) => mk({ _id: m._id }));
+  back2[0]._meshes = levels();
+  const t2 = {};
+  window._animationRegistry = { tracks: new Map([[back2[0].getID(), t2]]) };
+  console.error = () => {};
+  Skeleton.deserialize(withFix, back2, { _skelAll: new Set(), getMeshes: () => back2, render() {}, _scene: null, setMeshParent() {} });
+  console.error = err;
+  const arr2 = t2.correctiveDetails?.get('pose:a')?.get(back2[0]._meshes[1]);
+  check('a fix\'s details come back', !!arr2 && arr2[3] === 4 && arr2[4] === 5 && arr2[5] === 6 && arr2[0] === 0);
+  const d2 = back2[0]._meshes[1]._detailsXYZ;
+  check('...and its share at the saved weight leaves the level', d2[3] === 2 - 0.5 * 4 && d2[5] === 2 - 0.5 * 6 && d2[0] === 1, [...d2].join());
+  window._animationRegistry = wasReg;
+  delete meshes[0]._meshes;
+}
+
 // ── A FILE SAVED WHEN VOLUMES EXISTED STILL LOADS (SKEL v7) ───────────────────────────
 //
 // Joint volumes are gone, and their SECTION is not: matt's own skel01-03 carry one, and every

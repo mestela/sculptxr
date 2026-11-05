@@ -385,7 +385,7 @@ export default class BlendshapeStackPanel {
     const track = this._track();
     if (!track?.blendshapes) return [];
     const reg = window._animationRegistry;
-    return [...track.blendshapes.keys()].reverse().filter((n) => !reg?.isBlendshapeCombo?.(track, n));
+    return [...track.blendshapes.keys()].reverse().filter((n) => !reg?.isBlendshapeCombo?.(track, n) && !n.startsWith('pose:'));
   }
 
   _comboNames() {

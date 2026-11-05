@@ -13,6 +13,18 @@ const REPO = new URL('..', import.meta.url).pathname;
 const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
 
+// Soft reach injections, each seen to fail its check below:
+//   IK_INJECT=nosoft    no limb is softened: the whip check must fail
+//   IK_INJECT=softrest  the zone ignores how straight the limb was drawn: the rest check must fail
+//   The branch seed's sign test (was the hinge floor) is NOT covered here: only keyed playback on
+//   a real rig reached it (skelpose_v02_pop, .43 knee jump at t=.281).
+{
+  const swap = (a, b) => { if (!SRC.includes(a)) throw new Error('inject: anchor moved: ' + a); SRC = SRC.replace(a, b); };
+  const inj = process.env.IK_INJECT || '';
+  if (inj === 'nosoft') swap('if (window._ikSoftReach === false) return out;', 'return out;');
+  if (inj === 'softrest') swap('Math.min(SOFT_REACH, 1 - ext) * L', 'SOFT_REACH * L');
+}
+
 // Defect injections, so the steering checks have been seen to fail (standing lesson 1):
 //   IK_INJECT=noswivel  the steering goal does nothing at all
 //   IK_INJECT=axial     swivel toward the goal WITHOUT removing the component along the axis,
@@ -78,6 +90,12 @@ const mat4 = {
   create: () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
   clone: (m) => Float32Array.from(m),
   copy: (out, m) => { for (let i = 0; i < 16; i++) out[i] = m[i]; return out; },
+  identity: (out) => { for (let i = 0; i < 16; i++) out[i] = i % 5 === 0 ? 1 : 0; return out; },
+  multiply: (out, a, b) => {
+    const r = new THREE.Matrix4().fromArray(a).multiply(new THREE.Matrix4().fromArray(b)).elements;
+    for (let i = 0; i < 16; i++) out[i] = r[i];
+    return out;
+  },
 };
 
 // --- mock rig -------------------------------------------------------------------
@@ -1935,6 +1953,52 @@ function poleLeg() {
   check('...only when it is not already in the scene',
     /!\(main\.getMeshes\(\) \|\| \[\]\)\.includes\(prev\)/.test(SRC),
     'adding a live object a second time is its own bug');
+}
+
+// --- soft reach: the knee does not whip as the leg runs out of reach ----------------
+// Hips rising at a steady speed with both feet pinned, on a leg drawn at 99% of its reach like
+// the biped's. The number that matters is the knee's speed against the hips', frame to frame.
+{
+  const root = J([0, 2.2, 0]);
+  const legOf = (x) => {
+    const thigh = J([x, 2, 0], root);
+    const knee = J([x, 1, 0.14], thigh);
+    const ankle = J([x, 0, 0], knee);
+    return { thigh, knee, ankle };
+  };
+  const l = legOf(0.3), r = legOf(-0.3);
+  const main = makeMain([root, l.thigh, l.knee, l.ankle, r.thigh, r.knee, r.ankle]);
+  IKSolver.captureRest(main);
+  const foot0 = pos(l.ankle).clone();
+  IKSolver.setPin(l.ankle, IKSolver.PIN_POS, main);
+  IKSolver.setPin(r.ankle, IKSolver.PIN_POS, main);
+  const L = pos(l.thigh).distanceTo(pos(l.knee)) + pos(l.knee).distanceTo(pos(l.ankle));
+  const restD = pos(l.thigh).distanceTo(foot0);
+  const shin = pos(l.knee).distanceTo(pos(l.ankle));
+
+  IKSolver.solve(main, root, new THREE.Vector3(0, 2.2, 0));
+  const restOff = pos(l.ankle).distanceTo(foot0);
+  check('soft reach: the rest pose stays on its pins', restOff < 1e-3, 'foot off by ' + restOff.toFixed(4));
+
+  for (let y = 2.2; y >= 1.9; y -= 0.05) IKSolver.solve(main, root, new THREE.Vector3(0, y, 0));
+  let worstRatio = 0, offInReach = 0, offNearly = 0;
+  let prevK = null, prevH = null;
+  const step = 0.002;
+  for (let y = 1.9; y <= 2.5; y += step) {
+    IKSolver.solve(main, root, new THREE.Vector3(0, y, 0));
+    const k = pos(l.knee).clone(), h = pos(l.thigh).clone();
+    const d = h.distanceTo(foot0);
+    const off = pos(l.ankle).distanceTo(foot0);
+    if (d < restD) offInReach = Math.max(offInReach, off);
+    else if (d < L) offNearly = Math.max(offNearly, off);
+    if (prevK) worstRatio = Math.max(worstRatio, k.distanceTo(prevK) / Math.max(h.distanceTo(prevH), 1e-6));
+    prevK = k; prevH = h;
+  }
+  check('soft reach: the knee does not whip as the leg straightens', worstRatio < 5, worstRatio.toFixed(1) + 'x the hips');
+  check('soft reach: below the drawn extension the pin is exact', offInReach < 1e-3, offInReach.toFixed(4));
+  check('soft reach: a nearly straight leg gives up very little', offNearly < 0.37 * (L - restD) + 1e-3,
+    offNearly.toFixed(4) + ' against a zone of ' + (L - restD).toFixed(4));
+  check('soft reach: no bone stretched', Math.abs(pos(l.knee).distanceTo(pos(l.ankle)) - shin) < 1e-4);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

@@ -9,8 +9,25 @@ import AnimationRegistry from '../editing/AnimationRegistry.js';
 import Mesh from '../mesh/Mesh.js';
 import { jiggle } from '../editing/Jiggle.js';
 import { idle } from '../editing/IdleFace.js';
+import { paddedShapeCount, isCollapsedLevel } from './ShapeLevel.js';
 
 var Import = {};
+
+// Levels of a v28 file that a save after the bad reload collapsed (ShapeLevel) hold nothing to
+// restore. Keeping one would measure the collapse as its detail and rebuild it on every recomposite.
+// The caller's track is guarded: the refresh here must not read as a sculpt on the shapes' level.
+function dropCollapsedLevels(mm, shapeNv, track) {
+  var stack = mm._meshes;
+  for (var i = stack.findIndex(function (l) { return l.getNbVertices() === shapeNv; }) + 1; i < stack.length; i++) {
+    if (!isCollapsedLevel(stack[i].getVertices(), stack[i - 1].getNbVertices(), stack[i].getNbVertices(), track.baseShape)) continue;
+    track._applyingBS = true;
+    mm.setSelection(i - 1);
+    mm.deleteHigher();
+    track._applyingBS = false;
+    window._vrAlert?.('This file saved a collapsed subdivision level, which could not be restored. Removed it: subdivide again to get it back.');
+    return;
+  }
+}
 
 var handleNegativeIndexFace = function (i32) {
   var u32 = new Uint32Array(i32);
@@ -256,6 +273,7 @@ Import.importSGL = function (buffer, gl, main) {
       if (_c) { for (let _ii = 0; _ii < _c.length; _ii += 3) if (_c[_ii] < 0.99 || _c[_ii+1] < 0.99 || _c[_ii+2] < 0.99) _nwL++; }
       console.log(`[SXR Load] after setSelection(${activeIndex}): colors.len=${_c?.length} nonWhiteVerts=${_nwL} first3=[${_c ? Array.from(_c.subarray(0,3)).map(v=>v.toFixed(3)) : 'null'}]`);
       mm.updateResolution();
+      if (version >= 30) mm.analyseAbove();
       mm.initRender();
       // Restore the wireframe state from the saved file (don't force it on).
       const savedWireframe = parsedLevels[activeIndex] ?
@@ -370,10 +388,12 @@ Import.importSGL = function (buffer, gl, main) {
     }
 
     // Read blendshape tracks (version 8+)
+    // shapeNv = the level the shapes belong to; fileNv = what dense data in the file is sized to.
+    var shapeNv = finalMesh.getNbVertices(), fileNv = shapeNv;
     if (version >= 8) {
       var hasBlendshapes = u32a[off++];
       if (hasBlendshapes) {
-        var nbVerts = finalMesh.getNbVertices();
+        if (version >= 29) shapeNv = fileNv = u32a[off++];
         var trackObj = AnimationRegistry.tracks.get(finalMesh.getID());
         if (!trackObj) {
           trackObj = {
@@ -387,9 +407,12 @@ Import.importSGL = function (buffer, gl, main) {
 
         var hasBaseShape = u32a[off++];
         if (hasBaseShape) {
-          trackObj.baseShape = new Float32Array(nbVerts * 3);
-          trackObj.baseShape.set(f32a.subarray(off, off + nbVerts * 3));
-          off += nbVerts * 3;
+          if (version < 29 && finalMesh._meshes) {
+            shapeNv = paddedShapeCount(f32a.subarray(off, off + fileNv * 3), finalMesh._meshes.map(function (l) { return l.getNbVertices(); }));
+          }
+          trackObj.baseShape = f32a.slice(off, off + shapeNv * 3);
+          off += fileNv * 3;
+          if (shapeNv !== fileNv) dropCollapsedLevels(finalMesh, shapeNv, trackObj);
         }
 
         trackObj.blendshapes    = new Map();
@@ -411,12 +434,11 @@ Import.importSGL = function (buffer, gl, main) {
           // Read delta (v20: sparse, the vertices it moves)
           var delta;
           if (version >= 20) {
-            var _rd = ExportSGL.readDelta(u32a, f32a, off, nbVerts);
+            var _rd = ExportSGL.readDelta(u32a, f32a, off, shapeNv);
             delta = _rd[0]; off = _rd[1];
           } else {
-            delta = new Float32Array(nbVerts * 3);
-            delta.set(f32a.subarray(off, off + nbVerts * 3));
-            off += nbVerts * 3;
+            delta = f32a.slice(off, off + shapeNv * 3);
+            off += fileNv * 3;
           }
           trackObj.blendshapes.set(bsName, delta);
           _bsNames.push(bsName);
@@ -548,16 +570,14 @@ Import.importSGL = function (buffer, gl, main) {
         if (version >= 19) {
           var sTop = f32a[off++], nbLower = u32a[off++];
           samples = [];
-          var nv3 = finalMesh.getNbVertices() * 3;
           for (var _li = 0; _li < nbLower; _li++) {
             var sS = f32a[off++], sD;
             if (version >= 20) {
-              var _rs = ExportSGL.readDelta(u32a, f32a, off, nv3 / 3);
+              var _rs = ExportSGL.readDelta(u32a, f32a, off, shapeNv);
               sD = _rs[0]; off = _rs[1];
             } else {
-              sD = new Float32Array(nv3);
-              sD.set(f32a.subarray(off, off + nv3));
-              off += nv3;
+              sD = f32a.slice(off, off + shapeNv * 3);
+              off += fileNv * 3;
             }
             samples.push({ s: sS, d: sD });
           }
@@ -614,7 +634,7 @@ Import.importSGL = function (buffer, gl, main) {
 
       // v23: the neutral the shapes were made on (Retarget Shapes), as its offset from the base.
       if (version >= 23 && u32a[off++]) {
-        var _rd = ExportSGL.readDelta(u32a, f32a, off, finalMesh.getNbVertices());
+        var _rd = ExportSGL.readDelta(u32a, f32a, off, shapeNv);
         off = _rd[1];
         var nbSkip = u32a[off++], rSkip = new Set();
         for (var _rs2 = 0; _rs2 < nbSkip; _rs2++) { var rsName = cNames[u32a[off++]]; if (rsName) rSkip.add(rsName); }

@@ -1115,6 +1115,23 @@ class Picking {
     return false;
   }
 
+  // THE FAR SIDE OF A DRAG FOLLOWS THE MIRROR OF WHERE THE NEAR SIDE IS AIMING, and writes the step it
+  // took into `dir`. A mirrored ray aims at where the far limb would be if it hadn't moved, which on a
+  // posed character is empty space: Drag and Slide did nothing on the far side at all. At rest this is
+  // the same answer as the ray (the reflection of the closest point on a line is the closest point on
+  // its reflection).
+  followMirror(from, mesh, dir) {
+    var target = vec3.copy([0, 0, 0], from.getIntersectionPoint());
+    var nPlane = mesh.getSymmetryNormal();
+    this.mirrorLocalPoint(mesh, target, mesh.getSymmetryOrigin(), nPlane);
+    vec3.sub(dir, target, this.getIntersectionPoint());
+    this.setIntersectionPoint(target);
+    this._mesh = mesh;
+    var eyeDir = this.getEyeDirection();
+    vec3.copy(eyeDir, from.getEyeDirection());
+    Geometry.mirrorPoint(eyeDir, [0, 0, 0], nPlane);
+  }
+
   // Drop the vertices this picking gathered that are only SPATIALLY near the mirrored point --
   // the far hip a large brush catches while reaching for the far hand. No-op unless the last
   // mirror went through rest space, where the question can be asked properly.

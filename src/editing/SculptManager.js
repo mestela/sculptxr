@@ -369,6 +369,8 @@ class SculptManager {
     if (!name) {
       // Base cage is active. Block when it's locked (default once blendshapes exist)
       // so the cage isn't wrecked by accident. No baseShape yet → normal sculpting.
+      // On a saved pose the stroke goes into that pose's corrective, so the base is safe.
+      if (Skinning.correctiveFor?.(this._main, mesh)) return true;
       return !(track.baseShape && track.baseLocked);
     }
     if (track.blendshapeLocked?.has?.(name)) return false; // locked layer
@@ -639,7 +641,7 @@ class SculptManager {
     // what that commit changed in the rest shape rides on the stroke's undo state, so undo can put it back exactly
     const _re = Skinning._lastRestEntry;
     Skinning._lastRestEntry = null;
-    if (_re && _re.idx.length) {
+    if (_re && (_re.idx.length || _re.details)) {
       const _cs = this._main.getStateManager?.()?.getCurrentState?.();
       if (_cs) _cs._restEntry = _re;
     }

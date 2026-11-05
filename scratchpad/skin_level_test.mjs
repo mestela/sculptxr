@@ -27,6 +27,7 @@ const body = SRC.split('\n')
 
 const prelude = `
 import * as THREE from '${THREE_PATH}';
+const WeightCage = {};
 const Skeleton = { joints: () => [], jointPos: () => new THREE.Vector3() };
 const adjacencyFromFaces = () => [];
 `;
@@ -173,7 +174,7 @@ function boundMesh(levels, boundAt) {
       && /mesh\._skinLevelMesh = mesh\._meshes \? mesh\._meshes\[0\]/.test(bindFn),
     'bind still follows the selected subdivision level');
   check('binding a higher displayed level analyses detail down without changing selection',
-    /for \(let i = mesh\._sel \|\| 0; i > 0; i--\) mesh\._meshes\[i - 1\]\.lowerAnalysis\(mesh\._meshes\[i\]\)/.test(bindFn)
+    /for \(let i = mesh\._sel \|\| 0; i > 0; i--\) \{\s*mesh\._meshes\[i - 1\]\.lowerAnalysis\(mesh\._meshes\[i\]\)/.test(bindFn)
       && !/setSelection\(/.test(bindFn),
     'the visible sculpt was not transferred safely to level 0');
   check('...and unbind does not unlock it',
@@ -214,7 +215,7 @@ function boundMesh(levels, boundAt) {
     '_skinRest is what weights re-solve from and what unbind puts back');
   check('...by COPYING only when the skin matrices really are the identity',
     /Skinning\.atBindPose = function/.test(SRC)
-      && /if \(!Skinning\.atBindPose\(main, mesh\)\) return commitPosed\(main, mesh, level, nbV\);/.test(SRC),
+      && /if \(!atBind\) return journalled\(commitPosed\(main, mesh, level, nbV, into\)\);/.test(SRC),
     'copying a POSED shape into the rest shape corrupts the bind irreversibly; posed strokes '
       + 'go through commitPosed, which is measured in restwrite_test.mjs');
   check('...after folding a stroke made ABOVE the bound level back down to it',

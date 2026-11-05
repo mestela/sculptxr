@@ -7740,6 +7740,7 @@ class Scene {
   }
 
   clearScene() {
+    this._rigPoses = null;   // they belong to the skeleton going with it (RigPoses)
     this.getStateManager().reset();
     // The clips belong to the scene: File > New / Open-replace used to leave the video plane's
     // track and the audio (and their lanes and waveform in the timeline) behind.

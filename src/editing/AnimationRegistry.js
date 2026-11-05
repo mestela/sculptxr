@@ -2335,6 +2335,8 @@ class AnimationRegistry {
   // and clearing the map returns the shape to whatever the animation says, with nothing to undo.
   // Committing is a separate, explicit act that writes ordinary keys through the ordinary path.
   blendshapePreviewAt(track, name, bTrack) {
+    // A pose's corrective: its weight comes from the rig (RigPoses.drive), never a key or a slider.
+    if (track.correctiveW && track.correctiveW.has(name)) return Math.max(0, track.correctiveW.get(name));
     if (track.blendshapeCombos && track.blendshapeCombos.has(name)) return this.comboWeight(track, name);
     const p = track.blendshapePreview;
     if (p && p.has(name)) return p.get(name);
@@ -3066,7 +3068,13 @@ class AnimationRegistry {
       // since this last rebuilt it (a stroke, a level switch): analysis then synthesis is not an
       // exact round trip, and doing it every recomposite let the error compound -- a looped jaw on
       // GNM drifted 8 units in 200 cycles and tore the inside of the mouth apart.
-      if (li >= 0 && li < sel) {
+      //
+      // NOT ON A BOUND MESH, whose strokes are folded at their end (Skinning.commitToRest) and whose
+      // bound level the skin pass redraws under the details: there's nothing here to keep. Copying
+      // into it measured details against a shape about to be thrown away, so a shape switched on and
+      // off didn't come back (0.36); not copying, a second recomposite before the pass measured
+      // the whole pose as detail, and it grew by a pose each time.
+      if (li >= 0 && li < sel && !mesh._skinW) {
         const cur = stack[sel].getVertices(), n = stack[sel].getNbVertices() * 3;
         const last = track._mrLast;
         let same = !!last && last.sel === sel && last.v.length === n;
@@ -3114,7 +3122,7 @@ class AnimationRegistry {
       // contributes nothing — but it also made a never-keyed shape impossible to preview, which
       // is every shape the first time you reach for it on the pad.
       const previewing = track.blendshapePreview && track.blendshapePreview.has(name);
-      if ((!bTrack || bTrack.times.length === 0) && !previewing && !this.isBlendshapeCombo(track, name) && !this._idleMoves(track, name)) return;
+      if ((!bTrack || bTrack.times.length === 0) && !previewing && !this.isBlendshapeCombo(track, name) && !this._idleMoves(track, name) && !track.correctiveW?.has(name)) return;
       if (muted && muted.has(name)) return;
 
       const weight = this.shownWeight(track, name, bTrack);
@@ -3370,7 +3378,7 @@ class AnimationRegistry {
       // and the difference is silently baked into the delta — the shape would absorb whatever
       // the pad happened to be showing at the moment of the stroke.
       const previewingO = track.blendshapePreview && track.blendshapePreview.has(name);
-      if ((!bTrack || bTrack.times.length === 0) && !previewingO && !this.isBlendshapeCombo(track, name) && !this._idleMoves(track, name)) return;
+      if ((!bTrack || bTrack.times.length === 0) && !previewingO && !this.isBlendshapeCombo(track, name) && !this._idleMoves(track, name) && !track.correctiveW?.has(name)) return;
       const weight = this.shownWeight(track, name, bTrack);
       if (weight === 0) return;
       if (!out) out = new Float32Array(delta.length);

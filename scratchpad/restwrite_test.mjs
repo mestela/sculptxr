@@ -28,6 +28,7 @@ const body = SRC.split('\n')
 
 const prelude = `
 import * as THREE from '${THREE_PATH}';
+const WeightCage = {};
 const Skeleton = { joints: () => [], jointPos: () => new THREE.Vector3() };
 const adjacencyFromFaces = (level) => {
   const n = level.getNbVertices();
@@ -256,11 +257,31 @@ check('src: unbind drops the posed reference',
   'a stale reference from a previous bind would misread the first stroke after rebinding');
 
 check('src: a posed commit no longer refuses',
-  /return commitPosed\(main, mesh, level, nbV\);/.test(SRC)
+  /return journalled\(commitPosed\(main, mesh, level, nbV, into\)\);/.test(SRC)
     && !/restRefused\(mesh, 'sculpting while posed'\)/.test(SRC));
 
 check('src: a singular basis drops the vertex rather than writing a garbage inverse',
-  /if \(!\(Math\.abs\(det\) > 1e-12\)\) \{ singular\+\+; continue; \}/.test(SRC));
+  /if \(!\(Math\.abs\(det\) > 1e-12\)\) \{ singular\+\+; if \(jr\) jr\.drop\(\); continue; \}/.test(SRC));
+
+// A press with no stroke must leave the rest shape alone. Weight colours used to go up the stack by a
+// synthesis, which isn't exact against the last one, so the next stroke end took the difference for
+// sculpting and folded the whole limb in: 1884 rest vertices moved on skinny_rebuild, by up to 0.22.
+{
+  const show = SRC.slice(SRC.indexOf('Skinning.showWeightColors = function'), SRC.indexOf('Skinning._solo = null;'));
+  const restore = SRC.slice(SRC.indexOf('Skinning.restoreColors = function'), SRC.indexOf('Skinning.refreshWeightColors = function'));
+  check('src: carrying weight colours up leaves the positions alone',
+    /coloursUp\(mesh\);/.test(show) && !/synthesiseUp\(/.test(show) && /coloursUp\(mesh\);/.test(restore) && !/synthesiseUp\(/.test(restore));
+  const up = SRC.slice(SRC.indexOf('function coloursUp'), SRC.indexOf('// Resolve the bound joints once per pass.'));
+  check('src: ...by putting them back after every level', /v\.slice\(0,[\s\S]*higherSynthesis[\s\S]*v\.set\(keep\);/.test(up));
+}
+check('src: a posed bound mesh is never read back as rest, and strokes reach its shape through the commit',
+  /if \(this\._skinW && this\._skinIsPosed\) _track = null;/.test(fs.readFileSync(path.join(REPO, 'src/mesh/Mesh.js'), 'utf8'))
+    && /if \(!moved\) return false;\n  strokeIntoShape\(main, mesh, into\);/.test(SRC)
+    && /mesh\._skinIsPosed = true;/.test(fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8')));
+check('src: a recomposite does not analyse a bound mesh',
+  /if \(li >= 0 && li < sel && !mesh\._skinW\) \{/.test(fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8')));
+check('src: a posed stroke goes back by the mush frames when there are any',
+  /const back = mushReturn\(mesh, mats, src, idx, wts, nbV\);/.test(SRC) && /if \(iters <= 0 \|\| !pair \|\| !mesh\._skinAdj\) return null;/.test(SRC));
 
 // ---- ABOVE THE BOUND LEVEL (grade 3) ----------------------------------------------
 //
@@ -501,7 +522,7 @@ function boundBelow(rest, j, nLevels) {
 // implicated at all.
 
 check('src: the fold runs before the commit, not after',
-  /analyseDown\(mesh, level\);\n\n  if \(!Skinning\.atBindPose/.test(SRC),
+  /analyseDown\(mesh, level\);[\s\S]{0,900}?if \(!atBind\) return journalled/.test(SRC),
   'the commit reads the weighted array, so it has to be folded by then');
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');

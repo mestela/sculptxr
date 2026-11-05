@@ -1105,9 +1105,82 @@ function scratchPair(i) {
 
 // ---- solve ---------------------------------------------------------------------
 
+// ---- soft reach -----------------------------------------------------------------
+//
+// THE IK POP. The joint in the middle of a limb sits sqrt(L^2 - d^2) off the line to its goal,
+// and that is vertical at d = L: hips rising at a steady speed whip the knee straight in the last
+// moment of reach, then it stops dead. On skelpose_v02_pop the knee moved 22x the speed of the
+// hips on the frame the leg locked. The solver is not at fault; the curve is.
+//
+// So the goal eases towards full reach instead of arriving at it (soft IK, Nawrocki 2009): past
+// `L - s` the distance follows an exponential that approaches L and never gets there. The limb
+// reaches straight only in the limit and the knee has no last moment to whip through. The price
+// is the goal itself: the foot starts to leave its pin just before the limb runs out, by .37 s
+// at most while the pin is still in reach.
+//
+// THE REST POSE MUST NOT MOVE, which is what `s` answers to. Rigs are drawn nearly straight (the
+// biped at 99.4% of reach), and the textbook 5% would lift every foot .3 off the floor at rest.
+// The zone starts no earlier than the extension the limb was drawn at, so a rig with a little
+// more bend at rest has more room to ease and gets a softer knee.
+const SOFT_REACH = 0.05;
+const _mSoft = mat4.create(), _vSoft = new THREE.Vector3();
+
+// How straight the limb from `top` down to `node` was drawn: rest span over rest length. Both in
+// the same local frame, so a scaled rig reads the same. -1 when a joint has no rest yet.
+function restExtension(top, node) {
+  const chain = [];
+  for (let n = node; ; n = n.parent) { chain.unshift(n); if (n === top) break; }
+  let length = 0;
+  mat4.identity(_mSoft);
+  for (const n of chain) {
+    const r = n.joint._ikRest;
+    if (!r) return -1;
+    length += Math.hypot(r[12], r[13], r[14]);
+    mat4.multiply(_mSoft, _mSoft, r);
+  }
+  return length > 0 ? Math.hypot(_mSoft[12], _mSoft[13], _mSoft[14]) / length : -1;
+}
+
+// A limb is a goal plus the unbroken run of hinges above it, measured from the ball joint they
+// hang off. A hinge already answers "is this a knee", so a shoulder or a spine link never counts,
+// and a goal partway down (a pinned knee) means the run has no single span to soften.
+function softLimbs(targets) {
+  const out = [];
+  if (window._ikSoftReach === false) return out;
+  for (const [node, target] of targets) {
+    let top = node, L = 0;
+    let broken = false;
+    while (top.parent && top.parent.hinge) {
+      L += top.len;
+      top = top.parent;
+      if (targets.has(top)) { broken = true; break; }
+    }
+    if (broken || top === node || !top.parent) continue;
+    L += top.len;
+    const ext = restExtension(top, node);
+    if (ext < 0) continue;
+    const s = Math.min(SOFT_REACH, 1 - ext) * L;
+    if (s > L * 1e-4) out.push({ base: top.parent, target, want: target.clone(), L, s });
+  }
+  return out;
+}
+
+// Re-aimed as the base settles: a hip pin puts the thigh somewhere the seed pose did not.
+function applySoftReach(limbs) {
+  for (const { base, target, want, L, s } of limbs) {
+    _vSoft.subVectors(want, base.pos);
+    const d = _vSoft.length();
+    const start = L - s;
+    if (d <= start) { target.copy(want); continue; }
+    const eased = start + s * (1 - Math.exp((start - d) / s));
+    target.copy(base.pos).addScaledVector(_vSoft, eased / d);
+  }
+}
+
 // Run FABRIK over the tree. `targets` maps node -> desired model-space position (the dragged
 // joint and every pin). Returns the solved positions on the nodes themselves.
 let _sweepHinge = true;
+let _softNow = [];
 
 function fabrik(nodes, targets, root, rootFixed, tol, active, byDepth) {
   let worst = Infinity;
@@ -1201,6 +1274,7 @@ function fabrik(nodes, targets, root, rootFixed, tol, active, byDepth) {
       }
     }
 
+    applySoftReach(_softNow);
     worst = 0;
     for (const [n, t] of targets) worst = Math.max(worst, n.pos.distanceTo(t));
     if (worst < tol) break;
@@ -1266,7 +1340,10 @@ function reseedBranches(byDepth, targets) {
       _vHw.copy(_vHu).addScaledVector(_vHv, sgn * h);
       _vHdir.subVectors(_vHw, base).normalize();
       _vHy.subVectors(goal, _vHw).normalize(); // not _vHx: signedAngle uses that as its own scratch
-      if (signedAngle(_vHdir, _vHy, _vHa) >= HINGE_MIN) { n.pos.copy(_vHw); any = true; break; }
+      // Only the SIGN picks the branch. Asking for the 2 degree floor here gave up on both
+      // solutions as a knee neared straight, and the knee jumped back to wherever the seed left
+      // it: .43 in one frame, at a steady hip speed, with soft reach easing it towards straight.
+      if (signedAngle(_vHdir, _vHy, _vHa) > 0) { n.pos.copy(_vHw); any = true; break; }
     }
   }
   return any;
@@ -1306,8 +1383,12 @@ function runSolve(nodes, targets, root, rootFixed, tol) {
   if (seedOnly && window._ikHinge !== false) {
     _sweepHinge = true;
     updateHingeAxes(byDepth);
+    _softNow = softLimbs(targets);
+    applySoftReach(_softNow);
     reseedBranches(byDepth, targets);
     _sweepHinge = false;
+  } else {
+    _softNow = [];
   }
 
   let worst = fabrik(nodes, targets, root, rootFixed, tol, active, byDepth);

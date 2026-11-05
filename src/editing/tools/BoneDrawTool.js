@@ -651,6 +651,25 @@ class BoneDrawTool extends SculptBase {
       const d = Math.hypot(_s0.x - mx, _s0.y - my);
       if (d < bestD) { bestD = d; best = i; }
     }
+    // A VOLUME'S ARC AND RING, sampled along their length, and the NEAREST handle wins rather than any dot
+    // in reach. A dot's reach is 34px, so zoomed out it took every click on the ring beside it. Dots keep
+    // a small preference for when they're practically under the cursor, and the arc wins a tie with the ring.
+    if (h.arcOn) {
+      const px = this._pickPx();
+      let arcD = Infinity, ringD = Infinity;
+      for (let n = 0; n <= 16; n++) {
+        const t = (n / 16) * Math.PI / 2;
+        _ringP.copy(h.arcCentre).addScaledVector(h.arcA, Math.cos(t) * h.arcR).addScaledVector(h.arcB, Math.sin(t) * h.arcR);
+        if (this._toScreen(_ringP, _s0)) arcD = Math.min(arcD, Math.hypot(_s0.x - mx, _s0.y - my));
+      }
+      for (let n = 0; n < 48; n++) {
+        const t = (n / 48) * Math.PI * 2;
+        _ringP.copy(h.centrePos).addScaledVector(h.arcA, Math.cos(t) * h.ringR).addScaledVector(h.arcB, Math.sin(t) * h.ringR);
+        if (this._toScreen(_ringP, _s0)) ringD = Math.min(ringD, Math.hypot(_s0.x - mx, _s0.y - my));
+      }
+      const other = Math.min(arcD, ringD), dotD = best === null ? Infinity : bestD;
+      if (other < px && other + px * 0.25 < dotD) return arcD <= ringD ? Skeleton.arcHandle() : Skeleton.ringHandle(1);
+    }
     if (best !== null) return Object.assign({ kind: 'face', index: best }, Skeleton.scaleHandleAxis(best));
     // THE RINGS, sampled round their circumference and compared in pixels like the dots — what is
     // drawn where it is drawn. Only when no dot is under the cursor: a dot is the smaller target.
@@ -679,11 +698,11 @@ class BoneDrawTool extends SculptBase {
   _ringPoint(out) {
     const sc = this._scale;
     const h = this._main._jointHandles;
-    // A volume's twist ring is on the bone axis at the ring's drawn centre (see updateScaleHandles).
+    // A volume's ring and arc are on the bone axis, each at its own drawn centre (see updateScaleHandles).
     const v = this._vol;
     if ((!sc && !v) || !h || !this._screenRay(_rayO, _rayD)) return false;
     const a = sc ? sc.ringAxis : v.f.d;
-    const centre = sc ? sc.centre : h.centrePos;
+    const centre = sc ? sc.centre : (v.grip.kind === 'twist' ? v.f.C0 : h.centrePos);
     const denom = a.dot(_rayD);
     if (Math.abs(denom) < 0.2) return this._planePoint(h.centrePos, out);
     const t = a.dot(_wA.copy(centre).sub(_rayO)) / denom;
@@ -1277,7 +1296,7 @@ class BoneDrawTool extends SculptBase {
         // the edit snapped to it on the first move. matt: the handles "jump as soon as i start the
         // drag, rather than staying in place". With both, the first move reproduces the handle exactly.
         // (A ring measures from where it was taken hold of already, so it keeps the joint plane.)
-        const hp = grip.kind !== 'ring' && main2._jointHandles.pos[grip.index];
+        const hp = grip.kind === 'face' && main2._jointHandles.pos[grip.index];
         const anchor = hp ? hp.clone() : Skeleton.jointPos(hj, _jp).clone();
         const grabOff = (hp && this._planePoint(anchor, _wB)) ? anchor.clone().sub(_wB) : null;
         this._drag = { kind: 'joint', joint: hj, anchor: anchor, grabOff: grabOff,
@@ -1399,7 +1418,7 @@ class BoneDrawTool extends SculptBase {
 
     if (d.kind === 'joint') {
       const ringDrag = (this._scale && this._scale.grip.kind === 'ring')
-        || (this._vol && this._vol.grip.kind === 'ring');
+        || (this._vol && this._vol.grip.kind !== 'face');
       if (ringDrag ? this._ringPoint(_hit) : this._planePoint(d.anchor, _hit)) {
         if (!ringDrag && d.grabOff) _hit.add(d.grabOff);
         this._scaleTo(_hit);
@@ -2211,10 +2230,10 @@ class BoneDrawTool extends SculptBase {
   // ── BONE VOLUMES: EDITING A BONE'S SECTION FROM ITS ROOT ───────────────────────────────────
   //
   // Selecting a joint edits the volume LEAVING it (the one that is lit; tap the joint again to move to
-  // its next bone when it has several), like Voodoo, where the controls sit at the root. Three grips:
-  // the width dots (+-x of the section) and the height dots (+-z) set the ellipse, and the diagonal dot
-  // is the UNIFORM scale -- none of them touches the bone's length. The edit goes to the bone's mirror
-  // twin as well.
+  // its next bone when it has several), like Voodoo, where the controls sit at the root. The width dots
+  // (+-x of the section) and the height dots (+-z) set the ellipse, the big ring is the UNIFORM scale --
+  // none of them touches the bone's length -- and the quarter circle twists it. The edit goes to the
+  // bone's mirror twin as well.
   _volBones(joint) {
     const main = this._main;
     const b = Skeleton.volumeActive(main, joint);
@@ -2249,8 +2268,10 @@ class BoneDrawTool extends SculptBase {
     // A CENTRELINE bone keeps its width symmetric (it is its own mirror); everything else, and the
     // height of every bone, moves one face with the other pinned.
     const centreline = Skeleton.jointIsCentreline(this._main, bones[0]);
+    // The part of the ring's radius that doesn't scale with the volume (see updateScaleHandles).
+    const ringGap = Math.max(0, (this._main._jointHandles?.ringR || 0) - Math.max(f.W, f.H) * f.r * 1.35);
     this._vol = { joint, bones, grip, before: this._volRows(bones), f, r0: f.r, W0: f.W, H0: f.H,
-      o10: f.o1, o30: f.o3, centreline, startPerp: 0 };
+      o10: f.o1, o30: f.o3, centreline, startPerp: 0, ringGap };
     this._soloBegin([joint, joint._boneMirror], true);
     return true;
   }
@@ -2266,9 +2287,9 @@ class BoneDrawTool extends SculptBase {
     const h = Math.abs(px * f.e3.x + py * f.e3.y + pz * f.e3.z);
     const axis = v.grip.axis;
     const minR = Math.max(f.len * 0.02, 1e-6);
-    if (v.grip.kind === 'ring') {
-      // THE TWIST RING: the hand's angle round the bone, about the volume's middle, from where it took
-      // hold. The twin turns the other way (Skeleton.volumeTwist).
+    if (v.grip.kind === 'twist') {
+      // THE TWIST ARC: the hand's angle round the bone from where it took hold. The twin turns the other
+      // way (Skeleton.volumeTwist).
       _rv1.copy(f.C0).add(f.C1).multiplyScalar(0.5);
       _rv1.subVectors(pos, _rv1);
       _rv1.addScaledVector(f.d, -_rv1.dot(f.d));
@@ -2313,10 +2334,11 @@ class BoneDrawTool extends SculptBase {
         }
       }
     } else {
-      // The first frame only ANCHORS the drag (the dot sits on the rim, so the hand starts there).
+      // THE SCALE RING: the first frame only ANCHORS the drag, then the ring's edge stays under the hand.
+      // Hence the gap comes off both: the ring's radius doesn't all scale with the volume.
       const perp = Math.hypot(px, py, pz);
       if (!v.startPerp) { v.startPerp = Math.max(perp, 1e-9); return; }
-      const k = perp / v.startPerp;
+      const k = (perp - v.ringGap) / Math.max(v.startPerp - v.ringGap, 1e-9);
       for (const j of v.bones) j._boneRadius = Math.max(v.r0 * k, minR);
     }
     this._liveWeights();

@@ -7,6 +7,7 @@ import SkinMesh from '../editing/SkinMesh.js';
 import WeightCage from '../editing/WeightCage.js';
 import IKSolver from '../editing/IKSolver.js';
 import RigTopology from '../editing/RigTopology.js';
+import RigPoses from '../editing/RigPoses.js';
 import { orientJoints } from '../editing/JointOrient.js';
 import { collapsibleHTML, uiReorg, squeezeLabel } from './htmlvr/uiTokens.js';
 
@@ -784,6 +785,7 @@ export function buildBonePoseHTML(main, style) {
       <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
       <button class="${c.action}" id="bone-flip">Copy Side</button>
     </div>
+    ${rigPosesHTML(main, c)}
     ${bound ? `<div class="${c.btnRow}">
       <button class="${c.action}${Skinning.bindPoseHeld() ? ' active' : ''}" id="bone-bindpose"
         title="Jump to the pose the SKIN was bound in and hold it there, so you can sculpt the bind shape. Not the same as Rest Pose — that is the rig's rest, which can differ from the bind. Physics, playback and pin solves stand down while it is held; pressing it again puts the pose you left back exactly.">${
@@ -1013,6 +1015,84 @@ export function togglePhysicsBone(main, joint, onChange) {
   Skeleton.updateVisuals(main);
   main.render?.();
   return { on, mirrored: pair.length > 1 ? ' (mirrored)' : '' };
+}
+
+// THE RIG'S POSE LIBRARY, working as the face tool's does: press a name to apply it, or arm Update,
+// Rename or Delete first and press a name to do that instead.
+let rigPoseMode = null;
+const RIG_POSE_MODES = [['update', 'Update'], ['rename', 'Rename'], ['delete', 'Delete'], ['mirror', 'Mirror'],
+  ['bake', 'Bake to Rest'], ['clear', 'Clear Fix']];
+const escAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+
+function rigPosesHTML(main, c) {
+  const names = RigPoses.names(main);
+  if (!names.length) rigPoseMode = null;
+  const rows = [];
+  for (let i = 0; i < names.length; i += 2) {
+    rows.push(`<div class="${c.btnRow}">${names.slice(i, i + 2).map((n) => `<button class="${c.action}${rigPoseMode ? ' active' : ''}" data-rig-pose="${escAttr(n)}"${RigPoses.hasCorrective(main, n) ? ' title="Has sculpted fixes for this pose"' : ''}>${escAttr(n)}${RigPoses.hasCorrective(main, n) ? ' +' : ''}</button>`).join('')}</div>`);
+  }
+  const on = names.length ? RigPoses.active(main) : null;
+  return `${rows.join('')}
+    ${names.length ? `<div class="${c.btnRow}"><span id="bone-sculpt-into" title="Where a stroke goes. On a saved pose it is a fix for that pose, faded in by how close the rig is to it. Anywhere else it goes into the rest shape, which every pose gets.">Sculpting into: ${on ? escAttr(on.name) : 'rest'}</span></div>` : ''}
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-pose-key"
+        title="Key the whole rig as it stands at the playhead, every joint and pin, as one undo step. Press a pose first to key that pose.">Key Rig</button>
+      <button class="${c.action}" id="bone-pose-save"
+        title="Save the skeleton as it stands as a named pose. Press its name to go back to it. Each joint is stored relative to its rest, so a pose survives Tweak.">Save Pose</button>
+      ${names.length ? RIG_POSE_MODES.map(([m, label]) => `<button class="${c.action}${rigPoseMode === m ? ' active' : ''}" data-rig-pose-mode="${m}">${label}</button>`).join('') : ''}
+    </div>`;
+}
+
+// The VR keyboard in the headset, a text prompt on desktop.
+function askRigPoseName(cur, done) {
+  const kb = window._vrKeyboard;
+  if (kb?.shouldUse?.()) {
+    kb.open(cur, { label: 'Rename pose', maxLength: 32 }, (t) => { const n = (t ?? '').trim(); if (n) done(n); }, null, window.app?._mainMenuPanel || null);
+  } else {
+    const n = (window.prompt('Rename pose', cur) ?? '').trim().slice(0, 32);
+    if (n) done(n);
+  }
+}
+
+function wireRigPoses(root, main, say, rebuild) {
+  window._refreshRigPoses = rebuild;
+  window._rigSculptInto = (name) => {
+    const el = root.querySelector('#bone-sculpt-into');
+    if (el) el.textContent = 'Sculpting into: ' + (name || 'rest');
+  };
+  root.querySelector('#bone-pose-save')?.addEventListener('click', () => {
+    // Named poseN with no prompt: a text dialog in the headset is no way to work. Rename after.
+    const name = RigPoses.nextName(main);
+    if (RigPoses.save(main, name)) say(`Bones: saved ${name}`);
+    else say('Bones: no rest pose recorded to save against', false);
+    rebuild();
+  });
+  root.querySelector('#bone-pose-key')?.addEventListener('click', () => {
+    const t = window._animCurrentTime || 0;
+    const n = RigPoses.keyRig(main, t);
+    say(n ? `Bones: keyed ${n} joints and pins at ${t.toFixed(2)}s` : 'Bones: nothing to key', !!n);
+    main.getGui?.()._ctrlTimeline?.draw();
+    main.render?.();
+  });
+  root.querySelectorAll('[data-rig-pose-mode]').forEach((btn) => btn.addEventListener('click', () => {
+    rigPoseMode = rigPoseMode === btn.dataset.rigPoseMode ? null : btn.dataset.rigPoseMode;
+    rebuild();
+  }));
+  root.querySelectorAll('[data-rig-pose]').forEach((btn) => btn.addEventListener('click', () => {
+    const name = btn.dataset.rigPose, mode = rigPoseMode;
+    rigPoseMode = null;
+    if (mode === 'update') RigPoses.update(main, name);
+    else if (mode === 'delete') RigPoses.remove(main, name);
+    else if (mode === 'rename') askRigPoseName(name, (n) => { RigPoses.rename(main, name, n.slice(0, RigPoses.MAX_NAME)); rebuild(); });
+    else if (mode === 'bake') say(RigPoses.bake(main, name) ? `Bones: ${name}'s fix baked into the rest shape` : `Bones: ${name} has no fix to bake`);
+    else if (mode === 'clear') say(RigPoses.clear(main, name) ? `Bones: ${name}'s fix cleared` : `Bones: ${name} has no fix to clear`);
+    else if (mode === 'mirror') {
+      const r = RigPoses.mirror(main, name);
+      say(r.ok ? `Bones: mirrored to ${r.name}` + (r.layers ? ', fix included' : '') : 'Bones: ' + r.why, r.ok);
+    }
+    else if (!RigPoses.apply(main, name)) say(window._bindPoseHold ? 'Bones: leave the bind pose first' : `Bones: ${name} has no joints to set`, false);
+    rebuild();
+  }));
 }
 
 export function restPose(main, say) {
@@ -1759,7 +1839,8 @@ export function wireBoneSection(root, main, opts) {
         + `${res.bones} bones, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
         + (bnd && bnd.ok
             ? `, bound to ${bnd.joints} joints in ${bnd.ms}ms`
-              + (bnd.outside ? ` (${bnd.outside} verts outside every capsule)` : '')
+              // with volumes the skin is built just outside them, so this would be every vertex
+              + (bnd.outside && !Skeleton.displayFlag('volumes') ? ` (${bnd.outside} verts outside every capsule)` : '')
             : `, NOT bound: ${(bnd && bnd.why) || 'bind failed'}`)
       : `Bones: ${res.why}`, res.ok);
     rebuild(); // the new mesh becomes the selection, so the panel changes
@@ -2005,6 +2086,7 @@ export function wireBoneSection(root, main, opts) {
   });
 
   q('restpose')?.addEventListener('click', () => restPose(main, say));
+  wireRigPoses(root, main, say, rebuild);
 
   // SCULPT THE BIND SHAPE. Two things the rest of the app has never had: an exact way to REACH
   // the pose the skin was bound in (the rig's rest pose is a different pose and can differ from

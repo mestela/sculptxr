@@ -40,6 +40,7 @@ class MeshResolution extends Mesh {
     this.setTransformData(mesh.getTransformData());
 
     this._detailsXYZ = null; // details vectors (Float32Array)
+    this._detailsFix = null; // what the rig's pose fixes add to them right now, kept apart (RigPoses.js)
     this._detailsRGB = null; // details vectors (Float32Array)
     this._detailsPBR = null; // details vectors (Float32Array)
     this._vertMapping = null; // vertex mapping to higher res (Uint32Array)
@@ -71,8 +72,13 @@ class MeshResolution extends Mesh {
   }
 
   /** Go to one level below (up to down) */
-  lowerAnalysis(meshUp, mask) {
-    this.copyDataFromHigherRes(meshUp, mask);
+  lowerAnalysis(meshUp, mask, keepVertices) {
+    this.copyDataFromHigherRes(meshUp, mask, keepVertices);
+    this.analyseUp(meshUp);
+  }
+
+  /** The level above's detail vectors against this level as it stands. Changes nothing here. */
+  analyseUp(meshUp) {
     var nbVertices = meshUp.getNbVertices();
 
     // THE SCRATCH IS KEPT. This used to run only when the user stepped down a level by hand,
@@ -108,7 +114,10 @@ class MeshResolution extends Mesh {
   // Detail vectors need no such treatment: computeDetails re-derives every one of them from the
   // cage it is given, so a vertex whose cage neighbourhood did not move gets its old detail back
   // by arithmetic rather than by being restored.
-  copyDataFromHigherRes(meshUp, mask) {
+  //
+  // `keepVertices` leaves the positions: a level the skin pass rebuilds isn't ours to write. Colours
+  // and materials still come down, as the skin doesn't touch those.
+  copyDataFromHigherRes(meshUp, mask, keepVertices) {
     var vArDown = this.getVertices();
     var cArDown = this.getColors();
     var mArDown = this.getMaterials();
@@ -118,7 +127,7 @@ class MeshResolution extends Mesh {
     var mArUp = meshUp.getMaterials();
 
     if (this.getEvenMapping() === false && !mask) {
-      vArDown.set(vArUp.subarray(0, nbVertices * 3));
+      if (!keepVertices) vArDown.set(vArUp.subarray(0, nbVertices * 3));
       cArDown.set(cArUp.subarray(0, nbVertices * 3));
       mArDown.set(mArUp.subarray(0, nbVertices * 3));
     } else {
@@ -127,9 +136,11 @@ class MeshResolution extends Mesh {
         if (mask && !mask[i]) continue;
         var id = i * 3;
         var idUp = (vertMap ? vertMap[i] : i) * 3;
-        vArDown[id] = vArUp[idUp];
-        vArDown[id + 1] = vArUp[idUp + 1];
-        vArDown[id + 2] = vArUp[idUp + 2];
+        if (!keepVertices) {
+          vArDown[id] = vArUp[idUp];
+          vArDown[id + 1] = vArUp[idUp + 1];
+          vArDown[id + 2] = vArUp[idUp + 2];
+        }
         cArDown[id] = cArUp[idUp];
         cArDown[id + 1] = cArUp[idUp + 1];
         cArDown[id + 2] = cArUp[idUp + 2];
@@ -215,6 +226,14 @@ class MeshResolution extends Mesh {
     var dAr = this._detailsXYZ;
     var dColorAr = this._detailsRGB;
     var dMaterialAr = this._detailsPBR;
+
+    var fix = this._detailsFix;
+    if (fix && fix.length === dAr.length) {
+      if (!this._detailsShown || this._detailsShown.length !== dAr.length) this._detailsShown = new Float32Array(dAr.length);
+      var shown = this._detailsShown;
+      for (var f = 0; f < dAr.length; ++f) shown[f] = dAr[f] + fix[f];
+      dAr = shown;
+    }
 
     var min = Math.min;
     var max = Math.max;
@@ -386,6 +405,10 @@ class MeshResolution extends Mesh {
       dAr[j + 1] = tx * dx + ty * dy + tz * dz;
       dAr[j + 2] = bix * dx + biy * dy + biz * dz;
     }
+
+    // What was measured includes the pose fixes applyDetails drew, and those aren't this level's.
+    var fix = this._detailsFix;
+    if (fix && fix.length === nbVerticesUp * 3) for (var f = 0; f < fix.length; ++f) dAr[f] -= fix[f];
   }
 
   getSymmetryData() {

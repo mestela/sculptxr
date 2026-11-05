@@ -768,7 +768,8 @@ function capsuleTarget(p, caps, out) {
     // The FINEST feature here, which is the smallest of the three half-extents rather than the
     // radius: a joint squashed flat in Z has to keep a blend narrow enough not to fill it back
     // out again.
-    const fine = Math.min(hx, hy, hz);
+    // A volume's own `fine`: its depth along the bone is only the dome, not a feature.
+    const fine = c.fine || Math.min(hx, hy, hz);
     if (fine < rmin) rmin = fine;
   }
   if (!(dmin < Infinity)) return out.copy(p);
@@ -900,6 +901,124 @@ function relax(verts, faces, caps) {
 // joint volumes drifted from the thing they claimed to describe: four consumers, each re-deriving
 // the shape, agreeing at first and diverging on the cases that mattered. There is one answer
 // here, and the preview shows it rather than a picture of it.
+// WRAPPING THE BONE VOLUMES. With Bone Volumes on (the flag the bind and the drawing read) they ARE the
+// shape: Tweak Joint edits them, and the joint shapes below have no controls left. This wrapped the joint
+// shapes regardless, so a volume's width, height, offset, twist, ends and sharpness all reached the
+// weights and none of them reached the skin. Null with the flag off, or on a rig with no radii.
+//
+// ONE CAP PER VOLUME, the drawn shape in the relax's own terms: a segment, the section as half-extents in
+// the volume's frame, its sharpness, and the drawn dome's depth along the bone.
+//
+// EXCEPT WHERE IT MEETS A NEIGHBOUR. A volume stops short of its joint by a gap, which is right for
+// weights (the split falls in it) and wrong for a surface: wrapped literally, two domes facing each other
+// pinch the skin to nothing at every joint, like a string of sausages. So an end with a neighbour runs on
+// to the joint, and a free end (a fingertip, an end pulled past the tip) stays exactly where it was drawn.
+// By how much depends on the neighbour's size: a thin neck leaves the chest's end as drawn, as carrying
+// the whole chest to the neck joint would wrap a shelf over its base. A neighbour of its own size or
+// larger closes the gap completely.
+//
+// JUST OUTSIDE THE VOLUME, by VOLUME_MARGIN of its section. Exactly on it, smoothing leaves most of the skin
+// a hair inside and the volume shows through (skinny_v07: 1870 of 2530 vertices inside at 1.0, 297 at 1.04,
+// 277 at 1.08), and volumes belong under the surface. More only crowds fingers: crossing pairs on a hand
+// go 10, 23, 39 over the same three. Overridable as window._boneSkinMargin.
+const VOLUME_MARGIN = 1.04;
+// The ball at a branch: full size, as anything smaller left the biped's limbs crossing (0 pairs at 1, 44 at 0.85).
+const HUB_SIZE = 1;
+let _vols = null;
+const volSize = (v) => Math.sqrt(v.rw * v.rh);
+function volumeShapes(main, all) {
+  if (!Skeleton.displayFlag('volumes')) return null;
+  const vols = [], touching = new Map();
+  const touch = (j, v) => { if (!touching.has(j)) touching.set(j, []); touching.get(j).push(v); };
+  for (const j of all) {
+    if (!Skeleton.boneHasCapsule(j)) continue;
+    const f = Skeleton.volumeFrame(main, j);
+    if (!(f.len > 1e-9)) continue;
+    const v = { j: j, p: j._parentMesh, f: f, rw: Math.max(f.r * f.W, 1e-6), rh: Math.max(f.r * f.H, 1e-6) };
+    vols.push(v);
+    touch(j, v);
+    touch(v.p, v);
+  }
+  if (!vols.length) return null;
+
+  const reach = (v, at) => {                    // 0 = stop as drawn, 1 = run on to the joint
+    let big = 0;
+    for (const o of touching.get(at)) if (o !== v) big = Math.max(big, volSize(o));
+    return Math.min(1, big / volSize(v));
+  };
+  const caps = [], half = new Map(), centre = new Map();
+  for (const v of vols) {
+    const f = v.f, fine = Math.min(v.rw, v.rh);
+    const b = Math.max(Math.min(0.5 * fine, 0.3 * f.axial), 1e-6);  // as drawn: Skeleton.updateVisuals
+    // Along the bone from C0: where the shaft ends, the dome then reaching `b` past it.
+    const r0 = reach(v, v.p), r1 = reach(v, v.j);
+    let s0 = b + (-f.inset - b) * r0;
+    let s1 = (f.axial - b) + (f.inset + b) * r1;
+    if (s1 < s0) s0 = s1 = (s0 + s1) / 2;
+    const iq = f.Q.clone().invert();
+    const ri = new Float64Array([iq.x, iq.y, iq.z, iq.w, iq.x, iq.y, iq.z, iq.w]);
+    const pw = Skeleton.volumeRound(v.j);
+    const margin = typeof window._boneSkinMargin === 'number' ? window._boneSkinMargin : VOLUME_MARGIN;
+    const h = [v.rw * margin, b, v.rh * margin];
+    v.cap = { a: f.C0.clone().addScaledVector(f.d, s0), b: f.C0.clone().addScaledVector(f.d, s1),
+      ha: h, hb: h, pa: pw, pb: pw, ri: ri, fine: fine, vol: v };
+    caps.push(v.cap);
+  }
+
+  // THE BOX AT A JOINT: as big as the volumes touching it, axis by axis (the boxes stay world-aligned, so
+  // a volume's section is taken through its frame), and centred on them. A free end dragged off its joint
+  // takes its box along, inside the end, so the cap wraps that end rather than stretching along the bone
+  // to reach it. Only when dragged: moving every leaf's box this way crossed neighbouring fingers (235
+  // face pairs against 78 on a crowded hand).
+  for (const [j, list] of touching) {
+    const h = [0, 0, 0], off = new THREE.Vector3();
+    for (const v of list) {
+      const f = v.f, along = Math.min(v.rw, v.rh);
+      for (let k = 0; k < 3; k++) {
+        const a = f.e1.getComponent(k) * v.rw, c = f.e3.getComponent(k) * v.rh, d = f.d.getComponent(k) * along;
+        h[k] = Math.max(h[k], Math.sqrt(a * a + c * c + d * d));
+      }
+      off.addScaledVector(f.e1, f.o1 * f.r).addScaledVector(f.e3, f.o3 * f.r);
+    }
+    half.set(j, h);
+    const c = Skeleton.jointPos(j).add(off.divideScalar(list.length));
+    const moved = list.length === 1 && (list[0].j === j ? list[0].f.end1 : list[0].f.end0);
+    if (moved) {
+      const v = list[0], f = v.f, tip = v.j === j;
+      const hd = Math.abs(f.d.x) * h[0] + Math.abs(f.d.y) * h[1] + Math.abs(f.d.z) * h[2];
+      const t = tip ? Math.max(f.axial - hd, f.axial / 2) : Math.min(hd, f.axial / 2);
+      c.copy(f.C0).addScaledVector(f.d, t);
+    }
+    centre.set(j, c);
+    // A BRANCH HAS TO BE ONE MASS. Three or more bones meeting leave their roots converging on one point in
+    // open space, where the volumes have no shape to absorb them, and those tubes pass through each other.
+    if (list.length >= 3) {
+      const hub = [h[0] * HUB_SIZE, h[1] * HUB_SIZE, h[2] * HUB_SIZE];
+      caps.push({ a: c.clone(), b: c.clone(), ha: hub, hb: hub, pa: 2, pb: 2, ri: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1]),
+        fine: Math.min(hub[0], hub[1], hub[2]), hub: j });
+    }
+  }
+  return { caps: caps, half: half, centre: centre, touching: touching };
+}
+function shapeCentre(j) {
+  const c = _vols && _vols.centre.get(j);
+  return c ? c.clone() : Skeleton.jointCentre(j);
+}
+// Is `x` inside this cap? The relax's own measure: the p-norm of the offset, in units of the extents.
+const _ciA = new THREE.Vector3(), _ciT = new THREE.Vector3(), _ciL = new Float64Array(3);
+function insideCap(c, x) {
+  _ciA.subVectors(c.b, c.a);
+  const l2 = _ciA.lengthSq();
+  let t = l2 > 1e-18 ? _ciT.subVectors(x, c.a).dot(_ciA) / l2 : 0;
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  _ciT.copy(c.a).addScaledVector(_ciA, t).subVectors(x, _ciT);
+  rotInto(c.ri[0], c.ri[1], c.ri[2], c.ri[3], _ciT.x, _ciT.y, _ciT.z, _ciL);
+  const ux = _ciL[0] / c.ha[0], uy = _ciL[1] / c.ha[1], uz = _ciL[2] / c.ha[2];
+  const n = c.pa <= 2.0001 ? Math.hypot(ux, uy, uz)
+    : Math.pow(Math.pow(Math.abs(ux), c.pa) + Math.pow(Math.abs(uy), c.pa) + Math.pow(Math.abs(uz), c.pa), 1 / c.pa);
+  return n < 1;
+}
+
 // WHERE A JOINT'S CAGE BOX IS BUILT, which is its shape's centre unless that centre is BURIED in
 // its parent's shape.
 //
@@ -950,14 +1069,19 @@ function layoutCages(joints, topo) {
     const nbs = topo.adj.get(j);
     if (nbs.length < 2) continue;                       // a leaf: no limb to follow out
     const rb = boneRadius(p, j);
-    const cp = Skeleton.jointCentre(p), cj = Skeleton.jointCentre(j);
-    if (!insideShape(p, cp, cj, rb)) continue;          // not buried
+    const cp = shapeCentre(p), cj = shapeCentre(j);
+    // With volumes, buried is inside one that this joint's own bones are not: a shoulder in the chest.
+    const own = _vols && (_vols.touching.get(j) || []);
+    const buried = _vols
+      ? (x) => _vols.caps.some((c) => !own.includes(c.vol) && c.hub !== j && insideCap(c, x))
+      : (x) => insideShape(p, cp, x, rb);
+    if (!buried(cj)) continue;                          // not buried
     // Which way the limb continues: the mean direction to its children.
     const e = new THREE.Vector3();
     let near = Infinity;
     for (const k of nbs) {
       if (k === p) continue;
-      const d = new THREE.Vector3().subVectors(Skeleton.jointCentre(k), cj);
+      const d = new THREE.Vector3().subVectors(shapeCentre(k), cj);
       near = Math.min(near, d.length());
       e.add(d.normalize());
     }
@@ -965,22 +1089,24 @@ function layoutCages(joints, topo) {
     e.normalize();
     // March out until the point clears the parent's shape, then bisect the crossing.
     let lo = 0, hi = near * 0.6;
-    if (insideShape(p, cp, _inV.copy(cj).addScaledVector(e, hi).clone(), rb)) {
+    if (buried(_inV.copy(cj).addScaledVector(e, hi).clone())) {
       map.set(j, cj.clone().addScaledVector(e, hi));
       continue;
     }
     for (let it = 0; it < 24; it++) {
       const mid = (lo + hi) / 2;
-      if (insideShape(p, cp, cj.clone().addScaledVector(e, mid), rb)) lo = mid; else hi = mid;
+      if (buried(cj.clone().addScaledVector(e, mid))) lo = mid; else hi = mid;
     }
-    const out = Math.min(hi + 0.5 * extentAlong(j, e, rb), near * 0.6);
+    const hv = _vols && _vols.half.get(j);
+    const ext = hv ? Math.abs(e.x) * hv[0] + Math.abs(e.y) * hv[1] + Math.abs(e.z) * hv[2] : extentAlong(j, e, rb);
+    const out = Math.min(hi + 0.5 * ext, near * 0.6);
     map.set(j, cj.clone().addScaledVector(e, out));
   }
   _cageAt = map.size ? map : null;
 }
 function cageCentre(j) {
   const c = _cageAt && _cageAt.get(j);
-  return c ? c.clone() : Skeleton.jointCentre(j);
+  return c ? c.clone() : shapeCentre(j);
 }
 
 function boxAt(j, nbs) {
@@ -994,7 +1120,7 @@ function boxAt(j, nbs) {
   // OWN frame, so the bone directions are taken into that frame here and none of it changes.
   // Only where the lattice lands in the world does (latticePoint). Unrotated stays null, and the
   // arithmetic is then exactly what it was.
-  const q = Skeleton.jointRotIsSet(j) ? Skeleton.jointQuat(j) : null;
+  const q = !_vols && Skeleton.jointRotIsSet(j) ? Skeleton.jointQuat(j) : null;
   const qi = q ? q.clone().invert() : null;
   let r = 0;
   const dirs = [];
@@ -1029,7 +1155,7 @@ function boxAt(j, nbs) {
   // how a side divides are decided exactly as before; only where the vertices sit changes. That
   // is what keeps this a shape change rather than a rewrite of the part that is hard to get
   // right.
-  const half = Skeleton.jointHalf(j, r);
+  const half = (_vols && _vols.half.get(j)) || Skeleton.jointHalf(j, r);
   // ...and the clamp stays, now per axis. A block wider than half the gap to its nearest
   // neighbour reaches into that neighbour's block, and the bridge between them turns inside out.
   // Clamping each axis against the same gap keeps that guarantee in every direction: a joint
@@ -1298,7 +1424,7 @@ function buildArrays(joints, topo) {
     // THE ENDS ARE THE SHAPES' CENTRES, not the joints. A face drag moves one face and leaves
     // the other, which shifts the shape off its joint — and the envelope is the hull of the two
     // SHAPES. Reading the joints here would leave the skin behind wherever a joint was tweaked.
-    caps.push({ a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
+    if (!_vols) caps.push({ a: Skeleton.jointCentre(p), b: Skeleton.jointCentre(j),
       ha: guard(Skeleton.jointHalf(p, rj)), hb: guard(Skeleton.jointHalf(j, rj)),
       pa: Skeleton.jointRound(p), pb: Skeleton.jointRound(j),
       ri: capRotations(p, j) });
@@ -1339,7 +1465,7 @@ function buildArrays(joints, topo) {
     idx[i] = faces[i] === Utils.TRI_INDEX ? Utils.TRI_INDEX : used.get(faces[i]);
   }
 
-  const relaxed = window._boneSkinRelax === false ? packed : relax(packed, idx, caps);
+  const relaxed = window._boneSkinRelax === false ? packed : relax(packed, idx, _vols ? _vols.caps : caps);
   return { vertices: relaxed, faces: idx, boxes: boxes.size, bones: bones };
 }
 
@@ -1358,6 +1484,7 @@ SkinMesh.build = function (main) {
   if (!topo.bones.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
   const t0 = performance.now();
+  _vols = volumeShapes(main, all);
   const arr = buildArrays(joints, topo);
   if (!arr) return { ok: false, why: 'could not build a skin from this skeleton' };
 
@@ -1404,6 +1531,7 @@ SkinMesh.attachments = function (main) {
   if (!joints.length) return null;
   const topo = adjacency(joints, skip);
   if (!topo.bones.length) return null;
+  _vols = volumeShapes(main, all);
   layoutCages(joints, topo);
 
   const boxes = new Map();
@@ -1419,7 +1547,7 @@ SkinMesh.attachments = function (main) {
     // the user tweaked and what the capsule draws at. The preview wants the second: a picture at
     // 45% of the size of the thing you are shaping does not read as that thing.
     boxes.set(j, { joint: j, c: bx.c, h: bx.h, box: bx.box, q: bx.q,
-                   half: Skeleton.jointHalf(j, Skeleton.boneRadiusOf(main, j)),
+                   half: (_vols && _vols.half.get(j)) || Skeleton.jointHalf(j, Skeleton.boneRadiusOf(main, j)),
                    by: by, sides: new Set() });
   }
 
@@ -1516,6 +1644,7 @@ SkinMesh.attachments = function (main) {
 // module has no dependency on the mesh classes, so it can be exercised on its own.
 SkinMesh._adjacency = adjacency;
 SkinMesh._buildArrays = buildArrays;
+SkinMesh._volumeShapes = (main, all) => (_vols = volumeShapes(main, all));
 // The box FOR A LEVEL, since there is no longer a single one. The harness builds fixtures against
 // it and console pokes read it; both want to name the level they mean.
 SkinMesh._boxOf = boxOf;

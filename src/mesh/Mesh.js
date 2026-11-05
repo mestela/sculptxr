@@ -855,6 +855,11 @@ class Mesh {
     // capacity (createBlendshape), so on a mesh made in the app the length never matched and every
     // layer edit -- strokes, Snap to Surface -- was dropped as if it were on another level.
     if (_track?.baseShape && this.getNbVertices() !== (_track._bsNbVertices || _track.baseShape.length / 3)) _track = null;
+    // NOR FROM A POSED BOUND MESH. What's on screen there is the skin pass's output, and taken as the base
+    // it reached `_skinSrc` at the next recomposite and got posed a second time: a head stepped down a
+    // level and saved came back with its rest shape off by a pose. Strokes reach the shape through
+    // Skinning.commitPosed instead, which measures them against what the pass drew.
+    if (this._skinW && this._skinIsPosed) _track = null;
     if (_track?.editingBlendshape && _track.baseShape && !_track._applyingBS) {
       // Blendshape layer editing. The active layer is held at weight 1 while
       // sculpting (the SculptManager gate blocks strokes otherwise), but the live

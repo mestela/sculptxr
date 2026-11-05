@@ -123,6 +123,10 @@ function poseHash(main) {
     // caught up when something else moved — or when the flag was toggled off and on, which clears
     // the hash. matt: "the attach cubes only change shape if i hide and show them."
     h = (h * 31 + Math.round(Skeleton.jointRound(j) * 256)) | 0;
+    // ...and so is its volume, which is what Make Skin sizes the box from with volumes on.
+    for (const v of [j._boneRadius, j._volW, j._volH, j._volO1, j._volO3, j._volE0, j._volE1, j._volR]) {
+      h = (h * 31 + Math.round((v || 0) * 8192)) | 0;
+    }
     h = (h * 31 + Math.round(half[0] * 8192)) | 0;
     h = (h * 31 + Math.round(half[1] * 8192)) | 0;
     h = (h * 31 + Math.round(half[2] * 8192)) | 0;
