@@ -421,8 +421,8 @@ function makeJaw(base, teeth, bite, nv, skip, thick) {
 }
 
 // The arch's radius at sample position `b` (0 .. NA - 1) and height `y`: Catmull-Rom across the
-// samples so the radius and its slope are continuous, linear between the bands' middles (the
-// end bands' own value past them). The slopes per radian and per unit height are left in ADR, ADY.
+// samples and smoothstep between the bands' middles (the end bands' own value past them), so the
+// radius and its slopes are continuous. The slopes per radian and per unit height are left in ADR, ADY.
 // TeethViz draws from this.
 let ADR = 0, ADY = 0;
 function rowRadius(R, o, da, b) {
@@ -437,10 +437,13 @@ export function archRadius(jaw, b, y) {
   const c = Math.min(NY - 1, Math.max(0, (y - y0) / dy - 0.5)), j = Math.min(NY - 2, Math.floor(c)), u = c - j;
   const ra = rowRadius(R, j * NA, da, b), sa = ADR;
   const rb = rowRadius(R, (j + 1) * NA, da, b), sb = ADR;
-  ADR = sa + (sb - sa) * u;
-  const inside = (y - y0) / dy - 0.5 > 0 && (y - y0) / dy - 0.5 < NY - 1;
-  ADY = inside ? (rb - ra) / dy : 0;
-  return ra + (rb - ra) * u;
+  // Smoothstep between the bands, flat at each: linear, the slope stepped at every band's middle and
+  // cut to 0 past the end bands, and the heel's normal and distance (which divides by the gradient's
+  // length) jumped with it as skin crossed that height.
+  const e = u * u * (3 - 2 * u);
+  ADR = sa + (sb - sa) * e;
+  ADY = (rb - ra) * 6 * u * (1 - u) / dy;
+  return ra + (rb - ra) * e;
 }
 export const ARCH_SAMPLES = NA;
 
@@ -500,6 +503,16 @@ function region(jaws, tris, nv, inMouth, lip, base) {
     ribbon(lip, base, 0.5, R);
     const reach = (LIP_DEPTH + LIP_FADE) * lip.w;
     for (const v of verts) if (onRibbon(R, base[v * 3]) && Math.abs(base[v * 3 + 2] - RZ) < reach) lab[v] = base[v * 3 + 1] >= RY ? 1 : -1;
+    // WHICH SIDE skin that only bulges leaves by, fixed at rest. Read from where it is now, it flipped
+    // as the skin crossed the ribbon's height: the whole push reversed between two frames. Past the
+    // corners, the side of the corner it is beyond; lip skin, its own lip's.
+    const end = (RIBBON_K + 1) * 3;
+    lip.restSide = new Int8Array(verts.length);
+    verts.forEach((v, k) => {
+      const x = base[v * 3], y = base[v * 3 + 1];
+      lip.restSide[k] = (onRibbon(R, x) ? y >= RY : y >= R[(x <= R[0] ? 0 : end) + 1]) ? 1 : -1;
+    });
+    lip.cand.forEach((v, n) => { lip.restSide[slot[v]] = lip.side[n]; });
   }
   const off = new Int32Array(verts.length + 1), nbr = [];
   for (let k = 0; k < verts.length; k++) {
@@ -580,10 +593,10 @@ export function collideTeeth(state, base, v, push) {
         if (m <= 1e-5 * w) continue;
         const i = reg[k] * 3;
         if (!onRibbon(lip.now, v[i])) continue;
-        // Out along the ribbon's normal (-slope, 1), on the vertex's own side (bulging skin: the side
-        // it is on now).
-        const sd = up[k] || (v[i + 1] >= RY ? 1 : -1), l = Math.sqrt(1 + RS * RS);
-        v[i] += -RS / l * m * sd; v[i + 1] += m * sd / l;
+        // Out along the ribbon's normal (-slope, 1), on the side the vertex had at rest; RW fades it
+        // into the corners, where it would otherwise stop dead on the last station.
+        const sd = up[k] || lip.restSide[k], l = Math.sqrt(1 + RS * RS), out = m * sd * RW;
+        v[i] += -RS / l * out; v[i + 1] += out / l;
         moved = true;
       }
     }
