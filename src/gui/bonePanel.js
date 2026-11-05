@@ -1036,7 +1036,7 @@ function rigPosesHTML(main, c) {
     ${names.length ? `<div class="${c.btnRow}"><span id="bone-sculpt-into" title="Where a stroke goes. On a saved pose it is a fix for that pose, faded in by how close the rig is to it. Anywhere else it goes into the rest shape, which every pose gets.">Sculpting into: ${on ? escAttr(on.name) : 'rest'}</span></div>` : ''}
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-pose-key"
-        title="Key the whole rig as it stands at the playhead, every joint and pin, as one undo step. Press a pose first to key that pose.">Key Rig</button>
+        title="Key the whole rig as it stands at the playhead, every joint and pin, as one undo step. Press a pose first to key that pose. On an animated rig a pose you don't key lasts until the playhead moves.">Key Rig</button>
       <button class="${c.action}" id="bone-pose-save"
         title="Save the skeleton as it stands as a named pose. Press its name to go back to it. Each joint is stored relative to its rest, so a pose survives Tweak.">Save Pose</button>
       ${names.length ? RIG_POSE_MODES.map(([m, label]) => `<button class="${c.action}${rigPoseMode === m ? ' active' : ''}" data-rig-pose-mode="${m}">${label}</button>`).join('') : ''}

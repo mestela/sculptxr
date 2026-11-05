@@ -2345,16 +2345,82 @@ IKSolver.resetRigAndPins = function (main, label) {
   IKSolver.syncPinCache(main);
   Skeleton.updateVisuals?.(main);
   const after = objects.map((m) => [m, mat4.clone(m.getMatrix())]);
-  const apply = (snap) => {
+  const hold = IKSolver.beginPoseHold(main, before);
+  const apply = (snap, h) => {
     Skeleton.restoreLocal(snap);
+    IKSolver.setPoseHold(main, h);
     IKSolver.syncJointCache(main);
     Skeleton.updateVisuals?.(main);
     main.render?.();
   };
   main.getStateManager?.()?.pushStateCustom?.(
-    () => apply(before), () => apply(after), false, label || 'Reset Rig and Pins');
+    () => apply(before, hold.was), () => apply(after, hold.now), false, label || 'Reset Rig and Pins');
   main.render?.();
   return restored;
+};
+
+// A POSE PRESSED ON AN ANIMATED RIG LASTS WHILE THE PLAYHEAD STAYS PUT, like a blendshape slider with
+// Auto off. Curves take their joints and pins back by themselves, but only a track of 2+ keys is
+// evaluated: everything else kept what the pose wrote, for good. An unkeyed pin that moved is the bad
+// one, as every later frame solves the limb onto it. Measured on wrestler_example, one press: pins 35.9
+// off and joints 53.9 off at every time, on a body about 140 tall. So those are remembered here and put
+// back when the playhead moves. Key Rig is how a pose stays: a key changes the count, and the row is
+// left alone, which an undo of the key restores while the hold lasts (after a scrub, undo the Apply too).
+// A rig with no curves has no animation to protect, and a pose there stays put.
+const keyCount = (m) => window._animationRegistry?.tracks?.get(m.getID())?.times?.length | 0;
+
+// `before` is [object, matrix] from just before the pose. The FIRST press since the playhead last moved
+// holds the way back; a second pose on top must not record the first as home.
+IKSolver.beginPoseHold = function (main, before) {
+  const was = main._rigPoseHold || null;
+  if (was) return { was, now: was };
+  if (!before.some(([m]) => keyCount(m) >= 2)) return { was: null, now: null };
+  const now = {
+    t: window._animationRegistry.globalPlaybackTime || 0,
+    rows: before.filter(([m]) => keyCount(m) < 2).map(([m, v]) => [m, v, keyCount(m)]),
+  };
+  main._rigPoseHold = now;
+  return { was: null, now };
+};
+
+// For undo and redo. From now, as a redo can come after the playhead has moved on.
+IKSolver.setPoseHold = function (main, hold) {
+  main._rigPoseHold = hold;
+  if (hold) hold.t = window._animationRegistry?.globalPlaybackTime || 0;
+};
+
+// Once a frame, after playback has written the keys and before the solve reads the pins.
+IKSolver.releasePoseHold = function (main) {
+  const hold = main._rigPoseHold, reg = window._animationRegistry;
+  if (!hold || !reg) return;
+  // Tweak re-records the rest under it, so the way back is no longer a place the rig has been.
+  if (main._rigRestEdit) { main._rigPoseHold = null; return; }
+  // A take starts from the pose on screen, and the bind pose hold owns the rig.
+  if (window._bindPoseHold || reg.isRecording) return;
+  if (!window._animPlaying && Math.abs((reg.globalPlaybackTime || 0) - hold.t) < 1e-6) return;
+  main._rigPoseHold = null;
+  for (const [m, v, keys] of hold.rows) {
+    if (keyCount(m) !== keys) continue;
+    mat4.copy(m.getMatrix(), v);
+    Skeleton.syncThree(m);
+  }
+  IKSolver.syncJointCache(main);
+  IKSolver.syncPinCache(main);
+  window._ikPinsDirty = true;
+  window._physicsNeedsInit = true;
+  Skeleton.updateVisuals?.(main);
+  main.render?.();
+};
+
+// WHAT A FILE SAVES IS THE ANIMATION, NOT THE PREVIEW. Saved as it stood, the preview has become the
+// scene: on reload nothing remembers the way back.
+IKSolver.atPoseHome = function (main, fn) {
+  const rows = (main && main._rigPoseHold?.rows) || [];
+  const live = rows.map(([m]) => mat4.clone(m.getMatrix()));
+  rows.forEach(([m, v, keys]) => { if (keyCount(m) === keys) { mat4.copy(m.getMatrix(), v); Skeleton.syncThree(m); } });
+  try { return fn(); } finally {
+    rows.forEach(([m], i) => { mat4.copy(m.getMatrix(), live[i]); Skeleton.syncThree(m); });
+  }
 };
 
 // PIN CYCLE: unpinned -> position -> position + rotation -> unpinned. Shared by every tool

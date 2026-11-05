@@ -2027,6 +2027,7 @@ class Scene {
     // of course, and to this watcher that is indistinguishable from a pin being dragged — so it
     // solved, which moved the children, which looked like another move. The tool raises this
     // flag for the duration of the edit and re-seeds the caches when it lets go.
+    if (this._rigPoseHold) IKSolver.releasePoseHold(this);
     if (this._rigRestEdit) { window._ikPinsDirty = false; }
     else if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) {
       // Recorded separately from the registry's flag: "a pin genuinely moved" and "playback
@@ -7745,6 +7746,7 @@ class Scene {
 
   clearScene() {
     this._rigPoses = null;   // they belong to the skeleton going with it (RigPoses)
+    this._rigPoseHold = null;
     this.getStateManager().reset();
     // The clips belong to the scene: File > New / Open-replace used to leave the video plane's
     // track and the audio (and their lanes and waveform in the timeline) behind.

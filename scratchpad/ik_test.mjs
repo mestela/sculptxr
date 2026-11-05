@@ -23,6 +23,13 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
   const inj = process.env.IK_INJECT || '';
   if (inj === 'nosoft') swap('if (window._ikSoftReach === false) return out;', 'return out;');
   if (inj === 'softrest') swap('Math.min(SOFT_REACH, 1 - ext) * L', 'SOFT_REACH * L');
+  // Pose hold: holdstatic holds on a rig with no curves; holdsecond records the first pose as home;
+  // holdkeyed restores what was keyed since; holdsave saves the preview; holdplay ignores Play.
+  if (inj === 'holdstatic') swap('if (!before.some(([m]) => keyCount(m) >= 2)) return { was: null, now: null };', '');
+  if (inj === 'holdsecond') swap('if (was) return { was, now: was };', '');
+  if (inj === 'holdkeyed') swap('if (keyCount(m) !== keys) continue;', '');
+  if (inj === 'holdsave') swap('rows.forEach(([m, v, keys]) => { if (keyCount(m) === keys) { mat4.copy(m.getMatrix(), v); Skeleton.syncThree(m); } });', '');
+  if (inj === 'holdplay') swap('if (!window._animPlaying && Math.abs(', 'if (Math.abs(');
 }
 
 // Defect injections, so the steering checks have been seen to fail (standing lesson 1):
@@ -1999,6 +2006,51 @@ function poleLeg() {
   check('soft reach: a nearly straight leg gives up very little', offNearly < 0.37 * (L - restD) + 1e-3,
     offNearly.toFixed(4) + ' against a zone of ' + (L - restD).toFixed(4));
   check('soft reach: no bone stretched', Math.abs(pos(l.knee).distanceTo(pos(l.ankle)) - shin) < 1e-4);
+}
+
+// A pose on an animated rig lasts while the playhead stays put (IKSolver.beginPoseHold).
+{
+  const rig = pinnedBody();
+  IKSolver.captureRest(rig.main);
+  const [a, b] = IKSolver.pinnedJoints(rig.main).map((j) => IKSolver.pinObject(j));
+  const reg = window._animationRegistry = { tracks: new Map(), globalPlaybackTime: 1 };
+  const m = rig.main, X = (p) => p.getMatrix()[12];
+  const place = (p, x) => { p.getMatrix()[12] = x; };
+  const snapshot = () => [a, b].map((p) => [p, Float32Array.from(p.getMatrix())]);
+  place(a, 5); place(b, 6);
+  check('pose hold: a rig with no curves has nothing to protect', !IKSolver.beginPoseHold(m, snapshot()).now && !m._rigPoseHold);
+  const curve = { times: [0, 1] };
+  reg.tracks.set(b.getID(), curve);
+  IKSolver.beginPoseHold(m, snapshot());
+  place(a, 50);
+  IKSolver.beginPoseHold(m, snapshot());      // a second pose on top
+  place(a, 60);
+  IKSolver.releasePoseHold(m);
+  check('pose hold: stays while the playhead stays', X(a) === 60 && !!m._rigPoseHold);
+  let saved = 0;
+  IKSolver.atPoseHome(m, () => { saved = X(a); });
+  check('pose hold: a save writes the way back, not the preview', saved === 5, 'saved ' + saved);
+  check('...and the pose stays on screen', X(a) === 60);
+  reg.globalPlaybackTime = 2;
+  IKSolver.releasePoseHold(m);
+  check('pose hold: the playhead moving puts back what has no curve, from the FIRST press', X(a) === 5, 'at ' + X(a));
+  check('...and ends the hold', !m._rigPoseHold);
+
+  IKSolver.beginPoseHold(m, snapshot());
+  place(a, 70);
+  reg.tracks.set(a.getID(), { times: [1] });  // Key Rig
+  reg.globalPlaybackTime = 3;
+  IKSolver.releasePoseHold(m);
+  check('pose hold: what was keyed since stays', X(a) === 70, 'at ' + X(a));
+  reg.tracks.delete(a.getID());
+
+  IKSolver.beginPoseHold(m, snapshot());
+  place(a, 80);
+  window._animPlaying = true;
+  IKSolver.releasePoseHold(m);
+  window._animPlaying = false;
+  check('pose hold: pressing Play ends it at the same time', X(a) === 70, 'at ' + X(a));
+  delete window._animationRegistry;
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

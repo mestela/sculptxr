@@ -7,10 +7,11 @@ import ExportSculpteo from './ExportSculpteo.js';
 import ExportMaterialise from './ExportMaterialise.js';
 import ExportNOM from './ExportNOM.js';
 import ExportGLTF from './ExportGLTF.js';
+import IKSolver from '../editing/IKSolver.js';
 
 var Export = {};
 Export.exportOBJ = ExportOBJ.exportOBJ;
-Export.exportSGL = ExportSGL.exportSGL;
+Export.exportSGL = (meshes, main) => IKSolver.atPoseHome(main, () => ExportSGL.exportSGL(meshes, main));
 Export.exportAsciiPLY = ExportPLY.exportAsciiPLY;
 Export.exportBinaryPLY = ExportPLY.exportBinaryPLY;
 Export.exportAsciiSTL = ExportSTL.exportAsciiSTL;

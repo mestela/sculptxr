@@ -17,6 +17,8 @@
 //   RP_INJECT=alljoints weighs joints the pose doesn't change: the unrelated-joint check must fail
 //   RP_INJECT=nobakerest  Bake leaves `_skinRest` out: the bake check must fail
 //   RP_INJECT=nomirrorroot  a mirrored joint keeps its own parent frame: the mirror check must fail
+//   RP_INJECT=ontight   a tight limit on being on a pose: the hold check must fail
+//   RP_INJECT=onfuller  most joints wins over closest: the closest check must fail
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -44,6 +46,8 @@ if (i === 'keynopins') inject('Skeleton.joints(main).concat(pins), time', 'Skele
 if (i === 'keyselect') inject("time, 'transform');", "time, window._animKeyMode);");
 if (i === 'alljoints') inject('if (a >= CHANGED) rows.push({ j, q, a });', 'rows.push({ j, q, a: Math.max(a, 1e-3) });');
 if (i === 'nobakerest') inject('if (i < r.m._skinRest.length) r.m._skinRest[i] += r.d[i];', '');
+if (i === 'ontight') inject('if (w < ON_WEIGHT) continue;', 'if (w < 0.9) continue;');
+if (i === 'onfuller') inject('(w < best.w - LEVEL || (w <= best.w + LEVEL && n <= most))', 'n <= most');
 if (i === 'nomirrorroot') inject('const m = mat4.multiply(mat4.create(), P, model.get(src));', 'const m = mat4.clone(model.get(src));');
 src = src.replace(/^import .*$/gm, '').replace(/^export default .*$/m, '');
 
@@ -66,6 +70,8 @@ globalThis.__IKSolver = {
   pinObject: (j) => j.pin,
   syncJointCache() {},
   syncPinCache() {},
+  beginPoseHold: () => ({ was: null, now: null }),
+  setPoseHold() {},
 };
 globalThis.__Physics = { clearRest() { physics++; }, reset() {} };
 const { default: RigPoses } = await import('data:text/javascript,' + encodeURIComponent(stubs + src + '\nexport default RigPoses;'));
@@ -234,6 +240,15 @@ const reset = () => { states = []; pinned = []; window._bindPoseHold = false; };
   window._bindPoseHold = true;
   check('no active pose while the bind pose is held', RigPoses.active(m) === null);
   window._bindPoseHold = false;
+
+  // two keys holding a pose bulge between them: a share of the pose off, not a fixed angle
+  setArm(0.8);
+  check('a fifth of a pose off is still on it', RigPoses.active(m)?.name === 'up', 'weight ' + RigPoses.weight(withKnee).toFixed(3));
+  setArm(1);
+  const lib = m._rigPoses;
+  m._rigPoses = new Map([['near', new Map([[arm, rotZ(0.85)]])], ['up', withKnee]]);
+  check('of two that fit, the closest', RigPoses.active(m)?.name === 'up', 'weight ' + RigPoses.active(m)?.w.toFixed(3));
+  m._rigPoses = lib;
 
   // bake, undo, clear
   mesh._skinRest.fill(0);

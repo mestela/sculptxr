@@ -13,6 +13,7 @@ import PosedSymmetry from './PosedSymmetry.js';
 //
 // Applying one is a macro over the joints, like Rest Pose: no keys or curves of its own. Pins stay as they
 // are but move onto their joints, or the next solve would pull the pose straight back to the old anchors.
+// On an animated rig it lasts until the playhead moves, unless keyed (IKSolver.beginPoseHold).
 //
 // `main._rigPoses` is name -> Map(joint -> relative matrix), in order. Saved in the SKEL block (v30).
 const RigPoses = {};
@@ -125,15 +126,17 @@ RigPoses.apply = function (main, name) {
   Skeleton.updateVisuals?.(main);
 
   const after = objects.map((m) => [m, mat4.clone(m.getMatrix())]);
-  const put = (snap) => {
+  const hold = IKSolver.beginPoseHold(main, before);
+  const put = (snap, h) => {
     Skeleton.restoreLocal(snap);
+    IKSolver.setPoseHold(main, h);
     IKSolver.syncJointCache(main);
     IKSolver.syncPinCache(main);
     window._physicsNeedsInit = true;
     Skeleton.updateVisuals?.(main);
     main.render?.();
   };
-  main.getStateManager?.()?.pushStateCustom?.(() => put(before), () => put(after), false, 'Apply Rig Pose');
+  main.getStateManager?.()?.pushStateCustom?.(() => put(before, hold.was), () => put(after, hold.now), false, 'Apply Rig Pose');
   main.render?.();
   return n;
 };
@@ -169,10 +172,13 @@ const layerName = (name) => LAYER + name;
 
 // HOW FAR A JOINT HAS TO BE TURNED BY A POSE TO BE PART OF IT, in radians. The rest is solver settling.
 const CHANGED = 0.03;
-// WHEN YOU ARE "ON" A POSE: every joint it changes within this of it. A solve settles a pinned limb by
-// a few hundredths after Apply, and a fix made there is still a fix for this pose.
-const ON_POSE = 0.06;
-const ON_WEIGHT = 0.9;
+// WHEN YOU ARE "ON" A POSE: the weight it would get here. Relative to how far the pose turns each joint,
+// not an angle: two keys holding a pose still bulge between them, and a joint a pose turns 2.53 drifted .50
+// in the hold on skelpose_v03 and .096 one frame off the key. A limit of .06 said "rest" on all but the key
+// frames. The worst share of a pose seen in a hold was .22, weight .87; .75 allows a share of about .33.
+const ON_WEIGHT = 0.75;
+// Weights this close count as level, and the pose with more joints wins.
+const LEVEL = 0.05;
 // A CHANGE IN A DETAIL THIS SMALL AGAINST THE LARGEST ONE ISN'T PART OF THE STROKE.
 const NOISE = 1e-3;
 
@@ -215,19 +221,19 @@ RigPoses.weight = function (pose) {
   return w;
 };
 
-// THE POSE THE RIG IS ON, or null. Null while the bind pose is held. The one with most joints if several
-// fit, as the fuller description of what's on screen.
+// THE POSE THE RIG IS ON, or null. Null while the bind pose is held. The closest if several fit, and of
+// those level, the one with most joints, as the fuller description of what's on screen.
 RigPoses.active = function (main) {
   const lib = main._rigPoses;
   if (!lib || !lib.size || window._bindPoseHold) return null;
   let best = null, most = 0;
   for (const name of RigPoses.names(main)) {
-    const pose = lib.get(name), rows = changedJoints(pose);
-    if (rows.length <= most || rows.some((r) => jointAngle(r) > ON_POSE)) continue;
+    const pose = lib.get(name), n = changedJoints(pose).length;
     const w = RigPoses.weight(pose);
     if (w < ON_WEIGHT) continue;
+    if (best && (w < best.w - LEVEL || (w <= best.w + LEVEL && n <= most))) continue;
     best = { name, w };
-    most = rows.length;
+    most = n;
   }
   return best;
 };
