@@ -18,6 +18,7 @@
 // setBlendshapeWeight, deleteBlendshape, renameBlendshape, enter/exit edit mode)
 // against the active mesh (main.getMesh()).
 
+import RigPoses from '../editing/RigPoses.js';
 import { arkitByRegion, arkitEntry, lrPairFor } from '../editing/ArkitBlendshapes.js';
 import { Theme } from './theme.js';
 import BlendshapePad, { PAD_HEADER_H } from './BlendshapePad.js';
@@ -50,6 +51,11 @@ const TIPS = {
   autokey: 'Auto Key: slider moves set keys at the playhead (off: preview only)',
   zero: 'Set every shape to 0 (preview; Key commits it)',
   fold: 'Show or hide the layer list',
+  fixFold: 'Corrective shapes sculpted on saved poses',
+  fixMuteAll: 'Turn every pose fix off or on, to compare',
+  fixMute: 'Turn this fix off without losing it',
+  fixClear: 'Delete this fix',
+  fixRow: 'How strongly the rig is applying this fix right now',
   slot: (side) => 'Assign the selected layer to the pad ' + side + ' side',
 };
 const PART_TIPS = {
@@ -67,6 +73,7 @@ const TOOLBAR_BTN_H = 38;
 // same strip the XY pad carries (PAD_HEADER_H). On a rig with all the ARKit shapes the list is
 // taller than the panel and pushes the pad out of reach.
 const LAYERS_HEADER_H = 34;
+const FIX_ROW_H = 30;         // a Pose Fixes row: a readout, so one line
 const COMBOS_HEADER_H = 30;   // the Combos section's fold row, under the plain layers
 const TOOLBAR_H = TOOLBAR_BTN_H + LAYERS_HEADER_H;
 const ROW_H     = 46;
@@ -141,6 +148,9 @@ export default class BlendshapeStackPanel {
     // combinations". The plain layers stay on top, Base at the bottom.
     this._combosCollapsed = getOptionsURL().blendCombosCollapsed !== false;
     this._comboHeader = null;
+    // POSE FIXES SECTION, open unless folded: there are few of them and the point is to find them.
+    this._fixesCollapsed = !!getOptionsURL().blendFixesCollapsed;
+    this._fixHits = [];
     // VR only: the canvas is a fixed size, so the layer list scrolls inside the space above the
     // pad (desktop's canvas grows with the list and the sidebar scrolls instead).
     this._scrollY = 0;
@@ -302,7 +312,12 @@ export default class BlendshapeStackPanel {
                                    : (this._host && this._host.offsetParent !== null);
       if (visible && !this._dragName && !this._reorderActive) {
         const sig = this._stateSignature();
-        if (sig !== this._lastSig) { this._lastSig = sig; this.draw(); }
+        if (sig !== this._lastSig) {
+          this._lastSig = sig;
+          // Fixes can come and go with no layer changing (a stroke, a load, Clear Fix in the bone panel).
+          if (!this._vrMode && !this._picker && this._contentHeight() !== this._cssH) this._relayout();
+          else this.draw();
+        }
       }
       requestAnimationFrame(loop);
     };
@@ -311,8 +326,9 @@ export default class BlendshapeStackPanel {
 
   _stateSignature() {
     const track = this._track();
-    if (!track) return 'none';
-    let s = (window._animAutoKey ? 'A' : 'a') + (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
+    const fx = this._fixes().map((f) => f.name + (f.muted ? '-' : '+') + f.w.toFixed(2)).join() + '#';
+    if (!track) return 'none' + fx;
+    let s = fx + (window._animAutoKey ? 'A' : 'a') + (track.playbackTime || 0).toFixed(4) + '|' + (track.editingBlendshape || '') + '|'
           + (track.blendshapes?.size || 0) + '|' + (this._sc ? this._sc.scrollTop + ',' + this._sc.clientHeight : '') + '|';
     track.blendshapes?.forEach((d, n) => {
       s += n + ':' + this._weightOf(n).toFixed(4) + (track.blendshapeMuted?.has(n) ? 'm' : '') + ';';
@@ -330,7 +346,16 @@ export default class BlendshapeStackPanel {
   // The rows' height above Base: the plain layers, the Combos fold row when there are combos, and
   // the combos themselves when it is open.
   _listH() {
-    return this._layerNames().length * ROW_H + (this._comboNames().length ? COMBOS_HEADER_H : 0);
+    return this._layerNames().length * ROW_H + (this._comboNames().length ? COMBOS_HEADER_H : 0) + this._fixesH();
+  }
+
+  // The fixes belong to the scene's saved poses, not to whatever is selected: a joint or a pin is usually
+  // selected while posing, and the skin they sit on is not.
+  _fixes() { return RigPoses.fixes(this._main); }
+
+  _fixesH() {
+    const n = this._fixes().length;
+    return n ? COMBOS_HEADER_H + (this._fixesCollapsed ? 0 : n * FIX_ROW_H) : 0;
   }
 
   // Desktop canvas height while the picker overlay is open (it needs room to show the
@@ -482,6 +507,8 @@ export default class BlendshapeStackPanel {
       ctx.font = '12px sans-serif';
       ctx.textBaseline = 'middle';
       ctx.fillText('No mesh selected', PAD, TOOLBAR_H + 20);
+      this._fixHits = [];
+      if (!this._layersCollapsed) this._drawFixes(ctx, W, TOOLBAR_H + 40 - this._scrollY);
       return;
     }
 
@@ -526,6 +553,8 @@ export default class BlendshapeStackPanel {
           y += ROW_H;
         }
       }
+      this._fixHits = [];
+      y = this._drawFixes(ctx, W, y);
 
       if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W);
       ctx.restore();
@@ -551,6 +580,96 @@ export default class BlendshapeStackPanel {
     }
 
     if (this._picker) this._drawPicker(ctx, W, H);
+  }
+
+  // THE POSE FIXES SECTION. Each row is a readout of what the rig is doing, so there is no slider.
+  _drawFixes(ctx, W, y) {
+    const fixes = this._fixes();
+    if (!fixes.length) return y;
+    const RX = this._rightX(W) - PAD;
+    const hit = (kind, x0, x1, top, h, name) => this._fixHits.push({ kind, x0, x1, y0: top, y1: top + h, name });
+    const hot = (kind, name) => this._hover?.fix === kind && this._hover?.name === name;
+    const icon = (glyph, x, cy, color) => {
+      ctx.fillStyle = color;
+      ctx.font = '900 13px "Font Awesome 6 Free"';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(glyph, x, cy + 0.5);
+    };
+    // Header: fold on the left, mute all on the right.
+    ctx.fillStyle = Theme.mantle;
+    ctx.fillRect(0, y, W, COMBOS_HEADER_H);
+    ctx.strokeStyle = Theme.surface0;
+    ctx.beginPath(); ctx.moveTo(0, y + COMBOS_HEADER_H - 0.5); ctx.lineTo(W, y + COMBOS_HEADER_H - 0.5); ctx.stroke();
+    ctx.fillStyle = Theme.subtext0 || '#a6adc8';
+    ctx.font = '900 11px "Font Awesome 6 Free"';
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(this._fixesCollapsed ? '\uf054' : '\uf078', PAD, y + COMBOS_HEADER_H / 2);
+    ctx.font = '600 12px sans-serif';
+    ctx.fillText(`Pose Fixes (${fixes.length})`, PAD + 18, y + COMBOS_HEADER_H / 2);
+    const allOff = fixes.every((f) => f.muted);
+    icon(allOff ? FA.eyeSlash : FA.eye, RX - 8, y + COMBOS_HEADER_H / 2,
+      allOff ? '#e06c6c' : (hot('muteAll') ? Theme.text : Theme.overlay1));
+    hit('muteAll', RX - 24, RX + 8, y, COMBOS_HEADER_H);
+    hit('fold', 0, RX - 24, y, COMBOS_HEADER_H);
+    y += COMBOS_HEADER_H;
+    if (this._fixesCollapsed) return y;
+
+    for (const f of fixes) {
+      const cy = y + FIX_ROW_H / 2, on = !f.muted;
+      if (this._hover?.name === f.name && this._hover?.fix) {
+        ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(0, y, W, FIX_ROW_H);
+      }
+      ctx.strokeStyle = Theme.surface0;
+      ctx.beginPath(); ctx.moveTo(0, y + FIX_ROW_H - 0.5); ctx.lineTo(W, y + FIX_ROW_H - 0.5); ctx.stroke();
+      icon(on ? FA.eye : FA.eyeSlash, PAD + 8, cy, on ? (hot('mute', f.name) ? Theme.text : Theme.overlay1) : '#e06c6c');
+      hit('mute', 0, PAD + 20, y, FIX_ROW_H, f.name);
+      icon(FA.trash, RX - 8, cy, hot('clear', f.name) ? '#e06c6c' : Theme.surface2);
+      hit('clear', RX - 24, RX + 8, y, FIX_ROW_H, f.name);
+
+      // Name, then a bar and a percentage. Read-only, so no thumb. Muted still shows where it would be.
+      const pctW = 34, barW = Math.min(70, Math.max(30, (RX - 24 - pctW - (PAD + 28)) * 0.35));
+      const barX = RX - 26 - pctW - barW, nameX = PAD + 24;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(nameX, y, barX - nameX - 6, FIX_ROW_H); ctx.clip();
+      ctx.fillStyle = on ? Theme.text : Theme.overlay0;
+      ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(f.name, nameX, cy);
+      ctx.restore();
+      ctx.fillStyle = Theme.surface0;
+      this._roundRect(ctx, barX, cy - 2, barW, 4, 2); ctx.fill();
+      if (f.w > 0) {
+        ctx.fillStyle = on ? Theme.overlay1 : Theme.surface2;
+        this._roundRect(ctx, barX, cy - 2, Math.max(2, barW * Math.min(1, f.w)), 4, 2); ctx.fill();
+      }
+      ctx.fillStyle = on ? Theme.subtext : Theme.overlay0;
+      ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText(Math.round(f.w * 100) + '%', RX - 26, cy);
+      hit('row', PAD + 20, RX - 24, y, FIX_ROW_H, f.name);
+      y += FIX_ROW_H;
+    }
+    return y;
+  }
+
+  _hitFix(p) {
+    if (this._padOwned && (p.y < TOOLBAR_H || p.y >= this._cssH - this._padReserve)) return null;
+    return (this._fixHits || []).find((h) => p.x >= h.x0 && p.x <= h.x1 && p.y >= h.y0 && p.y < h.y1) || null;
+  }
+
+  _onFixPress(h) {
+    if (h.kind === 'fold') {
+      this._fixesCollapsed = !this._fixesCollapsed;
+      getOptionsURL.saveOption('blendFixesCollapsed', this._fixesCollapsed);
+    } else if (h.kind === 'muteAll') {
+      const fixes = this._fixes();
+      RigPoses.setFixMuted(this._main, fixes.map((f) => f.name), !fixes.every((f) => f.muted));
+    } else if (h.kind === 'mute') {
+      RigPoses.setFixMuted(this._main, [h.name], !this._fixes().find((f) => f.name === h.name)?.muted);
+    } else if (h.kind === 'clear') {
+      RigPoses.clear(this._main, h.name);
+      this._main.render?.();
+    }
+    if (this._vrMode) this.draw(); else this._relayout();
   }
 
   // The Combos section's fold row: caret, label and count, like the layer list's own fold bar.
@@ -1101,6 +1220,11 @@ export default class BlendshapeStackPanel {
       if (this._vrMode) this.draw(); else this._relayout();
       return;
     }
+    const fixHit = this._hitFix(p);
+    if (fixHit) {
+      if (fixHit.kind !== 'row') this._onFixPress(fixHit);
+      return;
+    }
     const { row, part } = this._classifyHit(p);
     if (!row) return;
     const mesh = this._mesh();
@@ -1219,8 +1343,11 @@ export default class BlendshapeStackPanel {
     if (this._padOwned) this._pad.hoverAt(p.x, p.y);
     let h;
     const btn = this._hitToolbar(p);
+    const fixH = !btn && this._hitFix(p);
     if (btn) {
       h = { btn: btn.id };
+    } else if (fixH) {
+      h = { fix: fixH.kind, name: fixH.name };
     } else {
       const { row, part } = this._classifyHit(p);
       h = row ? { name: row.name, part } : null;
@@ -1228,7 +1355,8 @@ export default class BlendshapeStackPanel {
     if (!this._vrMode && this._canvas) {
       this._canvas.style.cursor = (h && h.part === 'grip') ? 'grab' : 'default';
       // Native tooltips: every control here is canvas-drawn, so the canvas carries the title.
-      const tip = (h && (h.btn ? (h.btn.startsWith('slot_') ? TIPS.slot(h.btn.slice(5)) : TIPS[h.btn])
+      const FIX_TIPS = { fold: TIPS.fixFold, muteAll: TIPS.fixMuteAll, mute: TIPS.fixMute, clear: TIPS.fixClear, row: TIPS.fixRow };
+      const tip = (h && (h.fix ? FIX_TIPS[h.fix] : h.btn ? (h.btn.startsWith('slot_') ? TIPS.slot(h.btn.slice(5)) : TIPS[h.btn])
         : PART_TIPS[h.part])) || '';
       if (this._canvas.title !== tip) { this._canvas.title = tip; if (this._tbCanvas) this._tbCanvas.title = tip; }
     }
@@ -1239,7 +1367,7 @@ export default class BlendshapeStackPanel {
     const a = this._hover;
     if (!a && !h) return false;
     if (!a || !h) return true;
-    return a.btn !== h.btn || a.name !== h.name || a.part !== h.part;
+    return a.btn !== h.btn || a.name !== h.name || a.part !== h.part || a.fix !== h.fix;
   }
 
   // Clear hover (DOM pointerleave, or VR ray leaving the panel — called by Scene).

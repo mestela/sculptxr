@@ -392,3 +392,7 @@ Do not conflate them:
   the reflection plane. The answer was a few hundred lines away being used by a menu
   command while the live drag still did half the job — **and a harness rule was pinning the
   old behaviour**, so the bug had a test defending it. matt found it by using the tool.
+
+## Pose Fixes section
+
+The blendshape panel lists every pose fix in the scene under a foldable `Pose Fixes (n)`, whatever is selected. Each row shows the weight the rig is giving it. The eye turns a fix off without losing it (`track.correctiveMuted`, SKEL v33): `RigPoses.drive` weighs it 0, so the offset, details above the bound level and an older file's layer all follow. The header's eye does them all. A stroke on a muted fix goes to the rest shape and the status reads `pre`. The bin is Clear Fix. Bake and Mirror stay in the bone panel.

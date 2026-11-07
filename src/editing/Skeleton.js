@@ -5983,7 +5983,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 32;  // v32 a pose fix's offset on top of the skin pass (RigPoses.js); v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 33;  // v33 which pose fixes are muted; v32 a pose fix's offset on top of the skin pass (RigPoses.js); v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6388,6 +6388,14 @@ Skeleton.serialize = function (meshes, main) {
   }
   slots += 1;
   for (const d of fixPost) slots += 3 + d.key.length + d.idx.length * 4;
+  // v33: pose fixes switched off.
+  const fixMuted = [];
+  for (const m of meshes) {
+    const t = window._animationRegistry?.tracks?.get(m.getID());
+    for (const key of (t && t.correctiveMuted) || []) fixMuted.push({ i: idxOf(m), key });
+  }
+  slots += 1;
+  for (const d of fixMuted) slots += 2 + d.key.length;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6514,6 +6522,12 @@ Skeleton.serialize = function (meshes, main) {
     for (let k = 0; k < d.key.length; k++) u[o++] = d.key.charCodeAt(k);
     u[o++] = d.idx.length;
     for (const i of d.idx) { u[o++] = i; f[o++] = d.arr[i]; f[o++] = d.arr[i + 1]; f[o++] = d.arr[i + 2]; }
+  }
+  u[o++] = fixMuted.length;
+  for (const d of fixMuted) {
+    u[o++] = d.i;
+    u[o++] = d.key.length;
+    for (let k = 0; k < d.key.length; k++) u[o++] = d.key.charCodeAt(k);
   }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
@@ -7256,6 +7270,17 @@ Skeleton.deserialize = function (buffer, meshes, main) {
           for (let c = 0; c < 3; c++, o++) if (at + c < arr.length) arr[at + c] = f[o];
         }
         (t.correctivePost || (t.correctivePost = new Map())).set(key, arr);
+      }
+    }
+    if (ver >= 33) {
+      const mn = u[o++];
+      for (let i = 0; i < mn && o < u.length; i++) {
+        const m = meshes[u[o++]], len = u[o++];
+        if (len > 256) break;   // not a layer name: a damaged block
+        let key = '';
+        for (let k = 0; k < len; k++) key += String.fromCharCode(u[o++]);
+        const t = fixTrack(m);
+        if (t) (t.correctiveMuted || (t.correctiveMuted = new Set())).add(key);
       }
     }
 

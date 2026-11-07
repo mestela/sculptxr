@@ -811,6 +811,12 @@ export default class TimelineHelper {
     // undo. So the Map is copied (membership is what changes here — which shapes exist) while the
     // arrays inside are shared.
     if (track.blendshapes) cloned.blendshapes = new Map(track.blendshapes);
+    // Pose fixes, for the same reason: not key data, and gone for good if the clone drops them. Shared like
+    // the deltas, as nothing on the key-editing path writes them.
+    if (track.correctivePost) cloned.correctivePost = new Map(track.correctivePost);
+    if (track.correctiveDetails) cloned.correctiveDetails = new Map(track.correctiveDetails);
+    if (track.correctiveW) cloned.correctiveW = new Map(track.correctiveW);
+    if (track.correctiveMuted) cloned.correctiveMuted = new Set(track.correctiveMuted);
     if (track.baseShape) cloned.baseShape = track.baseShape;
     if (track.shapeRef) cloned.shapeRef = track.shapeRef;
     if (track.shapeRefSkip) cloned.shapeRefSkip = new Set(track.shapeRefSkip);

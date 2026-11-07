@@ -247,7 +247,7 @@ function layersOf(main, name) {
     const t = reg.tracks.get(m.getID());
     if (!t) continue;
     const key = layerName(name), d = t.blendshapes?.get(key), post = t.correctivePost?.get(key), fix = t.correctiveDetails?.get(key);
-    if (d || post || fix) out.push({ m, t, d, post, bt: t.blendshapeTracks?.get(key), fix });
+    if (d || post || fix) out.push({ m, t, d, post, bt: t.blendshapeTracks?.get(key), fix, muted: !!t.correctiveMuted?.has(key) });
   }
   return out;
 }
@@ -316,12 +316,14 @@ function dropLayers(main, name) {
     t.correctivePost?.delete(key);
     t.correctiveW?.delete(key);
     t.correctiveDetails?.delete(key);
+    t.correctiveMuted?.delete(key);
     refresh(m);
   }
 }
 function putLayers(main, name, rows) {
   const key = layerName(name);
-  for (const { m, t, d, bt, post, fix } of rows) {
+  for (const { m, t, d, bt, post, fix, muted } of rows) {
+    if (muted) (t.correctiveMuted || (t.correctiveMuted = new Set())).add(key);
     if (d) { t.blendshapes.set(key, d); t.blendshapeTracks.set(key, bt); }
     if (post) (t.correctivePost || (t.correctivePost = new Map())).set(key, post);
     (t.correctiveW || (t.correctiveW = new Map())).set(key, -1);
@@ -331,6 +333,32 @@ function putLayers(main, name, rows) {
 }
 
 RigPoses.hasCorrective = (main, name) => layersOf(main, name).length > 0;
+
+// THE FIXES IN THE SCENE, one per pose however many skins it reaches, for the blendshape panel. `w` is what
+// the rig is giving it now; a muted fix still reports that, so you can see when it would come in.
+RigPoses.fixes = function (main) {
+  const out = [];
+  for (const name of RigPoses.names(main)) {
+    const rows = layersOf(main, name);
+    if (rows.length) out.push({ name, w: RigPoses.weight(main._rigPoses.get(name)), muted: rows.every((r) => r.muted) });
+  }
+  return out;
+};
+
+// TURN A FIX OFF WITHOUT LOSING IT. Its weight goes to 0 in RigPoses.drive, the one place weights are set, so
+// the offset, the details above the bound level and an older file's layer all follow. Display state, like a
+// muted blendshape: saved with the file, not an undo step.
+RigPoses.setFixMuted = function (main, names, muted) {
+  const key = (n) => layerName(n);
+  for (const name of names) {
+    for (const { t } of layersOf(main, name)) {
+      const set = t.correctiveMuted || (t.correctiveMuted = new Set());
+      if (muted) set.add(key(name)); else set.delete(key(name));
+    }
+  }
+  RigPoses.drive(main);
+  main.render?.();
+};
 
 // WHAT STATE THE RIG IS IN AND WHERE A STROKE WOULD GO: `pose` is the nearest saved pose and how near, `stage`
 // is whether a stroke lands before the skin or after it, `warn` that it can jump (under the skin on a posed rig,
@@ -343,7 +371,8 @@ RigPoses.status = function (main) {
   if (Skinning.atBindPose(main, mesh)) return { pose: 'Bind', stage: 'pre', warn: false };
   const layer = window._animationRegistry?.tracks?.get(mesh.getID())?.editingBlendshape;
   const on = RigPoses.active(main), pct = (w) => Math.round(w * 100) + '%';
-  if (on && !layer) return { pose: on.name + ' ' + pct(on.w), stage: 'post', warn: false };
+  // A muted fix takes no strokes (correctiveFor), so this is under the skin like anywhere else off a pose.
+  if (on && !layer && !fixMuted(mesh, on)) return { pose: on.name + ' ' + pct(on.w), stage: 'post', warn: false };
   let near = null, w = 0;
   for (const name of RigPoses.names(main)) {
     const here = RigPoses.weight(main._rigPoses.get(name));
@@ -383,7 +412,7 @@ RigPoses.drive = function (main) {
     for (const key of keys) {
       if (!key.startsWith(LAYER)) continue;
       const pose = lib.get(key.slice(LAYER.length));
-      const w = pose ? RigPoses.weight(pose) : 0;
+      const w = pose && !t.correctiveMuted?.has(key) ? RigPoses.weight(pose) : 0;
       const W = t.correctiveW || (t.correctiveW = new Map());
       const was = W.has(key) ? W.get(key) : -1;
       if (Math.abs(w - was) > 1e-3) { W.set(key, w); moved = true; layer = layer || !!t.blendshapes?.has(key); }
@@ -396,7 +425,13 @@ RigPoses.drive = function (main) {
 
 // WHERE A STROKE ON THIS MESH GOES, for the commit. Null means rest.
 function correctiveFor(main, mesh) {
-  return mesh && mesh._skinW ? RigPoses.active(main) : null;
+  if (!mesh || !mesh._skinW) return null;
+  const on = RigPoses.active(main);
+  // A stroke into a fix that's switched off would be invisible, so it goes to the rest shape instead.
+  return on && !fixMuted(mesh, on) ? on : null;
+}
+function fixMuted(mesh, on) {
+  return !!window._animationRegistry?.tracks?.get(mesh.getID())?.correctiveMuted?.has(layerName(on.name));
 }
 
 // The fix's array, made on first use. No base and no layer: nothing under the skin changes, so this skin can
