@@ -1757,8 +1757,9 @@ export function buildMenuHTML_history(main) {
 }
 
 export function buildMenuHTML_reference() {
+  // NO SECTION TITLE: every mount already labels this "Reference" (the View fold, the menu
+  // header), and a title here became a second fold inside the first.
   return `
-    <div class="mm-section-title">Reference Images</div>
     <button class="mm-action-btn" id="mm-ref-add">Add reference image…</button>
     <button class="mm-action-btn" id="mm-ref-clear">Clear all references</button>
     <button class="mm-toggle" id="mm-ref-show">Show references</button>
