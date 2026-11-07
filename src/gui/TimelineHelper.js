@@ -16,8 +16,12 @@ export default class TimelineHelper {
   // LANE_H_MAX is a taste value, not a derived one: it wants to fit a key marker centred on a
   // label, with room for the blendshape/layer sub-rows that stack below at 18px.
   static laneHeight(laneAreaH, nTracks) {
+    //
+    // LANE_H_MIN keeps a name readable and a key pickable on a big rig (27 rows in the default
+    // panel shared out to 4px each); past it the lanes scroll.
     const LANE_H_MAX = 34;
-    return Math.min(LANE_H_MAX, laneAreaH / Math.max(4, nTracks));
+    const LANE_H_MIN = 16;
+    return Math.max(LANE_H_MIN, Math.min(LANE_H_MAX, laneAreaH / Math.max(4, nTracks)));
   }
 
 
@@ -35,6 +39,83 @@ export default class TimelineHelper {
   static bsEntries(track) {
     if (!track?.blendshapeTracks) return [];
     return [...track.blendshapeTracks].reverse();
+  }
+
+  // Which moves a selection means, as [first, second] key positions on one curve: neighbouring
+  // selected keys are the move between them, and a key on its own means the move leaving it (or, for
+  // the last key, the move arriving at it).
+  static easeSegments(n, ats) {
+    const sel = new Set(ats), out = [];
+    for (const at of ats) {
+      if (sel.has(at + 1)) out.push([at, at + 1]);
+      else if (!sel.has(at - 1)) {
+        if (at + 1 < n) out.push([at, at + 1]);
+        else if (at > 0) out.push([at - 1, at]);
+      }
+    }
+    return out;
+  }
+
+  // One move with a slider at f (-1..1). x is a handle's length as a fraction of the move, s its
+  // slope; a is the first key's outgoing handle, b the second key's incoming one. dV and T are the
+  // move's travel and duration, nextLen the length of the second key's outgoing handle (0 if none).
+  //
+  // OVERSHOOT_DV: how much of the move's travel an overshoot or anticipation handle spans. A curve
+  // leaving a key with handle height h peaks about 0.44h away, so .563 is 25% at full pull.
+  static easeSegment(kind, f, { T, dV, xa0, xb0, sa0, sb0, nextLen }) {
+    const HOLD = 0.9, SHORT = 0.05, SOFT = 0.6, LINEAR = 1 / 3, OVERSHOOT_DV = 0.563;
+    const mix = (from, to, g) => from + (to - from) * g;
+    const g = Math.abs(f);
+    let xa = xa0, xb = xb0, sa = sa0, sb = sb0, corners = false;
+    if (kind === 'timing') {
+      // The end being held gets a long flat handle, and the other a short one, keeping its slope.
+      // Flat arrives early in the pull: a long handle that still leans is a head start, not a hold.
+      const flat = Math.min(1, g * 2.5);
+      if (f > 0) { xa = mix(xa0, HOLD, g); sa = mix(sa0, 0, flat); xb = mix(xb0, SHORT, g); }
+      else if (f < 0) { xb = mix(xb0, HOLD, g); sb = mix(sb0, 0, flat); xa = mix(xa0, SHORT, g); }
+    } else if (kind === 'ease') {
+      if (f > 0) { xa = mix(xa0, SOFT, g); xb = mix(xb0, SOFT, g); sa = mix(sa0, 0, g); sb = mix(sb0, 0, g); }
+      else if (f < 0) {
+        const m = dV / T;
+        xa = mix(xa0, LINEAR, g); xb = mix(xb0, LINEAR, g); sa = mix(sa0, m, g); sb = mix(sb0, m, g);
+        corners = true;
+      }
+    } else if (f > 0) {
+      // With a next key the curve runs through this one and past it. Without one there is nowhere to
+      // go after it, so it arrives from beyond instead.
+      const target = nextLen > 0 ? OVERSHOOT_DV * dV / nextLen : -OVERSHOOT_DV * dV / (xb0 * T);
+      sb = mix(sb0, target, g);
+    } else if (f < 0) {
+      sa = mix(sa0, -OVERSHOOT_DV * dV / (xa0 * T), g);
+    }
+    return { xa, xb, sa, sb, corners };
+  }
+
+  // A row that holds transform keys and nothing that would be lost by folding it away.
+  static isXfRow(track) {
+    return !!(track?.times?.length && !track.shapeTimes?.length
+      && !track.blendshapeTracks?.size && !track.shapeLayers?.length);
+  }
+
+  // The Transforms row's keys: one per time, each holding the real keys under it. Muted rows are
+  // left out because their keys cannot be picked. Times closer than XF_SAME apart are one key, as
+  // the same pose keyed on many rows can differ by float noise after a retime.
+  static xfSummary(rows) {
+    const XF_SAME = 1e-3;
+    const all = [];
+    for (const [meshId, tr] of (rows || [])) {
+      if (tr.muted) continue;
+      for (let i = 0; i < tr.times.length; i++) all.push({ meshId, index: i, time: tr.times[i] });
+    }
+    all.sort((a, b) => a.time - b.time);
+    const out = [];
+    for (const k of all) {
+      const g = out[out.length - 1];
+      const key = { meshId: k.meshId, type: 'transform', index: k.index };
+      if (g && k.time - g.time < XF_SAME) g.keys.push(key);
+      else out.push({ time: k.time, keys: [key] });
+    }
+    return out;
   }
 
   static getBezierT(targetAlpha, p1x, p2x) {
@@ -120,6 +201,11 @@ export default class TimelineHelper {
         ctx.fillRect(w.x, ty, w.w, trackH);
       }
 
+      if (track._xfSummary) {
+        TimelineHelper._drawXfSummary(ctx, w, ty, trackH, tlX, tlW, loopStart, visibleDuration, uiState, show);
+        return;
+      }
+
       let laneName = `Track ${id}`;
       let laneMesh = null;
       if (main && main._meshes) {
@@ -148,7 +234,7 @@ export default class TimelineHelper {
       ctx.font = isGraphTarget ? 'bold 12px sans-serif' : '12px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
+      ctx.fillText(laneName, w.x + (uiState?._xfRows?.some(([rowId]) => rowId === id) ? 24 : 10), ty + trackH / 2);
       ctx.restore();
 
       // Mute toggle — right-aligned "M"; mutes this object's animation in playback.
@@ -448,6 +534,55 @@ export default class TimelineHelper {
     ctx.restore(); // dopesheet vertical-scroll clip
   }
 
+  static _drawXfSummary(ctx, w, ty, trackH, tlX, tlW, loopStart, visibleDuration, uiState, show) {
+    const rows = uiState._xfRows || [];
+    const cy = ty + trackH / 2;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(w.x, ty, w.w, trackH);
+
+    // The fold arrow, drawn so it needs no glyph: pointing right when folded, down when open.
+    ctx.fillStyle = '#cdd6f4';
+    ctx.beginPath();
+    if (uiState._xfFolded) {
+      ctx.moveTo(w.x + 9, cy - 5); ctx.lineTo(w.x + 15, cy); ctx.lineTo(w.x + 9, cy + 5);
+    } else {
+      ctx.moveTo(w.x + 7, cy - 3); ctx.lineTo(w.x + 17, cy - 3); ctx.lineTo(w.x + 12, cy + 3);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    const graphed = uiState._graphKeyIds;
+    const allGraphed = !!graphed && rows.every(([id, t]) => t.muted || graphed.has(id));
+    ctx.fillStyle = allGraphed ? '#ffff00' : '#cdd6f4';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`Transforms (${rows.length})`, w.x + 24, cy);
+
+    if (!show.transform) return;
+    const selected = new Set((window._animSelectedKeys || [])
+      .filter((k) => k.type === 'transform').map((k) => k.meshId + '|' + k.index));
+    const ms = uiState._marqueeStart, me = uiState._marqueeEnd;
+    const inMarquee = (kx) => !!(ms && me && Math.min(ms.y, me.y) + w.y <= ty + trackH && Math.max(ms.y, me.y) + w.y >= ty
+      && kx >= Math.min(ms.x, me.x) + w.x && kx <= Math.max(ms.x, me.x) + w.x);
+    for (const g of TimelineHelper.xfSummary(rows)) {
+      if (g.time < loopStart || g.time > loopStart + visibleDuration) continue;
+      const kx = w.x + tlX + ((g.time - loopStart) / visibleDuration) * tlW;
+      const n = g.keys.filter((k) => selected.has(k.meshId + '|' + k.index)).length;
+      const full = n === g.keys.length || inMarquee(kx);
+      const fill = TimelineHelper.keyFill(full, full && !!uiState._isDraggingKeyframe, false);
+      ctx.fillStyle = fill;
+      // Some of the keys under it selected: yellow outline, white middle.
+      ctx.strokeStyle = (n > 0 && !full) ? '#ffff00' : fill;
+      TimelineHelper.keyRing(ctx, TimelineHelper.isKeyHovered(kx, cy, uiState._lastMouseX, uiState._lastMouseY, 10));
+      ctx.beginPath();
+      ctx.moveTo(kx, cy - 4.5); ctx.lineTo(kx + 4.5, cy); ctx.lineTo(kx, cy + 4.5); ctx.lineTo(kx - 4.5, cy);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
   static moveKeys(reg, keys, dt, dVal, mDurVal, main) {
     reg.moveSelectedKeys(keys, dt, mDurVal);
     if (dVal !== undefined) {
@@ -710,7 +845,7 @@ export default class TimelineHelper {
   // box, its extent, its handles and the captured start values are ALL in display space -- so
   // the arithmetic below is one consistent space, and only the final write leaves it. With
   // Normalise off the caller passes the identity and nothing about raw mode changes.
-  static scaleKeysVertical(track, initialKeys, initialBox, targetVal, handle, tBox, fromDisp) {
+  static scaleKeysVertical(trackOf, initialKeys, initialBox, targetVal, handle, tBox, fromDisp) {
     const back = fromDisp || ((v) => v);
     let factor = 1.0;
     if (initialBox.maxV !== initialBox.minV) {
@@ -733,7 +868,13 @@ export default class TimelineHelper {
     // The bug that per-group pivots appeared to fix was really the CENTRE drag writing keys
     // ungrouped (see _setKeyVal), so every key landed in the active group and the other curves
     // never moved. That is fixed at its source; the box behaves like a box again.
+    // EACH KEY ON ITS OWN OBJECT'S TRACK. This was handed the graph target's track and wrote every key
+    // into it by index, so a box over several objects replaced one object's curves with the others'
+    // values the moment it was nudged. matt: "keys and curves would snap wildly".
     initialKeys.forEach(sk => {
+      const track = trackOf(sk);
+      if (!track) return;
+      TimelineHelper.scaleKeyHandles(track, sk, factor);
       const initialVal = sk.val ?? 0;
       let newVal = 0;
       if (handle === 'top') {
@@ -758,6 +899,26 @@ export default class TimelineHelper {
     } else {
       tBox.minV = targetVal;
     }
+  }
+
+  // A key's stored slopes, captured so a value scale can scale them too. A handle is a height in
+  // value units: left alone while the key's value shrinks, it looks huge and the curve bulges.
+  static keyHandleBase(track, sk) {
+    const to = sk.type === 'blendshape' ? track?.blendshapeTracks?.get(sk.name)?.tangentOffsets : track?.tangentOffsets;
+    if (!to || sk.index === undefined) return null;
+    const out = {};
+    for (const side of ['left', 'right']) {
+      const key = sk.type === 'transform' ? (sk.channel === undefined ? null
+          : `${xfTanPrefix(sk.group)}${sk.index}_${side}_dv_${sk.channel}`)
+        : sk.type === 'blendshape' ? `${sk.index}_${side}_dv` : null;
+      if (key && to[key] !== undefined) out[key] = to[key];
+    }
+    return { to, out };
+  }
+
+  static scaleKeyHandles(track, sk, factor) {
+    if (!sk.handles) return;
+    for (const key in sk.handles.out) sk.handles.to[key] = sk.handles.out[key] * factor;
   }
 
   static drawMarqueeBox(ctx, marqueeStart, marqueeEnd, offsetX = 0, offsetY = 0, lineWidth = 1) {

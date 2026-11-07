@@ -86,7 +86,8 @@ const slice = (name) => {
   return REG.slice(at, end + 4);
 };
 const Reg = new Function(
-  'return class R { constructor(){ this.tracks = new Map(); this.globalPlaybackTime = 0; }'
+  'const xfHandleFit = (h, dt) => (Math.abs(h) > dt ? dt / Math.abs(h) : 1);'
+  + 'return class R { constructor(){ this.tracks = new Map(); this.globalPlaybackTime = 0; }'
   + slice('scalarTrack') + slice('scalarAt') + slice('setScalarKey')
   // ...and the two helpers the evaluator leans on. Lifted rather than stubbed: the
   // interpolation IS what is being checked, and a stub of it would pass whatever it was

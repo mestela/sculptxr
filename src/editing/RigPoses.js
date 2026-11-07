@@ -157,10 +157,11 @@ RigPoses.keyRig = function (main, time) {
 // rest shape: the fix is the opposite of the crease, which at rest is a dent. So strokes on a saved pose
 // go into a shape layer whose weight comes from the rig (pose-space deformation).
 //
-// AN ORDINARY LAYER, `pose:<name>`, in rest space under the skin like any other, so the composite, the
-// mush, undo and the .sxr all need nothing new. Only its weight is different.
+// AN OFFSET ON TOP OF THE SKIN PASS, `track.correctivePost`, name -> array (Skinning.applyFixes), so what's
+// sculpted is what's drawn, however hard the bend. Files before SKEL v32 have the fix as a shape layer of the
+// same name in rest space under the skin instead; those keep working as they were, and a new stroke goes on top.
 //
-// PLUS DETAILS OF ITS OWN ABOVE THE BOUND LEVEL. The layer has the bound level's vertices, and most of a
+// PLUS DETAILS OF ITS OWN ABOVE THE BOUND LEVEL. The offset has the bound level's vertices, and most of a
 // fine stroke (Smooth kept .15 of .92) goes in the levels above. `track.correctiveDetails` is layer name ->
 // level -> detail array, and `level._detailsFix` is their weighted sum, added to the level's own details
 // when it draws and taken off when it measures. Kept apart, as details folded back through a sum would
@@ -244,12 +245,18 @@ function layersOf(main, name) {
   if (!reg) return out;
   for (const m of main.getMeshes?.() || []) {
     const t = reg.tracks.get(m.getID());
-    const d = t && t.blendshapes && t.blendshapes.get(layerName(name));
-    if (d) out.push({ m, t, d, bt: t.blendshapeTracks.get(layerName(name)), fix: t.correctiveDetails?.get(layerName(name)) });
+    if (!t) continue;
+    const key = layerName(name), d = t.blendshapes?.get(key), post = t.correctivePost?.get(key), fix = t.correctiveDetails?.get(key);
+    if (d || post || fix) out.push({ m, t, d, post, bt: t.blendshapeTracks?.get(key), fix });
   }
   return out;
 }
-function refresh(m) { composeDetails(m); window._animationRegistry?.applyBlendshapes(m); }
+// Only a mesh with a base has a composite to redo: composing the details asks for a pass, which draws the rest.
+function refresh(m) {
+  composeDetails(m);
+  const reg = window._animationRegistry;
+  if (reg?.tracks?.get(m.getID())?.baseShape) reg.applyBlendshapes(m);
+}
 
 // `level._detailsFix` from the fixes and their weights. Null where there's nothing to add.
 function composeDetails(m) {
@@ -304,8 +311,9 @@ Skinning.addFixDetails = function (mesh, on, edits) {
 function dropLayers(main, name) {
   const key = layerName(name);
   for (const { m, t } of layersOf(main, name)) {
-    t.blendshapes.delete(key);
-    t.blendshapeTracks.delete(key);
+    t.blendshapes?.delete(key);
+    t.blendshapeTracks?.delete(key);
+    t.correctivePost?.delete(key);
     t.correctiveW?.delete(key);
     t.correctiveDetails?.delete(key);
     refresh(m);
@@ -313,9 +321,9 @@ function dropLayers(main, name) {
 }
 function putLayers(main, name, rows) {
   const key = layerName(name);
-  for (const { m, t, d, bt, fix } of rows) {
-    t.blendshapes.set(key, d);
-    t.blendshapeTracks.set(key, bt);
+  for (const { m, t, d, bt, post, fix } of rows) {
+    if (d) { t.blendshapes.set(key, d); t.blendshapeTracks.set(key, bt); }
+    if (post) (t.correctivePost || (t.correctivePost = new Map())).set(key, post);
     (t.correctiveW || (t.correctiveW = new Map())).set(key, -1);
     if (fix) (t.correctiveDetails || (t.correctiveDetails = new Map())).set(key, fix);
     refresh(m);
@@ -324,31 +332,65 @@ function putLayers(main, name, rows) {
 
 RigPoses.hasCorrective = (main, name) => layersOf(main, name).length > 0;
 
+// WHAT STATE THE RIG IS IN AND WHERE A STROKE WOULD GO: `pose` is the nearest saved pose and how near, `stage`
+// is whether a stroke lands before the skin or after it, `warn` that it can jump (under the skin on a posed rig,
+// where the pass may not put it back where it was drawn). Null with no skin in the scene.
+RigPoses.status = function (main) {
+  const meshes = main.getMeshes?.() || [];
+  const sel = main.getMesh?.();
+  const mesh = sel && sel._skinW ? sel : meshes.find((m) => m._skinW);
+  if (!mesh) return null;
+  if (Skinning.atBindPose(main, mesh)) return { pose: 'Bind', stage: 'pre', warn: false };
+  const layer = window._animationRegistry?.tracks?.get(mesh.getID())?.editingBlendshape;
+  const on = RigPoses.active(main), pct = (w) => Math.round(w * 100) + '%';
+  if (on && !layer) return { pose: on.name + ' ' + pct(on.w), stage: 'post', warn: false };
+  let near = null, w = 0;
+  for (const name of RigPoses.names(main)) {
+    const here = RigPoses.weight(main._rigPoses.get(name));
+    if (here > w) { w = here; near = name; }
+  }
+  return { pose: near ? near + ' ' + pct(w) : 'Posed', stage: 'pre', warn: true };
+};
+RigPoses.statusText = (s) => s.pose + ' | ' + s.stage;
+
+// A few times a second is plenty to read, and it's only written when it changes.
+const STATUS_MS = 150;
+let statusAt = 0, statusWas = null;
+function publishStatus(main) {
+  const now = performance.now();
+  if (now - statusAt < STATUS_MS) return;
+  statusAt = now;
+  const s = RigPoses.status(main), text = s ? RigPoses.statusText(s) : '';
+  if (text === statusWas) return;
+  statusWas = text;
+  window._rigSculptInto?.(s);
+  window._rigStatusBar?.(s);
+}
+
 // SET THE LAYERS' WEIGHTS FROM THE RIG, once a frame before the skin pass. Recomposes only a mesh whose
 // weights moved, so a still rig costs a few quaternions. -1 means never set, which is how a loaded
 // file gets its composite on the first frame.
 RigPoses.drive = function (main) {
   const lib = main._rigPoses, reg = window._animationRegistry;
-  const on = lib && lib.size ? RigPoses.active(main) : null;
-  if (RigPoses._shownOn !== (on ? on.name : null)) {
-    RigPoses._shownOn = on ? on.name : null;
-    window._rigSculptInto?.(RigPoses._shownOn);
-  }
+  publishStatus(main);
   if (!lib || !lib.size || !reg) return;
   for (const m of main.getMeshes() || []) {
     if (!m._skinW) continue;
     const t = reg.tracks.get(m.getID());
-    if (!t || !t.blendshapes) continue;
-    let moved = false;
-    for (const key of t.blendshapes.keys()) {
+    if (!t) continue;
+    let moved = false, layer = false;
+    const keys = new Set([...(t.blendshapes?.keys() || []), ...(t.correctivePost?.keys() || []), ...(t.correctiveDetails?.keys() || [])]);
+    for (const key of keys) {
       if (!key.startsWith(LAYER)) continue;
       const pose = lib.get(key.slice(LAYER.length));
       const w = pose ? RigPoses.weight(pose) : 0;
       const W = t.correctiveW || (t.correctiveW = new Map());
       const was = W.has(key) ? W.get(key) : -1;
-      if (Math.abs(w - was) > 1e-3) { W.set(key, w); moved = true; }
+      if (Math.abs(w - was) > 1e-3) { W.set(key, w); moved = true; layer = layer || !!t.blendshapes?.has(key); }
     }
-    if (moved) refresh(m);
+    // An offset only needs the pass, so a keyed rig doesn't redo a composite every frame for it.
+    if (layer) refresh(m);
+    else if (moved) composeDetails(m);
   }
 };
 
@@ -357,9 +399,9 @@ function correctiveFor(main, mesh) {
   return mesh && mesh._skinW ? RigPoses.active(main) : null;
 }
 
-// The layer's array, made on first use. Not createBlendshape: that takes the base from what's on screen,
-// which here is posed, and locks it, which would stop this skin being sculpted at rest.
-function ensureLayer(main, mesh, on) {
+// The fix's array, made on first use. No base and no layer: nothing under the skin changes, so this skin can
+// still be sculpted at rest.
+function ensureFix(main, mesh, on) {
   const reg = window._animationRegistry;
   if (!reg) return null;
   const id = mesh.getID();
@@ -367,25 +409,18 @@ function ensureLayer(main, mesh, on) {
     reg.tracks.set(id, { times: [], positions: [], quaternions: [], scales: [],
       shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now() });
   }
-  const t = reg.tracks.get(id);
-  if (!t.blendshapes) t.blendshapes = new Map();
-  if (!t.blendshapeTracks) t.blendshapeTracks = new Map();
-  if (!t.baseShape) {
-    t.baseShape = new Float32Array(mesh._skinSrc);
-    t._bsNbVertices = t.baseShape.length / 3;
-  }
+  const t = reg.tracks.get(id), all = t.correctivePost || (t.correctivePost = new Map());
   const key = layerName(on.name);
-  let d = t.blendshapes.get(key);
-  if (!d) {
-    d = new Float32Array(t.baseShape.length);
-    t.blendshapes.set(key, d);
-    t.blendshapeTracks.set(key, { times: [], values: [] });
+  let d = all.get(key);
+  if (!d || d.length !== mesh._skinRest.length) {
+    d = new Float32Array(mesh._skinRest.length);
+    all.set(key, d);
     (t.correctiveW || (t.correctiveW = new Map())).set(key, on.w);
   }
   return { track: t, arr: d };
 }
 Skinning.correctiveFor = correctiveFor;
-Skinning.ensureCorrective = ensureLayer;
+Skinning.ensureCorrective = ensureFix;
 Skinning.beforePass = RigPoses.drive;
 
 // BAKE TO REST: the fix applies in every pose after all. The right escape from having sculpted on a pose
@@ -393,15 +428,18 @@ Skinning.beforePass = RigPoses.drive;
 RigPoses.bake = function (main, name) {
   const rows = layersOf(main, name);
   if (!rows.length) return 0;
-  const snaps = rows.map((r) => ({ ...r, base: r.t.baseShape.slice(), rest: r.m._skinRest.slice(),
+  const snaps = rows.map((r) => ({ ...r, base: r.t.baseShape?.slice(), rest: r.m._skinRest.slice(), src: r.m._skinSrc.slice(),
     details: [...(r.fix || new Map()).keys()].filter((l) => l._detailsXYZ).map((l) => [l, l._detailsXYZ.slice()]) }));
   const doIt = () => {
     for (const r of snaps) {
-      const n = Math.min(r.t.baseShape.length, r.d.length);
-      for (let i = 0; i < n; i++) {
-        r.t.baseShape[i] += r.d[i];
-        if (i < r.m._skinRest.length) r.m._skinRest[i] += r.d[i];
+      // An offset is already a rest-space vector: the pass turns it to where it is drawn.
+      for (const a of [r.d, r.post]) {
+        for (let i = 0; a && i < a.length; i++) {
+          if (r.base && i < r.base.length) r.t.baseShape[i] += a[i];
+          if (i < r.rest.length) { r.m._skinRest[i] += a[i]; if (!r.base) r.m._skinSrc[i] += a[i]; }
+        }
       }
+      r.m._skinMushDirty = true;
       for (const [lvl] of r.details) {
         const from = r.fix.get(lvl);
         for (let i = 0; i < from.length; i++) lvl._detailsXYZ[i] += from[i];
@@ -413,8 +451,10 @@ RigPoses.bake = function (main, name) {
   };
   const undo = () => {
     for (const r of snaps) {
-      r.t.baseShape.set(r.base);
+      if (r.base) r.t.baseShape.set(r.base);
       r.m._skinRest.set(r.rest);
+      r.m._skinSrc.set(r.src);
+      r.m._skinMushDirty = true;
       for (const [lvl, was] of r.details) lvl._detailsXYZ.set(was);
       r.t._bsRev = (r.t._bsRev | 0) + 1;
     }
@@ -534,6 +574,54 @@ function levelNormals(l) {
   l.updateFacesAabbAndNormal(undefined, true);
   l.updateVerticesNormal();
 }
+// WHAT THIS POSE'S FIX ADDS TO THE LEVEL ON SCREEN, per vertex, for Revert to take away; the stroke's commit then
+// takes it out of the fix like any other. Null off a pose, or with nothing to take. Above the bound level it's
+// measured as two surfaces, as details are written in frames of their own: built with the fix and without, the
+// same way, since rebuilding doesn't quite return what's on screen. Everything is put back after.
+Skinning.fixOnScreen = function (main, mesh) {
+  const on = correctiveFor(main, mesh), track = window._animationRegistry?.tracks?.get(mesh?.getID());
+  if (!on || !track) return null;
+  const key = layerName(on.name), w = track.correctiveW?.get(key) ?? on.w;
+  const low = Skinning.fixOffset(main, mesh, track.correctivePost?.get(key), w);
+  const own = track.correctiveDetails?.get(key);
+  const stack = mesh._meshes, from = stack ? stack.indexOf(mesh._skinLevelMesh || stack[mesh._skinLevel | 0]) : -1;
+  const to = mesh._sel | 0;
+  if (from < 0 || to <= from) return from === to || from < 0 ? low : null;
+  if (!low && !own?.size) return null;
+  const rows = stack.slice(from, to + 1).map((l) => ({ l, v: l.getVertices().slice(), n: l.getNormals().slice(), f: l._detailsFix }));
+  const base = rows[0].v, nb0 = rows[0].l.getNbVertices() * 3;
+  const build = (withFix) => {
+    const v0 = rows[0].l.getVertices();
+    for (let k = 0; k < nb0; k++) v0[k] = base[k] - (!withFix && low ? low[k] : 0);
+    levelNormals(rows[0].l);
+    rows.forEach((x, i) => {
+      if (!i) return;
+      let fix = x.f;
+      const mine = own?.get(x.l);
+      if (!withFix && mine && fix) {
+        fix = fix.slice();
+        for (let k = 0; k < fix.length; k++) fix[k] -= mine[k] * w;
+      }
+      x.l._detailsFix = fix;
+      // twice, as details are oriented by the level's own normals
+      for (let k = 0; k < 2; k++) { x.l.higherSynthesis(rows[i - 1].l); levelNormals(x.l); }
+    });
+    const top = rows[rows.length - 1].l;
+    return top.getVertices().slice(0, top.getNbVertices() * 3);
+  };
+  const off = build(false), full = build(true);
+  for (const x of rows) {
+    x.l.getVertices().set(x.v);
+    x.l.getNormals().set(x.n);
+    x.l._detailsFix = x.f;
+  }
+  let most = 0;
+  for (let k = 0; k < full.length; k++) { full[k] -= off[k]; most = Math.max(most, Math.abs(full[k])); }
+  if (!most) return null;
+  for (let k = 0; k < full.length; k++) if (Math.abs(full[k]) < most * NOISE) full[k] = 0;
+  return full;
+};
+
 // A FIX'S DETAILS, REFLECTED. A detail is written in its own vertex's surface frame, and the frames either
 // side of the plane aren't reflections of each other, so the numbers can't just be copied across. So do it
 // as surfaces: build the levels at rest without the fix and with it, reflect the difference, and measure what
@@ -560,9 +648,9 @@ function mirrorDetails(r, n, o, md) {
       return x.l.getVertices().slice(0, x.l.getNbVertices() * 3);
     });
   };
-  const nb0 = r.t.baseShape.length, on0 = new Float32Array(nb0), to0 = new Float32Array(nb0);
-  for (let i = 0; i < nb0; i++) { on0[i] = r.t.baseShape[i] + r.d[i]; to0[i] = r.t.baseShape[i] + md[i]; }
-  const off = build(r.t.baseShape, false);
+  const nb0 = r.base.length, on0 = new Float32Array(nb0), to0 = new Float32Array(nb0);
+  for (let i = 0; i < nb0; i++) { on0[i] = r.base[i] + r.sum[i]; to0[i] = r.base[i] + md[i]; }
+  const off = build(r.base, false);
   // What the same measurement reads with no fix at all, as it doesn't quite return the details it was given.
   const plain = rows.map((x, i) => {
     if (!i) return null;
@@ -621,8 +709,10 @@ RigPoses.mirror = function (main, name) {
   for (const r of layersOf(main, name)) {
     const n = r.m.getSymmetryNormal(), o = [0, 0, 0];
     if (!PosedSymmetry._restPlaneOrigin(r.m, n, o)) continue;
-    const md = mirrorDelta(n, o, r.t.baseShape, r.d);
-    rows.push({ m: r.m, t: r.t, d: md, bt: { times: [], values: [] }, fix: mirrorDetails(r, n, o, md) });
+    const base = r.t.baseShape || r.m._skinRest, sum = new Float32Array(base.length);
+    for (const a of [r.d, r.post]) for (let i = 0; a && i < a.length; i++) sum[i] += a[i];
+    const fix = mirrorDetails({ ...r, base, sum }, n, o, mirrorDelta(n, o, base, sum));
+    rows.push({ m: r.m, t: r.t, d: r.d && mirrorDelta(n, o, base, r.d), post: r.post && mirrorDelta(n, o, base, r.post), bt: { times: [], values: [] }, fix });
   }
   edit(main, (m) => m.set(made, rel), 'Mirror Rig Pose', () => putLayers(main, made, rows), () => dropLayers(main, made));
   return { ok: true, name: made, layers: rows.length };

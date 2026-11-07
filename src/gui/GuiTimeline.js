@@ -3,11 +3,13 @@ import { xfGroup, xfRead, xfWrite, xfTanPrefix, xfTanGet,
          XF_GROUPS, xfVisible, xfIsVisible, xfToggleVisible,
          xfWeightTrack, xfChanVisible, xfSetChanVisible,
          xfTimes, xfKeyed, xfKeyedSlots, xfSlope, xfSegEval, xfEval, xfBit, xfGroupBits, maskSync, XF_ALL,
-         xfPruneEmpty, xfRefreshDerived, posRef } from '../editing/xfChannel.js';
+         xfPruneEmpty, xfRefreshDerived, posRef, xfRetimeSnapshot, xfRetimeHandles, xfRetimeScalar } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 import IKSolver from '../editing/IKSolver.js';
 import PhysicsBones from '../editing/PhysicsBones.js';
 import { dockedSidebarWidth } from './compactUI.js';
+
+const XF_SUMMARY_ID = -2;   // the Transforms row, in _dopesheetTracks
 
 // Darker, higher-contrast blue (matches the desktop sidebar sliders) for active buttons
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
@@ -1787,7 +1789,8 @@ export default class GuiTimeline {
     const sel = this._main.getKeyTargets();
     if (!keys.length || !sel.length) return;
     const ids = new Set(sel.map((m) => m.getID()));
-    if (!keys.some((k) => ids.has(k.meshId) || ids.has(k.childId))) {
+    // A summary key selects without moving the scene selection, so _graphKeyIds vouches for it.
+    if (!keys.some((k) => ids.has(k.meshId) || ids.has(k.childId) || this._graphKeyIds?.has(k.meshId))) {
       window._animSelectedKeys = [];
       window._animTransformBox = null;
     }
@@ -2499,6 +2502,18 @@ export default class GuiTimeline {
     meshes.filter(m => m._isFrameGroup).forEach(g => {
       if (!entries.some(([id]) => id === g.getID())) entries.push([g.getID(), { _srGroupRow: true }]);
     });
+
+    // THE TRANSFORMS FOLD. One summary row over every row that holds only transform keys, so a
+    // pose can be retimed as one thing however many bones and pins it took. It goes in the row
+    // list, so drawing and every hit test place it the way they place any lane. A row that also
+    // has shape or blendshape rows stays out: folding it would hide those.
+    const groupIds = new Set(meshes.filter(m => m._isFrameGroup).map(m => m.getID()));
+    const xfRows = entries.filter(([id, t]) => !groupIds.has(id) && TimelineHelper.isXfRow(t));
+    this._xfRows = xfRows.length >= 2 ? xfRows : null;
+    if (this._xfRows) {
+      const rest = entries.filter((e) => !xfRows.includes(e));
+      entries = [[XF_SUMMARY_ID, { _xfSummary: true }], ...(this._xfFolded ? [] : xfRows), ...rest];
+    }
     return entries;
   }
 
@@ -2887,11 +2902,12 @@ export default class GuiTimeline {
       const _gm = this._graphMesh();
       const _nameOf = (m) => m._permanentStaticLabel || `Object ${m.getID()}`;
       const _gall = this._graphMeshes();
-      const _gname = _gm
+      const _allHidden = !xfVisible().length;
+      const _gname = _allHidden ? 'all key types hidden' : _gm
         ? (_gall.length > 1 ? `${_nameOf(_gm)} +${_gall.length - 1} more` : _nameOf(_gm))
         : 'nothing selected';
       ctx.save();
-      ctx.fillStyle = _gm ? '#ffff00' : '#6c7086';
+      ctx.fillStyle = (_gm || _allHidden) ? '#ffff00' : '#6c7086';
       ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
@@ -2904,7 +2920,7 @@ export default class GuiTimeline {
     // selectable, draggable).
     const _graphTarget = this._graphMesh();
     for (const activeMesh of this._graphMeshes()) {
-    ctx.globalAlpha = activeMesh === _graphTarget ? 1 : 0.5;
+    ctx.globalAlpha = (activeMesh === _graphTarget || this._graphKeyIds?.has(activeMesh.getID())) ? 1 : 0.5;
     if (activeMesh) {
       const id = activeMesh.getID();
       const track = reg.tracks.get(id);
@@ -3410,7 +3426,8 @@ export default class GuiTimeline {
         if ((maxV - minV) / 2 < _minHalf) { const _c = (minV + maxV) / 2; minV = _c - _minHalf; maxV = _c + _minHalf; }
       }
             const wObj = { x: 0, y: 0, w: this._cssWidth, h: this._cssHeight };
-            const tBox = { startTime: minT, endTime: maxT, minV, maxV };
+            const _pad = this._padBoxTime(minT, maxT);
+            const tBox = { startTime: _pad.minT, endTime: _pad.maxT, minV, maxV };
             TimelineHelper.drawTransformBox(ctx, tBox, wObj, HEADER_H, 200, this._cssWidth - 200, this._viewStart, this._viewDuration, (val) => this.valueToY(val));
           }
         }
@@ -3479,7 +3496,7 @@ export default class GuiTimeline {
         time = bt?.times?.[sk.index];
         val  = bt?.values?.[sk.index] ?? 0;
       }
-      return { ...sk, time, val };
+      return { ...sk, time, val, handles: TimelineHelper.keyHandleBase(tr, sk) };
     });
   }
 
@@ -3754,6 +3771,7 @@ export default class GuiTimeline {
       }
 
       if (minT !== Infinity && maxT !== -Infinity) {
+        ({ minT, maxT } = this._padBoxTime(minT, maxT));
         const kxLeft = tlX + ((minT - loopStart) / visibleDuration) * tlW;
         const kxRight = tlX + ((maxT - loopStart) / visibleDuration) * tlW;
         const kyTop = this.valueToY(maxV);
@@ -4313,6 +4331,7 @@ export default class GuiTimeline {
   _setGraphTarget(meshId) {
     if (meshId == null || meshId < 0) return; // synthetic rows (the folded rig lane) have no track
     this._graphMeshId = meshId;
+    this._graphKeyIds = null;   // the caller re-captures if this came with a key selection
     const mesh = this._main._meshes?.find((m) => m.getID() === meshId);
     // Unify timeline focus with the scene selection, but pass keepTool: setOrUnsetMesh runs
     // tool-context switching, and looking at a curve must not change your active tool.
@@ -4345,7 +4364,67 @@ export default class GuiTimeline {
       if (m === target || out.includes(m)) continue;
       if (has(m)) { reg?.syncEulerRef?.(m); out.push(m); }
     }
+    if (this._graphKeyIds) {
+      for (const m of (this._main._meshes || [])) {
+        if (!this._graphKeyIds.has(m.getID()) || out.includes(m)) continue;
+        if (has(m) && !reg.tracks.get(m.getID()).muted) { reg?.syncEulerRef?.(m); out.push(m); }
+      }
+    }
     return out;
+  }
+
+  // WHOSE CURVES THE DOPESHEET ASKED FOR: the objects owning the keys it just selected. Captured
+  // at that moment rather than read live off the selection, because a marquee in the graph narrows
+  // the selection to the keys being worked on and the other curves must stay on screen.
+  _captureGraphKeys() {
+    const ids = new Set();
+    for (const k of (window._animSelectedKeys || [])) if (k.type !== 'sr') ids.add(k.meshId);
+    this._graphKeyIds = ids.size ? ids : null;
+  }
+
+  // ENTERING THE GRAPH WITH A DOPESHEET SELECTION. A dopesheet key is a whole slot (no channel), a
+  // graph key is one channel of it, so the slots become channel keys: otherwise they sit selected
+  // in the graph without highlighting or taking a value drag. A slot none of whose channels are on
+  // show gets them turned on, so a selected key never lands on a blank graph; a filter that still
+  // shows some of its channels is left as you set it.
+  _graphFromDope() {
+    const reg = window._animationRegistry;
+    if (!reg || !this._graphKeyIds) return;
+    const GROUPS = ['pos', 'rot', 'scale'];
+    const sel = window._animSelectedKeys || [];
+    const isSlot = (k) => k.type === 'transform' && k.group !== 'weight' && k.index !== undefined;
+    const slots = sel.filter(isSlot).map((k) => [reg.tracks.get(k.meshId), k.index]);
+    if (!slots.length) {
+      for (const id of this._graphKeyIds) {
+        const tr = reg.tracks.get(id);
+        for (let i = 0; i < (tr?.times?.length || 0); i++) slots.push([tr, i]);
+      }
+    }
+    const showing = (g, c) => xfIsVisible(g) && xfChanVisible(g, c);
+    for (const [tr, i] of slots) {
+      if (!tr) continue;
+      const mask = maskSync(tr)[i];
+      const on = (g, c) => mask & xfBit(g, c);
+      if (GROUPS.some((g) => [0, 1, 2].some((c) => on(g, c) && showing(g, c)))) continue;
+      for (const g of GROUPS) for (const c of [0, 1, 2]) {
+        if (!on(g, c)) continue;
+        if (!xfIsVisible(g)) xfToggleVisible(g);
+        xfSetChanVisible(g, c, true);
+      }
+    }
+    window._animSelectedKeys = sel.flatMap((k) => {
+      if (!isSlot(k) || k.channel !== undefined) return [k];
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr) return [k];
+      const out = [];
+      for (const g of GROUPS) for (const c of [0, 1, 2]) {
+        if (xfKeyed(tr, k.index, g, c) && showing(g, c)) {
+          out.push({ meshId: k.meshId, type: 'transform', index: k.index, channel: c, group: g, time: tr.times[k.index] });
+        }
+      }
+      return out;
+    });
+    this._recomputeTransformBox();
   }
 
   // The selected keys' tie flags, one per key (a graph key's group and slot, or a shape/blendshape
@@ -4485,31 +4564,7 @@ export default class GuiTimeline {
   setSelectedTangents(mode) {
     const reg = window._animationRegistry;
     if (!reg) return 0;
-    const jobs = new Map();   // "meshId|grp|c" -> { tr, grp, c, slots:Set }
-    const add = (tr, id, grp, c, i) => {
-      if (!xfKeyedSlots(tr, grp, c).includes(i)) return;
-      const key = id + '|' + grp + '|' + c;
-      if (!jobs.has(key)) jobs.set(key, { tr, grp, c, slots: new Set() });
-      jobs.get(key).slots.add(i);
-    };
-    // Blendshape weight curves: one curve per shape, scalar tangent keys `${i}_right_dv` etc.
-    const bsJobs = new Map();   // "meshId|name" -> { bt, meshId, slots:Set }
-    for (const k of (window._animSelectedKeys || [])) {
-      if (k.type !== 'blendshape') continue;
-      const tr = reg.tracks.get(k.meshId);
-      const bt = tr && !tr.muted && tr.blendshapeTracks?.get(k.name);
-      if (!bt || bt.times[k.index] === undefined) continue;
-      const key = k.meshId + '|' + k.name;
-      if (!bsJobs.has(key)) bsJobs.set(key, { bt, meshId: k.meshId, slots: new Set() });
-      bsJobs.get(key).slots.add(k.index);
-    }
-    for (const k of (window._animSelectedKeys || [])) {
-      if (k.type !== 'transform' || k.group === 'weight') continue;
-      const tr = reg.tracks.get(k.meshId);
-      if (!tr || tr.muted || tr.times?.[k.index] === undefined) continue;
-      if (k.channel !== undefined) add(tr, k.meshId, k.group || 'pos', k.channel, k.index);
-      else for (const g of ['pos', 'rot', 'scale']) for (let c = 0; c < 3; c++) add(tr, k.meshId, g, c, k.index);
-    }
+    const { jobs, bsJobs } = this._selectedTangentJobs();
     if (!jobs.size && !bsJobs.size) return 0;
     const before = this._snapshotTracks();
     let n = 0;
@@ -4554,6 +4609,206 @@ export default class GuiTimeline {
     this._main.render?.();
     this.draw();
     return n;
+  }
+
+  // Which curves and keys a tangent edit touches: a graph key is its own channel, a dopesheet key
+  // every channel keyed at that slot.
+  _selectedTangentJobs() {
+    const reg = window._animationRegistry;
+    const jobs = new Map();   // "meshId|grp|c" -> { tr, grp, c, slots:Set }
+    const add = (tr, id, grp, c, i) => {
+      if (!xfKeyedSlots(tr, grp, c).includes(i)) return;
+      const key = id + '|' + grp + '|' + c;
+      if (!jobs.has(key)) jobs.set(key, { tr, grp, c, slots: new Set() });
+      jobs.get(key).slots.add(i);
+    };
+    // Blendshape weight curves: one curve per shape, scalar tangent keys `${i}_right_dv` etc.
+    const bsJobs = new Map();   // "meshId|name" -> { bt, meshId, slots:Set }
+    for (const k of (window._animSelectedKeys || [])) {
+      if (k.type !== 'blendshape') continue;
+      const tr = reg.tracks.get(k.meshId);
+      const bt = tr && !tr.muted && tr.blendshapeTracks?.get(k.name);
+      if (!bt || bt.times[k.index] === undefined) continue;
+      const key = k.meshId + '|' + k.name;
+      if (!bsJobs.has(key)) bsJobs.set(key, { bt, meshId: k.meshId, slots: new Set() });
+      bsJobs.get(key).slots.add(k.index);
+    }
+    for (const k of (window._animSelectedKeys || [])) {
+      if (k.type !== 'transform' || k.group === 'weight') continue;
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr || tr.muted || tr.times?.[k.index] === undefined) continue;
+      if (k.channel !== undefined) add(tr, k.meshId, k.group || 'pos', k.channel, k.index);
+      else for (const g of ['pos', 'rot', 'scale']) for (let c = 0; c < 3; c++) add(tr, k.meshId, g, c, k.index);
+    }
+    return { jobs, bsJobs };
+  }
+
+  // THE TIMING, EASE AND OVERSHOOT SLIDERS. They shape a whole MOVE, the segment between two keys,
+  // in proportion to how far each channel travels, so a hold or a snap lands on the same part of the
+  // move on every channel. That is what editing handles by hand does and what a per-key slope cannot:
+  // timing lives mostly in handle LENGTH. Spring-back, measured from the press.
+  //
+  // Length is stored per slot and per T/R/S group, so editing one channel's length moves the rest of
+  // its group too. On a summary selection they all change together, which is the point.
+  _tanDialRects() {
+    const left = 292;
+    const room = this._valueFieldRect().x - 8 - left;
+    const gap = 6, w = Math.min(150, Math.floor((room - 2 * gap) / 3));
+    if (w < 60) return [];
+    const at = (n) => left + n * (w + gap);
+    return [
+      { kind: 'timing', label: 'Timing', lo: 'Early', hi: 'Late', x: at(0), y: 34, w, h: 20,
+        tooltip: 'Where the move happens. Right: hold on the first key, then go late. Left: go early, then settle.' },
+      { kind: 'ease', label: 'Ease', lo: 'Linear', hi: 'Soft', x: at(1), y: 34, w, h: 20,
+        tooltip: 'Right: slow at both ends, fastest in the middle. Left: straight line.' },
+      { kind: 'over', label: 'Overshoot', lo: 'Antic', hi: 'More', x: at(2), y: 34, w, h: 20,
+        tooltip: 'Right: carry past the second key and settle back. Left: pull back before leaving the first.' },
+    ];
+  }
+
+  // A curve as the sliders need it, so transform channels and blendshape weights share one path.
+  _easeSegsFor(c, entries, ties) {
+    const { times: t, vals, ats, to } = c;
+    const get = (at, side) => {
+      const nb = side === 'right' ? at + 1 : at - 1;
+      if (t[nb] === undefined) return null;
+      const dt = c.getDt(at, side) ?? (t[nb] - t[at]) * 0.33;
+      const dv = c.getDv(at, side);
+      return { dt, dv, slope: dv !== undefined && dt ? dv / dt : c.slope(at) };
+    };
+    for (const [a, b] of TimelineHelper.easeSegments(t.length, ats)) {
+      const T = t[b] - t[a];
+      if (!(T > 0)) continue;
+      const aR = get(a, 'right'), aL = get(a, 'left'), bL = get(b, 'left'), bR = get(b, 'right');
+      for (const at of [a, b]) ties.push({ to, flag: c.tieKey(at), was: to[c.tieKey(at)] });
+      entries.push({
+        c, a, b, T, aL, bR, tiedA: to[c.tieKey(a)] !== false, tiedB: to[c.tieKey(b)] !== false,
+        seg: { T, dV: vals[b] - vals[a], xa0: Math.abs(aR.dt) / T, xb0: Math.abs(bL.dt) / T,
+               sa0: aR.slope, sb0: bL.slope, nextLen: bR ? bR.dt : 0 },
+      });
+    }
+  }
+
+  _tanDialStart(rect, rx) {
+    const { jobs, bsJobs } = this._selectedTangentJobs();
+    const entries = [], ties = [], meshIds = new Set(), derived = new Set();
+    for (const [k, { tr, grp, c: ch, slots }] of jobs) {
+      const ks = xfKeyedSlots(tr, grp, ch), pfx = xfTanPrefix(grp);
+      if (!tr.tangentOffsets) tr.tangentOffsets = {};
+      const side = (at, sd) => `${ks[at]}_${sd}`;
+      this._easeSegsFor({
+        times: ks.map((i) => tr.times[i]), vals: ks.map((i) => xfRead(tr, i, ch, grp)),
+        ats: ks.flatMap((i, at) => (slots.has(i) ? [at] : [])), to: tr.tangentOffsets,
+        getDt: (at, sd) => xfTanGet(tr, `${side(at, sd)}_dt`, grp),
+        getDv: (at, sd) => xfTanGet(tr, `${side(at, sd)}_dv_${ch}`, grp),
+        slope: (at) => xfSlope(tr, grp, ch, ks[at]),
+        dtKey: (at, sd) => `${pfx}${side(at, sd)}_dt`,
+        dvKey: (at, sd) => `${pfx}${side(at, sd)}_dv_${ch}`,
+        tieKey: (at) => `${pfx}${ks[at]}_tied`,
+      }, entries, ties);
+      meshIds.add(+k.split('|')[0]);
+      derived.add(tr);
+    }
+    for (const { bt, meshId, slots } of bsJobs.values()) {
+      if (!bt.tangentOffsets) bt.tangentOffsets = {};
+      const to = bt.tangentOffsets, reg = window._animationRegistry;
+      this._easeSegsFor({
+        times: bt.times, vals: bt.values, ats: [...slots].sort((x, y) => x - y), to,
+        getDt: (at, sd) => to[`${at}_${sd}_dt`], getDv: (at, sd) => to[`${at}_${sd}_dv`],
+        slope: (at) => reg.getBsSlope(bt, at),
+        dtKey: (at, sd) => `${at}_${sd}_dt`, dvKey: (at, sd) => `${at}_${sd}_dv`, tieKey: (at) => `${at}_tied`,
+      }, entries, ties);
+      meshIds.add(meshId);
+    }
+    if (!entries.length) return;
+    this._tanDial = { rect, x0: rx, entries, ties, meshIds, derived, before: this._snapshotTracks(), f: 0, moved: false };
+  }
+
+  _tanDialMove(rx) {
+    const d = this._tanDial, r = d.rect;
+    const f = Math.max(-1, Math.min(1, (rx - d.x0) / (r.w / 2)));
+    if (f === d.f) return;
+    d.f = f;
+    d.moved = true;
+    const put = (to, key, v) => { if (v === undefined) delete to[key]; else to[key] = v; };
+    let corners = false;
+    for (const e of d.entries) {
+      const { c, a, b, T, seg } = e, to = c.to;
+      const out = TimelineHelper.easeSegment(r.kind, f, seg);
+      corners = !!out.corners;
+      to[c.dtKey(a, 'right')] = out.xa * T;
+      to[c.dvKey(a, 'right')] = out.sa * out.xa * T;
+      to[c.dtKey(b, 'left')] = -out.xb * T;
+      to[c.dvKey(b, 'left')] = -out.sb * out.xb * T;
+      // The far side of a tied key keeps the curve smooth through it. Overshoot always writes the
+      // second key's far side: that handle is what carries the curve past the key.
+      if (e.aL) put(to, c.dvKey(a, 'left'), e.tiedA && !out.corners && out.sa !== seg.sa0 ? out.sa * e.aL.dt : e.aL.dv);
+      if (e.bR) put(to, c.dvKey(b, 'right'), (e.tiedB || r.kind === 'over') && !out.corners && out.sb !== seg.sb0 ? out.sb * e.bR.dt : e.bR.dv);
+    }
+    // A straight segment meets its neighbours at a corner, so those keys cannot stay tied.
+    for (const t of d.ties) {
+      if (corners) t.to[t.flag] = false;
+      else put(t.to, t.flag, t.was);
+    }
+    this._tanDialApply(d);
+  }
+
+  _tanDialApply(d) {
+    const reg = window._animationRegistry;
+    d.derived.forEach((tr) => xfRefreshDerived(tr));
+    for (const m of this._main.getMeshes?.() || []) if (d.meshIds.has(m.getID())) reg.update?.(m, true);
+    this._main.render?.();
+    this.draw();
+  }
+
+  _tanDialEnd() {
+    const d = this._tanDial;
+    this._tanDial = null;
+    if (d.moved) {
+      const after = this._snapshotTracks();
+      const restore = (state) => { this._restoreTracksInPlace(state); this._tanDialApply(d); };
+      this._main.getStateManager().pushStateCustom(() => restore(d.before), () => restore(after), false,
+        { timing: 'Timing', ease: 'Ease', over: 'Overshoot' }[d.rect.kind]);
+    }
+    this.draw();
+  }
+
+  _drawTanDials(ctx) {
+    const hasKeys = (window._animSelectedKeys || []).some((k) => (k.type === 'transform' && k.group !== 'weight') || k.type === 'blendshape');
+    for (const r of this._tanDialRects()) {
+      const live = this._tanDial?.rect.kind === r.kind ? this._tanDial : null;
+      const hov = hasKeys && this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
+               && this._lastMouseY >= r.y && this._lastMouseY <= r.y + r.h;
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      ctx.save();
+      ctx.globalAlpha = hasKeys ? 1 : 0.4;
+      ctx.fillStyle = hov ? hoverLift(Theme.surface0, 0.3) : Theme.surface0;
+      ctx.beginPath();
+      ctx.roundRect(r.x, r.y, r.w, r.h, 3);
+      ctx.fill();
+      if (live && live.f) {
+        ctx.fillStyle = TL_ACCENT;
+        const px = live.f * r.w / 2;
+        ctx.fillRect(Math.min(cx, cx + px), r.y, Math.abs(px), r.h);
+      }
+      ctx.fillStyle = Theme.subtext;
+      ctx.fillRect(cx - 0.5, r.y, 1, 4);
+      ctx.fillRect(cx - 0.5, r.y + r.h - 4, 1, 4);
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = Theme.text;
+      ctx.fillText(r.label, cx, cy + 0.5);
+      if (r.w >= 120) {
+        ctx.font = '9px sans-serif';
+        ctx.fillStyle = Theme.subtext;
+        ctx.textAlign = 'left';
+        ctx.fillText(r.lo, r.x + 5, cy + 0.5);
+        ctx.textAlign = 'right';
+        ctx.fillText(r.hi, r.x + r.w - 5, cy + 0.5);
+      }
+      ctx.restore();
+    }
   }
 
   // Every key of every transform curve the graph is showing on object `id`, as graph keys.
@@ -4601,6 +4856,7 @@ export default class GuiTimeline {
     if (_selId !== this._graphSeenSelId) {
       this._graphSeenSelId = _selId;
       if (_selId != null && this._graphMeshId != null && _selId !== this._graphMeshId) this._graphMeshId = null;
+      if (_selId != null && !this._graphKeyIds?.has(_selId)) this._graphKeyIds = null;
     }
     const id = this._graphMeshId;
     if (id != null) {
@@ -5189,6 +5445,8 @@ export default class GuiTimeline {
   }
 
   _cancelActiveAction() {
+    this._tanDial = null;
+    this._retimeBase = null;
     this._keysDetached = false;
     this._rangeDrag = null;
     this._isDraggingPlayhead = false;
@@ -5375,6 +5633,7 @@ export default class GuiTimeline {
         this._mode = this._mode === 'graph' ? 'dope' : 'graph';
         window.saveOption?.('vrTimelineMode', this._mode);
         if (this._mode === 'graph') {
+          this._graphFromDope();
           this.autoFitGraph();
           if (this._viewDuration === undefined) {
             const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
@@ -5655,6 +5914,9 @@ export default class GuiTimeline {
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
+    this._pressX = rx;
+    this._pressY = ry;
+    this._boxMoved = false;
 
     if (this._simplifyMouseDown(rx, ry)) return;
 
@@ -5938,6 +6200,14 @@ export default class GuiTimeline {
           return;
         }
       }
+      {
+        const dial = this._tanDialRects().find((r) => rx >= r.x && rx <= r.x + r.w && ry >= r.y && ry <= r.y + r.h);
+        if (dial) {
+          this._tanDialStart(dial, rx);
+          this.draw();
+          return;
+        }
+      }
       // Dispatch toolbar clicks via _toolbarBtnDefs() so positions stay in sync with draw().
       // Transport buttons are positioned with a safe left-margin (see _toolbarBtnDefs) so
       // they never overlap the left-side buttons — a single find() is sufficient.
@@ -6168,6 +6438,22 @@ export default class GuiTimeline {
           const laneMesh = this._main._meshes?.find(m => m.getID() === meshId);
           const ty2 = headerH + laneIdx * trackH - dsScroll;
 
+          // The Transforms row: the arrow folds it; its name points the graph at every row in it,
+          // as a row's own name points the graph at that row, leaving the key selection alone.
+          if (trackObj._xfSummary) {
+            if (rx < 200 && ry >= ty2 && ry < ty2 + trackH) {
+              if (rx < 24) this._xfFolded = !this._xfFolded;
+              else if (rx < 176) {
+                const ids = this._xfRows.filter(([, t]) => !t.muted).map(([id]) => id);
+                this._graphKeyIds = ids.length ? new Set(ids) : null;
+                if (ids.length) this._graphMeshId = ids[0];
+              }
+              this.draw();
+              return;
+            }
+            continue;
+          }
+
           // Blendshape sub-rows: M (mute layer) / × (delete this track's animation).
           if (rx >= 154 && rx < 188 && trackObj.blendshapeTracks && laneMesh) {
             const bsNames = TimelineHelper.bsNames(trackObj);
@@ -6253,7 +6539,9 @@ export default class GuiTimeline {
 
         // Check if clicked on Transform Box handles!
         if (window._animShowTransformBox && window._animTransformBox) {
-          const tBox = window._animTransformBox;
+          const _rawBox = window._animTransformBox;
+          const _dpad = this._padBoxTime(_rawBox.startTime, _rawBox.endTime);
+          const tBox = { startTime: _dpad.minT, endTime: _dpad.maxT };
           const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
           const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
           const kxMid = (kxLeft + kxRight) / 2;
@@ -6367,6 +6655,40 @@ export default class GuiTimeline {
           // its keys unable to be affected at all"). Frame-group rows have no mute and are exempt.
           if (trackObj.muted) return;
           const ty = headerH + (laneIdx * trackH) - dsScroll;
+          if (trackObj._xfSummary) {
+            if (keyFound || _keyShow.transform === false || Math.abs(ry - (ty + trackH / 2)) >= 12) return;
+            let hit = null, bestD = 12;
+            for (const g of TimelineHelper.xfSummary(this._xfRows)) {
+              const d = Math.abs(rx - (tlX + ((g.time - loopStart) / visibleDuration) * tlW));
+              if (d < bestD) { bestD = d; hit = g; }
+            }
+            if (!hit) return;
+            // Pressing this key is pressing every key under it: from here on it is the ordinary
+            // multi-key drag, grabbed by its first row.
+            const had = window._animSelectedKeys || [];
+            const isSel = (k) => had.some((s) => s.meshId === k.meshId && s.type === 'transform' && s.index === k.index);
+            if (e.shiftKey || this._lastModifierDown || this._main.multiSelectHeld?.()) {
+              window._animSelectedKeys = had.concat(hit.keys.filter((k) => !isSel(k)));
+            } else if (!hit.keys.every(isSel)) {
+              window._animSelectedKeys = hit.keys.slice();
+            }
+            this._recomputeTransformBox();
+            const first = hit.keys[0];
+            this._graphMeshId = first.meshId;
+            this._isDraggingKeyframe = true;
+            this._activeKeyframeTrack = reg.tracks.get(first.meshId);
+            this._activeMeshId = first.meshId;
+            this._activeKeyframeIndex = first.index;
+            this._activeKeyframeType = 'transform';
+            this._keyDragStartRx = rx;
+            this._keyDragStartRy = ry;
+            this._keyDragStartTime = hit.time;
+            this._undoTracksBeforeMove = new Map();
+            reg.tracks.forEach((tr, mId) => this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr)));
+            this._animSelectedKeysInitialTimes = this._snapshotSelectionForDrag(reg);
+            keyFound = true;
+            return;
+          }
           const kyTransform = ty + trackH / 2; // centred (matches drawDopeSheet)
           const kyShape     = ty + trackH / 2 + 10; // matches drawDopeSheet offset
 
@@ -6625,6 +6947,7 @@ export default class GuiTimeline {
 
         if (keyFound) {
           if (window._tlTrace) console.log('[tl] -> KEY TAKEN, dragging');
+          this._captureGraphKeys();
           return;
         }
       }
@@ -6670,6 +6993,54 @@ export default class GuiTimeline {
 
   // Fit window._animTransformBox to the current key selection's time span (2+ keys), or
   // clear it. Editable dopesheet key types only (SR frames retime via their own drag).
+  // A BOX THAT COVERS ONE MOMENT STILL NEEDS ROOM FOR ITS HANDLES. Keys sharing a time gave it no
+  // width, so both edges, the centre and the top and bottom grips stacked on one vertical line.
+  // Pixels, like the matching minimum height, so it holds at any zoom.
+  _padBoxTime(minT, maxT) {
+    const half = 40 / Math.max(1, this._cssWidth - 200) * this._viewDuration;
+    if ((maxT - minT) / 2 >= half) return { minT, maxT };
+    const mid = (minT + maxT) / 2;
+    return { minT: mid - half, maxT: mid + half };
+  }
+
+  // Taken just before keys first move, so a drag can keep each handle's share of its move.
+  _retimeCapture() {
+    if (this._retimeBase) return;
+    const reg = window._animationRegistry, base = this._retimeBase = [];
+    const seen = new Set();
+    for (const k of (window._animSelectedKeys || [])) {
+      const tr = reg?.tracks.get(k.meshId);
+      if (!tr) continue;
+      const bt = k.type === 'blendshape' ? tr.blendshapeTracks?.get(k.name) : null;
+      const owner = bt || (k.type === 'transform' && k.group !== 'weight' ? tr : null);
+      if (!owner || seen.has(owner) || !owner.tangentOffsets) continue;
+      seen.add(owner);
+      base.push({ owner, scalar: !!bt, snap: xfRetimeSnapshot(owner.tangentOffsets, owner.times) });
+    }
+  }
+
+  // After moveKeys, which has already evaluated the meshes with the old handle lengths.
+  _retimeRefresh() {
+    if (!this._retimeBase?.length) return;
+    this._retimeApply();
+    this._main._meshes?.forEach((m) => window._animationRegistry.update(m, true));
+  }
+
+  _retimeApply() {
+    for (const { owner, scalar, snap } of (this._retimeBase || [])) {
+      if (scalar) xfRetimeScalar(owner, snap);
+      else xfRetimeHandles(owner, snap);
+    }
+  }
+
+  // Under this many pixels from the press a box handle does nothing, so a click cannot edit.
+  _boxPastDeadzone(rx, ry) {
+    if (this._boxMoved) return true;
+    if (Math.hypot(rx - this._pressX, ry - this._pressY) < 3) return false;
+    this._boxMoved = true;
+    return true;
+  }
+
   _recomputeTransformBox() {
     const reg = window._animationRegistry;
     const sel = window._animSelectedKeys;
@@ -6693,6 +7064,10 @@ export default class GuiTimeline {
       this._isDraggingTangent = false;
       this._activeTransformHandle = null;
       this._undoTracksBeforeMove = null;
+    }
+    if (this._tanDial) {
+      this._tanDialMove(e.clientX - this._canvas.getBoundingClientRect().left);
+      return;
     }
     if (this._simplify?.dragging) {
       const rect = this._canvas.getBoundingClientRect();
@@ -6814,7 +7189,7 @@ export default class GuiTimeline {
 
     // Update toolbar tooltip.
     if (this._tooltip && ry >= 5 && ry <= TOOLBAR_BOTTOM) {
-      const hovered = this._toolbarBtnDefs().find(b => rx >= b.x && rx <= b.x + b.w
+      const hovered = [...this._toolbarBtnDefs(), ...this._tanDialRects()].find(b => rx >= b.x && rx <= b.x + b.w
         && ry >= b.y && ry <= b.y + b.h);
       if (hovered?.tooltip) {
         this._tooltip.textContent = hovered.tooltip;
@@ -6994,6 +7369,7 @@ export default class GuiTimeline {
         const inits = this._animSelectedKeysInitialTimes;
         if (inits && inits.length) {
           const g = inits.find(k =>
+            k.meshId === this._activeMeshId &&
             k.type === this._activeKeyframeType &&
             k.index === this._activeKeyframeIndex &&
             (this._activeKeyframeType !== 'transform' || k.channel === this._activeKeyframeChannel) &&
@@ -7017,6 +7393,7 @@ export default class GuiTimeline {
             [this._animSelectedKeysInitialTimes || [], window._animSelectedKeys || [], [active]]);
           this._activeKeyframeIndex = active.index;
         }
+        if (dt !== 0) this._retimeCapture();
         if (this._mode === 'graph') {
           const targetVal = this.yToValue(ry);
           const dVal = dragAxis === 'time' ? 0 : targetVal - this._keyDragStartVal;
@@ -7032,6 +7409,7 @@ export default class GuiTimeline {
           }];
 
           TimelineHelper.moveKeys(window._animationRegistry, keysToMove, dt, dVal, mDurVal, this._main);
+          this._retimeRefresh();
           if (this._main.render) this._main.render();
         } else {
           const keysToMove = this._animSelectedKeysInitialTimes || [{
@@ -7043,6 +7421,7 @@ export default class GuiTimeline {
           }];
 
           TimelineHelper.moveKeys(window._animationRegistry, keysToMove, dt, undefined, mDurVal, this._main);
+          this._retimeRefresh();
         }
       }
       
@@ -7071,21 +7450,20 @@ export default class GuiTimeline {
       
       const targetVal = this.yToValue(ry);
       const initialBox = this._animTransformInitialBox;
-      
-      const activeMesh = this._graphMesh();
-      if (activeMesh && window._animationRegistry && this._animTransformBoxInitialKeys) {
-        const id = activeMesh.getID();
-        const track = window._animationRegistry.tracks.get(id);
-        if (track) {
-          TimelineHelper.scaleKeysVertical(track, this._animTransformBoxInitialKeys, initialBox,
-            targetVal, this._activeTransformHandle, window._animTransformBox,
-            (v, g) => this._rawVal(v, g));
-          
-          if (this._main && this._main._meshes) {
-            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-          }
-          if (this._main.render) this._main.render();
+
+      if (this._boxPastDeadzone(e.clientX - rect.left, ry) && window._animationRegistry && this._animTransformBoxInitialKeys) {
+        const reg = window._animationRegistry;
+        // The box's grip starts on its edge, not under the cursor exactly: measured from the press,
+        // so the first pixels past the dead zone are a small change and not a jump to the cursor.
+        const edge = this._activeTransformHandle === 'top' ? initialBox.maxV : initialBox.minV;
+        const toVal = edge + (targetVal - this.yToValue(this._pressY));
+        TimelineHelper.scaleKeysVertical((sk) => reg.tracks.get(sk.meshId), this._animTransformBoxInitialKeys, initialBox,
+          toVal, this._activeTransformHandle, window._animTransformBox || {},
+          (v, g) => this._rawVal(v, g));
+        if (this._main && this._main._meshes) {
+          this._main._meshes.forEach(m => reg.update(m, true));
         }
+        if (this._main.render) this._main.render();
       }
       this.draw();
       return;
@@ -7151,14 +7529,15 @@ export default class GuiTimeline {
       const tBox = window._animTransformBox;
       const initBox = this._animTransformInitialBox;
 
-      if (tBox && initBox) {
+      if (tBox && initBox && this._boxPastDeadzone(rx, e.clientY - rect.top)) {
+        this._retimeCapture();
         const dx = rx - this._transformStartRx;
         const dt = (dx / tlW) * vDur;
         
         const baseDur = initBox.endTime - initBox.startTime;
         
         if (this._activeTransformHandle === 'left') {
-          const newStartTime = Math.max(0, initBox.startTime + dt);
+          const newStartTime = initBox.startTime + dt;   // padding can start it below 0; keys clamp
           tBox.startTime = newStartTime;
           const newDur = initBox.endTime - newStartTime;
           const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
@@ -7226,12 +7605,20 @@ export default class GuiTimeline {
                 const track = window._animationRegistry.tracks.get(initKey.meshId);
                 if (!track) return;
                 const relVal = initKey.val - initMidV;
+                TimelineHelper.scaleKeyHandles(track, initKey, scaleFactorY);
                 _setKeyVal(track, initKey, initMidV + relVal * scaleFactorY);
               });
             }
           }
         } else if (this._activeTransformHandle === 'center') {
-          const dtClamped = Math.max(-initBox.startTime, dt);
+          // One axis until the pointer has clearly left it, as a key drag does, so a move in time
+          // does not also nudge every value. From the keys, not the box: padding can put its edge
+          // below 0, and that would force the keys right.
+          const _bx = rx - this._pressX, _by = this._lastMouseY - this._pressY;
+          const _free = Math.abs(_bx) >= KEY_DRAG_FREE_THRESHOLD && Math.abs(_by) >= KEY_DRAG_FREE_THRESHOLD;
+          const _boxAxis = this._mode !== 'graph' || _free ? 'free' : (Math.abs(_bx) >= Math.abs(_by) ? 'time' : 'value');
+          const _keyMinT = (this._animTransformBoxInitialKeys || []).reduce((a, k) => (k.time < a ? k.time : a), Infinity);
+          const dtClamped = _boxAxis === 'value' ? 0 : Math.max(-(_keyMinT === Infinity ? 0 : _keyMinT), dt);
           tBox.startTime = initBox.startTime + dtClamped;
           tBox.endTime   = initBox.endTime   + dtClamped;
 
@@ -7244,7 +7631,7 @@ export default class GuiTimeline {
 
             if (this._mode === 'graph' && this._keyDragStartVal !== undefined) {
               const targetVal = this.yToValue(this._lastMouseY);
-              const dVal = targetVal - this._keyDragStartVal;
+              const dVal = _boxAxis === 'time' ? 0 : targetVal - this._keyDragStartVal;
 
               this._animTransformBoxInitialKeys.forEach(initKey => {
                 const track = window._animationRegistry.tracks.get(initKey.meshId);
@@ -7254,11 +7641,13 @@ export default class GuiTimeline {
             }
           }
           
-          if (this._main && this._main._meshes) {
-            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
-          }
-          if (this._main.render) this._main.render();
         }
+        // Every handle moves keys in time, and every one should show in the scene.
+        this._retimeApply();
+        if (this._main && this._main._meshes) {
+          this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+        }
+        if (this._main.render) this._main.render();
       }
       this.draw();
     } else if (this._isDraggingMarquee) {
@@ -7302,6 +7691,8 @@ export default class GuiTimeline {
   }
 
   _onMouseUpBody(e) {
+    this._retimeBase = null;
+    if (this._tanDial) { this._tanDialEnd(); return; }
     if (this._mediaDrag) { this._mediaDrag = null; this.draw(); return; }
     if (this._simplify?.dragging) { this._simplify.dragging = false; return; }
     if (this._rangeDrag) { this._rangeBarUp(); return; }
@@ -7636,7 +8027,8 @@ export default class GuiTimeline {
         tBox.endTime = tmp;
       }
 
-      // Push undo state for Transform Box!
+      // Push undo state for Transform Box! A click that moved nothing has nothing to undo.
+      if (!this._boxMoved) this._undoTracksBeforeMove = null;
       if (reg && this._undoTracksBeforeMove) {
         const beforeState = this._undoTracksBeforeMove;
         const afterState = new Map();
@@ -7896,7 +8288,15 @@ export default class GuiTimeline {
     // own radius.
     const KEY_ROW_PAD = 5;
     const rowTouched = (cy) => cy >= y1 - KEY_ROW_PAD && cy <= y2 + KEY_ROW_PAD;
+    let _summaryCaught = false;
     tracks.forEach(([meshId, trackObj], laneIdx) => {
+      if (trackObj._xfSummary) {
+        if (!rowTouched(headerH + laneIdx * trackH - _marqScroll + trackH / 2)) return;
+        for (const g of TimelineHelper.xfSummary(this._xfRows)) {
+          if (g.time >= tMin && g.time <= tMax) { newKeys.push(...g.keys); _summaryCaught = true; }
+        }
+        return;
+      }
       if (!_laneOk(meshId, trackObj)) return;
       const laneTop = headerH + laneIdx * trackH - _marqScroll;
       const rowXf = laneTop + trackH / 2, rowShape = rowXf + 10;
@@ -8000,7 +8400,10 @@ export default class GuiTimeline {
     // the one you were reaching for. It is also a no-op when the sweep caught nothing, so an
     // empty marquee leaves the graph where it was rather than blanking it.
     this._pruneMutedSelection();
-    if (newKeys.length) this._setGraphTarget(newKeys[0].meshId);
+    // Off the summary row it leaves the scene selection alone, as pressing a summary key does.
+    if (_summaryCaught) this._graphMeshId = newKeys[0].meshId;
+    else if (newKeys.length) this._setGraphTarget(newKeys[0].meshId);
+    this._captureGraphKeys();
 
     // Automatically create transform box around selection!
     if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
@@ -8309,6 +8712,7 @@ export default class GuiTimeline {
     const loopEndF = Math.round(loopEnd * fps);
 
     this._drawRangeBar(ctx);
+    this._drawTanDials(ctx);
 
     // --- Frame ruler strip (below both toolbar rows) ---
     // Keep this tied to the toolbar hit-test boundary. A hardcoded y=28 here used
@@ -8505,8 +8909,8 @@ export default class GuiTimeline {
 
     // Render Transform Box
     if (window._animShowTransformBox && window._animTransformBox) {
-      const tBox = window._animTransformBox;
-      TimelineHelper.drawTransformBox(ctx, tBox, w, headerH, tlX, tlW, loopStart, visibleDuration);
+      const _dp = this._padBoxTime(window._animTransformBox.startTime, window._animTransformBox.endTime);
+      TimelineHelper.drawTransformBox(ctx, { startTime: _dp.minT, endTime: _dp.maxT }, w, headerH, tlX, tlW, loopStart, visibleDuration);
     }
 
     this.drawPlayhead(ctx);

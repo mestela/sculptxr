@@ -1031,9 +1031,9 @@ function rigPosesHTML(main, c) {
   for (let i = 0; i < names.length; i += 2) {
     rows.push(`<div class="${c.btnRow}">${names.slice(i, i + 2).map((n) => `<button class="${c.action}${rigPoseMode ? ' active' : ''}" data-rig-pose="${escAttr(n)}"${RigPoses.hasCorrective(main, n) ? ' title="Has sculpted fixes for this pose"' : ''}>${escAttr(n)}${RigPoses.hasCorrective(main, n) ? ' +' : ''}</button>`).join('')}</div>`);
   }
-  const on = names.length ? RigPoses.active(main) : null;
+  const st = names.length ? RigPoses.status(main) : null;
   return `${rows.join('')}
-    ${names.length ? `<div class="${c.btnRow}"><span id="bone-sculpt-into" title="Where a stroke goes. On a saved pose it is a fix for that pose, faded in by how close the rig is to it. Anywhere else it goes into the rest shape, which every pose gets.">Sculpting into: ${on ? escAttr(on.name) : 'rest'}</span></div>` : ''}
+    ${names.length ? `<div class="${c.btnRow}"><span id="bone-sculpt-into" title="Where a stroke goes. On a saved pose it is a fix for that pose, faded in by how close the rig is to it. Anywhere else it goes into the rest shape, which every pose gets: exact at the bind pose, and on a posed rig it can jump on a hard bend.">${st ? escAttr(RigPoses.statusText(st)) : ''}</span></div>` : ''}
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-pose-key"
         title="Key the whole rig as it stands at the playhead, every joint and pin, as one undo step. Press a pose first to key that pose. On an animated rig a pose you don't key lasts until the playhead moves.">Key Rig</button>
@@ -1056,9 +1056,9 @@ function askRigPoseName(cur, done) {
 
 function wireRigPoses(root, main, say, rebuild) {
   window._refreshRigPoses = rebuild;
-  window._rigSculptInto = (name) => {
+  window._rigSculptInto = (st) => {
     const el = root.querySelector('#bone-sculpt-into');
-    if (el) el.textContent = 'Sculpting into: ' + (name || 'rest');
+    if (el) el.textContent = st ? RigPoses.statusText(st) : '';
   };
   root.querySelector('#bone-pose-save')?.addEventListener('click', () => {
     // Named poseN with no prompt: a text dialog in the headset is no way to work. Rename after.

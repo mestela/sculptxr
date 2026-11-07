@@ -94,7 +94,9 @@ class Move extends SculptBase {
     if (main.getSculptManager().getSymmetry()) {
       var pickingSym = main.getPickingSymmetry();
       var mesh = this.getMesh();
-      
+      // Posed, the far side takes the drag's movement through this, fixed here: see PosedSymmetry.dragTurn.
+      this._moveDataSym.turn = mesh ? pickingSym.mirrorDragTurn(mesh, this._moveData.center, mesh.getSymmetryNormal()) : null;
+
       // VR Symmetry Init
       if (main._xrSession && main._vrControllerPos && mesh && picking._isVRHit) {
         // Use proper symmetry mathematics on the LOCAL intersection point
@@ -532,7 +534,10 @@ class Move extends SculptBase {
     //
     // This was one of the six copies of "mirror a ray" counted in docs/posed_sculpting.md.
     var target = vec3.create();
-    if (useSymmetry) {
+    if (useSymmetry && moveData.turn) {
+      vec3.sub(target, Geometry.vertexOnLine(this._moveData.center, vNear, vFar), this._moveData.center);
+      vec3.add(target, moveData.center, moveData.turn(target));
+    } else if (useSymmetry) {
       var ptPlane = mesh.getSymmetryOrigin();
       var nPlane = mesh.getSymmetryNormal();
       vec3.copy(target, Geometry.vertexOnLine(this._moveData.center, vNear, vFar));
@@ -734,10 +739,15 @@ class Move extends SculptBase {
             // mirroring them in posed space) gives the mirrored vertices a direction taken from
             // the near side's deformation -- which is why a grab on a posed foot pulled its
             // twin the wrong way, or nowhere.
-            pickingSym.mirrorLocalPoint(mesh, symStartLocal, ptPlane, nPlane);
-            pickingSym.mirrorLocalPoint(mesh, symCurrLocal, ptPlane, nPlane);
-
-            vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
+            if (moveDataSym.turn) {
+              vec3.sub(moveDataSym.dir, vCurrLocal, vStartLocal);
+              moveDataSym.turn(moveDataSym.dir);
+              pickingSym.mirrorLocalPoint(mesh, symStartLocal, ptPlane, nPlane);   // the twist's centre
+            } else {
+              pickingSym.mirrorLocalPoint(mesh, symStartLocal, ptPlane, nPlane);
+              pickingSym.mirrorLocalPoint(mesh, symCurrLocal, ptPlane, nPlane);
+              vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
+            }
           vec3.scale(moveDataSym.dir, moveDataSym.dir, this._intensity);
 
             // Mirror Rotation

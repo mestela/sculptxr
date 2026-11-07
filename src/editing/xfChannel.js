@@ -30,7 +30,7 @@ export const XF_GROUPS = ['pos', 'rot', 'scale', 'weight'];
 // when the thing being edited does not say which group it belongs to.
 export function xfVisible() {
   const v = window._animXfVisible;
-  if (Array.isArray(v) && v.length) return v.filter((g) => XF_GROUPS.includes(g));
+  if (Array.isArray(v)) return v.filter((g) => XF_GROUPS.includes(g));
   // Nothing chosen yet: translate, rotate and scale (matt, 2026-10-19: "the TRS buttons ... should
   // be enabled by default"). Weight stays off -- it is only a pin's.
   return ['pos', 'rot', 'scale'];
@@ -56,15 +56,13 @@ export function xfSetChanVisible(g, c, on) {
   m[g][c] = !!on;
 }
 
-// At least one has to stay on: a graph with every channel filtered out is a blank panel with no
-// way back except guessing which button to press.
+// All of them may be off: the graph says so where it names the object (matt, 2026-11-07).
 export function xfToggleVisible(g) {
   if (!XF_GROUPS.includes(g)) return;
   const cur = xfVisible();
   const at = cur.indexOf(g);
   let next;
   if (at < 0) next = XF_GROUPS.filter((x) => cur.indexOf(x) >= 0 || x === g);
-  else if (cur.length === 1) return;         // refuse to empty it
   else next = cur.filter((x) => x !== g);
   window._animXfVisible = next;
   // The ACTIVE group -- where an untagged edit lands, and whose tangent namespace is used --
@@ -388,6 +386,12 @@ function solveBezierT(alpha, p1x, p2x) {
   return t;
 }
 
+// How much of a handle fits in a segment of length dt.
+export function xfHandleFit(handleDt, dt) {
+  const len = Math.abs(handleDt);
+  return len > dt ? dt / len : 1;
+}
+
 // Value of segment a->b (keyed slots) of channel (group, c) at `time`, with the keyed
 // neighbours ap (before a) and bn (after b) for the auto tangents. The same curve the graph
 // draws and playback plays.
@@ -398,11 +402,16 @@ export function xfSegEval(tr, group, c, a, ap, b, bn, time) {
   if (!(dt > 0)) return v(b);
   const rDt = xfTanGet(tr, `${a}_right_dt`, group), rDv = xfTanGet(tr, `${a}_right_dv_${c}`, group);
   const lDt = xfTanGet(tr, `${b}_left_dt`, group), lDv = xfTanGet(tr, `${b}_left_dv_${c}`, group);
-  const dt0 = rDt !== undefined ? rDt : dt * 0.33;
-  const dt1 = lDt !== undefined ? lDt : -dt * 0.33;
+  const dt0raw = rDt !== undefined ? rDt : dt * 0.33;
+  const dt1raw = lDt !== undefined ? lDt : -dt * 0.33;
   const s0 = slopeAt(T, v, a, ap, b), s1 = slopeAt(T, v, b, a, bn);
-  const dv0 = rDv !== undefined ? rDv : (Number.isFinite(s0) ? s0 : 0) * dt0;
-  const dv1 = lDv !== undefined ? lDv : (Number.isFinite(s1) ? s1 : 0) * dt1;
+  const dv0raw = rDv !== undefined ? rDv : (Number.isFinite(s0) ? s0 : 0) * dt0raw;
+  const dv1raw = lDv !== undefined ? lDv : (Number.isFinite(s1) ? s1 : 0) * dt1raw;
+  // A handle longer than its segment doubles the curve back in time, and the value snaps. It can
+  // happen whenever keys move closer than the handle was drawn for, so it is shortened here, along
+  // its own line. Only ever a guard: moving keys scales handles too (xfRetimeHandles).
+  const k0 = xfHandleFit(dt0raw, dt), k1 = xfHandleFit(dt1raw, dt);
+  const dt0 = dt0raw * k0, dv0 = dv0raw * k0, dt1 = dt1raw * k1, dv1 = dv1raw * k1;
   const t = solveBezierT(Math.min(1, Math.max(0, (time - T[a]) / dt)), dt0 / dt, 1 + dt1 / dt);
   const o = 1 - t;
   return o * o * o * v(a) + 3 * o * o * t * (v(a) + dv0) + 3 * o * t * t * (v(b) + dv1) + t * t * t * v(b);
@@ -497,6 +506,75 @@ export function xfRemoveSlots(tr, slots) {
 }
 
 // Drop every slot no channel is keyed in any more.
+// SCALE THAT NEVER CHANGES IS NOT ANIMATION. Files from before keying stopped writing it carry scale
+// keys on every slot of every bone. A flat, handle-free scale group evaluates the same with no keys
+// at all (xfEval holds the slot value), so the keys go and any slot that held nothing else with them.
+export function xfPruneIdleScale(tr) {
+  const n = tr?.times?.length || 0;
+  if (!n || !tr.scales) return false;
+  const m = maskSync(tr), bits = xfGroupBits('scale');
+  let any = false;
+  for (let i = 0; i < n; i++) {
+    if (!(m[i] & bits)) continue;
+    any = true;
+    for (let c = 0; c < 3; c++) {
+      if (Math.abs(tr.scales[i * 3 + c] - tr.scales[c]) > 1e-4) return false;
+    }
+  }
+  if (!any) return false;
+  for (const k in (tr.tangentOffsets || {})) {
+    if (k.startsWith('trans_scale_') && k.includes('_dv_') && tr.tangentOffsets[k]) return false;
+  }
+  for (let i = 0; i < n; i++) m[i] &= ~bits;
+  for (const k in (tr.tangentOffsets || {})) if (k.startsWith('trans_scale_')) delete tr.tangentOffsets[k];
+  xfPruneEmpty(tr);
+  return true;
+}
+
+// KEYS MOVED, SO THE MOVES THEY BOUND CHANGED LENGTH. A handle's length is stored in absolute time, so
+// without this a hold shaped on a 25 frame move stays 22 frames long on a 10 frame one. Each length
+// scales with its own segment; its height stays, as it is a share of the move's travel, which did not
+// change. The move keeps its shape exactly. `base` is what xfRetimeSnapshot took before the keys moved;
+// slot indices must not have changed since (they don't until the drag's release sorts the track).
+export function xfRetimeSnapshot(to, times) {
+  return { to: { ...to }, times: times.slice() };
+}
+
+const RETIME_RE = /^trans_(pos|rot|scale)_(\d+)_(left|right)_dt$/;
+export function xfRetimeHandles(tr, base) {
+  const to = tr.tangentOffsets;
+  if (!to) return;
+  const T = tr.times, T0 = base.times, m = maskSync(tr);
+  for (const k in base.to) {
+    const hit = RETIME_RE.exec(k);
+    if (!hit) continue;
+    const bits = xfGroupBits(hit[1]), i = +hit[2], dir = hit[3] === 'right' ? 1 : -1;
+    let nb = i + dir;
+    while (nb >= 0 && nb < T.length && !(m[nb] & bits)) nb += dir;
+    if (nb < 0 || nb >= T.length) continue;
+    const was = T0[nb] - T0[i], now = T[nb] - T[i];
+    const ratio = was !== 0 ? now / was : 1;
+    if (ratio > 0) to[k] = base.to[k] * ratio;
+  }
+}
+
+// The same for a blendshape weight curve: one channel, unprefixed keys, every key on the curve.
+const RETIME_BS_RE = /^(\d+)_(left|right)_dt$/;
+export function xfRetimeScalar(bt, base) {
+  const to = bt.tangentOffsets;
+  if (!to) return;
+  const T = bt.times, T0 = base.times;
+  for (const k in base.to) {
+    const hit = RETIME_BS_RE.exec(k);
+    if (!hit) continue;
+    const i = +hit[1], nb = i + (hit[2] === 'right' ? 1 : -1);
+    if (nb < 0 || nb >= T.length) continue;
+    const was = T0[nb] - T0[i], now = T[nb] - T[i];
+    const ratio = was !== 0 ? now / was : 1;
+    if (ratio > 0) to[k] = base.to[k] * ratio;
+  }
+}
+
 export function xfPruneEmpty(tr) {
   const m = maskSync(tr), gone = new Set();
   m.forEach((b, i) => { if (!b) gone.add(i); });

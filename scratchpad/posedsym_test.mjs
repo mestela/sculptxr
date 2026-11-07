@@ -598,5 +598,53 @@ const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
       + 'means a new copy was written instead of calling Picking.mirrorLocalPoint');
 }
 
+// A DRAG'S FAR SIDE IS THE NEAR SIDE'S MOVEMENT TURNED ACROSS (postpose.sxr: 4.71 among steps of .18, when the
+// target was mirrored each step and a different vertex became nearest).
+{
+  const jL = joint(), jR = joint();
+  const t = body(jL, jR);
+  Skinning.apply(t.main, t.mesh);
+  jL.pose(new THREE.Matrix4().makeRotationZ(0.9).setPosition(0, 1.5, 0));
+  jR.pose(new THREE.Matrix4().makeRotationX(-0.6).setPosition(0, -0.5, 7));
+  Skinning.apply(t.main, t.mesh);
+  const p = at(t.verts, 0), step = [0.3, -0.2, 0.4];
+  const turn = PosedSymmetry.dragTurn(t.main, t.mesh, p, PLANE_N);
+  const far = turn(step.slice());
+  // the two points mirrored the long way, on a rigid side where nothing can hop
+  const a = [0, 0, 0], b = [0, 0, 0];
+  PosedSymmetry.mirrorPoint(t.main, t.mesh, p, PLANE_PT, PLANE_N, a);
+  PosedSymmetry.mirrorPoint(t.main, t.mesh, [p[0] + step[0], p[1] + step[1], p[2] + step[2]], PLANE_PT, PLANE_N, b);
+  check('a drag turned across matches the mirror of its two ends',
+    dist(far, [b[0] - a[0], b[1] - a[1], b[2] - a[2]]) < 1e-4, JSON.stringify(far));
+  check('...and moves the far side as far as the near side',
+    Math.abs(Math.hypot(...far) - Math.hypot(...step)) < 1e-5);
+  const twice = turn(step.map((x) => x * 2));
+  check('...in proportion, wherever the target has got to', dist(twice, far.map((x) => x * 2)) < 1e-5);
+  const again = turn(step.slice());
+  check('...and it does not look anything up again', dist(again, far) === 0);
+
+  const fresh = joint(), fresh2 = joint(), rest = body(fresh, fresh2);
+  Skinning.apply(rest.main, rest.mesh);
+  check('at the bind pose there is no turn, the plain mirror being right',
+    PosedSymmetry.dragTurn(rest.main, rest.mesh, at(rest.verts, 0), PLANE_N) === null);
+
+  const read = (f) => fs.readFileSync(path.join(REPO, 'src/editing/tools/' + f + '.js'), 'utf8');
+  const MV = read('Move');
+  check('Move takes its far side through the turn, on desktop',
+    /useSymmetry && moveData\.turn\)[\s\S]{0,240}moveData\.turn\(target\)/.test(MV));
+  check('...and in VR', /moveDataSym\.turn\(moveDataSym\.dir\)/.test(MV));
+  check('...and takes the turn at the press', /_moveDataSym\.turn = mesh \? pickingSym\.mirrorDragTurn/.test(MV));
+  for (const f of ['Drag', 'Slide']) {
+    const src = read(f);
+    check(f + ' follows with the near step', (src.match(/followMirror\(picking, mesh, this\._dragDirSym, this\._dragDir\)/g) || []).length === 2);
+    check('...and keeps its own far point while posed', /!pickingSym\.followsOwnMirror\(mesh\)/.test(src));
+  }
+  const PK = fs.readFileSync(path.join(REPO, 'src/math3d/Picking.js'), 'utf8');
+  check('followMirror steps by the turn', /if \(turn\) vec3\.add\(target, this\.getIntersectionPoint\(\), turn\(/.test(PK));
+  const RV = read('Revert');
+  check('Revert on a fix can\'t overshoot', /fix\[ind\] \*= 1 - f/.test(RV));
+  check('...and asks for the fix at the press', /fixOnScreen\(mesh\)/.test(RV));
+}
+
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');
 process.exit(failures ? 1 : 0);

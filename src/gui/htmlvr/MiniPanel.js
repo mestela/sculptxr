@@ -1,6 +1,7 @@
 import MotionPathEdit from '../../editing/MotionPathEdit.js';
 import GrabChannels  from '../../editing/grabChannels.js';
 import RigPending    from '../../editing/RigPending.js';
+import RigPoses      from '../../editing/RigPoses.js';
 /**
  * MiniPanel — compact wrist HUD for SculptXR.
  *
@@ -150,6 +151,29 @@ const CSS = `
   box-shadow: inset 0 0 0 1px #313244;
   user-select: none;
 }
+
+/* ── Rig status ───────────────────────────────────────────────────── */
+/* Shown only with a skin in the scene, so nothing moves on a plain sculpt. The name gives way first, so a
+   long one can't hide pre or post. Coloured on the spans: the UI sweep colours them, so a colour on the
+   parent reads right in the DOM and comes out grey on the texture. */
+#mp-rig-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+}
+#mp-rig-status span { color: #a6adc8; }
+#mp-rig-status.warn span { color: #f9e2af; }
+#mp-rig-pose {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#mp-rig-stage { flex-shrink: 0; }
 
 /* ── Tool button ──────────────────────────────────────────────────── */
 /* SWAP TO THE MAIN MENU. On a hands-only runtime there is no X/A button to open the main panel
@@ -431,6 +455,10 @@ function injectCSS() {
 // ── Static HTML ───────────────────────────────────────────────────────────────
 function buildHTML() {
   return `
+    <div id="mp-rig-status" style="display:none">
+      <span id="mp-rig-pose"></span>
+      <span id="mp-rig-stage"></span>
+    </div>
     <div class="mp-toprow">
       <button id="mp-tool-btn" style="background:${toolTint(0)}">
         <span id="mp-tool-name">Brush</span>
@@ -1389,6 +1417,8 @@ export class MiniPanel extends HTMLVRPanel {
       if (nameEl) nameEl.textContent = toolName_;
     }
 
+    this._syncRigStatus(root);
+
     // ── Radius ─────────────────────────────────────────────────────────────
     if (tool) {
       const rInput = root.querySelector('#mp-radius');
@@ -1480,6 +1510,24 @@ export class MiniPanel extends HTMLVRPanel {
     this._colorWheel?.draw();
 
     this._requestPaint();
+  }
+
+  // WHAT STATE THE RIG IS IN AND WHERE A STROKE GOES, the menu bar's line for a headset. Read here rather
+  // than pushed by RigPoses because this sync already repaints the panel, so it adds no paints however
+  // fast a percentage changes. Appearing or going changes the panel's height, which the plane has to follow.
+  _syncRigStatus(root) {
+    const el = root.querySelector('#mp-rig-status');
+    if (!el) return;
+    const st = RigPoses.status(this._main);
+    const display = st ? '' : 'none';
+    if (el.style.display !== display) {
+      el.style.display = display;
+      this.noteContentResized();
+    }
+    if (!st) return;
+    root.querySelector('#mp-rig-pose').textContent = st.pose;
+    root.querySelector('#mp-rig-stage').textContent = st.stage;
+    el.classList.toggle('warn', st.warn);
   }
 
   // ── Paint request ──────────────────────────────────────────────────────────

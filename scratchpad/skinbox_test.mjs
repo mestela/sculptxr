@@ -1247,6 +1247,66 @@ console.log('\njoints that do not shape the skin');
   const longer = yMax(build(twoBones((js) => { js[2]._volE1 = 0.5; })));
   check('...and its ends: pulled past the tip, the skin goes with it', near(longer - tipAt, 1, 0.1), 'tip moved ' + (longer - tipAt).toFixed(3));
   check('a free end stops where the volume is drawn', near(tipAt, 4 - 2 * 0.04, 0.05), 'tip at ' + tipAt.toFixed(3));
+  // A fat short end: the clamp shrinks its box, and left there the cap is a few big quads stretched from one
+  // small face (the biped's head). On the end of the volume, the quads over the end stay small.
+  const headArr = build(twoBones((js) => { js[2]._boneRadius = 1.2; js[2]._volE1 = 0.5; }));
+  const capEdge = (arr, y0) => {
+    let big = 0;
+    for (let f = 0; f < arr.faces.length; f += 4) {
+      const q = [arr.faces[f], arr.faces[f + 1], arr.faces[f + 2], arr.faces[f + 3]];
+      for (let i = 0; i < 4; i++) {
+        const a = q[i] * 3, b = q[(i + 1) % 4] * 3;
+        if (arr.vertices[a + 1] < y0 || arr.vertices[b + 1] < y0) continue;
+        big = Math.max(big, Math.hypot(arr.vertices[a] - arr.vertices[b], arr.vertices[a + 1] - arr.vertices[b + 1], arr.vertices[a + 2] - arr.vertices[b + 2]));
+      }
+    }
+    return big;
+  };
+  check('a fat pulled end keeps its cap quads small', capEdge(headArr, 4) < 0.455, 'longest edge ' + capEdge(headArr, 4).toFixed(3) + ' (0.479 unseated)');
+  check('a fat pulled end reaches its volume', near(yMax(headArr), 4 - 2 * 0.04 + 1, 0.05), 'tip at ' + yMax(headArr).toFixed(3));
+  // A bone at the far end of the rig has no say in how hard this seam is.
+  const seam = (rows) => extent(build(volumes(skeleton(rows))), 1.95, 2.05).x;
+  const seamRows = [['a', null, 0, 0, 0, 0.5], ['b', 'a', 0, 2, 0, 1], ['c', 'b', 0, 4, 0, 0.5]];
+  const seamAlone = seam(seamRows);
+  const seamTail = seam([...seamRows, ['t', 'a', 0, -30, 0, 0.02]]);
+  check('a thin bone far away leaves a seam alone', near(seamTail, seamAlone, 0.01), seamAlone.toFixed(3) + ' vs ' + seamTail.toFixed(3));
+
+  // biped_resculpt.sxr: what the volumes should turn into. A fat head on an overlapping thin neck stays a dome,
+  // so the neck shows; running on to the joint made one column of them.
+  const domeArr = build(twoBones((js) => { js[1]._boneRadius = 0.4; js[1]._volE1 = 0.3; js[2]._boneRadius = 1; }));
+  const domeW = extent(domeArr, 2.2, 2.4).x, domeTop = extent(domeArr, 3, 3.2).x;
+  check('a fat end overlapping a thin neck stays a dome', domeW < domeTop * 0.85, 'at the neck ' + domeW.toFixed(3) + ', head ' + domeTop.toFixed(3));
+  // A chest's ball no deeper up the neck than the neck's own size, or it buries the neck.
+  const girdle = build(volumes(skeleton([['a', null, 0, 0, 0, 0.5], ['b', 'a', 0, 4, 0, 1], ['n', 'b', 0, 6, 0, 0.3],
+    ['l', 'b', 3, 4, 0, 0.3], ['r', 'b', -3, 4, 0, 0.3]])));
+  const neckW = extent(girdle, 4.7, 4.9).x;
+  check('a branch\'s ball leaves the neck showing', neckW < 0.5, 'neck half-width ' + neckW.toFixed(3) + ' (0.3 drawn)');
+  // A thin limb leaving a fat one at an angle flares at its root: no T-bar.
+  const sect = (arr, lo, hi) => {
+    let y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < arr.vertices.length; i += 3) {
+      if (arr.vertices[i] < lo || arr.vertices[i] > hi) continue;
+      y0 = Math.min(y0, arr.vertices[i + 1]); y1 = Math.max(y1, arr.vertices[i + 1]);
+    }
+    return (y1 - y0) / 2;
+  };
+  const rootH = sect(girdle, 1.3, 1.5), tipH = sect(girdle, 2.4, 2.6);
+  check('a thin limb flares where it leaves a fat one', rootH > tipH * 1.25, 'root ' + rootH.toFixed(3) + ', tip ' + tipH.toFixed(3));
+  // ...but not at the limb beside it: two thighs flaring at each other crushed the crotch. They flare front to back.
+  const legs = build(volumes(skeleton([['a', null, 0, 6, 0, 0.5], ['h', 'a', 0, 4, 0, 1], ['hl', 'h', 1, 3.5, 0, 1], ['hr', 'h', -1, 3.5, 0, 1],
+    ['kl', 'hl', 1, -3, 0, 0.3], ['kr', 'hr', -1, -3, 0, 0.3]])));
+  const legBand = (lo, hi) => {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < legs.vertices.length; i += 3) {
+      const y = legs.vertices[i + 1];
+      if (y < lo || y > hi || legs.vertices[i] < 0) continue;
+      x0 = Math.min(x0, legs.vertices[i]); x1 = Math.max(x1, legs.vertices[i]);
+      z0 = Math.min(z0, legs.vertices[i + 2]); z1 = Math.max(z1, legs.vertices[i + 2]);
+    }
+    return { x: (x1 - x0) / 2, z: (z1 - z0) / 2 };
+  };
+  const thighRoot = legBand(0.6, 1.8);
+  check('limbs side by side do not flare at each other', thighRoot.z > thighRoot.x * 1.15, 'x ' + thighRoot.x.toFixed(3) + ', z ' + thighRoot.z.toFixed(3));
 
   // No sausage links: where two like volumes meet, the skin carries on through the joint.
   const neck = extent(build(twoBones()), 1.95, 2.05);

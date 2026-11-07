@@ -74,13 +74,20 @@ const MAX_SPANS = 32;
 // Relax. Each pass smooths, then pulls the result back onto the capsule surface — smoothing
 // alone deflates a cage steadily, and it is the projection that holds the volume. Neither is
 // useful without the other.
-const RELAX_PASSES = 6;
+// Twenty, not six: the extra passes do not change the form (vertices inside a volume 281 -> 277), they
+// settle the quads along it. On the biped the worst quad's aspect goes 11.7 -> 5.8, the hips stop bunching,
+// and crossing pairs drop on the hard fixtures (crowded hand 66 -> 37). 60ms -> 185ms on a button press.
+const RELAX_PASSES = 20;
 const SMOOTH_RATE = 0.55;
 // How far a capsule's influence bleeds into its neighbour's, as a fraction of the SMALLEST
 // radius near the point — the finest feature anything there can have, so a thin bone leaving a
 // fat joint stays a thin bone. It rounds the seam where two capsules meet and cannot make the
 // skin thinner anywhere: a smooth-min only ever adds.
 const BLEND_FRAC = 0.6;
+// A thin bone leaving a fat one blends wider than the thin bone alone would say, or the join is a hard T
+// (chest to clavicle, the armpit). The width moves this far from the thin radius towards the fat one, in
+// ratio: 0 is the thin radius, 1 the fat.
+const BLEND_MIX = 0.35;
 
 // How far each pass pulls back onto the union after smoothing. Damped rather than a full snap:
 // at 1 the surface lands exactly on the union and limbs that nearly touch drive their bridges
@@ -666,12 +673,12 @@ const _grad = new THREE.Vector3();
 // That bookkeeping, not the arithmetic, was 95% of Make Skin: 311ms of a 327ms build.
 let _sd = new Float64Array(0), _nx = new Float64Array(0);
 let _ny = new Float64Array(0), _nz = new Float64Array(0);
-let _order = new Int32Array(0);
+let _order = new Int32Array(0), _fn = new Float64Array(0);
 function ensureCapsScratch(n) {
   if (_sd.length >= n) return;
   _sd = new Float64Array(n); _nx = new Float64Array(n);
   _ny = new Float64Array(n); _nz = new Float64Array(n);
-  _order = new Int32Array(n);
+  _order = new Int32Array(n); _fn = new Float64Array(n);
 }
 // THE TWO ENDS' ROTATIONS, INVERTED, for measuring a point in the frame its extents belong to.
 // Null when neither joint is rotated, which is the path every rig took before rotation existed.
@@ -770,9 +777,21 @@ function capsuleTarget(p, caps, out) {
     // out again.
     // A volume's own `fine`: its depth along the bone is only the dome, not a feature.
     const fine = c.fine || Math.min(hx, hy, hz);
+    _fn[nc - 1] = fine;
     if (fine < rmin) rmin = fine;
   }
   if (!(dmin < Infinity)) return out.copy(p);
+  // ONLY THE SHAPES THAT REACH THIS POINT. Every shape in the skeleton used to count, so the thinnest
+  // bone anywhere set how hard every seam was: a clavicle or a finger creased the hips, which is what cut
+  // the sockets into them. A shape counts within its own size of the nearest surface.
+  rmin = Infinity;
+  let rbig = 0;
+  for (let i = 0; i < nc; i++) {
+    if (sd[i] - dmin >= _fn[i]) continue;
+    if (_fn[i] < rmin) rmin = _fn[i];
+    if (_fn[i] > rbig) rbig = _fn[i];
+  }
+  if (rbig > rmin) rmin *= Math.pow(rbig / rmin, BLEND_MIX);
 
   // THE BLEND WIDTH IS A LENGTH, and it has to be one that exists in the scene or the soft-min
   // is either a hard min (creases) or a mush (limbs merge). The smallest radius in play is the
@@ -924,8 +943,45 @@ function relax(verts, faces, caps) {
 const VOLUME_MARGIN = 1.04;
 // The ball at a branch: full size, as anything smaller left the biped's limbs crossing (0 pairs at 1, 44 at 0.85).
 const HUB_SIZE = 1;
+// A joint bending further than this between its two volumes gets a ball too, the size of the limb that
+// carries on: a clavicle into an upper arm, which otherwise turns a squared-off corner. Not the larger
+// volume's size, as at a branch: a fat hip into a thin thigh grew lobes that way. Elbows and knees sit under it.
+const BEND_BALL = Math.cos(60 * Math.PI / 180);
+// Two bones this close to one line are one limb carrying on: a neck into a head, a finger off a palm.
+const ALONG = 0.7;
+// THIN ROOTS FLARE. A limb leaving a fatter volume at an angle widens towards it at that end, this far from its
+// own size to the fat one's: thigh into hip, clavicle into chest, the mass matt sculpted where a plain tube
+// left a T-bar. Against biped_resculpt.sxr, surface distance on hips, legs and shoulder: 0 .279 .284 .342,
+// 0.5 .213 .216 .315. Higher reads closer but stretches quads (worst 5.6 at 0.5, 7.3 at 0.75, 11.9 at 1).
+const ROOT_FLARE = 0.5;
+const FLARE_MIN_RATIO = 1.3;
+// ...but not towards a limb running alongside within this fraction of the gap: two thighs flaring at each other
+// crushed the crotch into 8.4:1 quads, 5.6 without.
+const FLARE_ROOM = 0.3;
+// A fat end stays a dome when it overlaps a limb this much thinner carrying straight on, see `reach`.
+const DOME_RATIO = 0.8;
 let _vols = null;
 const volSize = (v) => Math.sqrt(v.rw * v.rh);
+const volEnd = (v, at) => (at === v.j ? v.f.C0.clone().addScaledVector(v.f.d, v.f.axial) : v.f.C0.clone());
+// The distance from a point to a volume's axis, and that nearest point when `out` is given.
+function toAxis(x, v, out) {
+  const t = Math.max(0, Math.min(v.f.axial, new THREE.Vector3().subVectors(x, v.f.C0).dot(v.f.d)));
+  const q = v.f.C0.clone().addScaledVector(v.f.d, t);
+  if (out) out.copy(q);
+  return q.distanceTo(x);
+}
+// Half-extents along the world axes of a set of volumes; `along` says how deep each counts along its own bone.
+function worldExtents(list, along) {
+  const h = [0, 0, 0];
+  for (const v of list) {
+    const f = v.f, l = along(v);
+    for (let k = 0; k < 3; k++) {
+      const a = f.e1.getComponent(k) * v.rw, c = f.e3.getComponent(k) * v.rh, d = f.d.getComponent(k) * l;
+      h[k] = Math.max(h[k], Math.sqrt(a * a + c * c + d * d));
+    }
+  }
+  return h;
+}
 function volumeShapes(main, all) {
   if (!Skeleton.displayFlag('volumes')) return null;
   const vols = [], touching = new Map();
@@ -942,14 +998,42 @@ function volumeShapes(main, all) {
   if (!vols.length) return null;
 
   const reach = (v, at) => {                    // 0 = stop as drawn, 1 = run on to the joint
+    const list = touching.get(at);
     let big = 0;
-    for (const o of touching.get(at)) if (o !== v) big = Math.max(big, volSize(o));
+    for (const o of list) if (o !== v) big = Math.max(big, volSize(o));
+    // NOTHING TO CLOSE: a fat end already overlapping a thinner limb that carries straight on keeps its dome.
+    // Running on buried the neck and made head and neck one column, 2.47 wide where matt's resculpt is 1.85.
+    if (list.length === 2 && big < volSize(v) * DOME_RATIO) {
+      const o = list[0] === v ? list[1] : list[0];
+      if (Math.abs(o.f.d.dot(v.f.d)) > ALONG && toAxis(volEnd(v, at), o) < volSize(o)) return 0;
+    }
     return Math.min(1, big / volSize(v));
   };
-  const caps = [], half = new Map(), centre = new Map();
+  const flared = (v, at, h) => {                // this end's section, h[0] and h[2] being the shaft's
+    let fat = null;
+    for (const o of touching.get(at)) if (o !== v && (!fat || volSize(o) > volSize(fat))) fat = o;
+    if (!fat || volSize(fat) < FLARE_MIN_RATIO * volSize(v) || Math.abs(fat.f.d.dot(v.f.d)) > ALONG) return h;
+    const k = 1 + ROOT_FLARE * (volSize(fat) / volSize(v) - 1), out = [h[0] * k, h[1], h[2] * k];
+    const e = volEnd(v, at), near = new THREE.Vector3();
+    for (const o of vols) {
+      if (o === v || Math.abs(o.f.d.dot(v.f.d)) < ALONG) continue;
+      if (touching.get(v.p).includes(o) || touching.get(v.j).includes(o)) continue;
+      const dist = toAxis(e, o, near);
+      if (dist < 1e-6) continue;
+      near.sub(e).divideScalar(dist);
+      const cap = dist * FLARE_ROOM;
+      if (Math.abs(near.dot(v.f.e1)) > 0.5 && out[0] > cap) out[0] = h[0];
+      if (Math.abs(near.dot(v.f.e3)) > 0.5 && out[2] > cap) out[2] = h[2];
+    }
+    return out;
+  };
+  const caps = [], half = new Map(), centre = new Map(), free = new Map();
   for (const v of vols) {
     const f = v.f, fine = Math.min(v.rw, v.rh);
-    const b = Math.max(Math.min(0.5 * fine, 0.3 * f.axial), 1e-6);  // as drawn: Skeleton.updateVisuals
+    // A FULL DOME, deeper than the drawn bevel (half this, Skeleton.updateVisuals): a section-deep end is what
+    // makes a head a head and takes the rim off a fat short volume like a hip, where the drawn one left a ledge.
+    // So a drawn volume's flat rim can show through the skin at a free end.
+    const b = Math.max(Math.min(fine, 0.5 * f.axial), 1e-6);
     // Along the bone from C0: where the shaft ends, the dome then reaching `b` past it.
     const r0 = reach(v, v.p), r1 = reach(v, v.j);
     let s0 = b + (-f.inset - b) * r0;
@@ -961,7 +1045,7 @@ function volumeShapes(main, all) {
     const margin = typeof window._boneSkinMargin === 'number' ? window._boneSkinMargin : VOLUME_MARGIN;
     const h = [v.rw * margin, b, v.rh * margin];
     v.cap = { a: f.C0.clone().addScaledVector(f.d, s0), b: f.C0.clone().addScaledVector(f.d, s1),
-      ha: h, hb: h, pa: pw, pb: pw, ri: ri, fine: fine, vol: v };
+      ha: flared(v, v.p, h), hb: flared(v, v.j, h), pa: pw, pb: pw, ri: ri, fine: fine, vol: v };
     caps.push(v.cap);
   }
 
@@ -971,15 +1055,8 @@ function volumeShapes(main, all) {
   // to reach it. Only when dragged: moving every leaf's box this way crossed neighbouring fingers (235
   // face pairs against 78 on a crowded hand).
   for (const [j, list] of touching) {
-    const h = [0, 0, 0], off = new THREE.Vector3();
-    for (const v of list) {
-      const f = v.f, along = Math.min(v.rw, v.rh);
-      for (let k = 0; k < 3; k++) {
-        const a = f.e1.getComponent(k) * v.rw, c = f.e3.getComponent(k) * v.rh, d = f.d.getComponent(k) * along;
-        h[k] = Math.max(h[k], Math.sqrt(a * a + c * c + d * d));
-      }
-      off.addScaledVector(f.e1, f.o1 * f.r).addScaledVector(f.e3, f.o3 * f.r);
-    }
+    const h = worldExtents(list, (v) => Math.min(v.rw, v.rh)), off = new THREE.Vector3();
+    for (const v of list) off.addScaledVector(v.f.e1, v.f.o1 * v.f.r).addScaledVector(v.f.e3, v.f.o3 * v.f.r);
     half.set(j, h);
     const c = Skeleton.jointPos(j).add(off.divideScalar(list.length));
     const moved = list.length === 1 && (list[0].j === j ? list[0].f.end1 : list[0].f.end0);
@@ -988,17 +1065,27 @@ function volumeShapes(main, all) {
       const hd = Math.abs(f.d.x) * h[0] + Math.abs(f.d.y) * h[1] + Math.abs(f.d.z) * h[2];
       const t = tip ? Math.max(f.axial - hd, f.axial / 2) : Math.min(hd, f.axial / 2);
       c.copy(f.C0).addScaledVector(f.d, t);
+      // Where boxAt seats the box once it knows its clamped size: the end, and the way out through it.
+      free.set(j, { end: tip ? f.C0.clone().addScaledVector(f.d, f.axial) : f.C0.clone(), out: tip ? f.d.clone() : f.d.clone().negate() });
     }
     centre.set(j, c);
     // A BRANCH HAS TO BE ONE MASS. Three or more bones meeting leave their roots converging on one point in
     // open space, where the volumes have no shape to absorb them, and those tubes pass through each other.
-    if (list.length >= 3) {
-      const hub = [h[0] * HUB_SIZE, h[1] * HUB_SIZE, h[2] * HUB_SIZE];
+    const bend = list.length === 2 && list[0].f.d.dot(list[1].f.d) < BEND_BALL;
+    if (list.length >= 3 || bend) {
+      const kid = bend && list.find((v) => v.p === j);
+      // ...and no deeper along the fattest bone than the limb carrying on past it: a chest's ball the chest's
+      // own depth rose 2.85 up the neck and buried it. Flattened, 1.57.
+      let fat = list[0], on = 0;
+      for (const v of list) if (volSize(v) > volSize(fat)) fat = v;
+      for (const v of list) if (v !== fat && Math.abs(v.f.d.dot(fat.f.d)) > ALONG) on = Math.max(on, volSize(v));
+      const hh = on > 0 ? worldExtents(list, (v) => (v === fat ? on : Math.min(v.rw, v.rh))) : h;
+      const hub = kid ? [volSize(kid), volSize(kid), volSize(kid)] : [hh[0] * HUB_SIZE, hh[1] * HUB_SIZE, hh[2] * HUB_SIZE];
       caps.push({ a: c.clone(), b: c.clone(), ha: hub, hb: hub, pa: 2, pb: 2, ri: new Float64Array([0, 0, 0, 1, 0, 0, 0, 1]),
         fine: Math.min(hub[0], hub[1], hub[2]), hub: j });
     }
   }
-  return { caps: caps, half: half, centre: centre, touching: touching };
+  return { caps: caps, half: half, centre: centre, touching: touching, free: free };
 }
 function shapeCentre(j) {
   const c = _vols && _vols.centre.get(j);
@@ -1013,7 +1100,8 @@ function insideCap(c, x) {
   t = t < 0 ? 0 : (t > 1 ? 1 : t);
   _ciT.copy(c.a).addScaledVector(_ciA, t).subVectors(x, _ciT);
   rotInto(c.ri[0], c.ri[1], c.ri[2], c.ri[3], _ciT.x, _ciT.y, _ciT.z, _ciL);
-  const ux = _ciL[0] / c.ha[0], uy = _ciL[1] / c.ha[1], uz = _ciL[2] / c.ha[2];
+  const ux = _ciL[0] / (c.ha[0] + (c.hb[0] - c.ha[0]) * t), uy = _ciL[1] / (c.ha[1] + (c.hb[1] - c.ha[1]) * t),
+    uz = _ciL[2] / (c.ha[2] + (c.hb[2] - c.ha[2]) * t);
   const n = c.pa <= 2.0001 ? Math.hypot(ux, uy, uz)
     : Math.pow(Math.pow(Math.abs(ux), c.pa) + Math.pow(Math.abs(uy), c.pa) + Math.pow(Math.abs(uz), c.pa), 1 / c.pa);
   return n < 1;
@@ -1223,6 +1311,13 @@ function boxAt(j, nbs) {
   }
   const h = [half[0] * sc, half[1] * sc, half[2] * sc];
   if (!(h[0] > 1e-9 && h[1] > 1e-9 && h[2] > 1e-9)) return null;
+
+  // A FREE END'S BOX GOES ON THE END, once it has its real size. Left where it was placed, the clamp's
+  // smaller box stops short and the end's quads all come from stretching one small face: the biped's head
+  // had a few big quads for a cap and every ring bunched at the neck, its hand a coarse point. On the end,
+  // the bridge behind it is longer and takes its share of the rings.
+  const fr = _vols && _vols.free.get(j);
+  if (fr) c.copy(fr.end).addScaledVector(fr.out, -(Math.abs(fr.out.x) * h[0] + Math.abs(fr.out.y) * h[1] + Math.abs(fr.out.z) * h[2]));
 
   // THE COUNTS COME OFF THE CLAMPED HALF-EXTENTS, which is the box's real shape — clamping scales
   // uniformly, so it cannot change the proportions this reads, but taking the same array keeps one

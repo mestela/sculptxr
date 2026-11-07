@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { quat, mat4 } from 'gl-matrix';
-import { rotSync, xfWrite, xfTanGet, maskSync, xfEval, xfKeyedSlots, xfBit, xfGroupBits, XF_ALL, xfRefreshDerived, xfRemoveSlots, xfPruneEmpty, xfInsertSlot, xfSlotAt, eulerFromQuat, rotSetEuler, xfSlope, channelsToQuat, setEulerRef } from './xfChannel.js';
+import { xfHandleFit, rotSync, xfWrite, xfTanGet, maskSync, xfEval, xfKeyedSlots, xfBit, xfGroupBits, XF_ALL, xfRefreshDerived, xfRemoveSlots, xfPruneEmpty, xfInsertSlot, xfSlotAt, eulerFromQuat, rotSetEuler, xfSlope, channelsToQuat, setEulerRef } from './xfChannel.js';
 import { decimateKeys } from './curveSimplify.js';
 import { lrSplitNames, lrPairFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
@@ -3440,11 +3440,13 @@ class AnimationRegistry {
     const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
     const dv1 = leftDv  !== undefined ? leftDv  : slope1 * dt1;
 
-    const p1x = dt0 / dt;
-    const p2x = 1 + dt1 / dt;
+    // A handle past its segment doubles the curve back in time; see xfSegEval.
+    const k0 = xfHandleFit(dt0, dt), k1 = xfHandleFit(dt1, dt);
+    const p1x = dt0 * k0 / dt;
+    const p2x = 1 + dt1 * k1 / dt;
     const t = this.getBezierT(alpha, p1x, p2x);
     const omt = 1 - t;
-    return omt*omt*omt*v1 + 3*omt*omt*t*(v1+dv0) + 3*omt*t*t*(v2+dv1) + t*t*t*v2;
+    return omt*omt*omt*v1 + 3*omt*omt*t*(v1+dv0*k0) + 3*omt*t*t*(v2+dv1*k1) + t*t*t*v2;
   }
 
   deleteBlendshape(mesh, name) {
@@ -3742,7 +3744,26 @@ class AnimationRegistry {
     let bits;
     if (this.isRecording) bits = this._recordBits();
     else bits = this._changedGroupBits(track, time, [px, py, pz], [qx, qy, qz, qw], [sx, sy, sz]);
+    bits = this._dropIdleScale(track, time, [sx, sy, sz], bits);
     this._putKey(track, time, [px, py, pz], [qx, qy, qz, qw], [sx, sy, sz], bits, this.isRecording);
+  }
+
+  // SCALE IS KEYED ONCE IT CHANGES, NOT BEFORE (matt, 2026-11-07: bones almost never scale, and the
+  // keys "get in the way, are very confusing"). With no scale keys the channel holds its slot value,
+  // so nothing is lost. The first real scale key also keys that held value on what was the first
+  // slot: a channel holds flat before its first key, so otherwise the new value would run back to
+  // the start of the track.
+  _dropIdleScale(track, time, S, bits) {
+    const sb = xfGroupBits('scale');
+    if (!(bits & sb)) return bits;
+    const m = maskSync(track), hasScale = m.some((b) => b & sb);
+    if (hasScale) return bits;
+    const idle = !m.length || [0, 1, 2].every((c) => Math.abs(xfEval(track, 'scale', c, time) - S[c]) <= 1e-4);
+    if (!idle) {
+      m[0] |= sb;
+      return bits;
+    }
+    return (bits & ~sb) || bits;
   }
 
   // WHICH GROUPS A TAKE KEYS: the recorded ones, and only those. Under lockstep keys "record
@@ -3763,7 +3784,7 @@ class AnimationRegistry {
     const n = track.times ? track.times.length : 0;
     if (!n) return XF_ALL;
     let bits = 0;
-    const EPS_P = 1e-5, EPS_S = 1e-5, EPS_R = 1e-3;   // scene units, scale, degrees
+    const EPS_P = 1e-5, EPS_S = 1e-4, EPS_R = 1e-3;   // scene units, scale, degrees
     for (let c = 0; c < 3; c++) {
       if (Math.abs(xfEval(track, 'pos', c, time) - P[c]) > EPS_P) bits |= xfGroupBits('pos');
       if (Math.abs(xfEval(track, 'scale', c, time) - S[c]) > EPS_S) bits |= xfGroupBits('scale');

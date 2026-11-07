@@ -251,6 +251,11 @@ class SculptManager {
     return this._tools[this._toolIndex];
   }
 
+  // For Revert, which can't import Skinning (see Picking.mirrorLocalPoint).
+  fixOnScreen(mesh) {
+    return Skinning.fixOnScreen?.(this._main, mesh) || null;
+  }
+
   getSymmetry() {
     // A WEIGHT CAPSULE'S MIRROR IS THE OTHER LIMB, NOT ITS OWN MIDDLE.
     //

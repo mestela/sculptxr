@@ -513,11 +513,20 @@ function nearestCapsuleWeights(verts, nbV, segs, mask) {
 // start from the bone owning most of it and walk the skeleton (parent and children) through bones
 // that own any of the island in the plain solve -- a joint with no volume is walked through -- keeping
 // those that own at least ISLAND_MIN and the bones on the way to them. The arm mesh never reaches the
-// spine because the chest between them owns none of it. On one fused mesh every bone connects, so nothing changes; the
-// volumes still decide everything among the bones an island keeps. window._islandBones = false
-// switches it off for A/B.
+// spine because the chest between them owns none of it. The volumes still decide everything among the
+// bones an island keeps. window._islandBones = false switches it off for A/B.
+//
+// A SMALL BONE IS NOT A STRAY ONE. A share of the island says nothing about a hand on a low skin: one
+// owned 83 of 2792 vertices against a floor of 83.76, so it was dropped, its vertices went to the
+// forearm and the thigh, and no volume edit short of crossing that floor brought it back. The
+// difference is the shape of what it owns: a piece that CONTAINS a bone wraps it, while vertices that
+// are merely nearest a bone outside the piece lie to one side (chest under a resting forearm). So a
+// bone under the floor stays when its vertices' lean is under ISLAND_LEAN. Measured: real hand, jaw and
+// ears 0.08-0.28; strays on baseball_v03 0.57-1.0. Mesh-edge contact was tried first and does not
+// separate them: it gave the head to the clavicle and the chest back to the forearm.
 const ISLAND_MIN = 0.03;
-function islandBoneMask(level, raw, segs, nbV) {
+const ISLAND_LEAN = 0.33;
+function islandBoneMask(level, raw, segs, nbV, verts) {
   const parents = segs.parents;
   if (!parents || window._islandBones === false || level.getNbVertices() !== nbV) return null;
   const nbJ = parents.length;
@@ -542,6 +551,28 @@ function islandBoneMask(level, raw, segs, nbV) {
   }
   const hasVol = new Uint8Array(nbJ);
   for (const sg of segs) hasVol[sg.joint] = 1;
+  // How far each small bone's vertices fall to one side of it: the length of the mean unit vector from
+  // its axis out to them, 0 when they wrap all the way round, 1 when they all lie in one direction.
+  const volsOf = Array.from({ length: nbJ }, () => []);
+  for (const sg of segs) volsOf[sg.joint].push(sg);
+  const lean = counts.map(() => new Float64Array(nbJ * 3));
+  _surfaceMetric = true;
+  for (let i = 0; i < nbV; i++) {
+    const k = island[i], j = raw.idx[i * MAX_INFLUENCES];
+    if (j < 0 || counts[k][j] >= ISLAND_MIN * sizes[k]) continue;
+    const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
+    let sg = volsOf[j][0];
+    if (volsOf[j].length > 1) {
+      let best = Infinity;
+      for (const q of volsOf[j]) { const d = envelopeT2(px, py, pz, q); if (d < best) { best = d; sg = q; } }
+    }
+    const dx = sg.b.x - sg.a.x, dy = sg.b.y - sg.a.y, dz = sg.b.z - sg.a.z;
+    const vx = px - sg.a.x, vy = py - sg.a.y, vz = pz - sg.a.z;
+    const t = (vx * dx + vy * dy + vz * dz) / (dx * dx + dy * dy + dz * dz);
+    const rx = vx - dx * t, ry = vy - dy * t, rz = vz - dz * t, rl = Math.hypot(rx, ry, rz) || 1;
+    lean[k][j * 3] += rx / rl; lean[k][j * 3 + 1] += ry / rl; lean[k][j * 3 + 2] += rz / rl;
+  }
+  const leanOf = (k, j) => Math.hypot(lean[k][j * 3], lean[k][j * 3 + 1], lean[k][j * 3 + 2]) / (counts[k][j] || 1);
   const kids = Array.from({ length: nbJ }, () => []);
   parents.forEach((p, i) => { if (p >= 0) kids[p].push(i); });
   let dropped = 0;
@@ -563,7 +594,7 @@ function islandBoneMask(level, raw, segs, nbV) {
     // A bone owning ISLAND_MIN is kept, and so is every bone on the way to it: a short clavicle owns
     // little of a torso but the upper arm past it owns its shoulder.
     for (let j = 0; j < nbJ; j++) {
-      if (from[j] === -2 || cnt[j] < min) continue;
+      if (from[j] === -2 || (cnt[j] < min && leanOf(k, j) >= ISLAND_LEAN)) continue;
       for (let b = j; b >= 0 && !keep[b]; b = from[b]) if (hasVol[b] || b === seed) keep[b] = 1;
     }
     keep[seed] = 1;
@@ -573,13 +604,57 @@ function islandBoneMask(level, raw, segs, nbV) {
   return dropped ? { island, sets, dropped } : null;
 }
 
+// A PATCH CUT OFF FROM ITS BONE IS NOT THAT BONE'S. Nearest-volume measures straight through the air, so
+// a hand beside a thigh claims the thigh surface facing it: on a 2792-vertex biped, 12 vertices on the
+// thigh went to the hand, ringed entirely by thigh, and no size of hand volume both left them alone and
+// kept the hand above ISLAND_MIN. Across the surface the patch reaches neither the hand nor anything
+// next to it in the skeleton, so it goes to whichever bone borders it most. A bone's largest patch
+// stays wherever it is, and so does one with no neighbours at all (a separate piece, which the volumes
+// decide). window._skinPatches = false switches it off for A/B.
+function dropStrayPatches(level, res, segs, nbV) {
+  const parents = segs.parents;
+  if (!parents || window._skinPatches === false || Skeleton.displayFlag('volSoft') || level.getNbVertices() !== nbV) return;
+  const { off, nb } = flatAdjacency(level);
+  const idx = res.idx, own = (v) => idx[v * MAX_INFLUENCES];
+  const seen = new Uint8Array(nbV), patches = [], biggest = new Int32Array(parents.length);
+  for (let i = 0; i < nbV; i++) {
+    if (seen[i] || own(i) < 0) continue;
+    const j = own(i), verts = [i], borders = new Map();
+    seen[i] = 1;
+    for (let q = 0; q < verts.length; q++) {
+      for (let e = off[verts[q]]; e < off[verts[q] + 1]; e++) {
+        const n = nb[e], o = own(n);
+        if (o === j) { if (!seen[n]) { seen[n] = 1; verts.push(n); } } else if (o >= 0) borders.set(o, (borders.get(o) || 0) + 1);
+      }
+    }
+    patches.push({ j, verts, borders });
+    if (verts.length > biggest[j]) biggest[j] = verts.length;
+  }
+  let moved = 0;
+  for (const p of patches) {
+    if (p.verts.length === biggest[p.j] || !p.borders.size) continue;
+    let to = -1, most = 0, joined = false;
+    for (const [o, count] of p.borders) {
+      if (parents[o] === p.j || parents[p.j] === o) joined = true;
+      if (count > most) { most = count; to = o; }
+    }
+    if (joined) continue;
+    for (const v of p.verts) idx[v * MAX_INFLUENCES] = to;
+    moved += p.verts.length;
+  }
+  if (moved) console.log(`[bind] ${moved} of ${nbV} vertices in patches cut off from their bone went to the bone around them`);
+}
+
 // The rigid capsule solve, then again restricted to each island's connected bones if that excludes any.
 function capsuleWeights(level, verts, nbV, segs) {
-  const raw = nearestCapsuleWeights(verts, nbV, segs);
-  const mask = islandBoneMask(level, raw, segs, nbV);
-  if (!mask) return raw;
-  console.log(`[bind] island bones: ${mask.dropped} of ${nbV} vertices kept off bones not connected to their piece`);
-  return nearestCapsuleWeights(verts, nbV, segs, mask);
+  let res = nearestCapsuleWeights(verts, nbV, segs);
+  const mask = islandBoneMask(level, res, segs, nbV, verts);
+  if (mask) {
+    console.log(`[bind] island bones: ${mask.dropped} of ${nbV} vertices kept off bones not connected to their piece`);
+    res = nearestCapsuleWeights(verts, nbV, segs, mask);
+  }
+  dropStrayPatches(level, res, segs, nbV);
+  return res;
 }
 
 // Laplacian smoothing over the weight field: average each vertex's weights with its
@@ -2066,7 +2141,7 @@ Skinning.applyRestEntry = function (entry, which) {
     }
   }
   if (entry.details?.[0]?.arr) Skinning.composeFixDetails(m);
-  m._skinMushDirty = true;      // the mush deltas are defined against the rest pose
+  if (entry.idx.length) m._skinMushDirty = true;      // the mush deltas are defined against the rest pose
   m._skinDirty = true;          // the pass redraws from the restored rest
   return true;
 };
@@ -2110,12 +2185,7 @@ function mushReturn(mesh, mats, src, idx, wts, nbV) {
 // A POSED STROKE ALSO BELONGS IN THE SHAPE THE REST SURFACE IS COMPOSED FROM, or the next recomposite
 // (`_skinSrc` = base + layers) throws it away. The layer being edited, else the base. Taken from the
 // journal, which holds exactly what the commit changed, so the entry can put this back too.
-function shapeTarget(main, mesh, into) {
-  if (into) {
-    const t = Skinning.ensureCorrective(main, mesh, into);
-    // Divided by the layer's weight, for a rig a hair off the pose: the composite multiplies it back.
-    return t && { track: t.track, arr: t.arr, k: 1 / into.w, layer: true };
-  }
+function shapeTarget(main, mesh) {
   const reg = window._animationRegistry;
   const track = reg && reg.tracks ? reg.tracks.get(mesh.getID()) : null;
   if (!track || !track.baseShape) return null;
@@ -2131,9 +2201,9 @@ function shapeTarget(main, mesh, into) {
   reg.invalidateSparse?.(arr);
   return { track, arr, k: 1, layer: true };
 }
-function strokeIntoShape(main, mesh, into) {
+function strokeIntoShape(main, mesh) {
   const e = Skinning._lastRestEntry;
-  const t = e && e.idx.length ? shapeTarget(main, mesh, into) : null;
+  const t = e && e.idx.length ? shapeTarget(main, mesh) : null;
   if (!t) return;
   window._animationRegistry?.invalidateSparse?.(t.arr);
   const rest = mesh._skinRest;
@@ -2151,7 +2221,162 @@ function strokeIntoShape(main, mesh, into) {
   e.shape = t;
 }
 
-function commitPosed(main, mesh, level, nbV, into) {
+// A POSE'S FIX IS DRAWN AFTER THE SKIN PASS, on top of the mush. Sculpting a pose used to store the stroke
+// under the skinning, and the mush doesn't draw that back: on a hard bend a smoothing stroke of .21 came
+// back 1.93 off and never settled (pose_crumple.sxr; a straight forearm .001 on .02). Refining against the
+// pass diverges (see commitPosed). Here nothing is inverted, so the surface is what was sculpted.
+//
+// An offset, in the vertex's own turn from rest, so it follows the limb off the pose and is exact on it. A
+// BLENDED ROTATION, as blending the matrices nearly collapses at a hard bend and has no usable inverse there.
+const _mFix = new THREE.Matrix4(), _qFix = new THREE.Quaternion(), _axFix = new THREE.Vector3();
+function jointQuats(mats) {
+  const qs = new Float64Array(mats.length * 4);
+  for (let j = 0; j < mats.length; j++) {
+    if (!mats[j]) continue;   // all zeros: no say in the blend
+    _mFix.copy(mats[j]);
+    const e = _mFix.elements;
+    for (let c = 0; c < 3; c++) {
+      const l = _axFix.set(e[c * 4], e[c * 4 + 1], e[c * 4 + 2]).length() || 1;
+      e[c * 4] /= l; e[c * 4 + 1] /= l; e[c * 4 + 2] /= l;
+    }
+    _qFix.setFromRotationMatrix(_mFix);
+    qs[j * 4] = _qFix.x; qs[j * 4 + 1] = _qFix.y; qs[j * 4 + 2] = _qFix.z; qs[j * 4 + 3] = _qFix.w;
+  }
+  return qs;
+}
+// Vertex `i`'s turn: its joints' rotations, weighted, all on the near side of its heaviest.
+function vertexQuat(i, qs, idx, wts, q) {
+  let top = -1, most = 0;
+  for (let k = 0; k < MAX_INFLUENCES; k++) {
+    const j = idx[i * MAX_INFLUENCES + k], w = wts[i * MAX_INFLUENCES + k];
+    if (j >= 0 && w > most) { most = w; top = j; }
+  }
+  let x = 0, y = 0, z = 0, r = 0;
+  for (let k = 0; top >= 0 && k < MAX_INFLUENCES; k++) {
+    const j = idx[i * MAX_INFLUENCES + k];
+    let w = wts[i * MAX_INFLUENCES + k];
+    if (j < 0 || w <= 0) continue;
+    const a = j * 4, b = top * 4;
+    if (qs[a] * qs[b] + qs[a + 1] * qs[b + 1] + qs[a + 2] * qs[b + 2] + qs[a + 3] * qs[b + 3] < 0) w = -w;
+    x += qs[a] * w; y += qs[a + 1] * w; z += qs[a + 2] * w; r += qs[a + 3] * w;
+  }
+  const l = Math.sqrt(x * x + y * y + z * z + r * r);
+  if (l < 1e-9) { q[0] = q[1] = q[2] = 0; q[3] = 1; return; }
+  q[0] = x / l; q[1] = y / l; q[2] = z / l; q[3] = r / l;
+}
+// Vertex `i`'s turn as Skinning.blendAt* would pick its joints, with each joint swapped for its twin if a
+// table is given. Whether a table changed anything is the caller's to ask (blendAtMirrored says).
+const _idxT = new Int32Array(MAX_INFLUENCES), _wtT = new Float32Array(MAX_INFLUENCES);
+Skinning.turnAt = function (mesh, mats, i, table, q) {
+  const idx = mesh._skinIdx, wts = mesh._skinW;
+  for (let k = 0; k < MAX_INFLUENCES; k++) {
+    const j = idx[i * MAX_INFLUENCES + k];
+    _idxT[k] = j >= 0 && table ? table[j] : j;
+    _wtT[k] = wts[i * MAX_INFLUENCES + k];
+  }
+  vertexQuat(0, jointQuats(mats), _idxT, _wtT, q);
+};
+// v by q, or by its inverse with s = -1, into q's slots 4 to 6.
+function turn(q, s, vx, vy, vz) {
+  const x = q[0] * s, y = q[1] * s, z = q[2] * s, r = q[3];
+  const tx = 2 * (y * vz - z * vy), ty = 2 * (z * vx - x * vz), tz = 2 * (x * vy - y * vx);
+  q[4] = vx + r * tx + y * tz - z * ty;
+  q[5] = vy + r * ty + z * tx - x * tz;
+  q[6] = vz + r * tz + x * ty - y * tx;
+}
+const _qv = new Float64Array(7);
+function applyFixes(mesh, mats, out, nbV) {
+  const t = window._animationRegistry?.tracks?.get(mesh.getID());
+  if (!t || !t.correctivePost || !t.correctivePost.size) return;
+  const rows = [];
+  for (const [key, arr] of t.correctivePost) {
+    const w = t.correctiveW?.get(key) || 0;
+    if (w > 0 && arr.length === nbV * 3) rows.push([arr, w]);
+  }
+  if (!rows.length) return;
+  const qs = jointQuats(mats), idx = mesh._skinIdx, wts = mesh._skinW;
+  for (let i = 0; i < nbV; i++) {
+    const i3 = i * 3;
+    let x = 0, y = 0, z = 0;
+    for (const [arr, w] of rows) { x += arr[i3] * w; y += arr[i3 + 1] * w; z += arr[i3 + 2] * w; }
+    if (x === 0 && y === 0 && z === 0) continue;
+    vertexQuat(i, qs, idx, wts, _qv);
+    turn(_qv, 1, x, y, z);
+    out[i3] += _qv[4]; out[i3 + 1] += _qv[5]; out[i3 + 2] += _qv[6];
+  }
+}
+
+// What one fix adds to the bound level on screen, as applyFixes draws it. Null if it adds nothing.
+Skinning.fixOffset = function (main, mesh, arr, w) {
+  const nbV = (mesh._skinRest.length / 3) | 0;
+  if (!arr || !(w > 0) || arr.length !== nbV * 3) return null;
+  const qs = jointQuats(skinMatrices(mesh, resolveJoints(main, mesh))), out = new Float32Array(nbV * 3);
+  let any = false;
+  for (let i = 0; i < nbV; i++) {
+    const i3 = i * 3;
+    if (arr[i3] === 0 && arr[i3 + 1] === 0 && arr[i3 + 2] === 0) continue;
+    vertexQuat(i, qs, mesh._skinIdx, mesh._skinW, _qv);
+    turn(_qv, 1, arr[i3] * w, arr[i3 + 1] * w, arr[i3 + 2] * w);
+    out[i3] = _qv[4]; out[i3 + 1] = _qv[5]; out[i3 + 2] = _qv[6];
+    any = true;
+  }
+  return any ? out : null;
+};
+
+// A stroke on a saved pose: what it moved goes in the fix. Nothing under the skin changes, so the mush keeps
+// its deltas. Returns the undo record, in the shape details use, or null if nothing moved.
+function commitFix(main, mesh, level, nbV, on) {
+  const ref = mesh._skinPosed;
+  if (!ref || ref.length !== nbV * 3) {
+    restRefused(mesh, 'no skinned reference to measure the stroke against');
+    return null;
+  }
+  const out = level.getVertices(), arr = Skinning.ensureCorrective(main, mesh, on).arr;
+  const qs = jointQuats(skinMatrices(mesh, resolveJoints(main, mesh)));
+  const k = 1 / on.w, ids = [], was = [], now = [];   // over the weight, as the pass multiplies it back
+  for (let i = 0; i < nbV; i++) {
+    const i3 = i * 3;
+    const dx = out[i3] - ref[i3], dy = out[i3 + 1] - ref[i3 + 1], dz = out[i3 + 2] - ref[i3 + 2];
+    if (dx === 0 && dy === 0 && dz === 0) continue;
+    vertexQuat(i, qs, mesh._skinIdx, mesh._skinW, _qv);
+    turn(_qv, -1, dx, dy, dz);
+    ids.push(i3);
+    was.push(arr[i3], arr[i3 + 1], arr[i3 + 2]);
+    arr[i3] += _qv[4] * k; arr[i3 + 1] += _qv[5] * k; arr[i3 + 2] += _qv[6] * k;
+    now.push(arr[i3], arr[i3 + 1], arr[i3 + 2]);
+  }
+  if (!ids.length) return null;
+  ref.set(out.subarray(0, nbV * 3));   // a second stroke before the next pass mustn't commit this one twice
+  mesh._skinDirty = true;
+  return { lvl: null, arr, idx: ids, was, now };
+}
+
+// A STROKE UNDER THE SKIN ON A POSED RIG MAY NOT LAND WHERE IT WAS DRAWN, and only the pass that redraws it can
+// tell. Refusing would stop gentle work that's fine (a straight forearm: .001 on a .02 stroke), and the status
+// can't know, so this warns when it happens (an elbow: .5 on .48). Measured against `_skinPosed`, still what the
+// commit left on screen. Against the stroke's size so a big stroke's small drift stays quiet, with a floor
+// so a tiny stroke's tiny one does too.
+const JUMP_SHARE = 0.25, JUMP_FLOOR = 0.002, JUMP_EVERY_MS = 10000;
+let _jumpWarnedAt = -Infinity;
+function jumpCheck(mesh, out, nbV) {
+  const stroke = mesh._skinJumpStroke, was = mesh._skinPosed;
+  mesh._skinJumpStroke = 0;
+  if (!stroke || !was || was.length !== nbV * 3) return;
+  let most = 0;
+  for (let i = 0; i < nbV * 3; i += 3) {
+    const l = Math.hypot(out[i] - was[i], out[i + 1] - was[i + 1], out[i + 2] - was[i + 2]);
+    if (l > most) most = l;
+  }
+  const floor = JUMP_FLOOR * (mesh.computeLocalRadius ? mesh.computeLocalRadius() : 1);
+  if (most <= stroke * JUMP_SHARE || most <= floor) return;
+  console.warn('[Skinning] a posed stroke of ' + stroke.toFixed(3) + ' landed ' + most.toFixed(3) + ' off');
+  const now = performance.now();
+  if (now - _jumpWarnedAt < JUMP_EVERY_MS) return;
+  _jumpWarnedAt = now;
+  window._vrAlert?.('That stroke went under the skin and landed ' + most.toFixed(2) + ' off. Save this as a pose to sculpt a fix that lands exactly, or Hold Bind Pose to change all poses. Undo is exact.');
+}
+
+function commitPosed(main, mesh, level, nbV) {
   const ref = mesh._skinPosed;
   if (!ref || ref.length !== nbV * 3) {
     return restRefused(mesh, 'no skinned reference to measure the stroke against');
@@ -2242,7 +2467,7 @@ function commitPosed(main, mesh, level, nbV, into) {
       + 'committed', singular);
   }
   if (!moved) return false;
-  strokeIntoShape(main, mesh, into);
+  strokeIntoShape(main, mesh);
 
   // THE INVERSION ABOVE IS OF THE LINEAR BLEND ONLY, and the skin pass then adds delta mush, so with mush on
   // the pass does not redraw exactly what was sculpted: at a hard weight seam it moves the surface by up to
@@ -2252,10 +2477,13 @@ function commitPosed(main, mesh, level, nbV, into) {
   // after one stroke), because mush recomputes its detail against the new rest. Undo is made exact instead (the
   // journal above) and the artist is told where the edit is not: sculpt at the bind pose (Hold Bind Pose) to
   // keep it exact.
-  if (Skinning.mushIterations() > 0 && !mesh._skinPosedWarned && window.screenLog) {
-    mesh._skinPosedWarned = true;
-    window.screenLog('Sculpting while posed is approximate with Delta Mush on -- use Hold Bind Pose for exact edits (undo is exact either way)', '#f9e2af');
+  // So the next pass measures how far this one actually landed, and says so if it's a lot (see jumpCheck).
+  let most = 0;
+  for (let i = 0; i < nbV * 3; i += 3) {
+    const l = Math.hypot(out[i] - ref[i], out[i + 1] - ref[i + 1], out[i + 2] - ref[i + 2]);
+    if (l > most) most = l;
   }
+  mesh._skinJumpStroke = most;
 
   // The reference has to move with the stroke: a second stroke can land before the next skin
   // pass, and measuring it against a stale reference would commit the FIRST stroke twice.
@@ -2305,7 +2533,6 @@ Skinning.commitToRest = function (main, mesh) {
   // and the high-frequency half is in detail vectors the skin pass re-adds every frame.
   // ON A SAVED POSE THE STROKE IS THAT POSE'S (RigPoses), unless a layer is being edited on purpose.
   const into = !atBind && !(track && track.editingBlendshape) && Skinning.correctiveFor ? Skinning.correctiveFor(main, mesh) : null;
-  // Before the commit changes `_skinSrc`: a mesh with no shapes takes its base from it.
   if (into) Skinning.ensureCorrective(main, mesh, into);
   const detailsBefore = detailsAbove(mesh, level);
   analyseDown(mesh, level);
@@ -2327,7 +2554,12 @@ Skinning.commitToRest = function (main, mesh) {
     return result;
   };
 
-  if (!atBind) return journalled(commitPosed(main, mesh, level, nbV, into));
+  if (into) {
+    const rec = commitFix(main, mesh, level, nbV, into);
+    if (rec) details = (details || []).concat(rec);
+    return journalled(!!details);
+  }
+  if (!atBind) return journalled(commitPosed(main, mesh, level, nbV));
 
   const v = level.getVertices();
   const jb = restJournal(mesh);
@@ -2669,6 +2901,8 @@ Skinning.apply = function (main, mesh) {
   // has to see the deformation the weights produced — running it before, or folding it into
   // the weights, would be a different (and much worse) algorithm.
   applyMush(mesh, level, out, nbV);
+  applyFixes(mesh, mats, out, nbV);
+  jumpCheck(mesh, out, nbV);
 
   // KEEP WHAT THE SKIN PASS PRODUCED. The posed write-back measures a stroke as the difference
   // between what is on screen now and what skinning last put there, so it needs that "there"

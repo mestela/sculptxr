@@ -204,7 +204,7 @@ class Slide extends SculptBase {
       pickingSym._mesh = mesh;
       vec3.sub(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint(), this._dragDir);
       pickingSym.mirrorLocalPoint(mesh, pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
-      pickingSym.followMirror(picking, mesh, this._dragDirSym);
+      pickingSym.followMirror(picking, mesh, this._dragDirSym, this._dragDir);
 
       pickingSym.setLocalRadius2(picking.getLocalRadius2());
       pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
@@ -254,8 +254,10 @@ class Slide extends SculptBase {
     picking._mesh = mesh;
     if (pickingSym) {
       pickingSym._mesh = mesh;
-      vec3.copy(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint());
-      pickingSym.mirrorLocalPoint(mesh, pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+      if (!pickingSym.followsOwnMirror(mesh)) {
+        vec3.copy(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint());
+        pickingSym.mirrorLocalPoint(mesh, pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+      }
     }
 
     for (var i = 0.0; i < 1.0; i += step) {
@@ -281,7 +283,7 @@ class Slide extends SculptBase {
       this.stroke(picking, false);
 
     if (pickingSym) {
-      pickingSym.followMirror(picking, mesh, this._dragDirSym);
+      pickingSym.followMirror(picking, mesh, this._dragDirSym, this._dragDir);
       pickingSym.setLocalRadius2(picking.getLocalRadius2());
       pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
       pickingSym.pruneToMirror(mesh);

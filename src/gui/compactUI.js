@@ -101,7 +101,7 @@ body.ui-compact #gui-topbar {
   gap: 4px !important;
 }
 body.ui-compact .desktop-menu-btn { height: 44px; font-size: 14px; flex: 1 1 auto; border-radius: 8px; }
-body.ui-compact #desktop-mesh-stats, body.ui-compact #build-version { display: none !important; }
+body.ui-compact #desktop-mesh-stats, body.ui-compact #desktop-rig-status, body.ui-compact #build-version { display: none !important; }
 
 /* A menu opens as a sheet from under the strip (its top is set inline from the button) to the
    bottom of the screen, full width. */

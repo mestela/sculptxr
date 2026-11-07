@@ -452,8 +452,8 @@ check('there is one accessor for which times array a group lives on',
 {
   const src = HELP.slice(HELP.indexOf('static scaleKeysVertical'));
   const body = src.slice(src.indexOf('{') + 1, src.indexOf('\n  }'));
-  const scaleKeysVertical = new Function('track', 'initialKeys', 'initialBox', 'targetVal',
-    'handle', 'tBox', 'fromDisp', 'xfWrite', body);
+  const scaleKeysVertical = new Function('trackOf', 'initialKeys', 'initialBox', 'targetVal',
+    'handle', 'tBox', 'fromDisp', 'xfWrite', 'TimelineHelper', body);
 
   const mk = () => [
     { type: 'transform', group: 'rot', index: 0, channel: 0, val: -180 },
@@ -463,8 +463,8 @@ check('there is one accessor for which times array a group lives on',
   ];
   const run = (handle, targetVal) => {
     const written = [];
-    scaleKeysVertical({}, mk(), { minV: -180, maxV: 180 }, targetVal, handle, {},
-      (v) => v, (tr, i, c, v, g) => written.push({ g, i, v }));
+    scaleKeysVertical(() => ({}), mk(), { minV: -180, maxV: 180 }, targetVal, handle, {},
+      (v) => v, (tr, i, c, v, g) => written.push({ g, i, v }), { scaleKeyHandles() {} });
     return written;
   };
 
@@ -493,8 +493,8 @@ check('there is one accessor for which times array a group lives on',
   // A single-group selection is the same as it ever was.
   {
     const written = [];
-    scaleKeysVertical({}, mk().filter((k) => k.group === 'pos'), { minV: 0, maxV: 2 }, 1, 'top',
-      {}, (v) => v, (tr, i, c, v, g) => written.push({ g, i, v }));
+    scaleKeysVertical(() => ({}), mk().filter((k) => k.group === 'pos'), { minV: 0, maxV: 2 }, 1, 'top',
+      {}, (v) => v, (tr, i, c, v, g) => written.push({ g, i, v }), { scaleKeyHandles() {} });
     check('a single-group selection is unaffected by any of this',
       Math.abs(written[0].v - 0) < 1e-9 && Math.abs(written[1].v - 1) < 1e-9,
       written.map((w) => w.v).join(','));

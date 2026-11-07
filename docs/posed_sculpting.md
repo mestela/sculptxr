@@ -221,17 +221,49 @@ Smooth a crumple that only exists because of the pose and the write-back does wh
 it stores the opposite of the crumple, which at rest is a dent. No inverse can avoid that. The
 surface has one rest shape, so a pose-specific correction needs a corrective shape.
 
-**Correctives (`RigPoses.js`).** On a saved pose, status "fix: name" in the bone panel, a stroke
-goes into a layer `pose:<name>` instead of the rest shape. The layer's weight comes from the rig,
+**Correctives (`RigPoses.js`).** On a saved pose, status "name 100% | post", a stroke
+goes into that pose's fix instead of the rest shape. The fix's weight comes from the rig,
 not a key or slider: the minimum over the joints that pose changes of a smoothstep of how far the
 joint is towards it. Joints the pose leaves alone don't count, so a bent knee doesn't fade a raised
 arm. Anywhere else a stroke goes to rest, as before. Bake to Rest, Clear Fix and Mirror are in the
 pose list's modes.
 
-- The layer has to exist before the commit moves `_skinSrc`, as a mesh with no shapes takes its
-  base from it. The other order leaks the stroke into the base.
-- A layer stroke restores `_skinRest`: `_skinRest` means the shape with no pose, and a pose's fix
-  isn't part of that.
+**A fix is an offset on top of the skin pass** (`track.correctivePost`, `Skinning.applyFixes`, SKEL
+v32): drawn = skin + mush + weight x rotation x offset. Until v4.5.86 it was a shape layer under the
+skin, and the mush doesn't draw that back. On `pose_crumple.sxr`, a straight forearm snapped .001 on
+a .02 stroke, an elbow bent about 150 degrees .5 on .48, and up to 1.93 on .21 on top of an existing
+fix, never settling. So hard bends crumpled and couldn't be repaired. Now nothing is inverted and
+the snap is 0 on any bend, with no change to `_skinSrc` or the mush deltas.
+
+- The rotation is a normalised quaternion blend of the vertex's joints. Blended matrices nearly
+  collapse at a hard bend and have no usable inverse. Each joint is flipped to the near side of the
+  vertex's heaviest: three.js returns canonical quaternions, so two can sit on far sides.
+- The offset is stored turned back to rest, so it is exact on the pose and follows the limb off it.
+- Files before v32 keep their layer `pose:<name>` under the skin, and a new stroke goes on top of
+  it. Clear, Bake, Mirror and Rename handle both.
+- **Bake to Rest is approximate**: it adds the offset to the rest shape, and the pass then draws it
+  through the mush. .88 off at the elbow on that file (349 vertices).
+- Above the bound level a fix's details lag when the rig jumps back to the pose, as details are
+  oriented by normals of the last pass (`_skinSettle`). After a 6-unit stroke at level 1: .40, .22,
+  .10, .10, .04 by pass; steady at .002 once there, exact at rest.
+- **A level's own `updateGeometry` skips the posed guard in Mesh.js**, as `_skinW` lives on the
+  Multimesh, and rebases `baseShape` from the posed surface (30 units, in a test). Go through the
+  mesh. Direct level calls exist at `Scene.js` (`lvl.updateGeometry`) and Skinning's level rebuilds:
+  not checked.
+- **"Rest" covers two cases**, and `RigPoses.status` tells them apart for the bone panel, the
+  desktop menu bar and the VR wrist panel. At bind a stroke is a copy, exact. On a posed rig off every saved pose it still
+  goes back under the skin and can jump. That isn't refused, as gentle work on a straight limb is fine:
+  the next pass measures it (`jumpCheck`) and warns over a quarter of the stroke. The wrist panel reads the
+  status in its periodic sync, which already repaints, so it adds no paints.
+- **A drag's far side is the near side's movement turned across, fixed at the press.** `mirrorPoint`
+  takes the transform of the vertex nearest the point, so mirroring a drag's target every step changes
+  transform when a different vertex is nearest, and across a shoulder that threw the far side 4.71 in
+  one step among steps of .18 (Move, `postpose.sxr`; Drag 5.57 and 9.43). `PosedSymmetry.dragTurn` is a
+  rotation, so the far side moves as far as the near one. Drag and Slide take it each step at the current
+  point and keep their own far point. The selection is still gathered by `mirrorPoint`.
+- **Revert works on a fix**: on a saved pose with no layer being edited, `Skinning.fixOnScreen` measures
+  what the fix adds to the level on screen at the press, the brush takes that away, and `commitFix` takes
+  the same out of the fix. Old `pose:` rest layers aren't reached: use Clear.
 - Undoing a custom step must not commit (`StateManager`): the pose is on screen and not on the
   stack, so the commit stored the whole pose in rest.
 - **A fix has details of its own above the bound level.** The layer only has the bound level's

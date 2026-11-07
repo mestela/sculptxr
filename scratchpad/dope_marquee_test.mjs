@@ -21,7 +21,7 @@ function run(lanes, y1, y2, selectedMeshIds = []) {
     _mode: 'dope', _cssWidth: 900, _cssHeight: 300, _viewStart: 0, _viewDuration: 2,
     _marqueeStart: { x: 150, y: y1 }, _marqueeEnd: { x: 900, y: y2 },
     _dopesheetTracks: () => lanes.map((id) => [id, mkTr()]), _dopeScroll: () => 0, _setGraphTarget() {},
-    _pruneMutedSelection() {}, _notifySelectionChanged() {},
+    _pruneMutedSelection() {}, _notifySelectionChanged() {}, _captureGraphKeys() {},
     _main: { _meshes: [], getSelectedMeshes: () => selectedMeshIds.map((id) => ({ getID: () => id })),
              getStateManager: () => ({ pushStateCustom() {} }) },
   };

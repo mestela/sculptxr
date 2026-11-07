@@ -127,5 +127,17 @@ const ROOT = new URL('../src', import.meta.url).pathname;
     /need a bound mesh/.test(BONE));
 }
 
+// The rig status on the wrist. Read in the periodic sync, which already repaints, so a changing
+// percentage adds no paints. Coloured on the spans: the UI sweep colours them, so a colour on the parent
+// reads amber in the DOM and grey on the texture.
+const MINI_SRC = fs.readFileSync(path.join(ROOT, 'gui/htmlvr/MiniPanel.js'), 'utf8');
+check('the wrist panel shows the rig status from the shared source',
+  /this\._syncRigStatus\(root\);/.test(MINI_SRC) && /RigPoses\.status\(this\._main\)/.test(MINI_SRC));
+check('...and its warning colour is on the spans, not inherited',
+  /#mp-rig-status\.warn span \{ color:/.test(MINI_SRC) && /<span id="mp-rig-pose">/.test(MINI_SRC) && /<span id="mp-rig-stage">/.test(MINI_SRC));
+check('...and the plane follows the height when it appears or goes',
+  /el\.style\.display = display;\s+this\.noteContentResized\(\);/.test(MINI_SRC));
+
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

@@ -21,7 +21,28 @@ const SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skinning.js'), 'utf8');
 
 globalThis.window = globalThis.window || {};
 
-const body = SRC.split('\n')
+// RW_INJECT=fixdraw   the pass doesn't draw a fix: the exact check must fail
+// RW_INJECT=fixturn   a stroke isn't turned back by the vertex's rotation: the bent check must fail
+// RW_INJECT=fixweight a stroke isn't divided by the weight: the weight check must fail
+// RW_INJECT=fixrest   a stroke on a pose goes through the rest commit: the rest check must fail
+// RW_INJECT=fixfollow the offset isn't turned as it's drawn: the off-pose check must fail
+// RW_INJECT=jumpsilent a stroke that lands elsewhere says nothing: the jump check must fail
+// RW_INJECT=jumpalways any posed stroke warns: the quiet check must fail
+// RW_INJECT=fixflip   a joint on the far side isn't flipped into the blend: the far-side check must fail
+let SRC_B = SRC;
+{
+  const inj = (a, b) => { if (!SRC_B.includes(a)) throw new Error('anchor moved: ' + a); SRC_B = SRC_B.replace(a, b); };
+  const i = process.env.RW_INJECT;
+  if (i === 'jumpsilent') inj('  jumpCheck(mesh, out, nbV);\n', '');
+  if (i === 'jumpalways') inj('if (most <= stroke * JUMP_SHARE || most <= floor) return;', '');
+  if (i === 'fixdraw') inj('  applyFixes(mesh, mats, out, nbV);\n', '');
+  if (i === 'fixturn') inj('turn(_qv, -1, dx, dy, dz);', 'turn(_qv, 1, dx, dy, dz);');
+  if (i === 'fixweight') inj('const k = 1 / on.w, ids', 'const k = 1, ids');
+  if (i === 'fixrest') inj('const rec = commitFix(main, mesh, level, nbV, into);', 'const rec = null; commitPosed(main, mesh, level, nbV);');
+  if (i === 'fixfollow') inj('turn(_qv, 1, x, y, z);', '_qv[4] = x; _qv[5] = y; _qv[6] = z;');
+  if (i === 'fixflip') inj('< 0) w = -w;', '< 0) w = w;');
+}
+const body = SRC_B.split('\n')
   .filter((l) => !/^import\s/.test(l))
   .filter((l) => !/^export default/.test(l))
   .join('\n');
@@ -103,6 +124,149 @@ function sculpt(t, i, dx, dy, dz) {
 }
 
 const REST = [1, 0, 0,  0, 1, 0,  0, 0, 1,  2, 1, 0];
+
+// --- A POSE'S FIX, ON TOP OF THE PASS ----------------------------------------------
+//
+// Two joints bent hard, every vertex shared between them, mush on: the case where a stroke stored
+// under the skin came back up to nine times its size (pose_crumple.sxr). Round trips through the real pass.
+{
+  const rotZ = (a, px = 0, py = 0) => new THREE.Matrix4().makeTranslation(px, py, 0).multiply(new THREE.Matrix4().makeRotationZ(a)).multiply(new THREE.Matrix4().makeTranslation(-px, -py, 0)).elements.slice();
+  const A = joint(), B = joint(rotZ(2.6));
+  const nbV = 12, rest = [];
+  for (let i = 0; i < nbV; i++) { const a = i / nbV * Math.PI * 2; rest.push(Math.cos(a) * 2, Math.sin(a) * 2, i % 2 ? 0.3 : -0.3); }
+  const t = boundMesh(rest, A);
+  const { mesh, main, verts: v } = t;
+  mesh._skinJoints = [A.getID(), B.getID()];
+  mesh._skinInvBind = [new THREE.Matrix4(), new THREE.Matrix4()];
+  for (let i = 0; i < nbV; i++) { mesh._skinIdx[i * 4 + 1] = 1; mesh._skinW[i * 4] = 0.5; mesh._skinW[i * 4 + 1] = 0.5; }
+  mesh._skinAdj = (() => { const off = new Int32Array(nbV + 1), nb = []; for (let i = 0; i < nbV; i++) { off[i] = nb.length; nb.push((i + nbV - 1) % nbV, (i + 1) % nbV); } off[nbV] = nb.length; return { off, nb: Int32Array.from(nb) }; })();
+  main.getMeshes = () => [A, B];
+  const key = 'pose:p', track = { correctivePost: new Map(), correctiveW: new Map([[key, 1]]) };
+  window._animationRegistry = { tracks: new Map([[99, track]]), invalidateSparse() {} };
+  let on = { name: 'p', w: 1 };
+  Skinning.correctiveFor = () => on;
+  Skinning.composeFixDetails = () => {};
+  Skinning.ensureCorrective = () => {
+    if (!track.correctivePost.has(key)) track.correctivePost.set(key, new Float32Array(nbV * 3));
+    return { track, arr: track.correctivePost.get(key) };
+  };
+  const wasMush = window._skinMush;
+  window._skinMush = 10;
+  const pass = () => { mesh._skinDirty = true; Skinning.apply(main, mesh); };
+  const off = (a, b) => { let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[i])); return m; };
+  pass();
+  const clean = v.slice();
+  const restWas = mesh._skinRest.slice(), srcWas = mesh._skinSrc.slice();
+  sculpt(t, 3, 0.4, -0.2, 0.3); sculpt(t, 4, 0.1, 0.5, 0);
+  const drawn = v.slice();
+  Skinning._lastRestEntry = null;
+  check('fix: a stroke on a pose commits', Skinning.commitToRest(main, mesh) === true);
+  const entry = Skinning._lastRestEntry;
+  check('fix: it stays out of the rest shape', off(mesh._skinRest, restWas) === 0 && off(mesh._skinSrc, srcWas) === 0);
+  pass();
+  check('fix: the pass draws exactly what was sculpted, mush on, bend 2.6', off(v, drawn) < 1e-5, 'off by ' + off(v, drawn).toFixed(5));
+  sculpt(t, 3, -0.2, 0.1, 0.1);
+  const drawn2 = v.slice();
+  Skinning._lastRestEntry = null;
+  Skinning.commitToRest(main, mesh);
+  const entry2 = Skinning._lastRestEntry;
+  pass();
+  check('fix: a second stroke lands on the first', off(v, drawn2) < 1e-5, 'off by ' + off(v, drawn2).toFixed(5));
+  Skinning.applyRestEntry(entry2, 'undo'); pass();
+  check('fix: undo is exact', off(v, drawn) < 1e-5);
+  Skinning.applyRestEntry(entry, 'undo'); pass();
+  check('fix: ...back to the clean skin', off(v, clean) < 1e-5);
+  Skinning.applyRestEntry(entry, 'redo'); pass();
+  check('fix: redo is exact', off(v, drawn) < 1e-5);
+  // what Revert takes away is what the pass drew, so taking all of it lands on the clean skin and empties the fix
+  {
+    const arr = track.correctivePost.get(key), w = track.correctiveW?.get(key) ?? 1;
+    const adds = Skinning.fixOffset(main, mesh, arr, w);
+    let wrong = 0;
+    for (let k = 0; k < adds.length; k++) wrong = Math.max(wrong, Math.abs(v[k] - clean[k] - adds[k]));
+    check('revert: the offset measured is the one on screen', wrong < 1e-5, 'off by ' + wrong.toFixed(5));
+    const had = arr.slice();
+    for (let k = 0; k < adds.length; k++) v[k] -= adds[k];
+    Skinning._lastRestEntry = null;
+    Skinning.commitToRest(main, mesh);
+    const back = Skinning._lastRestEntry;
+    let left = 0;
+    for (let k = 0; k < arr.length; k++) left = Math.max(left, Math.abs(arr[k]));
+    check('revert: taking all of it empties the fix', left < 1e-5, 'left ' + left.toFixed(5));
+    pass();
+    check('revert: ...and lands on the clean skin', off(v, clean) < 1e-5, 'off by ' + off(v, clean).toFixed(5));
+    Skinning.applyRestEntry(back, 'undo'); pass();
+    check('revert: undo is exact', off(arr, had) < 1e-6 && off(v, drawn) < 1e-5);
+  }
+
+  // a rig a hair off the pose: the weight comes back out
+  track.correctiveW.set(key, 0.8); on = { name: 'p', w: 0.8 };
+  pass();
+  sculpt(t, 6, 0.3, 0, 0);
+  const drawnW = v.slice();
+  Skinning.commitToRest(main, mesh); pass();
+  check('fix: under full weight a stroke still lands', off(v, drawnW) < 1e-5, 'off by ' + off(v, drawnW).toFixed(5));
+  track.correctiveW.set(key, 0); pass();
+  check('fix: at no weight it is gone', off(v, clean) < 1e-5);
+
+  // off the pose it turns with the limb, same length
+  const fixArr = track.correctivePost.get(key);
+  fixArr.fill(0); fixArr[0] = 1;
+  track.correctiveW.set(key, 1);
+  const both = (a) => { A.setModelMatrix(rotZ(a)); B.setModelMatrix(rotZ(a)); };
+  both(1); window._skinMush = 0; pass();
+  const c = Math.cos(1), s = Math.sin(1), r0 = 2;
+  check('fix: off the pose the offset turns with its joints', Math.abs(v[0] - (r0 + 1) * c) < 1e-4 && Math.abs(v[1] - (r0 + 1) * s) < 1e-4, v[0].toFixed(3) + ',' + v[1].toFixed(3));
+
+  // two joints whose quaternions sit on far sides of the sphere: without a flip they blend the long way
+  const axisB = new THREE.Vector3(-0.6, 0.8, 0);
+  A.setModelMatrix(new THREE.Matrix4().makeRotationX(3).elements.slice());
+  B.setModelMatrix(new THREE.Matrix4().makeRotationAxis(axisB, 3).elements.slice());
+  pass();
+  const withFix = v.slice();
+  track.correctiveW.set(key, 0); pass();
+  const qa = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 3), qb = new THREE.Quaternion().setFromAxisAngle(axisB, 3);
+  if (qa.dot(qb) < 0) qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+  const want = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(qa.x + qb.x, qa.y + qb.y, qa.z + qb.z, qa.w + qb.w).normalize());
+  const got = new THREE.Vector3(withFix[0] - v[0], withFix[1] - v[1], withFix[2] - v[2]);
+  check('fix: joints on far sides blend the short way', got.distanceTo(want) < 1e-4, 'off by ' + got.distanceTo(want).toFixed(4));
+
+  delete Skinning.correctiveFor; delete Skinning.ensureCorrective; delete Skinning.composeFixDetails;
+  window._animationRegistry = null;
+  window._skinMush = wasMush;
+}
+
+// --- A POSED STROKE THAT DOESN'T LAND SAYS SO --------------------------------------
+{
+  const rotZ = (a) => new THREE.Matrix4().makeRotationZ(a).elements.slice();
+  const A = joint(), B = joint(rotZ(2.6));
+  const nbV = 12, rest = [];
+  for (let i = 0; i < nbV; i++) { const a = i / nbV * Math.PI * 2; rest.push(Math.cos(a) * 2, Math.sin(a) * 2, i % 2 ? 0.3 : -0.3); }
+  const t = boundMesh(rest, A);
+  const { mesh, main, verts: v } = t;
+  mesh._skinJoints = [A.getID(), B.getID()];
+  mesh._skinInvBind = [new THREE.Matrix4(), new THREE.Matrix4()];
+  for (let i = 0; i < nbV; i++) { mesh._skinIdx[i * 4 + 1] = 1; mesh._skinW[i * 4] = 0.5; mesh._skinW[i * 4 + 1] = 0.5; }
+  mesh._skinAdj = (() => { const off = new Int32Array(nbV + 1), nb = []; for (let i = 0; i < nbV; i++) { off[i] = nb.length; nb.push((i + nbV - 1) % nbV, (i + 1) % nbV); } off[nbV] = nb.length; return { off, nb: Int32Array.from(nb) }; })();
+  main.getMeshes = () => [A, B];
+  const alerts = [], wasAlert = window._vrAlert, wasWarn = console.warn, wasMush = window._skinMush;
+  window._vrAlert = (x) => alerts.push(x);
+  console.warn = () => {};
+  const pass = () => { mesh._skinDirty = true; Skinning.apply(main, mesh); };
+  window._skinMush = 0; pass();
+  sculpt(t, 3, 0.4, -0.2, 0.3);
+  Skinning.commitToRest(main, mesh); pass();
+  check('jump: a stroke that lands stays quiet', alerts.length === 0, alerts[0]);
+  window._skinMush = 10; mesh._skinMushDirty = true; pass();
+  sculpt(t, 3, 0.4, -0.2, 0.3);
+  Skinning.commitToRest(main, mesh); pass();
+  check('jump: one that lands elsewhere warns, and nothing is refused', alerts.length === 1 && /landed/.test(alerts[0]));
+  check('jump: ...once, not on every pass', (pass(), alerts.length === 1));
+  sculpt(t, 4, 0.4, -0.2, 0.3);
+  Skinning.commitToRest(main, mesh); pass();
+  check('jump: repeats are held back a while', alerts.length === 1);
+  window._vrAlert = wasAlert; console.warn = wasWarn; window._skinMush = wasMush;
+}
 
 // --- 1. ROUND TRIP under a rotation ------------------------------------------------
 //
@@ -257,7 +421,7 @@ check('src: unbind drops the posed reference',
   'a stale reference from a previous bind would misread the first stroke after rebinding');
 
 check('src: a posed commit no longer refuses',
-  /return journalled\(commitPosed\(main, mesh, level, nbV, into\)\);/.test(SRC)
+  /return journalled\(commitPosed\(main, mesh, level, nbV\)\);/.test(SRC)
     && !/restRefused\(mesh, 'sculpting while posed'\)/.test(SRC));
 
 check('src: a singular basis drops the vertex rather than writing a garbage inverse',
@@ -276,7 +440,7 @@ check('src: a singular basis drops the vertex rather than writing a garbage inve
 }
 check('src: a posed bound mesh is never read back as rest, and strokes reach its shape through the commit',
   /if \(this\._skinW && this\._skinIsPosed\) _track = null;/.test(fs.readFileSync(path.join(REPO, 'src/mesh/Mesh.js'), 'utf8'))
-    && /if \(!moved\) return false;\n  strokeIntoShape\(main, mesh, into\);/.test(SRC)
+    && /if \(!moved\) return false;\n  strokeIntoShape\(main, mesh\);/.test(SRC)
     && /mesh\._skinIsPosed = true;/.test(fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8')));
 check('src: a recomposite does not analyse a bound mesh',
   /if \(li >= 0 && li < sel && !mesh\._skinW\) \{/.test(fs.readFileSync(path.join(REPO, 'src/editing/AnimationRegistry.js'), 'utf8')));
@@ -522,7 +686,7 @@ function boundBelow(rest, j, nLevels) {
 // implicated at all.
 
 check('src: the fold runs before the commit, not after',
-  /analyseDown\(mesh, level\);[\s\S]{0,900}?if \(!atBind\) return journalled/.test(SRC),
+  /analyseDown\(mesh, level\);[\s\S]{0,1200}?if \(!atBind\) return journalled/.test(SRC),
   'the commit reads the weighted array, so it has to be folded by then');
 
 console.log(failures ? '\n' + failures + ' FAILED' : '\nall checks passed');

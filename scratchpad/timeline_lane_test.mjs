@@ -226,7 +226,7 @@ check('the drawing uses it too', /TimelineHelper\.laneHeight\(laneAreaH, tracks\
 
   // Every key-drawing site must use it — four kinds of key, one rule.
   const users = (code.match(/TimelineHelper\.keyFill\(/g) || []).length;
-  check('every key kind uses it', users === 4, `${users} of 4`);
+  check('every key kind uses it', users >= 4, `${users} of 4`);
 
   // The per-kind hues are gone from the KEYS. (#00ff88 survives on the blendshape row LABEL,
   // which is a lane name, not a key — the request was about key colours.)

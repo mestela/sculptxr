@@ -7,7 +7,11 @@ import SculptBase from './SculptBase.js';
 // delta, not "back to the Base". The capture in Mesh.updateGeometry then writes the smaller delta.
 // matt: the cartoon head's mouthFunnel "is too exaggerated and needs to be reduced".
 //
-// Only on a layer: on the Base there is no rest to go back to, so the press is refused.
+// ON A SAVED POSE WITH NO LAYER BEING EDITED it takes that pose's fix instead. What the fix adds on screen is
+// measured at the press, and what's left of it shrinks as it's brushed, so it can't overshoot however long you
+// scrub. The commit at the end of the stroke takes the same amount out of the fix (RigPoses, Skinning.commitFix).
+//
+// Otherwise there is no rest to go back to, so the press is refused.
 class Revert extends SculptBase {
 
   constructor(main) {
@@ -28,16 +32,18 @@ class Revert extends SculptBase {
   }
 
   start(ctrl) {
-    if (!this._layerDelta()) {
+    const mesh = this.getMesh();
+    this._fix = !mesh || this._layerDelta() ? null : this._main.getSculptManager().fixOnScreen(mesh);
+    if (!this._fix && !this._layerDelta()) {
       window._blendshapeStackPanel?.flash?.();
-      window.screenLog?.('Revert: select a blendshape layer to brush back to rest');
+      window.screenLog?.('Revert: select a blendshape layer, or go to a saved pose with a fix, to brush back');
       return false;
     }
     return super.start(ctrl);
   }
 
   stroke(picking) {
-    const delta = this._layerDelta();
+    const fix = this._fix, delta = fix || this._layerDelta();
     if (!delta) return;
     let iVerts = picking.getPickedVertices();
     const intensity = this._intensity * Tablet.getPressureIntensity();
@@ -64,6 +70,7 @@ class Revert extends SculptBase {
       vAr[ind] -= delta[ind] * f;
       vAr[ind + 1] -= delta[ind + 1] * f;
       vAr[ind + 2] -= delta[ind + 2] * f;
+      if (fix) { fix[ind] *= 1 - f; fix[ind + 1] *= 1 - f; fix[ind + 2] *= 1 - f; }
     }
     mesh.updateGeometry(mesh.getFacesFromVertices(iVerts), iVerts);
   }

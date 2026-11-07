@@ -5983,7 +5983,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 31;  // v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 32;  // v32 a pose fix's offset on top of the skin pass (RigPoses.js); v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6376,6 +6376,18 @@ Skeleton.serialize = function (meshes, main) {
   }
   slots += 1;
   for (const d of fixDetails) slots += 5 + d.key.length + d.idx.length * 4;
+  // v32: a pose fix's offset on top of the skin pass, sparse too.
+  const fixPost = [];
+  for (const m of meshes) {
+    const t = window._animationRegistry?.tracks?.get(m.getID());
+    for (const [key, arr] of (t && t.correctivePost) || []) {
+      const idx = [];
+      for (let i = 0; i < arr.length; i += 3) if (arr[i] || arr[i + 1] || arr[i + 2]) idx.push(i);
+      if (idx.length) fixPost.push({ i: idxOf(m), key, arr, idx });
+    }
+  }
+  slots += 1;
+  for (const d of fixPost) slots += 3 + d.key.length + d.idx.length * 4;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6495,10 +6507,30 @@ Skeleton.serialize = function (meshes, main) {
     u[o++] = d.idx.length;
     for (const i of d.idx) { u[o++] = i; f[o++] = d.arr[i]; f[o++] = d.arr[i + 1]; f[o++] = d.arr[i + 2]; }
   }
+  u[o++] = fixPost.length;
+  for (const d of fixPost) {
+    u[o++] = d.i;
+    u[o++] = d.key.length;
+    for (let k = 0; k < d.key.length; k++) u[o++] = d.key.charCodeAt(k);
+    u[o++] = d.idx.length;
+    for (const i of d.idx) { u[o++] = i; f[o++] = d.arr[i]; f[o++] = d.arr[i + 1]; f[o++] = d.arr[i + 2]; }
+  }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
 };
+
+// The track a pose's fix is kept on. A skin with a fix and no shapes has no other reason to have one, so the
+// file may not have brought one back.
+function fixTrack(m) {
+  const reg = window._animationRegistry;
+  if (!m || !reg) return null;
+  if (!reg.tracks.has(m.getID())) {
+    reg.tracks.set(m.getID(), { times: [], positions: [], quaternions: [], scales: [],
+      shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now() });
+  }
+  return reg.tracks.get(m.getID());
+}
 
 // Locate our block by walking the footer chain backwards. The skeleton block is written
 // BEFORE FrameGroup's so that FrameGroup's stays last — its reader only ever inspects the
@@ -7192,7 +7224,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         let key = '';
         for (let k = 0; k < len; k++) key += String.fromCharCode(u[o++]);
         const nb = u[o++];
-        const t = m && window._animationRegistry?.tracks?.get(m.getID());
+        const t = fixTrack(m);
         if (!t || !lvl || !lvl._detailsXYZ) { o += nb * 4; continue; }
         const all = t.correctiveDetails || (t.correctiveDetails = new Map());
         if (!all.has(key)) all.set(key, new Map());
@@ -7206,6 +7238,24 @@ Skeleton.deserialize = function (buffer, meshes, main) {
           }
         }
         all.get(key).set(lvl, arr);
+      }
+    }
+    if (ver >= 32) {
+      const pn = u[o++];
+      for (let i = 0; i < pn && o < u.length; i++) {
+        const m = meshes[u[o++]], len = u[o++];
+        if (len > 256) break;   // not a layer name: a damaged block
+        let key = '';
+        for (let k = 0; k < len; k++) key += String.fromCharCode(u[o++]);
+        const nb = u[o++];
+        const t = fixTrack(m);
+        if (!t || !m._skinRest) { o += nb * 4; continue; }
+        const arr = new Float32Array(m._skinRest.length);
+        for (let r = 0; r < nb; r++) {
+          const at = u[o++];
+          for (let c = 0; c < 3; c++, o++) if (at + c < arr.length) arr[at + c] = f[o];
+        }
+        (t.correctivePost || (t.correctivePost = new Map())).set(key, arr);
       }
     }
 

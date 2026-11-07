@@ -327,7 +327,7 @@ const roundTrip = (meshes) => {
   check('...and a pose with no joint in this save is dropped', !lib.has('gone'));
   // And the reader stops at damage rather than loading it or running out of memory.
   const bad = new Uint32Array(buf.slice(0));
-  const countAt = bad.length - 2 - 1 - (2 + 'arms up'.length + 2 * 17) - 1;   // -1 for the fix details' count (v31)
+  const countAt = bad.length - 2 - 1 - (2 + 'arms up'.length + 2 * 17) - 1 - 1;   // -1 each for the fix details' count (v31) and the fix offsets' count (v32)
   check('(the pose count is where this test thinks)', bad[countAt] === 1, 'read ' + bad[countAt]);
   bad[countAt + 1] = 0xdeadbeef;
   const hurt = meshes.map((m) => mk({ _id: m._id }));
@@ -356,6 +356,19 @@ const roundTrip = (meshes) => {
   check('a fix\'s details come back', !!arr2 && arr2[3] === 4 && arr2[4] === 5 && arr2[5] === 6 && arr2[0] === 0);
   const d2 = back2[0]._meshes[1]._detailsXYZ;
   check('...and its share at the saved weight leaves the level', d2[3] === 2 - 0.5 * 4 && d2[5] === 2 - 0.5 * 6 && d2[0] === 1, [...d2].join());
+
+  // A pose fix's offset: sparse too, and a skin with no other shapes has no track to come back to.
+  const post = new Float32Array([0, 0, 0, 7, 8, 9]);
+  window._animationRegistry = { tracks: new Map([[meshes[0].getID(), { correctivePost: new Map([['pose:b', post]]) }]]) };
+  const withPost = Skeleton.serialize(meshes, saved);
+  const back3 = meshes.map((m) => mk({ _id: m._id }));
+  back3[0]._skinRest = new Float32Array(6);
+  window._animationRegistry = { tracks: new Map() };
+  console.error = () => {};
+  Skeleton.deserialize(withPost, back3, { _skelAll: new Set(), getMeshes: () => back3, render() {}, _scene: null, setMeshParent() {} });
+  console.error = err;
+  const arr3 = window._animationRegistry.tracks.get(back3[0].getID())?.correctivePost?.get('pose:b');
+  check('a fix\'s offset comes back', !!arr3 && arr3.length === 6 && arr3[3] === 7 && arr3[4] === 8 && arr3[5] === 9 && arr3[0] === 0);
   window._animationRegistry = wasReg;
   delete meshes[0]._meshes;
 }

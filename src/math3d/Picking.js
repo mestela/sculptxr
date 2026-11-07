@@ -1115,15 +1115,33 @@ class Picking {
     return false;
   }
 
+  // See PosedSymmetry.dragTurn. On Picking for the reason above.
+  mirrorDragTurn(mesh, pt, nPlane) {
+    return PosedSymmetry.dragTurn(this._main, mesh, pt, nPlane);
+  }
+
+  // Posed, a brush that follows along keeps its own far point (followMirror), rather than being put back on
+  // the mirror each mouse move, which hops for the same reason.
+  followsOwnMirror(mesh) {
+    return PosedSymmetry.applies(this._main, mesh);
+  }
+
   // THE FAR SIDE OF A DRAG FOLLOWS THE MIRROR OF WHERE THE NEAR SIDE IS AIMING, and writes the step it
   // took into `dir`. A mirrored ray aims at where the far limb would be if it hadn't moved, which on a
   // posed character is empty space: Drag and Slide did nothing on the far side at all. At rest this is
   // the same answer as the ray (the reflection of the closest point on a line is the closest point on
   // its reflection).
-  followMirror(from, mesh, dir) {
+  //
+  // Posed, the step is the near side's `nearStep` turned across rather than the difference of two mirrors: those
+  // take the transform of whichever vertex is nearest, and when that changes the far side jumps (Drag, 5.57 and
+  // 9.43 among steps of .16, postpose.sxr). See PosedSymmetry.dragTurn. The mirror still runs, as pruneToMirror
+  // judges the selection by the rest-space point it leaves behind.
+  followMirror(from, mesh, dir, nearStep) {
     var target = vec3.copy([0, 0, 0], from.getIntersectionPoint());
     var nPlane = mesh.getSymmetryNormal();
+    var turn = nearStep ? PosedSymmetry.dragTurn(this._main, mesh, target, nPlane) : null;
     this.mirrorLocalPoint(mesh, target, mesh.getSymmetryOrigin(), nPlane);
+    if (turn) vec3.add(target, this.getIntersectionPoint(), turn(vec3.copy(dir, nearStep)));
     vec3.sub(dir, target, this.getIntersectionPoint());
     this.setIntersectionPoint(target);
     this._mesh = mesh;

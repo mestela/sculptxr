@@ -215,7 +215,7 @@ function boundMesh(levels, boundAt) {
     '_skinRest is what weights re-solve from and what unbind puts back');
   check('...by COPYING only when the skin matrices really are the identity',
     /Skinning\.atBindPose = function/.test(SRC)
-      && /if \(!atBind\) return journalled\(commitPosed\(main, mesh, level, nbV, into\)\);/.test(SRC),
+      && /if \(!atBind\) return journalled\(commitPosed\(main, mesh, level, nbV\)\);/.test(SRC),
     'copying a POSED shape into the rest shape corrupts the bind irreversibly; posed strokes '
       + 'go through commitPosed, which is measured in restwrite_test.mjs');
   check('...after folding a stroke made ABOVE the bound level back down to it',

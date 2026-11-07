@@ -1,3 +1,4 @@
+import { xfPruneIdleScale } from '../editing/xfChannel.js';
 import Utils from '../misc/Utils.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import ExportSGL from './ExportSGL.js';
@@ -358,6 +359,7 @@ Import.importSGL = function (buffer, gl, main) {
             // treat every key as hand-set. Genuinely hand-set handles in those files are lost.
             off += nbTransKeys * 9;
           }
+          xfPruneIdleScale(trackObj);
 
           var rP = [f32a[off++], f32a[off++], f32a[off++]];
           var rQ = [f32a[off++], f32a[off++], f32a[off++], f32a[off++]];

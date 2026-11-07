@@ -93,7 +93,7 @@ const POS = xfGroupBits('pos'), ROT = xfGroupBits('rot'), SCL = xfGroupBits('sca
   m.set(0, 0, 0); reg.addTransformKey(m, 0);
   m.set(0, 0, 0); reg.addTransformKey(m, 2);
   const tr = reg.tracks.get(m.getID());
-  check('the first key of a track keys everything', maskSync(tr)[0] === XF_ALL);
+  check('the first key of a track keys everything but idle scale', maskSync(tr)[0] === (XF_ALL & ~xfGroupBits('scale')));
   m.set(5, 0, 0); reg.addTransformKey(m, 1);        // moved only
   check('moving the object keys TRANSLATE only', maskSync(tr)[1] === POS, maskSync(tr)[1].toString(2));
   m.set(5, 0, 0, 30); reg.addTransformKey(m, 1);    // now rotated at the same frame
@@ -102,7 +102,7 @@ const POS = xfGroupBits('pos'), ROT = xfGroupBits('rot'), SCL = xfGroupBits('sca
   // is derived.
   check('an unkeyed group\'s value in that slot is derived from its curve', near(tr.scales[3], 1));
   m.set(5, 0, 0, 30); reg.addTransformKey(m, 1);    // pressed again, nothing changed
-  check('keying an unchanged pose pins every group', maskSync(tr)[1] === XF_ALL);
+  check('keying an unchanged pose pins every group but idle scale', maskSync(tr)[1] === (XF_ALL & ~xfGroupBits('scale')));
 }
 
 // ── evaluation through each channel's own keys ─────────────────────────────────

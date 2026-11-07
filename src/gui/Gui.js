@@ -1,3 +1,4 @@
+import RigPoses from '../editing/RigPoses.js';
 import TR from './GuiTR.js';
 import { TAB_ICONS, ICON_PIN } from './tabIcons.js';
 import { DesktopFloatPanel, injectFloatCSS } from './DesktopFloatPanel.js';
@@ -799,17 +800,31 @@ class Gui {
       this._dropdowns[def.id] = { btn, dd, def };
     }
 
-    // Mesh stats — absolutely positioned at the right end of the topbar
-    const statsSpan = document.createElement('span');
-    statsSpan.id = 'desktop-mesh-stats';
-    Object.assign(statsSpan.style, {
+    // Status and mesh stats, at the right end of the topbar. The status gives way first: it fills what's left
+    // after the menus and cuts off with an ellipsis, with the whole line on hover.
+    const statusRow = document.createElement('div');
+    statusRow.id = 'desktop-status-row';
+    Object.assign(statusRow.style, {
       position: 'absolute', right: '12px', top: '50%',
       transform: 'translateY(-50%)',
-      color: '#666', fontSize: '11px',
-      cursor: 'default', whiteSpace: 'nowrap',
-      pointerEvents: 'none'
+      display: 'flex', justifyContent: 'flex-end', gap: '14px', minWidth: '0',
+      fontSize: '11px', whiteSpace: 'nowrap', cursor: 'default'
     });
-    topbarEl.appendChild(statsSpan);
+    const rigStatus = document.createElement('span');
+    rigStatus.id = 'desktop-rig-status';
+    Object.assign(rigStatus.style, { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' });
+    const statsSpan = document.createElement('span');
+    rigStatus.title = 'Nearest saved pose, and where a stroke lands. pre: before the skin, all poses. post: after the skin, this pose only. Amber: it can jump.';
+    statsSpan.id = 'desktop-mesh-stats';
+    Object.assign(statsSpan.style, { color: '#666', flexShrink: '0', pointerEvents: 'none' });
+    statusRow.append(rigStatus, statsSpan);
+    topbarEl.appendChild(statusRow);
+    window._rigStatusBar = (st) => {
+      rigStatus.textContent = st ? RigPoses.statusText(st) : '';
+      rigStatus.style.color = st && st.warn ? '#f9e2af' : '#aaa';
+      const last = [...topbarEl.querySelectorAll('.desktop-menu-btn')].pop();
+      statusRow.style.left = last ? (last.offsetLeft + last.offsetWidth + 14) + 'px' : '';
+    };
 
     // CLOSE ON AN OUTSIDE PRESS — including a press in the 3D viewport, which is the one place it
     // did not work.

@@ -414,6 +414,48 @@ PosedSymmetry.mirrorLocal = function (main, mesh, pt, ptPlane, nPlane, nrm) {
   return !!PosedSymmetry.mirrorPoint(main, mesh, pt, ptPlane, nPlane, pt, nrm);
 };
 
+// A DRAG'S FAR SIDE, FIXED AT THE PRESS. mirrorPoint borrows the transform of the vertex nearest the point it
+// is given, so mirroring a drag's target every step changes transform whenever a different vertex is nearest,
+// and where a spine and an arm share a shoulder that throws the far side several units in one step (4.71 among
+// steps of .18, postpose.sxr). So this returns the near-to-far turn at the point pressed, for a drag's movement
+// and not its position: nothing to hop, the far side starts from zero, and it moves as far as the near side, as
+// these are rotations. Null when not posed, where the plain mirror is right. Edits `v` in place.
+PosedSymmetry.dragTurn = function (main, mesh, pt, nPlane) {
+  if (!PosedSymmetry.applies(main, mesh)) return null;
+  const level = Skinning.boundLevelOf(mesh), rest = mesh._skinRest;
+  if (!level || !rest) return null;
+  const nbV = (rest.length / 3) | 0;
+  if (level.getNbVertices() !== nbV) return null;
+  const mats = Skinning.skinMatricesFor(main, mesh);
+  if (!mats) return null;
+  const a = nearest(level.getVertices(), nbV, pt[0], pt[1], pt[2]);
+  if (a < 0) return null;
+  const near = new THREE.Quaternion(), far = new THREE.Quaternion(), q = [0, 0, 0, 1];
+  Skinning.turnAt(mesh, mats, a, null, q);
+  near.set(q[0], q[1], q[2], q[3]).invert();
+  // the far side as mirrorPoint chooses it: the twin joints, or with no pairing the vertex opposite
+  const table = Skinning.jointMirrors(main, mesh);
+  if (table && Skinning.blendAtMirrored(mesh, mats, a, table, _psMat)) {
+    Skinning.turnAt(mesh, mats, a, table, q);
+  } else {
+    if (!restPlaneOrigin(mesh, nPlane, _psPlane)) return null;
+    const mir = [rest[a * 3], rest[a * 3 + 1], rest[a * 3 + 2]];
+    mirrorAcross(mir, _psPlane, nPlane);
+    const b = nearest(rest, nbV, mir[0], mir[1], mir[2]);
+    if (b < 0) return null;
+    Skinning.turnAt(mesh, mats, b, null, q);
+  }
+  far.set(q[0], q[1], q[2], q[3]);
+  const nx = nPlane[0], ny = nPlane[1], nz = nPlane[2];
+  return (v) => {
+    _psVec.set(v[0], v[1], v[2]).applyQuaternion(near);
+    const d = 2 * (_psVec.x * nx + _psVec.y * ny + _psVec.z * nz);
+    _psVec.set(_psVec.x - d * nx, _psVec.y - d * ny, _psVec.z - d * nz).applyQuaternion(far);
+    v[0] = _psVec.x; v[1] = _psVec.y; v[2] = _psVec.z;
+    return v;
+  };
+};
+
 // FOR A MIRRORED RAY, which is how the desktop path works: it reflects the whole pick ray and
 // re-casts it, so it lands on whatever surface is really over there rather than on the mirror
 // image of this side. That is the better behaviour on an asymmetric mesh and it is worth
